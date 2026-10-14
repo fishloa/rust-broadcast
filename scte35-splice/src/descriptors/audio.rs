@@ -120,8 +120,16 @@ impl Serialize for AudioDescriptor {
         for c in &self.components {
             buf[pos] = c.component_tag;
             buf[pos + 1..pos + 4].copy_from_slice(&c.iso_code);
-            buf[pos + 4] = ((c.bit_stream_mode & 0x07) << 5)
-                | ((c.num_channels & 0x0F) << 1)
+            buf[pos + 4] = (broadcast_common::len::fit_mask(
+                c.bit_stream_mode,
+                0x07,
+                "audio_descriptor.bit_stream_mode",
+            )? << 5)
+                | (broadcast_common::len::fit_mask(
+                    c.num_channels,
+                    0x0F,
+                    "audio_descriptor.num_channels",
+                )? << 1)
                 | u8::from(c.full_srvc_audio);
             pos += COMPONENT_LEN;
         }
