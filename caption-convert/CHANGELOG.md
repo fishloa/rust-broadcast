@@ -4,6 +4,12 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed
+- Internal: `time.rs` (the SRT/WebVTT timestamp parser, `normalize_line_endings`, `to_hms_ms`, its own `TICKS_PER_MS`) and the local `unescape_payload` are deleted in favour of `timed_metadata::webvtt::{parse_timestamp, format_timestamp_with, normalize_line_endings, payload_lines, unescape_payload}`; `Error::InvalidTimestamp` still carries the offending text (#1210).
+
+### Fixed
+- `write_srt` now folds a lone CR (and CRLF) inside a cue's text to LF exactly like the WebVTT writer does (it used `str::lines()`, which only knows LF/CRLF, so a lone CR was written as a literal control character inside a payload line); `write_srt_folds_a_lone_cr_like_the_webvtt_writer` fails on the old code (#1210).
+
 ### Fixed
 - Timestamps are digits-only: a `+` sign in any field (accepted by
   `str::parse`) is now rejected (#1109 CV-O1).

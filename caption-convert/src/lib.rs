@@ -107,7 +107,6 @@ extern crate alloc;
 pub mod error;
 pub mod matrix;
 mod srt;
-mod time;
 mod webvtt;
 
 #[cfg(feature = "cc-data")]

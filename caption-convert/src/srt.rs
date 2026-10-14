@@ -17,23 +17,29 @@
 //! [`crate::webvtt_to_srt`] forwards.
 
 use crate::error::Error;
-use crate::time::{normalize_line_endings, parse_timestamp, to_hms_ms};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 use timed_metadata::MediaTime;
-use timed_metadata::webvtt::Cue;
+use timed_metadata::webvtt::{
+    Cue, format_timestamp_with, normalize_line_endings, parse_timestamp as parse_cue_timestamp,
+    payload_lines,
+};
 
 /// Render 90 kHz ticks as an SRT timestamp `hh:mm:ss,ttt`.
 #[must_use]
 pub fn format_srt_timestamp(t: MediaTime) -> String {
-    let (h, m, s, ms) = to_hms_ms(t.0);
-    let mut out = String::with_capacity(12);
-    // `write!` to a `String` cannot fail (no I/O), matching the panic-free
-    // guarantee `timed_metadata::webvtt::format_timestamp` gives via `format!`.
-    let _ = write!(out, "{h:02}:{m:02}:{s:02},{ms:03}");
-    out
+    format_timestamp_with(t, ',')
+}
+
+/// Parse an SRT `(hh:)?mm:ss,ttt` timestamp, mapping the shared grammar's
+/// error into this crate's [`Error::InvalidTimestamp`] (which carries the
+/// offending text).
+fn parse_timestamp(s: &str, sep: char) -> Result<u64, Error> {
+    parse_cue_timestamp(s, sep)
+        .map(|t| t.0)
+        .map_err(|_| Error::InvalidTimestamp(s.to_string()))
 }
 
 /// Render cues as an SRT document: `<index>\n<timings>\n<payload>\n\n` per
@@ -55,10 +61,11 @@ pub fn write_srt(cues: &[Cue]) -> String {
             format_srt_timestamp(cue.start),
             format_srt_timestamp(cue.end)
         );
-        for line in cue.text.lines() {
-            if line.is_empty() {
-                continue;
-            }
+        // Same CRLF / lone-CR / LF folding and blank-line dropping as the
+        // WebVTT writer (a lone CR used to survive here as a literal control
+        // character inside a payload line).
+        let normalized = normalize_line_endings(&cue.text);
+        for line in payload_lines(&normalized) {
             out.push_str(line);
             out.push('\n');
         }
@@ -151,6 +158,25 @@ pub fn parse_srt(input: &str) -> Result<Vec<Cue>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A lone CR in a cue's text is a line terminator (W3C WebVTT section 4,
+    /// and the permissive SRT convention the parser applies): the writer must
+    /// fold it to LF like the WebVTT writer does, not emit a literal control
+    /// character inside a payload line (`str::lines()` only knew LF/CRLF).
+    #[test]
+    fn write_srt_folds_a_lone_cr_like_the_webvtt_writer() {
+        let c = Cue {
+            start: MediaTime(0),
+            end: MediaTime(90_000),
+            text: "one\rtwo\r\nthree".to_string(),
+        };
+        let out = write_srt(&[c]);
+        assert_eq!(out, "1\n00:00:00,000 --> 00:00:01,000\none\ntwo\nthree\n\n");
+        assert!(!out.contains('\r'));
+        // and it round-trips through the SRT parser
+        let back = parse_srt(&out).unwrap();
+        assert_eq!(back[0].text, "one\ntwo\nthree");
+    }
 
     fn cue(start: u64, end: u64, text: &str) -> Cue {
         Cue {

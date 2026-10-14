@@ -27,10 +27,11 @@
 //!   part of the (nonexistent) SRT specification.
 
 use crate::error::Error;
-use crate::time::{normalize_line_endings, parse_timestamp};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use timed_metadata::webvtt::Cue;
+use timed_metadata::webvtt::{
+    Cue, normalize_line_endings, parse_timestamp as parse_cue_timestamp, unescape_payload,
+};
 
 pub use timed_metadata::webvtt::{
     cue_block, escape_payload, format_timestamp, write_document, write_segment,
@@ -50,41 +51,12 @@ pub struct ParsedWebVtt {
     pub lossy: bool,
 }
 
-/// Unescape the three entities [`escape_payload`] emits (`&amp;` `&lt;`
-/// `&gt;`), left-to-right, single pass -- the exact inverse of
-/// `escape_payload`. Other WebVTT-defined entities (`&lrm;` `&rlm;` `&nbsp;`)
-/// are out of scope and pass through literally (a documented, not silent,
-/// limitation -- they are rare in real captions and this crate emits none of
-/// them).
-fn unescape_payload(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '&' {
-            out.push(c);
-            continue;
-        }
-        let rest: String = chars.clone().take(4).collect();
-        if rest.starts_with("amp;") {
-            out.push('&');
-            for _ in 0..4 {
-                chars.next();
-            }
-        } else if rest.starts_with("lt;") {
-            out.push('<');
-            for _ in 0..3 {
-                chars.next();
-            }
-        } else if rest.starts_with("gt;") {
-            out.push('>');
-            for _ in 0..3 {
-                chars.next();
-            }
-        } else {
-            out.push('&');
-        }
-    }
-    out
+/// Parse a WebVTT `(hh:)?mm:ss.ttt` timestamp, mapping the shared grammar's
+/// error into this crate's [`Error::InvalidTimestamp`].
+fn parse_timestamp(s: &str, sep: char) -> Result<u64, Error> {
+    parse_cue_timestamp(s, sep)
+        .map(|t| t.0)
+        .map_err(|_| Error::InvalidTimestamp(s.to_string()))
 }
 
 /// Parse a WebVTT document (W3C WebVTT SS4) into [`ParsedWebVtt`].
