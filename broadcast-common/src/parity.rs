@@ -11,7 +11,7 @@
 /// bit included): the byte is a valid odd-parity-protected value.
 #[must_use]
 pub const fn has_odd_parity(byte: u8) -> bool {
-    byte.count_ones() % 2 == 1
+    byte.count_ones() & 1 == 1
 }
 
 /// Protect a 7-bit data value with odd parity: only the low 7 bits of `data7`
@@ -20,7 +20,7 @@ pub const fn has_odd_parity(byte: u8) -> bool {
 #[must_use]
 pub const fn set_odd_parity(data7: u8) -> u8 {
     let d = data7 & 0x7F;
-    if d.count_ones() % 2 == 0 { d | 0x80 } else { d }
+    if d.count_ones() & 1 == 0 { d | 0x80 } else { d }
 }
 
 /// Check and strip the parity bit: the 7-bit data value if `byte` has odd
