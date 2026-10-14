@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- PCR drift estimate: the inter-PCR delta used `u64::wrapping_sub(..) % (2^33*300)`, which is wrong whenever the PCR wraps (or steps backward) because 2^64 is not a multiple of the PCR modulus; the delta is now the true modular forward distance, so a steady PCR crossing the ~26.5 h wrap keeps ~0 ppm drift instead of being discarded as a discontinuity.
+
 ### Changed
 
 - `PcrSample::pid` is `mpeg_ts::pid::Pid` (#1159); the `TsHeader::pid` type change is absorbed internally.
