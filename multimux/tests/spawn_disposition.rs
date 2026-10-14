@@ -29,10 +29,10 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        656,
+        659,
         "spawn_blocking DVR persist; awaited inline",
     ),
-    ("dvr.rs", 596, "spawn_blocking DVR write; awaited inline"),
+    ("dvr.rs", 597, "spawn_blocking DVR write; awaited inline"),
     (
         "source/pull.rs",
         174,
@@ -111,7 +111,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/catchup.rs",
-        257,
+        258,
         "spawn_blocking archive scan; awaited inline",
     ),
     (
@@ -121,12 +121,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/catchup.rs",
-        367,
+        369,
         "spawn_blocking archived-segment read; awaited inline",
     ),
     (
         "output/catchup.rs",
-        434,
+        436,
         "spawn_blocking archived-segment read; awaited inline",
     ),
     (
