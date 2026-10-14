@@ -248,7 +248,7 @@ pub use dash::{
 #[cfg(feature = "std")]
 pub use dash_parse::{
     AdaptationSet, DashParseError, Mpd, MpdType, Period, Representation, S, SegmentTemplate,
-    SegmentTimeline, parse_iso8601_duration,
+    SegmentTimeline, TimelineSegment, parse_iso8601_duration,
 };
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,

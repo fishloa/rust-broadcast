@@ -711,40 +711,64 @@ pub struct SegmentTimeline {
 }
 
 impl SegmentTimeline {
-    /// Expand every `<S>` run into `(number, time)` pairs in presentation
-    /// order (ISO/IEC 23009-1 §5.3.9.6). `number` starts at `start_number`
-    /// (the enclosing [`SegmentTemplate::start_number`]) and increments by
-    /// one per segment; `time` is each segment's start time in the
-    /// representation's `@timescale` ticks — explicit via [`S::t`] when
-    /// present, else the spec-default derivation (previous segment's
-    /// `t + d`, §5.3.9.6.2 L1791), starting from 0 if the very first `S`
-    /// omits `@t`.
+    /// Expand the timeline with no known Period end — see
+    /// [`SegmentTimeline::resolve`]. Returns `(number, time)` pairs.
     ///
-    /// A negative [`S::r`] (`-1`, meaning "repeat until the next `S`'s `@t`
-    /// or the end of the Period", §5.3.9.6.2) cannot be resolved without that
-    /// external context; it is tolerated as a single occurrence (not a
-    /// panic/error) rather than looping unboundedly.
-    ///
-    /// Returns an error if the total segment count (summed across all `S`
-    /// entries, counting each `r+1` repetition) would exceed
-    /// [`MAX_TIMELINE_SEGMENTS`], defending against remote alloc-DoS attacks
-    /// via hostile MPDs with unbounded `<S r="...">` values.
+    /// A negative [`S::r`] on an `S` with no following explicit `@t` and no
+    /// Period end to measure against resolves to a single occurrence (never a
+    /// panic or an unbounded loop).
     pub fn enumerate(&self, start_number: u64) -> Result<Vec<(u64, u64)>> {
+        Ok(self
+            .resolve(start_number, None)?
+            .into_iter()
+            .map(|seg| (seg.number, seg.time))
+            .collect())
+    }
+
+    /// Expand every `<S>` run into one [`TimelineSegment`] per segment, in
+    /// presentation order (ISO/IEC 23009-1 §5.3.9.6; the derivation below is
+    /// the one DASH-IF IOP v4.3 §3.10.2.2.4 transcribes, see
+    /// `specs/rules/dash-mpd-rules.md`).
+    ///
+    /// * `number` starts at `start_number` (the enclosing
+    ///   [`SegmentTemplate::start_number`]) and increments per segment.
+    /// * `time` is the segment's start in `@timescale` ticks **relative to the
+    ///   Period start**: the explicit [`S::t`] when present — absolute, so the
+    ///   first `S` may start anywhere and any later `S` may jump ahead (a gap,
+    ///   §5.3.9.6.2) — else the previous segment's `time + duration`; `0` when
+    ///   the very first `S` omits `@t`.
+    /// * A non-negative `r` yields `r + 1` segments. A **negative** `r`
+    ///   repeats the duration until the next `S`'s explicit `@t`
+    ///   (`ceil((t_next - t) / d)` segments) or, for the last `S` (or one whose
+    ///   successor has no explicit `@t`), until `period_end_ticks`
+    ///   (`ceil((period_end - t) / d)`), the Period end in the same tick domain
+    ///   (`PEwc - PSwc`). With neither bound known it is a single occurrence.
+    ///
+    /// Errors with [`DashParseError::TimelineTooLong`] if the total count
+    /// would exceed [`MAX_TIMELINE_SEGMENTS`] (hostile `r` values), checked
+    /// before any allocation proportional to the count.
+    pub fn resolve(
+        &self,
+        start_number: u64,
+        period_end_ticks: Option<u64>,
+    ) -> Result<Vec<TimelineSegment>> {
         let mut out = Vec::new();
         let mut number = start_number;
         let mut time: u64 = 0;
         let mut total_segments: u64 = 0;
-        for s in &self.segments {
+        for (idx, s) in self.segments.iter().enumerate() {
             if let Some(t) = s.t {
                 time = t;
             }
-            let repeats: u64 = if s.r < 0 {
-                1
-            } else {
+            let repeats: u64 = if s.r >= 0 {
                 (s.r as u64).saturating_add(1)
+            } else {
+                let next_t = self.segments.get(idx + 1).and_then(|n| n.t);
+                match (next_t.or(period_end_ticks), s.d) {
+                    (Some(end), d) if d > 0 => end.saturating_sub(time).div_ceil(d),
+                    _ => 1,
+                }
             };
-            // Guard the accumulation: if this S's repeats would exceed the cap
-            // on its own, or the accumulated total would, return an error.
             if repeats > MAX_TIMELINE_SEGMENTS as u64 {
                 return Err(DashParseError::TimelineTooLong {
                     count_hint: repeats,
@@ -757,13 +781,30 @@ impl SegmentTimeline {
                 });
             }
             for _ in 0..repeats {
-                out.push((number, time));
+                out.push(TimelineSegment {
+                    number,
+                    time,
+                    duration: s.d,
+                });
                 number = number.saturating_add(1);
                 time = time.saturating_add(s.d);
             }
         }
         Ok(out)
     }
+}
+
+/// One resolved segment of a [`SegmentTimeline`] — see
+/// [`SegmentTimeline::resolve`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimelineSegment {
+    /// `$Number$` of this segment.
+    pub number: u64,
+    /// Start time in `@timescale` ticks relative to the Period start
+    /// (`$Time$`).
+    pub time: u64,
+    /// Duration in `@timescale` ticks.
+    pub duration: u64,
 }
 
 /// One `<S>` run entry inside a `SegmentTimeline` (ISO/IEC 23009-1 §5.3.9.6).
@@ -776,9 +817,9 @@ pub struct S {
     /// `@d` — this run's segment duration, in `@timescale` ticks (required).
     pub d: u64,
     /// `@r` — repeat count: this run has `r + 1` segments of duration `@d`
-    /// (default 0, i.e. one segment). `-1` means "repeat until the next
-    /// `S`'s `@t` or Period end" (§5.3.9.6.2) — see
-    /// [`SegmentTimeline::enumerate`]'s handling.
+    /// (default 0, i.e. one segment). A negative value means "repeat until the
+    /// next `S`'s `@t` or Period end" (§5.3.9.6.2) — see
+    /// [`SegmentTimeline::resolve`].
     pub r: i64,
 }
 
@@ -2415,6 +2456,64 @@ mod tests {
             timeline.enumerate(1).expect("enumerate"),
             vec![(1, 0), (2, 41984), (3, 86016), (4, 131072)]
         );
+    }
+
+    // -- Absolute @t and negative @r (issue #1187, ISO/IEC 23009-1 §5.3.9.6) --
+
+    fn s(t: Option<u64>, d: u64, r: i64) -> S {
+        S { t, d, r }
+    }
+
+    #[test]
+    fn resolve_first_s_absolute_t_and_explicit_t_gap() {
+        // Live-style timeline: first S far from zero, a later S jumps ahead of
+        // the derived time (a gap) and its explicit @t wins.
+        let tl = SegmentTimeline {
+            segments: vec![s(Some(1_000_000), 100, 1), s(Some(1_000_500), 100, 0)],
+        };
+        let got: Vec<(u64, u64)> = tl
+            .resolve(7, None)
+            .expect("resolve")
+            .into_iter()
+            .map(|x| (x.number, x.time))
+            .collect();
+        assert_eq!(got, vec![(7, 1_000_000), (8, 1_000_100), (9, 1_000_500)]);
+    }
+
+    #[test]
+    fn resolve_negative_r_runs_to_next_explicit_t() {
+        // ceil((1000-0)/300) = 4 segments (0,300,600,900); next S at 1000.
+        let tl = SegmentTimeline {
+            segments: vec![s(Some(0), 300, -1), s(Some(1000), 300, 0)],
+        };
+        let got = tl.resolve(1, None).expect("resolve");
+        let times: Vec<u64> = got.iter().map(|x| x.time).collect();
+        assert_eq!(times, vec![0, 300, 600, 900, 1000]);
+    }
+
+    #[test]
+    fn resolve_negative_r_last_s_runs_to_period_end() {
+        let tl = SegmentTimeline {
+            segments: vec![s(Some(500), 200, -1)],
+        };
+        let times: Vec<u64> = tl
+            .resolve(1, Some(1100))
+            .expect("resolve")
+            .iter()
+            .map(|x| x.time)
+            .collect();
+        // ceil((1100-500)/200) = 3
+        assert_eq!(times, vec![500, 700, 900]);
+        // Unknown period end: a single occurrence.
+        assert_eq!(tl.resolve(1, None).expect("resolve").len(), 1);
+    }
+
+    #[test]
+    fn resolve_negative_r_hostile_count_is_capped_not_allocated() {
+        let tl = SegmentTimeline {
+            segments: vec![s(Some(0), 1, -1)],
+        };
+        assert!(tl.resolve(1, Some(u64::MAX)).is_err());
     }
 
     #[test]

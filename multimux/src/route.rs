@@ -301,6 +301,14 @@ pub(crate) struct DashState {
     window: Mutex<VecDeque<DashWindowSegment>>,
     capacity: usize,
     track_specs: Mutex<Vec<TrackSpec>>,
+    /// Wall-clock instant this program's presentation began: when its `Trunk`
+    /// (timeline position `0`, segment number `1`) was minted. The source of
+    /// `MPD@availabilityStartTime` (ISO/IEC 23009-1 §5.3.1.2 Table 3: "the
+    /// anchor for the MPD in wall-clock time", the time from which every
+    /// segment's availability is measured, §5.3.9.5.3) — NOT the route's
+    /// construction time, which precedes ingest and does not move when a
+    /// reconnect mints a fresh `Trunk` that restarts at segment 1 (#1187).
+    presentation_origin: SystemTime,
 }
 
 impl DashState {
@@ -310,6 +318,7 @@ impl DashState {
             window: Mutex::new(VecDeque::new()),
             capacity: window_segments.get(),
             track_specs: Mutex::new(Vec::new()),
+            presentation_origin: SystemTime::now(),
         }
     }
 
@@ -517,6 +526,10 @@ impl ProgramServing {
 
     fn window_segments(&self) -> Vec<DashWindowSegment> {
         self.dash.window_segments()
+    }
+
+    fn presentation_origin(&self) -> SystemTime {
+        self.dash.presentation_origin
     }
 
     /// Runs `f` against this program's `Trunk` segment writer, acquiring it
@@ -1268,9 +1281,19 @@ impl RouteHandle {
         self.part_target_ms
     }
 
-    /// When this route was constructed — `MPD@availabilityStartTime`'s
-    /// source (`crate::output::dash`/`crate::output::ll_dash`); route-wide,
-    /// not something any per-program `Trunk` ring tracks.
+    /// The wall-clock instant `program`'s presentation began (its `Trunk` was
+    /// minted) — `MPD@availabilityStartTime`'s source
+    /// (`crate::output::dash`/`crate::output::ll_dash`, ISO/IEC 23009-1
+    /// §5.3.1.2). `None` if `program` is not registered. Unlike
+    /// [`Self::created_at`] it restarts with the program's own segment
+    /// numbering, so `AST + (N - startNumber) * duration` stays true across a
+    /// reconnect (#1187).
+    pub fn presentation_origin(&self, program: ProgramId) -> Option<SystemTime> {
+        self.serving(program).map(|s| s.presentation_origin())
+    }
+
+    /// When this route was constructed (admin status only; NOT the DASH
+    /// `availabilityStartTime` — see [`Self::presentation_origin`]).
     pub fn created_at(&self) -> SystemTime {
         self.created_at
     }
