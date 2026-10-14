@@ -9,7 +9,6 @@
 #![cfg(feature = "std")]
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use broadcast_common::{Package, Unpackage};
@@ -30,10 +29,7 @@ const SAMPLE_SLACK_TICKS: u64 = TICKS_PER_SEC / 10;
 const SECTION_HEAD: usize = 8;
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/ts")
-        .join(rel);
-    std::fs::read(&p).unwrap_or_else(|e| panic!("fixture {rel}: {e}"))
+    test_fixtures::read(&format!("ts/{rel}"))
 }
 
 fn demux(bytes: &[u8]) -> Media {

@@ -23,14 +23,9 @@
 //! `stream_id_extension` byte `0x60` = flag `0` + low bits `0x60`).
 
 use mpeg_pes::{PesAssembler, PesPacket, StreamId};
-use std::fs;
 
 fn fixture_bytes() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mpeg-pes/dirac-vc2-extended-stream-id.ts"
-    );
-    fs::read(path).expect("fixture dirac-vc2-extended-stream-id.ts must be present")
+    test_fixtures::read("mpeg-pes/dirac-vc2-extended-stream-id.ts")
 }
 
 const PKT: usize = 188;

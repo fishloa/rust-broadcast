@@ -50,10 +50,7 @@ mod listener;
 use listener::bind_tcp;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/h264_aac.ts"
-    ))
+    test_fixtures::path("ts/h264_aac.ts")
 }
 
 /// Locate `bin` on `PATH`, returning its full path.

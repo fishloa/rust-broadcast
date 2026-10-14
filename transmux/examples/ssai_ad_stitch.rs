@@ -126,10 +126,7 @@ pub struct Demo {
 /// Locate a fixture under the workspace `fixtures/` directory (a sibling of
 /// the crate's `CARGO_MANIFEST_DIR`).
 fn fixture_path(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join(rel)
+    test_fixtures::path(rel)
 }
 
 /// Sum of `samples[..upto]`'s durations, in the track's own timescale ticks.

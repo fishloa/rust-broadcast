@@ -4,18 +4,12 @@
 //! truncated FDT-Instance XML payload), assert the decoded LCT flag-driven
 //! field widths and EXT_FDT fields, and verify a byte-exact round-trip.
 
-use std::fs;
-
 use rmt_flute::{
     AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, TOI_FDT,
 };
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/rmt-flute/flute_fdt.bin"
-    );
-    fs::read(path).expect("fixture flute_fdt.bin must be committed")
+    test_fixtures::read("rmt-flute/flute_fdt.bin")
 }
 
 #[test]

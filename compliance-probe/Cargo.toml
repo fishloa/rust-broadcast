@@ -49,6 +49,7 @@ std = [
 ]
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 # Test-only: renders the `metrics` facade's recorded state back to Prometheus
 # text so tests can assert on it, exactly the pattern `multimux::prometheus`
 # uses for its own `install()` — see that module for why `build_recorder`

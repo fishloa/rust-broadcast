@@ -11,13 +11,7 @@ use std::path::PathBuf;
 use dvb_mabr::{MulticastGatewayConfiguration, MulticastServerConfiguration};
 
 fn fixture_path(name: &str) -> PathBuf {
-    // Fixtures live in the workspace-shared `fixtures/dvb-mabr/` directory,
-    // not inside this crate — per project convention.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("dvb-mabr")
-        .join(name)
+    test_fixtures::path(&format!("dvb-mabr/{name}"))
 }
 
 fn read_fixture(name: &str) -> String {

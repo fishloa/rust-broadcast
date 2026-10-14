@@ -30,6 +30,7 @@ flate2        = { version = "1", optional = true }
 encoding_rs = { version = "0.8", optional = true }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc = { path = "../test-alloc" }
 hex       = "0.4"

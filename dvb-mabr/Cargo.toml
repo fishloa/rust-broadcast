@@ -24,6 +24,7 @@ quick-xml         = { workspace = true, optional = true }
 thiserror         = { version = "2", default-features = false }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 
 [features]
 default = ["std"]

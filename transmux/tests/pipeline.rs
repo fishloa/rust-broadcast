@@ -15,11 +15,7 @@ use transmux::{
 };
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_aac_frag.mp4"
-    );
-    std::fs::read(path).expect("fixture file must exist")
+    test_fixtures::read("transmux/h264_aac_frag.mp4")
 }
 
 /// Find a top-level box, returning (absolute offset, full bytes).

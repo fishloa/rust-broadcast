@@ -4,16 +4,10 @@
 //! (0xFF). Asserts decoded fields, a byte-exact round-trip, and a corruption
 //! bite.
 
-use std::fs;
-
 use dvb_vbi::{DataField, DataUnitId, DataUnitPayload};
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-vbi/vbi_data_field.bin"
-    );
-    fs::read(path).expect("fixture vbi_data_field.bin must be committed")
+    test_fixtures::read("dvb-vbi/vbi_data_field.bin")
 }
 
 #[test]

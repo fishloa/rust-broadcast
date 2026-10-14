@@ -34,10 +34,7 @@ use transmux::{Media, Track, TrackSpec, TsDemux};
 /// crate's `CARGO_MANIFEST_DIR`). Fixtures are read at runtime via `std::fs`
 /// (never `include_bytes!`, which would bloat the published crate).
 fn fixture_path(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join(rel)
+    test_fixtures::path(rel)
 }
 
 /// One-line human summary of a track's codec configuration.

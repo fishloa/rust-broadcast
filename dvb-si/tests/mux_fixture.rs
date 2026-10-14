@@ -16,8 +16,7 @@ use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/ts/{}", env!("CARGO_MANIFEST_DIR"), name);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"))
+    test_fixtures::read(&format!("ts/{name}"))
 }
 
 /// Demux a capture into the unique current sections it carries, as

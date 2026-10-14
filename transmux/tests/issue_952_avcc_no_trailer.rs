@@ -22,18 +22,8 @@ use transmux::nalu_types::{AvcPps, AvcSps};
 use transmux::pipeline::{CodecConfig, TrackSpec, build_init_segment};
 
 fn fixture_bytes() -> Vec<u8> {
-    let init = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/scte35-ssai/dash/V300/init.mp4"
-    );
-    let seg = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/scte35-ssai/dash/V300/3.m4s"
-    );
-    let mut buf = std::fs::read(init).expect("fixtures/scte35-ssai/dash/V300/init.mp4 must exist");
-    buf.extend_from_slice(
-        &std::fs::read(seg).expect("fixtures/scte35-ssai/dash/V300/3.m4s must exist"),
-    );
+    let mut buf = test_fixtures::read("scte35-ssai/dash/V300/init.mp4");
+    buf.extend_from_slice(&test_fixtures::read("scte35-ssai/dash/V300/3.m4s"));
     buf
 }
 

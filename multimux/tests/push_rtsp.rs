@@ -50,10 +50,7 @@ use transmux::{CodecConfig, TsDemux};
 const GUARD: Duration = Duration::from_secs(20);
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/h264_aac.ts"
-    ))
+    test_fixtures::path("ts/h264_aac.ts")
 }
 
 /// Workspace-convention scratch dir (mirrors `golden_gate.rs`'s own

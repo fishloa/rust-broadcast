@@ -28,17 +28,11 @@
 //! build-from-fields round-trip unit tests in `mpeg-pes/src/packet.rs`.
 
 use mpeg_pes::{PesPacket, StreamId};
-use std::fs;
 
 const TS: usize = 188;
 
 fn fixture(name: &str) -> Vec<u8> {
-    fs::read(format!(
-        "{}/../fixtures/mpeg-pes/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        name
-    ))
-    .unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
+    test_fixtures::read(&format!("mpeg-pes/{name}"))
 }
 
 /// PES payload of a PUSI TS packet (these fixture packets are payload-only,

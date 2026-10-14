@@ -5,13 +5,10 @@
 //! - `manifest.mpd` — well-formed static MPD → zero findings.
 #![cfg(feature = "std")]
 
-use std::fs;
-
 use media_doctor::{Report, check_dash_mpd};
 
 fn read_fixture(name: &str) -> String {
-    let path = format!("{}/../fixtures/dash/{}", env!("CARGO_MANIFEST_DIR"), name);
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"))
+    test_fixtures::read_to_string(&format!("dash/{name}"))
 }
 
 fn findings<'a>(report: &'a Report, rule_id: &str) -> Vec<&'a media_doctor::Finding> {

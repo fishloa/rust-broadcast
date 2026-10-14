@@ -42,8 +42,7 @@ const DESC_TAG_CA: u8 = 0x09;
 const EXPECTED_AUDIO_PIDS: [u16; 3] = [0x82, 0x83, 0x84];
 
 fn fixture_bytes() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/france2.ts");
-    std::fs::read(path).expect("fixtures/ts/france2.ts must exist")
+    test_fixtures::read("ts/france2.ts")
 }
 
 fn demux_fixture() -> Media {

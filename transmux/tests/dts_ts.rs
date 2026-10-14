@@ -17,11 +17,7 @@ use transmux::{DtsSpecificBox, Fmp4Demux, TsDemux, TsMux};
 const TS: usize = 188;
 
 fn load_fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/dts/dts_core.ts"
-    );
-    std::fs::read(path).expect("dts_core.ts fixture must exist")
+    test_fixtures::read("ts/dts/dts_core.ts")
 }
 
 fn demux_fixture() -> Media {

@@ -40,10 +40,7 @@ use listener::bind_tcp;
 use transmux::smooth_parse::SmoothManifest;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/h264_aac_40s.ts"
-    ))
+    test_fixtures::path("ts/h264_aac_40s.ts")
 }
 
 fn have_oracle(bin: &str) -> bool {

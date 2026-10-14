@@ -22,8 +22,6 @@
 //! `docs/fec.md` §9 describes: `SourceBlockPartition` operates purely on
 //! symbol counts the caller supplies, never on FEC-scheme-specific bytes.
 
-use std::fs;
-
 use rmt_flute::{ALC_HET_EXT_FTI, AlcPacket, HET_EXT_FDT, SourceBlockPartition};
 
 /// The FEC Payload ID in this packet is a 4-octet Compact-No-Code
@@ -34,11 +32,7 @@ use rmt_flute::{ALC_HET_EXT_FTI, AlcPacket, HET_EXT_FDT, SourceBlockPartition};
 const FEC_PAYLOAD_ID_LEN: usize = 4;
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/atsc3/route-fdt-instance-2020-11-05.bin"
-    );
-    fs::read(path).expect("fixture route-fdt-instance-2020-11-05.bin must be committed")
+    test_fixtures::read("atsc3/route-fdt-instance-2020-11-05.bin")
 }
 
 #[test]

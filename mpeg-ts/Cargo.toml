@@ -22,6 +22,7 @@ std    = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 serde  = ["dep:serde"]
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 mp4-emsg = { path = "../mp4-emsg", version = "0.4", default-features = false }
 test-alloc = { path = "../test-alloc" }
 

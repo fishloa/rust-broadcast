@@ -23,5 +23,8 @@ mpeg-ts   = { path = "../mpeg-ts",   version = "0.5", default-features = false, 
 serde_json = { workspace = true }
 clap       = { workspace = true, features = ["derive"] }
 
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+
 [lints]
 workspace = true

@@ -19,14 +19,9 @@
 
 use caption_convert::TeletextToWebVtt;
 use std::fs;
-use std::path::Path;
 
 fn fixture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("teletext")
-        .join("teletext_subtitle_synthetic.txt")
+    test_fixtures::path("teletext/teletext_subtitle_synthetic.txt")
 }
 
 fn load_frames() -> Vec<(u64, Vec<u8>)> {

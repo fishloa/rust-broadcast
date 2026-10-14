@@ -24,7 +24,9 @@ mod listener;
 use listener::bind_tcp;
 
 fn fixture_path() -> String {
-    format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"))
+    test_fixtures::path("ts/h264_aac.ts")
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// One LL-HLS-only route named `"cam"`, bound at `bind`, ingesting a

@@ -2,8 +2,6 @@
 //! committed `cw_provision.bin`, assert its decoded fields, and verify a
 //! byte-exact round-trip. The CW inside `CP_CW_combination` is opaque.
 
-use std::fs;
-
 use broadcast_common::traits::Serialize;
 use dvb_simulcrypt::{
     EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType, ParameterType,
@@ -11,11 +9,7 @@ use dvb_simulcrypt::{
 };
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-simulcrypt/cw_provision.bin"
-    );
-    fs::read(path).expect("fixture cw_provision.bin must be committed")
+    test_fixtures::read("dvb-simulcrypt/cw_provision.bin")
 }
 
 #[test]

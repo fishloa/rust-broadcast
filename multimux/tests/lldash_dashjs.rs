@@ -66,10 +66,7 @@ const MIN_CURRENT_TIME_SECS: f64 = 1.8;
 const HARNESS_TIMEOUT_MS: u64 = 20_000;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/h264_aac.ts"
-    ))
+    test_fixtures::path("ts/h264_aac.ts")
 }
 
 fn assets_dir() -> PathBuf {

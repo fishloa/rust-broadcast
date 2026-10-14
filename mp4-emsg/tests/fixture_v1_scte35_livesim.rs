@@ -12,16 +12,10 @@
 //!
 //! Asserts the decoded fields, SCTE 35 recognition, and a byte-exact round-trip.
 
-use std::fs;
-
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/shared/emsg_v1_scte35_livesim.bin"
-    );
-    fs::read(path).expect("fixture emsg_v1_scte35_livesim.bin must be committed")
+    test_fixtures::read("shared/emsg_v1_scte35_livesim.bin")
 }
 
 #[test]

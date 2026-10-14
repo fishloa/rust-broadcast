@@ -89,6 +89,7 @@ media = [
 ]
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 tokio = { version = "1", features = ["full"] }
 # The WHIP-lite example's signalling endpoint (Task 10).
 axum  = { workspace = true }

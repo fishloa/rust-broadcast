@@ -13,14 +13,9 @@
 //! happy-path bytes do not exercise.
 
 use std::fs;
-use std::path::Path;
 
 fn fixture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("sub")
-        .join("sintel-en.srt")
+    test_fixtures::path("sub/sintel-en.srt")
 }
 
 fn load_fixture() -> String {

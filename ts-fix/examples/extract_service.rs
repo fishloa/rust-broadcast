@@ -188,19 +188,8 @@ fn payload_packet(pid: Pid, cc: u8) -> [u8; 188] {
     pkt
 }
 
-/// MPEG-2 CRC32 (polynomial 0x04C11DB7, init 0xFFFFFFFF, final XOR 0x00000000).
+/// MPEG-2 CRC32 (polynomial 0x04C11DB7, init 0xFFFFFFFF, final XOR 0x00000000):
+/// the workspace's one implementation.
 fn calc_crc32_mpeg2(data: &[u8]) -> u32 {
-    let poly: u32 = 0x04C11DB7;
-    let mut crc: u32 = 0xFFFFFFFF;
-    for &byte in data {
-        crc ^= (byte as u32) << 24;
-        for _ in 0..8 {
-            if crc & 0x80000000 != 0 {
-                crc = (crc << 1) ^ poly;
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-    crc
+    broadcast_common::crc32_mpeg2::compute(data)
 }

@@ -5,16 +5,10 @@
 //! explicitly as `Ok`.
 #![cfg(feature = "std")]
 
-use std::fs;
-use std::path::PathBuf;
-
 use dvb_mabr::{Error, MulticastGatewayConfiguration, MulticastServerConfiguration};
 
 fn fixture(name: &str) -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/dvb-mabr")
-        .join(name);
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
+    test_fixtures::read_to_string(&format!("dvb-mabr/{name}"))
 }
 
 fn assert_every_truncation_errors<T: std::fmt::Debug>(

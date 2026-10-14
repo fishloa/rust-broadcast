@@ -51,10 +51,9 @@ const SSRC_ORIGINAL: u32 = 0xd561_5604;
 const SSRC_RETRANSMIT: u32 = 0xd561_5605;
 
 fn fixture_path() -> String {
-    format!(
-        "{}/../fixtures/rist/rist-simple-loss25pct-loopback.pcap",
-        env!("CARGO_MANIFEST_DIR")
-    )
+    test_fixtures::path("rist/rist-simple-loss25pct-loopback.pcap")
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// One UDP datagram extracted from the capture, in on-wire order.

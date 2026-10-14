@@ -15,16 +15,11 @@
 
 use dvb_vbi::TeletextDataField;
 use std::fs;
-use std::path::Path;
 use timed_metadata::event::MediaTime;
 use timed_metadata::webvtt::{Cue, TeletextCueExtractor, write_document};
 
 fn fixture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("teletext")
-        .join("teletext_subtitle_synthetic.txt")
+    test_fixtures::path("teletext/teletext_subtitle_synthetic.txt")
 }
 
 /// Parse the fixture into `(pts_90k, 44-byte TeletextDataField wire)` frames,

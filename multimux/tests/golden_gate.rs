@@ -60,10 +60,7 @@ use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec, TsDemux};
 // ── Fixture + scratch-dir plumbing (mirrors transmux/tests/golden_gate.rs) ──
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/h264_aac.ts"
-    ))
+    test_fixtures::path("ts/h264_aac.ts")
 }
 
 fn scratch_dir(name: &str) -> PathBuf {
