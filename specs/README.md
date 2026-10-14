@@ -16,7 +16,7 @@ markdown is the public, reviewable artefact** the parsers are checked against.
 > PDFs resolve at `specs/` (symlink or copy as needed). CI does not need them —
 > it builds from the committed markdown.
 
-Freely-redistributable **text** specs (IETF RFCs, HLS drafts, ID3) remain
+Freely-redistributable **text** specs (IETF RFCs incl. RTP/RTCP/SDP/RTSP2/WHIP/EBML/Matroska/Ogg/Opus, W3C TTML2/IMSC, HLS drafts, ID3) remain
 committed here as `.txt`/`.html`. The table below documents the PDF set that
 now lives in `rust-broadcast-specs`.
 
@@ -40,6 +40,22 @@ now lives in `rust-broadcast-specs`.
 | `ansi_scte_35_2023r1_dpi_cueing.pdf` | ANSI/SCTE 35 2023r1 — Digital Program Insertion Cueing Message | `scte35-splice` (#58); tables in `scte35-splice/docs/tables/scte_35/` |
 | `dvb_a001r18_draft_ts_101_154_v02.07.01_av_coding.pdf` | DVB A001r18 (draft TS 101 154 v2.7.1) — AV coding in broadcast/broadband | `dvb-si` (component/AC-4/audio-preselection semantics, #53) |
 | `etsi_ts_103_190_2_v01.03.01_ac4.pdf` | TS 103 190-2 v1.3.1 — AC-4 immersive/personalized audio | `dvb-si` (AC-4 descriptor `ac4_toc` structure §6.2.1 — deferred typing, #102) |
+| `etsi_en_300_468_v01.20.01_dvb_si.pdf` | EN 300 468 v1.20.1 (2026-09) — DVB SI, newer edition than the v1.19.1 above | `dvb-si` (diff against v1.19.1 for new descriptors/tables) |
+| `etsi_en_300_472_v01.04.01_dvb_teletext_system_b.pdf` | EN 300 472 v1.4.1 — ITU-R System B Teletext in DVB bitstreams | `dvb-vbi`, teletext carriage |
+| `etsi_ts_101_191_v01.04.01_dvb_mega_frame_sfn_sync.pdf` | TS 101 191 v1.4.1 — DVB mega-frame for SFN synchronization | `dvb-t2mi` / SFN context |
+| `etsi_ts_102_034_v02.01.01_dvb_mpeg2_ts_over_ip.pdf` | TS 102 034 v2.1.1 — MPEG-2 TS based DVB services over IP | `dvb-stream`, `multimux` (RTP/UDP TS) |
+| `etsi_ts_103_285_v01.04.01_dvb_mpeg_dash_profile.pdf` | TS 103 285 v1.4.1 — MPEG-DASH profile for DVB services over IP | `transmux` / `multimux` DASH |
+| `etsi_ts_103_190_1_v01.04.01_ac4_part1.pdf` | TS 103 190-1 v1.4.1 — AC-4 part 1 (channel-based coding) | `dvb-si` AC-4 descriptor |
+| `etsi_ts_126_244_v19.01.00_3gpp_3gp_file_format.pdf` | 3GPP TS 26.244 v19.1.0 — 3GP file format | `transmux` (3GP/ISOBMFF brands) |
+| `smpte_st291-1_2011_anc_packet_space_formatting.pdf` | SMPTE ST 291-1:2011 — ANC packet and space formatting | `st291` |
+| `smpte_st336_2017_klv_data_encoding.pdf` | SMPTE ST 336:2017 — KLV data encoding protocol | `st377-1` (KLV framing) |
+| `smpte_st12-2_2014_timecode_in_anc.pdf` | SMPTE ST 12-2:2014 — Timecode transmission in ANC | `st12-1`, `st291` |
+| `smpte_st12-3_2016_timecode_high_frame_rate.pdf` | SMPTE ST 12-3:2016 — Timecode for high frame rate signals | `st12-1` |
+| `smpte_st2110-10_2022_system_timing.pdf` | SMPTE ST 2110-10:2022 — system and timing | ST 2110 family (`cpix/`/`st2110/` docs) |
+| `smpte_st2110-31_2022_aes3_transparent_transport.pdf` | SMPTE ST 2110-31:2022 — AES3 transparent transport | `st337` over RTP |
+| `smpte_st2110-40_2023_anc_rtp.pdf` | SMPTE ST 2110-40:2023 — ancillary data over RTP | `st291` (`rtp` feature) |
+| `ms_sstr_smooth_streaming_protocol.pdf` | MS-SSTR — Smooth Streaming Protocol (Microsoft Open Specifications) | `transmux` Smooth |
+| `dashif_cpix_v2.3.html` | DASH-IF CPIX v2.3 — Content Protection Information Exchange Format | `cpix/` docs-only, `transmux` CENC |
 
 Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
 - https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf
