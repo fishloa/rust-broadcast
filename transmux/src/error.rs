@@ -196,15 +196,16 @@ pub enum Error {
     /// A fMP4/CMAF mux entry point (see [`Error::UnmuxableDataTrack`] for the
     /// full list) was given a
     /// [`CodecConfig::Subtitle`](crate::pipeline::CodecConfig::Subtitle)
-    /// track (B1, media plane step-2 fix wave 1): reconstructing the `stpp`/
-    /// `wvtt` sample entry needs more than the format tag this crate carries
-    /// (`TODO(#753)`), so CMAF/fMP4 output cannot carry it yet. Names the
+    /// track with no ISOBMFF sample entry (a TS DVB-bitmap or Teletext stream:
+    /// there is no `stpp`/`wvtt` entry to reconstruct, #1186), so CMAF/fMP4
+    /// output cannot carry it. Tracks demuxed from an `stpp`/`wvtt` sample
+    /// entry mux fine. Names the
     /// offending track so the caller can pre-filter it out (e.g. with
     /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by))
     /// rather than have the whole package call fail opaquely.
     #[error(
         "cannot CMAF-mux track {track_id} (subtitle format {format}): \
-         CodecConfig::Subtitle has no ISOBMFF re-mux sample entry in this crate yet"
+         CodecConfig::Subtitle has no ISOBMFF sample entry (stpp / wvtt) to re-mux"
     )]
     UnmuxableSubtitleTrack {
         /// The offending track's [`TrackSpec::track_id`](crate::pipeline::TrackSpec::track_id).
