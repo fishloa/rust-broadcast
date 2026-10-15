@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `annexb_to_length_prefixed` 2.6–4.7× faster and `StreamingTsDemux` 13–39 % less time on the
   H.264 fixtures (new `annexb_scan` bench). Adds a `memchr` dependency
   (`default-features = false`, so the crate stays `no_std`).
+- The H.264 I-slice check behind `StreamingTsDemux`'s random-access-point detection unescapes
+  only the first 32 bytes of each slice NAL, enough for the two `ue(v)` slice-header fields it
+  reads, instead of copying the whole slice. Same results, 17–44 % less `StreamingTsDemux` time
+  on the H.264 fixtures on top of the `memchr` start-code scan.
 
 ### Added (subtitles in manifests, #1243)
 - `DashPackager` writes a subtitle track as an `AdaptationSet` with `contentType="text"`, `mimeType="application/mp4"` and `Representation@codecs` `stpp` (TTML/IMSC) or `wvtt` (WebVTT), after the video and audio sets (ETSI TS 103 285 §7.1.1; bare `stpp` is the form that clause allows when no TTML profile is declared, and the `stpp` sample entry carries none). New `MediaKind::Text`. `rfc6381_codec_string` returns `stpp` / `wvtt` for such a track; a `Subtitle` track with no ISOBMFF sample entry (TS DVB / Teletext) is still `UnsupportedCodec`.
@@ -154,11 +158,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `tkhd`/`mdhd` version-1 parsing reads its 64-bit fields through a checked `be_u64` helper (`BufferTooShort` instead of `try_into().unwrap()`); behaviour identical for valid input.
-
-- The H.264 I-slice check behind `StreamingTsDemux`'s random-access-point detection unescapes
-  only the first 32 bytes of each slice NAL, enough for the two `ue(v)` slice-header fields it
-  reads, instead of copying the whole slice. Same results, 17–44 % less `StreamingTsDemux` time
-  on the H.264 fixtures on top of the `memchr` start-code scan.
 
 ## [0.25.0] - 2026-10-05
 
