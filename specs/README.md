@@ -57,6 +57,22 @@ now lives in `rust-broadcast-specs`.
 | `ms_sstr_smooth_streaming_protocol.pdf` | MS-SSTR — Smooth Streaming Protocol (Microsoft Open Specifications) | `transmux` Smooth |
 | `dashif_cpix_v2.3.html` | DASH-IF CPIX v2.3 — Content Protection Information Exchange Format | `cpix/` docs-only, `transmux` CENC |
 
+## Chinese broadcast / AVS standards (private submodule, 2026-10)
+
+About 85 free-to-download Chinese broadcast and AVS standards (NRTA `GY/T`, AVS Workgroup / AITISA `T/AI`, UHD World Association `T/UWA`) were vendored into the private submodule: PDFs in `private/specs/`, textlayer Markdown in `private/specs-md/`, unofficial English working translations of the implementation-relevant clauses in `private/specs-md-en/`. Every file with its source URL, free/licence status and the crates it serves is in [`INCOMING-MANIFEST.md`](INCOMING-MANIFEST.md); the ranked index, edition tracking, blocked items and follow-up opportunities are in [`../docs/CHINESE-STANDARDS.md`](../docs/CHINESE-STANDARDS.md). The ones to read first:
+
+| File (in `private/specs/`) | Standard | Used by |
+|---|---|---|
+| `t_ai_109_7_2024_avs3_audio_encapsulation_transport.pdf` | T/AI 109.7-2024 — AVS3 audio encapsulation and transport (`AVS3_audio_descriptor`, stream_type 0xD5, RTP) | `dvb-si`, `mpeg-ts`, `mpeg-pes`, `transmux` |
+| `t_ai_109_6_2022_avs3_intelligent_media_format.pdf` | T/AI 109.6-2022 — AVS3 video system layer (`AVS3_video_descriptor`, stream_type 0xD4, stream_id 0xFD/0x41) | `dvb-si`, `mpeg-ts`, `mpeg-pes`, `transmux` |
+| `nrta_gyt_420_2025_uhd_av_stream_encapsulation_network_transmission.pdf` | GY/T 420-2025 — UHD A/V encapsulation (TS, SMT, ISOBMFF, FLV, DASH) | `dvb-si`, `transmux`, `broadcast-hls`, `rtmp-runtime` |
+| `uwa_tuwa_012_2_2023_bcqp_uhd_system_ts_encapsulation.pdf` | T/UWA 012.2-2023 — UHD system layer (earlier AVS3 descriptor layout, extended PES TimeStamp) | `dvb-si`, `mpeg-pes` |
+| `t_ai_109_2_2021_avs3_video_coding.pdf`, `nrta_gyt_368_2023_avs3_video_coding.pdf` | AVS3 video (sequence header, profiles/levels) | `transmux`, `dvb-si` |
+| `t_ai_109_3_2023_avs3_immersive_audio_cn.pdf`, `nrta_gyt_363_2023_3d_audio_coding_rendering_en.pdf` | AVS3 audio / GY/T 363-2023 (AATF/AASF) | `transmux`, future AVS3-P3 crate |
+| `uwa_tuwa_005_1_2022_hdr_vivid_metadata_tone_mapping.pdf`, `uwa_tuwa_005_2_1_2026_hdr_system_integration_guide.pdf` | T/UWA 005.1 / 005.2-1 — HDR Vivid metadata (EN 300 468 "T/UWA 005 DMI") | `dvb-si`, `transmux` |
+| `nrta_gyt_422_2025_tv_multi_audio_transmission.pdf`, `nrta_gyt_270_2013_dtv_closed_caption_system.pdf` | GY/T 422 audio preselection, GY/T 270 closed captions | `dvb-si`, `cc-data`, `caption-convert` |
+| `nrta_gyt_282_2014_*`, `nrta_gyt_377_2023_*`, `nrta_gyt_379_2023_*`, `nrta_gyt_262_2012_*` | Chinese loudness standards | `broadcast-loudness`, `compliance-probe` |
+
 Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
 - https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf
 - https://www.etsi.org/deliver/etsi_ts/102000_102099/102006/01.07.01_60/ts_102006v010701p.pdf
