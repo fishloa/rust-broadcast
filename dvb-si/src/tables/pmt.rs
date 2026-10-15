@@ -161,7 +161,7 @@ pub enum StreamType {
     IpmpHigh,
     /// 0x80 — China DTV closed-caption data PES (GY/T 270-2013 clause 6.2, Table 3:
     /// `cc_data()` in a dedicated PES, stream_id 0xBD). Elsewhere (ATSC/DigiCipher)
-    /// 0x80 is a different, vendor-specific type; the meaning here is Chinese-DTV only.
+    /// that value is a different vendor-specific type; the meaning here is Chinese-DTV only.
     ChinaClosedCaption,
     /// 0x81 — ATSC AC-3 audio (A/52).
     Ac3,
