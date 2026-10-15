@@ -1,6 +1,32 @@
 //! Audio Preselection Descriptor — ETSI EN 300 468 §6.4.1 (tag_extension 0x19).
+//!
+//! The Chinese multi-audio descriptor of GY/T 422-2025 clause 6 (Table 1) is a
+//! wire-compatible subset of this descriptor (tag 0x7F, tag_extension 0x19): its
+//! per-preselection flag byte carries `reserved_zero_future_use` (4 bits) where
+//! DVB has `audio_description`/`spoken_subtitles`/`dialogue_enhancement`/
+//! `interactivity_enabled`, and `reserved_zero_future_use` (1 bit) where DVB has
+//! `text_label_present`; `language_code_present`, `multi_stream_info_present`
+//! and `future_extension` and the optional fields are identical. The same parser
+//! therefore reads it; [`Preselection::is_gy_t_422_profile`] tells whether an
+//! entry stays within the Chinese subset. GY/T 422 Table 2
+//! (`audio_rendering_indication`) matches EN 300 468 Table 111.
 use super::*;
 use alloc::vec::Vec;
+
+impl Preselection<'_> {
+    /// Whether this entry stays inside the GY/T 422-2025 Table 1 subset: none of
+    /// the DVB-only flags (`audio_description`, `spoken_subtitles`,
+    /// `dialogue_enhancement`, `interactivity_enabled`) and no `message_id`
+    /// (`text_label_present`), which GY/T 422 defines as reserved zero.
+    #[must_use]
+    pub const fn is_gy_t_422_profile(&self) -> bool {
+        !self.audio_description
+            && !self.spoken_subtitles
+            && !self.dialogue_enhancement
+            && !self.interactivity_enabled
+            && self.message_id.is_none()
+    }
+}
 
 impl<'a> ExtensionBodyDef<'a> for AudioPreselection<'a> {
     const TAG_EXTENSION: u8 = 0x19;
@@ -14,6 +40,69 @@ impl<'a> ExtensionBodyDef<'a> for AudioPreselection<'a> {
 pub const AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
 const RESERVED_ZERO_3_MASK: u8 = 0x07;
 const RESERVED_ZERO_5_MASK: u8 = 0x1F;
+
+/// `audio_rendering_indication` (3 bits) — EN 300 468 Table 111 /
+/// GY/T 422-2025 Table 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum AudioRenderingIndication {
+    /// 0 — no preference given for the reproduction channel layout.
+    #[default]
+    NoPreference,
+    /// 1 — preferred layout is stereo.
+    Stereo,
+    /// 2 — preferred layout is two-dimensional (e.g. 5.1 multi-channel).
+    TwoDimensional,
+    /// 3 — preferred layout is three-dimensional (GY/T 422: 5.1.4).
+    ThreeDimensional,
+    /// 4 — content is pre-rendered for headphones.
+    Headphones,
+    /// 5..=7 — reserved; carries the value.
+    Reserved(u8),
+}
+
+impl AudioRenderingIndication {
+    /// Decode from the 3-bit wire value (lossless).
+    #[must_use]
+    pub const fn from_u8(v: u8) -> Self {
+        match v & 0x07 {
+            0 => Self::NoPreference,
+            1 => Self::Stereo,
+            2 => Self::TwoDimensional,
+            3 => Self::ThreeDimensional,
+            4 => Self::Headphones,
+            other => Self::Reserved(other),
+        }
+    }
+
+    /// The 3-bit wire value.
+    #[must_use]
+    pub const fn to_u8(self) -> u8 {
+        match self {
+            Self::NoPreference => 0,
+            Self::Stereo => 1,
+            Self::TwoDimensional => 2,
+            Self::ThreeDimensional => 3,
+            Self::Headphones => 4,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    /// Spec label (Table 111).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NoPreference => "no preference",
+            Self::Stereo => "stereo",
+            Self::TwoDimensional => "two-dimensional",
+            Self::ThreeDimensional => "three-dimensional",
+            Self::Headphones => "headphones",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(AudioRenderingIndication, Reserved);
 
 /// audio_preselection body (Table 110, §6.4.1). The preselection loop is unfolded.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -39,7 +128,7 @@ pub struct Preselection<'a> {
     /// preselection_id(5).
     pub preselection_id: u8,
     /// audio_rendering_indication(3) — Table 111.
-    pub audio_rendering_indication: u8,
+    pub audio_rendering_indication: AudioRenderingIndication,
     /// audio_description(1).
     pub audio_description: bool,
     /// spoken_subtitles(1).
@@ -94,7 +183,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
             let byte_b = sel[pos + 1];
             pos += 2;
             let preselection_id = byte_a >> 3;
-            let audio_rendering_indication = byte_a & 0x07;
+            let audio_rendering_indication = AudioRenderingIndication::from_u8(byte_a & 0x07);
             let audio_description = (byte_b >> 7) & 1 != 0;
             let spoken_subtitles = (byte_b >> 6) & 1 != 0;
             let dialogue_enhancement = (byte_b >> 5) & 1 != 0;
@@ -247,7 +336,7 @@ impl Serialize for AudioPreselection<'_> {
             buf[p] = (broadcast_common::len::fit_mask(s.preselection_id, 0x1F, "preselection_id")?
                 << 3)
                 | broadcast_common::len::fit_mask(
-                    s.audio_rendering_indication,
+                    s.audio_rendering_indication.to_u8(),
                     0x07,
                     "audio_rendering_indication",
                 )?;
@@ -312,6 +401,7 @@ mod tests {
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
     use crate::text::LangCode;
+    use alloc::string::ToString;
 
     #[test]
     fn parse_structured_round_trip_two_preselections() {
@@ -348,7 +438,10 @@ mod tests {
 
                 let p0 = &b.preselections[0];
                 assert_eq!(p0.preselection_id, 1);
-                assert_eq!(p0.audio_rendering_indication, 2);
+                assert_eq!(
+                    p0.audio_rendering_indication,
+                    AudioRenderingIndication::TwoDimensional
+                );
                 assert!(!p0.audio_description);
                 assert!(p0.spoken_subtitles);
                 assert!(!p0.dialogue_enhancement);
@@ -360,7 +453,10 @@ mod tests {
 
                 let p1 = &b.preselections[1];
                 assert_eq!(p1.preselection_id, 2);
-                assert_eq!(p1.audio_rendering_indication, 3);
+                assert_eq!(
+                    p1.audio_rendering_indication,
+                    AudioRenderingIndication::ThreeDimensional
+                );
                 assert!(p1.audio_description);
                 assert!(!p1.spoken_subtitles);
                 assert!(p1.dialogue_enhancement);
@@ -393,7 +489,10 @@ mod tests {
 
                 let p0 = &b.preselections[0];
                 assert_eq!(p0.preselection_id, 1);
-                assert_eq!(p0.audio_rendering_indication, 2);
+                assert_eq!(
+                    p0.audio_rendering_indication,
+                    AudioRenderingIndication::TwoDimensional
+                );
                 assert!(!p0.audio_description);
                 assert!(p0.spoken_subtitles);
                 assert!(!p0.dialogue_enhancement);
@@ -405,7 +504,10 @@ mod tests {
 
                 let p1 = &b.preselections[1];
                 assert_eq!(p1.preselection_id, 2);
-                assert_eq!(p1.audio_rendering_indication, 3);
+                assert_eq!(
+                    p1.audio_rendering_indication,
+                    AudioRenderingIndication::ThreeDimensional
+                );
                 assert!(p1.audio_description);
                 assert!(!p1.spoken_subtitles);
                 assert!(p1.dialogue_enhancement);
@@ -496,5 +598,68 @@ mod tests {
             matches!(err, Error::FieldOverflow(_)),
             "expected FieldOverflow, got {err:?}"
         );
+    }
+
+    /// GY/T 422-2025 Table 1 (clause 6) worked through the Chinese syntax: one
+    /// preselection, id 3, `audio_rendering_indication` 2 (surround 5.1, Table 2),
+    /// the 4 reserved flag bits and the reserved bit zero, `language_code_present`
+    /// = 1, `multi_stream_info_present` = 1 with two aux `component_tag`s,
+    /// `future_extension` = 0.
+    #[test]
+    fn gy_t_422_table_1_vector_round_trips() {
+        // num_preselections(5)=1, reserved(3)=0
+        let num = 1u8 << 3;
+        let a = (3u8 << 3) | 2; // preselection_id=3, rendering=2
+        // reserved(4)=0, language_code_present=1, reserved(1)=0, multi=1, future_ext=0
+        let b = 0b0000_1010u8;
+        let mut sel = vec![num, a, b];
+        sel.extend_from_slice(b"chi"); // ISO_639_language_code
+        sel.push(2u8 << 5); // num_aux_components=2, reserved(5)=0
+        sel.extend_from_slice(&[0x11, 0x12]); // component_tag x2
+        let bytes = wrap(0x19, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::AudioPreselection(body) => {
+                assert_eq!(body.preselections.len(), 1);
+                let p = &body.preselections[0];
+                assert_eq!(p.preselection_id, 3);
+                assert_eq!(
+                    p.audio_rendering_indication,
+                    AudioRenderingIndication::TwoDimensional
+                );
+                assert_eq!(p.language_code, Some(LangCode(*b"chi")));
+                assert_eq!(p.aux_component_tags, Some(&[0x11u8, 0x12][..]));
+                assert_eq!(p.future_extension, None);
+                assert!(p.is_gy_t_422_profile());
+            }
+            other => panic!("expected AudioPreselection, got {other:?}"),
+        }
+        let mut out = vec![0u8; d.serialized_len()];
+        let n = d.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[..n], &bytes[..], "byte-exact round trip");
+    }
+
+    /// GY/T 422 Table 2 values 0..=4 and reserved 5..=7, shared with Table 111.
+    #[test]
+    fn audio_rendering_indication_is_lossless_and_labelled() {
+        for v in 0u8..8 {
+            assert_eq!(AudioRenderingIndication::from_u8(v).to_u8(), v);
+        }
+        assert_eq!(AudioRenderingIndication::Headphones.name(), "headphones");
+        assert_eq!(
+            AudioRenderingIndication::from_u8(6).to_string(),
+            "reserved(0x06)"
+        );
+    }
+
+    /// An entry that uses a DVB-only flag is outside the GY/T 422 subset.
+    #[test]
+    fn dvb_only_flags_leave_the_gy_t_422_profile() {
+        let p = Preselection {
+            audio_description: true,
+            ..Preselection::default()
+        };
+        assert!(!p.is_gy_t_422_profile());
+        assert!(Preselection::default().is_gy_t_422_profile());
     }
 }
