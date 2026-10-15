@@ -151,14 +151,12 @@ fn fn_arms(root: &Path, rel: &str, impl_marker: &str, func: &str) -> Vec<(usize,
             if rest.starts_with("=>") || rest.starts_with("..") || rest.starts_with('|') {
                 out.push((i + 1, v));
             }
-        } else if t.starts_with("Self::") {
-            if let Some((_, rhs)) = t.split_once("=>") {
-                if let Some((v, tail)) = leading_lit(rhs) {
-                    if tail.trim_start().starts_with(',') {
-                        out.push((i + 1, v));
-                    }
-                }
-            }
+        } else if t.starts_with("Self::")
+            && let Some((_, rhs)) = t.split_once("=>")
+            && let Some((v, tail)) = leading_lit(rhs)
+            && tail.trim_start().starts_with(',')
+        {
+            out.push((i + 1, v));
         }
     }
     out
