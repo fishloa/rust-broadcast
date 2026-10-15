@@ -188,12 +188,24 @@ Semantics (§8.3.3):
 * **No real capture.** No compact-watermark capture exists in `.test-streams/`, the committed fixtures or any corpus
   known to us; that is the one remaining gap. The base (non-compact) SCTE 35 sections are covered by real captures in
   `tests/real_capture.rs`.
-* **Open question - DAS body nibble order.** Table 8 (p.28) lists the inline DAS block as `... breaks_expected(8) |
-  equivalent_segmentation_type(4, uimsbf) | reserved(4, bslbf) | upid()` (type = HIGH nibble), but the stand-alone
-  `DVB_DAS_descriptor()` Table 1 (p.17, identical in V1.1.1 2020-12 and V1.2.1 2024-01) lists the same two rows in the
-  OPPOSITE name order (`reserved` then `equivalent_segmentation_type`) while its mnemonic column (`uimsbf`, `bslbf`)
-  matches Table 8's. The crate follows each table's own row order (`das_descriptor.rs`: reserved high, type low;
-  `compact.rs`: type high, reserved low), so the two forms of the same body currently disagree. This cannot be decided
-  from the spec text or a capture; do not "fix" either side without a DAS-carrying real stream. A TS 103 752-1 erratum
-  or a real DAS capture is needed.
-
+* **Open question - DAS body nibble order (investigated, still unresolved; both readings now selectable).**
+  Table 8 (p.28) lists the inline DAS block as `... breaks_expected(8) | equivalent_segmentation_type(4, uimsbf) |
+  reserved(4, bslbf) | upid()` (type = HIGH nibble); the stand-alone `DVB_DAS_descriptor()` Table 1 (p.17, identical
+  in V1.1.1 2020-12 and V1.2.1 2024-01) lists the same two rows in the OPPOSITE name order (`reserved` then
+  `equivalent_segmentation_type`, widths 4/4, mnemonics `uimsbf`, `bslbf`; type = LOW nibble). Verified on the page
+  images (Table 1: the 8-row value/mnemonic columns are `8,8,32,8,8,4,4,N*8` / `uimsbf x6, bslbf, uimsbf`; Table 8:
+  `... 8,8,8,4,4,(N-3)*8,32` / `... uimsbf,uimsbf,uimsbf,uimsbf,bslbf,uimsbf,rpchof`). The mnemonic pair
+  (`uimsbf`, `bslbf`) fits "type = unsigned integer, reserved = bit string" only in Table 8's order, which favours
+  Table 8 but does not prove it (Table 1 is the older table).
+  **Evidence searched (2026-10-15):** (a) the ETSI deliver listing for TS 103 752-1 has only V1.1.1 and V1.2.1; there
+  is no V1.3.1, corrigendum or erratum; (b) TR 103 752-2 V1.1.1 and the DVB A178-1r1 TA-watermark V&V stream list
+  (TM-TA0086r3) contain no DAS/compact byte examples; (c) the spec text has no worked byte example of either form;
+  (d) TSDuck 3.44, GPAC 26.07 and ffmpeg do not decode `DVB_DAS_descriptor` or the compact format (no `DVB_`/0xF0
+  handling to cross-check against); (e) no real capture carries it: a raw scan of `.test-streams`, `private/fixtures`
+  and the committed fixtures for `0xF0 <len> "DVB_"` finds only this crate's own test vectors.
+  **Resolution policy:** `scte35_splice::dvb_ta::DasNibbleOrder` (`TABLE_1` = type low, `TABLE_8` = type high). The
+  defaults follow each table's own order (stand-alone descriptor: Table 1; compact message: Table 8, unchanged wire
+  behaviour); `DvbDasDescriptor::{parse,serialize_into}_with_order` and
+  `CompactSpliceInsert::{parse,serialize_into}_with_order` select the other reading, and
+  `tests/das_nibble_order.rs` pins both interpretations. A real DAS-carrying stream decides by changing the two
+  defaults. Do not change either default without such a stream.

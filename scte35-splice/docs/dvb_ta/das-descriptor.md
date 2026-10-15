@@ -38,6 +38,8 @@ the low nibble). The spec's Mnemonic column marks `reserved` as `uimsbf` and
 4-bit widths and parse are unaffected either way. `upid` is the trailing
 variable-length field (`N*8`).
 
+**Ambiguity:** Table 8 of the same specification (the inline DAS body of `compact_splice_insert()`) prints the opposite nibble order (type high, reserved low). See `compact-scte35.md` ("Open question - DAS body nibble order") and `DasNibbleOrder` for the evidence and the selectable readings.
+
 ## Semantics (§5.3.5.16)
 
 - **splice_descriptor_tag** (8) — defines the syntax for the private bytes that

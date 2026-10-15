@@ -97,6 +97,84 @@ impl EquivalentSegmentationType {
 }
 broadcast_common::impl_spec_display!(EquivalentSegmentationType, Reserved);
 
+/// Which nibble of the byte after `breaks_expected` carries
+/// `equivalent_segmentation_type` (the other carries `reserved`).
+///
+/// # AMBIGUITY (ETSI TS 103 752-1 V1.2.1 - unresolved, evidence recorded)
+///
+/// The specification disagrees with itself about the nibble order of this
+/// byte, in the stand-alone and the inline form of the same DAS body (verified
+/// on the page images, not just the text layer):
+///
+/// * **Table 1** (`DVB_DAS_descriptor()`, p.17): row order `reserved`,
+///   `equivalent_segmentation_type`, widths `4, 4`, mnemonics `uimsbf, bslbf`
+///   => `reserved` high nibble, type LOW nibble ([`DasNibbleOrder::TABLE_1`]).
+/// * **Table 8** (`compact_splice_insert()`, p.28): row order
+///   `equivalent_segmentation_type`, `reserved`, widths `4, 4`, mnemonics
+///   `uimsbf, bslbf` => type HIGH nibble, `reserved` low
+///   ([`DasNibbleOrder::TABLE_8`]).
+///
+/// The mnemonic pair `uimsbf, bslbf` is the same in both tables, which fits
+/// "type = unsigned integer, reserved = bit string" only for the Table 8 order;
+/// that favours Table 8 but does not prove it (Table 1 has existed unchanged
+/// since V1.1.1, Table 8 is new in V1.2.1). No newer edition or corrigendum
+/// exists (the ETSI deliver listing has only V1.1.1 and V1.2.1 of Part 1;
+/// TR 103 752-2 and the DVB A178-1r1 V&V stream list carry no byte examples),
+/// no worked byte example appears in the text, no independent implementation
+/// (TSDuck, GPAC, ffmpeg) knows the descriptor, and no real capture was found
+/// in `.test-streams`, `private/fixtures` or the committed fixtures. Until a
+/// DAS-carrying stream decides, the defaults follow each table's own order
+/// (this stand-alone descriptor: Table 1; `compact_splice_insert()`: Table 8)
+/// and the `*_with_order` entry points let a caller select the other reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DasNibbleOrder {
+    /// `equivalent_segmentation_type` in the HIGH nibble, `reserved` in the
+    /// low nibble (compact `splice_insert`, Table 8).
+    TypeHigh,
+    /// `reserved` in the HIGH nibble, `equivalent_segmentation_type` in the
+    /// low nibble (stand-alone descriptor, Table 1).
+    TypeLow,
+}
+
+impl DasNibbleOrder {
+    /// The order Table 1 (`DVB_DAS_descriptor()`) prints.
+    pub const TABLE_1: Self = Self::TypeLow;
+    /// The order Table 8 (`compact_splice_insert()`) prints.
+    pub const TABLE_8: Self = Self::TypeHigh;
+
+    /// Split the type/reserved byte into `(equivalent_segmentation_type,
+    /// reserved)` nibbles.
+    #[must_use]
+    pub const fn split(self, byte: u8) -> (u8, u8) {
+        match self {
+            Self::TypeHigh => (byte >> 4, byte & 0x0F),
+            Self::TypeLow => (byte & 0x0F, byte >> 4),
+        }
+    }
+
+    /// Join `equivalent_segmentation_type` and `reserved` (both 4-bit, masked)
+    /// into the wire byte.
+    #[must_use]
+    pub const fn join(self, equivalent_segmentation_type: u8, reserved: u8) -> u8 {
+        let (t, r) = (equivalent_segmentation_type & 0x0F, reserved & 0x0F);
+        match self {
+            Self::TypeHigh => (t << 4) | r,
+            Self::TypeLow => (r << 4) | t,
+        }
+    }
+
+    /// Spec label.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::TypeHigh => "type high / reserved low (Table 8)",
+            Self::TypeLow => "reserved high / type low (Table 1)",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(DasNibbleOrder);
+
 /// `DVB_DAS_descriptor()` — §5.3.5.16, Table 1.
 ///
 /// The `upid` is the trailing variable-length field; it borrows from the parsed
@@ -142,6 +220,17 @@ impl<'a> DvbDasDescriptor<'a> {
 impl<'a> Parse<'a> for DvbDasDescriptor<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_with_order(bytes, DasNibbleOrder::TABLE_1)
+    }
+}
+
+impl<'a> DvbDasDescriptor<'a> {
+    /// [`Parse::parse`] with an explicit [`DasNibbleOrder`] (see its
+    /// AMBIGUITY note; `parse` uses [`DasNibbleOrder::TABLE_1`]).
+    ///
+    /// # Errors
+    /// As [`Parse::parse`].
+    pub fn parse_with_order(bytes: &'a [u8], order: DasNibbleOrder) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "DVB_DAS_descriptor")?;
         if body.len() < FIXED_BODY_LEN {
             return Err(Error::BufferTooShort {
@@ -152,8 +241,9 @@ impl<'a> Parse<'a> for DvbDasDescriptor<'a> {
         }
         let break_num = body[0];
         let breaks_expected = body[1];
-        // body[2]: reserved (high nibble) + equivalent_segmentation_type (low).
-        let equivalent_segmentation_type = EquivalentSegmentationType::from_bits(body[2] & 0x0F);
+        // body[2]: the type/reserved byte; nibble order per `order`.
+        let (type_nibble, _reserved) = order.split(body[2]);
+        let equivalent_segmentation_type = EquivalentSegmentationType::from_bits(type_nibble);
         let upid = &body[FIXED_BODY_LEN..];
         Ok(Self {
             identifier,
@@ -171,6 +261,21 @@ impl Serialize for DvbDasDescriptor<'_> {
         HEADER_LEN + FIXED_BODY_LEN + self.upid.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.serialize_into_with_order(buf, DasNibbleOrder::TABLE_1)
+    }
+}
+
+impl DvbDasDescriptor<'_> {
+    /// [`Serialize::serialize_into`] with an explicit [`DasNibbleOrder`]
+    /// (`reserved` is written all-ones).
+    ///
+    /// # Errors
+    /// As [`Serialize::serialize_into`].
+    pub fn serialize_into_with_order(
+        &self,
+        buf: &mut [u8],
+        order: DasNibbleOrder,
+    ) -> Result<usize> {
         let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
@@ -191,9 +296,9 @@ impl Serialize for DvbDasDescriptor<'_> {
         header::write_header(buf, TAG, self.identifier, body_len)?;
         buf[HEADER_LEN] = self.break_num;
         buf[HEADER_LEN + 1] = self.breaks_expected;
-        // reserved nibble = 0xF (reserved bits set to 1 per crate policy), then
-        // the 4-bit equivalent_segmentation_type in the low nibble.
-        buf[HEADER_LEN + 2] = 0xF0 | self.equivalent_segmentation_type.bits();
+        // reserved nibble = 0xF (reserved bits set to 1 per crate policy) and
+        // the 4-bit equivalent_segmentation_type, in the order `order` selects.
+        buf[HEADER_LEN + 2] = order.join(self.equivalent_segmentation_type.bits(), 0x0F);
         buf[HEADER_LEN + FIXED_BODY_LEN..need].copy_from_slice(self.upid);
         Ok(need)
     }
