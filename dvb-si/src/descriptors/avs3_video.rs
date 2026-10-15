@@ -335,7 +335,7 @@ mod tests {
     use alloc::string::ToString;
     use alloc::vec;
 
-    fn rt(bytes: &[u8]) -> Avs3VideoDescriptor {
+    fn round_trip(bytes: &[u8]) -> Avs3VideoDescriptor {
         let d = Avs3VideoDescriptor::parse(bytes).unwrap();
         let mut out = vec![0u8; d.serialized_len()];
         let n = d.serialize_into(&mut out).unwrap();
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn gyt_420_table_6_eight_byte_form() {
         let bytes = [TAG, 8, 0x22, 0x42, 0xAA, 0x4B, 9, 14, 9, 0xFF];
-        let d = rt(&bytes);
+        let d = round_trip(&bytes);
         assert_eq!((d.profile_id, d.level_id), (0x22, 0x42));
         assert!(d.multiple_frame_rate_flag);
         assert_eq!(d.frame_rate_code, Avs3FrameRateCode::Fps30);
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn t_ai_109_6_table_9_seven_byte_form() {
         let bytes = [TAG, 7, 0x20, 0x40, 0x19, 0x34, 1, 1, 0x00];
-        let d = rt(&bytes);
+        let d = round_trip(&bytes);
         assert_eq!(d.colour_primaries, None);
         assert_eq!(d.frame_rate_code, Avs3FrameRateCode::Fps25);
         assert!(d.temporal_id_flag && d.td_mode_flag);
