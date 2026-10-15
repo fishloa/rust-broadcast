@@ -323,7 +323,7 @@ mod tests {
     }
 
     /// A real frame: the first `GA94` cc_data() of shaka-player's
-    /// `captions-test.ts` (Apache-2.0, `fixtures/captions/shaka/`). Its header
+    /// `captions-test.ts` (private submodule, `private/fixtures/captions/shaka/`; the media licence is unclear). Its header
     /// byte is `0x54`: `process_em_data_flag = 0`, `process_cc_data_flag = 1`,
     /// `additional_data_flag = 0`, `cc_count = 20`, and its em_data byte is
     /// `0x00`, not Table B.9's `0xFF`. A header check that insists on bit 7 = 1

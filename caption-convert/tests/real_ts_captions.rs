@@ -1,5 +1,7 @@
 //! Real CEA-608 captures in MPEG-2 TS (mux.js multi-channel, shaka-player
-//! `captions-test.ts`; Apache-2.0, `fixtures/captions/PROVENANCE.md`).
+//! `captions-test.ts`): in the private submodule (`private/fixtures/captions/`,
+//! the media licence is unclear; see its `PROVENANCE.md`); these tests skip loudly
+//! without it.
 //!
 //! 1. The workspace extractor (`tests/support/ga94.rs`) reproduces, byte for
 //!    byte, the `cc_data()` list an independent Python extractor wrote
@@ -20,6 +22,29 @@ use cc_data::CcData;
 use cc_data::decode::Cea608Channel;
 use support::ga94::{ga94_from_ts, parse_reference};
 
+/// The captures live in the private submodule (their media licence is unclear,
+/// see `private/fixtures/captions/PROVENANCE.md`): `true` (after a loud notice)
+/// when it is not checked out, so the test returns without asserting.
+fn skip_without_private() -> bool {
+    if test_fixtures::private("captions/mux.js/multi-channel-608-captions.ts").is_some() {
+        return false;
+    }
+    eprintln!(
+        "SKIP: private fixtures captions/ absent (the `private` submodule is not checked \
+         out); `git submodule update --init private` (maintainers only)"
+    );
+    true
+}
+
+fn read_private(rel: &str) -> Vec<u8> {
+    let path = test_fixtures::private(rel).unwrap_or_else(|| panic!("private/fixtures/{rel}"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+fn read_private_string(rel: &str) -> String {
+    String::from_utf8(read_private(rel)).expect("UTF-8 reference list")
+}
+
 const CAPTURES: &[(&str, &str, usize)] = &[
     (
         "captions/mux.js/multi-channel-608-captions.ts",
@@ -35,9 +60,12 @@ const CAPTURES: &[(&str, &str, usize)] = &[
 
 #[test]
 fn extractor_matches_the_independent_python_reference() {
+    if skip_without_private() {
+        return;
+    }
     for (ts, reference, count) in CAPTURES {
-        let got = ga94_from_ts(&test_fixtures::read(ts));
-        let want = parse_reference(&test_fixtures::read_to_string(reference));
+        let got = ga94_from_ts(&read_private(ts));
+        let want = parse_reference(&read_private_string(reference));
         assert_eq!(got.len(), *count, "{ts}: frame count");
         assert_eq!(got, want, "{ts}: extraction differs from the reference");
     }
@@ -45,9 +73,12 @@ fn extractor_matches_the_independent_python_reference() {
 
 #[test]
 fn every_real_cc_data_round_trips_byte_exact() {
+    if skip_without_private() {
+        return;
+    }
     let mut em_clear = 0usize;
     for (ts, _, _) in CAPTURES {
-        for (i, (_, bytes)) in ga94_from_ts(&test_fixtures::read(ts)).iter().enumerate() {
+        for (i, (_, bytes)) in ga94_from_ts(&read_private(ts)).iter().enumerate() {
             let cc = CcData::parse(bytes).unwrap_or_else(|e| panic!("{ts} frame {i}: {e}"));
             assert_eq!(
                 &cc.try_to_bytes().expect("serialize"),
@@ -63,7 +94,7 @@ fn every_real_cc_data_round_trips_byte_exact() {
 }
 
 fn convert(ts: &str, channel: Cea608Channel) -> Cea608ToWebVtt {
-    let mut frames = ga94_from_ts(&test_fixtures::read(ts));
+    let mut frames = ga94_from_ts(&read_private(ts));
     // cc_data rides in DECODE order (a B-frame's caption follows the P-frame it
     // is displayed before; the shaka capture's PES PTS run 132006, 144018,
     // 138012, ...). The converter wants PRESENTATION order, so sort by PTS (a
@@ -80,6 +111,9 @@ fn convert(ts: &str, channel: Cea608Channel) -> Cea608ToWebVtt {
 
 #[test]
 fn real_captures_yield_cues_and_renderings_agree() {
+    if skip_without_private() {
+        return;
+    }
     for (ts, _, _) in CAPTURES {
         let conv = convert(ts, Cea608Channel::Cc1);
         let cues = conv.cues().len();
@@ -102,6 +136,9 @@ fn real_captures_yield_cues_and_renderings_agree() {
 /// ordered.
 #[test]
 fn no_cue_is_zero_length_or_out_of_order_on_any_channel() {
+    if skip_without_private() {
+        return;
+    }
     for (ts, _, _) in CAPTURES {
         for ch in [
             Cea608Channel::Cc1,
