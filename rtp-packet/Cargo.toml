@@ -34,6 +34,9 @@ serde = ["dep:serde"]
 # and optional: most RTP consumers only need the RFC 3550 fixed header, so
 # this is not part of `default` and adds no new dependency surface.
 rfc8285 = []
+# AV3A-AATF (AVS3 audio / Audio Vivid) RTP payload helpers + AATF frame header
+# (T/AI 109.7-2024 clause 10.1). Additive, no new dependency.
+av3a = []
 
 [[example]]
 name = "build_packet"

@@ -69,6 +69,8 @@
 
 extern crate alloc;
 
+#[cfg(feature = "av3a")]
+pub mod av3a;
 mod error;
 mod header;
 #[cfg(feature = "rfc8285")]
