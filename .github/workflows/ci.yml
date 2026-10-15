@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# A force-push / rebase of a PR branch supersedes its in-flight run: cancel the
+# stale run instead of burning ~15 runner-minutes on a commit nobody will merge.
+# Runs on `main` are never cancelled (every merge keeps its own verdict).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -38,18 +45,7 @@ jobs:
       # --no-default-features build.
       - name: Build (all features)
         run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
-      # Examples are a published docs surface (they show on docs.rs and double as
-      # compile-checked usage docs). Build the whole workspace's examples — no
-      # excludes, so dvb-stream/dvb-conformance examples are covered too.
-      - name: Build examples (all features)
-        run: cargo build --workspace --examples --all-features --locked
-      # Building an example only proves it compiles. Issue #947: 12 examples
-      # pointed at fixture paths that stopped existing after the fixtures
-      # migration and silently exited 0 via a "fixture not available" fallback,
-      # so they had never actually run — and one carried a stale assertion that
-      # had been failing invisibly. Every argument-free example must now RUN.
-      - name: Run examples (all features)
-        run: ./tools/run-examples.sh --all-features --locked
+      # (Examples build + run live in the parallel `examples` job below.)
       # nextest enforces the per-test terminate-after timeout (.config/nextest.toml
       # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
       # not run doctests, which get their own bounded lane below.
@@ -58,6 +54,17 @@ jobs:
       - name: Doctests (all features)
         timeout-minutes: 15
         run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
+
+  # The bare / std-only feature lanes run as their own job in PARALLEL with the
+  # all-features `test` job above (they used to be its serial tail, which made
+  # one job the ~15-minute long pole of every CI run).
+  test-no-default:
+    name: test (MSRV 1.95.0, no default features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
       # ts/serde; dvb-stream always depends on tokio. Including any of them would
@@ -75,6 +82,25 @@ jobs:
       - name: Doctests (no optional features, std on)
         timeout-minutes: 15
         run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --doc
+
+  examples:
+    name: examples (MSRV 1.95.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      # Examples are a published docs surface (they show on docs.rs and double as
+      # compile-checked usage docs). Build the whole workspace's examples — no
+      # excludes, so dvb-stream/dvb-conformance examples are covered too.
+      - name: Build examples (all features)
+        run: cargo build --workspace --examples --all-features --locked
+      # Building an example only proves it compiles. Issue #947: 12 examples
+      # pointed at fixture paths that stopped existing after the fixtures
+      # migration and silently exited 0 via a "fixture not available" fallback,
+      # so they had never actually run — and one carried a stale assertion that
+      # had been failing invisibly. Every argument-free example must now RUN.
+      - name: Run examples (all features)
+        run: ./tools/run-examples.sh --all-features --locked
 
   lint:
     name: clippy
