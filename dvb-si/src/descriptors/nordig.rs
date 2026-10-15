@@ -1,6 +1,15 @@
 //! NorDig Logical Channel Descriptor v1 & v2 — NorDig Unified Requirements
-//! v3.1.1 §12.2.9.2–12.2.9.3 (tags 0x83, 0x87), scoped by
-//! PDS_NORDIG = 0x00000029.
+//! for Integrated Receiver Decoders v3.2.2 (2025-11) §12.2.9.2–12.2.9.3,
+//! Tables 12.12 and 12.14 (tags 0x83, 0x87; the syntax and the reserved-bit
+//! rule are identical in every published version 2.5.1 … 3.2.2), scoped by
+//! PDS_NORDIG = 0x00000029. NorDig defines no tag 0x88 descriptor.
+//!
+//! Reserved bits: the spec states "All 'reserved' bits shall be set to '1'
+//! (observe, however, that the IRD shall be able to handle (neglect) future use
+//! of reserved bits)" for both versions, so both defaults are all ones and
+//! parse preserves any value. No archive capture carries a NorDig-scoped
+//! (PDS 0x29) LCD, so there is no real-capture evidence either way; see
+//! `docs/reserved-bits-edition-audit.md` §12.2.
 //!
 //! v1 (tag 0x83) assigns a 14-bit LCN per service (4 bytes/entry).
 //! v2 (tag 0x87) groups services into named channel-lists with a 10-bit LCN,
@@ -28,9 +37,9 @@ const V1_LCN_HI_MASK: u8 = 0x3F;
 const V1_LCN_MAX: u16 = ((V1_LCN_HI_MASK as u16) << 8) | 0xFF;
 
 /// Default of the 1-bit per-entry `reserved` of the v1 descriptor: `1`.
-/// NorDig Unified Requirements v3.1.1 §12.2.9.2 (a D-Book/NorDig layout, not
-/// in the EN 300 468 reserved-bit audit); the existing emitted value is kept
-/// as the default and the bit is preserved on parse.
+/// NorDig Unified Requirements v3.2.2 §12.2.9.2, Table 12.12: "All 'reserved'
+/// bits shall be set to '1'" (same text in v2.5.1 … v3.2.2); the bit is
+/// preserved on parse.
 pub const V1_RESERVED_DEFAULT: u8 = 1;
 
 /// One NorDig LCD v1 LCN assignment.
@@ -171,9 +180,9 @@ const V2_LCN_HI_MASK: u8 = 0x03;
 const V2_LCN_MAX: u16 = ((V2_LCN_HI_MASK as u16) << 8) | 0xFF;
 
 /// Default of the 5-bit per-service `reserved` of the v2 descriptor: all ones
-/// (`0x1F`). NorDig Unified Requirements v3.1.1 §12.2.9.3 (not in the
-/// EN 300 468 audit); the existing emitted value is kept as the default and
-/// the bits are preserved on parse.
+/// (`0x1F`). NorDig Unified Requirements v3.2.2 §12.2.9.3, Table 12.14 (the
+/// field is named `reserved_future_use` there; "All 'reserved' bits shall be
+/// set to '1'", same text in v2.5.1 … v3.2.2); the bits are preserved on parse.
 pub const V2_RESERVED_DEFAULT: u8 = 0x1F;
 
 /// One service entry inside a NorDig LCD v2 channel list.
@@ -667,6 +676,37 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// NorDig Unified Requirements v3.2.2 §12.2.9.2/§12.2.9.3: every `reserved`
+    /// bit of both versions shall be `1`, so a hand-built descriptor emits all
+    /// ones (v1 flags byte `visible|reserved|lcn_hi` = 0xC0 for LCN 1; v2 flags
+    /// byte `visible|reserved(5)|lcn_hi` = 0xFC).
+    #[test]
+    fn built_descriptors_emit_all_ones_reserved_bits_per_nordig_spec() {
+        assert_eq!((V1_RESERVED_DEFAULT, V2_RESERVED_DEFAULT), (1, 0x1F));
+        let v1 = NordigLogicalChannelV1 {
+            entries: vec![NordigLogicalChannelV1Entry::new(0x0102, true, 1)],
+        };
+        let mut b = vec![0u8; v1.serialized_len()];
+        v1.serialize_into(&mut b).unwrap();
+        assert_eq!(b, [TAG_V1, 4, 0x01, 0x02, 0xC0, 0x01]);
+        let v2 = NordigLogicalChannelV2 {
+            channel_lists: vec![NordigLogicalChannelV2ChannelList {
+                channel_list_id: 1,
+                channel_list_name: b"A".to_vec(),
+                country_code: LangCode(*b"SWE"),
+                services: vec![NordigLogicalChannelV2Service::new(0x0102, true, 1)],
+            }],
+        };
+        let mut b = vec![0u8; v2.serialized_len()];
+        v2.serialize_into(&mut b).unwrap();
+        assert_eq!(
+            b,
+            [
+                TAG_V2, 11, 1, 1, b'A', b'S', b'W', b'E', 4, 0x01, 0x02, 0xFC, 0x01
+            ]
+        );
     }
 
     #[test]
