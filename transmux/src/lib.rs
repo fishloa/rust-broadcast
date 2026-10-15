@@ -135,6 +135,9 @@ pub mod annexb;
 pub mod au;
 pub mod av1;
 pub mod avc_config;
+pub mod avs2;
+pub mod avs3;
+pub mod avs3_audio;
 #[cfg(feature = "std")]
 pub mod base_url;
 pub mod bitreader;
@@ -228,6 +231,12 @@ pub use annexb::{
 pub use au::{AccessUnitSplitter, split_access_units};
 pub use av1::{AV01_FOURCC, AV1C_FOURCC, Av1ConfigurationBox, Av1SampleEntry};
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+pub use avs2::Avs2ConfigurationBox;
+pub use avs3::{
+    Avs3ConfigurationBox, AvsVideoConfig, AvsVideoEntryKind, AvsVideoSampleEntry,
+    LAvsConfigurationBox, LibraryDependencyIdc, TemporalLayerEntry, VisualLrapEntry,
+};
+pub use avs3_audio::{AV3A_FOURCC, Ca3SpecificBox, DCA3_FOURCC};
 pub use box_types::{BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader, box_iter, parse_box};
 pub use cenc::{
     CencScheme, OriginalFormatBox, ProtectionSchemeInfoBox, ProtectionSystemSpecificHeaderBox,
