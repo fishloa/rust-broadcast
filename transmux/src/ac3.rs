@@ -870,7 +870,7 @@ impl Ec3SpecificBox {
     /// frame (§F.6.2.3) — 0 for a single-programme stream.
     ///
     /// §F.6.2.12 literally says "the value of the `substreamid` field found in
-    /// the [dependent] frame", but dependent substreams are numbered from 0
+    /// the dependent frame", but dependent substreams are numbered from 0
     /// (§E.1.3.1.2), so that reading gives 0 for the first (often only)
     /// dependent substream and, with it, no `chan_loc` at all (`if num_dep_sub >
     /// 0 { chan_loc }`). Real producers write the count: MP4Box (GPAC 26.07)
