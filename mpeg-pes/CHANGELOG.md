@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added (#1224)
+- `StreamId::EXTENDED_STREAM_ID` (0xFD), `STREAM_ID_EXTENSION_AVS3_VIDEO` (0x41) and `STREAM_ID_EXTENSION_AVS3_AUDIO` (0b100_1111) (ETSI TS 101 154 V2.10.1 section 4.1.8; T/AI 109.7 clause 8.1.2), `PesExtensionField::stream_id_extension()` accessor, and `PesExtensionField` is now re-exported.
+
 ### Changed
 - Internal: the 5-byte marker-bit PTS/DTS/`DTS_next_AU` field is encoded/decoded by `broadcast_common::clock33::{pack_marked, pack_marked_with, unpack_marked}` instead of a local copy (each crate keeps its own prefix / marker validation and error variants); no behaviour change (#1208).
 

@@ -20,6 +20,7 @@ pub mod audio_stream;
 pub mod auxiliary_video_stream;
 pub mod avc_timing_and_hrd;
 pub mod avc_video;
+pub mod avs_audio;
 pub mod bouquet_name;
 pub mod ca;
 pub mod ca_identifier;
@@ -186,7 +187,7 @@ pub use registry::{
     DescriptorObject, DescriptorRegistry, ExtIterItem, ExtRegistryIter, RegistryIter,
 };
 
-pub use private_data_specifier::{PDS_EACEM, PDS_NORDIG};
+pub use private_data_specifier::{PDS_AVSA, PDS_AVSV, PDS_EACEM, PDS_NORDIG};
 
 /// Encode `value` to `nibbles` packed-BCD digits for a `set_*` accessor,
 /// mapping overflow to a [`ValueOutOfRange`](crate::Error::ValueOutOfRange)

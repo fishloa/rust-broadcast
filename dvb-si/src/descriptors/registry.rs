@@ -320,6 +320,18 @@ impl DescriptorRegistry {
         self
     }
 
+    /// Register the AVS3_audio_descriptor (tag 0xD2, T/AI 109.7 clause 8.1.3.4)
+    /// for `private_data_specifier` [`crate::descriptors::PDS_AVSA`] ('AVSA',
+    /// `0x41565341`) - the specifier EN 300 468 V1.20.1 Annex O / TS 101 154
+    /// V2.10.1 section 4.1.8.35 require to precede it. Under any other (or
+    /// no) specifier tag 0xD2 stays `Unknown`.
+    pub fn with_avs3_audio(&mut self) -> &mut Self {
+        self.register_for_pds::<crate::descriptors::avs_audio::AvsAudioDescriptor>(
+            crate::descriptors::PDS_AVSA,
+        );
+        self
+    }
+
     /// Lazily walk a raw descriptor loop using this registry's configuration.
     ///
     /// Semantics mirror [`crate::descriptors::parse_loop`]: per-descriptor
@@ -694,6 +706,39 @@ mod tests {
             AnyDescriptor::Unknown { tag, .. } => assert_eq!(*tag, 0x83),
             other => panic!("expected Unknown (wrong PDS), got {other:?}"),
         }
+    }
+
+    /// T/AI 109.7 clause 8.1.3.4 + TS 101 154 V2.10.1 4.1.8.35: tag 0xD2 is the
+    /// AVS3_audio_descriptor only under private_data_specifier 'AVSA'.
+    #[test]
+    fn avs3_audio_descriptor_is_pds_scoped() {
+        use crate::descriptors::avs_audio::AvsAudioDescriptor;
+        use crate::descriptors::private_data_specifier::PDS_AVSA;
+        let desc = [0xD2, 6, 0x03, 0b1_010_1010, 0x95, 0x04, 0x00, 0b01_101010];
+        let mut reg = DescriptorRegistry::new();
+        reg.with_avs3_audio();
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&pds_descriptor(PDS_AVSA));
+        bytes.extend_from_slice(&desc);
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        match &items[1] {
+            AnyDescriptor::Other { tag, value } => {
+                assert_eq!(*tag, 0xD2);
+                let d = value.downcast_ref::<AvsAudioDescriptor>().unwrap();
+                assert_eq!(d.sampling_frequency_index, 3);
+            }
+            other => panic!("expected Other (AvsAudioDescriptor), got {other:?}"),
+        }
+
+        // Without the 'AVSA' specifier (or under another) the tag stays Unknown.
+        let items: Vec<_> = reg.parse_loop(&desc).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[0], AnyDescriptor::Unknown { tag: 0xD2, .. }));
+        let mut other = Vec::new();
+        other.extend_from_slice(&pds_descriptor(PDS_NORDIG));
+        other.extend_from_slice(&desc);
+        let items: Vec<_> = reg.parse_loop(&other).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[1], AnyDescriptor::Unknown { tag: 0xD2, .. }));
     }
 
     #[test]

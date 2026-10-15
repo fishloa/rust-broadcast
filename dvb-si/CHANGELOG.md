@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added (#1224 - AVS3 audio)
+- `descriptors::avs_audio::AvsAudioDescriptor`: the AVS3_audio_descriptor (tag 0xD2) from T/AI 109.7-2024 clause 8.1.3.4 Table 4 (spec located free at aitisa.org.cn): `audio_codec_id`-selected bodies (0, 1 with the optional 24-bit `sampling_frequency`, 2 with the Table 5 `content_type` variants and `total_bitrate`), `resolution`, opaque `addition_info`; reserved bits captured on parse, all-ones defaults when hand-built. Private descriptor: not auto-dispatched; enable with `DescriptorRegistry::with_avs3_audio()`, which scopes it to `PDS_AVSA` ('AVSA', 0x41565341) as ETSI TS 101 154 V2.10.1 section 4.1.8.35 requires. `AnyDescriptor::AvsAudio` variant added (`@no_dispatch`). Transcription: `docs/descriptors/t_ai_109_7/avs3-audio-descriptor.md`.
+- `StreamType::Avs3Video` (0xD4) and `StreamType::Avs3Audio` (0xD5) (TS 101 154 V2.10.1 section 4.1.8; T/AI 109.7 clause 8.1.2). Note 0x33 is VVC, not AVS3.
+- `PDS_AVSV` (0x41565356, 'AVSV'): the specifier that precedes the AVS3_video_descriptor and the `registration_descriptor` format_identifier for AVS3 HDR; tests for the 'AVSV'/'AVSA' registration format identifiers.
+
 ### Changed (BREAKING, #1222 - EN 300 468 v1.20.1)
 - Brought up to ETSI EN 300 468 V1.20.1 (2026-09); clause-by-clause delta in `docs/en300468-v1.20.1-delta.md`. v1.20.1 adds no tags, table_ids or wire layouts.
 - **BREAKING (behavioural):** the 2038 MJD wrap rule (clauses 5.2.4/5.2.5/5.2.6, 6.2.20, 6.4.9) now applies to every time field (EIT `start_time`, TDT/TOT `UTC_time`, local_time_offset `time_of_change`, network_change_notify `start_time_of_change`): when the msb of the 16-bit MJD field is 0 the MJD is `0x10000` + the field, so `0x03D1123456` is 2040-12-25 12:34:56. Dates before 1948-08-05 are no longer representable (implemented in `broadcast_common::time`).

@@ -155,6 +155,14 @@ pub enum StreamType {
     VvcTemporalSubset,
     /// 0x35 — EVC video stream or EVC temporal sub-bitstream (ISO/IEC 23094-1).
     Evc,
+    /// 0xD4 — AVS3 video elementary stream (T/AI 109.6; ETSI TS 101 154 V2.10.1
+    /// §4.1.8.31 "Encoding": stream_id `0xFD`, stream_id_extension `0x41`).
+    /// Not to be confused with `0x33` (VVC).
+    Avs3Video,
+    /// 0xD5 — AVS3-P3 (immersive audio) elementary stream (T/AI 109.7 clause
+    /// 8.1.2; ETSI TS 101 154 V2.10.1 §4.1.8.35: stream_id `0xFD`,
+    /// stream_id_extension `0b100_1111`).
+    Avs3Audio,
     /// 0x81 — ATSC AC-3 audio (A/52).
     Ac3,
     /// 0x86 — SCTE-35 splice_info_section (ANSI/SCTE 35).
@@ -231,6 +239,8 @@ impl StreamType {
             0x36..=0x7E => Self::ReservedRange(v),
             0x7F => Self::IpmpHigh,
             0x81 => Self::Ac3,
+            0xD4 => Self::Avs3Video,
+            0xD5 => Self::Avs3Audio,
             0x86 => Self::Scte35,
             0x87 => Self::EAc3,
             _ => Self::UserPrivate(v),
@@ -297,6 +307,8 @@ impl StreamType {
             Self::Evc => 0x35,
             Self::IpmpHigh => 0x7F,
             Self::Ac3 => 0x81,
+            Self::Avs3Video => 0xD4,
+            Self::Avs3Audio => 0xD5,
             Self::Scte35 => 0x86,
             Self::EAc3 => 0x87,
             Self::ReservedRange(v) | Self::UserPrivate(v) => v,
@@ -332,6 +344,7 @@ impl StreamType {
     /// | `Vvc` | 0x33 | ITU-T H.266 / ISO/IEC 23090-3 |
     /// | `VvcTemporalSubset` | 0x34 | H.266 Annex A |
     /// | `Evc` | 0x35 | ISO/IEC 23094-1 |
+    /// | `Avs3Video` | 0xD4 | T/AI 109.6 (TS 101 154 V2.10.1) |
     ///
     /// **Note on `PesPrivateData` (0x06):** this stream_type alone does *not*
     /// identify the payload — AC-3, H.264, DVB subtitle, teletext, and others
@@ -365,6 +378,7 @@ impl StreamType {
                 | Self::Vvc
                 | Self::VvcTemporalSubset
                 | Self::Evc
+                | Self::Avs3Video
         )
     }
 
@@ -384,6 +398,7 @@ impl StreamType {
     /// | `MhasAudioAux` | 0x2E | ISO/IEC 23008-3 MHAS auxiliary |
     /// | `Ac3` | 0x81 | ATSC A/52 (AC-3) |
     /// | `EAc3` | 0x87 | ATSC A/52B (E-AC-3 / Dolby Digital Plus) |
+    /// | `Avs3Audio` | 0xD5 | T/AI 109.7 clause 8.1.2 |
     ///
     /// **Note on `PesPrivateData` (0x06):** this stream_type alone does *not*
     /// identify the payload — AC-3 carried over DVB uses 0x06 with an
@@ -403,6 +418,7 @@ impl StreamType {
                 | Self::MhasAudioAux
                 | Self::Ac3
                 | Self::EAc3
+                | Self::Avs3Audio
         )
     }
 
@@ -522,6 +538,8 @@ impl StreamType {
             Self::Evc => "EVC",
             Self::IpmpHigh => "IPMP (0x7F)",
             Self::Ac3 => "AC-3",
+            Self::Avs3Video => "AVS3 Video",
+            Self::Avs3Audio => "AVS3-P3 Audio",
             Self::Scte35 => "SCTE-35",
             Self::EAc3 => "E-AC-3",
             Self::ReservedRange(_) => "Reserved",
@@ -1139,6 +1157,20 @@ mod tests {
         assert_eq!(StreamType::Scte35.name(), "SCTE-35");
     }
 
+    /// ETSI TS 101 154 V2.10.1 §4.1.8: AVS3 video is stream_type 0xD4 and
+    /// AVS3-P3 audio is 0xD5 (T/AI 109.7 clause 8.1.2); 0x33 is VVC, not AVS3.
+    #[test]
+    fn avs3_stream_types() {
+        assert_eq!(StreamType::from_u8(0xD4), StreamType::Avs3Video);
+        assert_eq!(StreamType::from_u8(0xD5), StreamType::Avs3Audio);
+        assert_eq!(StreamType::Avs3Video.to_u8(), 0xD4);
+        assert_eq!(StreamType::Avs3Audio.to_u8(), 0xD5);
+        assert_eq!(StreamType::Avs3Video.name(), "AVS3 Video");
+        assert_eq!(StreamType::Avs3Audio.to_string(), "AVS3-P3 Audio");
+        assert_eq!(StreamType::from_u8(0x33), StreamType::Vvc);
+        assert_eq!(StreamType::from_u8(0xD6), StreamType::UserPrivate(0xD6));
+    }
+
     #[test]
     fn stream_type_wire_to_name() {
         assert_eq!(StreamType::from_u8(0x02).name(), "MPEG-2 Video");
@@ -1176,6 +1208,7 @@ mod tests {
             (0x33, "Vvc"),
             (0x34, "VvcTemporalSubset"),
             (0x35, "Evc"),
+            (0xD4, "Avs3Video"),
         ] {
             let st = StreamType::from_u8(byte);
             assert!(st.is_video(), "{label} (0x{byte:02X}) should be is_video");
@@ -1203,6 +1236,7 @@ mod tests {
             (0x2E, "MhasAudioAux"),
             (0x81, "Ac3"),
             (0x87, "EAc3"),
+            (0xD5, "Avs3Audio"),
         ] {
             let st = StreamType::from_u8(byte);
             assert!(st.is_audio(), "{label} (0x{byte:02X}) should be is_audio");

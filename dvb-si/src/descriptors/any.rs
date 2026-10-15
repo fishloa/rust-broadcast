@@ -344,6 +344,7 @@ declare_descriptors! {'a;
     LogicalChannel => crate::descriptors::logical_channel::LogicalChannelDescriptor,
     NordigLogicalChannelV1 => crate::descriptors::nordig::NordigLogicalChannelV1,
     NordigLogicalChannelV2 => crate::descriptors::nordig::NordigLogicalChannelV2,
+    AvsAudio => crate::descriptors::avs_audio::AvsAudioDescriptor,
 }
 
 /// Lazily walk a raw descriptor loop. Never panics.
