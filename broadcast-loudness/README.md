@@ -11,6 +11,11 @@ Loudness Range (LRA, LU), and true-peak level (dBTP).
 
 `no_std` + `alloc`, depends only on `broadcast-common`.
 
+Chinese broadcast targets (NRTA GY/T 282-2014 / GY/T 377-2023) are available as
+named profiles (`GY_T_282_2014`, `GY_T_377_2023_QUIET`, `GY_T_377_2023_NOISY`) with
+`check(integrated_lkfs, true_peak_dbtp)`, plus the GY/T 379-2023 monitoring
+helpers (`over_limit_ratio`, `consecutive_over_limit_ratio`, `classify_units`).
+
 ## Quick start
 
 ```rust

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added (#1236 - Chinese loudness profiles)
+- `profile` module: `LoudnessProfile` target profiles `GY_T_282_2014` (-24 LKFS +-2 LU, <= -2 dBTP), `GY_T_377_2023_QUIET` (-24 LKFS +-2 LU, <= -1 dBTP) and `GY_T_377_2023_NOISY` (-15 LKFS +-2 LU, <= -1 dBTP) with `check`/`check_meters` -> `ProfileReport`; GY/T 379-2023 channel-monitoring helpers (`MONITOR_OVER_LIMIT_LKFS` -22, `over_limit_ratio` = M10, `consecutive_over_limit_ratio` = S3, `classify_ratio`/`classify_units` with the Table 1 20%/40% verdicts `MonitorVerdict`, `MonitorUnit`). Unit tests pin every constant to the standard text and the inclusive tolerance/limit edges.
 ### Removed
 - **BREAKING:** the never-constructed `Error::ChannelOutOfRange` variant (r14-LOUD-O1, #1124).
 ### Added
