@@ -22,7 +22,7 @@ const LCN_HI_MASK: u8 = 0x03;
 /// and the LCN: all ones (`0x1F`). EACEM/D-Book private layout (PDS 0x28; the
 /// NorDig v1 layout on the same tag has `reserved(1)` + a 14-bit LCN, see
 /// `nordig.rs`). Real-capture evidence: the run is `11111` in all 2456 entries
-/// of the PDS-0x28 captures in the local archive (France TNT mux, TSDuck
+/// of the PDS-0x28 captures in the private real-capture corpus (France TNT mux, TSDuck
 /// test-059/092/124/184; `tests/local_archive_reserved_defaults.rs`). The bits
 /// are preserved on parse.
 pub const RESERVED_DEFAULT: u8 = 0x1F;

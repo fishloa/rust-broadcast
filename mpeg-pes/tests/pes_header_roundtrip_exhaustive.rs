@@ -29,10 +29,8 @@ use std::path::{Path, PathBuf};
 const PKT: usize = 188;
 /// `packet_start_code_prefix(3) + stream_id(1) + PES_packet_length(2)`.
 const PES_FIXED: usize = 6;
-/// Name of the gitignored local archive of real captures (repo root).
-const ARCHIVE_DIR: &str = ".test-streams";
 
-fn collect_ts_files(dir: &Path, include_archive: bool, out: &mut Vec<PathBuf>) {
+fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let p = e.path();
@@ -41,24 +39,33 @@ fn collect_ts_files(dir: &Path, include_archive: bool, out: &mut Vec<PathBuf>) {
         if p.is_dir() {
             if matches!(
                 name.as_ref(),
-                "target" | ".git" | ".claude" | "node_modules" | ".delegate"
-            ) || (name == ARCHIVE_DIR && !include_archive)
-            {
+                "target"
+                    | ".git"
+                    | ".claude"
+                    | "node_modules"
+                    | ".delegate"
+                    | "private"
+                    | ".test-streams"
+            ) {
                 continue;
             }
-            collect_ts_files(&p, include_archive, out);
+            collect_ts_files(&p, out);
         } else if name.ends_with(".ts") {
             out.push(p);
         }
     }
 }
 
-/// 188-stride `.ts` files: the committed fixtures, plus the local
-/// `.test-streams` archive when `include_archive`.
+/// 188-stride `.ts` files: the committed fixtures, plus the whole real-capture
+/// corpus (`private/fixtures/**` and the fetched `.test-streams/`) when
+/// `include_archive`.
 fn ts_files(include_archive: bool) -> Vec<(PathBuf, Vec<u8>)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut files = Vec::new();
-    collect_ts_files(&root, include_archive, &mut files);
+    collect_ts_files(&root, &mut files);
+    if include_archive {
+        files.extend(test_fixtures::corpus(&["ts"]));
+    }
     files.sort();
     files
         .into_iter()
@@ -176,14 +183,14 @@ fn every_pes_header_in_every_committed_ts_round_trips() {
     assert!(r.with_ext >= 1, "no real PES extension exercised");
 }
 
-/// Full-archive gate (slow; local only, needs the gitignored `.test-streams`):
+/// Full-corpus gate (slow; needs the private repo, see `test_fixtures::corpus`):
 /// `cargo test -p mpeg-pes --test pes_header_roundtrip_exhaustive -- --ignored`.
 ///
 /// Real non-`0xFF` PES header stuffing exists in
 /// `tsduck-test/input/test-002.ts`, and real `ES_rate` marker bits of `0`
 /// (the same stream: `ES_rate` bytes `25 0D 37`, leading marker `0`).
 #[test]
-#[ignore = "slow: scans the whole local .test-streams archive"]
+#[ignore = "slow: scans the whole real-capture corpus (private/fixtures + .test-streams)"]
 fn full_archive_pes_headers_round_trip() {
     let t = std::time::Instant::now();
     let r = scan(true);
@@ -197,11 +204,7 @@ fn full_archive_pes_headers_round_trip() {
         t.elapsed()
     );
     assert!(r.mismatches.is_empty(), "{:#?}", r.mismatches);
-    if Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(ARCHIVE_DIR)
-        .exists()
-    {
+    if test_fixtures::private_root().is_some() {
         assert!(
             r.with_nonff_stuffing
                 .iter()
@@ -230,7 +233,7 @@ fn real_pes_extension_reserved_bits_are_preserved() {
 }
 
 /// The committed corpus has no non-`0xFF` stuffing and no `0b111` extension
-/// reserved bits (the real non-`0xFF` stuffing is in the local archive); if one
+/// reserved bits (the real non-`0xFF` stuffing is in the private real-capture corpus); if one
 /// appears, promote it to primary evidence.
 #[test]
 fn no_committed_fixture_has_nonff_stuffing_or_111_reserved() {
@@ -256,17 +259,14 @@ fn no_committed_fixture_has_nonff_stuffing_or_111_reserved() {
 /// leading marker bit: TSDuck's BSD-2 `test-002.ts` PES #7751-style header
 /// `84 1C 24 | 25 0D 37 | D8 | E7 | 31 stuffing bytes with non-0xFF content`
 /// (`ES_rate` + `DSM_trick_mode` + `additional_copy_info`). Skips loudly when
-/// the local archive is absent.
+/// the private repo is not checked out.
 #[test]
 fn real_archive_es_rate_marker_and_nonff_stuffing_round_trip() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(ARCHIVE_DIR)
-        .join("tsduck-test/input/test-002.ts");
-    let Ok(ts) = fs::read(&path) else {
-        eprintln!("SKIP: {} not available", path.display());
+    let Some(path) = test_fixtures::tsduck("input/test-002.ts", "pes_header_roundtrip_exhaustive")
+    else {
         return;
     };
+    let ts = fs::read(&path).expect("read capture");
     let mut seen = 0;
     for raw in pes_packets(&ts) {
         let Ok(pes) = PesPacket::parse(&raw) else {

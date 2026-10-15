@@ -1,7 +1,8 @@
 //! Real-capture byte-identity survey (reserved-bit evidence hunt).
 //!
-//! Walks every `.ts`/`.m2ts`/`.mpg` capture under the gitignored
-//! `.test-streams/` archive (skips cleanly when absent), demuxes PSI/SI with
+//! Walks every `.ts`/`.m2ts`/`.mpg` capture of the real-capture corpus
+//! (`private/fixtures/**` + the fetched pinned `tsduck-test` clone; skips
+//! loudly when the private repo is not checked out), demuxes PSI/SI with
 //! `SiDemux`, and for
 //!
 //! * every table section: re-serializes the parsed section and compares with
@@ -25,7 +26,7 @@ use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::{AnyDescriptor, DescriptorLoop, parse_loop};
 use dvb_si::tables::AnyTableSection;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const SYNC: u8 = 0x47;
 const TS_LEN: usize = 188;
@@ -61,24 +62,6 @@ const TOLERATED: &[(&str, &str)] = &[
     ("test-062.", "MPE_IFEC (tid 0x7A)"),
     ("test-062.", "PROTECTION_MESSAGE (tid 0x7B)"),
 ];
-
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            walk(&p, out);
-        } else if p
-            .extension()
-            .and_then(|x| x.to_str())
-            .is_some_and(|x| matches!(x, "ts" | "m2ts" | "mpg"))
-        {
-            out.push(p);
-        }
-    }
-}
 
 /// `(stride, offset_of_188_packet_in_stride, first_sync)` or `None`.
 fn detect(data: &[u8]) -> Option<(usize, usize, usize)> {
@@ -432,14 +415,16 @@ fn survey_file(s: &mut Survey, path: &Path) {
 
 #[test]
 fn real_captures_reserialize_byte_identically() {
-    let root = PathBuf::from(format!("{}/../.test-streams", env!("CARGO_MANIFEST_DIR")));
-    if !root.exists() {
-        eprintln!("SKIP: .test-streams absent (local-only real-capture archive)");
+    // The whole real-capture corpus: `private/fixtures/**` plus the fetched
+    // `.test-streams/` (pinned tsduck-test clone).
+    let files = test_fixtures::corpus(&["ts", "m2ts", "mpg"]);
+    if files.is_empty() {
+        eprintln!(
+            "real_capture_byte_identity: SKIPPED - the private repo is not checked out \
+             (git submodule update --init private)"
+        );
         return;
     }
-    let mut files = Vec::new();
-    walk(&root, &mut files);
-    files.sort();
     let mut s = Survey::default();
     for f in &files {
         survey_file(&mut s, f);
@@ -496,6 +481,12 @@ fn real_captures_reserialize_byte_identically() {
     );
     // The allowlist must not go stale: every tolerated pair must still occur.
     for (p, k) in TOLERATED {
+        if !files.iter().any(|f| {
+            f.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(p))
+        }) {
+            continue; // that capture is not in this corpus (partial checkout)
+        }
         let hit = s
             .sections
             .get(*k)

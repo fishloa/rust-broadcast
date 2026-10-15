@@ -1,18 +1,17 @@
-//! Download-on-demand AIT capture test — exercises AIT descriptor paths
+//! Real-capture AIT capture test — exercises AIT descriptor paths
 //! against the real French TNT HbbTV mux (issue #218).
 //!
-//! Keyed on `.test-streams/france-tnt-uhf32.ts`. When the capture is present,
+//! Keyed on `private/fixtures/ts/france-tnt-uhf32.ts`. When the capture is present,
 //! feeds it through `SiDemux`, collects AIT sections (table_id 0x74), and
 //! walks each application's `ait_descriptors()` + the common descriptor loop
 //! via `common_ait_descriptors()`, asserting typed `AnyAitDescriptor` variants
 //! and no parse errors.
 //!
-//! When the capture is absent, the test **skips cleanly** so the suite passes
-//! without downloads.
+//! When the capture is absent, the test **skips loudly** (private/ not checked out) so the suite passes
+//! without the private fixtures repo.
 #![cfg(feature = "ts")]
 
 use std::fs;
-use std::path::Path;
 
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
@@ -21,23 +20,11 @@ use mpeg_ts::ts::TS_PACKET_SIZE;
 
 const CAPTURE: &str = "france-tnt-uhf32";
 
-fn capture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-        .join(format!("{CAPTURE}.ts"))
-}
-
 #[test]
 fn france_tnt_ait_descriptors_parse() {
-    let path = capture_path();
-    if !path.exists() {
-        eprintln!(
-            "downloaded_ait: SKIPPED — {CAPTURE}.ts not in .test-streams/. \
-             Run `tools/fetch-test-streams.sh {CAPTURE}` to enable."
-        );
+    let Some(path) = test_fixtures::require(&format!("ts/{CAPTURE}.ts"), "downloaded_ait") else {
         return;
-    }
+    };
 
     let data = fs::read(&path).expect("read capture");
 

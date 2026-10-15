@@ -24,29 +24,10 @@ use transmux::{Fmp4Demux, MHADecoderConfigurationRecord, TsDemux, TsMux};
 
 const TS: usize = 188;
 
-fn fixture_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("private")
-        .join("fixtures")
-        .join("ts")
-        .join("mpegh-cicp01-baseline.ts")
-}
-
-/// Load the fixture, or return `None` (with a SKIP notice) if the private
-/// submodule isn't checked out.
+/// Load the fixture (private repo: `private/fixtures/ts/`), or return `None`
+/// after a loud SKIPPED line when the private repo is not checked out.
 fn try_load_fixture() -> Option<Vec<u8>> {
-    let path = fixture_path();
-    if !path.exists() {
-        eprintln!(
-            "mpegh_ts: SKIPPED — {} not present. Run \
-             `git submodule update --init private` to enable (maintainers only; \
-             CC BY-NC-ND, not publicly redistributable).",
-            path.display()
-        );
-        return None;
-    }
-    Some(std::fs::read(&path).expect("read mpegh-cicp01-baseline.ts fixture"))
+    test_fixtures::require_bytes("ts/mpegh-cicp01-baseline.ts", "mpegh_ts")
 }
 
 /// Run `body` with the fixture bytes, or skip the test cleanly.

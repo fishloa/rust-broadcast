@@ -185,7 +185,7 @@ Semantics (§8.3.3):
   Table 8 widths `1,6,8,33,32,33,16,8,8,1,6,[8,8,8,4,4,(N-3)*8],[32]`). It shares no code with `compact.rs`; the crate
   agrees on every vector (plain, encrypted, with/without DAS, non-default reserved rows, extreme values). Mutating
   one field width in the parser makes five of the eight tests fail.
-* **No real capture.** No compact-watermark capture exists in `.test-streams/`, the committed fixtures or any corpus
+* **No real capture.** No compact-watermark capture exists in `private/fixtures/`, the committed fixtures or any corpus
   known to us; that is the one remaining gap. The base (non-compact) SCTE 35 sections are covered by real captures in
   `tests/real_capture.rs`.
 * **Open question - DAS body nibble order (investigated, still unresolved; both readings now selectable).**
@@ -201,7 +201,7 @@ Semantics (§8.3.3):
   is no V1.3.1, corrigendum or erratum; (b) TR 103 752-2 V1.1.1 and the DVB A178-1r1 TA-watermark V&V stream list
   (TM-TA0086r3) contain no DAS/compact byte examples; (c) the spec text has no worked byte example of either form;
   (d) TSDuck 3.44, GPAC 26.07 and ffmpeg do not decode `DVB_DAS_descriptor` or the compact format (no `DVB_`/0xF0
-  handling to cross-check against); (e) no real capture carries it: a raw scan of `.test-streams`, `private/fixtures`
+  handling to cross-check against); (e) no real capture carries it: a raw scan of `private/fixtures`
   and the committed fixtures for `0xF0 <len> "DVB_"` finds only this crate's own test vectors.
   **Resolution policy:** `scte35_splice::dvb_ta::DasNibbleOrder` (`TABLE_1` = type low, `TABLE_8` = type high). The
   defaults follow each table's own order (stand-alone descriptor: Table 1; compact message: Table 8, unchanged wire

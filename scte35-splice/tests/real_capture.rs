@@ -11,9 +11,9 @@
 //!
 //! * Committed fixtures (`fixtures/ts/scte35-*.ts`, `fixtures/scte35-ssai`)
 //!   always run.
-//! * The TSDuck BSD-2 test corpus under `.test-streams/tsduck-test/` is
-//!   LOCAL-ONLY (never committed); those cases skip loudly when the archive is
-//!   absent. Its `test-091.ts` carries `splice_command_length = 0xFFF`, which
+//! * The TSDuck BSD-2 test corpus files are mirrored in the private fixtures
+//!   repo (`private/fixtures/tsduck/`, resolved by `test_fixtures::tsduck`);
+//!   those cases skip loudly when `private/` is not checked out. Its `test-091.ts` carries `splice_command_length = 0xFFF`, which
 //!   SCTE 35 9.6.1 says receivers shall ignore (parse the command by its own
 //!   structure) - the crate used to reject such sections outright.
 
@@ -162,19 +162,11 @@ fn committed_ssai_splice_insert_with_pts_adjustment() {
     assert_eq!(bd.duration, 1_800_000);
 }
 
-/// LOCAL-ONLY: the TSDuck test corpus. `None` (after a loud skip) when absent.
+/// The TSDuck test corpus (pinned clone or `private/fixtures/tsduck/` mirror).
+/// `None` after a loud skip when the private repo is not checked out.
 fn tsduck(name: &str) -> Option<Vec<u8>> {
-    let p = repo(&format!(".test-streams/tsduck-test/{name}"));
-    match std::fs::read(&p) {
-        Ok(b) => Some(b),
-        Err(_) => {
-            eprintln!(
-                "real_capture: SKIPPED - {p:?} not present (local-only archive); \
-                 this is a no-op result on this host, not coverage"
-            );
-            None
-        }
-    }
+    let p = test_fixtures::tsduck(name, "real_capture")?;
+    Some(std::fs::read(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display())))
 }
 
 /// Real section with the deprecated `splice_command_length = 0xFFF`: SCTE 35

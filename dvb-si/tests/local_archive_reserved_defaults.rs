@@ -1,8 +1,9 @@
 //! Local-archive evidence for reserved-bit defaults (audit §3 / #1197 item d).
 //!
-//! Keyed on the LOCAL-ONLY `.test-streams/` archive (the TSDuck BSD-2 clone's
-//! live-captured streams are never committed). When a capture is absent the
-//! test skips loudly, like `downloaded_lcn.rs`.
+//! Keyed on the TSDuck BSD-2 corpus files mirrored in
+//! `private/fixtures/tsduck/` (live-captured streams: kept private, never in
+//! the public tree). Without `private/` checked out the test skips loudly,
+//! like `downloaded_lcn.rs`.
 //!
 //! * SSU `system_software_update_info` selector (TS 102 006 Table 4): the spec
 //!   gives NO value for the two `reserved` runs (verified in the V1.4.1 text,
@@ -24,14 +25,6 @@ use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::data_broadcast_id::{
     DATA_BROADCAST_ID_SSU, DataBroadcastIdDescriptor, IdSelector,
 };
-use std::path::{Path, PathBuf};
-
-fn archive(rel: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-        .join(rel)
-}
 
 /// Complete PSI sections of `pid` (all packets of the file, PUSI-reassembled).
 fn sections(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
@@ -81,11 +74,11 @@ fn sections(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
 
 #[test]
 fn ssu_selector_reserved_runs_are_preserved_from_a_real_pmt() {
-    let path = archive("tsduck-test/input/test-002.ts");
-    let Ok(ts) = std::fs::read(&path) else {
-        eprintln!("local_archive_reserved_defaults: SKIPPED - {path:?} not present");
+    let Some(path) = test_fixtures::tsduck("input/test-002.ts", "local_archive_reserved_defaults")
+    else {
         return;
     };
+    let ts = std::fs::read(&path).expect("read capture");
     let mut ssu_seen = 0;
     let mut zero_runs = 0;
     for sec in sections(&ts, 0x57).into_iter().filter(|s| s[0] == 0x02) {
@@ -164,26 +157,25 @@ fn nit_ts_descriptors(ts: &[u8]) -> Vec<(Option<u32>, u8, Vec<u8>)> {
 
 /// Real-capture evidence for the **EACEM** `logical_channel_descriptor`
 /// (PDS 0x28, tag 0x83): `visible_service_flag(1) reserved(5) LCN(10)`; the
-/// 5-bit run is `11111` in every entry of every PDS-0x28 capture in the local
-/// archive. This is evidence for `logical_channel.rs` (`RESERVED_DEFAULT =
+/// 5-bit run is `11111` in every entry of every PDS-0x28 capture in the real-capture
+/// corpus (private repo). This is evidence for `logical_channel.rs` (`RESERVED_DEFAULT =
 /// 0x1F`), **not** for the NorDig v1 layout (`reserved(1) LCN(14)`, PDS
 /// 0x29), which no capture carries (see the audit, section 12.2).
 #[test]
 fn eacem_logical_channel_reserved_run_is_all_ones_in_real_captures() {
     let mut entries = 0usize;
     let mut nordig = 0usize;
-    for rel in [
-        "france-tnt-uhf32.ts",
-        "tsduck-test/input/test-059.ts",
-        "tsduck-test/input/test-092.ts",
-        "tsduck-test/input/test-124.ts",
-        "tsduck-test/input/test-184.ts",
-    ] {
-        let path = archive(rel);
-        let Ok(ts) = std::fs::read(&path) else {
-            eprintln!("local_archive_reserved_defaults: SKIPPED - {path:?} not present");
-            continue;
-        };
+    let who = "local_archive_reserved_defaults";
+    let captures = [
+        test_fixtures::require("ts/france-tnt-uhf32.ts", who),
+        test_fixtures::tsduck("input/test-059.ts", who),
+        test_fixtures::tsduck("input/test-092.ts", who),
+        test_fixtures::tsduck("reference/test-124/test-124.ts", who),
+        test_fixtures::tsduck("input/test-184.ts", who),
+    ];
+    for path in captures.into_iter().flatten() {
+        let rel = path.display().to_string();
+        let ts = std::fs::read(&path).expect("read capture");
         for (pds, tag, body) in nit_ts_descriptors(&ts) {
             match (pds, tag) {
                 (Some(0x28), 0x83) => {
@@ -199,7 +191,7 @@ fn eacem_logical_channel_reserved_run_is_all_ones_in_real_captures() {
         }
     }
     eprintln!("EACEM LCN entries checked: {entries}; NorDig-scoped LCD descriptors: {nordig}");
-    if entries == 0 {
-        eprintln!("local_archive_reserved_defaults: SKIPPED - no archive capture present");
+    if test_fixtures::private_root().is_some() {
+        assert!(entries > 0, "the private corpus carries EACEM LCN entries");
     }
 }

@@ -153,10 +153,7 @@ fn constructed_extension_uses_convention_reserved_bits() {
 
 // ── exhaustive real-data gates ───────────────────────────────────────────────
 
-/// Name of the gitignored local archive of real captures (repo root).
-const ARCHIVE_DIR: &str = ".test-streams";
-
-fn collect_ts_files(dir: &Path, include_archive: bool, out: &mut Vec<PathBuf>) {
+fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let p = e.path();
@@ -165,12 +162,17 @@ fn collect_ts_files(dir: &Path, include_archive: bool, out: &mut Vec<PathBuf>) {
         if p.is_dir() {
             if matches!(
                 name.as_ref(),
-                "target" | ".git" | ".claude" | "node_modules" | ".delegate"
-            ) || (name == ARCHIVE_DIR && !include_archive)
-            {
+                "target"
+                    | ".git"
+                    | ".claude"
+                    | "node_modules"
+                    | ".delegate"
+                    | "private"
+                    | ".test-streams"
+            ) {
                 continue;
             }
-            collect_ts_files(&p, include_archive, out);
+            collect_ts_files(&p, out);
         } else if name.ends_with(".ts") {
             out.push(p);
         }
@@ -199,7 +201,11 @@ struct Report {
 fn scan(include_archive: bool) -> Report {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut files = Vec::new();
-    collect_ts_files(&root, include_archive, &mut files);
+    collect_ts_files(&root, &mut files);
+    if include_archive {
+        // The whole real-capture corpus: private/fixtures/** + fetched .test-streams/.
+        files.extend(test_fixtures::corpus(&["ts"]));
+    }
     files.sort();
     let mut r = Report::default();
     for path in files {
@@ -262,7 +268,7 @@ fn scan(include_archive: bool) -> Report {
     r
 }
 
-/// Fast gate over the files committed to git (no `.test-streams` archive):
+/// Fast gate over the files committed to git (no real-capture corpus):
 /// every adaptation field must re-serialize byte-exactly.
 #[test]
 fn every_committed_ts_adaptation_field_round_trips() {
@@ -274,15 +280,15 @@ fn every_committed_ts_adaptation_field_round_trips() {
     assert!(r.stuffed > 500, "only {} stuffed AFs", r.stuffed);
     assert!(r.files_with_af >= 20, "only {} files", r.files_with_af);
     // The committed corpus has no real AF extension (hence the spec-built
-    // vectors above); the real evidence lives in the local archive and is
-    // exercised by the ignored full-archive test below.
+    // vectors above); the real evidence lives in the private real-capture corpus and is
+    // exercised by the ignored full-corpus test below.
     assert!(
         r.ext_ok.is_empty(),
         "committed real AF-extension now exists"
     );
 }
 
-/// Full-archive gate (slow; local only, needs the gitignored `.test-streams`):
+/// Full-corpus gate (slow; needs the private repo, see `test_fixtures::corpus`):
 /// `cargo test -p mpeg-ts --test af_extension_roundtrip -- --ignored`.
 ///
 /// Real evidence for `adaptation_field_extension_flag == 1` (TEI = 0, parses):
@@ -304,7 +310,7 @@ fn every_committed_ts_adaptation_field_round_trips() {
 ///   overruns the AF. That is stream damage, not a sender convention, so the
 ///   parser keeps rejecting it rather than guess.
 #[test]
-#[ignore = "slow: scans the whole local .test-streams archive"]
+#[ignore = "slow: scans the whole real-capture corpus (private/fixtures + .test-streams)"]
 fn full_archive_adaptation_fields_round_trip() {
     let t = std::time::Instant::now();
     let r = scan(true);
@@ -336,11 +342,7 @@ fn full_archive_adaptation_fields_round_trip() {
             "undocumented AF parse error: {e}"
         );
     }
-    if Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(ARCHIVE_DIR)
-        .exists()
-    {
+    if test_fixtures::private_root().is_some() {
         assert!(
             r.ext_ok
                 .iter()
@@ -355,29 +357,26 @@ fn hex(b: &[u8]) -> String {
 }
 
 /// Primary real-data evidence for the adaptation-field extension: three
-/// specific packets of TSDuck's BSD-2 test streams in the local, gitignored
-/// `.test-streams` archive (skips loudly when absent, e.g. in CI / a worktree
-/// without the symlink). Each must re-serialize byte-exactly.
+/// specific packets of TSDuck's BSD-2 test streams (pinned `tsduck-test` clone
+/// or the `private/fixtures/tsduck/` mirror; skips loudly only when the private
+/// repo is not checked out). Each must re-serialize byte-exactly.
 ///
-/// * `tsduck-test/reference/test-147/test-147.ts` pkt 8098: flags `0x87`
+/// * `reference/test-147/test-147.ts` pkt 8098: flags `0x87`
 ///   (discontinuity + splice countdown + private data + extension) with a
 ///   `seamless_splice` whose three `marker_bit`s are `0` on the wire.
-/// * `tsduck-test/input/test-143.ts` pkts 451 and 3994.
+/// * `input/test-143.ts` pkts 451 and 3994.
 #[test]
 fn real_archive_af_extension_packets_round_trip() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(ARCHIVE_DIR);
     let cases = [
-        ("tsduck-test/reference/test-147/test-147.ts", 8098usize),
-        ("tsduck-test/input/test-143.ts", 451),
-        ("tsduck-test/input/test-143.ts", 3994),
+        ("reference/test-147/test-147.ts", 8098usize),
+        ("input/test-143.ts", 451),
+        ("input/test-143.ts", 3994),
     ];
     for (file, idx) in cases {
-        let Ok(buf) = fs::read(root.join(file)) else {
-            eprintln!("SKIP: {ARCHIVE_DIR}/{file} not available");
+        let Some(path) = test_fixtures::tsduck(file, "af_extension_roundtrip") else {
             continue;
         };
+        let buf = fs::read(path).expect("read capture");
         let raw: &[u8; TS_PACKET_SIZE] = buf[idx * TS_PACKET_SIZE..(idx + 1) * TS_PACKET_SIZE]
             .try_into()
             .unwrap();

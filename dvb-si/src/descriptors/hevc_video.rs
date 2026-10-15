@@ -24,7 +24,7 @@ const TEMPORAL_ID_MASK: u8 = 0x07;
 /// Default of the 2-bit `reserved` at bits `[3:2]` of byte 12 (H.222.0 Table
 /// 2-113, editions 03/2017-08/2023, audit §4 row 10 / §9): a single 2-bit
 /// `reserved` field, clause 2.1 "reserved" = `1`, so both bits are `1`.
-/// Real captures confirm it: every HEVC_video_descriptor in the local archive
+/// Real captures confirm it: every HEVC_video_descriptor in the private real-capture corpus
 /// (9, from TSDuck-compiled and re-muxed encoder output) carries
 /// `0x9F`/`0x7B`-style flag bytes with bits `[3:2]` = `11`. (An earlier
 /// reading cleared bit 3 on the strength of ISO/IEC 23001-2; that contradicted

@@ -1,12 +1,12 @@
 //! Real-capture SEI caption extraction gate (issue #599).
 //!
-//! Keyed on `.test-streams/transformers-eia608-h264.ts` — a short byte-range
+//! Keyed on `private/fixtures/ts/transformers-eia608-h264.ts` — a short byte-range
 //! slice of the real ffmpeg-bugs sample
 //! `samples.ffmpeg.org/ffmpeg-bugs/trac/ticket2885/transformers_EIA608_H264.ts`
 //! (real ATSC A/53 caption SEI / EIA-608 in H.264; licensed third-party movie
-//! footage, so only ~15 MB is fetched, never committed — see
-//! `tools/fetch-test-streams.sh transformers-eia608-h264`). Skips cleanly when
-//! absent.
+//! footage, so only ~15 MB is kept, in the private fixtures repo — see
+//! `tools/fetch-test-streams.sh transformers-eia608-h264`). Skips loudly when
+//! `private/` is not checked out.
 //!
 //! This test exercises the **full input path** the issue specifies: IR sample
 //! bytes recovered by [`TsDemux`] (unmodified — issue #599 does not touch
@@ -29,20 +29,10 @@
 //! later in the file. Confirmed by locating this test's expected bytes at
 //! their own distinct raw file offset (~133918) during development.
 
-use std::fs;
-use std::path::PathBuf;
-
 use broadcast_common::Unpackage;
 use transmux::{CodecConfig, NalCodec, TsDemux, caption_cc_data};
 
 const CAPTURE: &str = "transformers-eia608-h264";
-
-fn capture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-        .join(format!("{CAPTURE}.ts"))
-}
 
 /// `MPEG_cc_data()` bytes of `TsDemux`'s actual first caption-bearing video
 /// sample in the real capture slice — byte-for-byte from the raw file (a
@@ -63,16 +53,11 @@ const FIRST_EXPECTED_CC_DATA: [u8; 63] = [
 
 #[test]
 fn real_capture_sei_extraction() {
-    let path = capture_path();
-    if !path.exists() {
-        eprintln!(
-            "real_capture_sei_extraction: SKIPPED — {CAPTURE}.ts not in \
-             .test-streams/. Run `tools/fetch-test-streams.sh {CAPTURE}` to enable \
-             (fetches a short slice of a licensed third-party sample)."
-        );
+    let Some(data) =
+        test_fixtures::require_bytes(&format!("ts/{CAPTURE}.ts"), "sei_caption_real_capture")
+    else {
         return;
-    }
-    let data = fs::read(&path).expect("read real capture slice");
+    };
 
     let media = TsDemux::new()
         .unpackage(data.as_slice())

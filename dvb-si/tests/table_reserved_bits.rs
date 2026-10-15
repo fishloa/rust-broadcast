@@ -18,7 +18,7 @@
 //! 3. `real_sender_sections_*`: the exact section bytes of the real-capture
 //!    deviations that motivated the change (TDT `0x00` first bytes, NIT
 //!    `0xB0`, PAT `reserved(3)=000`, EIT `reserved(2)=00`, SDT
-//!    `reserved_future_use(6)`), taken from the local capture archive where it
+//!    `reserved_future_use(6)`), taken from the private real-capture corpus (`private/fixtures/tsduck`) where it
 //!    is present.
 #![cfg(feature = "ts")]
 
@@ -778,7 +778,7 @@ fn typed_header_bits_round_trip_off_spec_values() {
 }
 
 // ---------------------------------------------------------------------------
-// Real-sender sections (local capture archive; skipped when absent).
+// Real-sender sections (private real-capture corpus; skipped loudly when `private/` is absent).
 // ---------------------------------------------------------------------------
 
 /// `(stride, offset of the 188-byte packet in a stride, first sync)`: plain TS,
@@ -795,20 +795,26 @@ fn detect(data: &[u8]) -> Option<(usize, usize, usize)> {
     None
 }
 
-/// `None` when the local archive (or this capture) is absent: the test skips.
+/// `None` when the private repo is not checked out (loud skip); a missing
+/// capture in a checkout that has it is a panic (see `test_fixtures::tsduck`).
 fn archive_sections(file: &str, tid: u8, want: impl Fn(&[u8]) -> bool) -> Option<Vec<Vec<u8>>> {
     let stem = file.trim_end_matches(".ts");
-    let root = format!(
-        "{}/../.test-streams/tsduck-test",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let candidates = [
-        format!("{root}/input/{file}"),
-        format!("{root}/reference/{stem}/{file}"),
-    ];
+    // The capture is either `input/<file>` or `reference/<stem>/<file>` in the
+    // TSDuck corpus; use whichever the pinned clone / private mirror carries.
+    let mut candidates = Vec::new();
+    for rel in [format!("input/{file}"), format!("reference/{stem}/{file}")] {
+        let clone = test_fixtures::tsduck_dir().map(|d| d.join(&rel));
+        if let Some(p) = clone.filter(|p| p.exists()) {
+            candidates.push(p);
+        }
+    }
+    if candidates.is_empty() {
+        // Nothing found: let the resolver decide skip vs panic.
+        let _ = test_fixtures::tsduck(&format!("input/{file}"), "table_reserved_bits")?;
+    }
     let mut all: Option<Vec<Vec<u8>>> = None;
     for path in candidates {
-        if let Some(found) = archive_sections_in(&path, tid, &want) {
+        if let Some(found) = archive_sections_in(&path.display().to_string(), tid, &want) {
             for s in found {
                 let v = all.get_or_insert_with(Vec::new);
                 if !v.contains(&s) {
@@ -822,10 +828,7 @@ fn archive_sections(file: &str, tid: u8, want: impl Fn(&[u8]) -> bool) -> Option
 }
 
 fn archive_sections_in(path: &str, tid: u8, want: &dyn Fn(&[u8]) -> bool) -> Option<Vec<Vec<u8>>> {
-    let Ok(data) = std::fs::read(path) else {
-        eprintln!("SKIP: {path} absent (local-only real-capture archive)");
-        return None;
-    };
+    let data = std::fs::read(path).expect("read capture");
     let mut out = Vec::new();
     let Some((stride, pre, start)) = detect(&data) else {
         return Some(out);

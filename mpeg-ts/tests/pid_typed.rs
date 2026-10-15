@@ -1,8 +1,8 @@
 //! Typed-PID gate (#1159): `TsHeader.pid` is a [`Pid`], not a bare `u16`.
 //!
 //! The real-data gate parses **every packet of every committed `.ts`
-//! fixture** (and, in an `#[ignore]`d test, of the local `.test-streams`
-//! capture archive) and checks, per packet:
+//! fixture** (and, in an `#[ignore]`d test, of the private real-capture
+//! corpus) and checks, per packet:
 //!
 //! * `header.pid.value()` equals the 13-bit PID computed *independently* from
 //!   the raw wire bytes (ISO/IEC 13818-1 §2.4.3.2: `byte1[4:0] << 8 | byte2`)
@@ -31,8 +31,7 @@ fn raw_pid(packet: &[u8]) -> u16 {
     (u16::from(packet[1] & 0x1F) << 8) | u16::from(packet[2])
 }
 
-/// Recursively collect files with extension `ext` under `dir` (following the
-/// `.test-streams` symlink).
+/// Recursively collect files with extension `ext` under `dir`.
 fn collect(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for entry in rd.flatten() {
@@ -113,17 +112,16 @@ fn every_committed_ts_fixture_pid_matches_the_wire() {
     assert!(total > 10_000, "only {total} packets verified");
 }
 
-/// The local real-capture archive (gitignored; skips cleanly when absent).
+/// The real-capture corpus (`private/fixtures/**` + the fetched `.test-streams`;
+/// skips loudly when the private repo is not checked out).
 #[test]
-#[ignore = "needs the local .test-streams capture archive; run with --ignored"]
-fn every_test_streams_capture_pid_matches_the_wire() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.test-streams");
-    if !root.is_dir() {
-        eprintln!("skipping: {} not present", root.display());
+#[ignore = "slow: scans the whole real-capture corpus; run with --ignored"]
+fn every_corpus_capture_pid_matches_the_wire() {
+    let files = test_fixtures::corpus(&["ts"]);
+    if files.is_empty() {
+        eprintln!("pid_typed: SKIPPED - the private repo is not checked out");
         return;
     }
-    let mut files = Vec::new();
-    collect(&root, "ts", &mut files);
     let mut total = 0usize;
     for f in &files {
         // Cap very large captures to the first 256 MiB: the property is
@@ -134,7 +132,7 @@ fn every_test_streams_capture_pid_matches_the_wire() {
     }
     eprintln!("verified {total} packets across {} files", files.len());
     if !files.is_empty() {
-        assert!(total > 0, "no aligned packets found in the archive");
+        assert!(total > 0, "no aligned packets found in the corpus");
     }
 }
 

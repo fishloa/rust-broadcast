@@ -19,7 +19,8 @@ tools/dvb-si-audit/out/
 *.rlib
 *.rmeta
 
-# fetch-on-demand broadcast captures (tools/fetch-test-streams.sh) — never committed
+# fetch-on-demand scratch (tools/fetch-test-streams.sh): the 4.9 GB russia capture and the pinned
+# tsduck-test clone. Everything else lives in private/fixtures (the private submodule) — never here.
 /.test-streams
 
 # wasm-pack build output for the browser demo (generated; not committed)

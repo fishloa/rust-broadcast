@@ -1,16 +1,15 @@
-//! Download-on-demand MHP/BIOP capture test — exercises DSM-CC object-carousel
+//! Real-capture MHP/BIOP capture test — exercises DSM-CC object-carousel
 //! parsing against a real Hot Bird 13E Italian mux (issue #218).
 //!
-//! Keyed on `.test-streams/hotbird-mhp.ts` (~336 MB). When the capture is
+//! Keyed on `private/fixtures/ts/hotbird-mhp.ts` (~336 MB, Git LFS). When the capture is
 //! present, scans for DSM-CC sections (table_id 0x3B/0x3C) and parses them as
 //! `DsmccSection`, then attempts to decode `UnMessage` payloads (DSI/DII).
 //!
-//! When the capture is absent, the test **skips cleanly** so the suite passes
-//! without downloads.
+//! When the capture is absent, the test **skips loudly** (private/ not checked out) so the suite passes
+//! without the private fixtures repo.
 #![cfg(feature = "ts")]
 
 use std::fs;
-use std::path::Path;
 
 use broadcast_common::Parse;
 use dvb_si::carousel::{DownloadDataBlock, UnMessage};
@@ -23,13 +22,6 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 const CAPTURE: &str = "hotbird-mhp";
 
-fn capture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-        .join(format!("{CAPTURE}.ts"))
-}
-
 /// Empirically known DSM-CC PIDs from this capture (may carry MHP carousels).
 /// We scan all non-well-known PIDs between 0x0030–0x1FFE for DSM-CC sections.
 const MIN_CAROUSEL_PID: u16 = 0x0030;
@@ -37,14 +29,9 @@ const MAX_CAROUSEL_PID: u16 = 0x1FFE;
 
 #[test]
 fn hotbird_mhp_dsmcc_parse() {
-    let path = capture_path();
-    if !path.exists() {
-        eprintln!(
-            "downloaded_mhp: SKIPPED — {CAPTURE}.ts not in .test-streams/. \
-             Run `tools/fetch-test-streams.sh {CAPTURE}` to enable."
-        );
+    let Some(path) = test_fixtures::require(&format!("ts/{CAPTURE}.ts"), "downloaded_mhp") else {
         return;
-    }
+    };
 
     let data = fs::read(&path).expect("read capture");
 
@@ -141,14 +128,9 @@ const AIT_PIDS: [u16; 2] = [0x1EC6, 0x1EC7];
 /// (NOT `Unknown`), proving the new parsers bite on a real stream.
 #[test]
 fn hotbird_mhp_dvb_j_descriptors_typed() {
-    let path = capture_path();
-    if !path.exists() {
-        eprintln!(
-            "downloaded_mhp: SKIPPED — {CAPTURE}.ts not in .test-streams/. \
-             Run `tools/fetch-test-streams.sh {CAPTURE}` to enable."
-        );
+    let Some(path) = test_fixtures::require(&format!("ts/{CAPTURE}.ts"), "downloaded_mhp") else {
         return;
-    }
+    };
 
     let data = fs::read(&path).expect("read capture");
 
