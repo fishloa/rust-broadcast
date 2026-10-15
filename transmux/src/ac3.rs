@@ -511,6 +511,10 @@ pub struct Ec3SplitFrame {
 /// coded syncframe in 16-bit words" (excerpt appended to
 /// `docs/codec/eac3-syncframe.md`).
 ///
+/// A dependent-substream syncframe with no independent frame before it (an
+/// orphan: the payload starts on one, e.g. after a lost PES) is dropped, not
+/// emitted as an access unit of its own - TS 102 366 §E.1.3.1.2.
+///
 /// Multi-program E-AC-3 (independent substreams with `substreamid` 1..=7,
 /// §E.1.3.1.2) is not disentangled: every independent frame starts a new
 /// access unit in stream order (single-program streams are unaffected).
@@ -529,10 +533,17 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
             break;
         }
         let frame_bytes = &payload[off..off + len];
-        if info.strmtyp == EAC3_STRMTYP_DEPENDENT
-            && let Some(last) = out.last_mut()
-        {
-            last.data.extend_from_slice(frame_bytes);
+        if info.strmtyp == EAC3_STRMTYP_DEPENDENT {
+            // A dependent substream is only meaningful with the independent
+            // substream it follows (ETSI TS 102 366 §E.1.3.1.2: "Dependent
+            // substreams shall immediately follow the independent substream
+            // with which they are associated"). One with no independent frame
+            // before it (stream start, or the independent frame was lost) is
+            // an orphan: it cannot be decoded and must not become an access
+            // unit of its own, so it is dropped.
+            if let Some(last) = out.last_mut() {
+                last.data.extend_from_slice(frame_bytes);
+            }
             off += len;
             continue;
         }
@@ -1729,6 +1740,31 @@ mod tests {
         assert_eq!(back, bx, "dec3 must round-trip");
     }
 
+    /// An orphan dependent substream at the start of the payload (its
+    /// independent frame was lost) is dropped, not emitted as an access unit of
+    /// its own; a dependent frame after an independent one still folds in
+    /// (TS 102 366 §E.1.3.1.2).
+    #[test]
+    fn leading_orphan_dependent_frame_is_dropped() {
+        let orphan = eac3_bsi(1, 2, 64, 1, false, 0, 3, Some(0x0100), None);
+        let independent = eac3_bsi(0, 0, 64, 1, false, 0, 3, None, None);
+        let dependent = eac3_bsi(1, 1, 64, 1, false, 0, 3, Some(0x0100), None);
+        let es = [orphan.clone(), independent.clone(), dependent.clone()].concat();
+        let units = split_eac3_syncframes(&es);
+        assert_eq!(units.len(), 1, "the orphan is not its own access unit");
+        assert_eq!(
+            units[0].info.strmtyp, 0,
+            "the unit starts at the independent frame"
+        );
+        assert_eq!(
+            units[0].data,
+            [independent, dependent].concat(),
+            "the independent frame keeps its own dependent"
+        );
+        // A payload that is nothing but an orphan yields no access unit.
+        assert!(split_eac3_syncframes(&orphan).is_empty());
+    }
+
     /// r04-W5: a dependent-only (or empty) input describes no substream, so
     /// building a `dec3` from it must be an error. Unfixed, it produced a box
     /// with `num_ind_sub == 0` and no substreams, which the serializer then
@@ -1736,8 +1772,9 @@ mod tests {
     #[test]
     fn dec3_from_dependent_only_input_errors() {
         let es = eac3_bsi(1, 2, 64, 1, false, 0, 3, Some(0x0100), None);
-        let frames = scan_eac3_frames(&es);
-        assert_eq!(frames.len(), 1);
+        // The splitter drops an orphan dependent frame (see
+        // `leading_orphan_dependent_frame_is_dropped`), so parse it directly.
+        let frames = vec![Ec3SyncframeInfo::parse_at(&es, 0).unwrap()];
         assert_eq!(frames[0].strmtyp, EAC3_STRMTYP_DEPENDENT);
         let err = Ec3SpecificBox::from_syncframes(&frames).unwrap_err();
         assert!(
