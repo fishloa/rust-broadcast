@@ -418,6 +418,12 @@ const SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35: u32 = 4;
 /// table) — the fixed first byte of an ATSC caption SEI payload.
 const ITU_T_T35_COUNTRY_CODE_USA: u8 = 0xB5;
 
+/// `itu_t_t35_country_code` for China: GY/T 270-2013 clause 6.3.3 Table 6
+/// carries the same `GA94` `DVB1_data()` caption payload in an H.264 SEI whose
+/// T.35 country code is the fixed value `0x26` (provider code `0x0031`,
+/// `user_identifier` `0x47413934`, `user_data_type_code` `0x03`).
+const ITU_T_T35_COUNTRY_CODE_CHINA: u8 = 0x26;
+
 /// `itu_t_t35_provider_code` identifying ATSC as the T.35 payload provider
 /// (registered with the SMPTE RA). Well-established industry convention for
 /// H.264/H.265 caption SEI (matches e.g. ffmpeg's `ff_alloc_a53_sei`); ATSC
@@ -467,7 +473,7 @@ fn append_if_atsc_cc_data(payload: &[u8], out: &mut Vec<u8>) {
     if payload.len() < ATSC_T35_HEADER_LEN {
         return;
     }
-    if payload[0] != ITU_T_T35_COUNTRY_CODE_USA {
+    if payload[0] != ITU_T_T35_COUNTRY_CODE_USA && payload[0] != ITU_T_T35_COUNTRY_CODE_CHINA {
         return;
     }
     let provider_code = u16::from_be_bytes([payload[1], payload[2]]);
@@ -1100,6 +1106,25 @@ mod tests {
         0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00,
         0xfa, 0x00, 0x00,
     ];
+
+    /// GY/T 270-2013 clause 6.3.3 (Table 6): the China caption SEI differs only
+    /// in the T.35 country code (`0x26` instead of `0xB5`); provider `0x0031`,
+    /// `GA94` and `user_data_type_code` `0x03` are the same. The real-capture
+    /// SEI with its country byte set to `0x26` must extract the same bytes, and
+    /// any other country code must still be ignored.
+    #[test]
+    fn caption_cc_data_extracts_china_gyt_270_sei() {
+        let mut china = REAL_A53_SEI_NAL;
+        assert_eq!(china[6], 0xB5);
+        china[6] = 0x26;
+        assert_eq!(
+            caption_cc_data(NalCodec::Avc, &china, false),
+            REAL_A53_CC_DATA
+        );
+        let mut other = REAL_A53_SEI_NAL;
+        other[6] = 0x27;
+        assert!(caption_cc_data(NalCodec::Avc, &other, false).is_empty());
+    }
 
     #[test]
     fn caption_cc_data_extracts_real_atsc_a53_sei() {

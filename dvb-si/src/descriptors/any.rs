@@ -341,11 +341,12 @@ declare_descriptors! {'a;
     // 0x83 logical_channel requires private_data_specifier context; enabled
     // via the descriptor registry (Task 4).
     @no_dispatch
-    // ORDER: this no-dispatch tail is ordered by descriptor tag (0x3E, 0x40, 0x83, 0x87, 0xD1, 0xD2, 0xD3), not alphabetically.
+    // ORDER: this no-dispatch tail is ordered by descriptor tag (0x3E, 0x40, 0x83, 0x86, 0x87, 0xD1, 0xD2, 0xD3), not alphabetically.
     TuwaAvs3Video => crate::descriptors::tuwa_avs3_video::TuwaAvs3VideoDescriptor,
     Avs2Video => crate::descriptors::avs2_video::Avs2VideoDescriptor,
     LogicalChannel => crate::descriptors::logical_channel::LogicalChannelDescriptor,
     NordigLogicalChannelV1 => crate::descriptors::nordig::NordigLogicalChannelV1,
+    ChinaCaptionService => crate::descriptors::china_caption_service::ChinaCaptionServiceDescriptor,
     NordigLogicalChannelV2 => crate::descriptors::nordig::NordigLogicalChannelV2,
     Avs3Video => crate::descriptors::avs3_video::Avs3VideoDescriptor,
     Avs3Audio => crate::descriptors::avs3_audio::Avs3AudioDescriptor,

@@ -18,6 +18,9 @@
 - `StreamType::Avs2Video` (0xD2, GY/T 420-2025 7.2.1), `Avs2Audio` (0xD3, T/AI 109.7 8.2), `Avs3Video` (0xD4) and `Avs3Audio` (0xD5) (TS 101 154 V2.10.1 section 4.1.8; T/AI 109.6 / 109.7 clause 8.1.2). Note 0x33 is VVC, not AVS3.
 - `descriptors::avs3_video::Avs3VideoDescriptor` (tag 0xD1, T/AI 109.6-2022 clause 9.3.2 Table 9 / GY/T 420-2025 clause 7.3.3.2 Table 6) with typed `Avs3FrameRateCode`; 7- and 8-byte bodies (T/AI 109.6 Table 9 omits `colour_primaries`, its own semantics and GY/T 420 include it - both re-emitted faithfully); `DescriptorRegistry::with_avs3_video()` for 'AVSV' (PDS or registration). `AnyDescriptor::Avs3Video` variant. Transcription: `docs/descriptors/t_ai_109_6/avs3-video-descriptor.md`.
 - `PDS_AVSV` (0x41565356, 'AVSV'): the specifier that precedes the AVS3_video_descriptor and the `registration_descriptor` format_identifier for AVS3 HDR; tests for the 'AVSV'/'AVSA' registration format identifiers.
+### Added (#1227 - China closed caption, GY/T 270-2013)
+- `descriptors::china_caption_service::ChinaCaptionServiceDescriptor` (tag 0x86, clause 6.4 Table 8, `char_set` Table 9): per-service `language`/`caption_service_number`/`wide_aspect_ratio`/typed `ChinaCaptionCharSet`, trailing `caption_service_pid`, all reserved runs preserved. The tag is context-dependent (ATSC uses it differently), so it is not auto-dispatched: `DescriptorRegistry::with_china_caption_service()`. `AnyDescriptor::ChinaCaptionService` variant. Transcription: `docs/descriptors/gy_t_270/caption-service-descriptor.md`.
+- `StreamType::ChinaClosedCaption` (0x80, clause 6.2: `cc_data()` in a dedicated caption PES). The `cc_data()` link layer (Table 10) is bit-identical to `cc-data`'s existing parser.
 
 ### Changed (BREAKING, #1222 - EN 300 468 v1.20.1)
 - Brought up to ETSI EN 300 468 V1.20.1 (2026-09); clause-by-clause delta in `docs/en300468-v1.20.1-delta.md`. v1.20.1 adds no tags, table_ids or wire layouts.

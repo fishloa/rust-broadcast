@@ -159,6 +159,10 @@ pub enum StreamType {
     ReservedRange(u8),
     /// 0x7F — IPMP stream (H.222.0 Table 2-34).
     IpmpHigh,
+    /// 0x80 — China DTV closed-caption data PES (GY/T 270-2013 clause 6.2, Table 3:
+    /// `cc_data()` in a dedicated PES, stream_id 0xBD). Elsewhere (ATSC/DigiCipher)
+    /// that value is a different vendor-specific type; the meaning here is Chinese-DTV only.
+    ChinaClosedCaption,
     /// 0x81 — ATSC AC-3 audio (A/52).
     Ac3,
     /// 0x86 — SCTE-35 splice_info_section (ANSI/SCTE 35).
@@ -244,6 +248,7 @@ impl StreamType {
             0x35 => Self::Evc,
             0x36..=0x7E => Self::ReservedRange(v),
             0x7F => Self::IpmpHigh,
+            0x80 => Self::ChinaClosedCaption,
             0x81 => Self::Ac3,
             0x86 => Self::Scte35,
             0x87 => Self::EAc3,
@@ -315,6 +320,7 @@ impl StreamType {
             Self::Evc => 0x35,
             Self::ReservedRange(v) => v,
             Self::IpmpHigh => 0x7F,
+            Self::ChinaClosedCaption => 0x80,
             Self::Ac3 => 0x81,
             Self::Scte35 => 0x86,
             Self::EAc3 => 0x87,
@@ -553,6 +559,7 @@ impl StreamType {
             Self::Evc => "EVC",
             Self::ReservedRange(_) => "Reserved",
             Self::IpmpHigh => "IPMP (0x7F)",
+            Self::ChinaClosedCaption => "China Closed Caption (GY/T 270)",
             Self::Ac3 => "AC-3",
             Self::Scte35 => "SCTE-35",
             Self::EAc3 => "E-AC-3",
@@ -1250,6 +1257,16 @@ mod tests {
             );
             assert!(!st.is_data(), "{label} (0x{byte:02X}) must not be is_data");
         }
+    }
+
+    /// GY/T 270-2013 clause 6.2 Table 3: the dedicated caption PES has stream_type 0x80.
+    #[test]
+    fn china_closed_caption_stream_type() {
+        let st = StreamType::from_u8(0x80);
+        assert_eq!(st, StreamType::ChinaClosedCaption);
+        assert_eq!(st.to_u8(), 0x80);
+        assert_eq!(st.name(), "China Closed Caption (GY/T 270)");
+        assert!(!st.is_video() && !st.is_audio() && st.is_data());
     }
 
     #[test]

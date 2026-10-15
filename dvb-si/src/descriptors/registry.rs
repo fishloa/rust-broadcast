@@ -373,6 +373,15 @@ impl DescriptorRegistry {
         self.register::<crate::descriptors::tuwa_avs3_video::TuwaAvs3VideoDescriptor>()
     }
 
+    /// Register the China `caption_service_descriptor` (tag 0x86, GY/T 270-2013
+    /// clause 6.4 Table 8). The standard gives it no private_data_specifier, so
+    /// this is a PDS-agnostic registration of tag 0x86: enable it only for
+    /// Chinese DTV streams (tag 0x86 is the ATSC caption_service_descriptor
+    /// elsewhere, with a different layout).
+    pub fn with_china_caption_service(&mut self) -> &mut Self {
+        self.register::<crate::descriptors::china_caption_service::ChinaCaptionServiceDescriptor>()
+    }
+
     /// Lazily walk a raw descriptor loop using this registry's configuration.
     ///
     /// Semantics mirror [`crate::descriptors::parse_loop`]: per-descriptor
@@ -909,6 +918,32 @@ mod tests {
         other.extend_from_slice(&desc);
         let items: Vec<_> = reg.parse_loop(&other).collect::<Result<_, _>>().unwrap();
         assert!(matches!(items[1], AnyDescriptor::Unknown { tag: 0xD2, .. }));
+    }
+
+    /// GY/T 270-2013 Table 8: tag 0x86 is the China caption_service_descriptor
+    /// once `with_china_caption_service` is enabled, and stays Unknown otherwise.
+    #[test]
+    fn china_caption_service_is_opt_in() {
+        use crate::descriptors::china_caption_service::ChinaCaptionServiceDescriptor;
+        let desc = [
+            0x86, 9, 0xE1, b'c', b'h', b'i', 0xC1, 0xC2, 0xFF, 0xE1, 0x00,
+        ];
+        let plain = DescriptorRegistry::new();
+        let items: Vec<_> = plain.parse_loop(&desc).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[0], AnyDescriptor::Unknown { tag: 0x86, .. }));
+        let mut reg = DescriptorRegistry::new();
+        reg.with_china_caption_service();
+        let items: Vec<_> = reg.parse_loop(&desc).collect::<Result<_, _>>().unwrap();
+        match &items[0] {
+            AnyDescriptor::Other { tag, value } => {
+                assert_eq!(*tag, 0x86);
+                let d = value
+                    .downcast_ref::<ChinaCaptionServiceDescriptor>()
+                    .unwrap();
+                assert_eq!(d.services.len(), 1);
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
     }
 
     #[test]

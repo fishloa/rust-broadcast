@@ -31,6 +31,7 @@ pub mod cable_delivery_system;
 pub mod carousel_identifier;
 pub mod cell_frequency_link;
 pub mod cell_list;
+pub mod china_caption_service;
 pub mod component;
 pub mod content;
 pub mod content_identifier;
