@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING) / Added (real wvtt producers, #1249)
+- **BREAKING:** `VttCueBox` gains `extra_children` (every `vttc` child other than `payl`/`sttg`/`iden`, e.g. `vsid`/`ctim`, kept verbatim) and remembers the wire order of its children. Before, a parsed cue was written back `payl, sttg, iden` and unknown children were dropped, so it did not serialize to the bytes it was parsed from; MP4Box and gpac both write `iden, sttg, payl`, which is now also the order of a cue built with `VttCueBox::new` (after any extras). The struct literal can no longer be built outside the crate; use `VttCueBox::new` and set the public fields.
+- New `VttAdditionalTextBox` (`vtta`, the `NOTE` text both producers write ahead of the cue after a comment), `WvttSampleBox` (`Cue`/`Empty`/`AdditionalText`/`Other`) and `parse_wvtt_sample`: a `wvtt` media sample as typed boxes, serializing back to the same bytes.
+- Real `wvtt` / `stpp` artifacts from MP4Box and gpac (progressive, fragmented, DASH) under `fixtures/subtitles/`, checked against the tools' own parse (gpac `inspect` per-sample dts/cts/dur/size/CRC32; MP4Box `-raw` WebVTT export for cue ids, settings, text and NOTE blocks).
+
 ### Fixed (E-AC-3 orphan dependent substream, #1245)
 - An E-AC-3 dependent-substream syncframe with no independent frame before it (the data starts on it at stream start, or after a continuity gap / dropped PES / re-anchor cleared the carry) was emitted as a sample of its own with an independent frame's duration, shifting every following timestamp by one frame. It cannot be decoded alone (ETSI TS 102 366 §E.1.3.1.2: dependent substreams immediately follow their independent substream), so `StreamingTsDemux` and `ac3::split_eac3_syncframes` now drop it; a dependent frame after its independent frame still folds into that access unit.
 

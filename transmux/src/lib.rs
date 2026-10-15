@@ -400,8 +400,9 @@ pub use sps::{
     rfc6381_mp4a,
 };
 pub use subtitle_entries::{
-    CueIdBox, CuePayloadBox, CueSettingsBox, VttCueBox, VttEmptyCueBox, WebVttConfigurationBox,
-    WvttSampleEntry, XmlSubtitleSampleEntry,
+    CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
+    WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,
+    parse_wvtt_sample,
 };
 pub use timing::{
     CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,

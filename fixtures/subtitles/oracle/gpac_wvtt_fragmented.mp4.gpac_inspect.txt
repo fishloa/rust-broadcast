@@ -1,0 +1,14 @@
+1 dts=0 cts=0 dur=1000 sap=1 size=8 crc32=0xFCCAA5E4
+2 dts=1000 cts=1000 dur=2500 sap=1 size=265 crc32=0x5C72E83C
+3 dts=3500 cts=3500 dur=500 sap=1 size=8 crc32=0xFCCAA5E4
+4 dts=4000 cts=4000 dur=2000 sap=1 size=127 crc32=0xBD8A995F
+5 dts=6000 cts=6000 dur=2000 sap=1 size=8 crc32=0xFCCAA5E4
+6 dts=8000 cts=8000 dur=1500 sap=1 size=100 crc32=0x8CDA0B7B
+7 dts=9500 cts=9500 dur=2500 sap=1 size=8 crc32=0xFCCAA5E4
+8 dts=12000 cts=12000 dur=1500 sap=1 size=43 crc32=0xBB36847F
+9 dts=13500 cts=13500 dur=1000 sap=1 size=118 crc32=0x92429386
+10 dts=14500 cts=14500 dur=1500 sap=1 size=43 crc32=0xBB36847F
+11 dts=16000 cts=16000 dur=2000 sap=1 size=8 crc32=0xFCCAA5E4
+12 dts=18000 cts=18000 dur=2000 sap=1 size=67 crc32=0x11197095
+13 dts=20000 cts=20000 dur=2250 sap=1 size=8 crc32=0xFCCAA5E4
+14 dts=22250 cts=22250 dur=1500 sap=1 size=36 crc32=0xDFD85B67

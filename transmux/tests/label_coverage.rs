@@ -34,6 +34,9 @@ const SKIP: &[&str] = &[
     // whole parsed `stpp`/`wvtt` sample entry; its format label is
     // `SubtitleFormat` (which carries `name()` + `impl_spec_display!`).
     "SubtitleSampleEntry",
+    // `subtitle_entries::WvttSampleBox`: a data-carrying ADT of the boxes of a
+    // `wvtt` media sample (`vttc` / `vtte` / `vtta` / other), not a spec label.
+    "WvttSampleBox",
     // errors (Display comes from `thiserror`'s derive or a hand-written
     // human-readable message, not a spec-token label)
     "Error",
