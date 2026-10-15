@@ -6,8 +6,8 @@
 //! E-AC-3 syncframe (`strmtyp` 1, `chanmap` = Ls, Rs, Lrs/Rrs). Its licence is not
 //! stated, so it lives in the private submodule (`private/fixtures/eac3-dep/`,
 //! with `PROVENANCE.md` and `make.sh` for the derived MP4/TS files produced by
-//! MP4Box, ffmpeg and gpac); every test here skips loudly when `private/` is not
-//! checked out (maintainers only: `git submodule update --init private`).
+//! MP4Box, ffmpeg and gpac); every test here skips loudly (`test_fixtures::require`)
+//! when the private repo is not checked out.
 //!
 //! Independent oracles: MP4Box's own `dec3` box and gpac's per-sample parse of
 //! MP4Box's MP4 (`gw_mp4box.gpac_inspect.txt`: size and CRC32 of each access
@@ -28,19 +28,13 @@ const AC3_CORE_LEN: usize = 2304;
 const AU_LEN: usize = 2 * AC3_CORE_LEN;
 const SAMPLES_PER_AU: u32 = 1536;
 
+/// `private/fixtures/eac3-dep/<rel>` through the shared resolver: `None` after a
+/// loud SKIPPED line when the private repo is not checked out.
 fn local(rel: &str) -> Option<Vec<u8>> {
-    match test_fixtures::private(&format!("eac3-dep/{rel}")) {
-        Some(path) => {
-            Some(std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
-        }
-        None => {
-            eprintln!(
-                "SKIP: private fixture eac3-dep/{rel} absent (the `private` submodule is not \
-                 checked out); `git submodule update --init private` (maintainers only)"
-            );
-            None
-        }
-    }
+    test_fixtures::require_bytes(
+        &format!("eac3-dep/{rel}"),
+        "transmux/tests/eac3_real_dependent_substreams.rs",
+    )
 }
 
 macro_rules! need {
