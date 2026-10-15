@@ -277,6 +277,11 @@ variant = "IpmpHigh"
 spec = "IPMP (0x7F)"
 
 [[entry]]
+value = 0x80
+variant = "ChinaClosedCaption"
+spec = "China Closed Caption (GY/T 270)"
+
+[[entry]]
 value = 0x81
 variant = "Ac3"
 spec = "AC-3"

@@ -346,6 +346,7 @@ declare_descriptors! {'a;
     Avs2Video => crate::descriptors::avs2_video::Avs2VideoDescriptor,
     LogicalChannel => crate::descriptors::logical_channel::LogicalChannelDescriptor,
     NordigLogicalChannelV1 => crate::descriptors::nordig::NordigLogicalChannelV1,
+    ChinaCaptionService => crate::descriptors::china_caption_service::ChinaCaptionServiceDescriptor,
     NordigLogicalChannelV2 => crate::descriptors::nordig::NordigLogicalChannelV2,
     Avs3Video => crate::descriptors::avs3_video::Avs3VideoDescriptor,
     Avs3Audio => crate::descriptors::avs3_audio::Avs3AudioDescriptor,

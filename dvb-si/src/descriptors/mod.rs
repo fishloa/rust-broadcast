@@ -85,6 +85,7 @@ pub mod multiplex_buffer_utilization;
 pub mod muxcode;
 pub mod mvc_extension;
 pub mod network_name;
+pub mod china_caption_service;
 pub mod nordig;
 pub mod nvod_reference;
 pub mod parental_rating;

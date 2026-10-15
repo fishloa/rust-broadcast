@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `avs3_audio`: `Ca3SpecificBox` (`dca3`, A.4.3.1) with the general-bit-rate and lossless `Avs3Audio*SpecificConfig` (bit-packed, typed `content_type`).
 - Not modelled: the `lidx` LRAP segment index box and the `av3l` restricted-scheme wrapper (A.3.3.3/A.3.3.6), the `av3a` audio sample entry wiring in the init-segment machinery, and `sequence_header()` decoding (carried verbatim).
 
+### Added (#1227)
+- Caption SEI extraction (`caption_cc_data`) also accepts the China GY/T 270-2013 clause 6.3.3 form: `itu_t_t35_country_code` `0x26` (provider 0x0031, `GA94`, type 0x03), in addition to the ATSC `0xB5`.
+
 ### Added
 - `dash::xs_duration(Duration) -> String` is public: the workspace's one ISO 8601 / `xs:duration` spelling (jiff `SpanPrinter`); a duration beyond `i64::MAX` seconds saturates to the largest representable value. `multimux` now calls it instead of its own copy (#1216).
 
