@@ -1,4 +1,4 @@
-//! Download-on-demand SCTE-35 capture test — exercises the T2-MI → inner TS
+//! Fetch-on-demand SCTE-35 capture test — exercises the T2-MI → inner TS
 //! → SCTE-35 pipeline against a real Russian mux (issue #218).
 //!
 //! Keyed on `.test-streams/russia-t2mi-scte35.ts` (~4.9 GB). When the capture
@@ -6,12 +6,13 @@
 //! scans the inner TS for `splice_info_section` (table_id 0xFC), and asserts
 //! at least one splice command parses successfully.
 //!
-//! The capture is large — this is a **scaffold** test. It **skips cleanly** by
-//! default (the file won't be present without an explicit download).
+//! The capture is the one real capture too large to mirror in the private repo,
+//! so it stays fetch-on-demand (`tools/fetch-test-streams.sh
+//! russia-t2mi-scte35`, resolved by `test_fixtures::find`); the test **skips
+//! loudly** until fetched. This is a **scaffold** test.
 
 use mpeg_ts::pid::Pid;
 use std::fs;
-use std::path::Path;
 
 use broadcast_common::Parse;
 use dvb_t2mi::inner_ts::InnerTsRecovery;
@@ -19,27 +20,21 @@ use scte35_splice::SpliceInfoSection;
 
 const CAPTURE: &str = "russia-t2mi-scte35";
 
-fn capture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-        .join(format!("{CAPTURE}.ts"))
-}
-
 /// The T2-MI PID used by the Russian capture (empirically known).
 const T2MI_PID: u16 = 0x1000;
 
 #[test]
 fn russia_t2mi_scte35_parse() {
-    let path = capture_path();
-    if !path.exists() {
+    // ~4.9 GB: too large for the private repo (see `tools/fetch-test-streams.sh`),
+    // so it is the one fetch-on-demand capture; resolved through the shared
+    // resolver (`.test-streams/` fallback) and skipped loudly when not fetched.
+    let Some((path, _)) = test_fixtures::find(&format!("{CAPTURE}.ts")) else {
         eprintln!(
-            "downloaded_scte35: SKIPPED — {CAPTURE}.ts not in .test-streams/. \
-             Run `tools/fetch-test-streams.sh {CAPTURE}` to enable \
-             (warning: ~4.9 GB download)."
+            "downloaded_scte35: SKIPPED - {CAPTURE}.ts (~4.9 GB) not fetched. \
+             Run `tools/fetch-test-streams.sh {CAPTURE}` to enable."
         );
         return;
-    }
+    };
 
     let data = fs::read(&path).expect("read capture");
     let mut rec = InnerTsRecovery::new_for_plp(Pid::new(T2MI_PID), 0);

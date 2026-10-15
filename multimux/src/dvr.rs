@@ -2896,18 +2896,11 @@ mod tests {
     /// Skips cleanly when `private/` is absent (public clones, CI).
     #[tokio::test]
     async fn real_dvbt_capture_records_and_replays_from_disk_only() {
-        let fixture_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../private/fixtures/ts/france-tnt-dvbt-20s.ts"
-        );
-        if !std::path::Path::new(fixture_path).exists() {
-            eprintln!(
-                "SKIP real_dvbt_capture_records_and_replays_from_disk_only: \
-                 private fixture not found at {fixture_path} \
-                 (run `git submodule update --init private`)"
-            );
+        let Some(fixture_path) =
+            test_fixtures::require("ts/france-tnt-dvbt-20s.ts", "multimux dvr real capture")
+        else {
             return;
-        }
+        };
 
         use crate::source::ts_program::TsIngestSession;
         use crate::source::{DriverProgress, advance_route};

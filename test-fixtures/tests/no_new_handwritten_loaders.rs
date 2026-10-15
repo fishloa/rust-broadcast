@@ -55,7 +55,6 @@ const ALLOWED: &[&str] = &[
     "transmux/tests/hub.rs",
     "transmux/tests/interlace_facts.rs",
     "transmux/tests/mpeg_legacy.rs",
-    "transmux/tests/mpegh_ts.rs",
     "transmux/tests/progressive.rs",
     "transmux/tests/streaming_chunk_invariance.rs",
     "transmux/tests/subtitle_ac4_strictness.rs",

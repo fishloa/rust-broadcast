@@ -89,7 +89,8 @@ PES-carried `cc_data()` path (issue #568).
 `B5 00 31 47 41 39 34 03` (country + provider + `GA94` + type code) appears
 401 times in the first 15 MB of the real
 `samples.ffmpeg.org/ffmpeg-bugs/trac/ticket2885/transformers_EIA608_H264.ts`
-capture (fetched on demand into the gitignored `.test-streams/`, see
+capture (kept in the private fixtures repo as
+`private/fixtures/ts/transformers-eia608-h264.ts`; re-fetch via
 `tools/fetch-test-streams.sh`), confirming this is the layout real encoders
 emit, not just a documented-but-unused convention. One such SEI NAL, extracted
 byte-for-byte from that capture, is `transmux::nal`'s

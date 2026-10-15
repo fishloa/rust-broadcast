@@ -15,8 +15,8 @@
 //! extracted real pop-on cues with clean start/end timing that match the
 //! shape this extractor produces). That capture is licensed third-party
 //! movie footage (~130 MB) and is **not** committed here — per this
-//! project's fixture-licensing convention it would belong in the
-//! `.test-streams/`-gated pattern, not the public tree — so the committed,
+//! project's fixture-licensing convention it belongs in the private fixtures
+//! repo (`private/fixtures/ts/`), not the public tree — so the committed,
 //! CI-run fixture is the synthetic one below instead (STEP 1 fallback
 //! option 3, explicitly sanctioned for exactly this situation).
 #![cfg(feature = "cc-data")]

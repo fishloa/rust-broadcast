@@ -1,15 +1,14 @@
-//! Fetch-on-demand real-capture test: the MPEG-H 3D audio descriptors in the
-//! PMT of the Fraunhofer-IIS `mpegh-test-content` transport-layer streams
-//! (`tools/fetch-test-streams.sh mpegh-cicp01-baseline ...`).
+//! Real-capture test: the MPEG-H 3D audio descriptors in the PMT of the
+//! Fraunhofer-IIS `mpegh-test-content` transport-layer streams
+//! (`private/fixtures/ts/mpegh-*.ts`; provenance in its `PROVENANCE.md`,
+//! re-fetch via `tools/fetch-test-streams.sh mpegh-cicp01-baseline ...`).
 //!
-//! The streams are CC BY-NC-ND 4.0: they are fetched into the gitignored
-//! `.test-streams/` and never committed. Each test **skips cleanly** when its
-//! stream is absent. Expected values were read from the PMT bytes (dumped
+//! The streams are CC BY-NC-ND 4.0, so they live only in the private fixtures
+//! repo, never the public tree. Each test **skips loudly** when `private/` is
+//! not checked out. Expected values were read from the PMT bytes (dumped
 //! independently with a script and with TSDuck: `Elementary stream: type 0x2D`,
 //! `MPEG extended descriptor: MPEG-H 3D Audio (0x08)`).
 #![cfg(feature = "ts")]
-
-use std::path::Path;
 
 use broadcast_common::{Parse, Serialize};
 use dvb_si::demux::SiDemux;
@@ -21,16 +20,7 @@ use mpeg_ts::ts::TS_PACKET_SIZE;
 
 /// `(file, expected ES_info loop bytes of the 0x2D stream)`.
 fn pmt_es_descriptor_bytes(name: &str) -> Option<(StreamType, Vec<Vec<u8>>)> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-        .join(format!("{name}.ts"));
-    let Ok(data) = std::fs::read(&path) else {
-        eprintln!(
-            "downloaded_mpegh: SKIPPED — {name}.ts not in .test-streams/ (tools/fetch-test-streams.sh {name})"
-        );
-        return None;
-    };
+    let data = test_fixtures::require_bytes(&format!("ts/{name}.ts"), "downloaded_mpegh")?;
     let mut demux = SiDemux::builder().build();
     for chunk in data.chunks(TS_PACKET_SIZE) {
         if chunk.len() != TS_PACKET_SIZE || chunk[0] != 0x47 {

@@ -1,5 +1,5 @@
 //! Real-data gate for the typed-id migration (#1159): demuxes every committed
-//! fixture (and, when present, every `.test-streams` capture up to 40 MB) and
+//! fixture (and, when present, every real capture of the private corpus up to 40 MB) and
 //! compares the per-track `track_id` values and sample counts with
 //! `tests/golden/track_ids.txt`, which was captured when `track_id` was a bare
 //! `u32`. A `TrackId` newtype must render and number identically.
@@ -43,7 +43,7 @@ fn demux(path: &Path, bytes: &[u8]) -> Option<Media> {
     }
 }
 
-fn summarize(root: &Path, prefix: &str) -> String {
+fn summarize(root: &Path, key: impl Fn(&str) -> Option<String>) -> String {
     let mut files = Vec::new();
     walk(root, &mut files);
     files.sort();
@@ -62,7 +62,10 @@ fn summarize(root: &Path, prefix: &str) -> String {
             continue;
         };
         let rel = f.strip_prefix(root).unwrap().display().to_string();
-        let mut line = format!("{prefix}{rel}:");
+        let Some(key) = key(&rel) else {
+            continue;
+        };
+        let mut line = format!("{key}:");
         for t in &media.tracks {
             let _ = write!(line, " {}x{}", t.track_id(), t.samples.len());
         }
@@ -88,11 +91,30 @@ fn lines(s: &str) -> BTreeMap<String, String> {
 #[test]
 fn track_ids_match_pre_typed_golden() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut got = summarize(&manifest.join("../fixtures"), "fixtures/");
-    got.push_str(&summarize(
-        &manifest.join("../.test-streams"),
-        "test-streams/",
-    ));
+    let mut got = summarize(&manifest.join("../fixtures"), |r| {
+        Some(format!("fixtures/{r}"))
+    });
+    // Real-capture corpus. The golden keys predate the private repo and keep
+    // their historic `test-streams/...` spelling: `private/fixtures/ts/X` ->
+    // `test-streams/X`, `.../tsduck/Y` -> `test-streams/tsduck-test/Y`,
+    // `.../mpegh/Z` -> `test-streams/mpegh/Z`; other private entries are new
+    // captures and are not in the golden.
+    if let Some(private) = test_fixtures::private_root() {
+        got.push_str(&summarize(&private.join("fixtures"), |r| {
+            if let Some(x) = r.strip_prefix("ts/") {
+                Some(format!("test-streams/{x}"))
+            } else if let Some(x) = r.strip_prefix("tsduck/") {
+                Some(format!("test-streams/tsduck-test/{x}"))
+            } else {
+                r.strip_prefix("mpegh/")
+                    .map(|x| format!("test-streams/mpegh/{x}"))
+            }
+        }));
+    }
+    // Fetched (pinned tsduck-test clone) legacy directory.
+    got.push_str(&summarize(&manifest.join("../.test-streams"), |r| {
+        Some(format!("test-streams/{r}"))
+    }));
     if std::env::var_os("TRACK_ID_BLESS").is_some() {
         std::fs::write(golden_path(), &got).unwrap();
         return;
@@ -112,7 +134,7 @@ fn track_ids_match_pre_typed_golden() {
     }
     eprintln!("track_id golden: {checked} files matched");
     assert!(bad.is_empty(), "track ids changed: {bad:#?}");
-    // Every committed (not .test-streams) golden entry must still demux.
+    // Every committed (not real-capture corpus) golden entry must still demux.
     for k in want.keys().filter(|k| k.starts_with("fixtures/")) {
         assert!(
             got.contains_key(k),

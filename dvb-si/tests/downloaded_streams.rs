@@ -1,49 +1,26 @@
-//! Extended-capture tests over **fetch-on-demand** broadcast streams (issue #67).
+//! Extended-capture tests over real third-party broadcast muxes (issue #67).
 //!
-//! The captures are large, real, third-party muxes that are NOT vendored in the
-//! repo. Pull them with `tools/fetch-test-streams.sh` (they land in the
-//! gitignored `<repo>/.test-streams/`). This test then runs every present
-//! capture through `SiDemux` and asserts it parses real SI without panicking.
+//! The captures are large, real, third-party muxes kept in the private
+//! fixtures repo (`private/fixtures/ts/`, the `private/` submodule; resolved by
+//! `test_fixtures`, which also falls back to a fetched `.test-streams/` — see
+//! `tools/fetch-test-streams.sh`). This test runs every resolvable capture
+//! through `SiDemux` and asserts it parses real SI without panicking.
 //!
-//! When no captures are present (the default — nothing downloaded), the test
-//! **skips cleanly** so `cargo test` passes without the downloads. CI may run
-//! the fetch script first to exercise the extended corpus.
+//! When the `private/` submodule is not checked out (public/CI clones), the
+//! test **skips loudly**; with it checked out, a missing capture is a failure.
 #![cfg(feature = "ts")]
 
 use std::fs;
-use std::path::{Path, PathBuf};
 
 use dvb_si::demux::SiDemux;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
-/// `<repo>/.test-streams/` — `CARGO_MANIFEST_DIR` is the `dvb-si/` crate dir.
-fn streams_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-}
-
-fn ts_files(dir: &Path) -> Vec<PathBuf> {
-    let mut v = Vec::new();
-    if let Ok(rd) = fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if p.extension().is_some_and(|x| x == "ts") {
-                v.push(p);
-            }
-        }
-    }
-    v.sort();
-    v
-}
-
 #[test]
 fn downloaded_streams_parse_without_panic() {
-    let files = ts_files(&streams_dir());
+    let files = test_fixtures::private_files("ts", &["ts"]);
     if files.is_empty() {
         eprintln!(
-            "downloaded_streams: SKIPPED — no captures in .test-streams/. \
-             Run `tools/fetch-test-streams.sh` to enable the extended-corpus tests."
+            "downloaded_streams: SKIPPED - no captures under private/fixtures/ts (private repo not checked out)."
         );
         return;
     }

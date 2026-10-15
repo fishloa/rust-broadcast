@@ -122,7 +122,7 @@ broadcast_common::impl_spec_display!(EquivalentSegmentationType, Reserved);
 /// TR 103 752-2 and the DVB A178-1r1 V&V stream list carry no byte examples),
 /// no worked byte example appears in the text, no independent implementation
 /// (TSDuck, GPAC, ffmpeg) knows the descriptor, and no real capture was found
-/// in `.test-streams`, `private/fixtures` or the committed fixtures. Until a
+/// in `private/fixtures` or the committed fixtures. Until a
 /// DAS-carrying stream decides, the defaults follow each table's own order
 /// (this stand-alone descriptor: Table 1; `compact_splice_insert()`: Table 8)
 /// and the `*_with_order` entry points let a caller select the other reading.

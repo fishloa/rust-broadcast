@@ -4,7 +4,7 @@
 //! (CRC repaired) and must still parse to the SAME typed command / descriptor
 //! loop, then re-serialize to the sentinel-carrying bytes unchanged. The real
 //! TSDuck capture exercising the same path is in `real_capture.rs`
-//! (`test-091.ts`, local archive only).
+//! (`test-091.ts`, private fixtures only).
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use broadcast_common::{Parse, Serialize, crc32_mpeg2};

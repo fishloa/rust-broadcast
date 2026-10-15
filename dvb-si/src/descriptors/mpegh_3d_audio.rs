@@ -44,7 +44,7 @@
 //!   (`numSwitchGroups`, `mae_numGroupPresets`, `numDescLanguages` are counts;
 //!   the semantics sentence "number of switch groups minus one" disagrees with the
 //!   loop `i < numSwitchGroups` and the loop is followed). There are no real
-//!   captures of these descriptors in the local archive: they are verified
+//!   captures of these descriptors in the real-capture corpus: they are verified
 //!   against the printed syntax only (round-trip + hand-derived vectors).
 
 use crate::error::{Error, Result};

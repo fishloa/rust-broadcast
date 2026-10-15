@@ -1,8 +1,8 @@
 # CEA-708 (DTVCC) decode wire syntax — ANSI/CTA-708-E S-2023
 
 _Source: ANSI/CTA-708-E S-2023, "Digital Television (DTV) Closed Captioning",
-§5–§8, Tables 9–31 (PDF p.21–92), render-verified against the vendored PDF
-`specs/cta_708_e_2023.pdf` (copyright CTA; local-only, not committed)._
+§5–§8, Tables 9–31 (PDF p.21–92), render-verified against the PDF
+`cta_708_e_2023.pdf` (copyright CTA; not redistributable, not vendored)._
 
 This document transcribes the **bit-level DTVCC decode syntax** — the layers
 **above** the `cc_data()` carriage that `cc-data` already implements (ETSI TS

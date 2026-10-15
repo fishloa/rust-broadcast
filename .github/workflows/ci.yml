@@ -348,8 +348,8 @@ jobs:
   # both). The tool is macOS-only — this `ubuntu-latest` runner never has it
   # on `PATH`, so every test in that file skips itself loudly (an `eprintln!`
   # naming the reason) and passes trivially here; this step exists only to
-  # keep the file itself building/passing on Linux. The genuine check is
-  # local-only — run it on macOS with Apple's Additional Tools for Xcode
+  # keep the file itself building/passing on Linux. The genuine check needs
+  # macOS (not available on this runner) — run it there with Apple's Additional Tools for Xcode
   # installed (see the command in `CLAUDE.md`).
   golden-gate:
     name: golden gate (ffprobe + mediastreamvalidator, non-blocking)

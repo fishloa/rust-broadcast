@@ -58,15 +58,183 @@ pub fn read_to_string(rel: &str) -> String {
         .unwrap_or_else(|e| panic!("fixture {} must be committed: {e}", p.display()))
 }
 
-/// `private/fixtures/<rel>` in the private submodule, or `None` when the
-/// submodule is not initialised (public / CI clones), so the caller decides
-/// whether that is a loud skip.
+/// Environment variable that points at a checkout of the private repo (the
+/// directory that contains `fixtures/`), e.g. from a CI deploy-key job or a
+/// worktree whose own `private/` is not initialised.
+pub const PRIVATE_ENV: &str = "RUST_BROADCAST_PRIVATE";
+
+/// The workspace root (the directory holding `Cargo.toml`, `fixtures/`, `private/`).
+fn workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+/// Root of the private fixtures repo (`.../private`), if it is checked out.
+///
+/// Resolution order: `$RUST_BROADCAST_PRIVATE`; `<workspace>/private`; and, for
+/// a linked git worktree (whose own `private/` is an empty directory), the
+/// `private/` of the main checkout the worktree belongs to. `None` means the
+/// private repo is simply not available (public / CI clones).
+#[must_use]
+pub fn private_root() -> Option<PathBuf> {
+    let has_fixtures = |p: &Path| p.join("fixtures").is_dir();
+    if let Some(v) = std::env::var_os(PRIVATE_ENV) {
+        let p = PathBuf::from(v);
+        if has_fixtures(&p) {
+            return Some(p);
+        }
+    }
+    let ws = workspace();
+    let own = ws.join("private");
+    if has_fixtures(&own) {
+        return Some(own);
+    }
+    // Linked worktree: `.git` is a file `gitdir: <main>/.git/worktrees/<name>`.
+    let dot_git = std::fs::read_to_string(ws.join(".git")).ok()?;
+    let gitdir = PathBuf::from(dot_git.strip_prefix("gitdir:")?.trim());
+    let main = gitdir.ancestors().nth(3)?; // <main>/.git/worktrees/<name> -> <main>
+    let p = main.join("private");
+    has_fixtures(&p).then_some(p)
+}
+
+/// `private/fixtures/<rel>` in the private repo, or `None` when the repo is not
+/// checked out or lacks that entry.
 #[must_use]
 pub fn private(rel: &str) -> Option<PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../private/fixtures")
-        .join(rel);
+    let p = private_root()?.join("fixtures").join(rel);
     p.exists().then_some(p)
+}
+
+/// Directory of the pinned BSD-2 `tsduck/tsduck-test` clone, if present. The
+/// clone is fetched on demand by `tools/fetch-test-streams.sh tsduck-test` into
+/// `.test-streams/tsduck-test` (repository URL and pinned commit are recorded
+/// in that script); the files the tests actually reference are also mirrored
+/// under `private/fixtures/tsduck/`.
+#[must_use]
+pub fn tsduck_dir() -> Option<PathBuf> {
+    let clone = workspace().join(".test-streams/tsduck-test");
+    if clone.is_dir() {
+        return Some(clone);
+    }
+    private("tsduck")
+}
+
+/// Where a located fixture came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// Committed, redistributable `fixtures/`.
+    Public,
+    /// `private/fixtures/` (private repo).
+    Private,
+    /// Legacy fetch-on-demand `.test-streams/` directory.
+    Legacy,
+}
+
+/// Locate `rel` in, in order: the committed `fixtures/`, `private/fixtures/`,
+/// and (legacy fallback) `.test-streams/`.
+#[must_use]
+pub fn find(rel: &str) -> Option<(PathBuf, Source)> {
+    let public = path(rel);
+    if public.exists() {
+        return Some((public, Source::Public));
+    }
+    if let Some(p) = private(rel) {
+        return Some((p, Source::Private));
+    }
+    let legacy = workspace().join(".test-streams").join(rel);
+    legacy.exists().then_some((legacy, Source::Legacy))
+}
+
+/// The single entry point for tests that need a non-redistributable fixture
+/// (a real broadcast capture etc.): `Some(path)` when found, `None` after a
+/// loud `SKIPPED` line when the private repo is **not checked out**
+/// (public / CI clones).
+///
+/// # Panics
+/// If the private repo *is* checked out (or the entry is otherwise expected)
+/// but `rel` is in none of the three locations: a missing private fixture in a
+/// checkout that has the private repo is a repository error, never a skip.
+#[must_use]
+pub fn require(rel: &str, who: &str) -> Option<PathBuf> {
+    if let Some((p, _)) = find(rel) {
+        return Some(p);
+    }
+    match private_root() {
+        None => {
+            eprintln!(
+                "{who}: SKIPPED - private fixture `{rel}` unavailable: the private repo is not \
+                 checked out (git submodule update --init private, or set {PRIVATE_ENV})"
+            );
+            None
+        }
+        Some(root) => panic!(
+            "{who}: fixture `{rel}` is in none of fixtures/, {}/fixtures/, .test-streams/",
+            root.display()
+        ),
+    }
+}
+
+/// Locate `rel` (e.g. `input/test-002.ts`, `reference/test-147/test-147.ts`) in
+/// the pinned `tsduck-test` clone (`.test-streams/tsduck-test`) or the
+/// `private/fixtures/tsduck/` mirror. Same skip/panic contract as [`require`].
+///
+/// # Panics
+/// If the private repo is checked out but `rel` is in neither location.
+#[must_use]
+pub fn tsduck(rel: &str, who: &str) -> Option<PathBuf> {
+    let clone = workspace().join(".test-streams/tsduck-test").join(rel);
+    if clone.exists() {
+        return Some(clone);
+    }
+    require(&format!("tsduck/{rel}"), who)
+}
+
+/// Bytes of [`require`]`(rel, who)`, or `None` on a loud skip.
+#[must_use]
+pub fn require_bytes(rel: &str, who: &str) -> Option<Vec<u8>> {
+    let p = require(rel, who)?;
+    Some(std::fs::read(&p).unwrap_or_else(|e| panic!("{who}: read {}: {e}", p.display())))
+}
+
+fn walk_files(d: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(d) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            walk_files(&p, exts, out);
+        } else if p
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| exts.contains(&x))
+        {
+            out.push(p);
+        }
+    }
+}
+
+/// Every regular file under `private/fixtures/<dir>` (recursive, sorted) with
+/// one of the given extensions; empty when the private repo is not checked out.
+#[must_use]
+pub fn private_files(dir: &str, exts: &[&str]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(d) = private(dir) {
+        walk_files(&d, exts, &mut out);
+    }
+    out.sort();
+    out
+}
+
+/// The whole real-capture corpus for the scan/survey tests: every file with
+/// one of `exts` under `private/fixtures/` plus, if present, the fetched
+/// `.test-streams/` directory (which holds the pinned `tsduck-test` clone).
+/// Sorted; empty when neither is available.
+#[must_use]
+pub fn corpus(exts: &[&str]) -> Vec<PathBuf> {
+    let mut out = private_files("", exts);
+    walk_files(&workspace().join(".test-streams"), exts, &mut out);
+    out.sort();
+    out
 }
 
 #[cfg(test)]
@@ -103,5 +271,36 @@ mod tests {
     #[test]
     fn private_is_none_for_an_absent_entry() {
         assert!(private("definitely/not/here.bin").is_none());
+    }
+
+    #[test]
+    fn find_prefers_the_committed_fixture() {
+        let (p, src) = find("ts/m6-single.ts").unwrap();
+        assert_eq!(src, Source::Public);
+        assert_eq!(p, path("ts/m6-single.ts"));
+    }
+
+    #[test]
+    fn find_is_none_for_an_entry_in_no_location() {
+        assert!(find("definitely/not/here.bin").is_none());
+    }
+
+    #[test]
+    fn require_skips_loudly_only_without_the_private_repo() {
+        if private_root().is_none() {
+            assert!(require("definitely/not/here.bin", "unit").is_none());
+        }
+    }
+
+    #[test]
+    fn require_panics_when_private_is_present_but_the_entry_is_missing() {
+        if private_root().is_none() {
+            return; // nothing to assert without the private repo
+        }
+        let r = std::panic::catch_unwind(|| require("definitely/not/here.bin", "unit"));
+        assert!(
+            r.is_err(),
+            "a missing entry in a checkout WITH private/ must panic"
+        );
     }
 }

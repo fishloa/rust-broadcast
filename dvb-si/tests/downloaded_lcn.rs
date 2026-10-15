@@ -1,20 +1,19 @@
-//! Download-on-demand LCN capture test — exercises PDS-scoped logical_channel
+//! Real-capture LCN capture test — exercises PDS-scoped logical_channel
 //! descriptor decoding against the French TNT mux (issue #218).
 //!
-//! Keyed on `.test-streams/france-tnt-uhf32.ts`. Uses `SectionSetCollector` to
+//! Keyed on `private/fixtures/ts/france-tnt-uhf32.ts`. Uses `SectionSetCollector` to
 //! gather the complete NIT, then walks the transport-stream loop with a
 //! PDS-scoped registry (`PDS_EACEM`, `PDS_NORDIG`). When a transport stream
 //! carries a logical_channel descriptor (tag 0x83) under a recognised PDS, the
 //! test asserts typed `LogicalChannel` variants. If the capture has no such
 //! descriptors, the test **skips** with a clear eprintln.
 //!
-//! When the capture is absent, the test **skips cleanly** so the suite passes
-//! without downloads.
+//! When the capture is absent, the test **skips loudly** (private/ not checked out) so the suite passes
+//! without the private fixtures repo.
 #![cfg(feature = "ts")]
 
 use mpeg_ts::pid::Pid;
 use std::fs;
-use std::path::Path;
 
 use dvb_si::collect::SectionSetCollector;
 use dvb_si::demux::SiDemux;
@@ -23,23 +22,11 @@ use mpeg_ts::ts::TS_PACKET_SIZE;
 
 const CAPTURE: &str = "france-tnt-uhf32";
 
-fn capture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-        .join(format!("{CAPTURE}.ts"))
-}
-
 #[test]
 fn france_tnt_lcn_descriptors_parse() {
-    let path = capture_path();
-    if !path.exists() {
-        eprintln!(
-            "downloaded_lcn: SKIPPED — {CAPTURE}.ts not in .test-streams/. \
-             Run `tools/fetch-test-streams.sh {CAPTURE}` to enable."
-        );
+    let Some(path) = test_fixtures::require(&format!("ts/{CAPTURE}.ts"), "downloaded_lcn") else {
         return;
-    }
+    };
 
     let data = fs::read(&path).expect("read capture");
 

@@ -8,7 +8,7 @@
 //!
 //! Inputs: the committed `fixtures/ts/dolby/eac3.ts` and
 //! `fixtures/ts/gulli-opengop.ts`, plus (skipped cleanly when absent) the
-//! first 24 MB of the local archive's `france-tnt-uhf32.ts` (never committed).
+//! first 24 MB of the private fixtures repo's `france-tnt-uhf32.ts`.
 
 use std::path::PathBuf;
 
@@ -91,19 +91,11 @@ fn committed_real_eac3_captures_unchanged() {
 }
 
 #[test]
-fn local_archive_france_tnt_eac3_unchanged() {
-    let path: PathBuf = [
-        env!("CARGO_MANIFEST_DIR"),
-        "..",
-        ".test-streams",
-        "france-tnt-uhf32.ts",
-    ]
-    .iter()
-    .collect();
-    let Ok(f) = std::fs::File::open(&path) else {
-        eprintln!("SKIP: {} not present (local archive only)", path.display());
+fn real_capture_france_tnt_eac3_unchanged() {
+    let Some(path) = test_fixtures::require("ts/france-tnt-uhf32.ts", "eac3_real_capture") else {
         return;
     };
+    let f = std::fs::File::open(&path).expect("open capture");
     use std::io::Read;
     let mut buf = Vec::new();
     f.take(24 * 1024 * 1024).read_to_end(&mut buf).unwrap();

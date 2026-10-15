@@ -27,6 +27,7 @@ hex        = "0.4"
 serde_json = { workspace = true }
 dvb-t2mi   = { path = "../dvb-t2mi", features = ["ts"] }
 mpeg-ts    = { path = "../mpeg-ts", version = "0.5" }
+test-fixtures = { path = "../test-fixtures" }
 
 [features]
 default = ["std", "serde"]

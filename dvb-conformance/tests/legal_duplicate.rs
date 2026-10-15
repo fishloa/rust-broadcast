@@ -19,7 +19,7 @@
 //!    [`non_pcr_difference_on_same_cc_is_not_a_legal_duplicate`] — built
 //!    from one real PCR-bearing packet lifted from `france2.ts` (no
 //!    fixture in this repo's committed captures, nor in the two large
-//!    private `.test-streams` real broadcast captures scanned for this fix,
+//!    private-repo real broadcast captures scanned for this fix,
 //!    naturally contains a re-encoded-PCR duplicate — see PR discussion).
 //!    Byte-for-byte real capture data; only the specific field under test is
 //!    altered.

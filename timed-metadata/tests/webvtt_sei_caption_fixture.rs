@@ -23,9 +23,10 @@
 //!   in a real broadcast-style H.264 stream (confirmed: the exact
 //!   `B5 00 31 47 41 39 34 03` T.35/GA94/type-code signature appears 401 times
 //!   in the first 15 MB alone). Licensed third-party footage, so — per this
-//!   project's fixture-licensing convention — only a short byte-range slice is
-//!   fetched on demand into the gitignored `.test-streams/` (see
-//!   `tools/fetch-test-streams.sh transformers-eia608-h264`), never committed.
+//!   project's fixture-licensing convention — only a short byte-range slice
+//!   (`private/fixtures/ts/transformers-eia608-h264.ts`, re-fetchable via
+//!   `tools/fetch-test-streams.sh transformers-eia608-h264`) lives in the
+//!   private fixtures repo, never the public tree.
 //!   Demuxed through `transmux::TsDemux` (unmodified — issue #599 does not
 //!   touch `ts_demux.rs`), then through the same `caption_cc_data` ->
 //!   `CcData::parse` -> `Cea608CueExtractor` pipeline. Expected caption text
@@ -214,17 +215,10 @@ fn non_caption_sei_produces_no_cues() {
 }
 
 // ---------------------------------------------------------------------------
-// Real capture (skip-gated): samples.ffmpeg.org transformers_EIA608_H264.ts
+// Real capture (private repo, `private/fixtures/ts/`): samples.ffmpeg.org transformers_EIA608_H264.ts
 // ---------------------------------------------------------------------------
 
 const REAL_CAPTURE: &str = "transformers-eia608-h264";
-
-fn real_capture_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".test-streams")
-        .join(format!("{REAL_CAPTURE}.ts"))
-}
 
 /// Demux `data` (a whole/partial MPEG-2 TS byte stream), extract every A/53
 /// caption SEI from the H.264 video track's access units via
@@ -276,16 +270,12 @@ fn extract_sei_frames_from_ts(data: &[u8]) -> Vec<(u64, Vec<u8>)> {
 /// "byte-identical to ffmpeg's subtitle renderer".
 #[test]
 fn real_capture_sei_captions_match_ffmpeg_oracle() {
-    let path = real_capture_path();
-    if !path.exists() {
-        eprintln!(
-            "real_capture_sei_captions_match_ffmpeg_oracle: SKIPPED — \
-             {REAL_CAPTURE}.ts not in .test-streams/. Run \
-             `tools/fetch-test-streams.sh {REAL_CAPTURE}` to enable."
-        );
+    let Some(data) = test_fixtures::require_bytes(
+        &format!("ts/{REAL_CAPTURE}.ts"),
+        "webvtt_sei_caption_fixture",
+    ) else {
         return;
-    }
-    let data = fs::read(&path).expect("read real capture slice");
+    };
 
     let frames = extract_sei_frames_from_ts(&data);
     assert!(

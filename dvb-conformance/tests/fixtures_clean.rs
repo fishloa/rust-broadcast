@@ -32,7 +32,6 @@
 use core::time::Duration;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
 
 use dvb_conformance::{ConformanceMonitor, Indicator, Priority};
 
@@ -166,17 +165,9 @@ fn tnt_fixture_events_are_documented() {
 // ── #736: france-tnt-uhf32.ts (real DVB-T broadcast) ─────────────────────
 
 fn read_france_tnt() -> Option<Vec<u8>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Navigate: dvb-conformance/ → workspace root → .test-streams/
-    let path = manifest_dir
-        .parent() // dvb-conformance's parent = workspace root
-        .unwrap()
-        .join(".test-streams")
-        .join("france-tnt-uhf32.ts");
-    let mut f = File::open(&path).ok()?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf).ok()?;
-    Some(buf)
+    // Private repo fixture (`private/fixtures/ts/`): skipped loudly only when
+    // the private repo is not checked out.
+    test_fixtures::require_bytes("ts/france-tnt-uhf32.ts", "fixtures_clean")
 }
 
 /// THE HARD GATE: a conformant real DVB-T broadcast produces ZERO new-indicator
@@ -185,14 +176,8 @@ fn read_france_tnt() -> Option<Vec<u8>> {
 /// the check is wrong, not the stream.
 #[test]
 fn france_tnt_uhf32_clean_on_new_736_indicators() {
-    let data = match read_france_tnt() {
-        Some(d) => d,
-        None => {
-            eprintln!(
-                "SKIP: .test-streams/france-tnt-uhf32.ts not found — fetch the private test-streams fixture",
-            );
-            return;
-        }
+    let Some(data) = read_france_tnt() else {
+        return;
     };
 
     let mut monitor = ConformanceMonitor::new();

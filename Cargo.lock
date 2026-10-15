@@ -3606,6 +3606,7 @@ dependencies = [
  "mpeg-ts",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 

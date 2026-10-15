@@ -39,7 +39,7 @@ fn root(parts: &[&str]) -> PathBuf {
     p
 }
 
-fn head(path: &PathBuf, n: u64) -> Option<Vec<u8>> {
+fn head(path: &std::path::Path, n: u64) -> Option<Vec<u8>> {
     let f = std::fs::File::open(path).ok()?;
     let mut buf = Vec::new();
     f.take(n).read_to_end(&mut buf).ok()?;
@@ -67,14 +67,12 @@ fn real_captures_track_update_counts() {
         "hotbird-mhp.ts",
         "transformers-eia608-h264.ts",
     ] {
-        let path = root(&[".test-streams", name]);
-        match head(&path, 48 * 1024 * 1024) {
-            Some(b) => {
-                assert_eq!(updates(&b), 0, "{name}: no config flapping");
-                checked += 1;
-            }
-            None => eprintln!("SKIP {name}: local archive not present"),
-        }
+        let Some(path) = test_fixtures::require(&format!("ts/{name}"), "pps_real_capture") else {
+            continue;
+        };
+        let b = head(&path, 48 * 1024 * 1024).expect("read capture prefix");
+        assert_eq!(updates(&b), 0, "{name}: no config flapping");
+        checked += 1;
     }
     assert!(checked >= 4, "the committed fixtures always run");
 }

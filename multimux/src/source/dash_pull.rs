@@ -1433,18 +1433,18 @@ mod tests {
 
     /// #1187: a negative `S@r` (real DASH-IF Qualcomm MultiRate vector,
     /// `<S d="24576" r="-1"/>`, static, Period 9:54) repeats to the Period end
-    /// (DASH-IF IOP v4.3 §3.10.2.2.4). Local-only: that vector's licence is
-    /// unstated, so it is not committed — the test skips when absent.
+    /// (DASH-IF IOP v4.3 §3.10.2.2.4). That vector's licence is unstated, so it
+    /// lives in the private repo (`private/fixtures/dash/`) and the test skips
+    /// loudly only when the private repo is not checked out.
     #[test]
     fn negative_r_real_vector_runs_to_period_end() {
-        let path = format!(
-            "{}/../.test-streams/dash/qualcomm-multirate-1c-1.mpd",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            eprintln!("skip: {path} absent (local-only DASH-IF vector)");
+        let Some(path) = test_fixtures::require(
+            "dash/qualcomm-multirate-1c-1.mpd",
+            "dash_pull negative-r real vector",
+        ) else {
             return;
         };
+        let text = std::fs::read_to_string(&path).expect("read vector");
         let mpd = Mpd::parse(&text).expect("parse");
         let period = &mpd.periods[0];
         let period_len = period_length(period, &mpd);

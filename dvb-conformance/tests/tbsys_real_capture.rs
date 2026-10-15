@@ -1,9 +1,9 @@
 //! Real-capture regression for issue #1035: a conformant multiplex must not
 //! raise `Buffer_error` (TR 101 290 indicator 3.3).
 //!
-//! Uses the real French TNT UHF-32 off-air multiplex from the local
-//! `.test-streams` archive (never committed; the test skips loudly without
-//! it). The capture carries PCR, so packet arrival times are PCR-derived (a
+//! Uses the real French TNT UHF-32 off-air multiplex from the private
+//! fixtures repo (`private/fixtures/ts/france-tnt-uhf32.ts`, Git LFS; the test
+//! skips loudly when `private/` is not checked out). The capture carries PCR, so packet arrival times are PCR-derived (a
 //! constant rate from the first-to-last PCR of the first PCR PID — ~24
 //! Mbit/s), not invented. Before the fix, the EIT PID (0x0012), which is DVB
 //! SI and not PSI, was fed into TBsys; its back-to-back packets overflowed
@@ -34,14 +34,10 @@ fn pcr_of(p: &[u8]) -> Option<(u16, u64)> {
 
 #[test]
 fn real_multiplex_raises_no_buffer_error() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../.test-streams/france-tnt-uhf32.ts"
-    );
-    let Ok(mut f) = std::fs::File::open(path) else {
-        eprintln!("SKIP: {path} not present (real-capture archive is local-only)");
+    let Some(path) = test_fixtures::require("ts/france-tnt-uhf32.ts", "tbsys_real_capture") else {
         return;
     };
+    let mut f = std::fs::File::open(&path).expect("open capture");
     let mut data = vec![0u8; READ_BYTES];
     f.read_exact(&mut data).expect("read capture prefix");
     let n = data.len() / TS_PACKET;
