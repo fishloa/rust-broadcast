@@ -290,3 +290,14 @@ spec = "SCTE-35"
 value = 0x87
 variant = "EAc3"
 spec = "E-AC-3"
+
+# Not in H.222.0: AVS3 stream types per ETSI TS 101 154 V2.10.1 section 4.1.8 / T/AI 109.6 and 109.7 clause 8.1.2.
+[[entry]]
+value = 0xD4
+variant = "Avs3Video"
+spec = "AVS3 Video"
+
+[[entry]]
+value = 0xD5
+variant = "Avs3Audio"
+spec = "AVS3-P3 Audio"

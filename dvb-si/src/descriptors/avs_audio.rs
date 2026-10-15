@@ -38,6 +38,7 @@
 
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use broadcast_common::len::fit_bits;
 use broadcast_common::{Parse, Serialize};
 
@@ -589,16 +590,7 @@ mod tests {
     /// reserved=0b10_1010.
     #[test]
     fn codec0_vector() {
-        let bytes = [
-            TAG,
-            6,
-            0x03,
-            0b1_010_1010,
-            0x80 | 0x15,
-            0x04,
-            0x00,
-            0b01_101010,
-        ];
+        let bytes = [TAG, 6, 0x03, 0xAA, 0x80 | 0x15, 0x04, 0x00, 0x6A];
         let d = rt(&bytes);
         assert_eq!(d.sampling_frequency_index, 3);
         let AvsAudioBody::Codec0(b) = d.body else {
@@ -616,19 +608,7 @@ mod tests {
     #[test]
     fn codec1_explicit_frequency_and_addition_info() {
         // 0x1F | 0x00BB80 (48000) | anc=0 profile=1 reserved=0xF | ch=2 | res=2 rsv=0x3F | 0xDE 0xAD
-        let bytes = [
-            TAG,
-            9,
-            0x1F,
-            0x00,
-            0xBB,
-            0x80,
-            0b0_001_1111,
-            0x02,
-            0b10_111111,
-            0xDE,
-            0xAD,
-        ];
+        let bytes = [TAG, 9, 0x1F, 0x00, 0xBB, 0x80, 0x1F, 0x02, 0xBF, 0xDE, 0xAD];
         let d = rt(&bytes);
         let AvsAudioBody::Codec1(b) = d.body else {
             panic!()
@@ -644,7 +624,7 @@ mod tests {
     /// `audio_codec_id == 1` without explicit frequency (sfi != 0xF).
     #[test]
     fn codec1_indexed_frequency() {
-        let bytes = [TAG, 4, 0x13, 0b1_000_1111, 0x06, 0b00_111111];
+        let bytes = [TAG, 4, 0x13, 0x8F, 0x06, 0x3F];
         let d = rt(&bytes);
         let AvsAudioBody::Codec1(b) = d.body else {
             panic!()
@@ -660,21 +640,21 @@ mod tests {
         let head = (5u8 << 5) | (1 << 4);
         let cases: [(&[u8], AvsAudioContent); 5] = [
             (
-                &[head, 0b0000101_1],
+                &[head, 0x0B],
                 AvsAudioContent::Channel {
                     channel_number_index: 5,
                     reserved: 1,
                 },
             ),
             (
-                &[head | 1, 0b0000011_0],
+                &[head | 1, 0x06],
                 AvsAudioContent::Object {
                     object_channel_number: 3,
                     reserved: 0,
                 },
             ),
             (
-                &[head | 2, 0b0000101_1, 0b0000011_1],
+                &[head | 2, 0x0B, 0x07],
                 AvsAudioContent::ChannelAndObject {
                     channel_number_index: 5,
                     reserved_channel: 1,
@@ -695,7 +675,7 @@ mod tests {
             let mut body = vec![0x20u8]; // codec 2 / sfi 0
             body.extend_from_slice(mid);
             body.extend_from_slice(&[0x01, 0x80]); // total_bitrate 384
-            body.push(0b11_111111); // resolution 3, reserved all-ones
+            body.push(0xFF); // resolution 3, reserved all-ones
             let mut bytes = vec![TAG, body.len() as u8];
             bytes.extend_from_slice(&body);
             let d = rt(&bytes);
@@ -713,7 +693,7 @@ mod tests {
     /// byte + resolution byte, and round-trips.
     #[test]
     fn unknown_codec_id_round_trips() {
-        let bytes = [TAG, 2, 0x72, 0b01_000101];
+        let bytes = [TAG, 2, 0x72, 0x45];
         let d = rt(&bytes);
         assert_eq!(d.body, AvsAudioBody::Other(7));
         assert_eq!(d.body.audio_codec_id(), 7);

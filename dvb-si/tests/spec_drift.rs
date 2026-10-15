@@ -219,11 +219,11 @@ fn stream_type_toml_matches_enum() {
         code_set.insert((st.to_u8(), debug_name));
     }
 
-    // tripwire: 54 named standard values (0x00..=0x35) + 0x7F + 0x81 + 0x86 + 0x87 = 58
+    // tripwire: 54 named standard values (0x00..=0x35) + 0x7F + 0x81 + 0x86 + 0x87 + 0xD4 + 0xD5 = 60
     assert_eq!(
         code_set.len(),
-        58,
-        "StreamType sweep produced {} named variants, expected 58",
+        60,
+        "StreamType sweep produced {} named variants, expected 60",
         code_set.len()
     );
 

@@ -714,7 +714,7 @@ mod tests {
     fn avs3_audio_descriptor_is_pds_scoped() {
         use crate::descriptors::avs_audio::AvsAudioDescriptor;
         use crate::descriptors::private_data_specifier::PDS_AVSA;
-        let desc = [0xD2, 6, 0x03, 0b1_010_1010, 0x95, 0x04, 0x00, 0b01_101010];
+        let desc = [0xD2, 6, 0x03, 0xAA, 0x95, 0x04, 0x00, 0x6A];
         let mut reg = DescriptorRegistry::new();
         reg.with_avs3_audio();
 
