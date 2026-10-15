@@ -145,6 +145,22 @@ pub enum GaContent {
     ReservedProfile(u8),
 }
 
+impl GaContent {
+    /// Spec label of the content form.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Channel { .. } => "channel signal",
+            Self::ObjectsOnly { .. } => "objects only",
+            Self::ChannelAndObjects { .. } => "channel signal and objects",
+            Self::ReservedSoundBed(_) => "reserved soundBedType",
+            Self::Hoa { .. } => "HOA signal",
+            Self::ReservedProfile(_) => "reserved coding_profile",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(GaContent);
+
 /// `audio_codec_id == 2` header (general full-rate), Table A.6 + the trailing
 /// `frame_error_check()` of Table A.4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
