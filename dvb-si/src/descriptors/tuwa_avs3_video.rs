@@ -88,6 +88,18 @@ impl TuwaLibraryRef {
     }
 }
 
+impl TuwaLibraryRef {
+    /// Label of the reference form (`id_type_flag`).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Peid { .. } => "PEID",
+            Self::StreamId { .. } => "stream_id",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(TuwaLibraryRef);
+
 /// The references of a main (non-library) stream. All entries share one form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
