@@ -272,6 +272,7 @@ declare_descriptors! {'a;
     MvcExtension = 0x31 => crate::descriptors::mvc_extension::MvcExtensionDescriptor,
     J2kVideo = 0x32 => crate::descriptors::j2k_video::J2kVideoDescriptor<'a>,
     HevcVideo = 0x38 => crate::descriptors::hevc_video::HevcVideoDescriptor,
+    Mpeg2Extension = 0x3F => crate::descriptors::mpeg2_extension::Mpeg2ExtensionDescriptor,
     // DVB descriptors (ETSI EN 300 468) — contiguous 0x40..=0x7F.
     NetworkName = 0x40 => crate::descriptors::network_name::NetworkNameDescriptor<'a>,
     ServiceList = 0x41 => crate::descriptors::service_list::ServiceListDescriptor,

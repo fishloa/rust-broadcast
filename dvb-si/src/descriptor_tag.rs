@@ -61,6 +61,7 @@ pub enum DescriptorTag {
     MvcExtension               = 0x31,
     J2kVideo                   = 0x32,
     HevcVideo                  = 0x38,
+    Mpeg2Extension             = 0x3F,
 
     // ── DVB SI descriptors (0x40..=0x7F) ───────────────────────────────────
     NetworkName                = 0x40,
