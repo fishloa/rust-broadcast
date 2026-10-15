@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `LinuxCiDataDevice::open_split(adapter, ci)` / `LinuxCiDataDevice::from_split(write, read)`: the data plane as two one-direction descriptors (`O_WRONLY` write, `O_RDONLY | O_NONBLOCK` read). The Digital Devices CXD2099 `ci0` (dddvb, Ubuntu 5.15) rejects `O_RDWR` with `EINVAL`, so `LinuxCiDataDevice::open` now tries `O_RDWR` first and falls back to the split open on `EINVAL` and only `EINVAL`. Verified on that hardware with two `from_file`-wrapped fds: 150 s, 111k `feed_ts` calls, max 249 us, 0 errors (#1066).
+- `DeviceOpError` (re-exported): every failing Linux device operation (`open`, `read`, `write`, `poll`, `ioctl CA_RESET`, `ioctl CA_GET_SLOT_INFO`) now names the operation, the device path and the errno, e.g. `/dev/dvb/adapter3/ca0: write (17 byte frame: slot 0, connection 1) failed: Invalid argument (os error 22)`. The `io::ErrorKind` is unchanged; the errno is `DeviceOpError::errno_of(&err)` (a wrapped error no longer answers `raw_os_error()` itself) (#1032).
+
+### Fixed
+- `Driver::pump`: the first write after the post-`CA_RESET` settle (the `Create_T_C`) that fails `EINVAL` is retried every 250 ms for up to 12 s past the settle window instead of aborting the pump. The kernel's `dvb_ca_en50221` answers `EINVAL` to a write until the slot reaches its RUNNING state, and how long a CAM needs after a reset varies: on a DD CXD2099 with an AlphaCrypt, the 4th re-open within ~12 minutes returned `EINVAL` from the first handshake pump (no CA PMT sent; the kernel logged CAM init OK afterwards). A slot that never comes up is still reported once the window ends (#1032).
+
 ### Changed
 - Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143). `TransportConnection::init` uses an explicit justified `expect` for the fixed-size `Create_T_C` TPDU.
 

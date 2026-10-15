@@ -145,7 +145,9 @@ pub mod linux;
 
 pub use dataplane::{CiDataDevice, MockCiDataDevice, TS_PACKET_LEN};
 pub use descrambler::CaDescrambler;
-pub use device::{CaDevice, DeviceOp, LinkEvent, MockCaDevice, RecordingCaDevice, SlotInfo};
+pub use device::{
+    CaDevice, DeviceOp, DeviceOpError, LinkEvent, MockCaDevice, RecordingCaDevice, SlotInfo,
+};
 pub use driver::Driver;
 pub use event::{Action, Event, HostRequest, HotPlug, Notification};
 #[cfg(all(feature = "linux", target_os = "linux"))]
