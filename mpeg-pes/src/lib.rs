@@ -49,9 +49,10 @@ mod timestamp;
 pub use assembler::PesAssembler;
 pub use error::{Error, Result};
 pub use packet::{
-    Escr, PStdBuffer, PesExtension, PesHeader, PesPacket, ProgramPacketSequenceCounter, TrickMode,
+    Escr, PStdBuffer, PesExtension, PesExtensionField, PesHeader, PesPacket,
+    ProgramPacketSequenceCounter, TrickMode,
 };
-pub use stream_id::StreamId;
+pub use stream_id::{STREAM_ID_EXTENSION_AVS3_AUDIO, STREAM_ID_EXTENSION_AVS3_VIDEO, StreamId};
 pub use timestamp::{Dts, Pts};
 
 /// The 3-byte `packet_start_code_prefix` that opens every PES packet (`0x000001`).

@@ -299,6 +299,20 @@ pub struct PesExtensionField<'a> {
     pub rest: &'a [u8],
 }
 
+impl PesExtensionField<'_> {
+    /// The 7-bit `stream_id_extension` (Table 2-21), or `None` when
+    /// `stream_id_extension_flag` is `1` (the low bits are then `reserved` +
+    /// `tref_extension_flag`, not an extension id).
+    #[must_use]
+    pub const fn stream_id_extension(&self) -> Option<u8> {
+        if self.stream_id_extension_flag {
+            None
+        } else {
+            Some(self.low_bits)
+        }
+    }
+}
+
 /// Typed PES header extension sub-structure
 /// (ISO/IEC 13818-1 §2.4.3.7, Table 2-21, `PES_extension_flag = 1`).
 ///
@@ -1482,6 +1496,37 @@ mod tests {
         };
         let mut buf = vec![0u8; ext.serialized_len()];
         assert!(ext.serialize_into(&mut buf).is_err());
+    }
+
+    /// AVS3-P3 audio (T/AI 109.7 8.1.2 / TS 101 154 V2.10.1 4.1.8.35) is a
+    /// `stream_id = 0xFD` PES whose `stream_id_extension` is `100 1111`; AVS3
+    /// video uses `0x41`. The extension survives a serialize -> parse trip.
+    #[test]
+    fn avs3_stream_id_extension_round_trips() {
+        for want in [
+            crate::STREAM_ID_EXTENSION_AVS3_AUDIO,
+            crate::STREAM_ID_EXTENSION_AVS3_VIDEO,
+        ] {
+            let ext = PesExtension {
+                pes_extension_field: Some(PesExtensionField {
+                    stream_id_extension_flag: false,
+                    low_bits: want,
+                    rest: &[],
+                }),
+                ..PesExtension::new()
+            };
+            let mut buf = vec![0u8; ext.serialized_len()];
+            ext.serialize_into(&mut buf).unwrap();
+            let back = PesExtension::parse(&buf).unwrap();
+            let f = back.pes_extension_field.unwrap();
+            assert_eq!(f.stream_id_extension(), Some(want));
+        }
+        let tref = PesExtensionField {
+            stream_id_extension_flag: true,
+            low_bits: 1,
+            rest: &[],
+        };
+        assert_eq!(tref.stream_id_extension(), None);
     }
 
     /// W10 (#1129): `PES_extension_field_length` is an 8-bit field but used

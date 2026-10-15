@@ -87,6 +87,29 @@ impl<'a> crate::traits::DescriptorDef<'a> for RegistrationDescriptor<'a> {
 mod tests {
     use super::*;
 
+    /// TS 101 154 V2.10.1 AVS3 HDR signalling: registration_descriptor with
+    /// format_identifier 0x41565356 ('AVSV'); T/AI 109.7 8.1.3.3: AVS3 audio
+    /// uses 0x41565341 ('AVSA').
+    #[test]
+    fn avs3_format_identifiers_round_trip() {
+        for fid in [*b"AVSV", *b"AVSA"] {
+            let bytes = [TAG, 4, fid[0], fid[1], fid[2], fid[3]];
+            let d = RegistrationDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.format_identifier, fid);
+            assert_eq!(
+                u32::from_be_bytes(fid),
+                if fid == *b"AVSV" {
+                    0x4156_5356
+                } else {
+                    0x4156_5341
+                }
+            );
+            let mut out = alloc::vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
+
     #[test]
     fn parse_format_identifier_only() {
         let bytes = [TAG, 4, b'A', b'C', b'-', b'3'];

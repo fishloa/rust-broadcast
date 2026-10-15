@@ -19,6 +19,13 @@ pub const PDS_NORDIG: u32 = 0x0000_0029;
 /// ES loop (ETSI EN 300 468 v1.20.1 Annex O note): `0x41565341`, the ASCII
 /// of `'AVSA'`.
 pub const PDS_AVSA: u32 = 0x4156_5341;
+/// `private_data_specifier` that precedes the AVS3_video_descriptor in a PMT ES
+/// loop (ETSI TS 101 154 V2.10.1 section 4.1.8.31): `0x41565356`, ASCII
+/// `'AVSV'`. The same value is the `format_identifier` of the
+/// `registration_descriptor` that signals an AVS3 HDR bitstream (section
+/// 4.1.8.x "A registration_descriptor shall be used ... format_identifier
+/// 0x41565356"), registered with the SMPTE Registration Authority.
+pub const PDS_AVSV: u32 = 0x4156_5356;
 
 /// Descriptor tag for private_data_specifier_descriptor.
 pub const TAG: u8 = 0x5F;
@@ -102,6 +109,11 @@ mod tests {
 
     /// EN 300 468 v1.20.1 Annex O: the AVS3-P3 audio descriptor is preceded by a
     /// private_data_specifier_descriptor carrying `0x41565341` ('AVSA').
+    #[test]
+    fn avsv_specifier_is_ascii_avsv() {
+        assert_eq!(PDS_AVSV.to_be_bytes(), *b"AVSV");
+    }
+
     #[test]
     fn annex_o_avsa_specifier_round_trips() {
         assert_eq!(PDS_AVSA.to_be_bytes(), *b"AVSA");
