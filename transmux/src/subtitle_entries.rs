@@ -15,8 +15,8 @@
 //! any remaining bytes are optional boxes preserved verbatim for round-trip.
 //!
 //! `wvtt` appends a mandatory `vttC` box (WebVTT header block string) and optional
-//! further boxes. Cue samples contain `vttc` boxes with `payl`/`sttg`/`iden` children,
-//! and gap samples contain `vtte` boxes — these are sample-payload types, not boxes
+//! further boxes. Cue samples contain `vttc` boxes with `payl`/`sttg`/`iden` children
+//! (plus `vtta` boxes for `NOTE` text), and gap samples contain `vtte` boxes — these are sample-payload types, not boxes
 //! inside the sample entry, but they are provided here for completeness so callers can
 //! build and parse cue sample payloads.
 
@@ -324,21 +324,69 @@ utf8_text_box! {
     CueIdBox, "iden", b"iden", cue_id, "The cue identifier."
 }
 
+utf8_text_box! {
+    /// WebVTT Additional Text Box (`vtta`) — ISO/IEC 14496-30 §9.4.
+    ///
+    /// A sample-level box carrying WebVTT text that is not a cue, such as a
+    /// `NOTE` comment block, as one UTF-8 string with no terminator. MP4Box and
+    /// gpac both write it ahead of the cue that follows the comment (observed in
+    /// `fixtures/subtitles/`).
+    VttAdditionalTextBox, "vtta", b"vtta", text, "The additional text (e.g. a `NOTE` block, without the trailing blank line)."
+}
+
+/// Which child of a `vttc` sits at one position of its wire order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CueChild {
+    Iden,
+    Sttg,
+    Payl,
+    /// Index into [`VttCueBox::extra_children`].
+    Extra(usize),
+}
+
 /// WebVTT Cue Box (`vttc`) — ISO/IEC 14496-30 §9.4.
 ///
 /// A single presented cue. Contains a mandatory `payl` (payload) and
-/// optional `sttg` (settings) and `iden` (identifier) children.
+/// optional `sttg` (settings) and `iden` (identifier) children, plus any child
+/// this crate does not model (`vsid` cue source id, `ctim` cue time, ...) kept
+/// verbatim in [`extra_children`](Self::extra_children).
+///
+/// The child order seen on the wire is remembered, so a parsed cue serializes
+/// to the same bytes: MP4Box and gpac both write `iden`, `sttg`, `payl`, which
+/// is also the order of the spec's class (the identifier and settings precede
+/// the payload). A cue built with [`new`](Self::new) is written in that order
+/// too, after any extra children.
 /// Used in media sample payloads, not in the sample entry itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VttCueBox {
     /// Required cue payload (`payl`).
     pub payload: CuePayloadBox,
     /// Optional cue settings string (`sttg`).
     pub settings: Option<CueSettingsBox>,
-    /// Optional cue identifier (`iden`).
+    /// Optional cue identifier string (`iden`).
     pub cue_id: Option<CueIdBox>,
+    /// Children this crate has no typed model for, verbatim (box header
+    /// preserved through [`OpaqueBox`](crate::init_segment::OpaqueBox)).
+    pub extra_children: Vec<crate::init_segment::OpaqueBox>,
+    /// Wire order of the children of a parsed cue; empty for a built one.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    child_order: Vec<CueChild>,
 }
+
+/// Two cues are equal when their content is: the remembered wire order of the
+/// children does not take part (a cue read from the wire equals the same cue
+/// built with [`VttCueBox::new`]).
+impl PartialEq for VttCueBox {
+    fn eq(&self, other: &Self) -> bool {
+        self.payload == other.payload
+            && self.settings == other.settings
+            && self.cue_id == other.cue_id
+            && self.extra_children == other.extra_children
+    }
+}
+
+impl Eq for VttCueBox {}
 
 impl VttCueBox {
     /// Construct a new `vttc` box with a payload.
@@ -347,6 +395,8 @@ impl VttCueBox {
             payload: CuePayloadBox::new(payload),
             settings: None,
             cue_id: None,
+            extra_children: Vec::new(),
+            child_order: Vec::new(),
         }
     }
 
@@ -363,6 +413,8 @@ impl VttCueBox {
         let mut payload: Option<CuePayloadBox> = None;
         let mut settings: Option<CueSettingsBox> = None;
         let mut cue_id: Option<CueIdBox> = None;
+        let mut extra_children: Vec<crate::init_segment::OpaqueBox> = Vec::new();
+        let mut child_order: Vec<CueChild> = Vec::new();
         let mut pos = 0usize;
         while pos + BOX_HDR <= body.len() {
             let sz = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]])
@@ -374,10 +426,27 @@ impl VttCueBox {
             let child = &body[pos..end];
             let fourcc = &child[4..8];
             match fourcc {
-                b"payl" => payload = Some(CuePayloadBox::bare_parse(child)?),
-                b"sttg" => settings = Some(CueSettingsBox::bare_parse(child)?),
-                b"iden" => cue_id = Some(CueIdBox::bare_parse(child)?),
-                _ => {} // unknown children skipped
+                b"payl" => {
+                    payload = Some(CuePayloadBox::bare_parse(child)?);
+                    child_order.push(CueChild::Payl);
+                }
+                b"sttg" => {
+                    settings = Some(CueSettingsBox::bare_parse(child)?);
+                    child_order.push(CueChild::Sttg);
+                }
+                b"iden" => {
+                    cue_id = Some(CueIdBox::bare_parse(child)?);
+                    child_order.push(CueChild::Iden);
+                }
+                other => {
+                    let mut bt = [0u8; 4];
+                    bt.copy_from_slice(other);
+                    child_order.push(CueChild::Extra(extra_children.len()));
+                    extra_children.push(crate::init_segment::OpaqueBox::new(
+                        bt,
+                        child[BOX_HDR..].to_vec(),
+                    ));
+                }
             }
             pos += sz;
         }
@@ -390,7 +459,34 @@ impl VttCueBox {
             payload,
             settings,
             cue_id,
+            extra_children,
+            child_order,
         })
+    }
+
+    /// The children in the order they are written: the remembered wire order
+    /// for the ones that are still present, then whatever was added since
+    /// (extras, then `iden`, `sttg`, `payl`).
+    fn write_order(&self) -> Vec<CueChild> {
+        let present = |c: &CueChild| match c {
+            CueChild::Iden => self.cue_id.is_some(),
+            CueChild::Sttg => self.settings.is_some(),
+            CueChild::Payl => true,
+            CueChild::Extra(i) => *i < self.extra_children.len(),
+        };
+        let mut order: Vec<CueChild> = self.child_order.iter().copied().filter(present).collect();
+        let mut add = |c: CueChild| {
+            if present(&c) && !order.contains(&c) {
+                order.push(c);
+            }
+        };
+        for i in 0..self.extra_children.len() {
+            add(CueChild::Extra(i));
+        }
+        add(CueChild::Iden);
+        add(CueChild::Sttg);
+        add(CueChild::Payl);
+        order
     }
 }
 
@@ -412,6 +508,9 @@ impl Serialize for VttCueBox {
         if let Some(i) = &self.cue_id {
             n += i.serialized_len();
         }
+        for e in &self.extra_children {
+            n += BOX_HDR + e.data.len();
+        }
         crate::box_types::box_len(n)
     }
 
@@ -425,12 +524,27 @@ impl Serialize for VttCueBox {
         }
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"vttc", need)?;
-        c += self.payload.serialize_into(&mut buf[c..])?;
-        if let Some(s) = &self.settings {
-            c += s.serialize_into(&mut buf[c..])?;
-        }
-        if let Some(i) = &self.cue_id {
-            c += i.serialize_into(&mut buf[c..])?;
+        for child in self.write_order() {
+            match child {
+                CueChild::Iden => {
+                    if let Some(i) = &self.cue_id {
+                        c += i.serialize_into(&mut buf[c..])?;
+                    }
+                }
+                CueChild::Sttg => {
+                    if let Some(s) = &self.settings {
+                        c += s.serialize_into(&mut buf[c..])?;
+                    }
+                }
+                CueChild::Payl => c += self.payload.serialize_into(&mut buf[c..])?,
+                CueChild::Extra(i) => {
+                    let e = &self.extra_children[i];
+                    let len = BOX_HDR + e.data.len();
+                    c += crate::box_types::write_box_header(&mut buf[c..], &e.box_type, len)?;
+                    buf[c..c + e.data.len()].copy_from_slice(&e.data);
+                    c += e.data.len();
+                }
+            }
         }
         Ok(c)
     }
@@ -482,6 +596,105 @@ impl Serialize for VttEmptyCueBox {
         buf[..4].copy_from_slice(&(BOX_HDR as u32).to_be_bytes());
         buf[4..8].copy_from_slice(b"vtte");
         Ok(BOX_HDR)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebVTT sample payloads — a sequence of vttc / vtte / vtta boxes
+// ---------------------------------------------------------------------------
+
+/// One box of a `wvtt` media sample (ISO/IEC 14496-30 §9.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum WvttSampleBox {
+    /// `vttc`: a cue active during the sample.
+    Cue(VttCueBox),
+    /// `vtte`: no cue is active (a gap).
+    Empty(VttEmptyCueBox),
+    /// `vtta`: additional non-cue text such as a `NOTE` block.
+    AdditionalText(VttAdditionalTextBox),
+    /// Any other box, verbatim.
+    Other(crate::init_segment::OpaqueBox),
+}
+
+/// Split a `wvtt` media sample into its boxes.
+///
+/// A sample is a plain sequence of boxes (no wrapper): one or more `vttc` (a
+/// cue each; overlapping cues give several), `vtta` (a `NOTE` comment) or a
+/// single `vtte` (a gap). Unknown box types are kept as
+/// [`WvttSampleBox::Other`]. A box whose size field runs past the sample, or is
+/// smaller than its header, is an error, as is a trailing partial header.
+pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while pos < sample.len() {
+        let rest = &sample[pos..];
+        if rest.len() < BOX_HDR {
+            return Err(Error::BufferTooShort {
+                need: BOX_HDR,
+                have: rest.len(),
+                what: "wvtt sample box header",
+            });
+        }
+        let size = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+        if size < BOX_HDR || size > rest.len() {
+            return Err(Error::InvalidValue {
+                field: "wvtt sample box size",
+                value: size as u64,
+                reason: "box size is below the 8-byte header or past the end of the sample",
+            });
+        }
+        let boxed = &rest[..size];
+        out.push(match &boxed[4..8] {
+            b"vttc" => WvttSampleBox::Cue(VttCueBox::bare_parse(boxed)?),
+            b"vtte" => WvttSampleBox::Empty(VttEmptyCueBox::bare_parse(boxed)?),
+            b"vtta" => WvttSampleBox::AdditionalText(VttAdditionalTextBox::bare_parse(boxed)?),
+            other => {
+                let mut bt = [0u8; 4];
+                bt.copy_from_slice(other);
+                WvttSampleBox::Other(crate::init_segment::OpaqueBox::new(
+                    bt,
+                    boxed[BOX_HDR..].to_vec(),
+                ))
+            }
+        });
+        pos += size;
+    }
+    Ok(out)
+}
+
+impl Serialize for WvttSampleBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        match self {
+            WvttSampleBox::Cue(b) => b.serialized_len(),
+            WvttSampleBox::Empty(b) => b.serialized_len(),
+            WvttSampleBox::AdditionalText(b) => b.serialized_len(),
+            WvttSampleBox::Other(b) => BOX_HDR + b.data.len(),
+        }
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        match self {
+            WvttSampleBox::Cue(b) => b.serialize_into(buf),
+            WvttSampleBox::Empty(b) => b.serialize_into(buf),
+            WvttSampleBox::AdditionalText(b) => b.serialize_into(buf),
+            WvttSampleBox::Other(b) => {
+                let need = BOX_HDR + b.data.len();
+                if buf.len() < need {
+                    return Err(Error::OutputBufferTooSmall {
+                        need,
+                        have: buf.len(),
+                    });
+                }
+                let mut c = crate::box_types::write_box_header(buf, &b.box_type, need)?;
+                buf[c..c + b.data.len()].copy_from_slice(&b.data);
+                c += b.data.len();
+                Ok(c)
+            }
+        }
     }
 }
 
@@ -662,6 +875,55 @@ mod tests {
         let parsed = VttCueBox::bare_parse(&bytes).unwrap();
         assert_eq!(parsed.payload.cue_text, "Hello World");
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// A `vttc` with children this crate does not model (`vsid`, `ctim`) and in
+    /// an order other than iden/sttg/payl keeps every child and its position
+    /// through parse -> serialize (spec-vector: no producer on hand writes
+    /// `vsid`/`ctim`), and a cue built from scratch is written iden, sttg, payl.
+    #[test]
+    fn vttc_keeps_unmodelled_children_in_wire_order() {
+        fn child(ty: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut v = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+            v.extend_from_slice(ty);
+            v.extend_from_slice(body);
+            v
+        }
+        let mut body = Vec::new();
+        body.extend(child(b"vsid", &[0, 0, 0, 7]));
+        body.extend(child(b"payl", b"text"));
+        body.extend(child(b"ctim", b"00:00:01.000"));
+        body.extend(child(b"iden", b"id1"));
+        let wire = child(b"vttc", &body);
+        let cue = VttCueBox::bare_parse(&wire).unwrap();
+        assert_eq!(cue.payload.cue_text, "text");
+        assert_eq!(cue.cue_id.as_ref().unwrap().cue_id, "id1");
+        assert_eq!(cue.extra_children.len(), 2);
+        assert_eq!(&cue.extra_children[0].box_type, b"vsid");
+        assert_eq!(cue.try_to_bytes().unwrap(), wire, "wire order preserved");
+
+        let mut built = VttCueBox::new("p");
+        built.settings = Some(CueSettingsBox::new("align:end"));
+        built.cue_id = Some(CueIdBox::new("i"));
+        let bytes = built.try_to_bytes().unwrap();
+        let pos = |needle: &[u8]| bytes.windows(4).position(|w| w == needle).unwrap();
+        assert!(pos(b"iden") < pos(b"sttg") && pos(b"sttg") < pos(b"payl"));
+        assert_eq!(VttCueBox::bare_parse(&bytes).unwrap(), built);
+    }
+
+    #[test]
+    fn vtta_round_trips_a_note_block() {
+        let b = VttAdditionalTextBox::new("NOTE hello");
+        let bytes = b.try_to_bytes().unwrap();
+        assert_eq!(&bytes[4..8], b"vtta");
+        assert_eq!(VttAdditionalTextBox::bare_parse(&bytes).unwrap(), b);
+        let sample = [bytes.clone(), VttEmptyCueBox.try_to_bytes().unwrap()].concat();
+        let parsed = parse_wvtt_sample(&sample).unwrap();
+        assert!(matches!(parsed[0], WvttSampleBox::AdditionalText(_)));
+        assert!(matches!(parsed[1], WvttSampleBox::Empty(_)));
+        // A box that runs past the sample is an error, not a silent truncation.
+        assert!(parse_wvtt_sample(&bytes[..bytes.len() - 1]).is_err());
+        assert!(parse_wvtt_sample(&[0, 0, 0, 4, b'v', b't', b't', b'e']).is_err());
     }
 
     #[test]

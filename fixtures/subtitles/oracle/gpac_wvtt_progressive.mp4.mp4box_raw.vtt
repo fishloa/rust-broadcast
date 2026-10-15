@@ -1,0 +1,36 @@
+WEBVTT - rust-broadcast original test captions (authored for this repository)
+
+NOTE
+This file is original test content written for the rust-broadcast workspace.
+It exercises cue identifiers, settings, styling tags, multi-line text, gaps
+between cues, overlapping cues and non-ASCII text.
+
+intro
+00:01.000 --> 00:03.500
+Hello, <b>world</b>!
+
+second cue
+00:04.000 --> 00:06.000 line:10% position:20% align:start size:60%
+Two lines of text
+with a <i>second</i> line
+
+NOTE a comment between cues
+
+00:08.000 --> 00:09.500
+<v Alice>Speaker tag</v>
+<c.loud>classed text</c>
+
+overlap-a
+00:12.000 --> 00:16.000
+Long cue A
+
+overlap-b
+00:13.500 --> 00:14.500 align:end
+Short cue B overlapping A
+
+00:18.000 --> 00:20.000
+Unicode: café 日本語 ☃ 😀 &amp; &lt;tag&gt;
+
+00:22.250 --> 00:23.750
+Last cue after a gap
+

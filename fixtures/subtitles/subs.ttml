@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Original test captions authored for the rust-broadcast workspace. -->
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xml:lang="en" ttp:timeBase="media">
+  <head>
+    <styling>
+      <style xml:id="s1" tts:color="white" tts:textAlign="center"/>
+      <style xml:id="s2" tts:color="yellow" tts:fontStyle="italic"/>
+    </styling>
+    <layout>
+      <region xml:id="r1" tts:origin="10% 80%" tts:extent="80% 15%"/>
+    </layout>
+  </head>
+  <body>
+    <div>
+      <p begin="00:00:01.000" end="00:00:03.500" region="r1" style="s1">Hello, <span style="s2">world</span>!</p>
+      <p begin="00:00:04.000" end="00:00:06.000" region="r1" style="s1">Two lines of text<br/>with a second line</p>
+      <p begin="00:00:08.000" end="00:00:09.500" region="r1" style="s1">café 日本語 &amp; &lt;tag&gt;</p>
+      <p begin="00:00:22.250" end="00:00:23.750" region="r1" style="s1">Last cue after a gap</p>
+    </div>
+  </body>
+</tt>
