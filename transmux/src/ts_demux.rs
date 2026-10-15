@@ -892,7 +892,17 @@ impl FrameSync for Eac3Sync {
     /// 102 366 §E.1.2.2). Until that byte has arrived the type is unknown and
     /// the tail is not counted as commencing an access unit: a dependent
     /// substream must not move the timeline anchor (issue #1186).
+    ///
+    /// An AC-3 syncframe standing as independent substream 0 (`bsid` <= 8,
+    /// byte 5) has `crc1` where an E-AC-3 header has `strmtyp`, so once `bsid`
+    /// is visible it is what decides; before that a byte that *looks* dependent
+    /// is not counted (the conservative reading, as for any unjudged tail).
     fn tail_starts_new_unit(tail: &[u8]) -> bool {
+        const BSID_BYTE: usize = 5;
+        const AC3_MAX_BSID: u8 = 8;
+        if tail.len() > BSID_BYTE && tail[BSID_BYTE] >> 3 <= AC3_MAX_BSID {
+            return true;
+        }
         tail.len() > AC3_SYNC_BYTES.len()
             && (tail[AC3_SYNC_BYTES.len()] >> 6) != EAC3_STRMTYP_DEPENDENT
     }
@@ -10895,14 +10905,14 @@ mod tests {
     // under test.
 
     /// Dependent-substream syncframe of 64 bytes (`frmsiz = 31`): `syncword |
-    /// strmtyp=1 substreamid=1 frmsiz | fscod=0 numblkscod=3 acmod=2 lfeon=0 |
+    /// strmtyp=1 substreamid=0 frmsiz | fscod=0 numblkscod=3 acmod=2 lfeon=0 |
     /// bsid=16 | dialnorm compre chanmape=1 chanmap | mixmdate=0 infomdate=0`
     /// (§E.1.2.2), filler body varying by `n`.
     fn eac3_dependent_frame(n: usize) -> Vec<u8> {
         let mut h = alloc::vec![0x0B, 0x77];
         let mut nb = 16;
         put_bits(&mut h, &mut nb, 1, 2); // strmtyp = dependent
-        put_bits(&mut h, &mut nb, 1, 3); // substreamid
+        put_bits(&mut h, &mut nb, 0, 3); // substreamid (dependent substreams are numbered from 0)
         put_bits(&mut h, &mut nb, 31, 11); // frmsiz
         put_bits(&mut h, &mut nb, 0, 2); // fscod
         put_bits(&mut h, &mut nb, 3, 2); // numblkscod
