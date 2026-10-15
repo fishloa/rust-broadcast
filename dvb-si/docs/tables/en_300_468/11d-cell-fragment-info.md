@@ -6,13 +6,13 @@ _§5.2.11.3, PDF pp. 43-43_
 | cell_fragment_info(){ |
 | for (i=1;i<=N;i++) { |
 | cell_fragment_id | 32 | uimsbf |
-| first_occurence | 1 | bsblf |
-| last_occurence | 1 | bsblf |
-| if (first_occurence == 1) { |
+| first_occurrence | 1 | bsblf |
+| last_occurrence | 1 | bsblf |
+| if (first_occurrence == 1) { |
 | reserved_zero_future_use | 4 | bsblf |
-| center_latitude | 18 | tcimsbf |
+| centre_latitude | 18 | tcimsbf |
 | reserved_zero_future_use | 5 | bsblf |
-| center_longitude | 19 | tcimsbf |
+| centre_longitude | 19 | tcimsbf |
 | max_distance | 24 | uimsbf |
 | reserved_zero_future_use | 6 | bsblf |
 | } else { |

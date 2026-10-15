@@ -125,6 +125,43 @@ mod tests {
         assert_eq!(d.text.raw(), b"STEREO");
     }
 
+    /// EN 300 468 v1.20.1 Table 26 / Annex O Table O.1 (informative): AVS3-P3
+    /// audio component_types are stream_content 0x9 / stream_content_ext 0x1 /
+    /// component_type 0x20 (NGA), 0x21 (broadcast-mix accessibility) and 0x22
+    /// (receiver-mix accessibility); T/UWA 005 DMI is 0xB / 0xF / 0x0A.
+    /// The descriptor must carry each verbatim and round-trip byte-exact.
+    #[test]
+    fn v1_20_1_new_component_types_round_trip() {
+        for (ext, sc, ct) in [
+            (0x1u8, 0x9u8, 0x20u8),
+            (0x1, 0x9, 0x21),
+            (0x1, 0x9, 0x22),
+            (0xF, 0xB, 0x0A),
+        ] {
+            let bytes = [
+                TAG,
+                9,
+                (ext << 4) | sc,
+                ct,
+                0x01,
+                b'e',
+                b'n',
+                b'g',
+                b'A',
+                b'V',
+                b'S',
+            ];
+            let d = ComponentDescriptor::parse(&bytes).unwrap();
+            assert_eq!(
+                (d.stream_content_ext, d.stream_content, d.component_type),
+                (ext, sc, ct)
+            );
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
+
     #[test]
     fn parse_rejects_wrong_tag() {
         assert!(matches!(

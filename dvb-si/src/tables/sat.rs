@@ -262,18 +262,18 @@ pub struct PositionV2Body {
 /// Centre coordinates for a cell fragment (present when `first_occurrence == 1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CellCenter {
-    /// `center_latitude` (18 bits, two's complement, `tcimsbf`).
-    pub center_latitude: i32,
-    /// `center_longitude` (19 bits, two's complement, `tcimsbf`).
-    pub center_longitude: i32,
+pub struct CellCentre {
+    /// `centre_latitude` (18 bits, two's complement, `tcimsbf`).
+    pub centre_latitude: i32,
+    /// `centre_longitude` (19 bits, two's complement, `tcimsbf`).
+    pub centre_longitude: i32,
     /// `max_distance` (24 bits).
     pub max_distance: u32,
-    /// `reserved_zero_future_use` (4 bits, right-aligned) before `center_latitude`. Captured on parse and
+    /// `reserved_zero_future_use` (4 bits, right-aligned) before `centre_latitude`. Captured on parse and
     /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
     /// sender's bits round-trip). Hand-built values default to `0`.
     pub reserved_zero_future_use_4: u8,
-    /// `reserved_zero_future_use` (5 bits, right-aligned) before `center_longitude`. Captured on parse and
+    /// `reserved_zero_future_use` (5 bits, right-aligned) before `centre_longitude`. Captured on parse and
     /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
     /// sender's bits round-trip). Hand-built values default to `0`.
     pub reserved_zero_future_use_5: u8,
@@ -326,14 +326,14 @@ pub struct CellFragment {
     /// `last_occurrence`.
     pub last_occurrence: bool,
     /// Centre coordinates (present iff `first_occurrence`).
-    pub center: Option<CellCenter>,
+    pub centre: Option<CellCentre>,
     /// `delivery_system_id` entries (each 32 bits).
     pub delivery_system_ids: Vec<u32>,
     /// New delivery system entries.
     pub new_delivery_systems: Vec<NewDeliverySystem>,
     /// Obsolescent delivery system entries.
     pub obsolescent_delivery_systems: Vec<ObsolescentDeliverySystem>,
-    /// `reserved_zero_future_use` (4 bits, right-aligned) of the not-`first_occurence` branch (unused, `0`, when `center` is present). Captured on parse and
+    /// `reserved_zero_future_use` (4 bits, right-aligned) of the not-`first_occurrence` branch (unused, `0`, when `centre` is present). Captured on parse and
     /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
     /// sender's bits round-trip). Hand-built values default to `0`.
     pub reserved_zero_future_use_4: u8,
@@ -660,9 +660,12 @@ pub struct PositionV3Metadata {
     pub total_stop_time_day_fraction: u32,
     /// `interpolation_flag` — 1 bit.
     pub interpolation_flag: bool,
-    /// `interpolation_type` (3 bits, Table 11i).
+    /// `interpolation_type` (3 bits, Table 11i). EN 300 468 v1.20.1: when
+    /// `interpolation_flag == 0` this field is *undefined and not used* (v1.19.1
+    /// said "reserved"); every 3-bit value is preserved verbatim.
     pub interpolation_type: InterpolationType,
-    /// `interpolation_degree` (3 bits).
+    /// `interpolation_degree` (3 bits). Undefined and not used when
+    /// `interpolation_flag == 0` (v1.20.1); preserved verbatim.
     pub interpolation_degree: u8,
     /// Usable start time (optional).
     pub usable_start_time: Option<UsableTime>,
@@ -809,9 +812,12 @@ pub struct CovarianceData {
 pub struct PositionV3Satellite {
     /// `satellite_id` (24 bits).
     pub satellite_id: u32,
-    /// `usable_start_time_flag`.
+    /// `usable_start_time_flag`. EN 300 468 v1.20.1 (Table 11h semantics): when
+    /// `metadata_flag == 0` this flag is *not used* (v1.19.1 said "reserved");
+    /// the parsed bit is preserved verbatim either way.
     pub usable_start_time_flag: bool,
-    /// `usable_stop_time_flag`.
+    /// `usable_stop_time_flag`. Not used when `metadata_flag == 0` (v1.20.1,
+    /// was "reserved" in v1.19.1); the parsed bit is preserved verbatim.
     pub usable_stop_time_flag: bool,
     /// `ephemeris_accel_flag`.
     pub ephemeris_accel_flag: bool,
@@ -974,16 +980,16 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                 w.write_u(1, frag.first_occurrence as u64)?;
                 w.write_u(1, frag.last_occurrence as u64)?;
                 if frag.first_occurrence {
-                    let Some(ref c) = frag.center else {
+                    let Some(ref c) = frag.centre else {
                         return Err(Error::ValueOutOfRange {
-                            field: "center",
-                            reason: "required when first_occurence is set",
+                            field: "centre",
+                            reason: "required when first_occurrence is set",
                         });
                     };
                     w.write_u(4, u64::from(c.reserved_zero_future_use_4))?;
-                    w.write_i(18, c.center_latitude as i64)?;
+                    w.write_i(18, c.centre_latitude as i64)?;
                     w.write_u(5, u64::from(c.reserved_zero_future_use_5))?;
-                    w.write_i(19, c.center_longitude as i64)?;
+                    w.write_i(19, c.centre_longitude as i64)?;
                     w.write_u(24, c.max_distance as u64)?;
                     w.write_u(6, u64::from(c.reserved_zero_future_use_6))?;
                 } else {
@@ -1331,24 +1337,24 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 let first_occurrence = r.read_u(1)? != 0;
                 let last_occurrence = r.read_u(1)? != 0;
                 let mut frag_r4 = 0u8;
-                let center = if first_occurrence {
+                let centre = if first_occurrence {
                     const CENTER_BITS: usize = 4 + 18 + 5 + 19 + 24 + 6;
                     if r.remaining_bits() < CENTER_BITS {
                         return Err(Error::BufferTooShort {
                             need: CENTER_BITS,
                             have: r.remaining_bits(),
-                            what: "SatSection CellFragment center",
+                            what: "SatSection CellFragment centre",
                         });
                     }
                     let center_r4 = r.read_u(4)? as u8;
-                    let center_latitude = r.read_i(18)? as i32;
+                    let centre_latitude = r.read_i(18)? as i32;
                     let center_r5 = r.read_u(5)? as u8;
-                    let center_longitude = r.read_i(19)? as i32;
+                    let centre_longitude = r.read_i(19)? as i32;
                     let max_distance = r.read_u(24)? as u32;
                     let center_r6 = r.read_u(6)? as u8;
-                    Some(CellCenter {
-                        center_latitude,
-                        center_longitude,
+                    Some(CellCentre {
+                        centre_latitude,
+                        centre_longitude,
                         max_distance,
                         reserved_zero_future_use_4: center_r4,
                         reserved_zero_future_use_5: center_r5,
@@ -1422,7 +1428,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                     cell_fragment_id,
                     first_occurrence,
                     last_occurrence,
-                    center,
+                    centre,
                     delivery_system_ids,
                     new_delivery_systems,
                     obsolescent_delivery_systems,
@@ -2409,6 +2415,67 @@ mod tests {
         assert_eq!(bytes, buf2, "byte-exact multi-plan round-trip");
     }
 
+    /// EN 300 468 v1.20.1 Table 11h semantics: when `metadata_flag == 0` the
+    /// usable_*_time flags are "not used", and when `interpolation_flag == 0`
+    /// the `interpolation_type`/`interpolation_degree` are "undefined and not
+    /// used" (v1.19.1: "reserved"). Whatever a sender puts there must survive
+    /// parse -> serialize byte-for-byte.
+    #[test]
+    fn position_v3_not_used_fields_round_trip_verbatim() {
+        let sat_with = |flags: bool, md: Option<PositionV3Metadata>| PositionV3Satellite {
+            satellite_id: 0x00_1234,
+            usable_start_time_flag: flags,
+            usable_stop_time_flag: flags,
+            ephemeris_accel_flag: false,
+            covariance_flag: false,
+            metadata: md,
+            ephemeris_data: Vec::new(),
+            covariance: None,
+            reserved_zero_future_use: 0,
+        };
+        let md = PositionV3Metadata {
+            total_start_time_year: 26,
+            total_start_time_day: 1,
+            total_start_time_day_fraction: 0,
+            total_stop_time_year: 27,
+            total_stop_time_day: 2,
+            total_stop_time_day_fraction: 0,
+            interpolation_flag: false,
+            interpolation_type: InterpolationType::ReservedOther(6),
+            interpolation_degree: 5,
+            usable_start_time: None,
+            usable_stop_time: None,
+            total_start_time_reserved_zero_future_use: 0,
+            total_stop_time_reserved_zero_future_use: 0,
+            reserved_zero_future_use: 0,
+        };
+        let body = SatBody::PositionV3(PositionV3Body {
+            oem_version_major: 1,
+            oem_version_minor: 0,
+            creation_date_year: 26,
+            creation_date_day: 1,
+            creation_date_day_fraction: 0,
+            // Satellite 1: metadata_flag == 0 but both usable flags set.
+            // Satellite 2: interpolation_flag == 0 with a non-zero type/degree.
+            satellites: vec![sat_with(true, None), sat_with(false, Some(md))],
+            creation_date_reserved_zero_future_use: 0,
+        });
+        let bytes = build_sat(4, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        let SatBody::PositionV3(v3) = &sat.body else {
+            panic!("expected PositionV3");
+        };
+        assert!(v3.satellites[0].usable_start_time_flag && v3.satellites[0].usable_stop_time_flag);
+        assert!(v3.satellites[0].metadata.is_none());
+        let md = v3.satellites[1].metadata.as_ref().unwrap();
+        assert!(!md.interpolation_flag);
+        assert_eq!(md.interpolation_type, InterpolationType::ReservedOther(6));
+        assert_eq!(md.interpolation_degree, 5);
+        let mut out = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
     #[test]
     fn position_v3_one_sat_with_metadata_round_trip() {
         let body = SatBody::PositionV3(PositionV3Body {
@@ -2476,9 +2543,9 @@ mod tests {
                 cell_fragment_id: 0x11223344,
                 first_occurrence: true,
                 last_occurrence: false,
-                center: Some(CellCenter {
-                    center_latitude: 1000,
-                    center_longitude: -2000,
+                centre: Some(CellCentre {
+                    centre_latitude: 1000,
+                    centre_longitude: -2000,
                     max_distance: 500000,
                     reserved_zero_future_use_4: 0,
                     reserved_zero_future_use_5: 0,
@@ -2509,7 +2576,7 @@ mod tests {
                 assert_eq!(cf.fragments.len(), 1);
                 assert_eq!(cf.fragments[0].cell_fragment_id, 0x11223344);
                 assert!(cf.fragments[0].first_occurrence);
-                assert!(cf.fragments[0].center.is_some());
+                assert!(cf.fragments[0].centre.is_some());
                 assert_eq!(cf.fragments[0].delivery_system_ids.len(), 1);
                 assert_eq!(cf.fragments[0].new_delivery_systems.len(), 1);
                 assert_eq!(cf.fragments[0].obsolescent_delivery_systems.len(), 1);
@@ -2691,7 +2758,7 @@ mod tests {
                 cell_fragment_id: 1,
                 first_occurrence: false,
                 last_occurrence: false,
-                center: None,
+                centre: None,
                 delivery_system_ids: vec![0x11111111],
                 new_delivery_systems: Vec::new(),
                 obsolescent_delivery_systems: Vec::new(),
@@ -2719,7 +2786,7 @@ mod tests {
                     cell_fragment_id: 1,
                     first_occurrence: false,
                     last_occurrence: false,
-                    center: None,
+                    centre: None,
                     delivery_system_ids: vec![0x11111111; 50],
                     new_delivery_systems: Vec::new(),
                     obsolescent_delivery_systems: Vec::new(),
@@ -2931,7 +2998,7 @@ mod tests {
                 cell_fragment_id: 0xAABBCCDD,
                 first_occurrence: false,
                 last_occurrence: true,
-                center: None,
+                centre: None,
                 delivery_system_ids: Vec::new(),
                 new_delivery_systems: Vec::new(),
                 obsolescent_delivery_systems: Vec::new(),
@@ -3098,7 +3165,7 @@ mod tests {
     #[test]
     fn hand_built_cell_fragment_anchor() {
         // section_length = body_len(10) + 10 = 20 = 0x0014
-        // Bit breakdown in body (one fragment, no center, empty lists):
+        // Bit breakdown in body (one fragment, no centre, empty lists):
         //   [0:31]   cell_fragment_id(32)=0xAABBCCDD
         //   [32]     first_occurrence(1)=0
         //   [33]     last_occurrence(1)=1
@@ -3121,7 +3188,7 @@ mod tests {
                 assert_eq!(f.cell_fragment_id, 0xAABBCCDD);
                 assert!(!f.first_occurrence);
                 assert!(f.last_occurrence);
-                assert!(f.center.is_none());
+                assert!(f.centre.is_none());
                 assert!(f.delivery_system_ids.is_empty());
                 assert!(f.new_delivery_systems.is_empty());
                 assert!(f.obsolescent_delivery_systems.is_empty());

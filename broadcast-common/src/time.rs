@@ -4,9 +4,49 @@
 //! HHMMSS (EN 300 468 Annex C), and event durations as 24-bit BCD HHMMSS. The
 //! duration codec is dependency-free; the MJD↔calendar conversion needs a date
 //! library and so lives behind the `chrono` feature.
+//!
+//! # 2038 MJD wrap-around (EN 300 468 v1.20.1 clauses 5.2.4 / 5.2.5 / 5.2.6)
+//!
+//! The wire field carries only the 16 least-significant bits of the Modified
+//! Julian Date. v1.20.1 defines how to recover the full MJD: if the most
+//! significant bit of those 16 bits is one the 16 bits *are* the MJD (32768 =
+//! 1948-08-05 ... 65535 = 2038-04-22), otherwise the MJD is `65536 (0x10000)`
+//! plus the 16 bits (65536 = 2038-04-23 ... 98303 = 2128-01-09). Dates before
+//! MJD 32768 are therefore no longer representable; `25 December 2040
+//! 12:34:56` is coded `0x03D1123456`.
 
 use crate::bcd::{from_bcd_byte, to_bcd_byte};
 use core::time::Duration;
+
+/// Most significant bit of the 16-bit MJD field (EN 300 468 v1.20.1 clause
+/// 5.2.4): set means the field is the whole MJD, clear means the MJD is
+/// [`MJD_WRAP_OFFSET`] plus the field.
+const MJD_16_MSB: u16 = 0x8000;
+
+/// MJD offset added when the MSB of the 16-bit MJD field is zero (`0x10000`,
+/// EN 300 468 v1.20.1 clause 5.2.4).
+const MJD_WRAP_OFFSET: u32 = 0x1_0000;
+
+/// Recover the full MJD from the 16-bit wire field (v1.20.1 clause 5.2.4).
+fn full_mjd(field: u16) -> u32 {
+    if field & MJD_16_MSB != 0 {
+        u32::from(field)
+    } else {
+        MJD_WRAP_OFFSET + u32::from(field)
+    }
+}
+
+/// Narrow a full MJD to the 16-bit wire field; `None` outside the
+/// representable `0x8000 ..= 0x1_7FFF` range.
+fn mjd_field(full: u32) -> Option<u16> {
+    let field = if full >= MJD_WRAP_OFFSET {
+        full - MJD_WRAP_OFFSET
+    } else {
+        full
+    };
+    let field = u16::try_from(field).ok()?;
+    (full_mjd(field) == full).then_some(field)
+}
 
 /// Decoded 5-byte DVB UTC time (16-bit MJD + 24-bit BCD `HHMMSS`).
 ///
@@ -84,8 +124,8 @@ pub fn encode_mjd_bcd(dt: MjdBcdDateTime) -> Option<[u8; 5]> {
 /// [`mjd_to_ymd_nogate`] and the chrono-gated [`mjd_to_ymd`] call this same
 /// arithmetic so the algorithm exists exactly once; each applies its own
 /// (different) post-processing to the raw result.
-fn mjd_to_ymd_core(mjd: u16) -> (i64, i64, i64) {
-    let mjd = i64::from(mjd);
+fn mjd_to_ymd_core(field: u16) -> (i64, i64, i64) {
+    let mjd = i64::from(full_mjd(field));
     let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
     let m_prime = ((mjd as f64 - 14_956.1 - libm::floor(y_prime as f64 * 365.25)) / 30.6001) as i64;
     let d = mjd
@@ -137,11 +177,11 @@ fn ymd_to_mjd_nogate(year: i32, month: u32, day: u32) -> Option<u16> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    let mjd = ymd_to_mjd_core(year, month, day);
-    if !(0.0..=f64::from(u16::MAX)).contains(&mjd) {
+    let full = ymd_to_mjd_core(year, month, day);
+    if !(0.0..=f64::from(u32::MAX)).contains(&full) {
         return None;
     }
-    let mjd = mjd as u16;
+    let mjd = mjd_field(full as u32)?;
     // The core arithmetic is total over day 1..=31, so `31 Feb` silently
     // lands on 2 or 3 March. Accept only dates that decode back to the
     // same calendar day (`encode_mjd_bcd` must not accept what decode
@@ -189,7 +229,8 @@ pub fn encode_bcd_duration(duration: Duration) -> Option<[u8; 3]> {
     ])
 }
 
-/// Convert a 16-bit Modified Julian Date to `(year, month, day)`.
+/// Convert the 16-bit MJD wire field (16 lsb of the MJD, with the v1.20.1
+/// 2038 wrap rule) to `(year, month, day)`.
 ///
 /// Inverse of [`ymd_to_mjd`]; MJD→calendar per ETSI EN 300 468 Annex C.
 #[cfg(feature = "chrono")]
@@ -354,9 +395,15 @@ mod tests {
         use chrono::NaiveDate;
         // MJD epoch is 1858-11-17.
         let epoch = NaiveDate::from_ymd_opt(1858, 11, 17).unwrap();
-        for &(y, m, d) in &[(1993, 10, 13), (2000, 1, 1), (2023, 6, 8), (1900, 3, 1)] {
+        for &(y, m, d) in &[(1993, 10, 13), (2000, 1, 1), (2023, 6, 8), (1949, 1, 23)] {
             let date = NaiveDate::from_ymd_opt(y, m, d).unwrap();
-            let expected = (date - epoch).num_days() as u16;
+            let full = (date - epoch).num_days() as u32;
+            let expected = u16::try_from(if full >= 0x1_0000 {
+                full - 0x1_0000
+            } else {
+                full
+            })
+            .unwrap();
             assert_eq!(ymd_to_mjd(y, m, d), Some(expected), "{y}-{m}-{d}");
         }
     }
@@ -386,6 +433,51 @@ mod tests {
         let dt = decode_mjd_bcd_utc([0xE4, 0x09, 0x12, 0x34, 0x56]).expect("decodes");
         assert_eq!((dt.hour(), dt.minute(), dt.second()), (12, 34, 56));
         assert_eq!(dt.year(), 2018);
+    }
+
+    /// EN 300 468 v1.20.1 clause 5.2.4 EXAMPLE 3: 25 December 2040 12:34:56
+    /// is coded `0x03 D112 3456` (MSB of the 16-bit field is zero, so the MJD
+    /// is 0x10000 + 0x03D1).
+    #[test]
+    fn spec_v1_20_1_2040_example() {
+        let dt = MjdBcdDateTime {
+            year: 2040,
+            month: 12,
+            day: 25,
+            hour: 12,
+            minute: 34,
+            second: 56,
+        };
+        let raw = [0x03, 0xD1, 0x12, 0x34, 0x56];
+        assert_eq!(decode_mjd_bcd(raw), Some(dt));
+        assert_eq!(encode_mjd_bcd(dt), Some(raw));
+        // Clause 5.2.5 EXAMPLE 1 (pre-wrap) still decodes: 93/10/13 12:45:00.
+        let old = MjdBcdDateTime {
+            year: 1993,
+            month: 10,
+            day: 13,
+            hour: 12,
+            minute: 45,
+            second: 0,
+        };
+        assert_eq!(decode_mjd_bcd([0xC0, 0x79, 0x12, 0x45, 0x00]), Some(old));
+        // Boundary: last pre-wrap day and first post-wrap day.
+        let a = decode_mjd_bcd([0xFF, 0xFF, 0x00, 0x00, 0x00]).unwrap();
+        let b = decode_mjd_bcd([0x00, 0x00, 0x00, 0x00, 0x00]).unwrap();
+        assert_eq!((a.year, a.month, a.day), (2038, 4, 22));
+        assert_eq!((b.year, b.month, b.day), (2038, 4, 23));
+        // Pre-1949 dates are no longer representable.
+        assert_eq!(
+            encode_mjd_bcd(MjdBcdDateTime {
+                year: 1900,
+                month: 3,
+                day: 1,
+                hour: 0,
+                minute: 0,
+                second: 0
+            }),
+            None
+        );
     }
 
     #[test]

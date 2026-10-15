@@ -15,6 +15,10 @@ pub const PDS_EACEM: u32 = 0x0000_0028;
 /// `0x00000029` per the TS 101 162 register (`registries/tsPDS.names`).
 /// (Note: `0x00000031` is TeleDenmark, not NorDig.)
 pub const PDS_NORDIG: u32 = 0x0000_0029;
+/// `private_data_specifier` that precedes the AVS-P3 audio descriptor in a PMT
+/// ES loop (ETSI EN 300 468 v1.20.1 Annex O note): `0x41565341`, the ASCII
+/// of `'AVSA'`.
+pub const PDS_AVSA: u32 = 0x4156_5341;
 
 /// Descriptor tag for private_data_specifier_descriptor.
 pub const TAG: u8 = 0x5F;
@@ -95,6 +99,19 @@ impl crate::traits::DescriptorDef<'_> for PrivateDataSpecifierDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// EN 300 468 v1.20.1 Annex O: the AVS3-P3 audio descriptor is preceded by a
+    /// private_data_specifier_descriptor carrying `0x41565341` ('AVSA').
+    #[test]
+    fn annex_o_avsa_specifier_round_trips() {
+        assert_eq!(PDS_AVSA.to_be_bytes(), *b"AVSA");
+        let bytes = [TAG, 4, 0x41, 0x56, 0x53, 0x41];
+        let d = PrivateDataSpecifierDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.private_data_specifier, PDS_AVSA);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
 
     #[test]
     fn parse_extracts_specifier() {
