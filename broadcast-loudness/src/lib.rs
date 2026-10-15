@@ -15,11 +15,18 @@ mod channel_layout;
 mod error;
 mod filter;
 mod loudness_meter;
+mod profile;
 mod true_peak;
 
 pub use channel_layout::ChannelLayout;
 pub use error::{Error, Result};
 pub use loudness_meter::LoudnessMeter;
+pub use profile::{
+    ACCEPTABLE_MAX_RATIO, CHINESE_PROFILES, GY_T_282_2014, GY_T_377_2023_NOISY,
+    GY_T_377_2023_QUIET, LoudnessProfile, MONITOR_OVER_LIMIT_LKFS, MonitorUnit, MonitorVerdict,
+    OVER_LIMIT_MAX_RATIO, ProfileReport, classify_ratio, classify_units,
+    consecutive_over_limit_ratio, over_limit_ratio,
+};
 pub use true_peak::TruePeakMeter;
 
 pub mod kfilter {
