@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- MPEG-2 `Extension_descriptor` (tag 0x3F, H.222.0 clause 2.6.90) with the seven MPEG-H 3D audio descriptors (`extension_descriptor_tag` 0x08-0x0E, clauses 2.6.106-2.6.118): typed `MpegH3dAudio`, `MpegH3dAudioScene`, `MpegH3dAudioTextLabel`, `MpegH3dAudioMultiStream`, `MpegH3dAudioDrcLoudness`, opaque `MpegH3dAudioConfig` / `MpegH3dAudioCommand`, verbatim `Other` for the remaining extension tags, all reserved bits preserved. The descriptor is auto-dispatched by `parse_loop` (`AnyDescriptor::Mpeg2Extension`) and `DescriptorTag::Mpeg2Extension` (0x3F) is new. Verified byte-for-byte against the PMTs of the Fraunhofer-IIS MPEG-H transport streams (fetch-on-demand `tools/fetch-test-streams.sh mpegh-*`) and TSDuck-compiled vectors.
+
 ### Changed (BREAKING, #1229 - GY/T 422-2025 multi-audio)
 - **BREAKING:** `Preselection::audio_rendering_indication` is now the typed `AudioRenderingIndication` (EN 300 468 Table 111 / GY/T 422-2025 Table 2: no preference, stereo, two-dimensional, three-dimensional, headphones, reserved(n)) instead of a raw `u8`.
 
