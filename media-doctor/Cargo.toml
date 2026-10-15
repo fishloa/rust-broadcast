@@ -15,6 +15,19 @@ name = "media-doctor"
 path = "src/bin/media-doctor.rs"
 required-features = ["cli"]
 
+# These tests spawn the `media-doctor` binary (`CARGO_BIN_EXE_media-doctor`),
+# which only exists with the `cli` feature. Without this they ran (and failed)
+# in a bare `--no-default-features` lane whenever nothing else had built the
+# binary (it used to be masked by an earlier all-features build in the same CI
+# job sharing one target dir).
+[[test]]
+name = "cli_routing"
+required-features = ["cli"]
+
+[[test]]
+name = "watch_metrics_server"
+required-features = ["cli"]
+
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 mpeg-pes         = { path = "../mpeg-pes", version = "0.5", default-features = false }
