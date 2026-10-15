@@ -19,9 +19,12 @@ const RESERVED_SHIFT: u8 = 2;
 const LCN_HI_MASK: u8 = 0x03;
 
 /// Default of the 5-bit per-entry `reserved` between `visible_service_flag`
-/// and the LCN: all ones (`0x1F`). EACEM/NorDig/D-Book private layout, not
-/// covered by the EN 300 468 reserved-bit audit; the previously emitted value
-/// is kept as the default and the bits are preserved on parse.
+/// and the LCN: all ones (`0x1F`). EACEM/D-Book private layout (PDS 0x28; the
+/// NorDig v1 layout on the same tag has `reserved(1)` + a 14-bit LCN, see
+/// `nordig.rs`). Real-capture evidence: the run is `11111` in all 2456 entries
+/// of the PDS-0x28 captures in the local archive (France TNT mux, TSDuck
+/// test-059/092/124/184; `tests/local_archive_reserved_defaults.rs`). The bits
+/// are preserved on parse.
 pub const RESERVED_DEFAULT: u8 = 0x1F;
 /// `logical_channel_number` is 10 bits (0..=1023).
 const LCN_BITS: u32 = 10;

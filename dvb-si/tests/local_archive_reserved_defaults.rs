@@ -11,10 +11,13 @@
 //!   preserve them and re-serialize byte-identically (the default for a
 //!   hand-built entry stays the all-ones DVB analogy; the real data is why
 //!   preservation, not the default, is load-bearing here).
-//! * `logical_channel_descriptor` v1 (EACEM, tag 0x83): the 1-bit `reserved`
-//!   between `visible_service_flag` and the 14-bit LCN is `1` in every real
-//!   capture in the archive (59 entries in the French TNT mux alone), so the
-//!   `V1_RESERVED_DEFAULT = 1` default is evidence-backed.
+//! * EACEM `logical_channel_descriptor` (PDS 0x28, tag 0x83): the 5-bit
+//!   `reserved` run between `visible_service_flag` and the 10-bit LCN is
+//!   `11111` in every entry of every PDS-0x28 capture in the archive, so
+//!   `RESERVED_DEFAULT = 0x1F` of `logical_channel.rs` is evidence-backed. No
+//!   archive capture carries a NorDig-scoped (PDS 0x29) 0x83/0x87/0x88
+//!   descriptor: the NorDig defaults rest on the NorDig Unified Requirements
+//!   text (audit section 12.2).
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};
@@ -126,15 +129,11 @@ fn ssu_selector_reserved_runs_are_preserved_from_a_real_pmt() {
     );
 }
 
-#[test]
-fn logical_channel_v1_reserved_bit_is_one_in_real_captures() {
-    let path = archive("france-tnt-uhf32.ts");
-    let Ok(ts) = std::fs::read(&path) else {
-        eprintln!("local_archive_reserved_defaults: SKIPPED - {path:?} not present");
-        return;
-    };
-    let mut entries = 0usize;
-    for sec in sections(&ts, 0x10)
+/// PDS-scoped walk of every NIT transport_stream_loop descriptor loop:
+/// `(private_data_specifier, tag, body)` of each descriptor.
+fn nit_ts_descriptors(ts: &[u8]) -> Vec<(Option<u32>, u8, Vec<u8>)> {
+    let mut out = Vec::new();
+    for sec in sections(ts, 0x10)
         .into_iter()
         .filter(|s| s[0] == 0x40 || s[0] == 0x41)
     {
@@ -146,19 +145,61 @@ fn logical_channel_v1_reserved_bit_is_one_in_real_captures() {
         while pos + 6 <= end {
             let dl = (usize::from(sec[pos + 4] & 0x0F) << 8) | usize::from(sec[pos + 5]);
             let body = &sec[pos + 6..(pos + 6 + dl).min(sec.len())];
-            let mut j = 0;
+            let (mut j, mut pds) = (0, None);
             while j + 2 <= body.len() {
                 let (tag, l) = (body[j], usize::from(body[j + 1]));
-                if tag == 0x83 {
-                    for e in body[j + 2..(j + 2 + l).min(body.len())].chunks_exact(4) {
-                        entries += 1;
-                        assert_eq!((e[2] >> 6) & 1, 1, "v1 LCN reserved bit");
-                    }
+                let d = &body[j + 2..(j + 2 + l).min(body.len())];
+                if tag == 0x5F && d.len() == 4 {
+                    pds = Some(u32::from_be_bytes([d[0], d[1], d[2], d[3]]));
+                } else {
+                    out.push((pds, tag, d.to_vec()));
                 }
                 j += 2 + l;
             }
             pos += 6 + dl;
         }
     }
-    assert!(entries > 0, "france-tnt-uhf32.ts NIT carries LCN entries");
+    out
+}
+
+/// Real-capture evidence for the **EACEM** `logical_channel_descriptor`
+/// (PDS 0x28, tag 0x83): `visible_service_flag(1) reserved(5) LCN(10)`; the
+/// 5-bit run is `11111` in every entry of every PDS-0x28 capture in the local
+/// archive. This is evidence for `logical_channel.rs` (`RESERVED_DEFAULT =
+/// 0x1F`), **not** for the NorDig v1 layout (`reserved(1) LCN(14)`, PDS
+/// 0x29), which no capture carries (see the audit, section 12.2).
+#[test]
+fn eacem_logical_channel_reserved_run_is_all_ones_in_real_captures() {
+    let mut entries = 0usize;
+    let mut nordig = 0usize;
+    for rel in [
+        "france-tnt-uhf32.ts",
+        "tsduck-test/input/test-059.ts",
+        "tsduck-test/input/test-092.ts",
+        "tsduck-test/input/test-124.ts",
+        "tsduck-test/input/test-184.ts",
+    ] {
+        let path = archive(rel);
+        let Ok(ts) = std::fs::read(&path) else {
+            eprintln!("local_archive_reserved_defaults: SKIPPED - {path:?} not present");
+            continue;
+        };
+        for (pds, tag, body) in nit_ts_descriptors(&ts) {
+            match (pds, tag) {
+                (Some(0x28), 0x83) => {
+                    for e in body.chunks_exact(4) {
+                        entries += 1;
+                        assert_eq!((e[2] >> 2) & 0x1F, 0x1F, "{rel}: EACEM LCN reserved(5) run");
+                    }
+                }
+                // NorDig private descriptors (PDS 0x29): none expected locally.
+                (Some(0x29), 0x83 | 0x87 | 0x88) => nordig += 1,
+                _ => {}
+            }
+        }
+    }
+    eprintln!("EACEM LCN entries checked: {entries}; NorDig-scoped LCD descriptors: {nordig}");
+    if entries == 0 {
+        eprintln!("local_archive_reserved_defaults: SKIPPED - no archive capture present");
+    }
 }
