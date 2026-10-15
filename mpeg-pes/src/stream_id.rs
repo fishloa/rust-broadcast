@@ -15,9 +15,10 @@ const ECM_STREAM: u8 = 0xF0;
 const EMM_STREAM: u8 = 0xF1;
 const DSMCC_STREAM: u8 = 0xF2;
 const H222_1_TYPE_E: u8 = 0xF8;
-const PROGRAM_STREAM_DIRECTORY: u8 = 0xFF;
 const EXTENDED_STREAM_ID: u8 = 0xFD;
+const PROGRAM_STREAM_DIRECTORY: u8 = 0xFF;
 
+// ORDER: `stream_id_extension` values are a separate namespace from the `stream_id` constants above; ascending among themselves.
 /// `stream_id_extension` of an AVS3 video PES (T/AI 109.6, as cited by ETSI TS
 /// 101 154 V2.10.1 section 4.1.8 "Encoding"): the PES uses `stream_id = 0xFD`
 /// ([`StreamId::EXTENDED_STREAM_ID`]) and this extension value.

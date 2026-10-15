@@ -65,6 +65,7 @@ use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtp_sdp::aac_config_from_asc_bytes;
 use crate::vp9::Vp9ConfigurationBox;
 
+// ORDER: element-hierarchy order (EBML header, Segment, then each master's children), not numeric: IDs are variable-length marker-bit values.
 // --- EBML / Matroska element IDs (RFC 9559 §27; stored with marker bits) -----
 /// `EBML` header master element.
 const EBML_HEADER: u32 = 0x1A45_DFA3;

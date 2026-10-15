@@ -155,6 +155,16 @@ pub enum StreamType {
     VvcTemporalSubset,
     /// 0x35 — EVC video stream or EVC temporal sub-bitstream (ISO/IEC 23094-1).
     Evc,
+    /// Rec. ITU-T H.222.0 reserved range `0x36`..=`0x7E`.
+    ReservedRange(u8),
+    /// 0x7F — IPMP stream (H.222.0 Table 2-34).
+    IpmpHigh,
+    /// 0x81 — ATSC AC-3 audio (A/52).
+    Ac3,
+    /// 0x86 — SCTE-35 splice_info_section (ANSI/SCTE 35).
+    Scte35,
+    /// 0x87 — ATSC E-AC-3 / Dolby Digital Plus audio (A/52B).
+    EAc3,
     /// 0xD2 — AVS2 video elementary stream (GY/T 420-2025 clause 7.2.1 Table 2, with an
     /// AVS2_video_descriptor, tag 0x40).
     Avs2Video,
@@ -169,16 +179,6 @@ pub enum StreamType {
     /// 8.1.2; ETSI TS 101 154 V2.10.1 §4.1.8.35: stream_id `0xFD`,
     /// stream_id_extension `0b100_1111`).
     Avs3Audio,
-    /// 0x81 — ATSC AC-3 audio (A/52).
-    Ac3,
-    /// 0x86 — SCTE-35 splice_info_section (ANSI/SCTE 35).
-    Scte35,
-    /// 0x87 — ATSC E-AC-3 / Dolby Digital Plus audio (A/52B).
-    EAc3,
-    /// 0x7F — IPMP stream (H.222.0 Table 2-34).
-    IpmpHigh,
-    /// Rec. ITU-T H.222.0 reserved range `0x36`..=`0x7E`.
-    ReservedRange(u8),
     /// User private range `0x80`..=`0xFF` (except named entries).
     UserPrivate(u8),
 }
@@ -245,12 +245,12 @@ impl StreamType {
             0x36..=0x7E => Self::ReservedRange(v),
             0x7F => Self::IpmpHigh,
             0x81 => Self::Ac3,
+            0x86 => Self::Scte35,
+            0x87 => Self::EAc3,
             0xD2 => Self::Avs2Video,
             0xD3 => Self::Avs2Audio,
             0xD4 => Self::Avs3Video,
             0xD5 => Self::Avs3Audio,
-            0x86 => Self::Scte35,
-            0x87 => Self::EAc3,
             _ => Self::UserPrivate(v),
         }
     }
@@ -313,15 +313,16 @@ impl StreamType {
             Self::Vvc => 0x33,
             Self::VvcTemporalSubset => 0x34,
             Self::Evc => 0x35,
+            Self::ReservedRange(v) => v,
             Self::IpmpHigh => 0x7F,
             Self::Ac3 => 0x81,
+            Self::Scte35 => 0x86,
+            Self::EAc3 => 0x87,
             Self::Avs2Video => 0xD2,
             Self::Avs2Audio => 0xD3,
             Self::Avs3Video => 0xD4,
             Self::Avs3Audio => 0xD5,
-            Self::Scte35 => 0x86,
-            Self::EAc3 => 0x87,
-            Self::ReservedRange(v) | Self::UserPrivate(v) => v,
+            Self::UserPrivate(v) => v,
         }
     }
 
@@ -354,6 +355,7 @@ impl StreamType {
     /// | `Vvc` | 0x33 | ITU-T H.266 / ISO/IEC 23090-3 |
     /// | `VvcTemporalSubset` | 0x34 | H.266 Annex A |
     /// | `Evc` | 0x35 | ISO/IEC 23094-1 |
+    /// | `Avs2Video` | 0xD2 | GY/T 420-2025 clause 7.2.1 |
     /// | `Avs3Video` | 0xD4 | T/AI 109.6 (TS 101 154 V2.10.1) |
     ///
     /// **Note on `PesPrivateData` (0x06):** this stream_type alone does *not*
@@ -409,6 +411,7 @@ impl StreamType {
     /// | `MhasAudioAux` | 0x2E | ISO/IEC 23008-3 MHAS auxiliary |
     /// | `Ac3` | 0x81 | ATSC A/52 (AC-3) |
     /// | `EAc3` | 0x87 | ATSC A/52B (E-AC-3 / Dolby Digital Plus) |
+    /// | `Avs2Audio` | 0xD3 | T/AI 109.7 clause 8.2 |
     /// | `Avs3Audio` | 0xD5 | T/AI 109.7 clause 8.1.2 |
     ///
     /// **Note on `PesPrivateData` (0x06):** this stream_type alone does *not*
@@ -475,9 +478,9 @@ impl StreamType {
     /// | `GreenAccessUnits` | 0x2C | green access units |
     /// | `QualityAccessUnits` | 0x2F | quality access units |
     /// | `MediaOrchestration` | 0x30 | Media Orchestration |
+    /// | `ReservedRange(_)` | 0x36–0x7E | reserved, treated conservatively as data |
     /// | `IpmpHigh` | 0x7F | IPMP (H.222.0 Table 2-34) |
     /// | `Scte35` | 0x86 | SCTE-35 splice_info_section |
-    /// | `ReservedRange(_)` | 0x36–0x7E | reserved, treated conservatively as data |
     /// | `UserPrivate(_)` | 0x80–0xFF | user private, treated conservatively as data |
     ///
     /// **Note on `PesPrivateData` (0x06):** this stream_type is shared by many
@@ -548,15 +551,15 @@ impl StreamType {
             Self::Vvc => "VVC/H.266",
             Self::VvcTemporalSubset => "VVC Temporal Subset",
             Self::Evc => "EVC",
+            Self::ReservedRange(_) => "Reserved",
             Self::IpmpHigh => "IPMP (0x7F)",
             Self::Ac3 => "AC-3",
+            Self::Scte35 => "SCTE-35",
+            Self::EAc3 => "E-AC-3",
             Self::Avs2Video => "AVS2 Video",
             Self::Avs2Audio => "AVS2 Audio",
             Self::Avs3Video => "AVS3 Video",
             Self::Avs3Audio => "AVS3-P3 Audio",
-            Self::Scte35 => "SCTE-35",
-            Self::EAc3 => "E-AC-3",
-            Self::ReservedRange(_) => "Reserved",
             Self::UserPrivate(_) => "User Private",
         }
     }
@@ -1150,11 +1153,19 @@ mod tests {
         assert_eq!(StreamType::MediaOrchestration.to_u8(), 0x30);
         assert_eq!(StreamType::Mvcd.to_u8(), 0x26);
         assert_eq!(StreamType::Temi.to_u8(), 0x27);
+        assert_eq!(StreamType::AacAdts.to_u8(), 0x0F);
+        assert_eq!(StreamType::IpmpHigh.to_u8(), 0x7F);
         assert_eq!(StreamType::Ac3.to_u8(), 0x81);
         assert_eq!(StreamType::Scte35.to_u8(), 0x86);
         assert_eq!(StreamType::EAc3.to_u8(), 0x87);
-        assert_eq!(StreamType::AacAdts.to_u8(), 0x0F);
-        assert_eq!(StreamType::IpmpHigh.to_u8(), 0x7F);
+    }
+
+    /// Every wire byte round-trips through `from_u8`/`to_u8` (lossless).
+    #[test]
+    fn stream_type_all_256_round_trip() {
+        for v in 0..=255u8 {
+            assert_eq!(StreamType::from_u8(v).to_u8(), v, "stream_type {v:#04x}");
+        }
     }
 
     #[test]

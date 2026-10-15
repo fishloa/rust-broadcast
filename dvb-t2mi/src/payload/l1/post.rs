@@ -27,6 +27,7 @@ const NUM_AUX_BITS: u32 = 4;
 const AUX_CONFIG_RFU_BITS: u32 = 8;
 // RF loop per entry
 const RF_IDX_BITS: u32 = 3;
+// ORDER: field order of the L1-post wire syntax (bit widths), not numeric.
 const FREQUENCY_BITS: u32 = 32;
 // FEF block
 const FEF_TYPE_BITS: u32 = 4;

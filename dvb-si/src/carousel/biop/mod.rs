@@ -19,16 +19,16 @@
 //!
 //! Tagged-profile and component tags (32-bit) from TR 101 202 §4.7.3:
 
-/// `profileId_tag` for the BIOP Profile Body — TR 101 202 §4.7.3.2.
-pub const TAG_BIOP: u32 = 0x49534F06;
 /// `profileId_tag` for the Lite Options Profile Body — TR 101 202 §4.7.3.3.
 pub const TAG_LITE_OPTIONS: u32 = 0x49534F05;
-/// `componentId_tag` for BIOP::ObjectLocation — TR 101 202 Table 4.5.
-pub const TAG_OBJECT_LOCATION: u32 = 0x49534F50;
+/// `profileId_tag` for the BIOP Profile Body — TR 101 202 §4.7.3.2.
+pub const TAG_BIOP: u32 = 0x49534F06;
 /// `componentId_tag` for DSM::ConnBinder — TR 101 202 Table 4.5.
 pub const TAG_CONN_BINDER: u32 = 0x49534F40;
 /// `componentId_tag` for DSM::ServiceLocation — TR 101 202 Table 4.7.
 pub const TAG_SERVICE_LOCATION: u32 = 0x49534F46;
+/// `componentId_tag` for BIOP::ObjectLocation — TR 101 202 Table 4.5.
+pub const TAG_OBJECT_LOCATION: u32 = 0x49534F50;
 
 /// Tap `use` value — module delivery parameters (BIOP_DELIVERY_PARA_USE).
 /// TR 101 202 §4.7.3.2, Table 4.6.

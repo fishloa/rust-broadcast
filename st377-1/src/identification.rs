@@ -16,6 +16,7 @@ use crate::sets::{
 };
 use crate::types::{MxfTimestamp, ProductVersion, UlBytes, decode_utf16_be, encode_utf16_be};
 
+// ORDER: Annex A.3 property-table order (spec clause order), not numeric.
 /// Local tag: This Generation UID (A.3).
 pub const TAG_THIS_GENERATION_UID: u16 = 0x3C09;
 /// Local tag: Company Name (A.3).

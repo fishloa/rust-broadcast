@@ -702,13 +702,13 @@ fn parse_pixel_sub_blocks<'a>(
         pos += 1; // consume data_type byte
 
         let data_len = match data_type_byte {
+            0x10 => scan_2bit_code_string(&field[pos..]),
+            0x11 => scan_4bit_code_string(&field[pos..]),
+            0x12 => scan_8bit_code_string(&field[pos..]),
             0x20 => MAP_TABLE_2TO4_BYTES,
             0x21 => MAP_TABLE_2TO8_BYTES,
             0x22 => MAP_TABLE_4TO8_BYTES,
             0xF0 => 0,
-            0x10 => scan_2bit_code_string(&field[pos..]),
-            0x11 => scan_4bit_code_string(&field[pos..]),
-            0x12 => scan_8bit_code_string(&field[pos..]),
             _ => {
                 // Unknown: consume rest of field
                 field.len() - pos

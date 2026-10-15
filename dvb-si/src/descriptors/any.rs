@@ -344,8 +344,9 @@ declare_descriptors! {'a;
     LogicalChannel => crate::descriptors::logical_channel::LogicalChannelDescriptor,
     NordigLogicalChannelV1 => crate::descriptors::nordig::NordigLogicalChannelV1,
     NordigLogicalChannelV2 => crate::descriptors::nordig::NordigLogicalChannelV2,
-    Avs3Audio => crate::descriptors::avs3_audio::Avs3AudioDescriptor,
+    // ORDER: this no-dispatch tail is ordered by descriptor tag (0x83, 0xD1, 0xD2), not alphabetically.
     Avs3Video => crate::descriptors::avs3_video::Avs3VideoDescriptor,
+    Avs3Audio => crate::descriptors::avs3_audio::Avs3AudioDescriptor,
 }
 
 /// Lazily walk a raw descriptor loop. Never panics.

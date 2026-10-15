@@ -121,29 +121,29 @@ const INFO_RESERVED_HI: u8 = 0xF0;
 
 // ── stream_type → codec (ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154) ──────
 
-/// AVC (H.264) video — ISO/IEC 13818-1 Table 2-34.
-const STREAM_TYPE_AVC: u8 = 0x1B;
-/// HEVC (H.265) video — ISO/IEC 13818-1 Table 2-34 (issue #627).
-const STREAM_TYPE_HEVC: u8 = 0x24;
 /// MPEG-2 video (ITU-T H.262 / ISO/IEC 13818-2) — ISO/IEC 13818-1 Table 2-34
 /// (issue #627).
 const STREAM_TYPE_MPEG2_VIDEO: u8 = 0x02;
-/// ISO/IEC 13818-7 AAC in ADTS — ISO/IEC 13818-1 Table 2-34.
-const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
 /// MPEG-1 audio (ISO/IEC 11172-3) — ISO/IEC 13818-1 Table 2-34 (issue #627).
 const STREAM_TYPE_MPEG1_AUDIO: u8 = 0x03;
 /// MPEG-2 audio (ISO/IEC 13818-3, LSF) — ISO/IEC 13818-1 Table 2-34 (issue
 /// #627).
 const STREAM_TYPE_MPEG2_AUDIO: u8 = 0x04;
-/// AC-3 (ATSC/DVB user-private) — ETSI TS 101 154 §G.
-const STREAM_TYPE_AC3: u8 = 0x81;
-/// E-AC-3 (user-private) — ETSI TS 101 154 §G.
-const STREAM_TYPE_EAC3: u8 = 0x87;
-/// DTS (canonical DVB assignment, user-private) — ETSI TS 101 154 §G.
-const STREAM_TYPE_DTS: u8 = 0x82;
+/// ISO/IEC 13818-7 AAC in ADTS — ISO/IEC 13818-1 Table 2-34.
+const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
+/// AVC (H.264) video — ISO/IEC 13818-1 Table 2-34.
+const STREAM_TYPE_AVC: u8 = 0x1B;
+/// HEVC (H.265) video — ISO/IEC 13818-1 Table 2-34 (issue #627).
+const STREAM_TYPE_HEVC: u8 = 0x24;
 /// MPEG-H 3D Audio main stream (MHAS) — ISO/IEC 13818-1 Table 2-34 / ETSI
 /// TS 101 154 §6.8 (issue #579).
 const STREAM_TYPE_MPEGH: u8 = 0x2D;
+/// AC-3 (ATSC/DVB user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_AC3: u8 = 0x81;
+/// DTS (canonical DVB assignment, user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_DTS: u8 = 0x82;
+/// E-AC-3 (user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_EAC3: u8 = 0x87;
 
 /// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 14496-1 Table 5) —
 /// selects TS `stream_type` 0x03 vs 0x04 for a re-muxed

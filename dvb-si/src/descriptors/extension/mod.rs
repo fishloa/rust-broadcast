@@ -204,16 +204,16 @@ pub enum ExtensionTag {
     XaitPid = 0x0C,
     /// C2_delivery_system_descriptor.
     C2DeliverySystem = 0x0D,
+    /// DTS-HD_descriptor (Annex G.3, Tables G.6–G.10).
+    DtsHd = 0x0E,
+    /// DTS_Neural_descriptor (Annex L.1, Table L.1).
+    DtsNeural = 0x0F,
     /// video_depth_range_descriptor (Table 160, §6.4.16.1).
     VideoDepthRange = 0x10,
     /// T2-MI_descriptor (Table 158, §6.4.14).
     T2mi = 0x11,
     /// URI_linkage_descriptor.
     UriLinkage = 0x13,
-    /// DTS-HD_descriptor (Annex G.3, Tables G.6–G.10).
-    DtsHd = 0x0E,
-    /// DTS_Neural_descriptor (Annex L.1, Table L.1).
-    DtsNeural = 0x0F,
     /// CI_ancillary_data_descriptor (Table 112, §6.4.3).
     CiAncillaryData = 0x14,
     /// AC-4_descriptor (annex D).

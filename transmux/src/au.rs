@@ -81,6 +81,9 @@ const HEVC_UNSPEC_SUFFIX_MIN: u8 = 56;
 /// VVC highest VCL `nal_unit_type` (`RSV_VCL_11`) — ITU-T H.266 Table 5
 /// (VCL types are 0..=11).
 const VVC_VCL_MAX: u8 = 11;
+/// VVC `SUFFIX_APS_NUT` — ITU-T H.266 Table 5; belongs to the preceding picture.
+/// (`PREFIX_APS_NUT` 17 is deliberately absent: a prefix APS starts an AU.)
+const VVC_SUFFIX_APS: u8 = 18;
 /// VVC access-unit-delimiter `nal_unit_type` (`AUD_NUT`) — ITU-T H.266 Table 5.
 const VVC_AUD: u8 = 20;
 /// VVC `EOS_NUT` — ITU-T H.266 Table 5; may trail the last VCL (H.266
@@ -88,9 +91,6 @@ const VVC_AUD: u8 = 20;
 const VVC_EOS: u8 = 21;
 /// VVC `EOB_NUT` — ITU-T H.266 Table 5; likewise trailing.
 const VVC_EOB: u8 = 22;
-/// VVC `SUFFIX_APS_NUT` — ITU-T H.266 Table 5; belongs to the preceding picture.
-/// (`PREFIX_APS_NUT` 17 is deliberately absent: a prefix APS starts an AU.)
-const VVC_SUFFIX_APS: u8 = 18;
 /// VVC `SUFFIX_SEI_NUT` — ITU-T H.266 Table 5; belongs to the preceding picture.
 /// (`PREFIX_SEI_NUT` 23 is deliberately absent: a prefix SEI starts an AU.)
 const VVC_SUFFIX_SEI: u8 = 24;
