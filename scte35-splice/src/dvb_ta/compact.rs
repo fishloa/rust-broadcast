@@ -34,7 +34,7 @@
 
 use alloc::vec::Vec;
 
-use crate::dvb_ta::das_descriptor::EquivalentSegmentationType;
+use crate::dvb_ta::das_descriptor::{DasNibbleOrder, EquivalentSegmentationType};
 use crate::error::{Error, Result};
 use broadcast_common::bits::{BitError, BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
@@ -373,6 +373,20 @@ pub struct CompactDas {
 impl<'a> Parse<'a> for CompactSpliceInsert {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_with_order(bytes, DasNibbleOrder::TABLE_8)
+    }
+}
+
+impl CompactSpliceInsert {
+    /// [`Parse::parse`] with an explicit [`DasNibbleOrder`] for the inline DAS
+    /// `equivalent_segmentation_type`/`reserved` byte. `parse` uses
+    /// [`DasNibbleOrder::TABLE_8`] (the order Table 8 prints); Table 1 prints
+    /// the opposite order for the same body - see the AMBIGUITY note on
+    /// [`DasNibbleOrder`].
+    ///
+    /// # Errors
+    /// As [`Parse::parse`].
+    pub fn parse_with_order(bytes: &[u8], order: DasNibbleOrder) -> Result<Self> {
         const WHAT: &str = "compact_splice_insert";
         let have = bytes.len();
         if have * 8 < SI_FIXED_BITS {
@@ -414,9 +428,11 @@ impl<'a> Parse<'a> for CompactSpliceInsert {
             }
             let break_num = r.read_bits(8).map_err(e)? as u8;
             let breaks_expected = r.read_bits(8).map_err(e)? as u8;
-            let equivalent_segmentation_type =
-                EquivalentSegmentationType::from_bits(r.read_bits(4).map_err(e)? as u8);
-            let das_reserved = r.read_bits(DAS_RESERVED_BITS).map_err(e)? as u8;
+            let first = r.read_bits(4).map_err(e)? as u8;
+            let second = r.read_bits(DAS_RESERVED_BITS).map_err(e)? as u8;
+            // AMBIGUITY: nibble order per `order` (Table 8 vs Table 1).
+            let (type_nibble, das_reserved) = order.split((first << 4) | second);
+            let equivalent_segmentation_type = EquivalentSegmentationType::from_bits(type_nibble);
             let mut upid = Vec::with_capacity(desc_len - 3);
             for _ in 0..desc_len - 3 {
                 upid.push(r.read_bits(8).map_err(e)? as u8);
@@ -466,6 +482,22 @@ impl Serialize for CompactSpliceInsert {
         n
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.serialize_into_with_order(buf, DasNibbleOrder::TABLE_8)
+    }
+}
+
+impl CompactSpliceInsert {
+    /// [`Serialize::serialize_into`] with an explicit [`DasNibbleOrder`] for the
+    /// inline DAS type/reserved byte (`serialize_into` uses
+    /// [`DasNibbleOrder::TABLE_8`]; see the AMBIGUITY note on [`DasNibbleOrder`]).
+    ///
+    /// # Errors
+    /// As [`Serialize::serialize_into`].
+    pub fn serialize_into_with_order(
+        &self,
+        buf: &mut [u8],
+        order: DasNibbleOrder,
+    ) -> Result<usize> {
         const WHAT: &str = "compact_splice_insert";
         let need = self.serialized_len();
         if buf.len() < need {
@@ -516,9 +548,10 @@ impl Serialize for CompactSpliceInsert {
             w.write_bits(u64::from(desc_len), 8).map_err(e)?;
             w.write_bits(u64::from(das.break_num), 8).map_err(e)?;
             w.write_bits(u64::from(das.breaks_expected), 8).map_err(e)?;
-            w.write_bits(u64::from(das.equivalent_segmentation_type.bits()), 4)
-                .map_err(e)?;
-            w.write_bits(u64::from(das.reserved), DAS_RESERVED_BITS)
+            // AMBIGUITY: nibble order per `order` (Table 8 vs Table 1).
+            let byte = order.join(das.equivalent_segmentation_type.bits(), das.reserved);
+            w.write_bits(u64::from(byte >> 4), 4).map_err(e)?;
+            w.write_bits(u64::from(byte & 0x0F), DAS_RESERVED_BITS)
                 .map_err(e)?;
             for &b in &das.upid {
                 w.write_bits(u64::from(b), 8).map_err(e)?;

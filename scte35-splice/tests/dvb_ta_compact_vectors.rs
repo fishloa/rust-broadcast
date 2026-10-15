@@ -27,7 +27,10 @@
 //! matches Table 8's. The crate follows each table's own name order
 //! (`das_descriptor.rs`: reserved high / type low; `compact.rs`: type high /
 //! reserved low). Without a real DAS-carrying capture this cannot be decided;
-//! the tests below pin the crate to Table 8 for the compact form only.
+//! the tests below pin the crate to Table 8 for the compact form only. Both
+//! readings are selectable through `DasNibbleOrder` and pinned in
+//! `tests/das_nibble_order.rs`; the evidence search is recorded in
+//! `docs/dvb_ta/compact-scte35.md`.
 
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::dvb_ta::EquivalentSegmentationType;
