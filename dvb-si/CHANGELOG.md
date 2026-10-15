@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, #1229 - GY/T 422-2025 multi-audio)
+- **BREAKING:** `Preselection::audio_rendering_indication` is now the typed `AudioRenderingIndication` (EN 300 468 Table 111 / GY/T 422-2025 Table 2: no preference, stereo, two-dimensional, three-dimensional, headphones, reserved(n)) instead of a raw `u8`.
+
+### Added (#1229)
+- GY/T 422-2025 Table 1 (the Chinese multi-audio `audio_preselection_descriptor`, tag 0x7F ext 0x19) is a wire-compatible subset of the existing descriptor (the four DVB flags and `text_label_present` are reserved zero there); `Preselection::is_gy_t_422_profile()` and a spec-vector round-trip test (Table 1, verified on the rendered page) document and check it. Transcription: `docs/descriptors/gy_t_422/audio-preselection-descriptor.md`.
+
 ### Added (#1224 - AVS3 audio)
 - `descriptors::avs3_audio::Avs3AudioDescriptor`: the AVS3_audio_descriptor (tag 0xD2) from T/AI 109.7-2024 clause 8.1.3.4 Table 4 (spec located free at aitisa.org.cn): `audio_codec_id`-selected bodies (0, 1 with the optional 24-bit `sampling_frequency`, 2 with the Table 5 `content_type` variants and `total_bitrate`), `resolution`, opaque `addition_info`; reserved bits captured on parse, all-ones defaults when hand-built. Private descriptor: not auto-dispatched; enable with `DescriptorRegistry::with_avs3_audio()`, which scopes it to `PDS_AVSA` ('AVSA', 0x41565341) as ETSI TS 101 154 V2.10.1 section 4.1.8.35 requires. `AnyDescriptor::Avs3Audio` variant added (`@no_dispatch`). The Chinese documents scope it with a `registration_descriptor` 'AVSA' instead of a private_data_specifier; the registry accepts both (a registration whose format_identifier is 'AVSA'/'AVSV' opens the same scope; any other registration leaves the context untouched). Transcription: `docs/descriptors/t_ai_109_7/avs3-audio-descriptor.md`.
 - `StreamType::Avs2Video` (0xD2, GY/T 420-2025 7.2.1), `Avs2Audio` (0xD3, T/AI 109.7 8.2), `Avs3Video` (0xD4) and `Avs3Audio` (0xD5) (TS 101 154 V2.10.1 section 4.1.8; T/AI 109.6 / 109.7 clause 8.1.2). Note 0x33 is VVC, not AVS3.
