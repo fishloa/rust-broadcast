@@ -206,6 +206,11 @@ variant = "HevcVideo"
 spec = "HEVC_video_descriptor"
 
 [[entry]]
+value = 0x3F
+variant = "Mpeg2Extension"
+spec = "Extension_descriptor (ITU-T H.222.0 Table 2-45, tag 63)"
+
+[[entry]]
 value = 0x40
 variant = "NetworkName"
 spec = "network_name_descriptor"
