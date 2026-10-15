@@ -311,17 +311,24 @@ fn stream_type_tables_ascending_and_mirrored() {
     arms_ascending(&r, f, "impl StreamType", "from_u8");
     arms_ascending(&r, f, "impl StreamType", "to_u8");
     enum_doc_rows(&r, f, "StreamType");
-    // The enum, `to_u8` and `name()` list the named variants in the same order.
-    let src = read(&r, f);
-    let variants = enum_variant_idents(&src, "StreamType");
+    mirrored(&r, f, "StreamType");
+}
+
+/// The enum, its `to_u8` and its `name()` list the variants in the same order.
+fn mirrored(root: &Path, rel: &str, name: &str) {
+    let src = read(root, rel);
+    let variants = enum_variant_idents(&src, name);
+    let marker = format!("impl {name}");
     for func in ["to_u8", "name"] {
-        let arms = arm_idents(&src, "impl StreamType", func);
+        let arms = arm_idents(&src, &marker, func);
         let mut idx = 0usize;
         for a in &arms {
             let pos = variants[idx..]
                 .iter()
                 .position(|v| v == a)
-                .unwrap_or_else(|| panic!("{f}: `{func}` arm Self::{a} out of enum order"));
+                .unwrap_or_else(|| {
+                    panic!("{rel}: `{name}::{func}` arm Self::{a} out of enum order")
+                });
             idx += pos + 1;
         }
     }
