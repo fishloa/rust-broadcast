@@ -249,6 +249,8 @@ per the crate's zero-copy convention.
 | tag | Descriptor | Notes |
 |---|---|---|
 | 0x83 | logical_channel | EACEM/NorDig private; variant exists, not auto-dispatched — register via `DescriptorRegistry` |
+| 0xD1 | AVS3_video_descriptor | T/AI 109.6 / GY/T 420 private ('AVSV'); variant exists, enable with `DescriptorRegistry::with_avs3_video()` |
+| 0xD2 | AVS3_audio_descriptor | T/AI 109.7 private ('AVSA'); variant exists, enable with `DescriptorRegistry::with_avs3_audio()` |
 
 ### Extension descriptor registry (tag 0x7F)
 

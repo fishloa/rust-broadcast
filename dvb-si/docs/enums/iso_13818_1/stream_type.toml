@@ -291,7 +291,18 @@ value = 0x87
 variant = "EAc3"
 spec = "E-AC-3"
 
-# Not in H.222.0: AVS3 stream types per ETSI TS 101 154 V2.10.1 section 4.1.8 / T/AI 109.6 and 109.7 clause 8.1.2.
+# Not in H.222.0: AVS2/AVS3 stream types - 0xD2 AVS2 video (GY/T 420-2025 7.2.1), 0xD3 AVS2 audio (T/AI 109.7 8.2),
+# 0xD4 AVS3 video and 0xD5 AVS3 audio (ETSI TS 101 154 V2.10.1 section 4.1.8; T/AI 109.6 and 109.7 clause 8.1.2).
+[[entry]]
+value = 0xD2
+variant = "Avs2Video"
+spec = "AVS2 Video"
+
+[[entry]]
+value = 0xD3
+variant = "Avs2Audio"
+spec = "AVS2 Audio"
+
 [[entry]]
 value = 0xD4
 variant = "Avs3Video"

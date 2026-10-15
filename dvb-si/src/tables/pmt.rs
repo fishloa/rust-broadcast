@@ -155,6 +155,12 @@ pub enum StreamType {
     VvcTemporalSubset,
     /// 0x35 — EVC video stream or EVC temporal sub-bitstream (ISO/IEC 23094-1).
     Evc,
+    /// 0xD2 — AVS2 video elementary stream (GY/T 420-2025 clause 7.2.1 Table 2, with an
+    /// AVS2_video_descriptor, tag 0x40).
+    Avs2Video,
+    /// 0xD3 — AVS2 audio elementary stream (T/AI 109.7-2024 clause 8.2; AATF framing,
+    /// PES stream_id private_stream_1).
+    Avs2Audio,
     /// 0xD4 — AVS3 video elementary stream (T/AI 109.6; ETSI TS 101 154 V2.10.1
     /// §4.1.8.31 "Encoding": stream_id `0xFD`, stream_id_extension `0x41`).
     /// Not to be confused with `0x33` (VVC).
@@ -239,6 +245,8 @@ impl StreamType {
             0x36..=0x7E => Self::ReservedRange(v),
             0x7F => Self::IpmpHigh,
             0x81 => Self::Ac3,
+            0xD2 => Self::Avs2Video,
+            0xD3 => Self::Avs2Audio,
             0xD4 => Self::Avs3Video,
             0xD5 => Self::Avs3Audio,
             0x86 => Self::Scte35,
@@ -307,6 +315,8 @@ impl StreamType {
             Self::Evc => 0x35,
             Self::IpmpHigh => 0x7F,
             Self::Ac3 => 0x81,
+            Self::Avs2Video => 0xD2,
+            Self::Avs2Audio => 0xD3,
             Self::Avs3Video => 0xD4,
             Self::Avs3Audio => 0xD5,
             Self::Scte35 => 0x86,
@@ -378,6 +388,7 @@ impl StreamType {
                 | Self::Vvc
                 | Self::VvcTemporalSubset
                 | Self::Evc
+                | Self::Avs2Video
                 | Self::Avs3Video
         )
     }
@@ -418,6 +429,7 @@ impl StreamType {
                 | Self::MhasAudioAux
                 | Self::Ac3
                 | Self::EAc3
+                | Self::Avs2Audio
                 | Self::Avs3Audio
         )
     }
@@ -538,6 +550,8 @@ impl StreamType {
             Self::Evc => "EVC",
             Self::IpmpHigh => "IPMP (0x7F)",
             Self::Ac3 => "AC-3",
+            Self::Avs2Video => "AVS2 Video",
+            Self::Avs2Audio => "AVS2 Audio",
             Self::Avs3Video => "AVS3 Video",
             Self::Avs3Audio => "AVS3-P3 Audio",
             Self::Scte35 => "SCTE-35",
@@ -1161,6 +1175,8 @@ mod tests {
     /// AVS3-P3 audio is 0xD5 (T/AI 109.7 clause 8.1.2); 0x33 is VVC, not AVS3.
     #[test]
     fn avs3_stream_types() {
+        assert_eq!(StreamType::from_u8(0xD2), StreamType::Avs2Video);
+        assert_eq!(StreamType::from_u8(0xD3), StreamType::Avs2Audio);
         assert_eq!(StreamType::from_u8(0xD4), StreamType::Avs3Video);
         assert_eq!(StreamType::from_u8(0xD5), StreamType::Avs3Audio);
         assert_eq!(StreamType::Avs3Video.to_u8(), 0xD4);
@@ -1208,6 +1224,7 @@ mod tests {
             (0x33, "Vvc"),
             (0x34, "VvcTemporalSubset"),
             (0x35, "Evc"),
+            (0xD2, "Avs2Video"),
             (0xD4, "Avs3Video"),
         ] {
             let st = StreamType::from_u8(byte);
@@ -1236,6 +1253,7 @@ mod tests {
             (0x2E, "MhasAudioAux"),
             (0x81, "Ac3"),
             (0x87, "EAc3"),
+            (0xD3, "Avs2Audio"),
             (0xD5, "Avs3Audio"),
         ] {
             let st = StreamType::from_u8(byte);

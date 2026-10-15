@@ -326,8 +326,21 @@ impl DescriptorRegistry {
     /// V2.10.1 section 4.1.8.35 require to precede it. Under any other (or
     /// no) specifier tag 0xD2 stays `Unknown`.
     pub fn with_avs3_audio(&mut self) -> &mut Self {
-        self.register_for_pds::<crate::descriptors::avs_audio::AvsAudioDescriptor>(
+        self.register_for_pds::<crate::descriptors::avs3_audio::Avs3AudioDescriptor>(
             crate::descriptors::PDS_AVSA,
+        );
+        self
+    }
+
+    /// Register the AVS3_video_descriptor (tag 0xD1, T/AI 109.6 clause 9.3.2 /
+    /// GY/T 420 clause 7.3.3.2) for [`crate::descriptors::PDS_AVSV`] ('AVSV',
+    /// `0x41565356`). The scope is established either by a preceding
+    /// `private_data_specifier_descriptor` (ETSI TS 101 154 V2.10.1 section
+    /// 4.1.8) or by a `registration_descriptor` whose `format_identifier` is
+    /// 'AVSV' (the Chinese documents' form). Otherwise tag 0xD1 stays `Unknown`.
+    pub fn with_avs3_video(&mut self) -> &mut Self {
+        self.register_for_pds::<crate::descriptors::avs3_video::Avs3VideoDescriptor>(
+            crate::descriptors::PDS_AVSV,
         );
         self
     }
@@ -410,6 +423,20 @@ pub(crate) fn dispatch_entry<'a>(
 }
 
 fn update_pds(current: &mut Option<u32>, tag: u8, full: &[u8]) {
+    // The Chinese AVS3 documents (T/AI 109.6/109.7, GY/T 420) scope their
+    // descriptors with a registration_descriptor whose format_identifier is the
+    // same four ASCII bytes as the DVB private_data_specifier ('AVSV'/'AVSA'),
+    // so such a registration opens the same scope. Any other registration
+    // leaves the context untouched.
+    if tag == crate::descriptors::registration::TAG {
+        use broadcast_common::Parse;
+        if let Ok(reg) = crate::descriptors::registration::RegistrationDescriptor::parse(full) {
+            let id = u32::from_be_bytes(reg.format_identifier);
+            if id == crate::descriptors::PDS_AVSA || id == crate::descriptors::PDS_AVSV {
+                *current = Some(id);
+            }
+        }
+    }
     if tag == crate::descriptors::private_data_specifier::TAG {
         use broadcast_common::Parse;
         if let Ok(pds) =
@@ -708,11 +735,59 @@ mod tests {
         }
     }
 
+    /// AVS3_video_descriptor (tag 0xD1): scoped by a 'AVSV' private_data_specifier
+    /// (TS 101 154) or a 'AVSV' registration_descriptor (T/AI 109.6 / GY/T 420).
+    #[test]
+    fn avs3_video_descriptor_scopes() {
+        use crate::descriptors::avs3_video::Avs3VideoDescriptor;
+        use crate::descriptors::private_data_specifier::PDS_AVSV;
+        let desc = [0xD1, 8, 0x22, 0x42, 0xAA, 0x4B, 9, 14, 9, 0xFF];
+        let mut reg = DescriptorRegistry::new();
+        reg.with_avs3_video();
+        let check = |bytes: &[u8], idx: usize| {
+            let items: Vec<_> = reg.parse_loop(bytes).collect::<Result<_, _>>().unwrap();
+            match &items[idx] {
+                AnyDescriptor::Other { tag, value } => {
+                    assert_eq!(*tag, 0xD1);
+                    assert_eq!(
+                        value
+                            .downcast_ref::<Avs3VideoDescriptor>()
+                            .unwrap()
+                            .profile_id,
+                        0x22
+                    );
+                }
+                other => panic!("expected Other, got {other:?}"),
+            }
+        };
+        let mut pds = pds_descriptor(PDS_AVSV);
+        pds.extend_from_slice(&desc);
+        check(&pds, 1);
+        let mut registration = vec![0x05, 4, b'A', b'V', b'S', b'V'];
+        registration.extend_from_slice(&desc);
+        check(&registration, 1);
+        // No scope, or a different registration ('AC-3'), leaves it Unknown.
+        let items: Vec<_> = reg.parse_loop(&desc).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[0], AnyDescriptor::Unknown { tag: 0xD1, .. }));
+        let mut other = vec![0x05, 4, b'A', b'C', b'-', b'3'];
+        other.extend_from_slice(&desc);
+        let items: Vec<_> = reg.parse_loop(&other).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[1], AnyDescriptor::Unknown { tag: 0xD1, .. }));
+        // The audio descriptor also accepts the 'AVSA' registration form.
+        let adesc = [0xD2, 2, 0x72, 0x45];
+        let mut areg = DescriptorRegistry::new();
+        areg.with_avs3_audio();
+        let mut b = vec![0x05, 4, b'A', b'V', b'S', b'A'];
+        b.extend_from_slice(&adesc);
+        let items: Vec<_> = areg.parse_loop(&b).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[1], AnyDescriptor::Other { tag: 0xD2, .. }));
+    }
+
     /// T/AI 109.7 clause 8.1.3.4 + TS 101 154 V2.10.1 4.1.8.35: tag 0xD2 is the
     /// AVS3_audio_descriptor only under private_data_specifier 'AVSA'.
     #[test]
     fn avs3_audio_descriptor_is_pds_scoped() {
-        use crate::descriptors::avs_audio::AvsAudioDescriptor;
+        use crate::descriptors::avs3_audio::Avs3AudioDescriptor;
         use crate::descriptors::private_data_specifier::PDS_AVSA;
         let desc = [0xD2, 6, 0x03, 0xAA, 0x95, 0x04, 0x00, 0x6A];
         let mut reg = DescriptorRegistry::new();
@@ -725,10 +800,10 @@ mod tests {
         match &items[1] {
             AnyDescriptor::Other { tag, value } => {
                 assert_eq!(*tag, 0xD2);
-                let d = value.downcast_ref::<AvsAudioDescriptor>().unwrap();
+                let d = value.downcast_ref::<Avs3AudioDescriptor>().unwrap();
                 assert_eq!(d.sampling_frequency_index, 3);
             }
-            other => panic!("expected Other (AvsAudioDescriptor), got {other:?}"),
+            other => panic!("expected Other (Avs3AudioDescriptor), got {other:?}"),
         }
 
         // Without the 'AVSA' specifier (or under another) the tag stays Unknown.

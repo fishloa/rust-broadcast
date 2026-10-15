@@ -71,7 +71,7 @@
 
 > NOTE (not part of Table 2-34): within the `0x80–0xFF` User Private range,
 > industry conventions assign `0x81` = ATSC AC-3 (ATSC A/52), `0x86` =
-> SCTE-35 splice_info (ANSI/SCTE 35), `0x87` = ATSC E-AC-3 (ATSC A/52B), `0xD4` = AVS3 video and `0xD5` = AVS3-P3 audio (ETSI TS 101 154 V2.10.1 section 4.1.8; T/AI 109.7 clause 8.1.2). These
+> SCTE-35 splice_info (ANSI/SCTE 35), `0x87` = ATSC E-AC-3 (ATSC A/52B), `0xD2` = AVS2 video (GY/T 420-2025 7.2.1), `0xD3` = AVS2 audio (T/AI 109.7 8.2), `0xD4` = AVS3 video and `0xD5` = AVS3-P3 audio (ETSI TS 101 154 V2.10.1 section 4.1.8; T/AI 109.7 clause 8.1.2). These
 > are **not** assigned by Rec. ITU-T H.222.0 | ISO/IEC 13818-1 and are cited to
 > their own specifications; `dvb-si` decodes them as a documented convenience.
 

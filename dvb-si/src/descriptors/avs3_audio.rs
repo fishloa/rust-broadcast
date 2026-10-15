@@ -8,7 +8,9 @@
 //! value `0x41565341` ([`crate::descriptors::private_data_specifier::PDS_AVSA`], 'AVSA').
 //! Accordingly it is **not** auto-dispatched by `parse_loop`; enable it with
 //! [`crate::descriptors::DescriptorRegistry::with_avs3_audio`], which registers it
-//! for that private_data_specifier only.
+//! for that private_data_specifier only. The Chinese documents (T/AI 109.7 clause
+//! 8.1.3.3, GY/T 420) scope it with a `registration_descriptor` whose
+//! `format_identifier` is 'AVSA' instead; the registry accepts that form too.
 //!
 //! The type is owned (`addition_info` is a `Vec<u8>`) because registry-dispatched
 //! private descriptors must be `'static` (see [`crate::descriptors::DescriptorRegistry`]).
@@ -59,7 +61,7 @@ const ALL_ONES_6: u8 = 0x3F;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub struct AvsAudioCodec0 {
+pub struct Avs3AudioCodec0 {
     /// `anc_data_index` (1 bit, T/AI 109.3 Annex A).
     pub anc_data_index: bool,
     /// `coding_profile` (3 bits).
@@ -78,7 +80,7 @@ pub struct AvsAudioCodec0 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub struct AvsAudioCodec1 {
+pub struct Avs3AudioCodec1 {
     /// `sampling_frequency` (24 bits), present iff
     /// `sampling_frequency_index == 0xF`.
     pub sampling_frequency: Option<u32>,
@@ -96,7 +98,7 @@ pub struct AvsAudioCodec1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub enum AvsAudioContent {
+pub enum Avs3AudioContent {
     /// 0 — channel signal.
     Channel {
         /// `channel_number_index` (7 bits).
@@ -133,7 +135,7 @@ pub enum AvsAudioContent {
     Reserved(u8),
 }
 
-impl AvsAudioContent {
+impl Avs3AudioContent {
     /// The 4-bit `content_type` wire value.
     #[must_use]
     pub const fn content_type(&self) -> u8 {
@@ -158,19 +160,19 @@ impl AvsAudioContent {
         }
     }
 }
-broadcast_common::impl_spec_display!(AvsAudioContent, Reserved);
+broadcast_common::impl_spec_display!(Avs3AudioContent, Reserved);
 
 /// `audio_codec_id == 2` body (Table 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub struct AvsAudioCodec2 {
+pub struct Avs3AudioCodec2 {
     /// `nn_type` (3 bits).
     pub nn_type: u8,
     /// `reserved` (1 bit) between `nn_type` and `content_type`.
     pub reserved: u8,
     /// `content_type` + dependent fields.
-    pub content: AvsAudioContent,
+    pub content: Avs3AudioContent,
     /// `total_bitrate` (16 bits, kbps, Table 6).
     pub total_bitrate: u16,
 }
@@ -179,18 +181,18 @@ pub struct AvsAudioCodec2 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub enum AvsAudioBody {
+pub enum Avs3AudioBody {
     /// `audio_codec_id == 0`.
-    Codec0(AvsAudioCodec0),
+    Codec0(Avs3AudioCodec0),
     /// `audio_codec_id == 1`.
-    Codec1(AvsAudioCodec1),
+    Codec1(Avs3AudioCodec1),
     /// `audio_codec_id == 2`.
-    Codec2(AvsAudioCodec2),
+    Codec2(Avs3AudioCodec2),
     /// Any other `audio_codec_id` (3..=15): Table 4 defines no body for it.
     Other(u8),
 }
 
-impl AvsAudioBody {
+impl Avs3AudioBody {
     /// The 4-bit `audio_codec_id`.
     #[must_use]
     pub const fn audio_codec_id(&self) -> u8 {
@@ -213,17 +215,17 @@ impl AvsAudioBody {
         }
     }
 }
-broadcast_common::impl_spec_display!(AvsAudioBody, Other);
+broadcast_common::impl_spec_display!(Avs3AudioBody, Other);
 
 /// AVS3_audio_descriptor (T/AI 109.7 Table 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub struct AvsAudioDescriptor {
+pub struct Avs3AudioDescriptor {
     /// `sampling_frequency_index` (4 bits).
     pub sampling_frequency_index: u8,
     /// Body selected by `audio_codec_id`.
-    pub body: AvsAudioBody,
+    pub body: Avs3AudioBody,
     /// `resolution` (2 bits, T/AI 109.3 Annex A).
     pub resolution: u8,
     /// `reserved` (6 bits) after `resolution`; captured on parse, default `0x3F`.
@@ -247,20 +249,20 @@ impl Cursor<'_> {
         let b = *self.body.get(self.pos).ok_or(Error::BufferTooShort {
             need: self.pos + 1,
             have: self.body.len(),
-            what: "AvsAudioDescriptor",
+            what: "Avs3AudioDescriptor",
         })?;
         self.pos += 1;
         Ok(b)
     }
 }
 
-impl<'a> Parse<'a> for AvsAudioDescriptor {
+impl<'a> Parse<'a> for Avs3AudioDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let body = descriptor_body(
             bytes,
             TAG,
-            "AvsAudioDescriptor",
+            "Avs3AudioDescriptor",
             "unexpected tag for AVS3_audio_descriptor",
         )?;
         let mut c = Cursor { body, pos: 0 };
@@ -273,7 +275,7 @@ impl<'a> Parse<'a> for AvsAudioDescriptor {
                 let b2 = c.u8()?;
                 let hi = c.u8()?;
                 let lo = c.u8()?;
-                AvsAudioBody::Codec0(AvsAudioCodec0 {
+                Avs3AudioBody::Codec0(Avs3AudioCodec0 {
                     anc_data_index: bit(b1, 7),
                     coding_profile: (b1 >> 4) & 0x07,
                     bitrate_index: b1 & 0x0F,
@@ -294,7 +296,7 @@ impl<'a> Parse<'a> for AvsAudioDescriptor {
                     };
                 let b1 = c.u8()?;
                 let channel_number = c.u8()?;
-                AvsAudioBody::Codec1(AvsAudioCodec1 {
+                Avs3AudioBody::Codec1(Avs3AudioCodec1 {
                     sampling_frequency,
                     anc_data_index: bit(b1, 7),
                     coding_profile: (b1 >> 4) & 0x07,
@@ -308,14 +310,14 @@ impl<'a> Parse<'a> for AvsAudioDescriptor {
                 let content = match content_type {
                     0 => {
                         let v = c.u8()?;
-                        AvsAudioContent::Channel {
+                        Avs3AudioContent::Channel {
                             channel_number_index: v >> 1,
                             reserved: v & 1,
                         }
                     }
                     1 => {
                         let v = c.u8()?;
-                        AvsAudioContent::Object {
+                        Avs3AudioContent::Object {
                             object_channel_number: v >> 1,
                             reserved: v & 1,
                         }
@@ -323,7 +325,7 @@ impl<'a> Parse<'a> for AvsAudioDescriptor {
                     2 => {
                         let v = c.u8()?;
                         let w = c.u8()?;
-                        AvsAudioContent::ChannelAndObject {
+                        Avs3AudioContent::ChannelAndObject {
                             channel_number_index: v >> 1,
                             reserved_channel: v & 1,
                             object_channel_number: w >> 1,
@@ -332,23 +334,23 @@ impl<'a> Parse<'a> for AvsAudioDescriptor {
                     }
                     3 => {
                         let v = c.u8()?;
-                        AvsAudioContent::Hoa {
+                        Avs3AudioContent::Hoa {
                             hoa_order: v >> NIBBLE,
                             reserved: v & 0x0F,
                         }
                     }
-                    other => AvsAudioContent::Reserved(other),
+                    other => Avs3AudioContent::Reserved(other),
                 };
                 let hi = c.u8()?;
                 let lo = c.u8()?;
-                AvsAudioBody::Codec2(AvsAudioCodec2 {
+                Avs3AudioBody::Codec2(Avs3AudioCodec2 {
                     nn_type: b1 >> 5,
                     reserved: (b1 >> NIBBLE) & 1,
                     content,
                     total_bitrate: u16::from_be_bytes([hi, lo]),
                 })
             }
-            other => AvsAudioBody::Other(other),
+            other => Avs3AudioBody::Other(other),
         };
         let r = c.u8()?;
         Ok(Self {
@@ -361,12 +363,12 @@ impl<'a> Parse<'a> for AvsAudioDescriptor {
     }
 }
 
-impl AvsAudioDescriptor {
+impl Avs3AudioDescriptor {
     /// Build a descriptor with the all-ones default for every reserved run
     /// (the spec states no value). Per-body reserved fields inside `body` are
-    /// the caller's (use [`AvsAudioCodec1::new`] etc.).
+    /// the caller's (use [`Avs3AudioCodec1::new`] etc.).
     #[must_use]
-    pub const fn new(sampling_frequency_index: u8, body: AvsAudioBody, resolution: u8) -> Self {
+    pub const fn new(sampling_frequency_index: u8, body: Avs3AudioBody, resolution: u8) -> Self {
         Self {
             sampling_frequency_index,
             body,
@@ -377,7 +379,7 @@ impl AvsAudioDescriptor {
     }
 }
 
-impl AvsAudioCodec0 {
+impl Avs3AudioCodec0 {
     /// Build a body from its functional fields.
     #[must_use]
     pub const fn new(
@@ -399,7 +401,7 @@ impl AvsAudioCodec0 {
     }
 }
 
-impl AvsAudioCodec1 {
+impl Avs3AudioCodec1 {
     /// Build a body with the all-ones default reserved nibble.
     #[must_use]
     pub const fn new(
@@ -418,10 +420,10 @@ impl AvsAudioCodec1 {
     }
 }
 
-impl AvsAudioCodec2 {
+impl Avs3AudioCodec2 {
     /// Build a body with the all-ones default reserved bit.
     #[must_use]
-    pub const fn new(nn_type: u8, content: AvsAudioContent, total_bitrate: u16) -> Self {
+    pub const fn new(nn_type: u8, content: Avs3AudioContent, total_bitrate: u16) -> Self {
         Self {
             nn_type,
             reserved: ALL_ONES_1,
@@ -437,7 +439,7 @@ fn pack(hi: u8, hi_bits: u32, lo: u8, lo_bits: u32, name: &'static str) -> Resul
     Ok((h << lo_bits) | l)
 }
 
-impl AvsAudioDescriptor {
+impl Avs3AudioDescriptor {
     fn body_bytes(&self) -> Result<alloc::vec::Vec<u8>> {
         let mut out = alloc::vec::Vec::new();
         let sfi = fit_bits(
@@ -448,7 +450,7 @@ impl AvsAudioDescriptor {
         let id = fit_bits(u64::from(self.body.audio_codec_id()), 4, "audio_codec_id")? as u8;
         out.push((id << NIBBLE) | sfi);
         match &self.body {
-            AvsAudioBody::Codec0(b) => {
+            Avs3AudioBody::Codec0(b) => {
                 let prof = fit_bits(u64::from(b.coding_profile), 3, "coding_profile")? as u8;
                 let rate = fit_bits(u64::from(b.bitrate_index), 4, "bitrate_index")? as u8;
                 out.push((u8::from(b.anc_data_index) << 7) | (prof << 4) | rate);
@@ -457,7 +459,7 @@ impl AvsAudioDescriptor {
                 out.push((u8::from(b.bitstream_type) << 7) | ch);
                 out.extend_from_slice(&b.raw_frame_length.to_be_bytes());
             }
-            AvsAudioBody::Codec1(b) => {
+            Avs3AudioBody::Codec1(b) => {
                 let explicit = sfi == SAMPLING_FREQUENCY_INDEX_EXPLICIT;
                 match (explicit, b.sampling_frequency) {
                     (true, Some(f)) => {
@@ -477,13 +479,13 @@ impl AvsAudioDescriptor {
                 out.push((u8::from(b.anc_data_index) << 7) | (prof << 4) | res);
                 out.push(b.channel_number);
             }
-            AvsAudioBody::Codec2(b) => {
+            Avs3AudioBody::Codec2(b) => {
                 let nn = fit_bits(u64::from(b.nn_type), 3, "nn_type")? as u8;
                 let res = fit_bits(u64::from(b.reserved), 1, "reserved")? as u8;
                 let ct = fit_bits(u64::from(b.content.content_type()), 4, "content_type")? as u8;
                 out.push((nn << 5) | (res << 4) | ct);
                 match &b.content {
-                    AvsAudioContent::Channel {
+                    Avs3AudioContent::Channel {
                         channel_number_index,
                         reserved,
                     } => out.push(pack(
@@ -493,7 +495,7 @@ impl AvsAudioDescriptor {
                         1,
                         "channel_number_index",
                     )?),
-                    AvsAudioContent::Object {
+                    Avs3AudioContent::Object {
                         object_channel_number,
                         reserved,
                     } => out.push(pack(
@@ -503,7 +505,7 @@ impl AvsAudioDescriptor {
                         1,
                         "object_channel_number",
                     )?),
-                    AvsAudioContent::ChannelAndObject {
+                    Avs3AudioContent::ChannelAndObject {
                         channel_number_index,
                         reserved_channel,
                         object_channel_number,
@@ -524,17 +526,17 @@ impl AvsAudioDescriptor {
                             "object_channel_number",
                         )?);
                     }
-                    AvsAudioContent::Hoa {
+                    Avs3AudioContent::Hoa {
                         hoa_order,
                         reserved,
                     } => {
                         out.push(pack(*hoa_order, 4, *reserved, 4, "hoa_order")?);
                     }
-                    AvsAudioContent::Reserved(_) => {}
+                    Avs3AudioContent::Reserved(_) => {}
                 }
                 out.extend_from_slice(&b.total_bitrate.to_be_bytes());
             }
-            AvsAudioBody::Other(_) => {}
+            Avs3AudioBody::Other(_) => {}
         }
         out.push(pack(self.resolution, 2, self.reserved, 6, "resolution")?);
         out.extend_from_slice(&self.addition_info);
@@ -542,7 +544,7 @@ impl AvsAudioDescriptor {
     }
 }
 
-impl Serialize for AvsAudioDescriptor {
+impl Serialize for Avs3AudioDescriptor {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
         // An invalid (unserializable) descriptor reports the minimum; the
@@ -566,7 +568,7 @@ impl Serialize for AvsAudioDescriptor {
     }
 }
 
-impl crate::traits::DescriptorDef<'_> for AvsAudioDescriptor {
+impl crate::traits::DescriptorDef<'_> for Avs3AudioDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "AVS3_AUDIO";
 }
@@ -577,8 +579,8 @@ mod tests {
     use alloc::string::ToString;
     use alloc::vec;
 
-    fn rt(bytes: &[u8]) -> AvsAudioDescriptor {
-        let d = AvsAudioDescriptor::parse(bytes).unwrap();
+    fn rt(bytes: &[u8]) -> Avs3AudioDescriptor {
+        let d = Avs3AudioDescriptor::parse(bytes).unwrap();
         let mut out = vec![0u8; d.serialized_len()];
         let n = d.serialize_into(&mut out).unwrap();
         assert_eq!(&out[..n], bytes, "byte-exact round trip");
@@ -593,7 +595,7 @@ mod tests {
         let bytes = [TAG, 6, 0x03, 0xAA, 0x80 | 0x15, 0x04, 0x00, 0x6A];
         let d = rt(&bytes);
         assert_eq!(d.sampling_frequency_index, 3);
-        let AvsAudioBody::Codec0(b) = d.body else {
+        let Avs3AudioBody::Codec0(b) = d.body else {
             panic!()
         };
         assert!(b.anc_data_index && b.bitstream_type);
@@ -610,7 +612,7 @@ mod tests {
         // 0x1F | 0x00BB80 (48000) | anc=0 profile=1 reserved=0xF | ch=2 | res=2 rsv=0x3F | 0xDE 0xAD
         let bytes = [TAG, 9, 0x1F, 0x00, 0xBB, 0x80, 0x1F, 0x02, 0xBF, 0xDE, 0xAD];
         let d = rt(&bytes);
-        let AvsAudioBody::Codec1(b) = d.body else {
+        let Avs3AudioBody::Codec1(b) = d.body else {
             panic!()
         };
         assert_eq!(b.sampling_frequency, Some(48_000));
@@ -626,7 +628,7 @@ mod tests {
     fn codec1_indexed_frequency() {
         let bytes = [TAG, 4, 0x13, 0x8F, 0x06, 0x3F];
         let d = rt(&bytes);
-        let AvsAudioBody::Codec1(b) = d.body else {
+        let Avs3AudioBody::Codec1(b) = d.body else {
             panic!()
         };
         assert_eq!(b.sampling_frequency, None);
@@ -638,24 +640,24 @@ mod tests {
     fn codec2_content_types() {
         // nn_type=5, reserved=1.
         let head = (5u8 << 5) | (1 << 4);
-        let cases: [(&[u8], AvsAudioContent); 5] = [
+        let cases: [(&[u8], Avs3AudioContent); 5] = [
             (
                 &[head, 0x0B],
-                AvsAudioContent::Channel {
+                Avs3AudioContent::Channel {
                     channel_number_index: 5,
                     reserved: 1,
                 },
             ),
             (
                 &[head | 1, 0x06],
-                AvsAudioContent::Object {
+                Avs3AudioContent::Object {
                     object_channel_number: 3,
                     reserved: 0,
                 },
             ),
             (
                 &[head | 2, 0x0B, 0x07],
-                AvsAudioContent::ChannelAndObject {
+                Avs3AudioContent::ChannelAndObject {
                     channel_number_index: 5,
                     reserved_channel: 1,
                     object_channel_number: 3,
@@ -664,12 +666,12 @@ mod tests {
             ),
             (
                 &[head | 3, 0x3F],
-                AvsAudioContent::Hoa {
+                Avs3AudioContent::Hoa {
                     hoa_order: 3,
                     reserved: 0xF,
                 },
             ),
-            (&[head | 9], AvsAudioContent::Reserved(9)),
+            (&[head | 9], Avs3AudioContent::Reserved(9)),
         ];
         for (mid, content) in cases {
             let mut body = vec![0x20u8]; // codec 2 / sfi 0
@@ -679,7 +681,7 @@ mod tests {
             let mut bytes = vec![TAG, body.len() as u8];
             bytes.extend_from_slice(&body);
             let d = rt(&bytes);
-            let AvsAudioBody::Codec2(b) = d.body else {
+            let Avs3AudioBody::Codec2(b) = d.body else {
                 panic!()
             };
             assert_eq!(b.nn_type, 5);
@@ -695,70 +697,70 @@ mod tests {
     fn unknown_codec_id_round_trips() {
         let bytes = [TAG, 2, 0x72, 0x45];
         let d = rt(&bytes);
-        assert_eq!(d.body, AvsAudioBody::Other(7));
+        assert_eq!(d.body, Avs3AudioBody::Other(7));
         assert_eq!(d.body.audio_codec_id(), 7);
         assert_eq!(d.reserved, 0b000101);
     }
 
     #[test]
     fn rejects_wrong_tag_and_truncation() {
-        assert!(AvsAudioDescriptor::parse(&[0xD3, 2, 0x72, 0]).is_err());
+        assert!(Avs3AudioDescriptor::parse(&[0xD3, 2, 0x72, 0]).is_err());
         // codec 0 needs 5 body bytes + resolution byte
-        assert!(AvsAudioDescriptor::parse(&[TAG, 3, 0x03, 0x00, 0x00]).is_err());
-        assert!(AvsAudioDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(Avs3AudioDescriptor::parse(&[TAG, 3, 0x03, 0x00, 0x00]).is_err());
+        assert!(Avs3AudioDescriptor::parse(&[TAG, 0]).is_err());
     }
 
     #[test]
     fn serialize_rejects_inconsistent_and_overwide_fields() {
         // explicit-frequency flag without a frequency
-        let d = AvsAudioDescriptor::new(
+        let d = Avs3AudioDescriptor::new(
             SAMPLING_FREQUENCY_INDEX_EXPLICIT,
-            AvsAudioBody::Codec1(AvsAudioCodec1::new(None, false, 0, 2)),
+            Avs3AudioBody::Codec1(Avs3AudioCodec1::new(None, false, 0, 2)),
             0,
         );
         assert!(d.serialize_into(&mut [0u8; 32]).is_err());
         // coding_profile wider than 3 bits
-        let d = AvsAudioDescriptor::new(
+        let d = Avs3AudioDescriptor::new(
             0,
-            AvsAudioBody::Codec1(AvsAudioCodec1::new(None, false, 8, 2)),
+            Avs3AudioBody::Codec1(Avs3AudioCodec1::new(None, false, 8, 2)),
             0,
         );
         assert!(d.serialize_into(&mut [0u8; 32]).is_err());
         // resolution wider than 2 bits
-        let d = AvsAudioDescriptor::new(0, AvsAudioBody::Other(5), 4);
+        let d = Avs3AudioDescriptor::new(0, Avs3AudioBody::Other(5), 4);
         assert!(d.serialize_into(&mut [0u8; 32]).is_err());
     }
 
     #[test]
     fn labels() {
         assert_eq!(
-            AvsAudioContent::Hoa {
+            Avs3AudioContent::Hoa {
                 hoa_order: 1,
                 reserved: 0
             }
             .name(),
             "HOA signal"
         );
-        assert_eq!(AvsAudioContent::Reserved(9).to_string(), "reserved(0x09)");
+        assert_eq!(Avs3AudioContent::Reserved(9).to_string(), "reserved(0x09)");
         assert_eq!(
-            AvsAudioBody::Other(7).to_string(),
+            Avs3AudioBody::Other(7).to_string(),
             "reserved audio_codec_id(0x07)"
         );
-        assert_eq!(AvsAudioContent::Reserved(9).content_type(), 9);
+        assert_eq!(Avs3AudioContent::Reserved(9).content_type(), 9);
     }
 
     #[test]
     fn built_defaults_are_all_ones() {
-        let c = AvsAudioCodec2::new(
+        let c = Avs3AudioCodec2::new(
             1,
-            AvsAudioContent::Channel {
+            Avs3AudioContent::Channel {
                 channel_number_index: 2,
                 reserved: 1,
             },
             100,
         );
         assert_eq!(c.reserved, 1);
-        let d = AvsAudioDescriptor::new(0, AvsAudioBody::Codec2(c), 2);
+        let d = Avs3AudioDescriptor::new(0, Avs3AudioBody::Codec2(c), 2);
         assert_eq!(d.reserved, 0x3F);
     }
 }
