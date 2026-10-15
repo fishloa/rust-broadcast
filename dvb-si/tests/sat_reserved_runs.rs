@@ -82,9 +82,9 @@ fn cell_fragment_reserved_runs() {
         cell_fragment_id: 1,
         first_occurrence: true,
         last_occurrence: false,
-        center: Some(CellCenter {
-            center_latitude: 5,
-            center_longitude: -7,
+        centre: Some(CellCentre {
+            centre_latitude: 5,
+            centre_longitude: -7,
             max_distance: 9,
             reserved_zero_future_use_4: 0xF,
             reserved_zero_future_use_5: 0x1F,
@@ -112,7 +112,7 @@ fn cell_fragment_reserved_runs() {
         cell_fragment_id: 2,
         first_occurrence: false,
         last_occurrence: true,
-        center: None,
+        centre: None,
         delivery_system_ids: vec![],
         new_delivery_systems: vec![],
         obsolescent_delivery_systems: vec![],
