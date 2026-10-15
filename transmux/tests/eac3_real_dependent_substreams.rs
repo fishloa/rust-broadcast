@@ -4,10 +4,10 @@
 //! 157 access units, each an AC-3 core syncframe (bsid 6, independent substream 0
 //! per ETSI TS 102 366 §E.1.3.1.2 / Annex J.1.5.2.2) followed by a dependent
 //! E-AC-3 syncframe (`strmtyp` 1, `chanmap` = Ls, Rs, Lrs/Rrs). Its licence is not
-//! stated, so it is **local-only**: `fixtures/eac3-dep/make.sh` downloads it and
-//! derives the other inputs with MP4Box, ffmpeg and gpac into the git-ignored
-//! `.test-streams/eac3-dep/`; every test here skips loudly when they are absent
-//! (see `fixtures/eac3-dep/PROVENANCE.md`).
+//! stated, so it lives in the private submodule (`private/fixtures/eac3-dep/`,
+//! with `PROVENANCE.md` and `make.sh` for the derived MP4/TS files produced by
+//! MP4Box, ffmpeg and gpac); every test here skips loudly when `private/` is not
+//! checked out (maintainers only: `git submodule update --init private`).
 //!
 //! Independent oracles: MP4Box's own `dec3` box and gpac's per-sample parse of
 //! MP4Box's MP4 (`gw_mp4box.gpac_inspect.txt`: size and CRC32 of each access
@@ -29,16 +29,14 @@ const AU_LEN: usize = 2 * AC3_CORE_LEN;
 const SAMPLES_PER_AU: u32 = 1536;
 
 fn local(rel: &str) -> Option<Vec<u8>> {
-    let path = test_fixtures::root()
-        .join("../.test-streams/eac3-dep")
-        .join(rel);
-    match std::fs::read(&path) {
-        Ok(b) => Some(b),
-        Err(_) => {
+    match test_fixtures::private(&format!("eac3-dep/{rel}")) {
+        Some(path) => {
+            Some(std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
+        }
+        None => {
             eprintln!(
-                "SKIP: local-only real E-AC-3 dependent-substream stream absent ({}); \
-                 run fixtures/eac3-dep/make.sh to fetch it",
-                path.display()
+                "SKIP: private fixture eac3-dep/{rel} absent (the `private` submodule is not \
+                 checked out); `git submodule update --init private` (maintainers only)"
             );
             None
         }
