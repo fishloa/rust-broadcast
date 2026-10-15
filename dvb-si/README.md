@@ -4,7 +4,7 @@ ETSI EN 300 468 DVB Service Information parser **and builder**, plus the
 MPEG-2 PSI tables it builds on, the DVB-allocated companion tables, and the
 DSM-CC data carousel.
 
-**Complete coverage: every allocated `table_id` in EN 300 468 V1.19.1
+**Complete coverage: every allocated `table_id` in EN 300 468 V1.20.1
 Table 2 (29 section types; 28 dispatched by `AnyTableSection` + the type-keyed MPE datagram view), every allocated `descriptor_tag` in Table 12
 (0x40–0x7F, 64 descriptors), and the MPEG-2 systems descriptors (ISO/IEC 13818-1 §2.6, tags 0x02–0x12 plus the codec descriptors AVC/HEVC/AAC/MPEG-4 at 0x1B/0x1C/0x28/0x2A/0x2B/0x38) are implemented**, each with a symmetric
 `Parse` / `Serialize` pair and round-trip tests. Layouts are derived from the
@@ -147,7 +147,7 @@ structure raw.
 | 0x7F | SIT — Selection Information | EN 300 468 | |
 
 Remaining table_id values are *reserved* or *user-defined* in EN 300 468
-V1.19.1 Table 2 — there is nothing standardized left to implement.
+V1.20.1 Table 2 — there is nothing standardized left to implement.
 
 ## Descriptors
 
@@ -172,7 +172,7 @@ the raw payload is preserved and round-trips losslessly.
 
 ### DVB descriptors (EN 300 468, and companion specs)
 
-All 64 allocated tags 0x40–0x7F from EN 300 468 V1.19.1 Table 12 are implemented.
+All 64 allocated tags 0x40–0x7F from EN 300 468 V1.20.1 Table 12 are implemented.
 Each parses into a typed struct with a symmetric serializer and round-trip tests;
 any free-form byte fields (names, selector tails) stay borrowed `&[u8]`
 per the crate's zero-copy convention.

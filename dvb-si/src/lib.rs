@@ -1,4 +1,4 @@
-//! ETSI EN 300 468 v1.19.1 DVB Service Information parser and builder.
+//! ETSI EN 300 468 v1.20.1 DVB Service Information parser and builder.
 //!
 //! `dvb-si` turns a raw MPEG-TS into typed, decoded DVB sections and complete
 //! logical tables: feed packets in, get back PAT/PMT/SDT/EIT/… section structs
@@ -162,7 +162,7 @@
 //! - [`tables`] — `*Section` parsers for PAT, PMT, CAT, TSDT, NIT, BAT, SDT,
 //!   EIT, TDT, TOT, RST, DIT, SIT, ST, SAT, AIT, DSM-CC section, UNT, INT, RCT,
 //!   CIT, RNT, Container, MPE datagram, MPE-FEC, MPE-IFEC, protection message,
-//!   downloadable font info — every allocated table_id in EN 300 468 V1.19.1
+//!   downloadable font info — every allocated table_id in EN 300 468 V1.20.1
 //!   Table 2.
 //! - [`descriptors`] — every DVB descriptor (tags 0x40..0x7F) plus MPEG-2 descriptors.
 //! - [`carousel`] — DSM-CC data-carousel messages (DSI/DII/DDB) + module

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, #1222)
+- `time`: the DVB 16-bit MJD field follows the EN 300 468 v1.20.1 2038 wrap rule (msb 0 => MJD = 0x10000 + field). `decode_mjd_bcd`/`mjd_to_ymd`/`decode_mjd_bcd_utc` and their encoders now cover 1948-08-05 ..= 2128-01-09; earlier dates no longer encode/decode.
+
 ### Added
 - `len::fit_mask(value, mask, field)`: checked replacement for the `(value & MASK)` idiom in serializers; returns `FieldOverflow` when a set bit lies outside `mask` (#1197).
 - `clock33`: the 27 MHz PCR clock in one place - `PTS_HZ`, `PCR_HZ`, `PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ` (`2^33 * 300`), `pcr_from_parts` / `pcr_split` (`base * 300 + extension`), `pcr_forward_distance` and `pcr_signed_distance` (the modular PCR delta; `wrapping_sub(..) % PCR_WRAP_27MHZ` is wrong across a wrap because the modulus is not a power of two). Replaces five hand-rolled copies in `dvb-conformance`, `media-doctor`, `compliance-probe`, `dvb-tools`, `ts-fix` and the `base * 300 + ext` arithmetic of `mpeg-ts` `Pcr`, `mpeg-pes` `Escr`, `mpeg-ps` `Scr` (#1206).

@@ -240,7 +240,11 @@ _§6.2.8, PDF pp. 60-66_
 |  |  | 0x1D | DTS-UHD receiver-mix audio description, stereo, for the |
 |  |  |  | visually impaired (see note 12) |
 |  |  | 0x1E | DTS-UHD Next Generation Audio (NGA) Audio |
-|  |  | 0x1F to 0xFF | reserved for future use |
+|  |  | 0x1F | reserved for future use |
+|  |  | 0x20 | AVS3-P3 Next Generation Audio (NGA) |
+|  |  | 0x21 | AVS3-P3 broadcast-mix accessibility components |
+|  |  | 0x22 | AVS3-P3 receiver-mix accessibility components |
+|  |  | 0x23 to 0xFF | reserved for future use |
 |  | 0x2 | 0x00 to 0xFF | Timed Text Markup Language (TTML) subtitles ETSI |
 |  |  |  | EN 303 560 [12] |
 |  | 0x3 to 0xF | 0x00 to 0xFF | reserved for future use |
@@ -258,6 +262,7 @@ _§6.2.8, PDF pp. 60-66_
 |  |  | 0x07 | SL-HDR2 DMI format as defined in clause 5.14.4.4.3.4.4 |
 |  |  |  | of ETSI TS 101 154 [14] (see note 4 and note 11) |
 |  |  | 0x09 | PQ10 HDR (see note 4) |
-|  |  | 0x0A to 0xFF | reserved for future use |
+|  |  | 0x0A | T/UWA 005 DMI as defined in clause 5.14.4.4.3.4.6 of ETSI TS 101 154 [14] (see note 4 and note 11) |
+|  |  | 0x0B to 0xFF | reserved for future use |
 | 0xC to 0xF | n/a | 0x00 to 0xFF | user defined |
 

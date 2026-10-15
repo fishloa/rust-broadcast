@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, #1222 - EN 300 468 v1.20.1)
+- Brought up to ETSI EN 300 468 V1.20.1 (2026-09); clause-by-clause delta in `docs/en300468-v1.20.1-delta.md`. v1.20.1 adds no tags, table_ids or wire layouts.
+- **BREAKING (behavioural):** the 2038 MJD wrap rule (clauses 5.2.4/5.2.5/5.2.6, 6.2.20, 6.4.9) now applies to every time field (EIT `start_time`, TDT/TOT `UTC_time`, local_time_offset `time_of_change`, network_change_notify `start_time_of_change`): when the msb of the 16-bit MJD field is 0 the MJD is `0x10000` + the field, so `0x03D1123456` is 2040-12-25 12:34:56. Dates before 1948-08-05 are no longer representable (implemented in `broadcast_common::time`).
+- **BREAKING:** SAT cell-fragment names follow v1.20.1 spelling: `CellCenter` -> `CellCentre`, `CellFragment::center` -> `centre`, `center_latitude`/`center_longitude` -> `centre_latitude`/`centre_longitude` (serde keys follow).
+- SAT `satellite_position_v3_info`: `usable_start/stop_time_flag` (when `metadata_flag == 0`) and `interpolation_type`/`interpolation_degree` (when `interpolation_flag == 0`) are documented as "not used" (was "reserved"); values are preserved verbatim, now pinned by a test.
+
+### Added (#1222)
+- `PDS_AVSA` (`0x41565341`, 'AVSA'): the private_data_specifier that precedes the AVS-P3 audio descriptor (Annex O).
+- Tests carrying the v1.20.1 Table 26 component types (AVS3-P3 audio `0x9/0x1/0x20-0x22`, T/UWA 005 DMI `0xB/0xF/0x0A`) byte-exact through `ComponentDescriptor`.
+
 ### Changed (BREAKING, #1197)
 - **BREAKING (behavioural):** every remaining single-field `(value & MASK)` in a serializer is a checked `broadcast_common::len::fit_mask(..)?` that returns `Error::FieldOverflow` instead of silently dropping the high bits of an over-range value (the #1129 class; ~220 sites across the descriptors and tables, including bare `(field << n)` shifts such as `satellite_table_id`, `reference_type`, `c2_system_tuning_frequency_type`). Hand-built values that were wider than their field (reserved runs, `Reserved(v)` enum payloads such as `Bandwidth::Reserved(0xFE)` / `FecInner::Reserved(0x3E)`, 5-bit `stream_content_ext`, ...) used to be masked and now fail; values produced by `parse` always fit. Guarded by `tests/serialize_mask_guard.rs` (lexical, reasoned allow-list) and `tests/serialize_mask_overflow.rs` (behavioural).
 - **BREAKING:** the SAT (`tables::sat`) body structs gain typed `reserved_zero_future_use*` fields for every reserved run of EN 300 468 Tables 11c/11d/11e/11g/11h (captured on parse, re-emitted verbatim, hand-built default `0`): `PositionV2Satellite`, `PositionSystem::Orbital`, `CellCenter`, `CellFragment`, `NewDeliverySystem`, `ObsolescentDeliverySystem`, `TimeAssociationBody`, `BeamhoppingPlan`, `BeamhoppingMode::{Mode0, Mode1, Mode2}`, `PositionV3Body`, `PositionV3Satellite`, `PositionV3Metadata`, `UsableTime`, `EphemerisData`, `CovarianceData`. The SAT bit writer no longer truncates: an over-range value (a count, a 9-bit `*_ext` above 0x1FF, a signed latitude out of range) is `Error::FieldOverflow`, and `first_occurence` without a `center` is `ValueOutOfRange`.
