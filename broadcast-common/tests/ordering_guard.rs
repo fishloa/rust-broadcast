@@ -33,7 +33,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn root() -> Option<PathBuf> {
-    let r = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.to_path_buf();
+    let r = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .to_path_buf();
     r.join("dvb-si/src/tables/pmt.rs").exists().then_some(r)
 }
 
@@ -116,7 +118,10 @@ fn enum_discriminants(root: &Path, rel: &str, name: &str) {
         .filter_map(|(i, l)| {
             let t = l.trim();
             let (id, rest) = t.split_once('=')?;
-            if !id.trim().chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            if !id
+                .trim()
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
                 || id.trim().is_empty()
             {
                 return None;
@@ -221,7 +226,10 @@ fn consts_ascending(root: &Path, rel: &str, start: &str, end: &str) {
         .enumerate()
         .filter_map(|(i, l)| {
             let t = l.trim();
-            let t = t.strip_prefix("pub(crate) ").or(t.strip_prefix("pub ")).unwrap_or(t);
+            let t = t
+                .strip_prefix("pub(crate) ")
+                .or(t.strip_prefix("pub "))
+                .unwrap_or(t);
             let t = t.strip_prefix("const ")?;
             let (_, rhs) = t.split_once('=')?;
             let (v, tail) = leading_lit(rhs)?;
@@ -234,7 +242,9 @@ fn consts_ascending(root: &Path, rel: &str, start: &str, end: &str) {
 /// `Name = <lit> =>` entries (or `Name = [lo..=hi] =>` by `lo`) after `marker`.
 fn declare_list(root: &Path, rel: &str, marker: &str) {
     let src = read(root, rel);
-    let at = src.find(marker).unwrap_or_else(|| panic!("{rel}: {marker}"));
+    let at = src
+        .find(marker)
+        .unwrap_or_else(|| panic!("{rel}: {marker}"));
     let body = braced(&src[at..], marker.trim_end_matches('{').trim_end());
     let vals: Vec<_> = body
         .lines()
@@ -243,7 +253,10 @@ fn declare_list(root: &Path, rel: &str, marker: &str) {
             let t = l.trim();
             let (id, rest) = t.split_once('=')?;
             if id.trim().is_empty()
-                || !id.trim().chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                || !id
+                    .trim()
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
             {
                 return None;
             }
@@ -266,7 +279,8 @@ fn enum_doc_rows(root: &Path, rel: &str, name: &str) {
         .filter_map(|(i, l)| {
             let t = l.trim().strip_prefix("///")?.trim_start();
             let t = t.trim_start_matches('`');
-            t.starts_with("0x").then(|| leading_lit(t).map(|(v, _)| (i + 1, v)))?
+            t.starts_with("0x")
+                .then(|| leading_lit(t).map(|(v, _)| (i + 1, v)))?
         })
         .collect();
     strictly_ascending(&format!("{rel} enum {name} doc rows"), &vals);
@@ -280,7 +294,11 @@ fn discriminant_enums_ascending() {
     };
     enum_discriminants(&r, "dvb-si/src/descriptor_tag.rs", "DescriptorTag");
     enum_discriminants(&r, "dvb-si/src/table_id.rs", "TableId");
-    enum_discriminants(&r, "dvb-si/src/descriptors/extension/mod.rs", "ExtensionTag");
+    enum_discriminants(
+        &r,
+        "dvb-si/src/descriptors/extension/mod.rs",
+        "ExtensionTag",
+    );
 }
 
 #[test]
@@ -316,8 +334,18 @@ fn registry_enums_arms_ascending() {
         return;
     };
     for func in ["from_u8", "to_u8"] {
-        arms_ascending(&r, "dvb-si/src/descriptors/service.rs", "impl ServiceType", func);
-        arms_ascending(&r, "dvb-si/src/descriptors/linkage.rs", "impl LinkageType", func);
+        arms_ascending(
+            &r,
+            "dvb-si/src/descriptors/service.rs",
+            "impl ServiceType",
+            func,
+        );
+        arms_ascending(
+            &r,
+            "dvb-si/src/descriptors/linkage.rs",
+            "impl LinkageType",
+            func,
+        );
     }
 }
 
@@ -327,8 +355,16 @@ fn declare_lists_ascending() {
         eprintln!("ordering_guard: sibling crates not present; skipped");
         return;
     };
-    declare_list(&r, "dvb-si/src/descriptors/any.rs", "declare_descriptors! {");
-    declare_list(&r, "dvb-si/src/descriptors/extension/mod.rs", "declare_extension_bodies! {");
+    declare_list(
+        &r,
+        "dvb-si/src/descriptors/any.rs",
+        "declare_descriptors! {",
+    );
+    declare_list(
+        &r,
+        "dvb-si/src/descriptors/extension/mod.rs",
+        "declare_extension_bodies! {",
+    );
     declare_list(&r, "dvb-si/src/tables/any.rs", "declare_tables! {");
     declare_list(&r, "dvb-t2mi/src/payload/any.rs", "declare_payloads! {");
 }
@@ -339,25 +375,77 @@ fn named_const_blocks_ascending() {
         eprintln!("ordering_guard: sibling crates not present; skipped");
         return;
     };
-    consts_ascending(&r, "mpeg-pes/src/stream_id.rs", "const PROGRAM_STREAM_MAP", "const PROGRAM_STREAM_DIRECTORY");
-    consts_ascending(&r, "transmux/src/ts_demux.rs", "const STREAM_TYPE_MPEG2_VIDEO", "const STREAM_TYPE_METADATA_PES");
-    consts_ascending(&r, "transmux/src/ts_demux.rs", "const STREAM_TYPE_PRIVATE_SECTIONS", "const STREAM_TYPE_SCTE35");
-    consts_ascending(&r, "transmux/src/ts_demux.rs", "const OTI_MPEG4_AUDIO", "const OTI_MPEG2_AUDIO");
-    consts_ascending(&r, "transmux/src/ts_mux.rs", "const STREAM_TYPE_AVC", "const STREAM_TYPE_MPEGH");
-    consts_ascending(&r, "transmux/src/rtmp.rs", "pub const SET_CHUNK_SIZE", "pub const COMMAND_AMF0");
-    consts_ascending(&r, "transmux/src/au.rs", "const VVC_VCL_MAX", "const VVC_FD");
-    consts_ascending(&r, "dvb-si/src/carousel/biop/mod.rs", "pub const TAG_BIOP", "pub const TAG_SERVICE_LOCATION");
+    consts_ascending(
+        &r,
+        "mpeg-pes/src/stream_id.rs",
+        "const PROGRAM_STREAM_MAP",
+        "const PROGRAM_STREAM_DIRECTORY",
+    );
+    consts_ascending(
+        &r,
+        "transmux/src/ts_demux.rs",
+        "const STREAM_TYPE_MPEG2_VIDEO",
+        "const STREAM_TYPE_METADATA_PES",
+    );
+    consts_ascending(
+        &r,
+        "transmux/src/ts_demux.rs",
+        "const STREAM_TYPE_PRIVATE_SECTIONS",
+        "const STREAM_TYPE_SCTE35",
+    );
+    consts_ascending(
+        &r,
+        "transmux/src/ts_demux.rs",
+        "const OTI_MPEG4_AUDIO",
+        "const OTI_MPEG2_AUDIO",
+    );
+    consts_ascending(
+        &r,
+        "transmux/src/ts_mux.rs",
+        "const STREAM_TYPE_AVC",
+        "const STREAM_TYPE_MPEGH",
+    );
+    consts_ascending(
+        &r,
+        "transmux/src/rtmp.rs",
+        "pub const SET_CHUNK_SIZE",
+        "pub const COMMAND_AMF0",
+    );
+    consts_ascending(
+        &r,
+        "transmux/src/au.rs",
+        "const VVC_VCL_MAX",
+        "const VVC_FD",
+    );
+    consts_ascending(
+        &r,
+        "dvb-si/src/carousel/biop/mod.rs",
+        "pub const TAG_BIOP",
+        "pub const TAG_SERVICE_LOCATION",
+    );
 }
 
 /// Files whose tables are deliberately ordered by spec clause / wire field
 /// rather than numerically; each must say so in a `// ORDER:` comment.
 const ORDER_COMMENT_REQUIRED: &[(&str, &str)] = &[
     ("transmux/src/webm_demux.rs", "EBML element-hierarchy order"),
-    ("st377-1/src/identification.rs", "MXF Annex A.3 property-table order"),
-    ("st377-1/src/preface.rs", "MXF Annex A.2 property-table order"),
+    (
+        "st377-1/src/identification.rs",
+        "MXF Annex A.3 property-table order",
+    ),
+    (
+        "st377-1/src/preface.rs",
+        "MXF Annex A.2 property-table order",
+    ),
     ("st377-1/src/track.rs", "MXF Annex B property-table order"),
-    ("dvb-t2mi/src/payload/l1/post.rs", "L1-post wire field order (bit widths)"),
-    ("mpeg-pes/src/stream_id.rs", "stream_id_extension is a separate namespace"),
+    (
+        "dvb-t2mi/src/payload/l1/post.rs",
+        "L1-post wire field order (bit widths)",
+    ),
+    (
+        "mpeg-pes/src/stream_id.rs",
+        "stream_id_extension is a separate namespace",
+    ),
 ];
 
 #[test]
@@ -368,7 +456,9 @@ fn intentionally_unsorted_tables_are_documented() {
     };
     for (rel, why) in ORDER_COMMENT_REQUIRED {
         assert!(
-            read(&r, rel).lines().any(|l| l.trim_start().starts_with("// ORDER:")),
+            read(&r, rel)
+                .lines()
+                .any(|l| l.trim_start().starts_with("// ORDER:")),
             "{rel} ({why}) must carry a one-line `// ORDER:` comment explaining its non-numeric order"
         );
     }
