@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (E-AC-3 orphan dependent substream, #1245)
+- An E-AC-3 dependent-substream syncframe with no independent frame before it (the data starts on it at stream start, or after a continuity gap / dropped PES / re-anchor cleared the carry) was emitted as a sample of its own with an independent frame's duration, shifting every following timestamp by one frame. It cannot be decoded alone (ETSI TS 102 366 §E.1.3.1.2: dependent substreams immediately follow their independent substream), so `StreamingTsDemux` and `ac3::split_eac3_syncframes` now drop it; a dependent frame after its independent frame still folds into that access unit.
+
 ### Changed
 - The Annex B start-code scan (`find_start_code_prefix`, behind every NAL and access-unit
   splitter) finds each `01` byte with `memchr` instead of testing every offset. Same results,
