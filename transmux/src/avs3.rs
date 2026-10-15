@@ -517,6 +517,19 @@ pub enum AvsVideoConfig {
     Layers(LAvsConfigurationBox),
 }
 
+impl AvsVideoConfig {
+    /// FourCC-style label of the configuration box kind.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Avs3(_) => "av3c",
+            Self::Avs2(_) => "av2c",
+            Self::Layers(_) => "lavc/la2c",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(AvsVideoConfig);
+
 /// An AVS2/AVS3 video sample entry (`avs3`, `lav3`, `avst`, `lav2`): a
 /// `VisualSampleEntry` carrying the primary configuration box
 /// ([`AvsVideoEntryKind::config_fourcc`]). A second configuration box (`lavc` /

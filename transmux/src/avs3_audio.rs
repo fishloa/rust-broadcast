@@ -213,6 +213,17 @@ pub struct Ca3SpecificBox {
 }
 
 impl Ca3Config {
+    /// Spec label of the configuration kind.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::GeneralBitrate(_) => "general full-rate (audio_codec_id 2)",
+            Self::Lossless(_) => "lossless (audio_codec_id 1)",
+            Self::GeneralHigh(_) => "general high-rate (audio_codec_id 0)",
+            Self::Other { .. } => "reserved audio_codec_id",
+        }
+    }
+
     /// The 4-bit `audio_codec_id`.
     #[must_use]
     pub const fn audio_codec_id(&self) -> u8 {
@@ -224,6 +235,8 @@ impl Ca3Config {
         }
     }
 }
+
+broadcast_common::impl_spec_display!(Ca3Config);
 
 fn parse_ga(r: &mut BitReader<'_>) -> Result<Avs3AudioGaConfig> {
     let w = "dca3 GA config";
