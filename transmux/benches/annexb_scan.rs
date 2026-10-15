@@ -8,7 +8,6 @@
 //!   units, classifying them and converting them to length-prefixed form
 
 use std::hint::black_box;
-use std::path::PathBuf;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use transmux::annexb::{annexb_to_length_prefixed, length_prefixed_to_annexb};
@@ -20,10 +19,7 @@ use transmux::{CodecConfig, StreamingTsDemux, TsDemux};
 const FIXTURES: [&str; 3] = ["france2.ts", "gulli-opengop.ts", "h264_aac_40s.ts"];
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/ts")
-        .join(name);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    test_fixtures::read(&format!("ts/{name}"))
 }
 
 /// The fixture's H.264 access units, back in Annex B form.
