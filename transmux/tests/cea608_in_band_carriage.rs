@@ -1,6 +1,6 @@
 //! In-band CEA-608 carriage: real captures whose H.264 video carries ATSC
-//! A/53 `GA94` caption SEI (`fixtures/captions/**`, Apache-2.0, see
-//! `fixtures/captions/PROVENANCE.md`) go through demux -> IR -> TS mux ->
+//! A/53 `GA94` caption SEI (private submodule `private/fixtures/captions/`,
+//! see its `PROVENANCE.md`; the tests skip loudly without it) go through demux -> IR -> TS mux ->
 //! demux with every caption byte intact. transmux treats samples as opaque, so
 //! the caption SEI NAL units must come out exactly as they went in.
 //!
@@ -12,6 +12,29 @@
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::{Media, TsDemux, TsMux};
+
+/// The captures live in the private submodule (their media licence is unclear,
+/// see `private/fixtures/captions/PROVENANCE.md`): `true` (after a loud notice)
+/// when it is not checked out, so the test returns without asserting.
+fn skip_without_private() -> bool {
+    if test_fixtures::private("captions/mux.js/multi-channel-608-captions.ts").is_some() {
+        return false;
+    }
+    eprintln!(
+        "SKIP: private fixtures captions/ absent (the `private` submodule is not checked \
+         out); `git submodule update --init private` (maintainers only)"
+    );
+    true
+}
+
+fn read_private(rel: &str) -> Vec<u8> {
+    let path = test_fixtures::private(rel).unwrap_or_else(|| panic!("private/fixtures/{rel}"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+fn read_private_string(rel: &str) -> String {
+    String::from_utf8(read_private(rel)).expect("UTF-8 reference list")
+}
 
 const GA94_MARKER: [u8; 5] = *b"GA94\x03";
 
@@ -40,8 +63,8 @@ fn video_payloads(media: &Media) -> Vec<Vec<u8>> {
 }
 
 fn assert_carried(ts_path: &str, reference_path: &str) {
-    let ts = test_fixtures::read(ts_path);
-    let want = test_fixtures::read_to_string(reference_path)
+    let ts = read_private(ts_path);
+    let want = read_private_string(reference_path)
         .lines()
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .count();
@@ -68,6 +91,9 @@ fn assert_carried(ts_path: &str, reference_path: &str) {
 
 #[test]
 fn mux_js_multi_channel_608_survives_ts_remux() {
+    if skip_without_private() {
+        return;
+    }
     assert_carried(
         "captions/mux.js/multi-channel-608-captions.ts",
         "captions/mux.js/multi-channel-608-captions.cc_data.txt",
@@ -76,6 +102,9 @@ fn mux_js_multi_channel_608_survives_ts_remux() {
 
 #[test]
 fn shaka_608_survives_ts_remux() {
+    if skip_without_private() {
+        return;
+    }
     assert_carried(
         "captions/shaka/captions-test.ts",
         "captions/shaka/captions-test.cc_data.txt",
@@ -87,11 +116,12 @@ fn shaka_608_survives_ts_remux() {
 /// `grep -c` over the segment bytes). They survive demux and a CMAF re-mux.
 #[test]
 fn mux_js_fmp4_608_survives_cmaf_remux() {
+    if skip_without_private() {
+        return;
+    }
     use transmux::{CmafMux, Fmp4Demux};
-    let mut buf = test_fixtures::read("captions/mux.js/dash-608-captions-init.mp4");
-    buf.extend_from_slice(&test_fixtures::read(
-        "captions/mux.js/dash-608-captions-seg.m4s",
-    ));
+    let mut buf = read_private("captions/mux.js/dash-608-captions-init.mp4");
+    buf.extend_from_slice(&read_private("captions/mux.js/dash-608-captions-seg.m4s"));
     let raw_markers = buf
         .windows(GA94_MARKER.len())
         .filter(|w| *w == GA94_MARKER)
