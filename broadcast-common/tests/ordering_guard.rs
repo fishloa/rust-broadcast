@@ -369,6 +369,31 @@ fn declare_lists_ascending() {
     declare_list(&r, "dvb-t2mi/src/payload/any.rs", "declare_payloads! {");
 }
 
+/// The `@no_dispatch` tail of `declare_descriptors!` carries no tag literals;
+/// it is ordered by tag (0x83 LogicalChannel/Nordig, 0xD1 AVS3 video, 0xD2 AVS3 audio).
+#[test]
+fn no_dispatch_tail_ordered_by_tag() {
+    let Some(r) = root() else {
+        eprintln!("ordering_guard: sibling crates not present; skipped");
+        return;
+    };
+    let src = read(&r, "dvb-si/src/descriptors/any.rs");
+    let pos = |needle: &str| src.find(needle).unwrap_or_else(|| panic!("{needle}"));
+    let order = [
+        "    LogicalChannel =>",
+        "    Avs3Video =>",
+        "    Avs3Audio =>",
+    ];
+    for w in order.windows(2) {
+        assert!(
+            pos(w[0]) < pos(w[1]),
+            "any.rs no-dispatch tail: `{}` must come before `{}` (tag order)",
+            w[0].trim(),
+            w[1].trim()
+        );
+    }
+}
+
 #[test]
 fn named_const_blocks_ascending() {
     let Some(r) = root() else {
