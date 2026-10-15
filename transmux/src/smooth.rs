@@ -79,6 +79,19 @@ pub const FOURCC_AVC1: &str = "AVC1";
 pub const FOURCC_AACL: &str = "AACL";
 /// Audio FourCC in the Smooth `QualityLevel` (§2.2.2.5) — HE-AAC.
 pub const FOURCC_AACH: &str = "AACH";
+/// Text FourCC in the Smooth `QualityLevel` for a TTML/IMSC track: the ISOBMFF
+/// `stpp` sample-entry code. [MS-SSTR] §2.2.2.5 reserves no text FourCC and
+/// allows "a vendor extension value ... registered with MPEG4-RA"; `stpp`
+/// (ISO/IEC 14496-30) is such a registered code and names the sample format.
+pub const FOURCC_STPP: &str = "stpp";
+/// Text FourCC in the Smooth `QualityLevel` for a WebVTT track: the ISOBMFF
+/// `wvtt` sample-entry code (ISO/IEC 14496-30), a registered MPEG4-RA code.
+pub const FOURCC_WVTT: &str = "wvtt";
+/// `StreamIndex@Subtype` this packager writes for a text stream: `SUBT`,
+/// "Subtitles that are used for foreign-language audio" ([MS-SSTR] §2.2.2.3).
+/// The IR does not say whether a track is a caption service for the deaf
+/// (`CAPT`), so the subtitle category is used.
+pub const SUBTYPE_SUBT: &str = "SUBT";
 
 /// `AudioTag` for raw AAC in the Smooth `QualityLevel` (§2.2.2.5).
 const AUDIO_TAG_AAC: u32 = 255;
@@ -103,14 +116,18 @@ pub enum SmoothStreamType {
     Video,
     /// Audio stream — `Type="audio"`, `FourCC="AACL"`.
     Audio,
+    /// Text stream (subtitles) — `Type="text"`, `Subtype="SUBT"`,
+    /// `FourCC="stpp"` / `"wvtt"`.
+    Text,
 }
 
 impl SmoothStreamType {
-    /// The [MS-SSTR] `StreamIndex@Type` token (`"video"` / `"audio"`).
+    /// The [MS-SSTR] `StreamIndex@Type` token (`"video"` / `"audio"` / `"text"`).
     pub fn name(&self) -> &'static str {
         match self {
             SmoothStreamType::Video => "video",
             SmoothStreamType::Audio => "audio",
+            SmoothStreamType::Text => "text",
         }
     }
 }
@@ -498,8 +515,14 @@ impl SmoothPackager {
             if ordinal > 1 {
                 attrs.push(("Name", name));
             }
+            // [MS-SSTR] §2.2.2.3: `Subtype` MUST appear on a text stream.
+            let subtype = if s.stream_type == SmoothStreamType::Text {
+                SUBTYPE_SUBT.to_string()
+            } else {
+                String::new()
+            };
             attrs.extend([
-                ("Subtype", String::new()),
+                ("Subtype", subtype),
                 ("Chunks", s.fragments.len().to_string()),
                 ("QualityLevels", "1".to_string()),
                 ("Url", url),
@@ -527,6 +550,10 @@ impl SmoothPackager {
                         ::hex::encode_upper(&s.codec_private_data),
                     ));
                 }
+                // A text track needs no further `QualityLevel` attribute
+                // ([MS-SSTR] §2.2.2.5 requires geometry for video and audio
+                // parameters for audio only).
+                SmoothStreamType::Text => {}
                 SmoothStreamType::Audio => {
                     if let Some(sr) = s.sampling_rate {
                         ql.push(("SamplingRate", sr.to_string()));
@@ -654,8 +681,29 @@ fn resolve_codec(config: &CodecConfig) -> Result<ResolvedCodec> {
                 Some(*channel_count),
             ))
         }
+        // A subtitle track re-muxed from an ISOBMFF `stpp` / `wvtt` sample entry
+        // (issue #1186): the fragment carries the samples as they are, the
+        // manifest names the sample format by its entry fourcc.
+        CodecConfig::Subtitle {
+            sample_entry: Some(entry),
+            ..
+        } => {
+            let fourcc = match entry {
+                crate::pipeline::SubtitleSampleEntry::Ttml(_) => FOURCC_STPP,
+                crate::pipeline::SubtitleSampleEntry::WebVtt(_) => FOURCC_WVTT,
+            };
+            Ok((
+                SmoothStreamType::Text,
+                fourcc,
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+            ))
+        }
         _ => Err(Error::InvalidInput(
-            "Smooth Streaming supports only H.264 video and AAC-LC audio",
+            "Smooth Streaming supports only H.264 video, AAC-LC audio and ISOBMFF (stpp/wvtt) subtitles",
         )),
     }
 }
