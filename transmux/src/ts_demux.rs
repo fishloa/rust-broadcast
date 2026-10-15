@@ -961,6 +961,15 @@ fn split_frames_with_tail<F: FrameSync>(buf: &[u8]) -> FrameSplit<'_, F::Hdr> {
                     Some(prev) if F::folds_into_previous(&hdr) && prev.0 + prev.1.len() == at => {
                         prev.1 = &buf[prev.0..at + flen];
                     }
+                    // An E-AC-3 dependent substream with no contiguous
+                    // independent frame before it (the buffer starts on it
+                    // after a continuity gap / dropped PES / re-anchor, or
+                    // garbage separates them) is an orphan: ETSI TS 102 366
+                    // §E.1.3.1.2 has dependent substreams "immediately follow
+                    // the independent substream with which they are
+                    // associated", so alone it cannot be decoded and must not
+                    // become a sample of its own. Drop it.
+                    _ if F::folds_into_previous(&hdr) => {}
                     _ => frames.push((at, &buf[at..at + flen], hdr)),
                 }
                 at += flen;
@@ -10978,6 +10987,39 @@ mod tests {
                 1536,
                 p,
             );
+        }
+    }
+
+    /// A dependent substream whose independent frame never arrived (the
+    /// stream, or the PES after a gap, starts on it) is dropped instead of
+    /// being emitted as a sample of its own with an independent frame's
+    /// duration - which also shifted every following timestamp by one frame.
+    #[test]
+    fn eac3_orphan_dependent_at_stream_start_is_dropped() {
+        let real = real_eac3_independent_frames();
+        const REAL_RATE: i64 = 44_100;
+        let aus = eac3_aus(|i| real[i % real.len()].clone(), 8);
+        // The ES starts with a dependent frame (its independent frame is lost).
+        let mut frames = alloc::vec![eac3_dependent_frame(99)];
+        frames.extend(aus.frames.iter().cloned());
+        let es = audio_es(frames);
+        let ts = audio_ts(
+            STREAM_TYPE_EAC3,
+            &es,
+            &[usize::MAX],
+            1536 * 90_000 / REAL_RATE,
+        );
+        let (samples, disc) = observe(&ts, ts.len());
+        assert_eq!(disc, 0);
+        assert_eq!(
+            samples.len(),
+            aus.frames.len(),
+            "the orphan must not be a sample of its own"
+        );
+        for (n, (data, dts, _, dur)) in samples.iter().enumerate() {
+            assert_eq!(data, &aus.frames[n], "AU {n} byte-exact");
+            assert_eq!(*dur, Some(1536));
+            assert_eq!(*dts, Some(samples[0].1.unwrap() + n as i64 * 1536));
         }
     }
 
