@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (#1234 - AVS2/AVS3 video and Audio Vivid ISOBMFF boxes, GY/T 420-2025 Annex A)
+- `avs3`: `Avs3ConfigurationBox` (`av3c`, A.3.2.2) with `LibraryDependencyIdc` (Table A.1), `LAvsConfigurationBox` (`lavc`/`la2c`, A.3.2.3/A.2.2.3, per-layer `TemporalLayerInfo`, typed `AvsFrameRateCode`), `AvsVideoSampleEntry` (`avs3`/`lav3`/`avst`/`lav2`; byte-exact children, secondary layer box decodable), and the `telg`/`lrap`/`a3lg` sample-group entries (`TemporalLayerEntry`, `VisualLrapEntry`, `LibrarySampleGroupEntry`).
+- `avs2`: `Avs2ConfigurationBox` (`av2c`, A.2.2.2).
+- `avs3_audio`: `Ca3SpecificBox` (`dca3`, A.4.3.1) with the general-bit-rate and lossless `Avs3Audio*SpecificConfig` (bit-packed, typed `content_type`).
+- Not modelled: the `lidx` LRAP segment index box and the `av3l` restricted-scheme wrapper (A.3.3.3/A.3.3.6), the `av3a` audio sample entry wiring in the init-segment machinery, and `sequence_header()` decoding (carried verbatim).
+
 ### Added
 - `dash::xs_duration(Duration) -> String` is public: the workspace's one ISO 8601 / `xs:duration` spelling (jiff `SpanPrinter`); a duration beyond `i64::MAX` seconds saturates to the largest representable value. `multimux` now calls it instead of its own copy (#1216).
 
