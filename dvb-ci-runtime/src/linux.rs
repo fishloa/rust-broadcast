@@ -668,7 +668,14 @@ mod tests {
     #[test]
     fn split_read_side_is_nonblocking_and_a_drain_loop_terminates() {
         let path = make_fifo();
-        let mut dev = LinuxCiDataDevice::open_split_path(&path).expect("split open");
+        // The open itself is bounded too: a blocking read-only open of a FIFO
+        // with no writer yet sleeps, which is the same hang in another place.
+        let open_path = path.clone();
+        let mut dev = within(
+            Duration::from_secs(2),
+            || {},
+            move || LinuxCiDataDevice::open_split_path(&open_path).expect("split open"),
+        );
         // Loop the FIFO back: what the write fd writes, the read fd reads.
         dev.write(&packet(0xA1)).expect("write packet 1");
         dev.write(&packet(0xB2)).expect("write packet 2");
@@ -703,14 +710,17 @@ mod tests {
     #[test]
     fn split_with_a_blocking_read_fd_would_hang_the_drain_loop() {
         let path = make_fifo();
+        // Open the write end first (O_RDWR on a FIFO never blocks) so the
+        // blocking read-only open below finds a writer instead of waiting.
+        let write = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("write open");
         let read = OpenOptions::new()
             .read(true)
             .open(&path)
             .expect("blocking read-only open");
-        let write = OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .expect("write open");
         // Keep a handle to unblock the stuck reader afterwards.
         let unblock = write.try_clone().expect("clone write fd");
         let mut dev = LinuxCiDataDevice::from_split(write, read);
