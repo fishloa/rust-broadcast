@@ -16,6 +16,7 @@ use crate::sets::{
 };
 use crate::types::{MxfTimestamp, UlBytes, parse_uid_batch, serialize_uid_batch};
 
+// ORDER: Annex A.2 property-table order (spec clause order), not numeric.
 /// Local tag: Last Modified Date (A.2).
 pub const TAG_LAST_MODIFIED_DATE: u16 = 0x3B02;
 /// Local tag: Version (A.2).

@@ -46,6 +46,7 @@ pub const TAG_ORIGIN: u16 = 0x4B02;
 
 // ── Event Track additional tags (B.13) ──────────────────────────────────
 
+// ORDER: Annex B property-table order (spec clause order, grouped by track kind), not numeric.
 /// Local tag: Event Edit Rate (B.13) — Rational (8 bytes).
 pub const TAG_EVENT_EDIT_RATE: u16 = 0x4901;
 /// Local tag: Event Origin (B.13) — Position / Int64, optional (default 0).

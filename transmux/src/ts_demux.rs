@@ -276,36 +276,36 @@ const STREAM_TYPE_MPEG2_VIDEO: u8 = 0x02;
 const STREAM_TYPE_MPEG1_AUDIO: u8 = 0x03;
 /// MPEG-2 audio (ISO/IEC 13818-3, LSF) — ISO/IEC 13818-1 Table 2-34.
 const STREAM_TYPE_MPEG2_AUDIO: u8 = 0x04;
+/// PES private data (ISO/IEC 13818-1 Table 2-34) — DVB's standard carriage
+/// for AC-3/E-AC-3/DTS audio, subtitles, teletext, SMPTE 2038, etc., all
+/// disambiguated by the ES_info descriptor loop, not the `stream_type` byte
+/// itself (issue #641).
+const STREAM_TYPE_PES_PRIVATE: u8 = 0x06;
+/// ISO/IEC 13818-7 AAC in ADTS — ISO/IEC 13818-1 Table 2-34.
+const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
+/// Metadata in PES packets (ISO/IEC 13818-1 Table 2-34) — the other
+/// descriptor-disambiguated `stream_type`, per [`STREAM_TYPE_PES_PRIVATE`].
+const STREAM_TYPE_METADATA_PES: u8 = 0x15;
 /// AVC (H.264) video — ISO/IEC 13818-1 Table 2-34.
 const STREAM_TYPE_AVC: u8 = 0x1B;
 /// HEVC (H.265) video — ISO/IEC 13818-1 Table 2-34.
 const STREAM_TYPE_HEVC: u8 = 0x24;
-/// ISO/IEC 13818-7 AAC in ADTS — ISO/IEC 13818-1 Table 2-34.
-const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
-/// AC-3 (ATSC/DVB user-private) — ETSI TS 101 154 §G.
-const STREAM_TYPE_AC3: u8 = 0x81;
-/// E-AC-3 (user-private) — ETSI TS 101 154 §G.
-const STREAM_TYPE_EAC3: u8 = 0x87;
-/// DTS (user-private) — ETSI TS 101 154 §G.
-const STREAM_TYPE_DTS_82: u8 = 0x82;
-/// DTS-HD (user-private) — ETSI TS 101 154 §G.
-const STREAM_TYPE_DTS_85: u8 = 0x85;
-/// DTS (user-private) — ETSI TS 101 154 §G.
-const STREAM_TYPE_DTS_8A: u8 = 0x8A;
 /// MPEG-H 3D Audio main stream (MHAS, ISO/IEC 23008-3) — ISO/IEC 13818-1
 /// Table 2-34 / ETSI TS 101 154 §6.8 (issue #579). §6.8 additionally allows
 /// `0x2E` for an auxiliary (non-main) multi-stream MPEG-H component
 /// (§6.8.7) — out of scope here; only the single/main-stream `0x2D` is
 /// recognised.
 const STREAM_TYPE_MPEGH: u8 = 0x2D;
-/// PES private data (ISO/IEC 13818-1 Table 2-34) — DVB's standard carriage
-/// for AC-3/E-AC-3/DTS audio, subtitles, teletext, SMPTE 2038, etc., all
-/// disambiguated by the ES_info descriptor loop, not the `stream_type` byte
-/// itself (issue #641).
-const STREAM_TYPE_PES_PRIVATE: u8 = 0x06;
-/// Metadata in PES packets (ISO/IEC 13818-1 Table 2-34) — the other
-/// descriptor-disambiguated `stream_type`, per [`STREAM_TYPE_PES_PRIVATE`].
-const STREAM_TYPE_METADATA_PES: u8 = 0x15;
+/// AC-3 (ATSC/DVB user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_AC3: u8 = 0x81;
+/// DTS (user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_DTS_82: u8 = 0x82;
+/// DTS-HD (user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_DTS_85: u8 = 0x85;
+/// E-AC-3 (user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_EAC3: u8 = 0x87;
+/// DTS (user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_DTS_8A: u8 = 0x8A;
 /// AC-3 descriptor tag (ETSI EN 300 468 Annex D, issue #641).
 const DESC_TAG_AC3: u8 = 0x6A;
 /// Enhanced AC-3 (E-AC-3) descriptor tag (ETSI EN 300 468 Annex D).
@@ -369,10 +369,10 @@ const OTI_MPEG4_AUDIO: u8 = 0x40;
 /// `esds` `objectTypeIndication` for MPEG-2 Main Visual (ISO/IEC 14496-1 Table 5).
 /// `pub(crate)`: also used by `ps_demux` (C6, #1009) to build the same `esds`.
 pub(crate) const OTI_MPEG2_VIDEO_MAIN: u8 = 0x61;
-/// `esds` `objectTypeIndication` for MPEG-1 Audio, ISO/IEC 11172-3 (Table 5).
-const OTI_MPEG1_AUDIO: u8 = 0x6B;
 /// `esds` `objectTypeIndication` for MPEG-2 Audio, ISO/IEC 13818-3 (Table 5).
 const OTI_MPEG2_AUDIO: u8 = 0x69;
+/// `esds` `objectTypeIndication` for MPEG-1 Audio, ISO/IEC 11172-3 (Table 5).
+const OTI_MPEG1_AUDIO: u8 = 0x6B;
 /// `esds` `streamType` for an AudioStream (ISO/IEC 14496-1 Table 6).
 const STREAM_TYPE_AUDIO: u8 = 0x05;
 /// `esds` `streamType` for a VisualStream (ISO/IEC 14496-1 Table 6).

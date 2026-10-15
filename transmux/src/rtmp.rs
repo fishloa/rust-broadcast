@@ -106,10 +106,10 @@ pub mod msg_type {
     pub const VIDEO: u8 = 9;
     /// Data message, AMF3 (§7.1.2).
     pub const DATA_AMF3: u8 = 15;
-    /// Data message, AMF0 (`@setDataFrame`/`onMetaData`) (§7.1.2).
-    pub const DATA_AMF0: u8 = 18;
     /// Command message, AMF3 (§7.1.1).
     pub const COMMAND_AMF3: u8 = 17;
+    /// Data message, AMF0 (`@setDataFrame`/`onMetaData`) (§7.1.2).
+    pub const DATA_AMF0: u8 = 18;
     /// Command message, AMF0 (`connect`/`publish`/`play`/…) (§7.1.1).
     pub const COMMAND_AMF0: u8 = 20;
 }
