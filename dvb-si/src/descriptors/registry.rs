@@ -345,6 +345,34 @@ impl DescriptorRegistry {
         self
     }
 
+    /// Register the AVS2_video_descriptor (tag 0x40, GY/T 420-2025 clause 7.2.3)
+    /// for 'AVSV' (private_data_specifier or `registration_descriptor`
+    /// `format_identifier`, GY/T 420 clause 7.2.2). Tag 0x40 stays the DVB
+    /// `network_name_descriptor` outside that scope.
+    pub fn with_avs2_video(&mut self) -> &mut Self {
+        self.register_for_pds::<crate::descriptors::avs2_video::Avs2VideoDescriptor>(
+            crate::descriptors::PDS_AVSV,
+        );
+        self
+    }
+
+    /// Register the AVS2_audio_descriptor (tag 0xD3, T/AI 109.7-2024 clause
+    /// 8.2.3.4) for 'AVSA' (private_data_specifier or `registration_descriptor`
+    /// `format_identifier`, clause 8.2.3.3).
+    pub fn with_avs2_audio(&mut self) -> &mut Self {
+        self.register_for_pds::<crate::descriptors::avs2_audio::Avs2AudioDescriptor>(
+            crate::descriptors::PDS_AVSA,
+        );
+        self
+    }
+
+    /// Register the older T/UWA 012.2-2023 AVS3 video descriptor (tag 62,
+    /// clause 5.4.1). The standard gives it no private_data_specifier, so this
+    /// is a PDS-agnostic registration of tag 0x3E.
+    pub fn with_tuwa_avs3_video(&mut self) -> &mut Self {
+        self.register::<crate::descriptors::tuwa_avs3_video::TuwaAvs3VideoDescriptor>()
+    }
+
     /// Lazily walk a raw descriptor loop using this registry's configuration.
     ///
     /// Semantics mirror [`crate::descriptors::parse_loop`]: per-descriptor
@@ -733,6 +761,73 @@ mod tests {
             AnyDescriptor::Unknown { tag, .. } => assert_eq!(*tag, 0x83),
             other => panic!("expected Unknown (wrong PDS), got {other:?}"),
         }
+    }
+
+    /// AVS2 descriptors (GY/T 420 / T/AI 109.7) and the T/UWA 012.2 tag-62
+    /// descriptor are opt-in and scoped like the AVS3 ones.
+    #[test]
+    fn avs2_and_tuwa_descriptors_are_scoped() {
+        use crate::descriptors::avs2_audio::Avs2AudioDescriptor;
+        use crate::descriptors::avs2_video::Avs2VideoDescriptor;
+        use crate::descriptors::private_data_specifier::{PDS_AVSA, PDS_AVSV};
+        use crate::descriptors::tuwa_avs3_video::TuwaAvs3VideoDescriptor;
+        let mut reg = DescriptorRegistry::new();
+        reg.with_avs2_video()
+            .with_avs2_audio()
+            .with_tuwa_avs3_video();
+
+        let v = [0x40, 5, 0x20, 0x42, 0x00, 0xA9, 0x5F];
+        // Unscoped tag 0x40 is still the DVB network_name_descriptor.
+        let items: Vec<_> = reg.parse_loop(&v).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[0], AnyDescriptor::NetworkName(_)));
+        // Scoped by an 'AVSV' registration_descriptor it is the AVS2 descriptor.
+        let mut b = vec![0x05, 4, b'A', b'V', b'S', b'V'];
+        b.extend_from_slice(&v);
+        let items: Vec<_> = reg.parse_loop(&b).collect::<Result<_, _>>().unwrap();
+        match &items[1] {
+            AnyDescriptor::Other { tag: 0x40, value } => {
+                assert!(value.downcast_ref::<Avs2VideoDescriptor>().is_some());
+            }
+            other => panic!("expected Avs2Video, got {other:?}"),
+        }
+        // ... or by a private_data_specifier.
+        let mut b = pds_descriptor(PDS_AVSV);
+        b.extend_from_slice(&v);
+        let items: Vec<_> = reg.parse_loop(&b).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[1], AnyDescriptor::Other { tag: 0x40, .. }));
+
+        let a = [0xD3, 2, 6, 0x20];
+        let mut b = vec![0x05, 4, b'A', b'V', b'S', b'A'];
+        b.extend_from_slice(&a);
+        let items: Vec<_> = reg.parse_loop(&b).collect::<Result<_, _>>().unwrap();
+        match &items[1] {
+            AnyDescriptor::Other { tag: 0xD3, value } => {
+                assert!(value.downcast_ref::<Avs2AudioDescriptor>().is_some());
+            }
+            other => panic!("expected Avs2Audio, got {other:?}"),
+        }
+        let mut b = pds_descriptor(PDS_AVSA);
+        b.extend_from_slice(&a);
+        assert!(matches!(
+            reg.parse_loop(&b).collect::<Result<Vec<_>, _>>().unwrap()[1],
+            AnyDescriptor::Other { tag: 0xD3, .. }
+        ));
+        // Without scope tag 0xD3 stays Unknown.
+        let items: Vec<_> = reg.parse_loop(&a).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[0], AnyDescriptor::Unknown { tag: 0xD3, .. }));
+
+        // T/UWA 012.2 tag 62: PDS-agnostic opt-in.
+        let t = [62, 7, 0x22, 0x42, 0xAA, 0x4F, 9, 14, 9];
+        let items: Vec<_> = reg.parse_loop(&t).collect::<Result<_, _>>().unwrap();
+        match &items[0] {
+            AnyDescriptor::Other { tag: 62, value } => {
+                assert!(value.downcast_ref::<TuwaAvs3VideoDescriptor>().is_some());
+            }
+            other => panic!("expected TuwaAvs3Video, got {other:?}"),
+        }
+        let plain = DescriptorRegistry::new();
+        let items: Vec<_> = plain.parse_loop(&t).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[0], AnyDescriptor::Unknown { tag: 62, .. }));
     }
 
     /// AVS3_video_descriptor (tag 0xD1): scoped by a 'AVSV' private_data_specifier
