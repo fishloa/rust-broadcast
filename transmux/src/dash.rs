@@ -111,6 +111,20 @@ pub const TRICKMODE_SCHEME: &str = "urn:mpeg:dash:trickmode:2016";
 const MIME_VIDEO: &str = "video/mp4";
 /// MIME type carried on an audio `AdaptationSet` (`audio/mp4`).
 const MIME_AUDIO: &str = "audio/mp4";
+/// MIME type carried on a subtitle (`text`) `AdaptationSet`: `application/mp4`,
+/// ETSI TS 103 285 §7.1.1 Table 18 (EBU-TT-D / TTML in ISO BMFF) and the same
+/// for `wvtt` in ISO BMFF (ISO/IEC 14496-30).
+const MIME_TEXT: &str = "application/mp4";
+/// `codecs` for a TTML/IMSC (`stpp`) subtitle track. TS 103 285 §7.1.1: the
+/// attribute "shall begin with 'stpp'" and *should* name the W3C TTML profile
+/// (`stpp.ttml.etd1`, `stpp.ttml.im1t`, ...); "If 'stpp' alone is used, with no
+/// profile specified, 'stpp.ttml.etd1' shall be assumed". The `stpp` sample
+/// entry carries a namespace and schema location but no profile designator, so
+/// this packager does not invent one: it emits the bare `stpp`.
+const CODECS_STPP: &str = "stpp";
+/// `codecs` for a WebVTT (`wvtt`) subtitle track (RFC 6381 sample-entry fourcc;
+/// ISO/IEC 14496-30 §9).
+const CODECS_WVTT: &str = "wvtt";
 
 /// RFC 6381 `codecs` string for VP8 (WebM codec registration).
 const CODECS_VP8: &str = "vp8";
@@ -238,14 +252,19 @@ pub enum MediaKind {
     Video,
     /// Audio track — `audio/mp4`, carries `@audioSamplingRate` + channels.
     Audio,
+    /// Subtitle track (`stpp` TTML/IMSC or `wvtt` WebVTT in ISO BMFF) —
+    /// `contentType="text"`, `application/mp4`, no geometry or audio
+    /// attributes (ETSI TS 103 285 §7.1.1).
+    Text,
 }
 
 impl MediaKind {
-    /// The DASH spec token for this kind (`"video"` / `"audio"`).
+    /// The DASH spec token for this kind (`"video"` / `"audio"` / `"text"`).
     pub fn name(&self) -> &'static str {
         match self {
             MediaKind::Video => "video",
             MediaKind::Audio => "audio",
+            MediaKind::Text => "text",
         }
     }
 
@@ -254,12 +273,15 @@ impl MediaKind {
         match self {
             MediaKind::Video => MIME_VIDEO,
             MediaKind::Audio => MIME_AUDIO,
+            MediaKind::Text => MIME_TEXT,
         }
     }
 
     fn of(config: &CodecConfig) -> Self {
         if is_audio(config) {
             MediaKind::Audio
+        } else if matches!(config, CodecConfig::Subtitle { .. }) {
+            MediaKind::Text
         } else {
             MediaKind::Video
         }
@@ -472,8 +494,10 @@ struct ReprInfo {
 /// the DASH path uses.
 ///
 /// # Errors
-/// [`Error::UnsupportedCodec`] for an opaque `Data` or `Subtitle` track,
-/// which has no codec string; a malformed AAC `esds` is also an error.
+/// [`Error::UnsupportedCodec`] for an opaque `Data` track or a `Subtitle` track
+/// with no ISOBMFF sample entry, neither of which has a codec string (a
+/// `Subtitle` track with an `stpp` / `wvtt` entry yields `stpp` / `wvtt`); a
+/// malformed AAC `esds` is also an error.
 pub fn rfc6381_codec_string(config: &CodecConfig) -> Result<String> {
     DashPackager::codec_string(config)
 }
@@ -524,9 +548,18 @@ impl DashPackager {
             // Opaque PES data track: no RFC 6381 codec string can be derived
             // without decoding the payload (mirrors the fMP4 mux rejection).
             CodecConfig::Data { .. } => Err(Error::UnsupportedCodec { codec: "Data" }),
-            // Subtitle track (media plane step 2d): no fMP4 mux path yet
-            // (see `CodecConfig::Subtitle`'s doc comment / `TODO(#753)` on
-            // `build_trak`), so no RFC 6381 string either.
+            // Subtitle track re-muxed from an ISOBMFF `stpp` / `wvtt` sample entry
+            // (issue #1186): the sample-entry fourcc is its RFC 6381 codec.
+            CodecConfig::Subtitle {
+                sample_entry: Some(crate::pipeline::SubtitleSampleEntry::Ttml(_)),
+                ..
+            } => Ok(CODECS_STPP.to_string()),
+            CodecConfig::Subtitle {
+                sample_entry: Some(crate::pipeline::SubtitleSampleEntry::WebVtt(_)),
+                ..
+            } => Ok(CODECS_WVTT.to_string()),
+            // A subtitle track with no ISOBMFF origin (TS DVB / Teletext) has no
+            // sample entry to mux, hence no RFC 6381 string either.
             CodecConfig::Subtitle { .. } => Err(Error::UnsupportedCodec { codec: "Subtitle" }),
         }
     }
@@ -787,7 +820,7 @@ impl DashPackager {
         // and referenced by its `SupplementalProperty`, so the regular sets take
         // the next free ids around it (`t0`, `t1`, …).
         let mut next_id = 0u32;
-        for kind in [MediaKind::Video, MediaKind::Audio] {
+        for kind in [MediaKind::Video, MediaKind::Audio, MediaKind::Text] {
             let groups = adaption_set_groups(reprs, kind);
             for group in groups {
                 let id = loop {

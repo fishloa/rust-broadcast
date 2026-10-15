@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (subtitles in manifests, #1243)
+- `DashPackager` writes a subtitle track as an `AdaptationSet` with `contentType="text"`, `mimeType="application/mp4"` and `Representation@codecs` `stpp` (TTML/IMSC) or `wvtt` (WebVTT), after the video and audio sets (ETSI TS 103 285 §7.1.1; bare `stpp` is the form that clause allows when no TTML profile is declared, and the `stpp` sample entry carries none). New `MediaKind::Text`. `rfc6381_codec_string` returns `stpp` / `wvtt` for such a track; a `Subtitle` track with no ISOBMFF sample entry (TS DVB / Teletext) is still `UnsupportedCodec`.
+- `SmoothPackager` writes a subtitle track as `StreamIndex Type="text" Subtype="SUBT"` with `QualityLevel FourCC="stpp"` / `"wvtt"` and the samples as ordinary Smooth fragments ([MS-SSTR] §2.2.2.3 / §2.2.2.5). New `SmoothStreamType::Text`, `FOURCC_STPP`, `FOURCC_WVTT`, `SUBTYPE_SUBT`. The error for any other unsupported codec now names subtitles as supported.
+
 ### Added (#1234 - AVS2/AVS3 video and Audio Vivid ISOBMFF boxes, GY/T 420-2025 Annex A)
 - `avs3`: `Avs3ConfigurationBox` (`av3c`, A.3.2.2) with `LibraryDependencyIdc` (Table A.1), `LAvsConfigurationBox` (`lavc`/`la2c`, A.3.2.3/A.2.2.3, per-layer `TemporalLayerInfo`, typed `AvsFrameRateCode`), `AvsVideoSampleEntry` (`avs3`/`lav3`/`avst`/`lav2`; byte-exact children, secondary layer box decodable), and the `telg`/`lrap`/`a3lg` sample-group entries (`TemporalLayerEntry`, `VisualLrapEntry`, `LibrarySampleGroupEntry`).
 - `avs2`: `Avs2ConfigurationBox` (`av2c`, A.2.2.2).
