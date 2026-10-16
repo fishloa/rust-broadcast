@@ -58,8 +58,9 @@ Items flagged with ⚠ in the docs — verify against the PDF before encoding:
   (an extra digit); the class/type/version 5/1/1 packs to `0x00051041`. Confirm
   the literal on p. 80.
 - `fragment-header.md` — IV descriptor (`0xD0`) and key-id descriptor (`0xD1`)
-  byte widths are NOT in TS 103 605; defined in TS 103 205 §7.5.5.4.2 Table 46
-  and §7.5.5.4.3 Table 47 (not vendored). Opaque blobs of spec-defined length.
+  byte widths: TS 103 605 lists the tags (`0xD0`/`0xD1`) but not the layouts;
+  the layouts are TS 103 205 V1.4.1 §7.5.5.4.2 Table 46 and §7.5.5.4.3 Table 47
+  (vendored; transcribed in `dvb-ci/docs/ts_103_205/ci-plus-descriptors.md`).
 - Several TS 101 699 tables carry an editorial caption typo (the `*Ack` tables
   reuse the `*Req` caption — e.g. Status Query Table 41 captioned
   "DeliverySystemInfoReq syntax", input-module Table 14 captioned

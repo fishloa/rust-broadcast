@@ -24,7 +24,7 @@ Typical users: a DASH/CMAF packager injecting ad-cue events, a player or monitor
 |---|---|---|---|---|
 | ISO/IEC 23009-1 "DASH" §5.10.3.3 Event Message Box | Edition not established (paid, not vendored) | `EventMessageBox` v0 and v1 byte layout | Full (from public structure) | The byte layout and v0/v1 field order come from the widely reproduced public structure plus DASH-IF Part 10, not from the paid text. This is softer footing than the other crates and is flagged on purpose |
 | DASH-IF IOP Part 10 "Events and Timed Metadata" | v5.0.0 (vendored `dashif_iop_part10_v5.0.0_emsg`) | §6.1 and Table 6-2 field semantics | Full | Transcribed in `docs/emsg.md` |
-| ANSI/SCTE 35 and SCTE 214 scheme URIs | Not vendored | Only the `urn:scte:scte35` prefix test | Typed-opaque | `message_data` is returned as bytes |
+| ANSI/SCTE 35 and SCTE 214 scheme URIs | SCTE 35 2023r1 vendored (`ansi_scte_35_2023r1_dpi_cueing`); SCTE 214 not vendored | Only the `urn:scte:scte35` prefix test | Typed-opaque | `message_data` is returned as bytes |
 
 Verified against a real version 1 `emsg` extracted from the DASH-IF livesim2 simulator (`fixtures/shared/emsg_v1_scte35_livesim.bin`) and a constructed version 0 box.
 

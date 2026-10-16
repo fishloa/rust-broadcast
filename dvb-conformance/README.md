@@ -30,7 +30,7 @@ models only part of the T-STD (see below).
 |---|---|---|---|---|
 | ETSI TR 101 290, *Measurement guidelines for DVB systems* | V1.4.1 (2020-06) (vendored; verified) | §5.2.1 Table 5.0a (1.1 to 1.6), §5.2.2 Table 5.0b (2.1 to 2.3b, 2.5, 2.6), §5.2.3 Table 5.0c (3.1 to 3.10) | Partial: 27 of 28 indicator variants are emitted | 2.4 `PCR_accuracy_error` is not computable; 3.3/3.9/3.10 are partial (see "T-STD buffer model"). Transcription: `docs/tr_101_290.md`. |
 | ITU-T H.222.0 / ISO/IEC 13818-1 | H.222.0 v9 (08/2023) (vendored; verified) | §2.4.3.3 continuity_counter and legal duplicate packets (shared with `ts-fix` and `media-doctor` via `broadcast_common::ts_dup`), §2.4.2.2 clocks, §2.4.2.4 T-STD transport buffer TBn/TBsys | Partial | Transcription of the buffer clauses: `docs/h222_0-tstd-buffer-model.md`. |
-| ETSI TR 101 211 | not vendored (edition unverified) | §4.4 section interval per sub-table, the clause Table 5.0c cites for the 25 ms minimum gap | Used for `SiMinGapError` keying | |
+| ETSI TR 101 211 | V1.9.1, vendored (`etsi_tr_101_211_v01.09.01_dvb_si_guidelines`; §4.4 "Minimum repetition rates") | §4.4 section interval per sub-table, the clause Table 5.0c cites for the 25 ms minimum gap | Used for `SiMinGapError` keying | |
 | ETSI EN 300 468 | via `dvb-si` (V1.19.1 / V1.20.1 vendored) | Table-id sets on the well-known SI PIDs; PAT/PMT/EIT section parsing | Used, not owned | Section parsing is delegated to `dvb-si`. |
 
 ## Feature flags

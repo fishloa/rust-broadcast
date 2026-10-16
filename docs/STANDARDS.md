@@ -66,8 +66,8 @@ marked *private*.
 | ETSI TS 103 190-1 / -2 | AC-4 | V1.4.1 / V1.3.1 | `dvb-si`, `transmux` | Partial | `transmux/docs/codec/ac4-dac4.md` | Descriptor and `dac4` box; `ac4_toc` not typed. |
 | ETSI TS 102 114 | DTS Coherent Acoustics | V1.6.1 | `transmux` | Partial | `transmux/docs/codec/dts-core-frame.md` | Core frame header and ISOBMFF `ddts`. |
 | ETSI TS 102 034 | MPEG-2 TS services over IP | V2.1.1 | — | Reference | — | Vendored for `dvb-stream`/`multimux` context; not cited in code. |
-| NorDig Unified Requirements | Logical channel descriptors | v3 (as cited in code) | `dvb-si`, `dvb-tools` | Partial | — | LCD v1 and v2 private descriptors. |
-| EACEM / D-Book | Logical channel descriptor (tag 0x83) | edition unverified | `dvb-si` | Partial | — | The shared EACEM/NorDig/D-Book layout of tag 0x83 only. |
+| NorDig Unified Requirements | Logical channel descriptors | v3.2.2 (2025-11), vendored (`nordig_unified_requirements_ird_v3_2_2_2025-11`; §12.2.9, Table 12.12, tags 0x83 and 0x87) | `dvb-si`, `dvb-tools` | Partial | — | LCD v1 and v2 private descriptors. |
+| EACEM / D-Book | Logical channel descriptor (tag 0x83) | not vendored; edition unverified | `dvb-si` | Partial | — | The shared EACEM/NorDig/D-Book layout of tag 0x83 only. |
 
 ## ISO/IEC and ITU-T
 
