@@ -27,7 +27,7 @@ consumer's job), does not do TS framing (see `mpeg-ts`) or network transport
 |---|---|---|---|---|
 | ITU-T H.222.0 / ISO/IEC 13818-1, *Systems* | H.222.0 v9 (08/2023), verified against the vendored copy | §2.4.3.6 PES packet, §2.4.3.7 semantics, Table 2-21 (all optional fields, PES extension, P-STD buffer, program packet sequence counter, trick modes), stream_id assignments, PTS/DTS 33-bit @ 90 kHz, ESCR 27 MHz | Full for the PES layer | Unbounded video PES (`PES_packet_length` 0) supported by `PesAssembler`. |
 | ETSI TS 101 154 | V2.10.1 | §4.1.8 AVS3 `stream_id_extension` carriage | Partial: stream-id-extension constants and accessor only | Codec carriage rules themselves are out of scope. |
-| T/AI 109.7 (AVS3 system) | clause 8.1.2 as cited in the code; edition unverified (not vendored) | `stream_id_extension` values for AVS3 video/audio | Partial | |
+| T/AI 109.7 (AVS3 system) | T/AI 109.7-2024, vendored (`private/specs/t_ai_109_7_2024_avs3_audio_encapsulation_transport.pdf`), clause 8.1.2 (extended_stream_id 0xFD, stream_id_extension 0x4F for AVS3 audio) | `stream_id_extension` values for AVS3 video/audio | Partial | |
 
 ## Feature flags
 
