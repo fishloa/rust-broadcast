@@ -393,7 +393,7 @@ fn unt_serializes_to_valid_json() {
         0,
         0x00_00_01,
         0,
-        DescriptorLoop::new(&[]),
+        dvb_si::descriptors::unt::UntDescriptorLoop::new(&[]),
         vec![],
     );
     let j = serde_json::to_string(&unt).expect("serialize UNT");
@@ -411,7 +411,7 @@ fn int_serializes_to_valid_json() {
         0,
         0x00_00_01,
         0,
-        DescriptorLoop::new(&[]),
+        dvb_si::descriptors::int::IntDescriptorLoop::new(&[]),
         vec![],
     );
     let j = serde_json::to_string(&int).expect("serialize INT");
@@ -462,7 +462,7 @@ fn rnt_serializes_to_valid_json() {
         0,
         0,
         ContextIdType::BouquetId,
-        DescriptorLoop::new(&[]),
+        dvb_si::descriptors::rnt::RntDescriptorLoop::new(&[]),
         vec![],
     );
     let j = serde_json::to_string(&rnt).expect("serialize RNT");

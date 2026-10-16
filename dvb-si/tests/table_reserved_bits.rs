@@ -295,7 +295,18 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
         )),
         true,
     ));
-    let pair = || TargetOperationalLoop::new(dl(DESC), dl(DESC));
+    let int_pair = || {
+        TargetOperationalLoop::new(
+            dvb_si::descriptors::int::IntDescriptorLoop::new(DESC),
+            dvb_si::descriptors::int::IntDescriptorLoop::new(DESC),
+        )
+    };
+    let unt_pair = || {
+        TargetOperationalLoop::new(
+            dvb_si::descriptors::unt::UntDescriptorLoop::new(DESC),
+            dvb_si::descriptors::unt::UntDescriptorLoop::new(DESC),
+        )
+    };
     v.push((
         "INT",
         ser(&IntSection::new(
@@ -307,8 +318,8 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
             0,
             0x0001_5A00,
             0,
-            dl(DESC),
-            vec![pair(), pair()],
+            dvb_si::descriptors::int::IntDescriptorLoop::new(DESC),
+            vec![int_pair(), int_pair()],
         )),
         true,
     ));
@@ -323,12 +334,12 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
             0,
             0x0001_5A00,
             0,
-            dl(DESC),
+            dvb_si::descriptors::unt::UntDescriptorLoop::new(DESC),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
                     descriptors: vec![],
                 },
-                vec![pair(), pair()],
+                vec![unt_pair(), unt_pair()],
             )],
         )),
         true,
@@ -342,20 +353,20 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
             0,
             0,
             ContextIdType::from_u8(1),
-            dl(DESC),
+            dvb_si::descriptors::rnt::RntDescriptorLoop::new(DESC),
             vec![ResolutionProvider::new(
                 DvbText::new(b"rp"),
-                dl(DESC),
+                dvb_si::descriptors::rnt::RntDescriptorLoop::new(DESC),
                 vec![
                     CridAuthority::new(
                         DvbText::new(b"auth"),
                         CridAuthorityPolicy::from_u8(1),
-                        dl(DESC),
+                        dvb_si::descriptors::rnt::RntDescriptorLoop::new(DESC),
                     ),
                     CridAuthority::new(
                         DvbText::new(b"b"),
                         CridAuthorityPolicy::from_u8(2),
-                        dl(&[]),
+                        dvb_si::descriptors::rnt::RntDescriptorLoop::new(&[]),
                     ),
                 ],
             )],

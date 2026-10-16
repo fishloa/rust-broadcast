@@ -16,6 +16,7 @@
 //! | MPEG-2 `Extension_descriptor` (0x3F) bodies | [`mpeg2_extension::Mpeg2ExtensionBody`] (MPEG-H 3D audio) | Rec. ITU-T H.222.0 Table 2-110 |
 //! | Private / regional (PDS- or registration-scoped) | [`DescriptorRegistry`] opt-ins: [`logical_channel`], [`nordig`], [`avs2_video`], [`avs2_audio`], [`avs3_video`], [`avs3_audio`], [`tuwa_avs3_video`], [`china_caption_service`] | EACEM / NorDig / GY/T / T/AI / T/UWA |
 //! | AIT descriptors | [`parse_ait_loop`] → [`AnyAitDescriptor`] | ETSI TS 102 809 Table 38, TS 102 727 |
+//! | INT / UNT / RNT descriptor loops | [`parse_int_loop`] → [`AnyIntDescriptor`], [`parse_unt_loop`] → [`AnyUntDescriptor`], [`parse_rnt_loop`] → [`AnyRntDescriptor`] (SI fall-through where the spec hands back to EN 300 468) | ETSI EN 301 192 Table 19, ETSI TS 102 006 Table 19, ETSI TS 102 323 Table 4 |
 //!
 //! Every tag, its verified clause, Rust type and status — and every allocated
 //! tag with no implementation yet — is listed in the generated
@@ -62,6 +63,7 @@ pub mod default_authority;
 pub mod dsng;
 pub mod dts;
 pub mod ecm_repetition_rate;
+mod entry_list;
 pub mod enhanced_ac3;
 pub mod evc_video;
 pub mod extended_event;
@@ -77,6 +79,7 @@ pub mod hdr_wcg_idc;
 pub mod hevc_video;
 pub mod hierarchy;
 pub mod ibp;
+pub mod int;
 pub mod iod;
 pub mod iso_639_language;
 pub mod j2k_video;
@@ -89,6 +92,7 @@ pub mod metadata;
 pub mod metadata_format;
 pub mod metadata_pointer;
 pub mod metadata_std;
+pub mod mjd_time;
 pub mod mosaic;
 pub mod mpeg2_aac_audio;
 pub mod mpeg2_ext_codecs;
@@ -121,8 +125,10 @@ pub mod private_data_specifier;
 pub mod registration;
 pub mod registry;
 pub mod related_content;
+pub mod rnt;
 pub mod s2_satellite_delivery_system;
 pub mod satellite_delivery_system;
+pub mod scoped;
 pub mod scrambling;
 pub mod service;
 pub mod service_availability;
@@ -140,6 +146,7 @@ pub mod stuffing;
 pub mod subtitling;
 pub mod svc_extension;
 pub mod system_clock;
+pub mod target;
 pub mod target_background_grid;
 pub mod telephone;
 pub mod teletext;
@@ -151,6 +158,7 @@ pub mod transport_profile;
 pub mod transport_stream;
 pub mod tuwa_avs3_video;
 pub mod tva_id;
+pub mod unt;
 pub mod vbi_data;
 pub mod vbi_teletext;
 pub mod video_stream;
@@ -159,6 +167,11 @@ pub mod vvc_video;
 pub mod xait_location;
 
 pub use ca::CaDescriptor;
+pub use entry_list::MacAddress;
+pub use int::{AnyIntDescriptor, IntDescriptorIter, IntDescriptorLoop, parse_int_loop};
+pub use mjd_time::MjdBcdTime;
+pub use rnt::{AnyRntDescriptor, RntDescriptorIter, RntDescriptorLoop, parse_rnt_loop};
+pub use unt::{AnyUntDescriptor, UntDescriptorIter, UntDescriptorLoop, parse_unt_loop};
 pub use data_stream_alignment::DataStreamAlignmentDescriptor;
 pub use private_data_indicator::PrivateDataIndicatorDescriptor;
 pub use registration::RegistrationDescriptor;
