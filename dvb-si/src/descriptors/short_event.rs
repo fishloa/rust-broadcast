@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
+use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for short_event_descriptor.
@@ -79,7 +80,13 @@ impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
 impl Serialize for ShortEventDescriptor<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + LANG_LEN + 1 + self.event_name.len() + 1 + self.text.len() + self.trailing.len()
+        HEADER_LEN
+            + LANG_LEN
+            + 1
+            + self.event_name.len()
+            + 1
+            + self.text.len()
+            + self.trailing.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {

@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for service_descriptor.
@@ -270,7 +271,12 @@ impl<'a> Parse<'a> for ServiceDescriptor<'a> {
 impl Serialize for ServiceDescriptor<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + 1 + 1 + self.provider_name.len() + 1 + self.service_name.len()
+        HEADER_LEN
+            + 1
+            + 1
+            + self.provider_name.len()
+            + 1
+            + self.service_name.len()
             + self.trailing.len()
     }
 

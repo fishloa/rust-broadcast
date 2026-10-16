@@ -1799,7 +1799,11 @@ impl DrcInstructions {
 impl DrcTargetLoudness {
     /// Build with all-ones reserved bits and no lower value.
     #[must_use]
-    pub const fn new(upper: u8, depends_on_drc_set: u8, no_independent_use_or_reserved: u8) -> Self {
+    pub const fn new(
+        upper: u8,
+        depends_on_drc_set: u8,
+        no_independent_use_or_reserved: u8,
+    ) -> Self {
         Self {
             reserved_upper: ones(1),
             upper,

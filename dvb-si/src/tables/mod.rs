@@ -504,7 +504,8 @@ pub(crate) fn write_pid_r(
     reserved: u8,
 ) -> crate::Result<()> {
     let pid = pid.value();
-    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_3, "reserved")? << PID_RESERVED_SHIFT)
+    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_3, "reserved")?
+        << PID_RESERVED_SHIFT)
         | ((pid >> 8) as u8 & PID_LO_MASK);
     buf[1] = (pid & 0xFF) as u8;
     Ok(())
@@ -519,7 +520,8 @@ pub(crate) fn len_reserved_of(hi: u8) -> u8 {
 /// Write a checked 12-bit length with a caller-supplied `reserved(4)`.
 pub(crate) fn write_desc_loop_len_r(buf: &mut [u8], len: usize, reserved: u8) -> crate::Result<()> {
     let fitted = broadcast_common::len::fit_bits(len as u64, 12, "descriptors_length")?;
-    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_4, "reserved")? << LEN_RESERVED_SHIFT)
+    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_4, "reserved")?
+        << LEN_RESERVED_SHIFT)
         | ((fitted >> 8) as u8);
     buf[1] = fitted as u8;
     Ok(())

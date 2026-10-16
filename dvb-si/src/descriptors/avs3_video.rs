@@ -72,7 +72,12 @@ pub enum Avs3FrameRateCode {
     Fps100,
     /// `0b1010` - 120 Hz (also allows 59.94, 60, 119.88).
     Fps120,
-    /// `0b1011..=0b1111` - reserved; carries the value.
+    /// `0b1110` - 119.88 Hz (120000/1001; T/AI 109.2-2021 `frame_rate_code`
+    /// table, listed as a frame rate in T/AI 109.6 Table 10; also allows 59.94).
+    Fps119_88,
+    /// `0b1011..=0b1101` and `0b1111` - reserved here (T/AI 109.2 gives
+    /// `0b1011..=0b1101` the codec rates 200/240/300 Hz, which T/AI 109.6 Table
+    /// 10 does not list); carries the value.
     Reserved(u8),
 }
 
@@ -92,6 +97,7 @@ impl Avs3FrameRateCode {
             8 => Self::Fps60,
             9 => Self::Fps100,
             10 => Self::Fps120,
+            14 => Self::Fps119_88,
             other => Self::Reserved(other),
         }
     }
@@ -111,6 +117,7 @@ impl Avs3FrameRateCode {
             Self::Fps60 => 8,
             Self::Fps100 => 9,
             Self::Fps120 => 10,
+            Self::Fps119_88 => 14,
             Self::Reserved(v) => v,
         }
     }
@@ -130,6 +137,7 @@ impl Avs3FrameRateCode {
             Self::Fps60 => "60 Hz",
             Self::Fps100 => "100 Hz",
             Self::Fps120 => "120 Hz",
+            Self::Fps119_88 => "119.88 Hz",
             Self::Reserved(_) => "reserved",
         }
     }
@@ -401,6 +409,17 @@ mod tests {
             assert_eq!(Avs3FrameRateCode::from_u8(v).to_u8(), v);
         }
         assert_eq!(Avs3FrameRateCode::Fps29_97.name(), "29.97 Hz");
+        // 0b1110 = 120000/1001 (T/AI 109.2-2021 frame_rate_code table).
+        assert_eq!(
+            Avs3FrameRateCode::from_u8(0b1110),
+            Avs3FrameRateCode::Fps119_88
+        );
+        assert_eq!(Avs3FrameRateCode::from_u8(0b1110).name(), "119.88 Hz");
+        assert_eq!(Avs3FrameRateCode::Fps119_88.to_string(), "119.88 Hz");
+        assert_eq!(
+            Avs3FrameRateCode::from_u8(0b1111),
+            Avs3FrameRateCode::Reserved(0b1111)
+        );
         assert_eq!(
             Avs3FrameRateCode::Reserved(12).to_string(),
             "reserved(0x0C)"

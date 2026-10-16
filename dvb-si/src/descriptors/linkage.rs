@@ -1198,10 +1198,7 @@ mod tests {
                 assert!(e.event_simulcast);
                 assert_eq!(e.link_type, LinkType::SdOrUhd);
                 assert_eq!(e.target_id.target_id_type(), TargetIdType::UseUserDefinedId);
-                assert_eq!(
-                    e.target_id,
-                    TargetId::user_defined(0x5678)
-                );
+                assert_eq!(e.target_id, TargetId::user_defined(0x5678));
             }
             other => panic!("expected ExtendedEventLinkage, got {other:?}"),
         }

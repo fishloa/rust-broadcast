@@ -62,7 +62,8 @@ fn scene_with_switch_group_and_preset_constructors() {
             ),
         ],
     );
-    let scene = MpegH3dAudioScene::new(7, Some(vec![group]), Some(vec![switch]), Some(vec![preset]));
+    let scene =
+        MpegH3dAudioScene::new(7, Some(vec![group]), Some(vec![switch]), Some(vec![preset]));
     round_trip(Mpeg2ExtensionBody::MpegH3dAudioScene(scene));
 }
 
@@ -72,7 +73,10 @@ fn text_label_constructors() {
         *b"eng",
         vec![TextLabelEntry::group(1, b"Dialog".to_vec())],
         vec![TextLabelEntry::switch_group_or_preset(2, b"Lang".to_vec())],
-        vec![TextLabelEntry::switch_group_or_preset(3, b"Preset".to_vec())],
+        vec![TextLabelEntry::switch_group_or_preset(
+            3,
+            b"Preset".to_vec(),
+        )],
     );
     round_trip(Mpeg2ExtensionBody::MpegH3dAudioTextLabel(
         MpegH3dAudioTextLabel::new(5, vec![lang]),

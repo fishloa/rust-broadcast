@@ -766,8 +766,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
     let b0 = (loc.identifier_type().to_u8() << LOCATOR_ID_TYPE_SHIFT)
         | (u8::from(loc.scheduled_time_reliability) << 5)
         | (u8::from(loc.inline_service()) << 4)
-        | (broadcast_common::len::fit_mask(loc.reserved, 1, "reserved")?
-            << LOCATOR_RESERVED_SHIFT)
+        | (broadcast_common::len::fit_mask(loc.reserved, 1, "reserved")? << LOCATOR_RESERVED_SHIFT)
         | ((loc.start_date >> LOCATOR_START_DATE_HI_SHIFT) as u8 & LOCATOR_START_DATE_HI_MASK);
     buf[0] = b0;
 
