@@ -79,6 +79,10 @@
 //! 3D Audio. (*VP8/Vorbis have no ISOBMFF sample entry — WebM-native only,
 //! see the `{input} → {output}` exception noted above.)
 //!
+//! The crate README is the reference for the standards table and the
+//! input x output and codec matrices; this root doc is hand-maintained
+//! alongside it.
+//!
 //! Lower-level entry points remain: [`build_init_segment`]/[`build_media_segment`]
 //! (batch CMAF), [`AvcSps::decode`] + [`AvcSps::rfc6381`] (codec metadata). See the
 //! crate README for the full **feature matrix** and the `examples/` directory for
@@ -128,6 +132,11 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 extern crate alloc;
+
+// Compile-check every Rust snippet in the README so it cannot rot.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
 
 pub mod aac_asc;
 pub mod ac3;
