@@ -144,7 +144,9 @@ pub mod transport;
 #[cfg(all(feature = "linux", target_os = "linux"))]
 pub mod linux;
 
-pub use dataplane::{CiDataDevice, MockCiDataDevice, TS_PACKET_LEN};
+pub use dataplane::{
+    CiDataDevice, MockCiDataDevice, PartialWrite, TS_PACKET_LEN, partial_write_progress,
+};
 pub use descrambler::CaDescrambler;
 pub use device::{
     CaDevice, DeviceOp, DeviceOpError, LinkEvent, MockCaDevice, RecordingCaDevice, SlotInfo,

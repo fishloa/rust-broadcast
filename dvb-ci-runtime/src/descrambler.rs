@@ -46,7 +46,7 @@ use std::time::Duration;
 use dvb_si::tables::cat::CatSection;
 use dvb_si::tables::pmt::PmtSection;
 
-use crate::dataplane::{CiDataDevice, TS_PACKET_LEN};
+use crate::dataplane::{CiDataDevice, TS_PACKET_LEN, partial_write_progress};
 use crate::device::CaDevice;
 use crate::driver::Driver;
 use crate::event::Notification;
@@ -62,6 +62,10 @@ const TS_PID_HIGH_MASK: u8 = 0x1F;
 /// call while draining descrambled output in `feed_ts` — a batch buffer size,
 /// not a wire value.
 const READ_BATCH_PACKETS: usize = 32;
+/// How many consecutive `write` attempts that moved no packet at all
+/// ([`PartialWrite`] with `written == 0`) `feed_ts` retries, draining the
+/// device between attempts, before it returns the stall as an error.
+const MAX_STALLED_WRITES: u32 = 20;
 
 /// The 13-bit PID carried by one 188-byte TS packet's header (bytes 1–2),
 /// masking off the non-PID flag bits in byte 1.
@@ -176,20 +180,44 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
         let allow: BTreeSet<Pid> = self.required_pids().into_iter().collect();
         let (kept, bad_sync_count) = filter_ts(scrambled, &allow)?;
         self.bad_sync_packets += bad_sync_count as u64;
-        if !kept.is_empty() {
-            self.ci.write(&kept)?;
-        }
-
         let mut out = Vec::new();
+        // A full device buffer is not fatal: the device reports the whole
+        // packets it took ([`PartialWrite`]), and draining the descrambled
+        // output is what makes room, so drain and retry the unsent tail. Give
+        // up only after a bounded number of rounds that moved nothing.
+        let mut pending: &[u8] = &kept;
+        let mut stalled = 0;
+        while !pending.is_empty() {
+            match self.ci.write(pending) {
+                Ok(()) => break,
+                Err(e) => {
+                    let Some(written) = partial_write_progress(&e) else {
+                        return Err(e);
+                    };
+                    let written = written.min(pending.len()) / TS_PACKET_LEN * TS_PACKET_LEN;
+                    pending = &pending[written..];
+                    stalled = if written == 0 { stalled + 1 } else { 0 };
+                    if stalled > MAX_STALLED_WRITES {
+                        return Err(e);
+                    }
+                    self.drain_into(&mut out)?;
+                }
+            }
+        }
+        self.drain_into(&mut out)?;
+        Ok(out)
+    }
+
+    /// Read everything the module has descrambled so far into `out`.
+    fn drain_into(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
         let mut buf = [0u8; READ_BATCH_PACKETS * TS_PACKET_LEN];
         loop {
             let n = self.ci.read(&mut buf)?;
             if n == 0 {
-                break;
+                return Ok(());
             }
             out.extend_from_slice(&buf[..n]);
         }
-        Ok(out)
     }
 
     /// `descramble_pids ∪ ca_pids ∪ emm_pids ∪ PCR` — the PIDs the CAM needs
@@ -241,7 +269,7 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataplane::MockCiDataDevice;
+    use crate::dataplane::{MockCiDataDevice, PartialWrite};
     use crate::device::MockCaDevice;
     use crate::driver::tests::{
         CA_SESSION, build_ca_pmt_fixture, build_ca_pmt_fixture_dedicated_pcr, build_cat_fixture,
@@ -435,6 +463,99 @@ mod tests {
         // Feeding another bad packet accumulates the count.
         descrambler.feed_ts(&bad).unwrap();
         assert_eq!(descrambler.bad_sync_packets(), 2);
+    }
+
+    /// A data device whose input buffer holds `room` packets until it is read:
+    /// a `write` bigger than the room takes what fits and reports it as a
+    /// [`PartialWrite`] (the contract of [`CiDataDevice::write`]); `read`
+    /// drains the buffer (frees the room) and returns the packets it held.
+    struct SmallBufferDevice {
+        room: usize,
+        buffered: Vec<u8>,
+        accepted: Vec<u8>,
+        write_calls: usize,
+    }
+    impl CiDataDevice for SmallBufferDevice {
+        fn write(&mut self, ts: &[u8]) -> io::Result<()> {
+            self.write_calls += 1;
+            let free = self.room * TS_PACKET_LEN - self.buffered.len();
+            let take = ts.len().min(free);
+            self.buffered.extend_from_slice(&ts[..take]);
+            self.accepted.extend_from_slice(&ts[..take]);
+            if take == ts.len() {
+                return Ok(());
+            }
+            Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                PartialWrite {
+                    written: take,
+                    requested: ts.len(),
+                    device: "test".to_owned(),
+                },
+            ))
+        }
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = self.buffered.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.buffered[..n]);
+            self.buffered.drain(..n);
+            Ok(n)
+        }
+        fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            Ok(!self.buffered.is_empty())
+        }
+    }
+
+    /// Review ci-cam #7: a device buffer smaller than the burst must not lose
+    /// or reorder packets — `feed_ts` resumes after the whole packets the
+    /// device reported taking, draining between attempts.
+    #[test]
+    fn feed_ts_resumes_after_a_partial_write_without_losing_packets() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        let dev = SmallBufferDevice {
+            room: 3,
+            buffered: Vec::new(),
+            accepted: Vec::new(),
+            write_calls: 0,
+        };
+        let mut descrambler = CaDescrambler::new(d, dev);
+        let burst: Vec<u8> = (0..10u8).flat_map(|i| packet(Pid::new(0x100), i)).collect();
+        let out = descrambler.feed_ts(&burst).unwrap();
+        assert_eq!(
+            descrambler.ci().accepted,
+            burst,
+            "every packet, once, in order"
+        );
+        assert_eq!(out, burst, "the drain between attempts returns them all");
+        assert!(descrambler.ci().write_calls > 1, "the burst needed retries");
+    }
+
+    /// A device that never makes room is reported, not spun on forever.
+    #[test]
+    fn feed_ts_gives_up_on_a_device_that_never_drains() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        let dev = SmallBufferDevice {
+            room: 0,
+            buffered: Vec::new(),
+            accepted: Vec::new(),
+            write_calls: 0,
+        };
+        let mut descrambler = CaDescrambler::new(d, dev);
+        let err = descrambler
+            .feed_ts(&packet(Pid::new(0x100), 1))
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(
+            descrambler.ci().write_calls,
+            MAX_STALLED_WRITES as usize + 1
+        );
     }
 
     #[test]

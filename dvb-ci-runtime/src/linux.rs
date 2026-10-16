@@ -15,11 +15,11 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsFd;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustix::event::{Nsecs, PollFd, PollFlags, Timespec};
 
-use crate::dataplane::{CiDataDevice, TS_PACKET_LEN};
+use crate::dataplane::{CiDataDevice, PartialWrite, TS_PACKET_LEN};
 use crate::device::{CaDevice, DeviceOpError, SlotInfo};
 
 /// Poll a file descriptor for readability up to `timeout`.
@@ -43,6 +43,68 @@ fn poll_readable(fd: &impl AsFd, timeout: Duration) -> io::Result<bool> {
     };
     rustix::event::poll(&mut fds, Some(&ts))?;
     Ok(fds[0].revents().contains(PollFlags::IN))
+}
+
+/// Poll a file descriptor for writability (`POLLOUT`) up to `timeout`; the
+/// write-side twin of [`poll_readable`] (same timeout handling, same `EINTR`
+/// behaviour). `POLLERR`/`POLLHUP` alone report `false`.
+#[allow(clippy::unnecessary_fallible_conversions)]
+fn poll_writable(fd: &impl AsFd, timeout: Duration) -> io::Result<bool> {
+    let mut fds = [PollFd::new(fd, PollFlags::OUT)];
+    let ts = Timespec {
+        tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX),
+        tv_nsec: Nsecs::try_from(timeout.subsec_nanos()).unwrap_or(0),
+    };
+    rustix::event::poll(&mut fds, Some(&ts))?;
+    Ok(fds[0].revents().contains(PollFlags::OUT))
+}
+
+/// TS packets per `write(2)` to the CI data device. 21 x 188 = 3948 bytes is
+/// under `PIPE_BUF` (4096), so on a pipe/FIFO stand-in each call is atomic
+/// (all of it or `EAGAIN`, never a torn packet), and a stall can leave at most
+/// one chunk unsent. The real device takes any whole-packet multiple.
+const WRITE_CHUNK_PACKETS: usize = 21;
+/// How long [`CiDataDevice::write`] waits for a full device buffer to drain
+/// before giving up with a [`PartialWrite`] (whole packets already accepted).
+const WRITE_STALL_TIMEOUT: Duration = Duration::from_millis(50);
+/// How long to wait for room to finish a packet the device accepted only
+/// part of — the one situation that cannot be handed back to the caller.
+const TORN_PACKET_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Write `chunk` (a whole number of TS packets) to `file`, returning how many
+/// bytes the device accepted — always a whole number of packets. A short or
+/// non-packet-aligned write is completed (waiting up to
+/// [`TORN_PACKET_TIMEOUT`] for room) so a packet is never left half written;
+/// only if that wait fails is an error returned.
+fn write_whole_packets(file: &mut File, chunk: &[u8]) -> io::Result<usize> {
+    let mut n = 0;
+    while n < chunk.len() {
+        match file.write(&chunk[n..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "CI data device accepted 0 bytes",
+                ));
+            }
+            Ok(k) => n += k,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                if n.is_multiple_of(TS_PACKET_LEN) {
+                    // Device full at a packet boundary: nothing torn.
+                    return Ok(n);
+                }
+                // Mid-packet: the remainder must go in before anything else.
+                if !poll_writable(file, TORN_PACKET_TIMEOUT)? {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "CI data device stayed full with a TS packet half written",
+                    ));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
 }
 
 // --- DVB CA ioctl request numbers (uapi/linux/dvb/ca.h) --------------------
@@ -220,9 +282,26 @@ impl CaDevice for LinuxCaDevice {
         }
         // Strip the 2-byte link header; anything shorter has no TPDU.
         let tpdu = frame.get(2..n).unwrap_or(&[]);
-        let copy = tpdu.len().min(buf.len());
-        buf[..copy].copy_from_slice(&tpdu[..copy]);
-        Ok(copy)
+        if tpdu.len() > buf.len() {
+            // The frame is already consumed from the device, so the TPDU cannot
+            // be re-read; handing the stack a truncated one as `Ok` would
+            // corrupt the link layer silently (the failure r10-W-2 removed on
+            // the device side). Report it instead.
+            return Err(DeviceOpError::wrap(
+                format!(
+                    "read ({} byte TPDU does not fit the caller's {} byte buffer)",
+                    tpdu.len(),
+                    buf.len()
+                ),
+                &self.label,
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "TPDU larger than the read buffer; dropped, not truncated",
+                ),
+            ));
+        }
+        buf[..tpdu.len()].copy_from_slice(tpdu);
+        Ok(tpdu.len())
     }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<()> {
@@ -470,9 +549,42 @@ impl CiDataDevice for LinuxCiDataDevice {
             ));
         }
         let label = self.label.clone();
-        self.write_file()
-            .write_all(ts)
-            .map_err(|e| DeviceOpError::wrap(format!("write ({} bytes)", ts.len()), &label, e))
+        let mut done = 0;
+        let mut deadline = None;
+        while done < ts.len() {
+            let end = ts.len().min(done + WRITE_CHUNK_PACKETS * TS_PACKET_LEN);
+            let n = write_whole_packets(self.write_file(), &ts[done..end]).map_err(|e| {
+                DeviceOpError::wrap(format!("write ({} of {} bytes)", done, ts.len()), &label, e)
+            })?;
+            let want = end - done;
+            done += n;
+            if n > 0 {
+                deadline = None;
+            }
+            if n == want {
+                continue;
+            }
+            // The device is full (at a packet boundary). Wait, bounded, for it
+            // to drain; on timeout hand back the whole packets it did take so
+            // the caller can resume after the unsent tail instead of guessing.
+            let limit = *deadline.get_or_insert_with(|| Instant::now() + WRITE_STALL_TIMEOUT);
+            let left = limit.saturating_duration_since(Instant::now());
+            let writable = !left.is_zero()
+                && poll_writable(self.write_file(), left).map_err(|e| {
+                    DeviceOpError::wrap(format!("poll write ({left:?})"), &label, e)
+                })?;
+            if !writable {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    PartialWrite {
+                        written: done,
+                        requested: ts.len(),
+                        device: label,
+                    },
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
