@@ -35,7 +35,7 @@ independent in-repo grounds:
 2. **TR 101 202 v1.2.1** (vendored) — §4.6/§4.7.5 field semantics + DVB
    guidelines, Table 4.1 (transactionId sub-fields), Table 4.1a / 4.16
    (DSM-CC section field encoding).
-3. **TS 102 006 v1.7.1** (vendored) — Table 15 reproduces the
+3. **TS 102 006 V1.4.1** (file named v01.07.01) (vendored) — Table 15 reproduces the
    `compatibilityDescriptor()` structure; Table 6 (GroupInfoIndication) is the
    SSU profile's DSI `privateData`.
 

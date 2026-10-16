@@ -695,7 +695,7 @@ STANDARDS = [
     {
         "id": "ETSI TS 102 006",
         "title": "DVB System Software Update (SSU)",
-        "edition": "V1.7.1 (some module docs still cite V1.4.1)",
+        "edition": "V1.4.1",
         "scope": "UNT section, compatibilityDescriptor, SSU data_broadcast_id selector",
         "match": ["ETSI TS 102 006"],
     },
@@ -1214,7 +1214,7 @@ def render_coverage(m: Model) -> str:
         "",
     ]
     L += tag_rows(m, "int_descriptor_tag")
-    L += ["", "### UNT / SSU (ETSI TS 102 006 V1.7.1 Table 19)", ""]
+    L += ["", "### UNT / SSU (ETSI TS 102 006 V1.4.1 Table 19)", ""]
     L += tag_rows(m, "unt_descriptor_tag")
     L += ["", "### DSM-CC data carousel (ETSI EN 301 192 V1.7.1 Table 48)", ""]
     L += tag_rows(m, "dii_descriptor_tag")
