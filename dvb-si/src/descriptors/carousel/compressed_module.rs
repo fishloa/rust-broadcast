@@ -21,8 +21,10 @@ const BODY_LEN: usize = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CompressedModuleDescriptor {
-    /// `compression_method` — follows the zlib CM definition of IETF RFC 1950
-    /// (an external codec code: 8 = deflate).
+    /// `compression_method` — "follows the definition of zlib structure of IETF
+    /// RFC 1950" (an external codec code, carried verbatim). Real senders write
+    /// the zlib CMF byte here (`0x78` in the France TNT capture), not the bare
+    /// CM nibble (8), so no value is rejected.
     pub compression_method: u8,
     /// `original_size` — module size in bytes before compression.
     pub original_size: u32,

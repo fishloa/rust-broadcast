@@ -86,7 +86,7 @@ mod tests {
         // OUI 0x00015A (the DVB SSU reserved OUI) + tag 0x0007.
         let bytes = [TAG, 5, 0x00, 0x01, 0x5A, 0x00, 0x07];
         let d = SubgroupAssociationDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.oui, 0x0001_5A);
+        assert_eq!(d.oui, 0x0000_015A);
         assert_eq!(d.subgroup_tag, 7);
         let mut out = [0u8; 7];
         d.serialize_into(&mut out).unwrap();
