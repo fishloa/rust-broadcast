@@ -3,125 +3,92 @@
 [![crates.io](https://img.shields.io/crates/v/broadcast-auth.svg)](https://crates.io/crates/broadcast-auth)
 [![docs.rs](https://img.shields.io/docsrs/broadcast-auth)](https://docs.rs/broadcast-auth)
 
-Shared multi-scheme authentication for RTSP and HTTP clients **and
-servers**: one [`Credentials`] model — **Basic**, **Digest**, **Bearer** —
-one client-side challenge->response helper, and one server-side
-challenge+verify type (`Verifier`, plus a reverse-proxy **Forwarded**
-scheme), so every credentialed client and server in the workspace
-(`rtsp-runtime`; `multimux`'s HTTP input adapters *and* its shared
-output-auth gate) answers/issues a `WWW-Authenticate` challenge through the
-same code instead of re-implementing auth per client or per origin.
+Shared multi-scheme HTTP and RTSP authentication: a client that answers `WWW-Authenticate` challenges, and a server that issues and verifies them (Basic, Digest, Bearer, reverse-proxy Forwarded, signed URLs).
 
-## Why
+## What it does / what it does not
 
-Auth is not transport-specific. RTSP (RFC 2326 §14/§16 reuses HTTP's Basic and
-Digest verbatim), TS-over-HTTP, HLS-pull, and any other credentialed origin all
-face the same handful of schemes. Before this crate, `rtsp-runtime` carried its
-own `Credentials`/`Authenticator` pair wrapping [`http-auth`]; this crate pulls
-that logic out so it can be shared, and adds Bearer (RFC 6750), which
-`http-auth` does not cover (Bearer needs no challenge-response round-trip at
-all).
+**Does:** one `Credentials` model (`Basic`/`Digest` user and password, or a `Bearer` token); a client side (`Authenticator`, `respond`) that turns a server challenge into an `Authorization` value and keeps Digest's nonce count advancing across a session; and a server side (`server::Verifier`) that renders the `WWW-Authenticate` challenge for a `401` and verifies an incoming `RequestContext` (method, URI, body, headers, peer address). Secrets are wiped on drop and compared in constant time.
 
-## Schemes
+**Does not:** do any IO (sockets, header framing, TLS), store credentials or parse config, or implement OAuth flows. Digest offers `qop=auth` with MD5 only (the shape every camera and player in the workspace uses); `auth-int` and SHA-256 Digest are not offered by the verifier. Each client or server owns its transport: `rtsp-runtime`, `hls-runtime` and `multimux` call into this crate.
 
-- **Basic** (RFC 7617) / **Digest** (RFC 7616) — challenge parsing and the
-  Digest response hash are delegated to the mature [`http-auth`] crate.
-  `Authenticator` keeps the negotiated state alive across a session so
-  Digest's `nc` (nonce count) advances correctly on every subsequent request.
-- **Bearer** (RFC 6750) — no challenge needed; the `Authorization` value is
-  always `Bearer <token>`.
-- **Forwarded** (server-side only) — trusts that a fronting reverse proxy
-  has already authenticated the caller and forwards the authenticated
-  username in a configured header (conventionally `X-Forwarded-User`); no
-  `Credentials`/challenge-response round-trip at all. **Safe only behind a
-  trusted reverse proxy** that strips any client-supplied copy of that
-  header before forwarding — see `Verifier::forwarded`'s doc comment.
-- **SignedUrl** (server-side only, `Verifier::signed_url`, issue #747) —
-  CDN-style HMAC-SHA256 signed query-string tokens (`exp`/`kid`/`sig`[/`ip`])
-  so a player can fetch segments with no `Authorization` header at all. Key
-  rotation via multiple simultaneously-valid `kid`s, optional IP scoping,
-  constant-time signature compare. See the `signed_url` module
-  (`SignedUrlKeySet`) for the wire form and canonical string.
+## Standards supported
 
-`Credentials::new(user, pass)` doesn't commit to Basic or Digest: the
-responder answers whichever scheme the server's challenge actually advertises
-(`http-auth`'s challenge parser decides the wire scheme from the challenge
-text, not from the `Credentials` variant).
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| RFC 7617 HTTP Basic | RFC 7617 (not vendored, unverified here) | Client response, server verify (constant-time) | Full | Challenge parsing delegated to `http-auth` |
+| RFC 7616 HTTP Digest | RFC 7616 (not vendored, unverified here) | Client response (MD5, `qop=auth`, advancing `nc`), server verify incl. §3.4.4 `username*` and claimed-`uri` check | Partial | MD5 and `qop=auth` only. Server nonces are signed (HMAC-SHA256), expire after `DIGEST_NONCE_LIFETIME` (3600 s) and carry a 64-value anti-replay window per `(nonce, cnonce)`, capped at `DIGEST_NC_TRACK_CAP` |
+| RFC 6750 Bearer token | RFC 6750 (not vendored, unverified here) | `Authorization: Bearer <token>` | Full | No challenge round-trip |
+| RFC 7235 HTTP authentication framework | RFC 7235 (not vendored, unverified here) | `WWW-Authenticate` / `Authorization` header handling | Full | Via `http-auth`'s `ChallengeParser` |
+| RFC 2326 RTSP 1.0 §14 and §16 | RFC 2326 (vendored `specs/rfc2326_rtsp.txt`) | RTSP reuses Basic and Digest; only the request URI differs | Full | Used by `rtsp-runtime` |
+| Forwarded (reverse-proxy trust) | Workspace scheme, not a standard | Trusts a configured header (default convention `X-Forwarded-User`) | Full, server only | Safe only behind a proxy that strips client-supplied copies |
+| Signed URLs (HMAC-SHA256 `exp`/`kid`/`sig`[/`ip`]) | Workspace scheme, CDN-style, not a standard | Mint and verify, key rotation across `kid`s, optional IP scope, constant-time compare | Full, server only | `signed_url::SignedUrlKeySet` |
 
-## Client and server
+## Features
 
-- **Client** (`respond`/`Authenticator`): given a `WWW-Authenticate`
-  challenge received from a server, compute the `Authorization` value to
-  answer it — see Usage below.
-- **Server** (`server::Verifier`): given a configured `Credentials` + realm,
-  `Verifier::challenge()` renders the `WWW-Authenticate` value for a `401`
-  and `Verifier::verify(&RequestContext)` checks an incoming request.
-  Basic/Bearer compare in constant time; Digest recomputes the response hash
-  (RFC 7616 §3.4.1; the `Authorization` fields are read with `http-auth`'s
-  `ChallengeParser`, including the RFC 7616 §3.4.4 `username*` extended
-  parameter) and also checks the client's claimed `uri` against the actual
-  request URI. This is the production verifier behind `multimux`'s
-  shared output-auth gate.
-- **`RequestContext`** carries the method/URI/body (needed to compute or
-  verify a response) plus, for server-side use, every request header
-  (`headers`, looked up case-insensitively via `RequestContext::header`) and
-  the transport peer address (`peer_addr`) — what lets a `Verifier` scheme
-  see beyond `Authorization` (the mechanism `Verifier::forwarded` needs).
-  Both default to empty/`None` via `RequestContext::new`, so a client-side
-  2-arg call site is unaffected.
+None. The crate has no Cargo features, is `std`, and has `#![forbid(unsafe_code)]`.
 
-## Usage
+## Quick start
+
+A loopback of the whole flow: an origin issues a Digest challenge, a client answers it, the origin verifies.
 
 ```rust
-use broadcast_auth::{Authenticator, Credentials, RequestContext};
+use broadcast_auth::{AuthResult, Authenticator, Credentials, RequestContext, Verifier};
 
-// Negotiate once from the server's 401 WWW-Authenticate value...
-let mut auth = Authenticator::from_challenge(
-    "Digest realm=\"cameras\", nonce=\"abc123\", qop=\"auth\"",
-    Credentials::new("admin", "12345"),
-)?;
+let creds = Credentials::new("admin", "12345");
+let verifier = Verifier::new(creds.clone(), "cameras");
 
-// ...then answer every subsequent request with the same Authenticator so
-// Digest's nc advances (RFC 7616 §3.3):
-let value = auth.authorization(&RequestContext::new("DESCRIBE", "rtsp://cam/stream"))?;
-assert!(value.starts_with("Digest "));
-# Ok::<(), broadcast_auth::Error>(())
+// 401 response: the server renders the challenge.
+let challenge = verifier.challenge();
+assert!(challenge.starts_with("Digest "));
+
+// Client answers it and keeps the Authenticator for later requests.
+let mut client = Authenticator::from_challenge(&challenge, creds).unwrap();
+let authorization = client
+    .authorization(&RequestContext::new("DESCRIBE", "rtsp://cam/stream"))
+    .unwrap();
+
+// Server verifies the retried request.
+let headers = [("Authorization", authorization.as_str())];
+let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/stream").with_headers(&headers);
+assert_eq!(verifier.verify(&ctx), AuthResult::Ok);
+
+// A wrong password is refused.
+let mut bad = Authenticator::from_challenge(&challenge, Credentials::new("admin", "nope")).unwrap();
+let wrong = bad.authorization(&RequestContext::new("DESCRIBE", "rtsp://cam/stream")).unwrap();
+let headers = [("Authorization", wrong.as_str())];
+let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/stream").with_headers(&headers);
+assert_eq!(verifier.verify(&ctx), AuthResult::Unauthorized);
 ```
 
-Bearer skips the challenge entirely:
+Signed URLs, with no `Authorization` header at all:
 
 ```rust
-use broadcast_auth::Credentials;
-let creds = Credentials::bearer("mytoken");
+use broadcast_auth::{AuthResult, RequestContext, SignedUrlKeySet, Verifier};
+
+let keys = SignedUrlKeySet::new([("key-1".to_string(), vec![0u8; 32])]).unwrap();
+let query = keys.sign("key-1", "/stream/media.m3u8", 4_000_000_000, None).unwrap();
+let verifier = Verifier::signed_url(keys);
+let uri = format!("/stream/media.m3u8?{query}");
+assert_eq!(verifier.verify(&RequestContext::new("GET", &uri)), AuthResult::Ok);
 ```
 
-A one-shot helper (`respond`) is available for callers that don't need to keep
-an `Authenticator` around for more than one request.
+Runnable programs: `cargo run -p broadcast-auth --example client_respond` and `--example server_verify`.
 
-## Scope
+## What is implemented
 
-In: the `Credentials` model, challenge parsing (via `http-auth`) + response
-computation for Basic/Digest, Bearer's stateless header value, a stateful
-`Authenticator` for session reuse.
+- **Client:** `Credentials::new` (answers whichever of Basic or Digest the challenge advertises) and `Credentials::bearer`; `Authenticator::from_challenge` plus `authorization` for session reuse; one-shot `respond`.
+- **Server:** `Verifier::new` (scheme chosen by the `Credentials` variant: Basic, Digest or Bearer), `Verifier::forwarded`, `Verifier::signed_url`, `challenge` / `challenge_for`, `verify` returning `AuthResult`, `with_clock` and `with_digest_nc_capacity` for tests and tuning.
+- **`RequestContext`:** method, URI, optional body and headers (case-insensitive `header` lookup), peer address.
+- **Security properties:** `Credentials`, `Verifier`, nonce keys and `SignedUrlKeySet` zeroize on drop; comparisons use `subtle::ConstantTimeEq`; Digest nonces are stateless-signed and replay-windowed; a `secret_debug_guard` test forbids derived `Debug` over secrets.
 
-Out: transport IO (sockets, header framing) — that's each client's own job
-(`rtsp-runtime`'s session engine, `multimux`'s HTTP adapters). Out: credential
-*storage*/config parsing — callers build `Credentials` from URL userinfo or
-their own config.
+## Design notes
 
-## Consumers
+Delegates challenge parsing and Digest hashing to `http-auth`; types are `#[non_exhaustive]` where they may grow; errors are structured (`Error`); a lexical `dehandroll_guard` test keeps hand-rolled HTTP or base64 out of the source.
 
-- [`rtsp-runtime`](../rtsp-runtime) — re-exports `broadcast_auth::Credentials`
-  as `rtsp_runtime::Credentials` and delegates its `Authenticator` to this
-  crate (RFC 2326 §14).
-- [`hls-runtime`](../hls-runtime) — `client::tokio_client::TokioClient`
-  authenticates via this crate's `Credentials`/`Authenticator`
-  (Basic/Digest/Bearer).
-- `multimux` — client-side: its `TsHttp`/`HlsPull`/`Rtsp` input adapters
-  (`source::http_auth`) answer upstream challenges via this crate's
-  `Authenticator`. Server-side: `Config::output_auth`'s shared output-auth
-  gate (every `/{stream}/…` route, across every configured route) is built
-  on this crate's `server::Verifier`, including the `Forwarded` scheme for a
-  reverse-proxy deployment.
+## Related crates
 
-[`http-auth`]: https://crates.io/crates/http-auth
+Consumed by `rtsp-runtime` (re-exports `Credentials`), `hls-runtime` (client adapter) and `multimux` (input adapters and the shared output-auth gate). It depends on no other workspace crate.
+
+## MSRV and licence
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.
