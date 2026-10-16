@@ -21,8 +21,20 @@
 //!   destroyed PAT can be rebuilt as long as the PMTs are present.
 //!
 //! The original PAT is still observed as a *hint* for the `transport_stream_id`
-//! (which is not derivable from the PMTs), but the PMT scan is authoritative for
-//! the program mapping.
+//! and `network_PID` (neither is derivable from the PMTs), but the PMT scan is
+//! authoritative for the program mapping. The original PAT is reassembled
+//! across TS packets with [`mpeg_ts::ts::SectionReassembler`], so a
+//! multi-packet PAT supplies its hints too.
+//!
+//! ## Unknown `transport_stream_id`
+//!
+//! While PAT slots exist but the original PAT has not parsed (it may still be
+//! arriving across packets), nothing is emitted in position: the op does not
+//! guess. Only when the original is unobservable does it fall back to
+//! `transport_stream_id` 0, and only with programs to list: a stream with no
+//! PAT slot at all (fully stripped, emitted early), or at end of stream when
+//! PAT slots never parsed (corrupt PAT, emitted at flush). A program-less PAT
+//! with an unknown `transport_stream_id` is never emitted.
 //!
 //! # Emit position (in-position, not at flush)
 //!
@@ -46,7 +58,9 @@
 //!
 //! # No surviving PMT (e.g. `--keep-pids` that drops every PMT)
 //!
-//! A PAT slot seen but no PMT ever parsed means the mapping is genuinely empty.
+//! A PAT slot seen and no PMT section ever *seen* means the mapping is
+//! genuinely empty. (A PMT that began but failed to reassemble or parse is a
+//! parse failure, not an empty mapping: no PAT is emitted then.)
 //! The op then emits, at end of stream, a **program-less PAT** (ITU-T H.222.0
 //! (08/2023) Table 2-30, PDF p. 76 (printed p. 54; verified on the rendered page): the program loop `N` is unconstrained and
 //! `network_PID` is optional) carrying the original `transport_stream_id` and
@@ -89,9 +103,14 @@ pub(crate) struct PsiRegenOp {
     pmt_programs: BTreeMap<u16, Pid>,
     /// Per-PID section reassemblers for candidate PMT PIDs.
     pmt_reasm: BTreeMap<Pid, SectionReassembler>,
-    /// transport_stream_id hint, copied from the original PAT if one is seen.
-    /// Not derivable from PMTs, so absent a PAT we fall back to 0.
+    /// transport_stream_id hint, copied from the original PAT once a complete
+    /// PAT section has parsed. Not derivable from PMTs. `None` means the
+    /// original PAT has not (yet) been observed; see the module docs for what
+    /// the op does then (it never silently invents one when a PAT slot exists).
     transport_stream_id: Option<u16>,
+    /// Section reassembler for the original PAT (PID 0x0000), so a PAT that
+    /// spans several TS packets is parsed as one section, not per packet.
+    pat_reasm: SectionReassembler,
     /// network_pid hint (the PAT entry with `program_number == 0`,
     /// ISO/IEC 13818-1 §2.4.4.3), copied from the original PAT if one carries
     /// one. Not derivable from PMTs, so a regenerated PAT would otherwise
@@ -127,6 +146,7 @@ impl PsiRegenOp {
             pmt_programs: BTreeMap::new(),
             pmt_reasm: BTreeMap::new(),
             transport_stream_id: None,
+            pat_reasm: SectionReassembler::default(),
             network_pid: None,
             pat_hints_observed: false,
             seen_pat_slot: false,
@@ -165,26 +185,20 @@ impl PsiRegenOp {
         if self.pat_hints_observed {
             return;
         }
-        let section = if pusi {
-            let pointer = match payload.first() {
-                Some(&p) => p as usize,
-                None => return,
-            };
-            match payload.get(1 + pointer..) {
-                Some(s) => s,
-                None => return,
+        // Reassemble across packets: a PAT with many programs spans several
+        // TS packets and does not parse from any single one.
+        self.pat_reasm.feed(payload, pusi);
+        while let Some(section) = self.pat_reasm.pop_section() {
+            if let Ok(pat) = PatSection::parse(&section) {
+                self.transport_stream_id = Some(pat.transport_stream_id);
+                self.network_pid = pat
+                    .entries
+                    .iter()
+                    .find(|e| e.program_number == dvb_si::tables::pat::PROGRAM_NUMBER_NIT)
+                    .map(|e| e.pid);
+                self.pat_hints_observed = true;
+                break;
             }
-        } else {
-            payload
-        };
-        if let Ok(pat) = PatSection::parse(section) {
-            self.transport_stream_id = Some(pat.transport_stream_id);
-            self.network_pid = pat
-                .entries
-                .iter()
-                .find(|e| e.program_number == dvb_si::tables::pat::PROGRAM_NUMBER_NIT)
-                .map(|e| e.pid);
-            self.pat_hints_observed = true;
         }
     }
 
@@ -228,9 +242,9 @@ impl PsiRegenOp {
     /// program entries plus the original PAT's `network_pid` entry
     /// (`program_number == 0`), if one was observed — ISO/IEC 13818-1
     /// §2.4.4.3. Returns `None` if no programs have been discovered yet,
-    /// unless `allow_empty` (end of stream with a PAT slot seen) in which case
-    /// a program-less PAT — the loop count `N` of Table 2-30 is unconstrained —
-    /// is built.
+    /// unless `allow_empty` (end of stream, a PAT slot seen, and no PMT
+    /// candidate left unresolved) in which case a program-less PAT — the loop
+    /// count `N` of Table 2-30 is unconstrained — is built.
     fn current_entries(&self, allow_empty: bool) -> Option<Vec<PatEntry>> {
         if self.pmt_programs.is_empty() && !allow_empty {
             return None;
@@ -253,8 +267,21 @@ impl PsiRegenOp {
     /// entries actually differ from the last section built — not on every
     /// re-emission of an unchanged mapping.
     ///
-    /// Returns `None` if no programs have been discovered yet.
-    fn rebuild_pat(&mut self, allow_empty: bool) -> Option<Vec<u8>> {
+    /// Returns `None` when there is nothing trustworthy to emit: no programs
+    /// discovered yet (and `!allow_empty`), or the `transport_stream_id` is
+    /// unknown while PAT slots exist and this is not the end-of-stream
+    /// `final_flush` (the original PAT may simply still be arriving across
+    /// packets). The 0 fallback applies only when the original PAT is
+    /// unobservable: no PAT slot at all (stripped), or `final_flush` with
+    /// programs to list but a PAT that never parsed. A program-less PAT with an
+    /// unknown `transport_stream_id` is never emitted.
+    fn rebuild_pat(&mut self, allow_empty: bool, final_flush: bool) -> Option<Vec<u8>> {
+        let transport_stream_id = match self.transport_stream_id {
+            Some(id) => id,
+            None if self.seen_pat_slot && !final_flush => return None,
+            None if self.pmt_programs.is_empty() => return None,
+            None => 0,
+        };
         let entries = self.current_entries(allow_empty)?;
 
         if self.last_entries.as_ref() != Some(&entries) {
@@ -265,7 +292,7 @@ impl PsiRegenOp {
         }
 
         let pat = PatSection::new(
-            self.transport_stream_id.unwrap_or(0),
+            transport_stream_id,
             self.version_number,
             true,
             0,
@@ -281,8 +308,8 @@ impl PsiRegenOp {
     /// Emit a regenerated PAT (packetised onto PID 0x0000), if a mapping
     /// exists. Reuses `self.pat_packetiser` so `continuity_counter`
     /// increments across every emission instead of restarting at 0.
-    fn emit_regen_pat(&mut self, out: &mut dyn FnMut(&[u8]), allow_empty: bool) {
-        if let Some(section) = self.rebuild_pat(allow_empty) {
+    fn emit_regen_pat(&mut self, out: &mut dyn FnMut(&[u8]), allow_empty: bool, final_flush: bool) {
+        if let Some(section) = self.rebuild_pat(allow_empty, final_flush) {
             for pkt in self.pat_packetiser.packetise(&[&section]) {
                 out(&pkt);
             }
@@ -313,7 +340,7 @@ impl Op for PsiRegenOp {
                 // PMT scan (transport_stream_id, network_pid).
                 self.observe_pat_hints(payload, pusi);
             }
-            self.emit_regen_pat(out, false);
+            self.emit_regen_pat(out, false, false);
             return;
         }
 
@@ -331,7 +358,7 @@ impl Op for PsiRegenOp {
             // (every program's PMT has been seen → mapping complete), before
             // forwarding this packet so the PAT precedes the following data.
             if !self.seen_pat_slot && !self.emitted_pat && cycle_wrapped {
-                self.emit_regen_pat(out, false);
+                self.emit_regen_pat(out, false, false);
             }
         }
 
@@ -349,8 +376,13 @@ impl Op for PsiRegenOp {
         // PAT (plus the original network_PID entry, if any) rather than
         // dropped: Table 2-30's program loop may be empty, so a PAT that lists
         // exactly the PMTs present is valid and downstream demuxers keep a PAT.
+        //
+        // A PMT candidate that began but never parsed (`pmt_reasm` non-empty
+        // while no program resolved) is a parse failure, not "no programs":
+        // claiming an empty program loop would be wrong, so nothing is emitted.
         if !self.emitted_pat {
-            self.emit_regen_pat(out, self.seen_pat_slot);
+            let allow_empty = self.seen_pat_slot && self.pmt_reasm.is_empty();
+            self.emit_regen_pat(out, allow_empty, true);
         }
     }
 }

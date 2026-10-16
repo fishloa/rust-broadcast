@@ -261,8 +261,9 @@ impl ManagedCa {
         self.since = Duration::ZERO;
     }
 
-    /// The EMM PIDs to route into `ci0`: the last `set_cat`'s CAID → EMM-PID
-    /// map, intersected with the CAM's advertised CAIDs (last `ca_info`) — a
+    /// The EMM PIDs to route into `ci0`: the last `set_cat`'s list of
+    /// `(CAID, EMM PID)` entries (one per `CA_descriptor`; a CAID may have
+    /// several), intersected with the CAM's advertised CAIDs (last `ca_info`) — a
     /// CAT entry for a CAID the CAM never advertised is never fed (#763 Task
     /// 4).
     #[must_use]
