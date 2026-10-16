@@ -28,12 +28,12 @@ fn main() {
     assert_eq!(back, wire);
     println!("round-trip     : OK ({} bytes)", back.len());
 
-    // An unrecognised tag (Tenq 9F 88 07, an MMI high-level object not yet
-    // implemented) is preserved losslessly as AnyApdu::Unknown.
+    // An MMI high-level `enq` (9F 88 07) is a typed object; only an
+    // unallocated/private tag falls through to AnyApdu::Unknown.
     let unknown_wire = [0x9F, 0x88, 0x07, 0x02, 0xAA, 0xBB];
     let unknown = AnyApdu::parse(&unknown_wire).expect("valid APDU framing");
     println!(
-        "unknown tag    : {} -> preserved, round-trips: {}",
+        "enq (typed)    : {} -> round-trips: {}",
         unknown.name(),
         unknown.try_to_bytes().unwrap() == unknown_wire
     );

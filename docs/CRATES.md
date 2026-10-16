@@ -285,7 +285,7 @@ The host-to-CAM interface, the scrambling cipher and the head-end CA message pro
 A codec for the head-end CA control messages (no sockets): the generic message header and TLV parameter list with recomputed lengths, and the message/parameter registries of the ECMG<->SCS and EMMG/PDG<->MUX interfaces. Control words, ECM/EMM and datagram payloads stay opaque.
 
 - **Standards:** ETSI TS 103 197 V1.5.1
-- **Cargo description:** DVB SimulCrypt head-end CA message framing (ETSI TS 103 197): the generic TLV message structure plus the ECMG⇔SCS and EMMG/PDG⇔MUX message_type / parameter_type registries. Signalling only — CW/ECM/EMM/datagram payloads are opaque.
+- **Cargo description:** DVB SimulCrypt head-end CA message framing (ETSI TS 103 197): the generic TLV message structure plus the ECMG⇔SCS, EMMG/PDG⇔MUX and C(P)SIG⇔(P)SIG message_type / parameter_type registries. Signalling only — CW/ECM/EMM/datagram payloads are opaque.
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
@@ -716,7 +716,7 @@ Parses and builds the LTC codeword: BCD time address, drop-frame and colour-fram
 Parses and builds the burst preamble (Pa..Pd, or the extended Pa..Pf form) with an opaque burst payload, cross-checked against a real E-AC-3 burst and ffmpeg's spdif muxer.
 
 - **Standards:** SMPTE ST 337:2015
-- **Cargo description:** SMPTE ST 337-2015 non-PCM audio/data burst-preamble framing over AES3 — spec-complete parse/serialize, no_std.
+- **Cargo description:** SMPTE ST 337-2015 non-PCM audio/data burst-preamble framing over AES3 (16-bit mode) — typed parse/serialize of Pa/Pb/Pc/Pd(/Pe/Pf) + opaque payload, no_std.
 - **Version (in-tree):** 0.3.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none

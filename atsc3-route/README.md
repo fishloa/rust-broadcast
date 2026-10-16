@@ -5,7 +5,7 @@
 
 ATSC 3.0 ROUTE (A/331 Annex A) binary framing: the ROUTE-specific delta on top of the LCT/ALC/FLUTE wire formats in `rmt-flute`.
 
-> **ARCHIVED: ATSC 3.0 work in this workspace is abandoned.** The sibling `atsc3` signalling crate is permanently unpublished; `atsc3-route` was published before the work stopped (see its CHANGELOG) and receives only maintenance releases. The market is closed enough that real captures are scarce: the two ROUTE header extensions this crate once decoded appear in zero of 14,000+ real captured packets. `rmt-flute` is useful independently.
+> **ARCHIVED: ATSC 3.0 work in this workspace is abandoned.** The sibling `atsc3` signalling crate is permanently unpublished; `atsc3-route` is live on crates.io (0.2.0) and receives only maintenance releases. The market is closed enough that real captures are scarce: the two ROUTE header extensions this crate once decoded appear in zero of 14,000+ real captured packets. `rmt-flute` is useful independently.
 
 ```toml
 [dependencies]

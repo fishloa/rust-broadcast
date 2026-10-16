@@ -117,29 +117,31 @@ pub enum StructuralSetKind {
     ContentStorage,
     /// Essence Container Data (A.5) — typed, [`crate::EssenceContainerData`].
     EssenceContainerData,
-    /// Material Package (E.1) — identified only.
+    /// Material Package (E.1) — typed, [`crate::MaterialPackage`].
     MaterialPackage,
-    /// Source Package, File/Physical variants (E.2-E.4) — identified only.
+    /// Source Package, File/Physical variants (E.2-E.4) — typed,
+    /// [`crate::SourcePackage`].
     SourcePackage,
     /// Timeline Track, all cases (B.12/B.15/B.18/B.21/B.24/B.27.1) —
-    /// identified only.
+    /// typed, [`crate::TimelineTrack`].
     TimelineTrack,
-    /// Event Track (DM) (B.13/B.27.2) — identified only.
+    /// Event Track (DM) (B.13/B.27.2) — typed, [`crate::EventTrack`].
     EventTrackDm,
-    /// Static Track (DM) (B.14/B.27.3) — identified only.
+    /// Static Track (DM) (B.14/B.27.3) — typed, [`crate::StaticTrack`].
     StaticTrackDm,
-    /// Sequence, all cases (B.9/B.16/B.19/B.22/B.25/B.28) — identified only.
+    /// Sequence, all cases (B.9/B.16/B.19/B.22/B.25/B.28) — typed,
+    /// [`crate::Sequence`].
     Sequence,
-    /// Source Clip, Picture/Sound/Data (B.10/B.20/B.23/B.26) — identified
-    /// only.
+    /// Source Clip, Picture/Sound/Data (B.10/B.20/B.23/B.26) — typed,
+    /// [`crate::SourceClip`].
     SourceClip,
-    /// Timecode Component (B.17) — identified only.
+    /// Timecode Component (B.17) — typed, [`crate::TimecodeComponent`].
     TimecodeComponent,
     /// DM Segment (B.32) — identified only.
     DmSegment,
     /// DM Source Clip (B.33) — identified only.
     DmSourceClip,
-    /// Filler (B.11) — identified only.
+    /// Filler (B.11) — typed, [`crate::FillerComponent`].
     Filler,
     /// Package Marker Object (B.34) — identified only.
     PackageMarkerObject,
