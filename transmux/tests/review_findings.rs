@@ -94,3 +94,61 @@ fn eac3_cc_gap_in_next_pes_drops_the_held_intact_access_unit() {
     }
     assert_eq!(n, 156, "streaming: only the damaged PES's access unit is lost");
 }
+
+/// `SegmentTimeline::resolve` compares `S@t` with the Period end as if `S@t`
+/// were Period-relative, but `S@t` is on the MEDIA timeline: the Period-
+/// relative start is `S@t - @presentationTimeOffset` (ISO/IEC 23009-1 Table 17;
+/// `specs/rules/dash-mpd-rules.md`: `SAST = PSwc + (t + d - o) / ts`; ETSI TS
+/// 103 285 §10.x sets `@presentationTimeOffset` to the earliest presentation
+/// time, i.e. the first `S@t`). `resolve` has no PTO input, so a real live/VoD
+/// timeline with `presentationTimeOffset == S@t` and `@r = -1` resolves to
+/// ceil((PeriodLen - S@t)/d) segments: 10 instead of 15 here (the last 10 s of
+/// the Period are never planned), and ZERO - silently, `saturating_sub` - once
+/// the PTO exceeds the Period length (the usual live case: t ~ epoch ticks).
+///
+/// MPD shape: timescale 90000, presentationTimeOffset 900000, Period 30 s,
+/// `<S t="900000" d="180000" r="-1"/>` -> 15 two-second segments.
+#[test]
+fn segment_timeline_negative_r_ignores_presentation_time_offset() {
+    use transmux::dash_parse::{S, SegmentTimeline};
+    let tl = SegmentTimeline {
+        segments: vec![S {
+            t: Some(900_000),
+            d: 180_000,
+            r: -1,
+        }],
+    };
+    // The documented contract: `period_end_ticks` = (PEwc - PSwc) in ticks.
+    let segs = tl.resolve(1, Some(30 * 90_000)).expect("resolve");
+    assert_eq!(segs.len(), 15, "30 s Period / 2 s segments");
+}
+
+/// A negative `@r` whose next `S@t` is not after this one's start yields ZERO
+/// segments with no error: the `S` (whose `@d` the MPD declares) silently
+/// vanishes from the plan. ceil((t_next - t)/d) with t_next <= t must be an
+/// error (malformed timeline) or at least the one segment the `S` names.
+#[test]
+fn segment_timeline_negative_r_non_increasing_next_t_silently_drops_the_s() {
+    use transmux::dash_parse::{S, SegmentTimeline};
+    let tl = SegmentTimeline {
+        segments: vec![
+            S {
+                t: Some(1_000),
+                d: 100,
+                r: -1,
+            },
+            S {
+                t: Some(1_000),
+                d: 100,
+                r: 0,
+            },
+        ],
+    };
+    match tl.resolve(1, None) {
+        Err(_) => {}
+        Ok(segs) => assert!(
+            segs.iter().filter(|s| s.time == 1_000).count() >= 1 && segs.len() >= 2,
+            "the r=-1 S vanished without an error: {segs:?}"
+        ),
+    }
+}
