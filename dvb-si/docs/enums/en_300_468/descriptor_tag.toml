@@ -181,6 +181,16 @@ variant = "FlexMuxTiming"
 spec = "FlexMuxTiming_descriptor"
 
 [[entry]]
+value = 0x2D
+variant = "Mpeg4Text"
+spec = "MPEG-4_text_descriptor"
+
+[[entry]]
+value = 0x2E
+variant = "Mpeg4AudioExtension"
+spec = "MPEG-4_audio_extension_descriptor"
+
+[[entry]]
 value = 0x2F
 variant = "AuxiliaryVideoStream"
 spec = "Auxiliary_video_stream_descriptor"
@@ -201,9 +211,44 @@ variant = "J2kVideo"
 spec = "J2K_video_descriptor"
 
 [[entry]]
+value = 0x33
+variant = "MvcOperationPoint"
+spec = "MVC_operation_point_descriptor"
+
+[[entry]]
+value = 0x34
+variant = "Mpeg2StereoscopicVideoFormat"
+spec = "MPEG2_stereoscopic_video_format_descriptor"
+
+[[entry]]
+value = 0x35
+variant = "StereoscopicProgramInfo"
+spec = "stereoscopic_program_info_descriptor"
+
+[[entry]]
+value = 0x36
+variant = "StereoscopicVideoInfo"
+spec = "stereoscopic_video_info_descriptor"
+
+[[entry]]
+value = 0x37
+variant = "TransportProfile"
+spec = "transport_profile_descriptor"
+
+[[entry]]
 value = 0x38
 variant = "HevcVideo"
 spec = "HEVC_video_descriptor"
+
+[[entry]]
+value = 0x39
+variant = "VvcVideo"
+spec = "VVC_video_descriptor"
+
+[[entry]]
+value = 0x3A
+variant = "EvcVideo"
+spec = "EVC_video_descriptor"
 
 [[entry]]
 value = 0x3F

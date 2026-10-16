@@ -130,8 +130,8 @@ fn table_id_toml_matches_enum() {
     // tripwire
     assert_eq!(
         code_set.len(),
-        29,
-        "TableId byte sweep produced {} variants, expected 29",
+        34,
+        "TableId byte sweep produced {} variants, expected 34",
         code_set.len()
     );
 
@@ -164,11 +164,11 @@ fn descriptor_tag_toml_matches_enum() {
         }
     }
 
-    // tripwire: 42 MPEG (incl. 0x3F Extension_descriptor) + 64 DVB = 106
+    // tripwire: 51 MPEG (incl. 0x3F Extension_descriptor) + 64 DVB = 115
     assert_eq!(
         code_set.len(),
-        106,
-        "DescriptorTag list has {} entries, expected 106",
+        115,
+        "DescriptorTag list has {} entries, expected 115",
         code_set.len()
     );
 
@@ -1580,3 +1580,67 @@ scoped_enum_drift!(
     4,
     []
 );
+
+// ── test: dispatch lists vs DescriptorTag / TableId ──────────────────────────
+
+/// Every tag the `declare_descriptors!` dispatcher routes must be a
+/// `DescriptorTag` variant, and every `DescriptorTag` variant must be routed
+/// (so the typed-tag enum and the dispatcher cannot diverge again).
+#[test]
+fn dispatched_descriptor_tags_match_descriptor_tag_enum() {
+    use dvb_si::descriptors::AnyDescriptor;
+
+    let dispatched: BTreeSet<u8> = AnyDescriptor::DISPATCHED_TAGS.iter().copied().collect();
+    let in_enum: BTreeSet<u8> = (0u8..=255)
+        .filter(|b| DescriptorTag::try_from(*b).is_ok())
+        .collect();
+
+    let only_dispatched: Vec<String> = dispatched
+        .difference(&in_enum)
+        .map(|t| format!("{t:#04x}"))
+        .collect();
+    let only_enum: Vec<String> = in_enum
+        .difference(&dispatched)
+        .map(|t| format!("{t:#04x}"))
+        .collect();
+    assert!(
+        only_dispatched.is_empty() && only_enum.is_empty(),
+        "DescriptorTag vs declare_descriptors! drift:\n  dispatched but not in DescriptorTag: {only_dispatched:?}\n  in DescriptorTag but not dispatched: {only_enum:?}"
+    );
+}
+
+/// Every table_id the `declare_tables!` dispatcher routes must be a `TableId`
+/// variant, except the two documented *range* allocations that `TableId`
+/// intentionally models as helpers/ranges rather than variants: the EIT
+/// schedule segments (0x50..=0x6F) and the DSM-CC range (0x3A..=0x3F).
+#[test]
+fn dispatched_table_ids_match_table_id_enum() {
+    use dvb_si::tables::AnyTableSection;
+
+    let is_range_exempt = |id: u8| (0x50..=0x6F).contains(&id) || (0x3A..=0x3F).contains(&id);
+
+    let mut dispatched: BTreeSet<u8> = BTreeSet::new();
+    for &(lo, hi) in AnyTableSection::DISPATCHED_RANGES {
+        for id in lo..=hi {
+            dispatched.insert(id);
+        }
+    }
+    let missing: Vec<String> = dispatched
+        .iter()
+        .filter(|id| !is_range_exempt(**id) && TableId::try_from(**id).is_err())
+        .map(|t| format!("{t:#04x}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "dispatched table_ids with no TableId variant: {missing:?}"
+    );
+
+    let undispatched: Vec<String> = (0u8..=255)
+        .filter(|b| TableId::try_from(*b).is_ok() && !dispatched.contains(b))
+        .map(|t| format!("{t:#04x}"))
+        .collect();
+    assert!(
+        undispatched.is_empty(),
+        "TableId variants the dispatcher does not route: {undispatched:?}"
+    );
+}

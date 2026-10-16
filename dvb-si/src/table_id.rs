@@ -25,6 +25,11 @@ pub enum TableId {
     Cat                        = 0x01,
     Pmt                        = 0x02,
     TransportStreamDescription = 0x03,
+    Iso14496SceneDescription   = 0x04,
+    Iso14496ObjectDescriptor   = 0x05,
+    Metadata                   = 0x06,
+    Iso14496                   = 0x08,
+    GreenAccessUnit            = 0x09,
 
     // ── DVB SI tables ──────────────────────────────────────────────────────
     NetworkInformationActual   = 0x40,
@@ -131,7 +136,7 @@ mod tests {
                 matched += 1;
             }
         }
-        // 29 defined variants (added ProtectionMessage 0x7B, DownloadableFontInfo 0x7C)
-        assert_eq!(matched, 29, "expected 29 matched variants");
+        // 34 defined variants (29 + the five typed MPEG-2 sections 0x04/05/06/08/09)
+        assert_eq!(matched, 34, "expected 34 matched variants");
     }
 }
