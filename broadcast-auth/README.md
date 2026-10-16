@@ -21,7 +21,7 @@ Shared multi-scheme HTTP and RTSP authentication: a client that answers `WWW-Aut
 | RFC 7235 HTTP authentication framework | RFC 7235 (not vendored, unverified here) | `WWW-Authenticate` / `Authorization` header handling | Full | Via `http-auth`'s `ChallengeParser` |
 | RFC 2326 RTSP 1.0 §14 and §16 | RFC 2326 (vendored `specs/rfc2326_rtsp.txt`) | RTSP reuses Basic and Digest; only the request URI differs | Full | Used by `rtsp-runtime` |
 | Forwarded (reverse-proxy trust) | Workspace scheme, not a standard | Trusts a configured header (default convention `X-Forwarded-User`) | Full, server only | Safe only behind a proxy that strips client-supplied copies |
-| Signed URLs (HMAC-SHA256 `exp`/`kid`/`sig`[/`ip`]) | Workspace scheme, CDN-style, not a standard | Mint and verify, key rotation across `kid`s, optional IP scope, constant-time compare | Full, server only | `signed_url::SignedUrlKeySet` |
+| Signed URLs (HMAC-SHA256 `exp`/`kid`/`sig`, optional `ip`) | Workspace scheme, CDN-style, not a standard | Mint and verify, key rotation across `kid`s, optional IP scope, constant-time compare | Full, server only | `signed_url::SignedUrlKeySet` |
 
 ## Features
 

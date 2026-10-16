@@ -1,11 +1,9 @@
-# multimux — multi-input, multi-output just-in-time repackaging origin
+# multimux
 
-**multimux is a hub, not a single pipe.** It pulls/receives live media from
-any of several ingest transports, and serves each ingested stream as any
-combination of low-latency delivery protocols, from one in-process
-tokio + axum HTTP origin. Muxing only: samples are opaque and are never
-transcoded. Every route (one ingest → its served outputs) is independent —
-a single instance can serve dozens of unrelated cameras/feeds side by side.
+[![crates.io](https://img.shields.io/crates/v/multimux.svg)](https://crates.io/crates/multimux)
+[![docs.rs](https://img.shields.io/docsrs/multimux)](https://docs.rs/multimux)
+
+Multi-input, multi-output just-in-time repackaging origin. It pulls or receives live media over any of eleven ingest transports and serves each stream as any combination of low-latency delivery protocols, from one in-process tokio + axum HTTP origin. Library crate; the `multimux` binary is `multimux-cli`.
 
 ```text
   RTSP   ─┐                                          ┌─▶  LL-HLS   (media.m3u8 + parts, fMP4)
@@ -14,11 +12,127 @@ a single instance can serve dozens of unrelated cameras/feeds side by side.
   TS/HTTP─┼─▶  ingest  ─▶  transmux (depay/segment) ──┼─▶  Smooth   (Manifest, fMP4)
   SRT    ─┤         one route = one ingest,           ├─▶  TS-HLS   (media.m3u8, classic .ts)
   HLS-pull┤         one container, N outputs          ├─▶  catch-up (catchup.m3u8, DVR archive)
-  DASH-pull┤                                          ├─▶  SRT push
-  Smooth  ─┤                                          ├─▶  RTMP push
-  RTMP   ─┤                                          └─▶  RTSP push
+  DASH-pull┤                                          ├─▶  SRT / RTMP / RTSP push
+  Smooth  ─┤                                          └─▶  WHEP     (feature whep)
+  RTMP   ─┤
+  WHIP   ─┤  (feature whip)
   file   ─┘
 ```
+
+## What it does / what it does not
+
+**Does:** run many independent routes (one ingest, its served outputs) in one process, so a single instance can serve dozens of unrelated cameras or feeds. Every route is supervised (capped exponential-backoff reconnect), shares one optional output credential across all routes (Basic, Digest, Bearer, reverse-proxy Forwarded, or signed URLs), and can persist finished segments to disk for catch-up and VOD. Ingest once, many outputs: LL-HLS, DASH, LL-DASH and Smooth read the exact same segmented CMAF, with no per-output re-mux. A runtime admin API adds, removes and lists routes and reloads the config without dropping other routes' viewers. Third-party crates can add an input, output or output-auth scheme through a plugin registry without editing this crate.
+
+**Does not:** transcode (samples are opaque and pass through), do per-viewer sessions, server-side ad insertion, manifest rewrites or trick-play, serve both fMP4 and classic TS from one route (the `Trunk` has one segment ring per program: `ts_hls` is mutually exclusive with `llhls`, `dash`, `ll_dash` and `smooth`, and `Config::validate` rejects the mix; run two routes if both are needed), or implement adaptive-bitrate ladders (one route is one rendition). It is not a CDN: put one in front for scale.
+
+## Security defaults
+
+- `Config::allow_open_ingest` is `false`: `Config::validate` refuses an ingest listener that admits a publisher with no authentication (an RTMP route without `stream_key`, a WHIP route, a listener-mode SRT route) on a non-loopback address unless the config sets `"allow_open_ingest": true`. Loopback listeners, RTMP routes with a `stream_key` and caller-mode SRT are unaffected.
+- Pull credentials are origin-scoped: HLS, DASH and Smooth pull and TS-over-HTTP credentials are bound to the (scheme, host, port) of the configured source URL; a request to any other origin (an absolute URL on another host, a redirect target) goes without `Authorization`, and a Digest challenge from a redirect target is not answered.
+- The admin API is opt-in, binds a listener that must differ from the media listener, and requires its own auth (see below).
+- ICE credentials, WHIP/WHEP session ids, `ETag` tokens and RTP SSRCs come from the OS CSPRNG; `Debug` never prints a secret.
+
+## Standards supported
+
+| Standard | Edition | Scope here | Status | Notes |
+|---|---|---|---|---|
+| IETF HLS 2nd edition `draft-pantos-hls-rfc8216bis` | `-22`, 1 May 2026 (vendored) | LL-HLS output: parts, preload hint, blocking reload (§6.2.5.2), server control; HLS pull input | Partial | No delta updates or rendition reports on output (see `hls-runtime`) |
+| IETF RFC 8216 HLS | RFC 8216 (vendored) | Classic TS-segment HLS output (`ts_hls`), catch-up playlists | Full for the served shape | |
+| ISO/IEC 23009-1 MPEG-DASH, ETSI TS 103 285 | 23009-1 not vendored (edition unverified); TS 103 285 v1.4.1 vendored | `dash` and `ll_dash` output (live MPD, `availabilityStartTime`, `SegmentTemplate`), DASH pull incl. `SegmentTimeline` | Partial | Chunked-transfer LL-DASH |
+| Microsoft MS-SSTR Smooth Streaming | Vendored | Smooth output and pull | Partial | H.264 and AAC only |
+| IETF RFC 2326 RTSP 1.0 | RFC 2326 (vendored) | RTSP pull (`rtsp`, `rtsps://`) and RTSP push (ANNOUNCE/RECORD) | Partial | Via `rtsp-runtime` |
+| Adobe RTMP 1.0 | Vendored | RTMP publish ingest and RTMP push | Partial | Publish only; via `rtmp-runtime` |
+| SRT, `draft-sharabayko-srt-01` | -01 (vendored) | SRT caller and listener ingest, SRT push | Partial | No payload encryption in the adapter |
+| IETF RFC 9725 WHIP, `draft-ietf-wish-whep` | RFC 9725; WHEP draft -04 | Feature `whip` ingest (H.264 only), feature `whep` egress, session resources, Trickle ICE, ICE restart | Partial | RFC 8445/5764/3711 via `webrtc-runtime` |
+| IETF RFC 3550 RTP, RFC 6184 | As numbered | Raw RTP/UDP ingest with SDP, low-delay H.264 and one-AAC-AU-per-packet depayload, in-order only | Partial | |
+| ISO/IEC 13818-1 MPEG-2 TS | 08/2023 (vendored) | TS over UDP, HTTP and SRT; TS output via `ts_hls` and push | Full for carriable codecs | |
+| IETF RFC 7617 / 7616 / 6750 / 7235 | Not vendored, unverified here | Pull-side client auth and output-side verify, via `broadcast-auth` | Full | Digest is MD5 `qop=auth` only |
+
+## Inputs x outputs
+
+Every input feeds one `Trunk` per program; every output reads from it, so any input can feed any allowed output set. Limits come from the input's container and codec support, and from the output.
+
+| Input (`type`) | `llhls` / `dash` / `ll_dash` | `smooth` | `ts_hls` | `catchup` | `srt_push` / `rtsp_push` | `rtmp_push` | `whep` |
+|---|---|---|---|---|---|---|---|
+| `rtsp`, `rtp` | yes | AVC + AAC | yes | with DVR | TS-carriable codecs | AVC + AAC | H.264 |
+| `ts_udp`, `ts_http`, `srt` | yes | AVC + AAC | yes | with DVR | TS-carriable codecs | AVC + AAC | H.264 |
+| `hls_pull`, `dash_pull`, `smooth_pull` | yes | AVC + AAC | yes | with DVR | TS-carriable codecs | AVC + AAC | H.264 |
+| `rtmp` (FLV, AVC + AAC only) | yes | yes | yes | with DVR | yes | yes | H.264 |
+| `file` | yes | AVC + AAC | yes | with DVR | TS-carriable codecs | AVC + AAC | H.264 |
+| `whip` (H.264 only) | yes | video only | yes | with DVR | yes | video only | H.264 |
+| `custom` | per factory | per factory | per factory | with DVR | per factory | per factory | per factory |
+
+`ts_hls` cannot share a route with the fMP4 outputs in the first column or with `smooth`. `catchup` needs `dvr.enabled: true`. The TS-carriable codec set is that of `transmux::TsMux`; the full input and output reference tables follow below.
+
+## Configuration examples
+
+A route is an input plus an optional output list (default `["llhls"]`):
+
+```json
+{
+  "bind": "0.0.0.0:8080",
+  "output_auth": { "scheme": "bearer", "token": "viewer-secret" },
+  "routes": [
+    { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" }, "outputs": ["llhls", "dash"] },
+    { "name": "ingest", "input": { "type": "rtmp", "listen": "0.0.0.0:1935", "app": "live", "stream_key": "s3cret" },
+      "outputs": ["llhls", { "srt_push": { "url": "srt://relay.example:9000" } }] },
+    { "name": "slate", "input": { "type": "file", "path": "slate.ts" }, "outputs": ["ts_hls"] }
+  ]
+}
+```
+
+Ready-made configs are under `examples/` on GitHub: a 40-camera fleet, a reverse-proxy `forwarded` setup, many outputs from one ingest, a looping file slate, and `broadcast-origin.json` (eight sources over seven transports, three delivery protocols, signed-URL egress and the admin API, explained in `broadcast-origin.md`).
+
+## Features
+
+| Feature | Default | Description |
+|---|---|---|
+| `tls` | yes | `rtsps://` sources (rustls through `rtsp-runtime`). |
+| `whip` | no | WHIP ingest over HTTP plus ICE and DTLS-SRTP through `webrtc-runtime`'s `media` feature (pulls the ICE/DTLS dependency tree). |
+| `whep` | no | WHEP viewer egress (implies `webrtc-runtime/media`, `rtp-packet`). Independent of `whip`. |
+| `test-seams` | no | Pre-bound listener hand-in for tests (`Config::prebound`). Not public API. |
+| `test-hooks` | no | WebRTC fault injection for tests; implies `test-seams`. Not public API. |
+
+The crate is `std` only.
+
+## Quick start
+
+Load, validate and inspect a config in code (the repository's own example config):
+
+```rust
+use multimux::config::{Config, InputSpec};
+
+let config = Config::from_json_file(std::path::Path::new("examples/multi-output.json")).unwrap();
+config.validate().unwrap();
+assert!(!config.routes.is_empty());
+assert!(matches!(config.routes[0].input, InputSpec::Rtsp { .. }));
+
+// Running it: `multimux::serve(config).await` (tokio), or
+// `multimux::serve_config_file("routes.json").await` so `POST /admin/reload` works.
+```
+
+An open ingest listener on a public address is refused unless you opt in:
+
+```rust
+use multimux::config::Config;
+
+let json = r#"{ "bind": "0.0.0.0:8080",
+  "routes": [ { "name": "in", "input": { "type": "rtmp", "listen": "0.0.0.0:1935" } } ] }"#;
+let config: Config = serde_json::from_str(json).unwrap();
+assert!(config.validate().is_err(), "unauthenticated non-loopback RTMP needs allow_open_ingest");
+```
+
+From the shell (the `multimux` binary from `multimux-cli`):
+
+```bash
+multimux --rtsp rtsp://cam.local/stream --name cam1     # one camera
+curl http://0.0.0.0:8080/cam1/master.m3u8
+multimux --config routes.json                           # many routes
+```
+
+Runnable library examples: `serve_rtsp` and `custom_scheme` (`cargo run -p multimux --example <name>`).
+
+## Reference
 
 ## Inputs
 
@@ -36,7 +150,6 @@ Each route names one ingest transport (`InputSpec`):
 | `smooth_pull` | Pull a remote Smooth Streaming manifest and its fragments | optional `auth` |
 | `rtmp` | **Push** ingest: binds a listen port and accepts RTMP publishers (FLV), via `rtmp-runtime` | `app`/`stream_key` filters; concurrent publishers |
 | `file` | A local media file on disk, identified with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); paced to wall clock, including across the loop point; a long asset holds its parsed samples in memory — see the crate CHANGELOG |
-
 | `whip` | **Push** ingest: binds a `listen` address and accepts WHIP (RFC 9725) publishers; H.264 video only (feature `whip`, ICE + DTLS-SRTP via `webrtc-runtime`) | see [WHIP / WHEP](#whip--whep-session-resources) |
 
 `rtsp` accepts `rtsps://` for RTSP over TLS. `rtmp` is the only *push* input —
@@ -54,6 +167,7 @@ over that.
 Codecs: H.264 video + AAC audio (whatever `transmux`'s depayload/demux
 supports — any missing codec/transport capability is a library gap fixed
 upstream, in `transmux` or `rtsp-runtime`, never in this crate).
+
 
 ## Outputs
 
@@ -89,6 +203,7 @@ without a second ring — a legitimate future want, tracked separately, not
 something this release does. If both containers are genuinely needed for one
 source today, run two routes against it, one per container.
 
+
 ## Served endpoints
 
 One route ("stream") is served per configured `name`, under `/{stream}/...`:
@@ -111,6 +226,7 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 
 An unknown stream name, or a filename `multimux` doesn't recognize, returns
 `404`.
+
 
 ## WHIP / WHEP session resources
 
@@ -139,22 +255,6 @@ With the `whip` / `whep` Cargo features, a route can accept a WebRTC publisher
   credentials and candidates. A restart fragment that keeps the ufrag or lacks
   a pwd is `400`; afterwards the old `ETag` is `412`.
 
-## Ingest listener security
-
-- `Config::allow_open_ingest` (default `false`): `Config::validate` refuses an
-  ingest listener that admits a publisher with no authentication (an RTMP route
-  without `stream_key`, a WHIP route, a listener-mode SRT route) on a
-  **non-loopback** address unless the config sets `"allow_open_ingest": true`.
-  Loopback listeners, RTMP routes with a `stream_key` and caller-mode SRT are
-  unaffected.
-- **Origin-scoped credentials:** HLS/DASH/Smooth pull and TS-over-HTTP
-  credentials are bound to the (scheme, host, port) of the configured source
-  URL. A request to any other origin (an absolute playlist/manifest URL on
-  another host, a redirect target) is sent without `Authorization`, and a
-  Digest challenge from a redirect target is not answered.
-- ICE `ufrag`/`pwd`, session resource ids, `ETag` tokens and RTP SSRCs come
-  from the OS CSPRNG; `Debug` of the RTMP stream key, RTSP credentials and ICE
-  restart types never prints the secret (`tests/secret_debug_guard.rs`).
 
 ## DASH timeline
 
@@ -167,6 +267,7 @@ holds across a reconnect that restarts at segment 1 (ISO/IEC 23009-1 5.3.1.2,
 (`S@t` is absolute), and a negative `S@r` is resolved to the next `@t`/Period
 end; tests use real DASH-IF livesim2 MPDs. The `xs:duration` spelling is the one
 shared `transmux::dash::xs_duration`.
+
 
 ## Catch-up / VOD-from-live
 
@@ -185,6 +286,7 @@ rejects a route naming `"catchup"` without it.
 Shares `output_auth` with every other output — no separate credential or
 auth path for catch-up.
 
+
 ## Shared output auth
 
 One credential can gate **every** media output route (manifests and
@@ -198,7 +300,7 @@ Independent of, and unrelated to, each route's own ingest `auth`. `None`
 ```
 
 Schemes (`scheme` tag): `"basic"` / `"digest"` (username + password),
-`"bearer"` (token), and `"forwarded"` — see below.
+`"bearer"` (token), `"forwarded"` (see below), `"signed_url"` (CDN-style HMAC-SHA256 query tokens with key rotation across `kid`s, so a player needs no `Authorization` header) and `"custom"` (a registered plugin scheme).
 
 ### Reverse-proxy deployment (`forwarded`)
 
@@ -224,6 +326,7 @@ proxy that strips any client-supplied copies of `user_header` (and
 such stripping and trusts every inbound header completely — if the origin
 is *also* reachable directly, any client can set these headers itself and
 bypass authentication entirely.
+
 
 ## Runtime admin API
 
@@ -286,6 +389,7 @@ path (`multimux --config routes.json`, or `origin::serve_config_file`); an
 origin started from an in-memory `Config` (`origin::serve`/
 `serve_with_registry`, no file) rejects reload with a clear error — add/
 remove/list still work normally.
+
 
 ## Config shape
 
@@ -362,7 +466,7 @@ A route can persist finished segments to disk for catch-up / VOD:
 
 #### On-disk layout
 
-```
+```text
 <archive_root>/<route>/
 ├── p0.m4s          ← period 0 container file (init at head, then fragments)
 ├── p0.idx          ← JSON byte-range index: (seq, pts_ns, offset, len)
@@ -407,6 +511,7 @@ Many routes, one shared output credential, one process:
 Each camera is served at its own `/camN/media.m3u8`, independently
 reconnected/supervised, all gated by the one `output_auth` credential.
 
+
 ## External scheme plugin registry
 
 A third-party crate can add a new **input**, **output**, or **output-auth**
@@ -417,27 +522,9 @@ params }`, and `OutputAuthSpec::Custom { type_tag, params }`, resolved at
 the embedding application builds (`register_input`/`register_output`/
 `register_auth`). `origin::serve(config)` is `serve_with_registry(config,
 SchemeRegistry::new())` — the empty registry, for the built-in schemes only.
-See [`examples/custom_scheme.rs`](examples/custom_scheme.rs) for a
+See `examples/custom_scheme.rs` for a
 complete, runnable example.
 
-## Quick start
-
-Single-route quick start (one camera, no config file):
-
-```bash
-multimux --rtsp rtsp://cam.local/stream --name cam1
-curl http://0.0.0.0:8080/cam1/master.m3u8
-```
-
-Multi-route JSON config file:
-
-```bash
-multimux --config routes.json
-```
-
-Every flag/field has a default (see `multimux --help` or
-`multimux::config::Config::default()`); `--rtsp`/`--name` and `--config` are
-mutually exclusive — pass one or the other.
 
 ## Production hardening
 
@@ -461,71 +548,21 @@ mutually exclusive — pass one or the other.
 - **Graceful shutdown** — Ctrl-C / `SIGTERM` drains in-flight requests and
   every route's ingest task before exiting.
 
+
 ## v1 limits (still out of scope)
 
-- Per-viewer sessions, server-side ad insertion, manifest rewrites.
-- Trick-play.
+- Per-viewer sessions, server-side ad insertion, manifest rewrites, trick-play, ABR ladders.
+- Limits inherited from `transmux`'s `RtpStreamDepacketiser` (raw RTP input): low-delay H.264 only (no B-frame reordering), one AAC access unit per RTP packet, packets must arrive in order.
+- WHIP ingest is H.264 video only.
 
-Additional documented limits inherited from the underlying streaming
-depayloader (`transmux`'s `RtpStreamDepacketiser`, issue #700): low-delay
-H.264 only (no B-frame reordering), one AAC access unit per RTP packet, and
-packets must arrive in order.
+## Design notes
 
-See
-[`docs/superpowers/specs/2026-07-18-multimux-hub-design.md`](../docs/superpowers/specs/2026-07-18-multimux-hub-design.md)
-in the workspace root for the full hub design, and
-[`docs/superpowers/specs/2026-07-14-multimux-design.md`](../docs/superpowers/specs/2026-07-14-multimux-design.md)
-for the original v1 (RTSP→LL-HLS-only) design this hub replaced.
+One ingest architecture for every input: `media-plane`'s `Dialer` (the inputs that dial out) or `Listener` (RTMP, WHIP push accept) driven by `IngestDriver` / `ListenDriver`, publishing into a per-program `Trunk` that every egress serves from, so there is no second path a sample can take from socket to segment. HTTP outputs resolve through `hls-runtime`'s `HlsOrigin` and the `ServedEgress` trait; the DVR recorder is a `SegmentEgress` over its own pinning cursor, so it never perturbs live output. Errors are structured (`MultimuxError`), secrets are redacted everywhere, and the config schema is guarded by `tests/example_configs.rs` so the example configs cannot drift. The design documents are `docs/superpowers/specs/2026-07-18-multimux-hub-design.md` and (for the original RTSP-only v1) `2026-07-14-multimux-design.md` in the workspace.
 
-## Examples
+## Related crates
 
-```bash
-# Serve one real RTSP source.
-cargo run --example serve_rtsp -- rtsp://cam.local/stream
+`multimux-cli` (the `multimux` binary). Built on `transmux` (depayload, segmentation, DASH and Smooth packaging), `media-plane` (ingest drivers, `Trunk`, egress shapes), `hls-runtime` (LL-HLS origin and HLS pull), `rtsp-runtime`, `rtmp-runtime`, `srt-runtime`, `webrtc-runtime` (features `whip`, `whep`), `broadcast-auth`, `broadcast-hls`, `container-probe` (file input detection) and `rtp-packet`.
 
-# Register a custom input scheme with zero multimux edits (drives a real
-# synthetic Dialer/IngestSession through supervise_driver end to end).
-cargo run --example custom_scheme
-```
+## MSRV and licence
 
-### Example configs
-
-JSON files under [`examples/`](examples/) — each a realistic, valid
-`multimux::config::Config` for `multimux-cli --config <file>` (deserialize +
-`validate()` are guarded by `tests/example_configs.rs`, so they can't drift
-from the config schema):
-
-- [`file-slate.json`](examples/file-slate.json) — two file routes: a looping
-  slate (`loop: true`, the default) and a play-once ident (`loop: false`).
-  The container is identified with `container-probe`, so the file may be TS,
-  fMP4, progressive MP4, Matroska/WebM, MPEG-PS or FLV without being
-  declared. Note the memory characteristic in the Inputs table above.
-- [`webcam-fleet-40.json`](examples/webcam-fleet-40.json) — 40 routes
-  (`cam1`..`cam40`) spanning all five ingest protocols (RTSP with per-camera
-  Password/Bearer `auth`, RTP, TS/UDP multicast, TS/HTTP, HLS-pull), all
-  served under one shared `output_auth` (Basic) — heterogeneous ingest, one
-  uniform LL-HLS(+DASH) output surface.
-- [`reverse-proxy.json`](examples/reverse-proxy.json) — `output_auth` using
-  the `forwarded` scheme: TLS terminates at a fronting reverse proxy, and the
-  origin trusts its `X-Forwarded-User` header instead of challenging clients
-  itself (see [`OutputAuthSpec::Forwarded`](src/config.rs)'s trust-assumption
-  docs before using this in production).
-- [`multi-output.json`](examples/multi-output.json) — one RTSP ingest
-  packaged to all three outputs (`llhls`, `dash`, `ll_dash`) from the same
-  CMAF segments (issue #663 P4's "ingest-once, many-outputs").
-- [`custom-scheme.json`](examples/custom-scheme.json) — an `InputSpec::Custom`
-  route naming the `"demo"` scheme
-  [`examples/custom_scheme.rs`](examples/custom_scheme.rs) registers.
-
-## Spec
-
-RFC 8216bis (HTTP Live Streaming, 2nd edition) — Low-Latency HLS:
-`#EXT-X-PART` (§4.4.4.9), `#EXT-X-PART-INF`/`#EXT-X-SERVER-CONTROL`
-(§4.4.3.7/§4.4.3.8), and Blocking Playlist Reload (§6.2.5.2). ISO/IEC
-23009-1 (DASH) for the `dash`/`ll_dash` outputs. RTSP 1.0 (RFC 2326) for
-RTSP ingest, via `rtsp-runtime`. RFC 7617/7616/6750 (Basic/Digest/Bearer)
-for auth, via `broadcast-auth`.
-
-## License
-
-MIT OR Apache-2.0
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

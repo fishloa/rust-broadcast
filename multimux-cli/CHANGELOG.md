@@ -4,6 +4,9 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
 ### Changed (BREAKING: epoch — requires multimux 0.13)
 - Builds against new caret epochs of workspace siblings (`multimux` 0.12 -> 0.13). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff.
 
