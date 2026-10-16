@@ -9,6 +9,20 @@
 //! Wire layouts are documented in `dvb-si/docs/text/iso_13818_6/` (with
 //! provenance notes — ISO/IEC 13818-6 itself cannot be vendored) and pinned
 //! against a live capture by the `carousel_fixture` integration test.
+//!
+//! # Layers
+//!
+//! | Layer | Types |
+//! |---|---|
+//! | Section framing (table_id 0x3B / 0x3C) | [`crate::tables::dsmcc::DsmccSection`] |
+//! | Download protocol (U-N messages) | [`UnMessage`] → [`Dsi`] (+ [`GroupInfoIndication`]) / [`Dii`] (+ [`DiiModule`]); [`DownloadDataBlock`] |
+//! | Data carousel module reassembly | [`ModuleReassembler`] → [`Module`] (version-aware, out-of-order tolerant, memory-capped) |
+//! | Object carousel (BIOP) | [`ServiceGatewayInfo`], [`ModuleInfo`] (incl. [`CompressedModuleDescriptor`], decompressed with feature `flate2`), [`BiopMessage`], [`Ior`] / [`TaggedProfile`] |
+//! | File view | [`CarouselFs`] (`resolve` / `file_bytes`) |
+//!
+//! The DII / DSI carousel descriptors of ETSI EN 301 192 Table 48 other than
+//! `compressed_module_descriptor` are not typed yet; see the generated
+//! [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#dsm-cc-data-carousel-etsi-en-301-192-v171-table-48).
 
 pub mod biop;
 pub mod messages;

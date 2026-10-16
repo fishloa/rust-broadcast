@@ -1,57 +1,70 @@
-# dvb-si — spec table reference
+# dvb-si — documentation and spec reference
 
-One-table-per-file spec reference, organised as `docs/{tables,descriptors,enums,text}/<spec>/`. Transcribed from the canonical PDFs in the workspace [`specs/`](../../specs/) (the authoritative source); each `enums/` entry co-locates a `.toml` drift-guard with its page. Excluded from the published crate.
+Everything here is excluded from the published crate (`exclude = ["docs/**"]`); it is the
+reviewable ground truth behind the code.
 
-## Tables (wire-format syntax)
+## Start here
 
-| Spec | Files |
+| Document | What it is |
 |---|---|
-| EN 300 468 | [`tables/en_300_468/`](tables/en_300_468/) — `10-running-status-section.md`, `11-stuffing-section.md`, `11a-satellite-access-section.md`, `11c-satellite-position-v2-info.md`, `11d-cell-fragment-info.md`, `11e-time-association-info.md`, `11g-beamhopping-time-plan-info.md`, `11h-satellite-position-v3-info.md`, `11i-interpolation-method-for-ephemeris-data.md`, `124-roll-off-factor.md`, `144b-s2xv2-satellite-delivery-system-info.md`, `144f-postamble-pli.md`, `162-production-disparity-hint-info.md`, `163-discontinuity-information-section.md`, `164-selection-information-section.md`, `18-void.md`, `3-network-information-section.md`, `35-modulation-scheme-for-cable.md`, `36-inner-fec-scheme.md`, `39-roll-off-factor.md`, `4-bouquet-association-section.md`, `40-modulation-system-for-satellite.md`, `5-service-description-section.md`, `514-repetition-rates-and-random-access-hand-transcribed.md`, `61-mobile-hand-over-info.md`, `64-event-linkage-info.md`, `65-extended-event-linkage-info.md`, `68-target-service-matching-rules.md`, `7-event-information-section.md`, `8-time-and-date-section.md`, `9-time-offset-section.md`, `figure-a1-character-code-table-00-default-latin-alphabet.md`, `table-144c1-ncr-reference.md` |
-| EN 300 706 | [`tables/en_300_706/`](tables/en_300_706/) — Teletext packet coding |
-| EN 300 743 | [`tables/en_300_743/`](tables/en_300_743/) — DVB subtitling segments |
-| EN 301 192 | [`tables/en_301_192/`](tables/en_301_192/) — MPE, data carousel, INT syntax |
-| ISO/IEC 13818-1 | [`tables/iso_13818_1/`](tables/iso_13818_1/) — MPEG-2 TS packet, PSI sections |
-| TS 101 154 | [`tables/ts_101_154/`](tables/ts_101_154/) — AV coding constraints |
-| TS 102 006 | [`tables/ts_102_006/`](tables/ts_102_006/) — UNT, SSU sections |
-| TS 102 323 | [`tables/ts_102_323/`](tables/ts_102_323/) — TV-Anytime metadata sections |
-| TS 102 366 | [`tables/ts_102_366/`](tables/ts_102_366/) — AC-3 / E-AC-3 frame-header |
-| TS 102 772 | [`tables/ts_102_772/`](tables/ts_102_772/) — MPE-IFEC sections |
-| TS 102 809 | [`tables/ts_102_809/`](tables/ts_102_809/) — AIT, protection message sections |
+| [`COVERAGE.md`](COVERAGE.md) | **Generated** coverage reference: every table_id, descriptor tag and tag extension with its standard, verified clause, Rust type and status; the private/regional descriptors and their scopes; carousel, text and time handling; every allocated code that is **not** implemented; and a citation cross-check. Regenerate with `python3 tools/gen-dvbsi-coverage.py` — `cargo test -p dvb-si --test docs_coverage_drift` fails when it is stale. |
+| [`coverage/allocations.tsv`](coverage/allocations.tsv) | The hand-transcribed allocation lists (table_id, descriptor tags, extension tags, AIT/INT/UNT/DII/RNT namespaces) with verified clause numbers — the "what the standards define" input to `COVERAGE.md`. |
+| [`reserved-bits-edition-audit.md`](reserved-bits-edition-audit.md) | Per-field evidence for every reserved-bit default, edition by edition (EN 300 468 V1.3.1 … V1.20.1). |
+| [`en300468-v1.20.1-delta.md`](en300468-v1.20.1-delta.md) | What changed between EN 300 468 V1.19.1 and V1.20.1, and what that meant for the crate. |
 
-## Descriptors (wire-format syntax)
+## Spec transcriptions
 
-| Spec | Files |
-|---|---|
-| EN 300 468 | [`descriptors/en_300_468/`](descriptors/en_300_468/) — 72 per-tag descriptor syntax files |
-| EN 301 192 | [`descriptors/en_301_192/`](descriptors/en_301_192/) — MPE, INT, data carousel descriptors |
-| EN 303 560 | [`descriptors/en_303_560/`](descriptors/en_303_560/) — TTML subtitling descriptors |
-| ISO/IEC 13818-1 | [`descriptors/iso_13818_1/`](descriptors/iso_13818_1/) — MPEG-2 systems descriptors (tags 0x02–0x12) |
-| ISO/IEC 13818-6 | [`descriptors/iso_13818_6/`](descriptors/iso_13818_6/) — DSM-CC carousel descriptors |
-| TS 102 006 | [`descriptors/ts_102_006/`](descriptors/ts_102_006/) — SSU descriptors |
-| TS 102 323 | [`descriptors/ts_102_323/`](descriptors/ts_102_323/) — TV-Anytime metadata descriptors |
-| TS 102 727 | [`descriptors/ts_102_727/`](descriptors/ts_102_727/) — MHP deferred descriptors |
-| TS 102 772 | [`descriptors/ts_102_772/`](descriptors/ts_102_772/) — MPE-IFEC descriptor |
-| TS 102 809 | [`descriptors/ts_102_809/`](descriptors/ts_102_809/) — AIT application descriptors |
+One table per file, organised as `{tables,descriptors,enums,text}/<spec>/`. Transcribed from the
+vendored spec PDFs (in the private `private/` submodule — `private/specs/*.pdf`, with
+whole-document markdown in `private/specs-md/`), and checked against them; each `enums/` entry
+co-locates a `.toml` drift guard with its page. Module `//!` docs cite these files.
 
-## Enums (coded-value tables)
+<!-- BEGIN GENERATED: dvb-si-docs-index (tools/gen-dvbsi-coverage.py) -->
 
-| Spec | Files |
-|---|---|
-| EN 300 468 | [`enums/en_300_468/`](enums/en_300_468/) — `table_id`, `descriptor_tag`, `extension_tag`, `service_type`, `subtilting_type`, `teletext_type`, `linkage_type`, `announcement_type`, `running_status`, `scrambling_mode`, `polarization`, `fec_outer`, `ts_gs_mode`, `s2x_mode`, `t2_siso_miso`, `sh_diversity_mode`, `c2_tuning_frequency_type`, `ac3_service_type`, `ac4_channel_mode`, `control_remote_access` (+ 62 numbered `*-coding.md` tables) |
-| EN 301 192 | [`enums/en_301_192/`](enums/en_301_192/) — `int_action_type` (+ 12 numbered coding/value tables) |
-| EN 303 560 | [`enums/en_303_560/`](enums/en_303_560/) — segment/font-type coding tables |
-| ISO/IEC 13818-1 | [`enums/iso_13818_1/`](enums/iso_13818_1/) — `stream_type`, `alignment_type`, `audio_type` |
-| ISO/IEC 13818-6 | [`enums/iso_13818_6/`](enums/iso_13818_6/) — `biop_tag`, `biop_object_kind`, tap-use values |
-| TS 101 154 | [`enums/ts_101_154/`](enums/ts_101_154/) — display-horizontal-size value tables |
-| TS 101 162 | [`enums/ts_101_162/`](enums/ts_101_162/) — registration/allocation templates + domain-name registries |
-| TS 102 006 | [`enums/ts_102_006/`](enums/ts_102_006/) — `descriptor_type`, `unt_action_type` (+ 6 numbered coding tables) |
-| TS 102 323 | [`enums/ts_102_323/`](enums/ts_102_323/) — `crid_type`, `crid_authority_policy`, `link_type`, `tva_running_status` (+ 13 coding/value tables) |
-| TS 102 809 | [`enums/ts_102_809/`](enums/ts_102_809/) — `control_code`, `reference_type` (+ 12 coding/value tables) |
+| Kind | Standard | Files |
+|---|---|---|
+| Table / section syntax | [ETSI EN 300 468 — DVB Service Information](tables/en_300_468/) | 33 |
+| Table / section syntax | [ETSI EN 300 706 — Enhanced Teletext](tables/en_300_706/) | 19 |
+| Table / section syntax | [ETSI EN 300 743 — DVB subtitling](tables/en_300_743/) | 35 |
+| Table / section syntax | [ETSI EN 301 192 — DVB data broadcasting (MPE, INT, data carousel)](tables/en_301_192/) | 16 |
+| Table / section syntax | [Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 — MPEG-2 Systems](tables/iso_13818_1/) | 8 |
+| Table / section syntax | [ETSI TS 101 154 — audio/video coding in DVB](tables/ts_101_154/) | 38 |
+| Table / section syntax | [ETSI TS 102 006 — System Software Update](tables/ts_102_006/) | 6 |
+| Table / section syntax | [ETSI TS 102 323 — TV-Anytime carriage](tables/ts_102_323/) | 88 |
+| Table / section syntax | [ETSI TS 102 366 — AC-3 / E-AC-3](tables/ts_102_366/) | 13 |
+| Table / section syntax | [ETSI TS 102 772 — MPE-IFEC](tables/ts_102_772/) | 11 |
+| Table / section syntax | [ETSI TS 102 809 — application signalling (AIT)](tables/ts_102_809/) | 15 |
+| Descriptor syntax | [ETSI EN 300 468 — DVB Service Information](descriptors/en_300_468/) | 78 |
+| Descriptor syntax | [ETSI EN 301 192 — DVB data broadcasting (MPE, INT, data carousel)](descriptors/en_301_192/) | 38 |
+| Descriptor syntax | [ETSI EN 303 560 — DVB TTML subtitling](descriptors/en_303_560/) | 23 |
+| Descriptor syntax | [GY/T 270-2013 — China DTV closed captions](descriptors/gy_t_270/) | 1 |
+| Descriptor syntax | [GY/T 420-2025 — China UHD encapsulation (AVS2 video)](descriptors/gy_t_420/) | 1 |
+| Descriptor syntax | [GY/T 422-2025 — China multi-audio (audio preselection profile)](descriptors/gy_t_422/) | 1 |
+| Descriptor syntax | [Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 — MPEG-2 Systems](descriptors/iso_13818_1/) | 35 |
+| Descriptor syntax | [ISO/IEC 13818-6 — DSM-CC (hand transcription, provenance-documented)](descriptors/iso_13818_6/) | 4 |
+| Descriptor syntax | [ISO/IEC 14496-1 — MPEG-4 Systems (FlexMux buffer descriptors)](descriptors/iso_14496_1/) | 1 |
+| Descriptor syntax | [NorDig Unified Requirements v3.2.2 — logical channel descriptors](descriptors/nordig/) | 2 |
+| Descriptor syntax | [T/AI 109.6-2022 — AVS3 intelligent media format](descriptors/t_ai_109_6/) | 1 |
+| Descriptor syntax | [T/AI 109.7-2024 — AVS3 audio encapsulation](descriptors/t_ai_109_7/) | 2 |
+| Descriptor syntax | [T/UWA 012.2-2023 — UWA UHD TS encapsulation](descriptors/t_uwa_012_2/) | 1 |
+| Descriptor syntax | [ETSI TS 102 006 — System Software Update](descriptors/ts_102_006/) | 25 |
+| Descriptor syntax | [ETSI TS 102 323 — TV-Anytime carriage](descriptors/ts_102_323/) | 11 |
+| Descriptor syntax | [ETSI TS 102 727 — DVB-MHP (descriptor subset)](descriptors/ts_102_727/) | 3 |
+| Descriptor syntax | [ETSI TS 102 772 — MPE-IFEC](descriptors/ts_102_772/) | 1 |
+| Descriptor syntax | [ETSI TS 102 809 — application signalling (AIT)](descriptors/ts_102_809/) | 22 |
+| Descriptor syntax | [ETSI TS 102 825 — CPCM](descriptors/ts_102_825/) | 2 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI EN 300 468 — DVB Service Information](enums/en_300_468/) | 84 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI EN 301 192 — DVB data broadcasting (MPE, INT, data carousel)](enums/en_301_192/) | 13 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI EN 303 560 — DVB TTML subtitling](enums/en_303_560/) | 3 |
+| Coded-value tables (with `.toml` drift guards) | [Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 — MPEG-2 Systems](enums/iso_13818_1/) | 12 |
+| Coded-value tables (with `.toml` drift guards) | [ISO/IEC 13818-6 — DSM-CC (hand transcription, provenance-documented)](enums/iso_13818_6/) | 3 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI TS 101 154 — audio/video coding in DVB](enums/ts_101_154/) | 2 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI TS 101 162 — DVB identifier registries](enums/ts_101_162/) | 74 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI TS 102 006 — System Software Update](enums/ts_102_006/) | 8 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI TS 102 323 — TV-Anytime carriage](enums/ts_102_323/) | 19 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI TS 102 809 — application signalling (AIT)](enums/ts_102_809/) | 14 |
+| Prose references | [ISO/IEC 13818-6 — DSM-CC (hand transcription, provenance-documented)](text/iso_13818_6/) | 20 |
+| Prose references | [ETSI TR 101 211 — DVB SI implementation guidelines](text/tr_101_211/) | 9 |
+| Prose references | [ETSI TR 101 290 — DVB measurement guidelines](text/tr_101_290/) | 4 |
 
-## Text (prose references)
-
-| Standard | Files |
-|---|---|
-| ISO/IEC 13818-6 | [`text/iso_13818_6/`](text/iso_13818_6/) — DSM-CC carousel layouts (hand-transcribed) |
-| TR 101 211 | [`text/tr_101_211/`](text/tr_101_211/) — SI implementation guidelines |
-| TR 101 290 | [`text/tr_101_290/`](text/tr_101_290/) — TS monitoring indicator tables |
+<!-- END GENERATED: dvb-si-docs-index -->

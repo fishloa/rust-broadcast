@@ -4,6 +4,24 @@
 //! [`crate::collect`] to assemble complete logical tables that span multiple
 //! sections.
 //!
+//! # What is here
+//!
+//! | Family | Modules (table_id) | Standard |
+//! |---|---|---|
+//! | MPEG-2 PSI | [`pat`] (0x00), [`cat`] (0x01), [`pmt`] (0x02), [`tsdt`] (0x03) | Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 |
+//! | DSM-CC | [`dsmcc`] (0x3A–0x3F), [`mpe`] (0x3E typed MPE view) | ISO/IEC 13818-6, ETSI EN 301 192 |
+//! | DVB SI | [`nit`] (0x40/0x41), [`sdt`] (0x42/0x46), [`bat`] (0x4A), [`sat`] (0x4D), [`eit`] (0x4E–0x6F), [`tdt`] (0x70), [`rst`] (0x71), [`st`] (0x72), [`tot`] (0x73), [`dit`] (0x7E), [`sit`] (0x7F) | ETSI EN 300 468 |
+//! | Data broadcasting / SSU | [`unt`] (0x4B), [`int`] (0x4C), [`mpe_fec`] (0x78), [`mpe_ifec`] (0x7A) | ETSI TS 102 006, EN 301 192, TS 102 772 |
+//! | Applications | [`ait`] (0x74), [`protection_message`] (0x7B) | ETSI TS 102 809 |
+//! | TV-Anytime | [`container`] (0x75), [`rct`] (0x76), [`cit`] (0x77), [`rnt`] (0x79) | ETSI TS 102 323 |
+//! | Subtitling fonts | [`downloadable_font_info`] (0x7C) | ETSI EN 303 560 |
+//!
+//! [`AnyTableSection`] dispatches by table_id (generated from one
+//! `declare_tables!` list); [`TableRegistry`] adds private table_ids. The
+//! per-table_id reference with verified clauses, and the table_ids no module
+//! implements yet, is generated into
+//! [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#tables-table_id).
+//!
 //! # Reserved-bit policy (parse tolerant, serialize re-emits)
 //!
 //! Every `reserved` / `reserved_future_use` bit of a section header and body

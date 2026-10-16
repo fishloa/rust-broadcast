@@ -1,16 +1,103 @@
-//! ETSI EN 300 468 v1.20.1 DVB Service Information parser and builder.
+//! DVB Service Information (ETSI EN 300 468 V1.20.1) and MPEG-2 PSI — a typed
+//! parser **and** builder for every table and descriptor a DVB transport stream
+//! carries.
 //!
-//! `dvb-si` turns a raw MPEG-TS into typed, decoded DVB sections and complete
-//! logical tables: feed packets in, get back PAT/PMT/SDT/EIT/… section structs
-//! whose text fields decode to UTF-8 and
-//! whose descriptor loops walk into typed descriptors. Every layout is cited to
-//! the ETSI spec and round-trip tested; the same types serialize back to bytes.
+//! `dvb-si` turns the signalling inside an MPEG transport stream — PAT/PMT,
+//! NIT/SDT/BAT, the EIT programme guide, the TDT/TOT clock, the HbbTV AIT, SSU
+//! and IP/MAC notification tables, DSM-CC data and object carousels — into typed
+//! Rust values whose text fields decode to UTF-8 and whose descriptor loops walk
+//! into typed descriptors, and turns those values back into byte-identical wire
+//! sections. Every layout is cited to its spec clause and round-trip tested
+//! against real broadcast captures.
 //!
-//! # 30-second quickstart
+//! # At a glance
 //!
-//! Build a [`demux::SiDemux`], feed it TS packets, match on
-//! [`tables::AnyTableSection`], walk the descriptor loop with
-//! [`descriptors::DescriptorLoop::iter`], and print decoded text via
+//! The counts below are generated from the crate's own dispatch lists by
+//! `tools/gen-dvbsi-coverage.py` (CI fails when they go stale). The full
+//! per-code reference — standard, verified clause, Rust type and status for every
+//! table_id and descriptor tag, plus every allocated code that is **not**
+//! implemented — is
+//! [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md).
+//!
+//! <!-- BEGIN GENERATED: dvb-si-at-a-glance (tools/gen-dvbsi-coverage.py) -->
+//!
+//! | | |
+//! |---|---|
+//! | Section types (table_id) | **28** typed `*Section` parsers covering **67** table_id values — every allocated EN 300 468 Table 2 id |
+//! | Descriptors (tag 0x00–0x7F) | **106** auto-dispatched: **42** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
+//! | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
+//! | MPEG-2 extension descriptors (0x3F) | **7** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
+//! | AIT descriptors (TS 102 809 / MHP) | **9** typed in the separate AIT descriptor namespace |
+//! | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
+//! | Text (EN 300 468 Annex A) | **7** charset decoders covering every Table A.3 selector + Annex A.1 control codes |
+//! | DSM-CC carousel | **12** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree |
+//! | Registries | **171** CA_system_id and **174** private_data_specifier names (TSDuck data, build-time) |
+//! | Standards | **19** standards / families — see the table below |
+//! | Known gaps | **88** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
+//!
+//! ### Standards supported
+//!
+//! | Standard | Title | Edition implemented | Scope covered | Status |
+//! |---|---|---|---|---|
+//! | ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (97/97 allocated codes) |
+//! | Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (51/85 allocated codes) |
+//! | ISO/IEC 13818-6 | DSM-CC (data/object carousel) | as profiled by ETSI TR 101 202 V1.2.1 (13818-6 itself is not vendored) | DSM-CC sections, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel_identifier + association_tag descriptors | Partial (3/5 allocated codes) |
+//! | ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Partial (5/28 allocated codes) |
+//! | ETSI TS 102 006 | DVB System Software Update (SSU) | V1.7.1 (some module docs still cite V1.4.1) | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Partial (1/16 allocated codes) |
+//! | ETSI TS 102 809 | Application signalling (HbbTV AIT) | V1.3.1 | AIT section, AIT descriptor namespace, application_signalling + service_identifier descriptors, protection message section + descriptor | Partial (12/16 allocated codes) |
+//! | ETSI TS 102 727 | DVB-MHP 1.1.3 | V1.1.1 (descriptor subset) | DVB-J application + location AIT descriptors, XAIT_location, XAIT_PID | Partial (4/10 allocated codes) |
+//! | ETSI TS 102 323 | TV-Anytime carriage in DVB | V1.4.1 | container, RCT, CIT, RNT sections; default_authority, related_content, TVA_id, content_identifier descriptors | Partial (8/11 allocated codes) |
+//! | ETSI TS 102 772 | MPE-IFEC | V1.1.1 | MPE-IFEC section | Full (1/1 allocated codes) |
+//! | ETSI EN 303 560 | DVB TTML subtitling | V1.1.1 | TTML_subtitling descriptor, downloadable font info section (DFIS) | Full (2/2 allocated codes) |
+//! | ETSI TS 102 825-9 | CPCM system adaptation | V1.2.1 | cpcm_delivery_signalling extension descriptor | Full (1/1 allocated codes) |
+//! | ETSI TS 101 154 | Audio/video coding in DVB | V2.10.1 | PMT `StreamType` values incl. AVS2/AVS3 (0xD2–0xD5); AVS private_data_specifier rules | Partial |
+//! | ETSI TS 101 162 | DVB identifiers | registry data from TSDuck (see registries/README.md) | CA_system_id and private_data_specifier value → name lookups | Partial |
+//! | NorDig Unified Requirements | Nordic IRD requirements | v3.2.2 (2025-11) | logical channel descriptor v1 (0x83) + v2 (0x87), PDS 0x00000029 | Full (scoped) |
+//! | EACEM / D-Book | Logical channel numbering | private (PDS 0x00000028); no vendored spec | logical_channel descriptor (0x83) | Full (scoped) |
+//! | GY/T 270-2013 | China DTV closed captions | 2013 | caption_service_descriptor (0x86), `StreamType::ChinaClosedCaption` | Full (scoped) |
+//! | GY/T 420-2025, GY/T 422-2025 | China UHD encapsulation / multi-audio | 2025 | AVS2_video (0x40 under 'AVSV'), AVS3_video; GY/T 422 audio_preselection profile | Full (scoped) |
+//! | T/AI 109.6-2022, T/AI 109.7-2024 | AVS3 media format / audio transport | 2022 / 2024 | AVS3_video (0xD1), AVS3_audio (0xD2), AVS2_audio (0xD3) | Full (scoped) |
+//! | T/UWA 012.2-2023 | UWA UHD TS encapsulation | 2023 | older AVS3 video descriptor (tag 62) | Full (scoped) |
+//!
+//! Status: **Full** = every code the edition allocates is typed; **Partial** = some are (the tally counts allocated codes, so a single untyped one shows); **Full (scoped)** = typed, but only decoded inside the private_data_specifier / registration scope the standard requires (opt in via `DescriptorRegistry`); **Not implemented** = bytes are preserved but not typed. Every count above is generated by `tools/gen-dvbsi-coverage.py` from the crate's dispatch lists and CI fails if it goes stale.
+//!
+//! <!-- END GENERATED: dvb-si-at-a-glance -->
+//!
+//! # Quick start
+//!
+//! ## Parse one section, then serialize it back
+//!
+//! The bytes are the PAT of a real French TNT capture committed in the
+//! repository. Every parser has a symmetric serializer, so the round trip is
+//! byte-identical:
+//!
+//! ```
+//! use broadcast_common::{Parse, Serialize};
+//! use dvb_si::tables::AnyTableSection;
+//! use dvb_si::tables::pat::PatSection;
+//!
+//! let section: [u8; 36] = [
+//!     0x00, 0xB0, 0x21, 0x00, 0x06, 0xE5, 0x00, 0x00, 0x00, 0x00, 0xE0, 0x10,
+//!     0x06, 0x01, 0xE0, 0x64, 0x06, 0x06, 0xE2, 0x58, 0x06, 0x08, 0xE1, 0xF4,
+//!     0x06, 0x09, 0xE2, 0xBC, 0x06, 0x0A, 0xE0, 0xC8, 0x98, 0xF3, 0xCC, 0x2D,
+//! ];
+//!
+//! // Known type: parse it directly. Unknown type: dispatch on table_id.
+//! let pat = PatSection::parse(&section)?;
+//! assert_eq!(pat.entries.len(), 6); // the NIT pointer + five programmes
+//! assert!(matches!(AnyTableSection::parse(&section)?, AnyTableSection::PatSection(_)));
+//!
+//! let mut out = vec![0u8; pat.serialized_len()];
+//! pat.serialize_into(&mut out)?;
+//! assert_eq!(out, section);
+//! # Ok::<(), dvb_si::Error>(())
+//! ```
+//!
+//! ## Pump TS packets
+//!
+//! Build a [`demux::SiDemux`] (feature `ts`), feed it 188-byte packets, match on
+//! [`tables::AnyTableSection`], walk descriptor loops with
+//! [`descriptors::DescriptorLoop::iter`], and decode text with
 //! [`text::DvbText::decode`]:
 //!
 //! ```
@@ -72,7 +159,33 @@
 //! # }
 //! ```
 //!
-//! # Layer map
+//! ## Private descriptors inside their scope
+//!
+//! Private tags are never auto-dispatched; a [`descriptors::DescriptorRegistry`]
+//! opts in, scoped by the `private_data_specifier_descriptor` in front of them:
+//!
+//! ```
+//! use dvb_si::descriptors::nordig::NordigLogicalChannelV1;
+//! use dvb_si::descriptors::{AnyDescriptor, DescriptorLoop, DescriptorRegistry};
+//!
+//! // PDS 0x00000029 (NorDig), then NorDig LCD v1: service 1, visible, LCN 5.
+//! let bytes = [0x5F, 0x04, 0x00, 0x00, 0x00, 0x29, 0x83, 0x04, 0x00, 0x01, 0xC0, 0x05];
+//! let mut registry = DescriptorRegistry::new();
+//! registry.with_nordig_lcn();
+//! let items: Vec<_> = DescriptorLoop::new(&bytes)
+//!     .iter_with(&registry)
+//!     .collect::<Result<_, _>>()?;
+//! match &items[1] {
+//!     AnyDescriptor::Other { value, .. } => {
+//!         let lcd = value.downcast_ref::<NordigLogicalChannelV1>().unwrap();
+//!         assert_eq!(lcd.entries[0].logical_channel_number, 5);
+//!     }
+//!     other => panic!("expected the NorDig LCD, got {other:?}"),
+//! }
+//! # Ok::<(), dvb_si::Error>(())
+//! ```
+//!
+//! # Architecture
 //!
 //! ```text
 //! TS packets ─▶ demux::SiDemux ─▶ SectionEvent
@@ -93,10 +206,51 @@
 //!                                                  complete logical tables
 //! ```
 //!
-//! Each layer is independently usable: a caller who already has complete section
-//! bytes can skip [`demux`] and call [`tables::AnyTableSection::parse`] directly; a
-//! caller with a bare descriptor loop can call [`descriptors::parse_loop`] on it.
-//! Use [`collect`] when a table spans multiple sections.
+//! | Module | What it holds |
+//! |---|---|
+//! | [`tables`] | one `*Section` type per table_id (PSI, SI, AIT, UNT, INT, MPE, TV-Anytime, …) + [`tables::AnyTableSection`] dispatch + [`tables::TableRegistry`] |
+//! | [`descriptors`] | one module per descriptor tag; [`descriptors::AnyDescriptor`] / [`descriptors::DescriptorLoop`]; [`descriptors::extension`] (tag 0x7F bodies), [`descriptors::mpeg2_extension`] (tag 0x3F, MPEG-H), [`descriptors::ait`] (AIT namespace); [`descriptors::DescriptorRegistry`] / [`descriptors::ExtensionRegistry`] for private ones |
+//! | [`carousel`] | DSM-CC download protocol (DSI/DII/DDB), [`carousel::ModuleReassembler`], BIOP object carousel and [`carousel::CarouselFs`] |
+//! | [`compatibility`] | the DSM-CC / SSU `compatibilityDescriptor()` structure |
+//! | [`text`] | [`text::DvbText`] / [`text::LangCode`] — EN 300 468 Annex A decoding |
+//! | [`collect`] | multi-section collection: [`collect::SectionSetCollector`], [`collect::EitCollector`], complete NIT/BAT/SDT/EIT views |
+//! | `demux` | [`SiDemux`](crate::demux::SiDemux): PID-filtered, CRC-checked, version-gated section pump (feature `ts`) |
+//! | `epg` | `EpgStore`: bounded EPG with now/next and schedules (feature `chrono`) |
+//! | `owned` | `Owned<T>`: keep a zero-copy view past its buffer (feature `yoke`) |
+//! | [`table_id`] / [`descriptor_tag`] | the typed [`TableId`] / [`DescriptorTag`] enums |
+//! | [`traits`] | `TableDef` / `DescriptorDef` — the per-type consts the dispatch lists are generated from |
+//! | [`error`] | the structured [`Error`] every parser and serializer returns |
+//!
+//! # Standards
+//!
+//! ETSI EN 300 468 V1.20.1 (DVB SI, incl. Annex A text and Annexes D/G/H/L
+//! audio descriptors), Rec. ITU-T H.222.0 | ISO/IEC 13818-1 (PSI + descriptors,
+//! MPEG-H 3D audio), ISO/IEC 13818-6 as profiled by ETSI TR 101 202 (DSM-CC),
+//! ETSI EN 301 192 (data broadcasting: MPE, MPE-FEC, INT), ETSI TS 102 006
+//! (SSU/UNT), ETSI TS 102 809 (AIT, protection messages), ETSI TS 102 727 (MHP
+//! subset), ETSI TS 102 323 (TV-Anytime: container, RCT, CIT, RNT), ETSI TS
+//! 102 772 (MPE-IFEC), ETSI EN 303 560 (TTML subtitling, DFIS), ETSI TS
+//! 102 825-9 (CPCM), and the PDS-scoped regional extensions (NorDig, EACEM /
+//! D-Book, China GY/T 270 / 420 / 422, T/AI 109.6 / 109.7, T/UWA 012.2). The
+//! table above gives each one's edition and status; `docs/COVERAGE.md` lists
+//! every code.
+//!
+//! # Which API do I use?
+//!
+//! - **A TS source** → [`demux::SiDemux`], then `SectionEvent::table_section()`.
+//! - **Complete section bytes** → [`tables::AnyTableSection::parse`] (or a
+//!   specific `tables::<t>::<T>Section::parse`; `parse_with` adds a
+//!   [`tables::TableRegistry`]).
+//! - **A table spanning sections** → [`collect`]; **an EPG** → `epg::EpgStore`.
+//! - **A descriptor loop** → [`descriptors::DescriptorLoop::iter`] (or
+//!   [`descriptors::parse_loop`] on a bare slice); unknown tags become
+//!   [`descriptors::AnyDescriptor::Unknown`], never a panic.
+//! - **Private / regional descriptors** →
+//!   [`descriptors::DescriptorLoop::iter_with`] a [`descriptors::DescriptorRegistry`].
+//! - **Emitting SI** → build the struct with `new(..)`, then
+//!   [`Serialize::serialize_into`](broadcast_common::Serialize::serialize_into);
+//!   packetise with `mpeg-ts`.
+//! - **JSON** → the `serde` feature (serialize-only; re-parse from wire bytes).
 //!
 //! # RFU policy
 //!
@@ -131,48 +285,39 @@
 //! test re-serializes every descriptor found in the real-capture archive and
 //! requires byte-identity.
 //!
+//! # Design notes
+//!
+//! - **Zero-copy, symmetric.** Every wire type implements
+//!   [`Parse`](broadcast_common::Parse) (borrowing from the input) and
+//!   [`Serialize`](broadcast_common::Serialize); every type has a round-trip
+//!   test. Over-wide values are `Error::FieldOverflow` on serialize, never
+//!   masked.
+//! - **One dispatch list per namespace.** [`tables::AnyTableSection`],
+//!   [`descriptors::AnyDescriptor`], the extension bodies and
+//!   [`descriptors::AnyAitDescriptor`] are generated from single `declare_*!`
+//!   lists with drift tests, so dispatch (and the generated docs) cannot drift
+//!   from the implemented set.
+//! - **Labels.** Every spec/field enum has `name()` and a `Display` from
+//!   `broadcast_common::impl_spec_display!`.
+//! - **`#[non_exhaustive]`** public types with `new(..)` constructors, so
+//!   additions are not breaking.
+//!
 //! # Features
 //!
 //! | Feature | Default | Enables |
 //! |---|---|---|
-//! | `chrono` | on | MJD + BCD time fields decode to `chrono::DateTime<Utc>` (EIT `start_time()`, TDT/TOT). Off → raw bytes. |
-//! | `ts` | on | [`demux::SiDemux`], `mpeg_ts::ts::SectionReassembler`, TS packet parsing (framing now in the `mpeg-ts` crate). Off → bring your own complete section bytes. |
+//! | `std` | on | Links `std`. Off → `#![no_std]` + `alloc`; the non-Latin text charsets and wall-clock time need `std`. |
+//! | `chrono` | on | MJD + BCD time fields also decode to `chrono::DateTime<Utc>` (EIT `start_time_chrono()`, TDT/TOT `utc_time()`), local time offsets to `chrono::Duration`; the `epg` module. Off → `broadcast_common::time::MjdBcdDateTime` and raw bytes only. |
+//! | `ts` | on | [`demux::SiDemux`] over 188-byte TS packets (framing from the `mpeg-ts` crate). Off → bring your own complete section bytes. |
 //! | `serde` | on | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on every table/descriptor; [`text::DvbText`] serializes as its **decoded** UTF-8 string (camelCase JSON). |
 //! | `yoke` | off | `yoke::Yokeable` on every zero-copy view type + the `owned::Owned` wrapper — own a parsed view past the input buffer's borrow (store/cache/send across threads) without re-parsing or a mirror type. |
+//! | `flate2` | off | zlib decompression of `compressed_module_descriptor` modules in object carousels (implies `std`). |
 //!
 //! ```toml
-//! dvb-si = { version = "11", default-features = false }  # tight, no_std-ish build
+//! dvb-si = { version = "11", default-features = false }  # no_std + alloc
 //! ```
 //!
-//! # Entry points
-//!
-//! - [`demux::SiDemux`] — PID-filtered, version-gated section pump (feature `ts`).
-//! - [`tables::AnyTableSection`] / [`descriptors::AnyDescriptor`] — trait-driven
-//!   dispatch on table_id / descriptor_tag; [`descriptors::parse_loop`] walks a
-//!   loop lazily.
-//! - [`collect`] — generic multi-section collection plus complete NIT/BAT/SDT/EIT
-//!   views with typed descriptor loops.
-//! - [`descriptors::DescriptorRegistry`] — register private descriptors at runtime.
-//! - [`descriptors::ExtensionRegistry`] — register private tag-extension
-//!   sub-descriptors at runtime.
-//! - [`tables::TableRegistry`] — register private table_ids at runtime.
-//! - [`text::DvbText`] / [`text::LangCode`] — decoded-on-demand Annex A text.
-//! - [`Parse`](broadcast_common::Parse) / [`Serialize`](broadcast_common::Serialize) — the two
-//!   symmetric contracts every table and descriptor implements.
-//! - [`tables`] — `*Section` parsers for PAT, PMT, CAT, TSDT, NIT, BAT, SDT,
-//!   EIT, TDT, TOT, RST, DIT, SIT, ST, SAT, AIT, DSM-CC section, UNT, INT, RCT,
-//!   CIT, RNT, Container, MPE datagram, MPE-FEC, MPE-IFEC, protection message,
-//!   downloadable font info — every allocated table_id in EN 300 468 V1.20.1
-//!   Table 2.
-//! - [`descriptors`] — every DVB descriptor (tags 0x40..0x7F) plus MPEG-2 descriptors.
-//! - [`carousel`] — DSM-CC data-carousel messages (DSI/DII/DDB) + module
-//!   reassembly on top of the [`tables::dsmcc`] section framing.
-//! - `mpeg_ts::pid::well_known` — reserved DVB/MPEG-2 PIDs (now in the `mpeg-ts` crate).
-//! - [`table_id::TableId`] — typed table_id enum.
-//! - [`descriptor_tag::DescriptorTag`] — typed descriptor_tag enum.
-//!
-//! See the crate README and `docs/` for the structured spec reference.
-//! `MIGRATION-4.0.md` covers the 3.x → 4.0 API break.
+//! MSRV 1.95.0. `MIGRATION-4.0.md` covers the 3.x → 4.0 API break.
 
 #![warn(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -186,6 +331,10 @@
 #![doc = "```\n\n## `list_services`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/list_services.rs")]
 #![doc = "```"]
+// The README is the crates.io landing page; `cfg(doctest)` is set only while
+// rustdoc collects doctests, so every Rust snippet in it is compiled and run
+// by `cargo test --doc` without the README text appearing on docs.rs.
+#![cfg_attr(doctest, doc = include_str!("../README.md"))]
 
 extern crate alloc;
 
