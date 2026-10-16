@@ -481,9 +481,19 @@ impl EventLinkageInfo {
 #[non_exhaustive]
 pub enum TargetId {
     /// `target_id_type == 3` — user_defined_id (16 bits).
+    #[non_exhaustive]
     UserDefined {
         /// User-defined target service identifier.
         user_defined_id: u16,
+        /// `original_network_id_flag` as it sits on the wire. With
+        /// `target_id_type == 3` it selects no field (the ONID is never
+        /// present) but the bit is still transmitted; kept so a parsed
+        /// descriptor re-serializes byte-identically (`8E` stays `8E`).
+        /// [`TargetId::user_defined`] defaults it to `false`.
+        original_network_id_flag: bool,
+        /// `service_id_flag` as it sits on the wire; see
+        /// `original_network_id_flag`. Defaults to `false`.
+        service_id_flag: bool,
     },
     /// `target_id_type != 3` — DVB addressing with optional sub-fields.
     Dvb {
@@ -499,6 +509,17 @@ pub enum TargetId {
 }
 
 impl TargetId {
+    /// Build a `target_id_type == 3` target with both (meaningless) flag bits
+    /// clear.
+    #[must_use]
+    pub const fn user_defined(user_defined_id: u16) -> Self {
+        TargetId::UserDefined {
+            user_defined_id,
+            original_network_id_flag: false,
+            service_id_flag: false,
+        }
+    }
+
     /// Wire `target_id_type` this target encodes.
     #[must_use]
     pub fn target_id_type(&self) -> TargetIdType {
@@ -556,7 +577,9 @@ impl TargetId {
             });
         }
         match self {
-            TargetId::UserDefined { user_defined_id } => {
+            TargetId::UserDefined {
+                user_defined_id, ..
+            } => {
                 buf[..2].copy_from_slice(&user_defined_id.to_be_bytes());
             }
             TargetId::Dvb {
@@ -629,10 +652,23 @@ impl ExtendedEventLinkageEntry {
             0x03,
             "target_id_type",
         )? << 2;
-        if self.target_id.target_original_network_id().is_some() {
+        let (onid_flag, sid_flag) = match &self.target_id {
+            // No ONID/SID field exists for user_defined_id; the flag bits are
+            // still on the wire and are carried verbatim.
+            TargetId::UserDefined {
+                original_network_id_flag,
+                service_id_flag,
+                ..
+            } => (*original_network_id_flag, *service_id_flag),
+            other => (
+                other.target_original_network_id().is_some(),
+                other.target_service_id().is_some(),
+            ),
+        };
+        if onid_flag {
             byte2 |= EXT_ONID_FLAG_MASK;
         }
-        if self.target_id.target_service_id().is_some() {
+        if sid_flag {
             byte2 |= EXT_SID_FLAG_MASK;
         }
         buf[2] = byte2;
@@ -869,7 +905,11 @@ fn parse_extended_event_linkage(bytes: &[u8]) -> Result<ExtendedEventLinkageInfo
 
         let target_id = if target_id_type == TargetIdType::UseUserDefinedId {
             let user_defined_id = read_u16(&mut pos)?;
-            TargetId::UserDefined { user_defined_id }
+            TargetId::UserDefined {
+                user_defined_id,
+                original_network_id_flag,
+                service_id_flag,
+            }
         } else {
             let target_transport_stream_id =
                 if target_id_type == TargetIdType::UseTargetTransportStreamId {
@@ -1160,9 +1200,7 @@ mod tests {
                 assert_eq!(e.target_id.target_id_type(), TargetIdType::UseUserDefinedId);
                 assert_eq!(
                     e.target_id,
-                    TargetId::UserDefined {
-                        user_defined_id: 0x5678
-                    }
+                    TargetId::user_defined(0x5678)
                 );
             }
             other => panic!("expected ExtendedEventLinkage, got {other:?}"),

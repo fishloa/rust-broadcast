@@ -653,6 +653,13 @@ pub struct ShModulation {
     /// Interleaver block; `Some` encodes `interleaver_presence==1`, the variant
     /// encodes `interleaver_type`.
     pub interleaver: Option<ShInterleaver>,
+    /// The `interleaver_type` bit as it sits on the wire when
+    /// `interleaver_presence == 0` (EN 300 468 Table 119 always carries the
+    /// bit; with no interleaver block it selects nothing). Captured on parse
+    /// and re-emitted verbatim so `3F` does not come back as `1F`; ignored
+    /// when `interleaver` is `Some` (the variant encodes the type there).
+    /// [`ShModulation::new`] defaults it to `false` (`0`).
+    pub interleaver_type_when_absent: bool,
 }
 
 impl ShModulation {
@@ -663,6 +670,7 @@ impl ShModulation {
             modulation,
             reserved_future_use: MODULATION_RESERVED_FUTURE_USE_DEFAULT,
             interleaver,
+            interleaver_type_when_absent: false,
         }
     }
 }
@@ -893,6 +901,7 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                 modulation,
                 reserved_future_use: flags_reserved,
                 interleaver,
+                interleaver_type_when_absent: interleaver.is_none() && interleaver_type == 1,
             });
         }
         Ok(ShDeliverySystem {
@@ -940,8 +949,11 @@ impl Serialize for ShDeliverySystem {
         for m in &self.modulations {
             let modulation_type_bit = matches!(m.modulation, ShModulationMode::Ofdm { .. }) as u8;
             let interleaver_presence_bit = m.interleaver.is_some() as u8;
-            let interleaver_type_bit =
-                matches!(m.interleaver, Some(ShInterleaver::Type1 { .. })) as u8;
+            let interleaver_type_bit = match m.interleaver {
+                Some(ShInterleaver::Type1 { .. }) => 1,
+                Some(_) => 0,
+                None => u8::from(m.interleaver_type_when_absent),
+            };
             buf[p] = (modulation_type_bit << 7)
                 | (interleaver_presence_bit << 6)
                 | (interleaver_type_bit << 5)
