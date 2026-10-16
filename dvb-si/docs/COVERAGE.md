@@ -31,12 +31,13 @@ text; **Source cites** is what the module's own doc comment says (see the
 | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
 | MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
 | AIT descriptors (TS 102 809 / MHP) | **9** typed in the separate AIT descriptor namespace |
+| INT / UNT / RNT descriptors | **26** typed in their own scoped namespaces (`AnyIntDescriptor`, `AnyUntDescriptor`, `AnyRntDescriptor`) |
 | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
 | Text (EN 300 468 Annex A) | **7** charset decoders covering every Table A.3 selector + Annex A.1 control codes |
 | DSM-CC carousel | **12** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree |
 | Registries | **171** CA_system_id and **174** private_data_specifier names (TSDuck data, build-time) |
 | Standards | **19** standards / families — see the table below |
-| Known gaps | **59** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
+| Known gaps | **28** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
 
 ## Standards
 
@@ -45,11 +46,11 @@ text; **Source cites** is what the module's own doc comment says (see the
 | ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (97/97 allocated codes) |
 | Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (80/85 allocated codes) |
 | ISO/IEC 13818-6 | DSM-CC (data/object carousel) | as profiled by ETSI TR 101 202 V1.2.1 (13818-6 itself is not vendored) | DSM-CC sections, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel_identifier + association_tag descriptors | Partial (3/5 allocated codes) |
-| ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Partial (5/28 allocated codes) |
-| ETSI TS 102 006 | DVB System Software Update (SSU) | V1.7.1 (some module docs still cite V1.4.1) | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Partial (1/16 allocated codes) |
+| ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Partial (20/28 allocated codes) |
+| ETSI TS 102 006 | DVB System Software Update (SSU) | V1.4.1 | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Partial (14/16 allocated codes) |
 | ETSI TS 102 809 | Application signalling (HbbTV AIT) | V1.3.1 | AIT section, AIT descriptor namespace, application_signalling + service_identifier descriptors, protection message section + descriptor | Partial (12/16 allocated codes) |
 | ETSI TS 102 727 | DVB-MHP 1.1.3 | V1.1.1 (descriptor subset) | DVB-J application + location AIT descriptors, XAIT_location, XAIT_PID | Partial (4/10 allocated codes) |
-| ETSI TS 102 323 | TV-Anytime carriage in DVB | V1.4.1 | container, RCT, CIT, RNT sections; default_authority, related_content, TVA_id, content_identifier descriptors | Partial (8/11 allocated codes) |
+| ETSI TS 102 323 | TV-Anytime carriage in DVB | V1.4.1 | container, RCT, CIT, RNT sections; default_authority, related_content, TVA_id, content_identifier descriptors | Full (11/11 allocated codes) |
 | ETSI TS 102 772 | MPE-IFEC | V1.1.1 | MPE-IFEC section | Full (1/1 allocated codes) |
 | ETSI EN 303 560 | DVB TTML subtitling | V1.1.1 | TTML_subtitling descriptor, downloadable font info section (DFIS) | Full (2/2 allocated codes) |
 | ETSI TS 102 825-9 | CPCM system adaptation | V1.2.1 | cpcm_delivery_signalling extension descriptor | Full (1/1 allocated codes) |
@@ -89,8 +90,8 @@ values are omitted.
 | 0x42 | service_description_section (actual) | ETSI EN 300 468 V1.20.1 | 5.2.3 | ETSI EN 300 468 §5.2.3 | [`SdtSection`](../src/tables/sdt.rs) | Full |
 | 0x46 | service_description_section (other) | ETSI EN 300 468 V1.20.1 | 5.2.3 | ETSI EN 300 468 §5.2.3 | [`SdtSection`](../src/tables/sdt.rs) | Full |
 | 0x4A | bouquet_association_section | ETSI EN 300 468 V1.20.1 | 5.2.2 | ETSI EN 300 468 §5.2.2 | [`BatSection`](../src/tables/bat.rs) | Full |
-| 0x4B | update_notification_section (UNT) | ETSI TS 102 006 V1.7.1 | 9.4 | ETSI TS 102 006 v1.4.1 §9.4 | [`UntSection`](../src/tables/unt.rs) | Full |
-| 0x4C | IP/MAC_notification_section (INT) | ETSI EN 301 192 V1.7.1 | 8.4 | ETSI EN 301 192 v1.7.1 §8.4 | [`IntSection`](../src/tables/int.rs) | Full |
+| 0x4B | update_notification_section (UNT) | ETSI TS 102 006 V1.4.1 | 9.4 | ETSI TS 102 006 V1.4.1 §9.4 | [`UntSection`](../src/tables/unt.rs) | Full |
+| 0x4C | IP/MAC_notification_section (INT) | ETSI EN 301 192 V1.7.1 | 8.4 | ETSI EN 301 192 V1.7.1 §8.4 | [`IntSection`](../src/tables/int.rs) | Full |
 | 0x4D | satellite_access_section (SAT) | ETSI EN 300 468 V1.20.1 | 5.2.11 | ETSI EN 300 468 §5.2.11 | [`SatSection`](../src/tables/sat.rs) | Full |
 | 0x4E | event_information_section (actual, present/following) | ETSI EN 300 468 V1.20.1 | 5.2.4 | ETSI EN 300 468 §5.2.4 | [`EitSection`](../src/tables/eit.rs) | Full |
 | 0x4F | event_information_section (other, present/following) | ETSI EN 300 468 V1.20.1 | 5.2.4 | ETSI EN 300 468 §5.2.4 | [`EitSection`](../src/tables/eit.rs) | Full |
@@ -105,7 +106,7 @@ values are omitted.
 | 0x76 | related_content_section (RCT) | ETSI TS 102 323 V1.4.1 | 10.4 | ETSI TS 102 323 v1.4.1 §10.4 | [`RctSection`](../src/tables/rct.rs) | Full |
 | 0x77 | content_identifier_section (CIT) | ETSI TS 102 323 V1.4.1 | 12.2 | ETSI TS 102 323 v1.4.1 §12.2 | [`CitSection`](../src/tables/cit.rs) | Full |
 | 0x78 | MPE-FEC_section | ETSI EN 301 192 V1.7.1 | 9.9 | ETSI EN 301 192 v1.7.1 §9.9 (table_id 0x78) | [`MpeFecSection`](../src/tables/mpe_fec.rs) | Full |
-| 0x79 | resolution_provider_notification_section (RNT) | ETSI TS 102 323 V1.4.1 | 5.2.2 | ETSI TS 102 323 v1.4.1 §5.2.2 | [`RntSection`](../src/tables/rnt.rs) | Full |
+| 0x79 | resolution_provider_notification_section (RNT) | ETSI TS 102 323 V1.4.1 | 5.2.2 | ETSI TS 102 323 V1.4.1 §5.2.2 | [`RntSection`](../src/tables/rnt.rs) | Full |
 | 0x7A | MPE-IFEC_section | ETSI TS 102 772 V1.1.1 | 5.2 | ETSI TS 102 772 v1.1.1 §5.2 (table_id 0x7A) | [`MpeIfecSection`](../src/tables/mpe_ifec.rs) | Full |
 | 0x7B | protection_message_section | ETSI TS 102 809 V1.3.1 | 9 | ETSI TS 102 809 v1.3.1 §9 (table_id 0x7B) | [`ProtectionMessageSection`](../src/tables/protection_message.rs) | Full |
 | 0x7C | downloadable_font_info_section (DFIS) | ETSI EN 303 560 V1.1.1 | — | ETSI EN 303 560 v1.1.1 §5.3.2.3.1 (table_id 0x7C) | [`DownloadableFontInfoSection`](../src/tables/downloadable_font_info.rs) | Full |
@@ -363,46 +364,49 @@ Table 38 (HbbTV) plus the MHP-only tags of ETSI TS 102 727 V1.1.1.
 ## INT, UNT, data-carousel and RNT scoped descriptors
 
 These standards define their own descriptor tag spaces (EN 301 192 and TS 102 006 forbid
-MPEG descriptors 0x00–0x3F in the INT/UNT). Only the DSM-CC `compressed_module_descriptor`
-is typed today.
+MPEG descriptors 0x00–0x3F in the INT/UNT; TS 102 323 Table 4 overrides 0x40–0x42 inside the
+RNT). Each table's loops are walked by its own namespace (`parse_int_loop` / `AnyIntDescriptor`,
+`parse_unt_loop` / `AnyUntDescriptor`, `parse_rnt_loop` / `AnyRntDescriptor`), which falls back
+to the SI dispatch (`Si`) for the tags the spec hands back to EN 300 468. Of the DSM-CC
+data-carousel descriptors only `compressed_module_descriptor` is typed today.
 
 ### INT (ETSI EN 301 192 V1.7.1 Table 19)
 
 | tag | Descriptor | Standard | Clause (verified) | Source cites | Rust type | Status |
 |---|---|---|---|---|---|---|
-| 0x06 | target_smartcard_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x07 | target_MAC_address_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x08 | target_serial_number_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x09 | target_IP_address_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0A | target_IPv6_address_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0C | IP/MAC_platform_name_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0D | IP/MAC_platform_provider_name_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0E | target_MAC_address_range_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0F | target_IP_slash_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x10 | target_IP_source_slash_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x11 | target_IPv6_slash_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x12 | target_IPv6_source_slash_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x13 | IP/MAC_stream_location_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x14 | ISP_access_mode_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x15 | IP/MAC_generic_stream_location_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.1 | — | — | Not implemented — INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
+| 0x06 | target_smartcard_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.5 | ETSI EN 301 192 V1.7.1 §8.4.5.5 Table 23 (INT) / ETSI TS 102 006 §9.5.2.1 Table 20 (UNT) (tag 0x06) | [`TargetSmartcardDescriptor`](../src/descriptors/target/smartcard.rs) | Full |
+| 0x07 | target_MAC_address_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.6 | ETSI EN 301 192 V1.7.1 §8.4.5.6 Table 24 (INT) / ETSI TS 102 006 §9.5.2.2 Table 21 (UNT) (tag 0x07) | [`TargetMacAddressDescriptor`](../src/descriptors/target/mac_address.rs) | Full |
+| 0x08 | target_serial_number_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.4 | ETSI EN 301 192 V1.7.1 §8.4.5.4 Table 22 (INT) / ETSI TS 102 006 §9.5.2.5 Table 24 (UNT) (tag 0x08) | [`TargetSerialNumberDescriptor`](../src/descriptors/target/serial_number.rs) | Full |
+| 0x09 | target_IP_address_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.8 | ETSI EN 301 192 V1.7.1 §8.4.5.8 Table 26 (INT) / ETSI TS 102 006 §9.5.2.3 Table 22 (UNT) (tag 0x09) | [`TargetIpAddressDescriptor`](../src/descriptors/target/ip_address.rs) | Full |
+| 0x0A | target_IPv6_address_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.11 | ETSI EN 301 192 V1.7.1 §8.4.5.11 Table 29 (INT) / ETSI TS 102 006 §9.5.2.4 Table 23 (UNT) (tag 0x0A) | [`TargetIpv6AddressDescriptor`](../src/descriptors/target/ipv6_address.rs) | Full |
+| 0x0C | IP/MAC_platform_name_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.2 | ETSI EN 301 192 V1.7.1 §8.4.5.2 Table 20 (tag 0x0C) | [`IpMacPlatformNameDescriptor`](../src/descriptors/int/platform_name.rs) | Full |
+| 0x0D | IP/MAC_platform_provider_name_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.3 | ETSI EN 301 192 V1.7.1 §8.4.5.3 Table 21 (tag 0x0D) | [`IpMacPlatformProviderNameDescriptor`](../src/descriptors/int/platform_provider_name.rs) | Full |
+| 0x0E | target_MAC_address_range_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.7 | ETSI EN 301 192 V1.7.1 §8.4.5.7 Table 25 (tag 0x0E) | [`TargetMacAddressRangeDescriptor`](../src/descriptors/int/target_mac_address_range.rs) | Full |
+| 0x0F | target_IP_slash_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.9 | ETSI EN 301 192 V1.7.1 §8.4.5.9 Table 27 (tag 0x0F) | [`TargetIpSlashDescriptor`](../src/descriptors/int/target_ip_slash.rs) | Full |
+| 0x10 | target_IP_source_slash_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.10 | ETSI EN 301 192 V1.7.1 §8.4.5.10 Table 28 (tag 0x10) | [`TargetIpSourceSlashDescriptor`](../src/descriptors/int/target_ip_source_slash.rs) | Full |
+| 0x11 | target_IPv6_slash_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.12 | ETSI EN 301 192 V1.7.1 §8.4.5.12 Table 30 (tag 0x11) | [`TargetIpv6SlashDescriptor`](../src/descriptors/int/target_ipv6_slash.rs) | Full |
+| 0x12 | target_IPv6_source_slash_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.13 | ETSI EN 301 192 V1.7.1 §8.4.5.13 Table 31 (tag 0x12) | [`TargetIpv6SourceSlashDescriptor`](../src/descriptors/int/target_ipv6_source_slash.rs) | Full |
+| 0x13 | IP/MAC_stream_location_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.14 | ETSI EN 301 192 V1.7.1 §8.4.5.14 Table 32 (tag 0x13) | [`IpMacStreamLocationDescriptor`](../src/descriptors/int/stream_location.rs) | Full |
+| 0x14 | ISP_access_mode_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.16 | ETSI EN 301 192 V1.7.1 §8.4.5.16 Table 36 (tag 0x14), access_mode per Table 37 | [`IspAccessModeDescriptor`](../src/descriptors/int/isp_access_mode.rs) | Full |
+| 0x15 | IP/MAC_generic_stream_location_descriptor | ETSI EN 301 192 V1.7.1 | 8.4.5.15 | ETSI EN 301 192 V1.7.1 §8.4.5.15 Table 33 (tag 0x15), modulation_system_type per Table 34, PHY_stream_id per Table 35 | [`IpMacGenericStreamLocationDescriptor`](../src/descriptors/int/generic_stream_location.rs) | Full |
 
-### UNT / SSU (ETSI TS 102 006 V1.7.1 Table 19)
+### UNT / SSU (ETSI TS 102 006 V1.4.1 Table 19)
 
 | tag | Descriptor | Standard | Clause (verified) | Source cites | Rust type | Status |
 |---|---|---|---|---|---|---|
-| 0x01 | scheduling_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x02 | update_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x03 | ssu_location_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x04 | message_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x05 | ssu_event_name_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x06 | target_smartcard_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x07 | target_MAC_address_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x08 | target_serial_number_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x09 | target_IP_address_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0A | target_IPv6_address_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0B | ssu_subgroup_association_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0C | enhanced_message_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
-| 0x0D | ssu_uri_descriptor | ETSI TS 102 006 V1.7.1 | 9.5.1 | — | — | Not implemented — UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #1285) |
+| 0x01 | scheduling_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.9 | ETSI TS 102 006 §9.5.2.9 Table 31 (UNT tag 0x01), time units per Table 32 | [`SchedulingDescriptor`](../src/descriptors/unt/scheduling.rs) | Full |
+| 0x02 | update_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.6 | ETSI TS 102 006 §9.5.2.6 Table 25 (UNT tag 0x02), update_flag per Table 26, update_method per Table 27 | [`UpdateDescriptor`](../src/descriptors/unt/update.rs) | Full |
+| 0x03 | ssu_location_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.7 | ETSI TS 102 006 §9.5.2.7 Table 29 (UNT tag 0x03) | [`SsuLocationDescriptor`](../src/descriptors/unt/ssu_location.rs) | Full |
+| 0x04 | message_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.12 | ETSI TS 102 006 §9.5.2.12 Table 35 (UNT tag 0x04) | [`MessageDescriptor`](../src/descriptors/unt/message.rs) | Full |
+| 0x05 | ssu_event_name_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.11 | ETSI TS 102 006 §9.5.2.11 Table 34 (UNT tag 0x05) | [`SsuEventNameDescriptor`](../src/descriptors/unt/ssu_event_name.rs) | Full |
+| 0x06 | target_smartcard_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.1 | ETSI EN 301 192 V1.7.1 §8.4.5.5 Table 23 (INT) / ETSI TS 102 006 §9.5.2.1 Table 20 (UNT) (tag 0x06) | [`TargetSmartcardDescriptor`](../src/descriptors/target/smartcard.rs) | Full |
+| 0x07 | target_MAC_address_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.2 | ETSI EN 301 192 V1.7.1 §8.4.5.6 Table 24 (INT) / ETSI TS 102 006 §9.5.2.2 Table 21 (UNT) (tag 0x07) | [`TargetMacAddressDescriptor`](../src/descriptors/target/mac_address.rs) | Full |
+| 0x08 | target_serial_number_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.5 | ETSI EN 301 192 V1.7.1 §8.4.5.4 Table 22 (INT) / ETSI TS 102 006 §9.5.2.5 Table 24 (UNT) (tag 0x08) | [`TargetSerialNumberDescriptor`](../src/descriptors/target/serial_number.rs) | Full |
+| 0x09 | target_IP_address_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.3 | ETSI EN 301 192 V1.7.1 §8.4.5.8 Table 26 (INT) / ETSI TS 102 006 §9.5.2.3 Table 22 (UNT) (tag 0x09) | [`TargetIpAddressDescriptor`](../src/descriptors/target/ip_address.rs) | Full |
+| 0x0A | target_IPv6_address_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.4 | ETSI EN 301 192 V1.7.1 §8.4.5.11 Table 29 (INT) / ETSI TS 102 006 §9.5.2.4 Table 23 (UNT) (tag 0x0A) | [`TargetIpv6AddressDescriptor`](../src/descriptors/target/ipv6_address.rs) | Full |
+| 0x0B | ssu_subgroup_association_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.8 | ETSI TS 102 006 §9.5.2.8 Table 30 (UNT tag 0x0B) | [`SsuSubgroupAssociationDescriptor`](../src/descriptors/unt/subgroup_association.rs) | Full |
+| 0x0C | enhanced_message_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.14 | ETSI TS 102 006 §9.5.2.14 Table 37 (UNT tag 0x0C) | [`EnhancedMessageDescriptor`](../src/descriptors/unt/enhanced_message.rs) | Full |
+| 0x0D | ssu_uri_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.15 | ETSI TS 102 006 §9.5.2.15 Table 38 (UNT tag 0x0D) | [`SsuUriDescriptor`](../src/descriptors/unt/ssu_uri.rs) | Full |
 
 ### DSM-CC data carousel (ETSI EN 301 192 V1.7.1 Table 48)
 
@@ -417,16 +421,16 @@ is typed today.
 | 0x07 | est_download_time_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
 | 0x08 | group_link_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
 | 0x09 | compressed_module_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | ETSI TR 101 202 Table 4.14 (BIOP ModuleInfo userInfo) | [`CompressedModuleDescriptor`](../src/carousel/biop/message.rs) | Full — decompressed with the `flate2` feature; parsed from DII `moduleInfo` userInfo by `ModuleInfo` |
-| 0x0A | SSU_module_type_descriptor | ETSI TS 102 006 V1.7.1 | — | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x0B | subgroup_association_descriptor | ETSI TS 102 006 V1.7.1 | — | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
+| 0x0A | SSU_module_type_descriptor | ETSI TS 102 006 V1.4.1 | — | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
+| 0x0B | subgroup_association_descriptor | ETSI TS 102 006 V1.4.1 | — | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
 
 ### RNT scope (ETSI TS 102 323 V1.4.1 Table 4)
 
 | tag | Descriptor | Standard | Clause (verified) | Source cites | Rust type | Status |
 |---|---|---|---|---|---|---|
-| 0x40 | RAR_over_DVB_stream_descriptor | ETSI TS 102 323 V1.4.1 | 5.3.5 | — | — | Not implemented — the RNT loop is walked in the SI tag space, so 0x40–0x42 decode as network_name / service_list / stuffing (issue #1285) |
-| 0x41 | RAR_over_IP_descriptor | ETSI TS 102 323 V1.4.1 | 5.3.6 | — | — | Not implemented — the RNT loop is walked in the SI tag space, so 0x40–0x42 decode as network_name / service_list / stuffing (issue #1285) |
-| 0x42 | RNT_scan_descriptor | ETSI TS 102 323 V1.4.1 | 5.3.7 | — | — | Not implemented — the RNT loop is walked in the SI tag space, so 0x40–0x42 decode as network_name / service_list / stuffing (issue #1285) |
+| 0x40 | RAR_over_DVB_stream_descriptor | ETSI TS 102 323 V1.4.1 | 5.3.5 | ETSI TS 102 323 V1.4.1 §5.3.5 Table 12 (RNT tag 0x40) | [`RarOverDvbStreamDescriptor`](../src/descriptors/rnt/rar_over_dvb_stream.rs) | Full |
+| 0x41 | RAR_over_IP_descriptor | ETSI TS 102 323 V1.4.1 | 5.3.6 | ETSI TS 102 323 V1.4.1 §5.3.6 Table 13 (RNT tag 0x41) | [`RarOverIpDescriptor`](../src/descriptors/rnt/rar_over_ip.rs) | Full |
+| 0x42 | RNT_scan_descriptor | ETSI TS 102 323 V1.4.1 | 5.3.7 | ETSI TS 102 323 V1.4.1 §5.3.7 Table 14 (RNT tag 0x42) | [`RntScanDescriptor`](../src/descriptors/rnt/scan.rs) | Full |
 
 ## DSM-CC data and object carousel
 
@@ -501,12 +505,7 @@ real fixture first.
 | Descriptor tags (SI / MPEG namespace) | 2 | 0x15–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored, so not itemised), 0x29 IPMP_descriptor (ISO/IEC 13818-11) |
 | MPEG-2 extension_descriptor_tag | 2 | 0x10 virtual_segmentation_descriptor, 0x13 HEVC_subregion_descriptor |
 | AIT descriptors | 10 | 0x06 application_recording_descriptor, 0x08 DVB-HTML_application_descriptor, 0x09 DVB-HTML_application_location_descriptor, 0x0A DVB-HTML_application_boundary_descriptor, 0x0B application_icons_descriptor, 0x0C pre-fetch_descriptor, 0x0D DII_location_descriptor, 0x10 application_storage_descriptor, 0x11 IP_signalling_descriptor, 0x14 graphics_constraints_descriptor |
-| INT descriptors | 15 | 0x06 target_smartcard_descriptor, 0x07 target_MAC_address_descriptor, 0x08 target_serial_number_descriptor, 0x09 target_IP_address_descriptor, 0x0A target_IPv6_address_descriptor, 0x0C IP/MAC_platform_name_descriptor, 0x0D IP/MAC_platform_provider_name_descriptor, 0x0E target_MAC_address_range_descriptor, 0x0F target_IP_slash_descriptor, 0x10 target_IP_source_slash_descriptor, 0x11 target_IPv6_slash_descriptor, 0x12 target_IPv6_source_slash_descriptor, 0x13 IP/MAC_stream_location_descriptor, 0x14 ISP_access_mode_descriptor, 0x15 IP/MAC_generic_stream_location_descriptor |
-| UNT (SSU) descriptors | 13 | 0x01 scheduling_descriptor, 0x02 update_descriptor, 0x03 ssu_location_descriptor, 0x04 message_descriptor, 0x05 ssu_event_name_descriptor, 0x06 target_smartcard_descriptor, 0x07 target_MAC_address_descriptor, 0x08 target_serial_number_descriptor, 0x09 target_IP_address_descriptor, 0x0A target_IPv6_address_descriptor, 0x0B ssu_subgroup_association_descriptor, 0x0C enhanced_message_descriptor, 0x0D ssu_uri_descriptor |
 | DSM-CC data-carousel (DII/DSI) descriptors | 10 | 0x01 type_descriptor, 0x02 name_descriptor, 0x03 info_descriptor, 0x04 module_link_descriptor, 0x05 CRC32_descriptor, 0x06 location_descriptor, 0x07 est_download_time_descriptor, 0x08 group_link_descriptor, 0x0A SSU_module_type_descriptor, 0x0B subgroup_association_descriptor |
-| RNT-scoped descriptors | 3 | 0x40 RAR_over_DVB_stream_descriptor, 0x41 RAR_over_IP_descriptor, 0x42 RNT_scan_descriptor |
-
-Tracking: wrong-namespace decoding of INT/UNT/RNT loops is issue #1285.
 
 ## Citation cross-check
 
@@ -518,6 +517,6 @@ module cites a clause that is neither the verified clause nor a sub-clause of it
 
 Every module citation that names a clause agrees with the verified clause.
 
-201 implemented rows have their clause verified against the rendered PDF page
-(`verified_page` column of `coverage/allocations.tsv`); 46 not-implemented rows
+232 implemented rows have their clause verified against the rendered PDF page
+(`verified_page` column of `coverage/allocations.tsv`); 15 not-implemented rows
 carry a clause that is not yet page-verified (nothing cites it).
