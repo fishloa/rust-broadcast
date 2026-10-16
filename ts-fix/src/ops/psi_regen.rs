@@ -48,7 +48,7 @@
 //!
 //! A PAT slot seen but no PMT ever parsed means the mapping is genuinely empty.
 //! The op then emits, at end of stream, a **program-less PAT** (ITU-T H.222.0
-//! (08/2023) Table 2-30, PDF p. 55: the program loop `N` is unconstrained and
+//! (08/2023) Table 2-30, PDF p. 76 (printed p. 54; verified on the rendered page): the program loop `N` is unconstrained and
 //! `network_PID` is optional) carrying the original `transport_stream_id` and
 //! any `network_PID` entry, instead of silently dropping the PAT. It never
 //! lists a PMT PID that is not in the output. Tradeoff: this is emitted at
