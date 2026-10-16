@@ -24,6 +24,7 @@ const RES3: u8 = 0x07;
 /// `LCEVC_video_descriptor()` (ext 0x17) — Table 2-142.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct LcevcVideo {
     /// `lcevc_stream_tag`: association between base and enhancement streams.
     pub lcevc_stream_tag: u8,
@@ -53,6 +54,34 @@ pub struct LcevcVideo {
 }
 
 impl LcevcVideo {
+    /// Build with the three flags clear, `reserved(3)` all ones,
+    /// `reserved_zero_2bit` zero and no trailing bytes. Set the remaining public
+    /// fields directly to override.
+    #[must_use]
+    pub fn new(
+        lcevc_stream_tag: u8,
+        profile_idc: u8,
+        level_idc: u8,
+        sublevel_idc: u8,
+        hdr_wcg_idc: HdrWcgIdc,
+        video_properties_tag: u8,
+    ) -> Self {
+        Self {
+            lcevc_stream_tag,
+            profile_idc,
+            level_idc,
+            sublevel_idc,
+            processed_planes_type_flag: false,
+            picture_type_bit_flag: false,
+            field_type_bit_flag: false,
+            reserved: RES3,
+            hdr_wcg_idc,
+            reserved_zero_2bit: 0,
+            video_properties_tag,
+            trailing: Vec::new(),
+        }
+    }
+
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "LcevcVideo");
         Ok(Self {
@@ -106,6 +135,7 @@ impl LcevcVideo {
 /// `LCEVC_linkage_descriptor()` (ext 0x18) — Table 2-143.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct LcevcLinkage {
     /// `lcevc_stream_tag[i]` (`num_lcevc_stream_tags` is 8 bits).
     pub lcevc_stream_tags: Vec<u8>,
@@ -268,6 +298,7 @@ const LANG_LEN_EXPLICIT: u8 = 0;
 /// The optional identifier of a media service kind entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MediaIdentifier {
     /// `ID_length_code` (3 bits, Table 2-147); on serialize it must agree with
     /// `media_id.len()` (7 = explicit `ID_len`), so a non-canonical choice made
@@ -279,9 +310,22 @@ pub struct MediaIdentifier {
     pub media_id: Vec<u8>,
 }
 
+impl MediaIdentifier {
+    /// Build from the three wire fields.
+    #[must_use]
+    pub fn new(id_length_code: u8, id_type: u16, media_id: Vec<u8>) -> Self {
+        Self {
+            id_length_code,
+            id_type,
+            media_id,
+        }
+    }
+}
+
 /// One language / purposes pair of a media service kind entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MediaServiceLanguage {
     /// `configuration_type` (Table 2-149).
     pub configuration_type: ConfigurationType,
@@ -300,6 +344,7 @@ pub struct MediaServiceLanguage {
 /// One data element (outer loop) of the media service kind descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MediaServiceKindEntry {
     /// `media_description_flag` (Table 2-145: false = self, true = associate).
     pub media_description_flag: bool,
@@ -359,6 +404,7 @@ impl MediaServiceLanguage {
 /// `Media_service_kind_descriptor()` (ext 0x19) — Table 2-144.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MediaServiceKind {
     /// The data elements (`N` is implied by the descriptor size).
     pub entries: Vec<MediaServiceKindEntry>,

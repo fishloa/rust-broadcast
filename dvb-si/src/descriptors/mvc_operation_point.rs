@@ -21,6 +21,7 @@ const RESERVED_2_DEFAULT: u8 = 0x03;
 /// One `ES_reference` of an operation point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MvcEsReference {
     /// `reserved(2)`, default 3.
     pub reserved: u8,
@@ -42,6 +43,7 @@ impl MvcEsReference {
 /// One operation point of a level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MvcOperationPointEntry {
     /// `reserved(5)`, default `0x1F`.
     pub reserved: u8,
@@ -73,6 +75,7 @@ impl MvcOperationPointEntry {
 /// One level and its operation points.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MvcLevel {
     /// `level_idc` (H.264 level, external code).
     pub level_idc: u8,
@@ -80,10 +83,22 @@ pub struct MvcLevel {
     pub operation_points: Vec<MvcOperationPointEntry>,
 }
 
+impl MvcLevel {
+    /// Build from the level and its operation points.
+    #[must_use]
+    pub fn new(level_idc: u8, operation_points: Vec<MvcOperationPointEntry>) -> Self {
+        Self {
+            level_idc,
+            operation_points,
+        }
+    }
+}
+
 /// `MVC_operation_point_descriptor()` — Table 2-103.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct MvcOperationPointDescriptor {
     /// `profile_idc` (H.264 profile, external code).
     pub profile_idc: u8,

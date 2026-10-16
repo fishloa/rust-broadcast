@@ -34,6 +34,7 @@ const RES4: u8 = 0x0F;
 /// One `ES_reference` of an operation point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcOpEs {
     /// `reserved(1)`, default 1.
     pub reserved: u8,
@@ -58,6 +59,7 @@ impl HevcOpEs {
 /// One layer of an operation point (`numEsInOp` loop).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcOpLayer {
     /// `necessary_layer_flag[i][k]`.
     pub necessary_layer_flag: bool,
@@ -82,6 +84,7 @@ impl HevcOpLayer {
 /// `constant_frame_rate_info_idc > 0` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcOpFrameRate {
     /// `constant_frame_rate_info_idc[i]` (1..=3 here; 0 means this block is absent).
     pub constant_frame_rate_info_idc: u8,
@@ -106,6 +109,7 @@ impl HevcOpFrameRate {
 /// One HEVC operation point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcOperationPointEntry {
     /// `target_ols[i]`.
     pub target_ols: u8,
@@ -153,6 +157,7 @@ impl HevcOperationPointEntry {
 /// `HEVC_operation_point_descriptor()` — Table 2-117 (`extension_descriptor_tag` 0x05).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcOperationPoint {
     /// `reserved(2)` before `num_ptl`, default 3.
     pub reserved: u8,
@@ -322,6 +327,7 @@ impl HevcOperationPoint {
 /// One `hierarchy_ext_embedded_layer_index[i]` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcEmbeddedLayer {
     /// `reserved(2)`, default 3.
     pub reserved: u8,
@@ -343,6 +349,7 @@ impl HevcEmbeddedLayer {
 /// `HEVC_hierarchy_extension_descriptor()` — Table 2-118 (`extension_descriptor_tag` 0x06).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcHierarchyExtension {
     /// `extension_dimension_bits` (16 bits; bit index 0 multi-view, 1 spatial/SNR,
     /// 2 depth, 3 temporal, 4 auxiliary, 5..15 reserved — Table 2-119).
@@ -368,6 +375,31 @@ pub struct HevcHierarchyExtension {
 }
 
 impl HevcHierarchyExtension {
+    /// Build with `tref_present_flag` clear, both `reserved(2)` fields all ones
+    /// and no trailing bytes. Set the remaining public fields directly to override.
+    #[must_use]
+    pub fn new(
+        extension_dimension_bits: u16,
+        hierarchy_layer_index: u8,
+        temporal_id: u8,
+        nuh_layer_id: u8,
+        hierarchy_channel: u8,
+        embedded_layers: Vec<HevcEmbeddedLayer>,
+    ) -> Self {
+        Self {
+            extension_dimension_bits,
+            hierarchy_layer_index,
+            temporal_id,
+            nuh_layer_id,
+            tref_present_flag: false,
+            reserved_a: RES2,
+            reserved_b: RES2,
+            hierarchy_channel,
+            embedded_layers,
+            trailing: Vec::new(),
+        }
+    }
+
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "HevcHierarchyExtension");
         let extension_dimension_bits = r.u16(16)?;
@@ -433,6 +465,7 @@ impl HevcHierarchyExtension {
 /// One `Flag[i]` / `AdditionalSubstreamID[i]` pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct AdditionalSubstream {
     /// `Flag[i]` (only `Flag[0]` has a meaning; the rest are reserved).
     pub flag: bool,
@@ -476,6 +509,7 @@ pub enum HevcTileSubstreamDetail {
 /// `HEVC_tile_substream_descriptor()` — Table 2-130 (`extension_descriptor_tag` 0x12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcTileSubstream {
     /// `SubstreamID` (7 bits).
     pub substream_id: u8,
@@ -484,6 +518,14 @@ pub struct HevcTileSubstream {
 }
 
 impl HevcTileSubstream {
+    /// Build from the `SubstreamID` and the detail block.
+    #[must_use]
+    pub fn new(substream_id: u8, detail: HevcTileSubstreamDetail) -> Self {
+        Self {
+            substream_id,
+            detail,
+        }
+    }
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "HevcTileSubstream");
         let reference_flag = r.flag()?;

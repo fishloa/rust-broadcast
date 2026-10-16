@@ -506,7 +506,7 @@ fn hand_written_spec_byte_vectors() {
     // ---- AIT, ETSI TS 102 809 / TS 102 727 ----
     // TS 102 727 Table 81 ip_signalling: 11 len=3 platform_id(24)=0x00ABCD
     let ip: IpSignallingDescriptor = rt(&[0x11, 0x03, 0x00, 0xAB, 0xCD]);
-    assert_eq!(ip.platform_id, 0x00AB_CD);
+    assert_eq!(ip.platform_id, 0x0000_ABCD);
     // Table 82 prefetch: 0C len=6 label=1, { label_length=3 "img" priority=50 }
     let pf: PrefetchDescriptor = rt(&[0x0C, 0x06, 0x01, 0x03, 0x69, 0x6D, 0x67, 0x32]);
     assert_eq!(pf.transport_protocol_label, 1);

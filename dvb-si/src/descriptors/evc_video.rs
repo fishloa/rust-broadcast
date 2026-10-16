@@ -31,6 +31,7 @@ const RESERVED_2_DEFAULT: u8 = 0x03;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct EvcVideoDescriptor {
     /// `profile_idc` (ISO/IEC 23094-1 SPS code, external).
     pub profile_idc: u8,
@@ -69,6 +70,38 @@ pub struct EvcVideoDescriptor {
 }
 
 impl EvcVideoDescriptor {
+    /// Build with all four source/constraint flags and both presence flags
+    /// clear, the spec `reserved` fills, no temporal subset and no trailing
+    /// bytes. Set the remaining public fields directly to override.
+    #[must_use]
+    pub fn new(
+        profile_idc: u8,
+        level_idc: u8,
+        toolset_idc_h: u32,
+        toolset_idc_l: u32,
+        hdr_wcg_idc: HdrWcgIdc,
+        video_properties_tag: u8,
+    ) -> Self {
+        Self {
+            profile_idc,
+            level_idc,
+            toolset_idc_h,
+            toolset_idc_l,
+            progressive_source_flag: false,
+            interlaced_source_flag: false,
+            non_packed_constraint_flag: false,
+            frame_only_constraint_flag: false,
+            reserved_1: RESERVED_1_DEFAULT,
+            still_present_flag: false,
+            picture_24hr_present_flag: false,
+            hdr_wcg_idc,
+            reserved_2: RESERVED_2_DEFAULT,
+            video_properties_tag,
+            temporal_layer_subset: None,
+            trailing: Vec::new(),
+        }
+    }
+
     /// Default of `reserved(1)` (all ones).
     pub const RESERVED_1_DEFAULT: u8 = RESERVED_1_DEFAULT;
     /// Default of `reserved(2)` (all ones).

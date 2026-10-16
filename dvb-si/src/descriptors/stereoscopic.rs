@@ -27,6 +27,7 @@ const RESERVED_5_DEFAULT: u8 = 0x1F;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct Mpeg2StereoscopicVideoFormatDescriptor {
     /// `arrangement_type` (7 bits, Table L-1 of ISO/IEC 13818-2 Amd.4 — external
     /// code); `Some` iff `stereo_video_arrangement_type_present == '1'`.
@@ -144,6 +145,7 @@ broadcast_common::impl_spec_display!(StereoscopicServiceType, Reserved);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct StereoscopicProgramInfoDescriptor {
     /// `reserved(5)`, default `0x1F`.
     pub reserved: u8,
@@ -295,6 +297,7 @@ pub enum StereoscopicVideoView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct StereoscopicVideoInfoDescriptor {
     /// `reserved(7)` before `base_video_flag`, default `0x7F`.
     pub reserved: u8,

@@ -87,6 +87,7 @@ broadcast_common::impl_spec_display!(SectionFragmentIndication);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct MetadataSection<'a> {
     /// `section_syntax_indicator` (shall be 1; a received value is kept).
     pub section_syntax_indicator: bool,

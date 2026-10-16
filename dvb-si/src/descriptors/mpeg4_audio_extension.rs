@@ -23,6 +23,7 @@ pub const RESERVED_DEFAULT: u8 = 0x07;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct Mpeg4AudioExtensionDescriptor {
     /// `reserved(3)` after `ASC_flag`; re-emitted verbatim, default 7.
     pub reserved: u8,

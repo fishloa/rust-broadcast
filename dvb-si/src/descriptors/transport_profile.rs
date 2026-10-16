@@ -72,6 +72,7 @@ broadcast_common::impl_spec_display!(TransportProfile, Reserved, UserPrivate);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct TransportProfileDescriptor {
     /// `transport_profile` (Table 2-112).
     pub transport_profile: TransportProfile,

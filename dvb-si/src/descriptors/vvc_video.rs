@@ -25,6 +25,7 @@ const RESERVED_2_DEFAULT: u8 = 0x03;
 /// `temporal_layer_subset_flag == '1'`), shared by the VVC and EVC descriptors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct TemporalIdRange {
     /// `reserved(5)` before `temporal_id_min`, default `0x1F`.
     pub reserved_min: u8,
@@ -69,6 +70,7 @@ impl TemporalIdRange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct VvcVideoDescriptor {
     /// `profile_idc` (7 bits; `general_profile_idc` of H.266, external code).
     pub profile_idc: u8,
@@ -109,6 +111,39 @@ pub struct VvcVideoDescriptor {
 }
 
 impl VvcVideoDescriptor {
+    /// Build with no sub-profiles, all four source/constraint flags and both
+    /// presence flags clear, `reserved_zero_4bits` zero, the spec `reserved`
+    /// fills, no temporal subset and no trailing bytes. Set the remaining public
+    /// fields directly to override.
+    #[must_use]
+    pub fn new(
+        profile_idc: u8,
+        tier_flag: bool,
+        level_idc: u8,
+        hdr_wcg_idc: HdrWcgIdc,
+        video_properties_tag: u8,
+    ) -> Self {
+        Self {
+            profile_idc,
+            tier_flag,
+            sub_profile_idcs: Vec::new(),
+            progressive_source_flag: false,
+            interlaced_source_flag: false,
+            non_packed_constraint_flag: false,
+            frame_only_constraint_flag: false,
+            reserved_zero_4bits: 0,
+            level_idc,
+            still_present_flag: false,
+            picture_24hr_present_flag: false,
+            reserved_5: RESERVED_5_DEFAULT,
+            hdr_wcg_idc,
+            reserved_2: RESERVED_2_DEFAULT,
+            video_properties_tag,
+            temporal_layer_subset: None,
+            trailing: Vec::new(),
+        }
+    }
+
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "VvcVideoDescriptor");
         let profile_idc = r.u8(7)?;
