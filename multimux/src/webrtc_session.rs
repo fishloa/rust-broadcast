@@ -428,6 +428,15 @@ pub(crate) fn validate_restart(
     current_remote_ufrag: &str,
 ) -> Result<(String, String), String> {
     match (&fragment.ufrag, &fragment.pwd) {
+        // `MediaTransport::restart_ice` refuses empty remote credentials. The
+        // restart is applied later by the media task, after the `200` has
+        // gone out, so every condition the transport can refuse must be
+        // rejected HERE (RFC 9725 section 4.3.3: an unsatisfiable restart
+        // MUST be an error and the existing ICE session kept) - never
+        // acknowledged and then dropped with only a log line.
+        (Some(u), Some(p)) if u.is_empty() || p.is_empty() => {
+            Err("restart fragment has an empty ice-ufrag or ice-pwd".to_string())
+        }
         (Some(u), Some(p)) if u != current_remote_ufrag => Ok((u.clone(), p.clone())),
         (Some(_), Some(_)) => Err("restart fragment reuses the current ice-ufrag".to_string()),
         _ => Err("restart fragment needs both ice-ufrag and ice-pwd".to_string()),
@@ -576,6 +585,7 @@ pub(crate) fn patch_error_status(err: &webrtc_runtime::Error) -> axum::http::Sta
     use webrtc_runtime::Error;
     match err {
         Error::ETagMismatch { .. } => StatusCode::PRECONDITION_FAILED,
+        Error::PreconditionRequired { .. } => StatusCode::PRECONDITION_REQUIRED,
         Error::WrongState { .. } => StatusCode::CONFLICT,
         _ => StatusCode::BAD_REQUEST,
     }
@@ -627,6 +637,24 @@ mod tests {
             assert_eq!(id.len(), RESOURCE_ID_LEN);
             assert!(seen.insert(id));
         }
+    }
+
+    /// The transport refuses an empty remote credential and applies a restart
+    /// only after the `200` is out, so `validate_restart` must refuse it up
+    /// front (RFC 9725 section 4.3.3); our own credentials must be long
+    /// enough that the ICE agent never refuses them (RFC 8445 section 5.4).
+    #[test]
+    fn restart_validation_rejects_what_the_transport_would_refuse() {
+        let frag = |u: &str, p: &str| IceFragment {
+            ufrag: Some(u.to_string()),
+            pwd: Some(p.to_string()),
+            ..Default::default()
+        };
+        let pwd = "pwdpwdpwdpwdpwdpwdpwdp";
+        assert!(validate_restart(&frag("", pwd), "old").is_err());
+        assert!(validate_restart(&frag("new", ""), "old").is_err());
+        assert!(validate_restart(&frag("new", pwd), "old").is_ok());
+        const { assert!(ICE_UFRAG_LEN * 8 >= 24 && ICE_PWD_LEN * 8 >= 128) };
     }
 
     #[test]

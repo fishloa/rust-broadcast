@@ -77,7 +77,7 @@ async fn whep_post_with_credentials_against_a_live_trunk_is_201_with_location() 
     );
     assert_eq!(
         resp.headers()["access-control-expose-headers"],
-        "Location",
+        "Location, ETag",
         "main exposed Location so a cross-origin browser can DELETE by it"
     );
     assert_eq!(resp.headers()["content-type"], "application/sdp");

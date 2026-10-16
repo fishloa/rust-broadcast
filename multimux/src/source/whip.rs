@@ -963,7 +963,10 @@ fn whip_router_with_cap(state: Arc<WhipServeState>, max_pending: usize) -> axum:
 
     axum::Router::new()
         .route("/whip", post(whip_post).options(whip_options))
-        .route("/whip/session/{id}", patch(whip_patch).delete(whip_delete))
+        .route(
+            "/whip/session/{id}",
+            patch(whip_patch).delete(whip_delete).options(whip_options),
+        )
         // Mirror `output::whep`'s `ensure_connect_info`: a test harness driving
         // the router with `oneshot` has no accepted stream, so `ConnectInfo`
         // (and the `LocalAddr` extension) is absent and `whip_post`'s
@@ -1033,11 +1036,12 @@ async fn add_whip_cors(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         HeaderValue::from_static("Authorization, Content-Type, If-Match"),
     );
-    // Main exposed `Location` on the 201 so a cross-origin browser can read it
-    // and DELETE by it (RFC 9725 §4.x); keep that, lost in the axum move.
+    // `Location` on the 201 lets a cross-origin browser DELETE by it; `ETag`
+    // (neither is CORS-safelisted) is what its conditional `PATCH`es need
+    // (RFC 9725 section 4.3.1).
     headers.insert(
         header::ACCESS_CONTROL_EXPOSE_HEADERS,
-        HeaderValue::from_static("Location"),
+        HeaderValue::from_static("Location, ETag"),
     );
     resp
 }
@@ -1229,15 +1233,25 @@ async fn whip_post_inner(
         control,
         resource,
     };
-    if state.tx.send(admitted).await.is_ok() {
-        // Ownership of the slot passes to the admitted session from here.
-        slot.disarm();
-        // Wake the run loop so it drains this admission at once (I2), instead
-        // of waiting out a fixed poll interval a steady publish load starves.
-        state.admit_notify.notify_waiters();
+    match state.tx.send(admitted).await {
+        Ok(()) => {
+            // Ownership of the slot passes to the admitted session from here.
+            slot.disarm();
+            // Wake the run loop so it drains this admission at once (I2),
+            // instead of waiting out a fixed poll interval a steady publish
+            // load starves.
+            state.admit_notify.notify_waiters();
+            Ok(crate::webrtc_session::to_axum(response))
+        }
+        Err(rejected) => {
+            // The channel is closed (the route is shutting down): nothing will
+            // ever drive this session. Dropping the rejected admission
+            // unregisters its resource and `slot` releases on drop, so a
+            // `201` + `Location` is never handed out for a dead session.
+            drop(rejected);
+            Ok(axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response())
+        }
     }
-    // If the send failed (channel closed), `slot` drops here and releases it.
-    Ok(crate::webrtc_session::to_axum(response))
 }
 
 /// `PATCH /whip/session/<id>` (RFC 9725 section 4.3): a Trickle ICE SDP

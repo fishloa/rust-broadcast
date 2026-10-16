@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed (adversarial review of the WHIP/WHEP/DASH-pull runtimes, #1267)
+
+- **BREAKING (behaviour):** a WHIP trickle `PATCH` without `If-Match` is now `428 Precondition Required` (RFC 9725 sections 4.3.1/4.3.2: the session supports ICE restarts, so it always issues an `ETag` and entity-tags are mandatory for Trickle ICE); before it was `204`. Clients must send the `ETag` of the `201` (or of the last restart `200`).
+- CORS: the session resource (`/whip/session/{id}`, `/whep/session/{id}`) now answers a preflight `OPTIONS` `204` (it was `405`, so a cross-origin browser could never `DELETE` or trickle), and `Access-Control-Expose-Headers` is `Location, ETag` (the `ETag` is not CORS-safelisted, so a browser could not read it).
+- An ICE-restart `PATCH` the transport cannot apply (an empty `a=ice-ufrag`/`a=ice-pwd`) is a `400` with the existing ICE session and `ETag` kept (RFC 9725 section 4.3.3), instead of a `200` with new credentials the transport then refused (client and transport diverged). Applies to WHIP and WHEP.
+- WHIP/WHEP `POST` whose admit channel is closed (route shutting down) is `503` with the resource unregistered, instead of a `201` + `Location` for a session nothing would ever run.
+- DASH pull: a negative `S@r` (run to the Period end) with a non-zero `@presentationTimeOffset` resolved to zero segments because the Period end was not shifted by the offset while `S@t` is on the media timeline (ISO/IEC 23009-1 section 5.3.9.6; DVB-DASH MPDs carry a large PTO). A timeline refresh that restarts LOWER than the previous high-water mark (a new Period, an encoder restart) is re-baselined instead of being filtered to nothing, which stalled the route.
+- Known tradeoff (documented, not changed): `WhipClient`/`WhepPlayer` (`webrtc-runtime`) do not send the bearer token to a `Location` on another origin (#1142, origin-scoped credentials: a hostile or compromised endpoint must not be able to redirect the token to a host of its choosing). RFC 9725 section 4.7.1 says the token goes to the session resource; a deployment whose session URLs live on another origin has to host them on the endpoint's origin. An explicit opt-in allow-list is left for a follow-up.
+
 ### Changed (BREAKING)
 - `output::dash::xs_duration_for_test` (a `#[doc(hidden)]` test seam) is removed; the `xs:duration` spelling is `transmux::dash::xs_duration`, the one shared implementation. For a duration beyond `i64::MAX` seconds (~292 billion years) the manifest value is now the saturated maximum instead of `PT{secs}S` (#1216).
 

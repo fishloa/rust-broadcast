@@ -258,12 +258,26 @@ async fn patch_trickles_a_candidate_into_the_live_transport() {
     })
     .await;
 
-    // No If-Match is a plain trickle update too (the state machine's rule).
-    let again = http(
+    // RFC 9725 sections 4.3.1/4.3.2: a trickle PATCH with no If-Match is 428
+    // (this session supports ICE restarts); nothing reaches the transport.
+    let missing = http(
         addr,
         "PATCH",
         &loc,
         &[("Content-Type", &format!("{TRICKLE}; charset=utf-8"))],
+        &fragment("abcd", "3 1 udp 2130706431 10.0.0.10 5556 typ host"),
+    )
+    .await;
+    assert_eq!(missing.status, 428);
+    // Media-type parameters are ignored (RFC 9110 section 8.3.1).
+    let again = http(
+        addr,
+        "PATCH",
+        &loc,
+        &[
+            ("Content-Type", &format!("{TRICKLE}; charset=utf-8")),
+            ("If-Match", &etag),
+        ],
         &fragment("abcd", "3 1 udp 2130706431 10.0.0.10 5556 typ host"),
     )
     .await;
@@ -716,4 +730,159 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
     assert_eq!(route.live_resources(), 0);
     assert_eq!(http(addr, "DELETE", &loc, &[], "").await.status, 404);
     token.cancel();
+}
+
+// ---- Adversarial review (review/runtimes): FAILING regression tests --------
+
+/// REVIEW FINDING (CORS preflight on the session resource). A browser WHIP
+/// client on another origin must send a CORS preflight `OPTIONS` to the
+/// session URL before its `DELETE` (and before every `PATCH`, whose
+/// `application/trickle-ice-sdpfrag` Content-Type is never CORS-safelisted).
+/// The router only wires `patch`/`delete` on `/whip/session/{id}`, so the
+/// preflight is `405 Method Not Allowed`; the Fetch standard fails any
+/// preflight whose status is not `2xx`, so a cross-origin browser can never
+/// end or trickle its own session (the session lingers until idle reap).
+/// The `/whip` endpoint itself answers its preflight `204`.
+#[tokio::test]
+async fn review_cors_preflight_on_the_session_resource_is_2xx() {
+    let (addr, _route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let created = post_offer(addr).await;
+    let loc = resource_path(&created);
+    for method in ["DELETE", "PATCH"] {
+        let pre = http(
+            addr,
+            "OPTIONS",
+            &loc,
+            &[
+                ("Origin", "https://publisher.example"),
+                ("Access-Control-Request-Method", method),
+                ("Access-Control-Request-Headers", "content-type, if-match"),
+            ],
+            "",
+        )
+        .await;
+        assert!(
+            (200..300).contains(&pre.status),
+            "preflight for {method} on the session resource must be 2xx, got {}",
+            pre.status
+        );
+    }
+    token.cancel();
+}
+
+/// REVIEW FINDING (ETag unreadable cross-origin). RFC 9725 section 4.3.1: the
+/// client needs the `ETag` of the `201` (and of every ICE-restart `200`) to
+/// send conditional `PATCH`es. `Access-Control-Expose-Headers` lists only
+/// `Location`, and `ETag` is not a CORS-safelisted response header, so a
+/// cross-origin browser client cannot read it at all.
+#[tokio::test]
+async fn review_etag_is_exposed_to_cross_origin_clients() {
+    let (addr, _route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let created = post_offer(addr).await;
+    resource_path(&created);
+    let exposed = created
+        .header("access-control-expose-headers")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    assert!(
+        exposed.split(',').any(|h| h.trim() == "etag"),
+        "ETag must be exposed to a cross-origin client: {exposed:?}"
+    );
+    token.cancel();
+}
+
+/// REVIEW FINDING (RFC 9725 section 4.3.1 precondition). This session
+/// supports ICE restarts, so it "MUST generate a unique strong entity-tag"
+/// and "Missing or outdated ETags in the PATCH requests ... will be answered
+/// ... with a 428 Precondition Required response for a missing entity-tag";
+/// section 4.3.2: "WHIP sessions and clients that support Trickle ICE MUST
+/// make use of entity-tags and conditional requests". A trickle PATCH with no
+/// `If-Match` is accepted `204` instead.
+#[tokio::test]
+async fn review_trickle_patch_without_if_match_is_428() {
+    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let created = post_offer(addr).await;
+    let loc = resource_path(&created);
+    assert!(route.wait_for_admissions(1, Duration::from_secs(2)).await >= 1);
+    let r = http(
+        addr,
+        "PATCH",
+        &loc,
+        &[("Content-Type", TRICKLE)],
+        &fragment("abcd", CANDIDATE),
+    )
+    .await;
+    assert_eq!(
+        r.status, 428,
+        "missing If-Match must be 428, got {}",
+        r.status
+    );
+    token.cancel();
+}
+
+/// REVIEW FINDING (ICE restart acknowledged but never applied). An ICE-restart
+/// fragment with an EMPTY `a=ice-ufrag:` passes `validate_restart` (it is
+/// `Some("")`, which differs from the current ufrag), so the HTTP handler
+/// answers `200` with a fresh `ETag` and new server credentials and records
+/// `""` as the session's ICE generation, while the media task's
+/// `MediaTransport::restart_ice` refuses empty remote credentials and keeps
+/// the OLD ICE session (only a log line). RFC 9725 section 4.3.3: a restart
+/// that "cannot be satisfied ... MUST return an appropriate HTTP error code".
+/// After this the client uses credentials the transport never installed and
+/// the old ETag is stale (412): the session is unrecoverable over PATCH.
+#[tokio::test]
+async fn review_ice_restart_with_empty_ufrag_is_refused_not_acknowledged() {
+    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let created = post_offer(addr).await;
+    let loc = resource_path(&created);
+    let etag = etag_of(&created);
+    assert!(route.wait_for_admissions(1, Duration::from_secs(2)).await >= 1);
+    let r = http(
+        addr,
+        "PATCH",
+        &loc,
+        &[("Content-Type", TRICKLE), ("If-Match", "*")],
+        "a=ice-ufrag:\r\na=ice-pwd:newpasswordnewpassword0000\r\n",
+    )
+    .await;
+    assert!(
+        (400..500).contains(&r.status),
+        "an unsatisfiable restart must be a 4xx, got {} (body {:?})",
+        r.status,
+        r.body
+    );
+    // The existing ICE session (and its ETag) must still be in force.
+    let still = http(
+        addr,
+        "PATCH",
+        &loc,
+        &[("Content-Type", TRICKLE), ("If-Match", &etag)],
+        &fragment("abcd", CANDIDATE),
+    )
+    .await;
+    assert_eq!(still.status, 204, "the old ICE session must be kept");
+    token.cancel();
+}
+
+/// A `POST` whose admit channel is closed (the route is shutting down) must
+/// not hand out a `201` + `Location` for a session nothing will ever drive:
+/// it is `503`. `whip_router_for_test` drops its admit receiver, so every
+/// admission hits the closed channel.
+#[tokio::test]
+async fn post_with_a_closed_admit_channel_is_503_not_a_dangling_201() {
+    use tower::ServiceExt as _;
+    let router = multimux::source::whip::whip_router_for_test(4, 8);
+    let resp = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/whip")
+                .header("content-type", "application/sdp")
+                .body(axum::body::Body::from(OFFER))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    assert!(resp.headers().get("location").is_none());
 }

@@ -550,7 +550,10 @@ fn whep_router_with_cap(
 
     axum::Router::new()
         .route("/whep", post(whep_post).options(whep_options))
-        .route("/whep/session/{id}", patch(whep_patch).delete(whep_delete))
+        .route(
+            "/whep/session/{id}",
+            patch(whep_patch).delete(whep_delete).options(whep_options),
+        )
         .layer(axum::middleware::from_fn(move |req, next| {
             let auth = output_auth.clone();
             async move { whep_auth_middleware(auth, req, next).await }
@@ -686,11 +689,12 @@ async fn add_whep_cors(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         HeaderValue::from_static("Authorization, Content-Type, If-Match"),
     );
-    // Main exposed `Location` on the 201 so a cross-origin browser can read it
-    // and DELETE by it; keep that (lost in the axum move).
+    // `Location` on the 201 lets a cross-origin browser DELETE by it; `ETag`
+    // (neither is CORS-safelisted) is what its conditional `PATCH`es need
+    // (RFC 9725 section 4.3.1).
     headers.insert(
         header::ACCESS_CONTROL_EXPOSE_HEADERS,
-        HeaderValue::from_static("Location"),
+        HeaderValue::from_static("Location, ETag"),
     );
     resp
 }
@@ -845,10 +849,19 @@ async fn whep_post_inner(
         control,
         resource,
     };
-    if state.tx.send(admitted).await.is_ok() {
-        slot.disarm();
+    match state.tx.send(admitted).await {
+        Ok(()) => {
+            slot.disarm();
+            Ok(crate::webrtc_session::to_axum(response))
+        }
+        Err(rejected) => {
+            // Channel closed: no session task will ever run. Dropping the
+            // rejected admission unregisters its resource (and `slot`
+            // releases), so no `201` + `Location` for a dead session.
+            drop(rejected);
+            Ok(axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response())
+        }
     }
-    Ok(crate::webrtc_session::to_axum(response))
 }
 
 /// `PATCH /whep/session/<id>` (draft-ietf-wish-whep section 4, as RFC 9725
@@ -998,7 +1011,10 @@ pub async fn serve_whep_for_test_with_trunk(
     verifier: Option<Arc<Verifier>>,
 ) -> (axum::Router, CancellationToken) {
     let trunk = trunk_with_avc_track();
-    let (tx, _rx) = mpsc::channel::<AdmittedWhep>(4);
+    let (tx, rx) = mpsc::channel::<AdmittedWhep>(4);
+    // Keep the admit channel open (a closed one is a `503`, not a `201`) for
+    // the life of the process: this test-only harness never drives sessions.
+    std::mem::forget(rx);
     let state = Arc::new(WhepServeState {
         trunk,
         tx,

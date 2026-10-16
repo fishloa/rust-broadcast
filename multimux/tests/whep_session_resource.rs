@@ -215,6 +215,48 @@ async fn unknown_resources_are_404_for_patch_and_delete() {
     let _ = tokio::time::timeout(Duration::from_secs(10), h.handle).await;
 }
 
+/// REVIEW FINDING (review/runtimes): the CORS preflight a cross-origin
+/// browser WHEP player sends before `DELETE`/`PATCH` on its session resource
+/// is answered `405` (only `patch`/`delete` are routed on
+/// `/whep/session/{id}`); Fetch fails any non-`2xx` preflight, so the browser
+/// can never end or trickle its playback session. Also `ETag` is not in
+/// `Access-Control-Expose-Headers`, so the player cannot read it.
+#[tokio::test]
+async fn review_cors_preflight_and_etag_exposure_on_the_session_resource() {
+    let h = multimux::output::whep::serve_whep_run_probed_for_test(4).await;
+    let created = post_offer(h.addr).await;
+    let loc = resource_path(&created);
+    let exposed = created
+        .header("access-control-expose-headers")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    for method in ["DELETE", "PATCH"] {
+        let pre = http(
+            h.addr,
+            "OPTIONS",
+            &loc,
+            &[
+                ("Origin", "https://player.example"),
+                ("Access-Control-Request-Method", method),
+                ("Access-Control-Request-Headers", "content-type, if-match"),
+            ],
+            "",
+        )
+        .await;
+        assert!(
+            (200..300).contains(&pre.status),
+            "preflight for {method} on the session resource must be 2xx, got {}",
+            pre.status
+        );
+    }
+    assert!(
+        exposed.split(',').any(|h| h.trim() == "etag"),
+        "ETag must be exposed to a cross-origin client: {exposed:?}"
+    );
+    h.cancel.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(10), h.handle).await;
+}
+
 #[tokio::test]
 async fn patch_trickles_a_candidate_and_rejections_follow_the_rfc() {
     let h = multimux::output::whep::serve_whep_run_probed_for_test(4).await;

@@ -4,6 +4,9 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (behaviour):** `WhipSession::on_patch` returns the new `Error::PreconditionRequired` for a PATCH with no `If-Match` (RFC 9725 sections 4.3.1/4.3.2: the session issues an `ETag`, so a missing entity-tag is `428 Precondition Required`); it used to be a `TrickleIce` event with `if_match: None`. `Event::TrickleIce::if_match` is therefore always `Some` from `WhipSession`. `Error` is `#[non_exhaustive]`, so the new variant is additive. (`WhepSession` is unchanged.)
+
 ### Security (secrets and identity handling, #1142)
 
 - **BREAKING (behaviour):** `WhipClient`/`WhepPlayer` send the bearer token only to the origin of the configured endpoint. A session URL (`Location`) on another scheme, host or port gets no `Authorization` header. `url` is now a non-optional dependency (it was `media`-only).
