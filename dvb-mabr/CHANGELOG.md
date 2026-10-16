@@ -4,6 +4,10 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Internal: optional attributes are read with `StartTag::attr_owned` instead of building a `require_attr` error and discarding it with `.ok()` (no behaviour change; the parsed values and every error path are identical). Manifest: `quick-xml` and the lint table now come from the workspace (`[lints] workspace = true`), `test-fixtures` is a dev-dependency.
+- Requires the new `broadcast-common` major (epoch release; no API change).
+
 ## [0.2.0] - 2026-10-05
 ### Changed (breaking)
 - **BREAKING: XML support now requires the `std` feature; hand-rolled XML
