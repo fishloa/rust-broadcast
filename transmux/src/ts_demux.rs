@@ -1936,6 +1936,11 @@ struct StreamState {
     /// that straddles a PES boundary can still resolve the track's config
     /// (issue #1160). Empty otherwise.
     probe_tail: Vec<u8>,
+    /// Access units pushed while this PID was `Probing` (saturating). Bounds
+    /// how long an unresolved probe may hold back later PIDs
+    /// ([`PROBE_HEAD_BLOCK_AUS`]) and, for E-AC-3, how long it waits for its
+    /// first access unit to complete ([`EAC3_PROBE_MAX_AUS`]).
+    probe_aus: u32,
 }
 
 /// Advance a one-behind (video/data) pending slot with a newly-built sample,
@@ -3484,6 +3489,18 @@ fn advance_track(
             {
                 resolved = finalize_probe(stream.codec, &stream.descriptors, &mut probe, &window);
             }
+            stream.probe_aus = stream.probe_aus.saturating_add(1);
+            // Bounded fallback: an E-AC-3 first access unit that still is not
+            // provably complete after `EAC3_PROBE_MAX_AUS` payloads resolves
+            // from the frames held (as `finish` does), so the PID does not
+            // wait for a completion that is not coming.
+            if resolved.is_none()
+                && stream.codec == Codec::Eac3
+                && stream.probe_aus >= EAC3_PROBE_MAX_AUS
+            {
+                let window = [stream.probe_tail.as_slice(), latest.data.as_slice()].concat();
+                resolved = eac3_probe_result(&window, true);
+            }
             stream.probe_tail = if resolved.is_some() {
                 Vec::new()
             } else {
@@ -3520,6 +3537,24 @@ const AUDIO_PROBE_BOUNDARY_BYTES: usize = 16;
 /// a spec value: an access unit this long never completing means the data is
 /// not E-AC-3 framing.
 const EAC3_PROBE_MAX_FRAMES: usize = 16;
+
+/// Access units (PES payloads) an E-AC-3 probe waits for its first access unit
+/// to be *provably* complete before it resolves from the frames it holds
+/// anyway (what end of input does, see `finish`). An implementation bound, not
+/// a spec value: a clean stream completes within two or three payloads, so a
+/// probe still waiting after this many is not going to be told anything more
+/// and must not stay unpromoted (and, in PMT order, hold up later tracks)
+/// forever. The price is the #1186 hazard in its worst case: a dependent
+/// substream that never arrives is not signalled.
+const EAC3_PROBE_MAX_AUS: u32 = 16;
+
+/// Access units a `Probing` PID may hold back later-ranked `Parked` PIDs. PMT
+/// declaration order is kept whenever the earlier PID resolves in time, but a
+/// probe that has seen this many access units without resolving no longer
+/// blocks them: they are promoted past it, and it is promoted whenever (if
+/// ever) it does resolve. An implementation bound — generous, because a video
+/// probe legitimately waits a whole GOP for its parameter sets.
+const PROBE_HEAD_BLOCK_AUS: u32 = 512;
 
 /// The most an E-AC-3 probe holds: [`EAC3_PROBE_MAX_FRAMES`] syncframes of at
 /// most `2^11` 16-bit words each (ETSI TS 102 366 Annex E §E.1.3.1.3 `frmsiz`),
@@ -4714,6 +4749,7 @@ impl StreamingTsDemux {
             }),
             backlog_bytes: 0,
             probe_tail: Vec::new(),
+            probe_aus: 0,
         };
         // Replay any payloads that arrived on this PID before its PMT
         // registration completed (see `unattributed`'s doc).
@@ -4966,14 +5002,21 @@ impl StreamingTsDemux {
     /// `DemuxEvent::TrackAdded`, and replay its accumulated backlog as a
     /// burst of `DemuxEvent::Sample`s — repeating while the *next*-ranked PID
     /// is also already `Parked`. Stops at the first PID that is still
-    /// `Probing` (blocked) or not yet known at all.
+    /// `Probing` (blocked) or not yet known at all — except that a `Probing`
+    /// PID that has seen [`PROBE_HEAD_BLOCK_AUS`] access units without
+    /// resolving is stepped over rather than stopped at, so one probe that
+    /// cannot resolve never holds back every track behind it.
     fn try_promote_ready(&mut self) {
-        while let Some(&next_pid) = self
+        // PIDs still awaiting promotion, in PMT-declaration order. A snapshot:
+        // nothing below adds or reorders PIDs.
+        let pending: Vec<Pid> = self
             .codec_order
             .iter()
             .chain(self.data_order.iter())
-            .find(|p| !self.resolved.contains(p))
-        {
+            .copied()
+            .filter(|p| !self.resolved.contains(p))
+            .collect();
+        for next_pid in pending {
             let Some(stream) = self.streams.get_mut(&next_pid) else {
                 break;
             };
@@ -5056,6 +5099,12 @@ impl StreamingTsDemux {
                 }
                 other @ TrackState::Probing { .. } => {
                     stream.track = Some(other);
+                    if stream.probe_aus >= PROBE_HEAD_BLOCK_AUS {
+                        // Stalled: it no longer holds back the PIDs after it
+                        // (see `PROBE_HEAD_BLOCK_AUS`); it stays unresolved and
+                        // is promoted whenever it does resolve.
+                        continue;
+                    }
                     break; // blocked — an earlier-ranked PID isn't ready yet
                 }
                 other @ TrackState::Live(_) => {

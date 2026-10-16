@@ -496,14 +496,22 @@ impl Ec3SyncframeInfo {
     }
 
     /// The frames of the first access unit and whether its end was observed.
+    ///
+    /// The end is observed when a following independent frame for a substreamid
+    /// already seen begins the next access unit, **or** when the frame chain
+    /// breaks: the bytes right after a whole frame are not a syncword (or a
+    /// header that is long enough to judge does not parse). Frames are
+    /// contiguous (§E.1.3.1.2), so after a break no dependent frame can ever
+    /// follow in this data; waiting for one is futile. That is what a capture
+    /// with dropped packets looks like, and refusing to resolve on it kept the
+    /// track unpromoted forever.
     fn first_au(data: &[u8]) -> (Vec<Self>, bool) {
-        let frames = Self::from_es_all(data);
+        let (frames, mut complete) = Self::walk(data);
         // An access unit ends where the next one begins: an independent frame
         // for a substreamid already seen. `strmtyp == 0x2` counts as
         // independent too (an AC-3-derived stream carries no dependent frames).
         let mut seen_independent: Vec<u8> = Vec::new();
         let mut out = Vec::new();
-        let mut complete = false;
         for f in frames {
             if f.strmtyp != EAC3_STRMTYP_DEPENDENT {
                 if seen_independent.contains(&f.substreamid) {
@@ -526,23 +534,36 @@ impl Ec3SyncframeInfo {
     /// spans many access units, and only the first one should reach
     /// [`Ec3SpecificBox::from_syncframes`].
     pub fn from_es_all(data: &[u8]) -> Vec<Self> {
+        Self::walk(data).0
+    }
+
+    /// Walk contiguous syncframes from `data[0]`. The flag is `true` when the
+    /// walk stopped because the chain is **broken** (bytes that are not a
+    /// syncword, or an unparseable header, where a frame was due) rather than
+    /// because the data merely ended or truncated a frame.
+    fn walk(data: &[u8]) -> (Vec<Self>, bool) {
         let mut out = Vec::new();
         let mut off = 0usize;
         while off + 2 <= data.len() {
             if u16::from_be_bytes([data[off], data[off + 1]]) != AC3_SYNCWORD {
-                break;
+                return (out, true);
             }
-            let Ok(info) = Self::parse_at(data, off) else {
-                break;
+            let info = match Self::parse_at(data, off) {
+                Ok(info) => info,
+                Err(Error::BufferTooShort { .. }) => return (out, false),
+                Err(_) => return (out, true),
             };
             let len = (info.frmsiz as usize + 1) * BYTES_PER_WORD;
-            if len == 0 || off + len > data.len() {
-                break;
+            if len == 0 {
+                return (out, true);
+            }
+            if off + len > data.len() {
+                return (out, false);
             }
             out.push(info);
             off += len;
         }
-        out
+        (out, false)
     }
 
     /// Build an [`Ec3SpecificBox`] from the parsed syncframe fields.
