@@ -25,19 +25,18 @@ the real fixture, `private/fixtures/ts/mpegh-cicp01-baseline.ts` (Fraunhofer-IIS
   (tag `0x3F`), included at most once in the ES_info loop of an MPEG-H `stream_type 0x2D`/`0x2E`
   ES. TS 101 154's own text: *"The profile and level value shall be signalled in the
   mpegh3daProfileLevelIndication field in the MPEG-H_3dAudio_descriptor() as specified in
-  ISO/IEC 13818-1, clause 2.6.106"* — the full descriptor syntax is deferred wholesale to that
-  (paid, unvendored) clause.
-  - **Empirically observed** (the real fixture's ES_info): `3F 04 08 10 7F C1` = tag `0x3F`,
-    `descriptor_length 4`, then 4 body bytes `08 10 7F C1`.
-  - Byte `08` is therefore the `MPEGH_3dAudio_descriptor`'s registered
-    `extension_descriptor_tag` — not printed in either vendored spec (ISO/IEC 13818-1 §2.6.106
-    registers it); taken as ground truth from this real, DVB-conformant broadcast test stream
-    produced by Fraunhofer, the format's own originator.
-  - Byte `10` is `mpegh3daProfileLevelIndication` = `0x10` (BL Profile Level 1) — confirmed
-    against the independently-recovered `mpegh3daConfig()`'s own leading byte (see below): both
-    read `0x10`.
-  - Bytes `7F C1` have no grounding in either vendored spec (further fields of §2.6.106); this
-    crate does not reproduce them when muxing (see below).
+  ISO/IEC 13818-1, clause 2.6.106"*. That clause IS vendored: ITU-T H.222.0 (08/2023) §2.6.106
+  Table 2-121 (+ §2.6.107 semantics), transcribed and verified on the rendered page in
+  [`mpegh-3daudio-descriptor-h222.md`](mpegh-3daudio-descriptor-h222.md).
+  - **Real fixture** (ES_info): `3F 04 08 10 7F C1` = tag `0x3F`, `descriptor_length 4`,
+    `extension_descriptor_tag 0x08` (Table 2-110), `mpegh3daProfileLevelIndication 0x10`
+    (BL Profile Level 1, also the leading byte of the independently-recovered `mpegh3daConfig()`),
+    `0x7F` = `interactivityEnabled 0`, `compatibleProfileSetsPresent 1` (no compatible sets;
+    note the spec's inverted polarity), reserved ones, and `0xC1` = reserved `11` +
+    `referenceChannelLayout 1`.
+  - The muxer builds this descriptor through `dvb-si`'s typed `MpegH3dAudio` and reproduces the
+    real bytes exactly for profile `0x10` / layout `1`; `interactivityEnabled` is written `0`
+    because the IR does not carry it.
 
 ## MHAS elementary stream framing
 
