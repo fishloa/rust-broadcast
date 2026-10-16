@@ -1,0 +1,578 @@
+# Editorial data for the workspace crate index.
+#
+# `tools/gen-crate-index.py` merges this file with facts it reads from the
+# repository itself (each member's Cargo.toml: version, description, publish
+# flag, workspace dependencies; ci.yml: the CI-verified no_std list) and
+# regenerates the marked blocks in docs/CRATES.md and README.md.
+#
+# Every workspace member MUST have exactly one [crate.<name>] entry here, and
+# every entry MUST be a workspace member: `gen-crate-index.py --check` fails
+# otherwise, so a new crate cannot land without being classified.
+#
+# Field rules (see docs/DOC-STANDARD.md):
+#   domain     one of the [[domain]] ids below
+#   summary    one line, used in the README crate table
+#   standards  headline standards WITH the edition the code implements, as cited
+#              in the crate's own module docs / docs/ transcriptions. Write
+#              "edition unverified" rather than guess.
+#   what       a short paragraph: what it does and, where it matters, what it
+#              does not do
+#   crates_io  true if the crate is live on crates.io. Not derivable offline:
+#              re-verify with `python3 tools/gen-crate-index.py --verify-live`
+#              (uses tools/crates-io.py). Last verified 2026-10-16.
+#   lifecycle  "active" | "archived" | "internal"
+
+[[domain]]
+id = "foundation"
+title = "Foundation"
+blurb = "Shared traits and helpers every other crate builds on."
+
+[[domain]]
+id = "framing"
+title = "MPEG-2 TS / PES / PS framing"
+blurb = "The MPEG-2 systems layer (ISO/IEC 13818-1 / ITU-T H.222.0) and async adapters over it."
+
+[[domain]]
+id = "dvb"
+title = "DVB service information, physical-layer framing and conformance"
+blurb = "ETSI DVB tables and descriptors, DVB-T2/S2 modulator and baseband framing, and TR 101 290 monitoring."
+
+[[domain]]
+id = "ca"
+title = "Common Interface, conditional access, scrambling, SimulCrypt"
+blurb = "The host-to-CAM interface, the scrambling cipher and the head-end CA message protocol."
+
+[[domain]]
+id = "captions"
+title = "Subtitles, captions, teletext, VBI and ancillary data"
+blurb = "Every caption/subtitle carriage in the workspace, plus conversion between them."
+
+[[domain]]
+id = "signalling"
+title = "Metadata and ad-insertion signalling"
+blurb = "SCTE 35 / SCTE 104 cueing, DASH emsg, and conversion between the OTT carriages."
+
+[[domain]]
+id = "containers"
+title = "Containers and adaptive streaming"
+blurb = "Container detection, any-to-any remuxing (fMP4/CMAF/TS/PS/WebM/FLV), HLS/DASH/Smooth packaging."
+
+[[domain]]
+id = "live"
+title = "Live transport protocols"
+blurb = "Sans-IO session engines and packet codecs for RTSP, RTP/RTCP, RTMP, SRT, RIST, WebRTC (WHIP/WHEP), LL-HLS and ST 2022-6."
+
+[[domain]]
+id = "servers"
+title = "Servers, runtimes and tools"
+blurb = "The live origin stack, diagnostics, repair and CLI tools, and the sans-IO SSAI/playout cores."
+
+[[domain]]
+id = "professional"
+title = "Professional media (SMPTE / AES / Dolby)"
+blurb = "Studio and file-based interchange formats."
+
+[[domain]]
+id = "delivery"
+title = "IP and multicast delivery over broadcast"
+blurb = "IP-over-TS encapsulation, multicast object delivery, DVB-MABR and the (archived) ATSC 3.0 crates."
+
+[[domain]]
+id = "measurement"
+title = "Measurement"
+blurb = "Signal measurement with no wire format."
+
+[[domain]]
+id = "internal"
+title = "Internal test helpers (never published)"
+blurb = "`publish = false` dev-dependencies shared by the workspace's test suites."
+
+# ---------------------------------------------------------------- foundation
+
+[crate.broadcast-common]
+domain = "foundation"
+summary = "Shared Parse/Serialize traits, CRC-32/MPEG-2, BCD/time/hex codecs, mux traits, 33-bit clock arithmetic."
+standards = "ISO/IEC 13818-1 CRC-32 (Annex A); ISO/IEC 23001-7 scheme identity (`cenc`)"
+what = "The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair every wire type implements, the MPEG-2 CRC-32, BCD/MJD time and hex codecs, range-checked length narrowing for serializers (`len`), the container `mux` traits, the `cenc::CencScheme` identity shared by `transmux` and `broadcast-hls`, and `clock33` wrapping 33-bit PTS/DTS arithmetic. It implements no protocol on its own. Versioned independently of the DVB lockstep."
+crates_io = true
+lifecycle = "active"
+
+[crate.broadcast-auth]
+domain = "foundation"
+summary = "Shared HTTP/RTSP auth: Basic/Digest/Bearer client credentials and a server-side challenge+verify Verifier."
+standards = "RFC 7235, RFC 7616 / RFC 2617 (Digest), RFC 6750 (Bearer), RFC 2326 §14"
+what = "One credentials model and one challenge-response helper for clients, plus one server-side `Verifier` (including a reverse-proxy `forwarded` scheme), used by `rtsp-runtime`, `hls-runtime` and `multimux`. Basic/Digest challenge parsing is delegated to the `http-auth` crate."
+crates_io = true
+lifecycle = "active"
+
+# ------------------------------------------------------------------- framing
+
+[crate.mpeg-ts]
+domain = "framing"
+summary = "MPEG-2 TS packets, adaptation field, PCR, PSI section reassembly + packetisation, resync."
+standards = "ITU-T H.222.0 (08/2023) = ISO/IEC 13818-1 §2.4.3, §2.4.4"
+what = "Generic MPEG-2 Transport Stream framing: zero-copy and owned 188-byte packets, the adaptation field and PCR, PSI section reassembly and packetisation, byte-stream resynchronisation, and a scheduler-mux for SI tables. `dvb-si` and most TS-handling crates use it for the packet layer. It does not parse table bodies (that is `dvb-si`) or PES (that is `mpeg-pes`)."
+crates_io = true
+lifecycle = "active"
+
+[crate.mpeg-pes]
+domain = "framing"
+summary = "PES depacketization and 33-bit PTS/DTS, with a per-PID PES assembler."
+standards = "ISO/IEC 13818-1:2021 (ITU-T H.222.0 06/2021) §2.4.3.6-§2.4.3.7"
+what = "The layer between TS packets and elementary streams: PES packet header parse/serialize, the `stream_id` registry (including the AVS3 extended stream ids from T/AI 109.6 / 109.7), 33-bit 90 kHz `Pts`/`Dts`, and a per-PID assembler. Elementary-stream payloads stay opaque."
+crates_io = true
+lifecycle = "active"
+
+[crate.mpeg-ps]
+domain = "framing"
+summary = "MPEG-2 Program Stream: pack header (42-bit SCR), system header, program stream map."
+standards = "ISO/IEC 13818-1:2021 §2.5"
+what = "Program Stream (`.mpg` / `.vob`) framing around PES packets. Only the MPEG-2 pack layout is implemented; an MPEG-1 (ISO/IEC 11172-1) pack is recognised and rejected with `Error::Mpeg1NotSupported` rather than misparsed."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-stream]
+domain = "framing"
+summary = "Async/tokio stream adapters: SI sections and T2-MI events from files, TCP or UDP multicast."
+standards = "none of its own (adapters over dvb-si / dvb-t2mi); RFC 3550 RTP unwrapping via rtp-packet"
+what = "Wraps the synchronous `SiDemux` and `T2miPump` as `futures::Stream`s over any `AsyncRead`, and provides TS framing as a `tokio_util` codec plus UDP/multicast receive (socket options through `socket2`). Keeps tokio out of the parser crates. Requires `std`."
+crates_io = true
+lifecycle = "active"
+
+# ----------------------------------------------------------------------- dvb
+
+[crate.dvb-si]
+domain = "dvb"
+summary = "DVB Service Information + MPEG-2 PSI: every table and descriptor, DSM-CC carousel, Annex A text, SiDemux."
+standards = "ETSI EN 300 468 V1.20.1 (baseline V1.19.1); ISO/IEC 13818-1 PSI; ISO/IEC 13818-6 + TR 101 202 (carousel); TS 102 006 (SSU); TS 102 809 (AIT); TS 102 323; EN 301 192; NorDig LCN; Chinese AVS2/AVS3/caption descriptors"
+what = "The largest crate: parse and build every allocated EN 300 468 table and descriptor plus MPEG-2 PSI (PAT/PMT/CAT/TSDT), the DSM-CC data/object carousel with module reassembly, Annex A text decoding, the SSU (UNT) chain, and a PID-filtered, version-gated `SiDemux` that emits only changed sections. Private-tag descriptors from NorDig, D-Book and the Chinese GY/T / T/AI standards are typed too. TS packet framing comes from `mpeg-ts`."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-t2mi]
+domain = "dvb"
+summary = "DVB-T2 Modulator Interface (T2-MI): all packet types and a feed-and-iterate pump."
+standards = "ETSI TS 102 773 V1.4.1; EN 302 755 V1.4.1 (L1 signalling)"
+what = "Parses and builds T2-MI packets (BBFrame, L1-current/future, FEF, timestamp, individual addressing, ...) with a registry for private packet types, and a pump that extracts T2-MI from a TS PID. Hand the BBFrames to `dvb-bbframe` to get the inner TS back."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-bbframe]
+domain = "dvb"
+summary = "DVB-S2 / S2X / T2 BBFRAME headers and user-packet extraction (NM and HEM)."
+standards = "ETSI EN 302 307-1 / -2 (DVB-S2 / S2X); EN 302 755 V1.4.1 (DVB-T2, Annex C ISSY)"
+what = "The 10-byte BBHEADER (MATYPE/UPL/DFL/SYNC/SYNCD) with CRC-8, user-packet extraction in Normal and High Efficiency Mode, ISSY, and a per-PLP pump that turns BBFrames back into an inner transport stream."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-conformance]
+domain = "dvb"
+summary = "ETSI TR 101 290 transport-stream conformance monitor (priority 1, 2 and 3 indicators)."
+standards = "ETSI TR 101 290 V1.4.1 (2020-06) Tables 5.0a/b/c; partial ISO/IEC 13818-1 T-STD buffer model"
+what = "Feeds TS packets through the TR 101 290 indicator set on a caller-supplied clock: priority 1 (1.1-1.6), priority 2 (2.1-2.3b, 2.5-2.6) and priority 3 (3.1-3.10, with a partial T-STD buffer model for 3.3/3.9/3.10). Indicator 2.4 (PCR accuracy) is not emitted."
+crates_io = true
+lifecycle = "active"
+
+# ------------------------------------------------------------------------ ca
+
+[crate.dvb-ci]
+domain = "ca"
+summary = "DVB Common Interface (EN 50221) APDUs, session/transport PDUs, CI Plus extensions, CA_PMT builder."
+standards = "ETSI EN 50221:1997; TS 101 699 V1.1.1; TS 103 205 V1.4.1 (CI Plus extensions)"
+what = "The host-to-CICAM wire protocol: resource APDUs (resource manager, application info, CA support incl. `ca_pmt`/`ca_pmt_reply`, date-time, host control, the MMI set, low-speed communications), SPDUs and TPDUs, and a builder that turns a `dvb-si` PMT into a CA_PMT. Codec only; the driver loop is `dvb-ci-runtime`."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-ci-runtime]
+domain = "ca"
+summary = "EN 50221 driver runtime: device I/O, TPDU/SPDU poll loop, resource state machines, CAM hot-plug."
+standards = "ETSI EN 50221:1997 §7-§8; TS 101 699"
+what = "Drives a physical CAM over the `dvb-ci` codecs: a `CaDevice` abstraction (with a Linux CA-device implementation behind the `linux` feature), the transport poll loop, session management, per-resource state machines, hot-plug notifications and a managed descrambling layer (`CaDescrambler`). Requires `std`."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-csa]
+domain = "ca"
+summary = "DVB Common Scrambling Algorithm (CSA2) block + stream cipher, with a bitsliced batch path."
+standards = "DVB-CSA2 (no public normative specification; validated against libdvbcsa known-answer vectors)"
+what = "Scrambles and descrambles TS packet payloads with an 8-byte control word. There is no public spec to cite, so correctness rests on agreement with independent implementations (libdvbcsa vectors). The optional `bitsliced` feature processes 64 payloads per batch."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-simulcrypt]
+domain = "ca"
+summary = "DVB SimulCrypt head-end message framing: generic TLV message plus ECMG<->SCS and EMMG/PDG<->MUX registries."
+standards = "ETSI TS 103 197 V1.5.1"
+what = "A codec for the head-end CA control messages (no sockets): the generic message header and TLV parameter list with recomputed lengths, and the message/parameter registries of the ECMG<->SCS and EMMG/PDG<->MUX interfaces. Control words, ECM/EMM and datagram payloads stay opaque."
+crates_io = true
+lifecycle = "active"
+
+# ------------------------------------------------------------------ captions
+
+[crate.dvb-subtitle]
+domain = "captions"
+summary = "DVB bitmap subtitling segments (page/region/CLUT/object/DDS/disparity) and pixel-data sub-blocks."
+standards = "ETSI EN 300 743 V1.6.1"
+what = "Parses and builds the subtitling segments of a DVB subtitle PES data field, including 2/4/8-bit pixel-data run-length sub-blocks. It does not render bitmaps."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-vbi]
+domain = "captions"
+summary = "VBI data in DVB PES: VPS, WSS, closed captioning, EBU/inverted teletext, monochrome samples."
+standards = "ETSI EN 301 775 V1.2.1 §4; EN 300 472 (teletext carriage)"
+what = "Decodes the VBI PES data field: the data identifier and the data-unit loop for VPS (EN 300 231), WSS (EN 300 294), line-21 closed captioning, EBU and inverted teletext, and monochrome 4:2:2 luminance samples. Teletext page decoding lives in `timed-metadata` / `caption-convert`."
+crates_io = true
+lifecycle = "active"
+
+[crate.cc-data]
+domain = "captions"
+summary = "Closed-caption cc_data() carriage: typed CEA-608/708 triplets, 608/708 split, optional decode."
+standards = "ETSI TS 101 154 V2.6.1 Table B.9; ANSI/CTA-608-E; ANSI/CTA-708-E S-2023 (decode feature)"
+what = "Parses the `cc_data()` structure carried in MPEG-2/AVC/HEVC picture user data into typed triplets and splits CEA-608 from CEA-708. The `decode` feature adds the 608 byte-pair and 708 service-block decode model. The caller extracts `cc_data()` from the picture (transmux does this for A/53 `GA94`)."
+crates_io = true
+lifecycle = "active"
+
+[crate.ttml-subtitle]
+domain = "captions"
+summary = "W3C TTML2 / IMSC 1.1 timed-text parser, serializer and profile validator."
+standards = "W3C TTML2 (REC 2018-11-08); W3C IMSC 1.1 (REC 2018-11-08)"
+what = "Parses TTML2 documents into typed structures and validates them, as a separate pass, against the IMSC 1.1 Text and Image profiles. XML parsing and serialization use `quick-xml` and need the `std` feature; the time-expression parser stays `no_std`."
+crates_io = true
+lifecycle = "active"
+
+[crate.caption-convert]
+domain = "captions"
+summary = "Caption conversion: CEA-608/708 and EBU Teletext to WebVTT/SRT, WebVTT<->SRT."
+standards = "W3C WebVTT; SRT (de facto); consumes CEA-608/708, EN 300 706 teletext, IMSC"
+what = "Converts between caption formats using the decoders already in the workspace rather than reimplementing them. DVB bitmap subtitles and TTML/IMSC to WebVTT/SRT are modelled but not implemented; `matrix::check` is the authoritative statement of which pairs convert."
+crates_io = true
+lifecycle = "active"
+
+[crate.st291]
+domain = "captions"
+summary = "SMPTE ST 291-1 ancillary (ANC) data packets over ST 2038 (TS/PES) and RFC 8331 / ST 2110-40 (RTP)."
+standards = "SMPTE ST 291-1:2011; ST 2038:2021 (`ts` feature); RFC 8331 / ST 2110-40:2023 (`rtp` feature)"
+what = "Parses and builds ANC data packets (DID/SDID, user data words, parity and checksum) and their two carriages: the ST 2038 `anc_data_descriptor` + ANC PES packet in MPEG-2 TS, and the RFC 8331 RTP payload. Renamed from `smpte2038` / `dvb-smpte2038` (both yanked)."
+crates_io = true
+lifecycle = "active"
+
+# ---------------------------------------------------------------- signalling
+
+[crate.scte35-splice]
+domain = "signalling"
+summary = "SCTE 35 splice_info_section: every splice command and descriptor, segmentation tables, builders."
+standards = "ANSI/SCTE 35 2023r1; ETSI TS 103 752-1 V1.2.1 (DVB targeted advertising profile)"
+what = "Parser and builder for the SCTE 35 cueing message (table_id 0xFC): all splice commands, splice descriptors and the segmentation type/UPID tables, byte-exact round trip. Versioned independently (left the DVB lockstep at 1.0.0)."
+crates_io = true
+lifecycle = "active"
+
+[crate.scte104]
+domain = "signalling"
+summary = "SCTE 104 automation-to-compression messages: single/multiple operation messages and the DPI operations."
+standards = "ANSI/SCTE 104 2023"
+what = "Parses and builds `single_operation_message` and `multiple_operation_message` and the operations they carry (splice request, time signal, insert descriptor, segmentation, ...) that an automation system uses to make an encoder insert SCTE 35."
+crates_io = true
+lifecycle = "active"
+
+[crate.mp4-emsg]
+domain = "signalling"
+summary = "ISO BMFF / DASH Event Message Box (emsg) v0 and v1."
+standards = "ISO/IEC 23009-1 emsg (edition unverified); DASH-IF IOP Part 10 V5.0.0"
+what = "Parses and builds the `emsg` box used for in-band DASH/CMAF events (SCTE 35, ID3, ad tracking), deriving `size` and `version` from the typed fields on serialize."
+crates_io = true
+lifecycle = "active"
+
+[crate.timed-metadata]
+domain = "signalling"
+summary = "Convert SCTE 35 to/from DASH emsg and to HLS EXT-X-DATERANGE; 33-bit PTS wrap unrolling."
+standards = "ANSI/SCTE 214-3 §8.3.3 (emsg carriage); RFC 8216 / rfc8216bis §4.4.5.1 (DATERANGE); EN 300 706 V1.2.1 teletext decode (`teletext`)"
+what = "Lossless conversion of SCTE 35 cues between in-band TS, DASH `emsg` (both directions) and HLS `EXT-X-DATERANGE` (SCTE 35 to DATERANGE only), keeping the original section bytes, with a `Timeline` that unrolls 33-bit PTS wraps. Optional features extract CEA-608/708 and EBU Teletext cues."
+crates_io = true
+lifecycle = "active"
+
+# ---------------------------------------------------------------- containers
+
+[crate.container-probe]
+domain = "containers"
+summary = "Container-format detection over a byte prefix, with scored evidence and an explicit Ambiguous verdict."
+standards = "Uses layouts from ISO/IEC 13818-1, ISO/IEC 14496-12, RFC 8794/9559 (EBML/Matroska), SMPTE ST 377-1 and others; implements no standard of its own"
+what = "Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF and ADTS/MP3/Annex B elementary streams. Every prober runs and scores structural evidence; a near-tie reports `Ambiguous`, and `Insufficient` (read more) is distinct from `Unknown` (stop)."
+crates_io = true
+lifecycle = "active"
+
+[crate.broadcast-hls]
+domain = "containers"
+summary = "HLS (M3U8) playlist syntax: media/master playlists, LL-HLS tags, I-frame variants, CENC/CBCS EXT-X-KEY."
+standards = "RFC 8216; draft-pantos-hls-rfc8216bis-22 (incl. Appendix D interstitials)"
+what = "Parses and serializes HLS playlists, including Low-Latency HLS (parts, preload hints, rendition reports, skip), I-frame trick-play variants, discontinuity signalling and `#EXT-X-KEY` for CENC/CBCS. Extracted from `transmux` so a playlist-only consumer does not pull in the muxing hub; the segmenters that produce container bytes stay in `transmux`."
+crates_io = true
+lifecycle = "active"
+
+[crate.transmux]
+domain = "containers"
+summary = "Any-to-any container remux hub: TS/fMP4/PS/WebM/FLV/RTMP in, CMAF/MP4/TS/HLS/DASH/LL-*/Smooth out."
+standards = "ISO/IEC 14496-12 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)"
+what = "Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxes it to any supported output, so every input-output pair composes (WebM VP8/Vorbis tracks are the documented exception). Also: CENC/CBCS encrypt and decrypt, HLS SAMPLE-AES, RTP/RTCP, IR transforms (rebase, splice/SSAI, trick-play), an fMP4/CMAF conformance validator and a `transmux` CLI (feature `cli`). It parses codec configuration headers only and never decodes or encodes samples. XML manifest paths (DASH, Smooth, PlayReady) need `std`."
+crates_io = true
+lifecycle = "active"
+
+# ---------------------------------------------------------------------- live
+
+[crate.rtp-packet]
+domain = "live"
+summary = "RTP fixed header, CSRC list, generic header extension; optional RFC 8285 extensions and AV3A payload."
+standards = "RFC 3550 §5.1 / §5.3.1; RFC 8285 (`rfc8285`); T/AI 109.7-2024 §10.1 AV3A-AATF payload (`av3a`)"
+what = "Spec-complete parse and serialize of the RTP packet header and its extension, with optional one-byte/two-byte extension multiplexing and the AVS3 audio (Audio Vivid) RTP payload."
+crates_io = true
+lifecycle = "active"
+
+[crate.rtcp-packet]
+domain = "live"
+summary = "RTCP SR/RR/SDES/BYE/APP and compound packets."
+standards = "RFC 3550 §6"
+what = "Typed, symmetric parse and serialize for every RFC 3550 RTCP packet type and the compound packet. Feedback messages (NACK) are in `rist-runtime`."
+crates_io = true
+lifecycle = "active"
+
+[crate.rist-runtime]
+domain = "live"
+summary = "RIST Simple Profile RTCP messages (Generic/Range NACK, RTT Echo, compounds) and a sans-IO ARQ engine."
+standards = "VSF TR-06-1:2020 (RIST Simple Profile); RFC 4585 §6.2.1"
+what = "Wire codecs for the RIST Simple Profile RTCP messages on top of `rtcp-packet`, compound-packet builders that enforce the §5.2.1 structure, and a sans-IO sender/receiver ARQ engine (§5.3). TR-06-1 leaves most ARQ timing to the implementer, so several of the engine's numbers are this crate's own design choice, documented in the `arq` module. No socket adapter."
+crates_io = true
+lifecycle = "active"
+
+[crate.st2022]
+domain = "live"
+summary = "SMPTE ST 2022-6 HBRMT (SDI over IP) RTP payload header."
+standards = "SMPTE ST 2022-6:2012"
+what = "Parses and serializes the HBRMT payload header that carries uncompressed SDI over RTP. ST 2022-7 seamless protection switching is not implemented anywhere in the workspace."
+crates_io = true
+lifecycle = "active"
+
+[crate.rtsp-runtime]
+domain = "live"
+summary = "Sans-IO RTSP 1.0 client + server session engine, interleaved RTP/RTCP, Basic/Digest/Bearer auth."
+standards = "RFC 2326 (RTSP 1.0) incl. Appendix A state machines, §10.12 interleaving, §12.39 Transport, §14 auth"
+what = "Driveable client and server state machines with CSeq correlation, Transport negotiation and interleaved framing over the `rtsp-types` codec, with auth through `broadcast-auth`. The optional `tokio` (+ `tls`) feature adds a socket adapter. RTSP 2.0 (RFC 7826) is not implemented. Requires `std`."
+crates_io = true
+lifecycle = "active"
+
+[crate.rtmp-runtime]
+domain = "live"
+summary = "Sans-IO RTMP 1.0 ingest (publish) engine: handshake, chunk stream, AMF0 commands, server state machine."
+standards = "Adobe RTMP 1.0 (Dec 2012); AMF0"
+what = "Server-side publish session engine (`connect` -> `createStream` -> `publish`) over the handshake, chunk-stream and message layers, with an optional tokio adapter. Publish/ingest only; playback is not implemented. Requires `std`."
+crates_io = true
+lifecycle = "active"
+
+[crate.srt-runtime]
+domain = "live"
+summary = "SRT packet codecs, HSv5 handshake (caller/listener/rendezvous), ARQ, TSBPD, LiveCC/FileCC, optional crypto."
+standards = "draft-sharabayko-srt-01"
+what = "Sans-IO SRT: packet codecs, the HSv5 handshake state machines, an ARQ reliability engine, a TSBPD delivery scheduler, LiveCC pacing and FileCC congestion control, optional payload encryption (`crypto`) and an optional tokio UDP adapter (`tokio`). The core is `no_std`."
+crates_io = true
+lifecycle = "active"
+
+[crate.webrtc-runtime]
+domain = "live"
+summary = "Sans-IO WHIP + WHEP HTTP signalling: SDP offer/answer, Trickle ICE, ICE restart, session lifecycle."
+standards = "RFC 9725 (WHIP); draft-ietf-wish-whep-04; optional ICE/DTLS-SRTP transport (`media`)"
+what = "WHIP ingest and WHEP egress session establishment as state machines over `http` crate types; the caller drives HTTP. The optional `media` feature adds ICE + DTLS-SRTP transport (via the `rtc-*` crates), which `multimux`'s `whip`/`whep` features build on. Requires `std`."
+crates_io = true
+lifecycle = "active"
+
+[crate.hls-runtime]
+domain = "live"
+summary = "Sans-IO Low-Latency HLS client and origin engines; optional tokio+reqwest client adapter."
+standards = "RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS)"
+what = "A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 demux output) and a sans-IO origin (`server`, feature `std`) that renders playlists and serves init/segment/part bytes straight from a `media-plane` `Trunk`. Earlier releases were published as `ll-hls-runtime` (those versions are still live on crates.io)."
+crates_io = true
+lifecycle = "active"
+
+# ------------------------------------------------------------------- servers
+
+[crate.media-plane]
+domain = "servers"
+summary = "The live-origin spine: dialers/listeners, byte stages, ingest sessions and the Trunk ring hub with DVR retention."
+standards = "none of its own (architecture layer)"
+what = "Four layers (`Dialer`/`Listener` -> byte stages -> `IngestSession` -> IR transforms -> `Trunk`). A `Trunk` holds bounded sample/segment/event/part rings with cursor subscribers that report lag in-band, and supports served, push and segment egress with tiered retention and DVR pinning. Byte layer is `no_std` + `alloc`; `Trunk` and above need `std`."
+crates_io = true
+lifecycle = "active"
+
+[crate.multimux]
+domain = "servers"
+summary = "Multi-input, multi-output just-in-time repackaging HTTP origin (tokio + axum)."
+standards = "Composes the live and container crates (RTSP, RTP, SRT, RTMP, HLS, DASH, Smooth, WHIP/WHEP)"
+what = "Ingest RTSP, RTP/UDP, TS over UDP or HTTP, SRT, HLS/DASH/Smooth pull, RTMP push or a local file, and serve each stream as LL-HLS, DASH, LL-DASH, Smooth, TS-HLS or catch-up, or push it out over SRT/RTMP/RTSP. Muxing only, never transcoding. Includes shared output auth, a scheme plugin registry, Prometheus metrics and supervised reconnect. Requires `std`."
+crates_io = true
+lifecycle = "active"
+
+[crate.multimux-cli]
+domain = "servers"
+summary = "The multimux command-line binary: JSON multi-route config or a single-route RTSP quick start."
+standards = "see multimux"
+what = "Runs a `multimux` origin. The quick-start flags accept RTSP input and LL-HLS/DASH output (plus push shorthands); every other input and output kind is reachable through `--config`."
+crates_io = true
+lifecycle = "active"
+
+[crate.media-doctor]
+domain = "servers"
+summary = "Media diagnostics: lint-style TS checks, HLS/DASH/fMP4/CMAF validation, optional Prometheus endpoint and CLI."
+standards = "Checks against ISO/IEC 13818-1, RFC 8216, ISO/IEC 23009-1, SCTE 35"
+what = "A pluggable diagnostics harness: each `Diagnostic` checks one rule (sync, PAT/PMT versioning, continuity, PCR, PTS/DTS monotonicity, SCTE 35 splice consistency) and produces findings, plus HLS playlist, DASH MPD and fMP4/CMAF structural validation. Features `net`/`metrics` serve Prometheus; `cli` builds the `media-doctor` binary."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-tools]
+domain = "servers"
+summary = "DVB stream analyzer CLI: dump / services / epg / pids / t2mi."
+standards = "see dvb-si, dvb-t2mi"
+what = "Command-line analyzer over the DVB crates: dump changed SI sections (optionally as JSON), list services, print the EPG, show PID usage, and walk T2-MI down to the inner TS."
+crates_io = true
+lifecycle = "active"
+
+[crate.ts-fix]
+domain = "servers"
+summary = "MPEG-2 TS repair/remux engine and CLI: continuity, PID filter, PAT/PMT regen, stuffing, PCR restamp."
+standards = "ISO/IEC 13818-1"
+what = "A builder-driven streaming engine that takes 188-byte packets in and emits repaired packets out; each operation is opt-in and the engine fixes their order. Container layer only, no codec parsing. The `cli` feature builds the binary."
+crates_io = true
+lifecycle = "active"
+
+[crate.compliance-probe]
+domain = "servers"
+summary = "Live TR 101 290 + PCR-drift + SCTE 35 cue-sanity probe over a media-plane Trunk, exported as metrics."
+standards = "ETSI TR 101 290 (via dvb-conformance); SCTE 35"
+what = "Runs beside a live stream and exports `dvb-conformance` indicators, a PCR drift/jitter estimate (distinct from TR 101 290 indicator 2.4, which is not emitted) and `splice_insert` sanity checks through the `metrics` facade for a host to render as Prometheus."
+crates_io = true
+lifecycle = "active"
+
+[crate.ssai-runtime]
+domain = "servers"
+summary = "Sans-IO SCTE 35 server-side ad insertion core with HLS Interstitials rendering."
+standards = "SCTE 35; draft-pantos-hls-rfc8216bis Appendix D (interstitials)"
+what = "Per-session ad-break state, a pluggable `AdDecisionProvider`, splice-point conditioning against real segment/keyframe boundaries, and per-session HLS Interstitial playlist rendering. No HTTP client and no VAST/VMAP."
+crates_io = true
+lifecycle = "active"
+
+[crate.playout-runtime]
+domain = "servers"
+summary = "Sans-IO linear channel playout: schedule model, transition planning, SCTE 35 splice_insert emission points."
+standards = "SCTE 35 (via scte35-splice)"
+what = "Assembles a linear channel from an ordered programme/ad/slate schedule, plans each join (PTS rebase offset and discontinuity detection) and emits the SCTE 35 `splice_insert()` points a transition implies. No HTTP, no tokio, no transcoding."
+crates_io = true
+lifecycle = "active"
+
+# -------------------------------------------------------------- professional
+
+[crate.st12-1]
+domain = "professional"
+summary = "SMPTE ST 12-1 Linear Timecode: the 80-bit LTC codeword."
+standards = "SMPTE ST 12-1:2014 §9"
+what = "Parses and builds the LTC codeword: BCD time address, drop-frame and colour-frame flags, rate-dependent flag bits, eight binary groups and the sync word. Does not modulate or demodulate the audio signal."
+crates_io = true
+lifecycle = "active"
+
+[crate.st337]
+domain = "professional"
+summary = "SMPTE ST 337 non-PCM audio/data burst framing over AES3."
+standards = "SMPTE ST 337:2015"
+what = "Parses and builds the burst preamble (Pa..Pd, or the extended Pa..Pf form) with an opaque burst payload, cross-checked against a real E-AC-3 burst and ffmpeg's spdif muxer."
+crates_io = true
+lifecycle = "active"
+
+[crate.st377-1]
+domain = "professional"
+summary = "SMPTE ST 377-1 MXF: KLV, partition/primer packs, structural metadata, OP1a packages, random index pack."
+standards = "SMPTE ST 377-1:2019; ST 336:2017 (KLV); ST 378M-2004 (OP1a)"
+what = "Types the MXF backbone: KLV framing, partition packs, the primer pack, local-set structural metadata (Preface, Identification, ContentStorage, EssenceContainerData), OP1a packages/tracks/components and the random index pack. Essence-container mappings and descriptive metadata plug-ins are out of scope."
+crates_io = true
+lifecycle = "active"
+
+[crate.rdd29]
+domain = "professional"
+summary = "SMPTE RDD 29 Dolby Atmos bitstream: frame/element framing plus bed/object metadata."
+standards = "SMPTE RDD 29:2019"
+what = "Parses and builds Atmos frames and their elements, including bed definitions, object definitions and audio data DLC elements."
+crates_io = true
+lifecycle = "active"
+
+# ------------------------------------------------------------------ delivery
+
+[crate.ule]
+domain = "delivery"
+summary = "ULE: IP over MPEG-2 TS (SNDU framing, extension headers, TS de-fragmentation)."
+standards = "RFC 4326; RFC 5163"
+what = "Encapsulates and decapsulates network-layer PDUs as SNDUs (with optional destination NPA address and CRC-32), walks extension-header chains, and reassembles SNDUs from TS packets on one PID. For GSE use the external `dvb-gse` crate."
+crates_io = true
+lifecycle = "active"
+
+[crate.rmt-flute]
+domain = "delivery"
+summary = "ALC/LCT/FLUTE/NORM multicast object-delivery wire formats."
+standards = "RFC 5651 (LCT); RFC 5775 (ALC); RFC 6726 (FLUTE); RFC 5740 (NORM); RFC 5052 (FEC building block)"
+what = "LCT headers with flag-driven field sizing, header-extension chains, ALC and FEC payload IDs, FLUTE EXT_FDT/EXT_CENC and NORM messages. Pure IETF RMT; DVB, 3GPP and ATSC profiles sit on top of it. Renamed from `dvb-flute` (yanked)."
+crates_io = true
+lifecycle = "active"
+
+[crate.dvb-mabr]
+domain = "delivery"
+summary = "DVB multicast ABR session-configuration XML parser/serializer."
+standards = "ETSI TS 103 769 V1.2.1 clause 10"
+what = "Reads and writes the `MulticastServerConfiguration` and `MulticastGatewayConfiguration` documents that coordinate a DVB-MABR system. XML through `quick-xml`; requires `std` for anything but the error type."
+crates_io = true
+lifecycle = "active"
+
+[crate.atsc3]
+domain = "delivery"
+summary = "ARCHIVED, never published: ATSC 3.0 LLS envelope + Service List Table parser."
+standards = "ATSC A/331 §6.2-§6.3"
+what = "ATSC 3.0 work is abandoned: the market is closed and real fixtures are unobtainable. The crate still compiles and its tests run against the one real LLS/SLT fixture, but it receives no development and will not be published."
+crates_io = false
+lifecycle = "archived"
+
+[crate.atsc3-route]
+domain = "delivery"
+summary = "ARCHIVED (maintenance only): ATSC 3.0 ROUTE header-extension constants, FEC payload IDs, codepoint table."
+standards = "ATSC A/331 Annex A; RFC 6330 (RaptorQ payload ID)"
+what = "ROUTE binary framing on top of `rmt-flute`: header-extension type constants, source/repair FEC Payload ID layouts and the codepoint semantics table. The typed extension decoders were removed because no real capture carries them. No XML, S-TSID or SLS."
+crates_io = true
+lifecycle = "archived"
+
+# --------------------------------------------------------------- measurement
+
+[crate.broadcast-loudness]
+domain = "measurement"
+summary = "EBU R 128 / ITU-R BS.1770-5 loudness: integrated, momentary, short-term, LRA, true peak."
+standards = "ITU-R BS.1770-5 (11/2023); EBU R 128, Tech 3341, Tech 3342 (all November 2023); GY/T 282-2014, GY/T 377-2023, GY/T 379-2023 target profiles"
+what = "K-weighting at any non-zero sample rate (coefficients derived by bilinear transform, matching the BS.1770 48 kHz tables), gated integrated loudness, momentary and short-term loudness, loudness range and true peak, verified against the EBU Tech 3341 compliance signals. Chinese NRTA target profiles are included."
+crates_io = true
+lifecycle = "active"
+
+# ------------------------------------------------------------------ internal
+
+[crate.test-alloc]
+domain = "internal"
+summary = "Counting/capping GlobalAlloc wrappers for allocation-bound tests."
+standards = "n/a"
+what = "The single audited copy of the counting and capping allocators used by allocation-bound tests in several crates. Every impl delegates unchanged to `System`."
+crates_io = false
+lifecycle = "internal"
+
+[crate.test-bounded]
+domain = "internal"
+summary = "Deadline-bounded external-tool runner for tests."
+standards = "n/a"
+what = "`output_bounded(&mut Command, Duration)`: runs an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test."
+crates_io = false
+lifecycle = "internal"
+
+[crate.test-fixtures]
+domain = "internal"
+summary = "Shared loader for the workspace fixtures/ directory."
+standards = "n/a"
+what = "Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong."
+crates_io = false
+lifecycle = "internal"
