@@ -44,6 +44,17 @@
 //! mapping resolves.  In practice broadcast muxes cycle the PAT ahead of and
 //! alongside the PMTs, so at least one PAT slot follows the PMT.
 //!
+//! # No surviving PMT (e.g. `--keep-pids` that drops every PMT)
+//!
+//! A PAT slot seen but no PMT ever parsed means the mapping is genuinely empty.
+//! The op then emits, at end of stream, a **program-less PAT** (ITU-T H.222.0
+//! (08/2023) Table 2-30, PDF p. 55: the program loop `N` is unconstrained and
+//! `network_PID` is optional) carrying the original `transport_stream_id` and
+//! any `network_PID` entry, instead of silently dropping the PAT. It never
+//! lists a PMT PID that is not in the output. Tradeoff: this is emitted at
+//! flush, not in position (the op is single-pass and cannot know a PMT will not
+//! follow); a stream with no PAT slot and no PMT still gets no PAT.
+//!
 //! # Spec
 //!
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.3 (PAT) / §2.4.4.8 (PMT).
@@ -216,9 +227,12 @@ impl PsiRegenOp {
     /// Build the PAT entries for the current mapping: the PMT-derived
     /// program entries plus the original PAT's `network_pid` entry
     /// (`program_number == 0`), if one was observed — ISO/IEC 13818-1
-    /// §2.4.4.3. Returns `None` if no programs have been discovered yet.
-    fn current_entries(&self) -> Option<Vec<PatEntry>> {
-        if self.pmt_programs.is_empty() {
+    /// §2.4.4.3. Returns `None` if no programs have been discovered yet,
+    /// unless `allow_empty` (end of stream with a PAT slot seen) in which case
+    /// a program-less PAT — the loop count `N` of Table 2-30 is unconstrained —
+    /// is built.
+    fn current_entries(&self, allow_empty: bool) -> Option<Vec<PatEntry>> {
+        if self.pmt_programs.is_empty() && !allow_empty {
             return None;
         }
 
@@ -240,8 +254,8 @@ impl PsiRegenOp {
     /// re-emission of an unchanged mapping.
     ///
     /// Returns `None` if no programs have been discovered yet.
-    fn rebuild_pat(&mut self) -> Option<Vec<u8>> {
-        let entries = self.current_entries()?;
+    fn rebuild_pat(&mut self, allow_empty: bool) -> Option<Vec<u8>> {
+        let entries = self.current_entries(allow_empty)?;
 
         if self.last_entries.as_ref() != Some(&entries) {
             if self.last_entries.is_some() {
@@ -267,8 +281,8 @@ impl PsiRegenOp {
     /// Emit a regenerated PAT (packetised onto PID 0x0000), if a mapping
     /// exists. Reuses `self.pat_packetiser` so `continuity_counter`
     /// increments across every emission instead of restarting at 0.
-    fn emit_regen_pat(&mut self, out: &mut dyn FnMut(&[u8])) {
-        if let Some(section) = self.rebuild_pat() {
+    fn emit_regen_pat(&mut self, out: &mut dyn FnMut(&[u8]), allow_empty: bool) {
+        if let Some(section) = self.rebuild_pat(allow_empty) {
             for pkt in self.pat_packetiser.packetise(&[&section]) {
                 out(&pkt);
             }
@@ -299,7 +313,7 @@ impl Op for PsiRegenOp {
                 // PMT scan (transport_stream_id, network_pid).
                 self.observe_pat_hints(payload, pusi);
             }
-            self.emit_regen_pat(out);
+            self.emit_regen_pat(out, false);
             return;
         }
 
@@ -317,7 +331,7 @@ impl Op for PsiRegenOp {
             // (every program's PMT has been seen → mapping complete), before
             // forwarding this packet so the PAT precedes the following data.
             if !self.seen_pat_slot && !self.emitted_pat && cycle_wrapped {
-                self.emit_regen_pat(out);
+                self.emit_regen_pat(out, false);
             }
         }
 
@@ -329,8 +343,14 @@ impl Op for PsiRegenOp {
         // Fallback: if a mapping was discovered but no PAT was ever emitted
         // (e.g. the stream was stripped and the PMT cycle never wrapped within
         // the capture), emit one now so the regenerated PAT is never lost.
+        //
+        // If the stream carried PAT slots but no PMT ever survived (e.g. a PID
+        // filter dropped every PMT), the PAT is regenerated as a program-less
+        // PAT (plus the original network_PID entry, if any) rather than
+        // dropped: Table 2-30's program loop may be empty, so a PAT that lists
+        // exactly the PMTs present is valid and downstream demuxers keep a PAT.
         if !self.emitted_pat {
-            self.emit_regen_pat(out);
+            self.emit_regen_pat(out, self.seen_pat_slot);
         }
     }
 }

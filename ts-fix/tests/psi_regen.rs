@@ -1211,3 +1211,93 @@ fn regen_psi_on_real_capture_keeps_pat_pid_continuity_clean() {
         "regenerated PATs raised Continuity_count_error on PID 0: {pat_cc_errors:?}"
     );
 }
+
+// ── #1288: filter that drops PMT(s), then regen ─────────────────────────────
+
+/// Every PAT packet's continuity_counter must follow the previous one (mod 16).
+fn assert_pat_pid_continuous(ts: &[u8]) {
+    let ccs: Vec<u8> = ts
+        .chunks_exact(188)
+        .filter(|p| pid_from_packet(p) == PAT_PID)
+        .map(|p| p[3] & 0x0F)
+        .collect();
+    for w in ccs.windows(2) {
+        assert_eq!(w[1], (w[0] + 1) % 16, "PAT PID CC must be continuous: {ccs:?}");
+    }
+}
+
+/// PIDs in `ts` whose PUSI packets begin a PMT section.
+fn pmt_pids_in(ts: &[u8]) -> std::collections::BTreeSet<Pid> {
+    ts.chunks_exact(188)
+        .filter(|p| p[1] & 0x40 != 0)
+        .filter_map(|p| {
+            let payload = extract_ts_payload(p)?;
+            let tid = *payload.get(1 + *payload.first()? as usize)?;
+            (tid == PMT_TABLE_ID).then(|| pid_from_packet(p))
+        })
+        .collect()
+}
+
+/// Output must carry a valid, continuous PAT whose non-network entries all
+/// reference a PMT PID present in the output (never a dangling PMT PID).
+fn assert_pat_consistent_with_pmts(output: &[u8]) -> PatSection {
+    let pat_pkt = find_pat_packet(output).expect("output must have a PAT (#1288)");
+    assert!(pat_crc_is_valid(pat_pkt), "PAT CRC must be valid");
+    assert_pat_pid_continuous(output);
+    let pat = parse_pat_from_packet(pat_pkt).expect("PAT must parse");
+    let pmts = pmt_pids_in(output);
+    for e in &pat.entries {
+        if e.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT {
+            assert!(pmts.contains(&e.pid), "PAT references absent PMT PID {:?}", e.pid);
+        }
+    }
+    pat
+}
+
+/// The issue repro on the real capture: keep only ES PIDs (PMT dropped).
+#[test]
+fn keep_pids_dropping_every_pmt_then_regen_keeps_a_programless_pat() {
+    let ts = test_fixtures::read("ts/m6-single.ts");
+    let output = run(&ts, |b| {
+        b.filter_pids(PidFilter::keep([Pid::new(120), Pid::new(130)]))
+            .regen_psi()
+    });
+    assert!(!output.is_empty());
+    let pat = assert_pat_consistent_with_pmts(&output);
+    assert!(
+        pat.entries
+            .iter()
+            .all(|e| e.program_number == dvb_si::tables::pat::PROGRAM_NUMBER_NIT),
+        "no PMT survives, so no program may be listed"
+    );
+    // The kept ES PIDs are still present.
+    let pids: std::collections::BTreeSet<Pid> =
+        output.chunks_exact(188).map(pid_from_packet).collect();
+    assert!(pids.contains(&Pid::new(130)));
+}
+
+/// Two programs, both PMTs dropped (ES of program 1 kept).
+#[test]
+fn two_program_keep_without_any_pmt_keeps_programless_pat() {
+    let ts = build_two_program_ts(4);
+    let output = run(&ts, |b| {
+        b.filter_pids(PidFilter::keep([P1_VIDEO_PID, P1_AUDIO_PID]))
+            .regen_psi()
+    });
+    let pat = assert_pat_consistent_with_pmts(&output);
+    assert!(pat.entries.is_empty(), "no PMT survives: PAT lists no program");
+}
+
+/// Two programs: PMT1 kept, PMT2 dropped. PAT must list only program 1.
+#[test]
+fn two_program_keep_one_pmt_lists_only_that_program() {
+    let ts = build_two_program_ts(4);
+    let output = run(&ts, |b| {
+        b.filter_pids(PidFilter::keep([PMT1_PID, P1_VIDEO_PID, P1_AUDIO_PID]))
+            .regen_psi()
+    });
+    let pat = assert_pat_consistent_with_pmts(&output);
+    assert_eq!(pat.entries.len(), 1);
+    assert_eq!(pat.entries[0].program_number, 1);
+    assert_eq!(pat.entries[0].pid, PMT1_PID);
+}

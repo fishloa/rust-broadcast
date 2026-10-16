@@ -167,6 +167,13 @@ impl Engine {
                 });
             }
 
+            // The last op has no later op to chain through: its flush output
+            // is final (#1288 — a PAT flushed by a trailing `regen_psi` was
+            // silently dropped here).
+            if i == last {
+                stage1.append(&mut stage0);
+            }
+
             // Chain the staged packets through every later op.
             for j in (i + 1)..self.ops.len() {
                 if stage0.is_empty() {
