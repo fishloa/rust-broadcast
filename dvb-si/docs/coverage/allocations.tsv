@@ -272,36 +272,36 @@ ait_descriptor_tag	0x17	simple_application_boundary_descriptor	ETSI TS 102 809 V
 
 # ── INT descriptor namespace (target / operational / platform loops, 0x00–0x3F) — ETSI EN 301 192 V1.7.1 Table 19 (clause 8.4.5.1)
 # "MPEG descriptors in the range 0x00 to 0x3F cannot be used in the INT" (EN 301 192 V1.7.1 clause 8.4.5.1)
-int_descriptor_tag	0x06	target_smartcard_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.5
-int_descriptor_tag	0x07	target_MAC_address_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.6
-int_descriptor_tag	0x08	target_serial_number_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.4
-int_descriptor_tag	0x09	target_IP_address_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.8
-int_descriptor_tag	0x0A	target_IPv6_address_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.11
-int_descriptor_tag	0x0C	IP/MAC_platform_name_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.2
-int_descriptor_tag	0x0D	IP/MAC_platform_provider_name_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.3
-int_descriptor_tag	0x0E	target_MAC_address_range_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.7
-int_descriptor_tag	0x0F	target_IP_slash_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.9
-int_descriptor_tag	0x10	target_IP_source_slash_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.10
-int_descriptor_tag	0x11	target_IPv6_slash_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.12
-int_descriptor_tag	0x12	target_IPv6_source_slash_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.13
-int_descriptor_tag	0x13	IP/MAC_stream_location_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.14
-int_descriptor_tag	0x14	ISP_access_mode_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.16
-int_descriptor_tag	0x15	IP/MAC_generic_stream_location_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.15
+int_descriptor_tag	0x06	target_smartcard_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.5	33
+int_descriptor_tag	0x07	target_MAC_address_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.6	33
+int_descriptor_tag	0x08	target_serial_number_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.4	32
+int_descriptor_tag	0x09	target_IP_address_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.8	34
+int_descriptor_tag	0x0A	target_IPv6_address_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.11	36
+int_descriptor_tag	0x0C	IP/MAC_platform_name_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.2	31
+int_descriptor_tag	0x0D	IP/MAC_platform_provider_name_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.3	32
+int_descriptor_tag	0x0E	target_MAC_address_range_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.7	34
+int_descriptor_tag	0x0F	target_IP_slash_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.9	35
+int_descriptor_tag	0x10	target_IP_source_slash_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.10	35
+int_descriptor_tag	0x11	target_IPv6_slash_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.12	36
+int_descriptor_tag	0x12	target_IPv6_source_slash_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.13	37
+int_descriptor_tag	0x13	IP/MAC_stream_location_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.14	37
+int_descriptor_tag	0x14	ISP_access_mode_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.16	39
+int_descriptor_tag	0x15	IP/MAC_generic_stream_location_descriptor	ETSI EN 301 192 V1.7.1	8.4.5.15	38
 
 # ── UNT descriptor namespace (common / target / operational loops, 0x00–0x3F) — ETSI TS 102 006 V1.7.1 Table 19 (clause 9.5.1)
-unt_descriptor_tag	0x01	scheduling_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.9
-unt_descriptor_tag	0x02	update_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.6
-unt_descriptor_tag	0x03	ssu_location_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.7
-unt_descriptor_tag	0x04	message_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.12
-unt_descriptor_tag	0x05	ssu_event_name_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.11
-unt_descriptor_tag	0x06	target_smartcard_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.1
-unt_descriptor_tag	0x07	target_MAC_address_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.2
-unt_descriptor_tag	0x08	target_serial_number_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.5
-unt_descriptor_tag	0x09	target_IP_address_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.3
-unt_descriptor_tag	0x0A	target_IPv6_address_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.4
-unt_descriptor_tag	0x0B	ssu_subgroup_association_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.8
-unt_descriptor_tag	0x0C	enhanced_message_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.14
-unt_descriptor_tag	0x0D	ssu_uri_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.15
+unt_descriptor_tag	0x01	scheduling_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.9	30
+unt_descriptor_tag	0x02	update_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.6	28
+unt_descriptor_tag	0x03	ssu_location_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.7	29
+unt_descriptor_tag	0x04	message_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.12	33
+unt_descriptor_tag	0x05	ssu_event_name_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.11	32
+unt_descriptor_tag	0x06	target_smartcard_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.1	26
+unt_descriptor_tag	0x07	target_MAC_address_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.2	26
+unt_descriptor_tag	0x08	target_serial_number_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.5	27
+unt_descriptor_tag	0x09	target_IP_address_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.3	26
+unt_descriptor_tag	0x0A	target_IPv6_address_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.4	27
+unt_descriptor_tag	0x0B	ssu_subgroup_association_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.8	29
+unt_descriptor_tag	0x0C	enhanced_message_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.14	34
+unt_descriptor_tag	0x0D	ssu_uri_descriptor	ETSI TS 102 006 V1.7.1	9.5.2.15	35
 
 # ── DSM-CC data-carousel descriptors (DII moduleInfo / DSI groupInfo) — ETSI EN 301 192 V1.7.1 Table 48 (clause 10.2.2)
 dii_descriptor_tag	0x01	type_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
@@ -317,6 +317,6 @@ dii_descriptor_tag	0x0A	SSU_module_type_descriptor	ETSI TS 102 006 V1.7.1
 dii_descriptor_tag	0x0B	subgroup_association_descriptor	ETSI TS 102 006 V1.7.1
 
 # ── RNT descriptor scope — ETSI TS 102 323 V1.4.1 Table 4 (clause 5.3.3.1); these tags reuse 0x40–0x42 inside the RNT only
-rnt_descriptor_tag	0x40	RAR_over_DVB_stream_descriptor	ETSI TS 102 323 V1.4.1	5.3.5
-rnt_descriptor_tag	0x41	RAR_over_IP_descriptor	ETSI TS 102 323 V1.4.1	5.3.6
-rnt_descriptor_tag	0x42	RNT_scan_descriptor	ETSI TS 102 323 V1.4.1	5.3.7
+rnt_descriptor_tag	0x40	RAR_over_DVB_stream_descriptor	ETSI TS 102 323 V1.4.1	5.3.5	24
+rnt_descriptor_tag	0x41	RAR_over_IP_descriptor	ETSI TS 102 323 V1.4.1	5.3.6	25
+rnt_descriptor_tag	0x42	RNT_scan_descriptor	ETSI TS 102 323 V1.4.1	5.3.7	26
