@@ -1557,3 +1557,322 @@ pub struct MpegH3dAudioCommand {
     /// The MHAS packet bytes.
     pub mhas_packet: Vec<u8>,
 }
+
+// ───────────────────────── public constructors ─────────────────────────────
+//
+// Every struct above is `#[non_exhaustive]`, so code outside this crate cannot
+// build one with a struct literal. These constructors take the spec fields and
+// default every `reserved` run to its all-ones value (H.222.0 clause 2.1:
+// "reserved" bits are 1), every optional part to absent and every trailing run
+// to empty; assign the public fields afterwards to override a reserved value or
+// to set an optional part.
+
+impl MpegH3dAudioConfig {
+    /// Wrap an opaque `mpegh3daConfig()` bitstream.
+    #[must_use]
+    pub fn new(mpegh3da_config: Vec<u8>) -> Self {
+        Self { mpegh3da_config }
+    }
+}
+
+impl SwitchGroup {
+    /// Build with all-ones reserved bits.
+    #[must_use]
+    pub fn new(
+        switch_group_id: u8,
+        allow_on_off: bool,
+        default_on_off: bool,
+        members: Vec<SwitchGroupMember>,
+        default_group_id: u8,
+    ) -> Self {
+        Self {
+            reserved_id: ones(1),
+            switch_group_id,
+            allow_on_off,
+            default_on_off,
+            reserved_members: ones(3),
+            members,
+            reserved_default: ones(1),
+            default_group_id,
+        }
+    }
+}
+
+impl PresetConditionDetail {
+    /// Build with all-ones reserved bits.
+    #[must_use]
+    pub const fn new(
+        disable_gain_interactivity: bool,
+        disable_position_interactivity: bool,
+        gain: Option<u8>,
+        position: Option<PresetPosition>,
+    ) -> Self {
+        Self {
+            reserved: ones(4),
+            disable_gain_interactivity,
+            disable_position_interactivity,
+            gain,
+            position,
+        }
+    }
+}
+
+impl PresetCondition {
+    /// Build a condition; `detail` is `Some` iff `mae_groupPresetConditionOnOff == 1`.
+    #[must_use]
+    pub const fn new(group_id: u8, detail: Option<PresetConditionDetail>) -> Self {
+        Self { group_id, detail }
+    }
+}
+
+impl GroupPreset {
+    /// Build with all-ones reserved bits.
+    #[must_use]
+    pub fn new(preset_id: u8, preset_kind: u8, conditions: Vec<PresetCondition>) -> Self {
+        Self {
+            reserved_id: ones(3),
+            preset_id,
+            reserved_kind: ones(3),
+            preset_kind,
+            reserved_conditions: ones(4),
+            conditions,
+        }
+    }
+}
+
+impl TextLabelEntry {
+    /// A group description (`mae_descriptionGroupID`, 7-bit ID, 1 reserved bit set).
+    #[must_use]
+    pub fn group(id: u8, data: Vec<u8>) -> Self {
+        Self {
+            reserved: ones(1),
+            id,
+            data,
+        }
+    }
+
+    /// A switch-group or group-preset description (5-bit ID, 3 reserved bits set).
+    #[must_use]
+    pub fn switch_group_or_preset(id: u8, data: Vec<u8>) -> Self {
+        Self {
+            reserved: ones(3),
+            id,
+            data,
+        }
+    }
+}
+
+impl TextLabelLanguage {
+    /// Build with all-ones reserved bits.
+    #[must_use]
+    pub fn new(
+        language: [u8; 3],
+        groups: Vec<TextLabelEntry>,
+        switch_groups: Vec<TextLabelEntry>,
+        presets: Vec<TextLabelEntry>,
+    ) -> Self {
+        Self {
+            language,
+            reserved_groups: ones(1),
+            groups,
+            reserved_switch_groups: ones(3),
+            switch_groups,
+            reserved_presets: ones(3),
+            presets,
+        }
+    }
+}
+
+impl MpegH3dAudioTextLabel {
+    /// Build with all-ones reserved bits and no trailing bytes.
+    #[must_use]
+    pub fn new(scene_info_id: u8, languages: Vec<TextLabelLanguage>) -> Self {
+        Self {
+            scene_info_id,
+            reserved: ones(4),
+            languages,
+            trailing: Vec::new(),
+        }
+    }
+}
+
+impl AuxiliaryLocation {
+    /// `isInTS` + `auxiliaryStreamID`.
+    #[must_use]
+    pub const fn new(is_in_ts: bool, auxiliary_stream_id: u8) -> Self {
+        Self {
+            is_in_ts,
+            auxiliary_stream_id,
+        }
+    }
+}
+
+impl MultiStreamGroup {
+    /// A group carried in the main stream (no auxiliary location).
+    #[must_use]
+    pub const fn in_main_stream(group_id: u8) -> Self {
+        Self {
+            group_id,
+            is_in_main_stream: true,
+            auxiliary: None,
+        }
+    }
+
+    /// A group carried in an auxiliary stream.
+    #[must_use]
+    pub const fn in_auxiliary_stream(group_id: u8, auxiliary: AuxiliaryLocation) -> Self {
+        Self {
+            group_id,
+            is_in_main_stream: false,
+            auxiliary: Some(auxiliary),
+        }
+    }
+}
+
+impl MultiStreamMain {
+    /// Build with all-ones reserved bits.
+    #[must_use]
+    pub fn new(num_auxiliary_streams: u8, groups: Vec<MultiStreamGroup>) -> Self {
+        Self {
+            reserved_aux: ones(1),
+            num_auxiliary_streams,
+            reserved_groups: ones(1),
+            groups,
+        }
+    }
+}
+
+impl MpegH3dAudioMultiStream {
+    /// Build with no trailing bytes; `main` is `Some` iff `thisIsMainStream == 1`.
+    #[must_use]
+    pub fn new(this_stream_id: u8, main: Option<MultiStreamMain>) -> Self {
+        Self {
+            this_stream_id,
+            main,
+            trailing: Vec::new(),
+        }
+    }
+}
+
+impl DrcScope {
+    /// A type that carries an `mae_groupID` (reserved bit set).
+    #[must_use]
+    pub const fn group(kind: u8, group_id: u8) -> Self {
+        Self::Group {
+            kind,
+            reserved: ones(1),
+            group_id,
+        }
+    }
+
+    /// Type 3: an `mae_groupPresetID` (reserved bits set).
+    #[must_use]
+    pub const fn preset(preset_id: u8) -> Self {
+        Self::Preset {
+            reserved: ones(3),
+            preset_id,
+        }
+    }
+}
+
+impl DrcInstructions {
+    /// Build with all-ones reserved bits, no additional downmix IDs, no limiter
+    /// peak target and no target-loudness block.
+    #[must_use]
+    pub fn new(scope: DrcScope, drc_set_id: u8, downmix_id: u8, drc_set_effect: u16) -> Self {
+        Self {
+            reserved_type: ones(6),
+            scope,
+            reserved_set: ones(2),
+            drc_set_id,
+            reserved_downmix: ones(1),
+            downmix_id,
+            reserved_additional: ones(3),
+            additional_downmix_ids: Vec::new(),
+            drc_set_effect,
+            limiter_peak_target: None,
+            target_loudness: None,
+        }
+    }
+}
+
+impl DrcTargetLoudness {
+    /// Build with all-ones reserved bits and no lower value.
+    #[must_use]
+    pub const fn new(upper: u8, depends_on_drc_set: u8, no_independent_use_or_reserved: u8) -> Self {
+        Self {
+            reserved_upper: ones(1),
+            upper,
+            lower: None,
+            reserved_depends: ones(1),
+            depends_on_drc_set,
+            no_independent_use_or_reserved,
+        }
+    }
+}
+
+impl LoudnessInfoEntry {
+    /// Build with the all-ones reserved bits; `loudness_info` is the opaque
+    /// ISO/IEC 23003-4 `loudnessInfo()` structure.
+    #[must_use]
+    pub fn new(scope: DrcScope, loudness_info: Vec<u8>) -> Self {
+        Self {
+            reserved_type: ones(6),
+            scope,
+            loudness_info,
+        }
+    }
+}
+
+impl DownmixDefinition {
+    /// Build with the all-ones reserved bit.
+    #[must_use]
+    pub const fn new(downmix_id: u8, downmix_type: u8, cicp_speaker_layout_idx: u8) -> Self {
+        Self {
+            reserved: ones(1),
+            downmix_id,
+            downmix_type,
+            cicp_speaker_layout_idx,
+        }
+    }
+}
+
+impl DrcLoudnessInfo {
+    /// Build with all-ones reserved bits.
+    #[must_use]
+    pub fn new(
+        drc_instructions: Vec<DrcInstructions>,
+        loudness_infos: Vec<LoudnessInfoEntry>,
+        downmix_definitions: Vec<DownmixDefinition>,
+    ) -> Self {
+        Self {
+            reserved_drc: ones(2),
+            reserved_loudness: ones(2),
+            reserved_downmix: ones(3),
+            drc_instructions,
+            loudness_infos,
+            downmix_definitions,
+        }
+    }
+}
+
+impl MpegH3dAudioDrcLoudness {
+    /// Build with all-ones reserved bits and no trailing bytes; `info` is
+    /// `Some` iff `mpegh3daDrcAndLoudnessInfoPresent == 1`.
+    #[must_use]
+    pub fn new(info: Option<DrcLoudnessInfo>) -> Self {
+        Self {
+            reserved: ones(7),
+            info,
+            trailing: Vec::new(),
+        }
+    }
+}
+
+impl MpegH3dAudioCommand {
+    /// Wrap one complete MHAS packet (header included).
+    #[must_use]
+    pub fn new(mhas_packet: Vec<u8>) -> Self {
+        Self { mhas_packet }
+    }
+}
