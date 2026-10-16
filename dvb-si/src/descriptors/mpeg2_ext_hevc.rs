@@ -13,12 +13,18 @@
 //! as printed, which TSDuck 3.44 contradicts — see the docs.)
 //!
 //! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
-//! and `…-0x0f-0x19.md`. `profile_tier_level_info[i]` is carried as 12 opaque
-//! bytes: ITU-T H.265 §7.3.3 is vendored, but H.222.0 §2.6.101 calls the field
-//! 96 bits "coded according to 7.3.3" with `maxNumSubLayersMinus1` = 6, and that
-//! structure is 112 bits (96-bit general part plus the 16 sub-layer flag bits),
-//! so what the sub-layer part of a 96-bit field means is undefined; typing only
-//! the general part would be a guess.
+//! and `…-0x0f-0x19.md`. `profile_tier_level_info[i]` is typed as
+//! [`ProfileTierLevelInfo`]: H.222.0 §2.6.101 fixes the field at **96 bits**
+//! and says it is `profile_tier_level()` (Rec. ITU-T H.265 §7.3.3) with
+//! `profilePresentFlag = 1`, i.e. exactly the *general* part of that syntax
+//! (2+1+5+32+4+43+1+8 = 96 bits). The 44 bits between
+//! `general_frame_only_constraint_flag` and `general_level_idc` are
+//! profile-dependent in H.265 (`general_max_*` flags, reserved zeros,
+//! `general_inbld_flag`); like `HEVC_video_descriptor` (H.222.0 Table 2-112)
+//! they are carried as one `copied_44bits` value. The H.265 `sub_layer_*`
+//! part that `maxNumSubLayersMinus1 = 6` would add (16 flag bits, 112 in all) lies beyond the 96 bits
+//! H.222.0 allots and is **not** typed or invented here (see the docs
+//! transcription's spec note).
 //! Every `reserved` field is a typed field that is re-emitted verbatim
 //! (default: all ones).
 
@@ -27,11 +33,137 @@ use crate::h222_bits::{BitReader, BitWriter, invalid};
 use alloc::vec::Vec;
 
 const TAG: u8 = super::mpeg2_extension::TAG;
-/// Size of one `profile_tier_level_info[i]` (96 bits).
-pub const PROFILE_TIER_LEVEL_LEN: usize = 12;
+/// `copied_44bits` width (the 43 profile-dependent bits + the 1-bit
+/// `general_inbld_flag` / `general_reserved_zero_bit`).
+const COPIED_BITS: usize = 44;
 const RES1: u8 = 0x01;
 const RES2: u8 = 0x03;
 const RES4: u8 = 0x0F;
+
+/// `profile_tier_level_info[i]` — the 96-bit `profile_tier_level()` of H.265
+/// §7.3.3 with `profilePresentFlag = 1` (H.222.0 §2.6.101).
+///
+/// Bit layout (MSB first, 12 bytes):
+/// `general_profile_space(2)` `general_tier_flag(1)` `general_profile_idc(5)`
+/// `general_profile_compatibility_flag[0..32](32)`
+/// `general_progressive_source_flag(1)` `general_interlaced_source_flag(1)`
+/// `general_non_packed_constraint_flag(1)` `general_frame_only_constraint_flag(1)`
+/// `copied_44bits(44)` `general_level_idc(8)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ProfileTierLevelInfo {
+    /// `general_profile_space` (2 bits).
+    pub general_profile_space: u8,
+    /// `general_tier_flag`.
+    pub general_tier_flag: bool,
+    /// `general_profile_idc` (5 bits).
+    pub general_profile_idc: u8,
+    /// `general_profile_compatibility_flag[j]`, `j = 0` the most significant bit.
+    pub general_profile_compatibility_flags: u32,
+    /// `general_progressive_source_flag`.
+    pub general_progressive_source_flag: bool,
+    /// `general_interlaced_source_flag`.
+    pub general_interlaced_source_flag: bool,
+    /// `general_non_packed_constraint_flag`.
+    pub general_non_packed_constraint_flag: bool,
+    /// `general_frame_only_constraint_flag`.
+    pub general_frame_only_constraint_flag: bool,
+    /// The 44 profile-dependent bits between `general_frame_only_constraint_flag`
+    /// and `general_level_idc`, preserved verbatim (H.222.0 `copied_44bits`).
+    pub copied_44bits: u64,
+    /// `general_level_idc` (8 bits).
+    pub general_level_idc: u8,
+}
+
+impl ProfileTierLevelInfo {
+    /// Build with every flag clear and `copied_44bits` zero.
+    #[must_use]
+    pub const fn new(
+        general_profile_space: u8,
+        general_tier_flag: bool,
+        general_profile_idc: u8,
+        general_profile_compatibility_flags: u32,
+        general_level_idc: u8,
+    ) -> Self {
+        Self {
+            general_profile_space,
+            general_tier_flag,
+            general_profile_idc,
+            general_profile_compatibility_flags,
+            general_progressive_source_flag: false,
+            general_interlaced_source_flag: false,
+            general_non_packed_constraint_flag: false,
+            general_frame_only_constraint_flag: false,
+            copied_44bits: 0,
+            general_level_idc,
+        }
+    }
+
+    fn parse(r: &mut BitReader<'_>) -> Result<Self> {
+        let general_profile_space = r.u8(2)?;
+        let general_tier_flag = r.flag()?;
+        let general_profile_idc = r.u8(5)?;
+        let general_profile_compatibility_flags = r.bits(32)?;
+        let general_progressive_source_flag = r.flag()?;
+        let general_interlaced_source_flag = r.flag()?;
+        let general_non_packed_constraint_flag = r.flag()?;
+        let general_frame_only_constraint_flag = r.flag()?;
+        let hi = u64::from(r.bits(COPIED_BITS - 32)?);
+        let lo = u64::from(r.bits(32)?);
+        let copied_44bits = (hi << 32) | lo;
+        let general_level_idc = r.u8(8)?;
+        Ok(Self {
+            general_profile_space,
+            general_tier_flag,
+            general_profile_idc,
+            general_profile_compatibility_flags,
+            general_progressive_source_flag,
+            general_interlaced_source_flag,
+            general_non_packed_constraint_flag,
+            general_frame_only_constraint_flag,
+            copied_44bits,
+            general_level_idc,
+        })
+    }
+
+    fn write(&self, w: &mut BitWriter) -> Result<()> {
+        w.put(
+            u64::from(self.general_profile_space),
+            2,
+            "general_profile_space",
+        )?;
+        w.flag(self.general_tier_flag, "general_tier_flag")?;
+        w.put(
+            u64::from(self.general_profile_idc),
+            5,
+            "general_profile_idc",
+        )?;
+        w.put(
+            u64::from(self.general_profile_compatibility_flags),
+            32,
+            "general_profile_compatibility_flag",
+        )?;
+        w.flag(
+            self.general_progressive_source_flag,
+            "general_progressive_source_flag",
+        )?;
+        w.flag(
+            self.general_interlaced_source_flag,
+            "general_interlaced_source_flag",
+        )?;
+        w.flag(
+            self.general_non_packed_constraint_flag,
+            "general_non_packed_constraint_flag",
+        )?;
+        w.flag(
+            self.general_frame_only_constraint_flag,
+            "general_frame_only_constraint_flag",
+        )?;
+        w.put(self.copied_44bits, COPIED_BITS, "copied_44bits")?;
+        w.put(u64::from(self.general_level_idc), 8, "general_level_idc")
+    }
+}
 
 // ───────────────────────── 0x05 HEVC_operation_point_descriptor ─────────────
 
@@ -165,10 +297,9 @@ impl HevcOperationPointEntry {
 pub struct HevcOperationPoint {
     /// `reserved(2)` before `num_ptl`, default 3.
     pub reserved: u8,
-    /// `profile_tier_level_info[i]` — 96 bits each, nominally H.265 §7.3.3
-    /// (opaque by design: H.222.0 fixes `maxNumSubLayersMinus1` = 6, which makes
-    /// the H.265 structure 112 bits, not 96; see the module docs).
-    pub profile_tier_levels: Vec<[u8; PROFILE_TIER_LEVEL_LEN]>,
+    /// `profile_tier_level_info[i]` — 96 bits each, typed per H.265 §7.3.3
+    /// (see [`ProfileTierLevelInfo`]).
+    pub profile_tier_levels: Vec<ProfileTierLevelInfo>,
     /// The operation points.
     pub operation_points: Vec<HevcOperationPointEntry>,
     /// Bytes after the syntax, preserved verbatim.
@@ -179,7 +310,7 @@ impl HevcOperationPoint {
     /// Build with the spec `reserved` fill and no trailing bytes.
     #[must_use]
     pub fn new(
-        profile_tier_levels: Vec<[u8; PROFILE_TIER_LEVEL_LEN]>,
+        profile_tier_levels: Vec<ProfileTierLevelInfo>,
         operation_points: Vec<HevcOperationPointEntry>,
     ) -> Self {
         Self {
@@ -196,9 +327,7 @@ impl HevcOperationPoint {
         let num_ptl = r.bits(6)?;
         let mut profile_tier_levels = Vec::new();
         for _ in 0..num_ptl {
-            let mut ptl = [0u8; PROFILE_TIER_LEVEL_LEN];
-            ptl.copy_from_slice(r.bytes(PROFILE_TIER_LEVEL_LEN)?);
-            profile_tier_levels.push(ptl);
+            profile_tier_levels.push(ProfileTierLevelInfo::parse(&mut r)?);
         }
         let count = r.bits(8)?;
         let mut operation_points = Vec::new();
@@ -264,7 +393,7 @@ impl HevcOperationPoint {
         w.put(u64::from(self.reserved), 2, "reserved")?;
         w.put(self.profile_tier_levels.len() as u64, 6, "num_ptl")?;
         for ptl in &self.profile_tier_levels {
-            w.bytes(ptl);
+            ptl.write(&mut w)?;
         }
         w.put(
             self.operation_points.len() as u64,
@@ -610,8 +739,12 @@ mod tests {
     // Hand-built from Table 2-117 (see docs): reserved bits all ones.
     #[test]
     fn operation_point_spec_vector() {
-        let mut ptl = [0u8; 12];
-        ptl[0] = 0x01;
+        let ptl = ProfileTierLevelInfo::new(0, false, 1, 0, 0);
+        // 96 bits: space=10 tier=1 idc=00101 -> 0xA5, then 0xAA fill.
+        let mut other = ProfileTierLevelInfo::new(2, true, 5, 0xAAAA_AAAA, 0xAA);
+        other.general_progressive_source_flag = true;
+        other.general_non_packed_constraint_flag = true;
+        other.copied_44bits = 0xAAA_AAAA_AAAA;
         let mut e = HevcOperationPointEntry::new(
             2,
             vec![HevcOpEs::new(true, 5), HevcOpEs::new(false, 6)],
@@ -624,11 +757,17 @@ mod tests {
         e.frame_rate = Some(HevcOpFrameRate::new(2, 50));
         e.avg_bit_rate = Some(8000);
         e.max_bit_rate = Some(10000);
-        let d = HevcOperationPoint::new(vec![ptl, [0xAA; 12]], vec![e]);
+        let d = HevcOperationPoint::new(vec![ptl, other], vec![e]);
         let b = d.write_body().unwrap();
         // 2 reserved + num_ptl(2) = 0xC2
         assert_eq!(b[0], 0xC2);
-        assert_eq!(&b[1..13], &ptl);
+        assert_eq!(&b[1..13], &[0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            &b[13..25],
+            &[
+                0xA5, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+            ]
+        );
         assert_eq!(b[25], 1); // operation_points_count
         assert_eq!(b[26], 2); // target_ols
         assert_eq!(b[27], 2); // ES_count
@@ -716,5 +855,86 @@ mod tests {
             detail: HevcTileSubstreamDetail::Additional(vec![]),
         };
         assert!(empty.write_body().is_err());
+    }
+
+    // Bit layout of the hand-computed vector (MSB first):
+    //   byte 0    : space=10 tier=1 idc=00101        -> 0b10_1_00101 = 0xA5
+    //   bytes 1-4 : compat flags 0x60000000          -> 60 00 00 00
+    //   byte 5    : progressive=1 interlaced=0 non_packed=1 frame_only=0,
+    //               copied_44bits[43:40] = 0x9       -> 0b1010_1001 = 0xA9
+    //   bytes 6-10: copied_44bits[39:0] = 0x12_3456_789A -> 12 34 56 78 9A
+    //   byte 11   : general_level_idc = 93 (0x5D)
+    const PTL_VECTOR: [u8; 12] = [
+        0xA5, 0x60, 0x00, 0x00, 0x00, 0xA9, 0x12, 0x34, 0x56, 0x78, 0x9A, 0x5D,
+    ];
+
+    type PtlCase = (fn(&mut ProfileTierLevelInfo), usize, u8);
+
+    fn parse_ptl(b: &[u8]) -> Result<ProfileTierLevelInfo> {
+        ProfileTierLevelInfo::parse(&mut BitReader::new(b, "ptl"))
+    }
+
+    fn write_ptl(p: &ProfileTierLevelInfo) -> Result<Vec<u8>> {
+        let mut w = BitWriter::new();
+        p.write(&mut w)?;
+        Ok(w.into_vec())
+    }
+
+    #[test]
+    fn profile_tier_level_decodes_hand_computed_vector() {
+        let p = parse_ptl(&PTL_VECTOR).unwrap();
+        assert_eq!(p.general_profile_space, 2);
+        assert!(p.general_tier_flag);
+        assert_eq!(p.general_profile_idc, 5);
+        assert_eq!(p.general_profile_compatibility_flags, 0x6000_0000);
+        assert!(p.general_progressive_source_flag);
+        assert!(!p.general_interlaced_source_flag);
+        assert!(p.general_non_packed_constraint_flag);
+        assert!(!p.general_frame_only_constraint_flag);
+        assert_eq!(p.copied_44bits, 0x9_1234_5678_9A);
+        assert_eq!(p.general_level_idc, 93);
+        assert_eq!(write_ptl(&p).unwrap(), PTL_VECTOR);
+    }
+
+    #[test]
+    fn profile_tier_level_each_field_lands_in_its_bit() {
+        let base = ProfileTierLevelInfo::new(0, false, 0, 0, 0);
+        assert_eq!(write_ptl(&base).unwrap(), [0u8; 12]);
+        let cases: [PtlCase; 12] = [
+            (|p| p.general_profile_space = 3, 0, 0xC0),
+            (|p| p.general_tier_flag = true, 0, 0x20),
+            (|p| p.general_profile_idc = 0x1F, 0, 0x1F),
+            (
+                |p| p.general_profile_compatibility_flags = 0x8000_0000,
+                1,
+                0x80,
+            ),
+            (|p| p.general_profile_compatibility_flags = 1, 4, 0x01),
+            (|p| p.general_progressive_source_flag = true, 5, 0x80),
+            (|p| p.general_interlaced_source_flag = true, 5, 0x40),
+            (|p| p.general_non_packed_constraint_flag = true, 5, 0x20),
+            (|p| p.general_frame_only_constraint_flag = true, 5, 0x10),
+            (|p| p.copied_44bits = 1 << 43, 5, 0x08),
+            (|p| p.copied_44bits = 1, 10, 0x01),
+            (|p| p.general_level_idc = 0x80, 11, 0x80),
+        ];
+        for (set, idx, val) in cases {
+            let mut p = base.clone();
+            set(&mut p);
+            let mut want = [0u8; 12];
+            want[idx] = val;
+            assert_eq!(write_ptl(&p).unwrap(), want);
+            assert_eq!(parse_ptl(&want).unwrap(), p);
+        }
+    }
+
+    #[test]
+    fn profile_tier_level_rejects_out_of_range_fields() {
+        let mut p = ProfileTierLevelInfo::new(0, false, 0, 0, 0);
+        p.copied_44bits = 1 << 44;
+        assert!(write_ptl(&p).is_err());
+        assert!(write_ptl(&ProfileTierLevelInfo::new(4, false, 0, 0, 0)).is_err());
+        assert!(write_ptl(&ProfileTierLevelInfo::new(0, false, 32, 0, 0)).is_err());
+        assert!(parse_ptl(&PTL_VECTOR[..11]).is_err());
     }
 }
