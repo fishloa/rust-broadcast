@@ -23,6 +23,24 @@ impl Pid {
         Self(value & Self::MASK)
     }
 
+    /// Construct a `Pid` from the low 13 bits of `value`, **deliberately**
+    /// discarding the rest: the explicit name for extracting the 13-bit PID
+    /// field out of a wider wire word (e.g. `reserved(3)` + `PID(13)`), where
+    /// masking is the specified behaviour. Identical to [`Pid::new`]; prefer
+    /// this at parse sites so the intent is visible and a caller-supplied
+    /// value is never masked by accident (use [`Pid::try_new`] for those).
+    ///
+    /// ```
+    /// use mpeg_ts::pid::Pid;
+    /// // reserved(3) = 0b111 followed by PID 0x0100.
+    /// assert_eq!(Pid::from_wire_masked(0xE100).value(), 0x0100);
+    /// assert!(Pid::try_new(0xE100).is_err());
+    /// ```
+    #[must_use]
+    pub const fn from_wire_masked(value: u16) -> Self {
+        Self(value & Self::MASK)
+    }
+
     /// Construct a `Pid`, rejecting any value above [`Pid::MASK`] (`0x1FFF`).
     ///
     /// Use this at API boundaries that take a caller-supplied value; use

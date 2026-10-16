@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `Pid::from_wire_masked(u16)`: explicit, documented 13-bit-masking constructor for extracting the PID field from a wider wire word (same behaviour as `Pid::new`, which stays).
+
 ### Changed (BREAKING: epoch — requires broadcast-common 10)
 - Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `mp4-emsg` 0.4 -> 0.5). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
