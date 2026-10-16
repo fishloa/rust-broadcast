@@ -1,5 +1,5 @@
 ## Table 2-33 — TS program map section
-_§2.4.4.9, PDF pp. 58-59_
+_§2.4.4.9, printed p.57 (PDF p.79). Verified against the rendered page._
 
 | Syntax | Bits | Mnemonic |
 |---|---|---|

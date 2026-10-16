@@ -17,6 +17,7 @@ const HEADER_LEN: usize = 2;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct Mpeg4TextDescriptor<'a> {
     /// `textConfig()` — the ISO/IEC 14496-17 `TextConfig()` of the associated
     /// text stream (opaque: that standard is not vendored).

@@ -30,6 +30,7 @@ const TARGET_SCHEDULE_IDX_BITS: usize = 5;
 /// present only when `90kHz_flag == '0'` (N = 1, K = 300 otherwise).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct TimeScaleNk {
     /// `N` (32 bits).
     pub n: u32,
@@ -37,9 +38,18 @@ pub struct TimeScaleNk {
     pub k: u32,
 }
 
+impl TimeScaleNk {
+    /// Build from `N` and `K`.
+    #[must_use]
+    pub const fn new(n: u32, k: u32) -> Self {
+        Self { n, k }
+    }
+}
+
 /// The `picture_and_timing_info` block shared by the three descriptors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct PictureAndTimingInfo {
     /// `N`/`K`; `None` means `90kHz_flag == '1'` (N = 1, K = 300).
     pub nk: Option<TimeScaleNk>,
@@ -93,6 +103,7 @@ impl PictureAndTimingInfo {
 /// `HEVC_timing_and_HRD_descriptor()` — Table 2-115 (`extension_descriptor_tag` 0x03).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcTimingAndHrd {
     /// `hrd_management_valid_flag`.
     pub hrd_management_valid_flag: bool,
@@ -210,6 +221,7 @@ fn write_flag_block(
 /// `VVC_timing_and_HRD_descriptor()` — Table 2-139 (`extension_descriptor_tag` 0x15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct VvcTimingAndHrd {
     /// `hrd_management_valid_flag`.
     pub hrd_management_valid_flag: bool,
@@ -264,6 +276,7 @@ impl VvcTimingAndHrd {
 /// `EVC_timing_and_HRD_descriptor()` — Table 2-141 (`extension_descriptor_tag` 0x16).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct EvcTimingAndHrd {
     /// `hrd_management_valid_flag`.
     pub hrd_management_valid_flag: bool,

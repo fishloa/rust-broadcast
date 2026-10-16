@@ -317,15 +317,128 @@ fn tsduck_test_016_capture_int_loops_round_trip() {
     };
     let secs = sections_of(&ts, 0x4C);
     assert!(!secs.is_empty());
-    let mut names = BTreeSet::new();
+    let mut platform = BTreeSet::new();
+    let mut target = BTreeSet::new();
+    let mut operational = BTreeSet::new();
     for s in &secs {
         let int = IntSection::parse(s).unwrap();
         assert_eq!(&ser(&int), s);
-        walk_int(int.platform_descriptors.raw(), &mut names);
+        walk_int(int.platform_descriptors.raw(), &mut platform);
         for pair in &int.loops {
-            walk_int(pair.target_descriptors.raw(), &mut names);
-            walk_int(pair.operational_descriptors.raw(), &mut names);
+            walk_int(pair.target_descriptors.raw(), &mut target);
+            walk_int(pair.operational_descriptors.raw(), &mut operational);
         }
     }
-    println!("INT descriptors present in test-016: {names:?}");
+    // The exact descriptors the capture's INT carries, per loop. They match the
+    // loop each descriptor is allocated to in EN 301 192 Table 19: platform_name
+    // (0x0C) and platform_provider_name (0x0D) in the platform loop,
+    // target_IP_slash (0x0F) in the target loop, IP/MAC_stream_location (0x13)
+    // in the operational loop. Any descriptor silently falling to `Unknown`/`Si`
+    // changes a set and fails.
+    let set = |v: &[&'static str]| -> BTreeSet<&'static str> { v.iter().copied().collect() };
+    assert_eq!(
+        platform,
+        set(&["IP_MAC_PLATFORM_NAME", "IP_MAC_PLATFORM_PROVIDER_NAME"])
+    );
+    assert_eq!(target, set(&["TARGET_IP_SLASH"]));
+    assert_eq!(operational, set(&["IP_MAC_STREAM_LOCATION"]));
+}
+
+/// Hand-built INT (EN 301 192 Table 13) whose TARGET and OPERATIONAL loops
+/// each carry >= 2 descriptors, across two target/operational pairs, so the
+/// per-loop typed walk and the byte-exact round trip are exercised outside the
+/// platform loop. Every byte is laid out by hand from the spec syntax:
+///
+/// ```text
+/// table_id 0x4C | ssi=1 rfu=1 rsvd=11 len(12) | action_type 0x01 | hash 0x00
+/// rsvd(2)=11 version(5)=1 cni=1 -> 0xC3 | section_number 0 | last 0
+/// platform_id(24) 0x000001 | processing_order 0x00
+/// rsvd(4)=F platform_descriptor_loop_length(12)=0   (empty platform loop)
+/// { rsvd(4)=F target_loop_len(12) target_descriptors
+///   rsvd(4)=F operational_loop_len(12) operational_descriptors } x2
+/// CRC_32
+/// ```
+///
+/// target_IP_slash (tag 0x0F) = `{IPv4_addr(32) IPv4_slash_mask(8)}*`;
+/// IP/MAC_stream_location (tag 0x13) = `network_id(16) original_network_id(16)
+/// transport_stream_id(16) service_id(16) component_tag(8)`.
+#[test]
+fn int_target_and_operational_loops_with_multiple_descriptors_round_trip() {
+    // pair 1 target: 192.168.1.0/24 ; then 224.0.0.1/32 + 10.0.0.0/8
+    let t1: Vec<u8> = [
+        &[0x0F, 0x05, 192, 168, 1, 0, 24][..],
+        &[0x0F, 0x0A, 224, 0, 0, 1, 32, 10, 0, 0, 0, 8][..],
+    ]
+    .concat();
+    // pair 1 operational: two stream locations (different services)
+    let o1: Vec<u8> = [
+        &[
+            0x13, 0x09, 0x30, 0x40, 0x20, 0x01, 0x10, 0x02, 0x00, 0x64, 0x05,
+        ][..],
+        &[
+            0x13, 0x09, 0x30, 0x40, 0x20, 0x01, 0x10, 0x02, 0x00, 0x65, 0x06,
+        ][..],
+    ]
+    .concat();
+    // pair 2 target: 172.16.0.0/12 ; 127.0.0.1/32
+    let t2: Vec<u8> = [
+        &[0x0F, 0x05, 172, 16, 0, 0, 12][..],
+        &[0x0F, 0x05, 127, 0, 0, 1, 32][..],
+    ]
+    .concat();
+    // pair 2 operational
+    let o2: Vec<u8> = [
+        &[
+            0x13, 0x09, 0x30, 0x41, 0x20, 0x02, 0x10, 0x03, 0x01, 0x00, 0x07,
+        ][..],
+        &[
+            0x13, 0x09, 0x30, 0x41, 0x20, 0x02, 0x10, 0x03, 0x01, 0x01, 0x08,
+        ][..],
+    ]
+    .concat();
+
+    let mut body = vec![
+        0x01, 0x00, // action_type, platform_id_hash
+        0xC3, 0x00, 0x00, // rsvd/version 1/cni 1, section_number, last_section_number
+        0x00, 0x00, 0x01, // platform_id
+        0x00, // processing_order
+        0xF0, 0x00, // platform_descriptor_loop_length = 0
+    ];
+    for (t, o) in [(&t1, &o1), (&t2, &o2)] {
+        for lp in [t, o] {
+            let len = u16::try_from(lp.len()).unwrap();
+            body.push(0xF0 | (len >> 8) as u8);
+            body.push((len & 0xFF) as u8);
+            body.extend_from_slice(lp);
+        }
+    }
+    let section_length = u16::try_from(body.len() + 4).unwrap();
+    let mut sec = vec![
+        0x4C,
+        0xF0 | (section_length >> 8) as u8,
+        (section_length & 0xFF) as u8,
+    ];
+    sec.extend_from_slice(&body);
+    let crc = broadcast_common::crc32_mpeg2::compute(&sec);
+    sec.extend_from_slice(&crc.to_be_bytes());
+    assert_eq!(broadcast_common::crc32_mpeg2::compute(&sec), 0);
+
+    let int = IntSection::parse(&sec).unwrap();
+    assert_eq!(ser(&int), sec, "whole-section byte identity");
+    assert!(int.platform_descriptors.raw().is_empty());
+    assert_eq!(int.loops.len(), 2);
+    for (pair, (t, o)) in int.loops.iter().zip([(&t1, &o1), (&t2, &o2)]) {
+        assert_eq!(pair.target_descriptors.raw(), &t[..]);
+        assert_eq!(pair.operational_descriptors.raw(), &o[..]);
+        assert_eq!(entries(pair.target_descriptors.raw()).len(), 2);
+        assert_eq!(entries(pair.operational_descriptors.raw()).len(), 2);
+        let (mut tn, mut on) = (BTreeSet::new(), BTreeSet::new());
+        walk_int(pair.target_descriptors.raw(), &mut tn);
+        walk_int(pair.operational_descriptors.raw(), &mut on);
+        assert_eq!(tn.into_iter().collect::<Vec<_>>(), ["TARGET_IP_SLASH"]);
+        assert_eq!(
+            on.into_iter().collect::<Vec<_>>(),
+            ["IP_MAC_STREAM_LOCATION"]
+        );
+    }
 }

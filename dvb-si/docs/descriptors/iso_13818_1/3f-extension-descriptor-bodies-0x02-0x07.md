@@ -64,7 +64,7 @@ _§2.6.100–2.6.101; printed p.130 (PDF p.152). Verified against the rendered p
 
 > **Spec quirk (verbatim):** the page declares the count field as `numEsInOp[i]` but the loop bound reads `NumESinOP[i]`; they are the same quantity (the field is defined as `numEsInOp[i]` in §2.6.101 and the loop uses it).
 
-`profile_tier_level_info[i]` is the 96-bit H.265 §7.3.3 `profile_tier_level` (not vendored): carried as 12 opaque bytes. `ES_count` 0xFF is reserved.
+`profile_tier_level_info[i]` is carried as 12 opaque bytes. ITU-T H.265 (V11, 01/2026) clause 7.3.3 (printed pp. 42-43) IS vendored, but H.222.0 §2.6.101 says the 96-bit field is coded per 7.3.3 with `profilePresentFlag` = 1 and `maxNumSubLayersMinus1` = 6, and with those values 7.3.3 is 112 bits: the 96-bit general part (`general_profile_space(2)` … `general_level_idc(8)`), then 6 x 2 `sub_layer_*_present_flag` bits and 2 x `reserved_zero_2bits[i]` (16 bits). The 96-bit width holds only the general part, so the sub-layer part is undefined for this fixed case and the field is not typed (text-layer reading of the clause; not transcribed from a rendered page because the decision is to keep it raw). `ES_count` 0xFF is reserved.
 
 ## Table 2-118 — HEVC hierarchy extension descriptor (ext 0x06)
 _§2.6.102–2.6.103, Table 2-119; printed p.132 (PDF p.154). Verified against the rendered page._

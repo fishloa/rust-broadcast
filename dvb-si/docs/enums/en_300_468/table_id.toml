@@ -22,6 +22,31 @@ variant = "TransportStreamDescription"
 spec = "transport_stream_description_section"
 
 [[entry]]
+value = 0x04
+variant = "Iso14496SceneDescription"
+spec = "ISO_IEC_14496_scene_description_section"
+
+[[entry]]
+value = 0x05
+variant = "Iso14496ObjectDescriptor"
+spec = "ISO_IEC_14496_object_descriptor_section"
+
+[[entry]]
+value = 0x06
+variant = "Metadata"
+spec = "Metadata_section"
+
+[[entry]]
+value = 0x08
+variant = "Iso14496"
+spec = "ISO_IEC_14496_section"
+
+[[entry]]
+value = 0x09
+variant = "GreenAccessUnit"
+spec = "ISO/IEC 23001-11 green access unit section"
+
+[[entry]]
 value = 0x40
 variant = "NetworkInformationActual"
 spec = "network_information_section - actual network"

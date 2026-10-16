@@ -22,27 +22,52 @@ use crate::h222_bits::{BitReader, BitWriter};
 use alloc::vec::Vec;
 
 const RES6: u8 = 0x3F;
+/// Default of `reserved(7)` (all ones).
+const RES7: u8 = 0x7F;
+/// `buffer_model_type`: "only 2 is allowed" (Table 2-132).
+const JXS_BUFFER_MODEL_TYPE: u8 = 2;
 
 /// `ObjectDescriptorUpdate()` carried by `ODUpdate_descriptor` (ext 0x02).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct OdUpdate {
     /// The `ObjectDescriptorUpdate()` command bytes, ISO/IEC 14496-1 §7.2.5.5.2
     /// (opaque: that standard is not vendored).
     pub object_descriptor_update: Vec<u8>,
 }
 
+impl OdUpdate {
+    /// Build from the `ObjectDescriptorUpdate()` command bytes.
+    #[must_use]
+    pub fn new(object_descriptor_update: Vec<u8>) -> Self {
+        Self {
+            object_descriptor_update,
+        }
+    }
+}
+
 /// `timed_metadata_extension_descriptor()` (ext 0x11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct TimedMetadataExtension {
     /// The descriptor body, ISO/IEC 23001-13 clause 8.2.3 (opaque: not vendored).
     pub data: Vec<u8>,
 }
 
+impl TimedMetadataExtension {
+    /// Build from the opaque descriptor body.
+    #[must_use]
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+}
+
 /// `af_extensions_descriptor()` (ext 0x04): the syntax is empty (Table 2-116).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct AfExtensions {
     /// Bytes after the (empty) syntax, preserved verbatim.
     pub trailing: Vec<u8>,
@@ -51,6 +76,7 @@ pub struct AfExtensions {
 /// `Green_extension_descriptor()` (ext 0x07) — Table 2-120.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct GreenExtension {
     /// `constant_backlight_voltage_time_interval[i]` (16 bits each; the count
     /// `num_constant_backlight_voltage_time_intervals` is 2 bits, so at most 3).
@@ -132,6 +158,7 @@ impl GreenExtension {
 /// `Quality_extension_descriptor()` (ext 0x0F) — Table 2-128.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct QualityExtension {
     /// `field_size_bytes`: constant byte size of a metric value in each Quality
     /// Access Unit.
@@ -185,6 +212,7 @@ impl QualityExtension {
 /// SMPTE ST 2086 chromaticities / luminance and CTA-861 content light levels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct JxsMasteringDisplay {
     /// `X_c0, Y_c0, X_c1, Y_c1, X_c2, Y_c2` (increments of 0.00002).
     pub primaries: [u16; 6],
@@ -202,9 +230,34 @@ pub struct JxsMasteringDisplay {
     pub max_fall: u16,
 }
 
+impl JxsMasteringDisplay {
+    /// Build from every field of the block (all are spec values, no reserved bits).
+    #[must_use]
+    pub fn new(
+        primaries: [u16; 6],
+        white_point_x: u16,
+        white_point_y: u16,
+        l_max: u32,
+        l_min: u32,
+        max_cll: u16,
+        max_fall: u16,
+    ) -> Self {
+        Self {
+            primaries,
+            white_point_x,
+            white_point_y,
+            l_max,
+            l_min,
+            max_cll,
+            max_fall,
+        }
+    }
+}
+
 /// `JXS_video_descriptor()` (ext 0x14) — Table 2-132.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct JxsVideo {
     /// `descriptor_version` (shall be 0).
     pub descriptor_version: u8,
@@ -247,6 +300,48 @@ pub struct JxsVideo {
 }
 
 impl JxsVideo {
+    /// Build with the spec fills: `descriptor_version` 0, `buffer_model_type` 2
+    /// (the only allowed value), `video_full_range_flag` and `still_mode` clear,
+    /// `reserved(7)` all ones, `zero_bits` zero, no mastering display, no private
+    /// data. Set the remaining public fields directly to override.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        horizontal_size: u16,
+        vertical_size: u16,
+        brat: u32,
+        frat: u32,
+        schar: u16,
+        ppih: u16,
+        plev: u16,
+        max_buffer_size: u32,
+        colour_primaries: u8,
+        transfer_characteristics: u8,
+        matrix_coefficients: u8,
+    ) -> Self {
+        Self {
+            descriptor_version: 0,
+            horizontal_size,
+            vertical_size,
+            brat,
+            frat,
+            schar,
+            ppih,
+            plev,
+            max_buffer_size,
+            buffer_model_type: JXS_BUFFER_MODEL_TYPE,
+            colour_primaries,
+            transfer_characteristics,
+            matrix_coefficients,
+            video_full_range_flag: false,
+            reserved: RES7,
+            still_mode: false,
+            zero_bits: 0,
+            mastering_display: None,
+            private_data: Vec::new(),
+        }
+    }
+
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "JxsVideo");
         let descriptor_version = r.u8(8)?;

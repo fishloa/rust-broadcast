@@ -78,10 +78,22 @@ mod tests {
         // 0x25 metadata_pointer is in the MPEG range but Table 4 allows it in
         // the RNT with its SI/MPEG meaning: it must reach SI dispatch, never
         // the INT/UNT-style "Unknown".
-        let raw = [0x25, 0x00];
-        match parse_rnt_loop(&raw).next().unwrap() {
-            Ok(AnyRntDescriptor::Si(_)) | Err(_) => {}
-            other => panic!("expected the SI path, got {other:?}"),
+        // A well-formed metadata_pointer_descriptor body (application_format
+        // 0x0010, metadata_format 0x3F, service_id 0, flags: no locator,
+        // MPEG_carriage_flags 3 (so no program_number), reserved 11111 -> 0x7F)
+        // reaches SI dispatch and is typed.
+        let ok = [0x25, 0x05, 0x00, 0x10, 0x3F, 0x00, 0x7F];
+        match parse_rnt_loop(&ok).next().unwrap() {
+            Ok(AnyRntDescriptor::Si(d)) => assert_eq!(d.name(), "METADATA_POINTER"),
+            other => panic!("expected the typed SI path, got {other:?}"),
+        }
+        // An empty body is still routed to the SI parser (not `Unknown`), which
+        // rejects it as a too-short metadata_pointer_descriptor.
+        let empty = [0x25, 0x00];
+        match parse_rnt_loop(&empty).next().unwrap() {
+            Err(crate::Error::InvalidDescriptor { tag: 0x25, reason })
+                if reason.contains("metadata_pointer_descriptor too short") => {}
+            other => panic!("expected the SI parser's too-short error, got {other:?}"),
         }
     }
 

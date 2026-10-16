@@ -29,7 +29,7 @@ text; **Source cites** is what the module's own doc comment says (see the
 | Section types (table_id) | **31** typed `*Section` parsers covering **72** table_id values — every allocated EN 300 468 Table 2 id |
 | Descriptors (tag 0x00–0x7F) | **115** auto-dispatched: **51** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
 | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
-| MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
+| MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (7 MPEG-H 3D audio, plus HEVC/VVC/EVC/LCEVC/JPEG XS timing and structure, green, quality, OD update, timed metadata, media service kind) |
 | AIT descriptors (TS 102 809 / MHP) | **18** typed in the separate AIT descriptor namespace |
 | INT / UNT / RNT descriptors | **26** typed in their own scoped namespaces (`AnyIntDescriptor`, `AnyUntDescriptor`, `AnyRntDescriptor`) |
 | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
@@ -367,8 +367,8 @@ These standards define their own descriptor tag spaces (EN 301 192 and TS 102 00
 MPEG descriptors 0x00–0x3F in the INT/UNT; TS 102 323 Table 4 overrides 0x40–0x42 inside the
 RNT). Each table's loops are walked by its own namespace (`parse_int_loop` / `AnyIntDescriptor`,
 `parse_unt_loop` / `AnyUntDescriptor`, `parse_rnt_loop` / `AnyRntDescriptor`), which falls back
-to the SI dispatch (`Si`) for the tags the spec hands back to EN 300 468. Of the DSM-CC
-data-carousel descriptors only `compressed_module_descriptor` is typed today.
+to the SI dispatch (`Si`) for the tags the spec hands back to EN 300 468. All 11 DSM-CC
+data-carousel descriptors (EN 301 192 Table 48) are typed in `descriptors::carousel`.
 
 ### INT (ETSI EN 301 192 V1.7.1 Table 19)
 
