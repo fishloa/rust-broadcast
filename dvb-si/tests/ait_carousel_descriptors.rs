@@ -220,7 +220,14 @@ fn tsduck_test_062_plain_module_info_types_type_descriptor() {
 }
 
 // ------------------------------------------------- spec-syntax vectors, AIT
+//
+// NOTE: the two loop tests below build their bytes with `ser()` and compare
+// to `ser()`, so they are SELF-CONSISTENCY tests only (walk + typed dispatch +
+// round trip); a read/write bit-position bug mirrored in both directions would
+// pass them. The independent oracle is `hand_written_spec_byte_vectors` at the
+// end of this file, whose bytes are computed by hand from the syntax tables.
 
+/// Self-consistency only (see the note above): bytes come from `ser()`.
 #[test]
 fn ait_loop_with_every_new_descriptor_walks_typed_and_round_trips() {
     let icons = ApplicationIconsDescriptor {
@@ -327,6 +334,7 @@ fn ait_loop_with_every_new_descriptor_walks_typed_and_round_trips() {
 
 // --------------------------------------------- spec-syntax vectors, carousel
 
+/// Self-consistency only (see the AIT note above): bytes come from `ser()`.
 #[test]
 fn carousel_loop_with_every_descriptor_walks_typed_and_round_trips() {
     let ty = TypeDescriptor {
@@ -444,4 +452,118 @@ fn dii_module_and_dsi_group_info_expose_typed_loops() {
         private_data: &[],
     };
     assert_eq!(g.descriptors().iter().count(), 2);
+}
+
+/// Parse hand-written `bytes`, return the value, and require that it
+/// re-serializes to exactly those bytes.
+fn rt<'a, T>(bytes: &'a [u8]) -> T
+where
+    T: Parse<'a, Error = dvb_si::Error> + Serialize<Error = dvb_si::Error>,
+{
+    let v = T::parse(bytes).expect("hand-written vector parses");
+    assert_eq!(ser(&v), bytes, "hand-written vector must re-serialize identically");
+    v
+}
+
+/// Independent oracle: every byte below is computed BY HAND from the spec
+/// syntax tables (cited per vector), never produced by `ser()`. A bit-position
+/// or field-order bug mirrored in `parse` and `serialize_into` fails here.
+/// Reserved bits are written as the spec's "1" fill.
+#[test]
+fn hand_written_spec_byte_vectors() {
+    // ---- data carousel, ETSI EN 301 192 Tables 50-59 (tag, length, body) ----
+    // Table 50 type: 01 len=10 "text/plain"
+    let t: TypeDescriptor = rt(&[
+        0x01, 0x0A, 0x74, 0x65, 0x78, 0x74, 0x2F, 0x70, 0x6C, 0x61, 0x69, 0x6E,
+    ]);
+    assert_eq!(t.media_type.raw(), b"text/plain");
+    // Table 51 name: 02 len=5 "index"
+    let n: NameDescriptor = rt(&[0x02, 0x05, 0x69, 0x6E, 0x64, 0x65, 0x78]);
+    assert_eq!(n.name.raw(), b"index");
+    // Table 52 info: 03 len=8 ISO_639 "eng" then "hello"
+    let i: InfoDescriptor = rt(&[0x03, 0x08, 0x65, 0x6E, 0x67, 0x68, 0x65, 0x6C, 0x6C, 0x6F]);
+    assert_eq!(i.language_code, LangCode(*b"eng"));
+    assert_eq!(i.text.raw(), b"hello");
+    // Table 53 module_link: 04 len=3 position=0x01 (intermediate) module_id=0x0102
+    let l: ModuleLinkDescriptor = rt(&[0x04, 0x03, 0x01, 0x01, 0x02]);
+    assert_eq!((l.position, l.module_id), (LinkPosition::Intermediate, 0x0102));
+    // Table 54 CRC32: 05 len=4 CRC_32=0x0376E6E7
+    let c: Crc32Descriptor = rt(&[0x05, 0x04, 0x03, 0x76, 0xE6, 0xE7]);
+    assert_eq!(c.crc_32, 0x0376_E6E7);
+    // Table 55 location: 06 len=1 location_tag=0x42
+    let loc: LocationDescriptor = rt(&[0x06, 0x01, 0x42]);
+    assert_eq!(loc.location_tag, 0x42);
+    // Table 57 group_link: 08 len=5 position=0x02 (last) group_id=0xDEADBEEF
+    let g: GroupLinkDescriptor = rt(&[0x08, 0x05, 0x02, 0xDE, 0xAD, 0xBE, 0xEF]);
+    assert_eq!((g.position, g.group_id), (LinkPosition::Last, 0xDEAD_BEEF));
+    // Table 59 compressed_module: 09 len=5 method=8 original_size=1234=0x000004D2
+    let cm: CompressedModuleDescriptor = rt(&[0x09, 0x05, 0x08, 0x00, 0x00, 0x04, 0xD2]);
+    assert_eq!((cm.compression_method, cm.original_size), (8, 1234));
+    // TS 102 006 Table 9/10 SSU_module_type: 0A len=1 0x02 (data module type)
+    let ssu: SsuModuleTypeDescriptor = rt(&[0x0A, 0x01, 0x02]);
+    assert_eq!(ssu.ssu_module_type, SsuModuleType::Data);
+
+    // ---- AIT, ETSI TS 102 809 / TS 102 727 ----
+    // TS 102 727 Table 81 ip_signalling: 11 len=3 platform_id(24)=0x00ABCD
+    let ip: IpSignallingDescriptor = rt(&[0x11, 0x03, 0x00, 0xAB, 0xCD]);
+    assert_eq!(ip.platform_id, 0x00AB_CD);
+    // Table 82 prefetch: 0C len=6 label=1, { label_length=3 "img" priority=50 }
+    let pf: PrefetchDescriptor = rt(&[0x0C, 0x06, 0x01, 0x03, 0x69, 0x6D, 0x67, 0x32]);
+    assert_eq!(pf.transport_protocol_label, 1);
+    assert_eq!(pf.entries.len(), 1);
+    assert_eq!((pf.entries[0].label, pf.entries[0].prefetch_priority), (&b"img"[..], 50));
+    // Table 83 DII_location: 0D len=5 label=1, { rfu(1)=1 DII_identification(15)=0x0102
+    // -> 0x81 0x02 ; association_tag=0x0304 }
+    let dl: DiiLocationDescriptor = rt(&[0x0D, 0x05, 0x01, 0x81, 0x02, 0x03, 0x04]);
+    assert_eq!(dl.transport_protocol_label, 1);
+    assert_eq!(dl.locations.len(), 1);
+    // TS 102 809 Table 37 application_storage: 10 len=7 storage_property=1 (stand alone)
+    // flags(3)=000 reserved(5)=11111 -> 0x1F ; reserved(1)=1 version(31)=5 -> 0x80000005 ;
+    // priority=9
+    let st: ApplicationStorageDescriptor =
+        rt(&[0x10, 0x07, 0x01, 0x1F, 0x80, 0x00, 0x00, 0x05, 0x09]);
+    assert_eq!(st.storage_property, StorageProperty::StandAlone);
+    assert!(!st.not_launchable_from_broadcast);
+    assert_eq!((st.version, st.priority), (5, 9));
+    // TS 102 727 Table 87 DVB-HTML location: 09 len=27 physical_root_length=12
+    // "application/" then initial_path "main/index.htm"
+    let mut hl = vec![0x09, 0x1B, 0x0C];
+    hl.extend_from_slice(b"application/");
+    hl.extend_from_slice(b"main/index.htm");
+    let hl: DvbHtmlApplicationLocationDescriptor = rt(&hl);
+    assert_eq!(hl.physical_root.raw(), b"application/");
+    assert_eq!(hl.initial_path.raw(), b"main/index.htm");
+    // Table 89 DVB-HTML boundary: 0A len=4 label_length=1 "l" regex ".*"
+    let hb: DvbHtmlApplicationBoundaryDescriptor = rt(&[0x0A, 0x04, 0x01, 0x6C, 0x2E, 0x2A]);
+    assert_eq!(hb.label.raw(), b"l");
+    assert_eq!(hb.regular_expression.raw(), b".*");
+    // TS 102 809 Table 25 application_icons: 0B len=9 icon_locator_length=6 "/icons"
+    // icon_flags(16)=0x0005 (Table 7: 24x32 16:9 = 0x0004 | 32x32 square = 0x0001)
+    let ic: ApplicationIconsDescriptor =
+        rt(&[0x0B, 0x09, 0x06, 0x2F, 0x69, 0x63, 0x6F, 0x6E, 0x73, 0x00, 0x05]);
+    assert_eq!(ic.icon_locator.raw(), b"/icons");
+    assert_eq!(
+        ic.icon_flags,
+        IconFlags::default()
+            .with(IconFormat::Square32x32)
+            .with(IconFormat::Broadcast24x32Dar16x9)
+    );
+    // Table 27 graphics_constraints: 14 len=2 rfu(5)=11111 can_run_without_visible_ui=1
+    // handles_configuration_changed=0 handles_externally_controlled_video=0 -> 0xFC ;
+    // graphics_configuration_byte=3 (Table 9: full screen 1280x720)
+    let gc: GraphicsConstraintsDescriptor = rt(&[0x14, 0x02, 0xFC, 0x03]);
+    assert!(gc.can_run_without_visible_ui);
+    assert_eq!(gc.graphics_configurations, [GraphicsConfiguration::FullScreen1280x720]);
+    // Table 21 application_recording: 06 len=11 flags: scheduled_recording=1, 5 more flags 0,
+    // reserved(2)=11 -> 1000_0011=0x83 ; label_count=1 ; { label_length=3 "lbl"
+    // storage_properties(2)=01 (critical to store) reserved(6)=111111 -> 0x7F } ;
+    // component_tag_list_length=1 tag=0x10 ; private_length=1 private=0xAA
+    let rec: ApplicationRecordingDescriptor = rt(&[
+        0x06, 0x0B, 0x83, 0x01, 0x03, 0x6C, 0x62, 0x6C, 0x7F, 0x01, 0x10, 0x01, 0xAA,
+    ]);
+    assert!(rec.scheduled_recording_flag);
+    assert_eq!(rec.labels.len(), 1);
+    assert_eq!(rec.labels[0].storage_properties, StorageProperties::CriticalToStore);
+    assert_eq!(rec.component_tags, [0x10]);
+    assert_eq!(rec.private, &[0xAA]);
 }
