@@ -9,6 +9,7 @@
 - Every `reserved` field is a typed field re-emitted verbatim (default all ones; `zero_bits`/`reserved_zero_*` default zero). New syntax transcriptions in `docs/descriptors/iso_13818_1/` and `docs/tables/iso_13818_1/`, each checked against the rendered PDF page; `tests/h222_descriptors.rs` cross-checks against a TSDuck 3.44 `tstabcomp`-encoded PMT.
 
 ### Changed (BREAKING)
+- `CompatibilityDescriptor` gains a public `empty_count_present: bool` field (#1298). `parse` now records which empty form it read (`compatibilityDescriptorLength = 0`, or `= 2` with `descriptorCount = 0`, ISO/IEC 13818-6 / TS 102 006 Table 15) and `serialize` reproduces it, so a UNT/DSI/DII with the length=2/count=0 form is byte-identical (it used to lose 2 bytes). Struct-literal constructors must add the field; `false` keeps the previous 2-byte `00 00` output.
 - `Mpeg2ExtensionBody` gains 15 variants (it is `#[non_exhaustive]`); a body with one of those `extension_descriptor_tag`s that used to surface as `Other` is now typed, and a hand-built `Other` carrying one of them is rejected on serialize.
 - `DescriptorTag`/`AnyDescriptor` dispatch now types tags 0x2D, 0x2E, 0x33-0x37, 0x39, 0x3A (previously `Unknown`).
 
