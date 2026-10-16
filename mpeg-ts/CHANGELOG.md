@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Documentation
+- README rewritten to the workspace crate-README standard: what the crate does and does not do, a standards table (edition, scope, status), feature flags, a doctested quick start, the implemented API surface, design notes and related crates. Where the crate has a library target the crate-root docs are now `include_str!("../README.md")`, so docs.rs and crates.io show the same text.
+
 ### Added
 - `Pid::from_wire_masked(u16)`: explicit, documented 13-bit-masking constructor for extracting the PID field from a wider wire word (same behaviour as `Pid::new`, which stays).
 

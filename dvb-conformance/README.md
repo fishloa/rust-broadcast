@@ -2,211 +2,162 @@
 
 [![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance)
 [![docs.rs](https://img.shields.io/docsrs/dvb-conformance)](https://docs.rs/dvb-conformance)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](../LICENSE-MIT)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-license)
 
-ETSI TR 101 290 v1.4.1 transport-stream conformance monitor (DVB measurement
-guidelines). Feed TS packets with a caller-supplied monotonic clock, drain
-structured conformance events per indicator.
+**ETSI TR 101 290 transport-stream conformance monitor: feed TS packets with a caller-supplied clock, get structured per-indicator events for the first, second and third measurement priorities.**
+
+## What it does / what it does not
+
+`ConformanceMonitor` is a sans-IO state machine that checks a transport stream
+against the measurement guidelines of TR 101 290: sync and continuity
+(priority 1), transport/CRC/PCR/PTS/CAT errors (priority 2), and SI
+repetition, table-id and unreferenced-PID checks plus a partial T-STD buffer
+model (priority 3). It follows the PAT to discover PMTs and elementary-stream
+PIDs by itself. It is for monitoring probes, QC tools and test harnesses
+(`compliance-probe` drives it over a live trunk; `media-doctor`, `ts-fix`,
+`multimux` and `transmux` also depend on it).
+
+It does not own a clock: you pass a monotonic `Duration` with every packet, so
+anything that needs arrival-time resolution beyond that is not computable
+(notably indicator 2.4, `PCR_accuracy_error`, which needs +/-500 ns hardware
+timestamps; the `PcrAccuracyError` variant exists for completeness and is never
+emitted). It does not do I/O, does not repair streams (see `ts-fix`), and
+models only part of the T-STD (see below).
+
+## Standards supported
+
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| ETSI TR 101 290, *Measurement guidelines for DVB systems* | V1.4.1 (2020-06) (vendored; verified) | §5.2.1 Table 5.0a (1.1 to 1.6), §5.2.2 Table 5.0b (2.1 to 2.3b, 2.5, 2.6), §5.2.3 Table 5.0c (3.1 to 3.10) | Partial: 27 of 28 indicator variants are emitted | 2.4 `PCR_accuracy_error` is not computable; 3.3/3.9/3.10 are partial (see "T-STD buffer model"). Transcription: `docs/tr_101_290.md`. |
+| ITU-T H.222.0 / ISO/IEC 13818-1 | H.222.0 v9 (08/2023) (vendored; verified) | §2.4.3.3 continuity_counter and legal duplicate packets (shared with `ts-fix` and `media-doctor` via `broadcast_common::ts_dup`), §2.4.2.2 clocks, §2.4.2.4 T-STD transport buffer TBn/TBsys | Partial | Transcription of the buffer clauses: `docs/h222_0-tstd-buffer-model.md`. |
+| ETSI TR 101 211 | not vendored (edition unverified) | §4.4 section interval per sub-table, the clause Table 5.0c cites for the 25 ms minimum gap | Used for `SiMinGapError` keying | |
+| ETSI EN 300 468 | via `dvb-si` (V1.19.1 / V1.20.1 vendored) | Table-id sets on the well-known SI PIDs; PAT/PMT/EIT section parsing | Used, not owned | Section parsing is delegated to `dvb-si`. |
+
+## Feature flags
+
+| Feature | Default | What it enables |
+|---|---|---|
+| `std` | yes | Forwards `std` to `broadcast-common`, `dvb-si`, `mpeg-ts`; off gives `no_std` + `alloc` |
+| `serde` | yes | `serde::Serialize` on `ConformanceEvent`, `Indicator`, `Priority`, `Stats` |
+
+```toml
+[dependencies]
+dvb-conformance = "11"
+```
 
 ## Quick start
 
 ```rust
-use dvb_conformance::{ConformanceMonitor, ConformanceEvent, Indicator};
 use core::time::Duration;
+use dvb_conformance::ConformanceMonitor;
 
-let mut monitor = ConformanceMonitor::new();  // default config
-
-let mut t = Duration::ZERO;
-for packet in ts_packets {
-    t += Duration::from_micros(188 * 8 * 1_000_000 / 6_000_000); // ≈188 bytes @ 6 Mbit/s
-    for event in monitor.feed(packet, t) {
-        eprintln!("[{:?}] {}: {}", event.priority, event.indicator.name(), event.detail);
+// A committed capture; the path is relative to the crate root.
+let data = std::fs::read("../fixtures/ts/m6-single.ts").unwrap();
+let mut monitor = ConformanceMonitor::new(); // default Config
+for (i, pkt) in data.chunks_exact(188).enumerate() {
+    let t = Duration::from_micros(i as u64 * 40); // caller-supplied monotonic clock
+    for event in monitor.feed(pkt, t) {
+        eprintln!("[{}] {} (clause {}): {}", event.priority.name(),
+                  event.indicator.name(), event.indicator.clause(), event.detail);
     }
 }
+let stats = monitor.stats();
+assert!(stats.packets > 0 && stats.in_sync);
 ```
 
-Use `ConformanceMonitor::with_config(Config { .. })` to tune thresholds (PAT/PMT
-max intervals, PCR repetition and discontinuity limits, SI repetition intervals, etc.).
+`ConformanceMonitor::with_config(Config { .. })` tunes every threshold: PAT/PMT
+intervals, `pid_error_period`, sync acquire/loss counts, PCR repetition and
+discontinuity limits, PTS repetition, SI repetition intervals, the 3.4
+unreferenced-PID period, the 25 ms minimum gap and the `_other` intervals.
+Examples: `cargo run -p dvb-conformance --example monitor_stream` and
+`--example priority_breakdown`.
 
-## What's implemented
+## What is implemented
 
-### Indicators — 23 implemented, per the `Indicator` enum in `src/lib.rs`
+| Item | Purpose |
+|---|---|
+| `ConformanceMonitor` (`new`, `with_config`, `feed(packet, t) -> &[ConformanceEvent]`, `stats`) | The monitor |
+| `Config` | Hysteresis/timeout parameters (defaults are the TR 101 290 values) |
+| `ConformanceEvent { indicator, priority, pid: Option<Pid>, at, detail }` | One raised error |
+| `Indicator` (28 variants; `priority()`, `name()`, `clause()`), `Priority` (`First`, `Second`, `Third`) | What was raised |
+| `Stats { packets, events, in_sync }` | Diagnostic counters |
 
-| Priority | Clause | Indicator | Notes |
-|----------|--------|-----------|-------|
-| 1 | 1.1 | `TsSyncLoss` | Hysteresis: 5 consecutive good → in-sync; 2 consecutive bad → sync lost |
-| 1 | 1.2 | `SyncByteError` | `sync_byte != 0x47` on any packet |
-| 1 | 1.3.a | `PatError2` | PAT absent > 500 ms (default); wrong table_id or scrambled on PID 0x0000 |
-| 1 | 1.4 | `ContinuityCountError` | CC wrap + duplicate-packet allowance (one dup per sequence) |
-| 1 | 1.5.a | `PmtError2` | PMT absent > 500 ms per `program_map_PID`; scrambled on PMT PID |
-| 1 | 1.6 | `PidError` | Referenced ES PID absent > 5 s (default) |
-| 2 | 2.1 | `TransportError` | `transport_error_indicator` set |
-| 2 | 2.2 | `CrcError` | CRC-32 mismatch on completed long-form SI/PSI section |
-| 2 | 2.3a | `PcrRepetitionError` | PCR interval > 100 ms (default) on any PCR-carrying PID |
-| 2 | 2.3b | `PcrDiscontinuityError` | PCR delta > 100 ms (default) without `discontinuity_indicator` |
-| 2 | 2.5 | `PtsError` | PTS interval > 700 ms (default) on ES PIDs |
-| 2 | 2.6 | `CatError` | Wrong table_id on PID 0x0001; scrambled packet with no CAT seen |
-| 3 | 3.1 | `NitError` | Bad table_id on PID 0x0010 (not NIT_actual/NIT_other/ST); NIT_actual absent > 10 s (default) |
-| 3 | 3.2 | `SiRepetitionError` | Max-interval dimension: NIT_actual (10 s), SDT_actual (2 s), EIT P/F actual (2 s), TDT (30 s); min-gap (25 ms) shared by 3.1.a/3.2/3.5.a/3.6.a/3.7/3.8 via `SiMinGapError` |
-| 3 | 3.4 | `UnreferencedPid` | A PID persists > 500 ms (default) without being referenced by the PAT/CAT/a PMT or a well-known SI PID |
-| 3 | 3.5 | `SdtError` | Bad table_id on PID 0x0011 (not SDT_actual/SDT_other/BAT/ST); SDT_actual absent > 2 s (default) |
-| 3 | 3.6 | `EitError` | Bad table_id on PID 0x0012 (not EIT P/F or schedule range 0x50–0x6F or ST); EIT P/F actual absent > 2 s (default) |
-| 3 | 3.7 | `RstError` | Bad table_id on PID 0x0013 (not RST/ST) |
-| 3 | 3.8 | `TdtError` | Bad table_id on PID 0x0014 (not TDT/TOT/ST); TDT absent > 30 s (default) |
+### Priority 1 (Table 5.0a)
 
-### New indicators (P3 deferred, #736)
+| Clause | Indicator | Notes |
+|---|---|---|
+| 1.1 | `TsSyncLoss` | Hysteresis: 5 consecutive good sync bytes to acquire, 2 bad to lose |
+| 1.2 | `SyncByteError` | `sync_byte != 0x47` |
+| 1.3.a | `PatError2` | PAT absent > 500 ms; wrong table_id or scrambled on PID 0 |
+| 1.4 | `ContinuityCountError` | CC wrap, with the H.222.0 one-legal-duplicate allowance |
+| 1.5.a | `PmtError2` | PMT absent > 500 ms per `program_map_PID`; scrambled PMT PID |
+| 1.6 | `PidError` | Referenced ES PID absent > 5 s |
 
-| Priority | Clause | Indicator | Notes |
-|----------|--------|-----------|-------|
-| 3 | 3.6.c | `EitPfError` | EIT P/F sub-table missing one of its two sections (per-service, not global) |
-| 3 | 3.1.b | `NitOtherError` | NIT_other (0x41) sections with same `section_number` > 10 s apart; fires only after presence established |
-| 3 | 3.5.b | `SdtOtherError` | SDT_other (0x46) sections with same `section_number` > 10 s apart; fires only after presence established |
-| 3 | 3.6.b | `EitOtherError` | EIT P/F other (0x4F) sections with same `section_number` > 10 s apart; fires only after presence established |
-| 3 | — | `SiMinGapError` | Two sections of same `(table_id, section_number)` < 25 ms apart (shared by 3.1.a/3.2/3.5.a/3.6.a/3.7/3.8) |
+### Priority 2 (Table 5.0b)
 
-### New indicators (T-STD, #737)
+| Clause | Indicator | Notes |
+|---|---|---|
+| 2.1 | `TransportError` | `transport_error_indicator` set |
+| 2.2 | `CrcError` | CRC-32 mismatch on a completed long-form section |
+| 2.3a / 2.3b | `PcrRepetitionError`, `PcrDiscontinuityError` | PCR interval > 100 ms; PCR delta > 100 ms without `discontinuity_indicator` (modular PCR arithmetic from `broadcast_common::clock33`) |
+| 2.4 | `PcrAccuracyError` | **Never emitted** (needs +/-500 ns hardware timing) |
+| 2.5 | `PtsError` | PTS interval > 700 ms |
+| 2.6 | `CatError` | Wrong table_id on PID 1; scrambled packets with no CAT seen |
 
-| Priority | Clause | Indicator | Notes |
-|----------|--------|-----------|-------|
-| 2 | 2.4 | `PcrAccuracyError` | **Not implemented** — requires hardware arrival timing with ±500 ns resolution (ISO/IEC 13818-1 §2.4.2.2); the variant exists for documentation completeness only; never emitted |
-| 3 | 3.3 | `BufferError` | TBsys overflow (512-byte buffer, 1 Mbit/s drain, fed per packet by PSI only, latched per episode); TBn overflow deferred (needs coded bitrate Rxn from descriptors) |
-| 3 | 3.9 | `EmptyBufferError` | TBn/TBsys empty at least once per second; MBn check deferred (needs leak-method parameters from descriptors) |
-| 3 | 3.10 | `DataDelayError` | Data delay through T-STD transport buffers > 1 s; still-picture 60 s threshold NOT implemented — requires PMT stream_type detection from descriptors |
+### Priority 3 (Table 5.0c)
 
-### T-STD buffer model (#737)
+| Clause | Indicator | Notes |
+|---|---|---|
+| 3.1 / 3.1.b | `NitError`, `NitOtherError` | Disallowed table_id on PID 0x10; NIT_actual absent > 10 s; NIT_other sections > 10 s apart |
+| 3.2 | `SiRepetitionError` | Max interval: NIT_actual 10 s, SDT_actual 2 s, EIT P/F actual 2 s, TDT 30 s; timers lazily armed |
+| 3.3 | `BufferError` | TBsys overflow only (512 B, 1 Mbit/s drain, fed per TS packet) |
+| 3.4 | `UnreferencedPid` | A PID not referenced by PAT/CAT/PMT/well-known SI persists > 500 ms |
+| 3.5 / 3.5.b | `SdtError`, `SdtOtherError` | PID 0x11 table_id set; SDT_actual absent > 2 s; SDT_other spacing |
+| 3.6 / 3.6.b / 3.6.c | `EitError`, `EitOtherError`, `EitPfError` | PID 0x12 table_id set; EIT P/F actual absent > 2 s; other spacing; missing P/F section |
+| 3.7 | `RstError` | Disallowed table_id on PID 0x13 (no absence threshold in the spec) |
+| 3.8 | `TdtError` | Disallowed table_id on PID 0x14; TDT absent > 30 s |
+| 3.9 | `EmptyBufferError` | TBn/TBsys empty at least once per second |
+| 3.10 | `DataDelayError` | Data delay through TBn/TBsys > 1 s |
+| shared | `SiMinGapError` | Two sections of the same sub-table `(pid, table_id, table_id_extension)` < 25 ms apart (interval per sub-table, TR 101 211 §4.4) |
 
-A partial ISO/IEC 13818-1 T-STD buffer model (see `src/tstd.rs`) drives
-indicators 3.3, 3.9, and 3.10:
+### T-STD buffer model (3.3, 3.9, 3.10)
 
-- **TBn** (per-PID, 512 bytes): modelled for empty-interval and data-delay
-  tracking. Overflow detection is **deferred** — it requires the coded bitrate
-  `Rxn` from descriptors (multiplex_buffer_descriptor).
-- **TBsys** (global, 512 bytes, 1 Mbit/s drain): fed at PSI section completion.
-  Overflow (firewall), empty-interval, and data-delay checks are implemented.
-- **MBn / EBn / Bn / Bsys**: **deferred** — these require codec-level buffer
-  sizes from descriptors and are not yet parsed by the monitor.
+`src/tstd.rs` models TBn (per PID, 512 B) and TBsys (512 B, 1 Mbit/s drain,
+fed per packet by PSI only). TBn overflow, MBn/EBn/Bn/Bsys and the 60 s
+still-picture data-delay threshold are **deferred**: they need the coded
+bitrate and buffer sizes from `multiplex_buffer_descriptor` /
+`smoothing_buffer_descriptor`, which the monitor does not parse. Constants
+cite H.222.0 §2.4.2.4 (TB size 512 bytes, TBsys `Rxn` 1x10^6 bit/s, Bsys 1536
+bytes, deferred).
 
-All buffer sizes and rates are named constants citing the vendored ITU-T
-H.222.0 v9 (08/2023) PDF. The full transcription is at
-`dvb-conformance/docs/h222_0-tstd-buffer-model.md`.
+### Known limitations
 
-| Constant | Value | H.222.0 clause |
-|----------|-------|----------------|
-| TBn / TBsys size | 512 bytes | §2.4.2.4, p.42: "The transport buffer size is fixed at 512 bytes" |
-| TBsys drain rate | 1 Mbit/s | §2.4.2.4, p.42: "For systems data: Rxn = 1×10⁶ bits per second" |
-| Bsys size | 1536 bytes | §2.4.2.4, p.43: "The main buffer Bsys … size BSsys = 1536 bytes" (deferred) |
-| TB leak rate floor | 125 kbit/s | Modelling floor, not a spec value (Rxn ≥ 2×10⁶ bps per §2.4.2.4) |
+- 3.4 does not exempt CAT-referenced EMM PIDs (CA descriptors are not decoded)
+  or PIDs the operator defines as private data, so those streams can give a
+  false positive.
+- Clock monotonicity is the caller's responsibility; non-monotonic timestamps
+  produce spurious events.
+- EIT P/F is tracked at table level (any table_id `0x4E` section resets the
+  timer) to avoid false positives on dense schedules.
 
-**Note on 2.4 PCR_accuracy_error**: this indicator requires hardware arrival
-timestamps with ±500 ns accuracy. The monitor is sans-IO with a
-caller-supplied clock; a packet-index-derived timing estimate cannot
-honestly resolve 500 ns. A false positive here is worse than a gap
-(cf. the withdrawn `PtsCheck`). The indicator exists in the enum for
-documentation completeness but is never emitted.
+## Design notes
 
-Excluded, split by reason:
+- **Sans-IO, caller clock.** All presence/absence checks run on the
+  `Duration` you pass; no `Instant`, no threads.
+- **Single reading of duplicates.** The "two, and only two" legal-duplicate
+  rule is `broadcast_common::ts_dup`, shared with `ts-fix` and `media-doctor`
+  so the three tools cannot disagree (issue #956).
+- **No 33-bit arithmetic of its own.** `tests/clock33_guard.rs` bans a local
+  2^33 / `abs_diff`; PCR/PTS wrap handling is `broadcast_common::clock33`.
+- **Honest gaps over false positives.** An indicator that cannot be computed
+  honestly is documented and not emitted rather than approximated.
+- Public enums carry `name()` and `Display`; `no_std` + `alloc`.
 
-**Not computable without hardware arrival timing** (needs ±500 ns resolution):
+## Related crates and license
 
-| Clause | Indicator | Reason |
-|--------|-----------|--------|
-| 2.4 | `PCR_accuracy_error` | Requires ±500 ns PCR accuracy measurement against a hardware reference clock (ISO/IEC 13818-1 §2.4.2.2); a packet-index-derived arrival estimate cannot resolve 500 ns |
+Depends on `broadcast-common`, `mpeg-ts` and `dvb-si`. Used by
+`compliance-probe`, `media-doctor`, `ts-fix`, `multimux` and `transmux`. Lockstep
+version with `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-tools`.
 
-**Partially implemented — TBn overflow / MBn / EBn / Bn / Bsys deferred**
-(needs codec-dependent buffer-size descriptors not yet parsed by the monitor):
-
-| Clause | Indicator | Deferred sub-checks |
-|--------|-----------|---------------------|
-| 3.3 | `Buffer_error` | TBn overflow (needs Rxn from descriptors); MBn/EBn/Bn underflow/overflow; Bsys overflow |
-| 3.9 | `Empty_buffer_error` | MBn empty-at-least-once-per-second (leak method) |
-| 3.10 | `Data_delay_error` | Still-picture video data 60 s threshold differentiation; MBn delay |
-
-**Feasible, deferred** (reusable with the existing timer machinery, but not
-yet implemented):
-
-None — all previously deferred Priority-3 dimensions (25 ms min-gap, `_other`
-repetition, EIT P/F pairing) were implemented in #736. See the table above.
-
-### Caller-supplied time model
-
-`ConformanceMonitor::feed(packet, t)` takes a `core::time::Duration` alongside
-each TS packet. The monitor uses this clock for all presence/absence timeout
-checks (1.3.a, 1.5.a, 1.6, 2.3a, 2.3b, 2.5, 3.2). The caller must supply
-monotonic non-decreasing timestamps; the monitor does not enforce this but
-non-monotonic timestamps will produce spurious events. Because there is no
-independent hardware clock, PCR accuracy (2.4) and buffer-model indicators are
-not computable.
-
-### SI_repetition_error (3.2) — implementation notes
-
-- Maximum-interval checks are implemented for NIT_actual (10 s), SDT_actual
-  (2 s), EIT P/F actual (2 s), and TDT (30 s). Each table's timer is lazily
-  armed — checking starts only after the first section of that table is seen;
-  an entirely absent table is not flagged by this indicator (that is the role
-  of the out-of-scope per-table presence indicators).
-- EIT P/F is tracked at the table level (any section with table_id `0x4E`
-  resets the timer), not per section_number, to avoid false positives on dense
-  EIT schedules.
-
-### PAT-following PMT discovery
-
-The monitor parses each completed PAT section and automatically starts tracking
-the `program_map_PID` entries it finds, enabling indicator 1.5.a (PMT absence)
-and ES PID extraction (indicator 1.6).
-
-### NIT/SDT/EIT/RST/TDT_error (3.1, 3.5, 3.6, 3.7, 3.8) — implementation notes
-
-- Each indicator validates the `table_id` of every completed section on its
-  well-known PID against the allowed set from `docs/tr_101_290.md` clause
-  3.x, firing immediately on a disallowed value.
-- The absence dimension of 3.1/3.5/3.6/3.8 (NIT_actual/SDT_actual/EIT P/F
-  actual/TDT missing beyond the repetition interval) is raised from the
-  *same* lazily-armed timer that drives `SiRepetitionError` (3.2) — the two
-  indicators are the same underlying absence event with two spec identities
-  (the old combined indicator vs. the newer split `_actual` variant); both
-  fire together.
-- `RstError` (3.7) has no documented absence threshold in Table 5.0c, so it
-  only has the bad-table_id dimension.
-
-### Unreferenced_PID (3.4) — implementation notes
-
-- Tracks the first-seen time of any PID that is not (yet) part of the
-  referenced set: PAT, CAT, the well-known SI PIDs (NIT/SDT-BAT/EIT/RST/
-  TDT-TOT), the null PID, the reserved-for-future-use range (0x0002–0x000F),
-  `program_map_PID`s from the PAT, and ES/PCR PIDs from a PMT. A PID that
-  persists past the 500 ms (default) threshold without becoming referenced
-  raises `UnreferencedPid`.
-- **Known limitations** (documented, not silently swallowed): CAT-referenced
-  EMM PIDs are not exempted — this monitor validates CAT `table_id` but does
-  not decode CA descriptors to extract `CA_PID`s. PIDs "user defined as
-  private data streams" (the spec's own carve-out) are likewise not
-  distinguishable from the wire alone. Either can produce a false positive
-  for a stream using that pattern; the crate does not currently model it.
-
-## Feature flags
-
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `std` | **on** | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
-| `serde` | **on** | Serialize-only (`serde::Serialize`) on `ConformanceEvent`, `Indicator`, `Priority`, `Stats`. |
-
-## MSRV
-
-Rust **1.95.0**.
-
-## References
-
-- ETSI TR 101 290 v1.4.1 (2020-06) — DVB Measurement Guidelines (§5.2.1 Table 5.0a, §5.2.2 Table 5.0b, §5.2.3 Table 5.0c)
-- ISO/IEC 13818-1 — MPEG-2 Systems
-
-## Examples
-
-Run with `cargo run -p dvb-conformance --example <name>`:
-
-- **`monitor_stream`** — run the TR 101 290 monitor over a capture and print the headline stats.
-- **`priority_breakdown`** — tally findings by measurement priority (1/2/3) and indicator.
-
-## License
-
-Licensed under either of MIT ([LICENSE-MIT](../LICENSE-MIT)) or Apache-2.0
-([LICENSE-APACHE](../LICENSE-APACHE)), at your option.
+MSRV 1.95.0. Licensed under [MIT](https://github.com/fishloa/rust-broadcast/blob/main/LICENSE-MIT) or
+[Apache-2.0](https://github.com/fishloa/rust-broadcast/blob/main/LICENSE-APACHE), at your option.

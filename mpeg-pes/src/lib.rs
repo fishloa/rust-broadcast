@@ -1,28 +1,4 @@
-//! PES (Packetized Elementary Stream) depacketization + PTS/DTS — ISO/IEC 13818-1
-//! (Rec. ITU-T H.222.0) §2.4.3.6 / §2.4.3.7.
-//!
-//! `mpeg-pes` is the sublayer between an MPEG-TS packet layer (e.g. `dvb-si`'s
-//! `TsPacket` / `SiDemux`) and an elementary-stream consumer. Feed it the
-//! payload bytes of TS packets for one PID (split on `payload_unit_start`), and
-//! it yields [`PesPacket`]s carrying the `stream_id`, presentation/decoding
-//! timestamps ([`Pts`]/[`Dts`], 33-bit @ 90 kHz), and the elementary-stream
-//! bytes.
-//!
-//! It depends only on `broadcast-common` and is `#![no_std]` (+ `alloc`), WASM-clean.
-//!
-//! ```
-//! use mpeg_pes::{PesPacket, StreamId};
-//! // A minimal PES packet: start code, stream_id 0xE0 (video), len, header, PTS, payload.
-//! let bytes = [
-//!     0x00, 0x00, 0x01, 0xE0, 0x00, 0x0A, 0x80, 0x80, 0x05,
-//!     0x21, 0x00, 0x01, 0x00, 0x01, // PTS = 0
-//!     0xAA, 0xBB, // ES payload
-//! ];
-//! let pkt = PesPacket::parse(&bytes).unwrap();
-//! assert_eq!(pkt.stream_id, StreamId(0xE0));
-//! assert!(pkt.header.as_ref().unwrap().pts.is_some());
-//! assert_eq!(pkt.payload, &[0xAA, 0xBB]);
-//! ```
+#![doc = include_str!("../README.md")]
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]

@@ -4,193 +4,159 @@
 [![docs.rs](https://img.shields.io/docsrs/mpeg-ts)](https://docs.rs/mpeg-ts)
 [![CI](https://github.com/fishloa/rust-broadcast/actions/workflows/ci.yml/badge.svg)](https://github.com/fishloa/rust-broadcast/actions)
 
-**MPEG-2 Transport Stream framing for Rust.**
+**MPEG-2 Transport Stream framing: TS packets, adaptation fields, PCR, PSI section reassembly and packetisation, byte-stream resync.**
 
-Parses and serializes the ITU-T H.222.0 / ISO/IEC 13818-1 TS packet layer:
-188-byte TS packets, adaptation fields, PCR, PSI section reassembly, section
-packetisation, and sync recovery. `no_std` + `alloc` — runs on embedded targets
-with a heap.
+## What it does / what it does not
 
-Extracted from `dvb-si` at the 8.0.0 breaking boundary and published
-independently so projects that only need raw TS framing do not have to pull in
-the full SI/descriptor stack.
+`mpeg-ts` is the lowest layer of the workspace's broadcast stack. It turns a
+stream of bytes into typed 188-byte transport packets (and back), and it turns
+the payload of PSI/SI PIDs into complete sections (and back). It is for anyone
+who needs raw TS framing without the SI/descriptor stack: demuxers, muxers,
+stream repair tools, analyzers, embedded firmware.
 
-## Features
+It does:
 
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `std`   | yes     | Enable `std::error::Error` impls; disable for embedded |
-| `serde` | yes     | `Serialize` for packet/section types (serialize-only) |
+- parse and serialize the 4-byte TS header and the adaptation field (every
+  bit, including stuffing and reserved bits, so parse -> serialize is
+  byte-exact on real streams);
+- reassemble PSI/SI sections from TS payloads (`pointer_field`, multi-packet,
+  several sections per packet) and packetise sections back, with continuity
+  counters and `0xFF` stuffing;
+- schedule repeating SI tables into a TS packet stream (`SiMux`);
+- recover packet alignment from a raw byte stream (188- and 204-byte strides);
+- accumulate PUSI-delimited payloads on non-PSI PIDs (e.g. DASH `emsg`);
+- provide an owned, mutable packet type for in-place edits (continuity counter,
+  PCR).
 
-## Typed PIDs and round-trip fidelity
+It deliberately does not: parse PES (see `mpeg-pes`), interpret PSI/SI table
+bodies or descriptors (see `dvb-si`), descramble (see `dvb-csa`), check
+stream conformance (see `dvb-conformance`), or do any I/O.
 
-- **`pid::Pid` is the PID type everywhere**: `TsHeader::pid`,
-  `SectionPacketiser`, `SiMux`, `PusiReassembler` and `OwnedTsPacket` take and
-  return `Pid`, not `u16`. `Pid::try_new` / `TryFrom<u16>` reject values above
-  `0x1FFF` (`pid::PidOutOfRange`); `Pid::new` masks already-masked wire bits;
-  there is deliberately no `From<u16>`. `Pid` implements `UpperHex`/`LowerHex`
-  so `{:04X}` formatting is unchanged and serde output is unchanged
-  (`serde(transparent)`); `header.pid.value()` gives the raw `u16`.
-- **Every adaptation-field bit is preserved**, so parse -> serialize is
-  byte-exact on real streams: `AdaptationField::stuffing` (the stuffing bytes
-  verbatim, not just a length), `pcr_reserved`/`opcr_reserved`,
-  `SeamlessSplice::marker_bits`, and `AdaptationFieldExtension` with every
-  bit of ISO/IEC 13818-1 Table 2-6 (`piecewise_rate_reserved`,
-  `af_descriptor_not_present_flag`, `reserved_flags`, `trailing`). These types
-  are `#[non_exhaustive]` with `new()`/`Default` (spec-convention reserved
-  bits all `1`); `tests/af_extension_roundtrip.rs` re-serializes every
-  adaptation field of every committed `.ts` fixture.
-- `TsResync::feed_into(data, &mut Vec<[u8; 188]>)` appends to a caller-owned
-  vector (a 2000-packet feed makes at most 4 allocations).
-- The PCR arithmetic and the 5-byte marker-bit timestamp field come from
-  `broadcast_common::clock33`.
+## Standards supported
 
-## Installation
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| ITU-T H.222.0 / ISO/IEC 13818-1, *Generic coding of moving pictures and associated audio information: Systems* | H.222.0 v9 (08/2023); vendored copy verified in `private/specs-md` | §2.4.3.2 TS packet layer, §2.4.3.3 field semantics, §2.4.3.4 adaptation field (incl. PCR/OPCR, splice, LTW, piecewise rate, extension), §2.4.4 PSI `pointer_field` and section framing | Full for the listed clauses | Other H.222.0 clauses (PES §2.4.3.6, program streams §2.5, descriptors) are not this crate's job. Layouts cited by clause in module docs; 2007-era layouts for these clauses are unchanged. |
+| ETSI EN 300 468 | V1.19.1 (the edition vendored; a V1.20.1 copy is also present) | §5.1.1 generic section header, §5.1.3 Table 1 well-known PIDs, CRC_32 placement | Partial: framing and PID constants only | Table bodies and descriptors live in `dvb-si`. The TOT's CRC is not handled by the short-form path (use `dvb-si`). |
+| ISO/IEC 23009-1 | not pinned by this crate | §5.10.3.3.5 PUSI-delimited `emsg` carriage on PID `0x0004` | Partial: generic PUSI reassembly only | The `emsg` box itself is parsed by `mp4-emsg`. |
+| 204-byte RS-coded packets (188 + 16 parity) | n/a | Stride detection in `TsResync` | Partial | Parity bytes are stripped, never checked. |
+
+## Feature flags
+
+| Feature | Default | What it enables |
+|---|---|---|
+| `std` | yes | `std::error::Error` impls; turn off for `no_std` |
+| `serde` | yes | `serde::Serialize` on packet/section types (serialize-only) |
+
+The crate is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`;
+`default-features = false` builds on bare-metal targets that have a heap.
 
 ```toml
 [dependencies]
 mpeg-ts = "0.5"
+# embedded:
+# mpeg-ts = { version = "0.5", default-features = false }
 ```
 
-For embedded (`no_std + alloc`):
+## Quick start
 
-```toml
-[dependencies]
-mpeg-ts = { version = "0.5", default-features = false }
-```
-
-## Quickstart — feed TS packets into a `SectionReassembler`
+Parse a real PAT packet (extracted from the committed `m6-single.ts` fixture)
+and recover its section:
 
 ```rust
-use mpeg_ts::ts::{TsPacket, SectionReassembler};
+use mpeg_ts::ts::{SectionReassembler, TsPacket};
+use mpeg_ts::pid::well_known;
+
+// PID 0x0000, PUSI set, payload-only; PAT section: transport_stream_id 1, one program.
+let mut raw = [0xFFu8; 188];
+raw[..21].copy_from_slice(&[
+    0x47, 0x40, 0x00, 0x10, // sync, PUSI + PID 0, payload only, CC 0
+    0x00,                   // pointer_field
+    0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x04, 0x01, 0xE0, 0x64, // PAT
+    0xF9, 0xB4, 0x63, 0xEF, // CRC_32
+]);
+
+let pkt = TsPacket::parse(&raw)?;
+assert_eq!(pkt.header.pid, well_known::PAT);
+assert!(pkt.header.pusi);
 
 let mut reasm = SectionReassembler::default();
-// Feed 188-byte aligned TS packets; poll for completed PSI sections.
-for raw_packet in ts_source {
-    let pkt = TsPacket::parse(raw_packet).expect("valid TS packet");
-    if let (Some(payload), pusi) = (pkt.payload, pkt.header.pusi) {
-        reasm.feed(payload, pusi);
-    }
-    while let Some(section_bytes) = reasm.pop_section() {
-        // section_bytes is a complete PSI section — pass to dvb-si or similar.
-        println!("section {} bytes, table_id=0x{:02X}", section_bytes.len(), section_bytes[0]);
-    }
-}
-```
-
-### Typed packet inspection
-
-The [`ScramblingControl`] and [`AdaptationFieldControl`] enums give typed
-access to the 2-bit `transport_scrambling_control` and `adaptation_field_control`
-fields. Use `scrambling_control()` / `adaptation_field_control()` on either
-[`TsHeader`] or [`OwnedTsPacket`]:
-
-```rust
-use mpeg_ts::ts::{TsPacket, ScramblingControl, AdaptationFieldControl};
-use mpeg_ts::OwnedTsPacket;
-
-// On a borrowed TsPacket:
-let pkt = TsPacket::parse(raw_188_bytes)?;
-let sc = pkt.header.scrambling_control();
-let afc = pkt.header.adaptation_field_control();
-
-// On an owned OwnedTsPacket:
-let owned = OwnedTsPacket::parse(raw_array)?;
-let sc2 = owned.scrambling_control();
-let afc2 = owned.adaptation_field_control();
-
-match sc {
-    ScramblingControl::NotScrambled => println!("clear"),
-    ScramblingControl::EvenKey | ScramblingControl::OddKey => println!("scrambled"),
-    _ => {}
-}
+reasm.feed(pkt.payload.expect("payload"), pkt.header.pusi);
+let section = reasm.pop_section().expect("one complete section");
+assert_eq!(section[0], 0x00); // table_id = PAT
+assert_eq!(u16::from_be_bytes([section[3], section[4]]), 1); // transport_stream_id
 # Ok::<(), mpeg_ts::Error>(())
 ```
 
-### Bulk-walking a TS byte stream
-
-The free helper [`iter_packets`] walks a buffer of concatenated 188-byte packets
-without explicit length checks:
+Build and edit packets without manual byte twiddling:
 
 ```rust
-use mpeg_ts::ts::iter_packets;
+use mpeg_ts::ts::{Pcr, TsPacket};
+use mpeg_ts::{pid::{well_known, Pid}, OwnedTsPacket};
 
-// Build a buffer of 3 minimal payload-only packets with sync 0x47.
-let mut buf = vec![0u8; 188 * 3];
-for chunk in buf.chunks_exact_mut(188) {
-    chunk[0] = 0x47;      // sync byte
-    chunk[3] = 0x10;      // payload_only (adaptation_field_control = 01)
-    chunk[4..].fill(0xFF); // stuffing
-}
-for pkt in iter_packets(&buf) {
-    println!("PID: 0x{:04X}", pkt.header.pid);
-}
-```
+let null = OwnedTsPacket::null_packet(3);
+assert_eq!(TsPacket::parse(&null)?.header.pid, well_known::NULL);
 
-See [`examples/iter_packets.rs`](examples/iter_packets.rs) for a full CLI example
-that tallies scrambled vs clear packets across a `.ts` file.
-
-### Building & editing packets
-
-The [`OwnedTsPacket`] helpers let you construct, mutate, and round-trip TS
-packets without manual byte manipulation:
-
-```rust
-use mpeg_ts::ts::{Pcr, TsPacket, TS_PACKET_SIZE};
-use mpeg_ts::OwnedTsPacket;
-
-// Build a null packet (PID 0x1FFF) with a given continuity counter.
-let null_raw = OwnedTsPacket::null_packet(3);
-let pkt = TsPacket::parse(&null_raw)?;
-assert_eq!(pkt.header.pid, mpeg_ts::pid::well_known::NULL);
-assert_eq!(pkt.header.continuity_counter, 3);
-
-// Overwrite a continuity counter in-place.
-let mut raw = OwnedTsPacket::serialize_with_payload(mpeg_ts::pid::Pid::new(0x0100), false, 0, &[])?;
+let mut raw = OwnedTsPacket::serialize_with_payload(Pid::try_new(0x0100).unwrap(), false, 0, &[])?;
 OwnedTsPacket::set_continuity_counter(&mut raw, 7);
-let pkt = TsPacket::parse(&raw)?;
-assert_eq!(pkt.header.continuity_counter, 7);
+assert_eq!(TsPacket::parse(&raw)?.header.continuity_counter, 7);
 
-// Shift a PCR bearing packet (requires adaptation field with PCR flag).
-let mut raw = [0x47u8; 188];
-raw[3] = 0x20; // adaptation-only
-raw[4] = 7;    // adaptation_field_length
-raw[5] = 0x10; // PCR flag
-OwnedTsPacket::set_pcr(&mut raw, Pcr::from_27mhz(27_000_000))?;
-let pkt = TsPacket::parse(&raw)?;
-assert_eq!(pkt.adaptation_field().unwrap()?.pcr.unwrap().as_27mhz(), 27_000_000);
+let mut pcr_pkt = [0x47u8; 188];
+pcr_pkt[3] = 0x20; // adaptation only
+pcr_pkt[4] = 7;    // adaptation_field_length
+pcr_pkt[5] = 0x10; // PCR flag
+OwnedTsPacket::set_pcr(&mut pcr_pkt, Pcr::from_27mhz(27_000_000))?;
+let parsed = TsPacket::parse(&pcr_pkt)?;
+assert_eq!(parsed.adaptation_field().unwrap()?.pcr.unwrap().as_27mhz(), 27_000_000);
 # Ok::<(), mpeg_ts::Error>(())
 ```
 
-Run the worked example:
-```sh
-cargo run -p mpeg-ts --example edit_packet
-```
+Runnable examples: `cargo run -p mpeg-ts --example demux`, `--example iter_packets`,
+`--example edit_packet`.
 
-See [`examples/edit_packet.rs`](examples/edit_packet.rs) for a complete walk-through
-that builds a PCR-bearing packet, mutates PCR and CC, builds a null
-packet, and round-trips a packet header.
+## What is implemented
 
-## Spec
+| Module | Public API | Purpose |
+|---|---|---|
+| `ts` | `TsPacket<'a>`, `TsHeader`, `AdaptationField<'a>`, `AdaptationFieldExtension<'a>`, `Pcr`, `Ltw`, `SeamlessSplice`, `ScramblingControl`, `AdaptationFieldControl`, `SectionReassembler`, `iter_packets`, `extract_ts_payload`, `TS_PACKET_SIZE` | Zero-copy packet view, bit-exact adaptation field, PCR (27 MHz) and per-PID PSI section reassembly |
+| `owned` | `OwnedTsPacket` | Owned 188-byte packet: build (`null_packet`, `serialize_with_payload`), mutate (`set_continuity_counter`, `set_pcr`, `payload_mut`), inspect |
+| `pid` | `Pid`, `PidOutOfRange`, `well_known::{PAT, CAT, TSDT, IPMP_CIT, NIT, SDT_BAT, EIT, RST, TDT_TOT, NETWORK_SYNC, RNT, SAT, INBAND_SIGNALLING, MEASUREMENT, DIT, SIT, ATSC_PSIP, NULL}` | Typed 13-bit PID newtype |
+| `section` | `Section<'a>` | Generic section header (`table_id`, syntax indicator, length, version, section numbers, CRC validation) |
+| `mux` | `SectionPacketiser`, `SiMux` (`upsert`, `upsert_pat`, `upsert_pmt`, `upsert_sdt_actual`, `upsert_nit`, `upsert_tdt`, `upsert_tot`, `poll`, `poll_into`) | Sections to TS packets with continuity and stuffing; interval-scheduled SI repetition |
+| `resync` | `TsResync`, `PacketStride` (`Ts188`, `Rs204`), `ResyncStats` | Alignment recovery from raw bytes; `feed_into` appends to a caller-owned vector |
+| `pusi` | `PusiReassembler`, `DEFAULT_MAX_UNIT_SIZE` | PUSI-delimited unit accumulation for non-PSI PIDs, size-capped |
+| `error` | `Error`, `Result` | Structured `thiserror` errors (`BufferTooShort`, `CrcMismatch`, `InvalidSyncByte`, `OutputBufferTooSmall`, `FieldOverflow`, ...) |
 
-- **ITU-T H.222.0** (= ISO/IEC 13818-1): §2.4.3.2 (TS packet), §2.4.4 (PSI
-  section), §2.4.3.3 (adaptation field), §2.4.3.4 (PCR). All wire layouts are
-  cited to the clause in the module doc comments.
+Typed PIDs: `Pid` is used everywhere (`TsHeader::pid`, the mux types,
+`PusiReassembler`, `OwnedTsPacket`). `Pid::try_new` / `TryFrom<u16>` reject
+values above `0x1FFF`; `Pid::new` / `Pid::from_wire_masked` mask bits already
+taken from the wire; there is deliberately no `From<u16>`. `Pid` implements
+`UpperHex`/`LowerHex` and is `serde(transparent)`.
 
-## Lineage
+## Design notes
 
-This crate was extracted from `dvb-si` at the **8.0.0** release boundary (June
-2026). Users migrating from `dvb-si ≤ 7.x` who used the TS framing layer
-directly should replace:
+- **Zero-copy, symmetric.** Parsed types borrow the input; every wire type has
+  a matching serializer. `tests/fixture_roundtrip.rs` and
+  `tests/af_extension_roundtrip.rs` re-serialize every adaptation field of
+  every committed `.ts` fixture and require byte-identical output.
+- **No information dropped.** Adaptation-field stuffing, `pcr_reserved` /
+  `opcr_reserved`, splice marker bits and every extension reserved bit are
+  carried; the structs are `#[non_exhaustive]` with `new()` / `Default`
+  (reserved bits default to `1`, per the spec convention).
+- **Checked widths.** Serializers use `broadcast_common::len` checked helpers
+  (`FieldOverflow`), never a silent mask.
+- **Shared clock arithmetic.** PCR and the marker-bit timestamp come from
+  `broadcast_common::clock33`.
+- **Label convention.** Public field enums expose `name()` and `Display`
+  (`tests/label_coverage.rs` guards it).
 
-| Old (`dvb_si::…`) | New (`mpeg_ts::…`) |
-|---|---|
-| `ts::TsPacket` | `ts::TsPacket` |
-| `ts::SectionReassembler` | `ts::SectionReassembler` |
-| `mux::SiMux` / `SectionPacketiser` | `mux::SiMux` / `SectionPacketiser` |
-| `resync::TsResync` | `resync::TsResync` |
-| `pid::Pid` | `pid::Pid` |
+## Related crates
 
-## License
+Depends on `broadcast-common`. Built on by `dvb-si` (tables/descriptors),
+`mpeg-pes`, `dvb-stream`, `dvb-conformance`, `ts-fix`, `media-doctor` and
+`transmux`. Spec citations: [`docs/`](https://github.com/fishloa/rust-broadcast/tree/main/mpeg-ts/docs).
+Users migrating from `dvb-si <= 7.x`: `ts`, `mux`, `resync` and `pid` moved here
+unchanged in name.
 
-Licensed under either of [MIT](../../LICENSE-MIT) or [Apache-2.0](../../LICENSE-APACHE), at your option.
+MSRV 1.95.0. Licensed under [MIT](https://github.com/fishloa/rust-broadcast/blob/main/LICENSE-MIT) or
+[Apache-2.0](https://github.com/fishloa/rust-broadcast/blob/main/LICENSE-APACHE), at your option.
