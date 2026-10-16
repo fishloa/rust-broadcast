@@ -34,10 +34,6 @@ serde = ["dep:serde"]
 # feature is enabled (e.g. by dvb-si's own `chrono` feature); it is configured
 # `no_std + alloc` so it composes with the crate's `no_std` build.
 chrono = { workspace = true, optional = true, features = ["alloc"] }
-# Pure-Rust `floor` for the MJD↔calendar codec: `f64::floor` is a std-only
-# intrinsic, so the no_std build needs libm. `floor` is exact, so libm::floor is
-# bit-identical to `f64::floor` and is used uniformly in std and no_std.
-libm = "0.2"
 # Hex codec backing `hex::hex_encode` (SP5). `alloc` only: the crate stays no_std.
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # Only pulled in by the `serde` feature — see its comment above. Configured

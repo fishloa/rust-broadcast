@@ -427,7 +427,6 @@ dependencies = [
  "chrono",
  "criterion",
  "hex",
- "libm",
  "serde",
 ]
 

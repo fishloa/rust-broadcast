@@ -62,3 +62,50 @@ fn encoder_rejects_2100_02_29_and_encodes_2100_03_01_correctly() {
         Some([0x58, 0x40, 0, 0, 0])
     );
 }
+
+#[test]
+fn leap_day_2000_and_2038_wrap_boundaries() {
+    // 2000-02-29 = MJD 51603 = 0xC993 (MSB set: the field is the MJD).
+    assert_eq!(decode_mjd_bcd([0xC9, 0x93, 0, 0, 0]), Some(date(2000, 2, 29)));
+    assert_eq!(encode_mjd_bcd(date(2000, 2, 29)), Some([0xC9, 0x93, 0, 0, 0]));
+    // 2038-04-22 = 65535 = 0xFFFF, 2038-04-23 = 65536 = field 0x0000.
+    assert_eq!(decode_mjd_bcd([0xFF, 0xFF, 0, 0, 0]), Some(date(2038, 4, 22)));
+    assert_eq!(decode_mjd_bcd([0x00, 0x00, 0, 0, 0]), Some(date(2038, 4, 23)));
+    // 1948-08-05 = 32768 = 0x8000, the lowest representable date.
+    assert_eq!(decode_mjd_bcd([0x80, 0x00, 0, 0, 0]), Some(date(1948, 8, 5)));
+    // 2128-01-09 encodes to 0x7FFF; the day after is not representable.
+    assert_eq!(encode_mjd_bcd(date(2128, 1, 9)), Some([0x7F, 0xFF, 0, 0, 0]));
+    assert_eq!(encode_mjd_bcd(date(2128, 1, 10)), None);
+    assert_eq!(encode_mjd_bcd(date(1948, 8, 4)), None);
+}
+
+#[test]
+fn every_wire_mjd_round_trips_and_days_are_consecutive() {
+    // Both halves of the 16-bit space (MSB set and MSB clear), every value,
+    // walked in MJD order: 0x8000..=0xFFFF then 0x0000..=0x7FFF.
+    let mut prev: Option<MjdBcdDateTime> = None;
+    for field in (0x8000u32..=0xFFFF).chain(0x0000..=0x7FFF) {
+        let [b0, b1] = (field as u16).to_be_bytes();
+        let raw = [b0, b1, 0x12, 0x34, 0x56];
+        let dt = decode_mjd_bcd(raw).unwrap_or_else(|| panic!("decode {field:#06x}"));
+        assert_eq!(encode_mjd_bcd(dt), Some(raw), "round trip {field:#06x}");
+        if let Some(p) = prev {
+            let leap = (p.year % 4 == 0 && p.year % 100 != 0) || p.year % 400 == 0;
+            let dim = match p.month {
+                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                4 | 6 | 9 | 11 => 30,
+                2 if leap => 29,
+                _ => 28,
+            };
+            let expect = if p.day < dim {
+                (p.year, p.month, p.day + 1)
+            } else if p.month < 12 {
+                (p.year, p.month + 1, 1)
+            } else {
+                (p.year + 1, 1, 1)
+            };
+            assert_eq!((dt.year, dt.month, dt.day), expect, "after {field:#06x}");
+        }
+        prev = Some(dt);
+    }
+}
