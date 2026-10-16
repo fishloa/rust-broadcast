@@ -265,10 +265,13 @@ ait_descriptor_tag	0x0C	pre-fetch_descriptor	ETSI TS 102 727 V1.1.1	10.8.3.2	169
 ait_descriptor_tag	0x0D	DII_location_descriptor	ETSI TS 102 727 V1.1.1	10.8.3.3	170
 ait_descriptor_tag	0x10	application_storage_descriptor	ETSI TS 102 809 V1.3.1	5.3.10.1	51
 ait_descriptor_tag	0x11	IP_signalling_descriptor	ETSI TS 102 727 V1.1.1	10.8.2	169
+ait_descriptor_tag	0x12	provider_export_descriptor	ETSI TS 102 727 V1.1.1	10.15	181
+ait_descriptor_tag	0x13	provider_usage_descriptor	ETSI TS 102 727 V1.1.1	10.15	181
 ait_descriptor_tag	0x14	graphics_constraints_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.8	44
 ait_descriptor_tag	0x15	simple_application_location_descriptor	ETSI TS 102 809 V1.3.1	5.3.7	47
 ait_descriptor_tag	0x16	application_usage_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.5	41
 ait_descriptor_tag	0x17	simple_application_boundary_descriptor	ETSI TS 102 809 V1.3.1	5.3.8	48
+ait_descriptor_tag	0x5F	private_data_specifier_descriptor	ETSI EN 300 468 V1.20.1	6.2.31	99
 
 # ── INT descriptor namespace (target / operational / platform loops, 0x00–0x3F) — ETSI EN 301 192 V1.7.1 Table 19 (clause 8.4.5.1)
 # "MPEG descriptors in the range 0x00 to 0x3F cannot be used in the INT" (EN 301 192 V1.7.1 clause 8.4.5.1)

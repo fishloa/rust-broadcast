@@ -49,7 +49,7 @@ co-locates a `.toml` drift guard with its page. Module `//!` docs cite these fil
 | Descriptor syntax | [T/UWA 012.2-2023 — UWA UHD TS encapsulation](descriptors/t_uwa_012_2/) | 1 |
 | Descriptor syntax | [ETSI TS 102 006 — System Software Update](descriptors/ts_102_006/) | 25 |
 | Descriptor syntax | [ETSI TS 102 323 — TV-Anytime carriage](descriptors/ts_102_323/) | 11 |
-| Descriptor syntax | [ETSI TS 102 727 — DVB-MHP (descriptor subset)](descriptors/ts_102_727/) | 9 |
+| Descriptor syntax | [ETSI TS 102 727 — DVB-MHP (descriptor subset)](descriptors/ts_102_727/) | 11 |
 | Descriptor syntax | [ETSI TS 102 772 — MPE-IFEC](descriptors/ts_102_772/) | 1 |
 | Descriptor syntax | [ETSI TS 102 809 — application signalling (AIT)](descriptors/ts_102_809/) | 22 |
 | Descriptor syntax | [ETSI TS 102 825 — CPCM](descriptors/ts_102_825/) | 2 |

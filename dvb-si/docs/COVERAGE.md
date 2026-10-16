@@ -30,7 +30,7 @@ text; **Source cites** is what the module's own doc comment says (see the
 | Descriptors (tag 0x00–0x7F) | **115** auto-dispatched: **51** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
 | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
 | MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (7 MPEG-H 3D audio, plus HEVC/VVC/EVC/LCEVC/JPEG XS timing and structure, green, quality, OD update, timed metadata, media service kind) |
-| AIT descriptors (TS 102 809 / MHP) | **18** typed in the separate AIT descriptor namespace |
+| AIT descriptors (TS 102 809 / MHP) | **21** typed in the separate AIT descriptor namespace |
 | INT / UNT / RNT descriptors | **26** typed in their own scoped namespaces (`AnyIntDescriptor`, `AnyUntDescriptor`, `AnyRntDescriptor`) |
 | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
 | Text (EN 300 468 Annex A) | **7** charset decoders covering every Table A.3 selector + Annex A.1 control codes |
@@ -43,13 +43,13 @@ text; **Source cites** is what the module's own doc comment says (see the
 
 | Standard | Title | Edition implemented | Scope covered | Status |
 |---|---|---|---|---|
-| ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (97/97 allocated codes) |
+| ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (98/98 allocated codes) |
 | Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (80/85 allocated codes) |
 | ISO/IEC 13818-6 | DSM-CC (data/object carousel) | as profiled by ETSI TR 101 202 V1.2.1 (13818-6 itself is not vendored) | DSM-CC sections, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel_identifier + association_tag descriptors | Partial (3/5 allocated codes) |
 | ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Full (28/28 allocated codes) |
 | ETSI TS 102 006 | DVB System Software Update (SSU) | V1.4.1 | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Full (16/16 allocated codes) |
 | ETSI TS 102 809 | Application signalling (HbbTV AIT) | V1.3.1 | AIT section, AIT descriptor namespace, application_signalling + service_identifier descriptors, protection message section + descriptor | Full (16/16 allocated codes) |
-| ETSI TS 102 727 | DVB-MHP 1.1.3 | V1.1.1 (descriptor subset) | DVB-J application + location AIT descriptors, XAIT_location, XAIT_PID | Partial (9/10 allocated codes) |
+| ETSI TS 102 727 | DVB-MHP 1.1.3 | V1.1.1 (descriptor subset) | DVB-J application + location AIT descriptors, XAIT_location, XAIT_PID | Partial (11/12 allocated codes) |
 | ETSI TS 102 323 | TV-Anytime carriage in DVB | V1.4.1 | container, RCT, CIT, RNT sections; default_authority, related_content, TVA_id, content_identifier descriptors | Full (11/11 allocated codes) |
 | ETSI TS 102 772 | MPE-IFEC | V1.1.1 | MPE-IFEC section | Full (1/1 allocated codes) |
 | ETSI EN 303 560 | DVB TTML subtitling | V1.1.1 | TTML_subtitling descriptor, downloadable font info section (DFIS) | Full (2/2 allocated codes) |
@@ -356,10 +356,13 @@ Table 38 (HbbTV) plus the MHP-only tags of ETSI TS 102 727 V1.1.1.
 | 0x0D | DII_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.3.3 | ETSI TS 102 727 V1.1.1 §10.8.3.3, Table 83 (AIT tag 0x0D) | [`DiiLocationDescriptor`](../src/descriptors/ait/dii_location.rs) | Full |
 | 0x10 | application_storage_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.10.1 | ETSI TS 102 809 V1.3.1 §5.3.10.1, Table 37 (AIT tag 0x10; same layout as §5.2.11.2 Table 14, storage_property values Table 15) | [`ApplicationStorageDescriptor`](../src/descriptors/ait/application_storage.rs) | Full |
 | 0x11 | IP_signalling_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.2 | ETSI TS 102 727 V1.1.1 §10.8.2, Table 81 (AIT tag 0x11) | [`IpSignallingDescriptor`](../src/descriptors/ait/ip_signalling.rs) | Full |
+| 0x12 | provider_export_descriptor | ETSI TS 102 727 V1.1.1 | 10.15 | ETSI TS 102 727 V1.1.1 §10.15, Table 93 (AIT tag 0x12) | [`ProviderExportDescriptor`](../src/descriptors/ait/provider_export.rs) | Full |
+| 0x13 | provider_usage_descriptor | ETSI TS 102 727 V1.1.1 | 10.15 | ETSI TS 102 727 V1.1.1 §10.15, Table 94 (AIT tag 0x13) | [`ProviderUsageDescriptor`](../src/descriptors/ait/provider_usage.rs) | Full |
 | 0x14 | graphics_constraints_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.8 | ETSI TS 102 809 V1.3.1 §5.3.5.8, Table 27 (AIT tag 0x14; same layout as §5.2.9.2 Table 8, byte values Table 9) | [`GraphicsConstraintsDescriptor`](../src/descriptors/ait/graphics_constraints.rs) | Full |
 | 0x15 | simple_application_location_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.7 | ETSI TS 102 809 §5.3.7.0, Table 33 (AIT tag 0x15) | [`SimpleApplicationLocationDescriptor`](../src/descriptors/ait/simple_application_location.rs) | Full |
 | 0x16 | application_usage_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.5 | ETSI TS 102 809 §5.3.5.5, Table 23 (AIT tag 0x16) | [`ApplicationUsageDescriptor`](../src/descriptors/ait/application_usage.rs) | Full |
 | 0x17 | simple_application_boundary_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.8 | ETSI TS 102 809 §5.3.8, Table 35 (AIT tag 0x17) | [`SimpleApplicationBoundaryDescriptor`](../src/descriptors/ait/simple_application_boundary.rs) | Full |
+| 0x5F | private_data_specifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.31 | ETSI EN 300 468 §6.2.31 (tag 0x5F) | [`PrivateDataSpecifierDescriptor`](../src/descriptors/private_data_specifier.rs) | Full |
 
 ## INT, UNT, data-carousel and RNT scoped descriptors
 
@@ -516,6 +519,6 @@ module cites a clause that is neither the verified clause nor a sub-clause of it
 
 Every module citation that names a clause agrees with the verified clause.
 
-251 implemented rows have their clause verified against the rendered PDF page
+254 implemented rows have their clause verified against the rendered PDF page
 (`verified_page` column of `coverage/allocations.tsv`); 5 not-implemented rows
 carry a clause that is not yet page-verified (nothing cites it).
