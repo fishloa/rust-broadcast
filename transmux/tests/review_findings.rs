@@ -152,3 +152,72 @@ fn segment_timeline_negative_r_non_increasing_next_t_silently_drops_the_s() {
         ),
     }
 }
+
+/// A whole box in the `size = 1` + 64-bit `largesize` form (ISO/IEC 14496-12
+/// §4.2): 16-byte header, then `body`.
+fn largesize_box(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut b = 1u32.to_be_bytes().to_vec();
+    b.extend_from_slice(fourcc);
+    b.extend_from_slice(&((16 + body.len()) as u64).to_be_bytes());
+    b.extend_from_slice(body);
+    b
+}
+
+/// `stsd` (compact header, version 0, one entry) around `entry`.
+fn stsd_with(entry: &[u8]) -> Vec<u8> {
+    let mut b = ((16 + entry.len()) as u32).to_be_bytes().to_vec();
+    b.extend_from_slice(b"stsd");
+    b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 1]);
+    b.extend_from_slice(entry);
+    b
+}
+
+fn panics<R>(f: impl FnOnce() -> R + std::panic::UnwindSafe) -> bool {
+    std::panic::catch_unwind(f).is_err()
+}
+
+/// #1147 taught the sample-entry readers the `largesize` header by slicing the
+/// body at `box_header_len` (16), but their minimum-length guards still assume
+/// an 8-byte header, so a short `largesize` entry indexes past the body and
+/// PANICS instead of returning `BufferTooShort`. Reachable from any untrusted
+/// init segment: `stsd` dispatches `stpp`/`av01`/`vp09`/`avs3` entries straight
+/// to these readers. Before #1147 the body was `bytes[8..]` and the guards held.
+#[test]
+fn short_largesize_sample_entries_panic_instead_of_erroring() {
+    use broadcast_common::Parse;
+    use transmux::{
+        Av1SampleEntry, AvsVideoSampleEntry, SampleDescriptionBox, VisualSampleEntryFields,
+        XmlSubtitleSampleEntry,
+    };
+
+    // stpp: guard is `len >= 19`; 19 bytes with a 16-byte header leave a 3-byte
+    // body, and the reader takes body[6..8] (data_reference_index).
+    let stpp = largesize_box(b"stpp", &[0, 0, 0]);
+    assert_eq!(stpp.len(), 19);
+    let mut bad = Vec::new();
+    if panics(|| XmlSubtitleSampleEntry::parse(&stpp)) {
+        bad.push("XmlSubtitleSampleEntry::parse(stpp)");
+    }
+    if panics(|| SampleDescriptionBox::parse(&stsd_with(&stpp))) {
+        bad.push("SampleDescriptionBox::parse(stsd{stpp})");
+    }
+
+    // VisualSampleEntry readers: guard is `len >= 8 + 78`; 86 bytes with a
+    // 16-byte header leave a 70-byte body, and the reader takes body[74..76].
+    let av01 = largesize_box(b"av01", &[0u8; 70]);
+    assert_eq!(av01.len(), 86);
+    if panics(|| VisualSampleEntryFields::parse_body(&av01, "av01")) {
+        bad.push("VisualSampleEntryFields::parse_body");
+    }
+    if panics(|| Av1SampleEntry::parse_entry(&av01)) {
+        bad.push("Av1SampleEntry::parse_entry(av01)");
+    }
+    if panics(|| SampleDescriptionBox::parse(&stsd_with(&av01))) {
+        bad.push("SampleDescriptionBox::parse(stsd{av01})");
+    }
+    let avs3 = largesize_box(b"avs3", &[0u8; 70]);
+    if panics(|| AvsVideoSampleEntry::parse_entry(&avs3)) {
+        bad.push("AvsVideoSampleEntry::parse_entry(avs3)");
+    }
+    assert!(bad.is_empty(), "panicked on hostile input: {bad:?}");
+}
