@@ -217,7 +217,12 @@ fn extension_bodies_match_tsduck_values() {
         panic!()
     };
     assert_eq!(d.profile_tier_levels.len(), 1);
-    assert_eq!(d.profile_tier_levels[0][0], 0x01);
+    let ptl = &d.profile_tier_levels[0];
+    assert_eq!(ptl.general_profile_idc, 1);
+    assert_eq!(ptl.general_profile_space, 0);
+    assert!(!ptl.general_tier_flag);
+    assert_eq!(ptl.general_profile_compatibility_flags, 0);
+    assert_eq!((ptl.copied_44bits, ptl.general_level_idc), (0, 0));
     let op = &d.operation_points[0];
     assert_eq!(op.target_ols, 2);
     assert_eq!(op.es.len(), 2);
