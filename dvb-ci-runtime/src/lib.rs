@@ -86,7 +86,7 @@
 //!   [`descramble_pids`](crate::Driver::descramble_pids) /
 //!   [`ca_pids`](crate::Driver::ca_pids) /
 //!   [`required_pids`](crate::Driver::required_pids) — the PIDs to route into
-//!   the `ci0` data plane (EMM ∪ ES ∪ ECM ∪ PCR = `required_pids`).
+//!   the `ci0` data plane (EMM ∪ ES ∪ ECM ∪ PCR ∪ CAT = `required_pids`).
 //! - [`Driver::set_requery_interval`](crate::Driver::set_requery_interval) —
 //!   opt-in periodic `ca_pmt` re-query; a per-programme status transition
 //!   surfaces as an edge-triggered [`Notification::Entitlement`].

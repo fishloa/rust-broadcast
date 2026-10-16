@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `ManagedCa::required_pids()` now always includes the CAT PID (0x0001). Hardware-evidenced, not mandated by EN 50221: on a Digital Devices CXD2099 with an entitled AlphaCrypt One4All V2.5 (CAID 0x0650), ORF1, 180 s runs, CAT + EMM PID 0x259 descrambled from about 55 s while all seven EMM PIDs without the CAT never did (#1296).
+- `ManagedCa::set_cat` no longer collapses several `CA_descriptor`s with the same CA_system_id to one PID (it keyed a map by CAID); every EMM PID of a CAM-advertised CAID is now routed (#1296).
+
 ### Documentation
 - README and crate-root docs rewritten to the cluster standard: what it does / does not (no CI Plus, no LSC), standards table, feature table, hardware-verification facts as recorded in this CHANGELOG, stale test-count and roadmap lines removed.
 

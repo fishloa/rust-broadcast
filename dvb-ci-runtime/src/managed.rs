@@ -10,6 +10,7 @@
 //! builds + sends the `ca_pmt` and records the service here.
 
 use mpeg_ts::pid::Pid;
+use mpeg_ts::pid::well_known::CAT as CAT_PID;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
@@ -147,11 +148,11 @@ pub struct ManagedCa {
     /// [`tick`](Self::tick), mirroring `resource.rs`'s `DateTime::tick`
     /// accumulate-then-fire pattern).
     since: Duration,
-    /// The last `set_cat`'s CAID → EMM PID map (ISO/IEC 13818-1 §2.4.4.5's
+    /// The last `set_cat`'s (CAID, EMM PID) entries, one per `CA_descriptor` (a CAID may list several EMM PIDs; ISO/IEC 13818-1 §2.4.4.5's
     /// `CA_descriptor`s, EN 300 468 §6.2.16). Kept even when it yields no
     /// `emm_pids` (no `ca_info` seen yet) so a later `ca_info` can recompute
     /// against it (#763 Task 4).
-    cat_emm_pids: BTreeMap<u16, Pid>,
+    cat_emm_pids: Vec<(u16, Pid)>,
     /// The last-observed `Notification::CaInfo` CAID set — the CAM's
     /// advertised systems (#763 Task 4).
     cam_caids: BTreeSet<u16>,
@@ -174,7 +175,7 @@ impl Default for ManagedCa {
             services: BTreeMap::new(),
             requery_interval: REQUERY_DEFAULT,
             since: Duration::ZERO,
-            cat_emm_pids: BTreeMap::new(),
+            cat_emm_pids: Vec::new(),
             cam_caids: BTreeSet::new(),
             emm_pids: Vec::new(),
             descramble_pids: Vec::new(),
@@ -286,7 +287,7 @@ impl ManagedCa {
         &self.ca_pids
     }
 
-    /// `descramble_pids ∪ ca_pids ∪ emm_pids ∪ PCR` — every PID class a
+    /// `descramble_pids ∪ ca_pids ∪ emm_pids ∪ PCR ∪ CAT` — every PID class a
     /// caller must route into `ci0` for this slot to both descramble the
     /// tracked services (ES + ECM), keep entitlements current (EMM), and
     /// carry each active service's programme clock reference (PCR — ISO/IEC
@@ -295,12 +296,20 @@ impl ManagedCa {
     /// carries no elementary stream of its own; a service whose `pcr_pid` is
     /// `0x1FFF` ("no PCR") contributes nothing. Computed on demand (small
     /// sets); dedup + sorted.
+    ///
+    /// The CAT PID ([`CAT_PID`], 0x0001) is **always** included, even with no
+    /// services and no CAM. This is hardware-evidenced, not mandated by
+    /// EN 50221: on a Digital Devices CXD2099 with an entitled AlphaCrypt
+    /// One4All V2.5 (CAID 0x0650) decrypting ORF1 over 180 s runs, routing the
+    /// CAT plus only EMM PID 0x259 descrambled from about 55 s, while routing
+    /// all seven EMM PIDs without the CAT never descrambled (#1296).
     #[must_use]
     pub fn required_pids(&self) -> Vec<Pid> {
         let mut pids: BTreeSet<Pid> = BTreeSet::new();
         pids.extend(self.descramble_pids.iter().copied());
         pids.extend(self.ca_pids.iter().copied());
         pids.extend(self.emm_pids.iter().copied());
+        pids.insert(CAT_PID);
         for service in self.services.values() {
             if service.pcr_pid != PCR_PID_NONE {
                 pids.insert(service.pcr_pid);
@@ -497,6 +506,40 @@ mod tests {
         assert!(m.is_empty());
         assert!(m.services().is_empty());
         assert_eq!(m.requery_interval(), REQUERY_DEFAULT);
+    }
+
+    #[test]
+    fn required_pids_always_includes_the_cat_pid() {
+        let m = ManagedCa::new();
+        assert_eq!(m.required_pids(), vec![CAT_PID]);
+    }
+
+    #[test]
+    fn set_cat_keeps_every_emm_pid_of_a_shared_caid() {
+        let entry = |caid, pid| CatCaEntry {
+            ca_system_id: caid,
+            ca_pid: Pid::new(pid),
+            private_data: Vec::new(),
+        };
+        let mut m = ManagedCa::new();
+        m.set_cam_caids(BTreeSet::from([0x0650]));
+        m.set_cat(&[
+            entry(0x0650, 0x0258),
+            entry(0x0650, 0x0259),
+            entry(0x0650, 0x025A),
+            entry(0x0100, 0x0300), // CAID the CAM never advertised
+            entry(0x0650, 0x033E),
+            entry(0x0100, 0x033E), // duplicated PID under two CAIDs
+        ]);
+        assert_eq!(
+            m.emm_pids(),
+            &[
+                Pid::new(0x0258),
+                Pid::new(0x0259),
+                Pid::new(0x025A),
+                Pid::new(0x033E)
+            ]
+        );
     }
 
     #[test]
@@ -821,6 +864,7 @@ mod tests {
         assert_eq!(
             m.required_pids(),
             vec![
+                CAT_PID,
                 Pid::new(0x0064),
                 Pid::new(0x0065),
                 Pid::new(0x0066),
@@ -829,7 +873,7 @@ mod tests {
                 Pid::new(0x0200),
                 Pid::new(0x1FF0)
             ],
-            "required_pids must be descramble_pids ∪ ca_pids ∪ emm_pids"
+            "required_pids must be CAT ∪ descramble_pids ∪ ca_pids ∪ emm_pids"
         );
     }
 
@@ -893,7 +937,7 @@ mod tests {
         );
         assert_eq!(
             m.required_pids(),
-            vec![Pid::new(0x0064), Pid::new(0x0100)],
+            vec![CAT_PID, Pid::new(0x0064), Pid::new(0x0100)],
             "PCR_PID_NONE (0x1FFF) must never be added to required_pids"
         );
     }
@@ -919,7 +963,7 @@ mod tests {
         );
         assert_eq!(
             m.required_pids(),
-            vec![Pid::new(0x0064), Pid::new(0x0100)],
+            vec![CAT_PID, Pid::new(0x0064), Pid::new(0x0100)],
             "a pcr_pid coinciding with an ES PID must not duplicate/add a spurious entry"
         );
     }
