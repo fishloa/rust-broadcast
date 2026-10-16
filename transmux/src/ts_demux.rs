@@ -2194,12 +2194,21 @@ fn carried_frame_remainder(live: &LiveTrack, data: &[u8]) -> usize {
 /// when bytes were lost between two payloads (continuity gap, dropped or
 /// over-budget PES) or the codec config changed, so the held tail can no
 /// longer be joined to what follows.
-fn clear_audio_carry(stream: &mut StreamState) {
+///
+/// An E-AC-3 track holding back its final access unit (issue #1186) holds a
+/// COMPLETE access unit received intact in an earlier PES alongside the
+/// partial tail: only the tail is damaged, so the whole held access unit is
+/// emitted ([`flush_audio_carry`]) before the carry is dropped.
+fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>) {
     if let Some(TrackState::Live(LiveTrack {
-        kind: LiveKind::Audio { anchor, .. },
+        track_id,
+        kind: LiveKind::Audio { kind, anchor, .. },
         ..
     })) = stream.track.as_mut()
     {
+        if anchor.hold_final_au {
+            flush_audio_carry(kind, anchor, *track_id, events);
+        }
         anchor.carry.clear();
     }
 }
@@ -2286,6 +2295,41 @@ fn emit_audio_au(
     if seed.is_some() && plan.as_ref().is_some_and(|p| !p.commences) {
         fresh_anchor = false;
     }
+    // A COMPLETE access unit held back from the previous PES (E-AC-3
+    // dependent-substream hold-back, #1186) belongs to the OLD timeline: it was
+    // received whole in that PES and only held for a possible dependent frame.
+    // When this PES re-anchors, those frames are emitted at the old cursor
+    // (where the hold-back left it) and only a frame that really straddles the
+    // PES boundary is placed `lead` before the new wire stamp. (When the PES
+    // continues the old timeline, cursor and wire agree and nothing differs.)
+    let mut held_done = 0usize;
+    let mut held_ticks = 0i64;
+    if fresh_anchor
+        && carry_len > 0
+        && let (Some(seed), Some(p)) = (&seed, &plan)
+    {
+        for f in p
+            .frames
+            .iter()
+            .take_while(|f| f.from_carry && f.end <= carry_len)
+        {
+            if let Some(payload) = &f.data {
+                let mut sample = Sample::from_raw(
+                    payload.to_vec(),
+                    Some(seed.next_dts + held_ticks),
+                    Some(seed.next_pts + held_ticks),
+                    Some(f.duration),
+                );
+                if let Some(prov) = anchor.carry_provenance {
+                    sample = sample.with_provenance(prov);
+                }
+                events.push_back(DemuxEvent::Sample { track_id, sample });
+            }
+            held_ticks += f.duration as i64;
+            held_done += 1;
+        }
+    }
+    let lead_ticks = lead_ticks - held_ticks;
     // Only signal a discontinuity when re-anchoring an ALREADY-seeded track
     // (the very first access unit establishes the anchor, it doesn't
     // "discontinue" from anything).
@@ -2347,7 +2391,7 @@ fn emit_audio_au(
         | AudioKind::Eac3
         | AudioKind::Dts => {
             if let Some(plan) = &plan {
-                for (i, f) in plan.frames.iter().enumerate() {
+                for (i, f) in plan.frames.iter().enumerate().skip(held_done) {
                     if held_from.is_some() && i + 1 == plan.frames.len() {
                         // Held back in `anchor.carry` below: neither emitted
                         // nor counted into the cursor.
@@ -2435,6 +2479,15 @@ fn flush_audio_carry(
         }
         elapsed += f.duration as i64;
     }
+    // Advance the cursor past what was emitted: on a mid-stream flush (the
+    // carry is dropped after a loss) the next access unit must not be stamped
+    // on top of the one just flushed.
+    anchor.seed = Some(AudioAnchorSeed {
+        next_dts: seed.next_dts + elapsed,
+        next_pts: seed.next_pts + elapsed,
+        ticks_since_anchor: seed.ticks_since_anchor + elapsed,
+        ..seed
+    });
 }
 
 /// Does this E-AC-3 config carry dependent substreams (a `dec3` substream entry
@@ -3641,7 +3694,7 @@ fn feed_pes_bounded(
         let dropped_bytes = stream.pes_bytes as u64;
         let _ = assembler.flush();
         stream.pes_bytes = 0;
-        clear_audio_carry(stream);
+        clear_audio_carry(stream, events);
         let track = match stream.track.as_ref() {
             Some(TrackState::Live(live)) => Some(live.track_id),
             _ => None,
@@ -4378,7 +4431,7 @@ impl StreamingTsDemux {
                 // A dropped unit loses its bytes, so an audio frame tail held
                 // from the previous unit can no longer be joined to what
                 // follows (issue #1160).
-                clear_audio_carry(stream);
+                clear_audio_carry(stream, &mut self.events);
             }
             if completed_intact && let Some(completed) = completed_pes {
                 on_completed_pes(stream, pid, &completed, &mut self.events);
@@ -4388,7 +4441,7 @@ impl StreamingTsDemux {
                 // track holds (including the one the unit just completed
                 // above may have left) is no longer contiguous with the next
                 // payload (issue #1160).
-                clear_audio_carry(stream);
+                clear_audio_carry(stream, &mut self.events);
             }
             if matches!(stream.carrier, Carrier::Pes(_)) {
                 if pusi {
