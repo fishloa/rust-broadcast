@@ -186,8 +186,13 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
-        let built =
-            RarOverIpDescriptor::new(d.first_valid_date, d.last_valid_date, 1, false, DvbText::new(b"u"));
+        let built = RarOverIpDescriptor::new(
+            d.first_valid_date,
+            d.last_valid_date,
+            1,
+            false,
+            DvbText::new(b"u"),
+        );
         assert_eq!(built.reserved, RESERVED_DEFAULT);
     }
 

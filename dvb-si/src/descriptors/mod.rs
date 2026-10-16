@@ -63,9 +63,9 @@ pub mod default_authority;
 pub mod dsng;
 pub mod dts;
 pub mod ecm_repetition_rate;
-mod entry_list;
 pub mod enhanced_ac3;
 pub mod evc_video;
+mod entry_list;
 pub mod extended_event;
 pub mod extension;
 pub mod external_es_id;
@@ -167,14 +167,14 @@ pub mod vvc_video;
 pub mod xait_location;
 
 pub use ca::CaDescriptor;
+pub use data_stream_alignment::DataStreamAlignmentDescriptor;
 pub use entry_list::MacAddress;
 pub use int::{AnyIntDescriptor, IntDescriptorIter, IntDescriptorLoop, parse_int_loop};
 pub use mjd_time::MjdBcdTime;
-pub use rnt::{AnyRntDescriptor, RntDescriptorIter, RntDescriptorLoop, parse_rnt_loop};
-pub use unt::{AnyUntDescriptor, UntDescriptorIter, UntDescriptorLoop, parse_unt_loop};
-pub use data_stream_alignment::DataStreamAlignmentDescriptor;
 pub use private_data_indicator::PrivateDataIndicatorDescriptor;
 pub use registration::RegistrationDescriptor;
+pub use rnt::{AnyRntDescriptor, RntDescriptorIter, RntDescriptorLoop, parse_rnt_loop};
+pub use unt::{AnyUntDescriptor, UntDescriptorIter, UntDescriptorLoop, parse_unt_loop};
 
 /// Write a descriptor's 2-byte header — `tag` then a range-checked 8-bit
 /// `descriptor_length` — into `buf[0..2]`.

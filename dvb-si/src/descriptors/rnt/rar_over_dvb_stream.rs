@@ -125,10 +125,7 @@ impl<'a> Parse<'a> for RarOverDvbStreamDescriptor<'a> {
 impl Serialize for RarOverDvbStreamDescriptor<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN
-            + FIXED_LEN
-            + self.schedule.map_or(0, |_| SCHEDULE_LEN)
-            + self.trailing.len()
+        HEADER_LEN + FIXED_LEN + self.schedule.map_or(0, |_| SCHEDULE_LEN) + self.trailing.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
@@ -199,10 +196,18 @@ mod tests {
         assert_eq!(d.weighting, 5);
         assert!(d.complete_flag && d.schedule.is_none());
         assert_eq!(
-            (d.transport_stream_id, d.original_network_id, d.service_id, d.component_tag),
+            (
+                d.transport_stream_id,
+                d.original_network_id,
+                d.service_id,
+                d.component_tag
+            ),
             (0x1234, 0x5678, 0x9ABC, 0x21)
         );
-        assert_eq!(d.first_valid_date.parts(), (0xC079, Some(12), Some(0), Some(0)));
+        assert_eq!(
+            d.first_valid_date.parts(),
+            (0xC079, Some(12), Some(0), Some(0))
+        );
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
@@ -213,8 +218,14 @@ mod tests {
         let bytes = sample(true);
         let d = RarOverDvbStreamDescriptor::parse(&bytes).unwrap();
         let s = d.schedule.unwrap();
-        assert_eq!(s.download_start_time.parts(), (0xC079, Some(3), Some(30), Some(0)));
-        assert_eq!((s.download_period_duration, s.download_cycle_time), (10, 15));
+        assert_eq!(
+            s.download_start_time.parts(),
+            (0xC079, Some(3), Some(30), Some(0))
+        );
+        assert_eq!(
+            (s.download_period_duration, s.download_cycle_time),
+            (10, 15)
+        );
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);

@@ -88,8 +88,8 @@ mod tests {
         assert_eq!(
             AnyIntDescriptor::DISPATCHED_TAGS,
             &[
-                0x06, 0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13,
-                0x14, 0x15
+                0x06, 0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
+                0x15
             ]
         );
     }
@@ -151,7 +151,10 @@ mod tests {
     fn serde_surfaces_typed_and_parse_errors() {
         let ok = IntDescriptorLoop::new(&[0x14, 0x01, 0x01]);
         let json = serde_json::to_string(&ok).unwrap();
-        assert!(json.contains("ispAccessMode") && json.contains("Dialup"), "{json}");
+        assert!(
+            json.contains("ispAccessMode") && json.contains("Dialup"),
+            "{json}"
+        );
         let bad = IntDescriptorLoop::new(&[0x14, 0xFF]);
         assert!(serde_json::to_string(&bad).unwrap().contains("parseError"));
     }

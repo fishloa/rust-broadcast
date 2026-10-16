@@ -125,7 +125,11 @@ impl<'a> Parse<'a> for SchedulingDescriptor<'a> {
         let units = body[2 * MJD_BCD_LEN + 1];
         Ok(Self {
             start_date_time: MjdBcdTime::read(body, 0, "scheduling_descriptor start_date_time")?,
-            end_date_time: MjdBcdTime::read(body, MJD_BCD_LEN, "scheduling_descriptor end_date_time")?,
+            end_date_time: MjdBcdTime::read(
+                body,
+                MJD_BCD_LEN,
+                "scheduling_descriptor end_date_time",
+            )?,
             final_availability: flags & FINAL_AVAILABILITY != 0,
             periodicity_flag: flags & PERIODICITY_FLAG != 0,
             // byte 10: final_availability(1) periodicity_flag(1) period_unit(2)
@@ -190,11 +194,29 @@ mod tests {
         // start MJD 0xC079 12:45:00, end 0xC07A 01:02:03; flags: final=1
         // periodic=1 period=hour(10) duration=minute(01) cycle=day(11).
         let bytes = [
-            TAG, 15, 0xC0, 0x79, 0x12, 0x45, 0x00, 0xC0, 0x7A, 0x01, 0x02, 0x03, 0b1110_0111, 6, 30,
-            4, 0xEE,
+            TAG,
+            15,
+            0xC0,
+            0x79,
+            0x12,
+            0x45,
+            0x00,
+            0xC0,
+            0x7A,
+            0x01,
+            0x02,
+            0x03,
+            0b1110_0111,
+            6,
+            30,
+            4,
+            0xEE,
         ];
         let d = SchedulingDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.start_date_time.parts(), (0xC079, Some(12), Some(45), Some(0)));
+        assert_eq!(
+            d.start_date_time.parts(),
+            (0xC079, Some(12), Some(45), Some(0))
+        );
         assert_eq!(d.end_date_time.parts(), (0xC07A, Some(1), Some(2), Some(3)));
         assert!(d.final_availability && d.periodicity_flag);
         assert_eq!(d.period_unit, TimeUnit::Hour);
@@ -220,7 +242,9 @@ mod tests {
 
     #[test]
     fn rejects_short_body_and_wrong_tag() {
-        assert!(SchedulingDescriptor::parse(&[TAG, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_err());
+        assert!(
+            SchedulingDescriptor::parse(&[TAG, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_err()
+        );
         assert!(SchedulingDescriptor::parse(&[0x02, 0]).is_err());
         assert_eq!(TimeUnit::Day.to_string(), "day");
     }

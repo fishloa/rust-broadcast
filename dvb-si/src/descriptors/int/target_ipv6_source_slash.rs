@@ -4,7 +4,7 @@
 //! Targets receivers by both IPv6 source and destination address, each with
 //! a subnet mask in short "slash" form. INT target loop only (Table 19).
 
-use crate::descriptors::entry_list::{list_len, parse_list, write_list, Entry};
+use crate::descriptors::entry_list::{Entry, list_len, parse_list, write_list};
 use crate::error::Result;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};

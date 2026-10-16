@@ -1505,3 +1505,78 @@ fn biop_object_kind_toml_matches_enum() {
         "BIOP ObjectKind drift!\n  only in TOML: {only_in_toml:?}\n  only in code: {only_in_code:?}"
     );
 }
+
+// ── INT / UNT / RNT descriptor enums (issue #1285) ───────────────────────────
+
+/// TOML ↔ enum drift for a `from_u8`/`to_u8` enum whose catch-all variants
+/// are named in `$skip`; `$span` is the number of wire values swept.
+macro_rules! scoped_enum_drift {
+    ($test:ident, $ty:ty, $toml:literal, $span:expr, $count:expr, [$($skip:pat),*]) => {
+        #[test]
+        fn $test() {
+            let entries = parse_entries(include_str!($toml));
+            let toml_set: BTreeSet<(u8, String)> =
+                entries.iter().map(|(v, var, _)| (*v, var.clone())).collect();
+            let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
+            for b in 0u16..$span {
+                let v = <$ty>::from_u8(b as u8);
+                if false $(|| matches!(v, $skip))* {
+                    continue;
+                }
+                code_set.insert((v.to_u8(), format!("{v:?}")));
+            }
+            assert_eq!(code_set.len(), $count, "{} sweep size", stringify!($ty));
+            let only_in_toml: BTreeSet<_> = toml_set.difference(&code_set).collect();
+            let only_in_code: BTreeSet<_> = code_set.difference(&toml_set).collect();
+            assert!(
+                only_in_toml.is_empty() && only_in_code.is_empty(),
+                "{} drift!\n  only in TOML: {only_in_toml:?}\n  only in code: {only_in_code:?}",
+                stringify!($ty)
+            );
+        }
+    };
+}
+
+scoped_enum_drift!(
+    modulation_system_type_toml_matches_enum,
+    dvb_si::descriptors::int::ModulationSystemType,
+    "../docs/enums/en_301_192/modulation_system_type.toml",
+    256,
+    5,
+    [dvb_si::descriptors::int::ModulationSystemType::Reserved(_)]
+);
+scoped_enum_drift!(
+    isp_access_mode_toml_matches_enum,
+    dvb_si::descriptors::int::IspAccessMode,
+    "../docs/enums/en_301_192/isp_access_mode.toml",
+    256,
+    2,
+    [dvb_si::descriptors::int::IspAccessMode::Reserved(_)]
+);
+scoped_enum_drift!(
+    update_flag_toml_matches_enum,
+    dvb_si::descriptors::unt::UpdateFlag,
+    "../docs/enums/ts_102_006/update_flag.toml",
+    4,
+    2,
+    [dvb_si::descriptors::unt::UpdateFlag::Reserved(_)]
+);
+scoped_enum_drift!(
+    update_method_toml_matches_enum,
+    dvb_si::descriptors::unt::UpdateMethod,
+    "../docs/enums/ts_102_006/update_method.toml",
+    16,
+    3,
+    [
+        dvb_si::descriptors::unt::UpdateMethod::Reserved(_),
+        dvb_si::descriptors::unt::UpdateMethod::PrivateUse(_)
+    ]
+);
+scoped_enum_drift!(
+    time_unit_toml_matches_enum,
+    dvb_si::descriptors::unt::TimeUnit,
+    "../docs/enums/ts_102_006/time_unit.toml",
+    4,
+    4,
+    []
+);

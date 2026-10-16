@@ -112,8 +112,11 @@ impl Serialize for EnhancedMessageDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        let number =
-            broadcast_common::len::fit_mask(self.descriptor_number, NIBBLE_MASK, "descriptor_number")?;
+        let number = broadcast_common::len::fit_mask(
+            self.descriptor_number,
+            NIBBLE_MASK,
+            "descriptor_number",
+        )?;
         let last = broadcast_common::len::fit_mask(
             self.last_descriptor_number,
             NIBBLE_MASK,
@@ -124,8 +127,11 @@ impl Serialize for EnhancedMessageDescriptor<'_> {
             RESERVED_MASK,
             "reserved_for_future_use",
         )?;
-        let index =
-            broadcast_common::len::fit_mask(self.message_index, MESSAGE_INDEX_MASK, "message_index")?;
+        let index = broadcast_common::len::fit_mask(
+            self.message_index,
+            MESSAGE_INDEX_MASK,
+            "message_index",
+        )?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = (number << NUMBER_SHIFT) | last;
         buf[3..6].copy_from_slice(&self.language_code.0);

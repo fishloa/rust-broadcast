@@ -291,11 +291,7 @@ impl Serialize for IntSection<'_> {
             + INT_FIXED_LEN
             + LOOP_LEN_FIELD
             + self.platform_descriptors.len()
-            + self
-                .loops
-                .iter()
-                .map(|p| p.serialized_len())
-                .sum::<usize>()
+            + self.loops.iter().map(|p| p.serialized_len()).sum::<usize>()
             + CRC_LEN
     }
 

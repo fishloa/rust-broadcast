@@ -44,12 +44,12 @@ impl<'a> Parse<'a> for IpMacStreamLocationDescriptor<'a> {
             "IpMacStreamLocationDescriptor",
             "unexpected tag for IP/MAC_stream_location_descriptor",
         )?;
-        let (f, trailing) = body
-            .split_first_chunk::<BODY_LEN>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "IP/MAC_stream_location_descriptor body shorter than 9 bytes",
-            })?;
+        let (f, trailing) =
+            body.split_first_chunk::<BODY_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "IP/MAC_stream_location_descriptor body shorter than 9 bytes",
+                })?;
         Ok(Self {
             network_id: u16::from_be_bytes([f[0], f[1]]),
             original_network_id: u16::from_be_bytes([f[2], f[3]]),

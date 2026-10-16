@@ -5,7 +5,7 @@
 //! form (`XXX.XXX.XXX.XXX/NN`): host or subnet announcements in unicast,
 //! address ranges in multicast. INT target loop only (Table 19).
 
-use crate::descriptors::entry_list::{list_len, parse_list, write_list, Entry};
+use crate::descriptors::entry_list::{Entry, list_len, parse_list, write_list};
 use crate::error::Result;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -86,8 +86,14 @@ mod tests {
         assert_eq!(
             d.entries,
             [
-                Ipv4Slash { addr: Ipv4Addr::new(1, 2, 3, 4), slash_mask: 16 },
-                Ipv4Slash { addr: Ipv4Addr::new(5, 6, 7, 8), slash_mask: 24 },
+                Ipv4Slash {
+                    addr: Ipv4Addr::new(1, 2, 3, 4),
+                    slash_mask: 16
+                },
+                Ipv4Slash {
+                    addr: Ipv4Addr::new(5, 6, 7, 8),
+                    slash_mask: 24
+                },
             ]
         );
         let mut out = vec![0u8; d.serialized_len()];

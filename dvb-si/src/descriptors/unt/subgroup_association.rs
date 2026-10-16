@@ -55,12 +55,12 @@ impl<'a> Parse<'a> for SsuSubgroupAssociationDescriptor<'a> {
             "SsuSubgroupAssociationDescriptor",
             "unexpected tag for SSU_subgroup_association_descriptor",
         )?;
-        let (f, trailing) = body
-            .split_first_chunk::<BODY_LEN>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "SSU_subgroup_association_descriptor body shorter than 5 bytes",
-            })?;
+        let (f, trailing) =
+            body.split_first_chunk::<BODY_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "SSU_subgroup_association_descriptor body shorter than 5 bytes",
+                })?;
         let mut tag8 = [0u8; 8];
         tag8[8 - BODY_LEN..].copy_from_slice(f);
         Ok(Self {

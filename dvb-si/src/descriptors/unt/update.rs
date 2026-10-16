@@ -170,14 +170,18 @@ impl Serialize for UpdateDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        let flag = broadcast_common::len::fit_mask(self.update_flag.to_u8(), FLAG_MASK, "update_flag")?;
+        let flag =
+            broadcast_common::len::fit_mask(self.update_flag.to_u8(), FLAG_MASK, "update_flag")?;
         let method = broadcast_common::len::fit_mask(
             self.update_method.to_u8(),
             METHOD_MASK,
             "update_method",
         )?;
-        let prio =
-            broadcast_common::len::fit_mask(self.update_priority, PRIORITY_MASK, "update_priority")?;
+        let prio = broadcast_common::len::fit_mask(
+            self.update_priority,
+            PRIORITY_MASK,
+            "update_priority",
+        )?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = (flag << FLAG_SHIFT) | (method << METHOD_SHIFT) | prio;
         buf[3..len].copy_from_slice(self.private_data);

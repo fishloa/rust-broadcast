@@ -121,7 +121,10 @@ fn walk_int(raw: &[u8], names: &mut BTreeSet<&'static str>) {
         // omitting the mandatory `selector_length_flag` byte (7-byte body, EN 301 192
         // V1.7.1 Table 33 requires 8): a spec violation we report as a parse error.
         if tag == 0x15 && full.len() == 2 + 7 {
-            assert!(d.is_err(), "7-byte generic_stream_location must be rejected");
+            assert!(
+                d.is_err(),
+                "7-byte generic_stream_location must be rejected"
+            );
             continue;
         }
         let d = d.unwrap_or_else(|e| panic!("INT tag {tag:#04x}: {e}"));
@@ -212,7 +215,13 @@ fn tsduck_test_022_int_has_every_int_descriptor() {
         match d {
             AnyIntDescriptor::IpMacStreamLocation(l) => {
                 assert_eq!(
-                    (l.network_id, l.original_network_id, l.transport_stream_id, l.service_id, l.component_tag),
+                    (
+                        l.network_id,
+                        l.original_network_id,
+                        l.transport_stream_id,
+                        l.service_id,
+                        l.component_tag
+                    ),
                     (0x1234, 0x5678, 0x9ABC, 0x6543, 0x21)
                 );
                 seen_loc = true;
@@ -229,7 +238,10 @@ fn tsduck_test_022_int_has_every_int_descriptor() {
         }
     }
     assert!(seen_loc);
-    assert_eq!(seen_generic, 1, "the other TSDuck generic location is the rejected 7-byte form");
+    assert_eq!(
+        seen_generic, 1,
+        "the other TSDuck generic location is the rejected 7-byte form"
+    );
 }
 
 /// TSDuck test-060: UNTs with the UNT descriptors and the shared targets.
@@ -248,10 +260,18 @@ fn tsduck_test_060_unt_descriptors() {
         // length=0. Whole-section identity is asserted for every section whose
         // compatibility descriptors are not empty; the descriptor loops (the
         // subject of this test) are asserted byte-exact either way.
-        if unt.platforms.iter().all(|p| !p.compatibility_descriptor.descriptors.is_empty()) {
+        if unt
+            .platforms
+            .iter()
+            .all(|p| !p.compatibility_descriptor.descriptors.is_empty())
+        {
             assert_eq!(&ser(&unt), s, "whole-section byte identity");
         } else {
-            assert_eq!(ser(&unt).len() + 2, s.len(), "only the #1298 empty-compat form differs");
+            assert_eq!(
+                ser(&unt).len() + 2,
+                s.len(),
+                "only the #1298 empty-compat form differs"
+            );
         }
         walk_unt(unt.common_descriptors.raw(), &mut names);
         for p in &unt.platforms {

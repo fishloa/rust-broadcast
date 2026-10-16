@@ -86,13 +86,23 @@ mod tests {
 
     #[test]
     fn parse_and_round_trip() {
-        let bytes = [TAG, 10, 0x12, 0x34, 0x56, 0x78, 9, 0xAB, 0xCD, 0xEF, 0x01, 3];
+        let bytes = [
+            TAG, 10, 0x12, 0x34, 0x56, 0x78, 9, 0xAB, 0xCD, 0xEF, 0x01, 3,
+        ];
         let d = RntScanDescriptor::parse(&bytes).unwrap();
         assert_eq!(
             d.entries,
             [
-                RntScanEntry { transport_stream_id: 0x1234, original_network_id: 0x5678, scan_weighting: 9 },
-                RntScanEntry { transport_stream_id: 0xABCD, original_network_id: 0xEF01, scan_weighting: 3 },
+                RntScanEntry {
+                    transport_stream_id: 0x1234,
+                    original_network_id: 0x5678,
+                    scan_weighting: 9
+                },
+                RntScanEntry {
+                    transport_stream_id: 0xABCD,
+                    original_network_id: 0xEF01,
+                    scan_weighting: 3
+                },
             ]
         );
         let mut out = vec![0u8; d.serialized_len()];

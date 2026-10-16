@@ -71,8 +71,11 @@ impl Serialize for MessageDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        let number =
-            broadcast_common::len::fit_mask(self.descriptor_number, NIBBLE_MASK, "descriptor_number")?;
+        let number = broadcast_common::len::fit_mask(
+            self.descriptor_number,
+            NIBBLE_MASK,
+            "descriptor_number",
+        )?;
         let last = broadcast_common::len::fit_mask(
             self.last_descriptor_number,
             NIBBLE_MASK,

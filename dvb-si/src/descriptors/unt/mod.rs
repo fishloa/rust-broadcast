@@ -67,7 +67,9 @@ mod tests {
     fn dispatched_tags_are_the_table_19_set() {
         assert_eq!(
             AnyUntDescriptor::DISPATCHED_TAGS,
-            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D]
+            &[
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D
+            ]
         );
     }
 
@@ -83,9 +85,18 @@ mod tests {
             0x0E, 0x00, // UNT-unassigned MPEG-range tag
         ];
         let items: Vec<_> = parse_unt_loop(&raw).collect();
-        assert!(matches!(items[0].as_ref().unwrap(), AnyUntDescriptor::Update(_)));
-        assert!(matches!(items[1].as_ref().unwrap(), AnyUntDescriptor::SsuLocation(_)));
-        assert!(matches!(items[2].as_ref().unwrap(), AnyUntDescriptor::Message(_)));
+        assert!(matches!(
+            items[0].as_ref().unwrap(),
+            AnyUntDescriptor::Update(_)
+        ));
+        assert!(matches!(
+            items[1].as_ref().unwrap(),
+            AnyUntDescriptor::SsuLocation(_)
+        ));
+        assert!(matches!(
+            items[2].as_ref().unwrap(),
+            AnyUntDescriptor::Message(_)
+        ));
         assert!(matches!(
             items[3].as_ref().unwrap(),
             AnyUntDescriptor::Unknown { tag: 0x0E, .. }
@@ -106,7 +117,10 @@ mod tests {
         let raw = [0x0D, 0x02, 0x00, 0x00];
         let l = UntDescriptorLoop::new(&raw);
         assert_eq!(l.raw(), &raw[..]);
-        assert!(matches!(l.iter().next().unwrap().unwrap(), AnyUntDescriptor::SsuUri(_)));
+        assert!(matches!(
+            l.iter().next().unwrap().unwrap(),
+            AnyUntDescriptor::SsuUri(_)
+        ));
         let mut it = parse_unt_loop(&[0x01, 0x20, 0x00]);
         assert!(it.next().unwrap().is_err());
         assert!(it.next().is_none());

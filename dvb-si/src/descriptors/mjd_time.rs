@@ -65,7 +65,10 @@ impl MjdBcdTime {
     /// Read the field from `bytes[off..off + 5]`, or `BufferTooShort` naming
     /// `what`.
     pub(crate) fn read(bytes: &[u8], off: usize, what: &'static str) -> Result<Self> {
-        match bytes.get(off..).and_then(|s| s.first_chunk::<MJD_BCD_LEN>()) {
+        match bytes
+            .get(off..)
+            .and_then(|s| s.first_chunk::<MJD_BCD_LEN>())
+        {
             Some(b) => Ok(Self(*b)),
             None => Err(Error::BufferTooShort {
                 need: off.saturating_add(MJD_BCD_LEN),
@@ -118,7 +121,11 @@ mod tests {
     fn read_rejects_short_buffer() {
         assert!(matches!(
             MjdBcdTime::read(&[0; 4], 0, "t"),
-            Err(Error::BufferTooShort { need: 5, have: 4, what: "t" })
+            Err(Error::BufferTooShort {
+                need: 5,
+                have: 4,
+                what: "t"
+            })
         ));
     }
 

@@ -15,8 +15,7 @@
 //! ```
 //! use dvb_si::descriptors::rnt::{parse_rnt_loop, AnyRntDescriptor};
 //!
-//! // RNT_scan_descriptor (tag 0x42): one entry, then an SI network_name 0x47?
-//! // — no: 0x48 service_descriptor is SI and stays SI.
+//! // RNT_scan_descriptor (tag 0x42, not SI stuffing): one entry.
 //! let raw = [0x42, 0x05, 0x12, 0x34, 0x56, 0x78, 0x09];
 //! let item = parse_rnt_loop(&raw).next().unwrap().unwrap();
 //! assert!(matches!(item, AnyRntDescriptor::RntScan(_)));
@@ -60,8 +59,14 @@ mod tests {
             0x73, 0x03, b'a', b'b', b'c', // SI default_authority
         ];
         let items: Vec<_> = parse_rnt_loop(&raw).collect();
-        assert!(matches!(items[0].as_ref().unwrap(), AnyRntDescriptor::RntScan(_)));
-        assert!(matches!(items[1].as_ref().unwrap(), AnyRntDescriptor::Si(_)));
+        assert!(matches!(
+            items[0].as_ref().unwrap(),
+            AnyRntDescriptor::RntScan(_)
+        ));
+        assert!(matches!(
+            items[1].as_ref().unwrap(),
+            AnyRntDescriptor::Si(_)
+        ));
         match items[2].as_ref().unwrap() {
             AnyRntDescriptor::Si(d) => assert_eq!(d.name(), "DEFAULT_AUTHORITY"),
             other => panic!("expected Si default_authority, got {other:?}"),
@@ -85,7 +90,10 @@ mod tests {
         let raw = [0x42, 0x00];
         let l = RntDescriptorLoop::new(&raw);
         assert_eq!(l.raw(), &raw[..]);
-        assert!(matches!(l.iter().next().unwrap().unwrap(), AnyRntDescriptor::RntScan(_)));
+        assert!(matches!(
+            l.iter().next().unwrap().unwrap(),
+            AnyRntDescriptor::RntScan(_)
+        ));
         let mut it = parse_rnt_loop(&[0x40, 0x20, 0x00]);
         assert!(it.next().unwrap().is_err());
         assert!(it.next().is_none());

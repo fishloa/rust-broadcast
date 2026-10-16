@@ -244,7 +244,10 @@ mod tests {
             TAG, 12, 0x12, 0x34, 0xAB, 0x78, 0x94, 0x45, 0x68, 0x84, 0x12, 0x34, 0x56, 0x78,
         ];
         let d = IpMacGenericStreamLocationDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.modulation_system_type, ModulationSystemType::Reserved(0xAB));
+        assert_eq!(
+            d.modulation_system_type,
+            ModulationSystemType::Reserved(0xAB)
+        );
         assert_eq!(d.modulation_system_id, 0x7894);
         assert_eq!(d.phy_stream_id, 0x4568);
         assert_eq!(
@@ -267,11 +270,13 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
         // selector_length (3) runs past the end.
-        assert!(IpMacGenericStreamLocationDescriptor::parse(&[
-            TAG, 9, 0, 1, 4, 0, 2, 0, 3, 0x83, 1
-        ])
-        .is_err());
-        assert!(IpMacGenericStreamLocationDescriptor::parse(&[TAG, 7, 0, 0, 0, 0, 0, 0, 0]).is_err());
+        assert!(
+            IpMacGenericStreamLocationDescriptor::parse(&[TAG, 9, 0, 1, 4, 0, 2, 0, 3, 0x83, 1])
+                .is_err()
+        );
+        assert!(
+            IpMacGenericStreamLocationDescriptor::parse(&[TAG, 7, 0, 0, 0, 0, 0, 0, 0]).is_err()
+        );
     }
 
     #[test]

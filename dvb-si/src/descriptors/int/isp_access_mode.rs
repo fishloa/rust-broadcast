@@ -82,12 +82,10 @@ impl<'a> Parse<'a> for IspAccessModeDescriptor<'a> {
             "IspAccessModeDescriptor",
             "unexpected tag for ISP_access_mode_descriptor",
         )?;
-        let (mode, trailing) = body
-            .split_first()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "ISP_access_mode_descriptor body is empty",
-            })?;
+        let (mode, trailing) = body.split_first().ok_or(Error::InvalidDescriptor {
+            tag: TAG,
+            reason: "ISP_access_mode_descriptor body is empty",
+        })?;
         Ok(Self {
             access_mode: IspAccessMode::from_u8(*mode),
             trailing,

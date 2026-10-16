@@ -35,12 +35,12 @@ impl<'a> Parse<'a> for IpMacPlatformNameDescriptor<'a> {
             "IpMacPlatformNameDescriptor",
             "unexpected tag for IP/MAC_platform_name_descriptor",
         )?;
-        let (lang, text) = body
-            .split_first_chunk::<LANG_LEN>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "IP/MAC_platform_name_descriptor shorter than ISO_639_language_code",
-            })?;
+        let (lang, text) =
+            body.split_first_chunk::<LANG_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "IP/MAC_platform_name_descriptor shorter than ISO_639_language_code",
+                })?;
         Ok(Self {
             language_code: LangCode(*lang),
             text: DvbText::new(text),

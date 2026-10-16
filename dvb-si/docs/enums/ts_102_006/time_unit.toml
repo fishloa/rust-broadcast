@@ -1,0 +1,21 @@
+# ETSI TS 102 006 §9.5.2.9 Table 32 — time units coding (2 bits, all four defined)
+
+[[entry]]
+value = 0x00
+variant = "Second"
+spec = "second"
+
+[[entry]]
+value = 0x01
+variant = "Minute"
+spec = "minute"
+
+[[entry]]
+value = 0x02
+variant = "Hour"
+spec = "hour"
+
+[[entry]]
+value = 0x03
+variant = "Day"
+spec = "day"

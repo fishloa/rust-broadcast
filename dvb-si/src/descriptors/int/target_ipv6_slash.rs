@@ -4,7 +4,7 @@
 //! Targets receivers by IPv6 address with a subnet mask in short "slash"
 //! form (an IP VLSM function). INT target loop only (Table 19).
 
-use crate::descriptors::entry_list::{list_len, parse_list, write_list, Entry};
+use crate::descriptors::entry_list::{Entry, list_len, parse_list, write_list};
 use crate::error::Result;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -87,7 +87,13 @@ mod tests {
         bytes.extend_from_slice(&a.octets());
         bytes.push(72);
         let d = TargetIpv6SlashDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.entries, [Ipv6Slash { addr: a, slash_mask: 72 }]);
+        assert_eq!(
+            d.entries,
+            [Ipv6Slash {
+                addr: a,
+                slash_mask: 72
+            }]
+        );
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);

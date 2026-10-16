@@ -71,10 +71,7 @@ impl<'a> Parse<'a> for SsuLocationDescriptor<'a> {
 impl Serialize for SsuLocationDescriptor<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN
-            + ID_LEN
-            + self.association_tag.map_or(0, |_| TAG_LEN)
-            + self.private_data.len()
+        HEADER_LEN + ID_LEN + self.association_tag.map_or(0, |_| TAG_LEN) + self.private_data.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         // association_tag exists on the wire iff data_broadcast_id == 0x000A.
