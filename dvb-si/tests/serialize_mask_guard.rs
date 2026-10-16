@@ -100,7 +100,6 @@ const READ_SIDE: &[&str] = &[
     "cell_",
     "version",
     "consider",
-    "b1",
     "bits",
     "sext",
     "bit_rate",
@@ -163,7 +162,13 @@ fn lhs_is_field(lhs: &str) -> bool {
     // A bare `reserved*` identifier is a reserved-bit value passed into a
     // helper (s2x `pack_*(.., reserved_zero_future_use_1, ..)`): the caller's
     // value is just as unchecked as `self.reserved*`.
+    // Same for a bare `version_number` parameter of a shared header helper
+    // (`b5_of`): the review of the tables batch found `b1_of`/`b5_of`/
+    // `write_pid_r` masking inside `tables/mod.rs` helpers, invisible here
+    // because the helper exempted itself by name (`b1*`) and took the field as a
+    // bare parameter rather than `self.field`.
     operand.starts_with("reserved")
+        || operand == "version_number"
         || operand.contains("self.")
         || operand.contains(".to_u8()")
         || operand.contains(".to_u16()")
@@ -243,11 +248,14 @@ fn hits_in(body: &str) -> Vec<(usize, String)> {
                 && (i == 0 || bytes[i - 1] != '(')
                 && bytes.get(i + 1) == Some(&' ')
             {
-                let rhs: String = bytes[i + 2..]
+                // A path-qualified constant (`& super::RESERVED_2`) is a mask
+                // too: judge the last path segment, advance by the whole path.
+                let rhs_path: String = bytes[i + 2..]
                     .iter()
-                    .take_while(|c| c.is_alphanumeric() || **c == '_')
+                    .take_while(|c| c.is_alphanumeric() || **c == '_' || **c == ':')
                     .collect();
-                let after: String = bytes[i + 2 + rhs.len()..].iter().collect();
+                let rhs = rhs_path.rsplit("::").next().unwrap_or("").to_string();
+                let after: String = bytes[i + 2 + rhs_path.len()..].iter().collect();
                 let lhs: String = bytes[..i].iter().collect();
                 let is_flag_test = {
                     let a = after.trim_start_matches(')').trim_start();
@@ -324,4 +332,30 @@ fn scanner_bites_on_the_bad_pattern() {
     );
     let checked_shift = "fn serialize_into(&self) {\n    buf[0] = (fit_mask(self.version, 0x0F, \"v\")? << 4) | 1;\n}\n";
     assert!(hits_in(checked_shift).is_empty());
+}
+
+/// The helper-level gap found in review: a mask inside a shared header helper
+/// that receives the field as a bare parameter (`b1_of`, `b5_of`,
+/// `write_pid_r`, `write_desc_loop_len_r`) must be flagged, and the checked
+/// forms must not be.
+#[test]
+fn scanner_bites_on_header_helper_bodies() {
+    let b1 = "pub(crate) fn b1_of(ssi: bool, reserved_b1: u8) -> u8 {\n    ((reserved_b1 & RESERVED_2) << 4)\n}\n";
+    assert_eq!(hits_in(b1).len(), 1, "b1_of-style mask must be flagged");
+    let b5 = "pub(crate) fn b5_of(reserved_b5: u8, version_number: u8) -> u8 {\n    ((version_number & B5_VERSION_MASK) << 1)\n}\n";
+    assert_eq!(
+        hits_in(b5).len(),
+        1,
+        "bare version_number mask must be flagged"
+    );
+    let pid = "pub(crate) fn write_pid_r(buf: &mut [u8], reserved: u8) {\n    buf[0] = ((reserved & RESERVED_3) << 5);\n}\n";
+    assert_eq!(
+        hits_in(pid).len(),
+        1,
+        "write_pid_r-style mask must be flagged"
+    );
+    let reserved_field = "fn serialize_into(&self) {\n    buf[5] = ((self.reserved_b5 & super::RESERVED_2) << 6);\n}\n";
+    assert_eq!(hits_in(reserved_field).len(), 1);
+    let checked = "pub(crate) fn b5_of(reserved_b5: u8, version_number: u8) -> Result<u8> {\n    Ok((fit_mask(reserved_b5, RESERVED_2, \"r\")? << 6) | (fit_mask(version_number, B5_VERSION_MASK, \"v\")? << 1))\n}\n";
+    assert!(hits_in(checked).is_empty());
 }

@@ -185,7 +185,7 @@ impl Serialize for RstSection {
                 RESERVED_FUTURE_USE_5,
                 "reserved_future_use",
             )? << RESERVED_SHIFT)
-                | (e.running_status.to_u8() & super::RUNNING_STATUS_MASK);
+                | e.running_status.to_u8();
             off += ENTRY_LEN;
         }
         Ok(len)
