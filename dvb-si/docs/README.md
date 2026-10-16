@@ -27,7 +27,7 @@ co-locates a `.toml` drift guard with its page. Module `//!` docs cite these fil
 | Table / section syntax | [ETSI EN 300 706 — Enhanced Teletext](tables/en_300_706/) | 19 |
 | Table / section syntax | [ETSI EN 300 743 — DVB subtitling](tables/en_300_743/) | 35 |
 | Table / section syntax | [ETSI EN 301 192 — DVB data broadcasting (MPE, INT, data carousel)](tables/en_301_192/) | 16 |
-| Table / section syntax | [Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 — MPEG-2 Systems](tables/iso_13818_1/) | 8 |
+| Table / section syntax | [Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 — MPEG-2 Systems](tables/iso_13818_1/) | 9 |
 | Table / section syntax | [ETSI TS 101 154 — audio/video coding in DVB](tables/ts_101_154/) | 38 |
 | Table / section syntax | [ETSI TS 102 006 — System Software Update](tables/ts_102_006/) | 6 |
 | Table / section syntax | [ETSI TS 102 323 — TV-Anytime carriage](tables/ts_102_323/) | 88 |
@@ -40,7 +40,7 @@ co-locates a `.toml` drift guard with its page. Module `//!` docs cite these fil
 | Descriptor syntax | [GY/T 270-2013 — China DTV closed captions](descriptors/gy_t_270/) | 1 |
 | Descriptor syntax | [GY/T 420-2025 — China UHD encapsulation (AVS2 video)](descriptors/gy_t_420/) | 1 |
 | Descriptor syntax | [GY/T 422-2025 — China multi-audio (audio preselection profile)](descriptors/gy_t_422/) | 1 |
-| Descriptor syntax | [Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 — MPEG-2 Systems](descriptors/iso_13818_1/) | 35 |
+| Descriptor syntax | [Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 — MPEG-2 Systems](descriptors/iso_13818_1/) | 40 |
 | Descriptor syntax | [ISO/IEC 13818-6 — DSM-CC (hand transcription, provenance-documented)](descriptors/iso_13818_6/) | 4 |
 | Descriptor syntax | [ISO/IEC 14496-1 — MPEG-4 Systems (FlexMux buffer descriptors)](descriptors/iso_14496_1/) | 1 |
 | Descriptor syntax | [NorDig Unified Requirements v3.2.2 — logical channel descriptors](descriptors/nordig/) | 2 |

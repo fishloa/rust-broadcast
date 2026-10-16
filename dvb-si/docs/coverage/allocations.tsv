@@ -29,12 +29,12 @@ table_id	0x00	program_association_section	ITU-T H.222.0 (08/2023)	2.4.4.4	76
 table_id	0x01	conditional_access_section	ITU-T H.222.0 (08/2023)	2.4.4.7	78
 table_id	0x02	TS_program_map_section	ITU-T H.222.0 (08/2023)	2.4.4.9	79
 table_id	0x03	TS_description_section	ITU-T H.222.0 (08/2023)	2.4.4.13	84
-table_id	0x04	ISO_IEC_14496_scene_description_section	ITU-T H.222.0 (08/2023)	2.4.4.5
-table_id	0x05	ISO_IEC_14496_object_descriptor_section	ITU-T H.222.0 (08/2023)	2.4.4.5
-table_id	0x06	Metadata_section	ITU-T H.222.0 (08/2023)	2.4.4.5
+table_id	0x04	ISO_IEC_14496_scene_description_section	ITU-T H.222.0 (08/2023)	2.11.3.8	199
+table_id	0x05	ISO_IEC_14496_object_descriptor_section	ITU-T H.222.0 (08/2023)	2.11.3.8	199
+table_id	0x06	Metadata_section	ITU-T H.222.0 (08/2023)	2.12.6	210
 table_id	0x07	IPMP_Control_Information_section (ISO/IEC 13818-11)	ITU-T H.222.0 (08/2023)	2.4.4.5
-table_id	0x08	ISO_IEC_14496_section	ITU-T H.222.0 (08/2023)	2.4.4.5
-table_id	0x09	ISO/IEC 23001-11 green access unit section	ITU-T H.222.0 (08/2023)	2.4.4.5
+table_id	0x08	ISO_IEC_14496_section	ITU-T H.222.0 (08/2023)	2.11.3.8	199
+table_id	0x09	ISO/IEC 23001-11 green access unit section	ITU-T H.222.0 (08/2023)	2.18.1	247
 table_id	0x0A	ISO/IEC 23001-10 quality access unit section	ITU-T H.222.0 (08/2023)	2.4.4.5
 table_id	0x0B	ISO/IEC 23001-13 media orchestration access unit section	ITU-T H.222.0 (08/2023)	2.4.4.5
 table_id	0x38-0x39	DSM-CC sections (ISO/IEC 13818-6 range)	ISO/IEC 13818-6
@@ -107,20 +107,20 @@ descriptor_tag	0x29	IPMP_descriptor (ISO/IEC 13818-11)	ISO/IEC 13818-11
 descriptor_tag	0x2A	AVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.66	129
 descriptor_tag	0x2B	MPEG-2_AAC_audio_descriptor	ITU-T H.222.0 (08/2023)	2.6.68	131
 descriptor_tag	0x2C	M4MuxTiming_descriptor	ITU-T H.222.0 (08/2023)	2.6.54	121
-descriptor_tag	0x2D	MPEG-4_text_descriptor	ITU-T H.222.0 (08/2023)	2.6.70
-descriptor_tag	0x2E	MPEG-4_audio_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.72
+descriptor_tag	0x2D	MPEG-4_text_descriptor	ITU-T H.222.0 (08/2023)	2.6.70	132
+descriptor_tag	0x2E	MPEG-4_audio_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.72	132
 descriptor_tag	0x2F	auxiliary_video_stream_descriptor	ITU-T H.222.0 (08/2023)	2.6.74	133
 descriptor_tag	0x30	SVC_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.76	133
 descriptor_tag	0x31	MVC_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.78	134
 descriptor_tag	0x32	J2K_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.80	136
-descriptor_tag	0x33	MVC_operation_point_descriptor	ITU-T H.222.0 (08/2023)	2.6.82
-descriptor_tag	0x34	MPEG2_stereoscopic_video_format_descriptor	ITU-T H.222.0 (08/2023)	2.6.84
-descriptor_tag	0x35	stereoscopic_program_info_descriptor	ITU-T H.222.0 (08/2023)	2.6.86
-descriptor_tag	0x36	stereoscopic_video_info_descriptor	ITU-T H.222.0 (08/2023)	2.6.88
-descriptor_tag	0x37	transport_profile_descriptor	ITU-T H.222.0 (08/2023)	2.6.93
+descriptor_tag	0x33	MVC_operation_point_descriptor	ITU-T H.222.0 (08/2023)	2.6.82	140
+descriptor_tag	0x34	MPEG2_stereoscopic_video_format_descriptor	ITU-T H.222.0 (08/2023)	2.6.84	141
+descriptor_tag	0x35	stereoscopic_program_info_descriptor	ITU-T H.222.0 (08/2023)	2.6.86	141
+descriptor_tag	0x36	stereoscopic_video_info_descriptor	ITU-T H.222.0 (08/2023)	2.6.88	142
+descriptor_tag	0x37	transport_profile_descriptor	ITU-T H.222.0 (08/2023)	2.6.93	147
 descriptor_tag	0x38	HEVC_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.95	147
-descriptor_tag	0x39	VVC_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.129
-descriptor_tag	0x3A	EVC_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.133
+descriptor_tag	0x39	VVC_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.129	173
+descriptor_tag	0x3A	EVC_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.133	178
 descriptor_tag	0x3F	extension_descriptor (MPEG-2)	ITU-T H.222.0 (08/2023)	2.6.90	143
 
 # ── descriptor_tag 0x40–0x7F — ETSI EN 300 468 V1.20.1 Table 12 (clause 6.1)
@@ -223,12 +223,12 @@ dvb_extension_tag	0x23	vvc_subpictures_descriptor	ETSI EN 300 468 V1.20.1	6.4.17
 dvb_extension_tag	0x24	S2Xv2_satellite_delivery_system_descriptor	ETSI EN 300 468 V1.20.1	6.4.6.5.3	131
 
 # ── extension_descriptor_tag (MPEG-2, tag 0x3F) — Rec. ITU-T H.222.0 (08/2023) Table 2-110
-mpeg2_extension_tag	0x02	ODUpdate_descriptor	ITU-T H.222.0 (08/2023)	2.6.92
-mpeg2_extension_tag	0x03	HEVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.97
-mpeg2_extension_tag	0x04	af_extensions_descriptor	ITU-T H.222.0 (08/2023)	2.6.99
-mpeg2_extension_tag	0x05	HEVC_operation_point_descriptor	ITU-T H.222.0 (08/2023)	2.6.100
-mpeg2_extension_tag	0x06	HEVC_hierarchy_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.102
-mpeg2_extension_tag	0x07	green_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.104
+mpeg2_extension_tag	0x02	ODUpdate_descriptor	ITU-T H.222.0 (08/2023)	2.6.92	146
+mpeg2_extension_tag	0x03	HEVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.97	150
+mpeg2_extension_tag	0x04	af_extensions_descriptor	ITU-T H.222.0 (08/2023)	2.6.99	151
+mpeg2_extension_tag	0x05	HEVC_operation_point_descriptor	ITU-T H.222.0 (08/2023)	2.6.100	152
+mpeg2_extension_tag	0x06	HEVC_hierarchy_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.102	154
+mpeg2_extension_tag	0x07	green_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.104	155
 mpeg2_extension_tag	0x08	MPEG-H_3dAudio_descriptor	ITU-T H.222.0 (08/2023)	2.6.106	155
 mpeg2_extension_tag	0x09	MPEG-H_3dAudio_config_descriptor	ITU-T H.222.0 (08/2023)	2.6.108	156
 mpeg2_extension_tag	0x0A	MPEG-H_3dAudio_scene_descriptor	ITU-T H.222.0 (08/2023)	2.6.110	156
@@ -236,17 +236,17 @@ mpeg2_extension_tag	0x0B	MPEG-H_3dAudio_text_label_descriptor	ITU-T H.222.0 (08/
 mpeg2_extension_tag	0x0C	MPEG-H_3dAudio_multi-stream_descriptor	ITU-T H.222.0 (08/2023)	2.6.114	162
 mpeg2_extension_tag	0x0D	MPEG-H_3dAudio_drc_loudness_descriptor	ITU-T H.222.0 (08/2023)	2.6.116	163
 mpeg2_extension_tag	0x0E	MPEG-H_3dAudio_command_descriptor	ITU-T H.222.0 (08/2023)	2.6.118	165
-mpeg2_extension_tag	0x0F	quality_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.119
+mpeg2_extension_tag	0x0F	quality_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.119	166
 mpeg2_extension_tag	0x10	virtual_segmentation_descriptor	ITU-T H.222.0 (08/2023)	2.6.120
 mpeg2_extension_tag	0x11	timed_metadata_extension_descriptor	ITU-T H.222.0 (08/2023)
-mpeg2_extension_tag	0x12	HEVC_tile_substream_descriptor	ITU-T H.222.0 (08/2023)	2.6.122
+mpeg2_extension_tag	0x12	HEVC_tile_substream_descriptor	ITU-T H.222.0 (08/2023)	2.6.122	168
 mpeg2_extension_tag	0x13	HEVC_subregion_descriptor	ITU-T H.222.0 (08/2023)	2.6.125
-mpeg2_extension_tag	0x14	JXS_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.127
-mpeg2_extension_tag	0x15	VVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.131
-mpeg2_extension_tag	0x16	EVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.135
-mpeg2_extension_tag	0x17	LCEVC_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.137
-mpeg2_extension_tag	0x18	LCEVC_linkage_descriptor	ITU-T H.222.0 (08/2023)	2.6.139
-mpeg2_extension_tag	0x19	media_service_kind_descriptor	ITU-T H.222.0 (08/2023)	2.6.141
+mpeg2_extension_tag	0x14	JXS_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.127	171
+mpeg2_extension_tag	0x15	VVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.131	176
+mpeg2_extension_tag	0x16	EVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.135	179
+mpeg2_extension_tag	0x17	LCEVC_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.137	180
+mpeg2_extension_tag	0x18	LCEVC_linkage_descriptor	ITU-T H.222.0 (08/2023)	2.6.139	181
+mpeg2_extension_tag	0x19	media_service_kind_descriptor	ITU-T H.222.0 (08/2023)	2.6.141	182
 
 # ── AIT descriptor namespace — ETSI TS 102 809 V1.3.1 Table 38 (clause 5.5) + ETSI TS 102 727 V1.1.1 (MHP)
 # private/specs-md/etsi_ts_102_809_v01.03.01_dvb_app_signalling.md, etsi_ts_102_727_v01.01.01_dvb_mhp.md
