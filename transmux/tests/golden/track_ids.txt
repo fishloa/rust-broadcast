@@ -87,9 +87,9 @@ fixtures/ts/hevc/main.ts: 1x15
 fixtures/ts/hevc/main10.ts: 1x15
 fixtures/ts/legacy/mpeg2_mp2.ts: 1x25 2x39
 fixtures/ts/legacy/mpeg2_mp2_pes_misaligned.ts: 1x39
-fixtures/ts/m6-discontinuity.ts: 1x7 2x6 3x3 4x2 5x1 6x2
-fixtures/ts/m6-duplicate.ts: 1x7 2x6 3x3 4x2 5x1 6x2
-fixtures/ts/m6-single.ts: 1x7 2x6 3x3 4x2 5x1 6x2
+fixtures/ts/m6-discontinuity.ts: 1x8 2x6 3x3 4x2 5x1 6x2
+fixtures/ts/m6-duplicate.ts: 1x8 2x6 3x3 4x2 5x1 6x2
+fixtures/ts/m6-single.ts: 1x8 2x6 3x3 4x2 5x1 6x2
 fixtures/ts/pcr-wrap.ts:
 fixtures/ts/pts-backward.ts:
 fixtures/ts/pts-wrap.ts:
