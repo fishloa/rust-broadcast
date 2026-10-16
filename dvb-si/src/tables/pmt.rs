@@ -1,4 +1,4 @@
-//! Program Map Table — MPEG-2 ISO/IEC 13818-1 §2.4.4.8.
+//! Program Map Table — MPEG-2 ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.9.
 //!
 //! PMT describes the elementary streams that make up one programme.
 //! Carried on a per-programme PID signalled by the PAT, with table_id 0x02.
@@ -587,7 +587,7 @@ pub struct PmtStream<'a> {
     /// Elementary-stream descriptor loop. Serializes as the typed descriptor
     /// sequence; `.raw()` yields the wire bytes.
     pub es_info: DescriptorLoop<'a>,
-    /// `reserved(3)` before `elementary_PID` (ISO/IEC 13818-1 §2.4.4.8,
+    /// `reserved(3)` before `elementary_PID` (ISO/IEC 13818-1 §2.4.4.9,
     /// `111` in every edition); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub reserved_pid: u8,
@@ -622,10 +622,10 @@ pub struct PmtSection<'a> {
     pub version_number: u8,
     /// current_next_indicator bit.
     pub current_next_indicator: bool,
-    /// section_number in the sub-table sequence (ISO/IEC 13818-1 §2.4.4.8;
+    /// section_number in the sub-table sequence (ISO/IEC 13818-1 §2.4.4.9;
     /// shall be 0x00 for conformant PMTs but preserved for round-trip fidelity).
     pub section_number: u8,
-    /// last_section_number in the sub-table sequence (ISO/IEC 13818-1 §2.4.4.8;
+    /// last_section_number in the sub-table sequence (ISO/IEC 13818-1 §2.4.4.9;
     /// shall be 0x00 for conformant PMTs but preserved for round-trip fidelity).
     pub last_section_number: u8,
     /// 13-bit PCR PID.
@@ -1106,7 +1106,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_trailing_slack_bytes() {
-        // ETSI EN 300 468 / ISO 13818-1 §2.4.4.8: the stream loop runs to
+        // ETSI EN 300 468 / ISO 13818-1 §2.4.4.9: the stream loop runs to
         // stream_loop_end exactly. A truncated final entry (fewer than
         // STREAM_HEADER_LEN bytes of slack) must be rejected, not silently
         // dropped (mirrors EitSection's post-loop check).

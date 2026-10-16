@@ -1,5 +1,5 @@
 ## Table 10 — Running status section
-_§5.2.8, PDF pp. 38-38_
+_§5.2.7, PDF pp. 38-38_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

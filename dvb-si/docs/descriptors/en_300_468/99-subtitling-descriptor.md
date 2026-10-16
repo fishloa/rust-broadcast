@@ -1,5 +1,5 @@
 ## Table 99 — Subtitling descriptor
-_§6.2.42, PDF pp. 106-106_
+_§6.2.41, PDF pp. 106-106_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

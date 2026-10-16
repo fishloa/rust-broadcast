@@ -1,4 +1,4 @@
-//! Teletext Descriptor — ETSI EN 300 468 §6.2.44 (tag 0x56).
+//! Teletext Descriptor — ETSI EN 300 468 V1.20.1 §6.2.43 (tag 0x56).
 //!
 //! Carried inside PMT's ES_info loop. Enumerates teletext components: one
 //! entry per 3-char language code + type/magazine/page triple (5 bytes).

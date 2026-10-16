@@ -1,4 +1,4 @@
-//! URI Linkage Descriptor — ETSI EN 300 468 §6.4.16.1 (tag_extension 0x13).
+//! URI Linkage Descriptor — ETSI EN 300 468 V1.20.1 §6.4.15 (tag_extension 0x13).
 use super::*;
 
 impl<'a> ExtensionBodyDef<'a> for UriLinkage<'a> {

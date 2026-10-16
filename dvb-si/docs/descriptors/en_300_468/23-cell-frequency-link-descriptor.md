@@ -1,5 +1,5 @@
 ## Table 23 — Cell frequency link descriptor
-_§6.2.7, PDF pp. 58-58_
+_§6.2.6, PDF pp. 58-58_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

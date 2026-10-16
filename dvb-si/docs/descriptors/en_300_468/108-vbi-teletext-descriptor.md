@@ -1,5 +1,5 @@
 ## Table 108 — VBI teletext descriptor
-_§6.3, PDF pp. 111-111_
+_§6.2.48, PDF pp. 111-111_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

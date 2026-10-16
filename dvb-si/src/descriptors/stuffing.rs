@@ -1,4 +1,4 @@
-//! Stuffing Descriptor — ETSI EN 300 468 §6.2.41 (tag 0x42).
+//! Stuffing Descriptor — ETSI EN 300 468 V1.20.1 §6.2.40 (tag 0x42).
 //!
 //! Table 98 (PDF p. 105). A descriptor whose body is `N` arbitrary
 //! `stuffing_byte`s of any value. Used to pad descriptor loops; carries no
@@ -16,7 +16,7 @@ const MAX_BODY_LEN: usize = u8::MAX as usize;
 
 /// Stuffing Descriptor.
 ///
-/// EN 300 468 §6.2.41: `stuffing_byte` values are unconstrained ("This is an
+/// EN 300 468 §6.2.40: `stuffing_byte` values are unconstrained ("This is an
 /// 8-bit field whose value is not specified"), so the payload is stored as an
 /// opaque borrowed slice and round-trips byte-for-byte.
 #[derive(Debug, Clone, PartialEq, Eq)]

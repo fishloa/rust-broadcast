@@ -1,4 +1,4 @@
-//! Transport Stream Description Table — ISO/IEC 13818-1 §2.4.5.
+//! Transport Stream Description Table — ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.13.
 //!
 //! TSDT is carried on PID 0x0002 with table_id 0x03. It provides a
 //! means of describing the transport stream using descriptors.

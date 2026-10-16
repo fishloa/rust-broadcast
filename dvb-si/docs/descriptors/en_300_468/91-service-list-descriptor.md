@@ -1,5 +1,5 @@
 ## Table 91 — Service list descriptor
-_§6.2.36, PDF pp. 101-101_
+_§6.2.35, PDF pp. 101-101_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

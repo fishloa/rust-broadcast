@@ -1,5 +1,5 @@
 ## Table 112 — CID ancillary data descriptor
-_§6.4.3, PDF pp. 116-116_
+_§6.4.2, PDF pp. 116-116_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

@@ -1,4 +1,4 @@
-//! AC-4 Descriptor — ETSI EN 300 468 Annex D, §D.5 (tag_extension 0x15).
+//! AC-4 Descriptor — ETSI EN 300 468 V1.20.1 Annex D §D.7 (tag_extension 0x15).
 use super::*;
 
 impl<'a> ExtensionBodyDef<'a> for Ac4<'a> {

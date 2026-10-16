@@ -1,5 +1,5 @@
 ## Table 54 — Extension descriptor
-_§6.2.18.1, PDF pp. 80-80_
+_§6.2.16, PDF pp. 80-80_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

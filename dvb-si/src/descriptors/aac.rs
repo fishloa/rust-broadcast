@@ -1,4 +1,4 @@
-//! AAC Descriptor — ETSI EN 300 468 Annex H, Table H.1 (tag 0x7C).
+//! AAC Descriptor — ETSI EN 300 468 V1.20.1 Annex H §H.2.1, Table H.1 (tag 0x7C).
 //!
 //! Carried in the PMT ES_info loop to identify MPEG-4 AAC / HE-AAC / HE-AAC v2
 //! audio. Per the SI PDF (etsi_en_300_468_v01.19.01, Annex H §H.2.1, Table H.1,

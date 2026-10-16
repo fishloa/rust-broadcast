@@ -1,5 +1,5 @@
 ## Table 80 — NVOD reference descriptor
-_§6.2.28, PDF pp. 96-96_
+_§6.2.26, PDF pp. 96-96_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

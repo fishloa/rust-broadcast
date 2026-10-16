@@ -1,4 +1,4 @@
-//! Network Name Descriptor — ETSI EN 300 468 §6.2.28 (tag 0x40).
+//! Network Name Descriptor — ETSI EN 300 468 V1.20.1 §6.2.27 (tag 0x40).
 
 use crate::error::{Error, Result};
 use crate::text::DvbText;
@@ -18,7 +18,7 @@ pub const HEADER_LEN: usize = 2;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct NetworkNameDescriptor<'a> {
-    /// DVB Annex-A encoded network name (EN 300 468 §6.2.28).
+    /// DVB Annex-A encoded network name (EN 300 468 §6.2.27).
     pub network_name: DvbText<'a>,
 }
 

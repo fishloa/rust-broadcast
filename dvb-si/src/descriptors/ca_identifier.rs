@@ -1,4 +1,4 @@
-//! CA Identifier Descriptor — ETSI EN 300 468 §6.2.6 (tag 0x53).
+//! CA Identifier Descriptor — ETSI EN 300 468 V1.20.1 §6.2.5 (tag 0x53).
 //!
 //! Table 22 (PDF p. 57). Carried in SDT/BAT/EIT descriptor loops; lists the
 //! `CA_system_id`s whose conditional-access systems are available for the

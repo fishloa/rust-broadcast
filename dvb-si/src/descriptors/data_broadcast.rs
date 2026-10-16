@@ -1,4 +1,4 @@
-//! Data Broadcast Descriptor — ETSI EN 300 468 §6.2.12 (tag 0x64).
+//! Data Broadcast Descriptor — ETSI EN 300 468 V1.20.1 §6.2.11 (tag 0x64).
 //!
 //! Table 31 (PDF p. 71). Identifies a data broadcast component: its
 //! data_broadcast_id, the component_tag tying it to a stream_identifier, a raw
@@ -100,7 +100,7 @@ impl<'a> Parse<'a> for DataBroadcastDescriptor<'a> {
         }
         let text = DvbText::new(&body[pos..text_end]);
         if text_end != body.len() {
-            // text_length closes the descriptor (EN 300 468 §6.2.12); trailing
+            // text_length closes the descriptor (EN 300 468 §6.2.11); trailing
             // bytes used to be dropped on re-serialize (r03-W9).
             return Err(Error::InvalidDescriptor {
                 tag: TAG,

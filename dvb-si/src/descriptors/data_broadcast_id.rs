@@ -1,4 +1,4 @@
-//! Data Broadcast Id Descriptor — ETSI EN 300 468 §6.2.13 (tag 0x66).
+//! Data Broadcast Id Descriptor — ETSI EN 300 468 V1.20.1 §6.2.12 (tag 0x66).
 //!
 //! Table 32 (PDF p. 72). Identifies the data broadcast specification used by a
 //! data component, plus an `id_selector_byte` tail whose interpretation depends

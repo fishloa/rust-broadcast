@@ -1,4 +1,4 @@
-//! Ancillary Data Descriptor — ETSI EN 300 468 §6.2.3 (tag 0x6B, Table 15, PDF p. 55).
+//! Ancillary Data Descriptor — ETSI EN 300 468 V1.20.1 §6.2.2 (tag 0x6B, Table 15, PDF p. 55).
 //!
 //! Carried inside the PMT ES_info loop. Fixed 1-byte body: a bit-flag field
 //! `ancillary_data_identifier` whose bits select which ancillary-data formats

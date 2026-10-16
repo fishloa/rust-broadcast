@@ -1,4 +1,4 @@
-//! Discontinuity Information Table — ETSI EN 300 468 §7.1.2.
+//! Discontinuity Information Table — ETSI EN 300 468 V1.20.1 §7.1.1.
 //!
 //! Carried on PID `0x001E` with `table_id = 0x7E`, only in partial transport
 //! streams (e.g. a recording). A short-form section whose body is a single
@@ -13,10 +13,10 @@ pub const TABLE_ID: u8 = 0x7E;
 pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x001E);
 
 const HEADER_LEN: usize = 3;
-/// Body length: one byte holding `transition_flag` + reserved bits (§7.1.2).
+/// Body length: one byte holding `transition_flag` + reserved bits (§7.1.1).
 const BODY_LEN: usize = 1;
 
-/// Discontinuity Information Table (§7.1.2, Table 163).
+/// Discontinuity Information Table (§7.1.1, Table 163).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

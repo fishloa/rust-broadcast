@@ -1,4 +1,4 @@
-//! Running Status Table — ETSI EN 300 468 §5.2.8.
+//! Running Status Table — ETSI EN 300 468 V1.20.1 §5.2.7.
 //!
 //! Carried on PID `0x0013` with `table_id = 0x71`. A SHORT-FORM section — there
 //! is no version/section header and no CRC. The body is a flat loop of 9-byte
@@ -74,7 +74,7 @@ const RESERVED_FUTURE_USE_5: u8 = super::RESERVED_5;
 /// Shift of `reserved_future_use(5)` above `running_status(3)`.
 const RESERVED_SHIFT: u32 = 3;
 
-/// Running Status Table (§5.2.8, Table 10).
+/// Running Status Table (§5.2.7, Table 10).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

@@ -1,4 +1,4 @@
-//! DTS-UHD Descriptor — ETSI EN 300 468 Annex G.5, Table G.15 (tag_extension 0x21).
+//! DTS-UHD Descriptor — ETSI EN 300 468 V1.20.1 Annex G §G.5.1, Table G.15 (tag_extension 0x21).
 use super::*;
 
 impl<'a> ExtensionBodyDef<'a> for DtsUhd<'a> {

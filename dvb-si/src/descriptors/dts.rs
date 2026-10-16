@@ -1,4 +1,4 @@
-//! DTS Descriptor — ETSI EN 300 468 Annex G, Table G.1 (tag 0x7B).
+//! DTS Descriptor — ETSI EN 300 468 V1.20.1 Annex G §G.2.1, Table G.1 (tag 0x7B).
 //!
 //! Carried in the PMT ES_info loop to identify DTS Coherent Acoustics audio.
 //! Per the SI PDF (etsi_en_300_468_v01.19.01, Annex G §G.2.1, Table G.1,

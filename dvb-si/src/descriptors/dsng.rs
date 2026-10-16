@@ -1,7 +1,7 @@
-//! DSNG Descriptor — ETSI EN 300 468 §6.2.15 (tag 0x68, Table 52, PDF p. 78).
+//! DSNG Descriptor — ETSI EN 300 468 V1.20.1 §6.2.14 (tag 0x68, Table 52, PDF p. 78).
 //!
 //! Digital Satellite News Gathering. Carried in the NIT. The body is a single
-//! `for (i=0;i<N;i++) { byte }` loop (Table 52); §6.2.15 defines the bytes as
+//! `for (i=0;i<N;i++) { byte }` loop (Table 52); §6.2.14 defines the bytes as
 //! the textual DSNG identifier carried as ASCII characters. We preserve the
 //! raw bytes verbatim.
 
@@ -19,7 +19,7 @@ pub const HEADER_LEN: usize = 2;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DsngDescriptor<'a> {
-    /// Raw DSNG identifier bytes (ASCII per §6.2.15).
+    /// Raw DSNG identifier bytes (ASCII per §6.2.14).
     pub bytes: &'a [u8],
 }
 

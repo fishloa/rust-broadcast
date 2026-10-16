@@ -1,4 +1,4 @@
-//! Application Name Descriptor — ETSI TS 102 809 §5.3.5.6.2, Table 24
+//! Application Name Descriptor — ETSI TS 102 809 V1.3.1 §5.3.5.6.1, Table 24
 //! (AIT tag 0x01).
 //!
 //! Carried in the AIT per-application descriptor loop. A multilingual loop of

@@ -1,4 +1,4 @@
-//! Service Availability Descriptor — ETSI EN 300 468 §6.2.36 (tag 0x72, Table 90, PDF p. 101).
+//! Service Availability Descriptor — ETSI EN 300 468 V1.20.1 §6.2.34 (tag 0x72, Table 90, PDF p. 101).
 //!
 //! Carried inside the SDT. Body layout (Table 90):
 //! `availability_flag` (1 bit) + `reserved_future_use` (7 bits), then a

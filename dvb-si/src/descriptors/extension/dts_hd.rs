@@ -1,4 +1,4 @@
-//! DTS-HD Descriptor — ETSI EN 300 468 Annex G.3, Tables G.6–G.10 (tag_extension 0x0E).
+//! DTS-HD Descriptor — ETSI EN 300 468 V1.20.1 Annex G §G.3.1, Tables G.6–G.10 (tag_extension 0x0E).
 use super::*;
 use alloc::vec::Vec;
 

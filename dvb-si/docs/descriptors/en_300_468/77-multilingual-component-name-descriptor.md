@@ -1,5 +1,5 @@
 ## Table 77 — Multilingual component name descriptor
-_§6.2.24, PDF pp. 94-94_
+_§6.2.23, PDF pp. 94-94_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

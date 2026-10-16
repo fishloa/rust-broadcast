@@ -70,10 +70,10 @@ values are omitted.
 
 | table_id | Section | Standard | Clause (verified) | Source cites | Rust type | Status |
 |---|---|---|---|---|---|---|
-| 0x00 | program_association_section | ITU-T H.222.0 (08/2023) | 2.4.4.4 | MPEG-2 ISO/IEC 13818-1 §2.4.4.3 | [`PatSection`](../src/tables/pat.rs) | Full |
-| 0x01 | conditional_access_section | ITU-T H.222.0 (08/2023) | 2.4.4.7 | ISO/IEC 13818-1 §2.4.4.6 | [`CatSection`](../src/tables/cat.rs) | Full |
-| 0x02 | TS_program_map_section | ITU-T H.222.0 (08/2023) | 2.4.4.9 | MPEG-2 ISO/IEC 13818-1 §2.4.4.8 | [`PmtSection`](../src/tables/pmt.rs) | Full |
-| 0x03 | TS_description_section | ITU-T H.222.0 (08/2023) | 2.4.4.13 | ISO/IEC 13818-1 §2.4.5 | [`TsdtSection`](../src/tables/tsdt.rs) | Full |
+| 0x00 | program_association_section | ITU-T H.222.0 (08/2023) | 2.4.4.4 | MPEG-2 ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.4 | [`PatSection`](../src/tables/pat.rs) | Full |
+| 0x01 | conditional_access_section | ITU-T H.222.0 (08/2023) | 2.4.4.7 | ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.7 | [`CatSection`](../src/tables/cat.rs) | Full |
+| 0x02 | TS_program_map_section | ITU-T H.222.0 (08/2023) | 2.4.4.9 | MPEG-2 ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.9 | [`PmtSection`](../src/tables/pmt.rs) | Full |
+| 0x03 | TS_description_section | ITU-T H.222.0 (08/2023) | 2.4.4.13 | ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.13 | [`TsdtSection`](../src/tables/tsdt.rs) | Full |
 | 0x04 | ISO_IEC_14496_scene_description_section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x05 | ISO_IEC_14496_object_descriptor_section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x06 | Metadata_section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
@@ -97,7 +97,7 @@ values are omitted.
 | 0x50–0x5F | event_information_section (actual, schedule) | ETSI EN 300 468 V1.20.1 | 5.2.4 | ETSI EN 300 468 §5.2.4 | [`EitSection`](../src/tables/eit.rs) | Full |
 | 0x60–0x6F | event_information_section (other, schedule) | ETSI EN 300 468 V1.20.1 | 5.2.4 | ETSI EN 300 468 §5.2.4 | [`EitSection`](../src/tables/eit.rs) | Full |
 | 0x70 | time_date_section (TDT) | ETSI EN 300 468 V1.20.1 | 5.2.5 | ETSI EN 300 468 §5.2.5 | [`TdtSection`](../src/tables/tdt.rs) | Full |
-| 0x71 | running_status_section (RST) | ETSI EN 300 468 V1.20.1 | 5.2.7 | ETSI EN 300 468 §5.2.8 | [`RstSection`](../src/tables/rst.rs) | Full |
+| 0x71 | running_status_section (RST) | ETSI EN 300 468 V1.20.1 | 5.2.7 | ETSI EN 300 468 V1.20.1 §5.2.7 | [`RstSection`](../src/tables/rst.rs) | Full |
 | 0x72 | stuffing_section (ST) | ETSI EN 300 468 V1.20.1 | 5.2.8 | ETSI EN 300 468 §5.2.8 | [`StSection`](../src/tables/st.rs) | Full |
 | 0x73 | time_offset_section (TOT) | ETSI EN 300 468 V1.20.1 | 5.2.6 | ETSI EN 300 468 §5.2.6 | [`TotSection`](../src/tables/tot.rs) | Full |
 | 0x74 | application_information_section (AIT) | ETSI TS 102 809 V1.3.1 | 5.3.4 | ETSI TS 102 809 §5.3.4 | [`AitSection`](../src/tables/ait.rs) | Full |
@@ -109,7 +109,7 @@ values are omitted.
 | 0x7A | MPE-IFEC_section | ETSI TS 102 772 V1.1.1 | 5.2 | ETSI TS 102 772 v1.1.1 §5.2 (table_id 0x7A) | [`MpeIfecSection`](../src/tables/mpe_ifec.rs) | Full |
 | 0x7B | protection_message_section | ETSI TS 102 809 V1.3.1 | 9 | ETSI TS 102 809 v1.3.1 §9 (table_id 0x7B) | [`ProtectionMessageSection`](../src/tables/protection_message.rs) | Full |
 | 0x7C | downloadable_font_info_section (DFIS) | ETSI EN 303 560 V1.1.1 | — | ETSI EN 303 560 v1.1.1 §5.3.2.3.1 (table_id 0x7C) | [`DownloadableFontInfoSection`](../src/tables/downloadable_font_info.rs) | Full |
-| 0x7E | discontinuity_information_section (DIT) | ETSI EN 300 468 V1.20.1 | 7.1.1 | ETSI EN 300 468 §7.1.2 | [`DitSection`](../src/tables/dit.rs) | Full |
+| 0x7E | discontinuity_information_section (DIT) | ETSI EN 300 468 V1.20.1 | 7.1.1 | ETSI EN 300 468 V1.20.1 §7.1.1 | [`DitSection`](../src/tables/dit.rs) | Full |
 | 0x7F | selection_information_section (SIT) | ETSI EN 300 468 V1.20.1 | 7.1.2 | ETSI EN 300 468 §7.1.2 | [`SitSection`](../src/tables/sit.rs) | Full |
 
 ## Descriptors — MPEG-2 / DSM-CC (0x00–0x3F)
@@ -122,12 +122,12 @@ Allocated by Rec. ITU-T H.222.0 Table 2-45. Implemented tags are dispatched by
 | 0x02 | video_stream_descriptor | ITU-T H.222.0 (08/2023) | 2.6.2 | ISO/IEC 13818-1 §2.6.2 (tag 0x02) | [`VideoStreamDescriptor`](../src/descriptors/video_stream.rs) | Full |
 | 0x03 | audio_stream_descriptor | ITU-T H.222.0 (08/2023) | 2.6.4 | ISO/IEC 13818-1 §2.6.4 (tag 0x03) | [`AudioStreamDescriptor`](../src/descriptors/audio_stream.rs) | Full |
 | 0x04 | hierarchy_descriptor | ITU-T H.222.0 (08/2023) | 2.6.6 | ISO/IEC 13818-1 §2.6.6 (tag 0x04) | [`HierarchyDescriptor`](../src/descriptors/hierarchy.rs) | Full |
-| 0x05 | registration_descriptor | ITU-T H.222.0 (08/2023) | 2.6.8 | ISO/IEC 13818-1 §2.6.13 (tag 0x05) | [`RegistrationDescriptor`](../src/descriptors/registration.rs) | Full |
+| 0x05 | registration_descriptor | ITU-T H.222.0 (08/2023) | 2.6.8 | ISO/IEC 13818-1 (H.222.0 08/2023) §2.6.8 (tag 0x05) | [`RegistrationDescriptor`](../src/descriptors/registration.rs) | Full |
 | 0x06 | data_stream_alignment_descriptor | ITU-T H.222.0 (08/2023) | 2.6.10 | ISO/IEC 13818-1 §2.6.10 (tag 0x06) | [`DataStreamAlignmentDescriptor`](../src/descriptors/data_stream_alignment.rs) | Full |
 | 0x07 | target_background_grid_descriptor | ITU-T H.222.0 (08/2023) | 2.6.12 | ISO/IEC 13818-1 §2.6.12 (tag 0x07) | [`TargetBackgroundGridDescriptor`](../src/descriptors/target_background_grid.rs) | Full |
 | 0x08 | video_window_descriptor | ITU-T H.222.0 (08/2023) | 2.6.14 | ISO/IEC 13818-1 §2.6.14 (tag 0x08) | [`VideoWindowDescriptor`](../src/descriptors/video_window.rs) | Full |
 | 0x09 | CA_descriptor | ITU-T H.222.0 (08/2023) | 2.6.16 | ISO/IEC 13818-1 §2.6.16 (tag 0x09) | [`CaDescriptor`](../src/descriptors/ca.rs) | Full |
-| 0x0A | ISO_639_language_descriptor | ITU-T H.222.0 (08/2023) | 2.6.18 | MPEG-2 ISO/IEC 13818-1 §2.6.19 (tag 0x0A) | [`Iso639LanguageDescriptor`](../src/descriptors/iso_639_language.rs) | Full |
+| 0x0A | ISO_639_language_descriptor | ITU-T H.222.0 (08/2023) | 2.6.18 | MPEG-2 ISO/IEC 13818-1 (H.222.0 08/2023) §2.6.18 (tag 0x0A) | [`Iso639LanguageDescriptor`](../src/descriptors/iso_639_language.rs) | Full |
 | 0x0B | system_clock_descriptor | ITU-T H.222.0 (08/2023) | 2.6.20 | ISO/IEC 13818-1 §2.6.20 (tag 0x0B) | [`SystemClockDescriptor`](../src/descriptors/system_clock.rs) | Full |
 | 0x0C | multiplex_buffer_utilization_descriptor | ITU-T H.222.0 (08/2023) | 2.6.22 | ISO/IEC 13818-1 §2.6.22 (tag 0x0C) | [`MultiplexBufferUtilizationDescriptor`](../src/descriptors/multiplex_buffer_utilization.rs) | Full |
 | 0x0D | copyright_descriptor | ITU-T H.222.0 (08/2023) | 2.6.24 | ISO/IEC 13818-1 §2.6.24 (tag 0x0D) | [`CopyrightDescriptor`](../src/descriptors/copyright.rs) | Full |
@@ -179,70 +179,70 @@ Allocated by ETSI EN 300 468 V1.20.1 Table 12.
 
 | tag | Descriptor | Standard | Clause (verified) | Source cites | Rust type | Status |
 |---|---|---|---|---|---|---|
-| 0x40 | network_name_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.27 | ETSI EN 300 468 §6.2.28 (tag 0x40) | [`NetworkNameDescriptor`](../src/descriptors/network_name.rs) | Full |
-| 0x41 | service_list_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.35 | ETSI EN 300 468 §6.2.36 (tag 0x41) | [`ServiceListDescriptor`](../src/descriptors/service_list.rs) | Full |
-| 0x42 | stuffing_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.40 | ETSI EN 300 468 §6.2.41 (tag 0x42) | [`StuffingDescriptor`](../src/descriptors/stuffing.rs) | Full |
+| 0x40 | network_name_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.27 | ETSI EN 300 468 V1.20.1 §6.2.27 (tag 0x40) | [`NetworkNameDescriptor`](../src/descriptors/network_name.rs) | Full |
+| 0x41 | service_list_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.35 | ETSI EN 300 468 V1.20.1 §6.2.35 (tag 0x41) | [`ServiceListDescriptor`](../src/descriptors/service_list.rs) | Full |
+| 0x42 | stuffing_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.40 | ETSI EN 300 468 V1.20.1 §6.2.40 (tag 0x42) | [`StuffingDescriptor`](../src/descriptors/stuffing.rs) | Full |
 | 0x43 | satellite_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.13.2 | ETSI EN 300 468 §6.2.13.2 (tag 0x43) | [`SatelliteDeliverySystemDescriptor`](../src/descriptors/satellite_delivery_system.rs) | Full |
 | 0x44 | cable_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.13.1 | ETSI EN 300 468 §6.2.13.1 (tag 0x44) | [`CableDeliverySystemDescriptor`](../src/descriptors/cable_delivery_system.rs) | Full |
 | 0x45 | VBI_data_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.47 | ETSI EN 300 468 §6.2.47 (tag 0x45) | [`VbiDataDescriptor`](../src/descriptors/vbi_data.rs) | Full |
 | 0x46 | VBI_teletext_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.48 | ETSI EN 300 468 §6.2.48 (tag 0x46) | [`VbiTeletextDescriptor`](../src/descriptors/vbi_teletext.rs) | Full |
-| 0x47 | bouquet_name_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.4 | ETSI EN 300 468 §6.2.6 (tag 0x47) | [`BouquetNameDescriptor`](../src/descriptors/bouquet_name.rs) | Full |
+| 0x47 | bouquet_name_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.4 | ETSI EN 300 468 V1.20.1 §6.2.4 (tag 0x47) | [`BouquetNameDescriptor`](../src/descriptors/bouquet_name.rs) | Full |
 | 0x48 | service_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.33 | ETSI EN 300 468 §6.2.33 (tag 0x48) | [`ServiceDescriptor`](../src/descriptors/service.rs) | Full |
 | 0x49 | country_availability_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.10 | ETSI EN 300 468 §6.2.10 (tag 0x49) | [`CountryAvailabilityDescriptor`](../src/descriptors/country_availability.rs) | Full |
 | 0x4A | linkage_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.19 | ETSI EN 300 468 §6.2.19 (tag 0x4A) | [`LinkageDescriptor`](../src/descriptors/linkage.rs) | Partial — linkage_type 0x09/0x0A (SSU), 0x0B/0x0C (IP/MAC), 0x20 (TTML fonts) and user-defined conditional blocks kept as raw `LinkageData::Other` |
-| 0x4B | NVOD_reference_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.26 | ETSI EN 300 468 §6.2.28 (tag 0x4B) | [`NvodReferenceDescriptor`](../src/descriptors/nvod_reference.rs) | Full |
+| 0x4B | NVOD_reference_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.26 | ETSI EN 300 468 V1.20.1 §6.2.26 (tag 0x4B) | [`NvodReferenceDescriptor`](../src/descriptors/nvod_reference.rs) | Full |
 | 0x4C | time_shifted_service_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.45 | ETSI EN 300 468 §6.2.45 (tag 0x4C) | [`TimeShiftedServiceDescriptor`](../src/descriptors/time_shifted_service.rs) | Full |
 | 0x4D | short_event_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.37 | ETSI EN 300 468 §6.2.37 (tag 0x4D) | [`ShortEventDescriptor`](../src/descriptors/short_event.rs) | Full |
-| 0x4E | extended_event_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.15 | ETSI EN 300 468 §6.2.16 (tag 0x4E) | [`ExtendedEventDescriptor`](../src/descriptors/extended_event.rs) | Full |
+| 0x4E | extended_event_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.15 | ETSI EN 300 468 V1.20.1 §6.2.15 (tag 0x4E) | [`ExtendedEventDescriptor`](../src/descriptors/extended_event.rs) | Full |
 | 0x4F | time_shifted_event_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.44 | ETSI EN 300 468 §6.2.44 (tag 0x4F) | [`TimeShiftedEventDescriptor`](../src/descriptors/time_shifted_event.rs) | Full |
 | 0x50 | component_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.8 | ETSI EN 300 468 §6.2.8 (tag 0x50) | [`ComponentDescriptor`](../src/descriptors/component.rs) | Full |
 | 0x51 | mosaic_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.21 | ETSI EN 300 468 §6.2.21 (tag 0x51) | [`MosaicDescriptor`](../src/descriptors/mosaic.rs) | Full |
-| 0x52 | stream_identifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.39 | ETSI EN 300 468 §6.2.41 (tag 0x52) | [`StreamIdentifierDescriptor`](../src/descriptors/stream_identifier.rs) | Full |
-| 0x53 | CA_identifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.5 | ETSI EN 300 468 §6.2.6 (tag 0x53) | [`CaIdentifierDescriptor`](../src/descriptors/ca_identifier.rs) | Full |
+| 0x52 | stream_identifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.39 | ETSI EN 300 468 V1.20.1 §6.2.39 (tag 0x52) | [`StreamIdentifierDescriptor`](../src/descriptors/stream_identifier.rs) | Full |
+| 0x53 | CA_identifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.5 | ETSI EN 300 468 V1.20.1 §6.2.5 (tag 0x53) | [`CaIdentifierDescriptor`](../src/descriptors/ca_identifier.rs) | Full |
 | 0x54 | content_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.9 | ETSI EN 300 468 §6.2.9 (tag 0x54) | [`ContentDescriptor`](../src/descriptors/content.rs) | Full |
-| 0x55 | parental_rating_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.28 | ETSI EN 300 468 §6.2.30 (tag 0x55) | [`ParentalRatingDescriptor`](../src/descriptors/parental_rating.rs) | Full |
-| 0x56 | teletext_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.43 | ETSI EN 300 468 §6.2.44 (tag 0x56) | [`TeletextDescriptor`](../src/descriptors/teletext.rs) | Full |
+| 0x55 | parental_rating_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.28 | ETSI EN 300 468 V1.20.1 §6.2.28 (tag 0x55) | [`ParentalRatingDescriptor`](../src/descriptors/parental_rating.rs) | Full |
+| 0x56 | teletext_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.43 | ETSI EN 300 468 V1.20.1 §6.2.43 (tag 0x56) | [`TeletextDescriptor`](../src/descriptors/teletext.rs) | Full |
 | 0x57 | telephone_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.42 | ETSI EN 300 468 §6.2.42 (tag 0x57) | [`TelephoneDescriptor`](../src/descriptors/telephone.rs) | Full |
 | 0x58 | local_time_offset_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.20 | ETSI EN 300 468 §6.2.20 (tag 0x58) | [`LocalTimeOffsetDescriptor`](../src/descriptors/local_time_offset.rs) | Full |
-| 0x59 | subtitling_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.41 | ETSI EN 300 468 §6.2.42 (tag 0x59) | [`SubtitlingDescriptor`](../src/descriptors/subtitling.rs) | Full |
+| 0x59 | subtitling_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.41 | ETSI EN 300 468 V1.20.1 §6.2.41 (tag 0x59) | [`SubtitlingDescriptor`](../src/descriptors/subtitling.rs) | Full |
 | 0x5A | terrestrial_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.13.4 | ETSI EN 300 468 §6.2.13.4 (tag 0x5A) | [`TerrestrialDeliverySystemDescriptor`](../src/descriptors/terrestrial_delivery_system.rs) | Full |
 | 0x5B | multilingual_network_name_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.24 | ETSI EN 300 468 §6.2.24 (tag 0x5B) | [`MultilingualNetworkNameDescriptor`](../src/descriptors/multilingual_network_name.rs) | Full |
 | 0x5C | multilingual_bouquet_name_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.22 | ETSI EN 300 468 §6.2.22 (tag 0x5C) | [`MultilingualBouquetNameDescriptor`](../src/descriptors/multilingual_bouquet_name.rs) | Full |
 | 0x5D | multilingual_service_name_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.25 | ETSI EN 300 468 §6.2.25 (tag 0x5D) | [`MultilingualServiceNameDescriptor`](../src/descriptors/multilingual_service_name.rs) | Full |
 | 0x5E | multilingual_component_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.23 | ETSI EN 300 468 §6.2.23 (tag 0x5E) | [`MultilingualComponentDescriptor`](../src/descriptors/multilingual_component.rs) | Full |
 | 0x5F | private_data_specifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.31 | ETSI EN 300 468 §6.2.31 (tag 0x5F) | [`PrivateDataSpecifierDescriptor`](../src/descriptors/private_data_specifier.rs) | Full |
-| 0x60 | service_move_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.36 | ETSI EN 300 468 §6.2.37 (tag 0x60) | [`ServiceMoveDescriptor`](../src/descriptors/service_move.rs) | Full |
+| 0x60 | service_move_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.36 | ETSI EN 300 468 V1.20.1 §6.2.36 (tag 0x60) | [`ServiceMoveDescriptor`](../src/descriptors/service_move.rs) | Full |
 | 0x61 | short_smoothing_buffer_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.38 | ETSI EN 300 468 §6.2.38 (tag 0x61) | [`ShortSmoothingBufferDescriptor`](../src/descriptors/short_smoothing_buffer.rs) | Full |
 | 0x62 | frequency_list_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.17 | ETSI EN 300 468 §6.2.17 (tag 0x62) | [`FrequencyListDescriptor`](../src/descriptors/frequency_list.rs) | Full |
 | 0x63 | partial_transport_stream_descriptor | ETSI EN 300 468 V1.20.1 | 7.2.1 | ETSI EN 300 468 §7.2.1 (tag 0x63) | [`PartialTransportStreamDescriptor`](../src/descriptors/partial_transport_stream.rs) | Full |
-| 0x64 | data_broadcast_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.11 | ETSI EN 300 468 §6.2.12 (tag 0x64) | [`DataBroadcastDescriptor`](../src/descriptors/data_broadcast.rs) | Partial — selector_byte kept raw (its meaning depends on data_broadcast_id) |
+| 0x64 | data_broadcast_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.11 | ETSI EN 300 468 V1.20.1 §6.2.11 (tag 0x64) | [`DataBroadcastDescriptor`](../src/descriptors/data_broadcast.rs) | Partial — selector_byte kept raw (its meaning depends on data_broadcast_id) |
 | 0x65 | scrambling_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.32 | ETSI EN 300 468 §6.2.32 (tag 0x65) | [`ScramblingDescriptor`](../src/descriptors/scrambling.rs) | Full |
-| 0x66 | data_broadcast_id_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.12 | ETSI EN 300 468 §6.2.13 (tag 0x66) | [`DataBroadcastIdDescriptor`](../src/descriptors/data_broadcast_id.rs) | Partial — id_selector typed for SSU (`data_broadcast_id` 0x000A); other ids kept as `IdSelector::Raw` |
+| 0x66 | data_broadcast_id_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.12 | ETSI EN 300 468 V1.20.1 §6.2.12 (tag 0x66) | [`DataBroadcastIdDescriptor`](../src/descriptors/data_broadcast_id.rs) | Partial — id_selector typed for SSU (`data_broadcast_id` 0x000A); other ids kept as `IdSelector::Raw` |
 | 0x67 | transport_stream_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.46 | ETSI EN 300 468 §6.2.46 (tag 0x67, Table 105, PDF p. 109) | [`TransportStreamDescriptor`](../src/descriptors/transport_stream.rs) | Full |
-| 0x68 | DSNG_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.14 | ETSI EN 300 468 §6.2.15 (tag 0x68, Table 52, PDF p. 78) | [`DsngDescriptor`](../src/descriptors/dsng.rs) | Full |
+| 0x68 | DSNG_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.14 | ETSI EN 300 468 V1.20.1 §6.2.14 (tag 0x68, Table 52, PDF p. 78) | [`DsngDescriptor`](../src/descriptors/dsng.rs) | Full |
 | 0x69 | PDC_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.30 | ETSI EN 300 468 §6.2.30 (tag 0x69, Table 84, PDF p. 97) | [`PdcDescriptor`](../src/descriptors/pdc.rs) | Full |
-| 0x6A | AC-3_descriptor | ETSI EN 300 468 V1.20.1 | D.3 | ETSI EN 300 468 Annex D (tag 0x6A) | [`Ac3Descriptor`](../src/descriptors/ac3.rs) | Full |
-| 0x6B | ancillary_data_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.2 | ETSI EN 300 468 §6.2.3 (tag 0x6B, Table 15, PDF p. 55) | [`AncillaryDataDescriptor`](../src/descriptors/ancillary_data.rs) | Full |
+| 0x6A | AC-3_descriptor | ETSI EN 300 468 V1.20.1 | D.3 | ETSI EN 300 468 V1.20.1 Annex D §D.3 (tag 0x6A) | [`Ac3Descriptor`](../src/descriptors/ac3.rs) | Full |
+| 0x6B | ancillary_data_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.2 | ETSI EN 300 468 V1.20.1 §6.2.2 (tag 0x6B, Table 15, PDF p. 55) | [`AncillaryDataDescriptor`](../src/descriptors/ancillary_data.rs) | Full |
 | 0x6C | cell_list_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.7 | ETSI EN 300 468 §6.2.7 (tag 0x6C, Table 24, PDF p. 58) | [`CellListDescriptor`](../src/descriptors/cell_list.rs) | Full |
-| 0x6D | cell_frequency_link_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.6 | ETSI EN 300 468 §6.2.7 (tag 0x6D, Table 23, PDF p. 58) | [`CellFrequencyLinkDescriptor`](../src/descriptors/cell_frequency_link.rs) | Full |
+| 0x6D | cell_frequency_link_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.6 | ETSI EN 300 468 V1.20.1 §6.2.6 (tag 0x6D, Table 23, PDF p. 58) | [`CellFrequencyLinkDescriptor`](../src/descriptors/cell_frequency_link.rs) | Full |
 | 0x6E | announcement_support_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.3 | ETSI EN 300 468 §6.2.3 (tag 0x6E, Table 17, PDF p. 56) | [`AnnouncementSupportDescriptor`](../src/descriptors/announcement_support.rs) | Full |
-| 0x6F | application_signalling_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.1 | ETSI TS 102 809 §5.3.5.2.1, Table 17 (tag 0x6F) | [`ApplicationSignallingDescriptor`](../src/descriptors/application_signalling.rs) | Full |
+| 0x6F | application_signalling_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.1 | ETSI TS 102 809 V1.3.1 §5.3.5.1, Table 17 (tag 0x6F) | [`ApplicationSignallingDescriptor`](../src/descriptors/application_signalling.rs) | Full |
 | 0x70 | adaptation_field_data_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.1 | ETSI EN 300 468 §6.2.1 (tag 0x70, Table 13, PDF p. 54) | [`AdaptationFieldDataDescriptor`](../src/descriptors/adaptation_field_data.rs) | Full |
-| 0x71 | service_identifier_descriptor | ETSI TS 102 809 V1.3.1 | 6.2.1 | ETSI TS 102 809 §7.2, Table 39 (tag 0x71) | [`ServiceIdentifierDescriptor`](../src/descriptors/service_identifier.rs) | Full |
-| 0x72 | service_availability_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.34 | ETSI EN 300 468 §6.2.36 (tag 0x72, Table 90, PDF p. 101) | [`ServiceAvailabilityDescriptor`](../src/descriptors/service_availability.rs) | Full |
-| 0x73 | default_authority_descriptor | ETSI TS 102 323 V1.4.1 | 6.3.3 | ETSI TS 102 323 §12.2.1 (tag 0x73) | [`DefaultAuthorityDescriptor`](../src/descriptors/default_authority.rs) | Full |
+| 0x71 | service_identifier_descriptor | ETSI TS 102 809 V1.3.1 | 6.2.1 | ETSI TS 102 809 V1.3.1 §6.2.1, Table 39 (tag 0x71) | [`ServiceIdentifierDescriptor`](../src/descriptors/service_identifier.rs) | Full |
+| 0x72 | service_availability_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.34 | ETSI EN 300 468 V1.20.1 §6.2.34 (tag 0x72, Table 90, PDF p. 101) | [`ServiceAvailabilityDescriptor`](../src/descriptors/service_availability.rs) | Full |
+| 0x73 | default_authority_descriptor | ETSI TS 102 323 V1.4.1 | 6.3.3 | ETSI TS 102 323 V1.4.1 §6.3.3 (tag 0x73) | [`DefaultAuthorityDescriptor`](../src/descriptors/default_authority.rs) | Full |
 | 0x74 | related_content_descriptor | ETSI TS 102 323 V1.4.1 | — | ETSI TS 102 323 §10.4.1, Table 108 (tag 0x74) | [`RelatedContentDescriptor`](../src/descriptors/related_content.rs) | Full |
 | 0x75 | TVA_id_descriptor | ETSI TS 102 323 V1.4.1 | 11.2.4 | ETSI TS 102 323 §11.2.4, Table 114 (tag 0x75) | [`TvaIdDescriptor`](../src/descriptors/tva_id.rs) | Full |
 | 0x76 | content_identifier_descriptor | ETSI TS 102 323 V1.4.1 | — | ETSI TS 102 323 §12.1 (tag 0x76) | [`ContentIdentifierDescriptor`](../src/descriptors/content_identifier.rs) | Full |
 | 0x77 | time_slice_fec_identifier_descriptor | ETSI EN 301 192 V1.7.1 | — | ETSI EN 301 192 §9.5 Table 40 / ETSI TS 102 772 §6.2 Table 4 (tag 0x77) | [`TimeSliceFecIdentifierDescriptor`](../src/descriptors/time_slice_fec_identifier.rs) | Full |
 | 0x78 | ECM_repetition_rate_descriptor | ETSI EN 301 192 V1.7.1 | — | ETSI EN 301 192 §9.9, Table 44 (tag 0x78) | [`EcmRepetitionRateDescriptor`](../src/descriptors/ecm_repetition_rate.rs) | Full |
 | 0x79 | S2_satellite_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.13.3 | ETSI EN 300 468 §6.2.13.3 (tag 0x79) | [`S2SatelliteDeliverySystemDescriptor`](../src/descriptors/s2_satellite_delivery_system.rs) | Full |
-| 0x7A | enhanced_AC-3_descriptor | ETSI EN 300 468 V1.20.1 | D.5 | ETSI EN 300 468 Annex D (tag 0x7A) | [`EnhancedAc3Descriptor`](../src/descriptors/enhanced_ac3.rs) | Full |
-| 0x7B | DTS_descriptor | ETSI EN 300 468 V1.20.1 | G.2.1 | ETSI EN 300 468 Annex G, Table G.1 (tag 0x7B) | [`DtsDescriptor`](../src/descriptors/dts.rs) | Full |
-| 0x7C | AAC_descriptor | ETSI EN 300 468 V1.20.1 | H.2.1 | ETSI EN 300 468 Annex H, Table H.1 (tag 0x7C) | [`AacDescriptor`](../src/descriptors/aac.rs) | Full |
+| 0x7A | enhanced_AC-3_descriptor | ETSI EN 300 468 V1.20.1 | D.5 | ETSI EN 300 468 V1.20.1 Annex D §D.5 (tag 0x7A) | [`EnhancedAc3Descriptor`](../src/descriptors/enhanced_ac3.rs) | Full |
+| 0x7B | DTS_descriptor | ETSI EN 300 468 V1.20.1 | G.2.1 | ETSI EN 300 468 V1.20.1 Annex G §G.2.1, Table G.1 (tag 0x7B) | [`DtsDescriptor`](../src/descriptors/dts.rs) | Full |
+| 0x7C | AAC_descriptor | ETSI EN 300 468 V1.20.1 | H.2.1 | ETSI EN 300 468 V1.20.1 Annex H §H.2.1, Table H.1 (tag 0x7C) | [`AacDescriptor`](../src/descriptors/aac.rs) | Full |
 | 0x7D | XAIT_location_descriptor | ETSI TS 102 727 V1.1.1 | — | ETSI TS 102 727 §10.17.6, Table 96 (tag 0x7D) | [`XaitLocationDescriptor`](../src/descriptors/xait_location.rs) | Full |
 | 0x7E | FTA_content_management_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.18 | ETSI EN 300 468 §6.2.18.1 (tag 0x7E, Table 57, PDF p. 82) | [`FtaContentManagementDescriptor`](../src/descriptors/fta_content_management.rs) | Full |
-| 0x7F | extension_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.16 | ETSI EN 300 468 §6.2.18.1 (tag 0x7F) | [`ExtensionDescriptor`](../src/descriptors/extension/mod.rs) | Full |
+| 0x7F | extension_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.16 | ETSI EN 300 468 V1.20.1 §6.2.16 (tag 0x7F) | [`ExtensionDescriptor`](../src/descriptors/extension/mod.rs) | Full |
 
 ## DVB extension descriptors (tag 0x7F, `descriptor_tag_extension`)
 
@@ -254,30 +254,30 @@ Allocated by ETSI EN 300 468 V1.20.1 Table 109 (0x12 and 0x1A–0x1F are reserve
 | 0x00 | image_icon_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.7 | ETSI EN 300 468 §6.4.7 (tag_extension 0x00) | [`ImageIcon`](../src/descriptors/extension/image_icon.rs) | Full |
 | 0x01 | cpcm_delivery_signalling_descriptor | ETSI TS 102 825-9 V1.2.1 | — | ETSI TS 102 825-9 §4.1.5, Table 2 (tag_extension 0x01); typed CPCM USI decode per ETSI TS 102 825-4 §5.4 Table 8 | [`CpcmDeliverySignalling`](../src/descriptors/extension/cpcm_delivery_signalling.rs) | Full |
 | 0x02 | CP_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.3 | ETSI EN 300 468 §6.4.3, Table 113 (tag_extension 0x02) | [`Cp`](../src/descriptors/extension/cp.rs) | Full |
-| 0x03 | CP_identifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.4 | ETSI EN 300 468 §6.4.6.1, Table 114 (tag_extension 0x03) | [`CpIdentifier`](../src/descriptors/extension/cp_identifier.rs) | Full |
+| 0x03 | CP_identifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.4 | ETSI EN 300 468 V1.20.1 §6.4.4, Table 114 (tag_extension 0x03) | [`CpIdentifier`](../src/descriptors/extension/cp_identifier.rs) | Full |
 | 0x04 | T2_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.6.3 | ETSI EN 300 468 §6.4.6.3 (tag_extension 0x04) | [`T2DeliverySystem`](../src/descriptors/extension/t2_delivery_system.rs) | Full |
 | 0x05 | SH_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.6.2 | ETSI EN 300 468 §6.4.6.2 (tag_extension 0x05) | [`ShDeliverySystem`](../src/descriptors/extension/sh_delivery_system.rs) | Full |
 | 0x06 | supplementary_audio_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.11 | ETSI EN 300 468 §6.4.11 (tag_extension 0x06) | [`SupplementaryAudio`](../src/descriptors/extension/supplementary_audio.rs) | Full |
 | 0x07 | network_change_notify_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.9 | ETSI EN 300 468 §6.4.9 (tag_extension 0x07) | [`NetworkChangeNotify`](../src/descriptors/extension/network_change_notify.rs) | Full |
-| 0x08 | message_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.8 | ETSI EN 300 468 §6.4.9 (tag_extension 0x08) | [`Message`](../src/descriptors/extension/message.rs) | Full |
+| 0x08 | message_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.8 | ETSI EN 300 468 V1.20.1 §6.4.8 (tag_extension 0x08) | [`Message`](../src/descriptors/extension/message.rs) | Full |
 | 0x09 | target_region_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.12 | ETSI EN 300 468 §6.4.12 (tag_extension 0x09) | [`TargetRegion`](../src/descriptors/extension/target_region.rs) | Full |
 | 0x0A | target_region_name_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.13 | ETSI EN 300 468 §6.4.13 (tag_extension 0x0A) | [`TargetRegionName`](../src/descriptors/extension/target_region_name.rs) | Full |
 | 0x0B | service_relocated_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.10 | ETSI EN 300 468 §6.4.10 (tag_extension 0x0B) | [`ServiceRelocated`](../src/descriptors/extension/service_relocated.rs) | Full |
 | 0x0C | XAIT_PID_descriptor | ETSI TS 102 727 V1.1.1 | 10.17.3 | ETSI TS 102 727 §10.17.3, Table 95 (extension descriptor: tag 0x7F, tag_extension 0x0C) | [`XaitPid`](../src/descriptors/extension/xait_pid.rs) | Full |
 | 0x0D | C2_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.6.1 | ETSI EN 300 468 §6.4.6.1 (tag_extension 0x0D) | [`C2DeliverySystem`](../src/descriptors/extension/c2_delivery_system.rs) | Full |
-| 0x0E | DTS-HD_descriptor | ETSI EN 300 468 V1.20.1 | G.3.1 | ETSI EN 300 468 Annex G.3, Tables G.6–G.10 (tag_extension 0x0E) | [`DtsHd`](../src/descriptors/extension/dts_hd.rs) | Full |
+| 0x0E | DTS-HD_descriptor | ETSI EN 300 468 V1.20.1 | G.3.1 | ETSI EN 300 468 V1.20.1 Annex G §G.3.1, Tables G.6–G.10 (tag_extension 0x0E) | [`DtsHd`](../src/descriptors/extension/dts_hd.rs) | Full |
 | 0x0F | DTS_Neural_descriptor | ETSI EN 300 468 V1.20.1 | L.1 | ETSI EN 300 468 Annex L.1, Table L.1 (tag_extension 0x0F) | [`DtsNeural`](../src/descriptors/extension/dts_neural.rs) | Full |
 | 0x10 | video_depth_range_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.16 | ETSI EN 300 468 §6.4.16.1 (tag_extension 0x10) | [`VideoDepthRange`](../src/descriptors/extension/video_depth_range.rs) | Full |
 | 0x11 | T2MI_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.14 | ETSI EN 300 468 §6.4.14 (tag_extension 0x11) | [`T2mi`](../src/descriptors/extension/t2mi.rs) | Full |
-| 0x13 | URI_linkage_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.15 | ETSI EN 300 468 §6.4.16.1 (tag_extension 0x13) | [`UriLinkage`](../src/descriptors/extension/uri_linkage.rs) | Full |
-| 0x14 | CI_ancillary_data_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.2 | ETSI EN 300 468 §6.4.3, Table 112 (tag_extension 0x14) | [`CiAncillaryData`](../src/descriptors/extension/ci_ancillary_data.rs) | Full |
-| 0x15 | AC-4_descriptor | ETSI EN 300 468 V1.20.1 | D.7 | ETSI EN 300 468 Annex D, §D.5 (tag_extension 0x15) | [`Ac4`](../src/descriptors/extension/ac4.rs) | Partial — `ac4_toc()` kept opaque (its syntax is in ETSI TS 103 190-2; issue #102) |
+| 0x13 | URI_linkage_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.15 | ETSI EN 300 468 V1.20.1 §6.4.15 (tag_extension 0x13) | [`UriLinkage`](../src/descriptors/extension/uri_linkage.rs) | Full |
+| 0x14 | CI_ancillary_data_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.2 | ETSI EN 300 468 V1.20.1 §6.4.2, Table 112 (tag_extension 0x14) | [`CiAncillaryData`](../src/descriptors/extension/ci_ancillary_data.rs) | Full |
+| 0x15 | AC-4_descriptor | ETSI EN 300 468 V1.20.1 | D.7 | ETSI EN 300 468 V1.20.1 Annex D §D.7 (tag_extension 0x15) | [`Ac4`](../src/descriptors/extension/ac4.rs) | Partial — `ac4_toc()` kept opaque (its syntax is in ETSI TS 103 190-2; issue #102) |
 | 0x16 | C2_bundle_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.6.4 | ETSI EN 300 468 §6.4.6.4 (tag_extension 0x16) | [`C2BundleDeliverySystem`](../src/descriptors/extension/c2_bundle_delivery_system.rs) | Full |
 | 0x17 | S2X_satellite_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.6.5.2 | ETSI EN 300 468 §6.4.6.5.2 (tag_extension 0x17) | [`S2XSatelliteDeliverySystem`](../src/descriptors/extension/s2x_satellite_delivery_system.rs) | Full |
 | 0x18 | protection_message_descriptor | ETSI TS 102 809 V1.3.1 | — | ETSI TS 102 809 §9.3.3, Table 40 (tag_extension 0x18) | [`ProtectionMessage`](../src/descriptors/extension/protection_message.rs) | Full |
 | 0x19 | audio_preselection_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.1 | ETSI EN 300 468 §6.4.1 (tag_extension 0x19) | [`AudioPreselection`](../src/descriptors/extension/audio_preselection.rs) | Full |
 | 0x20 | TTML_subtitling_descriptor | ETSI EN 303 560 V1.1.1 | — | ETSI EN 303 560 §5.2.1.1 (tag_extension 0x20) | [`TtmlSubtitling`](../src/descriptors/extension/ttml_subtitling.rs) | Full |
-| 0x21 | DTS-UHD_descriptor | ETSI EN 300 468 V1.20.1 | G.5.1 | ETSI EN 300 468 Annex G.5, Table G.15 (tag_extension 0x21) | [`DtsUhd`](../src/descriptors/extension/dts_uhd.rs) | Full |
+| 0x21 | DTS-UHD_descriptor | ETSI EN 300 468 V1.20.1 | G.5.1 | ETSI EN 300 468 V1.20.1 Annex G §G.5.1, Table G.15 (tag_extension 0x21) | [`DtsUhd`](../src/descriptors/extension/dts_uhd.rs) | Full |
 | 0x22 | service_prominence_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.18 | ETSI EN 300 468 §6.4.18 (tag_extension 0x22) | [`ServiceProminence`](../src/descriptors/extension/service_prominence.rs) | Full |
 | 0x23 | vvc_subpictures_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.17 | ETSI EN 300 468 §6.4.17 (tag_extension 0x23) | [`VvcSubpictures`](../src/descriptors/extension/vvc_subpictures.rs) | Full |
 | 0x24 | S2Xv2_satellite_delivery_system_descriptor | ETSI EN 300 468 V1.20.1 | 6.4.6.5.3 | ETSI EN 300 468 §6.4.6.5.3 (tag_extension 0x24) | [`S2Xv2SatelliteDeliverySystem`](../src/descriptors/extension/s2xv2_satellite_delivery_system.rs) | Full |
@@ -341,7 +341,7 @@ Table 38 (HbbTV) plus the MHP-only tags of ETSI TS 102 727 V1.1.1.
 | tag | Descriptor | Standard | Clause (verified) | Source cites | Rust type | Status |
 |---|---|---|---|---|---|---|
 | 0x00 | application_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.3 | ETSI TS 102 809 §5.3.5.3, Table 20 (AIT tag 0x00) | [`ApplicationDescriptor`](../src/descriptors/ait/application.rs) | Full |
-| 0x01 | application_name_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.6.1 | ETSI TS 102 809 §5.3.5.6.2, Table 24 (AIT tag 0x01) | [`ApplicationNameDescriptor`](../src/descriptors/ait/application_name.rs) | Full |
+| 0x01 | application_name_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.6.1 | ETSI TS 102 809 V1.3.1 §5.3.5.6.1, Table 24 (AIT tag 0x01) | [`ApplicationNameDescriptor`](../src/descriptors/ait/application_name.rs) | Full |
 | 0x02 | transport_protocol_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.6 | ETSI TS 102 809 §5.3.6.1, Table 28 (AIT tag 0x02) | [`TransportProtocolDescriptor`](../src/descriptors/ait/transport_protocol.rs) | Full |
 | 0x03 | DVB-J_application_descriptor | ETSI TS 102 727 V1.1.1 | 10.9.1 | ETSI TS 102 727 §10.9.1, Table 84 (AIT tag 0x03) | [`DvbJApplicationDescriptor`](../src/descriptors/ait/dvb_j_application.rs) | Full |
 | 0x04 | DVB-J_application_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.9.2 | ETSI TS 102 727 §10.9.2, Table 85 (AIT tag 0x04) | [`DvbJApplicationLocationDescriptor`](../src/descriptors/ait/dvb_j_application_location.rs) | Full |
@@ -510,45 +510,14 @@ Tracking: wrong-namespace decoding of INT/UNT/RNT loops is issue #1285.
 
 ## Citation cross-check
 
-Rows where the clause named in a module's `//!` doc differs from the clause verified against
-the edition in the Standard column. Most are clause numbers carried over from an older
-edition; they are tracked in issue #1287 and disappear from this list as
-the module docs are corrected.
+Every module's `//!` citation is compared with the clause verified against the edition in
+the Standard column. The generator (and so the `docs_coverage_drift` test) **fails** if a
+module cites a clause that is neither the verified clause nor a sub-clause of it (issue
+#1287); reasoned exceptions live in `CITATION_ALLOWLIST` in
+`tools/gen-dvbsi-coverage.py`.
 
-| Code | Module | Module doc cites | Verified clause (edition) |
-|---|---|---|---|
-| table_id 0x00 | [`src/tables/pat.rs`](../src/tables/pat.rs) | 2.4.4.3 | 2.4.4.4 (ITU-T H.222.0 (08/2023)) |
-| table_id 0x01 | [`src/tables/cat.rs`](../src/tables/cat.rs) | 2.4.4.6 | 2.4.4.7 (ITU-T H.222.0 (08/2023)) |
-| table_id 0x02 | [`src/tables/pmt.rs`](../src/tables/pmt.rs) | 2.4.4.8 | 2.4.4.9 (ITU-T H.222.0 (08/2023)) |
-| table_id 0x03 | [`src/tables/tsdt.rs`](../src/tables/tsdt.rs) | 2.4.5 | 2.4.4.13 (ITU-T H.222.0 (08/2023)) |
-| table_id 0x71 | [`src/tables/rst.rs`](../src/tables/rst.rs) | 5.2.8 | 5.2.7 (ETSI EN 300 468 V1.20.1) |
-| table_id 0x7E | [`src/tables/dit.rs`](../src/tables/dit.rs) | 7.1.2 | 7.1.1 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x05 | [`src/descriptors/registration.rs`](../src/descriptors/registration.rs) | 2.6.13 | 2.6.8 (ITU-T H.222.0 (08/2023)) |
-| descriptor_tag 0x0A | [`src/descriptors/iso_639_language.rs`](../src/descriptors/iso_639_language.rs) | 2.6.19 | 2.6.18 (ITU-T H.222.0 (08/2023)) |
-| descriptor_tag 0x40 | [`src/descriptors/network_name.rs`](../src/descriptors/network_name.rs) | 6.2.28 | 6.2.27 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x41 | [`src/descriptors/service_list.rs`](../src/descriptors/service_list.rs) | 6.2.36 | 6.2.35 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x42 | [`src/descriptors/stuffing.rs`](../src/descriptors/stuffing.rs) | 6.2.41 | 6.2.40 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x47 | [`src/descriptors/bouquet_name.rs`](../src/descriptors/bouquet_name.rs) | 6.2.6 | 6.2.4 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x4B | [`src/descriptors/nvod_reference.rs`](../src/descriptors/nvod_reference.rs) | 6.2.28 | 6.2.26 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x4E | [`src/descriptors/extended_event.rs`](../src/descriptors/extended_event.rs) | 6.2.16 | 6.2.15 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x52 | [`src/descriptors/stream_identifier.rs`](../src/descriptors/stream_identifier.rs) | 6.2.41 | 6.2.39 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x53 | [`src/descriptors/ca_identifier.rs`](../src/descriptors/ca_identifier.rs) | 6.2.6 | 6.2.5 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x55 | [`src/descriptors/parental_rating.rs`](../src/descriptors/parental_rating.rs) | 6.2.30 | 6.2.28 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x56 | [`src/descriptors/teletext.rs`](../src/descriptors/teletext.rs) | 6.2.44 | 6.2.43 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x59 | [`src/descriptors/subtitling.rs`](../src/descriptors/subtitling.rs) | 6.2.42 | 6.2.41 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x60 | [`src/descriptors/service_move.rs`](../src/descriptors/service_move.rs) | 6.2.37 | 6.2.36 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x64 | [`src/descriptors/data_broadcast.rs`](../src/descriptors/data_broadcast.rs) | 6.2.12 | 6.2.11 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x66 | [`src/descriptors/data_broadcast_id.rs`](../src/descriptors/data_broadcast_id.rs) | 6.2.13 | 6.2.12 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x68 | [`src/descriptors/dsng.rs`](../src/descriptors/dsng.rs) | 6.2.15 | 6.2.14 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x6B | [`src/descriptors/ancillary_data.rs`](../src/descriptors/ancillary_data.rs) | 6.2.3 | 6.2.2 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x6D | [`src/descriptors/cell_frequency_link.rs`](../src/descriptors/cell_frequency_link.rs) | 6.2.7 | 6.2.6 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x6F | [`src/descriptors/application_signalling.rs`](../src/descriptors/application_signalling.rs) | 5.3.5.2.1 | 5.3.5.1 (ETSI TS 102 809 V1.3.1) |
-| descriptor_tag 0x71 | [`src/descriptors/service_identifier.rs`](../src/descriptors/service_identifier.rs) | 7.2 | 6.2.1 (ETSI TS 102 809 V1.3.1) |
-| descriptor_tag 0x72 | [`src/descriptors/service_availability.rs`](../src/descriptors/service_availability.rs) | 6.2.36 | 6.2.34 (ETSI EN 300 468 V1.20.1) |
-| descriptor_tag 0x73 | [`src/descriptors/default_authority.rs`](../src/descriptors/default_authority.rs) | 12.2.1 | 6.3.3 (ETSI TS 102 323 V1.4.1) |
-| descriptor_tag 0x7F | [`src/descriptors/extension/mod.rs`](../src/descriptors/extension/mod.rs) | 6.2.18.1 | 6.2.16 (ETSI EN 300 468 V1.20.1) |
-| dvb_extension_tag 0x03 | [`src/descriptors/extension/cp_identifier.rs`](../src/descriptors/extension/cp_identifier.rs) | 6.4.6.1 | 6.4.4 (ETSI EN 300 468 V1.20.1) |
-| dvb_extension_tag 0x08 | [`src/descriptors/extension/message.rs`](../src/descriptors/extension/message.rs) | 6.4.9 | 6.4.8 (ETSI EN 300 468 V1.20.1) |
-| dvb_extension_tag 0x13 | [`src/descriptors/extension/uri_linkage.rs`](../src/descriptors/extension/uri_linkage.rs) | 6.4.16.1 | 6.4.15 (ETSI EN 300 468 V1.20.1) |
-| dvb_extension_tag 0x14 | [`src/descriptors/extension/ci_ancillary_data.rs`](../src/descriptors/extension/ci_ancillary_data.rs) | 6.4.3 | 6.4.2 (ETSI EN 300 468 V1.20.1) |
-| ait_descriptor_tag 0x01 | [`src/descriptors/ait/application_name.rs`](../src/descriptors/ait/application_name.rs) | 5.3.5.6.2 | 5.3.5.6.1 (ETSI TS 102 809 V1.3.1) |
+Every module citation that names a clause agrees with the verified clause.
+
+173 implemented rows have their clause verified against the rendered PDF page
+(`verified_page` column of `coverage/allocations.tsv`); 74 not-implemented rows
+carry a clause that is not yet page-verified (nothing cites it).

@@ -1,5 +1,5 @@
 ## Table 85 — Private data specifier descriptor
-_§6.2.32, PDF pp. 98-98_
+_§6.2.31, PDF pp. 98-98_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

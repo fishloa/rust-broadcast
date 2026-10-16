@@ -1,5 +1,5 @@
 ## Table 24 — Application name descriptor syntax
-_§5.3.5.6.2, PDF pp. 42-42_
+_§5.3.5.6.1, PDF pp. 42-42_
 
 |  | No.of bits | Identifier | Value |
 |---|---|---|---|

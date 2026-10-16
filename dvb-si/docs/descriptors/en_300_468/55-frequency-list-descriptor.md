@@ -1,5 +1,5 @@
 ## Table 55 — Frequency list descriptor
-_§6.2.18.1, PDF pp. 80-80_
+_§6.2.17, PDF pp. 80-80_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

@@ -1,5 +1,5 @@
 ## Table 103 — Time shifted event descriptor
-_§6.2.46, PDF pp. 109-109_
+_§6.2.44, PDF pp. 109-109_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

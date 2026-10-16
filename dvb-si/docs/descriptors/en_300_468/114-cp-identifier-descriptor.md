@@ -1,5 +1,5 @@
 ## Table 114 — CP identifier descriptor
-_§6.4.6.1, PDF pp. 117-117_
+_§6.4.4, PDF pp. 117-117_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

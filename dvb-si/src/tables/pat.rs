@@ -1,4 +1,4 @@
-//! Program Association Table — MPEG-2 ISO/IEC 13818-1 §2.4.4.3.
+//! Program Association Table — MPEG-2 ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.4.
 //!
 //! PAT is carried on PID 0x0000 with table_id 0x00. It maps
 //! program_number values to the PID on which their PMT is carried.
@@ -31,7 +31,7 @@ pub struct PatEntry {
     pub program_number: u16,
     /// PMT PID (or NIT PID when program_number == 0).
     pub pid: Pid,
-    /// `reserved(3)` before the PID (ISO/IEC 13818-1 §2.4.4.3, `111`);
+    /// `reserved(3)` before the PID (ISO/IEC 13818-1 §2.4.4.4, `111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub reserved: u8,
