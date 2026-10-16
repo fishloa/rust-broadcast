@@ -1,5 +1,5 @@
 ## Table 22 — Syntax of the target_IP_address_descriptor
-_§9.5.2, PDF pp. 26-26_
+_§9.5.2.3, PDF pp. 26-26_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

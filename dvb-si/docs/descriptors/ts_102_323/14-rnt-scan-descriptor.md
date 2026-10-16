@@ -1,5 +1,5 @@
 ## Table 14 — RNT scan descriptor
-_§5.3.8.1, PDF pp. 26-26_
+_§5.3.7, PDF pp. 26-26_
 
 | Syntax | No. of bits | Identifier |
 |---|---|---|

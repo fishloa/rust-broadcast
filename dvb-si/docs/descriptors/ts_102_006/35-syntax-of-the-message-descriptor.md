@@ -1,5 +1,5 @@
 ## Table 35 — Syntax of the message_descriptor
-_§9.5.2.11, PDF pp. 33-33_
+_§9.5.2.12, PDF pp. 33-33_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

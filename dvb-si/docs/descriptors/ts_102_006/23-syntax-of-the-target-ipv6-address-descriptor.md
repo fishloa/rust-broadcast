@@ -1,5 +1,5 @@
 ## Table 23 — Syntax of the target_IPv6_address_descriptor
-_§9.5.2, PDF pp. 27-27_
+_§9.5.2.4, PDF pp. 27-27_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

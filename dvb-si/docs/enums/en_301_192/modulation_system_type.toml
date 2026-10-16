@@ -1,0 +1,27 @@
+# ETSI EN 301 192 §8.4.5.15 Table 34 — modulation_system_type
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "Dvbs2"
+spec = "DVB-S2"
+
+[[entry]]
+value = 0x01
+variant = "Dvbt2"
+spec = "DVB-T2"
+
+[[entry]]
+value = 0x02
+variant = "Dvbc2"
+spec = "DVB-C2"
+
+[[entry]]
+value = 0x03
+variant = "DvbNgh"
+spec = "DVB-NGH"
+
+[[entry]]
+value = 0x04
+variant = "Dvbs2x"
+spec = "DVB-S2X"

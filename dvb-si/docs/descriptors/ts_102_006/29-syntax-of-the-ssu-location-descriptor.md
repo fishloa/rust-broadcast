@@ -1,5 +1,5 @@
 ## Table 29 — Syntax of the SSU_location_descriptor
-_§9.5.2.8, PDF pp. 29-29_
+_§9.5.2.7, PDF pp. 29-29_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

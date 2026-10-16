@@ -1,5 +1,5 @@
 ## Table 22 — Syntax of the target_serial_number_descriptor
-_§8.4.5.3, PDF pp. 32-32_
+_§8.4.5.4, PDF pp. 32-32_
 
 | Name | No. of bits | Identifier | Remarks |
 |---|---|---|---|

@@ -1,5 +1,5 @@
 ## Table 37 — Syntax of the enhanced_message_descriptor
-_§9.5.2.11, PDF pp. 34-34_
+_§9.5.2.14, PDF pp. 34-34_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

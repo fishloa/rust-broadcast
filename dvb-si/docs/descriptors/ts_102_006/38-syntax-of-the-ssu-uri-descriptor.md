@@ -1,5 +1,5 @@
 ## Table 38 — Syntax of the ssu_uri_descriptor
-_§9.5.2.11, PDF pp. 35-35_
+_§9.5.2.15, PDF pp. 35-35_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

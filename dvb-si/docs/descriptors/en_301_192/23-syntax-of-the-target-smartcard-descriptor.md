@@ -1,5 +1,5 @@
 ## Table 23 — Syntax of the target_smartcard_descriptor
-_§8.4.5.3, PDF pp. 33-33_
+_§8.4.5.5, PDF pp. 33-33_
 
 | Name | No. of bits | Identifier | Remarks |
 |---|---|---|---|
