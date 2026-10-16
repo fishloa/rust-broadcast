@@ -158,7 +158,10 @@ impl TsFixBuilder {
     /// program → PMT PID mappings. The regenerated PAT listing exactly the
     /// observed programs replaces the original PAT in position as it passes; if
     /// the input carries no PAT slot at all, one is emitted as soon as the
-    /// program mapping is complete, or at end-of-stream as a fallback.
+    /// program mapping is complete, or at end-of-stream as a fallback. If a
+    /// filter dropped every PMT, a program-less PAT (ITU-T H.222.0 Table 2-30
+    /// allows an empty program loop) is emitted at end-of-stream instead of
+    /// no PAT at all.
     ///
     /// # Example — filter to one service, then regenerate PAT
     ///

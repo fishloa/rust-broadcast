@@ -1222,7 +1222,11 @@ fn assert_pat_pid_continuous(ts: &[u8]) {
         .map(|p| p[3] & 0x0F)
         .collect();
     for w in ccs.windows(2) {
-        assert_eq!(w[1], (w[0] + 1) % 16, "PAT PID CC must be continuous: {ccs:?}");
+        assert_eq!(
+            w[1],
+            (w[0] + 1) % 16,
+            "PAT PID CC must be continuous: {ccs:?}"
+        );
     }
 }
 
@@ -1248,7 +1252,11 @@ fn assert_pat_consistent_with_pmts(output: &[u8]) -> PatSection {
     let pmts = pmt_pids_in(output);
     for e in &pat.entries {
         if e.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT {
-            assert!(pmts.contains(&e.pid), "PAT references absent PMT PID {:?}", e.pid);
+            assert!(
+                pmts.contains(&e.pid),
+                "PAT references absent PMT PID {:?}",
+                e.pid
+            );
         }
     }
     pat
@@ -1285,7 +1293,10 @@ fn two_program_keep_without_any_pmt_keeps_programless_pat() {
             .regen_psi()
     });
     let pat = assert_pat_consistent_with_pmts(&output);
-    assert!(pat.entries.is_empty(), "no PMT survives: PAT lists no program");
+    assert!(
+        pat.entries.is_empty(),
+        "no PMT survives: PAT lists no program"
+    );
 }
 
 /// Two programs: PMT1 kept, PMT2 dropped. PAT must list only program 1.
