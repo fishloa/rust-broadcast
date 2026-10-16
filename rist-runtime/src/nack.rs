@@ -40,6 +40,44 @@ fn unpadded_end(bytes: &[u8], total_len: usize) -> Result<usize> {
     Ok(total_len - count)
 }
 
+/// The RFC 3550 §6.4.1 padding octets of a padded sub-packet (everything the
+/// count covers except the count byte itself, which is re-derived on
+/// serialize), plus validation that the unpadded body ends on a whole entry:
+/// a count that leaves a partial FCI / range entry behind is neither entry
+/// nor padding and is rejected rather than silently dropped.
+fn padding_region(
+    bytes: &[u8],
+    total_len: usize,
+    end: usize,
+    min_len: usize,
+    entry_len: usize,
+) -> Result<Vec<u8>> {
+    if end == total_len {
+        return Ok(Vec::new());
+    }
+    if !(end - min_len).is_multiple_of(entry_len) {
+        return Err(Error::InvalidPaddingCount {
+            count: total_len - end,
+            body: total_len - RTCP_HEADER_LEN,
+        });
+    }
+    Ok(bytes[end..total_len - 1].to_vec())
+}
+
+/// Validate a caller-set padding region (`padding.len() + 1` is the RFC 3550
+/// count byte, which must fit a `u8` and keep the packet word-aligned) and
+/// return the total padding length including the count byte (0 = no padding).
+fn padding_total(padding: &[u8], body: usize) -> Result<usize> {
+    if padding.is_empty() {
+        return Ok(0);
+    }
+    let count = padding.len() + 1;
+    if count > usize::from(u8::MAX) || !count.is_multiple_of(WORD_LEN) {
+        return Err(Error::InvalidPaddingCount { count, body });
+    }
+    Ok(count)
+}
+
 // ---------------------------------------------------------------------------
 // Wire constants
 // ---------------------------------------------------------------------------
@@ -126,6 +164,12 @@ pub struct GenericNack {
     pub ssrc_media: u32,
     /// One or more FCI entries, each identifying a lost packet and a bitmask.
     pub nacks: Vec<NackFci>,
+    /// RFC 3550 §6.4.1 padding octets of a padded sub-packet, excluding the
+    /// trailing count byte (re-derived: `padding.len() + 1`). Empty when the
+    /// P bit is clear. Preserved so a padded NACK re-serializes
+    /// byte-identically; non-empty requires `padding.len() + 1` to be a
+    /// multiple of 4 and at most 255.
+    pub padding: Vec<u8>,
 }
 
 impl<'a> Parse<'a> for GenericNack {
@@ -202,11 +246,22 @@ impl<'a> Parse<'a> for GenericNack {
             off += NACK_FCI_LEN;
         }
 
+        let padding = padding_region(bytes, total_len, end, GENERIC_NACK_MIN_LEN, NACK_FCI_LEN)?;
         Ok(GenericNack {
             ssrc_sender,
             ssrc_media,
             nacks,
+            padding,
         })
+    }
+}
+
+impl GenericNack {
+    /// Length of the unpadded packet (header, SSRCs, FCI entries); the
+    /// preserved `padding` is not counted. Used by the compound packet
+    /// walkers, which carry padding in their own slot.
+    pub(crate) fn body_len(&self) -> usize {
+        GENERIC_NACK_MIN_LEN + self.nacks.len() * NACK_FCI_LEN
     }
 }
 
@@ -214,11 +269,35 @@ impl Serialize for GenericNack {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        GENERIC_NACK_MIN_LEN + self.nacks.len() * NACK_FCI_LEN
+        self.body_len() + self.padding.len() + usize::from(!self.padding.is_empty())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
+        if buf.len() < len {
+            return Err(Error::OutputBufferTooSmall {
+                need: len,
+                have: buf.len(),
+            });
+        }
+        let written = self.write_body(buf)?;
+        let pad = padding_total(&self.padding, written - RTCP_HEADER_LEN)?;
+        if pad > 0 {
+            let total = written + pad;
+            let length_field = broadcast_common::len::fit_u16(total / WORD_LEN - 1, "RTCP length")?;
+            buf[0] |= RTCP_PADDING_MASK;
+            buf[2..4].copy_from_slice(&length_field.to_be_bytes());
+            buf[written..total - 1].copy_from_slice(&self.padding);
+            buf[total - 1] = pad as u8;
+        }
+        Ok(len)
+    }
+}
+
+impl GenericNack {
+    /// Serialize the unpadded packet (`P = 0`); returns its length.
+    pub(crate) fn write_body(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.body_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
@@ -293,6 +372,12 @@ pub struct RangeNack {
     /// Range entries, each identifying a contiguous run of lost packets.
     /// At most 16 per packet (TR-06-1 §5.3.2.2).
     pub ranges: Vec<PacketRange>,
+    /// RFC 3550 §6.4.1 padding octets, excluding the trailing count byte
+    /// (re-derived: `padding.len() + 1`). Empty when the P bit is clear.
+    /// Preserved so a padded Range NACK re-serializes byte-identically;
+    /// non-empty requires `padding.len() + 1` to be a multiple of 4 and at
+    /// most 255.
+    pub padding: Vec<u8>,
 }
 
 impl<'a> Parse<'a> for RangeNack {
@@ -378,7 +463,20 @@ impl<'a> Parse<'a> for RangeNack {
             off += RANGE_ENTRY_LEN;
         }
 
-        Ok(RangeNack { ssrc_media, ranges })
+        let padding = padding_region(bytes, total_len, end, RANGE_NACK_MIN_LEN, RANGE_ENTRY_LEN)?;
+        Ok(RangeNack {
+            ssrc_media,
+            ranges,
+            padding,
+        })
+    }
+}
+
+impl RangeNack {
+    /// Length of the unpadded packet; the preserved `padding` is not counted
+    /// (see [`GenericNack::body_len`]).
+    pub(crate) fn body_len(&self) -> usize {
+        RANGE_NACK_MIN_LEN + self.ranges.len() * RANGE_ENTRY_LEN
     }
 }
 
@@ -386,11 +484,35 @@ impl Serialize for RangeNack {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        RANGE_NACK_MIN_LEN + self.ranges.len() * RANGE_ENTRY_LEN
+        self.body_len() + self.padding.len() + usize::from(!self.padding.is_empty())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
+        if buf.len() < len {
+            return Err(Error::OutputBufferTooSmall {
+                need: len,
+                have: buf.len(),
+            });
+        }
+        let written = self.write_body(buf)?;
+        let pad = padding_total(&self.padding, written - RTCP_HEADER_LEN)?;
+        if pad > 0 {
+            let total = written + pad;
+            let length_field = broadcast_common::len::fit_u16(total / WORD_LEN - 1, "RTCP length")?;
+            buf[0] |= RTCP_PADDING_MASK;
+            buf[2..4].copy_from_slice(&length_field.to_be_bytes());
+            buf[written..total - 1].copy_from_slice(&self.padding);
+            buf[total - 1] = pad as u8;
+        }
+        Ok(len)
+    }
+}
+
+impl RangeNack {
+    /// Serialize the unpadded packet (`P = 0`); returns its length.
+    pub(crate) fn write_body(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.body_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
@@ -444,6 +566,7 @@ mod tests {
             ssrc_sender: 1,
             ssrc_media: 2,
             nacks: alloc::vec![NackFci { pid: 0, blp: 0 }; 65534],
+            padding: Vec::new(),
         };
         let mut buf = alloc::vec![0u8; nack.serialized_len()];
         let err = nack.serialize_into(&mut buf).unwrap_err();
@@ -467,6 +590,7 @@ mod tests {
             ssrc_sender: 1,
             ssrc_media: 2,
             nacks: alloc::vec![NackFci { pid: 7, blp: 0xAB }; 65533],
+            padding: Vec::new(),
         };
         let mut buf = alloc::vec![0u8; nack.serialized_len()];
         nack.serialize_into(&mut buf).unwrap();
@@ -485,6 +609,7 @@ mod tests {
                 pid: 1000,
                 blp: 0x000F,
             }],
+            padding: Vec::new(),
         };
         let bytes = nack.try_to_bytes().unwrap();
         // V=2, P=0, FMT=1 -> 0x81
@@ -503,6 +628,7 @@ mod tests {
                 start: 100,
                 additional: 0,
             }],
+            padding: Vec::new(),
         };
         let bytes = rn.try_to_bytes().unwrap();
         // V=2, P=0, Subtype=0 -> 0x80
@@ -523,6 +649,7 @@ mod tests {
                 start: 100,
                 additional: 0,
             }],
+            padding: Vec::new(),
         };
         let mut bytes = rn.try_to_bytes().unwrap();
         // Corrupt the name field.
@@ -537,6 +664,7 @@ mod tests {
             ssrc_sender: 1,
             ssrc_media: 2,
             nacks: alloc::vec![NackFci { pid: 1, blp: 0 }],
+            padding: Vec::new(),
         };
         let mut bytes = nack.try_to_bytes().unwrap();
         // Change FMT from 1 to 2 (keep V=2, P=0).
@@ -561,6 +689,7 @@ mod tests {
                     additional: 5,
                 })
                 .collect(),
+            padding: Vec::new(),
         };
         let mut buf = alloc::vec![0u8; rn.serialized_len()];
         let err = rn.serialize_into(&mut buf).unwrap_err();

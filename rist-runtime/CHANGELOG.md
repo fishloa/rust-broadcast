@@ -8,6 +8,7 @@ All notable changes to this crate will be documented in this file.
 - Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 ### Changed (breaking)
+- `GenericNack` and `RangeNack` gain a `padding: Vec<u8>` field (RFC 3550 §6.4.1 padding octets without the count byte): a padded standalone NACK now round-trips byte-identically (P bit, count and fill preserved) instead of re-serializing with `P = 0` and the padding gone. A padding count that leaves a partial FCI / range entry is rejected with `InvalidPaddingCount` instead of silently dropping the orphan bytes. Struct literals must add `padding: Vec::new()`.
 - `Error` gains `PaddingBitSet` (`#[non_exhaustive]`, so additive for matchers): `RttEcho::parse` rejects a set P bit (TR-06-1 §5.2.6 fixes `P = 0`; its padding is the message's own field) instead of silently clearing it on re-serialize (#1086/RIST-W5).
 
 ### Fixed

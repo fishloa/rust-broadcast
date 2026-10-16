@@ -568,8 +568,8 @@ impl TrailingValue {
     fn body_len(&self) -> usize {
         match self {
             TrailingValue::Sdes(sdes) => sdes.serialized_len(),
-            TrailingValue::GenericNack(nack) => nack.serialized_len(),
-            TrailingValue::RangeNack(rn) => rn.serialized_len(),
+            TrailingValue::GenericNack(nack) => nack.body_len(),
+            TrailingValue::RangeNack(rn) => rn.body_len(),
             TrailingValue::RttEcho(echo) => echo.serialized_len(),
             TrailingValue::Unknown(unk) => RTCP_HEADER_LEN + unk.payload.len(),
         }
@@ -625,8 +625,8 @@ impl TrailingSlot {
         // (P bit + padding count byte for the padding case).
         let written = match &self.value {
             TrailingValue::Sdes(sdes) => sdes.serialize_into(buf).map_err(Error::Rtcp)?,
-            TrailingValue::GenericNack(nack) => nack.serialize_into(buf)?,
-            TrailingValue::RangeNack(rn) => rn.serialize_into(buf)?,
+            TrailingValue::GenericNack(nack) => nack.write_body(buf)?,
+            TrailingValue::RangeNack(rn) => rn.write_body(buf)?,
             TrailingValue::RttEcho(echo) => echo.serialize_into(buf)?,
             TrailingValue::Unknown(unk) => {
                 return Err(Error::UnexpectedPacketType(unk.packet_type));
@@ -1010,14 +1010,14 @@ impl RistReceiverCompound {
             slots.push(TrailingSlot {
                 position: free.next(),
                 value: TrailingValue::GenericNack(nack.clone()),
-                padding: Vec::new(),
+                padding: nack.padding.clone(),
             });
         }
         for rn in &self.range_nacks {
             slots.push(TrailingSlot {
                 position: free.next(),
                 value: TrailingValue::RangeNack(rn.clone()),
-                padding: Vec::new(),
+                padding: rn.padding.clone(),
             });
         }
         if let Some(ref echo) = self.rtt_echo {

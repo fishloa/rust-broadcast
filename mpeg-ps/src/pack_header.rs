@@ -148,7 +148,7 @@ impl Serialize for PackHeader<'_> {
         buf[0..4].copy_from_slice(&PACK_START_CODE.to_be_bytes());
 
         // SCR field (6 bytes)
-        buf[4..10].copy_from_slice(&scr::write_scr_field(self.scr));
+        buf[4..10].copy_from_slice(&scr::encode_scr_field(self.scr)?);
 
         // program_mux_rate: 22 bits across bytes 10..12, no '01' prefix
         // (Table 2-39; see the parse-side comment above).

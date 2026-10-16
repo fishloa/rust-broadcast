@@ -251,6 +251,61 @@ impl<'a> Parse<'a> for SystemHeader {
     }
 }
 
+impl SystemHeader {
+    /// Checks that the stream loop and `trailing_reserved` would read back
+    /// unchanged: the parser's loop runs while `nextbits() == '1'` (Table
+    /// 2-40), and `stream_id == 0xB7` selects the 6-byte extension form.
+    fn validate_stream_loop(&self) -> Result<()> {
+        for b in &self.std_buffer_bounds {
+            if b.stream_id & 0x80 == 0 {
+                return Err(Error::InvalidField {
+                    field: "system_header.stream_id",
+                    reason: "stream_id MSB is 0, so the entry would end the stream loop on parse",
+                });
+            }
+            match b.stream_id_extension {
+                Some(ext) => {
+                    if b.stream_id != EXT_STREAM_ID {
+                        return Err(Error::InvalidField {
+                            field: "system_header.stream_id_extension",
+                            reason: "stream_id_extension requires stream_id 0xB7",
+                        });
+                    }
+                    broadcast_common::len::fit_bits(
+                        u64::from(ext),
+                        7,
+                        "system_header.stream_id_extension",
+                    )?;
+                }
+                None => {
+                    if b.stream_id == EXT_STREAM_ID {
+                        return Err(Error::InvalidField {
+                            field: "system_header.stream_id",
+                            reason: "stream_id 0xB7 requires stream_id_extension",
+                        });
+                    }
+                }
+            }
+            broadcast_common::len::fit_bits(
+                u64::from(b.buffer_size_bound),
+                13,
+                "system_header.P-STD_buffer_size_bound",
+            )?;
+        }
+        if self
+            .trailing_reserved
+            .first()
+            .is_some_and(|f| f & 0x80 != 0)
+        {
+            return Err(Error::InvalidField {
+                field: "system_header.trailing_reserved",
+                reason: "first byte has its MSB set, so it would be re-read as a stream-bound entry",
+            });
+        }
+        Ok(())
+    }
+}
+
 impl Serialize for SystemHeader {
     type Error = Error;
 
@@ -278,7 +333,27 @@ impl Serialize for SystemHeader {
         )?;
         buf[4..6].copy_from_slice(&header_length.to_be_bytes());
 
-        let rate_bound = self.rate_bound & 0x3F_FFFF;
+        let rate_bound = broadcast_common::len::fit_bits(
+            u64::from(self.rate_bound),
+            22,
+            "system_header.rate_bound",
+        )? as u32;
+        let audio_bound = broadcast_common::len::fit_bits(
+            u64::from(self.audio_bound),
+            6,
+            "system_header.audio_bound",
+        )? as u8;
+        let video_bound = broadcast_common::len::fit_bits(
+            u64::from(self.video_bound),
+            5,
+            "system_header.video_bound",
+        )? as u8;
+        let reserved_bits = broadcast_common::len::fit_mask(
+            self.reserved_bits,
+            RESERVED_BITS_MASK,
+            "system_header.reserved_bits",
+        )?;
+        self.validate_stream_loop()?;
         // byte 6: marker(1) | rate_bound[21:15](7)
         buf[6] = 0x80 | ((rate_bound >> 15) & 0x7F) as u8;
         // byte 7: rate_bound[14:7]
@@ -286,21 +361,14 @@ impl Serialize for SystemHeader {
         // byte 8: rate_bound[6:0](7) | marker(1)
         buf[8] = (((rate_bound & 0x7F) as u8) << 1) | 0x01;
         // byte 9: audio_bound[5:0](6) | fixed_flag(1) | CSPS_flag(1)
-        buf[9] = (self.audio_bound & 0x3F) << 2
-            | (u8::from(self.fixed_flag) << 1)
-            | u8::from(self.csps_flag);
+        buf[9] = audio_bound << 2 | (u8::from(self.fixed_flag) << 1) | u8::from(self.csps_flag);
         // byte 10: system_audio_lock_flag(1) | system_video_lock_flag(1) | marker(1) | video_bound[4:0](5)
         buf[10] = (u8::from(self.system_audio_lock_flag) << 7)
             | (u8::from(self.system_video_lock_flag) << 6)
             | 0x20 // marker_bit (bit5 of byte 10)
-            | (self.video_bound & 0x1F);
+            | video_bound;
         // byte 11: packet_rate_restriction_flag(1) | reserved(7)
-        buf[11] = (u8::from(self.packet_rate_restriction_flag) << 7)
-            | broadcast_common::len::fit_mask(
-                self.reserved_bits,
-                RESERVED_BITS_MASK,
-                "system_header.reserved_bits",
-            )?;
+        buf[11] = (u8::from(self.packet_rate_restriction_flag) << 7) | reserved_bits;
 
         // Stream loop
         let mut pos = 12;
@@ -308,18 +376,18 @@ impl Serialize for SystemHeader {
             if let Some(ext) = bound.stream_id_extension {
                 buf[pos] = bound.stream_id;
                 buf[pos + 1] = 0xC0;
-                buf[pos + 2] = ext & 0x7F;
+                buf[pos + 2] = ext;
                 buf[pos + 3] = 0xB6;
                 buf[pos + 4] = 0xC0
                     | (u8::from(bound.buffer_bound_scale) << 5)
-                    | ((bound.buffer_size_bound >> 8) & 0x1F) as u8;
+                    | (bound.buffer_size_bound >> 8) as u8;
                 buf[pos + 5] = (bound.buffer_size_bound & 0xFF) as u8;
                 pos += 6;
             } else {
                 buf[pos] = bound.stream_id;
                 buf[pos + 1] = 0xC0
                     | (u8::from(bound.buffer_bound_scale) << 5)
-                    | ((bound.buffer_size_bound >> 8) & 0x1F) as u8;
+                    | (bound.buffer_size_bound >> 8) as u8;
                 buf[pos + 2] = (bound.buffer_size_bound & 0xFF) as u8;
                 pos += 3;
             }

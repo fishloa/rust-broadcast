@@ -210,6 +210,7 @@ fn engine_reproduces_frame15_range_nack_from_the_verified_loss_shape() {
     let engine_nack = RangeNack {
         ssrc_media: SSRC_ORIGINAL,
         ranges: due,
+        padding: Vec::new(),
     };
     assert_eq!(
         engine_nack, real,

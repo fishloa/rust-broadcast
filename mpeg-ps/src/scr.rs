@@ -135,7 +135,17 @@ pub(crate) fn read_scr_field(b: &[u8], what: &'static str) -> Result<Scr> {
     Ok(Scr { base, extension })
 }
 
+/// Checked encode of an SCR field: rejects a `base` wider than 33 bits or an
+/// `extension` wider than 9 bits instead of silently masking (#1129 class).
+pub(crate) fn encode_scr_field(scr: Scr) -> crate::error::Result<[u8; SCR_FIELD_LEN]> {
+    broadcast_common::len::fit_bits(scr.base, 33, "pack_header.scr.base")?;
+    broadcast_common::len::fit_bits(u64::from(scr.extension), 9, "pack_header.scr.extension")?;
+    Ok(write_scr_field(scr))
+}
+
 /// Encode a 42-bit SCR into a 6-byte SCR field (without pack_start_code).
+/// Infallible and masking: callers must range-check first (see
+/// [`encode_scr_field`]).
 pub(crate) fn write_scr_field(scr: Scr) -> [u8; SCR_FIELD_LEN] {
     let base = scr.base & BASE_MASK;
     let extension = (scr.extension as u64) & EXT_MASK;

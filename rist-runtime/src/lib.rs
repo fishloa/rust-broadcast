@@ -42,6 +42,7 @@
 //!         NackFci { pid: 100, blp: 0x0000 },
 //!         NackFci { pid: 200, blp: 0x0003 },
 //!     ],
+//!     padding: vec![],
 //! };
 //! let bytes = nack.try_to_bytes().unwrap();
 //! assert_eq!(GenericNack::parse(&bytes).unwrap(), nack);

@@ -66,6 +66,16 @@ pub enum Error {
         /// The actual `stuffing.len()`.
         actual: usize,
     },
+    /// A caller-set field holds a value that would not read back as the same
+    /// header (serialize -> parse must be the identity, ISO/IEC 13818-1
+    /// Table 2-40 `nextbits() == '1'` stream-loop condition).
+    #[error("invalid {field}: {reason}")]
+    InvalidField {
+        /// The offending field.
+        field: &'static str,
+        /// Why the value cannot be serialized.
+        reason: &'static str,
+    },
     /// `header_length` overflows the available buffer.
     #[error("header_length {header_length} exceeds available bytes ({available})")]
     HeaderLengthOverflow {

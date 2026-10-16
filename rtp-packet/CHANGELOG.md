@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (av3a, review of #1235)
+- `Av3aDepacketizer` no longer buffers without limit until an `M` packet: it is capped at `DEFAULT_MAX_FRAME_BYTES` (1 MiB; `raw_frame_length` is 16 bits) or `with_max_frame_bytes(n)`. `push` now returns `Result<Option<Vec<u8>>>` and reports `InvalidValue` (dropping the partial frame) on overflow.
+- `Av3aFmtp::parse` rejects a leading `+` in `rate`/`bitrate`/`codec-nn-id`, `rate=0`, and any known parameter given more than once.
+
 ### Added (#1235)
 - `av3a` feature: AV3A-AATF RTP payload (T/AI 109.7-2024 clause 10.1). The payload has no header of its own; `av3a` provides the typed `AatfFrame`/`AatfFrameHeader` (T/AI 109.3-2023 Annex A Tables A.4-A.7: `audio_codec_id` 0 general high-rate, 1 lossless up to `aatf_error_check()`, 2 general full-rate), `packetize`/`Av3aDepacketizer` (MTU split, `M` marks the last fragment), `is_dynamic_payload_type`, and `Av3aFmtp`/`CodecNnId` for the SDP `rate`/`codec-nn-id`/`config`/`bitrate` parameters (spec examples 0x0000/0x0100/0x0201 tested). CRC bytes are carried, not verified (polynomial not in the vendored extract).
 
