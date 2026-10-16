@@ -316,7 +316,7 @@ impl Serialize for MpeDatagramSection<'_> {
             self.section_syntax_indicator,
             self.private_indicator,
             self.reserved_b1,
-        );
+        )?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // MAC scatter: byte 3 = MAC_6 (mac_address[5]), byte 4 = MAC_5.

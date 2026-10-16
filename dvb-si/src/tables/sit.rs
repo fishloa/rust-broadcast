@@ -259,12 +259,12 @@ impl Serialize for SitSection<'_> {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true);
+        buf[1] = self.bits.b1(true)?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         buf[5] = self
             .bits
-            .b5(self.version_number, self.current_next_indicator);
+            .b5(self.version_number, self.current_next_indicator)?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -294,7 +294,11 @@ impl Serialize for SitSection<'_> {
                 "service_descriptors_length",
             )?;
             // reserved_future_use(1) | running_status(3) | len_hi(4)
-            buf[pos + 2] = ((svc.reserved_future_use & 1) << RESERVED_SHIFT)
+            buf[pos + 2] = (broadcast_common::len::fit_mask(
+                svc.reserved_future_use,
+                1,
+                "reserved_future_use",
+            )? << RESERVED_SHIFT)
                 | (svc.running_status.to_u8() << 4)
                 | ((dll >> 8) as u8);
             buf[pos + 3] = dll as u8;

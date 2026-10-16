@@ -296,7 +296,11 @@ impl Serialize for SystemHeader {
             | (self.video_bound & 0x1F);
         // byte 11: packet_rate_restriction_flag(1) | reserved(7)
         buf[11] = (u8::from(self.packet_rate_restriction_flag) << 7)
-            | (self.reserved_bits & RESERVED_BITS_MASK);
+            | broadcast_common::len::fit_mask(
+                self.reserved_bits,
+                RESERVED_BITS_MASK,
+                "system_header.reserved_bits",
+            )?;
 
         // Stream loop
         let mut pos = 12;

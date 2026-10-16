@@ -127,7 +127,7 @@ impl Serialize for StSection {
         // value 0b1 or 0b0", Table 11), reserved_future_use='1', reserved='11',
         // upper nibble of section_length. Default top nibble 0b0111 = 0x70,
         // matching DIT/RST/TDT/TOT.
-        buf[1] = self.bits.b1(self.section_syntax_indicator);
+        buf[1] = self.bits.b1(self.section_syntax_indicator)?;
         super::write_section_length(buf, self.payload.len())?;
 
         // Payload: stuffing bytes

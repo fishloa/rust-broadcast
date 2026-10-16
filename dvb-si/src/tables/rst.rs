@@ -171,7 +171,7 @@ impl Serialize for RstSection {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0 (short form), reserved_future_use=1,
         // reserved=11, section_length high nibble.
-        buf[1] = self.bits.b1(false);
+        buf[1] = self.bits.b1(false)?;
         super::write_section_length(buf, len - HEADER_LEN)?;
         let mut off = HEADER_LEN;
         for e in &self.entries {

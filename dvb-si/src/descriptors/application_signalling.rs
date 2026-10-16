@@ -172,7 +172,11 @@ impl Serialize for ApplicationSignallingDescriptor {
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             // reserved_future_use(1): preserved from parse, default 1.
-            let word = (u16::from(e.reserved_future_use_1 & 1) << 15)
+            let word = (u16::from(broadcast_common::len::fit_mask(
+                e.reserved_future_use_1,
+                1,
+                "reserved_future_use_1",
+            )?) << 15)
                 | broadcast_common::len::fit_mask(
                     e.application_type.to_u16(),
                     APPLICATION_TYPE_MAX,

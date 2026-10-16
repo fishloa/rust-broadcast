@@ -111,6 +111,21 @@ fn is_mask_token(tok: &str) -> bool {
         let digits: String = hex.chars().filter(|c| *c != '_').collect();
         return !digits.is_empty() && !digits.eq_ignore_ascii_case("ff");
     }
+    // Binary literals (`& 0b111`) and plain decimal literals (`& 1`, `& 15`)
+    // are masks too: the five serializers #1197 claimed to convert (nordig
+    // `& 1`, cp `& 0b111`, supplementary_audio `& 1`, s2x/s2xv2 `& 1`) all
+    // used them and slipped past a hex/ALL_CAPS-only matcher.
+    if let Some(bin) = tok.strip_prefix("0b") {
+        let digits: String = bin.chars().filter(|c| *c != '_').collect();
+        return !digits.is_empty() && digits.chars().all(|c| c == '0' || c == '1');
+    }
+    if tok.chars().all(|c| c.is_ascii_digit() || c == '_')
+        && tok.chars().next().is_some_and(|c| c.is_ascii_digit())
+    {
+        let digits: String = tok.chars().filter(|c| *c != '_').collect();
+        // 0 and 255 are not masks of a packed field (255 = byte extraction).
+        return digits != "0" && digits != "255";
+    }
     tok.len() > 2
         && tok
             .chars()
@@ -145,7 +160,11 @@ fn lhs_is_field(lhs: &str) -> bool {
     if operand.contains(">>") || operand.contains("<<") {
         return false;
     }
-    operand.contains("self.")
+    // A bare `reserved*` identifier is a reserved-bit value passed into a
+    // helper (s2x `pack_*(.., reserved_zero_future_use_1, ..)`): the caller's
+    // value is just as unchecked as `self.reserved*`.
+    operand.starts_with("reserved")
+        || operand.contains("self.")
         || operand.contains(".to_u8()")
         || operand.contains(".to_u16()")
         || operand.contains(".unwrap_or(")
@@ -290,6 +309,11 @@ fn scanner_bites_on_the_bad_pattern() {
     assert!(hits_in(ok).is_empty());
     let parse = "fn parse(b: &[u8]) {\n    let r = (self.x & RESERVED_MASK) >> 4;\n}\n";
     assert!(hits_in(parse).is_empty());
+    // The #1197 miss: binary / decimal masks (`& 1`, `& 0b111`).
+    let dec = "fn serialize_into(&self) {\n    let b = (entry.reserved & 1) << 6;\n}\n";
+    assert_eq!(hits_in(dec).len(), 1, "decimal mask must be flagged");
+    let bin = "fn serialize_into(&self) {\n    let b = u16::from(self.rfu & 0b111) << 13;\n}\n";
+    assert_eq!(hits_in(bin).len(), 1, "binary mask must be flagged");
     let split = "fn serialize_into(&self) {\n    let b = (lt & 0x0F) << 4;\n}\n";
     assert!(hits_in(split).is_empty());
     let bare_shift = "fn serialize_into(&self) {\n    buf[0] = (self.version << 4) | 1;\n}\n";

@@ -473,14 +473,14 @@ impl Serialize for AitSection<'_> {
             "application_type",
         )?;
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true);
+        buf[1] = self.bits.b1(true)?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3] = (u8::from(self.test_application_flag) << TEST_APPLICATION_FLAG_SHIFT)
             | ((app_type_raw >> 8) as u8);
         buf[4] = (app_type_raw & 0xFF) as u8;
         buf[5] = self
             .bits
-            .b5(self.version_number, self.current_next_indicator);
+            .b5(self.version_number, self.current_next_indicator)?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

@@ -766,7 +766,8 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
     let b0 = (loc.identifier_type().to_u8() << LOCATOR_ID_TYPE_SHIFT)
         | (u8::from(loc.scheduled_time_reliability) << 5)
         | (u8::from(loc.inline_service()) << 4)
-        | ((loc.reserved & 1) << LOCATOR_RESERVED_SHIFT)
+        | (broadcast_common::len::fit_mask(loc.reserved, 1, "reserved")?
+            << LOCATOR_RESERVED_SHIFT)
         | ((loc.start_date >> LOCATOR_START_DATE_HI_SHIFT) as u8 & LOCATOR_START_DATE_HI_MASK);
     buf[0] = b0;
 
@@ -1173,7 +1174,7 @@ impl Serialize for RctSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = super::b1_of(true, self.table_id_extension_flag, self.reserved_b1);
+        buf[1] = super::b1_of(true, self.table_id_extension_flag, self.reserved_b1)?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
@@ -1181,7 +1182,7 @@ impl Serialize for RctSection<'_> {
             self.reserved_b5,
             self.version_number,
             self.current_next_indicator,
-        );
+        )?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.year_offset.to_be_bytes());

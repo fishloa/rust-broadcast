@@ -306,8 +306,16 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
-        let mut flags = ((self.reserved_zero_future_use & 1) << 5)
-            | ((self.reserved_future_use & 0b11) << FLAG_RESERVED_FU_SHIFT)
+        let mut flags = (broadcast_common::len::fit_mask(
+            self.reserved_zero_future_use,
+            1,
+            "reserved_zero_future_use",
+        )? << 5)
+            | (broadcast_common::len::fit_mask(
+                self.reserved_future_use,
+                0b11,
+                "reserved_future_use",
+            )? << FLAG_RESERVED_FU_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.ts_gs_mode.to_u8(),
                 TS_GS_MODE_MASK,

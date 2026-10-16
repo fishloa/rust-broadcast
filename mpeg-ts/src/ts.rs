@@ -787,7 +787,11 @@ impl<'a> AdaptationFieldExtension<'a> {
         }
         buf[0] = broadcast_common::len::fit_u8(need - 1, "adaptation_field_extension_length")?;
 
-        let mut flags = self.reserved_flags & AFE_RESERVED_FLAGS_MASK;
+        let mut flags = broadcast_common::len::fit_mask(
+            self.reserved_flags,
+            AFE_RESERVED_FLAGS_MASK,
+            "adaptation_field_extension.reserved",
+        )?;
         if self.ltw.is_some() {
             flags |= AFE_LTW_FLAG;
         }
@@ -811,8 +815,11 @@ impl<'a> AdaptationFieldExtension<'a> {
         }
         if let Some(rate) = self.piecewise_rate {
             // reserved(2) | 22-bit rate (ISO/IEC 13818-1 Table 2-6).
-            buf[cursor] = ((self.piecewise_rate_reserved & PIECEWISE_RATE_RESERVED_VALUE)
-                << PIECEWISE_RATE_RESERVED_SHIFT)
+            buf[cursor] = (broadcast_common::len::fit_mask(
+                self.piecewise_rate_reserved,
+                PIECEWISE_RATE_RESERVED_VALUE,
+                "piecewise_rate.reserved",
+            )? << PIECEWISE_RATE_RESERVED_SHIFT)
                 | ((rate >> 16) as u8 & PIECEWISE_RATE_HI_MASK);
             buf[cursor + 1] = (rate >> 8) as u8;
             buf[cursor + 2] = rate as u8;

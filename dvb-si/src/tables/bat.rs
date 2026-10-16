@@ -310,14 +310,14 @@ impl Serialize for BatSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true);
+        buf[1] = self.bits.b1(true)?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.bouquet_id.to_be_bytes());
         buf[5] = self
             .bits
-            .b5(self.version_number, self.current_next_indicator);
+            .b5(self.version_number, self.current_next_indicator)?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

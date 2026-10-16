@@ -519,7 +519,11 @@ impl<'a> PesExtension<'a> {
             });
         }
 
-        let mut flags = (self.reserved_bits & EXT_RESERVED_VALUE) << EXT_RESERVED_SHIFT;
+        let mut flags = broadcast_common::len::fit_mask(
+            self.reserved_bits,
+            EXT_RESERVED_VALUE,
+            "PES_extension.reserved",
+        )? << EXT_RESERVED_SHIFT;
         if self.pes_private_data.is_some() {
             flags |= EXT_PES_PRIVATE_DATA;
         }

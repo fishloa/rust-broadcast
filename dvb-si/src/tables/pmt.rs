@@ -806,15 +806,15 @@ impl Serialize for PmtSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true);
+        buf[1] = self.bits.b1(true)?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.program_number.to_be_bytes());
         buf[5] = self
             .bits
-            .b5(self.version_number, self.current_next_indicator);
+            .b5(self.version_number, self.current_next_indicator)?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
-        super::write_pid_r(&mut buf[8..10], self.pcr_pid, self.reserved_pcr_pid);
+        super::write_pid_r(&mut buf[8..10], self.pcr_pid, self.reserved_pcr_pid)?;
         let pil = broadcast_common::len::fit_bits(
             self.program_info.len() as u64,
             12,
@@ -838,7 +838,7 @@ impl Serialize for PmtSection<'_> {
                 &mut buf[pos + 1..pos + 3],
                 stream.elementary_pid,
                 stream.reserved_pid,
-            );
+            )?;
             let esl =
                 broadcast_common::len::fit_bits(stream.es_info.len() as u64, 12, "es_info_length")?;
             super::write_desc_loop_len_r(
