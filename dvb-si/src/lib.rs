@@ -348,6 +348,7 @@ pub mod descriptors;
 pub mod epg;
 pub mod error;
 pub(crate) mod h222_bits;
+pub mod quality_access_unit;
 mod registry_names;
 pub mod table_id;
 pub mod tables;

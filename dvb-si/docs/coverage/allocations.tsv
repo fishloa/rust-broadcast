@@ -35,7 +35,7 @@ table_id	0x06	Metadata_section	ITU-T H.222.0 (08/2023)	2.12.6	210
 table_id	0x07	IPMP_Control_Information_section (ISO/IEC 13818-11)	ITU-T H.222.0 (08/2023)	2.4.4.5
 table_id	0x08	ISO_IEC_14496_section	ITU-T H.222.0 (08/2023)	2.11.3.8	199
 table_id	0x09	ISO/IEC 23001-11 green access unit section	ITU-T H.222.0 (08/2023)	2.18.1	247
-table_id	0x0A	ISO/IEC 23001-10 quality access unit section	ITU-T H.222.0 (08/2023)	2.4.4.5
+table_id	0x0A	ISO/IEC 23001-10 quality access unit section (the Table 2-164 body is typed as `quality_access_unit::QualityAccessUnit`; the section header/CRC wrapper is not defined in the vendored H.222.0 text)	ITU-T H.222.0 (08/2023)	2.4.4.5
 table_id	0x0B	ISO/IEC 23001-13 media orchestration access unit section	ITU-T H.222.0 (08/2023)	2.4.4.5
 table_id	0x38-0x39	DSM-CC sections (ISO/IEC 13818-6 range)	ISO/IEC 13818-6
 table_id	0x3A-0x3F	DSM-CC sections (multiprotocol encapsulation, U-N messages, DDB, stream descriptors, private)	ISO/IEC 13818-6 / ETSI EN 301 192 V1.7.1

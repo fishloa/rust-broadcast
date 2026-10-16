@@ -81,7 +81,7 @@ values are omitted.
 | 0x07 | IPMP_Control_Information_section (ISO/IEC 13818-11) | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x08 | ISO_IEC_14496_section | ITU-T H.222.0 (08/2023) | 2.11.3.8 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.11.3.8, Table 2-153 (table_id 0x04 scene description, 0x05 object descriptor, 0x08 other … | [`Iso14496Section`](../src/tables/iso14496_section.rs) | Partial — payload (`SL_Packet()` / `M4MuxPacket()`s, selected by the carrying PMT) kept opaque (ISO/IEC 14496-1) |
 | 0x09 | ISO/IEC 23001-11 green access unit section | ITU-T H.222.0 (08/2023) | 2.18.1 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.18.1–2.18.3, Tables 2-162/2-163 (table_id 0x09); syntax in … | [`GreenAccessUnitSection`](../src/tables/green_access_unit_section.rs) | Partial — `Green_AU()` kept opaque (its loops are bounded by the out-of-band Green extension descriptor) |
-| 0x0A | ISO/IEC 23001-10 quality access unit section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
+| 0x0A | ISO/IEC 23001-10 quality access unit section (the Table 2-164 body is typed as `quality_access_unit::QualityAccessUnit`; the section header/CRC wrapper is not defined in the vendored H.222.0 text) | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x0B | ISO/IEC 23001-13 media orchestration access unit section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x38–0x39 | DSM-CC sections (ISO/IEC 13818-6 range) | ISO/IEC 13818-6 | — | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x3A–0x3F | DSM-CC sections (multiprotocol encapsulation, U-N messages, DDB, stream descriptors, private) | ISO/IEC 13818-6 / ETSI EN 301 192 V1.7.1 | — | ISO/IEC 13818-6 + ETSI EN 301 192 §9 | [`DsmccSection`](../src/tables/dsmcc.rs) | Full |
@@ -505,7 +505,7 @@ real fixture first.
 
 | Namespace | Count | Codes |
 |---|---|---|
-| table_id | 4 | 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x0A ISO/IEC 23001-10 quality access unit section, 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
+| table_id | 4 | 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x0A ISO/IEC 23001-10 quality access unit section (the Table 2-164 body is typed as `quality_access_unit::QualityAccessUnit`; the section header/CRC wrapper is not defined in the vendored H.222.0 text), 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
 | Descriptor tags (SI / MPEG namespace) | 2 | 0x16–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored and its layouts for tags 0x16-0x1A appear in no vendored spec: 0x17-0x1A are the stream-event / NPT descriptors, and TS 102 809 B.2.4.2 says NPT is obsolete and gives no layout), 0x29 IPMP_descriptor (ISO/IEC 13818-11) |
 | AIT descriptors | 1 | 0x08 DVB-HTML_application_descriptor |
 
