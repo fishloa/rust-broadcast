@@ -169,6 +169,12 @@ jobs:
       # is protected by #[rustfmt::skip]; everything else is rustfmt-clean.
       - name: rustfmt
         run: cargo fmt --all --check
+      # docs/CRATES.md and the README crate table are generated from the
+      # manifests, the no-std list below and docs/crates-index.toml. Fails if
+      # they are stale or a workspace member is not in crates-index.toml.
+      # Pure Python (tomllib, 3.11+); no cargo, no network.
+      - name: crate index is current
+        run: python3 tools/gen-crate-index.py --check
       - name: clippy
         run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 
