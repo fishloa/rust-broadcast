@@ -286,6 +286,7 @@ impl Serialize for CompactTimeSignal {
         }
         let have = buf.len();
         let e = |e| bit_err(e, have, WHAT);
+        check_e_crc(self.encrypted_packet, self.e_crc_32)?;
         let mut w = BitWriter::new(&mut buf[..need]);
         w.write_bool(self.encrypted_packet).map_err(e)?;
         w.write_bits(u64::from(self.encryption_algorithm), 6)
@@ -310,6 +311,21 @@ impl Serialize for CompactTimeSignal {
         }
         debug_assert_eq!(w.bits_written(), need * 8);
         Ok(need)
+    }
+}
+
+/// `E_CRC_32` is present exactly when `encrypted_packet` is set (Tables 6 and
+/// 8). The parser yields `Some` iff encrypted, so any other pairing would not
+/// survive serialize -> parse (a missing CRC would be written as `0`, a
+/// surplus one dropped); reject it rather than guess a CRC.
+fn check_e_crc(encrypted_packet: bool, e_crc_32: Option<u32>) -> Result<()> {
+    if encrypted_packet == e_crc_32.is_some() {
+        Ok(())
+    } else {
+        Err(Error::InvalidValue {
+            field: "e_crc_32",
+            reason: "must be Some exactly when encrypted_packet is set",
+        })
     }
 }
 
@@ -527,6 +543,7 @@ impl CompactSpliceInsert {
         }
         let have = buf.len();
         let e = |e| bit_err(e, have, WHAT);
+        check_e_crc(self.encrypted_packet, self.e_crc_32)?;
         let mut w = BitWriter::new(&mut buf[..need]);
         w.write_bool(self.encrypted_packet).map_err(e)?;
         w.write_bits(u64::from(self.encryption_algorithm), 6)
@@ -551,7 +568,14 @@ impl CompactSpliceInsert {
             // AMBIGUITY: nibble order per `order` (Table 8 vs Table 1).
             // `join` masks to 4 bits; reject an over-range value instead.
             let das_reserved = broadcast_common::len::fit_mask(das.reserved, 0x0F, "das_reserved")?;
-            let byte = order.join(das.equivalent_segmentation_type.bits(), das_reserved);
+            // `bits()` is verbatim for `Reserved(v)`: reject an over-range value
+            // instead of masking it into a different equivalent type.
+            let das_type = broadcast_common::len::fit_mask(
+                das.equivalent_segmentation_type.bits(),
+                0x0F,
+                "equivalent_segmentation_type",
+            )?;
+            let byte = order.join(das_type, das_reserved);
             w.write_bits(u64::from(byte >> 4), 4).map_err(e)?;
             w.write_bits(u64::from(byte & 0x0F), DAS_RESERVED_BITS)
                 .map_err(e)?;

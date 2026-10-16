@@ -79,6 +79,7 @@ fn stream_event_payload_serialize_output_always_reparses_equal() {
         let p = StreamEventPayload {
             timeline_type,
             temi,
+            reserved_dvb_data: &[],
             private_data: None,
             carriage: Scte35Carriage::CarouselObject(b"dvb://1.2.3/x"),
         };

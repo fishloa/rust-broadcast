@@ -35,9 +35,18 @@ pub fn format_srt_timestamp(t: MediaTime) -> String {
 
 /// Parse an SRT `(hh:)?mm:ss,ttt` timestamp, mapping the shared grammar's
 /// error into this crate's [`Error::InvalidTimestamp`] (which carries the
-/// offending text).
+/// offending text). SRT specifies `,` before the milliseconds but `.` (the
+/// WebVTT separator) is common in the wild and 0.2.0 accepted it, so it is
+/// accepted on input (lenient-in); [`write_srt`] always writes `,`.
 fn parse_timestamp(s: &str, sep: char) -> Result<u64, Error> {
     parse_cue_timestamp(s, sep)
+        .or_else(|e| {
+            if sep == '.' {
+                Err(e)
+            } else {
+                parse_cue_timestamp(s, '.')
+            }
+        })
         .map(|t| t.0)
         .map_err(|_| Error::InvalidTimestamp(s.to_string()))
 }

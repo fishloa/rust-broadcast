@@ -69,7 +69,9 @@ impl EquivalentSegmentationType {
         }
     }
 
-    /// The 4-bit wire value (low nibble).
+    /// The wire value. A [`EquivalentSegmentationType::Reserved`] value is
+    /// returned verbatim, *not* masked: the serializers reject one above `0xF`
+    /// rather than writing it as a different (valid-looking) type.
     #[must_use]
     pub const fn bits(self) -> u8 {
         match self {
@@ -78,7 +80,7 @@ impl EquivalentSegmentationType {
             Self::ProviderPlacementOpportunity => 0x2,
             Self::DistributorAdvertisement => 0x3,
             Self::ProviderAdvertisement => 0x4,
-            Self::Reserved(v) => v & 0x0F,
+            Self::Reserved(v) => v,
         }
     }
 
@@ -298,7 +300,12 @@ impl DvbDasDescriptor<'_> {
         buf[HEADER_LEN + 1] = self.breaks_expected;
         // reserved nibble = 0xF (reserved bits set to 1 per crate policy) and
         // the 4-bit equivalent_segmentation_type, in the order `order` selects.
-        buf[HEADER_LEN + 2] = order.join(self.equivalent_segmentation_type.bits(), 0x0F);
+        let das_type = broadcast_common::len::fit_mask(
+            self.equivalent_segmentation_type.bits(),
+            0x0F,
+            "equivalent_segmentation_type",
+        )?;
+        buf[HEADER_LEN + 2] = order.join(das_type, 0x0F);
         buf[HEADER_LEN + FIXED_BODY_LEN..need].copy_from_slice(self.upid);
         Ok(need)
     }

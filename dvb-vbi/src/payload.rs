@@ -675,6 +675,27 @@ fn check_stuffing(bytes: &[u8]) -> Result<()> {
 }
 
 impl<'a> DataUnit<'a> {
+    /// `Opaque` and `Stuffing` payloads own the whole `data_unit_length` body, so
+    /// a parse can never yield a trailing `stuffing` run behind them.
+    fn payload_owns_whole_body(&self) -> bool {
+        matches!(
+            self.payload,
+            DataUnitPayload::Opaque(_) | DataUnitPayload::Stuffing { .. }
+        )
+    }
+
+    /// Reject a non-zero `stuffing` on a payload that owns its whole body:
+    /// the extra `0xFF` bytes would re-parse as part of the payload.
+    fn check_stuffing_allowed(&self) -> Result<()> {
+        if self.stuffing != 0 && self.payload_owns_whole_body() {
+            return Err(Error::InvalidField {
+                what: "DataUnit.stuffing",
+                reason: "must be 0 for an Opaque or Stuffing payload (its whole body is the payload)",
+            });
+        }
+        Ok(())
+    }
+
     /// `data_unit_length`: the number of body bytes after the length field
     /// (the typed payload plus any trailing `stuffing_byte`s).
     pub fn data_unit_length(&self) -> usize {
@@ -686,6 +707,12 @@ impl<'a> DataUnit<'a> {
     /// `data_identifier` is `0x10`-`0x1F`, §4.4.2). Errors if the payload is
     /// already longer than `length`.
     pub fn padded_to(mut self, length: u8) -> Result<Self> {
+        if self.payload_owns_whole_body() {
+            return Err(Error::InvalidField {
+                what: "DataUnit.stuffing",
+                reason: "an Opaque or Stuffing payload cannot be padded (its whole body is the payload)",
+            });
+        }
         let have = self.payload.serialized_len();
         let want = usize::from(length);
         if have > want {
@@ -816,6 +843,7 @@ impl<'a> DataUnit<'a> {
                 payload: self.payload.kind_name(),
             });
         }
+        self.check_stuffing_allowed()?;
         let total = self.serialized_len();
         if out.len() < total {
             return Err(Error::OutputBufferTooSmall {

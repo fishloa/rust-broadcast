@@ -22,6 +22,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::section::SpliceInfoSection;
+use broadcast_common::len::{fit_bits, fit_u8};
 use broadcast_common::{Parse, Serialize};
 
 /// `event_type` value for inline carriage (`SCTE_35_section()` follows).
@@ -63,14 +64,17 @@ impl TimelineType {
         }
     }
 
-    /// The 4-bit wire value (low nibble).
+    /// The wire value. A [`TimelineType::Reserved`] value is returned
+    /// verbatim, *not* masked: [`StreamEventPayload`]'s serializer rejects a
+    /// value above `0xF` rather than writing it as a different (valid-looking)
+    /// timeline.
     #[must_use]
     pub const fn bits(self) -> u8 {
         match self {
             Self::None => 0x0,
             Self::VideoPts => 0x1,
             Self::Temi => 0x2,
-            Self::Reserved(v) => v & 0x0F,
+            Self::Reserved(v) => v,
         }
     }
 
@@ -125,6 +129,12 @@ pub struct StreamEventPayload<'a> {
     /// `(temi_component_tag, temi_timeline_id)` — present iff `timeline_type ==
     /// 0x2` (§6.3.1).
     pub temi: Option<(u8, u8)>,
+    /// The `reserved_zero_future_use` run (`N*8` bits) that follows the flags
+    /// byte and the optional TEMI fields inside the `DVB_data_length` region
+    /// (§6.3.1), carried verbatim so a payload using it re-serializes
+    /// byte-exactly; empty for a payload that has none.
+    #[cfg_attr(feature = "serde", serde(borrow))]
+    pub reserved_dvb_data: &'a [u8],
     /// Optional private data: `(private_data_specifier, private_data_byte[])`.
     /// `None` ⇒ `private_data_length == 0`.
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -151,8 +161,8 @@ impl StreamEventPayload<'_> {
     /// after `DVB_data_length` up to (but excluding) `private_data_length`.
     fn dvb_data_len(&self) -> usize {
         // reserved+event_type+timeline_type byte (1) + optional temi (2) +
-        // reserved_zero_future_use run (0 — we emit none).
-        1 + if self.temi.is_some() { 2 } else { 0 }
+        // the reserved_zero_future_use run.
+        1 + if self.temi.is_some() { 2 } else { 0 } + self.reserved_dvb_data.len()
     }
 
     /// Length of the `private_data_length` field's value (0 or `4 + bytes`).
@@ -207,8 +217,10 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
             None
         };
         // Any remaining DVB_data bytes after the flags byte (and optional temi)
-        // are reserved_zero_future_use; skip to the end of the DVB_data region.
+        // are reserved_zero_future_use; keep them for a byte-exact re-serialize.
         let mut pos = 1 + dvb_data_length;
+        let reserved_start = if temi.is_some() { 4 } else { 2 };
+        let reserved_dvb_data = &bytes[reserved_start..pos];
 
         // private_data_length(8).
         if bytes.len() <= pos {
@@ -273,6 +285,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
         Ok(Self {
             timeline_type,
             temi,
+            reserved_dvb_data,
             private_data,
             carriage,
         })
@@ -300,21 +313,35 @@ impl Serialize for StreamEventPayload<'_> {
             });
         }
         let dvb_data_len = self.dvb_data_len();
-        if dvb_data_len > u8::MAX as usize {
+        buf[0] = fit_u8(
+            dvb_data_len,
+            "DSM-CC_stream_event_payload_binary.DVB_data_length",
+        )?;
+        // timeline_type is a 4-bit field: reject an over-range `Reserved(v)`
+        // instead of masking it into a different timeline.
+        let timeline_bits = fit_bits(
+            u64::from(self.timeline_type.bits()),
+            4,
+            "DSM-CC_stream_event_payload_binary.timeline_type",
+        )? as u8;
+        // The temi_* bytes are present iff timeline_type == 0x2 (§6.3.1), so
+        // the two must agree or the output would not re-parse equal.
+        if (timeline_bits == TIMELINE_TYPE_TEMI) != self.temi.is_some() {
             return Err(Error::InvalidValue {
-                field: "DSM-CC_stream_event_payload_binary.DVB_data_length",
-                reason: "exceeds 8-bit field",
+                field: "DSM-CC_stream_event_payload_binary.temi",
+                reason: "temi_* fields must be present exactly when timeline_type is 0x2 (TEMI)",
             });
         }
-        buf[0] = dvb_data_len as u8;
         // reserved(3)=1, event_type(1), timeline_type(4).
-        buf[1] = 0xE0 | (self.carriage.event_type() << 4) | self.timeline_type.bits();
+        buf[1] = 0xE0 | (self.carriage.event_type() << 4) | timeline_bits;
         let mut pos = 2;
         if let Some((tag, id)) = self.temi {
             buf[pos] = tag;
             buf[pos + 1] = id;
             pos += 2;
         }
+        buf[pos..pos + self.reserved_dvb_data.len()].copy_from_slice(self.reserved_dvb_data);
+        pos += self.reserved_dvb_data.len();
         debug_assert_eq!(pos, 1 + dvb_data_len);
 
         let pdl = self.private_data_field_len();
@@ -391,6 +418,7 @@ mod tests {
         let payload = StreamEventPayload {
             timeline_type: TimelineType::VideoPts,
             temi: None,
+            reserved_dvb_data: &[],
             private_data: None,
             carriage: Scte35Carriage::Inline(section),
         };
@@ -416,6 +444,7 @@ mod tests {
         let payload = StreamEventPayload {
             timeline_type: TimelineType::Temi,
             temi: Some((0x07, 0x10)),
+            reserved_dvb_data: &[],
             private_data: Some(PrivateData {
                 specifier: 0x0000_0028, // a TS 101 162 PDS value
                 bytes: &pd,
@@ -444,6 +473,7 @@ mod tests {
         let payload = StreamEventPayload {
             timeline_type: TimelineType::None,
             temi: None,
+            reserved_dvb_data: &[],
             private_data: None,
             carriage: Scte35Carriage::CarouselObject(name),
         };
@@ -465,6 +495,7 @@ mod tests {
         let a = StreamEventPayload {
             timeline_type: TimelineType::None,
             temi: None,
+            reserved_dvb_data: &[],
             private_data: None,
             carriage: Scte35Carriage::CarouselObject(name),
         };

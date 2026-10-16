@@ -96,6 +96,7 @@ fn stream_event_wraps_section_and_base64_inflates_by_4_3() {
     let payload = StreamEventPayload {
         timeline_type: TimelineType::VideoPts,
         temi: None,
+        reserved_dvb_data: &[],
         private_data: None,
         carriage: Scte35Carriage::Inline(inner),
     };
