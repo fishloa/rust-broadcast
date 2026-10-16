@@ -3,24 +3,52 @@
 [![crates.io](https://img.shields.io/crates/v/mpeg-pes.svg)](https://crates.io/crates/mpeg-pes)
 [![docs.rs](https://img.shields.io/docsrs/mpeg-pes)](https://docs.rs/mpeg-pes)
 [![MSRV](https://img.shields.io/badge/MSRV-1.95.0-blue.svg)](https://blog.rust-lang.org/)
-[![license](https://img.shields.io/crates/l/mpeg-pes.svg)](#license)
+[![license](https://img.shields.io/crates/l/mpeg-pes.svg)](#related-crates-and-license)
 
-**PES (Packetized Elementary Stream) depacketization + PTS/DTS** — the sublayer
-between an MPEG-TS packet layer and an elementary-stream consumer. Per ISO/IEC
-13818-1 (Rec. ITU-T H.222.0) §2.4.3.6 / §2.4.3.7.
+**PES (Packetized Elementary Stream) packet parse/serialize with PTS/DTS: the layer between MPEG-TS/PS packets and an elementary-stream consumer.**
 
-`#![no_std]` (+ `alloc`), depends only on `broadcast-common`, WASM-clean. Pairs with
-[`dvb-si`](https://crates.io/crates/dvb-si) for the TS/PSI layer:
+## What it does / what it does not
 
-```text
-TsPacket payload + payload_unit_start ──► mpeg-pes ──► PesPacket { stream_id, pts, dts, payload }
+Feed it the payload bytes of one PID (split on `payload_unit_start_indicator`)
+and it yields typed PES packets: `stream_id`, the optional PES header (flags,
+PTS/DTS, ESCR, ES rate, DSM trick mode, CRC, PES extension) and the
+elementary-stream payload. Every field of the PES header syntax is kept so a
+packet re-serializes byte-for-byte. It is used by demuxers, analyzers and
+repair tools, and underlies `mpeg-ps` and `transmux`.
+
+It does not parse the elementary stream itself (H.264/AAC/... bitstreams are the
+consumer's job), does not do TS framing (see `mpeg-ts`) or network transport
+(see `dvb-stream`, which frames TS, not PES), and does not parse MPEG-1 PES (rejected with
+`Error::BadHeaderMarker`).
+
+## Standards supported
+
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| ITU-T H.222.0 / ISO/IEC 13818-1, *Systems* | H.222.0 v9 (08/2023), verified against the vendored copy | §2.4.3.6 PES packet, §2.4.3.7 semantics, Table 2-21 (all optional fields, PES extension, P-STD buffer, program packet sequence counter, trick modes), stream_id assignments, PTS/DTS 33-bit @ 90 kHz, ESCR 27 MHz | Full for the PES layer | Unbounded video PES (`PES_packet_length` 0) supported by `PesAssembler`. |
+| ETSI TS 101 154 | V2.10.1 | §4.1.8 AVS3 `stream_id_extension` carriage | Partial: stream-id-extension constants and accessor only | Codec carriage rules themselves are out of scope. |
+| T/AI 109.7 (AVS3 system) | clause 8.1.2 as cited in the code; edition unverified (not vendored) | `stream_id_extension` values for AVS3 video/audio | Partial | |
+
+## Feature flags
+
+| Feature | Default | What it enables |
+|---|---|---|
+| `std` | yes | Links `std` (`std::error::Error`); off gives `#![no_std]` + `alloc` |
+| `serde` | no | `serde::Serialize` on the public types |
+
+Depends only on `broadcast-common`; WASM-clean.
+
+```toml
+[dependencies]
+mpeg-pes = "0.5"
 ```
 
-## Quickstart
+## Quick start
 
 ```rust
-use mpeg_pes::{PesPacket, StreamId};
+use mpeg_pes::{PesAssembler, PesPacket, StreamId};
 
+// start code, stream_id 0xE0 (video), length, header (PTS only), payload
 let bytes = [
     0x00, 0x00, 0x01, 0xE0, 0x00, 0x0A, 0x80, 0x80, 0x05,
     0x21, 0x00, 0x01, 0x00, 0x01, // PTS = 0
@@ -29,78 +57,57 @@ let bytes = [
 let pkt = PesPacket::parse(&bytes)?;
 assert_eq!(pkt.stream_id, StreamId(0xE0));
 assert!(pkt.stream_id.is_video());
-assert_eq!(pkt.header.unwrap().pts.unwrap().ticks(), 0);
+assert_eq!(pkt.header.as_ref().unwrap().pts.unwrap().ticks(), 0);
 assert_eq!(pkt.payload, &[0xAA, 0xBB]);
+
+// Byte-exact re-serialization.
+let mut out = vec![0u8; pkt.serialized_len()];
+pkt.serialize_into(&mut out)?;
+assert_eq!(out, bytes);
+
+// Reassemble from TS payload chunks: `true` marks a payload_unit_start packet.
+let mut asm = PesAssembler::new();
+assert!(asm.feed(true, &bytes[..8]).is_none());
+assert!(asm.feed(false, &bytes[8..]).is_none());
+let unit = asm.flush().expect("buffered PES packet");
+assert_eq!(unit, bytes);
 # Ok::<(), mpeg_pes::Error>(())
 ```
 
-## Features
+Examples (`cargo run -p mpeg-pes --example <name>`): `parse_pes_packet`,
+`extract_pts` (depacketize a real capture and print the PTS timeline),
+`build_pes_header` (typed PTS+DTS/ESCR/DSM trick mode, serialize, re-parse).
 
-| Feature | Default | Effect |
-|---|---|---|
-| `std` | ✅ | Link `std`. Off → `#![no_std]` + `alloc`. |
-| `serde` | – | `serde::Serialize` on the public types. |
+## What is implemented
 
-## Round-trip fidelity
+| Area | Public API |
+|---|---|
+| Packet | `PesPacket<'a>` (`parse`, `serialized_len`, `serialize_into`), `PesHeader<'a>`, `PACKET_START_CODE_PREFIX` |
+| Header fields | `Escr`, `TrickMode`, `AdditionalCopyInfo`, `ProgramPacketSequenceCounter`, `PStdBuffer`, `PesExtension<'a>`, `PesExtensionField<'a>`, `FREEZE_FRAME_RESERVED_VALUE` |
+| Timestamps | `Pts`, `Dts` (33-bit @ 90 kHz; `ticks()`, `seconds()`, `to_field_bytes`/`from_field_bytes`) |
+| Stream ids | `StreamId` (`PROGRAM_STREAM_MAP`, `PADDING_STREAM`, `PRIVATE_STREAM_2`, `EXTENDED_STREAM_ID`, `has_optional_header`, `is_audio`, `is_video`), `STREAM_ID_EXTENSION_AVS3_VIDEO`, `STREAM_ID_EXTENSION_AVS3_AUDIO` |
+| Reassembly | `PesAssembler` (`new`, `with_max_unit_size`, `feed`, `flush`): PUSI-delimited accumulation, size-capped (default 16 MiB, shared with `mpeg-ts` via `broadcast-common`) |
+| Errors | `Error`, `Result` |
 
-Parse -> serialize is byte-exact on real streams because the header keeps what
-the wire carried: `PesHeader::header_stuffing` (the stuffing bytes verbatim, not
-a length), `es_rate_marker_bits`, and `PesExtension::reserved_bits`
-(ISO/IEC 13818-1 Table 2-21). These types are `#[non_exhaustive]` with
-`new()`/`Default`. `PesPacket::parse` rejects a header whose first flag byte is
-not `'10'` (`Error::BadHeaderMarker`: MPEG-1 PES or damage) and a
-`PES_header_data_length` that does not fit a bounded `PES_packet_length`;
-a `P-STD_buffer_size` over 13 bits is rejected with `Error::FieldOverflow`
-rather than masked. `StreamId::EXTENDED_STREAM_ID` (0xFD),
-`STREAM_ID_EXTENSION_AVS3_VIDEO` (0x41), `STREAM_ID_EXTENSION_AVS3_AUDIO`
-(0b100_1111) and `PesExtensionField::stream_id_extension()` cover the AVS3
-stream-id-extension carriage (ETSI TS 101 154 V2.10.1 section 4.1.8; T/AI 109.7
-clause 8.1.2). `tests/pes_header_roundtrip_exhaustive.rs` re-serializes every PES
-packet of every committed `.ts` fixture. PTS/DTS and ESCR marker-bit
-packing comes from `broadcast_common::clock33`.
+## Design notes
 
-## Scope
+- **Zero-copy and symmetric.** Parsed packets borrow the input; every type has
+  `serialize_into`; `tests/pes_header_roundtrip_exhaustive.rs` re-serializes
+  every PES packet of every committed `.ts` fixture.
+- **Nothing dropped.** `header_stuffing` (the bytes, not a length),
+  `es_rate_marker_bits` and `PesExtension::reserved_bits` are preserved
+  (`#[non_exhaustive]` types with `new()`/`Default`).
+- **Strict where it matters.** A first flag byte other than `'10'` is
+  `Error::BadHeaderMarker`; a `PES_header_data_length` that overruns a bounded
+  `PES_packet_length` is an error; a `P-STD_buffer_size` over 13 bits is
+  `Error::FieldOverflow`, never masked.
+- **Shared clock code.** Marker-bit PTS/DTS/ESCR packing is
+  `broadcast_common::clock33`.
+- `no_std` + `alloc`, `#![warn(missing_docs)]`; label convention
+  (`name()`/`Display`) guarded by `tests/label_coverage.rs`.
 
-In: PES packet header, `stream_id`, `PES_packet_length` (incl. unbounded video
-`0`), the optional header flags, and **PTS/DTS** (33-bit @ 90 kHz). Out:
-elementary-stream codec bitstream parsing (the consumer's job); network transport
-(see `dvb-stream`).
+## Related crates and license
 
-## Examples
-
-Run with `cargo run -p mpeg-pes --example <name>`:
-
-- **`parse_pes_packet`** — parse one PES packet from raw bytes (stream_id + PTS + payload).
-- **`extract_pts`** — depacketize a real capture, reassemble PES on a PID, and report the PTS timeline.
-- **`build_pes_header`** — construct a PES packet header from typed fields (PTS+DTS, ESCR, DSM trick mode), serialize, re-parse, and verify round-trip.
-
-### Building & editing PES headers
-
-The [`PesPacket::serialize_into`] method lets you re-serialize a parsed or
-hand-built packet byte-for-byte. Because [`PesHeader`] is `#[non_exhaustive]`,
-constructors from outside the crate currently need to assemble the wire bytes
-using the public typed field encoders and then parse:
-
-```rust,ignore
-
-// Build raw bytes with PTS+DTS using the typed field encoders, then parse.
-let pts = Pts(90_000);
-let dts = mpeg_pes::Dts(45_000);
-// (full example: `cargo run -p mpeg-pes --example build_pes_header`)
-
-// Once parsed, round-trip through serialize_into:
-let pkt = PesPacket::parse(&bytes).unwrap();
-let mut buf = vec![0u8; pkt.serialized_len()];
-pkt.serialize_into(&mut buf).unwrap();
-let re_pkt = PesPacket::parse(&buf).unwrap();
-assert_eq!(re_pkt.header.unwrap().pts.unwrap().ticks(), 90_000);
-```
-
-Run the worked example:
-```sh
-cargo run -p mpeg-pes --example build_pes_header
-```
-
-## License
-
-MIT OR Apache-2.0.
+Depends on `broadcast-common`. Used with `mpeg-ts` (TS payloads in) and
+`mpeg-ps` (program-stream PES), and consumed by `transmux`, `ts-fix`, `media-doctor`, `caption-convert` and `dvb-subtitle`.
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

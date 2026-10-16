@@ -1,47 +1,4 @@
-//! ETSI TR 101 290 v1.4.1 transport-stream conformance monitor.
-//!
-//! Implements the **first-priority** (Table 5.0a, indicators 1.1–1.6),
-//! **second-priority** (Table 5.0b, indicators 2.1–2.3b, 2.5–2.6), and
-//! **third-priority** (Table 5.0c, indicators 3.1–3.10) indicator sets —
-//! see `docs/tr_101_290.md` for the full spec transcription and the
-//! crate-coverage mapping.
-//!
-//! ## T-STD buffer model (indicators 3.3, 3.9, 3.10)
-//!
-//! A partial ISO/IEC 13818-1 T-STD buffer model (see `src/tstd.rs`) drives
-//! the buffer-model indicators:
-//!
-//! - **3.3 `BufferError`**: TBsys overflow detection (512-byte buffer at
-//!   1 Mbit/s drain, fed at PSI section completion). TBn overflow is deferred
-//!   — it requires the coded bitrate `Rxn` from descriptors.
-//! - **3.9 `EmptyBufferError`**: TBn (per-PID) and TBsys (global) empty at
-//!   least once per second. MBn empty check is deferred.
-//! - **3.10 `Data_delay_error`**: Data delay > 1 s through TBn and TBsys.
-//!   Still-picture 60 s threshold is tracked but not yet differentiated.
-//! - **2.4 `PcrAccuracyError`**: not implemented — requires hardware arrival
-//!   timestamps with ±500 ns resolution. The variant exists for documentation
-//!   completeness only.
-//!
-//! MBn/EBn/Bn/Bsys buffer modelling is deferred — it requires codec-level
-//! buffer sizes from descriptors (multiplex_buffer_descriptor,
-//! smoothing_buffer_descriptor) not yet parsed by the monitor.
-//!
-//! # Caller-supplied time
-//!
-//! [`ConformanceMonitor::feed`] takes a [`core::time::Duration`] timestamp
-//! alongside each TS packet. All presence/absence timeout checks (1.3.a, 1.5.a,
-//! 1.6, 2.3a, 2.3b, 2.5, 3.2) are evaluated against this clock. The caller
-//! must ensure that timestamps are **monotonic non-decreasing** across calls;
-//! the monitor does not enforce this but non-monotonic timestamps will produce
-//! spurious events.
-//!
-//! # References
-//!
-//! - ETSI TR 101 290 v1.4.1 (2020-06), §5.2.1, Table 5.0a
-//! - ETSI TR 101 290 v1.4.1 (2020-06), §5.2.2, Table 5.0b
-//! - ETSI TR 101 290 v1.4.1 (2020-06), §5.2.3, Table 5.0c
-//! - ISO/IEC 13818-1 (MPEG-2 Systems)
-
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // Runnable examples, embedded so they render on docs.rs and stay in sync with

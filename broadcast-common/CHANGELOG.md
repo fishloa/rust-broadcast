@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Documentation
+- README rewritten to the workspace crate-README standard: what the crate does and does not do, a standards table (edition, scope, status), feature flags, a doctested quick start, the implemented API surface, design notes and related crates. Where the crate has a library target the crate-root docs are now `include_str!("../README.md")`, so docs.rs and crates.io show the same text.
+
 ### Fixed (BREAKING-class behaviour, adversarial review of #1268)
 - `time`: the MJD to calendar conversion (`decode_mjd_bcd`, `encode_mjd_bcd`, `mjd_to_ymd`, `ymd_to_mjd`, the chrono wrappers) is now integer proleptic-Gregorian arithmetic valid over the whole v1.20.1 range (MJD 32768 ..= 98303, 1948-08-05 ..= 2128-01-09). It still used the EN 300 468 Annex C closed-form formula, which that Annex's NOTE 2 limits to 1900-03-01 ..= 2100-02-28: wire values `0x5840 ..= 0x7FFF` decoded one day early (`58 40` gave the non-existent 2100-02-29 instead of 2100-03-01, `7F FF` gave 2128-01-08), and the encoder accepted 2100-02-29. Tests walk every 16-bit wire value in MJD order (consecutive-day check + byte-exact round trip) and pin 2000-02-29, 2038-04-22/23, 2100-02-28/03-01 and 2128-01-09. The `libm` dependency is dropped (no `floor` any more).
 

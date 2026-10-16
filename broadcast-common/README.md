@@ -2,203 +2,151 @@
 
 [![crates.io](https://img.shields.io/crates/v/broadcast-common.svg)](https://crates.io/crates/broadcast-common)
 [![docs.rs](https://img.shields.io/docsrs/broadcast-common)](https://docs.rs/broadcast-common)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-license)
 
-Shared primitives for the DVB crate family. Every sibling crate (`dvb-si`,
-`dvb-t2mi`, `dvb-bbframe`, …) depends on this crate and nothing else.
+**The foundation crate of the rust-broadcast workspace: the symmetric `Parse`/`Serialize` traits, CRC-32/MPEG-2, BCD and MJD time codecs, bit-field I/O, the 33-bit/PCR clock arithmetic, checked field-width helpers, and the container-mux and streaming-stage traits every sibling crate builds on.**
 
-## `no_std` + `alloc` support
+## What it does / what it does not
 
-`broadcast-common` is `#![no_std]` when the `std` feature is disabled. Only `alloc`
-is required — suitable for embedded/RTOS targets with a heap. The `std` feature
-(on by default) re-enables `std::error::Error` integration and `chrono`'s
-wall-clock support. `core::error::Error` is used for the error trait bound in
-`no_std` builds (stabilised in Rust 1.81; workspace MSRV is 1.95.0). The MJD↔calendar float arithmetic
-uses `libm::floor` uniformly in both `std` and `no_std` builds, so the output
-is bit-identical on all targets.
+Nearly every crate in the workspace depends on `broadcast-common`, so it holds
+only the code that must be defined exactly once: the traits that make every
+wire type parse/serialize symmetric, the small codecs the DVB/MPEG family
+shares (CRC, BCD, MJD, odd parity, hex), the clock arithmetic that PTS/DTS,
+PCR, SCTE-35 and SRT all need, the range-checking helpers serializers use
+instead of silent masking, and the vocabulary traits of the muxing hub
+(`Unpackage`/`Package`/`Encrypt`/`Decrypt`) and the incremental `Stage` driver.
+Use it directly when you implement a new wire type in the workspace's style or
+need one of those primitives.
 
-## What's in here
+It deliberately has no shared error enum (each crate owns a domain `Error`,
+reached through `type Error` on the traits), no CRC-8 (only `dvb-bbframe` needs
+it), no concrete media or codec types, and no heavy dependencies (`chrono`,
+`serde` are optional; `hex` is the only unconditional one).
 
-### `Parse<'a>` and `Serialize` traits (`traits`)
+## Standards supported
 
-> **`Serialize::to_bytes()` was removed** (it panicked when `serialize_into`
-> failed). `Serialize::try_to_bytes() -> Result<Vec<u8>, Self::Error>` is the
-> only allocate-and-serialize entry point: production code propagates the error
-> (a value assembled from damaged wire data can fail too), tests use
-> `.try_to_bytes().unwrap()`. Guarded by `tests/no_panicking_to_bytes_guard.rs`.
+This crate implements primitives rather than a wire format, so the table lists
+the specification each primitive follows.
 
-The symmetric contract every wire type across the family implements:
-
-```rust
-pub trait Parse<'a>: Sized {
-    type Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self, Self::Error>;
-}
-
-pub trait Serialize {
-    type Error;
-    fn serialized_len(&self) -> usize;
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, Self::Error>;
-    fn to_bytes(&self) -> Vec<u8> where Self::Error: core::fmt::Debug;
-}
-```
-
-`Parse` is lifetime-parametric so parsed structs can borrow directly from the
-input buffer (zero-copy). `Serialize` is split from `Parse` so owned types can
-implement it without carrying a lifetime. `to_bytes()` is a convenience
-allocator; `serialize_into` is the low-level building block.
-
-### CRC-32 MPEG-2 (`crc32_mpeg2`)
-
-Polynomial `0x04C1_1DB7`, initial value `0xFFFF_FFFF`, MSB-first, no
-reflection, no final XOR — the CRC used by every PSI/SI section and every T2-MI
-packet. A precomputed 256-entry table is built at compile time (zero runtime
-initialisation cost).
-
-```rust
-let crc = broadcast_common::crc32_mpeg2::compute(&section_bytes[..section_bytes.len() - 4]);
-```
-
-### BCD codec (`bcd`)
-
-Binary-coded decimal helpers for the packed nibble fields throughout DVB
-(frequencies, symbol rates, HHMMSS time fields, HHMM offsets). Every encode has
-a symmetric decode; both return `None` rather than producing garbage on
-out-of-range input.
-
-```rust
-use broadcast_common::bcd;
-assert_eq!(bcd::from_bcd_byte(0x42), Some(42));
-assert_eq!(bcd::to_bcd_byte(42),     Some(0x42));
-```
-
-### MJD+BCD time codec (`time`)
-
-Decodes the 5-byte DVB UTC wire format (16-bit Modified Julian Date + 24-bit
-BCD HHMMSS) to a plain `MjdBcdDateTime` struct (no dependency required) or, if
-the `chrono` feature is enabled, to a `chrono::DateTime<Utc>`. The
-`Duration` / HHMMSS helpers for event durations are always available without
-`chrono`.
-
-The 16-bit MJD field follows the EN 300 468 v1.20.1 **2038 wrap rule**: a field
-whose most significant bit is 0 denotes `MJD = 0x10000 + field`, so
-`decode_mjd_bcd`/`mjd_to_ymd`/`decode_mjd_bcd_utc` and their encoders cover
-1948-08-05 ..= 2128-01-09 (earlier dates no longer encode/decode).
-`encode_mjd_bcd` rejects calendar-impossible days (31 Feb, 29 Feb in a
-non-leap year) instead of silently encoding a later day.
-`Timestamp::saturating_add_nanos` replaces the deprecated
-`checked_add_nanos` (which always saturated).
-
-### Bit-field codec (`bits`)
-
-`BitReader` and `BitWriter` for big-endian MSB-first sub-byte fields — the bit
-order used throughout DVB/MPEG physical-layer signalling (L1-pre, L1-post,
-MATYPE, …). Fields can span byte boundaries; up to 64 bits per field. Both sides
-are symmetric.
-
-```rust
-use broadcast_common::bits::{BitReader, BitWriter};
-
-let mut buf = [0u8; 2];
-let mut w = BitWriter::new(&mut buf);
-w.write_bits(0b101, 3).unwrap();
-w.write_bits(0x1FF, 9).unwrap();
-
-let mut r = BitReader::new(&buf);
-assert_eq!(r.read_bits(3).unwrap(), 0b101);
-assert_eq!(r.read_bits(9).unwrap(), 0x1FF);
-```
-
-### `impl_spec_display!` macro
-
-Project-wide helper that generates a `Display` impl for spec/field enums that
-delegate to an inherent `fn name(&self) -> &'static str`. Keeps spec token
-labels next to variant docs and greppable; removes identical boilerplate.
-
-### 33-bit wrapping clock (`clock33`)
-
-PTS/DTS (ISO/IEC 13818-1 §2.4.3.7) and SCTE-35 `pts_time` share a 2^33
-modulus: `unwrap_delta` (ever-growing unwrapped timeline), `wrapping_forward_distance`,
-`add` / `add_signed` (modular addition) and `signed_distance` (shortest signed
-distance on the circle).
-
-```rust
-use broadcast_common::clock33::{WRAP_33BIT, add, signed_distance};
-assert_eq!(add(WRAP_33BIT - 1, 2), 1);
-assert_eq!(signed_distance(WRAP_33BIT - 10, 5), 15);
-```
-
-`clock33` also owns the 27 MHz PCR clock in one place: `PTS_HZ`, `PCR_HZ`,
-`PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ` (`2^33 * 300`), `pcr_from_parts` /
-`pcr_split` (`base * 300 + extension`), `pcr_forward_distance` and
-`pcr_signed_distance` (the modular PCR delta; `wrapping_sub(..) %
-PCR_WRAP_27MHZ` is wrong across a wrap because the modulus is not a power of
-two), and the 5-byte marker-bit timestamp field of PES PTS/DTS, `DTS_next_AU`
-and ST 2038 PTS (`Marked`, `MARKERS_ALL_SET`, `unpack_marked`, `pack_marked`,
-`pack_marked_with`), decoded without failing so each caller keeps its own
-prefix/marker validation and error type.
-
-### Odd parity (`parity`)
-
-`has_odd_parity`, `set_odd_parity`, `strip_parity`: the odd-parity protected
-byte shared by CEA-608 line-21 data and EBU Teletext `txt_data_block` bytes
-(ETSI EN 300 706 section 8.1); detect-only by design.
-
-### Checked field widths (`len`)
-
-`fit_u8`/`fit_u16`/`fit_bits` and `fit_mask(value, mask, field)` — the checked
-replacement for the `(value & MASK)` idiom in serializers: they return
-`FieldOverflow` when a set bit lies outside the field instead of silently
-wrapping into a misframed structure.
-
-### PUSI accumulation (`pusi`)
-
-`PusiAccumulator` splits one PID's payload into `payload_unit_start_indicator`
-delimited units (ISO/IEC 13818-1 §2.4.3.2) with a memory cap
-(`DEFAULT_MAX_UNIT_SIZE`); `mpeg-pes` and `mpeg-ts` both wrap it.
-
-### Container-mux traits (`mux`)
-
-The codec-agnostic vocabulary for the any-to-any muxing hub, mirroring the
-`Parse` / `Serialize` symmetry:
-
-- `Unpackage` — demux a packaged container into an in-memory media IR.
-- `Package` — mux a media IR back into a packaged container.
-- `Decrypt` / `Encrypt` — in-place sample (un)protection.
-
-Each is generic over its input/output/media/config/key associated types plus
-`type Error`; no concrete media or codec types appear here. `Unpackage` ⇄
-`Package` and `Decrypt` ⇄ `Encrypt` are inverse pairs. Concrete implementations
-live in the container crates (e.g. `transmux`).
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| ITU-T H.222.0 / ISO/IEC 13818-1 | H.222.0 v9 (08/2023), verified against the vendored copy | Annex A CRC decoder model, the CRC-32 (`crc32_mpeg2`); §2.4.3.2 PUSI unit delimiting (`pusi`); §2.4.3.3 legal duplicate packets (`ts_dup`); §2.4.3.4/§2.4.3.7 PCR (27 MHz) and 33-bit PTS/DTS clocks and the 5-byte marker-bit timestamp field (`clock33`) | Full for the primitives listed | Higher layers (TS, PES, PSI) live in `mpeg-ts`, `mpeg-pes`, `dvb-si`. |
+| ETSI EN 300 468 | V1.20.1 (vendored; the 2038 MJD wrap rule is from this edition) | Annex A CRC-32 (same polynomial as above); Annex C MJD + BCD UTC time and BCD durations (`time`, `bcd`) | Full for the codecs | MJD range 1948-08-05 ..= 2128-01-09. Integer proleptic-Gregorian arithmetic (no closed-form Annex C formula limit). |
+| ETSI TS 102 773 | V1.4.1 | Annex A CRC-32 for T2-MI packets (same `crc32_mpeg2`) | Full for the CRC | The packet format is in `dvb-t2mi`. |
+| ETSI EN 300 706 | V1.2.1 | §8.1 odd-parity protected byte (`parity`) | Partial: parity primitive only | Also used for CEA-608 line-21 bytes. Detect-only by design. |
+| ISO/IEC 23001-7 (CENC) | not pinned (not vendored; unverified) | §4 `schm.scheme_type` identity: `cenc`, `cbcs` (`cenc::CencScheme`) | Scheme identity only | Crypto boxes live in `transmux`; `#EXT-X-KEY` signalling in `broadcast-hls`. |
+| RFC 1982 serial-number arithmetic | n/a | `seq::SeqSpace` wrap-safe sequence comparison (RTP 16-bit, SRT 31-bit) | Comparable, not spec-cited | Implementation policy, not defined by RTP/SRT. |
 
 ## Feature flags
 
-| Feature  | Default | Description |
-|----------|---------|-------------|
-| `std`    | on      | Link `std`; enables `std::error::Error` and `chrono`'s clock/timezone. Without it the crate is `#![no_std]` + `alloc`. |
-| `chrono` | off     | MJD↔`chrono::DateTime<Utc>` conversion in the `time` module. |
-| `serde`  | off     | `serde::Serialize` derives on the shared spec types (currently `cenc::CencScheme`). |
+| Feature | Default | What it enables |
+|---|---|---|
+| `std` | yes | Links `std`: `std::error::Error` glue, `Timestamp::from_instant`, and `chrono`'s clock when `chrono` is on. Off gives `#![no_std]` + `alloc`. |
+| `chrono` | no | `chrono::DateTime<Utc>` conversions in `time` (`decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, ...). Without it the plain `MjdBcdDateTime` and duration helpers stay available. |
+| `serde` | no | `serde::Serialize` on the shared spec types (currently `cenc::CencScheme`). |
 
-## MSRV
+```toml
+[dependencies]
+broadcast-common = "9"
+# embedded (no_std + alloc):
+# broadcast-common = { version = "9", default-features = false }
+```
 
-**1.95.0** — the workspace MSRV (#949). `core::error::Error` needed 1.81 (used as the error trait bound in
-`no_std` builds; stabilised in 1.81, workspace MSRV is 1.95.0).
+## Quick start
 
-## Non-goals
+```rust
+use broadcast_common::{bcd, clock33, crc32_mpeg2, Parse, Serialize};
 
-- A shared error enum. Each DVB crate owns a domain-specific `Error`; the
-  shared traits keep it that way via `type Error`.
-- CRC-8 (used only by `dvb-bbframe`). Lives in the consumer.
-- Anything with a non-trivial dependency. If a helper needs `bytes` / `serde`,
-  it belongs in a consumer with the matching feature flag.
+// CRC-32/MPEG-2 over a real PAT section (from the committed m6-single.ts fixture):
+// the CRC of the body equals the trailing CRC_32 field.
+let section = [
+    0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x04, 0x01, 0xE0, 0x64,
+    0xF9, 0xB4, 0x63, 0xEF,
+];
+let crc = crc32_mpeg2::compute(&section[..section.len() - 4]);
+assert_eq!(crc, 0xF9B4_63EF);
 
-## Examples
+// BCD and 33-bit clock arithmetic.
+assert_eq!(bcd::from_bcd_byte(0x42), Some(42));
+assert_eq!(clock33::add(clock33::WRAP_33BIT - 1, 2), 1);
+assert_eq!(clock33::signed_distance(clock33::WRAP_33BIT - 10, 5), 15);
 
-Run with `cargo run -p broadcast-common --example <name>`:
+// Implement the symmetric contract for your own wire type.
+#[derive(Debug, PartialEq)]
+struct Toy { tag: u8, value: u16 }
 
-- **`crc_and_bcd`** — CRC-32/MPEG-2 over a buffer (plus the "data+CRC ⇒ 0" check) and BCD coding.
-- **`implement_parse_serialize`** — implement the symmetric `Parse`/`Serialize` contract for your own wire type and round-trip it.
+impl<'a> Parse<'a> for Toy {
+    type Error = &'static str;
+    fn parse(b: &'a [u8]) -> Result<Self, Self::Error> {
+        if b.len() < 3 { return Err("short"); }
+        Ok(Toy { tag: b[0], value: u16::from_be_bytes([b[1], b[2]]) })
+    }
+}
+impl Serialize for Toy {
+    type Error = &'static str;
+    fn serialized_len(&self) -> usize { 3 }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        if buf.len() < 3 { return Err("short"); }
+        buf[0] = self.tag;
+        buf[1..3].copy_from_slice(&self.value.to_be_bytes());
+        Ok(3)
+    }
+}
+let wire = [0x42, 0x12, 0x34];
+let toy = Toy::parse(&wire)?;
+assert_eq!(toy.try_to_bytes()?, wire); // the workspace round-trip invariant
+# Ok::<(), &'static str>(())
+```
 
-## License
+Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
+`--example implement_parse_serialize`.
 
-MIT OR Apache-2.0, at your option.
+## What is implemented
+
+| Module | Public API |
+|---|---|
+| `traits` | `Parse<'a>` (`parse`), `Serialize` (`serialized_len`, `serialize_into`, `try_to_bytes`). `to_bytes()` no longer exists: it panicked on failure; `try_to_bytes` is the only allocate-and-serialize entry point. |
+| `crc32_mpeg2` | `compute` (poly `0x04C1_1DB7`, init `0xFFFF_FFFF`, MSB-first, no reflection, no final XOR; table built at compile time) |
+| `bcd` | `from_bcd_byte`, `to_bcd_byte` and wider helpers; `None` on out-of-range input, never garbage |
+| `time` | `MjdBcdDateTime`, `decode_mjd_bcd`/`encode_mjd_bcd`, `decode_bcd_duration`/`encode_bcd_duration`, `mjd_to_ymd`/`ymd_to_mjd`, `decode_seconds_since_2000_utc`/`encode_seconds_since_2000_utc`; with `chrono`: `decode_mjd_bcd_utc`/`encode_mjd_bcd_utc`. The encoder rejects impossible days (31 Feb) |
+| `bits` | `BitReader`, `BitWriter` (MSB-first, up to 64 bits per field, spans bytes), `BitError` |
+| `clock33` | `WRAP_33BIT`, `unwrap_delta`, `wrapping_forward_distance`, `add`, `add_signed`, `signed_distance`; PCR: `PTS_HZ`, `PCR_HZ`, `PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ`, `pcr_from_parts`, `pcr_split`, `pcr_forward_distance`, `pcr_signed_distance`; marker-bit timestamp field: `Marked`, `MARKERS_ALL_SET`, `unpack_marked`, `pack_marked`, `pack_marked_with` |
+| `len` | `FieldOverflow`, `fit_bits`, `fit_mask`, `fit_u8`, `fit_u16`, `fit_u24`, `fit_u32`: checked width narrowing for serializers |
+| `pusi` | `PusiAccumulator` (size-capped, `DEFAULT_MAX_UNIT_SIZE` 16 MiB): the unit splitter wrapped by `mpeg-ts` and `mpeg-pes` |
+| `ts_dup` | `is_legal_duplicate_pair`, `check_duplicate`, `DuplicateVerdict` (`NotDuplicate`, `Legal`, `IllegalThirdRepeat`): one reading of H.222.0 §2.4.3.3 shared by `dvb-conformance`, `media-doctor` and `ts-fix` |
+| `parity` | `has_odd_parity`, `set_odd_parity`, `strip_parity` |
+| `hex` | `hex_encode` (decoders stay with callers, whose validation policies differ) |
+| `seq` | `SeqSpace` (`add`, `diff`, `lt`/`leq`/`gt`/`geq`, `in_closed_range`), `MAX_SEQ_BITS` |
+| `cenc` | `CencScheme` (`to_four_cc`, `from_four_cc`, `name`), `SCHEME_CENC`, `SCHEME_CBCS` |
+| `mux` | `Unpackage`, `Package` (batch container demux/mux), `Decrypt`, `Encrypt` (in-place sample protection); inverse pairs, generic over `Input`/`Output`/`Media`/`Config`/`Keys`/`Error` |
+| `stage` | `Stage` (`feed`/`poll`/`finish`, `next_deadline`/`on_deadline`, `demand`), `Timestamp` (monotonic nanoseconds, saturating arithmetic), `Demand` |
+| root | `impl_spec_display!` macro (generates `Display` from an inherent `name()`) |
+
+## Design notes
+
+- **Reserved-bit and trailing-byte policy** (workspace-wide, issue #1139):
+  parse is tolerant; serialize preserves what was parsed in typed, spec-named
+  fields (no raw passthrough blobs); hand-built values default to the edition
+  value (`1` for `reserved_future_use`, `0` for `reserved_zero_future_use`);
+  reserved bytes are always written explicitly; trailing bytes are never
+  dropped without a documented decision.
+- **Round-trip invariant.** Every wire type parses to a borrowed struct and
+  serializes back byte-identically; this crate supplies the traits, the helpers
+  and the rule, and each crate carries the round-trip tests.
+- **Checked widths, not masks.** `len::fit_*` returns `FieldOverflow` when a
+  value does not fit its field; the `& MASK` idiom is banned in serializers.
+- **One clock implementation.** PCR/PTS/DTS/`pts_time` wrap arithmetic lives in
+  `clock33`; the 2^33 modulus must not be re-derived elsewhere.
+- **Label convention.** `impl_spec_display!` keeps `Display` in lockstep with
+  the hand-written `name()` of every public spec enum.
+- `#![forbid(unsafe_code)]`, `#![warn(missing_docs)]`, `no_std` + `alloc`
+  without `std`.
+
+## Related crates and license
+
+Versioned independently of the DVB lockstep crates (it ships from its own
+`broadcast-common-v*` tag). Every protocol crate depends on it; it depends on
+none of them. See the [workspace README](https://github.com/fishloa/rust-broadcast#readme)
+for the crate map.
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0, at your option.

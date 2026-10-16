@@ -1,29 +1,4 @@
-//! `media-doctor` — media diagnostics harness for DVB / MPEG-2 Transport Streams.
-//!
-//! An extensible lint-style analysis framework: individual [`Diagnostic`]s each
-//! check one rule against a TS byte-stream, producing [`Finding`]s that feed into
-//! a [`Report`]. A trivial built-in [`SyncByteCheck`] proves the
-//! harness.
-//!
-//! # Feature flags
-//!
-//! | Feature | Default | Description |
-//! |---|---|---|
-//! | `std`   | yes     | `std::error::Error` impls, plus `check_dash_mpd` (its MPD parser, `quick-xml`, needs `std`) |
-//! | `serde` | yes     | JSON report output via `serde` / `serde_json` |
-//! | `cli`   | yes     | `clap`-based CLI binary, incl. `watch` (issue #665) |
-//!
-//! # Quick start (library)
-//!
-//! ```rust
-//! use media_doctor::{Diagnostic, Report, SyncByteCheck};
-//!
-//! let mut report = Report::new();
-//! let diag = SyncByteCheck;
-//! diag.run(&[0x47, 0x00, 0x00, 0x10], &mut report);
-//! assert!(report.findings().is_empty());
-//! ```
-
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

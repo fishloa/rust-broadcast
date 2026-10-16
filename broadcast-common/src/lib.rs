@@ -1,16 +1,5 @@
-//! Shared primitives for the dvb_si / dvb_t2mi / dvb_bbframe family.
-//!
-//! See individual modules for documentation: the [`Parse`] / [`Serialize`]
-//! traits every wire type implements, the MPEG-2 [`crc32_mpeg2`] CRC, the
-//! [`bcd`] / [`time`] / [`hex`] codecs, the [`len`] range-checked wire-field
-//! narrowing those serializers use, the [`mux`] container-mux traits, the
-//! [`cenc`] Common Encryption scheme identity those traits protect with, and
-//! the [`clock33`] 33-bit wrapping-clock arithmetic (`add`, `add_signed`,
-//! `signed_distance`, `unwrap_delta`), the [`pusi`] PUSI-delimited unit
-//! accumulator, and
-//! the [`ts_dup`] ITU-T H.222.0 §2.4.3.3 legal-duplicate-packet check shared
-//! by `dvb-conformance`, `media-doctor` and `ts-fix`.
-//!
+#![doc = include_str!("../README.md")]
+#![doc = "\n"]
 //! # Reserved-bit and trailing-byte policy
 //!
 //! One workspace-wide rule for every wire crate (issue #1139):
@@ -28,9 +17,9 @@
 //! - **Constructed values default to the edition value**: a struct built by
 //!   hand (`new(..)` / `Default`) carries `1` for `reserved_future_use` and
 //!   H.222.0 "reserved", `0` for `reserved_zero_future_use`, with any explicit
-//!   per-field exception documented on the field. (A crate that has not yet
-//!   adopted preserve-on-parse — `mpeg-pes`, `transmux` — still normalizes
-//!   to the spec value on serialize; migrating it is the same change.)
+//!   per-field exception documented on the field. (A crate that has not
+//!   adopted preserve-on-parse documents which fields it normalizes to the
+//!   spec value on serialize; `mpeg-ts`, `mpeg-pes` and `mpeg-ps` preserve.)
 //! - A caller that needs byte-for-byte preservation of reserved bits in a
 //!   not-yet-migrated crate **keeps the original bytes** rather than
 //!   re-serializing.
@@ -42,45 +31,6 @@
 //!
 //! The round-trip gate is byte-exact against the original fixture slice
 //! (see `docs/CRATE-ACCEPTANCE.md`).
-//!
-//! # Container-mux traits ([`mux`])
-//!
-//! The [`mux`] module defines the codec-agnostic vocabulary for the any-to-any
-//! muxing hub, mirroring the [`Parse`] / [`Serialize`] symmetry:
-//!
-//! - [`Unpackage`] — demux a packaged container into an in-memory media IR.
-//! - [`Package`] — mux a media IR back into a packaged container.
-//! - [`Decrypt`] / [`Encrypt`] — in-place sample (un)protection.
-//!
-//! Each is generic over its input/output/media/config/key associated types plus
-//! `type Error`; no concrete media or codec types appear here. `Unpackage` ⇄
-//! `Package` and `Decrypt` ⇄ `Encrypt` are inverse pairs. Concrete
-//! implementations live in the container crates (e.g. `transmux`).
-//!
-//! These are the *batch* container-mux contract, operating on a whole packaged
-//! container at once. For the complementary *incremental* contract — feed
-//! bytes in, poll typed output out, drive on a clock — see [`stage`].
-//!
-//! # Incremental staging ([`stage`])
-//!
-//! The [`stage`] module defines [`Stage`], the drive shape every
-//! streaming stage in the workspace (TS/FLV demuxers, HLS/LL-HLS segmenters,
-//! conformance monitors, …) is converging on: `feed`/`poll`/`finish` plus a
-//! [`Timestamp`] clock parameter and deadline hooks for
-//! purely time-driven work, and a [`Demand`] backpressure hint.
-//!
-//! # Quick start
-//! ```
-//! use broadcast_common::{bcd, crc32_mpeg2};
-//!
-//! // Binary-coded decimal (as used in MJD/BCD time fields):
-//! assert_eq!(bcd::from_bcd_byte(0x42), Some(42));
-//! assert_eq!(bcd::to_bcd_byte(42), Some(0x42));
-//!
-//! // MPEG-2 CRC-32 over a section body (deterministic):
-//! let crc = crc32_mpeg2::compute(&[0xDE, 0xAD, 0xBE, 0xEF]);
-//! assert_eq!(crc, crc32_mpeg2::compute(&[0xDE, 0xAD, 0xBE, 0xEF]));
-//! ```
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
