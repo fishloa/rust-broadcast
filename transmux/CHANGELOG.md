@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (BREAKING: epoch — requires broadcast-common 10)
 - Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `broadcast-hls` 0.3 -> 0.4, `container-probe` 0.1 -> 0.2, `dvb-si` 11 -> 12, `mp4-emsg` 0.4 -> 0.5, `mpeg-pes` 0.5 -> 0.6, `mpeg-ps` 0.5 -> 0.6, `mpeg-ts` 0.5 -> 0.6, `rtcp-packet` 0.5 -> 0.6, `rtp-packet` 0.4 -> 0.5, `scte35-splice` 3 -> 4). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
+### Fixed (MPEG-H TS descriptor, H.222.0 Table 2-121)
+- The synthesized `MPEG-H_3dAudio_descriptor` ES_info entry is now the complete Table 2-121 form (`3F 04 08 <profile_level> 7F C1`-shaped: `mpegh3daProfileLevelIndication`, `interactivityEnabled`, `compatibleProfileSetsPresent`, `reserved`, `referenceChannelLayout`), built from `dvb-si`'s typed `MpegH3dAudio` instead of hand-assembled constants. The old 4-byte form omitted the two mandatory bytes. `referenceChannelLayout` now comes from the `mhaC` record and a value above 6 bits is `Error::InvalidValue`. The previous claim that H.222.0 2.6.106 is "paid and not vendored" was wrong: it is vendored; the table is transcribed (verified on the rendered page) in `docs/codec/mpegh-3daudio-descriptor-h222.md`. Real-fixture cross-check `3F 04 08 10 7F C1` retained.
+
 ### Fixed
 - Serialize: the `colr` nclx `reserved` byte was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
 
