@@ -1938,8 +1938,7 @@ struct StreamState {
     probe_tail: Vec<u8>,
     /// Access units pushed while this PID was `Probing` (saturating). Bounds
     /// how long an unresolved probe may hold back later PIDs
-    /// ([`PROBE_HEAD_BLOCK_AUS`]) and, for E-AC-3, how long it waits for its
-    /// first access unit to complete ([`EAC3_PROBE_MAX_AUS`]).
+    /// ([`PROBE_HEAD_BLOCK_AUS`]).
     probe_aus: u32,
 }
 
@@ -3490,16 +3489,17 @@ fn advance_track(
                 resolved = finalize_probe(stream.codec, &stream.descriptors, &mut probe, &window);
             }
             stream.probe_aus = stream.probe_aus.saturating_add(1);
-            // Bounded fallback: an E-AC-3 first access unit that still is not
-            // provably complete after `EAC3_PROBE_MAX_AUS` payloads resolves
-            // from the frames held (as `finish` does), so the PID does not
-            // wait for a completion that is not coming.
-            if resolved.is_none()
-                && stream.codec == Codec::Eac3
-                && stream.probe_aus >= EAC3_PROBE_MAX_AUS
-            {
+            // Bounded fallback: a first access unit still not provably complete
+            // after `EAC3_PROBE_MAX_FRAMES` chained frames resolves from the
+            // frames held (as `finish` does).
+            if resolved.is_none() && stream.codec == Codec::Eac3 {
                 let window = [stream.probe_tail.as_slice(), latest.data.as_slice()].concat();
-                resolved = eac3_probe_result(&window, true);
+                if let Some(start) = first_eac3_independent_offset(&window)
+                    && Ec3SyncframeInfo::from_es_all(&window[start..]).len()
+                        >= EAC3_PROBE_MAX_FRAMES
+                {
+                    resolved = eac3_probe_result(&window, true);
+                }
             }
             stream.probe_tail = if resolved.is_some() {
                 Vec::new()
@@ -3535,18 +3535,14 @@ const AUDIO_PROBE_BOUNDARY_BYTES: usize = 16;
 /// to complete (an independent frame, its dependent frames, then the next
 /// access unit's independent frame; issue #1186). An implementation bound, not
 /// a spec value: an access unit this long never completing means the data is
-/// not E-AC-3 framing.
+/// not E-AC-3 framing. Once the probe holds this many chained frames without
+/// the access unit completing it resolves from them anyway (as end of input
+/// does) rather than wait for a completion that is not coming and, in PMT
+/// order, hold up the tracks behind it. Counted in frames, not PES payloads,
+/// so it does not depend on how a muxer cuts PES packets (a 1-byte PES must
+/// not trigger it). The price is the #1186 hazard in its worst case: a
+/// dependent substream that never arrives is not signalled.
 const EAC3_PROBE_MAX_FRAMES: usize = 16;
-
-/// Access units (PES payloads) an E-AC-3 probe waits for its first access unit
-/// to be *provably* complete before it resolves from the frames it holds
-/// anyway (what end of input does, see `finish`). An implementation bound, not
-/// a spec value: a clean stream completes within two or three payloads, so a
-/// probe still waiting after this many is not going to be told anything more
-/// and must not stay unpromoted (and, in PMT order, hold up later tracks)
-/// forever. The price is the #1186 hazard in its worst case: a dependent
-/// substream that never arrives is not signalled.
-const EAC3_PROBE_MAX_AUS: u32 = 16;
 
 /// Access units a `Probing` PID may hold back later-ranked `Parked` PIDs. PMT
 /// declaration order is kept whenever the earlier PID resolves in time, but a
@@ -6230,9 +6226,9 @@ mod tests {
     /// An E-AC-3 PID whose first access unit can never be proven complete (an
     /// independent frame followed only by dependent frames, every one chained,
     /// so neither a repeated independent frame nor a broken chain ever ends the
-    /// access unit) resolves from the frames held after `EAC3_PROBE_MAX_AUS`
-    /// access units, with no `finish()`. One access unit fewer and it must
-    /// still be waiting.
+    /// access unit) resolves from the frames held once it has
+    /// `EAC3_PROBE_MAX_FRAMES` of them, with no `finish()`. One frame fewer and
+    /// it must still be waiting.
     #[test]
     fn eac3_probe_that_never_completes_resolves_after_the_bound() {
         use crate::ac3::Ec3SyncframeInfo;
@@ -6285,10 +6281,12 @@ mod tests {
             n
         };
         // A PES is only delivered when the next one starts, so `k` access units
-        // reach the probe from `k + 1` PES.
-        let bound = EAC3_PROBE_MAX_AUS as usize;
-        assert_eq!(eac3_tracks(&build(bound)), 0, "one access unit short");
-        assert_eq!(eac3_tracks(&build(bound + 1)), 1, "bound reached");
+        // reach the probe from `k + 1` PES; the first access unit holds two
+        // frames and every later one a dependent, so `k` of them are `k + 1`
+        // chained frames, i.e. as many frames as PES sent.
+        let bound = EAC3_PROBE_MAX_FRAMES;
+        assert_eq!(eac3_tracks(&build(bound - 1)), 0, "one frame short");
+        assert_eq!(eac3_tracks(&build(bound)), 1, "bound reached");
     }
 
     /// Head-of-line blocking: a PMT-first PID whose probe never resolves must
