@@ -141,7 +141,15 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // pair inside the payload whose byte 5 reads as bsid <= 8 used to be parsed as
     // an E-AC-3 header with a garbage length and swallow it; it is now an
     // AC-3-shaped candidate rejected by its CRC. The other tracks are unchanged.
-    ("ts/m6-single.ts", 0x9f5eebcfded0fbdd),
+    // Re-blessed for the StreamingTsDemux E-AC-3 promotion fix (0x9f5eebcfded0fbdd
+    // before): ONLY the second E-AC-3 track's `dec3` `bsmod` changes (0 -> 2),
+    // diffed field by field; every sample and every other track is identical.
+    // The probe no longer waits for a chain-verified first access unit when the
+    // frame chain after the first whole frame is broken (lost packets): waiting
+    // stalled that track, and in PMT order every track behind it, on a live feed
+    // (zenith regression). The config is built from that first frame, as 0.26.0
+    // did, so its `bsmod` is the isolated frame's (see #1186 note above).
+    ("ts/m6-single.ts", 0xf1c0bc83662f59e7),
     // 0x322faa14c5c28795 before #1161: the capture is field-coded (PAFF), and
     // is now one sample per field pair (293 fields -> 147 samples) instead of
     // one per field. Every other fixture is unchanged.

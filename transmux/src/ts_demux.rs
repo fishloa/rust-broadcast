@@ -3259,7 +3259,7 @@ fn finalize_probe(
                 },
             ))
         }
-        ConfigProbe::Eac3 => eac3_probe_result(latest, false),
+        ConfigProbe::Eac3 => eac3_probe_result(latest, Eac3Accept::ChainVerified),
         ConfigProbe::Dts => {
             let info = DtsCoreFrameInfo::from_es(latest).ok()?;
             let sample_rate = info.sample_rate;
@@ -3489,16 +3489,23 @@ fn advance_track(
                 resolved = finalize_probe(stream.codec, &stream.descriptors, &mut probe, &window);
             }
             stream.probe_aus = stream.probe_aus.saturating_add(1);
-            // Bounded fallback: a first access unit still not provably complete
-            // after `EAC3_PROBE_MAX_FRAMES` chained frames resolves from the
-            // frames held (as `finish` does).
+            // Fallbacks for a first access unit that is never proven complete
+            // (a lossy capture), tried only after the chain-verified attempts
+            // above failed on this payload: accept one whose frame chain broke
+            // (a lossy capture's frames are isolated by lost packets, and
+            // waiting for a chain-verified one stalls the track, and in PMT
+            // order everything behind it, for as long as the loss lasts); and,
+            // after `EAC3_PROBE_MAX_FRAMES` chained frames, whatever the access
+            // unit holds (as `finish` does).
             if resolved.is_none() && stream.codec == Codec::Eac3 {
                 let window = [stream.probe_tail.as_slice(), latest.data.as_slice()].concat();
-                if let Some(start) = first_eac3_independent_offset(&window)
+                resolved = eac3_probe_result(&window, Eac3Accept::BrokenChain);
+                if resolved.is_none()
+                    && let Some(start) = first_eac3_independent_offset(&window)
                     && Ec3SyncframeInfo::from_es_all(&window[start..]).len()
                         >= EAC3_PROBE_MAX_FRAMES
                 {
-                    resolved = eac3_probe_result(&window, true);
+                    resolved = eac3_probe_result(&window, Eac3Accept::Anything);
                 }
             }
             stream.probe_tail = if resolved.is_some() {
@@ -3623,6 +3630,21 @@ fn first_eac3_independent_offset(data: &[u8]) -> Option<usize> {
     })
 }
 
+/// How sure an E-AC-3 probe must be that the first access unit is whole before
+/// it builds a config from it (see [`eac3_probe_result`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Eac3Accept {
+    /// The next access unit's independent frame was seen (issue #1186): the
+    /// access unit is provably complete. What a plain probe requires.
+    ChainVerified,
+    /// Also an access unit followed by bytes that are not a syncword (lost
+    /// packets); see `Ec3SyncframeInfo::from_es_first_au_or_broken_chain`.
+    BrokenChain,
+    /// Whatever the access unit holds: end of input, or the frame-count
+    /// backstop ([`EAC3_PROBE_MAX_FRAMES`]).
+    Anything,
+}
+
 /// Recover an E-AC-3 track config from `latest`.
 ///
 /// The `dec3` describes the bitstream's substream layout and is built from the
@@ -3635,14 +3657,15 @@ fn first_eac3_independent_offset(data: &[u8]) -> Option<usize> {
 /// The access unit must be **provably complete** (issue #1186): until a
 /// following independent frame has been seen, a dependent frame may still be
 /// on its way in the next PES, and a `dec3` built now would silently signal 5.1
-/// for a 7.1 stream. `at_eof` (end of input: nothing more can arrive) accepts
-/// whatever the access unit holds.
-fn eac3_probe_result(latest: &[u8], at_eof: bool) -> Option<(CodecConfig, u32, LiveKind)> {
+/// for a 7.1 stream. [`Eac3Accept`] says how complete the first access unit must be.
+fn eac3_probe_result(latest: &[u8], accept: Eac3Accept) -> Option<(CodecConfig, u32, LiveKind)> {
     let start = first_eac3_independent_offset(latest)?;
-    let frames: alloc::vec::Vec<Ec3SyncframeInfo> = if at_eof {
-        Ec3SyncframeInfo::from_es_first_au(&latest[start..])
-    } else {
-        Ec3SyncframeInfo::from_es_first_complete_au(&latest[start..])?
+    let frames: alloc::vec::Vec<Ec3SyncframeInfo> = match accept {
+        Eac3Accept::Anything => Ec3SyncframeInfo::from_es_first_au(&latest[start..]),
+        Eac3Accept::ChainVerified => Ec3SyncframeInfo::from_es_first_complete_au(&latest[start..])?,
+        Eac3Accept::BrokenChain => {
+            Ec3SyncframeInfo::from_es_first_au_or_broken_chain(&latest[start..])?
+        }
     };
     let info = *frames.first()?;
     let sample_rate = info.sample_rate;
@@ -5201,7 +5224,7 @@ impl StreamingTsDemux {
             let Some(TrackState::Probing { probe, backlog }) = stream.track.take() else {
                 continue;
             };
-            let resolved = eac3_probe_result(&stream.probe_tail, true);
+            let resolved = eac3_probe_result(&stream.probe_tail, Eac3Accept::Anything);
             stream.probe_tail = Vec::new();
             stream.track = Some(match resolved {
                 Some((config, timescale, kind)) => TrackState::Parked {
@@ -6223,6 +6246,49 @@ mod tests {
         pids
     }
 
+    /// A one-program TS whose only PID is an E-AC-3 stream (`stream_type` 0x87)
+    /// with one PES per element of `payloads`.
+    fn eac3_pes_ts(payloads: &[Vec<u8>]) -> Vec<u8> {
+        let mut ts = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        ts.extend(psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_EAC3),
+        ));
+        let mut cc = 0u8;
+        for (n, es) in payloads.iter().enumerate() {
+            let pts = 90_000u64 + 2_880 * n as u64;
+            let mut pes = alloc::vec![0, 0, 1, 0xBD];
+            pes.extend_from_slice(&((3 + 5 + es.len()) as u16).to_be_bytes());
+            pes.extend_from_slice(&[0x80, 0x80, 5]);
+            pes.push(0x21 | ((pts >> 29) as u8 & 0x0E));
+            pes.push((pts >> 22) as u8);
+            pes.push(0x01 | ((pts >> 14) as u8 & 0xFE));
+            pes.push((pts >> 7) as u8);
+            pes.push(0x01 | ((pts << 1) as u8 & 0xFE));
+            pes.extend_from_slice(es);
+            ts.extend(pes_packets(ES_PID_UNDER_TEST, cc, &pes));
+            cc = cc.wrapping_add(pes.len().div_ceil(TS_PACKET_SIZE - 4) as u8);
+        }
+        ts
+    }
+
+    /// E-AC-3 `TrackAdded`s seen feeding `ts` live (no `finish()`).
+    fn live_eac3_tracks(ts: &[u8]) -> usize {
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(ts);
+        let mut n = 0;
+        while let Some(ev) = demux.poll_event() {
+            if let DemuxEvent::TrackAdded(spec) = ev
+                && matches!(spec.config, CodecConfig::Eac3 { .. })
+            {
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// An E-AC-3 PID whose first access unit can never be proven complete (an
     /// independent frame followed only by dependent frames, every one chained,
     /// so neither a repeated independent frame nor a broken chain ever ends the
@@ -6233,60 +6299,49 @@ mod tests {
     fn eac3_probe_that_never_completes_resolves_after_the_bound() {
         use crate::ac3::Ec3SyncframeInfo;
         use crate::ac3::tests::seven_one_eac3_es;
-        use crate::pipeline::CodecConfig;
 
         let au = seven_one_eac3_es();
         let frames = Ec3SyncframeInfo::from_es_all(&au);
         assert_eq!(frames.len(), 2, "independent + dependent");
         let dep_at = (frames[0].frmsiz as usize + 1) * 2;
-        let (first_au, dep_only) = (au.clone(), au[dep_at..].to_vec());
-
-        let build = |pes_count: usize| -> Vec<u8> {
-            let mut ts = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
-            ts.extend(psi_section_packets(
-                PMT_PID_UNDER_TEST,
-                0,
-                0x02,
-                &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_EAC3),
-            ));
-            let mut cc = 0u8;
-            for n in 0..pes_count {
-                let es = if n == 0 { &first_au } else { &dep_only };
-                let pts = 90_000u64 + 2_880 * n as u64;
-                let mut pes = alloc::vec![0, 0, 1, 0xBD];
-                pes.extend_from_slice(&((3 + 5 + es.len()) as u16).to_be_bytes());
-                pes.extend_from_slice(&[0x80, 0x80, 5]);
-                pes.push(0x21 | ((pts >> 29) as u8 & 0x0E));
-                pes.push((pts >> 22) as u8);
-                pes.push(0x01 | ((pts >> 14) as u8 & 0xFE));
-                pes.push((pts >> 7) as u8);
-                pes.push(0x01 | ((pts << 1) as u8 & 0xFE));
-                pes.extend_from_slice(es);
-                ts.extend(pes_packets(ES_PID_UNDER_TEST, cc, &pes));
-                cc = cc.wrapping_add(pes.len().div_ceil(TS_PACKET_SIZE - 4) as u8);
-            }
-            ts
-        };
-        let eac3_tracks = |ts: &[u8]| -> usize {
-            let mut demux = StreamingTsDemux::new();
-            demux.feed(ts);
-            let mut n = 0;
-            while let Some(ev) = demux.poll_event() {
-                if let DemuxEvent::TrackAdded(spec) = ev
-                    && matches!(spec.config, CodecConfig::Eac3 { .. })
-                {
-                    n += 1;
-                }
-            }
-            n
+        let dep_only = au[dep_at..].to_vec();
+        let build = |pes_count: usize| {
+            let mut v = alloc::vec![au.clone()];
+            v.extend((1..pes_count).map(|_| dep_only.clone()));
+            eac3_pes_ts(&v)
         };
         // A PES is only delivered when the next one starts, so `k` access units
         // reach the probe from `k + 1` PES; the first access unit holds two
         // frames and every later one a dependent, so `k` of them are `k + 1`
         // chained frames, i.e. as many frames as PES sent.
         let bound = EAC3_PROBE_MAX_FRAMES;
-        assert_eq!(eac3_tracks(&build(bound - 1)), 0, "one frame short");
-        assert_eq!(eac3_tracks(&build(bound)), 1, "bound reached");
+        assert_eq!(live_eac3_tracks(&build(bound - 1)), 0, "one frame short");
+        assert_eq!(live_eac3_tracks(&build(bound)), 1, "bound reached");
+    }
+
+    /// A lossy capture: every PES is an access unit followed by bytes that are
+    /// not a syncword, so a chain-verified access unit never appears. The probe
+    /// settles for the broken-chain access unit on the first payload instead of
+    /// stalling; but an access unit that merely ends (more of it may follow,
+    /// #1186) is still waited on.
+    #[test]
+    fn eac3_probe_on_lossy_capture_settles_for_a_broken_chain() {
+        use crate::ac3::tests::seven_one_eac3_es;
+
+        let clean = seven_one_eac3_es();
+        let mut lossy = clean.clone();
+        lossy.extend_from_slice(&[0x43, 0x8B, 0x88, 0xBC, 0xA9, 0xB4, 0x00, 0x15]);
+        // A PES is only delivered when the next one starts: two PES, one payload.
+        assert_eq!(
+            live_eac3_tracks(&eac3_pes_ts(&[lossy.clone(), lossy])),
+            1,
+            "broken chain"
+        );
+        assert_eq!(
+            live_eac3_tracks(&eac3_pes_ts(&[clean.clone(), clean])),
+            0,
+            "the access unit merely ends"
+        );
     }
 
     /// Head-of-line blocking: a PMT-first PID whose probe never resolves must

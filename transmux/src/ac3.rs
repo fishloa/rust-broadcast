@@ -491,22 +491,31 @@ impl Ec3SyncframeInfo {
     /// signal a 7.1 programme as 5.1 (issue #1186). `data` must begin at an
     /// independent frame (a leading dependent frame is mid-access-unit).
     pub fn from_es_first_complete_au(data: &[u8]) -> Option<Vec<Self>> {
-        let (frames, complete) = Self::first_au(data);
-        complete.then_some(frames)
+        let (frames, end) = Self::first_au(data);
+        (end == AuEnd::NextAu).then_some(frames)
     }
 
-    /// The frames of the first access unit and whether its end was observed.
-    ///
-    /// The end is observed when a following independent frame for a substreamid
-    /// already seen begins the next access unit, **or** when the frame chain
-    /// breaks: the bytes right after a whole frame are not a syncword (or a
-    /// header that is long enough to judge does not parse). Frames are
-    /// contiguous (§E.1.3.1.2), so after a break no dependent frame can ever
-    /// follow in this data; waiting for one is futile. That is what a capture
-    /// with dropped packets looks like, and refusing to resolve on it kept the
-    /// track unpromoted forever.
-    fn first_au(data: &[u8]) -> (Vec<Self>, bool) {
-        let (frames, mut complete) = Self::walk(data);
+    /// Like [`Self::from_es_first_complete_au`], but also `Some` when the frame
+    /// chain **breaks** right after the access unit: the bytes after a whole
+    /// frame are not a syncword (or a long-enough header does not parse).
+    /// Frames are contiguous (§E.1.3.1.2), so no dependent frame can ever follow
+    /// in this data; a capture that lost packets looks exactly like this. Such
+    /// an access unit is less trustworthy than a chain-verified one (the broken
+    /// frame may itself be damaged), which is why this is a separate, opt-in
+    /// call. Running out of data, or a truncated next frame, is still `None`.
+    pub fn from_es_first_au_or_broken_chain(data: &[u8]) -> Option<Vec<Self>> {
+        let (frames, end) = Self::first_au(data);
+        (end != AuEnd::Open).then_some(frames)
+    }
+
+    /// The frames of the first access unit and how its end was observed.
+    fn first_au(data: &[u8]) -> (Vec<Self>, AuEnd) {
+        let (frames, broken) = Self::walk(data);
+        let mut end = if broken {
+            AuEnd::BrokenChain
+        } else {
+            AuEnd::Open
+        };
         // An access unit ends where the next one begins: an independent frame
         // for a substreamid already seen. `strmtyp == 0x2` counts as
         // independent too (an AC-3-derived stream carries no dependent frames).
@@ -515,14 +524,14 @@ impl Ec3SyncframeInfo {
         for f in frames {
             if f.strmtyp != EAC3_STRMTYP_DEPENDENT {
                 if seen_independent.contains(&f.substreamid) {
-                    complete = true;
+                    end = AuEnd::NextAu;
                     break;
                 }
                 seen_independent.push(f.substreamid);
             }
             out.push(f);
         }
-        (out, complete)
+        (out, end)
     }
 
     /// Parse **every** syncframe in an E-AC-3 elementary stream, in order —
@@ -1512,6 +1521,17 @@ fn acmod_channels(acmod: u8) -> u8 {
     }
 }
 
+/// How the first access unit of an E-AC-3 elementary-stream buffer ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuEnd {
+    /// The next access unit's independent frame was parsed: provably complete.
+    NextAu,
+    /// The frame chain broke after a whole frame (not a syncword / bad header).
+    BrokenChain,
+    /// The data ended (or truncated a frame): more of the access unit may follow.
+    Open,
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -2028,30 +2048,42 @@ pub(crate) mod tests {
         );
     }
 
-    /// A first access unit is complete when the next independent frame begins
-    /// it, or when the frame chain breaks (the bytes after a whole frame are
-    /// not a syncword: packets were lost). Running out of data, or a truncated
-    /// next frame, is *not* completion (issue #1186): a dependent frame may
+    /// `from_es_first_complete_au` accepts only a chain-verified first access
+    /// unit (the next independent frame begins it); the opt-in
+    /// `from_es_first_au_or_broken_chain` also accepts one followed by bytes that
+    /// are not a syncword (a capture that lost packets). Running out of data, or
+    /// a truncated next frame, is neither (issue #1186): a dependent frame may
     /// still be on its way.
     #[test]
-    fn first_au_completes_on_a_broken_chain_but_not_on_missing_data() {
+    fn first_au_end_is_next_au_or_broken_chain_never_missing_data() {
         let one_au = seven_one_eac3_es();
-        let complete = |d: &[u8]| Ec3SyncframeInfo::from_es_first_complete_au(d).map(|f| f.len());
+        let strict = |d: &[u8]| Ec3SyncframeInfo::from_es_first_complete_au(d).map(|f| f.len());
+        let lenient =
+            |d: &[u8]| Ec3SyncframeInfo::from_es_first_au_or_broken_chain(d).map(|f| f.len());
 
-        assert_eq!(complete(&one_au), None, "data just ends: more may follow");
-        assert_eq!(complete(&one_au[..one_au.len() - 3]), None, "cut mid-frame");
-        // Next AU begins (a repeated independent frame): complete, 2 frames.
-        let mut two = one_au.clone();
-        two.extend_from_slice(&one_au);
-        assert_eq!(complete(&two), Some(2));
-        // The chain breaks right after the AU: complete with what was seen.
-        let mut broken = one_au.clone();
-        broken.extend_from_slice(&[0x43, 0x8B, 0x88, 0xBC, 0xA9, 0xB4, 0x00, 0x15]);
-        assert_eq!(complete(&broken), Some(2));
-        // A single trailing byte cannot be judged either way.
-        let mut one_byte = one_au.clone();
-        one_byte.push(0x43);
-        assert_eq!(complete(&one_byte), None);
+        for (name, d) in [
+            ("data just ends", one_au.clone()),
+            ("cut mid-frame", one_au[..one_au.len() - 3].to_vec()),
+            (
+                "one trailing byte",
+                [one_au.clone(), alloc::vec![0x43]].concat(),
+            ),
+        ] {
+            assert_eq!(strict(&d), None, "{name}");
+            assert_eq!(lenient(&d), None, "{name}");
+        }
+        // Next AU begins (a repeated independent frame): complete either way.
+        let two = [one_au.clone(), one_au.clone()].concat();
+        assert_eq!(strict(&two), Some(2));
+        assert_eq!(lenient(&two), Some(2));
+        // The chain breaks right after the AU: only the lenient call accepts it.
+        let broken = [
+            one_au.clone(),
+            alloc::vec![0x43, 0x8B, 0x88, 0xBC, 0xA9, 0xB4, 0x00, 0x15],
+        ]
+        .concat();
+        assert_eq!(strict(&broken), None);
+        assert_eq!(lenient(&broken), Some(2));
     }
 
     /// r04-W5: `bsmod` is read from `infomdate` (§E.1.3.1.x) and lands in the
