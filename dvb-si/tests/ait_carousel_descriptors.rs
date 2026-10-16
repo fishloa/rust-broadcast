@@ -437,6 +437,7 @@ fn dii_module_and_dsi_group_info_expose_typed_loops() {
         group_id: 1,
         group_size: 10,
         group_compatibility: CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: Vec::new(),
         },
         group_info: &loop_bytes,

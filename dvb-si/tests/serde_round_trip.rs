@@ -589,6 +589,7 @@ fn un_message_dii_serializes_to_valid_json() {
         t_c_download_window: 0,
         t_c_download_scenario: 0,
         compatibility_descriptor: CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: vec![],
         },
         modules: vec![DiiModule {

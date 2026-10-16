@@ -854,6 +854,7 @@ mod tests {
             adaptation: &[],
             server_id: [0xFF; 20],
             compatibility_descriptor: CompatibilityDescriptor {
+                empty_count_present: false,
                 descriptors: vec![],
             },
             private_data: &[0x0A, 0x0B],
@@ -871,6 +872,7 @@ mod tests {
             t_c_download_window: 0,
             t_c_download_scenario: 0,
             compatibility_descriptor: CompatibilityDescriptor {
+                empty_count_present: false,
                 descriptors: vec![],
             },
             modules: vec![
@@ -912,6 +914,7 @@ mod tests {
     /// empty `0x00 0x00` form the other tests use.
     fn nonempty_compat() -> CompatibilityDescriptor<'static> {
         CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: vec![crate::compatibility::CompatibilityDescriptorEntry {
                 descriptor_type: crate::compatibility::DescriptorType::SystemHardware,
                 specifier_type: crate::compatibility::SpecifierType::IeeeOui,
@@ -1131,6 +1134,7 @@ mod tests {
                 group_id: 0x0000_0001,
                 group_size: 500_000,
                 group_compatibility: CompatibilityDescriptor {
+                    empty_count_present: false,
                     descriptors: vec![],
                 },
                 group_info: &[0xCA, 0xFE],

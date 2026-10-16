@@ -255,24 +255,9 @@ fn tsduck_test_060_unt_descriptors() {
     let mut names = BTreeSet::new();
     for s in &secs {
         let unt = UntSection::parse(s).unwrap();
-        // Known pre-existing limitation (issue #1298): an empty
-        // compatibilityDescriptor written as length=2/count=0 re-serializes as
-        // length=0. Whole-section identity is asserted for every section whose
-        // compatibility descriptors are not empty; the descriptor loops (the
-        // subject of this test) are asserted byte-exact either way.
-        if unt
-            .platforms
-            .iter()
-            .all(|p| !p.compatibility_descriptor.descriptors.is_empty())
-        {
-            assert_eq!(&ser(&unt), s, "whole-section byte identity");
-        } else {
-            assert_eq!(
-                ser(&unt).len() + 2,
-                s.len(),
-                "only the #1298 empty-compat form differs"
-            );
-        }
+        // Whole-section identity for EVERY section, including the one whose
+        // compatibilityDescriptor is the length=2/count=0 empty form (#1298).
+        assert_eq!(&ser(&unt), s, "whole-section byte identity");
         walk_unt(unt.common_descriptors.raw(), &mut names);
         for p in &unt.platforms {
             for pair in &p.target_operational_pairs {
