@@ -27,7 +27,8 @@ fn load_fixture() -> Vec<u8> {
 #[test]
 fn reconstruct_pes_video_pid_0100() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]).unwrap();
+    let aus =
+        ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]).unwrap();
 
     let video: Vec<_> = aus.iter().filter(|au| au.pid == Pid::new(0x0100)).collect();
     let audio: Vec<_> = aus.iter().filter(|au| au.pid == Pid::new(0x0101)).collect();
@@ -67,7 +68,8 @@ fn all_audio_aus_have_pts() {
 #[test]
 fn every_au_starts_with_pes_start_code() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]).unwrap();
+    let aus =
+        ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]).unwrap();
     assert!(!aus.is_empty(), "expected at least one access unit");
     for au in &aus {
         assert!(

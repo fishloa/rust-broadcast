@@ -60,7 +60,7 @@ impl AccessUnit {
 pub fn reconstruct_access_units(ts: &[u8], pids: &[Pid]) -> Result<Vec<AccessUnit>, Error> {
     const TS_PACKET_SIZE: usize = 188;
 
-    if ts.len() % TS_PACKET_SIZE != 0 {
+    if !ts.len().is_multiple_of(TS_PACKET_SIZE) {
         return Err(Error::UnalignedInput { len: ts.len() });
     }
 

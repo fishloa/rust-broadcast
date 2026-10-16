@@ -388,7 +388,7 @@ mod tests {
     fn interpolate_extrapolates_correctly_after_more_than_one_pcr_wrap() {
         const STEP: u64 = 2_673_000; // 99 ms at 27 MHz
         const N: u64 = 1_000_000; // N * STEP = 2.673e12 > PCR_27MHZ_MODULUS (~2.576e12)
-        assert!(N * STEP > PCR_27MHZ_MODULUS);
+        const { assert!(N * STEP > PCR_27MHZ_MODULUS) };
 
         let mut op = PcrRestampOp::new(PcrRestamp::Interpolate);
         let mut model = StreamModel::default();

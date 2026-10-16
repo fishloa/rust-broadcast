@@ -2,7 +2,9 @@
 //! compact encrypted-packet CRC (adversarial review, signalling-captions).
 
 use broadcast_common::{Parse, Serialize};
-use scte35_splice::dvb_ta::{CompactSpliceInsert, Scte35Carriage, StreamEventPayload, TimelineType};
+use scte35_splice::dvb_ta::{
+    CompactSpliceInsert, Scte35Carriage, StreamEventPayload, TimelineType,
+};
 
 const NAME: &[u8] = b"dvb://1.2.3/x";
 
