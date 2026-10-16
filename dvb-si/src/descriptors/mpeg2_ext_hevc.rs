@@ -13,8 +13,12 @@
 //! as printed, which TSDuck 3.44 contradicts — see the docs.)
 //!
 //! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
-//! and `…-0x0f-0x19.md`. `profile_tier_level_info[i]` is the 96-bit H.265
-//! §7.3.3 structure (not vendored) and is carried as 12 opaque bytes.
+//! and `…-0x0f-0x19.md`. `profile_tier_level_info[i]` is carried as 12 opaque
+//! bytes: ITU-T H.265 §7.3.3 is vendored, but H.222.0 §2.6.101 calls the field
+//! 96 bits "coded according to 7.3.3" with `maxNumSubLayersMinus1` = 6, and that
+//! structure is 112 bits (96-bit general part plus the 16 sub-layer flag bits),
+//! so what the sub-layer part of a 96-bit field means is undefined; typing only
+//! the general part would be a guess.
 //! Every `reserved` field is a typed field that is re-emitted verbatim
 //! (default: all ones).
 
@@ -161,8 +165,9 @@ impl HevcOperationPointEntry {
 pub struct HevcOperationPoint {
     /// `reserved(2)` before `num_ptl`, default 3.
     pub reserved: u8,
-    /// `profile_tier_level_info[i]` — 96 bits each, coded per H.265 §7.3.3
-    /// (not vendored: opaque).
+    /// `profile_tier_level_info[i]` — 96 bits each, nominally H.265 §7.3.3
+    /// (opaque by design: H.222.0 fixes `maxNumSubLayersMinus1` = 6, which makes
+    /// the H.265 structure 112 bits, not 96; see the module docs).
     pub profile_tier_levels: Vec<[u8; PROFILE_TIER_LEVEL_LEN]>,
     /// The operation points.
     pub operation_points: Vec<HevcOperationPointEntry>,
