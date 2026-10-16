@@ -67,6 +67,11 @@ pub struct Escr {
     pub base: u64,
     /// 9-bit extension (27 MHz units, 0..=299).
     pub extension: u16,
+    /// The leading `reserved(2)` of the field (Table 2-21; spec convention
+    /// `0b11`), kept so a real stream's value round-trips. Held here, in the
+    /// struct's padding, rather than in `PesHeader` so the header does not grow
+    /// (the PS demuxer's allocation budget counts its size).
+    pub reserved: u8,
 }
 
 /// Spec-convention value of the freeze-frame `reserved(3)` bits (all ones,
@@ -83,8 +88,6 @@ const ESCR_RESERVED_SHIFT: u32 = 6;
 const ESCR_BASE_MASK: u64 = (1 << 33) - 1;
 /// ESCR 9-bit extension mask (`ESCR_extension`).
 const ESCR_EXT_MASK: u16 = (1 << 9) - 1;
-/// ESCR byte 0 leading `reserved(2) = '11'` (spec convention).
-const ESCR_B0_RESERVED: u8 = 0xC0;
 /// ESCR `marker_bit` that sits in bit 2 of bytes 0, 2 and 4.
 const ESCR_MARKER_MID: u8 = 0x04;
 /// ESCR trailing `marker_bit` (bit 0 of byte 5).
@@ -101,7 +104,11 @@ impl Escr {
     #[must_use]
     pub fn from_27mhz(ticks: u64) -> Self {
         let (base, extension) = broadcast_common::clock33::pcr_split(ticks);
-        Self { base, extension }
+        Self {
+            base,
+            extension,
+            reserved: ESCR_RESERVED_VALUE,
+        }
     }
 
     /// Decode from the 6-byte ESCR field.
@@ -122,7 +129,11 @@ impl Escr {
             | ((b[3] as u64) << 5)                             // base[12:5]
             | (((b[4] >> 3) & 0x1F) as u64); // base[4:0]
         let extension = ((((b[4] & 0x03) as u16) << 7) | ((b[5] >> 1) as u16)) & ESCR_EXT_MASK;
-        Ok(Self { base, extension })
+        Ok(Self {
+            base,
+            extension,
+            reserved: b[0] >> ESCR_RESERVED_SHIFT,
+        })
     }
 
     /// Encode as the 6-byte ESCR field.
@@ -135,7 +146,7 @@ impl Escr {
         let e = (self.extension & ESCR_EXT_MASK) as u64;
         [
             // B0: reserved(2)='11' | base[32:30](3) | marker(1)='1' | base[29:28](2)
-            ESCR_B0_RESERVED
+            ((self.reserved & ESCR_RESERVED_VALUE) << ESCR_RESERVED_SHIFT)
                 | (((b >> 30) & 0x07) as u8) << 3
                 | ESCR_MARKER_MID
                 | ((b >> 28) & 0x03) as u8,
@@ -637,10 +648,6 @@ pub struct PesHeader<'a> {
     pub dts: Option<Dts>,
     /// Elementary stream clock reference (6 bytes), if `ESCR_flag` is set.
     pub escr: Option<Escr>,
-    /// The leading `reserved(2)` of the ESCR field (Table 2-21; spec
-    /// convention `0b11`), kept so a real stream's value round-trips. Only
-    /// meaningful when `escr` is `Some`.
-    pub escr_reserved_bits: u8,
     /// 22-bit ES rate (bytes/second × 50), if `ES_rate_flag` is set.
     pub es_rate: Option<u32>,
     /// The two `marker_bit`s around `ES_rate` (Table 2-21), packed as
@@ -688,7 +695,6 @@ impl<'a> PesHeader<'a> {
             pts: None,
             dts: None,
             escr: None,
-            escr_reserved_bits: ESCR_RESERVED_VALUE,
             es_rate: None,
             es_rate_marker_bits: ES_RATE_MARKERS_VALUE,
             dsm_trick_mode: None,
@@ -866,7 +872,6 @@ impl<'a> PesPacket<'a> {
         };
 
         // ESCR (6 bytes, ISO/IEC 13818-1 §2.4.3.7).
-        let mut escr_reserved_bits = ESCR_RESERVED_VALUE;
         let escr = if f2 & F2_ESCR != 0 {
             if opt.len() < cursor + 6 {
                 return Err(Error::BufferTooShort {
@@ -877,7 +882,6 @@ impl<'a> PesPacket<'a> {
             }
             let arr: &[u8; 6] = opt[cursor..cursor + 6].try_into().unwrap();
             let e = Escr::from_field_bytes(arr)?;
-            escr_reserved_bits = arr[0] >> ESCR_RESERVED_SHIFT;
             cursor += 6;
             Some(e)
         } else {
@@ -977,7 +981,6 @@ impl<'a> PesPacket<'a> {
             pts,
             dts,
             escr,
-            escr_reserved_bits,
             es_rate,
             es_rate_marker_bits,
             dsm_trick_mode,
@@ -1078,10 +1081,7 @@ impl<'a> PesPacket<'a> {
                 }
                 // ESCR.
                 if let Some(escr) = h.escr {
-                    let mut field = escr.to_field_bytes();
-                    field[0] = (field[0] & !(ESCR_RESERVED_VALUE << ESCR_RESERVED_SHIFT))
-                        | ((h.escr_reserved_bits & ESCR_RESERVED_VALUE) << ESCR_RESERVED_SHIFT);
-                    buf[cursor..cursor + 6].copy_from_slice(&field);
+                    buf[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes());
                     cursor += 6;
                 }
                 // ES_rate: marker(1) | rate(22) | marker(1) = 3 bytes.
@@ -1220,7 +1220,6 @@ mod tests {
             escr: None,
             es_rate: None,
             es_rate_marker_bits: 0b11,
-            escr_reserved_bits: 0b11,
             additional_copy_info_marker: true,
             dsm_trick_mode: None,
             additional_copy_info: None,
@@ -1335,7 +1334,6 @@ mod tests {
             escr: None,
             es_rate: None,
             es_rate_marker_bits: 0b11,
-            escr_reserved_bits: 0b11,
             additional_copy_info_marker: true,
             dsm_trick_mode: None,
             additional_copy_info: None,
@@ -1351,6 +1349,7 @@ mod tests {
         let escr = Escr {
             base: 90_000,
             extension: 150,
+            reserved: 0b11,
         };
         let h = PesHeader {
             escr: Some(escr),
@@ -1382,6 +1381,7 @@ mod tests {
             let e = Escr {
                 base,
                 extension: ext,
+                reserved: 0b11,
             };
             let bytes = e.to_field_bytes();
             let decoded = Escr::from_field_bytes(&bytes).unwrap();
@@ -1395,7 +1395,6 @@ mod tests {
         let h = PesHeader {
             es_rate: Some(0x3FFFFF),
             es_rate_marker_bits: 0b11,
-            escr_reserved_bits: 0b11,
             additional_copy_info_marker: true,
             ..empty_header()
         };
@@ -1686,10 +1685,10 @@ mod tests {
             escr: Some(Escr {
                 base: 1000,
                 extension: 0,
+                reserved: 0b11,
             }),
             es_rate: Some(50_000),
             es_rate_marker_bits: 0b11,
-            escr_reserved_bits: 0b11,
             additional_copy_info_marker: true,
             dsm_trick_mode: Some(TrickMode::SlowMotion { rep_cntrl: 3 }),
             additional_copy_info: Some(5),
