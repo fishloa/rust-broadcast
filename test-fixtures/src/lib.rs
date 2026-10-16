@@ -63,6 +63,16 @@ pub fn read_to_string(rel: &str) -> String {
 /// worktree whose own `private/` is not initialised.
 pub const PRIVATE_ENV: &str = "RUST_BROADCAST_PRIVATE";
 
+/// Environment variable CI sets to `1` when it has the private-repo deploy key:
+/// a private fixture that cannot be found is then a hard failure, never a
+/// (vacuous) skip.
+pub const REQUIRE_PRIVATE_ENV: &str = "REQUIRE_PRIVATE_FIXTURES";
+
+/// `true` when `v` is exactly `1` (the value of [`REQUIRE_PRIVATE_ENV`]).
+fn flag_set(v: Option<&std::ffi::OsStr>) -> bool {
+    v.is_some_and(|v| v == "1")
+}
+
 /// The workspace root (the directory holding `Cargo.toml`, `fixtures/`, `private/`).
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -176,6 +186,10 @@ pub fn require(rel: &str, who: &str) -> Option<PathBuf> {
         return Some(p);
     }
     match private_root() {
+        None if flag_set(std::env::var_os(REQUIRE_PRIVATE_ENV).as_deref()) => panic!(
+            "{who}: private fixture `{rel}` unavailable but {REQUIRE_PRIVATE_ENV}=1 (CI has the \
+             deploy key, so the private checkout must exist - a skip here would hide the test)"
+        ),
         None => {
             eprintln!(
                 "{who}: SKIPPED - private fixture `{rel}` unavailable: the private repo is not \
@@ -307,6 +321,16 @@ mod tests {
         if private_root().is_none() {
             assert!(require("definitely/not/here.bin", "unit").is_none());
         }
+    }
+
+    #[test]
+    fn require_private_flag_is_exactly_one() {
+        use std::ffi::OsStr;
+        assert!(flag_set(Some(OsStr::new("1"))));
+        assert!(!flag_set(Some(OsStr::new("0"))));
+        assert!(!flag_set(Some(OsStr::new("true"))));
+        assert!(!flag_set(Some(OsStr::new(""))));
+        assert!(!flag_set(None));
     }
 
     #[test]
