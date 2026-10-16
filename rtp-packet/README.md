@@ -3,56 +3,55 @@
 [![Crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet)
 [![docs.rs](https://img.shields.io/docsrs/rtp-packet)](https://docs.rs/rtp-packet)
 
-RFC 3550 §5.1 RTP fixed header + CSRC list + §5.3.1 generic header extension —
-spec-complete parse/serialize, `no_std`.
+RTP fixed header, CSRC list and generic header extension (RFC 3550 §5.1 / §5.3.1): spec-complete parse and serialize, `no_std`. Optional RFC 8285 extension elements and AV3A-AATF audio payload helpers.
 
-`rtp-packet` is a shared low-level wire crate (in the same spirit as
-`mpeg-ts`/`mpeg-pes`/`mpeg-ps`): a single, spec-complete implementation of the
-RTP fixed header meant to be consumed by every higher-level crate that speaks
-RTP (`transmux`'s RTP spoke today; the upcoming SMPTE ST 2110-40 ANC-over-RTP
-work next), instead of each crate re-implementing its own header codec.
+```toml
+[dependencies]
+rtp-packet = "0.4"
+```
 
-- **[`RtpPacket`]** — version (validated `== 2` on parse, always written `2`
-  on serialize), padding (the trailing pad-count octet correctly
-  stripped/re-appended), the CSRC identifier list (0–15 entries, `CC` always
-  derived from the list length), marker, payload type, sequence number,
-  timestamp, SSRC, an optional [`HeaderExtension`], and the payload.
-- **[`HeaderExtension`]** — the §5.3.1 generic header extension: a 16-bit
-  profile-specific identifier + opaque profile-specific data (the `length`
-  field, in 32-bit words, is always derived from the data length).
+## What it does / what it does not
 
-See `docs/rtp-header.md` for the curated RFC 3550 §5.1/§5.3.1 transcription
-this crate implements field-for-field.
+**Does:** parse and build an RTP packet: version (checked `== 2`), padding (the trailing pad-count octet is stripped on parse and re-added on serialize), 0 to 15 CSRC identifiers, marker, payload type, sequence number, timestamp, SSRC, an optional generic header extension, and the payload as a borrowed slice. The `P`, `X` and `CC` bits and the extension length are derived from the typed data, so they cannot disagree with it.
 
-The optional `rfc8285` feature adds `rfc8285::parse_extensions`, decoding
-[RFC 8285](https://www.rfc-editor.org/rfc/rfc8285.txt)'s one-byte/two-byte
-multiplexed extension elements out of a `HeaderExtension`'s opaque `data`
-(the profile-specific interpretation RFC 3550 itself leaves to the
-profile). See `docs/rfc8285_header_ext.md` for the curated transcription.
+**Does not:** interpret payload formats (H.264 FU-A, AAC-hbr, MPEG-TS-over-RTP and so on live in `transmux` and friends), do RTCP (use `rtcp-packet`), reorder or jitter-buffer packets, or run sockets. It is the one RTP header codec that the rest of the workspace (`transmux`, `dvb-stream`, `multimux`, `webrtc-runtime`, `st291`'s RTP transport) shares instead of each crate hand-rolling its own.
 
-The optional `av3a` feature adds the **AV3A-AATF RTP payload**
-(T/AI 109.7-2024 clause 10.1). The payload has no header of its own, so the
-`av3a` module provides the typed `AatfFrame`/`AatfFrameHeader`
-(T/AI 109.3-2023 Annex A Tables A.4-A.7: `audio_codec_id` 0 general high-rate,
-1 lossless up to `aatf_error_check()`, 2 general full-rate),
-`packetize`/`Av3aDepacketizer` (MTU split, `M` marks the last fragment),
-`is_dynamic_payload_type`, and `Av3aFmtp`/`CodecNnId` for the SDP
-`rate`/`codec-nn-id`/`config`/`bitrate` parameters (the spec examples
-`0x0000`/`0x0100`/`0x0201` are tested). CRC bytes are carried, not verified
-(the polynomial is not in the vendored extract).
+## Standards supported
 
-`OneByteElements`/`TwoByteElements::serialize_into` validate every element
-before writing, so an invalid element leaves the output buffer untouched.
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| IETF RFC 3550 "RTP" | RFC 3550 (vendored `specs/rfc3550_rtp.txt`) | §5.1 fixed header, CSRC list, padding; §5.3.1 generic header extension | Full | Transcribed in `docs/rtp-header.md` |
+| IETF RFC 8285 "A General Mechanism for RTP Header Extensions" | RFC 8285 (vendored) | §4.2 one-byte form (`0xBEDE`), §4.3 two-byte form (`0x100x`) | Full, behind `rfc8285` | `docs/rfc8285_header_ext.md`; serialization validates every element before writing |
+| T/AI 109.7-2024 "AV3A-AATF RTP payload" (clause 10.1) | 2024 (not in the vendored index, edition per the crate's source citations) | `aatf_frame()` start, MTU fragmentation and `M`-bit reassembly, SDP `fmtp` parameters | Partial, behind `av3a` | CRC bytes are carried, not verified (polynomial not in the vendored extract); lossless header typed up to `aatf_error_check()`; `audio_codec_id` 3..=15 rejected |
+| T/AI 109.3-2023 Annex A Tables A.4 to A.7 (AATF frame header) | 2023 (as cited in the source) | General high-rate (0), lossless (1, partial) and general full-rate (2) headers | Partial, behind `av3a` | Same gaps as above |
+| IETF RFC 3551 (RTP A/V profile) | RFC 3551 | Static payload type numbers | Not implemented | The payload type is a plain `u8` (max 127) |
 
-`#![no_std]` + `alloc`; depends only on `broadcast-common`.
+## Features
+
+| Feature | Default | Description |
+|---|---|---|
+| `std` | yes | Links the standard library. Without it the crate is `#![no_std]` and needs only `alloc`. |
+| `serde` | no | `serde::Serialize` on the public types. |
+| `rfc8285` | no | The `rfc8285` module: decode and encode one-byte and two-byte header-extension elements. |
+| `av3a` | no | The `av3a` module: AATF frame codec, `packetize` / `Av3aDepacketizer`, SDP `Av3aFmtp`. |
 
 ## Quick start
+
+Parse a real 324-byte packet (produced by `transmux`'s RTP packetiser over the committed `h264_aac.ts` capture) and write it back byte-for-byte:
 
 ```rust
 use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
-let pkt = RtpPacket {
+let wire = std::fs::read("tests/fixtures/rtp_simple.bin").unwrap();
+let pkt = RtpPacket::parse(&wire).unwrap();
+assert!(pkt.extension.is_none() && pkt.csrc.is_empty());
+println!("pt={} seq={} ts={} ssrc={:#x}",
+    pkt.payload_type, pkt.sequence_number, pkt.timestamp, pkt.ssrc);
+assert_eq!(pkt.try_to_bytes().unwrap(), wire);
+
+// Build one from fields.
+let out = RtpPacket {
     marker: true,
     payload_type: 96,
     sequence_number: 1,
@@ -63,32 +62,27 @@ let pkt = RtpPacket {
     padding: None,
     payload: &[0xDE, 0xAD, 0xBE, 0xEF],
 };
-let mut bytes = vec![0u8; pkt.serialized_len()];
-pkt.serialize_into(&mut bytes).unwrap();
-assert_eq!(RtpPacket::parse(&bytes).unwrap(), pkt);
+let bytes = out.try_to_bytes().unwrap();
+assert_eq!(RtpPacket::parse(&bytes).unwrap(), out);
 ```
 
-## Examples
+Runnable programs: `build_packet`, `parse_packet`, and `rfc8285_extensions` (with `--features rfc8285`), via `cargo run -p rtp-packet --example <name>`.
 
-```sh
-cargo run -p rtp-packet --example build_packet
-cargo run -p rtp-packet --example parse_packet
-cargo run -p rtp-packet --example rfc8285_extensions --features rfc8285
-```
+## What is implemented
 
-## Features
+- `RtpPacket` and `HeaderExtension` (16-bit profile id plus opaque data, with the 32-bit-word length derived).
+- Limits as named constants: `RTP_VERSION`, `FIXED_HEADER_LEN`, `MAX_CSRC_COUNT` (15), `MAX_PADDING_COUNT`, `MAX_PAYLOAD_TYPE`.
+- `rfc8285`: `parse_extensions` returning `ExtensionElements::{OneByte, TwoByte}`, with validated `OneByteId` / `TwoByteId`.
+- `av3a`: `AatfFrame`, `AatfFrameHeader`, `packetize`, `Av3aDepacketizer` (capped at 1 MiB by default, `with_max_frame_bytes` to change), `Av3aFmtp`, `CodecNnId`, `is_dynamic_payload_type`.
 
-| Feature   | Default | Description |
-|-----------|---------|-------------|
-| `std`     | yes     | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
-| `serde`   | no      | `serde::Serialize` derives on public types. |
-| `rfc8285` | no      | RFC 8285 one-byte/two-byte multiplexed header-extension element decoding (`rfc8285` module). |
-| `av3a`    | no      | AV3A-AATF RTP payload (T/AI 109.7-2024 clause 10.1): frame codec, packetizer/depacketizer, SDP fmtp (`av3a` module). |
+## Design notes
 
-## Minimum Supported Rust Version
+Zero-copy `Parse`, symmetric `Serialize`, no magic numbers, `#[non_exhaustive]` `Error`, serializers that check lengths rather than casting, `no_std` + `alloc`. Padding, CSRC and extension cases are tested against spec-table vectors because no public pcap with those fields was available; the simple case is tested against the real fixture.
 
-1.95.0
+## Related crates
 
-## License
+Depends only on `broadcast-common`. Used by `transmux` (RTP packetiser/depacketiser), `dvb-stream`, `webrtc-runtime`, `multimux` (WHEP) and `st291` (ST 2110-40 RTP). `rtcp-packet` is its control-plane companion.
 
-MIT OR Apache-2.0
+## MSRV and licence
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

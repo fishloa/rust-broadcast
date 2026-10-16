@@ -1,186 +1,104 @@
 # hls-runtime
 
-A sans-IO Low-Latency HLS (**RFC 8216bis**, HTTP Live Streaming 2nd Edition)
-**client + server** engine in one crate, mirroring `rtsp-runtime`'s
-client+server split (renamed from `ll-hls-client`, never published — Stage 1
-of the hls-runtime unification). The crate holds two halves:
+[![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime)
+[![docs.rs](https://img.shields.io/docsrs/hls-runtime)](https://docs.rs/hls-runtime)
 
-- **`client`** (issue [#717](https://github.com/fishloa/rust-broadcast/issues/717),
-  slices 2-4: reload scheduler, fetch pipeline, output adapter, plus slice
-  5's `tokio` feature for the async IO adapter) — a driveable LL-HLS
-  playback client engine.
-- **`server`** (feature `std`; issue #663/#717 Stage 2, media-plane
-  implementation plan step 4) — the sans-IO LL-HLS **origin engine**:
-  `server::HlsOrigin`, a `media_plane::egress::ServedEgress` rendering
-  playlists and resolving blocking-reload/part-availability requests
-  (never blocking, never touching a clock) directly from a shared
-  `media_plane::Trunk` — not a push-fed rolling-window store of its own.
-  An async adapter (`multimux`, over tokio + axum) drives this engine the same
-  way any HTTP framework can adapt it.
+Sans-IO Low-Latency HLS (RFC 8216bis) client and origin engines in one crate: a driveable playback client, and an origin that renders playlists and resolves blocking-reload requests straight from a `media_plane::Trunk`. An optional `tokio` + `reqwest` adapter provides real HTTP for the client.
 
-`client::HlsClient` is a driveable, caller-driven state machine in the same
-sans-IO shape as [`srt-runtime`](../srt-runtime) (issue #565): the core never
-opens a socket or reads a clock. The caller drains `Action`s (what to fetch,
-and how), performs the IO itself, and feeds the response back in; decoded
-`Output`s (the init segment, then ordered access units) drain out in turn.
-
-## What's here
-
-- **Reload scheduler** — once a playlist advertises `EXT-X-SERVER-CONTROL`/
-  `EXT-X-PART-INF` (Low-Latency), every reload is a Blocking Playlist Reload
-  (RFC 8216bis §6.2.5.2) naming the next not-yet-seen Partial Segment's
-  `_HLS_msn`/`_HLS_part` — distinguishing a bare `_HLS_msn` (waits for a
-  *closed* segment) from `_HLS_part=0`. Non-LL origins get a plain GET paced
-  by a `WaitMs` hint derived from `#EXT-X-TARGETDURATION`. `EXT-X-SKIP`/
-  `CAN-SKIP-UNTIL` Playlist Delta Updates are requested once a full-playlist
-  baseline exists and merged back into a full view.
-- **Fetch pipeline** — the `EXT-X-PRELOAD-HINT`ed part is prefetched ahead of
-  its own numbered `EXT-X-PART` appearance; `BYTERANGE` parts are supported,
-  including the "omitted offset continues the previous sub-range" rule; the
-  Media Initialization Section (`EXT-X-MAP`) is fetched once and reused.
-- **Dedup / coalescing** — once any of a segment's parts have been
-  individually fetched, the segment is never re-fetched whole when it later
-  closes; a playlist whose segments carry no parts at all (non-LL) falls back
-  to whole-segment fetches. A part's samples are never double-counted against
-  its parent segment's.
-- **Output adapter** — exactly one `Output::Init` precedes any
-  `Output::Samples`; parts/segments are demuxed into real access units via
-  `transmux::Fmp4Demux` (never opaque container bytes); `EXT-X-DISCONTINUITY`
-  surfaces as `Output::Discontinuity`; resources arriving before the init
-  segment are buffered and replayed once it arrives, so a caller's fetches may
-  complete in any order.
-- **Classic MPEG-TS-segment HLS** (issue #760) — a playlist that never
-  advertises an `EXT-X-MAP` (HLS v3, the dominant legacy/IPTV form:
-  self-contained `.ts` segments, no init resource) routes each fetched
-  Part/Segment through `transmux::TsDemux` instead, content-sniffed by the
-  MPEG-TS sync byte once the playlist is known to carry no map. The first
-  demuxed segment's recovered track specs synthesize the one `Output::Init`
-  the contract above requires, so callers built against the fMP4 path need
-  no TS-specific handling. The fMP4/CMAF + LL path is entirely unchanged.
-
-## Reuse, not re-description
-
-The `client` module defines **no playlist model of its own**. Parsing is
-`broadcast_hls::MediaPlaylist::parse` (issue #717 slice 1 — the symmetric
-inverse of the LL-HLS origin's own `to_m3u8()` renderer, so origin and client
-share one wire model); demuxing a fetched CMAF part or segment into access
-units is `transmux::Fmp4Demux` (or, for classic MPEG-TS-segment HLS, issue
-#760's `transmux::TsDemux`). `client` holds only the client **engine**.
-
-## Zero IO in the core
-
-No `tokio`/`reqwest`/socket dependency in `HlsClient` itself, ever. `no_std`
-+ `alloc` (default `std` feature can be turned off) — verified by the
-`--no-default-features` gate. Drive it by hand — see `tests/origin_loop.rs`
-for a complete in-process example against a real
-`transmux::ll_hls::LlHlsSegmenter` origin (no real sockets: the origin's
-playlist/part/segment bytes are handed to the client exactly as a caller's
-HTTP fetch loop would).
-
-## The `tokio` feature (issue #717 slice 5)
-
-Enabling the (non-default) `tokio` cargo feature adds `client::tokio_client::TokioClient`:
-a thin async shell (tokio + reqwest/rustls) driving `HlsClient` over real
-HTTP — blocking-reload/preload-hint query params, typed `Range` byte-ranges,
-per-request/connect timeouts, `backon` retry/backoff with jitter on transient
-failures, and a `CancellationToken` (`TokioClientConfig::cancel`) that ends
-`next_output` with `Ok(None)` and aborts any in-flight request. Authenticates
-via the shared [`broadcast-auth`](../broadcast-auth) crate
-(`TokioClientConfig::auth` takes a `broadcast_auth::Credentials` —
-Basic/Digest/Bearer, with Digest computed end-to-end on a `401`), the same
-model `rtsp-runtime` and `multimux`'s HTTP input adapters use.
-`tests/glass_to_glass.rs` (gated on this
-feature) drives it against a **real** `multimux`-served LL-HLS origin over
-loopback HTTP, fed by a real-time-paced synthetic producer, and measures
-sub-second glass-to-glass latency — the epic's headline acceptance bar — plus
-asserts blocking-reload and preload-hint prefetch are actually exercised, and
-that a genuinely non-LL origin still plays via the full-segment fallback.
-
-## Typed identifiers
-
-`server::{SegmentSeq, PartIndex}` are re-exports of
-`media_plane::ids::{SegmentSeq, PartIndex}` (one canonical definition) and
-`server::Generation` types the init-segment generation, so a swapped
-segment/part/generation argument is a compile error rather than a wrong
-resource name. `ClosedSegment::sequence_number`, `ClosedSegment::init_generation`
-/`with_init_generation` and `HlsOrigin::init_name(track_id, generation)` use
-them; track ids are `transmux::TrackId` (`DEFAULT_TRACK_ID`,
-`HlsOrigin::render_playlist`, `Output::Samples { track_id }`). The wire names
-(`seg-1-5-7.m4s`, `init-1-5-2.mp4`, `part-..`) are unchanged.
-
-## The `server` module (feature `std`)
-
-The sans-IO LL-HLS **origin engine**, rendering from a shared
-`media_plane::Trunk` (media-plane implementation plan step 4) so any HTTP
-framework can adapt it:
-
-- **`server::HlsOrigin`** — implements `media_plane::egress::ServedEgress`.
-  Owns exactly one `media_plane::trunk::SegmentCursor` (never one per
-  request/peer) to keep a small synced window of currently-advertised closed
-  segments, the lifetime-max segment duration, and the cumulative
-  `#EXT-X-DISCONTINUITY-SEQUENCE` count — the one thing a `&Trunk` call alone
-  cannot answer (there is no snapshot query over the segment log). Every
-  other decision — live parts of the open segment, whether a segment has
-  closed, and the just-closed-segment's-final-part-still-serves guarantee
-  (multimux 0.2.1/0.2.2's hard-won bug fixes) — comes straight from the
-  `Trunk`'s own live-part log, with no cache at all.
-- **`HlsOrigin::resolve`** (the `ServedEgress` impl) — the Blocking
-  Playlist Reload (RFC 8216bis §6.2.5.2) and part-availability decision
-  logic as a synchronous poll method returning
-  `media_plane::egress::EgressResponse` (`Ready`/`Await`/`BadRequest`/
-  `NotFound`) — never blocking, never touching a clock, and never
-  `Await`-ing past the caller's own `AwaitPolicy` deadline. An async adapter
-  turns an `Await` outcome into an actual bounded wait via
-  `media_plane::Trunk::listen()` plus its own `tokio::time::timeout` (or
-  equivalent).
-- **`HlsOrigin::master_playlist`** — the origin's own master playlist with
-  a measured peak `BANDWIDTH` (segment bytes over duration, rounded up) and
-  the `CODECS` of its init segment (or `set_track_specs` for a TS origin);
-  errors are the typed `server::HlsMasterError`.
-- **`server::master_playlist_m3u8`** — the context-free master-playlist
-  renderer (fixed 5 Mb/s estimate, no `CODECS`); takes the media playlist's
-  served filename as an explicit argument, so an adapter can serve it under
-  any configured name.
-- **Instance-named resources** — every resource served `immutable` carries
-  the origin's instance token (`init-{track}-{instance}-{generation}.mp4`,
-  `seg-{track}-{instance}-{msn}.{ext}`,
-  `part-{track}-{instance}-{msn}.{idx}.{ext}`; the bare `init-{track}.mp4`
-  is the current init, served `no-cache`), so a name maps to one origin's
-  bytes for ever across reconnects and restarts.
-- **`media_plane::egress::CachePolicy`** (`Immutable`/`NoCache`) — the
-  cache-control policy a resolved `EgressResponse::Ready` carries, for an
-  adapter to apply as HTTP `Cache-Control`.
-
-`multimux` is the reference adapter, and as of its 0.5.0 it serves every route
-through `HlsOrigin`/`ServedEgress` over a `media_plane::Trunk` — one
-`HlsOrigin` per program, resolved per request. The push-fed `MediaStore`
-re-export it carried through 0.1.x is deleted: the `Trunk` is the single copy
-of the data, never a second cache of it.
-
-## What's *not* here — explicit follow-ups
-
-- **Multivariant Playlist rendition selection** — `broadcast_hls::MasterPlaylist::parse`
-  exists, but choosing a rendition/bitrate is a player-level policy this crate
-  doesn't impose; `HlsClient` follows one Media Playlist URL.
-- **Discontinuity signalling on a still-open segment** — RFC 8216bis's
-  `OpenSegment` (the in-progress, not-yet-closed segment) carries no
-  discontinuity flag of its own; if every part of a segment was already
-  delivered while it was open, a discontinuity revealed only once it closes is
-  signalled late (after those parts' samples). A gap in the current wire
-  model, not something this crate can fix locally.
-- **Server-side Playlist Delta Updates** — the `client` half requests
-  `EXT-X-SKIP`/`CAN-SKIP-UNTIL` deltas and merges them back into a full view
-  (`ClientSession::merge_delta`), but `server::HlsOrigin` never emits
-  `EXT-X-SKIP`, never advertises `CAN-SKIP-UNTIL`, and never renders
-  `EXT-X-RENDITION-REPORT`. The two halves of this crate cannot exercise
-  Delta Updates against each other; a client pointed at `HlsOrigin` always
-  gets a full playlist.
+Formerly published as `ll-hls-runtime` (last release 0.3.1 under that name); search for either name. (The earlier in-repo name `ll-hls-client` was never published.)
 
 ```toml
 [dependencies]
 hls-runtime = "0.8"
 ```
 
-## License
+## What it does / what it does not
 
-MIT OR Apache-2.0.
+**Does (client):** `client::HlsClient` is a caller-driven state machine. It tells you what to fetch (`Action::FetchPlaylist`, `FetchResource`, `WaitMs`), you do the IO, you feed the bytes back, and decoded `Output`s (one `Init`, then ordered `Samples`, plus `Discontinuity` and `EndOfStream`) come out. It schedules Blocking Playlist Reloads (`_HLS_msn`/`_HLS_part`), requests and merges Playlist Delta Updates (`EXT-X-SKIP`), prefetches the `EXT-X-PRELOAD-HINT` part, honours `BYTERANGE` parts, avoids re-fetching a segment whose parts it already has, demuxes fMP4/CMAF with `transmux::Fmp4Demux`, and also plays classic MPEG-TS-segment HLS (HLS v3, no `EXT-X-MAP`) through `transmux::TsDemux`.
+
+**Does (origin):** `server::HlsOrigin` implements `media_plane::egress::ServedEgress`. It owns one segment cursor, renders media and master playlists (LL-HLS parts, preload hint, `EXT-X-DATERANGE` from the trunk's SCTE-35 events, discontinuity sequence), names resources per origin instance so a name maps to one set of bytes for ever, and resolves blocking-reload and part-availability decisions as a synchronous poll returning `Ready`, `Await`, `BadRequest` or `NotFound`.
+
+**Does not:** open sockets or read a clock in the core (an async adapter such as `multimux` turns an `Await` into a bounded wait), define its own playlist model (that is `broadcast-hls`), choose a rendition from a multivariant playlist (the client follows one media playlist URL), or have the origin emit `EXT-X-SKIP`, `CAN-SKIP-UNTIL` or `EXT-X-RENDITION-REPORT` (so the two halves cannot exercise delta updates against each other).
+
+## Standards supported
+
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| IETF HLS 2nd edition, `draft-pantos-hls-rfc8216bis` | Internet-Draft of 1 May 2026, "HTTP Live Streaming 2nd Edition" (vendored `specs/ietf_draft_pantos_hls_rfc8216bis.txt`) | §6.2.5.2 Blocking Playlist Reload, Partial Segments, preload hint, Playlist Delta Updates (client), `EXT-X-DATERANGE` (origin), discontinuities | Partial | Origin has no delta updates or rendition reports; client has no ABR |
+| IETF RFC 8216 HLS | RFC 8216 (vendored `specs/ietf_rfc8216_hls.txt`) | Classic TS-segment HLS playback (HLS v3 form) | Partial | Client only |
+| Apple HLS timed metadata | Vendored `specs/apple_hls_timed_metadata.html` | SCTE-35 cues rendered as `EXT-X-DATERANGE` via `timed-metadata` | Partial | |
+| IETF RFC 3986 reference resolution, RFC 3339 dates | RFC 3986, RFC 3339 | Relative URL joins (`url`), program-date-time (`jiff`) | Full | Not hand-rolled |
+| IETF RFC 7617 / 7616 / 6750 | not vendored | `TokioClient` authentication through `broadcast-auth`; credentials go only to the playlist's origin | Full, behind `tokio` | |
+
+## Features
+
+| Feature | Default | Description |
+|---|---|---|
+| `std` | yes | Enables `server` (needs `media_plane::Trunk`, which is `std`), plus `bytes`, `url/std`, `jiff/std`. Without it the client core is `#![no_std]` + `alloc`. |
+| `serde` | no | `Serialize` on the public action, output and id types. |
+| `tokio` | no | `client::tokio_client::TokioClient`: async shell over tokio and reqwest (rustls). Blocking-reload query parameters, typed `Range`, per-request and connect timeouts, `backon` retry with jitter (no retry of a 4xx other than 408 and 429), a `CancellationToken`, and Basic, Bearer or Digest through `broadcast-auth`. Implies `std`. |
+
+## Quick start
+
+Drive the client over real ffmpeg fMP4 HLS output, with the playlist text and the segment files handed over by hand (no HTTP):
+
+```rust
+use hls_runtime::client::{Action, HlsClient, Output};
+
+let playlist = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:0\n\
+    #EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n\
+    #EXTINF:1.000000,\nindex0.m4s\n#EXTINF:1.000000,\nindex1.m4s\n#EXTINF:1.000000,\nindex2.m4s\n\
+    #EXT-X-ENDLIST\n";
+
+let mut client = HlsClient::new("http://origin/live/index.m3u8");
+// The first action is always a plain playlist GET.
+assert!(matches!(client.poll(), Some(Action::FetchPlaylist { .. })));
+client.on_playlist(playlist.as_bytes()).unwrap();
+
+let (mut init, mut samples) = (0, 0);
+loop {
+    while let Some(action) = client.poll() {
+        if let Action::FetchResource { id, url, .. } = action {
+            let file = url.rsplit('/').next().unwrap();
+            let bytes = std::fs::read(format!("tests/fixtures/cmaf-fmp4/{file}")).unwrap();
+            client.on_resource(id, &bytes).unwrap();
+        }
+    }
+    let mut progressed = false;
+    while let Some(out) = client.next_output() {
+        progressed = true;
+        match out {
+            Output::Init(_) => init += 1,
+            Output::Samples { samples: s, .. } => samples += s.len(),
+            _ => {}
+        }
+    }
+    if !progressed {
+        break;
+    }
+}
+assert_eq!(init, 1, "exactly one init precedes the samples");
+assert!(samples > 0, "real H.264 and AAC access units came out");
+```
+
+For the origin, `examples/origin_playlist.rs` builds a `Trunk`, publishes parts and segments, and renders a playlist through `HlsOrigin::resolve`; `examples/client_stepping.rs` steps the client against that origin's output. Run them with `cargo run -p hls-runtime --example <name>`. `tests/origin_loop.rs` drives the client against a real `transmux::ll_hls::LlHlsSegmenter` in process.
+
+## What is implemented
+
+- **`client`:** `HlsClient` (`new`, `poll`, `on_playlist`, `on_resource`, `on_error`, `next_output`, `poll_timeout`), `Action`, `Output`, `ResourceId`, error type, relative URL resolution.
+- **`server`** (feature `std`): `HlsOrigin` and its builder (`target_duration_secs`, `window_segments`, `low_latency`), `HlsRequest`, `BlockingQuery`, `HlsBody`, `ClosedSegment`, `master_playlist` (measured peak `BANDWIDTH` and the init segment's `CODECS`, typed `HlsMasterError`), `master_playlist_m3u8` (context-free renderer), `set_init`, `set_track_specs` (TS origins), `DEFAULT_TRACK_ID`.
+- **Typed identifiers:** `server::SegmentSeq` and `server::PartIndex` re-export `media_plane::ids`, `server::Generation` types the init-segment generation, and tracks are `transmux::TrackId`, so a swapped segment, part or generation argument is a compile error. Wire names (`seg-1-5-7.m4s`, `init-1-5-2.mp4`) are unchanged.
+- **Cache policy:** each resolved resource carries a `media_plane::egress::CachePolicy` (`Immutable` for instance-named parts, segments and generation-named inits; `NoCache` for the bare current init and playlists).
+- **Poison-tolerant locks** in the origin, and bounded behaviour on abusive requests (`tests/origin_hardening.rs`).
+
+## Design notes
+
+Sans-IO (no clock read, no socket, in the core), `#![forbid(unsafe_code)]`, `no_std` + `alloc` client, one wire model (playlists are `broadcast_hls::MediaPlaylist`, not re-described), the `Trunk` is the single copy of the data (the old push-fed `MediaStore` was deleted), `#[non_exhaustive]` on `Action`, `Output` and errors, golden client transcripts and a no-hand-roll guard. Known gap: a discontinuity revealed only when a still-open segment closes is signalled late, because `OpenSegment` carries no discontinuity flag in the wire model.
+
+## Related crates
+
+Depends on `broadcast-hls` (playlist syntax), `transmux` (demux, `TrackId`), `media-plane` (`Trunk`, `ServedEgress`), `timed-metadata` (`EXT-X-DATERANGE`) and, for `tokio`, `broadcast-auth`. `multimux` is the reference adapter: it serves every LL-HLS route through one `HlsOrigin` per program over axum and tokio.
+
+## MSRV and licence
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

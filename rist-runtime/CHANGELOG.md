@@ -4,6 +4,9 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
 ### Changed (BREAKING: epoch — requires broadcast-common 10)
 - Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `rtcp-packet` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
