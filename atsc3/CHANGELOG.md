@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch)
+- **BREAKING (epoch):** builds against the new `broadcast-common` major (removal of the panicking `Serialize::to_bytes`, umbrella #1143; see `broadcast-common`'s `[Unreleased]`). A change of the `broadcast-common` caret epoch is a major-class change for this crate whether or not one of its own public items changed (epoch-purity rule, `docs/RELEASE-AUDIT.md` §2).
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
