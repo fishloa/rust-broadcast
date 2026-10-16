@@ -11,7 +11,9 @@ Outputs (all deterministic — same inputs, byte-identical output):
 * the ``<!-- BEGIN GENERATED: dvb-si-at-a-glance -->`` block in
   ``dvb-si/README.md`` (counts + the standards table), and
 * the ``<!-- BEGIN GENERATED: dvb-si-at-a-glance -->`` block in the crate-root
-  ``//!`` docs of ``dvb-si/src/lib.rs``.
+  ``//!`` docs of ``dvb-si/src/lib.rs``, and
+* the ``<!-- BEGIN GENERATED: dvb-si-docs-index -->`` block in
+  ``dvb-si/docs/README.md`` (the spec-transcription index).
 
 Inputs ("what the code implements" — read lexically, never hand-typed):
 
@@ -469,7 +471,7 @@ def apply_partial(impls: list[Impl]) -> None:
 # Annex A charset decoders: Charset variant -> (selector(s), table, decoding).
 CHARSETS = {
     "Iso6937": ("none (first byte ≥ 0x20) or 0x00", "Figure A.1 default Latin (ISO/IEC 6937 superset, € at 0xA4)", "built-in, glyph-for-glyph; combining-diacritic row → precomposed or base + combining mark", "no"),
-    "Iso8859": ("0x01–0x07, 0x09–0x0B; 0x10 0x00 nn", "ISO/IEC 8859-5 … -15 (no -12); two-byte form any -n", "`encoding_rs`", "yes"),
+    "Iso8859": ("0x01–0x07, 0x09–0x0B; 0x10 0x00 nn", "ISO/IEC 8859-5 … -15 (no -12); two-byte form any -n", "`encoding_rs` (8859-1 built-in)", "yes, except 8859-1"),
     "Ucs2Be": ("0x11", "ISO/IEC 10646 Basic Multilingual Plane", "built-in UCS-2 big-endian", "no"),
     "Ksx1001": ("0x12", "KS X 1001 (Korean)", "`encoding_rs` EUC-KR", "yes"),
     "Gb2312": ("0x13", "GB-2312-1980 (Simplified Chinese)", "`encoding_rs` GBK (a GB-2312 superset)", "yes"),
@@ -553,6 +555,60 @@ def registry_counts() -> dict[str, int]:
         "cas": count(CRATE / "registries" / "tsCAS.names", "CASystemId"),
         "pds": count(CRATE / "registries" / "tsPDS.names", "PrivateDataSpecifier"),
     }
+
+
+# Spec-transcription directories under dvb-si/docs/{kind}/<dir>/ -> document title.
+# A new directory without an entry fails generation, so the index cannot rot.
+SPEC_DIRS = {
+    "en_300_468": "ETSI EN 300 468 — DVB Service Information",
+    "en_300_706": "ETSI EN 300 706 — Enhanced Teletext",
+    "en_300_743": "ETSI EN 300 743 — DVB subtitling",
+    "en_301_192": "ETSI EN 301 192 — DVB data broadcasting (MPE, INT, data carousel)",
+    "en_303_560": "ETSI EN 303 560 — DVB TTML subtitling",
+    "gy_t_270": "GY/T 270-2013 — China DTV closed captions",
+    "gy_t_420": "GY/T 420-2025 — China UHD encapsulation (AVS2 video)",
+    "gy_t_422": "GY/T 422-2025 — China multi-audio (audio preselection profile)",
+    "iso_13818_1": "Rec. ITU-T H.222.0 \\| ISO/IEC 13818-1 — MPEG-2 Systems",
+    "iso_13818_6": "ISO/IEC 13818-6 — DSM-CC (hand transcription, provenance-documented)",
+    "iso_14496_1": "ISO/IEC 14496-1 — MPEG-4 Systems (FlexMux buffer descriptors)",
+    "nordig": "NorDig Unified Requirements v3.2.2 — logical channel descriptors",
+    "t_ai_109_6": "T/AI 109.6-2022 — AVS3 intelligent media format",
+    "t_ai_109_7": "T/AI 109.7-2024 — AVS3 audio encapsulation",
+    "t_uwa_012_2": "T/UWA 012.2-2023 — UWA UHD TS encapsulation",
+    "tr_101_211": "ETSI TR 101 211 — DVB SI implementation guidelines",
+    "tr_101_290": "ETSI TR 101 290 — DVB measurement guidelines",
+    "ts_101_154": "ETSI TS 101 154 — audio/video coding in DVB",
+    "ts_101_162": "ETSI TS 101 162 — DVB identifier registries",
+    "ts_102_006": "ETSI TS 102 006 — System Software Update",
+    "ts_102_323": "ETSI TS 102 323 — TV-Anytime carriage",
+    "ts_102_366": "ETSI TS 102 366 — AC-3 / E-AC-3",
+    "ts_102_727": "ETSI TS 102 727 — DVB-MHP (descriptor subset)",
+    "ts_102_772": "ETSI TS 102 772 — MPE-IFEC",
+    "ts_102_809": "ETSI TS 102 809 — application signalling (AIT)",
+    "ts_102_825": "ETSI TS 102 825 — CPCM",
+}
+SPEC_KINDS = [
+    ("tables", "Table / section syntax"),
+    ("descriptors", "Descriptor syntax"),
+    ("enums", "Coded-value tables (with `.toml` drift guards)"),
+    ("text", "Prose references"),
+]
+DOCS_INDEX = CRATE / "docs" / "README.md"
+INDEX_BEGIN = "<!-- BEGIN GENERATED: dvb-si-docs-index (tools/gen-dvbsi-coverage.py) -->"
+INDEX_END = "<!-- END GENERATED: dvb-si-docs-index -->"
+
+
+def render_docs_index() -> list[str]:
+    out = [INDEX_BEGIN, "", "| Kind | Standard | Files |", "|---|---|---|"]
+    for kind, label in SPEC_KINDS:
+        base = CRATE / "docs" / kind
+        for d in sorted(p for p in base.iterdir() if p.is_dir()):
+            if d.name not in SPEC_DIRS:
+                raise GenError(f"docs/{kind}/{d.name}/ has no title in SPEC_DIRS (tools/gen-dvbsi-coverage.py)")
+            n = sum(1 for f in d.rglob("*.md") if f.name != "README.md")
+            out.append(f"| {label} | [{SPEC_DIRS[d.name]}]({kind}/{d.name}/) | {n} |")
+    out += ["", INDEX_END]
+    return out
 
 
 # ─────────────────────────── standards ─────────────────────────────
@@ -1088,11 +1144,13 @@ def render_coverage(m: Model) -> str:
     L += [
         "- **MJD + BCD UTC** (EN 300 468 Annex C) for EIT `start_time`, TDT/TOT `UTC_time`,",
         "  local_time_offset `time_of_change`, network_change_notify `start_time_of_change`:",
-        "  decoded by `broadcast_common::time`, exposed as `chrono::DateTime<Utc>` with the `chrono`",
-        "  feature (raw bytes otherwise).",
+        "  always decoded to `broadcast_common::time::MjdBcdDateTime` (e.g. `EitEvent::start_time()`,",
+        "  `TdtSection::utc_time_decoded()`), additionally to `chrono::DateTime<Utc>` with the",
+        "  `chrono` feature (`start_time_chrono()`, `utc_time()`); `*_raw()` returns the wire bytes.",
         "- **2038 MJD wrap rule** (EN 300 468 V1.20.1 clauses 5.2.4–5.2.6, 6.2.20, 6.4.9): an MJD",
         "  whose most significant bit is 0 is read as `0x10000 + MJD`.",
-        "- **BCD durations** (EIT `duration`, local_time_offset) decode to `chrono::Duration`.",
+        "- **BCD durations**: EIT `duration()` → `core::time::Duration`; local_time_offset",
+        "  `local_time_offset()` / `next_time_offset()` → `chrono::Duration` (feature `chrono`).",
         "",
         "## Higher layers",
         "",
@@ -1133,15 +1191,15 @@ def render_block(m: Model, comment: str) -> list[str]:
     return lines
 
 
-def splice(text: str, block: list[str], path: Path, comment: str = "") -> str:
-    b = (comment + " " + BEGIN).strip() if comment else BEGIN
-    e = (comment + " " + END).strip() if comment else END
+def splice(text: str, block: list[str], path: Path, comment: str = "", begin: str = BEGIN, end: str = END) -> str:
+    b = (comment + " " + begin).strip() if comment else begin
+    e = (comment + " " + end).strip() if comment else end
     lines = text.split("\n")
     try:
         s = next(i for i, l in enumerate(lines) if l.strip() == b)
         t = next(i for i, l in enumerate(lines) if l.strip() == e)
     except StopIteration:
-        raise GenError(f"{rel(path)}: generated-block markers not found ({BEGIN!r} … {END!r})")
+        raise GenError(f"{rel(path)}: generated-block markers not found ({begin!r} … {end!r})")
     return "\n".join(lines[:s] + block + lines[t + 1 :])
 
 
@@ -1150,6 +1208,7 @@ def outputs(m: Model) -> dict[Path, str]:
         COVERAGE: render_coverage(m),
         README: splice(read(README), render_block(m, ""), README),
         LIB: splice(read(LIB), render_block(m, "//!"), LIB, "//!"),
+        DOCS_INDEX: splice(read(DOCS_INDEX), render_docs_index(), DOCS_INDEX, begin=INDEX_BEGIN, end=INDEX_END),
     }
 
 

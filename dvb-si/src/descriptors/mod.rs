@@ -5,6 +5,21 @@
 //! (or [`AnyDescriptor::Unknown`] for tags with no implementation). To handle a
 //! single known tag, call the specific module's `parse` directly (e.g.
 //! [`satellite_delivery_system`], [`service`], [`linkage`]).
+//!
+//! # Tag namespaces
+//!
+//! | Namespace | Entry point | Allocated by |
+//! |---|---|---|
+//! | MPEG-2 systems + DSM-CC, tags 0x02–0x3F | [`AnyDescriptor`] (auto-dispatched) | Rec. ITU-T H.222.0 Table 2-45, ISO/IEC 13818-6 |
+//! | DVB, tags 0x40–0x7F | [`AnyDescriptor`] (auto-dispatched) | ETSI EN 300 468 Table 12 |
+//! | DVB `extension_descriptor` (0x7F) bodies | [`extension::ExtensionBody`], [`ExtensionRegistry`] | ETSI EN 300 468 Table 109 |
+//! | MPEG-2 `Extension_descriptor` (0x3F) bodies | [`mpeg2_extension::Mpeg2ExtensionBody`] (MPEG-H 3D audio) | Rec. ITU-T H.222.0 Table 2-110 |
+//! | Private / regional (PDS- or registration-scoped) | [`DescriptorRegistry`] opt-ins: [`logical_channel`], [`nordig`], [`avs2_video`], [`avs2_audio`], [`avs3_video`], [`avs3_audio`], [`tuwa_avs3_video`], [`china_caption_service`] | EACEM / NorDig / GY/T / T/AI / T/UWA |
+//! | AIT descriptors | [`parse_ait_loop`] → [`AnyAitDescriptor`] | ETSI TS 102 809 Table 38, TS 102 727 |
+//!
+//! Every tag, its verified clause, Rust type and status — and every allocated
+//! tag with no implementation yet — is listed in the generated
+//! [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md).
 
 pub mod aac;
 pub mod aac_additional_info;

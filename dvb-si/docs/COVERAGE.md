@@ -455,7 +455,7 @@ CR/LF → space, reserved controls stripped.
 | Selector (Table A.3) | Character table | Decoder | Needs `std` |
 |---|---|---|---|
 | none (first byte ≥ 0x20) or 0x00 | Figure A.1 default Latin (ISO/IEC 6937 superset, € at 0xA4) | built-in, glyph-for-glyph; combining-diacritic row → precomposed or base + combining mark | no |
-| 0x01–0x07, 0x09–0x0B; 0x10 0x00 nn | ISO/IEC 8859-5 … -15 (no -12); two-byte form any -n | `encoding_rs` | yes |
+| 0x01–0x07, 0x09–0x0B; 0x10 0x00 nn | ISO/IEC 8859-5 … -15 (no -12); two-byte form any -n | `encoding_rs` (8859-1 built-in) | yes, except 8859-1 |
 | 0x15 | UTF-8 encoding of ISO/IEC 10646 | passthrough (lossy on invalid bytes) | no |
 | 0x11 | ISO/IEC 10646 Basic Multilingual Plane | built-in UCS-2 big-endian | no |
 | 0x12 | KS X 1001 (Korean) | `encoding_rs` EUC-KR | yes |
@@ -467,11 +467,13 @@ CR/LF → space, reserved controls stripped.
 
 - **MJD + BCD UTC** (EN 300 468 Annex C) for EIT `start_time`, TDT/TOT `UTC_time`,
   local_time_offset `time_of_change`, network_change_notify `start_time_of_change`:
-  decoded by `broadcast_common::time`, exposed as `chrono::DateTime<Utc>` with the `chrono`
-  feature (raw bytes otherwise).
+  always decoded to `broadcast_common::time::MjdBcdDateTime` (e.g. `EitEvent::start_time()`,
+  `TdtSection::utc_time_decoded()`), additionally to `chrono::DateTime<Utc>` with the
+  `chrono` feature (`start_time_chrono()`, `utc_time()`); `*_raw()` returns the wire bytes.
 - **2038 MJD wrap rule** (EN 300 468 V1.20.1 clauses 5.2.4–5.2.6, 6.2.20, 6.4.9): an MJD
   whose most significant bit is 0 is read as `0x10000 + MJD`.
-- **BCD durations** (EIT `duration`, local_time_offset) decode to `chrono::Duration`.
+- **BCD durations**: EIT `duration()` → `core::time::Duration`; local_time_offset
+  `local_time_offset()` / `next_time_offset()` → `chrono::Duration` (feature `chrono`).
 
 ## Higher layers
 

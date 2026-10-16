@@ -1,7 +1,8 @@
 //! Drift guard for the generated coverage documentation.
 //!
-//! `tools/gen-dvbsi-coverage.py` derives `docs/COVERAGE.md` and the "At a
-//! glance" blocks of `README.md` and the crate-root `//!` docs from the crate's
+//! `tools/gen-dvbsi-coverage.py` derives `docs/COVERAGE.md`, the "At a
+//! glance" blocks of `README.md` and the crate-root `//!` docs, and the
+//! spec-transcription index in `docs/README.md` from the crate's
 //! single sources of truth (the `declare_tables!` / `declare_descriptors!` /
 //! `declare_extension_bodies!` / `declare_ait_descriptors!` lists, each
 //! module's spec citation, the `DescriptorRegistry` opt-ins, the `Charset`

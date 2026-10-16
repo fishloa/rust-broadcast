@@ -307,7 +307,7 @@
 //! | Feature | Default | Enables |
 //! |---|---|---|
 //! | `std` | on | Links `std`. Off → `#![no_std]` + `alloc`; the non-Latin text charsets and wall-clock time need `std`. |
-//! | `chrono` | on | MJD + BCD time fields decode to `chrono::DateTime<Utc>` (EIT `start_time()`, TDT/TOT); the `epg` module. Off → raw bytes. |
+//! | `chrono` | on | MJD + BCD time fields also decode to `chrono::DateTime<Utc>` (EIT `start_time_chrono()`, TDT/TOT `utc_time()`), local time offsets to `chrono::Duration`; the `epg` module. Off → `broadcast_common::time::MjdBcdDateTime` and raw bytes only. |
 //! | `ts` | on | [`demux::SiDemux`] over 188-byte TS packets (framing from the `mpeg-ts` crate). Off → bring your own complete section bytes. |
 //! | `serde` | on | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on every table/descriptor; [`text::DvbText`] serializes as its **decoded** UTF-8 string (camelCase JSON). |
 //! | `yoke` | off | `yoke::Yokeable` on every zero-copy view type + the `owned::Owned` wrapper — own a parsed view past the input buffer's borrow (store/cache/send across threads) without re-parsing or a mirror type. |
