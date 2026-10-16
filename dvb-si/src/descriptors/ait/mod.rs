@@ -16,8 +16,8 @@
 //! §6.2.31) reused verbatim: TS 102 809 §5.3.4.7 and Table 38 (note 2) say "the
 //! DVB SI private data specifier descriptor is defined for use in the
 //! Application Information Table to introduce private descriptors" and TS 102
-//! 727 Table (note 2) repeats it, so AIT dispatches to the same
-//! [`PrivateDataSpecifierDescriptor`](crate::descriptors::PrivateDataSpecifierDescriptor).
+//! 727 (its AIT allocation table, note 2) repeats it, so AIT dispatches to the same
+//! [`PrivateDataSpecifierDescriptor`](crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor).
 //!
 //! [`parse_ait_loop`] lazily walks a raw AIT descriptor loop (the
 //! `descriptor()` sequence inside AIT common or per-application loops),

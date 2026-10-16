@@ -13,11 +13,11 @@
 //!
 //! `Virtual_segmentation_descriptor` follows the text of §2.6.121: the 2-bit
 //! `maximum_duration_length_minus_1` field holds `MDL - 1` ("Length, in bytes
-//! (minus one)"), so `maximum_duration` is `MDL*8 + 5` bits with `MDL` = field
-//! + 1; with `timescale_flag == 0` the text infers `MDL = 0` (field = -1) and
-//! `ticks_per_second = 1`, i.e. a bare 5-bit duration. TSDuck 3.44 writes the
-//! field as `MDL` itself (one byte fewer) and so disagrees; the divergence is
-//! pinned in `tests/h222_descriptors.rs` and noted in the docs.
+//! (minus one)"), so `maximum_duration` is `MDL*8 + 5` bits with `MDL` equal to
+//! the field plus one; with `timescale_flag == 0` the text infers `MDL = 0`
+//! (field = -1) and `ticks_per_second = 1`, i.e. a bare 5-bit duration. TSDuck
+//! 3.44 writes the field as `MDL` itself (one byte fewer) and so disagrees; the
+//! divergence is pinned in `tests/h222_descriptors.rs` and noted in the docs.
 //!
 //! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-*.md`.
 //! Every `reserved` field is a typed field re-emitted verbatim (default: all
