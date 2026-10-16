@@ -5,6 +5,8 @@
 
 Sans-IO Low-Latency HLS (RFC 8216bis) client and origin engines in one crate: a driveable playback client, and an origin that renders playlists and resolves blocking-reload requests straight from a `media_plane::Trunk`. An optional `tokio` + `reqwest` adapter provides real HTTP for the client.
 
+Formerly published as `ll-hls-runtime` (last release 0.3.1 under that name); search for either name. (The earlier in-repo name `ll-hls-client` was never published.)
+
 ```toml
 [dependencies]
 hls-runtime = "0.8"

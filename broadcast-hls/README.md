@@ -3,192 +3,57 @@
 [![Crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls)
 [![docs.rs](https://img.shields.io/docsrs/broadcast-hls)](https://docs.rs/broadcast-hls)
 
-> **Extracted from `transmux`** (issue #878). `transmux/src/hls.rs` — the M3U8
-> playlist syntax — moved here so a crate that only needs to parse/render HLS
-> playlists (e.g. `media-doctor`, an HLS-pull client, a fuzz target) no longer
-> has to pull in an entire any-to-any container muxing hub to parse a text
-> file. `transmux`'s own HLS/LL-HLS **segmenters** (`ts_hls`, `ll_hls` — they
-> produce container bytes, not playlist syntax) stayed put.
-
-## Install
+HLS (M3U8) playlist syntax, RFC 8216 and RFC 8216bis (Low-Latency HLS): typed Media and Multivariant (Master) Playlist parse and serialize, `no_std`.
 
 ```toml
 [dependencies]
 broadcast-hls = "0.3"
 ```
 
-HLS (M3U8) playlist syntax — RFC 8216 / RFC 8216bis (Low-Latency HLS): typed
-Media/Master Playlist parse + serialize.
+## What it does / what it does not
 
-Implements:
+**Does:** parse a playlist into `MediaPlaylist` or `MasterPlaylist` structs and render it back with `to_m3u8()`, covering every one of the 32 tags in RFC 8216bis §4.4 (28 as typed struct fields, 4 preserved verbatim), the Low-Latency additions (partial segments, blocking reload, delta updates, preload hints, rendition reports), I-frame trick-play, discontinuity signalling, and the `EXT-X-KEY` line for CENC/CBCS protected CMAF. `EXT-X-VERSION` is computed from the content, never trusted from a caller. It was extracted from `transmux` (issue #878) so a crate that only needs playlist syntax (`media-doctor`, an HLS-pull client, a fuzz target) does not pull in a container-muxing hub.
 
-- **`MediaPlaylist`** / **`MasterPlaylist`** — `#EXTM3U` Media and
-  Multivariant (Master) Playlists; `to_m3u8()` renders, `parse()` is its
-  symmetric inverse.
-- **`MediaSegment`** / **`Variant`** / **`IFrameVariant`** — per-segment and
-  per-variant entries, including RFC 8216 §4.3.4.2 I-frame-only trick-play
-  signalling.
-- **Low-Latency HLS (RFC 8216bis)** — `LowLatencyConfig`, `PartSpec`,
-  `OpenSegment`, `MapTag`, `ByteRange`, `PreloadHintType`,
-  `RenditionReport`, `SkipInfo` — the partial-segment / blocking-reload /
-  playlist-delta-update directives, all strictly opt-in so a plain playlist
-  is byte-for-byte unchanged.
-- **`#EXT-X-DISCONTINUITY[-SEQUENCE]`** signalling, including
-  `mark_init_discontinuities` (auto-detect an init-segment change across a
-  segment run).
-- **CENC/CBCS DRM signalling** (ISO/IEC 23001-7, issue #564) —
-  `cenc_ext_x_key` renders the `#EXT-X-KEY` tag for a CMAF track:
-  `cbcs` becomes `METHOD=SAMPLE-AES`, `cenc` becomes `METHOD=SAMPLE-AES-CTR`
-  with no `IV` (RFC 8216bis §4.4.4.4).
-- **28 of the 32 RFC 8216bis §4.4 tags have a typed struct field** (issue
-  #872) — including `#EXT-X-INDEPENDENT-SEGMENTS`, `#EXT-X-START`
-  (`StartPoint`), `#EXT-X-DEFINE` (`Define`), `#EXT-X-PLAYLIST-TYPE`
-  (`PlaylistType`: `VOD`/`EVENT`), `#EXT-X-GAP`, `#EXT-X-BITRATE`,
-  `#EXT-X-SESSION-DATA` (`SessionData`), `#EXT-X-SESSION-KEY`
-  (`SessionKey`, `EncryptionMethod`) and `#EXT-X-CONTENT-STEERING`
-  (`ContentSteering`) parse *into* that field and serialize *from* it. The
-  remaining **4** — `#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`,
-  `#EXT-X-DATERANGE`, `#EXT-X-MEDIA` — have no typed field; `parse()`
-  recognizes them (no error) and preserves the tag line verbatim, so they
-  round-trip losslessly, but a caller cannot read or build one through a
-  struct field (see "Round-trip fidelity" below and the module doc's
-  "Known, documented gaps" list in `src/lib.rs`). The first three are
-  *segment-defining*: they attach to the following Media Segment's
-  `MediaSegment::pre_tags` (or `OpenSegment::pre_tags` at the live edge) and
-  re-render in place, so a key rotation or a per-segment PDT keeps its
-  position (audit BH-W5); `#EXT-X-MEDIA` is playlist-level and lands in
-  `MasterPlaylist::extra_tags`. Both claims are enforced *behaviorally* by
-  `tests/hls_tag_completeness.rs`: it parses a fixture carrying every one of
-  the 32 tags and asserts the typed ones populate their field and the 4
-  opaque ones survive verbatim — not merely that each tag's name appears
-  somewhere in `src/`.
+**Does not:** fetch anything or run a client (that is `hls-runtime`), produce segments (`transmux`'s `ts_hls` and `ll_hls` segmenters stay there because they emit container bytes), validate cross-file semantic rules (`media-doctor`), or give typed access to `EXT-X-KEY`, `EXT-X-PROGRAM-DATE-TIME`, `EXT-X-DATERANGE` and `EXT-X-MEDIA` (they round-trip losslessly as tag lines, but you cannot read or build them through a field). HLS Interstitials (`CLASS="com.apple.hls.interstitial"` date ranges) are therefore built by the caller (`ssai-runtime` renders them) as `EXT-X-DATERANGE` lines, and the interstitial spec (`docs/interstitials.md`) is transcribed but not typed here.
 
-`#![no_std]` + `alloc`; depends only on `broadcast-common`. Builds for
-`thumbv7em-none-eabi`.
+## Standards supported
 
-## Round-trip fidelity
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| IETF HLS 2nd edition, `draft-pantos-hls-rfc8216bis` | `-22`, 1 May 2026 (vendored `specs/ietf_draft_pantos_hls_rfc8216bis.txt`); transcribed in `docs/` | §4.4 tags (all 32 recognised), §8 protocol version derivation, §9 examples (fixtures), Low-Latency directives | Partial | 28 of 32 tags typed; cross-tag and cross-file MUSTs are not enforced; a draft, not a ratified RFC |
+| IETF RFC 8216 HLS | RFC 8216 (vendored `specs/ietf_rfc8216_hls.txt`) | §4.2 attribute-list grammar and quoted strings, §4.3 tags including I-frame variants | Full for the syntax | Superseded in intent by the draft above |
+| Apple HLS timed metadata | Vendored `specs/apple_hls_timed_metadata.html` | `EXT-X-DATERANGE` carried as opaque tag lines | Typed-opaque | `timed-metadata` builds the lines |
+| ISO/IEC 23001-7 Common Encryption | Edition not in the vendored index | `cenc_ext_x_key`: `cbcs` becomes `METHOD=SAMPLE-AES`, `cenc` becomes `METHOD=SAMPLE-AES-CTR` with no `IV` (draft §4.4.4.4) | Partial | Scheme identity is `broadcast_common::cenc::CencScheme`, shared with `transmux` |
 
-Per this workspace's text-format rule (`docs/CRATE-ACCEPTANCE.md` §1), a
-playlist is not required to be byte-identical after a parse → serialize
-round trip, only for a *second* parse of the rendered output to equal the
-first parse. Known ways rendered output can differ from arbitrary input
-text:
+## Features
 
-- **Unmodeled tags are preserved, not dropped, in a `MasterPlaylist`.**
-  `#EXT-X-MEDIA` (alternate audio/video/subtitle renditions) has no
-  corresponding typed field but is preserved verbatim into
-  `MasterPlaylist::extra_tags`, the Multivariant-Playlist counterpart of
-  `MediaPlaylist::extra_tags`. A fixture containing `#EXT-X-MEDIA` therefore
-  round-trips under this crate's invariant (the *parsed struct* is stable
-  across a second parse); the rendered text differs in tag ordering (see
-  below) but no tag is silently lost.
-- **Tag ordering is canonical on re-emit, not input-preserving.** `to_m3u8()`
-  always emits tags in a fixed order relative to the variant list:
-  `extra_tags` first, then `INDEPENDENT-SEGMENTS` / `DEFINE` / `START`,
-  then `SESSION-KEY` / `SESSION-DATA` / `CONTENT-STEERING`, then the
-  variant and I-frame-variant entries — regardless of where those tags
-  appeared in the source text. The ordering divergence is a formatting
-  difference, not data loss: every parsed tag (typed or verbatim) survives
-  the round trip; it is just re-sequenced on output.
-
-- **Unknown attributes on modeled tags are retained and re-emitted** (issue
-  #884). Every tag struct that carries an attribute list (
-  `ContentSteering`, `Variant`, `IFrameVariant`, `MapTag`, `PartSpec`,
-  `RenditionReport`, `SkipInfo`, `SessionData`, `SessionKey`, `StartPoint`,
-  `Define`) now holds an `extra_attrs: Vec<(String, AttrValue)>` for
-  attribute names this crate does not model.
-  `LowLatencyConfig` is the one exception: it carries three per-tag lists
-  (`sc_extra_attrs`/`pi_extra_attrs`/`ph_extra_attrs`) instead, so each
-  tag's unmodeled attributes re-render on that tag and not another (audit
-  BH-W8). All forms survive parse → serialize and feed the §8 row 12
-  `REQ-` check.
-  They are always emitted *after* each tag's known attributes, so a tag
-  with unknown attrs will have them appended in sorted-by-name order.
-- **Tag ordering is canonical, not preserved.** `to_m3u8()` always emits
-  tags in a fixed order (e.g. `#EXT-X-INDEPENDENT-SEGMENTS` /
-  `#EXT-X-DEFINE` / `#EXT-X-START` right after `#EXT-X-VERSION`;
-  `#EXT-X-SESSION-KEY` / `#EXT-X-SESSION-DATA` / `#EXT-X-CONTENT-STEERING`
-  before the variant list), regardless of where those tags appeared in the
-  source text.
-- **`to_m3u8()` is fallible.** A field it would place inside an RFC 8216
-  §4.2 quoted-string, or emit as a URI, that contains `"`, CR or LF is
-  rejected (`Error::InvalidQuotedString` / `Error::InvalidUri`) rather
-  than rendered: a newline in a segment URI would inject a tag line
-  into the playlist and an embedded `"` would break out of the
-  attribute list (audit BH-W7). Constructing segments/attributes
-  through the crate's own constructors already prevents this; the
-  fallible renderer is the guarantee for a playlist built by hand
-  through the public fields.
-- **Line-continuation backslashes are never round-tripped.** Some RFC
-  8216bis §9 examples use a trailing `\` to wrap a long attribute list
-  across lines for readability in the spec text itself (not literal m3u8
-  syntax — see `docs/examples.md`); this crate's fixtures reflow those onto
-  single lines before committing them, and `to_m3u8()` never emits a
-  continuation of its own.
-- **`#EXT-X-BITRATE`'s "does not apply to a byte-ranged segment" rule is not
-  enforced.** The tag is carried forward and dedup-rendered exactly like
-  `#EXT-X-MAP`; a segment carrying its own `#EXT-X-BYTERANGE` still renders
-  (and round-trips) a carried-forward bitrate value, though the spec says
-  the tag does not semantically apply to it.
-- **Cross-tag/cross-file MUST-constraints are not enforced** — e.g.
-  `#EXT-X-DEFINE`'s `IMPORT`/`QUERYPARAM` resolution against a parent
-  Multivariant Playlist or request URI, `#EXT-X-SESSION-KEY`'s "`METHOD`
-  MUST NOT be `NONE`", or any "MUST NOT appear more than once" rule. Only
-  each tag's own attribute grammar is validated; broader semantic checks are
-  left to a higher-level tool (e.g. `media-doctor`).
-- **`#EXT-X-VERSION` is *computed*, and is often omitted rather than
-  always emitted** (issue #871). `to_m3u8()` never renders a version you
-  handed it verbatim: it derives the minimum version the playlist's actual
-  content requires per RFC 8216bis §8 (`MediaPlaylist::computed_version`/
-  `MasterPlaylist::computed_version`, transcribed in
-  `docs/version-compatibility.md`), and renders exactly that. A playlist
-  that triggers no §8 rule (fully compatible with version 1) gets **no**
-  `#EXT-X-VERSION` tag at all — including one parsed from input that had no
-  version tag either, so that case round-trips with the tag still absent,
-  not gaining one.
-  [`MediaPlaylist::version`]/[`MasterPlaylist::version`] is a *floor*, not
-  the rendered value: `0` (the field's `Default`, and what a version-less
-  input parses to) means "no explicit floor — render exactly the computed
-  value, or nothing"; a nonzero value is raised, never lowered, to the
-  computed minimum, so you can deliberately over-declare but can never
-  silently under-declare an invalid playlist. In short: a caller can rely
-  on the rendered `#EXT-X-VERSION` (when present) being *at least* what the
-  content requires — it is not the caller's job to compute that minimum.
-- **Whitespace and comments are not preserved.** Blank lines, trailing
-  whitespace (real playlists do carry it — Apple's BipBop `#EXTINF` lines
-  end in a tab), and non-`#EXT` `#` comment lines are dropped at parse time
-  and never re-emitted.
-
-Durations are **not** in this list: `#EXTINF` and every seconds-valued
-attribute round-trip bit-exactly, including sub-millisecond values such as
-Apple's `9.9766` and RFC 8216bis §9.11's `2.00004`. (They were lossy until
-issue #872 — see `fixtures/hls/MANIFEST.md`, Tier 2 "Finding".) Seconds-valued
-fields are typed: `DecimalSeconds` (finite, non-negative —
-`DecimalSeconds::new(9.009)?`) and `SignedDecimalSeconds` (finite, may be
-negative, e.g. a `#EXT-X-START` `TIME-OFFSET`), each rejecting NaN/infinity
-with `Error::InvalidDecimalSeconds` / `Error::InvalidSignedDecimalSeconds`.
-Rendering is faithful to the exact `f64` inside, so a duration that came from
-an unrounded division (e.g. `11.0 / 30.0`) renders with all the digits needed
-to reproduce it — `0.36666666666666664`. That is correct and round-trips, but
-if you want compact playlists, **round your own durations before building the
-playlist**; this crate will not round them for you, because it cannot tell a
-deliberate `2.00004` from an artefact.
-
-Other public API worth knowing: `MediaSegment::title` (the `#EXTINF` title),
-`MediaSegment::pre_tags` (verbatim segment-defining tags — `#EXT-X-KEY`,
-`#EXT-X-PROGRAM-DATE-TIME`, `#EXT-X-DATERANGE`, `#EXT-X-CUE-*` — that re-render
-in place before the segment), `AttrValue` (a quoted/bare attribute value
-validated at construction, used for unmodeled attributes), and
-`parse_attribute_list` / `render_attribute_list` for the RFC 8216 §4.2
-attribute-list grammar.
+| Feature | Default | Description |
+|---|---|---|
+| `std` | yes | Links the standard library. Without it the crate is `#![no_std]` and needs only `alloc` (it builds for `thumbv7em-none-eabi`). |
+| `serde` | no | `serde::Serialize` on the public types. |
 
 ## Quick start
+
+Parse a real Apple BipBop media playlist (a committed fixture) and render it back:
+
+```rust
+use broadcast_hls::MediaPlaylist;
+
+let text = std::fs::read_to_string("../fixtures/hls/real/bipbop-ts/gear1-video.m3u8").unwrap();
+let playlist = MediaPlaylist::parse(&text).unwrap();
+assert!(!playlist.segments.is_empty());
+
+// to_m3u8 is the symmetric inverse of parse: a second parse equals the first.
+let rendered = playlist.to_m3u8().unwrap();
+assert_eq!(MediaPlaylist::parse(&rendered).unwrap(), playlist);
+```
+
+Build a playlist from fields (`DecimalSeconds` rejects NaN and infinity, `to_m3u8` is fallible):
 
 ```rust
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 let playlist = MediaPlaylist {
-    version: 3,
     target_duration: 10,
     segments: vec![MediaSegment {
         uri: "seg0.m4s".into(),
@@ -199,27 +64,46 @@ let playlist = MediaPlaylist {
     ..Default::default()
 };
 let m3u8 = playlist.to_m3u8().unwrap();
-assert_eq!(MediaPlaylist::parse(&m3u8).unwrap(), playlist);
+assert!(m3u8.starts_with("#EXTM3U"));
+// The renderer computed `#EXT-X-VERSION` from the content; parsing reads it back.
+let reparsed = MediaPlaylist::parse(&m3u8).unwrap();
+assert_eq!(reparsed.segments, playlist.segments);
+assert_eq!(reparsed.to_m3u8().unwrap(), m3u8);
 ```
 
-## Examples
+Runnable programs: `cargo run -p broadcast-hls --example build_playlist` and `--example parse_playlist`.
 
-```sh
-cargo run -p broadcast-hls --example build_playlist
-cargo run -p broadcast-hls --example parse_playlist
-```
+## What is implemented
 
-## Features
+- **`MediaPlaylist` and `MediaSegment`:** segments with `title`, `map` (carry-forward on parse, deduplicated on render), `bitrate`, `gap`, `discontinuous`, byte ranges, and `pre_tags` (segment-defining tags kept in place), plus playlist-level `extra_tags` for unrecognised tags.
+- **`MasterPlaylist`, `Variant`, `IFrameVariant`:** multivariant playlists with `EXT-X-I-FRAME-STREAM-INF` trick-play (RFC 8216 §4.3.4.2) and `MasterPlaylist::extra_tags`.
+- **The 28 typed tags:** including `EXT-X-INDEPENDENT-SEGMENTS`, `EXT-X-START` (`StartPoint`), `EXT-X-DEFINE` (`Define`), `EXT-X-PLAYLIST-TYPE` (`PlaylistType`), `EXT-X-GAP`, `EXT-X-BITRATE`, `EXT-X-SESSION-DATA` (`SessionData`), `EXT-X-SESSION-KEY` (`SessionKey`, `EncryptionMethod`) and `EXT-X-CONTENT-STEERING` (`ContentSteering`). `tests/hls_tag_completeness.rs` parses a fixture carrying all 32 and asserts typed tags populate their field and the four opaque ones survive verbatim.
+- **Low-Latency HLS** (opt-in, so a plain playlist is unchanged): `LowLatencyConfig`, `PartSpec`, `OpenSegment` (the in-progress segment at the live edge), `MapTag`, `ByteRange`, `PreloadHintType`, `RenditionReport`, `SkipInfo`. `PART-HOLD-BACK` must be at least three part targets.
+- **Discontinuities:** `EXT-X-DISCONTINUITY` and `EXT-X-DISCONTINUITY-SEQUENCE`, and `mark_init_discontinuities` (detect an init-segment change across a run).
+- **Version derivation:** `MediaPlaylist::computed_version` and `MasterPlaylist::computed_version` apply the draft's §8 table (`docs/version-compatibility.md`). A playlist needing nothing gets no `EXT-X-VERSION` tag. The `version` field is a floor: raised to the computed value, never lowered.
+- **Attribute lists:** `parse_attribute_list`, `render_attribute_list`, `AttrValue` (validated quoted or bare value), and unknown attributes on every modelled tag kept in `extra_attrs` and re-emitted after the known ones.
+- **Durations:** `DecimalSeconds` and `SignedDecimalSeconds` round-trip bit-exactly (including `9.9766` and `2.00004`). Round your own durations before building if you want compact playlists, since an unrounded division renders every digit.
+- **CENC:** `cenc_ext_x_key`, `CENC_KEYFORMAT`, `CENC_KEYFORMATVERSIONS`.
 
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `std`   | yes     | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
-| `serde` | no      | `serde::Serialize` derives on public types. |
+## Round-trip fidelity
 
-## Minimum Supported Rust Version
+The workspace text-format rule is that a second parse of the rendered output equals the first parse, not that the text is byte-identical. What changes on re-emit:
 
-1.95.0
+- Tag order is canonical, not input order (for example `INDEPENDENT-SEGMENTS`, `DEFINE`, `START` follow the version line; `SESSION-KEY`, `SESSION-DATA`, `CONTENT-STEERING` precede the variants). No tag is lost.
+- Blank lines, trailing whitespace and `#` comment lines are dropped. Line-continuation backslashes (used for wrapping in spec examples) are never emitted.
+- `to_m3u8()` is fallible: a quoted-string or URI field containing `"`, CR or LF (`Error::InvalidQuotedString`, `Error::InvalidUri`) is rejected instead of rendered, which prevents tag-line injection. The same applies to an `EXT-X-SKIP` removed-daterange id.
+- Not enforced: `EXT-X-BITRATE` not applying to a byte-ranged segment, `EXT-X-DEFINE` `IMPORT` and `QUERYPARAM` resolution, `EXT-X-SESSION-KEY` `METHOD` not being `NONE`, "must not appear more than once" rules. Those need cross-file context and belong to `media-doctor`.
+- A non-segment-defining unrecognised tag lands in `extra_tags` and loses its interleaved position (it renders as one block before the segments). Segment-defining tags (`EXT-X-KEY`, `EXT-X-PROGRAM-DATE-TIME`, `EXT-X-DATERANGE`, `EXT-X-CUE-*`) attach to the following segment's `pre_tags` and keep their place.
+- A hand-built playlist whose segments' `map` fields do not form a valid carry-forward sequence cannot round-trip, because the wire has no "stop applying the map" short of a discontinuity plus a new map.
 
-## License
+## Design notes
 
-MIT OR Apache-2.0
+Zero dependencies beyond `broadcast-common` and `thiserror`, `no_std` + `alloc`, symmetric parse and render, `#[non_exhaustive]` on `Error` and the open enums, label-coverage tests for spec enums, fixture corpus (`tests/hls_fixture_corpus.rs`) over Apple's BipBop playlists and every RFC 8216bis §9 example (provenance in `fixtures/hls/MANIFEST.md`), and a fuzz target.
+
+## Related crates
+
+Depends on `broadcast-common`. Consumed by `hls-runtime` (client parses, origin renders), `transmux` (the HLS segmenters), `ssai-runtime` (interstitial playlists), `media-doctor` (conformance checks), `timed-metadata` (daterange lines) and `multimux`.
+
+## MSRV and licence
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.
