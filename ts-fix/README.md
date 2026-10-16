@@ -132,6 +132,10 @@ wrote 450 packets (84600 bytes) to keep.ts
 - **Reused judgements.** Legal duplicate packets are `broadcast_common::ts_dup`
   (same rule as `dvb-conformance` and `media-doctor`, issue #956); PCR wrap
   arithmetic is `clock33` (`tests/clock33_guard.rs` bans a local 2^33).
+- **`--regen-psi` after a filter that drops every PMT** (e.g. `--keep-pids`
+  of ES PIDs only) emits a program-less PAT at end of stream rather than no PAT
+  (H.222.0 Table 2-30: the program loop may be empty); it never lists a PMT PID
+  absent from the output (#1288).
 - **Verified against an oracle.** `tests/tsduck_oracle.rs` checks `--regen-psi`
   output against TSDuck as an independent second opinion; `tests/scte35_preserve.rs` pins that splice signalling survives.
 - The library has no `std` path: with `default-features = false` it is
