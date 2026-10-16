@@ -96,13 +96,17 @@ fn every_descriptor_in_the_tsduck_pmt_is_typed_and_round_trips() {
     assert_eq!(all.len(), 22);
     for d in &all {
         match d[0] {
+            // TSDuck 3.44 writes ext 0x13 with one more SubstreamOffset per pattern
+            // than Table 2-131 prints; our parser follows the spec and rejects those
+            // bytes (pinned in `hevc_subregion_follows_the_spec_and_diverges_from_tsduck`).
+            0x3F if d[2] == 0x13 => {
+                assert!(Mpeg2ExtensionDescriptor::parse(d).is_err());
+            }
             0x3F => {
                 let e = rt::<Mpeg2ExtensionDescriptor>(d);
-                // 0x13 is deliberately kept verbatim (see below); everything else typed.
-                assert_eq!(
-                    matches!(e.body, Mpeg2ExtensionBody::Other { .. }),
-                    d[2] == 0x13,
-                    "ext {:#04x} typed-ness",
+                assert!(
+                    !matches!(e.body, Mpeg2ExtensionBody::Other { .. }),
+                    "ext {:#04x} fell through to Other",
                     d[2]
                 );
             }
@@ -333,34 +337,84 @@ fn extension_bodies_match_tsduck_values() {
 }
 
 #[test]
-fn hevc_subregion_stays_verbatim_until_its_loop_bound_is_settled() {
+fn hevc_subregion_follows_the_spec_and_diverges_from_tsduck() {
+    use dvb_si::descriptors::mpeg2_ext_hevc::HevcSubregion;
     // Table 2-131 bounds the SubstreamOffset loop by `k < SubstreamCountMinus1[i]`
-    // as printed, but TSDuck 3.44 encodes SubstreamCountMinus1 = 1 followed by TWO
-    // offsets (see the committed PMT). The two disagree, so ext 0x13 is not typed.
+    // and §2.6.126 calls the field "the number of HEVC tile substreams to be
+    // appended", so a layout with SubstreamCountMinus1 = 1 carries ONE offset per
+    // pattern. TSDuck 3.44 (the committed PMT) writes SubstreamCountMinus1 = 1
+    // followed by TWO offsets (01, ff), i.e. one more than the spec loop.
+    //   3f 0e 13 | 84 10 5a | 91 01 3c 07 80 04 38 81 | 01 ff
     let raw = get(0x3F, Some(0x13));
-    let d = rt::<Mpeg2ExtensionDescriptor>(&raw);
+    assert_eq!(
+        raw,
+        [
+            0x3F, 0x0E, 0x13, 0x84, 0x10, 0x5A, 0x91, 0x01, 0x3C, 0x07, 0x80, 0x04, 0x38, 0x81,
+            0x01, 0xFF
+        ]
+    );
+    // Our parser reads the single spec-mandated offset (01) and then, because N1
+    // is implied by the descriptor size, takes the stray 0xFF as the start of a
+    // second layout, which is truncated: the TSDuck bytes are rejected, not
+    // silently reinterpreted.
     assert!(matches!(
-        d.body,
-        Mpeg2ExtensionBody::Other {
-            extension_descriptor_tag: 0x13,
-            ..
-        }
+        Mpeg2ExtensionDescriptor::parse(&raw),
+        Err(Error::BufferTooShort { .. })
     ));
+    // The offsets TSDuck wrote are exactly what the spec loop reads when the
+    // count says two: patching SubstreamCountMinus1 to 2 yields one clean layout.
+    let mut patched = raw.clone();
+    patched[7] = 0x02;
+    let d = rt::<Mpeg2ExtensionDescriptor>(&patched);
+    let Mpeg2ExtensionBody::HevcSubregion(HevcSubregion { layouts, .. }) = d.body else {
+        panic!("ext 0x13 must be typed");
+    };
+    assert_eq!(layouts.len(), 1);
+    assert_eq!(layouts[0].patterns, [vec![1i8, -1]]);
+    assert_eq!(layouts[0].preamble.unwrap().preamble_substream_id, 0x11);
 }
 
 #[test]
-fn virtual_segmentation_stays_verbatim_until_its_text_is_unambiguous() {
-    // Table 2-129 / §2.6.121: the MDL byte count is ambiguous in the text, so
-    // ext 0x10 is deliberately NOT typed. TSDuck 3.44 encodes (ticks=100, one
-    // 13-bit-duration partition, one dependent partition) as below.
+fn virtual_segmentation_follows_the_spec_and_diverges_from_tsduck() {
+    use dvb_si::descriptors::mpeg2_ext_misc::{VirtualSegmentation, VirtualSegmentationBoundary};
+    // Table 2-129 / §2.6.121: maximum_duration_length_minus_1 holds MDL - 1
+    // ("Length, in bytes (minus one)"), maximum_duration is MDL*8 + 5 bits.
+    // TSDuck 3.44 encodes (ticks=100, partition 0 explicit with a 13-bit duration,
+    // partition 1 a dependent partition on PID 0x0200) writing the 2-bit field as
+    // 1 = MDL itself:
+    //   3f 0c 10 | 5f 00 03 23 | 9f 50 00 | 2f 7f 10 07
     let b = [
         0x3F, 0x0C, 0x10, 0x5F, 0x00, 0x03, 0x23, 0x9F, 0x50, 0x00, 0x2F, 0x7F, 0x10, 0x07,
     ];
-    let d = rt::<Mpeg2ExtensionDescriptor>(&b);
+    // Per the spec the field value 1 means MDL = 2, a 21-bit duration: partition 0
+    // consumes 50 00 2f, partition 1 then starts at 7f and is truncated. Rejected.
     assert!(matches!(
-        d.body,
-        Mpeg2ExtensionBody::Other {
-            extension_descriptor_tag: 0x10,
+        Mpeg2ExtensionDescriptor::parse(&b),
+        Err(Error::BufferTooShort { .. })
+    ));
+    // The same bytes with the field patched to 0 (MDL = 1, a 13-bit duration, what
+    // TSDuck meant) parse cleanly under the spec reading.
+    let mut patched = b;
+    patched[6] = 0x21;
+    let d = rt::<Mpeg2ExtensionDescriptor>(&patched);
+    let Mpeg2ExtensionBody::VirtualSegmentation(VirtualSegmentation {
+        config: Some(cfg), ..
+    }) = d.body
+    else {
+        panic!("ext 0x10 must be typed");
+    };
+    assert_eq!(cfg.timescale.unwrap().ticks_per_second, 100);
+    assert_eq!(cfg.partitions.len(), 2);
+    assert!(matches!(
+        cfg.partitions[0].boundary,
+        VirtualSegmentationBoundary::Explicit {
+            maximum_duration: 0x1000
+        }
+    ));
+    assert!(matches!(
+        cfg.partitions[1].boundary,
+        VirtualSegmentationBoundary::Reference {
+            boundary_pid: 0x0200,
             ..
         }
     ));

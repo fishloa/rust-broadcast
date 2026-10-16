@@ -35,7 +35,7 @@ table_id	0x06	Metadata_section	ITU-T H.222.0 (08/2023)	2.12.6	210
 table_id	0x07	IPMP_Control_Information_section (ISO/IEC 13818-11)	ITU-T H.222.0 (08/2023)	2.4.4.5
 table_id	0x08	ISO_IEC_14496_section	ITU-T H.222.0 (08/2023)	2.11.3.8	199
 table_id	0x09	ISO/IEC 23001-11 green access unit section	ITU-T H.222.0 (08/2023)	2.18.1	247
-table_id	0x0A	ISO/IEC 23001-10 quality access unit section	ITU-T H.222.0 (08/2023)	2.4.4.5
+table_id	0x0A	ISO/IEC 23001-10 quality access unit section (the Table 2-164 body is typed as `quality_access_unit::QualityAccessUnit`; the section header/CRC wrapper is not defined in the vendored H.222.0 text)	ITU-T H.222.0 (08/2023)	2.4.4.5
 table_id	0x0B	ISO/IEC 23001-13 media orchestration access unit section	ITU-T H.222.0 (08/2023)	2.4.4.5
 table_id	0x38-0x39	DSM-CC sections (ISO/IEC 13818-6 range)	ISO/IEC 13818-6
 table_id	0x3A-0x3F	DSM-CC sections (multiprotocol encapsulation, U-N messages, DDB, stream descriptors, private)	ISO/IEC 13818-6 / ETSI EN 301 192 V1.7.1
@@ -88,7 +88,8 @@ descriptor_tag	0x11	STD_descriptor	ITU-T H.222.0 (08/2023)	2.6.32	114
 descriptor_tag	0x12	IBP_descriptor	ITU-T H.222.0 (08/2023)	2.6.34	114
 descriptor_tag	0x13	carousel_identifier_descriptor	ISO/IEC 13818-6
 descriptor_tag	0x14	association_tag_descriptor	ISO/IEC 13818-6
-descriptor_tag	0x15-0x1A	other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored, so not itemised)	ISO/IEC 13818-6
+descriptor_tag	0x15	deferred_association_tags_descriptor	ETSI EN 301 192 V1.7.1	11.3.3	73
+descriptor_tag	0x16-0x1A	other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored and its layouts for tags 0x16-0x1A appear in no vendored spec: 0x17-0x1A are the stream-event / NPT descriptors, and TS 102 809 B.2.4.2 says NPT is obsolete and gives no layout)	ISO/IEC 13818-6
 descriptor_tag	0x1B	MPEG-4_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.36	115
 descriptor_tag	0x1C	MPEG-4_audio_descriptor	ITU-T H.222.0 (08/2023)	2.6.38	115
 descriptor_tag	0x1D	IOD_descriptor	ITU-T H.222.0 (08/2023)	2.6.40	117
@@ -237,10 +238,10 @@ mpeg2_extension_tag	0x0C	MPEG-H_3dAudio_multi-stream_descriptor	ITU-T H.222.0 (0
 mpeg2_extension_tag	0x0D	MPEG-H_3dAudio_drc_loudness_descriptor	ITU-T H.222.0 (08/2023)	2.6.116	163
 mpeg2_extension_tag	0x0E	MPEG-H_3dAudio_command_descriptor	ITU-T H.222.0 (08/2023)	2.6.118	165
 mpeg2_extension_tag	0x0F	quality_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.119	166
-mpeg2_extension_tag	0x10	virtual_segmentation_descriptor	ITU-T H.222.0 (08/2023)	2.6.120
+mpeg2_extension_tag	0x10	virtual_segmentation_descriptor	ITU-T H.222.0 (08/2023)	2.6.120	167
 mpeg2_extension_tag	0x11	timed_metadata_extension_descriptor	ITU-T H.222.0 (08/2023)
 mpeg2_extension_tag	0x12	HEVC_tile_substream_descriptor	ITU-T H.222.0 (08/2023)	2.6.122	168
-mpeg2_extension_tag	0x13	HEVC_subregion_descriptor	ITU-T H.222.0 (08/2023)	2.6.125
+mpeg2_extension_tag	0x13	HEVC_subregion_descriptor	ITU-T H.222.0 (08/2023)	2.6.125	169
 mpeg2_extension_tag	0x14	JXS_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.127	171
 mpeg2_extension_tag	0x15	VVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.131	176
 mpeg2_extension_tag	0x16	EVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.135	179
@@ -257,7 +258,7 @@ ait_descriptor_tag	0x03	DVB-J_application_descriptor	ETSI TS 102 727 V1.1.1	10.9
 ait_descriptor_tag	0x04	DVB-J_application_location_descriptor	ETSI TS 102 727 V1.1.1	10.9.2	171
 ait_descriptor_tag	0x05	external_application_authorisation_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.7	43
 ait_descriptor_tag	0x06	application_recording_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.4	40
-ait_descriptor_tag	0x08	DVB-HTML_application_descriptor	ETSI TS 102 727 V1.1.1	10.10.1	172
+ait_descriptor_tag	0x08	DVB-HTML_application_descriptor (deferred: Table 86 loops `i<N1` over 16-bit application_id with N1 = appid_set_length, but the prose says appid_set_length "specifies the length of the list of application_ids" with no unit; a determinate reading needs the owner's call)	ETSI TS 102 727 V1.1.1	10.10.1	172
 ait_descriptor_tag	0x09	DVB-HTML_application_location_descriptor	ETSI TS 102 727 V1.1.1	10.10.2	173
 ait_descriptor_tag	0x0A	DVB-HTML_application_boundary_descriptor	ETSI TS 102 727 V1.1.1	10.10.3	174
 ait_descriptor_tag	0x0B	application_icons_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.6.2	43
@@ -265,10 +266,13 @@ ait_descriptor_tag	0x0C	pre-fetch_descriptor	ETSI TS 102 727 V1.1.1	10.8.3.2	169
 ait_descriptor_tag	0x0D	DII_location_descriptor	ETSI TS 102 727 V1.1.1	10.8.3.3	170
 ait_descriptor_tag	0x10	application_storage_descriptor	ETSI TS 102 809 V1.3.1	5.3.10.1	51
 ait_descriptor_tag	0x11	IP_signalling_descriptor	ETSI TS 102 727 V1.1.1	10.8.2	169
+ait_descriptor_tag	0x12	provider_export_descriptor	ETSI TS 102 727 V1.1.1	10.15	181
+ait_descriptor_tag	0x13	provider_usage_descriptor	ETSI TS 102 727 V1.1.1	10.15	181
 ait_descriptor_tag	0x14	graphics_constraints_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.8	44
 ait_descriptor_tag	0x15	simple_application_location_descriptor	ETSI TS 102 809 V1.3.1	5.3.7	47
 ait_descriptor_tag	0x16	application_usage_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.5	41
 ait_descriptor_tag	0x17	simple_application_boundary_descriptor	ETSI TS 102 809 V1.3.1	5.3.8	48
+ait_descriptor_tag	0x5F	private_data_specifier_descriptor	ETSI EN 300 468 V1.20.1	6.2.31	99
 
 # ── INT descriptor namespace (target / operational / platform loops, 0x00–0x3F) — ETSI EN 301 192 V1.7.1 Table 19 (clause 8.4.5.1)
 # "MPEG descriptors in the range 0x00 to 0x3F cannot be used in the INT" (EN 301 192 V1.7.1 clause 8.4.5.1)

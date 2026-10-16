@@ -768,8 +768,8 @@ STANDARDS = [
     {
         "id": "EACEM / D-Book",
         "title": "Logical channel numbering",
-        "edition": "private (PDS 0x00000028); no vendored spec",
-        "scope": "logical_channel descriptor (0x83)",
+        "edition": "private (PDS 0x00000028); EACEM TR-030 is not vendored",
+        "scope": "logical_channel descriptor (0x83), 10-bit-LCN layout rests on real captures only; the vendored NorDig spec defines LCD v1 (0x83) and v2 (0x87) in §12.2.9 (both typed in `nordig.rs`)",
         "fixed": "Full (scoped)",
     },
     {

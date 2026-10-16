@@ -23,4 +23,4 @@ _§8.4.5.15, PDF pp. 39-39_
 
 NOTE: The unconditional presence of this field implies that DVB-S2 or DVB-S2X is operated in multiple input stream mode. If only a single input stream is intended to be used, DVB-S2 or DVB-S2X is still operated in multiple input stream mode, but only a single input stream identifier value is used.
 
-`selector_length_flag`, `selector_flags`, `selector_length`, `selector_byte` "shall be encoded according to ETSI TS 102 606-2 [27], clause 5.2.2.8" (not transcribed here; the selector content is opaque to this crate).
+`selector_length_flag`, `selector_flags`, `selector_length`, `selector_byte` "shall be encoded according to ETSI TS 102 606-2 [27], clause 5.2.2.8" (ETSI TS 102 606-2 is not vendored, so there is no spec text here to transcribe; the selector content is opaque to this crate).

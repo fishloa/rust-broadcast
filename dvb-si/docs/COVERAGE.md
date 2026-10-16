@@ -27,29 +27,29 @@ text; **Source cites** is what the module's own doc comment says (see the
 | | |
 |---|---|
 | Section types (table_id) | **31** typed `*Section` parsers covering **72** table_id values — every allocated EN 300 468 Table 2 id |
-| Descriptors (tag 0x00–0x7F) | **115** auto-dispatched: **51** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
+| Descriptors (tag 0x00–0x7F) | **116** auto-dispatched: **52** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
 | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
-| MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (7 MPEG-H 3D audio, plus HEVC/VVC/EVC/LCEVC/JPEG XS timing and structure, green, quality, OD update, timed metadata, media service kind) |
-| AIT descriptors (TS 102 809 / MHP) | **18** typed in the separate AIT descriptor namespace |
+| MPEG-2 extension descriptors (0x3F) | **24** typed `extension_descriptor_tag` bodies (7 MPEG-H 3D audio, plus HEVC/VVC/EVC/LCEVC/JPEG XS timing and structure, green, quality, OD update, timed metadata, media service kind) |
+| AIT descriptors (TS 102 809 / MHP) | **21** typed in the separate AIT descriptor namespace |
 | INT / UNT / RNT descriptors | **26** typed in their own scoped namespaces (`AnyIntDescriptor`, `AnyUntDescriptor`, `AnyRntDescriptor`) |
 | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
 | Text (EN 300 468 Annex A) | **7** charset decoders covering every Table A.3 selector + Annex A.1 control codes |
 | DSM-CC carousel | **12** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree |
 | Registries | **171** CA_system_id and **174** private_data_specifier names (TSDuck data, build-time) |
 | Standards | **19** standards / families — see the table below |
-| Known gaps | **9** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
+| Known gaps | **7** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
 
 ## Standards
 
 | Standard | Title | Edition implemented | Scope covered | Status |
 |---|---|---|---|---|
-| ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (97/97 allocated codes) |
-| Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (80/85 allocated codes) |
+| ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (98/98 allocated codes) |
+| Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (82/85 allocated codes) |
 | ISO/IEC 13818-6 | DSM-CC (data/object carousel) | as profiled by ETSI TR 101 202 V1.2.1 (13818-6 itself is not vendored) | DSM-CC sections, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel_identifier + association_tag descriptors | Partial (3/5 allocated codes) |
-| ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Full (28/28 allocated codes) |
+| ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Full (29/29 allocated codes) |
 | ETSI TS 102 006 | DVB System Software Update (SSU) | V1.4.1 | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Full (16/16 allocated codes) |
 | ETSI TS 102 809 | Application signalling (HbbTV AIT) | V1.3.1 | AIT section, AIT descriptor namespace, application_signalling + service_identifier descriptors, protection message section + descriptor | Full (16/16 allocated codes) |
-| ETSI TS 102 727 | DVB-MHP 1.1.3 | V1.1.1 (descriptor subset) | DVB-J application + location AIT descriptors, XAIT_location, XAIT_PID | Partial (9/10 allocated codes) |
+| ETSI TS 102 727 | DVB-MHP 1.1.3 | V1.1.1 (descriptor subset) | DVB-J application + location AIT descriptors, XAIT_location, XAIT_PID | Partial (11/12 allocated codes) |
 | ETSI TS 102 323 | TV-Anytime carriage in DVB | V1.4.1 | container, RCT, CIT, RNT sections; default_authority, related_content, TVA_id, content_identifier descriptors | Full (11/11 allocated codes) |
 | ETSI TS 102 772 | MPE-IFEC | V1.1.1 | MPE-IFEC section | Full (1/1 allocated codes) |
 | ETSI EN 303 560 | DVB TTML subtitling | V1.1.1 | TTML_subtitling descriptor, downloadable font info section (DFIS) | Full (2/2 allocated codes) |
@@ -57,7 +57,7 @@ text; **Source cites** is what the module's own doc comment says (see the
 | ETSI TS 101 154 | Audio/video coding in DVB | V2.10.1 | PMT `StreamType` values incl. AVS2/AVS3 (0xD2–0xD5); AVS private_data_specifier rules | Partial |
 | ETSI TS 101 162 | DVB identifiers | registry data from TSDuck (see registries/README.md) | CA_system_id and private_data_specifier value → name lookups | Partial |
 | NorDig Unified Requirements | Nordic IRD requirements | v3.2.2 (2025-11) | logical channel descriptor v1 (0x83) + v2 (0x87), PDS 0x00000029 | Full (scoped) |
-| EACEM / D-Book | Logical channel numbering | private (PDS 0x00000028); no vendored spec | logical_channel descriptor (0x83) | Full (scoped) |
+| EACEM / D-Book | Logical channel numbering | private (PDS 0x00000028); EACEM TR-030 is not vendored | logical_channel descriptor (0x83), 10-bit-LCN layout rests on real captures only; the vendored NorDig spec defines LCD v1 (0x83) and v2 (0x87) in §12.2.9 (both typed in `nordig.rs`) | Full (scoped) |
 | GY/T 270-2013 | China DTV closed captions | 2013 | caption_service_descriptor (0x86), `StreamType::ChinaClosedCaption` | Full (scoped) |
 | GY/T 420-2025, GY/T 422-2025 | China UHD encapsulation / multi-audio | 2025 | AVS2_video (0x40 under 'AVSV'), AVS3_video; GY/T 422 audio_preselection profile | Full (scoped) |
 | T/AI 109.6-2022, T/AI 109.7-2024 | AVS3 media format / audio transport | 2022 / 2024 | AVS3_video (0xD1), AVS3_audio (0xD2), AVS2_audio (0xD3) | Full (scoped) |
@@ -81,7 +81,7 @@ values are omitted.
 | 0x07 | IPMP_Control_Information_section (ISO/IEC 13818-11) | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x08 | ISO_IEC_14496_section | ITU-T H.222.0 (08/2023) | 2.11.3.8 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.11.3.8, Table 2-153 (table_id 0x04 scene description, 0x05 object descriptor, 0x08 other … | [`Iso14496Section`](../src/tables/iso14496_section.rs) | Partial — payload (`SL_Packet()` / `M4MuxPacket()`s, selected by the carrying PMT) kept opaque (ISO/IEC 14496-1) |
 | 0x09 | ISO/IEC 23001-11 green access unit section | ITU-T H.222.0 (08/2023) | 2.18.1 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.18.1–2.18.3, Tables 2-162/2-163 (table_id 0x09); syntax in … | [`GreenAccessUnitSection`](../src/tables/green_access_unit_section.rs) | Partial — `Green_AU()` kept opaque (its loops are bounded by the out-of-band Green extension descriptor) |
-| 0x0A | ISO/IEC 23001-10 quality access unit section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
+| 0x0A | ISO/IEC 23001-10 quality access unit section (the Table 2-164 body is typed as `quality_access_unit::QualityAccessUnit`; the section header/CRC wrapper is not defined in the vendored H.222.0 text) | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x0B | ISO/IEC 23001-13 media orchestration access unit section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x38–0x39 | DSM-CC sections (ISO/IEC 13818-6 range) | ISO/IEC 13818-6 | — | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x3A–0x3F | DSM-CC sections (multiprotocol encapsulation, U-N messages, DDB, stream descriptors, private) | ISO/IEC 13818-6 / ETSI EN 301 192 V1.7.1 | — | ISO/IEC 13818-6 + ETSI EN 301 192 §9 | [`DsmccSection`](../src/tables/dsmcc.rs) | Full |
@@ -139,7 +139,8 @@ Allocated by Rec. ITU-T H.222.0 Table 2-45. Implemented tags are dispatched by
 | 0x12 | IBP_descriptor | ITU-T H.222.0 (08/2023) | 2.6.34 | ISO/IEC 13818-1 §2.6.34 (tag 0x12) | [`IbpDescriptor`](../src/descriptors/ibp.rs) | Full |
 | 0x13 | carousel_identifier_descriptor | ISO/IEC 13818-6 | — | ISO/IEC 13818-6 / ETSI TR 101 202 §4.7.7.1 (tag 0x13) | [`CarouselIdentifierDescriptor`](../src/descriptors/carousel_identifier.rs) | Full |
 | 0x14 | association_tag_descriptor | ISO/IEC 13818-6 | — | ISO/IEC 13818-6 §11.4.1 / ETSI TR 101 202 §4.7.7.2 (tag 0x14) | [`AssociationTagDescriptor`](../src/descriptors/association_tag.rs) | Full |
-| 0x15–0x1A | other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored, so not itemised) | ISO/IEC 13818-6 | — | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
+| 0x15 | deferred_association_tags_descriptor | ETSI EN 301 192 V1.7.1 | 11.3.3 | ETSI EN 301 192 V1.7.1 §11.3.3, Tables 64 and 65 (tag 0x15; "the decimal value of 21") | [`DeferredAssociationTagsDescriptor`](../src/descriptors/deferred_association_tags.rs) | Full |
+| 0x16–0x1A | other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored and its layouts for tags 0x16-0x1A appear in no vendored spec: 0x17-0x1A are the stream-event / NPT descriptors, and TS 102 809 B.2.4.2 says NPT is obsolete and gives no layout) | ISO/IEC 13818-6 | — | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
 | 0x1B | MPEG-4_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.36 | ISO/IEC 13818-1 §2.6.36 (tag 0x1B) | [`Mpeg4VideoDescriptor`](../src/descriptors/mpeg4_video.rs) | Full |
 | 0x1C | MPEG-4_audio_descriptor | ITU-T H.222.0 (08/2023) | 2.6.38 | ISO/IEC 13818-1 §2.6.38 (tag 0x1C) | [`Mpeg4AudioDescriptor`](../src/descriptors/mpeg4_audio.rs) | Full |
 | 0x1D | IOD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.40 | ISO/IEC 13818-1 §2.6.40, Table 2-75 (tag 0x1D) | [`IodDescriptor`](../src/descriptors/iod.rs) | Partial — `InitialObjectDescriptor()` kept opaque (ISO/IEC 14496-1) |
@@ -303,10 +304,10 @@ Allocated by Rec. ITU-T H.222.0 (08/2023) Table 2-110.
 | 0x0D | MPEG-H_3dAudio_drc_loudness_descriptor | ITU-T H.222.0 (08/2023) | 2.6.116 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioDrcLoudness`](../src/descriptors/mpegh_3d_audio.rs) | Full |
 | 0x0E | MPEG-H_3dAudio_command_descriptor | ITU-T H.222.0 (08/2023) | 2.6.118 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioCommand`](../src/descriptors/mpegh_3d_audio.rs) | Typed-opaque — payload kept as bytes (its syntax is defined in ISO/IEC 23008-3) |
 | 0x0F | quality_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.119 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`QualityExtension`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
-| 0x10 | virtual_segmentation_descriptor | ITU-T H.222.0 (08/2023) | 2.6.120 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
+| 0x10 | virtual_segmentation_descriptor | ITU-T H.222.0 (08/2023) | 2.6.120 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`VirtualSegmentation`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
 | 0x11 | timed_metadata_extension_descriptor | ITU-T H.222.0 (08/2023) | — | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`TimedMetadataExtension`](../src/descriptors/mpeg2_ext_misc.rs) | Typed-opaque — body kept as bytes (ISO/IEC 23001-13 clause 8.2.3, not vendored) |
 | 0x12 | HEVC_tile_substream_descriptor | ITU-T H.222.0 (08/2023) | 2.6.122 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`HevcTileSubstream`](../src/descriptors/mpeg2_ext_hevc.rs) | Full |
-| 0x13 | HEVC_subregion_descriptor | ITU-T H.222.0 (08/2023) | 2.6.125 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
+| 0x13 | HEVC_subregion_descriptor | ITU-T H.222.0 (08/2023) | 2.6.125 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`HevcSubregion`](../src/descriptors/mpeg2_ext_hevc.rs) | Full |
 | 0x14 | JXS_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.127 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`JxsVideo`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
 | 0x15 | VVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.131 | Rec. ITU-T H.222.0 (08/2023) §2.6.97, §2.6.131, §2.6.135 | [`VvcTimingAndHrd`](../src/descriptors/h222_timing.rs) | Full |
 | 0x16 | EVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.135 | Rec. ITU-T H.222.0 (08/2023) §2.6.97, §2.6.131, §2.6.135 | [`EvcTimingAndHrd`](../src/descriptors/h222_timing.rs) | Full |
@@ -348,7 +349,7 @@ Table 38 (HbbTV) plus the MHP-only tags of ETSI TS 102 727 V1.1.1.
 | 0x04 | DVB-J_application_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.9.2 | ETSI TS 102 727 §10.9.2, Table 85 (AIT tag 0x04) | [`DvbJApplicationLocationDescriptor`](../src/descriptors/ait/dvb_j_application_location.rs) | Full |
 | 0x05 | external_application_authorisation_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.7 | ETSI TS 102 809 §5.3.5.7, Table 26 (AIT tag 0x05) | [`ExternalApplicationAuthorisationDescriptor`](../src/descriptors/ait/external_application_authorisation.rs) | Full |
 | 0x06 | application_recording_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.4 | ETSI TS 102 809 V1.3.1 §5.3.5.4, Table 21 (AIT tag 0x06; storage_properties values Table 22) | [`ApplicationRecordingDescriptor`](../src/descriptors/ait/application_recording.rs) | Full |
-| 0x08 | DVB-HTML_application_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.1 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
+| 0x08 | DVB-HTML_application_descriptor (deferred: Table 86 loops `i<N1` over 16-bit application_id with N1 = appid_set_length, but the prose says appid_set_length "specifies the length of the list of application_ids" with no unit; a determinate reading needs the owner's call) | ETSI TS 102 727 V1.1.1 | 10.10.1 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
 | 0x09 | DVB-HTML_application_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.2 | ETSI TS 102 727 V1.1.1 §10.10.2, Table 87 (AIT tag 0x09; physical-root semantics Table 88) | [`DvbHtmlApplicationLocationDescriptor`](../src/descriptors/ait/dvb_html_application_location.rs) | Full |
 | 0x0A | DVB-HTML_application_boundary_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.3 | ETSI TS 102 727 V1.1.1 §10.10.3, Table 89 (AIT tag 0x0A) | [`DvbHtmlApplicationBoundaryDescriptor`](../src/descriptors/ait/dvb_html_application_boundary.rs) | Full |
 | 0x0B | application_icons_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.6.2 | ETSI TS 102 809 V1.3.1 §5.3.5.6.2, Table 25 (AIT tag 0x0B); the icon_flags values are §5.2.8.2 Table 7 (PDF p.43 / p.23, transcribed in … | [`ApplicationIconsDescriptor`](../src/descriptors/ait/application_icons.rs) | Full |
@@ -356,10 +357,13 @@ Table 38 (HbbTV) plus the MHP-only tags of ETSI TS 102 727 V1.1.1.
 | 0x0D | DII_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.3.3 | ETSI TS 102 727 V1.1.1 §10.8.3.3, Table 83 (AIT tag 0x0D) | [`DiiLocationDescriptor`](../src/descriptors/ait/dii_location.rs) | Full |
 | 0x10 | application_storage_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.10.1 | ETSI TS 102 809 V1.3.1 §5.3.10.1, Table 37 (AIT tag 0x10; same layout as §5.2.11.2 Table 14, storage_property values Table 15) | [`ApplicationStorageDescriptor`](../src/descriptors/ait/application_storage.rs) | Full |
 | 0x11 | IP_signalling_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.2 | ETSI TS 102 727 V1.1.1 §10.8.2, Table 81 (AIT tag 0x11) | [`IpSignallingDescriptor`](../src/descriptors/ait/ip_signalling.rs) | Full |
+| 0x12 | provider_export_descriptor | ETSI TS 102 727 V1.1.1 | 10.15 | ETSI TS 102 727 V1.1.1 §10.15, Table 93 (AIT tag 0x12) | [`ProviderExportDescriptor`](../src/descriptors/ait/provider_export.rs) | Full |
+| 0x13 | provider_usage_descriptor | ETSI TS 102 727 V1.1.1 | 10.15 | ETSI TS 102 727 V1.1.1 §10.15, Table 94 (AIT tag 0x13) | [`ProviderUsageDescriptor`](../src/descriptors/ait/provider_usage.rs) | Full |
 | 0x14 | graphics_constraints_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.8 | ETSI TS 102 809 V1.3.1 §5.3.5.8, Table 27 (AIT tag 0x14; same layout as §5.2.9.2 Table 8, byte values Table 9) | [`GraphicsConstraintsDescriptor`](../src/descriptors/ait/graphics_constraints.rs) | Full |
 | 0x15 | simple_application_location_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.7 | ETSI TS 102 809 §5.3.7.0, Table 33 (AIT tag 0x15) | [`SimpleApplicationLocationDescriptor`](../src/descriptors/ait/simple_application_location.rs) | Full |
 | 0x16 | application_usage_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.5 | ETSI TS 102 809 §5.3.5.5, Table 23 (AIT tag 0x16) | [`ApplicationUsageDescriptor`](../src/descriptors/ait/application_usage.rs) | Full |
 | 0x17 | simple_application_boundary_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.8 | ETSI TS 102 809 §5.3.8, Table 35 (AIT tag 0x17) | [`SimpleApplicationBoundaryDescriptor`](../src/descriptors/ait/simple_application_boundary.rs) | Full |
+| 0x5F | private_data_specifier_descriptor | ETSI EN 300 468 V1.20.1 | 6.2.31 | ETSI EN 300 468 §6.2.31 (tag 0x5F) | [`PrivateDataSpecifierDescriptor`](../src/descriptors/private_data_specifier.rs) | Full |
 
 ## INT, UNT, data-carousel and RNT scoped descriptors
 
@@ -501,10 +505,9 @@ real fixture first.
 
 | Namespace | Count | Codes |
 |---|---|---|
-| table_id | 4 | 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x0A ISO/IEC 23001-10 quality access unit section, 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
-| Descriptor tags (SI / MPEG namespace) | 2 | 0x15–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored, so not itemised), 0x29 IPMP_descriptor (ISO/IEC 13818-11) |
-| MPEG-2 extension_descriptor_tag | 2 | 0x10 virtual_segmentation_descriptor, 0x13 HEVC_subregion_descriptor |
-| AIT descriptors | 1 | 0x08 DVB-HTML_application_descriptor |
+| table_id | 4 | 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x0A ISO/IEC 23001-10 quality access unit section (the Table 2-164 body is typed as `quality_access_unit::QualityAccessUnit`; the section header/CRC wrapper is not defined in the vendored H.222.0 text), 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
+| Descriptor tags (SI / MPEG namespace) | 2 | 0x16–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored and its layouts for tags 0x16-0x1A appear in no vendored spec: 0x17-0x1A are the stream-event / NPT descriptors, and TS 102 809 B.2.4.2 says NPT is obsolete and gives no layout), 0x29 IPMP_descriptor (ISO/IEC 13818-11) |
+| AIT descriptors | 1 | 0x08 DVB-HTML_application_descriptor (deferred: Table 86 loops `i<N1` over 16-bit application_id with N1 = appid_set_length, but the prose says appid_set_length "specifies the length of the list of application_ids" with no unit; a determinate reading needs the owner's call) |
 
 ## Citation cross-check
 
@@ -516,6 +519,6 @@ module cites a clause that is neither the verified clause nor a sub-clause of it
 
 Every module citation that names a clause agrees with the verified clause.
 
-251 implemented rows have their clause verified against the rendered PDF page
-(`verified_page` column of `coverage/allocations.tsv`); 5 not-implemented rows
+257 implemented rows have their clause verified against the rendered PDF page
+(`verified_page` column of `coverage/allocations.tsv`); 3 not-implemented rows
 carry a clause that is not yet page-verified (nothing cites it).

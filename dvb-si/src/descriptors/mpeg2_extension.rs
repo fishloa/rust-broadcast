@@ -8,14 +8,15 @@
 //!
 //! Typed bodies: MPEG-H 3D audio (0x08…0x0E, [`super::mpegh_3d_audio`]),
 //! the timing/HRD ones (0x03, 0x15, 0x16, [`super::h222_timing`]), the
-//! layered/tiled HEVC ones (0x05, 0x06, 0x12, [`super::mpeg2_ext_hevc`]),
+//! layered/tiled HEVC ones (0x05, 0x06, 0x12, 0x13, [`super::mpeg2_ext_hevc`]),
 //! the LCEVC / media service kind ones (0x17…0x19, [`super::mpeg2_ext_codecs`])
-//! and 0x02, 0x04, 0x07, 0x0F, 0x11, 0x14 ([`super::mpeg2_ext_misc`]; 0x02 and
-//! 0x11 are typed-opaque, their structures being defined in ISO/IEC 14496-1 /
-//! 23001-13). Every other body, including 0x10 (whose `MDL` field is ambiguous
-//! in the spec text) and 0x13 (whose `SubstreamOffset` loop bound as printed is
-//! contradicted by TSDuck), is carried verbatim as [`Mpeg2ExtensionBody::Other`] so
-//! the descriptor always round-trips.
+//! and 0x02, 0x04, 0x07, 0x0F, 0x10, 0x11, 0x14 ([`super::mpeg2_ext_misc`]; 0x02
+//! and 0x11 are typed-opaque, their structures being defined in ISO/IEC 14496-1 /
+//! 23001-13). Every other body is carried verbatim as
+//! [`Mpeg2ExtensionBody::Other`] so the descriptor always round-trips. 0x10
+//! (`MDL` = field + 1) and 0x13 (`SubstreamOffset` loop of `SubstreamCountMinus1`
+//! entries) follow the text of §2.6.121 / §2.6.126; TSDuck 3.44 encodes both
+//! differently (see `tests/h222_descriptors.rs`).
 //!
 //! ```text
 //! Extension_descriptor() {
@@ -26,9 +27,12 @@
 
 use super::h222_timing::{EvcTimingAndHrd, HevcTimingAndHrd, VvcTimingAndHrd};
 use super::mpeg2_ext_codecs::{LcevcLinkage, LcevcVideo, MediaServiceKind};
-use super::mpeg2_ext_hevc::{HevcHierarchyExtension, HevcOperationPoint, HevcTileSubstream};
+use super::mpeg2_ext_hevc::{
+    HevcHierarchyExtension, HevcOperationPoint, HevcSubregion, HevcTileSubstream,
+};
 use super::mpeg2_ext_misc::{
     AfExtensions, GreenExtension, JxsVideo, OdUpdate, QualityExtension, TimedMetadataExtension,
+    VirtualSegmentation,
 };
 use super::mpegh_3d_audio::{
     MpegH3dAudio, MpegH3dAudioCommand, MpegH3dAudioConfig, MpegH3dAudioDrcLoudness,
@@ -244,10 +248,14 @@ pub enum Mpeg2ExtensionBody {
     GreenExtension(GreenExtension),
     /// `extension_descriptor_tag` 0x0F (Table 2-128).
     QualityExtension(QualityExtension),
+    /// `extension_descriptor_tag` 0x10 (Table 2-129).
+    VirtualSegmentation(VirtualSegmentation),
     /// `extension_descriptor_tag` 0x11 (ISO/IEC 23001-13, opaque).
     TimedMetadataExtension(TimedMetadataExtension),
     /// `extension_descriptor_tag` 0x12 (Table 2-130).
     HevcTileSubstream(HevcTileSubstream),
+    /// `extension_descriptor_tag` 0x13 (Table 2-131).
+    HevcSubregion(HevcSubregion),
     /// `extension_descriptor_tag` 0x14 (Table 2-132).
     JxsVideo(JxsVideo),
     /// `extension_descriptor_tag` 0x15 (Table 2-139).
@@ -288,8 +296,10 @@ impl Mpeg2ExtensionBody {
             Self::HevcHierarchyExtension(_) => 0x06,
             Self::GreenExtension(_) => 0x07,
             Self::QualityExtension(_) => 0x0F,
+            Self::VirtualSegmentation(_) => 0x10,
             Self::TimedMetadataExtension(_) => 0x11,
             Self::HevcTileSubstream(_) => 0x12,
+            Self::HevcSubregion(_) => 0x13,
             Self::JxsVideo(_) => 0x14,
             Self::VvcTimingAndHrd(_) => 0x15,
             Self::EvcTimingAndHrd(_) => 0x16,
@@ -328,11 +338,8 @@ pub struct Mpeg2ExtensionDescriptor {
 
 /// `extension_descriptor_tag` values that have a typed [`Mpeg2ExtensionBody`]
 /// variant (so a hand-built [`Mpeg2ExtensionBody::Other`] must not use them).
-/// 0x10 (`Virtual_segmentation_descriptor`, `MDL` ambiguous in Table 2-129 /
-/// §2.6.121) and 0x13 (`HEVC_subregion_descriptor`, loop bound of Table 2-131
-/// contradicted by TSDuck) are deliberately absent: they stay verbatim.
 const fn is_typed_extension_tag(tag: u8) -> bool {
-    matches!(tag, 0x02..=0x0F | 0x11..=0x12 | 0x14..=0x19)
+    matches!(tag, 0x02..=0x19)
 }
 
 impl Mpeg2ExtensionDescriptor {
@@ -376,8 +383,10 @@ impl Mpeg2ExtensionDescriptor {
             }
             Mpeg2ExtensionBody::GreenExtension(b) => out.extend_from_slice(&b.write_body()?),
             Mpeg2ExtensionBody::QualityExtension(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::VirtualSegmentation(b) => out.extend_from_slice(&b.write_body()?),
             Mpeg2ExtensionBody::TimedMetadataExtension(b) => out.extend_from_slice(&b.data),
             Mpeg2ExtensionBody::HevcTileSubstream(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::HevcSubregion(b) => out.extend_from_slice(&b.write_body()?),
             Mpeg2ExtensionBody::JxsVideo(b) => out.extend_from_slice(&b.write_body()?),
             Mpeg2ExtensionBody::VvcTimingAndHrd(b) => out.extend_from_slice(&b.write_body()?),
             Mpeg2ExtensionBody::EvcTimingAndHrd(b) => out.extend_from_slice(&b.write_body()?),
@@ -436,10 +445,12 @@ impl<'a> Parse<'a> for Mpeg2ExtensionDescriptor {
             )?),
             0x07 => Mpeg2ExtensionBody::GreenExtension(GreenExtension::parse_body(rest)?),
             0x0F => Mpeg2ExtensionBody::QualityExtension(QualityExtension::parse_body(rest)?),
+            0x10 => Mpeg2ExtensionBody::VirtualSegmentation(VirtualSegmentation::parse_body(rest)?),
             0x11 => Mpeg2ExtensionBody::TimedMetadataExtension(TimedMetadataExtension {
                 data: rest.to_vec(),
             }),
             0x12 => Mpeg2ExtensionBody::HevcTileSubstream(HevcTileSubstream::parse_body(rest)?),
+            0x13 => Mpeg2ExtensionBody::HevcSubregion(HevcSubregion::parse_body(rest)?),
             0x14 => Mpeg2ExtensionBody::JxsVideo(JxsVideo::parse_body(rest)?),
             0x15 => Mpeg2ExtensionBody::VvcTimingAndHrd(VvcTimingAndHrd::parse_body(rest)?),
             0x16 => Mpeg2ExtensionBody::EvcTimingAndHrd(EvcTimingAndHrd::parse_body(rest)?),

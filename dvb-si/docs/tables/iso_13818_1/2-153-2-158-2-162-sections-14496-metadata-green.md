@@ -72,5 +72,10 @@ _§2.18.1–2.18.3; printed p.225 (PDF p.247). Verified against the rendered pag
 
 `section_syntax_indicator` shall be `'0'`. `Green_AU()` (Table 2-163: `num_quality_levels`(4) `reserved`(4), then loops bounded by `num_constant_backlight_voltage_time_intervals` and `num_max_variations` of the Green extension descriptor, which are out of band) cannot be parsed from the section alone: carried as one opaque byte run.
 
-## Not typed (no syntax in the primary text)
-table_id 0x07 (IPMP, ISO/IEC 13818-11), 0x0A (quality AU), 0x0B (media orchestration AU) and 0x38..0x39 (ISO/IEC 13818-6): Table 2-31 only assigns them. The quality access unit is "carried in MPEG sections" (§2.20.1) without a section header syntax, and Table 2-164 gives the AU only.
+## Not typed as sections (no section syntax in the primary text)
+table_id 0x07 (IPMP, ISO/IEC 13818-11), 0x0B (media orchestration AU) and 0x38..0x39 (ISO/IEC 13818-6): Table 2-31 only assigns them.
+
+table_id 0x0A (quality access unit): the *body* is defined (Table 2-164, §2.20.1) and is typed as the standalone
+`quality_access_unit::QualityAccessUnit` (see `2-164-quality-access-unit.md`); what the vendored text does not define is the
+**section wrapper** (header bits, `private_section_length`, `CRC_32`) that carries it "in MPEG sections", so no
+`table_id` 0x0A section type exists and the section is still dispatched as `AnyTableSection::Unknown`.

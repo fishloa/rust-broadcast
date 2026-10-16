@@ -3,6 +3,14 @@
 //! Carried inside NIT transport_stream_loop second descriptor loop.
 //! Assigns an LCN (Logical Channel Number) to each service, plus a
 //! `visible_service` flag for hiding services from the channel list.
+//!
+//! Provenance of the layout: EACEM TR-030 / the D-Book are **not vendored**, so
+//! this 10-bit-LCN layout (`visible_service_flag` + `reserved(5)` + 10-bit LCN,
+//! PDS 0x28) rests on real captures only (France TNT, TSDuck test streams; see
+//! `tests/downloaded_lcn.rs`). The vendored NorDig Unified Requirements v3.2.2
+//! define the descriptors that share tag 0x83 / 0x87 under PDS 0x29 in §12.2.9
+//! (LCD v1: `reserved(1)` + 14-bit LCN; LCD v2); both are typed in
+//! [`super::nordig`] and are a different layout from this one.
 
 use super::descriptor_body;
 use crate::error::{Error, Result};

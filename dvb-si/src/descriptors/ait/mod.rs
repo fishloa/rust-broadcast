@@ -12,6 +12,13 @@
 //! `DISPATCHED_TAGS`, and a drift test that pins each tag literal to the
 //! type's [`crate::traits::DescriptorDef::TAG`].
 //!
+//! Tag 0x5F is the DVB-SI `private_data_specifier_descriptor` (ETSI EN 300 468
+//! §6.2.31) reused verbatim: TS 102 809 §5.3.4.7 and Table 38 (note 2) say "the
+//! DVB SI private data specifier descriptor is defined for use in the
+//! Application Information Table to introduce private descriptors" and TS 102
+//! 727 (its AIT allocation table, note 2) repeats it, so AIT dispatches to the same
+//! [`PrivateDataSpecifierDescriptor`](crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor).
+//!
 //! [`parse_ait_loop`] lazily walks a raw AIT descriptor loop (the
 //! `descriptor()` sequence inside AIT common or per-application loops),
 //! yielding one [`AnyAitDescriptor`] per entry.
@@ -54,6 +61,8 @@ pub mod external_application_authorisation;
 pub mod graphics_constraints;
 pub mod ip_signalling;
 pub mod prefetch;
+pub mod provider_export;
+pub mod provider_usage;
 pub mod simple_application_boundary;
 pub mod simple_application_location;
 pub mod transport_protocol;
@@ -76,6 +85,8 @@ pub use external_application_authorisation::ExternalApplicationAuthorisationDesc
 pub use graphics_constraints::{GraphicsConfiguration, GraphicsConstraintsDescriptor};
 pub use ip_signalling::IpSignallingDescriptor;
 pub use prefetch::{PrefetchDescriptor, PrefetchEntry};
+pub use provider_export::{ProviderExport, ProviderExportDescriptor};
+pub use provider_usage::ProviderUsageDescriptor;
 pub use simple_application_boundary::SimpleApplicationBoundaryDescriptor;
 pub use simple_application_location::SimpleApplicationLocationDescriptor;
 pub use transport_protocol::TransportProtocolDescriptor;
@@ -193,10 +204,13 @@ declare_ait_descriptors! {'a;
     DiiLocation              = 0x0D => crate::descriptors::ait::dii_location::DiiLocationDescriptor,
     ApplicationStorage       = 0x10 => crate::descriptors::ait::application_storage::ApplicationStorageDescriptor,
     IpSignalling             = 0x11 => crate::descriptors::ait::ip_signalling::IpSignallingDescriptor,
+    ProviderExport           = 0x12 => crate::descriptors::ait::provider_export::ProviderExportDescriptor<'a>,
+    ProviderUsage            = 0x13 => crate::descriptors::ait::provider_usage::ProviderUsageDescriptor<'a>,
     GraphicsConstraints      = 0x14 => crate::descriptors::ait::graphics_constraints::GraphicsConstraintsDescriptor,
     SimpleAppLocation        = 0x15 => crate::descriptors::ait::simple_application_location::SimpleApplicationLocationDescriptor<'a>,
     ApplicationUsage         = 0x16 => crate::descriptors::ait::application_usage::ApplicationUsageDescriptor,
     SimpleAppBoundary        = 0x17 => crate::descriptors::ait::simple_application_boundary::SimpleApplicationBoundaryDescriptor<'a>,
+    PrivateDataSpecifier     = 0x5F => crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor,
 }
 
 /// Lazily walk a raw AIT descriptor loop. Never panics.
@@ -376,8 +390,37 @@ mod tests {
             AnyAitDescriptor::DISPATCHED_TAGS,
             &[
                 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x10, 0x11,
-                0x14, 0x15, 0x16, 0x17
+                0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x5F
             ]
         );
+    }
+
+    #[test]
+    fn provider_and_private_data_specifier_dispatch() {
+        // provider_export (0x12): "ab" + class "C"; provider_usage (0x13): "ab";
+        // private_data_specifier (0x5F): EACEM 0x00000028 (EN 300 468 layout).
+        let buf = [
+            0x12, 0x05, 2, b'a', b'b', 1, b'C', 0x13, 0x03, 2, b'a', b'b', 0x5F, 0x04, 0x00, 0x00,
+            0x00, 0x28,
+        ];
+        let items: Vec<_> = parse_ait_loop(&buf).collect();
+        assert_eq!(items.len(), 3);
+        match items[0].as_ref().unwrap() {
+            AnyAitDescriptor::ProviderExport(d) => {
+                assert_eq!(d.providers[0].provider_name, b"ab");
+                assert_eq!(d.providers[0].provider_class_name, b"C");
+            }
+            other => panic!("expected ProviderExport, got {other:?}"),
+        }
+        match items[1].as_ref().unwrap() {
+            AnyAitDescriptor::ProviderUsage(d) => assert_eq!(d.provider_names, [&b"ab"[..]]),
+            other => panic!("expected ProviderUsage, got {other:?}"),
+        }
+        match items[2].as_ref().unwrap() {
+            AnyAitDescriptor::PrivateDataSpecifier(d) => {
+                assert_eq!(d.private_data_specifier, 0x0000_0028);
+            }
+            other => panic!("expected PrivateDataSpecifier, got {other:?}"),
+        }
     }
 }

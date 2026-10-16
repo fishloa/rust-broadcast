@@ -250,6 +250,7 @@ declare_descriptors! {'a;
     Ibp = 0x12 => crate::descriptors::ibp::IbpDescriptor,
     CarouselIdentifier = 0x13 => crate::descriptors::carousel_identifier::CarouselIdentifierDescriptor<'a>,
     AssociationTag = 0x14 => crate::descriptors::association_tag::AssociationTagDescriptor<'a>,
+    DeferredAssociationTags = 0x15 => crate::descriptors::deferred_association_tags::DeferredAssociationTagsDescriptor<'a>,
     Mpeg4Video = 0x1B => crate::descriptors::mpeg4_video::Mpeg4VideoDescriptor,
     Mpeg4Audio = 0x1C => crate::descriptors::mpeg4_audio::Mpeg4AudioDescriptor,
     Iod = 0x1D => crate::descriptors::iod::IodDescriptor<'a>,

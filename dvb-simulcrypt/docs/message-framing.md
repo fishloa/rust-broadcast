@@ -63,13 +63,24 @@ NOTEs (p. 26):
 | (P)SIG ⇔ MUX | `0x04` |
 | EIS ⇔ SCS | `0x04` |
 
+Not in Table 2 but defined in the interfaces' own clauses (verified on the
+rendered pages, PDF pp. 166 and 177):
+
+| Interface | protocol_version | Where |
+|-----------|------------------|-------|
+| ACG ⇔ EIS | `0x04` | §11.5 (p. 166): "It shall have the value 0x04 according to the present document." |
+| SIMCOMP ⇔ MUXCONFIG | `0x04` | §12.3 (p. 177): "The value of protocol_version shall be 0x04." |
+
 - NOTE 4 — Compliance between protocol versions is described in annex I.
 - NOTE 5 — protocol_version `0x05` on the ECMG⇔SCS and EMMG⇔MUX interfaces is
   specifically for "IP Datacasting over DVB-H" and is described in annex N.
 
-> ⚠ p. 27 — Table 2 does **not** list ACG⇔EIS or SIMCOMP⇔MUXCONFIG
-> protocol_version values; those interfaces carry their version in their own
-> clauses (§11 / §12) — not transcribed here.
+> Table 2 (p. 27) does not list ACG⇔EIS or SIMCOMP⇔MUXCONFIG; those two
+> interfaces state their protocol_version (`0x04` each) in their own parameter
+> semantics clauses (§11.5 p. 166, §12.3 p. 177), transcribed in the table above.
+> `dvb-simulcrypt` models only the ECMG⇔SCS, EMMG/PDG⇔MUX and C(P)SIG⇔(P)SIG
+> interfaces (`registry::Interface`); the other interfaces' message types are
+> not implemented.
 
 ## The channel / stream concept
 

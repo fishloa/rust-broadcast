@@ -6,19 +6,25 @@
 //! * 0x04 `af_extensions_descriptor()` — §2.6.99, Table 2-116 (empty syntax).
 //! * 0x07 `Green_extension_descriptor()` — §2.6.104, Table 2-120.
 //! * 0x0F `Quality_extension_descriptor()` — §2.6.119, Table 2-128.
+//! * 0x10 `Virtual_segmentation_descriptor()` — §2.6.120, Table 2-129 (semantics §2.6.121).
 //! * 0x11 `timed_metadata_extension_descriptor()` — named in Tables 2-109/2-110;
 //!   its structure is clause 8.2.3 of ISO/IEC 23001-13 (not vendored: opaque).
 //! * 0x14 `JXS_video_descriptor()` — §2.6.127, Table 2-132.
 //!
-//! (0x10 `Virtual_segmentation_descriptor` is deliberately not typed: the
-//! `MDL` byte count is ambiguous in Table 2-129 / §2.6.121, see the docs.)
+//! `Virtual_segmentation_descriptor` follows the text of §2.6.121: the 2-bit
+//! `maximum_duration_length_minus_1` field holds `MDL - 1` ("Length, in bytes
+//! (minus one)"), so `maximum_duration` is `MDL*8 + 5` bits with `MDL` equal to
+//! the field plus one; with `timescale_flag == 0` the text infers `MDL = 0`
+//! (field = -1) and `ticks_per_second = 1`, i.e. a bare 5-bit duration. TSDuck
+//! 3.44 writes the field as `MDL` itself (one byte fewer) and so disagrees; the
+//! divergence is pinned in `tests/h222_descriptors.rs` and noted in the docs.
 //!
 //! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-*.md`.
 //! Every `reserved` field is a typed field re-emitted verbatim (default: all
 //! ones; `zero_bits` of the JPEG XS descriptor defaults to zero as the spec says).
 
 use crate::error::Result;
-use crate::h222_bits::{BitReader, BitWriter};
+use crate::h222_bits::{BitReader, BitWriter, invalid};
 use alloc::vec::Vec;
 
 const RES6: u8 = 0x3F;
@@ -205,6 +211,309 @@ impl QualityExtension {
         }
         w.bytes(&self.trailing);
         Ok(w.into_vec())
+    }
+}
+
+// ───────────────────────── 0x10 Virtual_segmentation_descriptor ─────────────
+
+/// Default of `reserved(5)` (all ones).
+const RES5: u8 = 0x1F;
+/// Default of `reserved(3)` (all ones).
+const RES3: u8 = 0x07;
+/// Default of `reserved(4)` (all ones).
+const RES4: u8 = 0x0F;
+/// Bits of `maximum_duration` before the `MDL * 8` extension (Table 2-129).
+const MAX_DURATION_BASE_BITS: usize = 5;
+const BITS_PER_BYTE: usize = 8;
+/// Width of `num_partitions` (3 bits).
+const NUM_PARTITIONS_BITS: usize = 3;
+
+/// The `timescale_flag == 1` block of the virtual segmentation descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct VirtualSegmentationTimescale {
+    /// `ticks_per_second` (21 bits): precision of `maximum_duration`.
+    pub ticks_per_second: u32,
+    /// `maximum_duration_length_minus_1` (2 bits): the length, in bytes minus
+    /// one, of the `maximum_duration` extension (so `MDL` = this + 1).
+    pub maximum_duration_length_minus_1: u8,
+    /// `reserved(1)`, default 1.
+    pub reserved: bool,
+}
+
+impl VirtualSegmentationTimescale {
+    /// Build with the spec `reserved` fill.
+    #[must_use]
+    pub const fn new(ticks_per_second: u32, maximum_duration_length_minus_1: u8) -> Self {
+        Self {
+            ticks_per_second,
+            maximum_duration_length_minus_1,
+            reserved: true,
+        }
+    }
+
+    /// `MDL`: the extra bytes of `maximum_duration`
+    /// (`maximum_duration_length_minus_1 + 1`, §2.6.121).
+    #[must_use]
+    pub const fn mdl(&self) -> usize {
+        self.maximum_duration_length_minus_1 as usize + 1
+    }
+}
+
+/// How a partition's boundaries are signalled (`explicit_boundary_flag`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum VirtualSegmentationBoundary {
+    /// `explicit_boundary_flag == 0`: a dependent stream; boundary data is on
+    /// the reference partition carried on `boundary_pid`.
+    Reference {
+        /// `reserved(5)`, default all ones.
+        reserved_before: u8,
+        /// `boundary_PID` (13 bits).
+        boundary_pid: u16,
+        /// `reserved(3)`, default all ones.
+        reserved_after: u8,
+    },
+    /// `explicit_boundary_flag == 1`: this PID carries the boundary
+    /// descriptors; `maximum_duration` is `MDL*8 + 5` bits in
+    /// `ticks_per_second` units (0 = unlimited).
+    Explicit {
+        /// `maximum_duration`.
+        maximum_duration: u64,
+    },
+}
+
+impl VirtualSegmentationBoundary {
+    /// Spec label for the `explicit_boundary_flag` branch.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Reference { .. } => "reference partition (explicit_boundary_flag 0)",
+            Self::Explicit { .. } => "explicit boundary (explicit_boundary_flag 1)",
+        }
+    }
+
+    /// A reference (`explicit_boundary_flag == 0`) boundary with the spec
+    /// `reserved` fills.
+    #[must_use]
+    pub const fn reference(boundary_pid: u16) -> Self {
+        Self::Reference {
+            reserved_before: RES5,
+            boundary_pid,
+            reserved_after: RES3,
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(VirtualSegmentationBoundary);
+
+/// One partition of the virtual segmentation descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct VirtualSegmentationPartition {
+    /// `partition_id` (3 bits).
+    pub partition_id: u8,
+    /// `reserved(4)`, default all ones.
+    pub reserved: u8,
+    /// `SAP_type_max` (3 bits): 0 means any SAP type may appear.
+    pub sap_type_max: u8,
+    /// Boundary signalling (`explicit_boundary_flag` and what it selects).
+    pub boundary: VirtualSegmentationBoundary,
+}
+
+impl VirtualSegmentationPartition {
+    /// Build with the spec `reserved` fill.
+    #[must_use]
+    pub const fn new(
+        partition_id: u8,
+        sap_type_max: u8,
+        boundary: VirtualSegmentationBoundary,
+    ) -> Self {
+        Self {
+            partition_id,
+            reserved: RES4,
+            sap_type_max,
+            boundary,
+        }
+    }
+}
+
+/// The part of the descriptor present when `descriptor_length > 1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct VirtualSegmentationConfig {
+    /// `reserved(4)` after `timescale_flag`, default all ones.
+    pub reserved: u8,
+    /// The timescale block (`timescale_flag == 1`); `None` infers
+    /// `ticks_per_second = 1` and `MDL = 0` (a 5-bit `maximum_duration`).
+    pub timescale: Option<VirtualSegmentationTimescale>,
+    /// The partitions (`num_partitions` of them, at most 7).
+    pub partitions: Vec<VirtualSegmentationPartition>,
+}
+
+impl VirtualSegmentationConfig {
+    /// Build with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        timescale: Option<VirtualSegmentationTimescale>,
+        partitions: Vec<VirtualSegmentationPartition>,
+    ) -> Self {
+        Self {
+            reserved: RES4,
+            timescale,
+            partitions,
+        }
+    }
+
+    /// `maximum_duration` width in bits: `MDL*8 + 5` (`MDL` = 0 without timescale).
+    fn duration_bits(&self) -> usize {
+        self.timescale.map_or(0, |t| t.mdl()) * BITS_PER_BYTE + MAX_DURATION_BASE_BITS
+    }
+}
+
+/// `Virtual_segmentation_descriptor()` (ext 0x10) — Table 2-129, §2.6.121.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct VirtualSegmentation {
+    /// The body when longer than one byte (`if (descriptor_length > 1)`);
+    /// `None` for an empty body. A body of exactly one byte is outside the
+    /// syntax and is rejected.
+    pub config: Option<VirtualSegmentationConfig>,
+    /// Bytes after the last partition, preserved verbatim.
+    pub trailing: Vec<u8>,
+}
+
+impl VirtualSegmentation {
+    /// Build with no trailing bytes.
+    #[must_use]
+    pub fn new(config: Option<VirtualSegmentationConfig>) -> Self {
+        Self {
+            config,
+            trailing: Vec::new(),
+        }
+    }
+
+    pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
+        if body.is_empty() {
+            return Ok(Self::new(None));
+        }
+        if body.len() == 1 {
+            return Err(invalid(
+                super::mpeg2_extension::TAG,
+                "Virtual_segmentation_descriptor body of one byte: Table 2-129 defines fields only when descriptor_length > 1",
+            ));
+        }
+        let mut r = BitReader::new(body, "VirtualSegmentation");
+        let num_partitions = r.bits(NUM_PARTITIONS_BITS)?;
+        let timescale_flag = r.flag()?;
+        let reserved = r.u8(4)?;
+        let timescale = if timescale_flag {
+            Some(VirtualSegmentationTimescale {
+                ticks_per_second: r.bits(21)?,
+                maximum_duration_length_minus_1: r.u8(2)?,
+                reserved: r.flag()?,
+            })
+        } else {
+            None
+        };
+        let mut cfg = VirtualSegmentationConfig {
+            reserved,
+            timescale,
+            partitions: Vec::new(),
+        };
+        let duration_bits = cfg.duration_bits();
+        for _ in 0..num_partitions {
+            let explicit = r.flag()?;
+            let partition_id = r.u8(3)?;
+            let reserved = r.u8(4)?;
+            let sap_type_max = r.u8(3)?;
+            let boundary = if explicit {
+                VirtualSegmentationBoundary::Explicit {
+                    maximum_duration: r.bits64(duration_bits)?,
+                }
+            } else {
+                VirtualSegmentationBoundary::Reference {
+                    reserved_before: r.u8(5)?,
+                    boundary_pid: r.u16(13)?,
+                    reserved_after: r.u8(3)?,
+                }
+            };
+            cfg.partitions.push(VirtualSegmentationPartition {
+                partition_id,
+                reserved,
+                sap_type_max,
+                boundary,
+            });
+        }
+        Ok(Self {
+            config: Some(cfg),
+            trailing: r.rest().to_vec(),
+        })
+    }
+
+    pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
+        let mut w = BitWriter::new();
+        if let Some(cfg) = &self.config {
+            w.put(
+                cfg.partitions.len() as u64,
+                NUM_PARTITIONS_BITS,
+                "num_partitions",
+            )?;
+            w.flag(cfg.timescale.is_some(), "timescale_flag")?;
+            w.put(u64::from(cfg.reserved), 4, "reserved")?;
+            if let Some(t) = &cfg.timescale {
+                w.put(u64::from(t.ticks_per_second), 21, "ticks_per_second")?;
+                w.put(
+                    u64::from(t.maximum_duration_length_minus_1),
+                    2,
+                    "maximum_duration_length_minus_1",
+                )?;
+                w.flag(t.reserved, "reserved")?;
+            }
+            let duration_bits = cfg.duration_bits();
+            for p in &cfg.partitions {
+                w.flag(
+                    matches!(p.boundary, VirtualSegmentationBoundary::Explicit { .. }),
+                    "explicit_boundary_flag",
+                )?;
+                w.put(u64::from(p.partition_id), 3, "partition_id")?;
+                w.put(u64::from(p.reserved), 4, "reserved")?;
+                w.put(u64::from(p.sap_type_max), 3, "SAP_type_max")?;
+                match p.boundary {
+                    VirtualSegmentationBoundary::Reference {
+                        reserved_before,
+                        boundary_pid,
+                        reserved_after,
+                    } => {
+                        w.put(u64::from(reserved_before), 5, "reserved")?;
+                        w.put(u64::from(boundary_pid), 13, "boundary_PID")?;
+                        w.put(u64::from(reserved_after), 3, "reserved")?;
+                    }
+                    VirtualSegmentationBoundary::Explicit { maximum_duration } => {
+                        w.put(maximum_duration, duration_bits, "maximum_duration")?;
+                    }
+                }
+            }
+        } else if !self.trailing.is_empty() {
+            return Err(invalid(
+                super::mpeg2_extension::TAG,
+                "Virtual_segmentation_descriptor trailing bytes need a config (an empty body has none)",
+            ));
+        }
+        w.bytes(&self.trailing);
+        let out = w.into_vec();
+        if out.len() == 1 {
+            return Err(invalid(
+                super::mpeg2_extension::TAG,
+                "Virtual_segmentation_descriptor body of one byte is outside Table 2-129",
+            ));
+        }
+        Ok(out)
     }
 }
 
@@ -450,6 +759,98 @@ impl JxsVideo {
 #[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
+
+    // ── Table 2-129 spec vectors (hand-built; bit layout in each comment) ──
+
+    #[test]
+    fn virtual_segmentation_mdl_2() {
+        // num_partitions=010 timescale_flag=1 reserved=1111            -> 5F
+        // ticks_per_second=100 (21b) field=01 (MDL=2) reserved=1       -> 00 03 23
+        // p0: explicit=1 id=001 res=1111                               -> 9F
+        //     SAP_type_max=010 + maximum_duration (21b)=0x12345        -> 41 23 45
+        // p1: explicit=0 id=010 res=1111                               -> 2F
+        //     SAP=011 res=11111 boundary_PID=0x0200 res=111            -> 7F 10 07
+        let b = [
+            0x5F, 0x00, 0x03, 0x23, 0x9F, 0x41, 0x23, 0x45, 0x2F, 0x7F, 0x10, 0x07,
+        ];
+        let d = VirtualSegmentation::parse_body(&b).unwrap();
+        let cfg = d.config.as_ref().unwrap();
+        let t = cfg.timescale.unwrap();
+        assert_eq!((t.ticks_per_second, t.mdl()), (100, 2));
+        assert_eq!(cfg.partitions.len(), 2);
+        let p0 = cfg.partitions[0];
+        assert_eq!((p0.partition_id, p0.sap_type_max), (1, 2));
+        assert_eq!(
+            p0.boundary,
+            VirtualSegmentationBoundary::Explicit {
+                maximum_duration: 0x12345
+            }
+        );
+        let p1 = cfg.partitions[1];
+        assert_eq!((p1.partition_id, p1.sap_type_max), (2, 3));
+        assert_eq!(p1.boundary, VirtualSegmentationBoundary::reference(0x0200));
+        assert_eq!(d.write_body().unwrap(), b);
+    }
+
+    #[test]
+    fn virtual_segmentation_without_timescale_is_a_five_bit_duration() {
+        // num_partitions=001 timescale_flag=0 reserved=1111           -> 2F
+        // p0: explicit=1 id=000 res=1111                              -> 8F
+        //     SAP=001 maximum_duration (5b)=31 ("up to 31 seconds")    -> 3F
+        let b = [0x2F, 0x8F, 0x3F];
+        let d = VirtualSegmentation::parse_body(&b).unwrap();
+        let cfg = d.config.as_ref().unwrap();
+        assert!(cfg.timescale.is_none());
+        assert_eq!(
+            cfg.partitions[0].boundary,
+            VirtualSegmentationBoundary::Explicit {
+                maximum_duration: 31
+            }
+        );
+        assert_eq!(d.write_body().unwrap(), b);
+        // 32 does not fit 5 bits: rejected, never masked.
+        let mut over = d;
+        if let Some(c) = over.config.as_mut() {
+            c.partitions[0].boundary = VirtualSegmentationBoundary::Explicit {
+                maximum_duration: 32,
+            };
+        }
+        assert!(over.write_body().is_err());
+    }
+
+    #[test]
+    fn virtual_segmentation_mdl_4_has_a_37_bit_duration() {
+        // num_partitions=001 timescale_flag=1 reserved=1111           -> 3F
+        // ticks_per_second=1 (21b) field=11 (MDL=4) reserved=1        -> 00 00 0F
+        // p0: explicit=1 id=000 res=1111                              -> 8F
+        //     SAP=000 maximum_duration (37b)=0x1_2345_6789            -> 01 23 45 67 89
+        let b = [0x3F, 0x00, 0x00, 0x0F, 0x8F, 0x01, 0x23, 0x45, 0x67, 0x89];
+        let d = VirtualSegmentation::parse_body(&b).unwrap();
+        let cfg = d.config.as_ref().unwrap();
+        assert_eq!(cfg.timescale.unwrap().mdl(), 4);
+        assert_eq!(
+            cfg.partitions[0].boundary,
+            VirtualSegmentationBoundary::Explicit {
+                maximum_duration: 0x1_2345_6789
+            }
+        );
+        assert_eq!(d.write_body().unwrap(), b);
+    }
+
+    #[test]
+    fn virtual_segmentation_empty_one_byte_and_trailing() {
+        let d = VirtualSegmentation::parse_body(&[]).unwrap();
+        assert!(d.config.is_none());
+        assert!(d.write_body().unwrap().is_empty());
+        // One byte is outside `if (descriptor_length > 1)`.
+        assert!(VirtualSegmentation::parse_body(&[0x1F]).is_err());
+        // Truncated partition.
+        assert!(VirtualSegmentation::parse_body(&[0x3F, 0x8F]).is_err());
+        // Two bytes, zero partitions, no timescale: the second byte is trailing.
+        let d = VirtualSegmentation::parse_body(&[0x0F, 0xAB]).unwrap();
+        assert_eq!(d.trailing, [0xAB]);
+        assert_eq!(d.write_body().unwrap(), [0x0F, 0xAB]);
+    }
 
     #[test]
     fn green_spec_vector_and_limits() {

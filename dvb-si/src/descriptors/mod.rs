@@ -62,6 +62,7 @@ pub mod data_broadcast_id;
 pub mod data_stream_alignment;
 pub mod decoder_config_flags;
 pub mod default_authority;
+pub mod deferred_association_tags;
 pub mod dsng;
 pub mod dts;
 pub mod ecm_repetition_rate;
