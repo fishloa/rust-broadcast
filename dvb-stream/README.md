@@ -37,7 +37,7 @@ delegated.
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
 | ITU-T H.222.0 / ISO/IEC 13818-1 §2.4.3.2 | H.222.0 v9 (08/2023) | 188-byte TS packet alignment and sync-byte resync (`TsDecoder`, `resync`) via `mpeg-ts` | Full for framing | 204-byte RS-coded packets are not handled here (see `mpeg-ts::TsResync`). |
-| RFC 3550 §5.1 (RTP) and RFC 2250 §2 (RTP payload for MPEG-2 TS) | RFCs as published (not vendored; unverified) | `TsDecoder::datagram` unwraps an RTP header (CSRCs, extension, padding) when the payload is whole 188-byte packets starting on `0x47` | Partial | Payload type is not inspected; the detection is structural. Uses `rtp-packet`. |
+| RFC 3550 §5.1 (RTP) and RFC 2250 §2 (RTP payload for MPEG-2 TS) | RFC 3550 vendored (`specs/rfc3550_rtp.txt`); RFC 2250 not vendored (unverified) | `TsDecoder::datagram` unwraps an RTP header (CSRCs, extension, padding) when the payload is whole 188-byte packets starting on `0x47` | Partial | Payload type is not inspected; the detection is structural. Uses `rtp-packet`. |
 | ETSI EN 300 468 (SI) and TS 102 773 (T2-MI) | via `dvb-si` and `dvb-t2mi` | Section and T2-MI event semantics | Delegated | |
 
 ## Feature flags

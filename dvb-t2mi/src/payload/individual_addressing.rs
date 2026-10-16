@@ -245,8 +245,10 @@ const FREQUENCY_BODY_LEN: usize = 5;
 /// defined in ETSI TS 102 773 §5.2.8.2 Tables 7–12b.  [`FunctionBody::Raw`]
 /// is the escape for:
 /// - tags not in [`AddressingFunctionTag`] (reserved / private),
-/// - tags in [`AddressingFunctionTag`] whose body layout is not vendored
-///   (e.g. 0x00–0x06), or
+/// - tags in [`AddressingFunctionTag`] whose body layout is not yet typed here
+///   (0x00–0x06: defined by ETSI TS 101 191 V1.4.1 §6.1, Table 6 tag values and
+///   Tables 7–13 per-function syntax; that spec is vendored and not yet
+///   implemented in this crate), or
 /// - a known tag whose `function_length` doesn't match the expected body size
 ///   (future extension).
 #[derive(Debug, Clone, PartialEq, Eq)]

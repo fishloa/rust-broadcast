@@ -1063,6 +1063,9 @@ are documented only in their element's syntax box in §3.
 ## 6. Not transcribed here (out of scope for a container/subtitle-carriage
 crate, or covered elsewhere)
 
+Deferred, not unavailable: the full spec is vendored as `specs/w3c_ttml2.html`;
+transcribe from it when needed.
+
 - Full CSS-style resolution algorithm (§10.4) and rendering/line-layout model
   (§11.3) — presentation-processor concerns, not parse/serialize concerns.
 - Concrete encoding / reduced XML infoset (Appendix A, B) — general XML

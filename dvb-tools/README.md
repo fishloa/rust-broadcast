@@ -29,7 +29,7 @@ decode.
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
 | ETSI EN 300 468 (DVB SI) | via `dvb-si`: V1.19.1 / V1.20.1 vendored | All allocated tables and the descriptors `dvb-si` implements; SDT/NIT service tree; EIT schedule | Full (as `dvb-si`) | Subcommands: `dump`, `services`, `epg`. |
-| NorDig / EACEM logical channel number descriptors | edition unverified (not vendored) | LCN shown by `dump` and `services` | Partial | Whatever `dvb-si` decodes for these private descriptors. |
+| NorDig / EACEM logical channel number descriptors | NorDig Unified IRD v3.2.2 (2025-11) vendored (§12.2.9 `logical_channel_descriptor`, Table 12.12 v1 tag 0x83, v2 tag 0x87); EACEM / D-Book not vendored | LCN shown by `dump` and `services` | Partial | Whatever `dvb-si` decodes for these private descriptors. |
 | ITU-T H.222.0 / ISO/IEC 13818-1 | H.222.0 v9 (08/2023) | PAT/PMT/CAT/TSDT, PID table, PCR-based bitrate | Full for PSI | `pids` bitrate is `n/a` when at most one PCR is seen. |
 | ETSI TS 102 773 (T2-MI) | V1.4.1 via `dvb-t2mi` | `t2mi` packet dump; `--inner` recovers the inner TS through `dvb-bbframe` | Full (as `dvb-t2mi`) | HEM frames with NPD are skipped. |
 

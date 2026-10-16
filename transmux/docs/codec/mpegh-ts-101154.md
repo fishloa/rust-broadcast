@@ -4,9 +4,11 @@ Sources: **ETSI TS 101 154** (vendored, `dvb_a001r18_draft_ts_101_154_v02.07.01_
 + the two newer `etsi_ts_101_154_*.pdf` revisions), §6.8 "MPEG-H Audio" (encoding/decoding
 requirements) and §4.1.8.31 "MPEG-H_3dAudio_descriptor" (PMT signalling); **ATSC A/342-3**
 (vendored, `atsc_a342-3_2025_mpegh_system.pdf`) §5.2 "Bit Stream Encapsulation". Both cite
-**ISO/IEC 23008-3** (MPEG-H 3D Audio) and **ISO/IEC 13818-1** (MPEG-2 Systems) clauses that are
-themselves paid and not vendored — where that's the boundary of what this crate can ground in
-text, this doc says so explicitly and records what was instead **empirically verified** against
+**ISO/IEC 23008-3** (MPEG-H 3D Audio), which is paid and not vendored, and **ISO/IEC 13818-1**
+(MPEG-2 Systems), which IS vendored as ITU-T H.222.0 (08/2023,
+`private/specs/itu_t_h222_0_202308_mpeg2_systems.pdf`): §2.6.106 Table 2-121 defines the
+`MPEG-H_3dAudio_descriptor()` body and §2.6.107 its semantics (extension_descriptor_tag `0x08`).
+Where the boundary of what this crate can ground in text is ISO/IEC 23008-3, this doc says so explicitly and records what was instead **empirically verified** against
 the real fixture, `private/fixtures/ts/mpegh-cicp01-baseline.ts` (Fraunhofer-IIS
 `mpegh-test-content`, CICP_01 baseline single-stream 32 kbps; CC BY-NC-ND, private submodule).
 

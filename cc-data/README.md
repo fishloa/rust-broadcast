@@ -34,8 +34,8 @@ or `transmux`, does that), render pixels, or decode the XDS metadata catalogue
 | Standard | Edition | Scope / clauses | Status | Notes |
 |---|---|---|---|---|
 | ETSI TS 101 154 DVB audio/video coding | V2.6.1 (2019-09), as transcribed in `docs/ts_101_154/b9-cc-data.md`; also present in `private/specs-md` as V2.6.1, V2.7.1 draft and V2.10.1 | §B.5 / Table B.9 `cc_data()` | Full | `process_em_data_flag` / `additional_data_flag` preserved verbatim (real A/53 captures carry `process_em_data_flag = 0`). |
-| ANSI/CTA-608-E (line-21 captions) | -E; **not vendored** (copyright, cart-gated), so the byte-level tables are unverified against the document | pop-on / roll-up / paint-on, PACs, mid-row codes, tab offsets, Western-European character sets, CC1-CC4, doubling, XDS detect-and-skip | Partial (decode) | feature `decode`; XDS content is not decoded |
-| ANSI/CTA-708-E (DTVCC) | -E; **not vendored**, same caveat | CCP reassembly, Service Blocks (extended service), C0/C1/G0/G1/G2/G3, windows (DF0-7, attributes, show/hide/toggle/delete), pens, DLY/DLC/RST; services 1-6 | Partial (decode) | feature `decode` |
+| ANSI/CTA-608-E (line-21 captions) | -E; **not vendored** (copyright, cart-gated; no copy in `private/specs` or `specs/`). `docs/decode/cea608-decode.md` was transcribed in June 2026 from a locally held PDF copy that is no longer retrievable, so its tables cannot be re-verified | pop-on / roll-up / paint-on, PACs, mid-row codes, tab offsets, Western-European character sets, CC1-CC4, doubling, XDS detect-and-skip | Partial (decode) | feature `decode`; XDS content is not decoded |
+| ANSI/CTA-708-E (DTVCC) | -E; **not vendored**, same caveat for `docs/decode/cea708-decode.md`. Vendored cross-source: GY/T 270-2013 (`private/specs/nrta_gyt_270_2013_dtv_closed_caption_system.pdf`, a Chinese adaptation: check differences from CTA-708) | CCP reassembly, Service Blocks (extended service), C0/C1/G0/G1/G2/G3, windows (DF0-7, attributes, show/hide/toggle/delete), pens, DLY/DLC/RST; services 1-6 | Partial (decode) | feature `decode` |
 | 47 CFR §79.102 (US decoder requirements) | public domain; transcribed in `docs/decode/cea708-conformance.md` | 708 semantic model, window/pen enumerations | Full as a grounding source | |
 
 ## Feature flags
@@ -120,8 +120,8 @@ Examples: `parse_cc_data`, `build_cc_data`, `decode_cea608`, `decode_cea708`
 - Zero-copy-style `Parse` / `Serialize` pair; the carriage round trip is
   byte-identical, including the preserved flag bits and `reserved_byte1`.
 - `Error` is `#[non_exhaustive]`; odd-parity checking is `broadcast_common::parity`.
-- Decode is grounded in the transcriptions under `docs/decode/`; where a CTA table
-  is not vendored the docs say so (see the standards table).
+- Decode is grounded in the transcriptions under `docs/decode/`; CTA-608-E/708-E
+  are not vendored (see the standards table); GY/T 270-2013 is the vendored cross-source for the DTVCC layer.
 
 ## Related crates
 

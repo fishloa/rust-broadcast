@@ -110,8 +110,8 @@ undefined names within them are reserved for future W3C standardization.
 — appear in examples throughout this spec for backward-compatibility
 signalling; they are a *different*, earlier-version profile, not aliases of
 the 1.1 designators above. See §L "Summary of substantive changes" for the
-1.0.1→1.1 diff, not transcribed in full here — not read in detail, listed
-under "could not establish" in `README.md`.)
+1.0.1→1.1 diff, not transcribed in full here — deferred (transcribe from
+`specs/w3c_imsc1.1.html`; listed in `README.md`).)
 
 ## 5. Feature/Extension disposition table (§6, Table, verbatim, all 159 rows)
 
@@ -399,8 +399,8 @@ implementer is likely to under-enforce:
 
 - **§8.1 Designator**: `http://www.w3.org/ns/ttml/profile/imsc1.1/text`.
 - **§8.2 Recommended Character Sets**: SHOULD use characters from Annex B
-  Common Character Sets (not transcribed here — see README "could not
-  establish" list).
+  Common Character Sets (not transcribed here — deferred, see README
+  "Deferred" list; transcribe from `specs/w3c_imsc1.1.html`).
 - **§8.3 Reference Fonts**: when rendering codepoints matching Annex A's
   combinations of computed font family + codepoint, a processor SHALL use a
   font producing a substantially-identical glyph-sequence dimension to one of
@@ -603,8 +603,8 @@ supporting X mean" definition, not additional restrictions.
 
 The paint/compositing algorithm (regions → images → text, §10.1–10.5) is a
 *presentation*-processor concern (how to rasterize), not a parse/serialize
-concern, and is not transcribed here — listed in README's "could not
-establish" / "not needed" list.
+concern, and is not transcribed here — listed in README's "Deferred" /
+"not needed" list (source vendored: `specs/w3c_imsc1.1.html`, §10).
 
 ## 12. Not transcribed here
 

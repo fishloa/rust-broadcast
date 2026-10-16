@@ -33,8 +33,8 @@
 //! | Standard | Edition | Scope | Status |
 //! |---|---|---|---|
 //! | ETSI TS 101 154 | V2.6.1 (transcribed in `docs/ts_101_154/`) | §B.5 / Table B.9 `cc_data()` | Full |
-//! | ANSI/CTA-608-E | -E; not vendored, so byte tables unverified against the document | line-21 decode, CC1-CC4, PACs, character sets | Partial (decode); XDS skipped |
-//! | ANSI/CTA-708-E | -E; not vendored, same caveat | DTVCC packets, service blocks, windows, pens; services 1-6 | Partial (decode) |
+//! | ANSI/CTA-608-E | -E; CTA-608-E is not vendored (no copy in `private/specs` or `specs/`), so byte tables cannot be re-verified against it | line-21 decode, CC1-CC4, PACs, character sets | Partial (decode); XDS skipped |
+//! | ANSI/CTA-708-E | -E; CTA-708-E is not vendored; cross-source: GY/T 270-2013 (vendored, a Chinese adaptation; differences from CTA must be checked) | DTVCC packets, service blocks, windows, pens; services 1-6 | Partial (decode) |
 //! | 47 CFR §79.102 | public domain (`docs/decode/cea708-conformance.md`) | 708 semantic model | Full as a grounding source |
 //!
 //! # Feature flags

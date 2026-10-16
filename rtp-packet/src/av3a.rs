@@ -18,12 +18,13 @@
 //!   (`rate`, `codec-nn-id`, `config`, `bitrate`) of encoding name `AV3A-AATF`.
 //!
 //! Source gaps (no value is guessed): the lossless (`audio_codec_id` 1) header
-//! carries `channel_number` as `{4;8}` bits, a width selection the vendored text
-//! does not make unambiguous, so the lossless header is typed up to
-//! `aatf_error_check()` and the byte-aligned remainder (`channel_number`,
-//! `resolution`, alignment, raw data) stays in [`AatfFrame::body`]. The CRC
-//! polynomial of `crc_check` (`rpchof`) is not in the vendored extract: CRC bytes
-//! are carried, not verified. `audio_codec_id` 3..=15 have no defined header
+//! carries `channel_number` as `{4;8}` bits; that field is not yet typed (it is
+//! defined by T/AI 109.3 Annex A, which is vendored), so the lossless header is
+//! typed up to `aatf_error_check()` and the byte-aligned remainder
+//! (`channel_number`, `resolution`, alignment, raw data) stays in
+//! [`AatfFrame::body`]. T/AI 109.3 Table A.5 names `crc_check` as `rpchof` but
+//! states no polynomial or initial value: CRC bytes are carried, not verified.
+//! `audio_codec_id` 3..=15 have no defined header
 //! ([`Error::InvalidValue`] on parse).
 
 use crate::error::{Error, Result};

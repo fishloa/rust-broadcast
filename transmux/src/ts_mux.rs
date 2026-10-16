@@ -169,9 +169,9 @@ const DESCRIPTOR_TAG_CA: u8 = 0x09;
 /// descriptor under which post-2013 additions, including MPEG-H signalling,
 /// register a second-level `extension_descriptor_tag`.
 const DESCRIPTOR_TAG_EXTENSION: u8 = 0x3F;
-/// `MPEGH_3dAudio_descriptor`'s `extension_descriptor_tag`. ISO/IEC 13818-1
-/// §2.6.106 (which registers this value) is paid and not vendored; the value
-/// `0x08` is taken from the real Fraunhofer MPEG-H-in-TS fixture's ES_info
+/// `MPEGH_3dAudio_descriptor`'s `extension_descriptor_tag`. ITU-T H.222.0
+/// (08/2023, vendored) §2.6.106 Table 2-121 defines the descriptor and the
+/// extension-tag table lists it as `0x08`; the value is also confirmed by the real Fraunhofer MPEG-H-in-TS fixture's ES_info
 /// bytes (`3F 04 08 10 7F C1` — see `transmux/docs/codec/mpegh-ts-101154.md`),
 /// real DVB-conformant broadcast content from the format's own originator.
 const MPEGH_3DAUDIO_EXTENSION_TAG: u8 = 0x08;

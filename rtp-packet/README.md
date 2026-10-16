@@ -22,8 +22,8 @@ rtp-packet = "0.4"
 |---|---|---|---|---|
 | IETF RFC 3550 "RTP" | RFC 3550 (vendored `specs/rfc3550_rtp.txt`) | §5.1 fixed header, CSRC list, padding; §5.3.1 generic header extension | Full | Transcribed in `docs/rtp-header.md` |
 | IETF RFC 8285 "A General Mechanism for RTP Header Extensions" | RFC 8285 (vendored) | §4.2 one-byte form (`0xBEDE`), §4.3 two-byte form (`0x100x`) | Full, behind `rfc8285` | `docs/rfc8285_header_ext.md`; serialization validates every element before writing |
-| T/AI 109.7-2024 "AV3A-AATF RTP payload" (clause 10.1) | 2024 (not in the vendored index, edition per the crate's source citations) | `aatf_frame()` start, MTU fragmentation and `M`-bit reassembly, SDP `fmtp` parameters | Partial, behind `av3a` | CRC bytes are carried, not verified (polynomial not in the vendored extract); lossless header typed up to `aatf_error_check()`; `audio_codec_id` 3..=15 rejected |
-| T/AI 109.3-2023 Annex A Tables A.4 to A.7 (AATF frame header) | 2023 (as cited in the source) | General high-rate (0), lossless (1, partial) and general full-rate (2) headers | Partial, behind `av3a` | Same gaps as above |
+| T/AI 109.7-2024 "AV3A-AATF RTP payload" (clause 10.1) | T/AI 109.7-2024, vendored (`private/specs/t_ai_109_7_2024_avs3_audio_encapsulation_transport.pdf`, md clauses 10.1.1 to 10.1.4) | `aatf_frame()` start, MTU fragmentation and `M`-bit reassembly, SDP `fmtp` parameters | Partial, behind `av3a` | CRC bytes are carried, not verified (T/AI 109.3 Table A.5 names `crc_check` as `rpchof` but states no polynomial or initial value); lossless header typed up to `aatf_error_check()`; `audio_codec_id` 3..=15 rejected |
+| T/AI 109.3-2023 Annex A Tables A.4 to A.7 (AATF frame header) | T/AI 109.3-2023, vendored (English and Chinese editions in `private/specs/`) | General high-rate (0), lossless (1, partial) and general full-rate (2) headers | Partial, behind `av3a` | Same gaps as above |
 | IETF RFC 3551 (RTP A/V profile) | RFC 3551 | Static payload type numbers | Not implemented | The payload type is a plain `u8` (max 127) |
 
 ## Features

@@ -7,9 +7,11 @@ February 2018) §2 + §2.1 (text pp. 4–10), render-verified from the vendored
 This document grounds the **per-ANC-packet field set, the 10-bit-word parity
 rule, and the `Checksum_Word` computation** that SMPTE ST 2038 (see
 [`st_2038.md`](st_2038.md)) defers to SMPTE ST 291-1 ("reinserted as ancillary
-data, per SMPTE ST 291-1"). ST 291-1 itself is paid (not vendored), but RFC 8331
-**§2.1 reproduces** the ST 291-1 ANC-packet semantics — including the parity and
-checksum derivations — and is freely vendorable. RFC 8331 §1 states its data
+data, per SMPTE ST 291-1"). ST 291-1 itself is vendored (SMPTE ST 291-1:2011,
+`private/specs/smpte_st291-1_2011_anc_packet_space_formatting.pdf`: §6.1/6.2/6.4
+DID/SDID/DBN 8-bit word + even parity b8 + b9 = NOT b8, §6.7 checksum word),
+and RFC 8331 **§2.1 also reproduces** the ST 291-1 ANC-packet semantics —
+including the parity and checksum derivations. RFC 8331 §1 states its data
 model "is based on the data model of SMPTE ST 2038 [ST2038]", so the field set
 maps directly onto the ST 2038 per-ANC-packet fields.
 
@@ -249,8 +251,9 @@ against a directed attack).
 
 4. **"Even parity of b0..b7"** is RFC 8331's wording (stated for Data_Count's
    b8/b9). ST 291-1 applies the same b9=NOT(b8) construction to DID/SDID/UDW;
-   the underlying ST 291-1 standard is paid/not vendored, but RFC 8331 §2.1
-   reproduces these derivations — this is free, vendorable footing.
+   the underlying ST 291-1 standard is vendored (SMPTE ST 291-1:2011 §6.1, §6.2, §6.4:
+   b8 is even parity of b7..b0, b9 = NOT b8), and RFC 8331 §2.1 reproduces
+   these derivations.
 
 5. **RTP/payload-header framing** (Extended Sequence Number, Length, `ANC_Count`,
    `F`, reserved, RTP header) is **RFC-8331-specific**, not part of ST 2038.
