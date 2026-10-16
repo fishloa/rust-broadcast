@@ -37,6 +37,8 @@ Each route names one ingest transport (`InputSpec`):
 | `rtmp` | **Push** ingest: binds a listen port and accepts RTMP publishers (FLV), via `rtmp-runtime` | `app`/`stream_key` filters; concurrent publishers |
 | `file` | A local media file on disk, identified with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); paced to wall clock, including across the loop point; a long asset holds its parsed samples in memory — see the crate CHANGELOG |
 
+| `whip` | **Push** ingest: binds a `listen` address and accepts WHIP (RFC 9725) publishers; H.264 video only (feature `whip`, ICE + DTLS-SRTP via `webrtc-runtime`) | see [WHIP / WHEP](#whip--whep-session-resources) |
+
 `rtsp` accepts `rtsps://` for RTSP over TLS. `rtmp` is the only *push* input —
 nothing is dialled out to; it binds and accepts, and one stalled publisher does
 not block another.
@@ -70,6 +72,7 @@ unaffected):
 | `"srt_push"` | Push re-egress: relay ingested media to a downstream SRT listener, via `srt-runtime` | `url` required |
 | `"rtmp_push"` | Push re-egress: relay to a downstream RTMP server (FLV), via `rtmp-runtime` | `url` required |
 | `"rtsp_push"` | Push re-egress: relay to a downstream RTSP server (ANNOUNCE/RECORD), via `rtsp-runtime` | `url` required |
+| `"whep"` | WHEP (draft-ietf-wish-whep) viewer egress on its own `listen` address (feature `whep`) | see [WHIP / WHEP](#whip--whep-session-resources) |
 
 `"llhls"`/`"dash"`/`"ll_dash"`/`"smooth"` all read the exact same segmented CMAF —
 ingest-once, many-outputs, no per-output re-mux — so a route can enable more
@@ -108,6 +111,62 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 
 An unknown stream name, or a filename `multimux` doesn't recognize, returns
 `404`.
+
+## WHIP / WHEP session resources
+
+With the `whip` / `whep` Cargo features, a route can accept a WebRTC publisher
+(`POST /whip`) or serve viewers (`POST /whep`). Sessions are real resources
+(RFC 9725 sections 4.2, 4.3, 8 and draft-ietf-wish-whep):
+
+- The `201 Created` `Location` is a per-session resource,
+  `/whip/session/<id>` / `/whep/session/<id>` (a 32-character unguessable id
+  from the OS CSPRNG); the id-less paths no longer exist (`404`). Clients must
+  follow `Location` rather than hard-code a path. Both `201`s carry the
+  `ETag` the state machine owns.
+- `DELETE` on the resource ends the session (`200`): the media task drops the
+  transport (WHIP also releases the published program), the `Trunk` cursor
+  (WHEP) and the capacity slot; a repeated `DELETE`, or one for a session that
+  already ended, is `404`.
+- `PATCH` carries Trickle ICE (`application/trickle-ice-sdpfrag`, optional
+  `If-Match`): candidates are added to the live transport (`204`); a wrong
+  `Content-Type` is `415`, an `If-Match` naming another entity-tag `412`, an
+  unparsable fragment / one for another ICE generation / with nothing to add
+  `400`, an unknown resource `404`.
+- `If-Match: *` is an **ICE restart** (RFC 9725 section 4.3.2): the PATCH
+  carries the client's new `ice-ufrag`/`ice-pwd`; the server restarts ICE in
+  place under new credentials of its own (DTLS/SRTP untouched, media keeps
+  flowing) and answers `200` with a new `ETag` and an sdpfrag holding its new
+  credentials and candidates. A restart fragment that keeps the ufrag or lacks
+  a pwd is `400`; afterwards the old `ETag` is `412`.
+
+## Ingest listener security
+
+- `Config::allow_open_ingest` (default `false`): `Config::validate` refuses an
+  ingest listener that admits a publisher with no authentication (an RTMP route
+  without `stream_key`, a WHIP route, a listener-mode SRT route) on a
+  **non-loopback** address unless the config sets `"allow_open_ingest": true`.
+  Loopback listeners, RTMP routes with a `stream_key` and caller-mode SRT are
+  unaffected.
+- **Origin-scoped credentials:** HLS/DASH/Smooth pull and TS-over-HTTP
+  credentials are bound to the (scheme, host, port) of the configured source
+  URL. A request to any other origin (an absolute playlist/manifest URL on
+  another host, a redirect target) is sent without `Authorization`, and a
+  Digest challenge from a redirect target is not answered.
+- ICE `ufrag`/`pwd`, session resource ids, `ETag` tokens and RTP SSRCs come
+  from the OS CSPRNG; `Debug` of the RTMP stream key, RTSP credentials and ICE
+  restart types never prints the secret (`tests/secret_debug_guard.rs`).
+
+## DASH timeline
+
+`MPD@availabilityStartTime` is the program's **presentation origin** (the
+instant its `Trunk` was minted, `RouteHandle::presentation_origin(program)`),
+not the route's construction time, so `AST + (N - startNumber) * duration`
+holds across a reconnect that restarts at segment 1 (ISO/IEC 23009-1 5.3.1.2,
+5.3.9.5.3); before a program is published the MPD answers `503`. A live
+`SegmentTimeline` (`$Time$`) MPD refresh in DASH pull is extended by time
+(`S@t` is absolute), and a negative `S@r` is resolved to the next `@t`/Period
+end; tests use real DASH-IF livesim2 MPDs. The `xs:duration` spelling is the one
+shared `transmux::dash::xs_duration`.
 
 ## Catch-up / VOD-from-live
 
@@ -394,6 +453,11 @@ mutually exclusive — pass one or the other.
   reaches a log line, error message, or `Debug` output.
 - **Prometheus metrics + health/readiness** — see the served-endpoints
   table above.
+- **Mid-GOP-safe push** — RTMP/SRT/RTSP push drops every sample until the
+  first video sync sample after a (re)connect, so a downstream never starts
+  mid-GOP; an RTSP interleaved frame whose RTP payload does not parse is
+  skipped, logged and counted (`malformed_media_frames`) rather than ending the
+  ingest session.
 - **Graceful shutdown** — Ctrl-C / `SIGTERM` drains in-flight requests and
   every route's ingest task before exiting.
 

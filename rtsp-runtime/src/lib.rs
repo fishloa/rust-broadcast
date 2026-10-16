@@ -56,6 +56,7 @@
 //! `docs/methods-and-status.md`.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod auth;
 pub mod client;

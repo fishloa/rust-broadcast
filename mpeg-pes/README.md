@@ -41,6 +41,24 @@ assert_eq!(pkt.payload, &[0xAA, 0xBB]);
 | `std` | ✅ | Link `std`. Off → `#![no_std]` + `alloc`. |
 | `serde` | – | `serde::Serialize` on the public types. |
 
+## Round-trip fidelity
+
+Parse -> serialize is byte-exact on real streams because the header keeps what
+the wire carried: `PesHeader::header_stuffing` (the stuffing bytes verbatim, not
+a length), `es_rate_marker_bits`, and `PesExtension::reserved_bits`
+(ISO/IEC 13818-1 Table 2-21). These types are `#[non_exhaustive]` with
+`new()`/`Default`. `PesPacket::parse` rejects a header whose first flag byte is
+not `'10'` (`Error::BadHeaderMarker`: MPEG-1 PES or damage) and a
+`PES_header_data_length` that does not fit a bounded `PES_packet_length`;
+a `P-STD_buffer_size` over 13 bits is rejected with `Error::FieldOverflow`
+rather than masked. `StreamId::EXTENDED_STREAM_ID` (0xFD),
+`STREAM_ID_EXTENSION_AVS3_VIDEO` (0x41), `STREAM_ID_EXTENSION_AVS3_AUDIO`
+(0b100_1111) and `PesExtensionField::stream_id_extension()` cover the AVS3
+stream-id-extension carriage (ETSI TS 101 154 V2.10.1 section 4.1.8; T/AI 109.7
+clause 8.1.2). `tests/pes_header_roundtrip_exhaustive.rs` re-serializes every PES
+packet of every committed `.ts` fixture. PTS/DTS and ESCR marker-bit
+packing comes from `broadcast_common::clock33`.
+
 ## Scope
 
 In: PES packet header, `stream_id`, `PES_packet_length` (incl. unbounded video

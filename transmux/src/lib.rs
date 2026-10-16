@@ -126,6 +126,7 @@
 // `cargo build --no-default-features` is the guard against `std` in non-test code.
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 extern crate alloc;
 
 pub mod aac_asc;

@@ -44,6 +44,18 @@ This crate is functionally complete end to end (plan steps 3a through 3e):
   `Await` negotiation.
 - **`retention`** — `Retention::HotOnly`/`Tiered`, `RetentionDriver` draining a
   pinning segment cursor into a caller-supplied, sans-IO `SegmentSink`.
+- **`ids`** — `SegmentSeq` and `PartIndex` newtypes (checked `checked_next`/
+  `checked_add`/`checked_sub`/`checked_distance_from`, explicit
+  `wrapping_next`/`saturating_next`, no operator impls that could overflow
+  silently). `SegmentEntry::sequence_number`, `PartEntry::{segment_number,
+  part_index}`, `EventAnchor::Segment`, `Trunk::{part_bytes, parts_in_segment,
+  events_in_segment, last_closed_segment}`, `SegmentWriter` and
+  `RetentionDriver::locate` use them instead of `u32`, so a swapped
+  segment/part argument is a compile error. At `u32::MAX`
+  `next_sequence_number` saturates and a further segment is rejected.
+- **Typed track ids** — `TrackSelection::track_ids`, `TrunkWriter::publish`,
+  `SampleCursorItem::Timed` and `SessionEvent::Sample` carry `transmux::TrackId`
+  rather than a bare `u32`.
 
 ## `no_std` note — the byte layer only
 

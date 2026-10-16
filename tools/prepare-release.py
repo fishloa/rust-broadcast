@@ -5,6 +5,9 @@ Usage:
     tools/prepare-release.py <crate>=<version> [<crate>=<version> ...]
     tools/prepare-release.py --check <crate>=<version> [...]     # dry run
     tools/prepare-release.py --verify <crate>=<version> [...]    # post-publish
+    tools/prepare-release.py --check-readmes [<crate>=<version> ...]
+                                    # exit 1 if a README `crate = "x.y"` snippet
+                                    # disagrees with the current/planned version
 
 Does the mechanical, error-prone half of `docs/RELEASE-DOCS.md` so it is not
 retyped by hand each time:
@@ -13,6 +16,10 @@ retyped by hand each time:
 2. **Sibling dep refs** — updates every OTHER workspace crate that depends on a
    bumped crate to the new caret version, so no published bucket ends up
    spanning two epochs (the #858 rule).
+2b. **README snippets** — rewrites every README `crate = "x.y"` /
+   `crate = { version = "x.y", .. }` dependency snippet for a workspace crate
+   to the bump plan's version (`tools/readme_snippets.py`; the dry run lists
+   the rewrites, `--check-readmes` fails on any disagreement).
 3. **CHANGELOG cut** — `## [Unreleased]` becomes `## [X.Y.Z] - YYYY-MM-DD` and
    a fresh empty `## [Unreleased]` goes back on top.
 4. **Release note** — scaffolds `docs/release-notes/<crate>-<version>.md` from
@@ -324,6 +331,30 @@ def restamp_dates(pairs: list[tuple[str, str]], apply: bool) -> int:
     return rc
 
 
+def _readme_snippets():
+    """Import the sibling tools/readme_snippets.py module."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("readme_snippets", Path(__file__).resolve().parent / "readme_snippets.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def check_readmes(pairs: list[tuple[str, str]]) -> int:
+    """Fail when any README dependency snippet disagrees with the crate's
+    current manifest version (overlaid by the planned `pairs`, if given)."""
+    snippets = _readme_snippets()
+    bad = snippets.check(ROOT, snippets.plan_versions(pairs, ROOT))
+    for line in bad:
+        print(line)
+    if bad:
+        print(f"\n{len(bad)} stale README dependency snippet(s); the apply path rewrites them.", file=sys.stderr)
+        return 1
+    print("README dependency snippets OK")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
     if not args:
@@ -331,7 +362,9 @@ def main(argv: list[str]) -> int:
         return 2
 
     mode = "apply"
-    if args[0] == "--check":
+    if args[0] == "--check-readmes":
+        mode, args = "check-readmes", args[1:]
+    elif args[0] == "--check":
         mode, args = "check", args[1:]
     elif args[0] == "--verify":
         mode, args = "verify", args[1:]
@@ -349,6 +382,9 @@ def main(argv: list[str]) -> int:
 
     if mode == "verify":
         return verify(pairs)
+
+    if mode == "check-readmes":
+        return check_readmes(pairs)
 
     if mode in ("restamp", "restamp-check"):
         doing = mode == "restamp"
@@ -370,6 +406,12 @@ def main(argv: list[str]) -> int:
             any_ref = True
     if not any_ref:
         print("  (none needed)")
+
+    print("\nREADME dependency snippets:")
+    snippets = _readme_snippets()
+    planned = snippets.plan_versions(pairs, ROOT)
+    for line in snippets.rewrite(ROOT, planned, apply) or ["  (none needed)"]:
+        print(line)
 
     print("\nCHANGELOGs:")
     bodies: dict[str, str] = {}

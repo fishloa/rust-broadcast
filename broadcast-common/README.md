@@ -21,6 +21,12 @@ is bit-identical on all targets.
 
 ### `Parse<'a>` and `Serialize` traits (`traits`)
 
+> **`Serialize::to_bytes()` was removed** (it panicked when `serialize_into`
+> failed). `Serialize::try_to_bytes() -> Result<Vec<u8>, Self::Error>` is the
+> only allocate-and-serialize entry point: production code propagates the error
+> (a value assembled from damaged wire data can fail too), tests use
+> `.try_to_bytes().unwrap()`. Guarded by `tests/no_panicking_to_bytes_guard.rs`.
+
 The symmetric contract every wire type across the family implements:
 
 ```rust
@@ -74,6 +80,15 @@ the `chrono` feature is enabled, to a `chrono::DateTime<Utc>`. The
 `Duration` / HHMMSS helpers for event durations are always available without
 `chrono`.
 
+The 16-bit MJD field follows the EN 300 468 v1.20.1 **2038 wrap rule**: a field
+whose most significant bit is 0 denotes `MJD = 0x10000 + field`, so
+`decode_mjd_bcd`/`mjd_to_ymd`/`decode_mjd_bcd_utc` and their encoders cover
+1948-08-05 ..= 2128-01-09 (earlier dates no longer encode/decode).
+`encode_mjd_bcd` rejects calendar-impossible days (31 Feb, 29 Feb in a
+non-leap year) instead of silently encoding a later day.
+`Timestamp::saturating_add_nanos` replaces the deprecated
+`checked_add_nanos` (which always saturated).
+
 ### Bit-field codec (`bits`)
 
 `BitReader` and `BitWriter` for big-endian MSB-first sub-byte fields — the bit
@@ -112,6 +127,29 @@ use broadcast_common::clock33::{WRAP_33BIT, add, signed_distance};
 assert_eq!(add(WRAP_33BIT - 1, 2), 1);
 assert_eq!(signed_distance(WRAP_33BIT - 10, 5), 15);
 ```
+
+`clock33` also owns the 27 MHz PCR clock in one place: `PTS_HZ`, `PCR_HZ`,
+`PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ` (`2^33 * 300`), `pcr_from_parts` /
+`pcr_split` (`base * 300 + extension`), `pcr_forward_distance` and
+`pcr_signed_distance` (the modular PCR delta; `wrapping_sub(..) %
+PCR_WRAP_27MHZ` is wrong across a wrap because the modulus is not a power of
+two), and the 5-byte marker-bit timestamp field of PES PTS/DTS, `DTS_next_AU`
+and ST 2038 PTS (`Marked`, `MARKERS_ALL_SET`, `unpack_marked`, `pack_marked`,
+`pack_marked_with`), decoded without failing so each caller keeps its own
+prefix/marker validation and error type.
+
+### Odd parity (`parity`)
+
+`has_odd_parity`, `set_odd_parity`, `strip_parity`: the odd-parity protected
+byte shared by CEA-608 line-21 data and EBU Teletext `txt_data_block` bytes
+(ETSI EN 300 706 section 8.1); detect-only by design.
+
+### Checked field widths (`len`)
+
+`fit_u8`/`fit_u16`/`fit_bits` and `fit_mask(value, mask, field)` — the checked
+replacement for the `(value & MASK)` idiom in serializers: they return
+`FieldOverflow` when a set bit lies outside the field instead of silently
+wrapping into a misframed structure.
 
 ### PUSI accumulation (`pusi`)
 

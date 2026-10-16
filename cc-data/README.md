@@ -35,6 +35,20 @@ Both decoders are one-way (bytes → caption state) and panic-free on arbitrary 
 truncated / malformed input. Decode is grounded in the spec transcriptions under
 `cc-data/docs/decode/`.
 
+## Carriage fidelity and decoder behaviour on real captures
+
+- `CcData` keeps `process_em_data_flag` (byte 0 bit 7) and `additional_data_flag`
+  (bit 5), constructed with Table B.9's own defaults (`true` / `false`).
+  `CcData::parse` accepts headers with those bits in either state, because real
+  ATSC A/53 captures carry `process_em_data_flag = 0` (all 599 frames of
+  shaka-player's `captions-test.ts`); the bits are preserved verbatim so the
+  round-trip stays byte-exact.
+- `Cea608Decoder`: RCL (Resume Caption Loading) only selects pop-on style and
+  no longer erases the non-displayed memory (ENM erases). Real SCC files
+  re-issue RCL after loading text and before the EDM + EOC pair, and the old
+  decoder discarded every such caption.
+- Odd-parity checking comes from `broadcast_common::parity`.
+
 ## Scope
 
 In: the `cc_data()` carriage structure (Table B.9) — extract + demux the caption

@@ -57,6 +57,7 @@
 #![doc = "```\n\n## `stream_stats`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/stream_stats.rs")]
 #![doc = "```"]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 // Drift-guard exemption (issue #806): this crate defines no `pub enum` at
 // all (only stream adapter structs and `ResyncStats` below), so neither the

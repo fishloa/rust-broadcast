@@ -151,10 +151,12 @@ V1.20.1 Table 2 — there is nothing standardized left to implement.
 
 ## Descriptors
 
-**71 descriptor tags are dispatched by `AnyDescriptor`** (via `DescriptorLoop::iter` /
-`parse_loop`): 6 MPEG-2/DSM-CC tags, 64 DVB-allocated tags (0x40–0x7F), and the de-facto
-private `logical_channel_descriptor` (0x83) — which exists as a variant but is not
-auto-dispatched (register it via `DescriptorRegistry` with PDS context).
+`AnyDescriptor` (via `DescriptorLoop::iter` / `parse_loop`) auto-dispatches the MPEG-2
+systems/DSM-CC descriptors (including the `Extension_descriptor`, tag 0x3F) and all 64
+DVB-allocated tags (0x40–0x7F). Private and context-dependent tags (0x83 logical_channel,
+the Chinese AVS/caption descriptors, ...) have a variant but are **not** auto-dispatched:
+opt in through `DescriptorRegistry` with the right `private_data_specifier` /
+`registration_descriptor` scope (see *Private descriptors* below).
 Unknown or unregistered tags pass through as `AnyDescriptor::Unknown { tag, body }` —
 the raw payload is preserved and round-trips losslessly.
 
@@ -169,6 +171,7 @@ the raw payload is preserved and round-trips losslessly.
 | 0x0F | private_data_indicator |
 | 0x13 | carousel_identifier (ISO/IEC 13818-6) |
 | 0x14 | association_tag (ISO/IEC 13818-6) |
+| 0x3F | Extension_descriptor (H.222.0 clause 2.6.90, `AnyDescriptor::Mpeg2Extension`, auto-dispatched): `extension_descriptor_tag` 0x08–0x0E are the seven **MPEG-H 3D audio** descriptors (clauses 2.6.106–2.6.118) — typed `MpegH3dAudio`, `MpegH3dAudioScene`, `MpegH3dAudioTextLabel`, `MpegH3dAudioMultiStream`, `MpegH3dAudioDrcLoudness`, opaque `MpegH3dAudioConfig` / `MpegH3dAudioCommand`; every other extension tag is kept verbatim as `Other`; all reserved bits preserved. Verified byte-for-byte against the PMTs of the Fraunhofer-IIS MPEG-H transport streams (`tools/fetch-test-streams.sh mpegh-*`) and TSDuck-compiled vectors |
 
 ### DVB descriptors (EN 300 468, and companion specs)
 
@@ -249,8 +252,17 @@ per the crate's zero-copy convention.
 | tag | Descriptor | Notes |
 |---|---|---|
 | 0x83 | logical_channel | EACEM/NorDig private; variant exists, not auto-dispatched — register via `DescriptorRegistry` |
-| 0xD1 | AVS3_video_descriptor | T/AI 109.6 / GY/T 420 private ('AVSV'); variant exists, enable with `DescriptorRegistry::with_avs3_video()` |
-| 0xD2 | AVS3_audio_descriptor | T/AI 109.7 private ('AVSA'); variant exists, enable with `DescriptorRegistry::with_avs3_audio()` |
+| 0x83 / 0x87 | NorDig Logical Channel v1 / v2 | NorDig Unified Requirements v3.2.2 §12.2.9.2–12.2.9.3 (Tables 12.12/12.14), scoped by `PDS_NORDIG` (0x00000029); v1 = 14-bit LCN per service, v2 = named channel lists with a 10-bit LCN, per-list country code and Annex A name; enable with `DescriptorRegistry::with_nordig_lcn()` |
+| 0x40 | AVS2_video_descriptor | GY/T 420-2025 Table 3; scoped by an 'AVSV' registration_descriptor or private_data_specifier (`with_avs2_video()`); unscoped 0x40 stays `network_name` |
+| 0xD3 | AVS2_audio_descriptor | T/AI 109.7-2024 Table 10; scoped by 'AVSA' (`with_avs2_audio()`); bytes after the version block are kept in `trailing` (`anc_data_block()` is defined in a non-vendored standard) |
+| 62 (0x3E) | TUWA AVS3 video | T/UWA 012.2-2023 Table 1, typed `TuwaLibraryRef::{Peid, StreamId}`; PDS-agnostic opt-in `with_tuwa_avs3_video()` |
+| 0x86 | China caption service | GY/T 270-2013 clause 6.4 Table 8 (`char_set` Table 9, typed `ChinaCaptionCharSet`); the tag is context-dependent (ATSC uses it differently) so opt in with `with_china_caption_service()` |
+| 0xD1 | AVS3_video_descriptor | T/AI 109.6-2022 Table 9 / GY/T 420-2025 Table 6, typed `Avs3FrameRateCode`; 7- and 8-byte bodies (the `colour_primaries` byte is omitted by one source and included by the other, both re-emitted faithfully); 'AVSV' scope (PDS or registration), `DescriptorRegistry::with_avs3_video()` |
+| 0xD2 | AVS3_audio_descriptor | T/AI 109.7-2024 clause 8.1.3.4 Table 4: `audio_codec_id`-selected bodies (0, 1 with optional 24-bit `sampling_frequency`, 2 with Table 5 `content_type` variants and `total_bitrate`); 'AVSA' scope (`PDS_AVSA` 0x41565341 or a registration_descriptor), `DescriptorRegistry::with_avs3_audio()` |
+
+`StreamType` gains `Avs2Video` (0xD2), `Avs2Audio` (0xD3), `Avs3Video` (0xD4), `Avs3Audio` (0xD5) (ETSI TS 101 154 V2.10.1 §4.1.8; note 0x33 is VVC, not AVS3) and `ChinaClosedCaption` (0x80, GY/T 270-2013 clause 6.2: `cc_data()` in a dedicated caption PES, bit-identical to `cc-data`'s parser). `PDS_AVSV` (0x41565356) and `PDS_AVSA` are the private_data_specifiers.
+
+The Chinese multi-audio `audio_preselection_descriptor` (GY/T 422-2025 Table 1, tag 0x7F ext 0x19) is a wire-compatible subset of the DVB one (`Preselection::is_gy_t_422_profile()`); `Preselection::audio_rendering_indication` is the typed `AudioRenderingIndication` (EN 300 468 Table 111 / GY/T 422 Table 2).
 
 ### Extension descriptor registry (tag 0x7F)
 
@@ -453,6 +465,42 @@ dvb-si = { version = "11", default-features = false }  # tight build: no_std + a
 `serde` is **Serialize-only** — for display/export (JSON via `serde_json`);
 parsing FROM JSON is deliberately unsupported — re-parse from the wire bytes.
 
+## Reserved bits, section header bits and edition fidelity
+
+- **Every `reserved` / `reserved_future_use` bit is preserved.** Parse stays
+  tolerant; each table and descriptor captures its reserved runs in typed,
+  spec-named fields and re-emits them verbatim, so a real sender's section or
+  descriptor re-serializes byte-identically (the CRC is recomputed). Values
+  built with `new()` / `Default` carry the governing edition's fill (all ones,
+  except the PSI `'0'` bit and the AC-3 `reserved_flags`, which are `0000` in
+  every EN 300 468 edition). Evidence: `docs/reserved-bits-edition-audit.md`;
+  `tests/real_capture_byte_identity.rs` and `tests/table_reserved_bits.rs`
+  (a single-bit-flip property over every table type).
+- **`tables::SectionBits { private_indicator, reserved_b1, reserved_b5 }`**
+  (`SectionBits::psi()` / `::dvb()`) is the `bits` field of every
+  short/long-form section (the bit after `section_syntax_indicator` is H.222.0's
+  `private_indicator` and EN 300 468's `reserved_future_use`: `0` for
+  PAT/PMT/CAT/TSDT, `1` for DVB tables). The touched structs are
+  `#[non_exhaustive]`; construct them with `new()` constructors.
+  `StSection` keeps `section_syntax_indicator`.
+- **2038 MJD wrap rule** (EN 300 468 V1.20.1 clauses 5.2.4–5.2.6, 6.2.20,
+  6.4.9) applies to every time field (EIT `start_time`, TDT/TOT `UTC_time`,
+  `time_of_change`, `start_time_of_change`): when the msb of the 16-bit MJD is
+  0 the MJD is `0x10000` + the field (`0x03D1123456` is 2040-12-25 12:34:56);
+  dates before 1948-08-05 are not representable (implemented in
+  `broadcast_common::time`).
+- **Checked serializers**: a value wider than its wire field is
+  `Error::FieldOverflow` (via `broadcast_common::len::fit_mask` / `fit_*`),
+  never masked into a different valid-looking value — ~220 sites across the
+  descriptors and tables, including the SAT bit writer.
+- **Typed PIDs**: every PID field (`PatEntry::pid`, `PmtStream::elementary_pid`,
+  `PmtSection::pcr_pid`, `CatCaEntry::ca_pid`, `CaDescriptor::ca_pid`, every
+  per-table `PID` const) is `mpeg_ts::pid::Pid`; the ten placeholder
+  `PID = 0x0000` consts on tables with no fixed PID are removed.
+- **SAT** (`tables::sat`) names follow v1.20.1 (`CellCentre`, `centre_latitude`)
+  and every reserved run of Tables 11c–11h is a typed `reserved_zero_future_use*`
+  field.
+
 ## Principles
 
 - **Spec fidelity.** Every field in a section's syntax appears in the parsed struct.
@@ -470,7 +518,7 @@ transcription:
 
 | Spec | ETSI deliverable | Transcription |
 |---|---|---|
-| EN 300 468 V1.19.1 (2025-02) — DVB SI | [PDF](https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf) | [en_300_468.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/en_300_468.md) |
+| EN 300 468 V1.20.1 (2026-09) — DVB SI (delta vs 1.19.1: [`en300468-v1.20.1-delta.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/en300468-v1.20.1-delta.md); no new tags, table_ids or layouts) | [PDF](https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf) | [en_300_468.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/en_300_468.md) |
 | EN 301 192 v1.7.1 — data broadcasting | [PDF](https://www.etsi.org/deliver/etsi_en/301100_301199/301192/01.07.01_60/en_301192v010701p.pdf) | [en_301_192.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/en_301_192.md) |
 | TS 102 006 v1.7.1 — System Software Update | [PDF](https://www.etsi.org/deliver/etsi_ts/102000_102099/102006/01.07.01_60/ts_102006v010701p.pdf) | [ts_102_006_ssu.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/ts_102_006_ssu.md) |
 | TS 102 323 v1.4.1 — TV-Anytime carriage | [PDF](https://www.etsi.org/deliver/etsi_ts/102300_102399/102323/01.04.01_60/ts_102323v010401p.pdf) | [ts_102_323_tva.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/ts_102_323_tva.md) |

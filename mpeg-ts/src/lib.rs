@@ -37,6 +37,7 @@
 //!   All wire layouts are cited by clause in the module-level doc comments.
 #![no_std]
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 extern crate alloc;
 
 pub mod error;

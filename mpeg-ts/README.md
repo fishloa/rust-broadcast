@@ -22,6 +22,29 @@ the full SI/descriptor stack.
 | `std`   | yes     | Enable `std::error::Error` impls; disable for embedded |
 | `serde` | yes     | `Serialize` for packet/section types (serialize-only) |
 
+## Typed PIDs and round-trip fidelity
+
+- **`pid::Pid` is the PID type everywhere**: `TsHeader::pid`,
+  `SectionPacketiser`, `SiMux`, `PusiReassembler` and `OwnedTsPacket` take and
+  return `Pid`, not `u16`. `Pid::try_new` / `TryFrom<u16>` reject values above
+  `0x1FFF` (`pid::PidOutOfRange`); `Pid::new` masks already-masked wire bits;
+  there is deliberately no `From<u16>`. `Pid` implements `UpperHex`/`LowerHex`
+  so `{:04X}` formatting is unchanged and serde output is unchanged
+  (`serde(transparent)`); `header.pid.value()` gives the raw `u16`.
+- **Every adaptation-field bit is preserved**, so parse -> serialize is
+  byte-exact on real streams: `AdaptationField::stuffing` (the stuffing bytes
+  verbatim, not just a length), `pcr_reserved`/`opcr_reserved`,
+  `SeamlessSplice::marker_bits`, and `AdaptationFieldExtension` with every
+  bit of ISO/IEC 13818-1 Table 2-6 (`piecewise_rate_reserved`,
+  `af_descriptor_not_present_flag`, `reserved_flags`, `trailing`). These types
+  are `#[non_exhaustive]` with `new()`/`Default` (spec-convention reserved
+  bits all `1`); `tests/af_extension_roundtrip.rs` re-serializes every
+  adaptation field of every committed `.ts` fixture.
+- `TsResync::feed_into(data, &mut Vec<[u8; 188]>)` appends to a caller-owned
+  vector (a 2000-packet feed makes at most 4 allocations).
+- The PCR arithmetic and the 5-byte marker-bit timestamp field come from
+  `broadcast_common::clock33`.
+
 ## Installation
 
 ```toml
