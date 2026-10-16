@@ -26,7 +26,7 @@
 //! | Section types (table_id) | **31** typed `*Section` parsers covering **72** table_id values — every allocated EN 300 468 Table 2 id |
 //! | Descriptors (tag 0x00–0x7F) | **115** auto-dispatched: **51** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
 //! | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
-//! | MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
+//! | MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (7 MPEG-H 3D audio, plus HEVC/VVC/EVC/LCEVC/JPEG XS timing and structure, green, quality, OD update, timed metadata, media service kind) |
 //! | AIT descriptors (TS 102 809 / MHP) | **18** typed in the separate AIT descriptor namespace |
 //! | INT / UNT / RNT descriptors | **26** typed in their own scoped namespaces (`AnyIntDescriptor`, `AnyUntDescriptor`, `AnyRntDescriptor`) |
 //! | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |

@@ -20,8 +20,10 @@
 //! | Object carousel (BIOP) | [`ServiceGatewayInfo`], [`ModuleInfo`] (incl. [`CompressedModuleDescriptor`], decompressed with feature `flate2`), [`BiopMessage`], [`Ior`] / [`TaggedProfile`] |
 //! | File view | [`CarouselFs`] (`resolve` / `file_bytes`) |
 //!
-//! The DII / DSI carousel descriptors of ETSI EN 301 192 Table 48 other than
-//! `compressed_module_descriptor` are not typed yet; see the generated
+//! All eleven DII / DSI carousel descriptors of ETSI EN 301 192 Table 48 are
+//! typed in [`crate::descriptors::carousel`] (`AnyCarouselDescriptor` /
+//! `parse_carousel_loop`); [`ModuleInfo::user_info`] walks them in that tag
+//! space. See the generated
 //! [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#dsm-cc-data-carousel-etsi-en-301-192-v171-table-48).
 
 pub mod biop;

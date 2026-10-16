@@ -1,5 +1,5 @@
 ## Table 2-30 — Program association section
-_§2.4.4.4, PDF pp. 55-57_
+_§2.4.4.4, printed p.54 (PDF p.76). Verified against the rendered page._
 
 | Syntax | Bits | Mnemonic |
 |---|---|---|
