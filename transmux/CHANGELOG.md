@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `broadcast-hls` 0.3 -> 0.4, `container-probe` 0.1 -> 0.2, `dvb-si` 11 -> 12, `mp4-emsg` 0.4 -> 0.5, `mpeg-pes` 0.5 -> 0.6, `mpeg-ps` 0.5 -> 0.6, `mpeg-ts` 0.5 -> 0.6, `rtcp-packet` 0.5 -> 0.6, `rtp-packet` 0.4 -> 0.5, `scte35-splice` 3 -> 4). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Fixed
 - Serialize: the `colr` nclx `reserved` byte was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
 
@@ -96,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ADTS multi-block frames with CRC (#1012).** A frame with `protection_absent == 0` and `number_of_raw_data_blocks_in_frame > 0` now has its `raw_data_block_position[]` table and every `crc_check` word (header-level and per-block, ISO/IEC 13818-7:2004 §6.2 Tables 5-7) stripped; the AAC sample is the concatenated `raw_data_block()` payloads. A self-inconsistent position table degrades to stripping only the header CRC and table instead of rejecting the frame. CRC values are not validated. Layout transcribed in `docs/codec/adts-error-check.md`. Single-block and unprotected frames are byte-identical to before.
 
 ### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143). `AudioSpecificConfig`'s stack-less fallback no longer panics on an unserializable value (it hands the parser an empty buffer); `smooth` tfxd splice propagates the serializer error.
+- `AudioSpecificConfig`'s stack-less fallback no longer panics on an unserializable value (it hands the parser an empty buffer); `smooth` tfxd splice propagates the serializer error.
 
 - **BREAKING (#1159): typed track and program ids.** New `TrackId(u32)` and `ProgramNumber(u16)` newtypes (re-exported at the crate root and from `ir`; `new`/`value`, no silent `From`, `Debug`/`Display` render the bare number and serde is `transparent`, so every golden, JSON and manifest is byte-identical). Every public `track_id: u32` is now `TrackId`: `TrackSpec::{track_id, new}`, `Track::track_id()`, `FragmentTrackData`, `DemuxEvent` track fields (`Sample`, `TrackRemoved`, `TrackAbandoned`, `Discontinuity`, `InputDegraded`), the `push(track_id, ..)` of the segmenters, `RtpInputStream`/`RtpTrackInit`, the ISOBMFF box structs (`tkhd`/`tfhd`/`trex`/`mvhd.next_track_id`/`prft.reference_track_id`), `Error::UnmuxableDataTrack`, the Smooth/DASH track descriptors, and `TrackSpec::program_number` (now `Option<ProgramNumber>`, `with_program(ProgramNumber)`). `TrackId::next()` hands out consecutive ids. Migrate with `TrackId::new(n)` / `.value()`.
 - Test: `tests/track_id_baseline.rs` demuxes every committed fixture (and every `.test-streams` capture up to 40 MB when present) and compares per-track ids and sample counts with `tests/golden/track_ids.txt`, captured while `track_id` was a bare `u32`.

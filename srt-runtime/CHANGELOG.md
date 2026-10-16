@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Added
 - `io::SrtSocket::rendezvous` / `rendezvous_with`: the tokio adapter now drives the sans-IO `RendezvousHandshake` (§4.3.2) over a bound UDP socket, so two peers can connect in Rendezvous mode (previously only the sans-IO engine existed). Verified against a REAL peer: `tests/libsrt_rendezvous.rs` runs `srt-live-transmit` in `mode=rendezvous` over loopback in both data directions, repeated with fresh random cookies so both Initiator/Responder outcomes occur (skips loudly when libsrt is absent, like the other `libsrt_*` tests; `SRT_REQUIRE_LIBSRT=1` makes the skip a failure). `tests/io_rendezvous.rs` is the self-vs-self counterpart that runs everywhere. The Caller path's post-handshake wiring is now the shared `SrtSocket::established`.
 

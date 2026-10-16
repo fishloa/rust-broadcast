@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-auth 0.5)
+- Builds against new caret epochs of workspace siblings (`broadcast-auth` 0.4 -> 0.5). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff.
+
 ### Security (secrets and identity handling, #1142)
 
 - The `Session` id comparison uses `subtle::ConstantTimeEq` (new `subtle` dependency) instead of a hand-written fold; new `tests/secret_debug_guard.rs`.

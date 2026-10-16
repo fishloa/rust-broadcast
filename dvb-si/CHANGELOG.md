@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `mpeg-ts` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Changed (BREAKING, review of the tables/core batch)
 - **`section_syntax_indicator` is preserved on every table.** It was neither checked nor kept: a PAT with SSI = 0 parsed and re-serialized with SSI = 1 (and a TDT/RST/DIT with SSI = 1 re-serialized with 0). It is now `SectionBits::section_syntax_indicator` (spec `1` for long-form tables, `0` for TDT/TOT/RST/DIT via the new `SectionBits::short_form()`; `StSection` already preserved it) and a `section_syntax_indicator` field on the tables that keep their own header bits (`CitSection`, `ContainerSection`, `MpeFecSection`, `MpeIfecSection`, `RctSection`, `SatSection`). **BREAKING:** `StSection::section_syntax_indicator` moved to `StSection::bits.section_syntax_indicator`; `SectionBits` gained a field.
 - **BREAKING (behavioural):** a NIT/BAT whose `transport_stream_loop_length` is shorter than the bytes left before the CRC is rejected (it was accepted and the trailing bytes silently dropped on re-serialize: a real tnt-5w NIT cut by 64 came back 578 bytes instead of 642). AIT already rejected the same shape. A SAT body with bytes after its last whole entry is likewise rejected instead of losing them.
@@ -61,9 +64,6 @@
 ### Fixed (#1197)
 - DTS `sample_rate_code` 0b1001 (88,2 kHz): the decision is now documented with the TS 102 114 / EN 300 468 V1.20.1 evidence (`docs/reserved-bits-edition-audit.md` section 12); no behaviour change.
 - Local-archive evidence for the SSU selector (real zero reserved runs preserved) and `logical_channel` v1 (`reserved` = 1 in every real capture): `tests/local_archive_reserved_defaults.rs`.
-
-### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 ### Fixed
 
@@ -126,7 +126,6 @@
 ### Fixed
 
 - Production parsers no longer use `first_chunk::<N>().unwrap()` / `try_into().unwrap()` for big-endian field reads; they go through a checked `wire::be_u16`/`be_u32` helper that returns `Error::BufferTooShort` instead of being able to panic. Behaviour is byte-identical for valid input; public API unchanged.
-
 
 ## [11.0.0] - 2026-10-05
 ### Changed (breaking)

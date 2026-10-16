@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `mpeg-ps` 0.5 -> 0.6, `mpeg-ts` 0.5 -> 0.6, `st377-1` 0.4 -> 0.5). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Changed
 - A prefix too short for a literal magic that already contradicts it (`XY` for `OggS`, `FLV`, ASF GUID, MXF key, PS start code, EBML magic, `RIFF`..`WAVE`) is now `None` ("stop") for that prober instead of `Insufficient` ("read more"); a genuine truncated prefix of the same magic stays `Insufficient`. Consequence: eight zero bytes now ask for the TS lattice's structural need (1504) instead of the geometric floor (13) (audit r01-O6, #1076).
 - The ADTS and MP3 chain walkers are one generic `chain::longest_chain` (r01-O5); the crate docs' allocation claim is now accurate and pinned by `tests/alloc_bound.rs` (r01-O7).

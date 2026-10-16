@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
+### Fixed (adversarial review of signalling/captions)
+- `to_xml` no longer deletes unmodelled children: `<metadata>` (e.g. the `<smpte:image>` subtitle images of SMPTE-TT / IMSC image documents; broken since 0.3.0), `ttm:title`/`desc`/`copyright`, `ttm:name`, `ittm:altText`, `<initial>` and `<style>` stored them in `unknown_children` but never wrote them, and `ebuttm:documentMetadata` wrote its own in reverse order. Every container is now covered by `tests/unknown_children_roundtrip.rs` (a foreign-namespace marker per container plus every committed W3C IMSC fixture). The golden `edge-metadata-pure-and-impure.xml` pinned the old dropping behaviour and is re-blessed.
+- The XML declaration is validated at parse (XML 1.0 §2.8 `VersionNum` `'1.' [0-9]+`, §4.3.3 `EncName`, `standalone` yes|no) and a hand-built non-`VersionNum` version falls back to `1.0` on write, so `<?xml version='1.0" standalone="maybe' ?>` can no longer be accepted and re-serialized into an unparseable document. A declaration anywhere but the very start of the document (after a comment, whitespace or PI, or a second one) is rejected (§2.8) instead of being accepted and silently moved to the front.
+
 ### Changed (BREAKING)
 - `Document::parse_str` now populates `Document::xml_declaration` from the XML
   declaration (quick-xml `Decl` event; it was always `None`), and `to_xml`

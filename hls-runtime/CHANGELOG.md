@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `broadcast-auth` 0.4 -> 0.5, `broadcast-hls` 0.3 -> 0.4, `media-plane` 0.6 -> 0.7, `timed-metadata` 0.6 -> 0.7, `transmux` 0.26 -> 0.27). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Changed
 
 - **BREAKING (#1188):** `server::SegmentSeq`/`PartIndex` are now re-exports of `media_plane::ids::{SegmentSeq, PartIndex}` (one canonical definition); `ClosedSegment::sequence_number` and `ClosedSegment::new`'s first argument are `SegmentSeq`.
@@ -17,7 +20,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - Dependency epoch bump: `transmux` 0.25 → 0.26 and `media-plane` 0.5 → 0.6. No other change.
-
 
 ## [0.7.0] - 2026-10-05
 

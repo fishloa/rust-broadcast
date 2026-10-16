@@ -6,8 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `transmux` 0.26 -> 0.27). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143). `UserControl::to_message` / `ProtocolControl::to_message` keep their documented panic via an explicit `expect` message (use `try_to_message` for untrusted values).
+- `UserControl::to_message` / `ProtocolControl::to_message` keep their documented panic via an explicit `expect` message (use `try_to_message` for untrusted values).
 
 ### Security (secrets and identity handling, #1142)
 

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `broadcast-auth` 0.4 -> 0.5, `broadcast-hls` 0.3 -> 0.4, `container-probe` 0.1 -> 0.2, `dvb-conformance` 11 -> 12, `dvb-si` 11 -> 12, `hls-runtime` 0.8 -> 0.9, `media-doctor` 0.10 -> 0.11, `media-plane` 0.6 -> 0.7, `mpeg-ts` 0.5 -> 0.6, `rtmp-runtime` 0.7 -> 0.8, `rtp-packet` 0.4 -> 0.5, `rtsp-runtime` 0.7 -> 0.8, `scte35-splice` 3 -> 4, `srt-runtime` 0.5 -> 0.6, `timed-metadata` 0.6 -> 0.7, `transmux` 0.26 -> 0.27, `webrtc-runtime` 0.3 -> 0.4). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Fixed (adversarial review of the WHIP/WHEP/DASH-pull runtimes, #1267)
 
 - **BREAKING (behaviour):** a WHIP trickle `PATCH` without `If-Match` is now `428 Precondition Required` (RFC 9725 sections 4.3.1/4.3.2: the session supports ICE restarts, so it always issues an `ETag` and entity-tags are mandatory for Trickle ICE); before it was `204`. Clients must send the `ETag` of the `201` (or of the last restart `200`).
@@ -60,7 +63,6 @@
 ### Fixed
 - Admin runtime install no longer uses `expect` on internal state: rollback ownership moved to a `RollbackGuard`, so the invalid state is unrepresentable. No public API change.
 - WHIP media transport mutex is `parking_lot` (no poison panics); `take_transport` returns `Option` and a missing transport skips that session with an error log.
-
 
 ## [0.11.0] - 2026-10-05
 

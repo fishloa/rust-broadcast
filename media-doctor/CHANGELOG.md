@@ -2,10 +2,12 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `broadcast-hls` 0.3 -> 0.4, `container-probe` 0.1 -> 0.2, `dvb-conformance` 11 -> 12, `dvb-si` 11 -> 12, `mpeg-pes` 0.5 -> 0.6, `mpeg-ts` 0.5 -> 0.6, `scte35-splice` 3 -> 4, `timed-metadata` 0.6 -> 0.7, `transmux` 0.26 -> 0.27). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Changed
 - Internal: the 27 MHz PCR constants / modular delta / `base * 300 + extension` arithmetic now come from `broadcast_common::clock33` (`PCR_HZ`, `PCR_WRAP_27MHZ`, `pcr_forward_distance`, `pcr_from_parts`, `pcr_split`) instead of a local copy; no behaviour change (#1206).
 ### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 - `CcAnomalyCheck` keeps the previous packet of each PID in a fixed 188-byte array instead of a fresh `Vec` per payload packet: a clean stream is now O(PIDs) allocations, not O(packets) (audit MD-O2, #1112; `tests/cc_anomaly_allocs.rs`).
 
 ### Changed
