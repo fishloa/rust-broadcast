@@ -162,9 +162,21 @@ impl Serialize for SchedulingDescriptor<'_> {
         let b = &mut buf[HEADER_LEN..];
         self.start_date_time.write(b, 0);
         self.end_date_time.write(b, MJD_BCD_LEN);
-        let mut flags = (self.period_unit.to_u8() << PERIOD_UNIT_SHIFT)
-            | (self.duration_unit.to_u8() << DURATION_UNIT_SHIFT)
-            | self.estimated_cycle_time_unit.to_u8();
+        let period_unit =
+            broadcast_common::len::fit_mask(self.period_unit.to_u8(), UNIT_MASK, "period_unit")?;
+        let duration_unit = broadcast_common::len::fit_mask(
+            self.duration_unit.to_u8(),
+            UNIT_MASK,
+            "duration_unit",
+        )?;
+        let cycle_unit = broadcast_common::len::fit_mask(
+            self.estimated_cycle_time_unit.to_u8(),
+            UNIT_MASK,
+            "estimated_cycle_time_unit",
+        )?;
+        let mut flags = (period_unit << PERIOD_UNIT_SHIFT)
+            | (duration_unit << DURATION_UNIT_SHIFT)
+            | cycle_unit;
         if self.final_availability {
             flags |= FINAL_AVAILABILITY;
         }

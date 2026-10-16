@@ -36,13 +36,15 @@ impl SsuSubgroupAssociationDescriptor<'_> {
     /// The 24-bit OUI of the defining authority (the 24 MSBs of `subgroup_tag`).
     #[must_use]
     pub const fn oui(&self) -> u32 {
-        (self.subgroup_tag >> 16) as u32 & 0x00FF_FFFF
+        let b = self.subgroup_tag.to_be_bytes();
+        u32::from_be_bytes([0, b[3], b[4], b[5]])
     }
 
     /// The 16-bit subgroup value (the 16 LSBs of `subgroup_tag`).
     #[must_use]
     pub const fn subgroup(&self) -> u16 {
-        (self.subgroup_tag & 0xFFFF) as u16
+        let b = self.subgroup_tag.to_be_bytes();
+        u16::from_be_bytes([b[6], b[7]])
     }
 }
 
@@ -105,7 +107,7 @@ mod tests {
     fn parse_oui_subgroup_and_round_trip() {
         let bytes = [TAG, 5, 0x00, 0x12, 0x34, 0xBE, 0xEF];
         let d = SsuSubgroupAssociationDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.oui(), 0x0012_34);
+        assert_eq!(d.oui(), 0x0000_1234);
         assert_eq!(d.subgroup(), 0xBEEF);
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
