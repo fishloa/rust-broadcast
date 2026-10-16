@@ -13,8 +13,9 @@ use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 const FIXTURE: &str = "ts/france-tnt-m6-eac3-zenith.ts";
 const WHO: &str = "transmux/tests/streaming_ts_demux_eac3_promotion.rs";
 
-fn run(data: &[u8]) -> (Vec<(u16, String)>, BTreeMap<u16, usize>, usize, usize) {
-    let live_tracks;
+type Outcome = (Vec<(u16, String)>, BTreeMap<u16, usize>, usize, usize);
+
+fn run(data: &[u8]) -> Outcome {
     let mut d = StreamingTsDemux::new();
     let mut ev = Vec::new();
     for c in data.chunks(188 * 7) {
@@ -23,7 +24,7 @@ fn run(data: &[u8]) -> (Vec<(u16, String)>, BTreeMap<u16, usize>, usize, usize) 
             ev.push(e);
         }
     }
-    live_tracks = ev
+    let live_tracks = ev
         .iter()
         .filter(|e| matches!(e, DemuxEvent::TrackAdded(_)))
         .count();
