@@ -10,6 +10,9 @@ slow-timeout = { period = "30s", terminate-after = 3 }
 slow-timeout = { period = "30s", terminate-after = 3 }
 retries = 1
 failure-output = "immediate-final"
+# Run every test even after a failure: with fail-fast (the default) one broken
+# test hides every other failure behind a re-run cycle (~8 min each on CI).
+fail-fast = false
 
 # Real-browser tests (`real_browser_*`) drive a headless Chromium through
 # Playwright, publish/play several seconds of actual media, and assert on the
