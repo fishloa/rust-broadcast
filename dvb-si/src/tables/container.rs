@@ -185,7 +185,7 @@ impl Serialize for ContainerSection<'_> {
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | private_section_length[11:8](4).
-        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1);
+        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)?;
         // Byte 2: private_section_length[7:0].
         super::write_section_length(buf, len - HEADER_LEN)?;
 
@@ -195,7 +195,7 @@ impl Serialize for ContainerSection<'_> {
             self.reserved_b5,
             self.version_number,
             self.current_next_indicator,
-        );
+        )?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

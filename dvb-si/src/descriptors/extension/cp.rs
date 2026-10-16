@@ -86,7 +86,11 @@ impl Serialize for Cp<'_> {
         buf[0..2].copy_from_slice(&self.cp_system_id.to_be_bytes());
         // reserved_future_use(3), then CP_PID(13).
         let cp_pid = self.cp_pid.value();
-        let reserved = u16::from(self.reserved_future_use & 0b111) << RESERVED_SHIFT;
+        let reserved = u16::from(broadcast_common::len::fit_mask(
+            self.reserved_future_use,
+            0b111,
+            "reserved_future_use",
+        )?) << RESERVED_SHIFT;
         buf[2..4].copy_from_slice(&(reserved | cp_pid).to_be_bytes());
         buf[CP_HEADER_LEN..len].copy_from_slice(self.private_data);
         Ok(len)

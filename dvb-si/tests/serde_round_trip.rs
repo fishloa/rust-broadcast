@@ -615,6 +615,7 @@ fn short_event_serializes_decoded_strings() {
         language_code: LangCode(*b"fre"),
         event_name: DvbText::new(b"Journal"),
         text: DvbText::new(b"20h"),
+        trailing: Vec::new(),
     };
     let j = serde_json::to_value(&d).unwrap();
     assert_eq!(j["language_code"], "fre");
@@ -629,6 +630,7 @@ fn service_serializes_decoded_strings() {
         service_type: ServiceType::AvcHdDigitalTelevision,
         provider_name: DvbText::new(b"BBC"),
         service_name: DvbText::new(b"BBC ONE HD"),
+        trailing: Vec::new(),
     };
     let j = serde_json::to_value(&d).unwrap();
     assert_eq!(j["provider_name"], "BBC");

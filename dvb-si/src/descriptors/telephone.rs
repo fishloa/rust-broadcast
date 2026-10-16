@@ -18,6 +18,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for telephone_descriptor.
@@ -76,6 +77,11 @@ pub struct TelephoneDescriptor<'a> {
     pub national_area_code: DvbText<'a>,
     /// core_number_char bytes (≤ 15).
     pub core_number: DvbText<'a>,
+    /// Bytes after `core_number` inside the declared descriptor length. EN 300
+    /// 468 Table 100 defines none (a non-conformant sender appended them);
+    /// parse is tolerant and keeps them here so the descriptor re-serializes
+    /// byte-identically. [`TelephoneDescriptor::new`] leaves it empty.
+    pub trailing: Vec<u8>,
 }
 
 impl<'a> TelephoneDescriptor<'a> {
@@ -101,6 +107,7 @@ impl<'a> TelephoneDescriptor<'a> {
             operator_code,
             national_area_code,
             core_number,
+            trailing: Vec::new(),
         }
     }
 }
@@ -163,6 +170,7 @@ impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
             operator_code: DvbText::new(operator_code),
             national_area_code: DvbText::new(national_area_code),
             core_number: DvbText::new(core_number),
+            trailing: body[FIXED_LEN + total_chars..].to_vec(),
         })
     }
 }
@@ -177,6 +185,7 @@ impl Serialize for TelephoneDescriptor<'_> {
             + self.operator_code.raw().len()
             + self.national_area_code.raw().len()
             + self.core_number.raw().len()
+            + self.trailing.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -252,6 +261,7 @@ impl Serialize for TelephoneDescriptor<'_> {
             buf[pos..pos + field.len()].copy_from_slice(field);
             pos += field.len();
         }
+        buf[pos..pos + self.trailing.len()].copy_from_slice(&self.trailing);
         Ok(len)
     }
 }

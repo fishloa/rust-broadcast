@@ -200,12 +200,12 @@ impl Serialize for CatSection<'_> {
         }
         let section_length = len - MIN_HEADER_LEN;
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true);
+        buf[1] = self.bits.b1(true)?;
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.reserved_extension.to_be_bytes());
         buf[5] = self
             .bits
-            .b5(self.version_number, self.current_next_indicator);
+            .b5(self.version_number, self.current_next_indicator)?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;

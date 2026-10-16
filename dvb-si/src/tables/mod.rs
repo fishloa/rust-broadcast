@@ -237,8 +237,7 @@ impl SectionBits {
 
     /// Byte 1 flags (everything above `section_length[11:8]`) given the
     /// `section_syntax_indicator`.
-    #[must_use]
-    pub(crate) fn b1(&self, section_syntax_indicator: bool) -> u8 {
+    pub(crate) fn b1(&self, section_syntax_indicator: bool) -> crate::Result<u8> {
         b1_of(
             section_syntax_indicator,
             self.private_indicator,
@@ -247,8 +246,7 @@ impl SectionBits {
     }
 
     /// Byte 5: `reserved(2) | version_number(5) | current_next_indicator(1)`.
-    #[must_use]
-    pub(crate) fn b5(&self, version_number: u8, current_next_indicator: bool) -> u8 {
+    pub(crate) fn b5(&self, version_number: u8, current_next_indicator: bool) -> crate::Result<u8> {
         b5_of(self.reserved_b5, version_number, current_next_indicator)
     }
 }
@@ -256,23 +254,35 @@ impl SectionBits {
 /// Assemble section byte 1 (everything above `section_length[11:8]`) from its
 /// parts, for tables that keep `private_indicator` / `reserved_b1` as their
 /// own fields.
-#[must_use]
+///
+/// An over-range `reserved_b1` is a typed `FieldOverflow`, never masked.
 pub(crate) fn b1_of(
     section_syntax_indicator: bool,
     private_indicator: bool,
     reserved_b1: u8,
-) -> u8 {
-    (u8::from(section_syntax_indicator) * SECTION_B1_SSI)
+) -> crate::Result<u8> {
+    Ok((u8::from(section_syntax_indicator) * SECTION_B1_SSI)
         | (u8::from(private_indicator) * B1_PRIVATE_INDICATOR)
-        | ((reserved_b1 & RESERVED_2) << B1_RESERVED_SHIFT)
+        | (broadcast_common::len::fit_mask(reserved_b1, RESERVED_2, "reserved")?
+            << B1_RESERVED_SHIFT))
 }
 
 /// Assemble the long-form byte 5 with a caller-supplied `reserved(2)`.
-#[must_use]
-pub(crate) fn b5_of(reserved_b5: u8, version_number: u8, current_next_indicator: bool) -> u8 {
-    ((reserved_b5 & RESERVED_2) << B5_RESERVED_SHIFT)
-        | ((version_number & B5_VERSION_MASK) << 1)
-        | u8::from(current_next_indicator)
+///
+/// An over-range `reserved_b5` or `version_number` is a typed
+/// `FieldOverflow`, never masked into a different valid-looking section.
+pub(crate) fn b5_of(
+    reserved_b5: u8,
+    version_number: u8,
+    current_next_indicator: bool,
+) -> crate::Result<u8> {
+    Ok(
+        (broadcast_common::len::fit_mask(reserved_b5, RESERVED_2, "reserved")?
+            << B5_RESERVED_SHIFT)
+            | (broadcast_common::len::fit_mask(version_number, B5_VERSION_MASK, "version_number")?
+                << 1)
+            | u8::from(current_next_indicator),
+    )
 }
 
 /// The `reserved(2)` bits in section byte 1 (`[5:4]`).
@@ -434,7 +444,7 @@ pub(crate) fn status_byte(running_status: u8, free_ca_mode: bool, dll_hi: u8) ->
 #[must_use]
 #[cfg(test)]
 pub(crate) fn version_byte(version_number: u8, current_next_indicator: bool) -> u8 {
-    b5_of(RESERVED_2, version_number, current_next_indicator)
+    b5_of(RESERVED_2, version_number, current_next_indicator).expect("test version fits 5 bits")
 }
 
 /// Decode the 12-bit `section_length` from bytes 1–2 of a section header.
@@ -465,7 +475,7 @@ pub(crate) fn pid_of(hi: u8, lo: u8) -> mpeg_ts::pid::Pid {
 /// Write a 13-bit PID carrying the three `reserved='111'` bits.
 #[cfg(test)]
 pub(crate) fn write_pid(buf: &mut [u8], pid: mpeg_ts::pid::Pid) {
-    write_pid_r(buf, pid, RESERVED_3);
+    write_pid_r(buf, pid, RESERVED_3).expect("RESERVED_3 fits 3 bits");
 }
 
 /// All-ones `reserved(3)` fill (ISO/IEC 13818-1 §2.4.4.8 etc.).
@@ -488,10 +498,17 @@ pub(crate) fn pid_reserved_of(hi: u8) -> u8 {
 }
 
 /// Write a 13-bit PID with a caller-supplied `reserved(3)`.
-pub(crate) fn write_pid_r(buf: &mut [u8], pid: mpeg_ts::pid::Pid, reserved: u8) {
+pub(crate) fn write_pid_r(
+    buf: &mut [u8],
+    pid: mpeg_ts::pid::Pid,
+    reserved: u8,
+) -> crate::Result<()> {
     let pid = pid.value();
-    buf[0] = ((reserved & RESERVED_3) << PID_RESERVED_SHIFT) | ((pid >> 8) as u8 & PID_LO_MASK);
+    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_3, "reserved")?
+        << PID_RESERVED_SHIFT)
+        | ((pid >> 8) as u8 & PID_LO_MASK);
     buf[1] = (pid & 0xFF) as u8;
+    Ok(())
 }
 
 /// The `reserved(4)` bits above a 12-bit length's first wire byte.
@@ -503,7 +520,9 @@ pub(crate) fn len_reserved_of(hi: u8) -> u8 {
 /// Write a checked 12-bit length with a caller-supplied `reserved(4)`.
 pub(crate) fn write_desc_loop_len_r(buf: &mut [u8], len: usize, reserved: u8) -> crate::Result<()> {
     let fitted = broadcast_common::len::fit_bits(len as u64, 12, "descriptors_length")?;
-    buf[0] = ((reserved & RESERVED_4) << LEN_RESERVED_SHIFT) | ((fitted >> 8) as u8);
+    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_4, "reserved")?
+        << LEN_RESERVED_SHIFT)
+        | ((fitted >> 8) as u8);
     buf[1] = fitted as u8;
     Ok(())
 }

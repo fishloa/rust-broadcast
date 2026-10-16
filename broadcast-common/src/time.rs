@@ -75,7 +75,7 @@ pub struct MjdBcdDateTime {
 /// Unlike [`decode_mjd_bcd_utc`], this is dependency-free (no `chrono`
 /// feature required). Returns `None` if the BCD nibbles are out of range
 /// or the minute/second fields exceed 59. The MJD→calendar conversion
-/// follows ETSI EN 300 468 Annex C.
+/// is proleptic Gregorian (EN 300 468 Annex C's formula is only valid to 2100-02-28; see `mjd_to_ymd_core`).
 #[must_use]
 pub fn decode_mjd_bcd(raw: [u8; 5]) -> Option<MjdBcdDateTime> {
     let (mjd_bytes, _) = raw.split_first_chunk::<2>().unwrap();
@@ -119,22 +119,32 @@ pub fn encode_mjd_bcd(dt: MjdBcdDateTime) -> Option<[u8; 5]> {
     ])
 }
 
-/// Shared floating-point core of the EN 300 468 Annex C MJD→calendar
-/// conversion, before range validation / integer narrowing. Both
-/// [`mjd_to_ymd_nogate`] and the chrono-gated [`mjd_to_ymd`] call this same
-/// arithmetic so the algorithm exists exactly once; each applies its own
-/// (different) post-processing to the raw result.
+/// Julian Day Number of Modified Julian Date 0 (1858-11-17): `JD = MJD +
+/// 2_400_000.5`, and the integer day number of that civil day is one more.
+const JDN_OF_MJD_0: i64 = 2_400_001;
+
+/// Proleptic-Gregorian MJD→calendar conversion in pure integer arithmetic
+/// (Richards' Julian-Day-Number algorithm), valid over the **whole**
+/// representable range `0x8000 ..= 0x1_7FFF` (1948-08-05 ..= 2128-01-09).
+///
+/// EN 300 468 Annex C's closed-form formula is only valid 1900-03-01 ..=
+/// 2100-02-28 (its NOTE 2: it treats 2100 as a leap year), which the v1.20.1
+/// 2038 wrap rule outgrows; this conversion applies the full Gregorian leap
+/// rule (divisible by 4, except centuries not divisible by 400). Both
+/// [`mjd_to_ymd_nogate`] and the chrono-gated `mjd_to_ymd` share it.
 fn mjd_to_ymd_core(field: u16) -> (i64, i64, i64) {
-    let mjd = i64::from(full_mjd(field));
-    let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
-    let m_prime = ((mjd as f64 - 14_956.1 - libm::floor(y_prime as f64 * 365.25)) / 30.6001) as i64;
-    let d = mjd
-        - 14_956
-        - libm::floor(y_prime as f64 * 365.25) as i64
-        - libm::floor(m_prime as f64 * 30.6001) as i64;
-    let k = i64::from(m_prime == 14 || m_prime == 15);
-    let y = y_prime + k + 1900;
-    let m = m_prime - 1 - k * 12;
+    const Y_BASE: i64 = 4716;
+    const J_OFFSET: i64 = 1401;
+    const B_OFFSET: i64 = 274_277;
+    const C_CORR: i64 = -38;
+    let jdn = i64::from(full_mjd(field)) + JDN_OF_MJD_0;
+    let f = jdn + J_OFFSET + (((4 * jdn + B_OFFSET) / 146_097) * 3) / 4 + C_CORR;
+    let e = 4 * f + 3;
+    let g = (e % 1461) / 4;
+    let h = 5 * g + 2;
+    let d = (h % 153) / 5 + 1;
+    let m = (h / 153 + 2) % 12 + 1;
+    let y = e / 1461 - Y_BASE + (12 + 2 - m) / 12;
     (y, m, d)
 }
 
@@ -153,20 +163,17 @@ fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
     Some((y_u16, m_u8, d_u8))
 }
 
-/// Shared floating-point core of the EN 300 468 Annex C calendar→MJD
-/// conversion, before range validation / narrowing to `u16`. Kept as the
-/// single copy of the algorithm ([`ymd_to_mjd_nogate`] and the chrono-gated
-/// [`ymd_to_mjd`] share it — the two callers currently apply identical
-/// validation, but this also gives a future divergent caller one place to
-/// call rather than a third hand-copy of the formula).
-fn ymd_to_mjd_core(year: i32, month: u32, day: u32) -> f64 {
-    let l = if month <= 2 { 1.0 } else { 0.0 };
-    let y = f64::from(year - 1900);
-    let m = f64::from(month);
-    14_956.0
-        + f64::from(day)
-        + libm::floor((y - l) * 365.25)
-        + libm::floor((m + 1.0 + l * 12.0) * 30.6001)
+/// Proleptic-Gregorian calendar→full-MJD conversion in pure integer
+/// arithmetic (Fliegel & Van Flandern Julian-Day-Number algorithm); the
+/// inverse of [`mjd_to_ymd_core`], valid over the whole range (see there).
+/// Total over `day` 1..=31 (e.g. `31 Feb` lands on March); callers validate
+/// by round-tripping.
+fn ymd_to_mjd_core(year: i32, month: u32, day: u32) -> i64 {
+    let a = (14 - i64::from(month)) / 12;
+    let y = i64::from(year) + 4800 - a;
+    let m = i64::from(month) + 12 * a - 3;
+    let jdn = i64::from(day) + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32_045;
+    jdn - JDN_OF_MJD_0
 }
 
 /// Convert a `(year, month, day)` date to a 16-bit Modified Julian Date.
@@ -178,10 +185,7 @@ fn ymd_to_mjd_nogate(year: i32, month: u32, day: u32) -> Option<u16> {
         return None;
     }
     let full = ymd_to_mjd_core(year, month, day);
-    if !(0.0..=f64::from(u32::MAX)).contains(&full) {
-        return None;
-    }
-    let mjd = mjd_field(full as u32)?;
+    let mjd = mjd_field(u32::try_from(full).ok()?)?;
     // The core arithmetic is total over day 1..=31, so `31 Feb` silently
     // lands on 2 or 3 March. Accept only dates that decode back to the
     // same calendar day (`encode_mjd_bcd` must not accept what decode

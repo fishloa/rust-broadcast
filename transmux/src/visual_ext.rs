@@ -348,7 +348,8 @@ impl Serialize for ColourInformationBox {
             c += 2;
             buf[c..c + 2].copy_from_slice(&nclx.matrix_coefficients.to_be_bytes());
             c += 2;
-            buf[c] = ((nclx.full_range_flag as u8) << 7) | (nclx.reserved & 0x7F);
+            buf[c] = ((nclx.full_range_flag as u8) << 7)
+                | broadcast_common::len::fit_mask(nclx.reserved, 0x7F, "colr.nclx.reserved")?;
             c += 1;
         }
         // Trailing payload: the pad after an `nclx` body, or an ICC/opaque one.

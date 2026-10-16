@@ -313,7 +313,7 @@ impl Serialize for NitSection<'_> {
             NitKind::Actual => TABLE_ID_ACTUAL,
             NitKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = self.bits.b1(true);
+        buf[1] = self.bits.b1(true)?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         // Extension header per ETSI EN 300 468 §5.2.1:
@@ -323,7 +323,7 @@ impl Serialize for NitSection<'_> {
         buf[3..5].copy_from_slice(&self.network_id.to_be_bytes());
         buf[5] = self
             .bits
-            .b5(self.version_number, self.current_next_indicator);
+            .b5(self.version_number, self.current_next_indicator)?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

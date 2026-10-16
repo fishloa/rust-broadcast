@@ -176,7 +176,7 @@ impl Serialize for TotSection<'_> {
         buf[0] = TABLE_ID;
         // §5.2.6: section_syntax_indicator SHALL be 0 for the TOT (despite the
         // trailing CRC_32). 0x70 = SSI(0) | reserved_future_use(1) | reserved(11).
-        buf[1] = self.bits.b1(false);
+        buf[1] = self.bits.b1(false)?;
         super::write_section_length(buf, len - HEADER_LEN)?;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
         let dl = broadcast_common::len::fit_bits(

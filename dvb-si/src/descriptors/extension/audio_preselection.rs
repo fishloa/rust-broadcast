@@ -116,6 +116,11 @@ pub struct AudioPreselection<'a> {
     pub reserved_zero_future_use_3: u8,
     /// Preselection entries (num_preselections is their count).
     pub preselections: Vec<Preselection<'a>>,
+    /// Bytes after the last preselection inside the declared descriptor
+    /// length. EN 300 468 Table 110 defines none (a non-conformant sender
+    /// appended them); parse is tolerant and keeps them here so the
+    /// descriptor re-serializes byte-identically. Empty when conformant.
+    pub trailing: &'a [u8],
 }
 
 /// A single preselection entry in the audio_preselection_descriptor loop
@@ -293,6 +298,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
         Ok(AudioPreselection {
             reserved_zero_future_use_3: header_reserved,
             preselections,
+            trailing: &sel[pos..],
         })
     }
 }
@@ -310,7 +316,7 @@ impl Serialize for AudioPreselection<'_> {
                     + p.future_extension.map_or(0, |e| 1 + e.len())
             })
             .sum();
-        1 + body
+        1 + body + self.trailing.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
@@ -391,6 +397,7 @@ impl Serialize for AudioPreselection<'_> {
                 p += ext.len();
             }
         }
+        buf[p..p + self.trailing.len()].copy_from_slice(self.trailing);
         Ok(len)
     }
 }

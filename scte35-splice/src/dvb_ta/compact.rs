@@ -549,7 +549,9 @@ impl CompactSpliceInsert {
             w.write_bits(u64::from(das.break_num), 8).map_err(e)?;
             w.write_bits(u64::from(das.breaks_expected), 8).map_err(e)?;
             // AMBIGUITY: nibble order per `order` (Table 8 vs Table 1).
-            let byte = order.join(das.equivalent_segmentation_type.bits(), das.reserved);
+            // `join` masks to 4 bits; reject an over-range value instead.
+            let das_reserved = broadcast_common::len::fit_mask(das.reserved, 0x0F, "das_reserved")?;
+            let byte = order.join(das.equivalent_segmentation_type.bits(), das_reserved);
             w.write_bits(u64::from(byte >> 4), 4).map_err(e)?;
             w.write_bits(u64::from(byte & 0x0F), DAS_RESERVED_BITS)
                 .map_err(e)?;

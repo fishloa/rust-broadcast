@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Serialize: the `colr` nclx `reserved` byte was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
+
 ### Fixed (E-AC-3 dependent substreams, a real 7.1 stream, #1255)
 - An AC-3 syncframe (`bsid` <= 8) is now an independent substream 0 of an E-AC-3 stream (ETSI TS 102 366 §E.1.3.1.2; Annex J.1.5.2.2 allows `bsid` 6 or 8 with a dependent substream). `Ec3SyncframeInfo`, `ac3::split_eac3_syncframes` and `StreamingTsDemux` recognised E-AC-3 syntax only, so a real Dolby Digital Plus 7.1 stream (AC-3 core + dependent E-AC-3 frame, FFmpeg FATE `the_great_wall_7.1.eac3`) produced no track from MPEG-2 TS (`stream_type` 0x87, or 0x06 + descriptor 0x7A) and no access units.
 - `Ec3SpecificBox::from_syncframes`: `num_dep_sub` is the number of dependent substreams (highest dependent `substreamid` + 1). It was the last dependent frame's `substreamid`, which is 0 for the first (dependent substreams are numbered from 0), so a lone dependent substream gave `num_dep_sub` 0 and no `chan_loc`. MP4Box (GPAC 26.07) and ffmpeg 8.1.2 both write 1; the resulting `dec3` for the real stream matches MP4Box's byte for byte (`24 00 0c 0f 02 02`).

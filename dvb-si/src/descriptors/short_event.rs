@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
+use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for short_event_descriptor.
@@ -24,6 +25,11 @@ pub struct ShortEventDescriptor<'a> {
     pub event_name: DvbText<'a>,
     /// DVB Annex-A encoded brief description.
     pub text: DvbText<'a>,
+    /// Bytes after `text` inside the declared descriptor length. EN 300 468
+    /// Table 87 defines none (a non-conformant sender appended them); parse is
+    /// tolerant and keeps them here so the descriptor re-serializes
+    /// byte-identically. Empty for a conformant descriptor.
+    pub trailing: Vec<u8>,
 }
 
 impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
@@ -66,6 +72,7 @@ impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
             language_code,
             event_name,
             text,
+            trailing: body[text_end..].to_vec(),
         })
     }
 }
@@ -73,7 +80,13 @@ impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
 impl Serialize for ShortEventDescriptor<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + LANG_LEN + 1 + self.event_name.len() + 1 + self.text.len()
+        HEADER_LEN
+            + LANG_LEN
+            + 1
+            + self.event_name.len()
+            + 1
+            + self.text.len()
+            + self.trailing.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -93,6 +106,8 @@ impl Serialize for ShortEventDescriptor<'_> {
         buf[n_end] = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
         let t_start = n_end + 1;
         buf[t_start..t_start + self.text.len()].copy_from_slice(self.text.raw());
+        let tr_start = t_start + self.text.len();
+        buf[tr_start..tr_start + self.trailing.len()].copy_from_slice(&self.trailing);
         Ok(len)
     }
 }
@@ -158,6 +173,7 @@ mod tests {
             language_code: LangCode(*b"fra"),
             event_name: DvbText::new(b"Journal"),
             text: DvbText::new(b"20h"),
+            trailing: Vec::new(),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -171,6 +187,7 @@ mod tests {
             language_code: LangCode(*b"eng"),
             event_name: DvbText::new(b"ABC"),
             text: DvbText::new(b"DE"),
+            trailing: Vec::new(),
         };
         // 3 lang + 1 name_len + 3 name + 1 text_len + 2 text = 10
         assert_eq!(d.serialized_len() - 2, 10);

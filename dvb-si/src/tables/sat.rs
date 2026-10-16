@@ -1998,7 +1998,7 @@ impl Serialize for SatSection {
             }
         }
         buf[0] = TABLE_ID;
-        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)
+        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)?
             | ((section_length >> 8) as u8 & super::SECTION_LENGTH_HI_MASK);
         buf[2] = (section_length & 0xFF) as u8;
         broadcast_common::len::fit_mask(
@@ -2015,7 +2015,7 @@ impl Serialize for SatSection {
             self.reserved_b5,
             self.version_number,
             self.current_next_indicator,
-        );
+        )?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8] = self.reserved_zero_future_use;

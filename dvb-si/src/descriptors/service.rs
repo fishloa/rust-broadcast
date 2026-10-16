@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for service_descriptor.
@@ -217,6 +218,11 @@ pub struct ServiceDescriptor<'a> {
     pub provider_name: DvbText<'a>,
     /// DVB Annex-A encoded service name.
     pub service_name: DvbText<'a>,
+    /// Bytes after `service_name` inside the declared descriptor length.
+    /// EN 300 468 Table 86 defines none (a non-conformant sender appended
+    /// them); parse is tolerant and keeps them here so the descriptor
+    /// re-serializes byte-identically. Empty for a conformant descriptor.
+    pub trailing: Vec<u8>,
 }
 
 impl<'a> Parse<'a> for ServiceDescriptor<'a> {
@@ -257,6 +263,7 @@ impl<'a> Parse<'a> for ServiceDescriptor<'a> {
             service_type,
             provider_name,
             service_name,
+            trailing: body[service_end..].to_vec(),
         })
     }
 }
@@ -264,7 +271,13 @@ impl<'a> Parse<'a> for ServiceDescriptor<'a> {
 impl Serialize for ServiceDescriptor<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + 1 + 1 + self.provider_name.len() + 1 + self.service_name.len()
+        HEADER_LEN
+            + 1
+            + 1
+            + self.provider_name.len()
+            + 1
+            + self.service_name.len()
+            + self.trailing.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -284,6 +297,8 @@ impl Serialize for ServiceDescriptor<'_> {
         buf[p_end] = broadcast_common::len::fit_u8(self.service_name.len(), "service_name_length")?;
         let s_start = p_end + 1;
         buf[s_start..s_start + self.service_name.len()].copy_from_slice(self.service_name.raw());
+        let t_start = s_start + self.service_name.len();
+        buf[t_start..t_start + self.trailing.len()].copy_from_slice(&self.trailing);
         Ok(len)
     }
 }
@@ -349,6 +364,7 @@ mod tests {
             service_type: ServiceType::AvcHdDigitalTelevision,
             provider_name: DvbText::new(b"BBC"),
             service_name: DvbText::new(b"BBC ONE HD"),
+            trailing: Vec::new(),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -362,6 +378,7 @@ mod tests {
             service_type: ServiceType::DigitalTelevision,
             provider_name: DvbText::new(b"AA"),
             service_name: DvbText::new(b"BBB"),
+            trailing: Vec::new(),
         };
         // 1 (type) + 1 (p_len) + 2 (p) + 1 (s_len) + 3 (s) = 8
         assert_eq!(d.serialized_len() - 2, 8);

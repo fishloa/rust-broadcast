@@ -401,6 +401,34 @@ impl DescriptorRegistry {
             current_pds: None,
         }
     }
+
+    /// Like [`parse_loop`](Self::parse_loop) but starting inside the scope an
+    /// enclosing loop already opened (`inherited`, from
+    /// [`RegistryIter::avs_scope`]).
+    ///
+    /// T/AI 109.7 clause 8.1.3 and GY/T 420 clauses 7.2.2 / 7.3.3.1 / 7.4.3.1
+    /// put the `registration_descriptor` under "Program and program element
+    /// descriptors" and say only that "the PMT shall contain" it, without
+    /// naming the `program_info` or the `ES_info` loop, while the AVS
+    /// descriptors themselves sit in the ES_info loop (T/AI 109.7 clause
+    /// 8.1.3.4, GY/T 420 clause 7.3.1 d). A registration in the `program_info`
+    /// loop therefore has to scope the AVS descriptors of the elementary-stream
+    /// loops that follow: walk `program_info` with `parse_loop`, take the scope
+    /// with `avs_scope`, and walk each ES_info loop with this method.
+    #[must_use]
+    pub fn parse_loop_in_scope<'r, 'a>(
+        &'r self,
+        bytes: &'a [u8],
+        inherited: Option<u32>,
+    ) -> RegistryIter<'r, 'a> {
+        RegistryIter {
+            registry: self,
+            bytes,
+            pos: 0,
+            fused: false,
+            current_pds: inherited,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +512,19 @@ fn update_pds(current: &mut Option<u32>, tag: u8, full: &[u8]) {
     }
 }
 
+impl RegistryIter<'_, '_> {
+    /// The AVS scope ('AVSV' / 'AVSA') the entries walked so far opened, via a
+    /// `private_data_specifier_descriptor` or a `registration_descriptor`
+    /// `format_identifier`; `None` when no AVS scope is open. Feed it to
+    /// [`DescriptorRegistry::parse_loop_in_scope`] for the elementary-stream
+    /// loops that follow a `program_info` loop.
+    #[must_use]
+    pub fn avs_scope(&self) -> Option<u32> {
+        self.current_pds
+            .filter(|p| *p == crate::descriptors::PDS_AVSA || *p == crate::descriptors::PDS_AVSV)
+    }
+}
+
 impl<'a> Iterator for RegistryIter<'_, 'a> {
     type Item = crate::Result<AnyDescriptor<'a>>;
 
@@ -560,6 +601,7 @@ impl<'r, 'a> ExtRegistryIter<'r, 'a> {
         desc_reg: &'r DescriptorRegistry,
         ext_reg: &'r super::extension::registry::ExtensionRegistry,
         bytes: &'a [u8],
+        inherited: Option<u32>,
     ) -> Self {
         Self {
             desc_reg,
@@ -567,8 +609,16 @@ impl<'r, 'a> ExtRegistryIter<'r, 'a> {
             bytes,
             pos: 0,
             fused: false,
-            current_pds: None,
+            current_pds: inherited,
         }
+    }
+
+    /// The AVS scope ('AVSV' / 'AVSA') the entries walked so far opened; see
+    /// [`RegistryIter::avs_scope`].
+    #[must_use]
+    pub fn avs_scope(&self) -> Option<u32> {
+        self.current_pds
+            .filter(|p| *p == crate::descriptors::PDS_AVSA || *p == crate::descriptors::PDS_AVSV)
     }
 }
 
@@ -837,6 +887,51 @@ mod tests {
         let plain = DescriptorRegistry::new();
         let items: Vec<_> = plain.parse_loop(&t).collect::<Result<_, _>>().unwrap();
         assert!(matches!(items[0], AnyDescriptor::Unknown { tag: 62, .. }));
+    }
+
+    /// The specs say "the PMT shall contain" the 'AVSV'/'AVSA'
+    /// registration_descriptor without naming the loop, and put the AVS
+    /// descriptor in the ES_info loop: a registration in `program_info` must
+    /// scope the ES_info loops that follow (`avs_scope` + `parse_loop_in_scope`).
+    #[test]
+    fn program_info_registration_scopes_es_info_descriptors() {
+        use crate::descriptors::avs3_video::Avs3VideoDescriptor;
+        use crate::descriptors::private_data_specifier::PDS_AVSV;
+        let program_info = [0x05, 4, b'A', b'V', b'S', b'V'];
+        // ES_info of the stream_type 0xD4 entry: just the AVS3 video descriptor.
+        let es_info = [0xD1, 8, 0x22, 0x42, 0xAA, 0x4B, 9, 14, 9, 0xFF];
+        let mut reg = DescriptorRegistry::new();
+        reg.with_avs3_video();
+
+        // Per-loop scoping alone never sees the registration: Unknown.
+        let items: Vec<_> = reg.parse_loop(&es_info).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[0], AnyDescriptor::Unknown { tag: 0xD1, .. }));
+
+        // Walk program_info, carry the scope into the ES_info walk.
+        let mut pi = reg.parse_loop(&program_info);
+        assert_eq!(pi.avs_scope(), None, "no entry consumed yet");
+        for item in pi.by_ref() {
+            item.unwrap();
+        }
+        let scope = pi.avs_scope();
+        assert_eq!(scope, Some(PDS_AVSV));
+        let items: Vec<_> = reg
+            .parse_loop_in_scope(&es_info, scope)
+            .collect::<Result<_, _>>()
+            .unwrap();
+        match &items[0] {
+            AnyDescriptor::Other { tag: 0xD1, value } => {
+                assert!(value.downcast_ref::<Avs3VideoDescriptor>().is_some());
+            }
+            other => panic!("expected Avs3Video via inherited scope, got {other:?}"),
+        }
+        // A non-AVS program_info registration opens no scope to inherit.
+        let hevc = [0x05, 4, b'H', b'E', b'V', b'C'];
+        let mut pi = reg.parse_loop(&hevc);
+        for item in pi.by_ref() {
+            item.unwrap();
+        }
+        assert_eq!(pi.avs_scope(), None);
     }
 
     /// AVS3_video_descriptor (tag 0xD1): scoped by a 'AVSV' private_data_specifier
@@ -1109,6 +1204,46 @@ mod tests {
         bytes2.extend_from_slice(&logical_channel_descriptor(0x0002, false, 2));
         let items2: Vec<_> = reg.parse_loop(&bytes2).collect::<Result<_, _>>().unwrap();
         assert!(matches!(&items2[1], AnyDescriptor::LogicalChannel(_)));
+    }
+
+    /// Same program_info-registration layout through `iter_with_extensions`.
+    #[test]
+    fn program_info_registration_scopes_es_info_with_extensions() {
+        use crate::descriptors::any::DescriptorLoop;
+        use crate::descriptors::avs3_video::Avs3VideoDescriptor;
+        use crate::descriptors::extension::registry::ExtensionRegistry;
+        use crate::descriptors::private_data_specifier::PDS_AVSV;
+        let program_info = [0x05, 4, b'A', b'V', b'S', b'V'];
+        let es_info = [0xD1, 8, 0x22, 0x42, 0xAA, 0x4B, 9, 14, 9, 0xFF];
+        let mut reg = DescriptorRegistry::new();
+        reg.with_avs3_video();
+        let ext = ExtensionRegistry::new();
+
+        let items: Vec<_> = DescriptorLoop::new(&es_info)
+            .iter_with_extensions(&reg, &ext)
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(matches!(
+            &items[0],
+            ExtIterItem::Descriptor(AnyDescriptor::Unknown { tag: 0xD1, .. })
+        ));
+
+        let mut pi = DescriptorLoop::new(&program_info).iter_with_extensions(&reg, &ext);
+        for item in pi.by_ref() {
+            item.unwrap();
+        }
+        let scope = pi.avs_scope();
+        assert_eq!(scope, Some(PDS_AVSV));
+        let items: Vec<_> = DescriptorLoop::new(&es_info)
+            .iter_with_extensions_in_scope(&reg, &ext, scope)
+            .collect::<Result<_, _>>()
+            .unwrap();
+        match &items[0] {
+            ExtIterItem::Descriptor(AnyDescriptor::Other { tag: 0xD1, value }) => {
+                assert!(value.downcast_ref::<Avs3VideoDescriptor>().is_some());
+            }
+            other => panic!("expected Avs3Video via inherited scope, got {other:?}"),
+        }
     }
 
     #[test]

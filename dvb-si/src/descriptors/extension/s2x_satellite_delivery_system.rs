@@ -485,7 +485,11 @@ fn pack_we_pol_mis_ro(
     Ok((u8::from(we) << 7)
         | (broadcast_common::len::fit_mask(pol.to_u8(), 0x03, "polarization")? << 5)
         | (u8::from(mis) << 4)
-        | ((reserved_zero_future_use_1 & 1) << PACKED_RZFU_1_SHIFT)
+        | (broadcast_common::len::fit_mask(
+            reserved_zero_future_use_1,
+            1,
+            "reserved_zero_future_use_1",
+        )? << PACKED_RZFU_1_SHIFT)
         | broadcast_common::len::fit_mask(ro.to_u8(), 0x07, "roll_off")?)
 }
 

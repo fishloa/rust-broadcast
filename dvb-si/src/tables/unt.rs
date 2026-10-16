@@ -425,14 +425,14 @@ impl Serialize for UntSection<'_> {
         // silently (audit r03-W3 class).
         broadcast_common::len::fit_bits(u64::from(self.oui), 24, "oui")?;
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true);
+        buf[1] = self.bits.b1(true)?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[OFFSET_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFFSET_OUI_HASH] = self.oui_hash;
         buf[OFFSET_FLAGS] = self
             .bits
-            .b5(self.version_number, self.current_next_indicator);
+            .b5(self.version_number, self.current_next_indicator)?;
         buf[OFFSET_SECTION_NUMBER] = self.section_number;
         buf[OFFSET_LAST_SECTION_NUMBER] = self.last_section_number;
         buf[OFFSET_OUI] = ((self.oui >> 16) & 0xFF) as u8;

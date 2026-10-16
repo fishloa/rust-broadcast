@@ -114,7 +114,11 @@ impl Serialize for SupplementaryAudio<'_> {
                 0x1F,
                 "editorial_classification",
             )? << 2)
-            | ((self.reserved_future_use & 1) << 1)
+            | (broadcast_common::len::fit_mask(
+                self.reserved_future_use,
+                1,
+                "reserved_future_use",
+            )? << 1)
             | u8::from(self.iso_639_language_code.is_some());
         let mut p = 1;
         if let Some(lc) = self.iso_639_language_code {

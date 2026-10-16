@@ -616,7 +616,11 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
             Some(true) => 1,
             Some(false) => 0,
             // The bit is reserved_zero_future_use for this mode.
-            None => self.reserved_zero_future_use_1 & 1,
+            None => broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_1,
+                1,
+                "reserved_zero_future_use_1",
+            )?,
         };
         buf[6] = (scram_bit << 7)
             | (broadcast_common::len::fit_mask(self.ts_gs_s2x_mode, 0x03, "ts_gs_s2x_mode")? << 5)

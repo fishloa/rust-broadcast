@@ -276,6 +276,29 @@ impl Mpeg2ExtensionDescriptor {
     }
 
     fn encode_body(&self) -> Result<Vec<u8>> {
+        // A hand-built `Other` carrying a typed tag would serialize as that
+        // typed body and parse back as a different variant (serialize -> parse
+        // not an identity); the typed variants are the only way to write 0x08..=0x0E.
+        if let Mpeg2ExtensionBody::Other {
+            extension_descriptor_tag,
+            ..
+        } = &self.body
+            && matches!(
+                Mpeg2ExtensionTag::from_u8(*extension_descriptor_tag),
+                Mpeg2ExtensionTag::MpegH3dAudio
+                    | Mpeg2ExtensionTag::MpegH3dAudioConfig
+                    | Mpeg2ExtensionTag::MpegH3dAudioScene
+                    | Mpeg2ExtensionTag::MpegH3dAudioTextLabel
+                    | Mpeg2ExtensionTag::MpegH3dAudioMultiStream
+                    | Mpeg2ExtensionTag::MpegH3dAudioDrcLoudness
+                    | Mpeg2ExtensionTag::MpegH3dAudioCommand
+            )
+        {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "Mpeg2ExtensionBody::Other carries a typed extension_descriptor_tag; use the typed variant",
+            });
+        }
         let mut out = Vec::new();
         out.push(self.body.extension_descriptor_tag());
         match &self.body {

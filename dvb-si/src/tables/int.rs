@@ -312,14 +312,14 @@ impl Serialize for IntSection<'_> {
         // silently (audit r03-W3 class).
         broadcast_common::len::fit_bits(u64::from(self.platform_id), 24, "platform_id")?;
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true);
+        buf[1] = self.bits.b1(true)?;
         super::write_section_length(buf, len - OUTER_HEADER_LEN)?;
 
         buf[OFF_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFF_PLATFORM_ID_HASH] = self.platform_id_hash;
         buf[OFF_VERSION_BYTE] = self
             .bits
-            .b5(self.version_number, self.current_next_indicator);
+            .b5(self.version_number, self.current_next_indicator)?;
         buf[OFF_SECTION_NUMBER] = self.section_number;
         buf[OFF_LAST_SECTION_NUMBER] = self.last_section_number;
         buf[OFF_PLATFORM_ID] = ((self.platform_id >> 16) & 0xFF) as u8;

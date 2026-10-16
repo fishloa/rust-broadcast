@@ -282,7 +282,7 @@ impl Serialize for CitSection<'_> {
             broadcast_common::len::fit_u8(self.prepend_strings.len(), "prepend_string_count")?;
 
         buf[0] = TABLE_ID;
-        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1);
+        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
@@ -290,7 +290,7 @@ impl Serialize for CitSection<'_> {
             self.reserved_b5,
             self.version_number,
             self.current_next_indicator,
-        );
+        )?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
