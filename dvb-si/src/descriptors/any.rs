@@ -573,7 +573,22 @@ impl<'a> DescriptorLoop<'a> {
         desc_reg: &'r crate::descriptors::registry::DescriptorRegistry,
         ext_reg: &'r crate::descriptors::extension::registry::ExtensionRegistry,
     ) -> crate::descriptors::registry::ExtRegistryIter<'r, 'a> {
-        crate::descriptors::registry::ExtRegistryIter::new(desc_reg, ext_reg, self.0)
+        crate::descriptors::registry::ExtRegistryIter::new(desc_reg, ext_reg, self.0, None)
+    }
+
+    /// [`iter_with_extensions`](Self::iter_with_extensions) starting inside a
+    /// scope an enclosing loop opened (`inherited`, from
+    /// [`ExtRegistryIter::avs_scope`](crate::descriptors::registry::ExtRegistryIter::avs_scope)):
+    /// a `program_info` 'AVSV'/'AVSA' registration scopes the AVS descriptors of
+    /// the ES_info loops (see `DescriptorRegistry::parse_loop_in_scope`).
+    #[must_use]
+    pub fn iter_with_extensions_in_scope<'r>(
+        &self,
+        desc_reg: &'r crate::descriptors::registry::DescriptorRegistry,
+        ext_reg: &'r crate::descriptors::extension::registry::ExtensionRegistry,
+        inherited: Option<u32>,
+    ) -> crate::descriptors::registry::ExtRegistryIter<'r, 'a> {
+        crate::descriptors::registry::ExtRegistryIter::new(desc_reg, ext_reg, self.0, inherited)
     }
 }
 

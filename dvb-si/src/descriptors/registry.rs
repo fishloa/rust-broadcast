@@ -601,6 +601,7 @@ impl<'r, 'a> ExtRegistryIter<'r, 'a> {
         desc_reg: &'r DescriptorRegistry,
         ext_reg: &'r super::extension::registry::ExtensionRegistry,
         bytes: &'a [u8],
+        inherited: Option<u32>,
     ) -> Self {
         Self {
             desc_reg,
@@ -608,8 +609,16 @@ impl<'r, 'a> ExtRegistryIter<'r, 'a> {
             bytes,
             pos: 0,
             fused: false,
-            current_pds: None,
+            current_pds: inherited,
         }
+    }
+
+    /// The AVS scope ('AVSV' / 'AVSA') the entries walked so far opened; see
+    /// [`RegistryIter::avs_scope`].
+    #[must_use]
+    pub fn avs_scope(&self) -> Option<u32> {
+        self.current_pds
+            .filter(|p| *p == crate::descriptors::PDS_AVSA || *p == crate::descriptors::PDS_AVSV)
     }
 }
 
@@ -1195,6 +1204,46 @@ mod tests {
         bytes2.extend_from_slice(&logical_channel_descriptor(0x0002, false, 2));
         let items2: Vec<_> = reg.parse_loop(&bytes2).collect::<Result<_, _>>().unwrap();
         assert!(matches!(&items2[1], AnyDescriptor::LogicalChannel(_)));
+    }
+
+    /// Same program_info-registration layout through `iter_with_extensions`.
+    #[test]
+    fn program_info_registration_scopes_es_info_with_extensions() {
+        use crate::descriptors::any::DescriptorLoop;
+        use crate::descriptors::avs3_video::Avs3VideoDescriptor;
+        use crate::descriptors::extension::registry::ExtensionRegistry;
+        use crate::descriptors::private_data_specifier::PDS_AVSV;
+        let program_info = [0x05, 4, b'A', b'V', b'S', b'V'];
+        let es_info = [0xD1, 8, 0x22, 0x42, 0xAA, 0x4B, 9, 14, 9, 0xFF];
+        let mut reg = DescriptorRegistry::new();
+        reg.with_avs3_video();
+        let ext = ExtensionRegistry::new();
+
+        let items: Vec<_> = DescriptorLoop::new(&es_info)
+            .iter_with_extensions(&reg, &ext)
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(matches!(
+            &items[0],
+            ExtIterItem::Descriptor(AnyDescriptor::Unknown { tag: 0xD1, .. })
+        ));
+
+        let mut pi = DescriptorLoop::new(&program_info).iter_with_extensions(&reg, &ext);
+        for item in pi.by_ref() {
+            item.unwrap();
+        }
+        let scope = pi.avs_scope();
+        assert_eq!(scope, Some(PDS_AVSV));
+        let items: Vec<_> = DescriptorLoop::new(&es_info)
+            .iter_with_extensions_in_scope(&reg, &ext, scope)
+            .collect::<Result<_, _>>()
+            .unwrap();
+        match &items[0] {
+            ExtIterItem::Descriptor(AnyDescriptor::Other { tag: 0xD1, value }) => {
+                assert!(value.downcast_ref::<Avs3VideoDescriptor>().is_some());
+            }
+            other => panic!("expected Avs3Video via inherited scope, got {other:?}"),
+        }
     }
 
     #[test]

@@ -75,9 +75,14 @@ pub enum Avs3FrameRateCode {
     /// `0b1110` - 119.88 Hz (120000/1001; T/AI 109.2-2021 `frame_rate_code`
     /// table, listed as a frame rate in T/AI 109.6 Table 10; also allows 59.94).
     Fps119_88,
-    /// `0b1011..=0b1101` and `0b1111` - reserved here (T/AI 109.2 gives
-    /// `0b1011..=0b1101` the codec rates 200/240/300 Hz, which T/AI 109.6 Table
-    /// 10 does not list); carries the value.
+    /// `0b1011` - 200 Hz (T/AI 109.2-2021 `frame_rate_code` table; **not**
+    /// listed in the TS descriptor table T/AI 109.6 Table 10 / GY/T 420 Table 7).
+    Fps200,
+    /// `0b1100` - 240 Hz (T/AI 109.2-2021; not listed in T/AI 109.6 Table 10).
+    Fps240,
+    /// `0b1101` - 300 Hz (T/AI 109.2-2021; not listed in T/AI 109.6 Table 10).
+    Fps300,
+    /// `0b1111` - reserved; carries the value.
     Reserved(u8),
 }
 
@@ -97,6 +102,9 @@ impl Avs3FrameRateCode {
             8 => Self::Fps60,
             9 => Self::Fps100,
             10 => Self::Fps120,
+            11 => Self::Fps200,
+            12 => Self::Fps240,
+            13 => Self::Fps300,
             14 => Self::Fps119_88,
             other => Self::Reserved(other),
         }
@@ -117,6 +125,9 @@ impl Avs3FrameRateCode {
             Self::Fps60 => 8,
             Self::Fps100 => 9,
             Self::Fps120 => 10,
+            Self::Fps200 => 11,
+            Self::Fps240 => 12,
+            Self::Fps300 => 13,
             Self::Fps119_88 => 14,
             Self::Reserved(v) => v,
         }
@@ -137,6 +148,9 @@ impl Avs3FrameRateCode {
             Self::Fps60 => "60 Hz",
             Self::Fps100 => "100 Hz",
             Self::Fps120 => "120 Hz",
+            Self::Fps200 => "200 Hz",
+            Self::Fps240 => "240 Hz",
+            Self::Fps300 => "300 Hz",
             Self::Fps119_88 => "119.88 Hz",
             Self::Reserved(_) => "reserved",
         }
@@ -421,8 +435,8 @@ mod tests {
             Avs3FrameRateCode::Reserved(0b1111)
         );
         assert_eq!(
-            Avs3FrameRateCode::Reserved(12).to_string(),
-            "reserved(0x0C)"
+            Avs3FrameRateCode::Reserved(15).to_string(),
+            "reserved(0x0F)"
         );
     }
 
