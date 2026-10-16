@@ -43,10 +43,10 @@ marked *private*.
 | ETSI EN 303 560 | TTML subtitling systems | V1.1.1 | `dvb-si` | Partial | `dvb-si/docs/` | Downloadable font info table (0x7C) only. |
 | ETSI TS 102 727 | MHP 1.2.2 | V1.1.1 | `dvb-si` | Partial | `dvb-si/docs/` | `XAIT_location` descriptor only. |
 | ETSI TR 101 211 | SI implementation guidelines | V1.9.1 | `dvb-si` | Reference | `dvb-si/docs/text/tr_101_211/` | Running-status semantics, repetition rates. |
-| ETSI TS 101 154 | AV coding in broadcast/broadband | V2.6.1 (`cc-data` Table B.9); other crates: unverified (draft V2.7.1 and later revisions vendored) | `cc-data`, `dvb-si`, `transmux`, `mpeg-ts`, `mpeg-pes`, `dvb-conformance`, `caption-convert` | Partial | `cc-data/docs/ts_101_154/` | `cc_data()` carriage; component/stream-type semantics elsewhere. |
+| ETSI TS 101 154 | AV coding in broadcast/broadband | V2.6.1 (`cc-data` Table B.9); other crates: edition not recorded per crate (vendored: V2.6.1 (2019-09), DVB A001 Rev.18 draft V2.7.1 (Nov 2021), V2.10.1 (2026-05)) | `cc-data`, `dvb-si`, `transmux`, `mpeg-ts`, `mpeg-pes`, `dvb-conformance`, `caption-convert` | Partial | `cc-data/docs/ts_101_154/` | `cc_data()` carriage; component/stream-type semantics elsewhere. |
 | ETSI TS 102 773 | DVB-T2 Modulator Interface (T2-MI) | V1.4.1 | `dvb-t2mi` | Full | `dvb-t2mi/docs/` | All packet types, individual addressing functions. |
 | ETSI EN 302 755 | DVB-T2 | V1.4.1 | `dvb-bbframe`, `dvb-t2mi` | Partial | `dvb-bbframe/docs/`, `dvb-t2mi/docs/` | BBHEADER, ISSY (Annex C), L1 signalling fields. Physical layer (modulation, FEC) is out of scope. |
-| ETSI EN 302 307-1 / -2 | DVB-S2 / DVB-S2X | V1.4.1 / edition unverified for -2 | `dvb-bbframe` | Partial | `dvb-bbframe/docs/` | BBHEADER, MODCOD tables, CRC-8. Physical layer out of scope. |
+| ETSI EN 302 307-1 / -2 | DVB-S2 / DVB-S2X | V1.4.1 (2014) / -2 V1.4.1 (2024-08), both vendored | `dvb-bbframe` | Partial | `dvb-bbframe/docs/` | BBHEADER, MODCOD tables, CRC-8. Physical layer out of scope. |
 | ETSI TR 101 290 | Measurement guidelines for DVB systems | V1.4.1 (2020-06) | `dvb-conformance`, `compliance-probe`, `media-doctor` | Partial | `dvb-conformance/docs/tr_101_290.md` | Priority 1 (1.1-1.6), priority 2 (2.1-2.3b, 2.5-2.6), priority 3 (3.1-3.10). Indicator 2.4 (PCR accuracy) not emitted. |
 | ETSI EN 300 743 | DVB subtitling | V1.6.1 | `dvb-subtitle` | Full (segments) | `dvb-subtitle/docs/tables/en_300_743/` | Rendering is out of scope. |
 | ETSI EN 301 775 | VBI data carriage in DVB | V1.2.1 §4 | `dvb-vbi` | Full (§4 PES data field) | `dvb-vbi/docs/vbi.md` | |
@@ -56,7 +56,7 @@ marked *private*.
 | ETSI EN 50221 | Common Interface for conditional access | 1997 | `dvb-ci`, `dvb-ci-runtime` | Full (APDU/SPDU/TPDU + resources listed in the crate) | `dvb-ci/docs/en_50221/`, `dvb-ci-runtime/docs/` | |
 | ETSI TS 101 699 | Extensions to the Common Interface | V1.1.1 | `dvb-ci`, `dvb-ci-runtime` | Partial | `dvb-ci/docs/ci_plus/` | |
 | ETSI TS 103 205 | Extensions to CI Plus | V1.4.1 | `dvb-ci` | Partial | `dvb-ci/docs/ts_103_205/` | Multi-stream CA support. The CI Plus core specification is not transcribed. |
-| ETSI TS 100 289 | Scrambling control semantics | edition unverified | `mpeg-ts`, `dvb-csa` | Reference | `mpeg-ts/docs/tables/scrambling_control.md` | |
+| ETSI TS 100 289 | Scrambling control semantics | V1.1.1 (2011-09), vendored | `mpeg-ts`, `dvb-csa` | Reference | `mpeg-ts/docs/tables/scrambling_control.md` | |
 | DVB-CSA (CSA2) | Common Scrambling Algorithm | n/a (no public normative text) | `dvb-csa` | Full (cipher) | — | Validated against libdvbcsa known-answer vectors. |
 | ETSI TS 103 197 | DVB SimulCrypt head-end | V1.5.1 | `dvb-simulcrypt` | Partial | `dvb-simulcrypt/docs/` | Generic message, ECMG<->SCS, EMMG/PDG<->MUX, C(P)SIG<->(P)SIG. Other interfaces not implemented; CW/ECM/EMM payloads opaque. |
 | ETSI TS 103 769 | DVB multicast ABR | V1.2.1 clause 10 | `dvb-mabr` | Partial | `dvb-mabr/docs/` | Session-configuration XML only; architecture, reporting and transport clauses transcribed but not implemented. |
@@ -97,8 +97,8 @@ marked *private*.
 | ANSI/CTA-608-E | Line 21 data services | S-2019 | `cc-data` (`decode`), `caption-convert`, `timed-metadata` | Partial | `cc-data/docs/decode/cea608-decode.md` | Byte-pair decode model. |
 | ANSI/CTA-708-E | DTV closed captioning | S-2023 | `cc-data` (`decode`), `caption-convert`, `timed-metadata` | Partial | `cc-data/docs/decode/cea708-decode.md` | Service-block decode model. |
 | ATSC A/53 Part 4 | MPEG-2 video system characteristics (caption carriage) | 2009 | `transmux`, `cc-data` | Partial | `transmux/docs/codec/a53-caption-sei.md` | `GA94` user data / SEI extraction. |
-| ATSC A/342-3 | MPEG-H system | edition unverified | `transmux` | Reference | `transmux/docs/codec/mpegh-atsc-a342-3.md` | |
-| ATSC A/331 | Signaling, delivery, synchronization and error protection | edition unverified | `atsc3`, `atsc3-route` | Partial (archived) | `atsc3/docs/` | LLS envelope and SLT; ROUTE header-extension constants, FEC payload IDs, codepoints. ATSC 3.0 work is abandoned. |
+| ATSC A/342-3 | MPEG-H system | A/342-3:2025-10 (17 October 2025), vendored | `transmux` | Reference | `transmux/docs/codec/mpegh-atsc-a342-3.md` | |
+| ATSC A/331 | Signaling, delivery, synchronization and error protection | A/331:2026-04 (14 April 2026) vendored; `atsc3-route` code cites A/331:2025-06 | `atsc3`, `atsc3-route` | Partial (archived) | `atsc3/docs/` | LLS envelope and SLT; ROUTE header-extension constants, FEC payload IDs, codepoints. ATSC 3.0 work is abandoned. |
 | ATSC A/321 | System discovery and signaling (bootstrap) | 2026-06 | — | Not implemented | `atsc3/docs/a321-bootstrap.md` | Transcription only. |
 
 ## SMPTE, AES, EBU, VSF and Dolby
@@ -116,7 +116,7 @@ marked *private*.
 | SMPTE ST 336 | KLV data encoding | 2017 | `st377-1`, `transmux` | Partial | — | KLV framing. |
 | SMPTE ST 378 | MXF Operational Pattern 1a | 378M-2004 | `st377-1` | Partial | `st377-1/docs/st378-op1a.md` | |
 | SMPTE ST 2022-6 | HBRMT (SDI over IP) | 2012 | `st2022` | Full (payload header) | `st2022/docs/st2022-6-framing.md` | |
-| SMPTE ST 2022-7 | Seamless protection switching | edition unverified | — | Not implemented | `st2022/docs/st2022-7-hitless.md` | |
+| SMPTE ST 2022-7 | Seamless protection switching | ST 2022-7:2019 (revision of ST 2022-7:2013), vendored | — | Not implemented | `st2022/docs/st2022-7-hitless.md` | |
 | SMPTE RDD 29 | Dolby Atmos bitstream | 2019 | `rdd29` | Partial | `rdd29/docs/rdd29.md` | Frame/element framing, bed and object definitions, audio data DLC. |
 | EBU R 128 | Loudness normalisation | November 2023 | `broadcast-loudness` | Full | `broadcast-loudness/docs/r128-targets.md` | |
 | EBU Tech 3341 | Loudness metering (EBU Mode) | November 2023 | `broadcast-loudness` | Full | `broadcast-loudness/docs/r128-metering.md` | Compliance signals are the test gate. |
@@ -155,7 +155,7 @@ marked *private*.
 | W3C WebVTT | Web Video Text Tracks | edition unverified | `caption-convert`, `transmux` | Partial | — | Writer and WebVTT<->SRT. |
 | Adobe RTMP 1.0 + AMF0 | Real-Time Messaging Protocol | Dec 2012 | `rtmp-runtime`, `transmux` | Partial | `rtmp-runtime/docs/rtmp.md`, `transmux/docs/rtmp/rtmp.md` | Publish/ingest only. |
 | Adobe FLV | Flash Video file format | v10.1 Annex E | `transmux`, `container-probe` | Partial | `transmux/docs/codec/flv.md` | |
-| Microsoft MS-SSTR | Smooth Streaming protocol | version unverified | `transmux`, `multimux` | Partial | `transmux/docs/smooth/ms-sstr.md` | Manifest and fragments; PlayReady header via `transmux/docs/drm/pssh.md`. |
+| Microsoft MS-SSTR | Smooth Streaming protocol | revision 11.0 (19 Nov 2024) per the vendored copy's revision summary | `transmux`, `multimux` | Partial | `transmux/docs/smooth/ms-sstr.md` | Manifest and fragments; PlayReady header via `transmux/docs/drm/pssh.md`. |
 | DASH-IF IOP Part 10 | Events and timed metadata | V5.0.0 (2023-01) | `mp4-emsg` | Reference | `mp4-emsg/docs/emsg.md` | |
 | DASH-IF CPIX | Content protection information exchange | 2.3 | — | Not implemented | `cpix/docs/` | Docs-only directory. |
 | Apple HLS SAMPLE-AES | MPEG-2 stream encryption for HLS | version unverified | `transmux`, `broadcast-hls` | Partial | `transmux/docs/drm/hls-sample-aes.md` | |
