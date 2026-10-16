@@ -857,6 +857,76 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// REVIEW (failing): r10-W-2 sized the scratch frame so no legal TPDU is
+    /// truncated, but `read` then copies `min(tpdu.len(), buf.len())` into
+    /// the caller's buffer and returns `Ok` — `Driver` passes a 4096-byte
+    /// buffer, so a 5000-byte TPDU reaches the stack silently truncated, the
+    /// exact failure r10-W-2 set out to remove.
+    #[test]
+    fn read_does_not_silently_truncate_a_tpdu_larger_than_the_callers_buffer() {
+        let path = std::env::temp_dir().join(format!(
+            "dvb-ci-runtime-review-trunc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before UNIX_EPOCH")
+                .as_nanos()
+        ));
+        let mut frame = vec![0x00, 0x01];
+        frame.extend(std::iter::repeat_n(0xAB, 5000));
+        std::fs::write(&path, &frame).expect("stage a 5000-byte TPDU frame");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("open the staged file");
+        let mut dev = LinuxCaDevice::from_file(file, 0);
+        let mut buf = [0u8; 4096]; // Driver's buffer size
+        let r = dev.read(&mut buf);
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            r.is_err(),
+            "a 5000-byte TPDU read into a 4096-byte buffer must not be returned as Ok({:?})",
+            r.ok()
+        );
+    }
+
+    /// REVIEW (failing): the duplex CI data fd is `O_NONBLOCK` (#1066), so
+    /// `write_all` stops with `WouldBlock` after a *partial* write once the
+    /// device buffer fills. The error carries no byte count, so the caller
+    /// cannot resume, and the stream is left misaligned mid-TS-packet. A
+    /// FIFO's 64 KiB buffer is not a multiple of 188, so 400 packets written
+    /// at once leave a torn packet behind.
+    #[test]
+    fn duplex_write_never_leaves_a_partial_ts_packet_in_the_device() {
+        let path = make_fifo();
+        let mut dev = LinuxCiDataDevice::open_path(&path).expect("open_path");
+        let mut reader = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)
+            .expect("second reader");
+        let burst: Vec<u8> = (0..400).flat_map(|i| packet(i as u8)).collect();
+        let res = dev.write(&burst);
+        let mut got = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => got.extend_from_slice(&chunk[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("{e}"),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            got.len() % TS_PACKET_LEN,
+            0,
+            "write returned {res:?} after putting {} bytes (not whole packets) on the device",
+            got.len()
+        );
+    }
+
     /// Sanity: an ordinary short frame still reads through unaffected.
     #[test]
     fn read_still_returns_short_frames_normally() {
