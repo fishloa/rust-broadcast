@@ -23,24 +23,24 @@
 //!
 //! | | |
 //! |---|---|
-//! | Section types (table_id) | **28** typed `*Section` parsers covering **67** table_id values — every allocated EN 300 468 Table 2 id |
-//! | Descriptors (tag 0x00–0x7F) | **106** auto-dispatched: **42** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
+//! | Section types (table_id) | **31** typed `*Section` parsers covering **72** table_id values — every allocated EN 300 468 Table 2 id |
+//! | Descriptors (tag 0x00–0x7F) | **115** auto-dispatched: **51** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
 //! | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
-//! | MPEG-2 extension descriptors (0x3F) | **7** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
+//! | MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
 //! | AIT descriptors (TS 102 809 / MHP) | **9** typed in the separate AIT descriptor namespace |
 //! | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
 //! | Text (EN 300 468 Annex A) | **7** charset decoders covering every Table A.3 selector + Annex A.1 control codes |
 //! | DSM-CC carousel | **12** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree |
 //! | Registries | **171** CA_system_id and **174** private_data_specifier names (TSDuck data, build-time) |
 //! | Standards | **19** standards / families — see the table below |
-//! | Known gaps | **88** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
+//! | Known gaps | **59** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
 //!
 //! ### Standards supported
 //!
 //! | Standard | Title | Edition implemented | Scope covered | Status |
 //! |---|---|---|---|---|
 //! | ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (97/97 allocated codes) |
-//! | Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (51/85 allocated codes) |
+//! | Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (80/85 allocated codes) |
 //! | ISO/IEC 13818-6 | DSM-CC (data/object carousel) | as profiled by ETSI TR 101 202 V1.2.1 (13818-6 itself is not vendored) | DSM-CC sections, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel_identifier + association_tag descriptors | Partial (3/5 allocated codes) |
 //! | ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Partial (5/28 allocated codes) |
 //! | ETSI TS 102 006 | DVB System Software Update (SSU) | V1.7.1 (some module docs still cite V1.4.1) | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Partial (1/16 allocated codes) |
@@ -346,6 +346,7 @@ pub mod descriptors;
 #[cfg(feature = "chrono")]
 pub mod epg;
 pub mod error;
+pub(crate) mod h222_bits;
 mod registry_names;
 pub mod table_id;
 pub mod tables;

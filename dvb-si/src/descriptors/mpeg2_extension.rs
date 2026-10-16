@@ -6,9 +6,16 @@
 //! the DVB `extension_descriptor` (tag 0x7F, EN 300 468 §6.2.16,
 //! [`super::extension`]).
 //!
-//! The MPEG-H 3D audio bodies (`extension_descriptor_tag` 0x08…0x0E) are typed
-//! ([`super::mpegh_3d_audio`]); every other body is carried verbatim as
-//! [`Mpeg2ExtensionBody::Other`] so the descriptor always round-trips.
+//! Typed bodies: MPEG-H 3D audio (0x08…0x0E, [`super::mpegh_3d_audio`]),
+//! the timing/HRD ones (0x03, 0x15, 0x16, [`super::h222_timing`]), the
+//! layered/tiled HEVC ones (0x05, 0x06, 0x12, [`super::mpeg2_ext_hevc`]),
+//! the LCEVC / media service kind ones (0x17…0x19, [`super::mpeg2_ext_codecs`])
+//! and 0x02, 0x04, 0x07, 0x0F, 0x11, 0x14 ([`super::mpeg2_ext_misc`]; 0x02 and
+//! 0x11 are typed-opaque, their structures being defined in ISO/IEC 14496-1 /
+//! 23001-13). Every other body, including 0x10 (whose `MDL` field is ambiguous
+//! in the spec text) and 0x13 (whose `SubstreamOffset` loop bound as printed is
+//! contradicted by TSDuck), is carried verbatim as [`Mpeg2ExtensionBody::Other`] so
+//! the descriptor always round-trips.
 //!
 //! ```text
 //! Extension_descriptor() {
@@ -17,6 +24,12 @@
 //! }
 //! ```
 
+use super::h222_timing::{EvcTimingAndHrd, HevcTimingAndHrd, VvcTimingAndHrd};
+use super::mpeg2_ext_codecs::{LcevcLinkage, LcevcVideo, MediaServiceKind};
+use super::mpeg2_ext_hevc::{HevcHierarchyExtension, HevcOperationPoint, HevcTileSubstream};
+use super::mpeg2_ext_misc::{
+    AfExtensions, GreenExtension, JxsVideo, OdUpdate, QualityExtension, TimedMetadataExtension,
+};
 use super::mpegh_3d_audio::{
     MpegH3dAudio, MpegH3dAudioCommand, MpegH3dAudioConfig, MpegH3dAudioDrcLoudness,
     MpegH3dAudioMultiStream, MpegH3dAudioScene, MpegH3dAudioTextLabel, Reader,
@@ -217,6 +230,36 @@ pub enum Mpeg2ExtensionBody {
     MpegH3dAudioDrcLoudness(MpegH3dAudioDrcLoudness),
     /// 0x0E (Table 2-127).
     MpegH3dAudioCommand(MpegH3dAudioCommand),
+    /// `extension_descriptor_tag` 0x02 (Table 2-109 `ObjectDescriptorUpdate()`, opaque).
+    OdUpdate(OdUpdate),
+    /// `extension_descriptor_tag` 0x03 (Table 2-115).
+    HevcTimingAndHrd(HevcTimingAndHrd),
+    /// `extension_descriptor_tag` 0x04 (Table 2-116).
+    AfExtensions(AfExtensions),
+    /// `extension_descriptor_tag` 0x05 (Table 2-117).
+    HevcOperationPoint(HevcOperationPoint),
+    /// `extension_descriptor_tag` 0x06 (Table 2-118).
+    HevcHierarchyExtension(HevcHierarchyExtension),
+    /// `extension_descriptor_tag` 0x07 (Table 2-120).
+    GreenExtension(GreenExtension),
+    /// `extension_descriptor_tag` 0x0F (Table 2-128).
+    QualityExtension(QualityExtension),
+    /// `extension_descriptor_tag` 0x11 (ISO/IEC 23001-13, opaque).
+    TimedMetadataExtension(TimedMetadataExtension),
+    /// `extension_descriptor_tag` 0x12 (Table 2-130).
+    HevcTileSubstream(HevcTileSubstream),
+    /// `extension_descriptor_tag` 0x14 (Table 2-132).
+    JxsVideo(JxsVideo),
+    /// `extension_descriptor_tag` 0x15 (Table 2-139).
+    VvcTimingAndHrd(VvcTimingAndHrd),
+    /// `extension_descriptor_tag` 0x16 (Table 2-141).
+    EvcTimingAndHrd(EvcTimingAndHrd),
+    /// `extension_descriptor_tag` 0x17 (Table 2-142).
+    LcevcVideo(LcevcVideo),
+    /// `extension_descriptor_tag` 0x18 (Table 2-143).
+    LcevcLinkage(LcevcLinkage),
+    /// `extension_descriptor_tag` 0x19 (Table 2-144).
+    MediaServiceKind(MediaServiceKind),
     /// Any other `extension_descriptor_tag`: the body bytes verbatim.
     Other {
         /// The raw `extension_descriptor_tag`.
@@ -238,6 +281,21 @@ impl Mpeg2ExtensionBody {
             Self::MpegH3dAudioMultiStream(_) => 0x0C,
             Self::MpegH3dAudioDrcLoudness(_) => 0x0D,
             Self::MpegH3dAudioCommand(_) => 0x0E,
+            Self::OdUpdate(_) => 0x02,
+            Self::HevcTimingAndHrd(_) => 0x03,
+            Self::AfExtensions(_) => 0x04,
+            Self::HevcOperationPoint(_) => 0x05,
+            Self::HevcHierarchyExtension(_) => 0x06,
+            Self::GreenExtension(_) => 0x07,
+            Self::QualityExtension(_) => 0x0F,
+            Self::TimedMetadataExtension(_) => 0x11,
+            Self::HevcTileSubstream(_) => 0x12,
+            Self::JxsVideo(_) => 0x14,
+            Self::VvcTimingAndHrd(_) => 0x15,
+            Self::EvcTimingAndHrd(_) => 0x16,
+            Self::LcevcVideo(_) => 0x17,
+            Self::LcevcLinkage(_) => 0x18,
+            Self::MediaServiceKind(_) => 0x19,
             Self::Other {
                 extension_descriptor_tag,
                 ..
@@ -268,6 +326,15 @@ pub struct Mpeg2ExtensionDescriptor {
     pub body: Mpeg2ExtensionBody,
 }
 
+/// `extension_descriptor_tag` values that have a typed [`Mpeg2ExtensionBody`]
+/// variant (so a hand-built [`Mpeg2ExtensionBody::Other`] must not use them).
+/// 0x10 (`Virtual_segmentation_descriptor`, `MDL` ambiguous in Table 2-129 /
+/// §2.6.121) and 0x13 (`HEVC_subregion_descriptor`, loop bound of Table 2-131
+/// contradicted by TSDuck) are deliberately absent: they stay verbatim.
+const fn is_typed_extension_tag(tag: u8) -> bool {
+    matches!(tag, 0x02..=0x0F | 0x11..=0x12 | 0x14..=0x19)
+}
+
 impl Mpeg2ExtensionDescriptor {
     /// Wrap a body.
     #[must_use]
@@ -283,16 +350,7 @@ impl Mpeg2ExtensionDescriptor {
             extension_descriptor_tag,
             ..
         } = &self.body
-            && matches!(
-                Mpeg2ExtensionTag::from_u8(*extension_descriptor_tag),
-                Mpeg2ExtensionTag::MpegH3dAudio
-                    | Mpeg2ExtensionTag::MpegH3dAudioConfig
-                    | Mpeg2ExtensionTag::MpegH3dAudioScene
-                    | Mpeg2ExtensionTag::MpegH3dAudioTextLabel
-                    | Mpeg2ExtensionTag::MpegH3dAudioMultiStream
-                    | Mpeg2ExtensionTag::MpegH3dAudioDrcLoudness
-                    | Mpeg2ExtensionTag::MpegH3dAudioCommand
-            )
+            && is_typed_extension_tag(*extension_descriptor_tag)
         {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
@@ -309,6 +367,23 @@ impl Mpeg2ExtensionDescriptor {
             Mpeg2ExtensionBody::MpegH3dAudioMultiStream(b) => b.write(&mut out)?,
             Mpeg2ExtensionBody::MpegH3dAudioDrcLoudness(b) => b.write(&mut out)?,
             Mpeg2ExtensionBody::MpegH3dAudioCommand(b) => out.extend_from_slice(&b.mhas_packet),
+            Mpeg2ExtensionBody::OdUpdate(b) => out.extend_from_slice(&b.object_descriptor_update),
+            Mpeg2ExtensionBody::HevcTimingAndHrd(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::AfExtensions(b) => out.extend_from_slice(&b.trailing),
+            Mpeg2ExtensionBody::HevcOperationPoint(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::HevcHierarchyExtension(b) => {
+                out.extend_from_slice(&b.write_body()?)
+            }
+            Mpeg2ExtensionBody::GreenExtension(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::QualityExtension(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::TimedMetadataExtension(b) => out.extend_from_slice(&b.data),
+            Mpeg2ExtensionBody::HevcTileSubstream(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::JxsVideo(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::VvcTimingAndHrd(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::EvcTimingAndHrd(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::LcevcVideo(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::LcevcLinkage(b) => out.extend_from_slice(&b.write_body()?),
+            Mpeg2ExtensionBody::MediaServiceKind(b) => out.extend_from_slice(&b.write_body()?),
             Mpeg2ExtensionBody::Other { data, .. } => out.extend_from_slice(data),
         }
         Ok(out)
@@ -348,6 +423,29 @@ impl<'a> Parse<'a> for Mpeg2ExtensionDescriptor {
             0x0E => Mpeg2ExtensionBody::MpegH3dAudioCommand(MpegH3dAudioCommand {
                 mhas_packet: rest.to_vec(),
             }),
+            0x02 => Mpeg2ExtensionBody::OdUpdate(OdUpdate {
+                object_descriptor_update: rest.to_vec(),
+            }),
+            0x03 => Mpeg2ExtensionBody::HevcTimingAndHrd(HevcTimingAndHrd::parse_body(rest)?),
+            0x04 => Mpeg2ExtensionBody::AfExtensions(AfExtensions {
+                trailing: rest.to_vec(),
+            }),
+            0x05 => Mpeg2ExtensionBody::HevcOperationPoint(HevcOperationPoint::parse_body(rest)?),
+            0x06 => Mpeg2ExtensionBody::HevcHierarchyExtension(HevcHierarchyExtension::parse_body(
+                rest,
+            )?),
+            0x07 => Mpeg2ExtensionBody::GreenExtension(GreenExtension::parse_body(rest)?),
+            0x0F => Mpeg2ExtensionBody::QualityExtension(QualityExtension::parse_body(rest)?),
+            0x11 => Mpeg2ExtensionBody::TimedMetadataExtension(TimedMetadataExtension {
+                data: rest.to_vec(),
+            }),
+            0x12 => Mpeg2ExtensionBody::HevcTileSubstream(HevcTileSubstream::parse_body(rest)?),
+            0x14 => Mpeg2ExtensionBody::JxsVideo(JxsVideo::parse_body(rest)?),
+            0x15 => Mpeg2ExtensionBody::VvcTimingAndHrd(VvcTimingAndHrd::parse_body(rest)?),
+            0x16 => Mpeg2ExtensionBody::EvcTimingAndHrd(EvcTimingAndHrd::parse_body(rest)?),
+            0x17 => Mpeg2ExtensionBody::LcevcVideo(LcevcVideo::parse_body(rest)?),
+            0x18 => Mpeg2ExtensionBody::LcevcLinkage(LcevcLinkage::parse_body(rest)?),
+            0x19 => Mpeg2ExtensionBody::MediaServiceKind(MediaServiceKind::parse_body(rest)?),
             other => Mpeg2ExtensionBody::Other {
                 extension_descriptor_tag: other,
                 data: rest.to_vec(),

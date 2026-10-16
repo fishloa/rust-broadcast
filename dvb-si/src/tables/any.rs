@@ -260,6 +260,10 @@ declare_tables! {'a;
     CatSection       = [0x01..=0x01] => crate::tables::cat::CatSection<'a>,
     PmtSection       = [0x02..=0x02] => crate::tables::pmt::PmtSection<'a>,
     TsdtSection      = [0x03..=0x03] => crate::tables::tsdt::TsdtSection<'a>,
+    // Carriage of ISO/IEC 14496, metadata and green access units (H.222.0 Tables 2-153, 2-158, 2-162).
+    Iso14496Section = [0x04..=0x05, 0x08..=0x08] => crate::tables::iso14496_section::Iso14496Section<'a>,
+    MetadataSection = [0x06..=0x06] => crate::tables::metadata_section::MetadataSection<'a>,
+    GreenAccessUnitSection = [0x09..=0x09] => crate::tables::green_access_unit_section::GreenAccessUnitSection<'a>,
     // DSM-CC sections (ISO/IEC 13818-6) — 0x3E is included; the MPE typed
     // view (`MpeDatagramSection`) is reachable via `AnyTableSection::parse_as` or
     // `MpeDatagramSection::parse`.

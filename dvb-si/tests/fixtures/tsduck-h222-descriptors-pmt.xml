@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Input for: tstabcomp -c tsduck-h222-descriptors-pmt.xml -o tsduck-h222-descriptors-pmt.bin  (TSDuck 3.44-4676) -->
+<tsduck>
+  <PMT service_id="1" version="1" current="true" pcr_pid="0x100">
+    <MPEG2_stereoscopic_video_format_descriptor arrangement_type="3" />
+    <stereoscopic_program_info_descriptor stereoscopic_service_type="2" />
+    <transport_profile_descriptor transport_profile="2">
+      <private_data>DEAD</private_data>
+    </transport_profile_descriptor>
+    <MVC_operation_point_descriptor profile_idc="118" constraint_set0="true" constraint_set1="false" constraint_set2="true" constraint_set3="false" constraint_set4="false" constraint_set5="true" AVC_compatible_flags="1">
+      <level level_idc="40">
+        <operation_point applicable_temporal_id="3" num_target_output_views="2">
+          <ES reference="3" />
+          <ES reference="4" />
+        </operation_point>
+      </level>
+    </MVC_operation_point_descriptor>
+    <component elementary_pid="0x100" stream_type="0x02">
+      <stereoscopic_video_info_descriptor base_video="true" leftview="true" />
+    </component>
+    <component elementary_pid="0x101" stream_type="0x22">
+      <stereoscopic_video_info_descriptor base_video="false" usable_as_2D="true" horizontal_upsampling_factor="2" vertical_upsampling_factor="5" />
+      <MPEG4_audio_extension_descriptor>
+        <audioProfileLevelIndication value="0x2F" />
+        <audioProfileLevelIndication value="0x30" />
+        <audioSpecificConfig>1210</audioSpecificConfig>
+      </MPEG4_audio_extension_descriptor>
+      <VVC_video_descriptor profile_idc="1" tier_flag="false" progressive_source_flag="true" interlaced_source_flag="false" non_packed_constraint_flag="false" frame_only_constraint_flag="true" level_idc="0x33" VVC_still_present_flag="false" VVC_24hr_picture_present_flag="false" HDR_WCG_idc="2" video_properties_tag="2" temporal_id_min="1" temporal_id_max="3" />
+      <EVC_video_descriptor profile_idc="0" level_idc="0x33" toolset_idc_h="1" toolset_idc_l="2" progressive_source_flag="true" interlaced_source_flag="false" non_packed_constraint_flag="false" frame_only_constraint_flag="true" EVC_still_present_flag="false" EVC_24hr_picture_present_flag="true" HDR_WCG_idc="1" video_properties_tag="1" temporal_id_min="0" temporal_id_max="2" />
+      <HEVC_timing_and_HRD_descriptor hrd_management_valid="true" target_schedule_idx="3" N="1" K="300" num_units_in_tick="1001" />
+      <VVC_timing_and_HRD_descriptor hrd_management_valid="false" num_units_in_tick="1001" />
+      <EVC_timing_and_HRD_descriptor hrd_management_valid="true" N="1" K="300" num_units_in_tick="1001" />
+      <af_extensions_descriptor />
+      <green_extension_descriptor>
+        <constant_backlight_voltage_time_interval value="0x0010" />
+        <constant_backlight_voltage_time_interval value="0x0020" />
+        <max_variation value="0x0030" />
+      </green_extension_descriptor>
+      <quality_extension_descriptor field_size_bytes="2">
+        <metric code="0x50534E52" />
+        <metric code="0x5353494D" />
+      </quality_extension_descriptor>
+      <LCEVC_video_descriptor lcevc_stream_tag="7" profile_idc="3" level_idc="5" sublevel_idc="1" processed_planes_type_flag="true" picture_type_bit_flag="false" field_type_bit_flag="true" HDR_WCG_idc="2" video_properties_tag="2" />
+      <LCEVC_linkage_descriptor>
+        <lcevc_stream_tag>1020</lcevc_stream_tag>
+      </LCEVC_linkage_descriptor>
+      <HEVC_hierarchy_extension_descriptor extension_dimension_bits="3" hierarchy_layer_index="5" temporal_id="2" nuh_layer_id="1" tref_present="false" hierarchy_channel="4">
+        <embedded_layer hierarchy_layer_index="1" />
+        <embedded_layer hierarchy_layer_index="3" />
+      </HEVC_hierarchy_extension_descriptor>
+      <HEVC_operation_point_descriptor>
+        <profile_tier_level_info>010000000000000000000000</profile_tier_level_info>
+        <operation_point target_ols="2" constant_frame_rate_info_idc="2" applicable_temporal_id="6" frame_rate_indicator="50" avg_bit_rate="8000" max_bit_rate="10000">
+          <ES prepend_dependencies="true" ES_reference="5" />
+          <ES prepend_dependencies="false" ES_reference="6" />
+          <ESinOP necessary_layer="true" output_layer="true" ptl_ref_idx="0" />
+          <ESinOP necessary_layer="true" output_layer="false" ptl_ref_idx="0" />
+        </operation_point>
+      </HEVC_operation_point_descriptor>
+      <HEVC_tile_substream_descriptor SubstreamID="5">
+        <Substream Flag="1" AdditionalSubstreamID="1" />
+        <Substream Flag="0" AdditionalSubstreamID="2" />
+      </HEVC_tile_substream_descriptor>
+      <HEVC_subregion_descriptor SubstreamIDsPerLine="4" TotalSubstreamIDs="16" LevelFullPanorama="0x5A">
+        <SubregionLayout PreambleSubstreamID="0x11" Level="0x3C" PictureSizeHor="1920" PictureSizeVer="1080">
+          <Pattern>
+            <Substream offset="1" />
+            <Substream offset="-1" />
+          </Pattern>
+        </SubregionLayout>
+      </HEVC_subregion_descriptor>
+      <Media_service_kind_descriptor>
+        <media_service_kind media_description="self" media_type="audio" ID_length_code="2" ID_type="0x0200" media_ID="ABCD">
+          <language_media_pair configuration_type="0" lang_len_idc="1" BCP47_language_code="en">
+            <media_service_type purpose="1" />
+            <media_service_type purpose="9" />
+          </language_media_pair>
+        </media_service_kind>
+      </Media_service_kind_descriptor>
+    </component>
+  </PMT>
+</tsduck>

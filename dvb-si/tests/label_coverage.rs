@@ -50,6 +50,8 @@ const SKIP: &[&str] = &[
     "SatBody",
     "ProtectionMessageBody",
     "FontInfo",
+    "StereoscopicVideoView",
+    "HevcTileSubstreamDetail",
     "DvbLocatorService",
     "DvbLocatorIdentifier",
     "ExtIterItem",

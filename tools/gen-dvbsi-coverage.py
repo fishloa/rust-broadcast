@@ -303,6 +303,11 @@ def load_tables() -> list[Impl]:
         )
     if not out:
         raise GenError("declare_tables! yielded no tables")
+    for i in out:
+        key = rel(i.module).removeprefix("src/")
+        if key in TABLE_PARTIAL:
+            i.status = "Partial"
+            i.note = TABLE_PARTIAL[key]
     return out
 
 
@@ -318,6 +323,21 @@ PARTIAL = {
     "descriptors/muxcode.rs": "`MuxCodeTableEntry()` records kept opaque (ISO/IEC 14496-1)",
     "descriptors/fmx_buffer_size.rs": "`FlexMuxBufferDescriptor()` records kept as raw bytes (ISO/IEC 14496-1 §11.2)",
     "descriptors/avs2_audio.rs": "`anc_data_block()` kept in `trailing` (defined in a non-vendored standard)",
+    "descriptors/mpeg4_text.rs": "`textConfig()` kept opaque (ISO/IEC 14496-17, not vendored)",
+    "descriptors/mpeg4_audio_extension.rs": "`audioSpecificConfig()` kept opaque (ISO/IEC 14496-3, not vendored)",
+}
+
+# Sections whose payload is deliberately kept as bytes (status Partial, note shown).
+TABLE_PARTIAL = {
+    "tables/iso14496_section.rs": "payload (`SL_Packet()` / `M4MuxPacket()`s, selected by the carrying PMT) kept opaque (ISO/IEC 14496-1)",
+    "tables/metadata_section.rs": "`metadata_byte`s (the metadata Access Unit) kept opaque",
+    "tables/green_access_unit_section.rs": "`Green_AU()` kept opaque (its loops are bounded by the out-of-band Green extension descriptor)",
+}
+
+# Opaque MPEG-2 extension bodies whose payload is defined elsewhere (default: ISO/IEC 23008-3).
+OPAQUE_EXT_NOTES = {
+    "OdUpdate": "`ObjectDescriptorUpdate()` kept as bytes (ISO/IEC 14496-1 §7.2.5.5.2, not vendored)",
+    "TimedMetadataExtension": "body kept as bytes (ISO/IEC 23001-13 clause 8.2.3, not vendored)",
 }
 
 
@@ -424,7 +444,7 @@ def load_mpeg2_extension() -> list[Impl]:
         variant, tag = m.groups()
         f = find_type_file(variant, SRC / "descriptors")
         v = int(tag, 16)
-        opaque = opaque_struct(variant, read(f))
+        opaque = opaque_struct(variant, read(f)) and variant != "AfExtensions"
         out.append(
             Impl(
                 "mpeg2_extension_tag",
@@ -434,7 +454,7 @@ def load_mpeg2_extension() -> list[Impl]:
                 f,
                 True,
                 status="Typed-opaque" if opaque else "Full",
-                note="payload kept as bytes (its syntax is defined in ISO/IEC 23008-3)" if opaque else "",
+                note=OPAQUE_EXT_NOTES.get(variant, "payload kept as bytes (its syntax is defined in ISO/IEC 23008-3)") if opaque else "",
                 cite=citation(module_doc(f)),
             )
         )
