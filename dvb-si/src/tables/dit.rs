@@ -46,7 +46,7 @@ impl DitSection {
         Self {
             transition_flag,
             reserved_future_use: RESERVED_FUTURE_USE_7,
-            bits: super::SectionBits::dvb(),
+            bits: super::SectionBits::dvb().short_form(),
         }
     }
 }
@@ -105,7 +105,7 @@ impl Serialize for DitSection {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0 (short form), reserved_future_use=1,
         // reserved=11, section_length high nibble.
-        buf[1] = self.bits.b1(false)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, BODY_LEN)?;
         // transition_flag in bit 7; remaining 7 bits reserved (set to 1).
         buf[3] = (u8::from(self.transition_flag) * TRANSITION_FLAG)

@@ -50,6 +50,12 @@ fn discover_single_plp(path: &str, t2mi_pid: Pid) -> Result<Option<u8>, ExitCode
         let _ = rec.feed(&packet);
     }
     packets.finish()?;
+    single_plp(&rec)
+}
+
+/// The sole PLP `rec` has seen (`None` if none); prints the list and fails
+/// when there is more than one.
+fn single_plp(rec: &InnerTsRecovery) -> Result<Option<u8>, ExitCode> {
     let plps: Vec<u8> = rec.plps_seen().collect();
     match plps.as_slice() {
         [] => Ok(None),
@@ -65,6 +71,34 @@ fn discover_single_plp(path: &str, t2mi_pid: Pid) -> Result<Option<u8>, ExitCode
             Err(ExitCode::FAILURE)
         }
     }
+}
+
+/// `--inner` without `--plp` on a non-seekable input (pipe, FIFO, process
+/// substitution): the input can be read only once, so recover every PLP in a
+/// single pass into memory, then emit it only if exactly one PLP was seen. A
+/// single-PLP unfiltered recovery is byte-identical to the filtered one.
+fn inner_single_pass(path: &str, t2mi_pid: Pid) -> Result<Vec<u8>, ExitCode> {
+    let mut packets = PacketReader::open(path, "dvb-tools t2mi")?;
+    let mut rec = InnerTsRecovery::new(t2mi_pid);
+    let mut buf = Vec::new();
+    for packet in packets.by_ref() {
+        for inner_pkt in rec.feed(&packet) {
+            buf.extend_from_slice(inner_pkt);
+        }
+    }
+    packets.finish()?;
+    single_plp(&rec)?;
+    let s = rec.stats();
+    eprintln!(
+        "-- inner packets written: ts_packets={} t2mi_packets={} \
+         crc_failures={} malformed={} filtered_bbframes={}",
+        s.ts_packets,
+        s.t2mi_packets,
+        s.crc_failures,
+        s.malformed_packets,
+        rec.filtered_bbframes(),
+    );
+    Ok(buf)
 }
 
 pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> ExitCode {
@@ -98,6 +132,18 @@ pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> E
         // writing several into one output would interleave them into one
         // garbled mux (#1034). Without `--plp`, scan the capture first and
         // refuse a multi-PLP feed, listing the PLPs to pick from.
+        let seekable = std::fs::metadata(path).is_ok_and(|m| m.is_file());
+        if plp.is_none() && !seekable {
+            let buf = match inner_single_pass(path, t2mi_pid) {
+                Ok(b) => b,
+                Err(code) => return code,
+            };
+            let mut out = std::io::stdout().lock();
+            if let Err(e) = out.write_all(&buf).and_then(|()| out.flush()) {
+                return stdout_failure("write stdout", &e);
+            }
+            return ExitCode::SUCCESS;
+        }
         let plp = match plp {
             Some(p) => Some(p),
             None => match discover_single_plp(path, t2mi_pid) {

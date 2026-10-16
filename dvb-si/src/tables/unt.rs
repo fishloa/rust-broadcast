@@ -425,7 +425,7 @@ impl Serialize for UntSection<'_> {
         // silently (audit r03-W3 class).
         broadcast_common::len::fit_bits(u64::from(self.oui), 24, "oui")?;
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[OFFSET_ACTION_TYPE] = self.action_type.to_u8();

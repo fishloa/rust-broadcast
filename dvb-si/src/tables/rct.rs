@@ -501,6 +501,10 @@ fn link_info_serialized_len(li: &LinkInfo) -> usize {
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 #[non_exhaustive]
 pub struct RctSection<'a> {
+    /// `section_syntax_indicator` (byte 1 bit 7): `1` for a constructed value,
+    /// whatever the wire carried for a parsed one (parse tolerant, serialize
+    /// preserves).
+    pub section_syntax_indicator: bool,
     /// `table_id_extension_flag` (bit 6 of byte 1).
     pub table_id_extension_flag: bool,
     /// `service_id` — table_id_extension field.
@@ -546,6 +550,7 @@ impl<'a> RctSection<'a> {
         descriptors: DescriptorLoop<'a>,
     ) -> Self {
         Self {
+            section_syntax_indicator: true,
             table_id_extension_flag,
             service_id,
             version_number,
@@ -791,7 +796,12 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
             service_id,
         } => {
             let sd_lo = (loc.start_date & 0x3F) as u8;
-            buf[1] = (sd_lo << 2) | (loc.reserved_inline_service & super::RESERVED_2);
+            buf[1] = (sd_lo << 2)
+                | broadcast_common::len::fit_mask(
+                    loc.reserved_inline_service,
+                    super::RESERVED_2,
+                    "reserved_inline_service",
+                )?;
             buf[2..4].copy_from_slice(&transport_stream_id.to_be_bytes());
             buf[4..6].copy_from_slice(&original_network_id.to_be_bytes());
             buf[6..8].copy_from_slice(&service_id.to_be_bytes());
@@ -989,7 +999,11 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         "term_id",
     )?;
     buf[0] = (broadcast_common::len::fit_mask(lt, 0x0F, "lt")? << LINK_TYPE_SHIFT)
-        | ((li.reserved_link_type & super::RESERVED_2) << LINK_INFO_HEADER_RFU_SHIFT)
+        | (broadcast_common::len::fit_mask(
+            li.reserved_link_type,
+            super::RESERVED_2,
+            "reserved_link_type",
+        )? << LINK_INFO_HEADER_RFU_SHIFT)
         | ((hr >> 4) & HOW_RELATED_HI_MASK);
     buf[1] = ((hr & 0x0F) << 4) | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
     buf[2] = li.term_id as u8;
@@ -1009,8 +1023,12 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         pos += n;
     }
     let item_count = broadcast_common::len::fit_bits(li.items.len() as u64, 6, "number_items")?;
-    buf[pos] =
-        ((li.reserved_number_items & super::RESERVED_2) << ITEM_RFU_SHIFT) | item_count as u8;
+    buf[pos] = (broadcast_common::len::fit_mask(
+        li.reserved_number_items,
+        super::RESERVED_2,
+        "reserved_number_items",
+    )? << ITEM_RFU_SHIFT)
+        | item_count as u8;
     pos += 1;
     for item in &li.items {
         let text_len =
@@ -1130,6 +1148,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
         let descriptors = DescriptorLoop::new(&bytes[desc_start..desc_end]);
 
         Ok(RctSection {
+            section_syntax_indicator: bytes[1] & super::SECTION_B1_SSI != 0,
             table_id_extension_flag,
             service_id,
             version_number,
@@ -1173,7 +1192,11 @@ impl Serialize for RctSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = super::b1_of(true, self.table_id_extension_flag, self.reserved_b1)?;
+        buf[1] = super::b1_of(
+            self.section_syntax_indicator,
+            self.table_id_extension_flag,
+            self.reserved_b1,
+        )?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());

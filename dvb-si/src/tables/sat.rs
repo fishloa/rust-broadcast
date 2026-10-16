@@ -1242,7 +1242,23 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
     Ok(())
 }
 
+/// Parse a SAT body. The typed loop bodies stop when fewer bits than one entry remain; those
+/// leftover bytes belong to no field and would be dropped on re-serialize, so
+/// a body whose re-serialized length differs from `data` is rejected.
 fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
+    let body = sat_body_parse_entries(sat_table_id, data)?;
+    let used = sat_body_serialized_len(&body);
+    if used != data.len() {
+        return Err(Error::BufferTooShort {
+            need: data.len().saturating_sub(used),
+            have: 0,
+            what: "SatSection trailing body bytes after the last whole entry",
+        });
+    }
+    Ok(body)
+}
+
+fn sat_body_parse_entries(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
     if data.is_empty() && sat_table_id <= 4 {
         return Ok(match sat_table_id {
             0 => SatBody::PositionV2(PositionV2Body {
@@ -1854,6 +1870,10 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
 pub struct SatSection {
     /// 6-bit discriminant selecting the body structure (see [`SatTableId`]).
     pub satellite_table_id: u8,
+    /// `section_syntax_indicator` (byte 1 bit 7): `1` for a constructed value,
+    /// whatever the wire carried for a parsed one (parse tolerant, serialize
+    /// preserves).
+    pub section_syntax_indicator: bool,
     /// `private_indicator` — byte 1 bit 6 (Table 11a).
     pub private_indicator: bool,
     /// 10-bit sub_table discriminator.
@@ -1896,6 +1916,7 @@ impl SatSection {
     ) -> Self {
         Self {
             satellite_table_id,
+            section_syntax_indicator: true,
             private_indicator,
             table_count,
             version_number,
@@ -1952,6 +1973,7 @@ impl<'a> Parse<'a> for SatSection {
         let body = sat_body_parse(satellite_table_id, body_data)?;
         Ok(SatSection {
             satellite_table_id,
+            section_syntax_indicator: bytes[1] & super::SECTION_B1_SSI != 0,
             private_indicator,
             table_count,
             version_number,
@@ -1998,8 +2020,11 @@ impl Serialize for SatSection {
             }
         }
         buf[0] = TABLE_ID;
-        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)?
-            | ((section_length >> 8) as u8 & super::SECTION_LENGTH_HI_MASK);
+        buf[1] = super::b1_of(
+            self.section_syntax_indicator,
+            self.private_indicator,
+            self.reserved_b1,
+        )? | ((section_length >> 8) as u8 & super::SECTION_LENGTH_HI_MASK);
         buf[2] = (section_length & 0xFF) as u8;
         broadcast_common::len::fit_mask(
             self.table_count,

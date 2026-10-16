@@ -284,7 +284,7 @@ impl Serialize for SdtSection<'_> {
             SdtKind::Actual => TABLE_ID_ACTUAL,
             SdtKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[5] = self

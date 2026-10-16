@@ -224,6 +224,13 @@ impl<'a> Parse<'a> for BatSection<'a> {
                 available: ts_loop_end - (ts_loop_start + 2),
             });
         }
+        // The loop is the last field before CRC_32: a shorter declared length
+        // leaves bytes no field owns (dropped on re-serialize), so reject.
+        super::check_loop_reaches_crc(
+            loop_end,
+            ts_loop_end,
+            "BatSection trailing bytes after transport stream loop",
+        )?;
 
         let mut transport_streams = Vec::new();
         let mut pos = ts_loop_start + 2;
@@ -310,7 +317,7 @@ impl Serialize for BatSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         // Extension header.

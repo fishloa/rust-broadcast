@@ -324,19 +324,21 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[4] = self.mac_address.0[4];
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
-        buf[5] = ((self.reserved_b5 & super::RESERVED_2) << 6)
-            | (broadcast_common::len::fit_mask(
-                self.payload_scrambling_control,
-                0x03,
-                "payload_scrambling_control",
-            )? << 4)
-            | (broadcast_common::len::fit_mask(
-                self.address_scrambling_control,
-                0x03,
-                "address_scrambling_control",
-            )? << 2)
-            | (u8::from(self.llc_snap_flag) << 1)
-            | u8::from(self.current_next_indicator);
+        buf[5] =
+            (broadcast_common::len::fit_mask(self.reserved_b5, super::RESERVED_2, "reserved(2)")?
+                << 6)
+                | (broadcast_common::len::fit_mask(
+                    self.payload_scrambling_control,
+                    0x03,
+                    "payload_scrambling_control",
+                )? << 4)
+                | (broadcast_common::len::fit_mask(
+                    self.address_scrambling_control,
+                    0x03,
+                    "address_scrambling_control",
+                )? << 2)
+                | (u8::from(self.llc_snap_flag) << 1)
+                | u8::from(self.current_next_indicator);
 
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;

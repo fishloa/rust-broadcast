@@ -576,7 +576,11 @@ impl ProtectionMessageBody<'_> {
                     });
                 }
                 // reserved(4) emitted 1s | certificate_count(4).
-                buf[0] = ((*reserved_certificate_count & super::RESERVED_4) << 4)
+                buf[0] = (broadcast_common::len::fit_mask(
+                    *reserved_certificate_count,
+                    super::RESERVED_4,
+                    "reserved(4)",
+                )? << 4)
                     | broadcast_common::len::fit_bits(certificates.len() as u64, 4, "certificates")?
                         as u8;
                 let mut pos = 1;
@@ -624,7 +628,7 @@ impl Serialize for ProtectionMessageSection<'_> {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).

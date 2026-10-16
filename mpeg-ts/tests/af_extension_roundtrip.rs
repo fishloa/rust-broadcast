@@ -160,6 +160,11 @@ fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let name = e.file_name();
         let name = name.to_string_lossy();
         if p.is_dir() {
+            // The private repo (`private/` locally, `private-fixtures/` in CI)
+            // is not "committed": skip it by identity, not by name.
+            if test_fixtures::is_private_checkout(&p) {
+                continue;
+            }
             if matches!(
                 name.as_ref(),
                 "target"
@@ -207,6 +212,10 @@ fn scan(include_archive: bool) -> Report {
         files.extend(test_fixtures::corpus(&["ts"]));
     }
     files.sort();
+    scan_files(files)
+}
+
+fn scan_files(files: Vec<PathBuf>) -> Report {
     let mut r = Report::default();
     for path in files {
         let Ok(buf) = fs::read(&path) else { continue };
@@ -393,3 +402,36 @@ fn real_archive_af_extension_packets_round_trip() {
         }
     }
 }
+
+/// Pinned real-data counts for the TSDuck streams that carry real adaptation-
+/// field extensions (private corpus; skips loudly via `test_fixtures::tsduck`
+/// when the private repo is not checked out). The committed corpus carries no
+/// extension (see the `ext_ok.is_empty()` canary above, which skips the private
+/// checkout by identity); this is its positive counterpart, so a parser change
+/// that stops recognising the real extensions, or starts rejecting more of the
+/// pseudo-random scrambling-test packets, fails here instead of silently
+/// passing. Counts measured on the pinned `tsduck-test` mirror.
+#[test]
+fn real_tsduck_adaptation_field_extension_counts_are_pinned() {
+    let mut files = Vec::new();
+    for rel in ["input/test-143.ts", "reference/test-147/test-147.ts"] {
+        match test_fixtures::tsduck(rel, "af_extension_roundtrip") {
+            Some(p) => files.push(p),
+            None => return,
+        }
+    }
+    let r = scan_files(files);
+    assert!(r.mismatches.is_empty(), "{:#?}", r.mismatches);
+    assert_eq!(r.ext_ok.len(), PINNED_EXT_OK, "{:#?}", r.ext_ok);
+    assert_eq!(
+        r.parse_errors.len(),
+        PINNED_PARSE_ERRORS,
+        "{:#?}",
+        r.parse_errors
+    );
+    assert_eq!(r.checked, PINNED_CHECKED);
+}
+
+const PINNED_EXT_OK: usize = 3;
+const PINNED_PARSE_ERRORS: usize = 10;
+const PINNED_CHECKED: usize = 1297;

@@ -69,6 +69,16 @@ pub struct Escr {
     pub extension: u16,
 }
 
+/// Spec-convention value of the freeze-frame `reserved(3)` bits (all ones,
+/// ISO/IEC 13818-1 "reserved" convention; Table 2-24).
+pub const FREEZE_FRAME_RESERVED_VALUE: u8 = 0b111;
+/// `marker_bit` of the `additional_copy_info` byte (bit 7, Table 2-21).
+const ADDITIONAL_COPY_INFO_MARKER: u8 = 0x80;
+/// Spec-convention value of the ESCR leading `reserved(2)` (`0b11`).
+const ESCR_RESERVED_VALUE: u8 = 0b11;
+/// Bit position of the ESCR leading `reserved(2)` in the field's first byte.
+const ESCR_RESERVED_SHIFT: u32 = 6;
+
 /// ESCR 33-bit base mask (ISO/IEC 13818-1 §2.4.3.7 `ESCR_base`).
 const ESCR_BASE_MASK: u64 = (1 << 33) - 1;
 /// ESCR 9-bit extension mask (`ESCR_extension`).
@@ -169,6 +179,10 @@ pub enum TrickMode {
     FreezeFrame {
         /// 2-bit `field_id`.
         field_id: u8,
+        /// The 3 `reserved` bits after `field_id` (Table 2-24; spec
+        /// convention [`FREEZE_FRAME_RESERVED_VALUE`] = `0b111`), kept so a
+        /// real stream's value round-trips.
+        reserved: u8,
     },
     /// `011` — fast reverse.
     FastReverse {
@@ -207,6 +221,7 @@ impl TrickMode {
             0b001 => TrickMode::SlowMotion { rep_cntrl: data },
             0b010 => TrickMode::FreezeFrame {
                 field_id: (data >> 3) & 0x03,
+                reserved: data & 0x07,
             },
             0b011 => TrickMode::FastReverse {
                 field_id: (data >> 3) & 0x03,
@@ -234,7 +249,9 @@ impl TrickMode {
                     | (frequency_truncation & 0x03)
             }
             TrickMode::SlowMotion { rep_cntrl } => (0b001 << 5) | (rep_cntrl & 0x1F),
-            TrickMode::FreezeFrame { field_id } => (0b010 << 5) | ((field_id & 0x03) << 3),
+            TrickMode::FreezeFrame { field_id, reserved } => {
+                (0b010 << 5) | ((field_id & 0x03) << 3) | (reserved & 0x07)
+            }
             TrickMode::FastReverse {
                 field_id,
                 intra_slice_refresh,
@@ -620,6 +637,10 @@ pub struct PesHeader<'a> {
     pub dts: Option<Dts>,
     /// Elementary stream clock reference (6 bytes), if `ESCR_flag` is set.
     pub escr: Option<Escr>,
+    /// The leading `reserved(2)` of the ESCR field (Table 2-21; spec
+    /// convention `0b11`), kept so a real stream's value round-trips. Only
+    /// meaningful when `escr` is `Some`.
+    pub escr_reserved_bits: u8,
     /// 22-bit ES rate (bytes/second × 50), if `ES_rate_flag` is set.
     pub es_rate: Option<u32>,
     /// The two `marker_bit`s around `ES_rate` (Table 2-21), packed as
@@ -632,6 +653,10 @@ pub struct PesHeader<'a> {
     pub dsm_trick_mode: Option<TrickMode>,
     /// 7-bit `additional_copy_info`, if `additional_copy_info_flag` is set.
     pub additional_copy_info: Option<u8>,
+    /// The `marker_bit` in front of `additional_copy_info` (Table 2-21; the
+    /// spec fixes it to `1`), kept so a real stream's value round-trips. Only
+    /// meaningful when `additional_copy_info` is `Some`.
+    pub additional_copy_info_marker: bool,
     /// Previous PES packet CRC (16 bits), if `PES_CRC_flag` is set.
     pub pes_crc: Option<u16>,
     /// PES extension sub-structure, if `PES_extension_flag` is set.
@@ -663,10 +688,12 @@ impl<'a> PesHeader<'a> {
             pts: None,
             dts: None,
             escr: None,
+            escr_reserved_bits: ESCR_RESERVED_VALUE,
             es_rate: None,
             es_rate_marker_bits: ES_RATE_MARKERS_VALUE,
             dsm_trick_mode: None,
             additional_copy_info: None,
+            additional_copy_info_marker: true,
             pes_crc: None,
             pes_extension: None,
             header_stuffing: &[],
@@ -839,6 +866,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // ESCR (6 bytes, ISO/IEC 13818-1 §2.4.3.7).
+        let mut escr_reserved_bits = ESCR_RESERVED_VALUE;
         let escr = if f2 & F2_ESCR != 0 {
             if opt.len() < cursor + 6 {
                 return Err(Error::BufferTooShort {
@@ -849,6 +877,7 @@ impl<'a> PesPacket<'a> {
             }
             let arr: &[u8; 6] = opt[cursor..cursor + 6].try_into().unwrap();
             let e = Escr::from_field_bytes(arr)?;
+            escr_reserved_bits = arr[0] >> ESCR_RESERVED_SHIFT;
             cursor += 6;
             Some(e)
         } else {
@@ -892,6 +921,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // additional_copy_info (1 byte: marker + 7-bit info).
+        let mut additional_copy_info_marker = true;
         let additional_copy_info = if f2 & F2_ADDITIONAL_COPY_INFO != 0 {
             if opt.len() < cursor + 1 {
                 return Err(Error::BufferTooShort {
@@ -901,6 +931,7 @@ impl<'a> PesPacket<'a> {
                 });
             }
             let v = opt[cursor] & 0x7F;
+            additional_copy_info_marker = opt[cursor] & ADDITIONAL_COPY_INFO_MARKER != 0;
             cursor += 1;
             Some(v)
         } else {
@@ -946,10 +977,12 @@ impl<'a> PesPacket<'a> {
             pts,
             dts,
             escr,
+            escr_reserved_bits,
             es_rate,
             es_rate_marker_bits,
             dsm_trick_mode,
             additional_copy_info,
+            additional_copy_info_marker,
             pes_crc,
             pes_extension,
             header_stuffing,
@@ -1045,7 +1078,10 @@ impl<'a> PesPacket<'a> {
                 }
                 // ESCR.
                 if let Some(escr) = h.escr {
-                    buf[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes());
+                    let mut field = escr.to_field_bytes();
+                    field[0] = (field[0] & !(ESCR_RESERVED_VALUE << ESCR_RESERVED_SHIFT))
+                        | ((h.escr_reserved_bits & ESCR_RESERVED_VALUE) << ESCR_RESERVED_SHIFT);
+                    buf[cursor..cursor + 6].copy_from_slice(&field);
                     cursor += 6;
                 }
                 // ES_rate: marker(1) | rate(22) | marker(1) = 3 bytes.
@@ -1068,7 +1104,12 @@ impl<'a> PesPacket<'a> {
                 }
                 // additional_copy_info: marker(1) | info(7).
                 if let Some(aci) = h.additional_copy_info {
-                    buf[cursor] = 0x80 | (aci & 0x7F);
+                    let marker = if h.additional_copy_info_marker {
+                        ADDITIONAL_COPY_INFO_MARKER
+                    } else {
+                        0
+                    };
+                    buf[cursor] = marker | (aci & 0x7F);
                     cursor += 1;
                 }
                 // PES_CRC (2 bytes, big-endian).
@@ -1179,6 +1220,8 @@ mod tests {
             escr: None,
             es_rate: None,
             es_rate_marker_bits: 0b11,
+            escr_reserved_bits: 0b11,
+            additional_copy_info_marker: true,
             dsm_trick_mode: None,
             additional_copy_info: None,
             pes_crc: None,
@@ -1292,6 +1335,8 @@ mod tests {
             escr: None,
             es_rate: None,
             es_rate_marker_bits: 0b11,
+            escr_reserved_bits: 0b11,
+            additional_copy_info_marker: true,
             dsm_trick_mode: None,
             additional_copy_info: None,
             pes_crc: None,
@@ -1350,6 +1395,8 @@ mod tests {
         let h = PesHeader {
             es_rate: Some(0x3FFFFF),
             es_rate_marker_bits: 0b11,
+            escr_reserved_bits: 0b11,
+            additional_copy_info_marker: true,
             ..empty_header()
         };
         let bytes = build_pes(h, &[]);
@@ -1367,7 +1414,10 @@ mod tests {
                 frequency_truncation: 0x3,
             },
             TrickMode::SlowMotion { rep_cntrl: 0x1F },
-            TrickMode::FreezeFrame { field_id: 0x1 },
+            TrickMode::FreezeFrame {
+                field_id: 0x1,
+                reserved: 0b101,
+            },
             TrickMode::FastReverse {
                 field_id: 0x0,
                 intra_slice_refresh: false,
@@ -1639,6 +1689,8 @@ mod tests {
             }),
             es_rate: Some(50_000),
             es_rate_marker_bits: 0b11,
+            escr_reserved_bits: 0b11,
+            additional_copy_info_marker: true,
             dsm_trick_mode: Some(TrickMode::SlowMotion { rep_cntrl: 3 }),
             additional_copy_info: Some(5),
             pes_crc: Some(0xCAFE),

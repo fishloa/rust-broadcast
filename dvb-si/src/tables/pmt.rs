@@ -806,7 +806,7 @@ impl Serialize for PmtSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.program_number.to_be_bytes());
         buf[5] = self

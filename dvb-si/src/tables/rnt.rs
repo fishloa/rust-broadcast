@@ -499,7 +499,7 @@ impl Serialize for RntSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.context_id.to_be_bytes());
@@ -575,7 +575,11 @@ impl Serialize for RntSection<'_> {
                     12,
                     "crid_authority_descriptors_length",
                 )?;
-                buf[pos] = ((ca.reserved & super::RESERVED_2) << CRID_POLICY_RESERVED_SHIFT)
+                buf[pos] = (broadcast_common::len::fit_mask(
+                    ca.reserved,
+                    super::RESERVED_2,
+                    "reserved(2)",
+                )? << CRID_POLICY_RESERVED_SHIFT)
                     | (broadcast_common::len::fit_mask(
                         ca.crid_authority_policy.to_u8(),
                         CRID_POLICY_MASK,

@@ -57,6 +57,10 @@ pub struct CridEntry<'a> {
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 #[non_exhaustive]
 pub struct CitSection<'a> {
+    /// `section_syntax_indicator` (byte 1 bit 7): `1` for a constructed value,
+    /// whatever the wire carried for a parsed one (parse tolerant, serialize
+    /// preserves).
+    pub section_syntax_indicator: bool,
     /// `private_indicator` bit from byte 1.
     pub private_indicator: bool,
     /// `service_id` — identifies the container this section belongs to
@@ -104,6 +108,7 @@ impl<'a> CitSection<'a> {
         crid_entries: Vec<CridEntry<'a>>,
     ) -> Self {
         Self {
+            section_syntax_indicator: true,
             private_indicator,
             service_id,
             version_number,
@@ -239,6 +244,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
         }
 
         Ok(CitSection {
+            section_syntax_indicator: bytes[1] & super::SECTION_B1_SSI != 0,
             private_indicator,
             service_id,
             version_number,
@@ -282,7 +288,11 @@ impl Serialize for CitSection<'_> {
             broadcast_common::len::fit_u8(self.prepend_strings.len(), "prepend_string_count")?;
 
         buf[0] = TABLE_ID;
-        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)?;
+        buf[1] = super::b1_of(
+            self.section_syntax_indicator,
+            self.private_indicator,
+            self.reserved_b1,
+        )?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());

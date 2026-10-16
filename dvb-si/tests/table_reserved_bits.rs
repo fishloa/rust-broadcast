@@ -83,15 +83,18 @@ fn reserialize(t: &AnyTableSection<'_>) -> Option<Vec<u8>> {
     }
 }
 
-/// Section byte 1 bit 7: `section_syntax_indicator` (decoded structure).
+/// Section byte 1 carries `section_syntax_indicator` (bit 7) and the high
+/// nibble of `section_length`; byte 2 is the low byte of `section_length`.
 const SSI_BYTE: usize = 1;
-const SSI_MASK: u8 = 0x80;
-/// Bytes 1 (low nibble) and 2 carry `section_length`.
 const LEN_HI_MASK: u8 = 0x0F;
 
-/// Flip every bit of `section` (but SSI, section_length and the table_id) and
-/// return the list of `(byte, bit)` positions whose flip is lost on
-/// `parse -> serialize` (the serializer wrote the original value back). `has_crc`: recompute the trailing CRC_32 after each flip.
+/// Flip every bit of `section` (but the table_id and the `section_length`
+/// bits) and return the `(byte, bit)` positions whose flip is lost on
+/// `parse -> serialize`: any flip that still parses but does not come back as
+/// exactly the flipped bytes counts, INCLUDING a flip that changes the length
+/// of the re-serialized section (bytes silently dropped) and a flipped
+/// `section_syntax_indicator`. `has_crc`: recompute the trailing CRC_32 after
+/// each flip (and ignore it in the comparison, it is recomputed on serialize).
 fn lost_bits(section: &[u8], has_crc: bool) -> Vec<(usize, u8)> {
     let body_end = if has_crc {
         section.len() - 4
@@ -102,9 +105,6 @@ fn lost_bits(section: &[u8], has_crc: bool) -> Vec<(usize, u8)> {
     for byte in 1..body_end {
         for bit in 0..8u8 {
             let mask = 1u8 << bit;
-            if byte == SSI_BYTE && mask & SSI_MASK != 0 {
-                continue;
-            }
             if (byte == SSI_BYTE && mask & LEN_HI_MASK != 0) || byte == 2 {
                 continue;
             }
@@ -117,19 +117,10 @@ fn lost_bits(section: &[u8], has_crc: bool) -> Vec<(usize, u8)> {
             let Ok(t) = AnyTableSection::parse(&f) else {
                 continue;
             };
-            // A *lost* bit is the one we flipped coming back unflipped with
-            // nothing else changed (same length, single differing bit). A flip
-            // that restructures the section (a length field, a discriminant
-            // selecting another body layout) changes more than that bit.
             if let Some(re) = reserialize(&t)
-                && re.len() == f.len()
-                && re != f
+                && (re.len() != f.len() || re[..body_end] != f[..body_end])
             {
-                // The CRC_32 legitimately differs whenever the content does.
-                let diffs: Vec<usize> = (0..body_end).filter(|&i| re[i] != f[i]).collect();
-                if diffs == [byte] && (re[byte] ^ f[byte]) == mask {
-                    lost.push((byte, bit));
-                }
+                lost.push((byte, bit));
             }
         }
     }
@@ -184,14 +175,15 @@ fn single_bit_flip_real_captured_sections_keep_every_bit() {
         sections.len()
     );
     let mut tids = BTreeSet::new();
+    let mut failures = Vec::new();
     for (name, sec) in &sections {
         tids.insert(sec[0]);
         let lost = lost_bits(sec, !is_short_no_crc(sec[0]));
-        assert!(
-            lost.is_empty(),
-            "{name}: bits lost on parse->serialize (byte,bit): {lost:?}"
-        );
+        if !lost.is_empty() {
+            failures.push(format!("{name}: bits lost (byte,bit): {lost:?}"));
+        }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
     // The fixtures cover the core SI/PSI tables.
     for tid in [0x00u8, 0x02, 0x42, 0x40] {
         assert!(tids.contains(&tid), "fixtures lack table_id 0x{tid:02X}");
@@ -601,16 +593,17 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
 
 #[test]
 fn single_bit_flip_built_sections_keep_every_bit() {
+    let mut failures = Vec::new();
     for (name, sec, has_crc) in built_sections() {
         // A built section must itself re-parse byte-identically first.
         let t = AnyTableSection::parse(&sec).unwrap_or_else(|e| panic!("{name}: parse: {e}"));
         assert_eq!(reserialize(&t).as_deref(), Some(&sec[..]), "{name}: base");
         let lost = lost_bits(&sec, has_crc);
-        assert!(
-            lost.is_empty(),
-            "{name}: bits lost on parse->serialize (byte,bit): {lost:?}"
-        );
+        if !lost.is_empty() {
+            failures.push(format!("{name}: bits lost (byte,bit): {lost:?}"));
+        }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 // ---------------------------------------------------------------------------
