@@ -186,7 +186,7 @@ impl Serialize for PatSection {
         let section_length = EXTENSION_HEADER_LEN + self.entries.len() * ENTRY_LEN + CRC_LEN;
 
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[5] = self

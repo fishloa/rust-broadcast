@@ -69,7 +69,7 @@ impl TdtSection {
     pub fn new(utc_time_raw: [u8; 5]) -> Self {
         Self {
             utc_time_raw,
-            bits: super::SectionBits::dvb(),
+            bits: super::SectionBits::dvb().short_form(),
         }
     }
 }
@@ -146,7 +146,7 @@ impl Serialize for TdtSection {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(false)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, UTC_TIME_LEN)?;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
         Ok(len)

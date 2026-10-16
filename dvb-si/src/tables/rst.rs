@@ -94,7 +94,7 @@ impl RstSection {
     pub fn new(entries: Vec<RstEntry>) -> Self {
         Self {
             entries,
-            bits: super::SectionBits::dvb(),
+            bits: super::SectionBits::dvb().short_form(),
         }
     }
 }
@@ -171,7 +171,7 @@ impl Serialize for RstSection {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0 (short form), reserved_future_use=1,
         // reserved=11, section_length high nibble.
-        buf[1] = self.bits.b1(false)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - HEADER_LEN)?;
         let mut off = HEADER_LEN;
         for e in &self.entries {
@@ -185,7 +185,7 @@ impl Serialize for RstSection {
                 RESERVED_FUTURE_USE_5,
                 "reserved_future_use",
             )? << RESERVED_SHIFT)
-                | (e.running_status.to_u8() & super::RUNNING_STATUS_MASK);
+                | e.running_status.to_u8();
             off += ENTRY_LEN;
         }
         Ok(len)

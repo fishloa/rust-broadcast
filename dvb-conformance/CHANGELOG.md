@@ -14,6 +14,24 @@
 
 - **BREAKING (#1159):** `ConformanceEvent::pid` is `Option<mpeg_ts::pid::Pid>` instead of `Option<u16>` (serde output unchanged: `Pid` is transparent).
 
+### Fixed
+
+- TR 101 290 indicator 3.3 (`Buffer_error`): the T-STD `TBsys` model fed a
+  whole reassembled PSI/SI section's byte length in one instant, at
+  section-completion time, so any legally-paced section over 512 bytes
+  (routine for SDT/NIT/EIT) raised a false `Buffer_error` regardless of how
+  the bytes were actually spread across TS packets. `TBsys` is now fed per
+  TS packet, as each packet's payload physically arrives (ISO/IEC 13818-1
+  §2.4.2.3), so it drains correctly between packets instead of receiving
+  the whole section at once (#1035).
+- Indicator 3.3 (`Buffer_error`), second half of #1035: TBsys is now fed only
+  by PSI (PAT, CAT, PMT, NIT — H.222.0 §2.4.2.1 "system information for the
+  program being decoded"), not by DVB SI (SDT/BAT, EIT, RST, TDT/TOT), whose
+  back-to-back packets overflowed it seven times in 20 s of a real conformant
+  multiplex (france-tnt-uhf32, PCR-timed; PID 0x0012). The report is also
+  latched per overflow episode (re-armed when TBsys drains empty) instead of
+  one event per packet while the buffer stays full.
+
 ## [11.0.1] - 2026-10-11
 ### Changed
 - Version bump with the lockstep (11.0.1); no functional changes in this crate.
@@ -69,21 +87,6 @@ Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
   read past the end of a packet whose `adaptation_field_length` pointed
   beyond the truncated buffer. The discontinuity decision now comes from the
   single parsed adaptation field (ISO/IEC 13818-1 §2.4.3.4) (#1096).
-- TR 101 290 indicator 3.3 (`Buffer_error`): the T-STD `TBsys` model fed a
-  whole reassembled PSI/SI section's byte length in one instant, at
-  section-completion time, so any legally-paced section over 512 bytes
-  (routine for SDT/NIT/EIT) raised a false `Buffer_error` regardless of how
-  the bytes were actually spread across TS packets. `TBsys` is now fed per
-  TS packet, as each packet's payload physically arrives (ISO/IEC 13818-1
-  §2.4.2.3), so it drains correctly between packets instead of receiving
-  the whole section at once (#1035).
-- Indicator 3.3 (`Buffer_error`), second half of #1035: TBsys is now fed only
-  by PSI (PAT, CAT, PMT, NIT — H.222.0 §2.4.2.1 "system information for the
-  program being decoded"), not by DVB SI (SDT/BAT, EIT, RST, TDT/TOT), whose
-  back-to-back packets overflowed it seven times in 20 s of a real conformant
-  multiplex (france-tnt-uhf32, PCR-timed; PID 0x0012). The report is also
-  latched per overflow episode (re-armed when TBsys drains empty) instead of
-  one event per packet while the buffer stays full.
 
 ## [10.0.1] - 2026-08-30
 Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.

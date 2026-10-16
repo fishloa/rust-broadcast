@@ -370,7 +370,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         // font_id_extension(9) | font_id(7); spec mandates extension all-zero.
         let id_word =

@@ -37,6 +37,11 @@ fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let name = e.file_name();
         let name = name.to_string_lossy();
         if p.is_dir() {
+            // The private repo (`private/` locally, `private-fixtures/` in CI)
+            // is not "committed": skip it by identity, not by name.
+            if test_fixtures::is_private_checkout(&p) {
+                continue;
+            }
             if matches!(
                 name.as_ref(),
                 "target"
@@ -365,4 +370,73 @@ fn header_overrunning_pes_packet_length_is_rejected() {
         PesPacket::parse(&b),
         Err(mpeg_pes::Error::BufferTooShort { .. })
     ));
+}
+
+/// Pinned real-data counts for TSDuck's BSD-2 `test-002.ts` (private corpus;
+/// skips loudly when the private repo is not checked out). The committed
+/// corpus has no non-`0xFF` stuffing (the canary above, which skips the
+/// private checkout by identity); this is its positive counterpart: every PES
+/// packet of the capture round-trips byte-exactly, and the real counts of the
+/// lossy-bit cases it carries are pinned, so a parser change that stops
+/// recognising them (or starts rejecting them) fails here.
+#[test]
+fn real_tsduck_test_002_pes_header_counts_are_pinned() {
+    let Some(path) = test_fixtures::tsduck("input/test-002.ts", "pes_header_roundtrip_exhaustive")
+    else {
+        return;
+    };
+    let ts = fs::read(&path).expect("read capture");
+    let (mut parsed, mut nonff, mut es_rate_marker0, mut trick, mut copy_info) = (0, 0, 0, 0, 0);
+    for raw in pes_packets(&ts) {
+        let Ok(pes) = PesPacket::parse(&raw) else {
+            continue;
+        };
+        let want = &raw[..(PES_FIXED + usize::from(pes.pes_packet_length)).min(raw.len())];
+        let mut out = vec![0u8; pes.serialized_len()];
+        let n = pes.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[..n], want, "PES did not round-trip");
+        parsed += 1;
+        if let Some(h) = &pes.header {
+            nonff += usize::from(h.header_stuffing.iter().any(|&b| b != 0xFF));
+            es_rate_marker0 += usize::from(h.es_rate.is_some() && h.es_rate_marker_bits != 0b11);
+            trick += usize::from(h.dsm_trick_mode.is_some());
+            copy_info += usize::from(h.additional_copy_info.is_some());
+        }
+    }
+    assert_eq!(
+        (parsed, nonff, es_rate_marker0, trick, copy_info),
+        (372, 8, 1, 1, 1),
+        "pinned counts: (parsed, non-0xFF stuffing, ES_rate marker != 11, trick mode, additional_copy_info)"
+    );
+}
+
+/// A constructed header carries the spec fill for the bits a real stream may
+/// override: ESCR `reserved(2) = 11`, `additional_copy_info` marker `1`, and
+/// (for a freeze-frame trick mode) `reserved(3) = 111`.
+#[test]
+fn constructed_header_carries_spec_fill() {
+    use mpeg_pes::{Escr, FREEZE_FRAME_RESERVED_VALUE, PesHeader, StreamId, TrickMode};
+    let mut h = PesHeader::new();
+    h.escr = Some(Escr::from_27mhz(0));
+    h.dsm_trick_mode = Some(TrickMode::FreezeFrame {
+        field_id: 0,
+        reserved: FREEZE_FRAME_RESERVED_VALUE,
+    });
+    h.additional_copy_info = Some(mpeg_pes::AdditionalCopyInfo::new(0x0A));
+    let p = PesPacket {
+        stream_id: StreamId(0xE0),
+        pes_packet_length: 0,
+        header: Some(h),
+        payload: &[],
+    };
+    let mut out = vec![0u8; p.serialized_len()];
+    p.serialize_into(&mut out).unwrap();
+    // 9 fixed bytes, then ESCR (6), trick mode (1), additional_copy_info (1).
+    assert_eq!(out[9] & 0xC0, 0xC0, "ESCR reserved(2)");
+    assert_eq!(
+        out[15], 0b0100_0111,
+        "freeze frame, field_id 0, reserved 111"
+    );
+    assert_eq!(out[16], 0x8A, "marker bit set");
+    round_trip(&out);
 }

@@ -104,6 +104,23 @@ pub fn private(rel: &str) -> Option<PathBuf> {
     p.exists().then_some(p)
 }
 
+/// Whether `dir` is the checked-out private repo (resolved by [`private_root`]).
+///
+/// A "committed fixtures only" walk of the workspace tree must skip it by
+/// *identity*, not by directory name: the private checkout is `private/` in a
+/// developer clone but `private-fixtures/` in CI (and wherever
+/// [`PRIVATE_ENV`] points), and a name list misses the second.
+#[must_use]
+pub fn is_private_checkout(dir: &Path) -> bool {
+    let Some(root) = private_root() else {
+        return false;
+    };
+    match (dir.canonicalize(), root.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// Directory of the pinned BSD-2 `tsduck/tsduck-test` clone, if present. The
 /// clone is fetched on demand by `tools/fetch-test-streams.sh tsduck-test` into
 /// `.test-streams/tsduck-test` (repository URL and pinned commit are recorded

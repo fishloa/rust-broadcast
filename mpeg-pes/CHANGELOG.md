@@ -21,6 +21,13 @@
 ### Changed
 - ESCR field encoding uses named marker/mask constants (no behaviour change; audit r01-W15 residue).
 
+### Changed (BREAKING, review of the dvb-si tables/core batch)
+- Three more header bits that parse accepted and serialize silently rewrote are now typed and preserved (parse tolerant, serialize preserves, hand-built default = spec value):
+  - **BREAKING:** `PesHeader::additional_copy_info` is `Option<AdditionalCopyInfo>` (new, `#[non_exhaustive]`: `info` 7 bits + `marker` bit, `AdditionalCopyInfo::new(info)` sets the spec marker `1`) instead of `Option<u8>`; `...80 04 01 0A` used to come back as `0x8A`.
+  - **BREAKING:** `Escr` gains `reserved: u8` - the leading `reserved(2)` of the ESCR field (spec `0b11`, set by `Escr::from_27mhz`; `04...` used to come back as `C4...`).
+  - **BREAKING:** `TrickMode::FreezeFrame` gains `reserved: u8` - the 3 `reserved` bits after `field_id` (Table 2-24; `...52` used to come back as `0x50`). The constructed value is now the spec-convention `FREEZE_FRAME_RESERVED_VALUE` (`0b111`, newly exported), where the old serializer wrote `000`. Migration: `TrickMode::FreezeFrame { field_id, reserved: FREEZE_FRAME_RESERVED_VALUE }`.
+- Tests: the "committed corpus" canaries (`no_committed_fixture_has_nonff_stuffing_or_111_reserved`, and `mpeg-ts`'s `every_committed_ts_adaptation_field_round_trips`) walked the whole workspace tree and skipped the private checkout by the directory NAME `private`, so a CI checkout at `private-fixtures/` was scanned as "committed" and tripped the canaries on real TSDuck data. They now skip it by identity (`test_fixtures::is_private_checkout`), and the real data is covered by positive pinned-count tests (`real_tsduck_test_002_pes_header_counts_are_pinned`, `real_tsduck_adaptation_field_extension_counts_are_pinned`).
+
 ### Changed (breaking, umbrella #1139 T11 / audit r01-W2)
 - `PesHeader::header_stuffing_len: usize` is replaced by
   `PesHeader::header_stuffing: &'a [u8]` (the stuffing bytes verbatim; use `&[]`

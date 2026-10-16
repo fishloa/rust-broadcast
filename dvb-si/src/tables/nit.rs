@@ -226,6 +226,13 @@ impl<'a> Parse<'a> for NitSection<'a> {
                 available: ts_loop_end - (ts_loop_start + 2),
             });
         }
+        // The loop is the last field before CRC_32: a shorter declared length
+        // leaves bytes no field owns (dropped on re-serialize), so reject.
+        super::check_loop_reaches_crc(
+            loop_end,
+            ts_loop_end,
+            "NitSection trailing bytes after transport stream loop",
+        )?;
 
         let mut transport_streams = Vec::new();
 
@@ -313,7 +320,7 @@ impl Serialize for NitSection<'_> {
             NitKind::Actual => TABLE_ID_ACTUAL,
             NitKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = self.bits.b1(true)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         // Extension header per ETSI EN 300 468 §5.2.1:

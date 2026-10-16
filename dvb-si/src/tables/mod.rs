@@ -19,6 +19,11 @@
 //!   (=`1`) in EN 300 468. It is modelled as [`SectionBits::private_indicator`];
 //!   PSI sections ([`SectionBits::psi`]) default to `0` (the H.222.0 literal),
 //!   EN 300 468 tables ([`SectionBits::dvb`]) to `1`;
+//! * `section_syntax_indicator` itself is [`SectionBits::section_syntax_indicator`]:
+//!   `1` for the long-form tables, `0` for TDT/TOT/RST/DIT
+//!   ([`SectionBits::short_form`]); a received section keeps what it carried;
+//! * a value wider than its field (`version_number` over 31, a `reserved*`
+//!   wider than its width) is `Error::FieldOverflow` on serialize, never masked;
 //! * the `reserved(2)` after it and the `reserved(2)` in front of
 //!   `version_number` are [`SectionBits::reserved_b1`] / [`SectionBits::reserved_b5`]
 //!   (default `0b11`);
@@ -188,6 +193,12 @@ pub(crate) const SECTION_B1_PRIVATE_INDICATOR: u8 = 0x40;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SectionBits {
+    /// Byte 1 bit 7: `section_syntax_indicator`. Spec value `1` for every
+    /// long-form section (the default of [`psi`](Self::psi) /
+    /// [`dvb`](Self::dvb)), `0` for the short-form TDT/RST/DIT/TOT
+    /// ([`short_form`](Self::short_form)); a received section keeps whatever
+    /// it carried (parse tolerant, serialize preserves).
+    pub section_syntax_indicator: bool,
     /// Byte 1 bit 6: `private_indicator` (ISO/IEC 13818-1 §2.4.4.10, user
     /// definable) = `reserved_future_use` (ETSI EN 300 468 §5.1.1).
     pub private_indicator: bool,
@@ -207,6 +218,7 @@ impl SectionBits {
     #[must_use]
     pub const fn psi() -> Self {
         Self {
+            section_syntax_indicator: true,
             private_indicator: false,
             reserved_b1: RESERVED_2,
             reserved_b5: RESERVED_2,
@@ -218,10 +230,19 @@ impl SectionBits {
     #[must_use]
     pub const fn dvb() -> Self {
         Self {
+            section_syntax_indicator: true,
             private_indicator: true,
             reserved_b1: RESERVED_2,
             reserved_b5: RESERVED_2,
         }
+    }
+
+    /// The same bits with `section_syntax_indicator` = `0`: the short-form
+    /// sections (TDT, TOT, RST, DIT; EN 300 468 §5.2.5-§5.2.6, §7.2.2).
+    #[must_use]
+    pub const fn short_form(mut self) -> Self {
+        self.section_syntax_indicator = false;
+        self
     }
 
     /// Read the bits from byte 1 (and byte 5 for long-form sections; pass
@@ -229,17 +250,17 @@ impl SectionBits {
     #[must_use]
     pub(crate) fn parse(b1: u8, b5: Option<u8>) -> Self {
         Self {
+            section_syntax_indicator: b1 & SECTION_B1_SSI != 0,
             private_indicator: b1 & B1_PRIVATE_INDICATOR != 0,
             reserved_b1: (b1 >> B1_RESERVED_SHIFT) & RESERVED_2,
             reserved_b5: b5.map_or(RESERVED_2, |b| b >> B5_RESERVED_SHIFT),
         }
     }
 
-    /// Byte 1 flags (everything above `section_length[11:8]`) given the
-    /// `section_syntax_indicator`.
-    pub(crate) fn b1(&self, section_syntax_indicator: bool) -> crate::Result<u8> {
+    /// Byte 1 flags (everything above `section_length[11:8]`).
+    pub(crate) fn b1(&self) -> crate::Result<u8> {
         b1_of(
-            section_syntax_indicator,
+            self.section_syntax_indicator,
             self.private_indicator,
             self.reserved_b1,
         )
@@ -341,6 +362,26 @@ pub(crate) fn check_section_length(
 /// Annex A); one definition for every table module.
 pub(crate) const CRC_LEN: usize = 4;
 
+/// A trailing loop whose declared length is the last field before the CRC
+/// (NIT/BAT `transport_stream_loop_length`, AIT `application_loop_length`) must
+/// end exactly at the CRC. A shorter declared length leaves bytes that belong
+/// to no field, which a parse would accept and a serialize would silently
+/// drop; reject them (never a byte-identical round trip otherwise).
+pub(crate) fn check_loop_reaches_crc(
+    loop_end: usize,
+    crc_pos: usize,
+    what: &'static str,
+) -> crate::Result<()> {
+    if loop_end != crc_pos {
+        return Err(crate::error::Error::BufferTooShort {
+            need: crc_pos.saturating_sub(loop_end),
+            have: 0,
+            what,
+        });
+    }
+    Ok(())
+}
+
 /// Write the MPEG-2 CRC-32 trailer of a long-form section: the CRC of
 /// `buf[..crc_pos]` goes into `buf[crc_pos..crc_pos + 4]`
 /// (ISO/IEC 13818-1 Annex A / ETSI EN 300 468 §5.1.1). The one definition of
@@ -439,9 +480,7 @@ pub(crate) fn status_byte(running_status: u8, free_ca_mode: bool, dll_hi: u8) ->
 /// Assemble the extension-header flags byte (byte 5) of a long-form section:
 /// `reserved(2)='11' | version_number(5) | current_next_indicator(1)`.
 ///
-/// The 5-bit version is masked defensively so a constructed value wider than
-/// the field can never bleed into the reserved bits.
-#[must_use]
+/// A version wider than the 5-bit field is a [`FieldOverflow`], never wrapped.
 #[cfg(test)]
 pub(crate) fn version_byte(version_number: u8, current_next_indicator: bool) -> u8 {
     b5_of(RESERVED_2, version_number, current_next_indicator).expect("test version fits 5 bits")

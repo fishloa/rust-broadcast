@@ -111,6 +111,10 @@ impl RealTimeParameters {
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 #[non_exhaustive]
 pub struct MpeIfecSection<'a> {
+    /// `section_syntax_indicator` (byte 1 bit 7): `1` for a constructed value,
+    /// whatever the wire carried for a parsed one (parse tolerant, serialize
+    /// preserves).
+    pub section_syntax_indicator: bool,
     /// `private_indicator` bit from byte 1 (MPE-IFEC is a private section).
     pub private_indicator: bool,
     /// `burst_number` (byte 3) — the IFEC burst this section belongs to.
@@ -155,6 +159,7 @@ impl<'a> MpeIfecSection<'a> {
         ifec_data: &'a [u8],
     ) -> Self {
         Self {
+            section_syntax_indicator: true,
             private_indicator,
             burst_number,
             ifec_burst_size,
@@ -215,6 +220,7 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
         let ifec_data = &bytes[data_start..data_end];
 
         Ok(MpeIfecSection {
+            section_syntax_indicator: bytes[1] & super::SECTION_B1_SSI != 0,
             private_indicator,
             burst_number,
             ifec_burst_size,
@@ -250,7 +256,11 @@ impl Serialize for MpeIfecSection<'_> {
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | section_length[11:8](4).
-        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)?;
+        buf[1] = super::b1_of(
+            self.section_syntax_indicator,
+            self.private_indicator,
+            self.reserved_b1,
+        )?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.

@@ -23,14 +23,10 @@ const HEADER_LEN: usize = 3;
 pub struct StSection {
     /// Raw stuffing bytes — any value, no meaning (§5.2.8).
     pub payload: Vec<u8>,
-    /// `section_syntax_indicator` (byte 1 bit 7). EN 300 468 Table 11 /
-    /// §5.2.8: "This 1-bit field may take either the value 0b1 or 0b0" - the
-    /// one DVB-SI table where the indicator is NOT fixed by the spec, so it is
-    /// captured on parse and re-emitted verbatim. [`StSection::new`] uses
-    /// `false` (0b0, the value every other short-form DVB section carries).
-    pub section_syntax_indicator: bool,
-    /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
-    /// (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
+    /// Header bit fields: `section_syntax_indicator` (EN 300 468 Table 11 /
+    /// §5.2.8: "may take either the value 0b1 or 0b0", the one DVB-SI table
+    /// where it is not fixed; [`StSection::new`] uses 0b0), `reserved_future_use`
+    /// and `reserved(2)` of byte 1 (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
     /// is unused (short-form section).
     #[cfg_attr(feature = "serde", serde(skip))]
     pub bits: super::SectionBits,
@@ -43,8 +39,7 @@ impl StSection {
     pub fn new(payload: Vec<u8>) -> Self {
         Self {
             payload,
-            section_syntax_indicator: false,
-            bits: super::SectionBits::dvb(),
+            bits: super::SectionBits::dvb().short_form(),
         }
     }
 
@@ -98,7 +93,6 @@ impl<'a> Parse<'a> for StSection {
         let payload = &bytes[HEADER_LEN..HEADER_LEN + payload_len];
         Ok(Self {
             payload: payload.to_vec(),
-            section_syntax_indicator: bytes[1] & super::SECTION_B1_SSI != 0,
             bits: super::SectionBits::parse(bytes[1], None),
         })
     }
@@ -127,7 +121,7 @@ impl Serialize for StSection {
         // value 0b1 or 0b0", Table 11), reserved_future_use='1', reserved='11',
         // upper nibble of section_length. Default top nibble 0b0111 = 0x70,
         // matching DIT/RST/TDT/TOT.
-        buf[1] = self.bits.b1(self.section_syntax_indicator)?;
+        buf[1] = self.bits.b1()?;
         super::write_section_length(buf, self.payload.len())?;
 
         // Payload: stuffing bytes
@@ -198,7 +192,7 @@ mod tests {
         for (b1, ssi) in [(0x70u8, false), (0xF0, true)] {
             let bytes = [TABLE_ID, b1, 0x02, 0xFF, 0xFF];
             let st = StSection::parse(&bytes).unwrap();
-            assert_eq!(st.section_syntax_indicator, ssi);
+            assert_eq!(st.bits.section_syntax_indicator, ssi);
             let mut buf = vec![0u8; st.serialized_len()];
             st.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes);

@@ -10,6 +10,8 @@
 - `t2mi` (event dump and `--inner`) treats a closed stdout pipe (`| head`) as a clean stop: it returns immediately with success instead of continuing through the capture and failing on the final flush, and the event dump no longer panics inside `println!` (r11-W-DT-3, #1100).
 - Every subcommand now streams the capture in 1 MiB reads through the stateful TS resynchroniser instead of reading the whole file and then building a second full-size `Vec` of packets: peak memory on a 152 MB capture is 19 MB (r11-W-DT-4). A mid-file read error is reported and exits non-zero.
 
+- `t2mi --inner` without `--plp` on a non-seekable input (a pipe via `/dev/stdin`, a FIFO, process substitution) no longer writes zero packets and exits 0: the PLP-discovery pass added by #1034 consumed the stream before the real pass. A non-regular input is now recovered in a single pass (output buffered in memory, written only if exactly one PLP was seen; several PLPs still exit non-zero listing them). Regular files keep the constant-memory two-pass scan.
+
 ### Changed
 
 - **BREAKING (#1034):** `t2mi --inner` without `--plp` now scans the capture first and, when it carries more than one PLP, exits non-zero listing the PLPs and asking for `--plp N` — each PLP is an independent transport stream, and the old behaviour interleaved them into one garbled mux on stdout. A single-PLP capture needs no `--plp`.

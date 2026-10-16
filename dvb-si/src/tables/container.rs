@@ -61,6 +61,10 @@ const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 #[non_exhaustive]
 pub struct ContainerSection<'a> {
+    /// `section_syntax_indicator` (byte 1 bit 7): `1` for a constructed value,
+    /// whatever the wire carried for a parsed one (parse tolerant, serialize
+    /// preserves).
+    pub section_syntax_indicator: bool,
     /// `private_indicator` bit from byte 1 (this is a private section).
     pub private_indicator: bool,
     /// 16-bit `container_id` (carried in the table_id_extension slot, bytes 3-4).
@@ -97,6 +101,7 @@ impl<'a> ContainerSection<'a> {
         container_data: &'a [u8],
     ) -> Self {
         Self {
+            section_syntax_indicator: true,
             private_indicator,
             container_id,
             version_number,
@@ -152,6 +157,7 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
         let container_data = &bytes[data_start..data_end];
 
         Ok(ContainerSection {
+            section_syntax_indicator: bytes[1] & super::SECTION_B1_SSI != 0,
             private_indicator,
             container_id,
             version_number,
@@ -185,7 +191,11 @@ impl Serialize for ContainerSection<'_> {
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | private_section_length[11:8](4).
-        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)?;
+        buf[1] = super::b1_of(
+            self.section_syntax_indicator,
+            self.private_indicator,
+            self.reserved_b1,
+        )?;
         // Byte 2: private_section_length[7:0].
         super::write_section_length(buf, len - HEADER_LEN)?;
 
