@@ -96,6 +96,11 @@ variant = "AssociationTag"
 spec = "association_tag_descriptor"
 
 [[entry]]
+value = 0x15
+variant = "DeferredAssociationTags"
+spec = "deferred_association_tags_descriptor"
+
+[[entry]]
 value = 0x1B
 variant = "Mpeg4Video"
 spec = "MPEG-4_video_descriptor"

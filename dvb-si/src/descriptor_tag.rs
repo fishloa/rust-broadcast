@@ -39,6 +39,7 @@ pub enum DescriptorTag {
     Ibp                        = 0x12,
     CarouselIdentifier         = 0x13,
     AssociationTag             = 0x14,
+    DeferredAssociationTags    = 0x15,
     Mpeg4Video                 = 0x1B,
     Mpeg4Audio                 = 0x1C,
     Iod                        = 0x1D,

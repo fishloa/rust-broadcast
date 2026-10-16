@@ -88,7 +88,8 @@ descriptor_tag	0x11	STD_descriptor	ITU-T H.222.0 (08/2023)	2.6.32	114
 descriptor_tag	0x12	IBP_descriptor	ITU-T H.222.0 (08/2023)	2.6.34	114
 descriptor_tag	0x13	carousel_identifier_descriptor	ISO/IEC 13818-6
 descriptor_tag	0x14	association_tag_descriptor	ISO/IEC 13818-6
-descriptor_tag	0x15-0x1A	other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored, so not itemised)	ISO/IEC 13818-6
+descriptor_tag	0x15	deferred_association_tags_descriptor	ETSI EN 301 192 V1.7.1	11.3.3	73
+descriptor_tag	0x16-0x1A	other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored and its layouts for tags 0x16-0x1A appear in no vendored spec: 0x17-0x1A are the stream-event / NPT descriptors, and TS 102 809 B.2.4.2 says NPT is obsolete and gives no layout)	ISO/IEC 13818-6
 descriptor_tag	0x1B	MPEG-4_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.36	115
 descriptor_tag	0x1C	MPEG-4_audio_descriptor	ITU-T H.222.0 (08/2023)	2.6.38	115
 descriptor_tag	0x1D	IOD_descriptor	ITU-T H.222.0 (08/2023)	2.6.40	117
