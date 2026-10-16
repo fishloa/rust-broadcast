@@ -11,6 +11,47 @@ versioning.
 
 ### Changed (BREAKING)
 
+- **BREAKING (adversarial review `review/ci-cam-crypto`): parse -> serialize is
+  byte-exact for every object, or the parse is an error.** The r10-O-1 "reject
+  trailing bytes" pass had missed fixed-layout APDUs and every variable-layout
+  object silently dropped whatever followed its last counted field, so the
+  byte-exact claim above was not true for them. Now (a) every fixed or
+  count-delimited layout rejects a longer `length_field`
+  (`Error::InvalidObject`, "trailing bytes after the fixed body"): `menu_answ`,
+  `keypress`, `keypad_control` (commands without a `key_code` list),
+  `display_message`, `scene_end_mark`, `scene_done_message`, `scene_control`,
+  `display_reply`, `clear_replace`, `application_info` (EN 50221 Table 21 and TS
+  101 699 §5 define nothing after `menu_string`, so there is no later-version
+  extension to preserve), `open_session_request` (`length_field` = 4), the CI
+  extension / CI+ objects (`RequestStart`, `cp_query`, `ServiceListChanged`,
+  `ServiceListVersionAck`, `ServiceListAck`, `ServiceDescReq/Ack`, `GetServiceReq`,
+  every `StatusItem` object, `EITSectionAck`, `FileSystemOffer`, `CICAM_player_*`
+  requests, `comms_IP_config_reply`, `PID_select_req/reply`, `sd_info_reply`,
+  `sd_start`, `sd_update`, `tune_ip_req`, `tuner_status_reply`); (b) reserved and
+  unused bits a peer sent are kept in typed fields and written back instead of
+  being cleared or rewritten to `1`: new public `reserved` fields (type
+  `reserved::Reserved<BITS, ONES>`, aliases `ReservedOnes` / `ReservedZero`,
+  default = the spec fill, never part of serde output) on `CaPmt`
+  (`reserved_version`, `reserved_program_info`), `CaPmtStream`, `CaPmtReply*`,
+  `MsCaPmt*`, `Replace`, `Enq`, `SceneEndMark`, `SceneDoneMessage`,
+  `SceneControl`, `PixelDepth`, `FileAck`, `ActivationStateChangeRequest`,
+  `ModuleIdSend`, `ModuleIdCommand`, `ServiceDescAck`, `GetServiceAck`,
+  `EitSectionReq/Ack`, `CcPinReply`, `CommsInfoReply`, `CommsIpConfigReply`,
+  `PlayerStartReq`, `PlayerStatusError`, `PlayerAssetEnd`, `ComponentType`,
+  `PidSelectRequest/Entry/Reply`, `SampleTrack`, `SdStart`, `SdUpdate`,
+  `TuneTripletReq`, `TuneLcnReq`, `TuneIpReq`, `TunerStatusDsd` (a hand-built
+  struct literal must now name them: `Default::default()` is the spec value).
+  Guard: `roundtrip_property` drives every dispatch enum (`AnyApdu`, the 18
+  resource enums, the two hand-written dispatchers in both host-control modes)
+  and the SPDUs with 40 000 pseudo-random bodies per tag; any accepted input
+  that does not re-serialize byte-for-byte fails the build.
+- **BREAKING:** `length::encode_with` (and so every `try_to_bytes`) rejects a
+  `LengthForm::Long` whose octet count is the *minimal* one for the value (`81 80`
+  for 128, `82 01 00` for 256): the bytes equal `LengthForm::Minimal`, so `parse`
+  can only return `Minimal` and `serialize -> parse` changed the value. Parsed
+  objects never carry such a form; non-minimal real-data forms (`82 00 09`,
+  `83 00 00 09`, ...) still round-trip.
+
 - **BREAKING (r10-W-4, #1091): `length_field` coding is preserved.** A CAM may code a length in a longer form than necessary (`82 00 09` for the value 9, captured raw on hardware, dvb-ci-runtime #337); parse accepted these but every object re-serialized the minimal form, changing real traffic bytes. New typed `length::LengthForm` (`Minimal` = default, `Long { octets }` for a non-minimal long form), captured by `parse` and re-emitted by `serialize`, so parse -> serialize is byte-exact. Every APDU object (the EN 50221, CI-extension and CI Plus structs, `AnyApdu::Unknown`), every SPDU (`OpenSessionRequest`, `OpenSessionResponse`, `CreateSession`, `CreateSessionResponse`, `CloseSessionRequest`, `CloseSessionResponse`, `SessionNumber`) and every TPDU object (`TcObject`, `NewTc`, `TcError`, `CommandTpdu`, `ResponseTpdu` plus its `status_length_form`) gains a `length_form: LengthForm` field (not serialized by serde); the header-only objects (`ApplicationInfoEnq`, `EnterMenu`, `ProfileEnq`, ...) are no longer unit structs (use `Default::default()` / `new`-style `{ length_form: Default::default() }`). `AnyApdu::Unknown` gains `length_form`. `length::decode_form`, `encode_with` and `encoded_len_with` are the codec entry points; `decode` accepts up to 4 length octets (value still capped at 0xFFFF); the indefinite form, more than 4 octets, a value above 0xFFFF and a truncated field are still rejected. New `SessionNumber::header_len()`: the APDU body of a `session_number` SPDU starts at that offset (`HEADER_LEN` is only the minimal-form length). Pinned per form (`81 NN`, `82 00 NN`, `83 00 00 NN`, `84 00 00 00 NN`) over every APDU, SPDU and TPDU, and the #337 capture round-trips byte-exactly. Not verified against real CAM hardware beyond that capture.
 
 - **BREAKING (#1159, typed PIDs):** every 13-bit PID field is `mpeg_ts::pid::Pid` instead of `u16`: `CaPmtStream::elementary_pid`, `CaPmtReplyStream::elementary_pid`, `Replace::{replaced_pid,replacement_pid}`, the CI+ `MsCaPmt*`/`PidSelect*`/`SampleTrack::track_pid`/`CommsInfoReply::input_delivery_pid` fields and `multistream::NULL_PID`. The serialize-time "PID exceeds 13-bit range" checks are gone (unrepresentable); the former `oversized_*_rejected` tests now assert `Pid::try_new` refuses the value. New dependency: `mpeg-ts`.
