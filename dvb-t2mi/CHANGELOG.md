@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- **BREAKING:** individual-addressing function tags 0x00-0x06 (TS 101 191 §6.1 Tables 7-13, which TS 102 773 §5.2.8.1 defers to) are now typed instead of `FunctionBody::Raw`: new variants `FunctionBody::{TimeOffset, FrequencyOffset, Power, PrivateData, CellId, Enable, Bandwidth}` over `TimeOffsetBody`, `FrequencyOffsetBody` (24-bit signed), `PowerBody`, `PrivateDataBody`, `CellIdBody`, `EnableBody` and `BandwidthBody` (all `#[non_exhaustive]` with `new()`). Callers that matched `Raw` for these tags must match the typed variants; a fixed-size tag whose length does not fit still falls back to `Raw`. Every table was verified on the rendered PDF page; see `docs/tables/ts_101_191/`.
+- **BREAKING (fix):** `function_length` is the length of the whole `function()` including its 2-byte tag+length header (TS 102 773 §5.2.8.2.0), not just the body. It was parsed/serialized as the body length, which made the real Colombia capture's 0x21 packets fail to parse and mis-framed every typed T2 function (0x10-0x17) on the wire. A `function_length` below 2 is rejected. Pinned by a byte-exact round trip over the capture's 11 real individual-addressing packets.
+- Spec note recorded, not silently corrected: TS 101 191 prose calls `ch_bandwidth` an "8-bit field" but Table 13 gives it 7 bits; the table width is implemented.
+
 ### Documentation
 - README rewritten to the workspace crate-README standard: what the crate does and does not do, a standards table (edition, scope, status), feature flags, a doctested quick start, the implemented API surface, design notes and related crates. Where the crate has a library target the crate-root docs are now `include_str!("../README.md")`, so docs.rs and crates.io show the same text.
 

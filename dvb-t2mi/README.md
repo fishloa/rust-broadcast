@@ -31,6 +31,7 @@ are skipped, never mis-decoded).
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
 | ETSI TS 102 773, *DVB-T2 Modulator Interface (T2-MI)* | V1.4.1 (vendored; verified) | §5.1 packet header; §5.2.1 to §5.2.12 all 12 packet types (BBFrame 0x00, aux I/Q 0x01, arbitrary cells 0x02, L1-current 0x10, L1-future 0x11, P2 bias 0x12, timestamp 0x20, individual addressing 0x21, FEF null 0x30, FEF I/Q 0x31, FEF composite 0x32, FEF sub-part 0x33); Annex A CRC-32 | Full | Unknown/reserved `packet_type` values fall through to `AnyPayload::Unknown` with bytes preserved. |
+| ETSI TS 101 191, *DVB mega-frame for SFN synchronization* | V1.4.1 (vendored; verified) | §6.1 individual addressing functions 0x00-0x06 (time offset, frequency offset, power, private data, cell id, enable, bandwidth), the function bodies TS 102 773 §5.2.8.1 defers to | Full (Tables 7-13); the MIP/mega-frame parts are out of scope | `function_length` counts the whole `function()` incl. its 2-byte header (TS 102 773 §5.2.8.2.0, confirmed on a real capture); `ch_bandwidth` is 7 bits per Table 13 despite "8-bit" prose. |
 | ETSI EN 302 755, *DVB-T2 frame structure, channel coding and modulation* | V1.4.1 (vendored; verified) | §7.2 L1-pre and L1-post signalling structures and their coded-value enums | Full for L1-pre/L1-post parsing | Used by `L1CurrentPayload`/`L1FuturePayload::l1_pre()` / `l1_post()`. |
 
 ## Feature flags

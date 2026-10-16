@@ -12,13 +12,20 @@
 //! transmitter_loop() = for each transmitter:
 //!   transmitter_identifier(16) · function_loop_length(8) · function()…
 //!
-//! function() = function_tag(8) · function_length(8) · function_body(function_length bytes)
+//! function() = function_tag(8) · function_length(8) · function_body(function_length - 2 bytes)
 //! ```
 //!
 //! `individual_addressing_length` counts the bytes of the transmitter loop
 //! (everything after the 2-byte header).  `function_loop_length` counts the
 //! bytes of the function loop within one transmitter entry (tag + length +
-//! body of every function).  `function_length` counts only the body bytes.
+//! body of every function).  `function_length` counts the **whole**
+//! `function()` including its 2-byte tag+length header (TS 102 773 §5.2.8.2.0:
+//! "including the function_tag, function_length and function_body() fields"),
+//! so the body is `function_length - 2` bytes; the real Colombia capture
+//! (`00 04 ff 9c` = a 2-byte time offset) confirms this.
+//!
+//! Tags 0x00–0x06 are the TS 101 191 §6.1 functions TS 102 773 §5.2.8.1
+//! defers to; tags 0x10–0x17 are the T2-specific functions of §5.2.8.2.
 //!
 //! # RFU policy (individual-addressing exception)
 //!
@@ -226,8 +233,196 @@ pub struct FrequencyBody {
     pub rfu: u8,
 }
 
+// ── Existing TS 101 191 §6.1 function bodies (Tables 7–13) ─────────────────
+//
+// Referenced by TS 102 773 §5.2.8.1 / Table 5.  Transcribed and verified on
+// the rendered pages in `docs/tables/ts_101_191/`.
+
+/// Transmitter time offset function body — ETSI TS 101 191 §6.1.1, Table 7
+/// (function_tag 0x00).
+///
+/// Layout (2 bytes): `time_offset` (16, `tcimsbf`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct TimeOffsetBody {
+    /// Deliberate time offset of the mega-frames, unit 100 ns
+    /// (range -32 768..=32 767).
+    pub time_offset: i16,
+}
+
+impl TimeOffsetBody {
+    /// Build a body from its `time_offset` (units of 100 ns).
+    #[must_use]
+    pub fn new(time_offset: i16) -> Self {
+        Self { time_offset }
+    }
+}
+
+/// Transmitter frequency offset function body — ETSI TS 101 191 §6.1.2,
+/// Table 8 (function_tag 0x01).
+///
+/// Layout (3 bytes): `frequency_offset` (24, `tcimsbf`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct FrequencyOffsetBody {
+    /// Deliberate frequency offset in Hz, a 24-bit two's-complement value
+    /// (range -8 388 608..=8 388 607).
+    pub frequency_offset: i32,
+}
+
+impl FrequencyOffsetBody {
+    /// Build a body from its `frequency_offset` (Hz, 24-bit signed range).
+    #[must_use]
+    pub fn new(frequency_offset: i32) -> Self {
+        Self { frequency_offset }
+    }
+}
+
+/// Transmitter power function body — ETSI TS 101 191 §6.1.3, Table 9
+/// (function_tag 0x02).
+///
+/// Layout (2 bytes): `tx_power` (16, `uimsbf`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct PowerBody {
+    /// Transmitter ERP, unit 0,1 dB.
+    pub tx_power: u16,
+}
+
+impl PowerBody {
+    /// Build a body from its `tx_power` (units of 0,1 dB).
+    #[must_use]
+    pub fn new(tx_power: u16) -> Self {
+        Self { tx_power }
+    }
+}
+
+/// Private data function body — ETSI TS 101 191 §6.1.4, Table 10
+/// (function_tag 0x03).
+///
+/// Layout (N bytes): `private_data` (8 × N, `bsblf`).  The spec defines no
+/// structure inside `private_data` ("can be used for proprietary functions"),
+/// so it is the one field here that is opaque by specification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct PrivateDataBody<'a> {
+    /// Proprietary bytes, borrowed from the input.
+    pub private_data: &'a [u8],
+}
+
+impl<'a> PrivateDataBody<'a> {
+    /// Build a body from its proprietary bytes.
+    #[must_use]
+    pub fn new(private_data: &'a [u8]) -> Self {
+        Self { private_data }
+    }
+}
+
+/// Cell id function body — ETSI TS 101 191 §6.1.5, Table 11
+/// (function_tag 0x04).
+///
+/// Layout (3 bytes):
+/// - bytes 0-1: `cell_id` (16)
+/// - byte 2 `[7]`: `wait_for_enable_flag` (1)
+/// - byte 2 `[6:0]`: `reserved_future_use` (7) — preserved per the
+///   individual-addressing RFU exception
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct CellIdBody {
+    /// Cell identifier (EN 300 468 `cell_id`).
+    pub cell_id: u16,
+    /// `false`: insert the cell_id immediately; `true`: insert it after the
+    /// corresponding enable function has been received.
+    pub wait_for_enable_flag: bool,
+    /// `reserved_future_use` `[6:0]` (7 bits) — preserved verbatim.
+    pub rfu: u8,
+}
+
+impl CellIdBody {
+    /// Build a body with zeroed RFU bits.
+    #[must_use]
+    pub fn new(cell_id: u16, wait_for_enable_flag: bool) -> Self {
+        Self {
+            cell_id,
+            wait_for_enable_flag,
+            rfu: 0,
+        }
+    }
+}
+
+/// Enable function body — ETSI TS 101 191 §6.1.6, Table 12
+/// (function_tag 0x05).
+///
+/// Layout (N bytes): `enabled_function_tag` (8) × N.  Each value is a
+/// `function_tag` per Table 6 (see [`AddressingFunctionTag`]); values outside
+/// that table are kept as-is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct EnableBody {
+    /// The `function_tag` values being enabled, in wire order.
+    pub enabled_function_tags: Vec<u8>,
+}
+
+impl EnableBody {
+    /// Build a body from the list of enabled `function_tag` values.
+    #[must_use]
+    pub fn new(enabled_function_tags: Vec<u8>) -> Self {
+        Self {
+            enabled_function_tags,
+        }
+    }
+}
+
+/// Bandwidth function body — ETSI TS 101 191 §6.1.7, Table 13
+/// (function_tag 0x06; "not applicable" to DVB-T2 per TS 102 773 Table 5).
+///
+/// Layout (1 byte):
+/// - `[7:1]`: `ch_bandwidth` (7) — Table 14: 0 = 5 MHz, 1..=127 reserved
+/// - `[0]`: `wait_for_enable_flag` (1)
+///
+/// The spec prose calls `ch_bandwidth` an "8-bit field" while Table 13 gives
+/// it 7 bits; the table width is implemented (see
+/// `docs/tables/ts_101_191/`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct BandwidthBody {
+    /// `ch_bandwidth` `[7:1]` (7 bits); see [`CH_BANDWIDTH_5_MHZ`].
+    pub ch_bandwidth: u8,
+    /// `false`: implement the bandwidth immediately; `true`: after the
+    /// corresponding enable function.
+    pub wait_for_enable_flag: bool,
+}
+
+/// `ch_bandwidth` value 0 = 5 MHz (TS 101 191 Table 14).
+pub const CH_BANDWIDTH_5_MHZ: u8 = 0;
+
+impl BandwidthBody {
+    /// Build a body from its two fields.
+    #[must_use]
+    pub fn new(ch_bandwidth: u8, wait_for_enable_flag: bool) -> Self {
+        Self {
+            ch_bandwidth,
+            wait_for_enable_flag,
+        }
+    }
+}
+
 // ── Body size constants ────────────────────────────────────────────────────
 
+const TIME_OFFSET_BODY_LEN: usize = 2;
+const FREQUENCY_OFFSET_BODY_LEN: usize = 3;
+const POWER_BODY_LEN: usize = 2;
+const CELL_ID_BODY_LEN: usize = 3;
+const BANDWIDTH_BODY_LEN: usize = 1;
+const FREQUENCY_OFFSET_MIN: i32 = -(1 << 23);
+const FREQUENCY_OFFSET_MAX: i32 = (1 << 23) - 1;
 const ACE_PAPR_BODY_LEN: usize = 2;
 const MISO_GROUP_BODY_LEN: usize = 1;
 const TR_PAPR_BODY_LEN: usize = 5;
@@ -241,20 +436,31 @@ const FREQUENCY_BODY_LEN: usize = 5;
 /// Parsed function body — typed for known tags, raw for unknown/reserved or
 /// length-mismatched entries.
 ///
-/// Typed variants correspond to the function bodies whose wire layouts are
-/// defined in ETSI TS 102 773 §5.2.8.2 Tables 7–12b.  [`FunctionBody::Raw`]
-/// is the escape for:
-/// - tags not in [`AddressingFunctionTag`] (reserved / private),
-/// - tags in [`AddressingFunctionTag`] whose body layout is not yet typed here
-///   (0x00–0x06: defined by ETSI TS 101 191 V1.4.1 §6.1, Table 6 tag values and
-///   Tables 7–13 per-function syntax; that spec is vendored and not yet
-///   implemented in this crate), or
-/// - a known tag whose `function_length` doesn't match the expected body size
-///   (future extension).
+/// Typed variants cover every function whose body is defined by the spec: tags
+/// 0x00–0x06 per ETSI TS 101 191 §6.1 Tables 7–13 (which TS 102 773 §5.2.8.1
+/// defers to) and tags 0x10–0x17 per TS 102 773 §5.2.8.2 Tables 7–12b.
+/// [`FunctionBody::Raw`] is the escape for:
+/// - tags not in [`AddressingFunctionTag`] (reserved / future use), or
+/// - a known fixed-size tag whose `function_length` doesn't match the
+///   expected body size (future extension).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum FunctionBody<'a> {
+    /// Transmitter time offset (tag 0x00) — TS 101 191 §6.1.1, Table 7.
+    TimeOffset(TimeOffsetBody),
+    /// Transmitter frequency offset (tag 0x01) — TS 101 191 §6.1.2, Table 8.
+    FrequencyOffset(FrequencyOffsetBody),
+    /// Transmitter power (tag 0x02) — TS 101 191 §6.1.3, Table 9.
+    Power(PowerBody),
+    /// Private data (tag 0x03) — TS 101 191 §6.1.4, Table 10.
+    PrivateData(PrivateDataBody<'a>),
+    /// Cell id (tag 0x04) — TS 101 191 §6.1.5, Table 11.
+    CellId(CellIdBody),
+    /// Enable (tag 0x05) — TS 101 191 §6.1.6, Table 12.
+    Enable(EnableBody),
+    /// Bandwidth (tag 0x06) — TS 101 191 §6.1.7, Table 13.
+    Bandwidth(BandwidthBody),
     /// ACE-PAPR (tag 0x10) — §5.2.8.2.1, Table 7.
     AcePapr(AcePaprBody),
     /// MISO group (tag 0x11) — §5.2.8.2.2, Table 8.
@@ -271,7 +477,7 @@ pub enum FunctionBody<'a> {
     Frequency(FrequencyBody),
     /// Unknown/reserved tag or known tag with unexpected `function_length`.
     /// `body` is the raw function body bytes (after tag + length, exactly
-    /// `function_length` bytes).
+    /// `function_length - 2` bytes).
     Raw(&'a [u8]),
 }
 
@@ -280,6 +486,13 @@ impl FunctionBody<'_> {
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
+            Self::TimeOffset(_) => "Transmitter time offset",
+            Self::FrequencyOffset(_) => "Transmitter frequency offset",
+            Self::Power(_) => "Transmitter power",
+            Self::PrivateData(_) => "Private data",
+            Self::CellId(_) => "Cell ID",
+            Self::Enable(_) => "Enable",
+            Self::Bandwidth(_) => "Bandwidth",
             Self::AcePapr(_) => "ACE-PAPR",
             Self::MisoGroup(_) => "MISO group",
             Self::TrPapr(_) => "TR-PAPR",
@@ -360,6 +573,73 @@ const TX_HEADER_LEN: usize = 3;
 const FUNC_HEADER_LEN: usize = 2;
 
 // ── Private body parse helpers ──────────────────────────────────────────────
+
+fn parse_time_offset(body: &[u8]) -> Result<TimeOffsetBody, crate::Error> {
+    let (b, _) =
+        body.split_first_chunk::<TIME_OFFSET_BODY_LEN>()
+            .ok_or(crate::Error::BufferTooShort {
+                need: TIME_OFFSET_BODY_LEN,
+                have: body.len(),
+                what: "time offset function body",
+            })?;
+    Ok(TimeOffsetBody {
+        time_offset: i16::from_be_bytes(*b),
+    })
+}
+
+fn parse_frequency_offset(body: &[u8]) -> Result<FrequencyOffsetBody, crate::Error> {
+    let (b, _) = body
+        .split_first_chunk::<FREQUENCY_OFFSET_BODY_LEN>()
+        .ok_or(crate::Error::BufferTooShort {
+            need: FREQUENCY_OFFSET_BODY_LEN,
+            have: body.len(),
+            what: "frequency offset function body",
+        })?;
+    // 24-bit two's complement: place in the top of an i32, then arithmetic-shift back.
+    Ok(FrequencyOffsetBody {
+        frequency_offset: i32::from_be_bytes([b[0], b[1], b[2], 0]) >> 8,
+    })
+}
+
+fn parse_power(body: &[u8]) -> Result<PowerBody, crate::Error> {
+    let (b, _) =
+        body.split_first_chunk::<POWER_BODY_LEN>()
+            .ok_or(crate::Error::BufferTooShort {
+                need: POWER_BODY_LEN,
+                have: body.len(),
+                what: "power function body",
+            })?;
+    Ok(PowerBody {
+        tx_power: u16::from_be_bytes(*b),
+    })
+}
+
+fn parse_cell_id(body: &[u8]) -> Result<CellIdBody, crate::Error> {
+    let (b, _) =
+        body.split_first_chunk::<CELL_ID_BODY_LEN>()
+            .ok_or(crate::Error::BufferTooShort {
+                need: CELL_ID_BODY_LEN,
+                have: body.len(),
+                what: "cell id function body",
+            })?;
+    Ok(CellIdBody {
+        cell_id: u16::from_be_bytes([b[0], b[1]]),
+        wait_for_enable_flag: b[2] & 0x80 != 0,
+        rfu: b[2] & 0x7F,
+    })
+}
+
+fn parse_bandwidth(body: &[u8]) -> Result<BandwidthBody, crate::Error> {
+    let b = *body.first().ok_or(crate::Error::BufferTooShort {
+        need: BANDWIDTH_BODY_LEN,
+        have: body.len(),
+        what: "bandwidth function body",
+    })?;
+    Ok(BandwidthBody {
+        ch_bandwidth: b >> 1,
+        wait_for_enable_flag: b & 0x01 != 0,
+    })
+}
 
 fn parse_ace_papr(body: &[u8]) -> Result<AcePaprBody, crate::Error> {
     if body.len() < ACE_PAPR_BODY_LEN {
@@ -481,6 +761,34 @@ fn try_parse_typed_body(
     body_bytes: &[u8],
 ) -> Option<Result<FunctionBody<'_>, crate::Error>> {
     match tag {
+        t if t == AddressingFunctionTag::TimeOffset as u8
+            && body_bytes.len() == TIME_OFFSET_BODY_LEN =>
+        {
+            Some(parse_time_offset(body_bytes).map(FunctionBody::TimeOffset))
+        }
+        t if t == AddressingFunctionTag::FrequencyOffset as u8
+            && body_bytes.len() == FREQUENCY_OFFSET_BODY_LEN =>
+        {
+            Some(parse_frequency_offset(body_bytes).map(FunctionBody::FrequencyOffset))
+        }
+        t if t == AddressingFunctionTag::Power as u8 && body_bytes.len() == POWER_BODY_LEN => {
+            Some(parse_power(body_bytes).map(FunctionBody::Power))
+        }
+        // private_data and enabled_function_tag are N-byte loops: any length.
+        t if t == AddressingFunctionTag::PrivateData as u8 => Some(Ok(FunctionBody::PrivateData(
+            PrivateDataBody::new(body_bytes),
+        ))),
+        t if t == AddressingFunctionTag::CellId as u8 && body_bytes.len() == CELL_ID_BODY_LEN => {
+            Some(parse_cell_id(body_bytes).map(FunctionBody::CellId))
+        }
+        t if t == AddressingFunctionTag::Enable as u8 => Some(Ok(FunctionBody::Enable(
+            EnableBody::new(body_bytes.to_vec()),
+        ))),
+        t if t == AddressingFunctionTag::Bandwidth as u8
+            && body_bytes.len() == BANDWIDTH_BODY_LEN =>
+        {
+            Some(parse_bandwidth(body_bytes).map(FunctionBody::Bandwidth))
+        }
         t if t == AddressingFunctionTag::AcePapr as u8 && body_bytes.len() == ACE_PAPR_BODY_LEN => {
             Some(parse_ace_papr(body_bytes).map(FunctionBody::AcePapr))
         }
@@ -545,6 +853,46 @@ const fn range_reason(bits: u32) -> &'static str {
         24 => "Must be in range 0..=16777215 (24-bit field)",
         _ => "value exceeds field width",
     }
+}
+
+fn serialize_time_offset(body: &TimeOffsetBody, buf: &mut [u8]) {
+    buf[..TIME_OFFSET_BODY_LEN].copy_from_slice(&body.time_offset.to_be_bytes());
+}
+
+fn serialize_frequency_offset(
+    body: &FrequencyOffsetBody,
+    buf: &mut [u8],
+) -> Result<(), crate::error::Error> {
+    if !(FREQUENCY_OFFSET_MIN..=FREQUENCY_OFFSET_MAX).contains(&body.frequency_offset) {
+        return Err(crate::Error::ReservedBitsViolation {
+            field: "frequency_offset",
+            reason: "Must be in range -8388608..=8388607 (24-bit signed field)",
+        });
+    }
+    let be = body.frequency_offset.to_be_bytes();
+    buf[..FREQUENCY_OFFSET_BODY_LEN].copy_from_slice(&be[1..]);
+    Ok(())
+}
+
+fn serialize_power(body: &PowerBody, buf: &mut [u8]) {
+    buf[..POWER_BODY_LEN].copy_from_slice(&body.tx_power.to_be_bytes());
+}
+
+fn serialize_cell_id(body: &CellIdBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
+    check_bits(u64::from(body.rfu), 7, "cell_id reserved_future_use")?;
+    buf[..2].copy_from_slice(&body.cell_id.to_be_bytes());
+    buf[2] = if body.wait_for_enable_flag {
+        0x80
+    } else {
+        0x00
+    } | body.rfu;
+    Ok(())
+}
+
+fn serialize_bandwidth(body: &BandwidthBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
+    check_bits(u64::from(body.ch_bandwidth), 7, "ch_bandwidth")?;
+    buf[0] = body.ch_bandwidth << 1 | u8::from(body.wait_for_enable_flag);
+    Ok(())
 }
 
 fn serialize_ace_papr(body: &AcePaprBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
@@ -639,6 +987,13 @@ fn serialize_frequency(body: &FrequencyBody, buf: &mut [u8]) -> Result<(), crate
 
 fn body_serialized_len(body: &FunctionBody<'_>) -> usize {
     match body {
+        FunctionBody::TimeOffset(_) => TIME_OFFSET_BODY_LEN,
+        FunctionBody::FrequencyOffset(_) => FREQUENCY_OFFSET_BODY_LEN,
+        FunctionBody::Power(_) => POWER_BODY_LEN,
+        FunctionBody::PrivateData(b) => b.private_data.len(),
+        FunctionBody::CellId(_) => CELL_ID_BODY_LEN,
+        FunctionBody::Enable(b) => b.enabled_function_tags.len(),
+        FunctionBody::Bandwidth(_) => BANDWIDTH_BODY_LEN,
         FunctionBody::AcePapr(_) => ACE_PAPR_BODY_LEN,
         FunctionBody::MisoGroup(_) => MISO_GROUP_BODY_LEN,
         FunctionBody::TrPapr(_) => TR_PAPR_BODY_LEN,
@@ -655,6 +1010,36 @@ fn serialize_body_into(
     buf: &mut [u8],
 ) -> Result<usize, crate::error::Error> {
     match body {
+        FunctionBody::TimeOffset(b) => {
+            serialize_time_offset(b, buf);
+            Ok(TIME_OFFSET_BODY_LEN)
+        }
+        FunctionBody::FrequencyOffset(b) => {
+            serialize_frequency_offset(b, buf)?;
+            Ok(FREQUENCY_OFFSET_BODY_LEN)
+        }
+        FunctionBody::Power(b) => {
+            serialize_power(b, buf);
+            Ok(POWER_BODY_LEN)
+        }
+        FunctionBody::PrivateData(b) => {
+            let n = b.private_data.len();
+            buf[..n].copy_from_slice(b.private_data);
+            Ok(n)
+        }
+        FunctionBody::CellId(b) => {
+            serialize_cell_id(b, buf)?;
+            Ok(CELL_ID_BODY_LEN)
+        }
+        FunctionBody::Enable(b) => {
+            let n = b.enabled_function_tags.len();
+            buf[..n].copy_from_slice(&b.enabled_function_tags);
+            Ok(n)
+        }
+        FunctionBody::Bandwidth(b) => {
+            serialize_bandwidth(b, buf)?;
+            Ok(BANDWIDTH_BODY_LEN)
+        }
         FunctionBody::AcePapr(b) => {
             serialize_ace_papr(b, buf)?;
             Ok(ACE_PAPR_BODY_LEN)
@@ -776,10 +1161,19 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
                 }
 
                 let tag = data[pos];
+                // `function_length` counts the whole function() including the
+                // 2-byte tag+length header (TS 102 773 §5.2.8.2.0, confirmed by
+                // the real capture), so the body is `function_length - 2`.
                 let function_length = data[pos + 1] as usize;
+                let body_len = function_length.checked_sub(FUNC_HEADER_LEN).ok_or(
+                    crate::Error::ReservedBitsViolation {
+                        field: "function_length",
+                        reason: "function_length must include the 2-byte tag+length header",
+                    },
+                )?;
                 pos += FUNC_HEADER_LEN;
 
-                let body_end = pos + function_length;
+                let body_end = pos + body_len;
                 if body_end > func_end {
                     return Err(crate::Error::BufferTooShort {
                         need: body_end,
@@ -872,15 +1266,16 @@ impl Serialize for IndividualAddressingPayload<'_> {
 
             for func in &tx.functions {
                 let body_len = body_serialized_len(&func.body);
-                if body_len > u8::MAX as usize {
-                    return Err(crate::Error::ReservedBitsViolation {
-                        field: "function_length",
-                        reason: "function body exceeds 255 bytes (8-bit length field)",
-                    });
-                }
+                // function_length counts the whole function() incl. its header.
+                let function_length =
+                    broadcast_common::len::fit_u8(FUNC_HEADER_LEN + body_len, "function_length")
+                        .map_err(|_| crate::Error::ReservedBitsViolation {
+                            field: "function_length",
+                            reason: "function exceeds 255 bytes (8-bit length field)",
+                        })?;
 
                 buf[pos] = func.tag;
-                buf[pos + 1] = body_len as u8;
+                buf[pos + 1] = function_length;
                 pos += FUNC_HEADER_LEN;
 
                 let written = serialize_body_into(&func.body, &mut buf[pos..])?;
@@ -989,7 +1384,7 @@ mod tests {
             0x05,
             func_loop_len,
             0x10,
-            ACE_PAPR_BODY_LEN as u8,
+            (FUNC_HEADER_LEN + ACE_PAPR_BODY_LEN) as u8,
             func_body[0],
             func_body[1],
         ];
@@ -1025,7 +1420,7 @@ mod tests {
             0x0A,
             func_loop_len,
             0x11,
-            MISO_GROUP_BODY_LEN as u8,
+            (FUNC_HEADER_LEN + MISO_GROUP_BODY_LEN) as u8,
             func_body[0],
         ];
         let mut buf = vec![0x00u8, tx_loop.len() as u8];
@@ -1057,7 +1452,13 @@ mod tests {
         serialize_frequency(&freq_body, &mut func_bytes).unwrap();
 
         let func_loop_len = (FUNC_HEADER_LEN + func_bytes.len()) as u8;
-        let mut tx_loop = vec![0x00, 0x07, func_loop_len, 0x17, FREQUENCY_BODY_LEN as u8];
+        let mut tx_loop = vec![
+            0x00,
+            0x07,
+            func_loop_len,
+            0x17,
+            (FUNC_HEADER_LEN + FREQUENCY_BODY_LEN) as u8,
+        ];
         tx_loop.extend_from_slice(&func_bytes);
 
         let mut buf = vec![0x00u8, tx_loop.len() as u8];
@@ -1085,7 +1486,7 @@ mod tests {
             0x01,
             func_loop_len,
             0x14,
-            func_body.len() as u8,
+            (FUNC_HEADER_LEN + func_body.len()) as u8,
             func_body[0],
             func_body[1],
             func_body[2],
@@ -1112,7 +1513,7 @@ mod tests {
             0x01,
             func_loop_len,
             0x10,
-            func_body.len() as u8,
+            (FUNC_HEADER_LEN + func_body.len()) as u8,
             func_body[0],
             func_body[1],
             func_body[2],
@@ -1458,5 +1859,275 @@ mod tests {
             body: FunctionBody::Raw(&[]),
         };
         assert_eq!(entry_unknown.addressing_tag(), None);
+    }
+
+    // ── TS 101 191 §6.1 functions (tags 0x00–0x06) ─────────────────────────
+    //
+    // Spec vectors: every byte below is hand-derived from the bit layout in
+    // `docs/tables/ts_101_191/6-1-existing-individual-addressing-functions.md`.
+    // The one real-capture vector lives in `tests/real_capture.rs`.
+
+    /// Wrap one function (`tag`, `body`) in a one-transmitter payload
+    /// (`tx_id` 0x1234).  `function_length` = 2 + body length.
+    fn wrap_one(tag: u8, body: &[u8]) -> Vec<u8> {
+        let function_length = (FUNC_HEADER_LEN + body.len()) as u8;
+        let mut tx = vec![0x12, 0x34, function_length, tag, function_length];
+        tx.extend_from_slice(body);
+        let mut buf = vec![0x00, tx.len() as u8];
+        buf.extend_from_slice(&tx);
+        buf
+    }
+
+    /// Parse `wrap_one(tag, body)`, hand the typed body to `check`, and assert
+    /// the payload re-serializes byte-identically.
+    fn parse_and_round_trip(tag: u8, body: &[u8], check: impl FnOnce(&FunctionBody<'_>)) {
+        let buf = wrap_one(tag, body);
+        let parsed = IndividualAddressingPayload::parse(&buf).unwrap();
+        assert_eq!(parsed.transmitters[0].functions.len(), 1);
+        check(&parsed.transmitters[0].functions[0].body);
+        let mut out = vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(out, buf, "re-serialization must be byte-identical");
+    }
+
+    fn single(tag: u8, body: FunctionBody<'_>) -> IndividualAddressingPayload<'_> {
+        IndividualAddressingPayload {
+            rfu: 0,
+            transmitters: vec![TransmitterEntry {
+                transmitter_id: 1,
+                functions: vec![FunctionEntry { tag, body }],
+            }],
+        }
+    }
+
+    fn assert_serialize_rejected(p: &IndividualAddressingPayload<'_>) {
+        let mut buf = vec![0u8; p.serialized_len()];
+        assert!(matches!(
+            p.serialize_into(&mut buf),
+            Err(crate::Error::ReservedBitsViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn time_offset_vectors() {
+        // 0xFF9C = -100 (two's complement), 0x8000 = i16::MIN, 0x7FFF = i16::MAX.
+        for (bytes, want) in [
+            ([0xFF, 0x9C], -100i16),
+            ([0x80, 0x00], i16::MIN),
+            ([0x7F, 0xFF], i16::MAX),
+            ([0x00, 0x01], 1),
+        ] {
+            parse_and_round_trip(0x00, &bytes, |b| match b {
+                FunctionBody::TimeOffset(t) => assert_eq!(t.time_offset, want),
+                other => panic!("expected TimeOffset, got {other:?}"),
+            });
+        }
+    }
+
+    #[test]
+    fn frequency_offset_vectors() {
+        // 24-bit two's complement: 0xFFFF38 = -200, 0x800000 = -2^23,
+        // 0x7FFFFF = 2^23-1, 0x000001 = 1.
+        for (bytes, want) in [
+            ([0xFF, 0xFF, 0x38], -200i32),
+            ([0x80, 0x00, 0x00], -8_388_608),
+            ([0x7F, 0xFF, 0xFF], 8_388_607),
+            ([0x00, 0x00, 0x01], 1),
+        ] {
+            parse_and_round_trip(0x01, &bytes, |b| match b {
+                FunctionBody::FrequencyOffset(f) => assert_eq!(f.frequency_offset, want),
+                other => panic!("expected FrequencyOffset, got {other:?}"),
+            });
+        }
+    }
+
+    #[test]
+    fn frequency_offset_out_of_24_bit_range_is_rejected() {
+        for bad in [8_388_608, -8_388_609, i32::MAX, i32::MIN] {
+            let p = single(
+                0x01,
+                FunctionBody::FrequencyOffset(FrequencyOffsetBody::new(bad)),
+            );
+            assert_serialize_rejected(&p);
+        }
+    }
+
+    #[test]
+    fn power_vector() {
+        // tx_power 0x1234 (4660 x 0,1 dB), big-endian.
+        parse_and_round_trip(0x02, &[0x12, 0x34], |b| match b {
+            FunctionBody::Power(p) => assert_eq!(p.tx_power, 0x1234),
+            other => panic!("expected Power, got {other:?}"),
+        });
+    }
+
+    #[test]
+    fn private_data_vectors() {
+        parse_and_round_trip(0x03, &[0xDE, 0xAD, 0xBE, 0xEF], |b| match b {
+            FunctionBody::PrivateData(p) => assert_eq!(p.private_data, &[0xDE, 0xAD, 0xBE, 0xEF]),
+            other => panic!("expected PrivateData, got {other:?}"),
+        });
+        // N = 0 is a legal empty loop.
+        parse_and_round_trip(0x03, &[], |b| match b {
+            FunctionBody::PrivateData(p) => assert!(p.private_data.is_empty()),
+            other => panic!("expected PrivateData, got {other:?}"),
+        });
+    }
+
+    #[test]
+    fn cell_id_bit_positions() {
+        // byte 2 = wait_for_enable_flag[7] | reserved_future_use[6:0].
+        // flag set, rfu 0x55: 0x80 | 0x55 = 0xD5.
+        parse_and_round_trip(0x04, &[0x12, 0x34, 0xD5], |b| match b {
+            FunctionBody::CellId(c) => {
+                assert_eq!(c.cell_id, 0x1234);
+                assert!(c.wait_for_enable_flag);
+                assert_eq!(c.rfu, 0x55);
+            }
+            other => panic!("expected CellId, got {other:?}"),
+        });
+        // Only bit 7 -> only the flag; only bit 0 -> only the rfu LSB.
+        parse_and_round_trip(0x04, &[0x00, 0x00, 0x80], |b| match b {
+            FunctionBody::CellId(c) => {
+                assert_eq!(c.cell_id, 0);
+                assert!(c.wait_for_enable_flag);
+                assert_eq!(c.rfu, 0);
+            }
+            other => panic!("expected CellId, got {other:?}"),
+        });
+        parse_and_round_trip(0x04, &[0xFF, 0xFF, 0x01], |b| match b {
+            FunctionBody::CellId(c) => {
+                assert_eq!(c.cell_id, 0xFFFF);
+                assert!(!c.wait_for_enable_flag);
+                assert_eq!(c.rfu, 0x01);
+            }
+            other => panic!("expected CellId, got {other:?}"),
+        });
+    }
+
+    #[test]
+    fn cell_id_oversized_rfu_is_rejected() {
+        let mut body = CellIdBody::new(1, false);
+        body.rfu = 0x80;
+        assert_serialize_rejected(&single(0x04, FunctionBody::CellId(body)));
+    }
+
+    #[test]
+    fn enable_vectors() {
+        // Enables ACE-PAPR (0x10), time offset (0x00), and an unassigned tag.
+        parse_and_round_trip(0x05, &[0x10, 0x00, 0x7E], |b| match b {
+            FunctionBody::Enable(e) => assert_eq!(e.enabled_function_tags, vec![0x10, 0x00, 0x7E]),
+            other => panic!("expected Enable, got {other:?}"),
+        });
+        parse_and_round_trip(0x05, &[], |b| match b {
+            FunctionBody::Enable(e) => assert!(e.enabled_function_tags.is_empty()),
+            other => panic!("expected Enable, got {other:?}"),
+        });
+    }
+
+    #[test]
+    fn bandwidth_bit_positions() {
+        // byte = ch_bandwidth[7:1] | wait_for_enable_flag[0].
+        for (byte, bw, flag) in [
+            (0x00u8, 0u8, false),
+            (0x01, 0, true),
+            (0x02, 1, false),
+            (0xFE, 127, false),
+            (0xFF, 127, true),
+        ] {
+            parse_and_round_trip(0x06, &[byte], |b| match b {
+                FunctionBody::Bandwidth(w) => {
+                    assert_eq!(w.ch_bandwidth, bw);
+                    assert_eq!(w.wait_for_enable_flag, flag);
+                }
+                other => panic!("expected Bandwidth, got {other:?}"),
+            });
+        }
+        assert_eq!(CH_BANDWIDTH_5_MHZ, 0);
+    }
+
+    #[test]
+    fn bandwidth_oversized_ch_bandwidth_is_rejected() {
+        assert_serialize_rejected(&single(
+            0x06,
+            FunctionBody::Bandwidth(BandwidthBody::new(128, false)),
+        ));
+    }
+
+    #[test]
+    fn legacy_fixed_size_tags_with_wrong_length_stay_raw() {
+        for (tag, body) in [
+            (0x00u8, &[0x01u8][..]),
+            (0x01, &[0x01, 0x02]),
+            (0x02, &[0x01, 0x02, 0x03]),
+            (0x04, &[0x01, 0x02]),
+            (0x06, &[0x01, 0x02]),
+        ] {
+            parse_and_round_trip(tag, body, |b| match b {
+                FunctionBody::Raw(r) => assert_eq!(*r, body),
+                other => panic!("tag {tag:#04x}: expected Raw fallback, got {other:?}"),
+            });
+        }
+    }
+
+    #[test]
+    fn function_length_counts_its_own_header() {
+        // function_length 1 cannot even cover tag+length: reject, never wrap.
+        let tx = [0x00, 0x01, 0x02, 0x00, 0x01];
+        let mut buf = vec![0x00, tx.len() as u8];
+        buf.extend_from_slice(&tx);
+        assert!(IndividualAddressingPayload::parse(&buf).is_err());
+        // function_length 2 = empty body.
+        let tx = [0x00, 0x01, 0x02, 0x99, 0x02];
+        let mut buf = vec![0x00, tx.len() as u8];
+        buf.extend_from_slice(&tx);
+        let parsed = IndividualAddressingPayload::parse(&buf).unwrap();
+        assert!(matches!(
+            parsed.transmitters[0].functions[0].body,
+            FunctionBody::Raw(&[])
+        ));
+    }
+
+    #[test]
+    fn round_trip_all_legacy_bodies_in_one_payload() {
+        let orig = IndividualAddressingPayload {
+            rfu: 0xA5,
+            transmitters: vec![TransmitterEntry {
+                transmitter_id: 0xBEEF,
+                functions: vec![
+                    FunctionEntry {
+                        tag: 0x00,
+                        body: FunctionBody::TimeOffset(TimeOffsetBody::new(-1234)),
+                    },
+                    FunctionEntry {
+                        tag: 0x01,
+                        body: FunctionBody::FrequencyOffset(FrequencyOffsetBody::new(-50_000)),
+                    },
+                    FunctionEntry {
+                        tag: 0x02,
+                        body: FunctionBody::Power(PowerBody::new(0xFFFF)),
+                    },
+                    FunctionEntry {
+                        tag: 0x03,
+                        body: FunctionBody::PrivateData(PrivateDataBody::new(&[1, 2, 3])),
+                    },
+                    FunctionEntry {
+                        tag: 0x04,
+                        body: FunctionBody::CellId(CellIdBody::new(0x0102, true)),
+                    },
+                    FunctionEntry {
+                        tag: 0x05,
+                        body: FunctionBody::Enable(EnableBody::new(vec![0x04, 0x10])),
+                    },
+                    FunctionEntry {
+                        tag: 0x06,
+                        body: FunctionBody::Bandwidth(BandwidthBody::new(0, true)),
+                    },
+                ],
+            }],
+        };
+        let mut buf = vec![0u8; orig.serialized_len()];
+        orig.serialize_into(&mut buf).unwrap();
+        assert_eq!(IndividualAddressingPayload::parse(&buf).unwrap(), orig);
     }
 }

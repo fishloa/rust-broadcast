@@ -26,8 +26,9 @@ pub use fef_null::FefNullPayload;
 pub use fef_null::S1Field;
 pub use fef_subpart::{FefSubPartPayload, PrbsType, SubpartVariety};
 pub use individual_addressing::{
-    AcePaprBody, AddressingFunctionTag, FrequencyBody, FunctionBody, FunctionEntry,
-    IndividualAddressingPayload, L1AcePaprBody, MisoGroupBody, TrPaprBody, TransmitterEntry,
+    AcePaprBody, AddressingFunctionTag, BandwidthBody, CellIdBody, EnableBody, FrequencyBody,
+    FrequencyOffsetBody, FunctionBody, FunctionEntry, IndividualAddressingPayload, L1AcePaprBody,
+    MisoGroupBody, PowerBody, PrivateDataBody, TimeOffsetBody, TrPaprBody, TransmitterEntry,
     TxSigAuxStreamTxIdBody, TxSigFefSeqNumBody,
 };
 pub use l1::{

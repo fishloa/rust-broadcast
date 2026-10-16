@@ -93,3 +93,52 @@ fn typed_pid_filter_selects_the_t2mi_pid_on_a_real_capture() {
         "0x2040 aliases 0x0040 if masked"
     );
 }
+
+/// The capture carries 11 individual-addressing (0x21) packets, each with
+/// three transmitters (0x000B / 0x000C / 0x000D), each a single
+/// `tx_time_offset_function` (tag 0x00; TS 101 191 §6.1.1, Table 7) with
+/// offsets -100 / 0 / -50 (units of 100 ns).  Real bytes, per packet:
+/// `00 15 | 00 0b 04 00 04 ff 9c | 00 0c 04 00 04 00 00 | 00 0d 04 00 04 ff ce`.
+/// This is also the evidence that `function_length` counts the 2-byte
+/// function header (`function_length` = 4 for a 2-byte body).
+#[test]
+fn colombia_individual_addressing_time_offsets_decode_and_round_trip() {
+    use broadcast_common::Serialize;
+    use dvb_t2mi::packet::Header;
+    use dvb_t2mi::payload::individual_addressing::FunctionBody;
+
+    let data = fixture();
+    let mut pump = T2miPump::new(T2MI_PID);
+    let mut seen = 0usize;
+    for pkt in data.chunks(TS_PACKET) {
+        for event in pump.feed_ts(pkt) {
+            let Ok(AnyPayload::IndividualAddressing(ia)) = event.payload() else {
+                continue;
+            };
+            seen += 1;
+            let got: Vec<(u16, i16)> = ia
+                .transmitters
+                .iter()
+                .map(|t| {
+                    assert_eq!(t.functions.len(), 1);
+                    assert_eq!(t.functions[0].tag, 0x00);
+                    match &t.functions[0].body {
+                        FunctionBody::TimeOffset(b) => (t.transmitter_id, b.time_offset),
+                        other => panic!("expected typed TimeOffset, got {other:?}"),
+                    }
+                })
+                .collect();
+            assert_eq!(got, [(0x000B, -100), (0x000C, 0), (0x000D, -50)]);
+
+            // Byte-exact round trip against the wire payload.
+            let wire = Header::raw_payload_bytes(event.bytes()).unwrap();
+            let mut out = vec![0u8; ia.serialized_len()];
+            ia.serialize_into(&mut out).unwrap();
+            assert_eq!(out, wire);
+        }
+    }
+    assert_eq!(
+        seen, 11,
+        "expected the capture's 11 individual-addressing packets"
+    );
+}
