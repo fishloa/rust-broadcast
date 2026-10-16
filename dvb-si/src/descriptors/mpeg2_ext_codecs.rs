@@ -484,6 +484,7 @@ impl MediaServiceKind {
 }
 
 #[cfg(test)]
+#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
 

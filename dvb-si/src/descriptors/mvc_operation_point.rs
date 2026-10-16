@@ -209,6 +209,7 @@ impl_h222_descriptor!(
 );
 
 #[cfg(test)]
+#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use broadcast_common::{Parse, Serialize};
