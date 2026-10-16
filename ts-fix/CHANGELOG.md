@@ -8,6 +8,12 @@
 ### Changed (BREAKING: epoch — requires broadcast-common 10)
 - Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `dvb-conformance` 11 -> 12, `dvb-si` 11 -> 12, `mpeg-pes` 0.5 -> 0.6, `mpeg-ts` 0.5 -> 0.6, `scte35-splice` 3 -> 4). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
+### Fixed (audit 2026-10, `--regen-psi`)
+- The original PAT is now reassembled across TS packets (`SectionReassembler`) before its `transport_stream_id` / `network_PID` hints are read. Previously only a single packet was parsed, so a multi-packet PAT yielded no hints and the regenerated PAT silently got `transport_stream_id` 0 and lost its `network_PID`.
+- `transport_stream_id` is no longer invented in position: while PAT slots exist but the original has not parsed, no PAT is emitted in position; if it never parses, one PAT (tsid 0, documented) is emitted at end of stream, and only if programs were discovered. A program-less PAT with an unknown tsid is never emitted.
+- A PMT that began but never reassembled/parsed is treated as a parse failure, not "no programs": the flush-time program-less PAT is no longer emitted in that case.
+- Docs: `current_entries`/`rebuild_pat` no longer claim "Returns None if no programs" unconditionally.
+
 ### Fixed (#1288)
 - `--regen-psi` after a filter that dropped every PMT (e.g. `--keep-pids 120,130 --regen-psi`) emitted no PAT at all. Two causes: (1) the regen op built no PAT when no PMT was seen; it now emits, at end of stream, a program-less PAT (ITU-T H.222.0 (08/2023) Table 2-30, PDF p. 76 (printed p. 54; verified on the rendered page): the program loop `N` is unconstrained, `network_PID` optional) carrying the original `transport_stream_id` and any `network_PID`, and never lists a PMT PID absent from the output; (2) `TsFix::finish` discarded the flush output of the *last* op in a multi-op pipeline, so any trailing `regen_psi` flush (also the late-PMT fallback PAT) was lost. **BREAKING (behavioural):** output of such pipelines now contains a PAT it previously lacked. Tests: `tests/psi_regen.rs` (`keep_pids_dropping_every_pmt_*`, `two_program_keep_*`).
 

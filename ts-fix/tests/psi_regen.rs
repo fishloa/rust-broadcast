@@ -1312,3 +1312,131 @@ fn two_program_keep_one_pmt_lists_only_that_program() {
     assert_eq!(pat.entries[0].program_number, 1);
     assert_eq!(pat.entries[0].pid, PMT1_PID);
 }
+
+// ── Audit 2026-10: PAT hints across packets / unknown tsid / PMT parse failure ─
+
+/// Hand-framed single TS packet: PUSI set, pointer_field 0, `section` bytes,
+/// 0xFF stuffing. Used for deliberately malformed sections the packetiser
+/// would never produce.
+fn raw_section_packet(pid: Pid, section: &[u8]) -> [u8; 188] {
+    let mut pkt = [0xFFu8; 188];
+    pkt[0] = 0x47;
+    pkt[1] = 0x40 | ((pid.value() >> 8) as u8);
+    pkt[2] = pid.value() as u8;
+    pkt[3] = 0x10;
+    pkt[4] = 0x00;
+    pkt[5..5 + section.len()].copy_from_slice(section);
+    pkt
+}
+
+fn pmt1_packets() -> Vec<[u8; 188]> {
+    let pmt1 = PmtSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        P1_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![PmtStream::new(
+            StreamType::Mpeg2Video,
+            P1_VIDEO_PID,
+            DescriptorLoop::new(&[]),
+        )],
+    );
+    SectionPacketiser::new(PMT1_PID).packetise(&[&serialize_pmt(&pmt1)])
+}
+
+/// An original PAT spanning several TS packets (60 programs) must still supply
+/// its `transport_stream_id` and `network_PID` to the regenerated PAT. The old
+/// hint extraction parsed one packet only, so a multi-packet PAT failed to
+/// parse and the regenerated PAT silently got transport_stream_id 0.
+#[test]
+fn regen_pat_hints_survive_a_multi_packet_original_pat() {
+    const TSID: u16 = 0x1234;
+    const NIT_PID: Pid = Pid::new(0x0010);
+    let mut entries = vec![PatEntry::new(0, NIT_PID), PatEntry::new(1, PMT1_PID)];
+    for n in 2..62u16 {
+        entries.push(PatEntry::new(n, Pid::new(0x0300 + n)));
+    }
+    let pat = PatSection::new(TSID, 0, true, 0, 0, entries);
+    let pat_pkts = SectionPacketiser::new(PAT_PID).packetise(&[&serialize_pat(&pat)]);
+    assert!(pat_pkts.len() > 1, "precondition: PAT must span >1 packet");
+    let pmt_pkts = pmt1_packets();
+
+    let mut ts = Vec::new();
+    for cycle in 0..3u8 {
+        for p in pat_pkts.iter().chain(pmt_pkts.iter()) {
+            ts.extend_from_slice(p);
+        }
+        ts.extend_from_slice(&dummy_es_packet(P1_VIDEO_PID, cycle));
+    }
+
+    let output = run(&ts, |b| b.regen_psi());
+    let pkt = find_pat_packet(&output).expect("output must carry a regenerated PAT");
+    let regen = parse_pat_from_packet(pkt).expect("regenerated PAT must parse");
+    assert_eq!(
+        regen.transport_stream_id, TSID,
+        "transport_stream_id must come from the reassembled multi-packet PAT"
+    );
+    assert!(
+        regen
+            .entries
+            .iter()
+            .any(|e| e.program_number == 0 && e.pid == NIT_PID),
+        "network_PID must survive, got {:?}",
+        regen.entries
+    );
+}
+
+/// PAT slots exist but the original PAT never parses and a PMT is present: the
+/// transport_stream_id is unknown, so nothing is emitted in position (it could
+/// be a PAT still arriving across packets). The documented fallback (tsid 0)
+/// is used only once, at end of stream.
+#[test]
+fn unparseable_original_pat_falls_back_only_at_flush() {
+    // table_id 0x42 (not a PAT) so the section reassembles but PatSection fails.
+    let bad_pat = [0x42, 0xB0, 0x09, 0x00, 0x01, 0xC1, 0x00, 0x00, 0, 0, 0, 0];
+    let mut ts = Vec::new();
+    for cycle in 0..3u8 {
+        ts.extend_from_slice(&raw_section_packet(PAT_PID, &bad_pat));
+        for p in pmt1_packets() {
+            ts.extend_from_slice(&p);
+        }
+        ts.extend_from_slice(&dummy_es_packet(P1_VIDEO_PID, cycle));
+    }
+    let output = run(&ts, |b| b.regen_psi());
+    let pids: Vec<Pid> = output.chunks_exact(188).map(pid_from_packet).collect();
+    let first_pat = pids
+        .iter()
+        .position(|p| *p == PAT_PID)
+        .expect("a fallback PAT is emitted at flush");
+    assert!(
+        pids[first_pat..].iter().all(|p| *p == PAT_PID),
+        "no PAT may be emitted in position while the transport_stream_id is unknown"
+    );
+    let pat = parse_pat_from_packet(find_pat_packet(&output).unwrap()).unwrap();
+    assert_eq!(pat.transport_stream_id, 0, "documented flush-time fallback");
+    assert_eq!(pat.entries.len(), 1);
+}
+
+/// A PMT that begins but never completes is a parse failure, not "no
+/// programs": the flush-time program-less PAT must not be emitted.
+#[test]
+fn unresolved_pmt_does_not_yield_a_programless_pat() {
+    let pat = PatSection::new(0x4321, 0, true, 0, 0, vec![PatEntry::new(1, PMT1_PID)]);
+    let pat_pkts = SectionPacketiser::new(PAT_PID).packetise(&[&serialize_pat(&pat)]);
+    // PMT header claiming 255 bytes of section body, never completed.
+    let truncated_pmt = [pmt::TABLE_ID, 0xB0, 0xFF, 0x00, 0x01, 0xC1, 0x00, 0x00];
+    let mut ts = Vec::new();
+    for p in &pat_pkts {
+        ts.extend_from_slice(p);
+    }
+    ts.extend_from_slice(&raw_section_packet(PMT1_PID, &truncated_pmt));
+    ts.extend_from_slice(&dummy_es_packet(P1_VIDEO_PID, 0));
+    let output = run(&ts, |b| b.regen_psi());
+    assert!(
+        find_pat_packet(&output).is_none(),
+        "an unresolved PMT must not be reported as an empty program loop"
+    );
+}
