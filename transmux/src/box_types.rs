@@ -401,6 +401,31 @@ pub(crate) fn compact_form(bytes: &[u8]) -> Result<alloc::borrow::Cow<'_, [u8]>>
     Ok(alloc::borrow::Cow::Owned(out))
 }
 
+/// The body of the whole box `bytes` (everything after its 8- or 16-byte
+/// header), checked to hold at least `min_body` bytes.
+///
+/// Every sample-entry / fixed-layout box reader derives its minimum length from
+/// the box *body*, never from `8 + body`: a `largesize` box has a 16-byte
+/// header, so a guard written against an 8-byte header lets a short
+/// `largesize` box through to an out-of-bounds index (#1147 follow-up). The
+/// error reports the whole-box length needed (`header + min_body`).
+pub(crate) fn box_body<'a>(
+    bytes: &'a [u8],
+    min_body: usize,
+    what: &'static str,
+) -> Result<&'a [u8]> {
+    let hdr = box_header_len(bytes)?;
+    let body = &bytes[hdr..];
+    if body.len() < min_body {
+        return Err(Error::BufferTooShort {
+            need: hdr + min_body,
+            have: bytes.len(),
+            what,
+        });
+    }
+    Ok(body)
+}
+
 /// The total length of the child box at the front of `region`, header
 /// included: its `size`, the 64-bit `largesize` when `size == 1`, or the rest
 /// of `region` when `size == 0` (ISO/IEC 14496-12:2015 §4.2). `None` when the

@@ -105,16 +105,8 @@ impl XmlSubtitleSampleEntry {
 
     /// Parse from full box bytes (including the 8-byte box header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        // Minimum: box header (8) + SampleEntry reserved+dri (8) + 3 NUL bytes = 19
-        if bytes.len() < 19 {
-            return Err(Error::BufferTooShort {
-                need: 19,
-                have: bytes.len(),
-                what: "stpp",
-            });
-        }
-        // body starts past the 8-byte box header
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        // Minimum body: SampleEntry reserved+dri (8) + 3 NUL bytes = 11
+        let body = crate::box_types::box_body(bytes, 11, "stpp")?;
         // SampleEntry: reserved(6) + data_reference_index(2)
         let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
         let pos = 8usize; // into body

@@ -199,7 +199,7 @@ impl Av1SampleEntry {
     /// Parse from full box bytes (including the 8-byte header).
     pub fn parse_entry(bytes: &[u8]) -> Result<Self> {
         let visual = VisualSampleEntryFields::parse_body(bytes, "av01")?;
-        let region = &bytes[BOX_HDR + VisualSampleEntryFields::serialized_len()..];
+        let region = VisualSampleEntryFields::children_region(bytes, "av01")?;
         let av1c = crate::sample_entries::find_config_box(region, &AV1C_FOURCC).ok_or(
             Error::BufferTooShort {
                 need: 0,

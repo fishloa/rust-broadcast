@@ -565,7 +565,7 @@ impl AvsVideoSampleEntry {
             expected: "avs3/lav3/avst/lav2",
         })?;
         let visual = VisualSampleEntryFields::parse_body(bytes, "AVS sample entry")?;
-        let region = &bytes[BOX_HDR + VisualSampleEntryFields::serialized_len()..];
+        let region = VisualSampleEntryFields::children_region(bytes, "AVS sample entry")?;
         let cfg_fourcc = kind.config_fourcc();
         let cfg = crate::sample_entries::find_config_box(region, &cfg_fourcc).ok_or(
             Error::UnexpectedBox {

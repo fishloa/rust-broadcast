@@ -2660,14 +2660,7 @@ struct ParsedAudioSampleEntry {
 }
 
 fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAudioSampleEntry> {
-    if bytes.len() < 8 + 28 {
-        return Err(Error::BufferTooShort {
-            need: 8 + 28,
-            have: bytes.len(),
-            what,
-        });
-    }
-    let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+    let body = crate::box_types::box_body(bytes, 28, what)?;
     let entry_version = u16::from_be_bytes([body[8], body[9]]);
     let mut reserved_1 = [0u8; 6];
     reserved_1.copy_from_slice(&body[10..16]);
@@ -4037,14 +4030,7 @@ pub struct TrackExtendsBox {
 impl<'a> Parse<'a> for TrackExtendsBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 32 {
-            return Err(Error::BufferTooShort {
-                need: 32,
-                have: bytes.len(),
-                what: "trex",
-            });
-        }
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::box_body(bytes, 24, "trex")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         Ok(Self {
