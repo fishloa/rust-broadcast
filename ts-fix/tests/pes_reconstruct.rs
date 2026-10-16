@@ -27,7 +27,8 @@ fn load_fixture() -> Vec<u8> {
 #[test]
 fn reconstruct_pes_video_pid_0100() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]);
+    let aus =
+        ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]).unwrap();
 
     let video: Vec<_> = aus.iter().filter(|au| au.pid == Pid::new(0x0100)).collect();
     let audio: Vec<_> = aus.iter().filter(|au| au.pid == Pid::new(0x0101)).collect();
@@ -39,7 +40,7 @@ fn reconstruct_pes_video_pid_0100() {
 #[test]
 fn all_video_aus_have_pts() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100)]);
+    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100)]).unwrap();
     assert!(!aus.is_empty(), "expected at least one AU on PID 0x0100");
     for au in &aus {
         assert!(
@@ -53,7 +54,7 @@ fn all_video_aus_have_pts() {
 #[test]
 fn all_audio_aus_have_pts() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0101)]);
+    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0101)]).unwrap();
     assert!(!aus.is_empty(), "expected at least one AU on PID 0x0101");
     for au in &aus {
         assert!(
@@ -67,7 +68,8 @@ fn all_audio_aus_have_pts() {
 #[test]
 fn every_au_starts_with_pes_start_code() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]);
+    let aus =
+        ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]).unwrap();
     assert!(!aus.is_empty(), "expected at least one access unit");
     for au in &aus {
         assert!(
@@ -90,7 +92,7 @@ fn every_au_starts_with_pes_start_code() {
 #[test]
 fn video_dts_non_decreasing() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100)]);
+    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100)]).unwrap();
     let mut prev_dts: Option<u64> = None;
     for au in &aus {
         if let Some(dts) = au.dts {
@@ -144,4 +146,23 @@ fn identity_passthrough_byte_identical() {
         input.len()
     );
     assert_eq!(output, input, "identity engine output differs from input");
+}
+
+/// A buffer that is not a whole number of 188-byte packets is a typed error,
+/// not a panic (review of the signalling/captions wave, item 12).
+#[test]
+fn unaligned_input_is_a_typed_error() {
+    for len in [1usize, 187, 189, 188 * 3 + 1] {
+        let ts = vec![0x47u8; len];
+        match ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100)]) {
+            Err(ts_fix::Error::UnalignedInput { len: got }) => assert_eq!(got, len),
+            other => panic!("len {len}: expected UnalignedInput, got {other:?}"),
+        }
+    }
+    // Aligned (including empty) input is accepted.
+    assert!(
+        ts_fix::pes::reconstruct_access_units(&[], &[Pid::new(0x0100)])
+            .unwrap()
+            .is_empty()
+    );
 }

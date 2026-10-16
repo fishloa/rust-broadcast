@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `mpeg-ts` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
+### Fixed (adversarial review of signalling/captions)
+- **BREAKING (behavioural):** `EquivalentSegmentationType::bits()` / `TimelineType::bits()` return a `Reserved(v)` verbatim instead of masking it to 4 bits, and the compact `splice_insert` DAS block, the stand-alone `DVB_DAS_descriptor()` and `DSM-CC_stream_event_payload_binary()` serializers reject a value above `0xF` with `FieldOverflow` (it used to be written as a different valid-looking value, e.g. `Reserved(0x12)` as `ProviderPlacementOpportunity` / `Temi`).
+- **BREAKING (behavioural):** `StreamEventPayload::serialize_into` requires the `temi_*` bytes exactly when the wire `timeline_type` is `0x2` (`{Temi, temi: None}` and `{VideoPts, temi: Some}` are rejected instead of producing output the parser rejects or silently loses).
+- **BREAKING (additive field on a literal-constructible struct):** `StreamEventPayload` gains `reserved_dvb_data: &[u8]`, the `reserved_zero_future_use` run inside `DVB_data_length` that parse used to skip and serialize used to drop; it is now preserved so such a payload re-serializes byte-exactly (`&[]` for hand-built payloads).
+- **BREAKING (behavioural):** `CompactTimeSignal` / `CompactSpliceInsert` serialize rejects `encrypted_packet: true` with `e_crc_32: None` (it wrote `E_CRC_32 = 0`, which re-parsed as `Some(0)`) and `e_crc_32: Some` when not encrypted (silently dropped).
+
 ### Fixed
 - Serialize: the DVB-TA DAS `reserved` nibble in the compact encoder was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
 
@@ -17,9 +26,6 @@
 
 ### Changed (BREAKING, #1202)
 - **BREAKING (behavioural):** `SpliceInfoSection::serialize_into` rejects `sap_type` > 3 and `encryption_algorithm` > 63, and `AudioDescriptor::serialize_into` rejects `bit_stream_mode` > 7 / `num_channels` > 15, with `Error::FieldOverflow` instead of masking them into a different valid-looking value (the #1129 class). Guarded by `tests/serialize_mask_guard.rs` and `tests/serialize_field_width.rs`; `tests/hostility.rs` sweeps CRC-repaired mutations of real sections for panics (none found).
-
-### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 ### Changed (BREAKING)
 - `dvb_ta::compact`: `compact_time_signal()` / `compact_splice_insert()` now use

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `dvb-conformance` 11 -> 12, `dvb-si` 11 -> 12, `mpeg-pes` 0.5 -> 0.6, `mpeg-ts` 0.5 -> 0.6, `scte35-splice` 3 -> 4). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
+### Fixed (adversarial review of signalling/captions)
+- `PcrRestamp::Interpolate`: the extrapolation rate (used after a corrupt or frozen observation) was the *modular* forward distance from the PID's first anchor to its last observation divided by the packets between them, which aliases by a whole PCR wrap (~26.5 h) once a clean run outgrows one wrap; the anchor-to-observation span is now a running unwrapped total, so it holds for arbitrarily long runs. The in-crate test drives the op with a 1M-packet 99 ms-step run in one reused buffer and fails on the old code.
+- **BREAKING (behavioural):** `pes::reconstruct_access_units` returns `Result<Vec<AccessUnit>, Error>` and reports a buffer that is not a multiple of 188 bytes as the new `Error::UnalignedInput { len }` instead of panicking (`assert_eq!`).
+
 ### Fixed
 - `PcrRestamp::Interpolate` stopped adopting observed PCRs after a legal 33-bit PCR wrap: the forward distance was computed as `obs.wrapping_sub(last) % (2^33 * 300)`, which is garbage whenever `obs < last` (2^64 is not a multiple of the non-power-of-two PCR modulus), so every post-wrap observation was discarded and the output was extrapolated from the pre-wrap rate forever. The constant-rate `pcr_wrap` fixture passed only by coincidence; `tests/pcr_wrap_observed_after_wrap.rs` (post-wrap rate change) fails on the old code and passes now. Both distance computations use `broadcast_common::clock33::pcr_forward_distance` (#1206).
 

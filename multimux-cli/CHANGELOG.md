@@ -4,11 +4,13 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires multimux 0.13)
+- Builds against new caret epochs of workspace siblings (`multimux` 0.12 -> 0.13). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff.
+
 ## [0.10.0] - 2026-10-13
 
 ### Changed
 - Dependency epoch bump: `multimux` 0.11 → 0.12 (persistent per-connection TS muxer for SRT/RTSP push, fixed DASH `startNumber`, see the multimux 0.12.0 note). No CLI change.
-
 
 ## [0.9.0] - 2026-10-05
 

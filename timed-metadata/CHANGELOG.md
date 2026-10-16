@@ -4,6 +4,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `broadcast-hls` 0.3 -> 0.4, `cc-data` 0.6 -> 0.7, `dvb-vbi` 0.4 -> 0.5, `mp4-emsg` 0.4 -> 0.5, `scte35-splice` 3 -> 4). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Fixed
 - The 608/708/Teletext cue extractors no longer emit zero-length (or negative) cues. Several caption updates under one access-unit PTS (common in real captures: 21 on CC1 of the mux.js multi-channel TS) produced intermediate cues whose end equalled their start, which are never on screen (#1220).
 
@@ -12,9 +15,6 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ### Changed
 - Internal: odd-parity encode/check comes from `broadcast_common::parity` instead of a local copy (`timed_metadata::webvtt::teletext::{encode,decode}_odd_parity` stay as thin wrappers, public API unchanged); no behaviour change (#1212).
-
-### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 ## [0.6.1] - 2026-10-13
 ### Changed

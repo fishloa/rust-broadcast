@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
+### Fixed (adversarial review of signalling/captions)
+- **BREAKING (behavioural):** `DataUnit::serialize_into` and `DataUnit::padded_to` reject a non-zero `stuffing` on an `Opaque` or `Stuffing` payload (which own their whole `data_unit_length` body): `Opaque([DE, AD])` with stuffing 3 used to re-parse as `Opaque([DE, AD, FF, FF, FF])` with stuffing 0.
+
 ### Changed (BREAKING)
 - `LineHeader` gains `reserved: u8` (the 2-bit `reserved_future_use` prefix),
   `WssDataField` gains `reserved_tail: u8` (its trailing 2 bits) and

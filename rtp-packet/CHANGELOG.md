@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Fixed (av3a, review of #1235)
 - `Av3aDepacketizer` no longer buffers without limit until an `M` packet: it is capped at `DEFAULT_MAX_FRAME_BYTES` (1 MiB; `raw_frame_length` is 16 bits) or `with_max_frame_bytes(n)`. `push` now returns `Result<Option<Vec<u8>>>` and reports `InvalidValue` (dropping the partial frame) on overflow.
 - `Av3aFmtp::parse` rejects a leading `+` in `rate`/`bitrate`/`codec-nn-id`, `rate=0`, and any known parameter given more than once.

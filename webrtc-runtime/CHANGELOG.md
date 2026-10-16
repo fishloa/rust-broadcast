@@ -4,6 +4,9 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `rtcp-packet` 0.5 -> 0.6, `rtp-packet` 0.4 -> 0.5). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Changed
 - **BREAKING (behaviour):** `WhipSession::on_patch` returns the new `Error::PreconditionRequired` for a PATCH with no `If-Match` (RFC 9725 sections 4.3.1/4.3.2: the session issues an `ETag`, so a missing entity-tag is `428 Precondition Required`); it used to be a `TrickleIce` event with `if_match: None`. `Event::TrickleIce::if_match` is therefore always `Some` from `WhipSession`. `Error` is `#[non_exhaustive]`, so the new variant is additive. (`WhepSession` is unchanged.)
 
@@ -14,7 +17,6 @@ All notable changes to this crate will be documented in this file.
 - The DTLS certificate-fingerprint comparison uses `subtle::ConstantTimeEq` (new optional `subtle` dependency under `media`) instead of a hand-written fold.
 - New `tests/secret_hygiene.rs`, `tests/secret_debug_guard.rs`.
 ### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 - **BREAKING (behaviour):** `WhipSession::on_patch` now rejects a PATCH whose `Content-Type` is missing or is not `application/trickle-ice-sdpfrag` (RFC 9725 section 4; parameters such as `charset` are ignored) with `Error::InvalidSdpFragment`, matching `WhepSession::on_patch` (audit r09-W21). Migrate: send the trickle-ICE media type on every WHIP PATCH.
 ### Added
 - `MediaTransport::restart_ice` (feature `media`): an in-place ICE restart (RFC 8445 section 9, as WHIP/WHEP need for RFC 9725 section 4.3.2). Installs new local and remote ICE credentials, drops the previous remote candidates and pairs, restarts connectivity checks and resets the remote-candidate budget; local candidates, DTLS and SRTP are untouched, so media keeps flowing and no new handshake runs. Covered by a two-transport loopback test (pair re-nominated, same SRTP session decrypts both ways).
@@ -23,7 +25,6 @@ All notable changes to this crate will be documented in this file.
 ### Fixed
 
 - `MediaTransport::encrypt_rtp`/`encrypt_rtcp` return `Error::Media` for an unserializable packet instead of panicking.
-
 
 ## [0.2.0] - 2026-10-05
 

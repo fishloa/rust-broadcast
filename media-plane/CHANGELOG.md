@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `scte35-splice` 3 -> 4, `timed-metadata` 0.6 -> 0.7, `transmux` 0.26 -> 0.27). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 - **BREAKING (#1188):** new `media_plane::ids::{SegmentSeq, PartIndex}` newtypes (checked `checked_next`/`checked_add`/`checked_sub`/`checked_distance_from`, explicit `wrapping_next`/`saturating_next`, no operator impls that could overflow silently). `SegmentEntry::sequence_number`, `PartEntry::segment_number`/`part_index` (and their `new` arguments), `EventAnchor::Segment { segment_number }`, `Trunk::part_bytes`/`parts_in_segment`/`events_in_segment`/`last_closed_segment`, `SegmentWriter::next_sequence_number`/`note_segment_start`, `RetentionDriver::locate` and `NonMonotonicSequenceNumber::{attempted, last_published}` use them instead of `u32`, so a swapped segment/part argument is a compile error. At `u32::MAX` `next_sequence_number` saturates and a further segment is rejected (pinned by `segment_sequence_at_u32_max_saturates_and_rejects_the_next`).
 

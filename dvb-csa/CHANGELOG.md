@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires mpeg-ts 0.6)
+- Builds against new caret epochs of workspace siblings (`mpeg-ts` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff.
+
 ### Security (secrets and identity handling, #1142)
 
 - `ControlWord` equality now uses `subtle::ConstantTimeEq` instead of a hand-written XOR fold (new `subtle` dependency); new `tests/secret_debug_guard.rs`.
@@ -14,7 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.1] - 2026-10-11
 ### Changed
 - Zeroing of control-word-derived state now delegates to the `zeroize` crate (no_std) instead of a hand-rolled `write_volatile` loop; behaviour and public API unchanged.
-
 
 ## [0.3.0] - 2026-10-05
 

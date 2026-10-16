@@ -4,9 +4,11 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Changed
 - Internal: optional attributes are read with `StartTag::attr_owned` instead of building a `require_attr` error and discarding it with `.ok()` (no behaviour change; the parsed values and every error path are identical). Manifest: `quick-xml` and the lint table now come from the workspace (`[lints] workspace = true`), `test-fixtures` is a dev-dependency.
-- Requires the new `broadcast-common` major (epoch release; no API change).
 
 ## [0.2.0] - 2026-10-05
 ### Changed (breaking)

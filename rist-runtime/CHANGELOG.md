@@ -4,8 +4,8 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
-### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `rtcp-packet` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 ### Changed (breaking)
 - `GenericNack` and `RangeNack` gain a `padding: Vec<u8>` field (RFC 3550 §6.4.1 padding octets without the count byte): a padded standalone NACK now round-trips byte-identically (P bit, count and fill preserved) instead of re-serializing with `P = 0` and the padding gone. A padding count that leaves a partial FCI / range entry is rejected with `InvalidPaddingCount` instead of silently dropping the orphan bytes. Struct literals must add `padding: Vec::new()`.
@@ -19,7 +19,6 @@ All notable changes to this crate will be documented in this file.
 
 ### Changed
 - Dependency epoch bump: `rtcp-packet` 0.4 → 0.5 (BREAKING upstream: `SenderReport`/`ReceiverReport` are `#[non_exhaustive]` with constructors and carry `profile_extensions`). `ReportPart::Sr`/`Rr` therefore expose the new types; tests migrated to the constructors. No other behaviour change.
-
 
 ## [0.2.0] - 2026-10-05
 

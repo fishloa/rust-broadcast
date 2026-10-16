@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `dvb-bbframe` 11 -> 12, `mpeg-ts` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 ### Added
 - `InnerTsRecovery::plps_seen()` — every `plp_id` a BBFrame was seen for (#1034); with more than one the unfiltered output interleaves independent TSes, so select one with `new_for_plp`. Docs on the type say so. Per-PLP carry-over (the other half of #1034) was already in place.
 

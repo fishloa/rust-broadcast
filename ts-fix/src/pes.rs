@@ -10,6 +10,7 @@
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) — §2.4.3.6 (PES packet), §2.4.3.7 (PES
 //! header / PTS/DTS).
 
+use crate::error::Error;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
@@ -52,19 +53,16 @@ impl AccessUnit {
 /// PTS/DTS. Access units are returned in arrival (completion) order; AUs from
 /// different PIDs may interleave.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `ts` is not a multiple of 188 bytes (caller must pre-chop to
-/// packet boundaries).
-pub fn reconstruct_access_units(ts: &[u8], pids: &[Pid]) -> Vec<AccessUnit> {
+/// [`Error::UnalignedInput`] if `ts` is not a multiple of 188 bytes (the
+/// caller must pre-chop to packet boundaries); nothing is parsed in that case.
+pub fn reconstruct_access_units(ts: &[u8], pids: &[Pid]) -> Result<Vec<AccessUnit>, Error> {
     const TS_PACKET_SIZE: usize = 188;
 
-    assert_eq!(
-        ts.len() % TS_PACKET_SIZE,
-        0,
-        "ts buffer length {} is not a multiple of 188",
-        ts.len()
-    );
+    if !ts.len().is_multiple_of(TS_PACKET_SIZE) {
+        return Err(Error::UnalignedInput { len: ts.len() });
+    }
 
     // Build a set for O(1) PID membership checks.
     let pid_set = {
@@ -85,7 +83,7 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[Pid]) -> Vec<AccessUnit> {
     for chunk in ts.chunks(TS_PACKET_SIZE) {
         let raw: [u8; TS_PACKET_SIZE] = match chunk.try_into() {
             Ok(a) => a,
-            Err(_) => continue, // not 188 bytes; should not happen due to the assert above
+            Err(_) => continue, // unreachable: the length check above guarantees 188-byte chunks
         };
 
         let pkt = match mpeg_ts::OwnedTsPacket::parse(raw) {
@@ -118,7 +116,7 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[Pid]) -> Vec<AccessUnit> {
         }
     }
 
-    result
+    Ok(result)
 }
 
 /// Parse a completed PES packet `Vec<u8>` into an `AccessUnit`.
