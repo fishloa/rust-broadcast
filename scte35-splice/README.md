@@ -4,185 +4,142 @@
 [![docs.rs](https://img.shields.io/docsrs/scte35-splice)](https://docs.rs/scte35-splice)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](../LICENSE-MIT)
 
-> **Formerly `dvb-scte35`.** This crate was renamed from `dvb-scte35` (last
-> released as 7.9.0 in the DVB lockstep) to `scte35-splice` (v1.0.0) and is now
-> independently versioned. The deprecated `dvb-scte35` crate re-exports this one.
+Spec-cited **ANSI/SCTE 35 2023r1** splice information (Digital Program Insertion
+cueing) parser **and builder**, with the rust-broadcast family's symmetric
+`Parse`/`Serialize` round-trip discipline: every wire type round-trips byte for byte.
 
-## Install
+> **Formerly `dvb-scte35`.** Renamed from `dvb-scte35` (last released as 7.9.0 in the
+> DVB lockstep) to `scte35-splice` (v1.0.0) and now independently versioned. The
+> deprecated `dvb-scte35` crate re-exports this one.
 
 ```toml
 [dependencies]
 scte35-splice = "3"
 ```
 
-Spec-cited **ANSI/SCTE 35 2023r1** splice information (Digital Program
-Insertion cueing) parser **and builder** in Rust, with the rust-broadcast family's
-symmetric `Parse`/`Serialize` round-trip discipline — every wire type
-round-trips byte-for-byte.
+## What it does / what it does not
 
-> **Edition note.** This crate implements **ANSI/SCTE 35 2023r1**, the
-> single-document edition of the standard. SCTE has since split the standard
-> into **SCTE 35-1** (the message) and **SCTE 35-2** (XML/binary mappings); the
-> binary `splice_info_section` syntax implemented here is unchanged.
+SCTE 35 is the cueing standard used across cable and OTT to signal ad-insertion
+(avail) and content-segmentation opportunities in an MPEG transport stream. A
+`splice_info_section` (table_id `0xFC`) carries one splice **command**
+(`splice_insert`, `time_signal`, ...) plus a loop of splice **descriptors**
+(`segmentation_descriptor`, ...), trailed by an MPEG CRC-32.
 
-## What is SCTE 35?
+**Does:** parse and build `splice_info_section`s byte-exactly, with typed commands,
+typed splice descriptors, the segmentation UPID / type-id tables, decoded 90 kHz time
+accessors, and the DVB Targeted Advertising (DVB-TA) SCTE 35 profile (compact forms,
+`DVB_DAS_descriptor`, DSM-CC stream-event payload). Used by ad-insertion (SSAI),
+playout and monitoring code.
 
-SCTE 35 is the cueing standard used across the cable / OTT industry to signal
-ad-insertion (avail) and content-segmentation opportunities in an MPEG
-transport stream. A `splice_info_section` (table_id `0xFC`) carries one splice
-**command** (e.g. `splice_insert`, `time_signal`) plus a loop of splice
-**descriptors** (e.g. `segmentation_descriptor`), trailed by an MPEG CRC-32.
+**Does not:** transport anything (no TS demux or PID discovery: feed it the section
+bytes, e.g. from `dvb-si`), decrypt encrypted sections (the encrypted region is kept
+raw and round-trips), make ad decisions, implement SCTE 104 (see `scte104`), or
+implement the SCTE 35-2 XML/JSON mappings.
 
-## Quick start
+## Standards supported
 
-```rust
-use scte35_splice::{SpliceInfoSection, commands::{AnyCommand, TimeSignal}};
-use scte35_splice::time::SpliceTime;
-use broadcast_common::{Parse, Serialize};
+| Standard | Edition | Scope / clauses | Status | Notes |
+|---|---|---|---|---|
+| ANSI/SCTE 35 Digital Program Insertion Cueing Message | 2023r1 (checked against `private/specs-md/ansi_scte_35_2023r1_dpi_cueing.md`) | §9.6 `splice_info_section`; §9.6.1 Table 7 commands; §10.1 Table 16 splice descriptors; §10.3.3 segmentation tables 21-25 | Full for clear sections; encrypted payload Typed-opaque | The encrypted region and `E_CRC_32` are kept raw. SCTE has since split the standard into 35-1 / 35-2; the binary syntax is unchanged. |
+| ETSI TS 103 752-1 DVB Targeted Advertising, part 1 | V1.2.1 (checked against `etsi_ts_103_752-1_v01.02.01_dvb_ta`) | §5.3.5.16 `DVB_DAS_descriptor` (tag `0xF0`); §8.3.3 compact `time_signal` / `splice_insert`; §6.3.1 `DSM-CC_stream_event_payload_binary`; §5.3.4-5.3.5 PPO/DPO profiling | Full, with one open ambiguity | See the nibble-order note below. |
+| ISO/IEC 13818-1 / ITU-T H.222.0 CRC-32 | n/a | section `CRC_32` (`broadcast_common::crc32_mpeg2`) | Full | Verified on parse, recomputed on serialize. |
 
-// Build a time_signal() section and emit it.
-let ts = TimeSignal { splice_time: SpliceTime::with_pts(0x0_0012_3456) };
-let section = SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]);
-let bytes = section.try_to_bytes().unwrap();
-assert_eq!(bytes[0], 0xFC); // table_id
+### Command and descriptor coverage matrix
 
-// ...and parse it straight back (CRC verified on parse).
-let parsed = SpliceInfoSection::parse(&bytes).unwrap();
-assert!(matches!(parsed.clear.unwrap().command, AnyCommand::TimeSignal(_)));
-```
+| SCTE 35 item | Code | Status |
+|---|---|---|
+| `splice_null` 0x00, `splice_schedule` 0x04, `splice_insert` 0x05, `time_signal` 0x06, `bandwidth_reservation` 0x07, `private_command` 0xFF | `commands::*` (6 types, `declare_commands!`) | Full |
+| Any other command type | `AnyCommand::Unknown` | Typed-opaque (raw bytes kept) |
+| `avail_descriptor` 0x00, `DTMF_descriptor` 0x01, `segmentation_descriptor` 0x02, `time_descriptor` 0x03, `audio_descriptor` 0x04 | `descriptors::*` (5 types, `declare_splice_descriptors!`) | Full |
+| Segmentation UPID MPU (Table 24) and MID (Table 25) | `descriptors::Mpu`, `descriptors::MidUpid` | Full (decoded on demand) |
+| Other UPID payloads | `SegmentationDescriptor` | Typed-opaque (typed `SegmentationUpidType`, payload bytes) |
+| Unknown / private descriptor tags | `AnySpliceDescriptor::Unknown` | Typed-opaque |
+| `DVB_DAS_descriptor` tag `0xF0` | `dvb_ta::DvbDasDescriptor` | Full |
+| DVB-TA compact `time_signal` / `splice_insert` | `dvb_ta::CompactTimeSignal` / `CompactSpliceInsert` | Full |
 
-## What's implemented
-
-### splice_info_section
-
-Full §9.6 header: `table_id` (0xFC), `section_length`, `protocol_version`,
-`encrypted_packet` flag + `encryption_algorithm` (encrypted region kept raw),
-33-bit `pts_adjustment`, 12-bit `tier`, `splice_command_length`,
-`splice_command_type`, descriptor_loop_length, CRC-32 (verified on parse).
-Decoded accessor: `pts_adjustment_duration()` → `core::time::Duration`.
-
-### Splice commands — 6 (§9.6.1 Table 7)
-
-All 6 are in the `declare_commands!` list in `commands/any.rs`; each has `Parse`
-+ `Serialize` impl and round-trip tests. Unknown/reserved command types fall
-through to `AnyCommand::Unknown` with raw bytes preserved.
-
-| Type | Command | Notes |
-|------|---------|-------|
-| 0x00 | `splice_null` | Empty; CRC-only keep-alive |
-| 0x04 | `splice_schedule` | One or more timed splice events |
-| 0x05 | `splice_insert` | Immediate or timed insert with `break_duration` |
-| 0x06 | `time_signal` | `splice_time` with optional PTS |
-| 0x07 | `bandwidth_reservation` | Empty payload |
-| 0xFF | `private_command` | `identifier` (32-bit) + opaque body |
-
-### Splice descriptors — 5 (§10.1 Table 16)
-
-All 5 are in the `declare_splice_descriptors!` list in `descriptors/any.rs`;
-unknown tags fall through to `AnySpliceDescriptor::Unknown` with raw body (lossless).
-
-| Tag | Descriptor | Notes |
-|-----|------------|-------|
-| 0x00 | `avail_descriptor` | `provider_avail_id` |
-| 0x01 | `DTMF_descriptor` | preroll + DTMF chars |
-| 0x02 | `segmentation_descriptor` | `segmentation_upid`, typed `SegmentationTypeId`, `DeviceRestrictions`, `component_list` |
-| 0x03 | `time_descriptor` | TAI seconds + nanoseconds + UTC offset |
-| 0x04 | `audio_descriptor` | Multi-component audio coding info |
-
-### Segmentation assignment tables
-
-Typed enums so callers never re-implement the spec lookup tables (§10.3.3.1):
-
-| Enum | Table | Values |
-|------|-------|--------|
-| `DeviceRestrictions` | Table 21 | 4 variants (2-bit field) |
-| `SegmentationUpidType` | Table 22 | 18 named variants (0x00–0x11) + `Reserved(u8)` |
-| `SegmentationTypeId` | Table 23 | 48 named variants (0x00–0x51) + `Reserved(u8)` |
-
-All three enums round-trip via `from_*` / `to_u8`; unrecognised values are
-carried through `Reserved(raw)` without data loss.
-
-### Decoded time accessors
-
-90 kHz `SpliceTime` and `BreakDuration` fields expose `pts()` / `duration()`
-accessors returning `core::time::Duration`. The 33-bit `pts_adjustment` field
-likewise has a `pts_adjustment_duration()` accessor (carry-ignored wrap per the
-spec).
-
-### Robustness and strictness
-
-- A clear section whose `splice_command_length` is the deprecated `0xFFF`
-  "backwards compatibility" value (SCTE 35 §9.6.1: "shall be ignored by
-  downstream equipment") is parsed by deriving the command's extent from its
-  own structure (never guessed: an underivable layout is an error).
-  `ClearPayload::legacy_command_length_sentinel` records it so
-  `serialize_into` writes `0xFFF` back and the section round-trips byte for
-  byte. Found with a real TSDuck capture (`tests/real_capture.rs`).
-- `serialize_into` rejects `sap_type` > 3, `encryption_algorithm` > 63,
-  `AudioDescriptor` `bit_stream_mode` > 7 and `num_channels` > 15 with
-  `Error::FieldOverflow` instead of masking them into a different valid-looking
-  value; `time::ticks_to_duration` saturates rather than wrapping.
-
-### DVB Targeted Advertising (`dvb_ta`, ETSI TS 103 752-1 V1.2.1)
-
-| Item | Notes |
-|---|---|
-| `DVB_DAS_descriptor()` (§5.3.5.16, tag `0xF0`) | DVB-private splice descriptor, integrated into `AnySpliceDescriptor` |
-| Compact SCTE 35 (§8.3.3) | `compact_time_signal()` / `compact_splice_insert()` with the bit packing of Tables 6 and 8 as re-aligned from the PDF (no reserved bits between `encryption_algorithm`/`cw_index`/`pts_time`; typed, preserved `reserved` fields on `CompactSpliceInsert` and `CompactDas`) |
-| `DSM-CC_stream_event_payload_binary()` (§6.3.1) | wraps or references a full SCTE 35 section; RFC 4648 base-64 helper |
-| PPO/DPO profiling (§5.3.4-5.3.5) | typed helpers over the base `segmentation_type_id` constraints (no new wire syntax) |
-
-**Open question, not guessed:** Table 1 (stand-alone `DVB_DAS_descriptor()`,
-`equivalent_segmentation_type` in the low nibble) and Table 8
-(`compact_splice_insert()`, type in the high nibble) disagree on the nibble
-order of the same body, and no corrigendum, byte example or independent
+**Open question, not guessed (DasNibbleOrder).** ETSI TS 103 752-1 Table 1
+(stand-alone `DVB_DAS_descriptor()`, `equivalent_segmentation_type` in the low
+nibble) and Table 8 (`compact_splice_insert()`, type in the high nibble) disagree on
+the nibble order of the same body, and no corrigendum, byte example or independent
 implementation resolves it. `dvb_ta::DasNibbleOrder` (`TypeHigh` = Table 8,
 `TypeLow` = Table 1) with `parse_with_order` / `serialize_into_with_order` on
-`DvbDasDescriptor` and `CompactSpliceInsert` selects either reading; default
-wire behaviour is Table 1 for the descriptor and Table 8 for the compact form,
-and both are pinned by `tests/das_nibble_order.rs`. Independent-oracle compact
-vectors: `tests/dvb_ta_compact_vectors.rs`. Evidence:
-`docs/dvb_ta/compact-scte35.md`.
-
-### Dispatch and drift tests
-
-`AnyCommand` and `AnySpliceDescriptor` are each generated from a single
-`declare_*!` macro invocation that is the single source of truth for the
-dispatcher and a compile-time drift test. Adding a new command or descriptor
-requires one line in the macro list.
-
-## dvb-si integration
-
-SCTE 35 sections ride on a PID the PMT labels with a registration descriptor
-carrying the `"CUEI"` format_identifier — which [`dvb-si`](../dvb-si/) already
-parses. Once you have the `0xFC` section bytes (e.g. from a dvb-si demux),
-route them into `SpliceInfoSection::parse`.
+`DvbDasDescriptor` and `CompactSpliceInsert` selects either reading. Default wire
+behaviour is Table 1 for the descriptor and Table 8 for the compact form; both are
+pinned by `tests/das_nibble_order.rs`. Independent-oracle compact vectors:
+`tests/dvb_ta_compact_vectors.rs`. Evidence: `docs/dvb_ta/compact-scte35.md`.
 
 ## Feature flags
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `std` | **on** | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
-| `serde` | **on** | Serialize-only (`serde::Serialize`) on all types; no Deserialize. |
+| `std` | on | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
+| `serde` | on | Serialize-only (`serde::Serialize`) on all types; no Deserialize. |
 
-## MSRV
+## Quick start
 
-Rust **1.95.0**.
+```rust
+use scte35_splice::{SpliceInfoSection, commands::AnyCommand};
+use broadcast_common::{Parse, Serialize};
 
-## Spec grounding
+// A minimal time_signal() section with no descriptors, built and emitted.
+let ts = scte35_splice::commands::TimeSignal {
+    splice_time: scte35_splice::time::SpliceTime::with_pts(0x0_0012_3456),
+};
+let section = SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]);
+let bytes = section.try_to_bytes().unwrap();
+assert_eq!(bytes[0], 0xFC); // table_id
 
-The syntax tables and the assignment tables are hand-transcribed in
-[`scte35-splice/docs/scte_35.md`](docs/scte_35.md); every module doc cites the SCTE
-35 section, table and tag/command_type it implements. SCTE 35 is published by
-SCTE at no cost.
+// ...and parsed straight back.
+let parsed = SpliceInfoSection::parse(&bytes).unwrap();
+assert!(matches!(parsed.clear.as_ref().unwrap().command, AnyCommand::TimeSignal(_)));
+```
 
-## Examples
+## What is implemented
 
-Run with `cargo run -p scte35-splice --example <name>`:
+- **`splice_info_section`** (§9.6): `table_id`, `section_length`, `protocol_version`,
+  `encrypted_packet` + `encryption_algorithm` (encrypted region kept raw), 33-bit
+  `pts_adjustment` (`pts_adjustment_duration()` accessor), `cw_index`, 12-bit `tier`,
+  `splice_command_length` / type, descriptor loop, CRC-32 (verified on parse).
+- **Segmentation tables** (§10.3.3.1): typed `DeviceRestrictions` (Table 21),
+  `SegmentationUpidType` (Table 22) and `SegmentationTypeId` (Table 23), each with a
+  `Reserved(u8)` catch-all so unrecognised values round-trip.
+- **Time accessors**: `SpliceTime` and `BreakDuration` expose `pts()` / `duration()`
+  as `core::time::Duration`; `time::ticks_to_duration` saturates rather than wraps.
+- **Robustness**: a clear section whose `splice_command_length` is the deprecated
+  `0xFFF` sentinel (SCTE 35 §9.6.1) is parsed by deriving the command extent from its
+  structure (never guessed; an underivable layout is an error);
+  `ClearPayload::legacy_command_length_sentinel` records it so it re-serializes
+  byte-exactly (found with a real TSDuck capture, `tests/real_capture.rs`).
+  Serializers reject `sap_type` > 3, `encryption_algorithm` > 63, audio
+  `bit_stream_mode` > 7 and `num_channels` > 15 with `Error::FieldOverflow`.
+- **DVB-TA** (`dvb_ta`): `DVB_DAS_descriptor`, compact SCTE 35 (Tables 6 and 8 as
+  re-aligned from the PDF, typed preserved `reserved` fields), stream-event payload
+  with an RFC 4648 base-64 helper, PPO/DPO profiling helpers.
+- **Dispatch**: `AnyCommand` and `AnySpliceDescriptor` are generated from single
+  `declare_*!` lists with compile-time drift tests; adding a type is one line.
 
-- **`parse_splice_insert`** — parse a real `splice_info_section` carrying a `splice_insert()`.
-- **`round_trip_and_descriptors`** — walk the splice descriptor loop and prove the serializer is byte-exact.
+## Design notes
 
-## License
+- Zero-copy `Parse<'a>` / `Serialize`; parse, serialize, byte-identical round trip is a
+  hard invariant, exercised on real captures (`fixtures/ts/scte35-*.ts`).
+- Reserved bits are written as `1` on serialize and ignored on parse.
+- `Error` is `#[non_exhaustive]`; the crate is `no_std` + `alloc` without `std`.
+- `serde` output is Serialize-only (no Deserialize).
 
-Licensed under either of MIT or Apache-2.0 at your option.
+## Related crates
+
+Depends on `broadcast-common` (traits, CRC-32, `clock33`). Built on top of it:
+`timed-metadata` (SCTE 35 / HLS DATERANGE / emsg), `ssai-runtime`, `playout-runtime`.
+`dvb-si` locates the SCTE 35 PID through the PMT `"CUEI"` registration descriptor;
+`scte104` is the automation-side signalling that feeds a SCTE 35 encoder.
+
+## Spec grounding and examples
+
+Syntax and assignment tables are transcribed in [`docs/scte_35.md`](docs/scte_35.md);
+every module doc cites the SCTE 35 section, table and tag. Examples
+(`cargo run -p scte35-splice --example <name>`): `parse_splice_insert`,
+`round_trip_and_descriptors`.
+
+## MSRV and licence
+
+Rust **1.95.0**. Licensed under MIT OR Apache-2.0.

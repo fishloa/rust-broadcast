@@ -6,6 +6,56 @@
 //! see the support matrix below, which is the authoritative statement, and
 //! call [`matrix::check`] rather than assuming a pair converts.
 //!
+//! # What it does / what it does not
+//!
+//! **Does:** turn raw caption carriage (CEA-608/708 `cc_data()` bytes or EBU
+//! Teletext data fields, each tagged with a 90 kHz PTS) into a WebVTT or SRT
+//! document, and convert WebVTT <-> SRT. **Does not:** convert DVB bitmap
+//! subtitles to text (they are pixels; that needs OCR, out of scope), convert
+//! TTML/IMSC to WebVTT/SRT/Image, or emit 608/708/Teletext as IMSC. 608/708/
+//! Teletext output is lossy (no placement or styling; cue times are the carrying
+//! PTS).
+//!
+//! # Standards supported
+//!
+//! | Standard | Edition | Scope | Status |
+//! |---|---|---|---|
+//! | ANSI/CTA-608-E, CTA-708-E (decoded by `cc-data`) | -E, unverified (not vendored) | CC1; one 708 service | Partial (lossy), feature `cc-data` |
+//! | ETSI EN 300 706 / EN 301 775 §4.5 | V1.2.1 each | Level-1 subtitle page | Partial (lossy), feature `teletext` |
+//! | W3C WebVTT | curated rules (`specs/rules/webvtt-rules.md`) | parse + write cues | Partial |
+//! | SRT | no formal spec; de facto ffmpeg/VLC form | indexed cues | Full for that form |
+//! | ETSI EN 300 743 DVB subtitling | V1.6.1 | bitmap | Not converted |
+//! | W3C TTML2 / IMSC 1.1 | see `ttml-subtitle` | identity row only | Not implemented as a conversion |
+//!
+//! WebVTT -> SRT is lossless unless the source uses cue identifiers, settings or
+//! `NOTE`/`STYLE`/`REGION` blocks (reported through the `lossy` flag); SRT ->
+//! WebVTT is lossless.
+//!
+//! # Feature flags
+//!
+//! | Feature | Default | Effect |
+//! |---|---|---|
+//! | `std` | on | passes `std` to dependencies; own logic needs only `alloc` |
+//! | `cc-data` | on | [`Cea608ToWebVtt`] / [`Cea708ToWebVtt`] |
+//! | `teletext` | on | [`TeletextToWebVtt`] |
+//! | `serde` | off | serde on dependency types |
+//!
+//! # Quick start
+//!
+//! ```
+//! use caption_convert::{SourceFormat, TargetFormat, check, srt_to_webvtt, webvtt_to_srt};
+//!
+//! let (srt, lossy) =
+//!     webvtt_to_srt("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello\n").unwrap();
+//! assert!(!lossy);
+//! assert!(srt.starts_with("1\n"));
+//! assert!(srt_to_webvtt(&srt).unwrap().starts_with("WEBVTT"));
+//!
+//! // The matrix says up front what converts and what does not.
+//! assert!(check(SourceFormat::Cea608, TargetFormat::Srt).is_ok());
+//! assert!(check(SourceFormat::DvbBitmapSubtitle, TargetFormat::WebVtt).is_err());
+//! ```
+//!
 //! # Why this crate exists
 //!
 //! Every *decoder* this crate needs already ships in this workspace
@@ -97,6 +147,14 @@
 //! this crate re-exports link `std`; nothing in this crate's own logic
 //! requires it. Examples and fixture-driven tests use `std::fs` to read
 //! files, same as every other crate in this workspace.
+//!
+//! # Design notes and related crates
+//!
+//! [`Error`] and the format enums are `#[non_exhaustive]`; there is no wire
+//! format of its own, so behaviour is pinned by real-capture tests rather than a
+//! byte round trip. Depends on `timed-metadata`, `cc-data`, `dvb-vbi` and
+//! `broadcast-common`; siblings are `dvb-subtitle` and `ttml-subtitle`. MSRV
+//! 1.95.0; MIT OR Apache-2.0.
 
 #![no_std]
 #![warn(missing_docs)]

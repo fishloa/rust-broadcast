@@ -1,34 +1,74 @@
-//! SMPTE RDD 29:2019 Dolby Atmos® bitstream — frame/element framing plus
-//! bed/object metadata.
+//! SMPTE RDD 29:2019 Dolby Atmos bitstream: frame and element framing plus
+//! bed/object rendering metadata, `no_std` + `alloc`.
 //!
-//! This crate implements exactly the wire structures described in the
-//! curated spec transcription at `rdd29/docs/rdd29.md` (fetched directly
-//! from `https://pub.smpte.org/pub/rdd29/rdd29-2019.pdf`) — cite that file,
-//! not this doc comment, as the field-semantics oracle.
+//! The wire structures follow the curated transcription at
+//! `rdd29/docs/rdd29.md` (from `https://pub.smpte.org/pub/rdd29/rdd29-2019.pdf`);
+//! cite that file, not this comment, as the field-semantics oracle.
 //!
-//! - [`AtmosFrame`] — one complete frame: the top-level `ATMOSFrame` element
-//!   (§2.1/§4.2), containing zero or more sub-[`AnyElement`]s.
-//! - [`BedDefinition1`] — a channel-based audio bed's channel-to-audio-asset
-//!   mapping (§2.2/§4.3).
-//! - [`ObjectDefinition1`] — one panned audio object's per-sub-block pan/
-//!   rendering metadata: 3D position, snap, zone gain, spread, decorrelation,
-//!   plus an optional text description (§2.3/§4.4).
-//! - [`AudioDataDlc`] — one track's audio essence pointer + opaque payload
-//!   (§2.4/§4.5).
+//! # What it does / what it does not
 //!
-//! **What this crate is not**: an audio codec. `AudioDataDlc`'s payload is
-//! the Dolby Lossless Coding (DLC) codec's own bit-packed bitstream (linear-
-//! predictive + Rice-Golomb entropy-coded residual audio samples) — this
-//! crate treats it as opaque bytes, the same "parse the container, not the
-//! codec" discipline this workspace's `transmux`/`st337` crates use for
-//! media containers and AES3 non-PCM bursts respectively. See
-//! `docs/rdd29.md`'s "Scope decisions" for the exact boundary and the two
-//! honest gaps in the source disclosure document this crate had to resolve
-//! (the `Plex(8)` pseudocode's internal inconsistency, and the completely
-//! undocumented `AudioDescription` field semantics).
+//! RDD 29 is the disclosure document for the frame-based Dolby Atmos bitstream:
+//! per frame, one `ATMOSFrame` element holding bed definitions, object
+//! definitions and audio-data elements. This crate reads and builds that
+//! framing and metadata. It does **not**:
 //!
-//! Depends only on `broadcast-common`. `#![no_std]` (+ `alloc`) when the
-//! `std` feature is disabled.
+//! - decode audio: [`AudioDataDlc`]'s payload is the Dolby Lossless Coding
+//!   (DLC) codec's own bitstream, kept as opaque bytes after the two
+//!   byte-aligned fields `AudioDataID` and `DLCSize`;
+//! - render or mix;
+//! - cover any other Dolby Atmos carriage (RDD 29's cinema bitstream only);
+//! - implement §3.3 Amplitude Gain (`A10`) coding: transcribed, but no
+//!   implemented field uses it.
+//!
+//! # Standards supported
+//!
+//! | Standard | Edition | Scope / clauses | Status | Notes |
+//! |---|---|---|---|---|
+//! | SMPTE RDD 29, Dolby Atmos Bitstream Specification | 2019 (vendored; revision of RDD 29:2014) | §2-§5: `ATMOSFrame` (§4.2), `BedDefinition1` (§4.3), `ObjectDefinition1` (§4.4), `AudioDataDLC` (§4.5), Plex coding (§3.4), relative distance coding (§3.2), Table 1 element IDs | Partial | DLC payload opaque; §3.3 gain coding not implemented; reserved/unknown `ElementID`s round-trip as [`AnyElement::Unknown`] |
+//!
+//! # Feature flags
+//!
+//! | Feature | Default | Description |
+//! |---|---|---|
+//! | `std` | yes | Link the standard library; without it the crate is `#![no_std]` + `alloc`. |
+//! | `serde` | no | `serde::Serialize`/`Deserialize` derives on public types. |
+//!
+//! # What is implemented
+//!
+//! - [`AtmosFrame`] ([`ATMOS_VERSION`], [`SampleRate`], [`BitDepth`],
+//!   [`FrameRate`]) holding a list of [`AnyElement`]s; [`ElementId`] with the
+//!   Table 1 IDs.
+//! - [`BedDefinition1`]: [`BedChannel`]s mapping a [`ChannelId`] (14 named
+//!   channels plus `Reserved(u8)`) to an `AudioDataID`.
+//! - [`ObjectDefinition1`]: [`PanSubBlock`]s ([`PanInfo`] position, snap,
+//!   [`ZoneGain`] per [`ZoneId`], [`ObjectSpreadMode`], decorrelation via
+//!   [`DecorCoefPrefix`]) and an optional [`AudioDescription`] text; the
+//!   sub-block count is derived from [`FrameRate`].
+//! - [`AudioDataDlc`]: `AudioDataID`, `DLCSize`, opaque payload.
+//! - [`distance`]: [`distance::distance_xy`] / [`distance::distance_z`],
+//!   read-only derived views of the §3.2 codes (the raw `u16` stays the
+//!   round-tripped value; shifts and core `f64` only, identical under
+//!   `no_std`).
+//! - Plex coding ([`PLEX_MAX_VALUE`]); non-minimal escapes are rejected
+//!   ([`Error::NonMinimalPlex`]).
+//!
+//! # Design notes
+//!
+//! - Symmetric `Parse`/`Serialize`; every reserved field is a hard-validated
+//!   constant so a corrupt frame cannot re-serialize differently.
+//! - Real-data caveat: RDD 29 has no capturable file format outside a licensed
+//!   encoder, so the committed fixture (`tests/fixtures/eac3_frame0.bin`) is a
+//!   real E-AC-3 syncframe used as an opaque `AudioDataDLC` payload inside
+//!   framing built through this crate's own typed API; there is no real Atmos
+//!   capture behind the tests.
+//! - Public enums are `#[non_exhaustive]` with `name()` + `Display` labels.
+//! - `no_std` + `alloc`; one `thiserror` enum, [`Error`]. MSRV 1.95.0; licence
+//!   MIT OR Apache-2.0.
+//!
+//! # Related crates
+//!
+//! Depends only on `broadcast-common`. Shares the "container, not codec"
+//! boundary with `st337` and `st377-1`.
 //!
 //! # Examples
 //!

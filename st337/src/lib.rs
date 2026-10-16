@@ -1,31 +1,76 @@
-//! SMPTE ST 337:2015 non-PCM audio/data burst-preamble framing over AES3.
+//! SMPTE ST 337:2015 burst-preamble framing for non-PCM audio and data carried
+//! in an AES3 serial digital audio interface: typed parse/serialize of the
+//! `Pa`/`Pb`/`Pc`/`Pd` (and extended `Pe`/`Pf`) preamble plus the opaque
+//! payload, `no_std` + `alloc`.
 //!
-//! This crate implements exactly the wire structures described in the
-//! curated spec transcription at `st337/docs/st337.md` (fetched directly
-//! from `https://pub.smpte.org/latest/st337/st0337-2015.pdf`) — cite that
-//! file, not this doc comment, as the field-semantics oracle. See also
-//! `st337/docs/st337-PROVENANCE.md` for a real-fixture / independent-oracle
-//! (`ffmpeg -f spdif`) cross-check of the constants and bit layout below.
+//! The field semantics follow the curated transcription at
+//! `st337/docs/st337.md` (from `https://pub.smpte.org/latest/st337/st0337-2015.pdf`);
+//! see also `st337/docs/st337-PROVENANCE.md` for a real-fixture,
+//! independent-oracle (`ffmpeg -f spdif`) cross-check of the constants and
+//! bit layout.
 //!
-//! - [`Burst`] — one complete non-PCM data burst: [`BurstPreamble`] (`Pa`..
-//!   `Pd`, or `Pa`..`Pf` for the "extended" six-word form) followed by the
-//!   opaque `burst_payload` bytes (§7.1/§7.2).
-//! - [`DataMode`] — the `data_mode` field (§7.2.4.3 Table 8): this crate
-//!   supports only [`DataMode::Mode16`] for parsing/building (see the
-//!   "Scope decisions" section of `docs/st337.md`).
+//! # What it does / what it does not
 //!
-//! **What this crate is not**: an AES3 physical-layer (biphase-mark line
-//! code, subframe/timeslot bit placement) codec. It parses/builds the
-//! *logical* burst-preamble/burst-payload word sequence as a plain byte
-//! stream (`&[u8]`, 2 bytes per 16-bit preamble word) — the same "parse the
-//! container, not the physical/codec layer" discipline this workspace's
-//! `transmux` crate uses for media containers. It also does not define a
-//! `data_type` -> codec enum: that mapping is registered in the companion
-//! spec SMPTE ST 338, which was not available to verify truthfully (see
-//! `docs/st337.md`).
+//! ST 337 defines how compressed or non-PCM data (for example AC-3, E-AC-3 or
+//! DTS audio) rides inside the sample words of an AES3 stream: a repeating
+//! **data burst** of a preamble plus a payload. This crate reads and builds
+//! those bursts from the word sequence as bytes. It does **not**:
 //!
-//! Depends only on `broadcast-common`. `#![no_std]` (+ `alloc`) when the
-//! `std` feature is disabled.
+//! - implement the AES3 physical layer (biphase-mark coding, subframe/time-slot
+//!   placement, channel-status words);
+//! - map `data_type` to a codec (that registry is SMPTE ST 338, not vendored),
+//!   so `data_type` is a validated `u8` (0 to 31);
+//! - support the 20-bit/24-bit `data_mode` values: [`DataMode::Mode20`] and
+//!   [`DataMode::Mode24`] parse as enum values but [`BurstPreamble`] rejects
+//!   them with [`Error::UnsupportedDataMode`];
+//! - decode or re-encode the payload (it stays opaque bytes);
+//! - implement IEC 61937: `length_code` is read as **bits** per ST 337's own
+//!   text, whereas a real IEC 61937 E-AC-3 capture writes bytes for the same
+//!   data type.
+//!
+//! # Standards supported
+//!
+//! | Standard | Edition | Scope / clauses | Status | Notes |
+//! |---|---|---|---|---|
+//! | SMPTE ST 337, Non-PCM Audio and Data in an AES3 Serial Digital Audio Interface | 2015 (vendored; revision of 337-2008) | §7.1/§7.2 burst and preamble: `Pa`/`Pb` sync, `Pc` fields, `Pd` length code, extended-type `Pe`/`Pf` (§7.2.4), Table 8 `data_mode` | Partial | 16-bit mode only; words as little-endian 16-bit values in a byte stream |
+//! | SMPTE ST 338, Non-PCM data_type registry | not vendored | none | Not implemented | `data_type` is an opaque validated number |
+//! | AES3-3 / IEC 61937 | n/a | none | Not implemented | sync constants and `Pc` layout cross-checked against a real E-AC-3 capture |
+//!
+//! # Feature flags
+//!
+//! | Feature | Default | Description |
+//! |---|---|---|
+//! | `std` | yes | Link the standard library; without it the crate is `#![no_std]` + `alloc`. |
+//! | `serde` | no | `serde::Serialize`/`Deserialize` derives on public types. |
+//!
+//! # What is implemented
+//!
+//! - [`Burst`]: a [`BurstPreamble`] plus the opaque payload slice (borrowed on
+//!   parse); [`Burst::new`] computes `length_code` for you.
+//! - [`BurstPreamble`]: `data_type`, `data_mode`, `error_flag`,
+//!   `data_type_dependent`, `data_stream_number`, `length_code`, and an
+//!   optional [`ExtendedPreamble`] (`Pe`/`Pf`) used when `data_type` equals
+//!   [`EXTENDED_DATA_TYPE_MARKER`].
+//! - [`DataMode`] (Table 8) and the constants [`SYNC_WORD_PA`],
+//!   [`SYNC_WORD_PB`], [`MAX_5_BIT_FIELD`], [`MAX_DATA_STREAM_NUMBER`],
+//!   [`MAX_LENGTH_CODE_BITS`].
+//! - A committed real E-AC-3 burst (`tests/fixtures/eac3_frame0.bin`)
+//!   round-trips byte-exact.
+//!
+//! # Design notes
+//!
+//! - Symmetric `Parse`/`Serialize` with round-trip tests; the preamble is
+//!   validated ([`Error::InvalidSync`], [`Error::InvalidValue`],
+//!   [`Error::ExtendedPreambleMismatch`], [`Error::PayloadTooLarge`]) so a
+//!   corrupt burst cannot re-serialize differently.
+//! - Public enums are `#[non_exhaustive]` with `name()` + `Display` labels.
+//! - `no_std` + `alloc`; one `thiserror` error enum. MSRV 1.95.0; licence
+//!   MIT OR Apache-2.0.
+//!
+//! # Related crates
+//!
+//! Depends only on `broadcast-common`. The payloads it carries are compressed
+//! audio or data that this crate never parses.
 //!
 //! # Examples
 //!

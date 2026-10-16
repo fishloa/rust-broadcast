@@ -5,6 +5,33 @@
 //! then validate it separately — the two passes are independent so callers can
 //! inspect a non-conformant document before deciding whether to reject it.
 //!
+//! ## What it does / does not
+//!
+//! Does: parse a TTML2 document into a typed tree ([`Document`]), serialize it
+//! back, and check a documented subset of the IMSC 1.1 Text/Image Profile
+//! constraints ([`Validator`]). Does not: render or lay out subtitles, resolve
+//! style inheritance, certify full IMSC conformance (`valid: true` only means
+//! the implemented checks passed), convert to WebVTT/SRT, or decode image
+//! payloads. IMSC 1.2 is not implemented.
+//!
+//! ## Standards supported
+//!
+//! | Standard | Edition | Scope | Status |
+//! |---|---|---|---|
+//! | W3C TTML2 | Recommendation 08 Nov 2018 | element tree, `tts:*` style attributes, §9 resource elements | Partial (unmodelled content kept as [`UnknownElement`] / [`ForeignAttribute`]) |
+//! | W3C TTML2 | same | `<time-expression>` grammar ([`TimeExpression`]) | Full |
+//! | W3C IMSC 1.1 | Recommendation 08 Nov 2018, edited 27 Apr 2020 | Text and Image Profile checks listed in the [`validation`] module | Partial (159-row feature table transcribed in `docs/imsc11-profiles.md`, not enforced) |
+//! | W3C IMSC 1.0 / 1.0.1 | [`ImscVersion::V1_0`] | same checker minus the IMSC 1.1-only frame-rate rule | Partial |
+//! | XML 1.0 | §2.8, §4.3.3 | declaration validated at parse | Full |
+//!
+//! ## Design
+//!
+//! Parse and validate are independent passes. XML I/O is `quick-xml` only; the
+//! serializer is generated from typed fields. Public enums are
+//! `#[non_exhaustive]`. MSRV 1.95.0, MIT OR Apache-2.0. Related crates:
+//! `broadcast-common` (dependency), `caption-convert` (documents TTML source
+//! conversion as a gap), `dvb-subtitle` (bitmap subtitles, a different format).
+//!
 //! ## Features
 //!
 //! XML parsing and serialization read and write through `quick-xml`, which needs
@@ -25,7 +52,7 @@
 //! [`UnknownElement`] subtrees on the carrying element and re-emitted with
 //! the same prefix bindings, falling back to a generated `ttmfallbackN`
 //! prefix only when the original one is unavailable.
-//! See [`README.md §Round-Trip Guarantee`] for the full verified list.
+//! See the crate README's "Round-Trip Guarantee" section for the full verified list.
 //!
 //! ## From-scratch authoring
 //!

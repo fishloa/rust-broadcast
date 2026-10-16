@@ -12,6 +12,28 @@
 //!
 //! Depends only on `broadcast-common` and is `#![no_std]` (+ `alloc`).
 //!
+//! ## What it does / what it does not
+//!
+//! Gives you the wire messages: typed operations, message framing and the
+//! variable-length timestamp, for an automation-side sender or a compression-side
+//! receiver / monitor. It does **not** implement the transport (connection
+//! handling, session state machines, timers) and does not turn a message into a
+//! SCTE 35 section (`inject_section_data` carries SCTE 35 bytes opaquely; use the
+//! `scte35-splice` crate for those).
+//!
+//! ## Standards supported
+//!
+//! | Standard | Edition | Scope | Status |
+//! |---|---|---|---|
+//! | ANSI/SCTE 104 Automation System to Compression System Communications API | 2023 | §8.2.2 / §8.2.3 framing, Table 8-3 (15 basic ops), Table 8-4 (22 ops), §12.4 `Time`, §12.5 `Timestamp` | Full for the opID tables; unknown opIDs Typed-opaque (`Unknown`) |
+//!
+//! ## Feature flags
+//!
+//! | Feature | Default | Effect |
+//! |---|---|---|
+//! | `std` | on | link `std`; without it `no_std` + `alloc` |
+//! | `serde` | off | `serde::Serialize` on all types |
+//!
 //! ## Coverage
 //!
 //! - [`SingleOperationMessage`] — single-operation framing (§8.2.2, Table 8-1)
@@ -68,6 +90,14 @@
 //! );
 //! let bytes = mom.try_to_bytes().unwrap();
 //! ```
+//!
+//! ## Design notes and related crates
+//!
+//! Zero-copy `Parse`/`Serialize` symmetry with a byte-identical round trip;
+//! operation bodies must be exactly the typed length (trailing bytes are
+//! rejected); [`Error`] is `#[non_exhaustive]`. Depends only on `broadcast-common`;
+//! its output feeds `scte35-splice` (via a compression system). MSRV 1.95.0;
+//! MIT OR Apache-2.0.
 //!
 //! ## Examples
 //!

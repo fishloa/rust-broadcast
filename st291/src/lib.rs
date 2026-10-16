@@ -1,49 +1,81 @@
-//! SMPTE ST 291-1 — ancillary (ANC) data content.
+//! SMPTE ST 291-1 ancillary (ANC) data packets, parsed and serialized as typed
+//! structs for their two transports: MPEG-2 Transport Stream carriage (SMPTE
+//! ST 2038:2021, feature `ts`) and RTP carriage (RFC 8331 / SMPTE ST 2110-40,
+//! feature `rtp`).
+//!
+//! # What it does / what it does not
 //!
 //! ST 291-1 defines the ANC data packet: the generic carrier for VANC/HANC
-//! payloads (captions, AFD, timecode, audio metadata, …) multiplexed into a
-//! professional video signal. This crate is about that **content**, not any
-//! one carriage mechanism — ST 291-1 packets can be conveyed over more than
-//! one transport, and this crate grows to cover each as it is added.
+//! payloads (captions, AFD, timecode, audio metadata, ...) multiplexed into a
+//! professional video signal. This crate is about that **content**, not any one
+//! carriage mechanism.
 //!
-//! ## Transports
+//! - It parses and serializes the wire structures byte-exact, and exposes the
+//!   ST 291-1 10-bit parity rule and `Checksum_Word` computation as explicit
+//!   helpers ([`AncContent::with_parity`], [`AncContent::compute_checksum`],
+//!   [`AncContent::verify_checksum`], [`AncContent::build`]).
+//! - It does **not** interpret payloads: `DID`/`SDID` and user data words are
+//!   opaque (no CEA-708 / AFD / ST 12-2 / SCTE 104 decoding).
+//! - It does **not** validate parity/checksum on parse; a bit-flipped packet
+//!   still parses `Ok` and the caller opts in with
+//!   [`AncContent::verify_checksum`].
+//! - It does **not** implement the SDI wire (HANC/VANC word packing), the
+//!   ST 2110-40 SDP/session layer, or the RTP fixed header (the `rtp-packet`
+//!   crate's job).
 //!
-//! - **`ts`** (default) — SMPTE ST 2038:2021 carriage of ANC data packets in
-//!   an MPEG-2 Transport Stream. ST 2038 provides a transparent pipe so
-//!   ST 291-1 ANC data packets can be conveyed frame-accurately alongside the
-//!   video they belong to (ST 2038 §1); it is **not** for audio carriage and
-//!   **not** for EDH packets (Introduction). This crate implements the two
-//!   wire structures defined in ST 2038 §4:
-//!   - [`AncDataDescriptor`] — the `anc_data_descriptor` (tag `0xC4`) used in
-//!     the PMT ES loop, plus the `"VANC"` `registration_descriptor`
-//!     [`format_identifier`](VANC_FORMAT_IDENTIFIER) `0x56414E43` and the
-//!     [`ANC_STREAM_TYPE`] `0x06` (§4.1, Table 1).
-//!   - [`AncDataPacket`] — the ANC data PES packet (`stream_id == 0xBD`, PTS,
-//!     `PES_header_data_length == 0x05`) carrying a list of bit-packed
-//!     [`AncPacket`] records + trailing `0xFF` stuffing (§4.2, Table 2).
-//! - **`rtp`** — RFC 8331 / ST 2110-40 carriage of ANC data packets over RTP
-//!   (issue #648). [`AncRtpPayload`] is the §2.1 payload (`Extended Sequence
-//!   Number`/`Length`/`ANC_Count`/[`FieldSense`]/`reserved` + a list of
-//!   [`RtpAncPacket`]s), riding on an `rtp_packet::RtpPacket`'s payload (the
-//!   RTP fixed header, RFC 3550, is the `rtp-packet` crate's responsibility).
-//!   See `docs/anc_rtp_8331.md`.
+//! # Standards supported
 //!
-//! The per-ANC-packet content — `DID`/`SDID`/`data_count`/`user_data_word`/
-//! `checksum_word` — is a **contiguous MSB-first 10-bit bit stream**, walked
-//! with [`broadcast_common::bits`], and is byte-for-byte **identical across
-//! both transports**: it lives in the always-compiled [`AncContent`] type
-//! (gated behind neither `ts` nor `rtp`), wrapped by each transport's own
-//! placement fields ([`AncPacket`]'s three for ST 2038, [`RtpAncPacket`]'s
-//! five for RFC 8331). Per §4.2.1/§2.1 the `user_data_word` loop counter uses
-//! only the **low 8 bits** of `data_count`; the full 10-bit values are stored
-//! verbatim and ST 291-1 parity/checksum is **not** validated (deferred to
-//! ST 291-1, which is not vendored — see `docs/anc_packet_291.md`).
+//! | Standard | Edition | Scope / clauses | Status | Notes |
+//! |---|---|---|---|---|
+//! | SMPTE ST 2038, ANC in an MPEG-2 TS | 2021 (vendored, verified) | §4.1 Table 1 `anc_data_descriptor` (tag `0xC4`), `"VANC"` identifier `0x56414E43`, `stream_type` `0x06`; §4.2 Table 2 ANC data PES packet | Full | PES header parsed inline; fixed/reserved bits validated; PTS of 2^33 or more rejected |
+//! | IETF RFC 8331, RTP payload for ST 291-1 ANC | Feb 2018 | §2/§2.1 payload header + packet list, `F` field, `Length`/`ANC_Count` cross-check; §3.1/§4 media-type and clock-rate constants | Full (wire format) | Not the SDP/session layer; `F == 0b01` parses as `FieldSense::Invalid` |
+//! | SMPTE ST 2110-40, ST 291-1 ANC over RTP | 2023 (vendored) | Builds normatively on RFC 8331 | Partial | Grounded in RFC 8331; the 2023 text is not line-audited against the code (unverified delta) |
+//! | SMPTE ST 291-1, ANC packet and space formatting | 2011 (vendored) | 10-bit parity rule, `Checksum_Word` | Partial | Derived from RFC 8331 §2.1, which reproduces the rule; SDI ANC *space* formatting is out of scope |
 //!
-//! Depends only on `broadcast-common` (plus `rtp-packet`, optionally, for the
-//! `rtp` feature) and is `#![no_std]` (+ `alloc`). The ST 2038 PES header is
-//! parsed inline (every field is fixed by ST 2038 Table 2, so the dedicated
-//! `mpeg-pes` parser adds a dependency without simplifying the bit-packed
-//! payload walk).
+//! # Feature flags
+//!
+//! | Feature | Default | Description |
+//! |---|---|---|
+//! | `std` | yes | Link the standard library; without it the crate is `#![no_std]` + `alloc`. |
+//! | `ts` | yes | ST 2038:2021 MPEG-2 TS transport. |
+//! | `rtp` | no | RFC 8331 / ST 2110-40 RTP transport; pulls in `rtp-packet`. |
+//! | `serde` | no | `serde::Serialize` derives on public types. |
+//!
+//! [`AncContent`] is always compiled.
+//!
+//! # What is implemented
+//!
+//! - **Shared content**: [`AncContent`] holds `DID`, `SDID`, `data_count`,
+//!   `user_data_words` and `checksum` as raw 10-bit values (parity bits
+//!   included). The user-data loop counter uses only the low 8 bits of
+//!   `data_count`; a mismatch with `user_data_words.len()` is rejected on
+//!   serialize ([`Error::InconsistentUdwLength`]).
+//! - **`ts`**: [`AncDataDescriptor`] (tag [`ANC_DATA_DESCRIPTOR_TAG`], with
+//!   [`VANC_FORMAT_IDENTIFIER`] and [`ANC_STREAM_TYPE`]) and
+//!   [`AncDataPacket`] (PES, `stream_id` [`ANC_STREAM_ID`], PTS) holding
+//!   [`AncPacket`]s plus `0xFF` stuffing.
+//! - **`rtp`**: [`AncRtpPayload`] (extended sequence number, [`FieldSense`],
+//!   packet list; `Length` and `ANC_Count` recomputed on serialize and
+//!   cross-checked on parse) holding [`RtpAncPacket`]s. See
+//!   `docs/anc_rtp_8331.md` and `docs/anc_packet_291.md`.
+//!
+//! # Design notes
+//!
+//! - Every wire structure implements the workspace `Parse`/`Serialize` pair
+//!   with a byte-exact round-trip test and a committed fixture per transport.
+//! - The content fields are a contiguous MSB-first 10-bit stream walked with
+//!   [`broadcast_common::bits`], identical across both transports.
+//! - Reserved bits are validated on parse ([`Error::BadFixedBits`],
+//!   [`Error::ReservedNotZero`]); lengths and counts are written through the
+//!   checked `fit_*` helpers ([`Error::FieldTooWide`]), never silently wrapped.
+//! - One `thiserror` enum, [`Error`]; public enums are `#[non_exhaustive]`.
+//! - `#![no_std]` + `alloc`. MSRV 1.95.0. Licence MIT OR Apache-2.0.
+//!
+//! # Related crates
+//!
+//! Depends on `broadcast-common` and, with `rtp`, `rtp-packet`; `mpeg-ts`
+//! supplies the TS packetisation around the `ts` transport. The ST 2038 PES
+//! header is parsed inline (every field is fixed by Table 2).
 //!
 //! # Examples
 //!

@@ -7,52 +7,119 @@
 //! SCTE-35 `splice_insert()` emission points a transition implies
 //! ([`scte35`]).
 //!
-//! ## Design decisions (issue #748's design-decision comment settles these)
+//! # What it does / what it does not
 //!
-//! - **The schedule format is ours to define.** There is no applicable open
-//!   standard for "ordered channel-assembly playlist" to adopt: SCTE 224
-//!   (ESNI) covers policy/blackout signalling, not channel assembly, and is
-//!   paywalled besides. [`schedule::Schedule`] is therefore a plain in-memory
-//!   model with no `Parse`/`Serialize` pair — there is no wire format to be
-//!   symmetric about.
-//! - **This crate builds on `ssai-runtime` rather than duplicating it.**
-//!   `ssai_runtime::splice::condition_splice_point_wrapping` already owns
-//!   nearest-boundary splice-point conditioning (with an explicit tolerance,
-//!   refusing rather than silently snapping when nothing is close enough);
-//!   [`scte35::build_splice_insert`] calls it rather than re-implementing
-//!   the same nearest-boundary math a second time. This crate's own job is
-//!   deciding *when* a transition happens (the schedule); `ssai-runtime`'s
-//!   is deciding *how the splice lands* against real boundaries.
-//! - **The hard part is the transition, not the schedule.** Joining two
-//!   sources means timeline continuity: a PTS-rebase offset
-//!   ([`transition::TransitionPlan::rebase`]) so the incoming source's own
-//!   clock lands continuously on the shared channel timeline, and a
-//!   discontinuity flag ([`transition::TransitionPlan::discontinuity`]) when
-//!   the codec configuration changes across the join. "A schedule that plays
-//!   the right thing at the wrong timestamp is worse than no scheduler" —
-//!   this crate's tests hold timeline correctness as the primary property,
-//!   not scheduling logic.
+//! **Does:** finds the next join a schedule implies and computes it (channel
+//! instant, PTS-rebase offset, discontinuity flag), and builds the
+//! `splice_insert()` for entering or returning from a break, conditioned against
+//! real candidate boundaries.
 //!
-//! ## What this crate is **not**
+//! **Does not:**
 //!
-//! - **No transcoding or conforming.** A differing codec config across a
-//!   transition is a discontinuity to *signal*
-//!   ([`transition::TransitionPlan::discontinuity`]), never something this
-//!   crate re-encodes. This workspace parses containers and never touches
-//!   the codec bitstream, and that holds here too.
-//! - **No actual sample-timestamp rewriting.** `transmux`'s IR transform is
-//!   what would apply [`transition::TransitionPlan::pts_rebase_offset`] to
-//!   real sample PTS/DTS values; this crate computes the number, not the
-//!   rewrite. Likewise `broadcast_hls::mark_init_discontinuities` is what
-//!   would act on [`transition::TransitionPlan::discontinuity`] at the
-//!   playlist/init-segment level — neither dependency is pulled in here.
-//! - **No HTTP, no tokio.** A `multimux` adapter driving a real channel
-//!   clock against this crate's planning is deliberately future work, not
-//!   this crate — mirroring the `rtsp-runtime`/`hls-runtime` and
-//!   `ssai-runtime` split the rest of the workspace uses.
+//! - **No transcoding or conforming.** A differing codec config is a
+//!   discontinuity to *signal* ([`transition::TransitionPlan::discontinuity`]).
+//! - **No sample-timestamp rewriting.** `transmux`'s IR transform would apply
+//!   [`transition::TransitionPlan::pts_rebase_offset`]; this crate computes the
+//!   number. `broadcast_hls::mark_init_discontinuities` would act on the
+//!   discontinuity flag; neither is a dependency here.
+//! - **No boundary conditioning of its own:** [`scte35::build_splice_insert`]
+//!   calls `ssai_runtime::splice::condition_splice_point_wrapping`.
+//! - **No schedule wire format, no SCTE 224** (it covers policy and blackout
+//!   signalling, not channel assembly): [`schedule::Schedule`] is an in-memory
+//!   model with no `Parse`/`Serialize` pair.
+//! - **No HTTP, no tokio**, no real-time clock; a `multimux` adapter is future
+//!   work.
 //!
-//! `no_std` + `alloc`.
-
+//! # Standards supported
+//!
+//! | Standard | Edition | Scope | Status |
+//! |---|---|---|---|
+//! | ANSI/SCTE 35 | 2023r1 | `splice_insert()` (section 9.7.3, Table 10) via `scte35-splice`; clear `splice_info_section` wrapper | Partial: `splice_insert` only (no `time_signal`, segmentation descriptors, encryption, components); 90 kHz ticks |
+//! | schedule model | n/a | programme / ad / slate | Not a standard (SCTE 224 not adopted) |
+//!
+//! # Features
+//!
+//! | Feature | Default | Effect |
+//! |---|---|---|
+//! | `std` | yes | Links `std`; off gives `#![no_std]` + `alloc` |
+//! | `serde` | no | `serde` derives on the public types |
+//!
+//! # Quick start
+//!
+//! ```rust
+//! use playout_runtime::{
+//!     BreakEdge, CodecConfigId, EntryKind, Schedule, ScheduleEntry, build_splice_insert,
+//!     next_transition,
+//! };
+//!
+//! let mut schedule = Schedule::new();
+//! schedule
+//!     .push(ScheduleEntry {
+//!         id: "news".into(),
+//!         kind: EntryKind::Programme,
+//!         planned_start: 0,
+//!         source_start_pts: 0,
+//!         codec_config: CodecConfigId(1),
+//!     })
+//!     .unwrap();
+//! // A 30 s ad at 10 minutes (90 kHz ticks), cut from an asset whose own clock
+//! // starts at 5_000, with a different codec configuration.
+//! schedule
+//!     .push(ScheduleEntry {
+//!         id: "ad".into(),
+//!         kind: EntryKind::Ad,
+//!         planned_start: 54_000_000,
+//!         source_start_pts: 5_000,
+//!         codec_config: CodecConfigId(2),
+//!     })
+//!     .unwrap();
+//!
+//! // The join: when, how to rebase the incoming clock, and whether to signal a
+//! // discontinuity.
+//! let t = next_transition(&schedule, 0).unwrap();
+//! assert_eq!(t.plan.at_pts, 54_000_000);
+//! assert!(t.plan.discontinuity);
+//! assert_eq!(t.plan.rebase(5_000), Some(54_000_000));
+//!
+//! // The splice_insert() that entering the break implies, snapped to the nearest
+//! // real boundary (2_000 ticks before the nominal instant beats 3_000 after).
+//! let (point, insert) = build_splice_insert(
+//!     BreakEdge::Enter,
+//!     1,
+//!     t.plan.at_pts,
+//!     &[53_998_000, 54_003_000],
+//!     5_000,
+//!     Some(2_700_000),
+//! )
+//! .unwrap();
+//! assert_eq!(point.snapped_pts, 53_998_000);
+//! assert!(insert.out_of_network_indicator);
+//! ```
+//!
+//! # What is implemented
+//!
+//! - [`schedule`]: [`Schedule`] of [`ScheduleEntry`] ([`EntryKind`],
+//!   [`CodecConfigId`]).
+//! - [`transition`]: [`next_transition`] returns a [`PlannedTransition`];
+//!   [`TransitionPlan::plan`] computes `at_pts`, `pts_rebase_offset` (`i128`,
+//!   never clamped) and `discontinuity`; [`TransitionPlan::rebase`] returns
+//!   `None` rather than wrapping, and [`TransitionPlan::rebase_wrapped`] unrolls a
+//!   raw 33-bit PTS first.
+//! - [`scte35`]: [`build_splice_insert`] (circular distances modulo 2^33) and
+//!   [`to_section`], with [`BreakEdge`] naming the break edge.
+//!
+//! # Design notes
+//!
+//! Sans-IO, `no_std` + `alloc`, `#![forbid(unsafe_code)]`, structured [`Error`]s.
+//! "A schedule that plays the right thing at the wrong timestamp is worse than no
+//! scheduler" — timeline correctness is the primary tested property (including a
+//! real, non-IDR-aligned cue from `fixtures/scte35-ssai/`). Units are 90 kHz ticks.
+//!
+//! # Related crates
+//!
+//! Depends on `broadcast-common`, `ssai-runtime` and `scte35-splice`. MSRV 1.95.0;
+//! MIT OR Apache-2.0.
+//!
 #![no_std]
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

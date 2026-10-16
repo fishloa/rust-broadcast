@@ -1,66 +1,39 @@
-//! Multicast object-delivery wire formats: **ALC / LCT / FLUTE / NORM**.
+//! The binary wire formats of IETF Reliable Multicast Transport (RMT): ALC, LCT, FLUTE and NORM headers, used to deliver files and streams over IP multicast.
 //!
-//! This crate parses and serializes the binary headers used to deliver files
-//! and streams over IP multicast. Every format here is **IETF RMT** (Reliable
-//! Multicast Transport) — RFC 5651, RFC 5775, RFC 6726, RFC 5740. No
-//! broadcast-specific standard is implemented by this crate.
+//! ## What it does / what it does not
 //!
-//! Several delivery systems are layered *on top* of these formats and are
-//! consumers of this crate rather than owners of it: **DVB** (DVB-IPTV and
-//! DVB-MABR / ETSI TS 103 769 file delivery), **3GPP** (MBMS/eMBMS download
-//! delivery), and **ATSC 3.0** (ROUTE, A/331 Annex A — written as a
-//! profile-and-delta on RFC 5651/5775/6726).
+//! Every format here is **IETF RMT** (RFC 5651, 5775, 6726, 5740); no broadcast-specific standard is implemented by this crate. Delivery systems that sit on top of RMT consume it rather than own it: DVB-IPTV and DVB-MABR (ETSI TS 103 769; the `dvb-mabr` crate parses its session XML and does not depend on this crate), 3GPP MBMS/eMBMS download delivery, and ATSC 3.0 ROUTE (A/331 Annex A, see `atsc3-route`).
 //!
-//! Renamed from `dvb-flute` at 0.4.0: the old name named one consumer of an
-//! IETF standard rather than the standard itself, and read as a layering
-//! error once non-DVB consumers needed to depend on it. All `dvb-flute`
-//! versions are yanked; there is no shim.
+//! Use it to parse or build LCT/ALC packets, FLUTE extension headers and NORM messages byte-exactly, and to compute the scheme-agnostic source-block partition of a transport object. It does **not**:
 //!
-//! Implements:
+//! - implement a FEC scheme: the FEC Payload ID and Scheme-specific FEC OTI layouts depend on the FEC Encoding ID (RFC 5052 and the scheme documents) and travel as opaque byte slices whose length the caller supplies ([`FecPayloadId128`] is one concrete example layout);
+//! - encode or decode FEC symbols (no Reed-Solomon, Raptor, LDPC or similar);
+//! - parse the FLUTE FDT Instance: it is XML carried as the packet payload on TOI 0 and is out of scope of this binary crate (a caller supplies its own XML parser);
+//! - run a sender/receiver session, congestion control, or NORM state machines (it is wire format only, no I/O);
+//! - verify `EXT_AUTH` signatures (the extension is carried, not interpreted).
 //!
-//! - [`LctHeader`] — the **Layered Coding Transport** header (RFC 5651 §5). The
-//!   fixed first word carries `V`/`C`/`PSI`/`S`/`O`/`H`/`A`/`B`, `HDR_LEN` and
-//!   the Codepoint; the `C`, `S`, `O` and `H` flags then drive the byte-widths
-//!   of the **CCI**, **TSI** and **TOI** fields (`4*(C+1)`, `4*S+2*H`,
-//!   `4*O+2*H` bytes). The shared `H` half-word feeds both TSI *and* TOI. Flag
-//!   bits and `HDR_LEN` are recomputed on serialize from the typed field
-//!   lengths — there is no raw passthrough.
-//! - [`HeaderExtension`] — the LCT/NORM header-extension chain (RFC 5651 §5.2):
-//!   variable-length (`HET` 0..=127, carries `HEL`) and fixed-length (`HET`
-//!   128..=255, one word) forms; with [`ExtTime`] (EXT_TIME) and the
-//!   [`LctExtType`] registry (EXT_NOP/EXT_AUTH/EXT_TIME).
-//! - [`AlcPacket`] — an **Asynchronous Layered Coding** packet (RFC 5775):
-//!   LCT header + an opaque FEC Payload ID + the encoding-symbol payload, plus
-//!   `EXT_FTI` (HET 64) and the Small-Block-Systematic [`FecPayloadId128`].
-//! - [`ExtFdt`] / [`ExtCenc`] — the **FLUTE** (RFC 6726) fixed-length LCT
-//!   extensions `EXT_FDT` (HET 192) and `EXT_CENC` (HET 193), plus the TOI = 0
-//!   FDT-Instance convention. The FDT Instance body is XML and is **out of
-//!   scope** of this binary crate — it rides as the packet payload.
-//! - [`NormCommonHeader`] + [`NormData`] / [`NormInfo`] / [`NormCmd`] / [`NormFeedback`] — the
-//!   **NORM** (RFC 5740) common header and message types (NORM_INFO / NORM_DATA /
-//!   NORM_CMD / NORM_NACK / NORM_ACK / NORM_REPORT).
-//! - [`SourceBlockPartition`] — the FEC Building Block's (RFC 5052 §9.1)
-//!   scheme-agnostic **Block Partitioning Algorithm**: given a transport
-//!   object's Transfer-Length, Encoding-Symbol-Length and
-//!   Maximum-Source-Block-Length, derive the number of source blocks and each
-//!   block's length in symbols. The common substrate `dvb-mabr` and
-//!   `atsc3-route` both need (issue #944) without hardcoding any FEC scheme's
-//!   FEC Payload ID or Scheme-specific OTI layout.
+//! > **Renamed from `dvb-flute` at 0.4.0.** The old name implied a DVB standard this crate does not implement. All `dvb-flute` versions are yanked; there is no shim.
 //!
-//! ⚠ **FEC Payload ID** bit layouts are FEC-scheme dependent (RFC 5052 / the FEC
-//! Scheme document) and are **not** defined by ALC/NORM themselves; this crate
-//! exposes them as opaque byte slices (the caller supplies the length), with
-//! [`FecPayloadId128`] provided as one concrete illustrative layout.
+//! ## Standards supported
 //!
-//! All integer fields are big-endian. `#![no_std]` + `alloc`; depends only on
-//! `broadcast-common`.
+//! | Standard | Edition | Scope covered | Status | Notes |
+//! |----------|---------|---------------|--------|-------|
+//! | RFC 5651 — Layered Coding Transport (LCT) Building Block | October 2009 | §5 LCT header (flag-driven CCI/TSI/TOI widths, HDR_LEN, Codepoint), §5.2 header-extension chain, EXT_NOP / EXT_AUTH / EXT_TIME | Full | EXT_AUTH body opaque; EXT_TIME carries SCT/ERT/SLC with reserved Use bits and trailing bytes preserved for byte-exact round-trip. |
+//! | RFC 5775 — Asynchronous Layered Coding (ALC) Protocol Instantiation | April 2010 | §3 ALC packet (LCT header + FEC Payload ID + payload), EXT_FTI (HET 64), PSI SPI bit | Partial | FEC Payload ID and FTI body are scheme-dependent and opaque; [`FecPayloadId128`] provided as one layout. |
+//! | RFC 6726 — FLUTE: File Delivery over Unidirectional Transport | November 2012 | EXT_FDT (HET 192), EXT_CENC (HET 193), TOI 0 FDT-Instance convention, FLUTE version and Instance-ID limit | Partial | The FDT Instance XML itself is not parsed. |
+//! | RFC 5740 — NACK-Oriented Reliable Multicast (NORM) Protocol | November 2009 | §4 common header, NORM_INFO, NORM_DATA, NORM_CMD (typed per sub-type), NORM_NACK / NORM_ACK feedback, sender-word, header extensions (EXT_AUTH, EXT_CC, EXT_RATE, EXT_FTI) | Partial | NORM_REPORT has no defined wire format in the RFC (§4.4.1) and is exposed as opaque content. FEC Payload IDs opaque. |
+//! | RFC 5052 — Forward Error Correction (FEC) Building Block | Revision referenced by the code (`fec.rs` cites §9.1) | §9.1 Block Partitioning Algorithm only | Partial | Edition not vendored under `specs/`: unverified. |
 //!
-//! # Examples
+//! ## Feature flags
 //!
-//! Build an LCT header from typed fields (flag-driven CCI/TSI/TOI widths) and
-//! round-trip it:
+//! | Feature | Default | Enables |
+//! |---------|---------|---------|
+//! | `std`   | yes     | Links the standard library. Without it the crate is `#![no_std]` + `alloc`. |
+//! | `serde` | no      | `serde::Serialize` derives on the public types (serialize-only). |
 //!
-//! ```
+//! ## Quick start
+//!
+//! ```rust
 //! use rmt_flute::{LctHeader, LCT_VERSION};
 //!
 //! let cci = [0u8; 4]; // C = 0
@@ -82,6 +55,38 @@
 //! assert_eq!(used, buf.len());
 //! assert_eq!(re, hdr);
 //! ```
+//!
+//! Runnable examples in `examples/`:
+//!
+//! ```sh
+//! cargo run -p rmt-flute --example build_lct
+//! cargo run -p rmt-flute --example parse_flute
+//! ```
+//!
+//! ## What is implemented
+//!
+//! - [`LctHeader`] (RFC 5651 §5): the fixed first word carries `V`/`C`/`PSI`/`S`/`O`/`H`/`A`/`B`, `HDR_LEN` and the Codepoint; the `C`, `S`, `O`, `H` flags drive the byte-widths of **CCI** (`4*(C+1)`), **TSI** (`4*S+2*H`) and **TOI** (`4*O+2*H`). The shared `H` half-word feeds both TSI and TOI. Flag bits and `HDR_LEN` are recomputed on serialize from the typed field lengths; there is no raw passthrough.
+//! - [`HeaderExtension`] with [`parse_chain`] / [`serialize_chain`] / [`chain_len`]: variable-length (`HET` 0..=127, carries `HEL`) and fixed-length (`HET` 128..=255, one word) forms; [`ExtTime`] and the [`LctExtType`] registry (EXT_NOP / EXT_AUTH / EXT_TIME).
+//! - [`AlcPacket`] (RFC 5775): LCT header, opaque FEC Payload ID, encoding-symbol payload; `EXT_FTI`; [`FecPayloadId128`].
+//! - [`ExtFdt`] / [`ExtCenc`] / [`CencAlgorithm`] (RFC 6726): the FLUTE LCT extensions and the TOI 0 constant [`TOI_FDT`].
+//! - [`NormCommonHeader`], [`NormInfo`], [`NormData`], [`NormCmd`] (with a typed [`NormCmdBody`] per command sub-type), [`NormFeedback`] (NACK/ACK), [`NormMessageType`], [`NormCmdType`], [`NormAckType`], [`SenderWord`].
+//! - [`SourceBlockPartition`] (RFC 5052 §9.1): given Transfer-Length, Encoding-Symbol-Length and Maximum-Source-Block-Length, derive the number and length of source blocks. This is a scheme-agnostic substrate for `atsc3-route` (and any future DVB-MABR transport) that avoids hardcoding any FEC scheme.
+//!
+//! ## Design notes
+//!
+//! - **Zero-copy, symmetric.** Parsed headers borrow `&[u8]` slices from the input; every parser has a symmetric serializer, with round-trip tests and committed real fixtures (an FLUTE FDT packet and a ROUTE FDT/FEC packet).
+//! - **Reserved bits are preserved, not rejected, where the RFC says receivers MUST ignore them** (for example EXT_TIME reserved Use bits and the EXT_CENC reserved field), so input round-trips byte-exactly.
+//! - **Error model.** One `thiserror` enum, [`Error`], with context-carrying variants; length fields are written through checked helpers.
+//! - Public enums are `#[non_exhaustive]` with `name()` / `Display` labels; `#![no_std]` + `alloc`; all integers big-endian.
+//!
+//! ## Related crates
+//!
+//! Depends only on `broadcast-common`. Consumed within the workspace by `atsc3-route` (ATSC 3.0 ROUTE profile). The `mpeg-ts`/`ule` crates are unrelated transports; ALC/LCT rides over UDP.
+//!
+//! ## MSRV and licence
+//!
+//! Minimum supported Rust version 1.95.0. Licensed under MIT OR Apache-2.0.
+//!
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]

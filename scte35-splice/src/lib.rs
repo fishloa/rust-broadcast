@@ -9,6 +9,44 @@
 //! edition; SCTE has since split the standard into 35-1 / 35-2). Layouts are
 //! transcribed in `scte35-splice/docs/scte_35.md` and cited per module.
 //!
+//! ## What it does / what it does not
+//!
+//! **Does:** parse and build `splice_info_section`s byte-exactly: typed commands,
+//! typed splice descriptors, segmentation UPID / type-id tables, decoded 90 kHz
+//! time accessors, and the DVB Targeted Advertising SCTE 35 profile
+//! ([`dvb_ta`]). **Does not:** demux or transport anything (feed it the section
+//! bytes), decrypt encrypted sections (the encrypted region is kept raw and
+//! round-trips), make ad decisions, implement SCTE 104 (see the `scte104` crate)
+//! or the SCTE 35-2 XML/JSON mappings.
+//!
+//! ## Standards supported
+//!
+//! | Standard | Edition | Scope | Status |
+//! |---|---|---|---|
+//! | ANSI/SCTE 35 Digital Program Insertion Cueing Message | 2023r1 | §9.6 section, Table 7 commands, Table 16 descriptors, Tables 21-25 | Full (clear); encrypted payload Typed-opaque |
+//! | ETSI TS 103 752-1 DVB Targeted Advertising | V1.2.1 | §5.3.5.16 DAS descriptor, §8.3.3 compact forms, §6.3.1 stream-event payload, §5.3.4-5.3.5 profiling | Full, one open ambiguity |
+//! | ISO/IEC 13818-1 CRC-32/MPEG-2 | n/a | section `CRC_32` | Full |
+//!
+//! | SCTE 35 item | Code | Status |
+//! |---|---|---|
+//! | 6 commands (0x00, 0x04, 0x05, 0x06, 0x07, 0xFF) | [`commands`] | Full; others to `AnyCommand::Unknown` (Typed-opaque) |
+//! | 5 descriptors (0x00-0x04) | [`descriptors`] | Full; others to `AnySpliceDescriptor::Unknown` (Typed-opaque) |
+//! | `DVB_DAS_descriptor` 0xF0, compact `time_signal`/`splice_insert` | [`dvb_ta`] | Full |
+//!
+//! **Open question, not guessed:** ETSI TS 103 752-1 Table 1 (stand-alone
+//! `DVB_DAS_descriptor()`, type in the low nibble) and Table 8
+//! (`compact_splice_insert()`, type in the high nibble) disagree on the nibble
+//! order of the same body. [`dvb_ta::DasNibbleOrder`] selects either reading via
+//! `parse_with_order` / `serialize_into_with_order`; defaults are Table 1 for the
+//! descriptor and Table 8 for the compact form.
+//!
+//! ## Feature flags
+//!
+//! | Feature | Default | Effect |
+//! |---|---|---|
+//! | `std` | on | link `std`; without it the crate is `no_std` + `alloc` |
+//! | `serde` | on | Serialize-only `serde::Serialize` on all types |
+//!
 //! ## Coverage
 //!
 //! - [`SpliceInfoSection`] — the full §9.6 header (protocol_version, the
@@ -80,7 +118,14 @@
 //! Reserved bits are written as `1` on serialize (the spec's convention) and
 //! ignored on parse. `splice_info_section` uses the MPEG-2 CRC-32
 //! ([`broadcast_common::crc32_mpeg2`], §9.6.1): parse verifies it, serialize
-//! recomputes it.
+//! recomputes it. [`Error`] is `#[non_exhaustive]`; serializers reject over-range
+//! fields with `Error::FieldOverflow` rather than masking them.
+//!
+//! ## Related crates and MSRV
+//!
+//! Depends on `broadcast-common`; used by `timed-metadata`, `ssai-runtime` and
+//! `playout-runtime`; `dvb-si` finds the SCTE 35 PID. MSRV 1.95.0; licence
+//! MIT OR Apache-2.0.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

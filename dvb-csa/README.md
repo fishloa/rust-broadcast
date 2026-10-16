@@ -1,33 +1,54 @@
 # dvb-csa
 
-Pure-Rust implementation of the **DVB Common Scrambling Algorithm (CSA2)** —
-the cipher underneath conditional access on DVB-S, DVB-T, and DVB-C.
+Pure-Rust DVB Common Scrambling Algorithm (CSA2): the cipher underneath conditional access on DVB-S, DVB-T and DVB-C.
 
-## Status: oracle-validated, not spec-cited
+[![crates.io](https://img.shields.io/crates/v/dvb-csa.svg)](https://crates.io/crates/dvb-csa)
+[![docs.rs](https://docs.rs/dvb-csa/badge.svg)](https://docs.rs/dvb-csa)
 
-DVB-CSA has no public normative specification — the algorithm was confidential
-and licensed through ETSI. Every open implementation is reverse-engineered.
-Correctness is established by byte-exact agreement with **libdvbcsa 1.1.0**
-(VideoLAN's reference free implementation): 18 committed golden vectors in
-`tests/fixtures/libdvbcsa-vectors.hex` — 13 full 184-byte TS payloads plus one
-each at 8 B, 16 B, 32 B, 64 B and 100 B, the last covering a residual block
-that is neither empty nor a whole multiple of the 8-byte block size.
+## What it does / what it does not
 
-## Algorithm overview
+**Does.** Scrambles and descrambles MPEG-2 TS payloads (or any byte buffer) with
+an 8-byte control word using CSA2: a 56-round block cipher chained CBC-style
+plus an LFSR stream cipher. It also handles the TS-packet level: locating the
+payload past the adaptation field and setting `transport_scrambling_control`
+(even/odd key). An optional bitsliced path processes 64 independent payloads at
+once. Users are descramblers, head-end scramblers, test-stream generators and
+conformance tools.
 
-DVB-CSA2 combines a **block cipher** and a **stream cipher**, both keyed by the
-same 8-byte control word:
+**Does not.**
+- It does not obtain control words: ECM/EMM handling, CAS and CAM interaction
+  are out of scope (see `dvb-ci-runtime` for the CAM route, `dvb-simulcrypt`
+  for head-end CW/ECM messaging).
+- It does not implement DVB-CSA3 (AES-based, ETSI TS 100 289) or any other
+  scrambling scheme (AES-CBC, CENC: see `transmux`).
+- It does not parse the TS beyond what scrambling needs (use `mpeg-ts`), and
+  does not identify which PIDs to descramble.
+- It is not a normative implementation: DVB-CSA has no public specification
+  (see below).
 
-- **Block cipher** — 56-round substitution/permutation network on 8-byte blocks,
-  applied in a CBC-like chained mode across all complete blocks.
-- **Stream cipher** — LFSR-based byte-stream generator seeded from the
-  nibble-swapped control word and the encrypted first block as IV, XOR'd with
-  bytes 8..end.
+## Standards supported
 
-Encrypt = block CBC then stream XOR; decrypt = stream XOR then block CBC undo.
-Payloads shorter than 8 bytes pass through unchanged.
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| DVB-CSA (version 1/2) | none public: the algorithm was confidential, licensed through ETSI | Block cipher, stream cipher, chained mode, short-payload pass-through | Full (oracle-validated) | Correctness is established by byte-exact agreement with libdvbcsa 1.1.0: 18 committed golden vectors (`tests/fixtures/libdvbcsa-vectors.hex`, 13 full 184-byte TS payloads plus 8, 16, 32, 64 and 100 byte payloads) |
+| ISO/IEC 13818-1 (MPEG-2 Systems) | as cited in `src/ts.rs` | §2.4.3.3 `transport_scrambling_control`, §2.4.3.4 adaptation field: payload location in a 188-byte packet | Full | Packets with no payload return `Error::NoPayload` |
+| ETSI TS 100 289 V1.1.1 (2011-09), Support for use of the DVB Scrambling Algorithm version 3 | V1.1.1 (`etsi_ts_100_289_v01.01.01_dvb_scrambling_ca`, in `private/specs-md/INDEX.md`) | §5.1 Table 1 even/odd `transport_scrambling_control` values (`KeyParity`) | Partial | Only the even/odd signalling is used; the CSA3 cipher it describes is Not implemented |
 
-## Usage
+Reverse-engineered, not spec-cited: a round-trip test proves nothing for a
+cipher (any invertible function passes), so the libdvbcsa vectors are the gate.
+A TSDuck-scrambled capture (`france-tnt-scrambled-0x02d0.ts`) is committed but
+its control word was never recorded, so no test uses it.
+
+## Feature flags
+
+| Feature | Default | Effect |
+|---|---|---|
+| `std` | yes | `std::error::Error` on `Error`; enables `mpeg-ts/std`. |
+| `bitsliced` | no | Adds `dvb_csa::bitsliced`, the 64-lane batch fast path. |
+
+`no_std` without default features, with or without `bitsliced`.
+
+## Quick start
 
 ```rust
 use dvb_csa::{ControlWord, scramble, descramble};
@@ -38,10 +59,11 @@ let mut payload = vec![0xAA; 184];
 scramble(&cw, &mut payload);
 descramble(&cw, &mut payload);
 // payload is back to all 0xAA
+assert_eq!(payload, vec![0xAA; 184]);
 ```
 
-For TS-packet-level operation (extracts the payload, respects the adaptation
-field):
+At TS-packet level (skips the header and adaptation field, sets and checks
+`transport_scrambling_control`):
 
 ```rust
 use dvb_csa::ts::{self, KeyParity};
@@ -58,16 +80,33 @@ ts::descramble_ts_packet(&cw, KeyParity::Even, &mut packet).unwrap();
 assert_eq!(packet, clear); // and back
 ```
 
-The parity names which control word (even/odd) scrambles the packet and is
-written into `transport_scrambling_control`; the call returns an error (rather
-than scrambling twice) if the packet is already scrambled. This snippet is
-compiled and run as a doctest on `ts::scramble_ts_packet`.
+Runnable examples: `cargo run -p dvb-csa --example scramble_file` and
+`--example descramble_file`.
 
-## Bitsliced batch fast path
+## What is implemented
 
-The optional `bitsliced` feature adds `dvb_csa::bitsliced`, which transposes
-the data and evaluates the cipher as a branch-free boolean circuit, so every
-gate acts on `LANES` (64) payloads at once.
+- **Core:** `scramble` / `descramble` over a payload (payloads under 8 bytes
+  pass through unchanged, matching libdvbcsa); `ControlWord` (8 bytes,
+  zeroized on drop, constant-time equality, redacted `Debug`).
+- **TS level:** `ts::scramble_ts_packet` / `ts::descramble_ts_packet`,
+  `ts::KeyParity` (`Even` = `10`, `Odd` = `11`). Refuses to scramble an
+  already-scrambled packet (`Error::AlreadyScrambled`) and a parity/packet
+  mismatch on descramble (`Error::ParityMismatch`).
+- **Batch:** `bitsliced::scramble_batch` / `descramble_batch` over up to
+  `bitsliced::LANES` (64) independent payloads (feature `bitsliced`).
+- **Errors:** `Error` (`BufferTooShort`, `NoPayload`, `AlreadyScrambled`,
+  `ParityMismatch`), `#[non_exhaustive]`.
+
+### Algorithm
+
+Both ciphers are keyed by the same control word. The block cipher is a 56-round
+substitution/permutation network on 8-byte blocks in a CBC-like chain over all
+complete blocks; the stream cipher is an LFSR byte generator seeded from the
+nibble-swapped control word and the encrypted first block, XORed over bytes
+8..end. Encrypt is block CBC then stream XOR; decrypt is stream XOR then block
+CBC undo.
+
+### Bitsliced batch fast path
 
 ```toml
 [dependencies]
@@ -85,44 +124,42 @@ bitsliced::scramble_batch(&cw, &mut batch);
 bitsliced::descramble_batch(&cw, &mut batch);
 ```
 
-**The unit of parallelism is the payload, not the block.** CSA2 offers little
-independence *within* one payload — scrambling's block cipher is a reverse CBC
-(`C[i] = E(P[i] ^ C[i+1])`) and the stream cipher is a chained LFSR, both
-strictly sequential; only descrambling's block half is independent per block,
-and the stream cipher (the sequential part) is about two thirds of the work.
-So the API batches **independent** payloads — TS packets, typically — and there
-is deliberately no bitsliced single-payload entry point. A batch well below 64
-leaves lanes idle and scales down accordingly.
+The unit of parallelism is the payload, not the block: scrambling's block
+cipher is a reverse CBC and the stream cipher a chained LFSR, both strictly
+sequential (the stream cipher is about two thirds of the work), so the API
+batches independent payloads and has no single-payload bitsliced entry point.
+A batch well under 64 leaves lanes idle. Measured by `benches/throughput.rs`
+on an Apple M2 Ultra (rustc 1.86.0), 64 x 184-byte TS payloads:
 
-Measured by `benches/throughput.rs` on an Apple M2 Ultra (rustc 1.86.0), over
-64 x 184-byte TS payloads:
+| Operation | Scalar | Bitsliced | Speed-up |
+|---|---|---|---|
+| scramble | 15.7 MiB/s | 91.3 MiB/s | 5.8x |
+| descramble | 15.1 MiB/s | 99.8 MiB/s | 6.6x |
 
-| Operation  | Scalar     | Bitsliced  | Speed-up |
-|------------|------------|------------|----------|
-| scramble   | 15.7 MiB/s | 91.3 MiB/s | **5.8x** |
-| descramble | 15.1 MiB/s | 99.8 MiB/s | **6.6x** |
+The fast path is bit-exact with the scalar path, held by three gates: every
+generated circuit is checked against the table it came from over its entire
+input domain; a differential test requires identical output on randomised
+payloads and lengths; and the libdvbcsa vectors run through the batch path
+too. Circuits are generated by `tools/gen_circuits.py` from `src/tables.rs`,
+the single source of truth for the cipher.
 
-The fast path is bit-exact with the scalar path, held there by three
-independent gates: every generated circuit is checked against the table in
-`src/tables.rs` it came from over its **entire** input domain; a differential
-test requires byte-identical agreement with the scalar path over randomised
-payloads and lengths in both directions; and the libdvbcsa known-answer
-vectors are run through the batch path too, so it answers to the external
-oracle and not merely to our own scalar code.
+## Design notes
 
-The circuits are generated by `tools/gen_circuits.py` from `src/tables.rs`,
-which remains the single source of truth for the cipher.
+- Round-trip is not the correctness gate for a cipher; the external libdvbcsa
+  vectors are.
+- Control-word-derived state is zeroed with the `zeroize` crate and compared
+  with `subtle` constant-time equality; `Debug` never prints key bytes
+  (`tests/secret_debug_guard.rs`).
+- `#[non_exhaustive]` enums, `name()` + `Display` labels, structured errors.
+- `no_std`, no `alloc` needed for the scalar path.
 
-## Features
+## Related crates
 
-| Feature     | Default | What it does |
-|-------------|---------|--------------|
-| `std`       | yes     | Enables `std::error::Error` on `Error` |
-| `bitsliced` | no      | Adds the `bitsliced` batch fast path (above) |
+Depends on `mpeg-ts` (TS header and adaptation-field decode), `zeroize`,
+`subtle`, `thiserror`. Pairs with `dvb-simulcrypt` (head-end CW/ECM message
+framing) and `dvb-ci` / `dvb-ci-runtime` (CAM descrambling); `dvb-si` locates
+the CA descriptors and PIDs.
 
-Builds `no_std` without default features, with or without `bitsliced`.
+## MSRV and licence
 
-## License
-
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option.
+Rust 1.95.0. MIT OR Apache-2.0.

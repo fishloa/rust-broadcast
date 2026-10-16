@@ -1,86 +1,159 @@
 # dvb-ci-runtime
 
-Pure-Rust **EN 50221 DVB Common Interface runtime** — the driver loop over the
-[`dvb-ci`](https://crates.io/crates/dvb-ci) wire codecs.
+[![crates.io](https://img.shields.io/crates/v/dvb-ci-runtime.svg)](https://crates.io/crates/dvb-ci-runtime)
+[![docs.rs](https://img.shields.io/docsrs/dvb-ci-runtime)](https://docs.rs/dvb-ci-runtime)
+[![MSRV](https://img.shields.io/badge/MSRV-1.95.0-blue.svg)](https://blog.rust-lang.org/)
+[![license](https://img.shields.io/crates/l/dvb-ci-runtime.svg)](#msrv-and-license)
 
-`dvb-ci` is `no_std` and owns the **wire** layer (TPDU / SPDU / APDU
-parse+serialize, CA_PMT building, CI Plus extensions). `dvb-ci-runtime` adds the
-**runtime**: device I/O, the TPDU poll loop, SPDU session management, and the
-per-resource state machines that drive a physical CAM (ETSI EN 50221, TS 101 699).
+Pure-Rust **EN 50221 DVB Common Interface driver runtime**: device I/O, the TPDU
+poll loop, SPDU session management and the per-resource state machines that drive
+a physical CAM, over the [`dvb-ci`](https://crates.io/crates/dvb-ci) wire codecs.
 
-## Design
+## What it does / what it does not
 
-Everything is written against the `CaDevice` trait, so the runtime runs against
-either a real Linux CA device (`/dev/dvb/adapterN/caM`, the `linux` feature) or an
-in-memory `MockCaDevice`. The mock makes the state machines testable without
-hardware and enables differential testing against an external reference — drive
-both with the same scripted mock CAM, assert the emitted `write`/ioctl byte
-sequences match.
+**Does.** Drives a Common Interface module end to end: resets the slot, opens the
+transport connection, runs the Resource Manager handshake, answers the module's
+session opens for the six host-provided resources, surfaces `application_info`,
+`ca_info`, `ca_pmt_reply`, MMI and host-control events as `Notification`s, builds
+and sends `ca_pmt` for the services you add, and (with a `ci0` data device)
+pushes a scrambled TS through the CAM and returns the descrambled TS. It is
+sync and sans-IO at its core: the caller owns the clock and the loop.
 
-Implemented from the EN 50221 specification.
+**Does not.**
 
-## What's implemented
+- No CI Plus: the runtime does not run CI+ authentication, the Content Control
+  resource, multi-stream or any TS 103 205 resource (the `dvb-ci` crate types
+  those APDUs; nothing here drives them).
+- No Low-Speed Communications, no TS 101 699 extension resources at runtime
+  (Resource Manager v2, Power Manager, Download and so on); only the six
+  EN 50221 resources listed below are served.
+- It does not re-tune on a `host_control` `tune`/`replace` request: it surfaces
+  the request and the host acts on it.
+- It does not descramble itself; the CAM does. For software CSA see
+  [`dvb-csa`](https://crates.io/crates/dvb-csa).
+- Linux only for real hardware (the DVB CA/CI devices); other platforms get the
+  portable core and the in-memory mocks.
 
-- **Transport** (TPDU, §A.4): `Create_T_C` handshake, poll cadence, `T_SB`
-  data-available → `T_RCV`, `T_Data_More/Last` reassembly, reply timeout.
-- **Session** (SPDU, §7.2): session table; `open_session`/`create_session`/
-  `close`; `session_number` + APDU routing.
-- **Resources** (§8): Resource Manager handshake → `CamReady`,
-  application_information, conditional_access (`ca_pmt`/`ca_pmt_reply`),
-  date_time (MJD + BCD), mmi (surfaces module menus/enquiries).
+## Standards supported
+
+| Standard | Edition | Scope | Status | Notes |
+|---|---|---|---|---|
+| CENELEC EN 50221 — Common Interface Specification for CA and other DVB Decoder Applications | February 1997 (vendored text) | Transport (Annex A TPDU poll loop), session layer, and the host-provided resources: Resource Manager, Application Information, Conditional Access Support, Date-Time, MMI, Host Control | Partial | Low-Speed Communications not served; Host Control surfaced, not acted on |
+| ETSI TS 101 699 — Extensions to the Common Interface Specification | V1.1.1 (1999-11) | None at runtime (wire objects are typed in `dvb-ci`) | Not implemented | Cited by the crate docs for context only |
+| Linux DVB CA API (`linux/dvb/ca.h`, kernel `dvb_ca_en50221`) | n/a (kernel ABI) | `CA_RESET`, `CA_GET_SLOT_INFO`, `[slot, connection_id, ...]` frame read/write, `ciM` TS data plane | Full for the calls used | `linux` feature, Linux only |
+
+## Features
+
+| Feature | Default | Effect |
+|---|---|---|
+| (none) | yes | Portable sync core: `Driver`, `CiStack`, `ManagedCa`, `CaDescrambler`, `MockCaDevice`, `MockCiDataDevice`, `RecordingCaDevice`, `trace`. Needs `std` (no `no_std` claim). |
+| `linux` | no | `LinuxCaDevice` (`/dev/dvb/adapterN/caM`), `LinuxCiDataDevice` (`ciM`), `DeviceOpError`, and the `ci-probe` binary (pulls `libc`, `rustix`, `clap`). |
+
+## Quick start
+
+```rust
+use std::time::Duration;
+use dvb_ci_runtime::{Driver, HotPlug, MockCaDevice, Notification};
+use dvb_ci_runtime::dvb_ci::tpdu::tags;
+
+fn main() -> std::io::Result<()> {
+    // Script a module that accepts the transport connection.
+    let dev = MockCaDevice::new([vec![tags::C_T_C_REPLY, 0x01, 0x01]]);
+    let mut driver = Driver::new(dev);
+
+    driver.init()?; // reset + open the transport connection
+
+    // Pump the device: reads frames when readable, otherwise advances the
+    // EN 50221 poll cadence by the timeout.
+    for _ in 0..4 {
+        driver.pump(Duration::from_millis(100))?;
+    }
+
+    // Host-facing events surface here, poll-drained:
+    for note in driver.take_notifications() {
+        match note {
+            Notification::CamReady => { /* now safe to send a ca_pmt */ }
+            other => { let _ = other; }
+        }
+    }
+
+    // ...or delivered by a closure per pump:
+    driver.pump_hotplug(Duration::from_millis(100), |hp| match hp {
+        HotPlug::CamPresent => { /* CAM (re)inserted: re-send any pending ca_pmt */ }
+        HotPlug::CamRemoved => { /* CAM removed: stop descrambling */ }
+        _ => {}
+    })?;
+    Ok(())
+}
+```
+
+Runnable versions: `examples/mock_cam_session.rs`, `examples/sans_io_core.rs`.
+
+## What is implemented
+
+- **Transport** (EN 50221 Annex A TPDU): `Create_T_C` handshake, poll cadence
+  (one `T_Data_Last` per module `T_SB`, half-duplex), `T_SB` data-available to
+  `T_RCV`, `T_Data_More/Last` reassembly, reply timeout.
+- **Session** (SPDU): session table, `open_session`/`create_session`/`close`,
+  `session_number` APDU routing.
+- **Resources**, all host-provided (the module opens the session; the host
+  advertises them in its Resource Manager `profile`): Resource Manager
+  (handshake to `CamReady`), Application Information, Conditional Access
+  (`ca_pmt` / `ca_pmt_reply`), Date-Time (MJD + BCD), MMI (menus and enquiries
+  surfaced as `Notification::Mmi`; `Driver::mmi_menu_answer` / `mmi_enquiry_answer`
+  / `mmi_cancel` answer them), Host Control (`tune` / `replace` /
+  `clear_replace` / `ask_release` surfaced as `Notification::HostControl`).
 - **Descramble helper**: `Driver::descramble(pmt)` / `HostRequest::Descramble`
-  runs the full `ca_pmt` query → reply → `ok_descrambling` sequence, filtered to
-  the CAM's advertised CAIDs (from `ca_info`).
-- **Devices**: in-memory `MockCaDevice` + `MockCiDataDevice`; Linux
-  `/dev/dvb/adapterN/caM` (control plane) and `ciM` (TS data plane, `CiDataDevice`
-  — scrambled-in / descrambled-out for separate-CI hardware) behind the `linux`
-  feature (`libc`).
-- **Split-fd data plane**: `LinuxCiDataDevice::open_split(adapter, ci)` /
-  `from_split(write, read)` drive `ciM` as two one-direction descriptors
-  (`O_WRONLY` write, `O_RDONLY | O_NONBLOCK` read). `open` tries `O_RDWR`
-  first and falls back to the split open on `EINVAL` only, for hardware such
-  as the Digital Devices CXD2099 `ci0` that rejects `O_RDWR` (verified on that
-  hardware, #1066).
-- **Named device errors**: every failing Linux device operation (`open`,
-  `read`, `write`, `poll`, `CA_RESET`, `CA_GET_SLOT_INFO`) returns a
-  `DeviceOpError` naming the operation, device path and errno
-  (`DeviceOpError::errno_of(&err)`); the `io::ErrorKind` is unchanged. The
-  first `Create_T_C` write that fails `EINVAL` while the kernel slot is still
-  coming up is retried (every 250 ms, up to 12 s past the settle window)
-  instead of aborting the pump.
-- **Long-form `length_field` safe**: follows `dvb-ci`'s preserved
-  `LengthForm`, so a CAM coding `82 00 09` no longer misframes the session or
-  transport layer. PID accessors (`es_pids`, `emm_pids`, `descramble_pids`,
-  `required_pids`, ...) are typed `mpeg_ts::pid::Pid`. Linux ioctl request
-  numbers come from `rustix::ioctl::opcode` (correct on mips/powerpc/sparc).
-- **Diagnostics**: `RecordingCaDevice` captures the link both ways;
-  `trace::decode_frame` / `decode_log` annotate a capture (TPDU → SPDU → APDU)
-  for live-CAM debugging.
-- **MMI answering**: `Driver::mmi_menu_answer` / `mmi_enquiry_answer` /
-  `mmi_cancel` send `menu_answ` / `answ` back to the module.
-- **Hot-plug** (#726): `Notification::HotPlug(HotPlug)` groups the five
-  transitions — `CamPresent`/`CamRemoved` are real DVB-CA slot-status edges
-  (the driver re-drives the handshake on insert, tears down on remove);
-  `CardInserted`/`CardRemoved`/`CardChanged` are best-effort EN 50221
-  app-layer inference (CI slots have no card-detect line). React with a
-  closure via `Driver::pump_hotplug(dt, |hp| …)` (or `pump_with` for every
-  notification), or classify a drained note with `Notification::hotplug()`.
-- **Managed CAS layer** (#763): a single-slot orchestration layer fed parsed
-  `dvb-si` structs (never raw bytes). `Driver::add_service(&PmtSection)` /
-  `remove_service(pn)` build + send the `ca_pmt` and track the slot's active
-  service set; `set_cat(&CatSection)` computes the EMM-PID feed (CAT EMM PIDs
-  ∩ the CAM's `ca_info` CAIDs); `emm_pids()`/`descramble_pids()`/`ca_pids()`/
-  `required_pids()` (EMM ∪ ES ∪ ECM ∪ PCR) give the PIDs to route into `ci0`.
-  `set_requery_interval(dt)` (**opt-in**: the default `REQUERY_DEFAULT` is
-  `Duration::ZERO`, disabled, because no CAM verified so far answers the
-  `query` half) periodically re-queries with a `list_management = update`
-  `ca_pmt` pair so a card entitled *after* the initial `ca_pmt` refreshes — a
-  per-programme status change surfaces as an edge-triggered
-  `Notification::Entitlement`.
+  runs the `ca_pmt` query, reply and `ok_descrambling` sequence, filtered to the
+  CAM's advertised CAIDs (from `ca_info`).
+- **Managed CAS layer**: a single-slot orchestration layer fed parsed `dvb-si`
+  structs (never raw bytes). `Driver::add_service(&PmtSection)` /
+  `remove_service(pn)` build and send the `ca_pmt` and track the active service
+  set; `set_cat(&CatSection)` computes the EMM-PID feed (CAT EMM PIDs intersected
+  with the CAM's `ca_info` CAIDs); `emm_pids()` / `descramble_pids()` /
+  `ca_pids()` / `required_pids()` give the PIDs to route into `ci0`.
+  `set_requery_interval(dt)` is **opt-in** (default `REQUERY_DEFAULT` is
+  `Duration::ZERO`) because no CAM verified so far answers the `query` half; a
+  per-programme change surfaces as an edge-triggered `Notification::Entitlement`.
   `CaDescrambler<D, C>` is the turnkey wrapper that also owns the `ci0`
   `CiDataDevice`: `feed_ts(scrambled)` filters to `required_pids()` and returns
-  the descrambled TS. One `CaDescrambler` = one CI slot = one TS path
-  (multi-tuner ⇒ one per slot).
+  the descrambled TS. One `CaDescrambler` is one CI slot and one TS path.
+- **Hot-plug**: `Notification::HotPlug(HotPlug)` with `CamPresent` / `CamRemoved`
+  (real DVB-CA slot-status edges; the driver re-drives the handshake on insert
+  and tears down on remove) and `CardInserted` / `CardRemoved` / `CardChanged`
+  (best-effort EN 50221 app-layer inference; CI slots have no card-detect line).
+  React with `Driver::pump_hotplug(dt, |hp| ...)` or `pump_with`.
+- **Devices**: in-memory `MockCaDevice` + `MockCiDataDevice`; Linux
+  `LinuxCaDevice` (control plane) and `LinuxCiDataDevice` (TS data plane, whole
+  packets only, `WouldBlock` + `PartialWrite` on backpressure) behind `linux`.
+  `LinuxCiDataDevice::open` tries `O_RDWR` and falls back to a split
+  `O_WRONLY` / `O_RDONLY | O_NONBLOCK` open on `EINVAL` (`open_split` /
+  `from_split` are public).
+- **Named device errors**: every failing Linux device operation returns a
+  `DeviceOpError` naming the operation, device path and errno
+  (`DeviceOpError::errno_of(&err)`); the `io::ErrorKind` is unchanged. A first
+  `Create_T_C` write that fails `EINVAL` while the kernel slot is still coming up
+  is retried every 250 ms for up to 12 s past the settle window.
+- **Diagnostics**: `RecordingCaDevice` captures the link both ways;
+  `trace::decode_frame` / `decode_log` annotate a capture (TPDU, SPDU, APDU).
+
+## Hardware verification
+
+Only what the CHANGELOG records:
+
+- An AlphaCrypt / Irdeto module (live): Resource Manager handshake,
+  `application_information` ("AlphaCrypt") and `ca_info` with 18 CA_system_ids
+  were verified against the real module (#337, #340). That module rejects a host
+  `create_session` for the host-provided resources and sends no
+  `resource_identifier`s in its first `profile`; the runtime handles both. It
+  also drops a second link block sent before it answers the first.
+- A Digital Devices CXD2099 `ci0` (dddvb, Ubuntu 5.15): the split-fd data plane
+  was run for 150 s, 111k `feed_ts` calls, max 249 us, 0 errors (#1066); the
+  device rejects `O_RDWR` with `EINVAL` and `CA_GET_SLOT_INFO` may return `EINVAL`
+  (the slot is then assumed ready).
+- Not verified on hardware: the periodic `ca_pmt` re-query (no CAM tested answers
+  the `query` half), CardInserted/Removed/Changed inference, and every path not
+  listed above.
 
 ## `ci-probe` — discover and engage an installed CAM
 
@@ -178,44 +251,26 @@ The EN 50221 link is polled half-duplex — the host sends one `T_Data_Last` per
 module `T_SB`. The transport queues outbound SPDUs and releases one per turn (a
 real CAM drops a second block sent before it answers the first — #337).
 
-`#![deny(unsafe_code)]` — the Linux device leaf is the sole `#[allow]`; the
-sans-IO core is unsafe-free. 27 tests, no hardware required.
+## Design notes
 
-Roadmap: the `host_control` resource, MMI answering (`menu_answ`/`answ`), and a
-differential test harness against an external reference.
+- Everything is written against the `CaDevice` trait, so the runtime runs against
+  a real Linux CA device or the in-memory `MockCaDevice`, which makes the state
+  machines testable without hardware.
+- `#![deny(unsafe_code)]`: the Linux device leaf is the sole `#[allow]`; the
+  sans-IO core is unsafe-free. Linux ioctl request numbers come from
+  `rustix::ioctl::opcode`; readiness polling is `rustix::event::poll`.
+- Long-form `length_field` safe: follows `dvb-ci`'s preserved `LengthForm`, so a
+  CAM coding `82 00 09` does not misframe the session or transport layer. PID
+  accessors are typed `mpeg_ts::pid::Pid`.
+- `Debug` redacts MMI enquiry answers (whatever the user typed).
+- `thiserror` error types; dispatch enums are `#[non_exhaustive]`.
 
-## Example
+## Related crates
 
-```rust
-use std::time::Duration;
-use dvb_ci_runtime::{Driver, HotPlug, MockCaDevice, Notification};
-use dvb_ci_runtime::dvb_ci::tpdu::tags;
+Depends on [`dvb-ci`](https://crates.io/crates/dvb-ci) (wire codecs, re-exported
+as `dvb_ci_runtime::dvb_ci`), `dvb-si` (PMT / CAT inputs), `mpeg-ts` and
+`broadcast-common`.
 
-// Script a module that accepts the transport connection.
-let dev = MockCaDevice::new([vec![tags::C_T_C_REPLY, 0x01, 0x01]]);
-let mut driver = Driver::new(dev);
+## MSRV and license
 
-driver.init()?;                       // reset + open the transport connection
-
-// Poll-drain style: pump, then match drained notifications.
-for _ in 0..4 {
-    driver.pump(Duration::from_millis(100))?;   // read frames / advance poll cadence
-}
-for note in driver.take_notifications() {
-    if let Notification::CamReady = note { /* now safe to send a ca_pmt */ }
-}
-
-// Or closure style — react to CAM/card hot-plug edges directly:
-driver.pump_hotplug(Duration::from_millis(100), |hp| match hp {
-    HotPlug::CamPresent => { /* CAM (re)inserted — (re)send any pending ca_pmt */ }
-    HotPlug::CamRemoved => { /* CAM removed — stop descrambling */ }
-    _ => {}                 // Card{Inserted,Removed,Changed} — best-effort inference
-})?;
-# Ok::<(), std::io::Error>(())
-```
-
-See `examples/` for a runnable version.
-
-## License
-
-MIT OR Apache-2.0.
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.
