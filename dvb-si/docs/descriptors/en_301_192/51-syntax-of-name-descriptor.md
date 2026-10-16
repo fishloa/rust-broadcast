@@ -1,5 +1,5 @@
 ## Table 51 — Syntax of name_descriptor
-_§10.2.4, PDF pp. 65-65_
+_§10.2.3, PDF pp. 65-65_
 
 | name_descriptor(){ | No. of bytes | Value |
 |---|---|---|

@@ -1,5 +1,5 @@
 ## Table 48 — Defined descriptors, values and allowed locations
-_§10.2.2, PDF pp. 64-64_
+_§10.2.1, PDF pp. 64-64_
 
 | Descriptor | Tag | DII - | DSI - | Short description |
 |---|---|---|---|---|

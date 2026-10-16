@@ -1,5 +1,5 @@
 ## Table 25 — Application icons descriptor syntax
-_§5.3.5.7, PDF pp. 43-43_
+_§5.3.5.6.2, PDF pp. 43-43_
 
 |  | No.of bits | Identifier | Value |
 |---|---|---|---|

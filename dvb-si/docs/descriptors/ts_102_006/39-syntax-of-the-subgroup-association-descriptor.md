@@ -1,5 +1,5 @@
 ## Table 39 — Syntax of the subgroup_association_descriptor
-_§9.6.2.2, PDF pp. 36-36_
+_§9.6.2.1, PDF pp. 36-36_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

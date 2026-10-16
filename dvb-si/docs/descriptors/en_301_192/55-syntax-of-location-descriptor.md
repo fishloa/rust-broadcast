@@ -1,5 +1,5 @@
 ## Table 55 — Syntax of location_descriptor
-_§10.2.9, PDF pp. 67-67_
+_§10.2.7, PDF pp. 67-67_
 
 | location_descriptor(){ | No. of bytes | Value |
 |---|---|---|
