@@ -26,6 +26,7 @@
 //! Third-party crates can add a new input/output/output-auth scheme without
 //! editing this crate at all — see [`registry`] (issue #663 external scheme
 //! plugin registry) and [`origin::serve_with_registry`].
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub(crate) mod catchup;
 pub mod config;

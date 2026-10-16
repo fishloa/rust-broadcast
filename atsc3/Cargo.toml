@@ -34,6 +34,7 @@ optional         = true
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
