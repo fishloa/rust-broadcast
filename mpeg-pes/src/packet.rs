@@ -341,6 +341,28 @@ impl PesExtensionField<'_> {
     }
 }
 
+/// The `additional_copy_info` byte: `marker_bit(1) | additional_copy_info(7)`
+/// (ISO/IEC 13818-1 Table 2-21). The marker is spec-fixed to `1` but kept so a
+/// real stream's value round-trips; it lives with the value (not as a
+/// `PesHeader` field) so the header does not grow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct AdditionalCopyInfo {
+    /// 7-bit `additional_copy_info`.
+    pub info: u8,
+    /// The `marker_bit` in front of it (spec `1`).
+    pub marker: bool,
+}
+
+impl AdditionalCopyInfo {
+    /// A value with the spec-conformant marker bit.
+    #[must_use]
+    pub const fn new(info: u8) -> Self {
+        Self { info, marker: true }
+    }
+}
+
 /// Typed PES header extension sub-structure
 /// (ISO/IEC 13818-1 §2.4.3.7, Table 2-21, `PES_extension_flag = 1`).
 ///
@@ -658,12 +680,9 @@ pub struct PesHeader<'a> {
     pub es_rate_marker_bits: u8,
     /// DSM trick-mode control byte (typed), if `DSM_trick_mode_flag` is set.
     pub dsm_trick_mode: Option<TrickMode>,
-    /// 7-bit `additional_copy_info`, if `additional_copy_info_flag` is set.
-    pub additional_copy_info: Option<u8>,
-    /// The `marker_bit` in front of `additional_copy_info` (Table 2-21; the
-    /// spec fixes it to `1`), kept so a real stream's value round-trips. Only
-    /// meaningful when `additional_copy_info` is `Some`.
-    pub additional_copy_info_marker: bool,
+    /// `marker_bit` + 7-bit `additional_copy_info`, if
+    /// `additional_copy_info_flag` is set.
+    pub additional_copy_info: Option<AdditionalCopyInfo>,
     /// Previous PES packet CRC (16 bits), if `PES_CRC_flag` is set.
     pub pes_crc: Option<u16>,
     /// PES extension sub-structure, if `PES_extension_flag` is set.
@@ -699,7 +718,6 @@ impl<'a> PesHeader<'a> {
             es_rate_marker_bits: ES_RATE_MARKERS_VALUE,
             dsm_trick_mode: None,
             additional_copy_info: None,
-            additional_copy_info_marker: true,
             pes_crc: None,
             pes_extension: None,
             header_stuffing: &[],
@@ -925,7 +943,6 @@ impl<'a> PesPacket<'a> {
         };
 
         // additional_copy_info (1 byte: marker + 7-bit info).
-        let mut additional_copy_info_marker = true;
         let additional_copy_info = if f2 & F2_ADDITIONAL_COPY_INFO != 0 {
             if opt.len() < cursor + 1 {
                 return Err(Error::BufferTooShort {
@@ -934,8 +951,10 @@ impl<'a> PesPacket<'a> {
                     what: "additional_copy_info",
                 });
             }
-            let v = opt[cursor] & 0x7F;
-            additional_copy_info_marker = opt[cursor] & ADDITIONAL_COPY_INFO_MARKER != 0;
+            let v = AdditionalCopyInfo {
+                info: opt[cursor] & 0x7F,
+                marker: opt[cursor] & ADDITIONAL_COPY_INFO_MARKER != 0,
+            };
             cursor += 1;
             Some(v)
         } else {
@@ -985,7 +1004,6 @@ impl<'a> PesPacket<'a> {
             es_rate_marker_bits,
             dsm_trick_mode,
             additional_copy_info,
-            additional_copy_info_marker,
             pes_crc,
             pes_extension,
             header_stuffing,
@@ -1104,12 +1122,12 @@ impl<'a> PesPacket<'a> {
                 }
                 // additional_copy_info: marker(1) | info(7).
                 if let Some(aci) = h.additional_copy_info {
-                    let marker = if h.additional_copy_info_marker {
+                    let marker = if aci.marker {
                         ADDITIONAL_COPY_INFO_MARKER
                     } else {
                         0
                     };
-                    buf[cursor] = marker | (aci & 0x7F);
+                    buf[cursor] = marker | (aci.info & 0x7F);
                     cursor += 1;
                 }
                 // PES_CRC (2 bytes, big-endian).
@@ -1220,7 +1238,6 @@ mod tests {
             escr: None,
             es_rate: None,
             es_rate_marker_bits: 0b11,
-            additional_copy_info_marker: true,
             dsm_trick_mode: None,
             additional_copy_info: None,
             pes_crc: None,
@@ -1334,7 +1351,6 @@ mod tests {
             escr: None,
             es_rate: None,
             es_rate_marker_bits: 0b11,
-            additional_copy_info_marker: true,
             dsm_trick_mode: None,
             additional_copy_info: None,
             pes_crc: None,
@@ -1395,7 +1411,6 @@ mod tests {
         let h = PesHeader {
             es_rate: Some(0x3FFFFF),
             es_rate_marker_bits: 0b11,
-            additional_copy_info_marker: true,
             ..empty_header()
         };
         let bytes = build_pes(h, &[]);
@@ -1456,12 +1471,15 @@ mod tests {
     #[test]
     fn pes_header_additional_copy_info_round_trip() {
         let h = PesHeader {
-            additional_copy_info: Some(0x7F),
+            additional_copy_info: Some(AdditionalCopyInfo::new(0x7F)),
             ..empty_header()
         };
         let bytes = build_pes(h, &[]);
         let pkt = PesPacket::parse(&bytes).unwrap();
-        assert_eq!(pkt.header.unwrap().additional_copy_info, Some(0x7F));
+        assert_eq!(
+            pkt.header.unwrap().additional_copy_info,
+            Some(AdditionalCopyInfo::new(0x7F))
+        );
     }
 
     /// PES_CRC round-trip.
@@ -1689,9 +1707,8 @@ mod tests {
             }),
             es_rate: Some(50_000),
             es_rate_marker_bits: 0b11,
-            additional_copy_info_marker: true,
             dsm_trick_mode: Some(TrickMode::SlowMotion { rep_cntrl: 3 }),
-            additional_copy_info: Some(5),
+            additional_copy_info: Some(AdditionalCopyInfo::new(5)),
             pes_crc: Some(0xCAFE),
             pes_extension: Some(ext),
             header_stuffing: &[],
@@ -1707,7 +1724,7 @@ mod tests {
             dh.dsm_trick_mode,
             Some(TrickMode::SlowMotion { rep_cntrl: 3 })
         );
-        assert_eq!(dh.additional_copy_info, Some(5));
+        assert_eq!(dh.additional_copy_info, Some(AdditionalCopyInfo::new(5)));
         assert_eq!(dh.pes_crc, Some(0xCAFE));
         assert!(dh.pes_extension.is_some());
     }

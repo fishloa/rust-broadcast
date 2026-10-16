@@ -422,7 +422,7 @@ fn constructed_header_carries_spec_fill() {
         field_id: 0,
         reserved: FREEZE_FRAME_RESERVED_VALUE,
     });
-    h.additional_copy_info = Some(0x0A);
+    h.additional_copy_info = Some(mpeg_pes::AdditionalCopyInfo::new(0x0A));
     let p = PesPacket {
         stream_id: StreamId(0xE0),
         pes_packet_length: 0,
