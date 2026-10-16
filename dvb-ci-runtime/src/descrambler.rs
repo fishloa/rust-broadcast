@@ -597,16 +597,16 @@ mod tests {
         let b = packet(Pid::new(0x100), 0xB2);
         let mut descrambler = scripted(
             false,
-            vec![
-                Ok(a.clone()),
-                Err(io::Error::other("boom")),
-                Ok(b.clone()),
-            ],
+            vec![Ok(a.clone()), Err(io::Error::other("boom")), Ok(b.clone())],
         );
         let err = descrambler.feed_ts(&[]).unwrap_err();
         assert_eq!(err.to_string(), "boom");
         let got = descrambler.feed_ts(&[]).unwrap();
-        assert_eq!(got, [a, b].concat(), "A drained before the error must survive");
+        assert_eq!(
+            got,
+            [a, b].concat(),
+            "A drained before the error must survive"
+        );
         assert!(descrambler.take_undelivered().is_empty());
     }
 
