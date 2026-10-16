@@ -37,7 +37,7 @@ below); for SRT/TTML conversion use `caption-convert`, which wraps these extract
 | ANSI/SCTE 214-3 | unverified (not vendored) | §8.3.3 inband `emsg`, scheme `urn:scte:scte35:2013:bin` | Full for the binary scheme | Part number settled from DASH-IF IOP v4.3 §5.4.3 (see `convert/emsg.rs`). The MPD `EventStream` XML form (SCTE 214-1) is not implemented. |
 | ISO/IEC 23009-1 (via `mp4-emsg`) | unverified | §5.10.3.3 Event Message Box, v0 <-> v1 re-timing | Full | `emsg_to_v0` / `emsg_to_v1` |
 | W3C WebVTT + RFC 8216 §3.5 | curated rules: `specs/rules/webvtt-rules.md` | cue syntax, `X-TIMESTAMP-MAP=MPEGTS:<n>,LOCAL:00:00:00.000` | Partial | No cue settings (`line`/`position`/`align`), no styling tags. |
-| ANSI/CTA-608-E, CTA-708-E (decode in `cc-data`) | CTA-608-E, CTA-708-E (not vendored; unverified against the document) | CC1 pop-on/roll-up/paint-on, 708 service windows | Partial | feature `cc-data`; documented losses in `webvtt` module docs. |
+| ANSI/CTA-608-E, CTA-708-E (decode in `cc-data`) | CTA-608-E, CTA-708-E (CTA not vendored; 708 cross-source: GY/T 270-2013, vendored, a Chinese adaptation) | CC1 pop-on/roll-up/paint-on, 708 service windows | Partial | feature `cc-data`; documented losses in `webvtt` module docs. |
 | ETSI EN 300 706 Enhanced Teletext (decode here) / EN 301 775 §4.5 (carriage in `dvb-vbi`) | V1.2.1 of each (`private/specs-md/INDEX.md`) | Level-1 subtitle pages, Hamming-8/4, odd parity, English national option | Partial | feature `teletext`; no enhancement packets, no styling, English-only national option (`docs/teletext-subtitles.md`). |
 
 ### Conversion matrix

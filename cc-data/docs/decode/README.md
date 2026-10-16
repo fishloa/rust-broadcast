@@ -16,8 +16,8 @@ separate crate. `cc-data` already produces typed caption triplets and splits 608
 | Caption carriage (`cc_data()`) | ETSI TS 101 154 Table B.9 | already vendored (`../ts_101_154/`) |
 | ANC carriage (SMPTE 2038 / IP) | **RFC 8331** (IETF, freely usable) | yes — RFC |
 | **Decoder conformance + 708 semantic model** | **47 CFR §79.102** (US Gov **public domain**) | **yes — fully vendorable** → [`cea708-conformance.md`](cea708-conformance.md) |
-| 708 bit-level syntax (DTVCC packet / service block / C0/C1/G0/G1/G2/C2/C3 opcode bytes + preset tables) | **ANSI/CTA-708-E** (copyright CTA; cart-gated) | **NOT yet vendored** — see Gaps in the conformance doc |
-| 608 bit-level syntax (line-21 control codes + PAC byte values, colour/style codes) | **ANSI/CTA-608-E** (copyright CTA; cart-gated) | **NOT yet vendored** |
+| 708 bit-level syntax (DTVCC packet / service block / C0/C1/G0/G1/G2/C2/C3 opcode bytes + preset tables) | **ANSI/CTA-708-E** (copyright CTA; cart-gated) | **NOT vendored** (no copy in `private/specs`, `private/specs-md` or `specs/`); cross-source: **GY/T 270-2013** (vendored, `private/specs-md/nrta_gyt_270_2013_dtv_closed_caption_system.md`: `caption_channel_packet()`, C0 §10.2.2, C1 §10.2.3, DefineWindow §11.10.5.3, SetPenAttributes §11.10.5.10, predefined window/pen styles §11.4.13 + Annex A.7) — a Chinese adaptation, differences from CTA-708 must be checked; see Gaps in the conformance doc |
+| 608 bit-level syntax (line-21 control codes + PAC byte values, colour/style codes) | **ANSI/CTA-608-E** (copyright CTA; cart-gated) | **NOT vendored** (no copy in `private/specs`, `private/specs-md` or `specs/`) |
 
 Key distinction: §79.102 is **US-Government public domain** (no copyright), so its
 text — the decoder requirements *and* the 708 semantic model (services, code-space

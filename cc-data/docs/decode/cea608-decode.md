@@ -2,9 +2,12 @@
 
 _Source: ANSI/CTA-608-E S-2019 ("Line 21 Data Services", April 2008 reaffirmation),
 §5.3, §6, §7, §8, Annex B, and the consolidated FCC tables in Annex F.1.1
-(Tables 49–53, PDF p.96–101) — copyright CTA, not redistributable (the PDF `cta_608_e_2019.pdf` is
-not vendored). Render-verified against that PDF; tables transcribed from the
-PDF render, not pdftotext._
+(Tables 49–53, PDF p.96–101) — copyright CTA, not redistributable. NOT vendored: no copy of `cta_608_e_2019.pdf`
+exists in `private/specs`, `private/specs-md`, `specs/` or elsewhere on the
+maintainer machine today. Provenance: transcribed from the PDF render (not pdftotext)
+in commit 712951587 (2026-06-21), whose message says it was render-verified against a
+then-held gitignored copy; that copy is gone, so the verification cannot be re-run
+and these tables are unverified against a retrievable source._
 
 This document captures the **DECODE byte-pair semantics** of the EIA/CEA-608 line-21
 data service — the meaning of the two-byte control / character codes that `cc-data`

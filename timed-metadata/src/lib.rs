@@ -37,7 +37,7 @@
 //! | ANSI/SCTE 214-3 | unverified (not vendored) | §8.3.3 inband `emsg`, `urn:scte:scte35:2013:bin` | Full (binary scheme only) |
 //! | ISO/IEC 23009-1 | unverified | §5.10.3.3 `emsg`, v0 <-> v1 re-timing | Full |
 //! | W3C WebVTT + RFC 8216 §3.5 | curated rules | cue syntax, `X-TIMESTAMP-MAP` | Partial |
-//! | CTA-608-E / CTA-708-E (decode in `cc-data`) | unverified (not vendored) | CC1, 708 service | Partial, feature `cc-data` |
+//! | CTA-608-E / CTA-708-E (decode in `cc-data`) | CTA not vendored (708 cross-source: GY/T 270-2013, vendored, a Chinese adaptation) | CC1, 708 service | Partial, feature `cc-data` |
 //! | ETSI EN 300 706 / EN 301 775 §4.5 | V1.2.1 | Level-1 subtitle pages | Partial, feature `teletext` |
 //!
 //! | From \ To | `EXT-X-DATERANGE` | `emsg` | SCTE-35 bytes |

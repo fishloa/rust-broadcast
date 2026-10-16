@@ -266,7 +266,7 @@ frame — is set by the carriage layer; see Table B.9.)
 §79.102 gives the decoder **requirements + the 708 semantic model** above, but does
 **NOT** reproduce the bit-level wire syntax or the exact byte-value tables. The
 following are **awaiting ANSI/CTA-708-E** (copyright CTA; free-to-download but
-cart-gated; **not yet vendored**) and must NOT be guessed from the regulation:
+cart-gated; **not vendored**) and must NOT be guessed from the regulation. A vendored cross-source exists: GY/T 270-2013 (`private/specs-md/nrta_gyt_270_2013_dtv_closed_caption_system.md`, a Chinese adaptation of the DTVCC system) contains the `caption_channel_packet()` syntax, C0 (§10.2.2) / C1 (§10.2.3) code sets, DefineWindow (§11.10.5.3), SetPenAttributes (§11.10.5.10) and the predefined window/pen tables (§11.4.13, Annex A.7 Tables A.2/A.3); its differences from CTA-708-E must be checked before use:
 
 ### DTVCC transport / framing (CTA-708-E)
 - **DTVCC packet header** layout — `sequence_number`, `packet_size_code`, and how
@@ -299,9 +299,9 @@ cart-gated; **not yet vendored**) and must NOT be guessed from the regulation:
 - The **line-21 control-code + Preamble Address Code (PAC) byte values**, the
   608 colour/style codes, and roll-up / pop-on / paint-on timing — for the
   `cc_type` 0/1 (608) path that `cc-data` already demuxes. These are in **ANSI/CTA-
-  608-E** (also copyright CTA, not vendored).
+  608-E** (also copyright CTA, not vendored; no vendored cross-source for line-21 exists).
 
-Until CTA-608-E / 708-E are vendored, a decode implementation is **grounded** for:
+Until CTA-608-E / 708-E are vendored (GY/T 270-2013 being the only vendored, adapted cross-source for the 708 layer), a decode implementation is **grounded** for:
 the service model (6 services), the code-space mandate (C0/G0/C1/G1 full, G2
 subset + substitution, C2/C3/G3 optional), the window/pen/font/colour/opacity/edge
 **enumerations + counts**, the screen-coordinate grid + anchor-resolution limits,

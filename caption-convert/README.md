@@ -38,7 +38,7 @@ caption-extraction tools.
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| ANSI/CTA-608-E, ANSI/CTA-708-E (decoded by `cc-data`) | -E editions as cited by `cc-data` (not vendored; unverified against the document) | CC1 pop-on / roll-up / paint-on; one 708 service | Partial (lossy) | feature `cc-data` |
+| ANSI/CTA-608-E, ANSI/CTA-708-E (decoded by `cc-data`) | -E editions as cited by `cc-data` (CTA not vendored; cross-source for 708: GY/T 270-2013, vendored, a Chinese adaptation) | CC1 pop-on / roll-up / paint-on; one 708 service | Partial (lossy) | feature `cc-data` |
 | ETSI EN 300 706 Enhanced Teletext; ETSI EN 301 775 §4.5 carriage | V1.2.1 each (`private/specs-md/INDEX.md`) | Level-1 subtitle page, one `(magazine, page)` | Partial (lossy) | feature `teletext`; English national option only |
 | W3C WebVTT | curated rules `specs/rules/webvtt-rules.md` | write (via `timed-metadata`) and parse cues; cue settings, `NOTE`/`STYLE`/`REGION` flagged lossy on conversion to SRT | Partial | no cue-setting emission |
 | SRT (SubRip) | no formal specification; de facto ffmpeg/VLC-compatible form | index, `hh:mm:ss,ttt --> hh:mm:ss,ttt`, blank-line separated | Full for that form | `.` millisecond separator accepted on parse |
