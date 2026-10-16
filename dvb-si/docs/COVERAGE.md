@@ -349,7 +349,7 @@ Table 38 (HbbTV) plus the MHP-only tags of ETSI TS 102 727 V1.1.1.
 | 0x04 | DVB-J_application_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.9.2 | ETSI TS 102 727 §10.9.2, Table 85 (AIT tag 0x04) | [`DvbJApplicationLocationDescriptor`](../src/descriptors/ait/dvb_j_application_location.rs) | Full |
 | 0x05 | external_application_authorisation_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.7 | ETSI TS 102 809 §5.3.5.7, Table 26 (AIT tag 0x05) | [`ExternalApplicationAuthorisationDescriptor`](../src/descriptors/ait/external_application_authorisation.rs) | Full |
 | 0x06 | application_recording_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.4 | ETSI TS 102 809 V1.3.1 §5.3.5.4, Table 21 (AIT tag 0x06; storage_properties values Table 22) | [`ApplicationRecordingDescriptor`](../src/descriptors/ait/application_recording.rs) | Full |
-| 0x08 | DVB-HTML_application_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.1 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
+| 0x08 | DVB-HTML_application_descriptor (deferred: Table 86 loops `i<N1` over 16-bit application_id with N1 = appid_set_length, but the prose says appid_set_length "specifies the length of the list of application_ids" with no unit; a determinate reading needs the owner's call) | ETSI TS 102 727 V1.1.1 | 10.10.1 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
 | 0x09 | DVB-HTML_application_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.2 | ETSI TS 102 727 V1.1.1 §10.10.2, Table 87 (AIT tag 0x09; physical-root semantics Table 88) | [`DvbHtmlApplicationLocationDescriptor`](../src/descriptors/ait/dvb_html_application_location.rs) | Full |
 | 0x0A | DVB-HTML_application_boundary_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.3 | ETSI TS 102 727 V1.1.1 §10.10.3, Table 89 (AIT tag 0x0A) | [`DvbHtmlApplicationBoundaryDescriptor`](../src/descriptors/ait/dvb_html_application_boundary.rs) | Full |
 | 0x0B | application_icons_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.6.2 | ETSI TS 102 809 V1.3.1 §5.3.5.6.2, Table 25 (AIT tag 0x0B); the icon_flags values are §5.2.8.2 Table 7 (PDF p.43 / p.23, transcribed in … | [`ApplicationIconsDescriptor`](../src/descriptors/ait/application_icons.rs) | Full |
@@ -507,7 +507,7 @@ real fixture first.
 |---|---|---|
 | table_id | 4 | 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x0A ISO/IEC 23001-10 quality access unit section (the Table 2-164 body is typed as `quality_access_unit::QualityAccessUnit`; the section header/CRC wrapper is not defined in the vendored H.222.0 text), 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
 | Descriptor tags (SI / MPEG namespace) | 2 | 0x16–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored and its layouts for tags 0x16-0x1A appear in no vendored spec: 0x17-0x1A are the stream-event / NPT descriptors, and TS 102 809 B.2.4.2 says NPT is obsolete and gives no layout), 0x29 IPMP_descriptor (ISO/IEC 13818-11) |
-| AIT descriptors | 1 | 0x08 DVB-HTML_application_descriptor |
+| AIT descriptors | 1 | 0x08 DVB-HTML_application_descriptor (deferred: Table 86 loops `i<N1` over 16-bit application_id with N1 = appid_set_length, but the prose says appid_set_length "specifies the length of the list of application_ids" with no unit; a determinate reading needs the owner's call) |
 
 ## Citation cross-check
 

@@ -258,7 +258,7 @@ ait_descriptor_tag	0x03	DVB-J_application_descriptor	ETSI TS 102 727 V1.1.1	10.9
 ait_descriptor_tag	0x04	DVB-J_application_location_descriptor	ETSI TS 102 727 V1.1.1	10.9.2	171
 ait_descriptor_tag	0x05	external_application_authorisation_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.7	43
 ait_descriptor_tag	0x06	application_recording_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.4	40
-ait_descriptor_tag	0x08	DVB-HTML_application_descriptor	ETSI TS 102 727 V1.1.1	10.10.1	172
+ait_descriptor_tag	0x08	DVB-HTML_application_descriptor (deferred: Table 86 loops `i<N1` over 16-bit application_id with N1 = appid_set_length, but the prose says appid_set_length "specifies the length of the list of application_ids" with no unit; a determinate reading needs the owner's call)	ETSI TS 102 727 V1.1.1	10.10.1	172
 ait_descriptor_tag	0x09	DVB-HTML_application_location_descriptor	ETSI TS 102 727 V1.1.1	10.10.2	173
 ait_descriptor_tag	0x0A	DVB-HTML_application_boundary_descriptor	ETSI TS 102 727 V1.1.1	10.10.3	174
 ait_descriptor_tag	0x0B	application_icons_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.6.2	43
