@@ -1,8 +1,8 @@
-//! HEVC / VVC / EVC timing and HRD descriptors — Rec. ITU-T H.222.0 (08/2023)
-//! | ISO/IEC 13818-1:2023 §2.6.97 (Table 2-115, `HEVC_timing_and_HRD_descriptor`,
-//! `extension_descriptor_tag` 0x03), §2.6.131 (Table 2-139,
-//! `VVC_timing_and_HRD_descriptor`, 0x15) and §2.6.135 (Table 2-141,
-//! `EVC_timing_and_HRD_descriptor`, 0x16). All three carry the same
+//! HEVC / VVC / EVC timing and HRD descriptors — Rec. ITU-T H.222.0 (08/2023) §2.6.97, §2.6.131, §2.6.135.
+//!
+//! `HEVC_timing_and_HRD_descriptor` (Table 2-115, `extension_descriptor_tag`
+//! 0x03), `VVC_timing_and_HRD_descriptor` (Table 2-139, 0x15) and
+//! `EVC_timing_and_HRD_descriptor` (Table 2-141, 0x16) all carry the same
 //! `picture_and_timing_info` block; syntax in
 //! `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
 //! and `…-0x0f-0x19.md`.

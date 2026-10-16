@@ -26,24 +26,24 @@ text; **Source cites** is what the module's own doc comment says (see the
 
 | | |
 |---|---|
-| Section types (table_id) | **28** typed `*Section` parsers covering **67** table_id values — every allocated EN 300 468 Table 2 id |
-| Descriptors (tag 0x00–0x7F) | **106** auto-dispatched: **42** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
+| Section types (table_id) | **31** typed `*Section` parsers covering **72** table_id values — every allocated EN 300 468 Table 2 id |
+| Descriptors (tag 0x00–0x7F) | **115** auto-dispatched: **51** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
 | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
-| MPEG-2 extension descriptors (0x3F) | **7** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
+| MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
 | AIT descriptors (TS 102 809 / MHP) | **9** typed in the separate AIT descriptor namespace |
 | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
 | Text (EN 300 468 Annex A) | **7** charset decoders covering every Table A.3 selector + Annex A.1 control codes |
 | DSM-CC carousel | **12** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree |
 | Registries | **171** CA_system_id and **174** private_data_specifier names (TSDuck data, build-time) |
 | Standards | **19** standards / families — see the table below |
-| Known gaps | **88** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
+| Known gaps | **59** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
 
 ## Standards
 
 | Standard | Title | Edition implemented | Scope covered | Status |
 |---|---|---|---|---|
 | ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (97/97 allocated codes) |
-| Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (51/85 allocated codes) |
+| Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (80/85 allocated codes) |
 | ISO/IEC 13818-6 | DSM-CC (data/object carousel) | as profiled by ETSI TR 101 202 V1.2.1 (13818-6 itself is not vendored) | DSM-CC sections, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel_identifier + association_tag descriptors | Partial (3/5 allocated codes) |
 | ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Partial (5/28 allocated codes) |
 | ETSI TS 102 006 | DVB System Software Update (SSU) | V1.7.1 (some module docs still cite V1.4.1) | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Partial (1/16 allocated codes) |
@@ -74,12 +74,12 @@ values are omitted.
 | 0x01 | conditional_access_section | ITU-T H.222.0 (08/2023) | 2.4.4.7 | ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.7 | [`CatSection`](../src/tables/cat.rs) | Full |
 | 0x02 | TS_program_map_section | ITU-T H.222.0 (08/2023) | 2.4.4.9 | MPEG-2 ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.9 | [`PmtSection`](../src/tables/pmt.rs) | Full |
 | 0x03 | TS_description_section | ITU-T H.222.0 (08/2023) | 2.4.4.13 | ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.13 | [`TsdtSection`](../src/tables/tsdt.rs) | Full |
-| 0x04 | ISO_IEC_14496_scene_description_section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
-| 0x05 | ISO_IEC_14496_object_descriptor_section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
-| 0x06 | Metadata_section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
+| 0x04 | ISO_IEC_14496_scene_description_section | ITU-T H.222.0 (08/2023) | 2.11.3.8 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.11.3.8, Table 2-153 (table_id 0x04 scene description, 0x05 object descriptor, 0x08 other … | [`Iso14496Section`](../src/tables/iso14496_section.rs) | Partial — payload (`SL_Packet()` / `M4MuxPacket()`s, selected by the carrying PMT) kept opaque (ISO/IEC 14496-1) |
+| 0x05 | ISO_IEC_14496_object_descriptor_section | ITU-T H.222.0 (08/2023) | 2.11.3.8 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.11.3.8, Table 2-153 (table_id 0x04 scene description, 0x05 object descriptor, 0x08 other … | [`Iso14496Section`](../src/tables/iso14496_section.rs) | Partial — payload (`SL_Packet()` / `M4MuxPacket()`s, selected by the carrying PMT) kept opaque (ISO/IEC 14496-1) |
+| 0x06 | Metadata_section | ITU-T H.222.0 (08/2023) | 2.12.6 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.12.6, Tables 2-158/2-159 (table_id 0x06); syntax in … | [`MetadataSection`](../src/tables/metadata_section.rs) | Partial — `metadata_byte`s (the metadata Access Unit) kept opaque |
 | 0x07 | IPMP_Control_Information_section (ISO/IEC 13818-11) | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
-| 0x08 | ISO_IEC_14496_section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
-| 0x09 | ISO/IEC 23001-11 green access unit section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
+| 0x08 | ISO_IEC_14496_section | ITU-T H.222.0 (08/2023) | 2.11.3.8 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.11.3.8, Table 2-153 (table_id 0x04 scene description, 0x05 object descriptor, 0x08 other … | [`Iso14496Section`](../src/tables/iso14496_section.rs) | Partial — payload (`SL_Packet()` / `M4MuxPacket()`s, selected by the carrying PMT) kept opaque (ISO/IEC 14496-1) |
+| 0x09 | ISO/IEC 23001-11 green access unit section | ITU-T H.222.0 (08/2023) | 2.18.1 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.18.1–2.18.3, Tables 2-162/2-163 (table_id 0x09); syntax in … | [`GreenAccessUnitSection`](../src/tables/green_access_unit_section.rs) | Partial — `Green_AU()` kept opaque (its loops are bounded by the out-of-band Green extension descriptor) |
 | 0x0A | ISO/IEC 23001-10 quality access unit section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x0B | ISO/IEC 23001-13 media orchestration access unit section | ITU-T H.222.0 (08/2023) | 2.4.4.5 | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
 | 0x38–0x39 | DSM-CC sections (ISO/IEC 13818-6 range) | ISO/IEC 13818-6 | — | — | — | Not implemented — dispatched as `AnyTableSection::Unknown` (section bytes kept) |
@@ -157,20 +157,20 @@ Allocated by Rec. ITU-T H.222.0 Table 2-45. Implemented tags are dispatched by
 | 0x2A | AVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.66 | ISO/IEC 13818-1 §2.6.66 (tag 0x2A) | [`AvcTimingAndHrdDescriptor`](../src/descriptors/avc_timing_and_hrd.rs) | Full |
 | 0x2B | MPEG-2_AAC_audio_descriptor | ITU-T H.222.0 (08/2023) | 2.6.68 | ISO/IEC 13818-1 §2.6.68 (tag 0x2B) | [`Mpeg2AacAudioDescriptor`](../src/descriptors/mpeg2_aac_audio.rs) | Full |
 | 0x2C | M4MuxTiming_descriptor | ITU-T H.222.0 (08/2023) | 2.6.54 | ISO/IEC 13818-1 §2.6.54, Table 2-82 (tag 0x2C) | [`FlexMuxTimingDescriptor`](../src/descriptors/flex_mux_timing.rs) | Full |
-| 0x2D | MPEG-4_text_descriptor | ITU-T H.222.0 (08/2023) | 2.6.70 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
-| 0x2E | MPEG-4_audio_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.72 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
+| 0x2D | MPEG-4_text_descriptor | ITU-T H.222.0 (08/2023) | 2.6.70 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.6.70–2.6.71, Table 2-96 (tag 0x2D); syntax in … | [`Mpeg4TextDescriptor`](../src/descriptors/mpeg4_text.rs) | Partial — `textConfig()` kept opaque (ISO/IEC 14496-17, not vendored) |
+| 0x2E | MPEG-4_audio_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.72 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.6.72–2.6.73, Table 2-97 (tag 0x2E); syntax in … | [`Mpeg4AudioExtensionDescriptor`](../src/descriptors/mpeg4_audio_extension.rs) | Partial — `audioSpecificConfig()` kept opaque (ISO/IEC 14496-3, not vendored) |
 | 0x2F | auxiliary_video_stream_descriptor | ITU-T H.222.0 (08/2023) | 2.6.74 | ISO/IEC 13818-1 §2.6.74, Table 2-98 (tag 0x2F) | [`AuxiliaryVideoStreamDescriptor`](../src/descriptors/auxiliary_video_stream.rs) | Full |
 | 0x30 | SVC_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.76 | ISO/IEC 13818-1 §2.6.76, Table 2-99 (tag 0x30) | [`SvcExtensionDescriptor`](../src/descriptors/svc_extension.rs) | Full |
 | 0x31 | MVC_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.78 | ISO/IEC 13818-1 §2.6.78, Table 2-100 (tag 0x31) | [`MvcExtensionDescriptor`](../src/descriptors/mvc_extension.rs) | Full |
 | 0x32 | J2K_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.80 | ISO/IEC 13818-1 §2.6.80, Table 2-101 (tag 0x32) | [`J2kVideoDescriptor`](../src/descriptors/j2k_video.rs) | Full |
-| 0x33 | MVC_operation_point_descriptor | ITU-T H.222.0 (08/2023) | 2.6.82 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
-| 0x34 | MPEG2_stereoscopic_video_format_descriptor | ITU-T H.222.0 (08/2023) | 2.6.84 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
-| 0x35 | stereoscopic_program_info_descriptor | ITU-T H.222.0 (08/2023) | 2.6.86 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
-| 0x36 | stereoscopic_video_info_descriptor | ITU-T H.222.0 (08/2023) | 2.6.88 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
-| 0x37 | transport_profile_descriptor | ITU-T H.222.0 (08/2023) | 2.6.93 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
+| 0x33 | MVC_operation_point_descriptor | ITU-T H.222.0 (08/2023) | 2.6.82 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.6.82–2.6.83, Table 2-103 (tag 0x33); syntax in … | [`MvcOperationPointDescriptor`](../src/descriptors/mvc_operation_point.rs) | Full |
+| 0x34 | MPEG2_stereoscopic_video_format_descriptor | ITU-T H.222.0 (08/2023) | 2.6.84 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`Mpeg2StereoscopicVideoFormatDescriptor`](../src/descriptors/stereoscopic.rs) | Full |
+| 0x35 | stereoscopic_program_info_descriptor | ITU-T H.222.0 (08/2023) | 2.6.86 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`StereoscopicProgramInfoDescriptor`](../src/descriptors/stereoscopic.rs) | Full |
+| 0x36 | stereoscopic_video_info_descriptor | ITU-T H.222.0 (08/2023) | 2.6.88 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`StereoscopicVideoInfoDescriptor`](../src/descriptors/stereoscopic.rs) | Full |
+| 0x37 | transport_profile_descriptor | ITU-T H.222.0 (08/2023) | 2.6.93 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.6.93–2.6.94, Tables 2-111/2-112 (tag 0x37); syntax in … | [`TransportProfileDescriptor`](../src/descriptors/transport_profile.rs) | Full |
 | 0x38 | HEVC_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.95 | ISO/IEC 13818-1 §2.6.95 (tag 0x38) | [`HevcVideoDescriptor`](../src/descriptors/hevc_video.rs) | Full |
-| 0x39 | VVC_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.129 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
-| 0x3A | EVC_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.133 | — | — | Not implemented — surfaces as `AnyDescriptor::Unknown { tag, body }` — bytes kept, round-trips losslessly |
+| 0x39 | VVC_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.129 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.6.129–2.6.130, Tables 2-133…2-138 (tag 0x39); syntax in … | [`VvcVideoDescriptor`](../src/descriptors/vvc_video.rs) | Full |
+| 0x3A | EVC_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.133 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 §2.6.133–2.6.134, Table 2-140 (tag 0x3A); syntax in … | [`EvcVideoDescriptor`](../src/descriptors/evc_video.rs) | Full |
 | 0x3F | extension_descriptor (MPEG-2) | ITU-T H.222.0 (08/2023) | 2.6.90 | Rec. ITU-T H.222.0 (2023) \| ISO/IEC 13818-1 clause 2.6.90, Table 2-109, tag **0x3F** (63); the descriptor's second-level selector … | [`Mpeg2ExtensionDescriptor`](../src/descriptors/mpeg2_extension.rs) | Full |
 
 ## Descriptors — DVB (0x40–0x7F)
@@ -288,12 +288,12 @@ Allocated by Rec. ITU-T H.222.0 (08/2023) Table 2-110.
 
 | ext_tag | Descriptor | Standard | Clause (verified) | Source cites | Rust type | Status |
 |---|---|---|---|---|---|---|
-| 0x02 | ODUpdate_descriptor | ITU-T H.222.0 (08/2023) | 2.6.92 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x03 | HEVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.97 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x04 | af_extensions_descriptor | ITU-T H.222.0 (08/2023) | 2.6.99 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x05 | HEVC_operation_point_descriptor | ITU-T H.222.0 (08/2023) | 2.6.100 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x06 | HEVC_hierarchy_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.102 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x07 | green_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.104 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
+| 0x02 | ODUpdate_descriptor | ITU-T H.222.0 (08/2023) | 2.6.92 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`OdUpdate`](../src/descriptors/mpeg2_ext_misc.rs) | Typed-opaque — `ObjectDescriptorUpdate()` kept as bytes (ISO/IEC 14496-1 §7.2.5.5.2, not vendored) |
+| 0x03 | HEVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.97 | Rec. ITU-T H.222.0 (08/2023) §2.6.97, §2.6.131, §2.6.135 | [`HevcTimingAndHrd`](../src/descriptors/h222_timing.rs) | Full |
+| 0x04 | af_extensions_descriptor | ITU-T H.222.0 (08/2023) | 2.6.99 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`AfExtensions`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
+| 0x05 | HEVC_operation_point_descriptor | ITU-T H.222.0 (08/2023) | 2.6.100 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`HevcOperationPoint`](../src/descriptors/mpeg2_ext_hevc.rs) | Full |
+| 0x06 | HEVC_hierarchy_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.102 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`HevcHierarchyExtension`](../src/descriptors/mpeg2_ext_hevc.rs) | Full |
+| 0x07 | green_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.104 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`GreenExtension`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
 | 0x08 | MPEG-H_3dAudio_descriptor | ITU-T H.222.0 (08/2023) | 2.6.106 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudio`](../src/descriptors/mpegh_3d_audio.rs) | Full |
 | 0x09 | MPEG-H_3dAudio_config_descriptor | ITU-T H.222.0 (08/2023) | 2.6.108 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioConfig`](../src/descriptors/mpegh_3d_audio.rs) | Typed-opaque — payload kept as bytes (its syntax is defined in ISO/IEC 23008-3) |
 | 0x0A | MPEG-H_3dAudio_scene_descriptor | ITU-T H.222.0 (08/2023) | 2.6.110 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioScene`](../src/descriptors/mpegh_3d_audio.rs) | Full |
@@ -301,17 +301,17 @@ Allocated by Rec. ITU-T H.222.0 (08/2023) Table 2-110.
 | 0x0C | MPEG-H_3dAudio_multi-stream_descriptor | ITU-T H.222.0 (08/2023) | 2.6.114 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioMultiStream`](../src/descriptors/mpegh_3d_audio.rs) | Full |
 | 0x0D | MPEG-H_3dAudio_drc_loudness_descriptor | ITU-T H.222.0 (08/2023) | 2.6.116 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioDrcLoudness`](../src/descriptors/mpegh_3d_audio.rs) | Full |
 | 0x0E | MPEG-H_3dAudio_command_descriptor | ITU-T H.222.0 (08/2023) | 2.6.118 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioCommand`](../src/descriptors/mpegh_3d_audio.rs) | Typed-opaque — payload kept as bytes (its syntax is defined in ISO/IEC 23008-3) |
-| 0x0F | quality_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.119 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
+| 0x0F | quality_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.119 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`QualityExtension`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
 | 0x10 | virtual_segmentation_descriptor | ITU-T H.222.0 (08/2023) | 2.6.120 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x11 | timed_metadata_extension_descriptor | ITU-T H.222.0 (08/2023) | — | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x12 | HEVC_tile_substream_descriptor | ITU-T H.222.0 (08/2023) | 2.6.122 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
+| 0x11 | timed_metadata_extension_descriptor | ITU-T H.222.0 (08/2023) | — | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`TimedMetadataExtension`](../src/descriptors/mpeg2_ext_misc.rs) | Typed-opaque — body kept as bytes (ISO/IEC 23001-13 clause 8.2.3, not vendored) |
+| 0x12 | HEVC_tile_substream_descriptor | ITU-T H.222.0 (08/2023) | 2.6.122 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`HevcTileSubstream`](../src/descriptors/mpeg2_ext_hevc.rs) | Full |
 | 0x13 | HEVC_subregion_descriptor | ITU-T H.222.0 (08/2023) | 2.6.125 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x14 | JXS_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.127 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x15 | VVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.131 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x16 | EVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.135 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x17 | LCEVC_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.137 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x18 | LCEVC_linkage_descriptor | ITU-T H.222.0 (08/2023) | 2.6.139 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
-| 0x19 | media_service_kind_descriptor | ITU-T H.222.0 (08/2023) | 2.6.141 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
+| 0x14 | JXS_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.127 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`JxsVideo`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
+| 0x15 | VVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.131 | Rec. ITU-T H.222.0 (08/2023) §2.6.97, §2.6.131, §2.6.135 | [`VvcTimingAndHrd`](../src/descriptors/h222_timing.rs) | Full |
+| 0x16 | EVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.135 | Rec. ITU-T H.222.0 (08/2023) §2.6.97, §2.6.131, §2.6.135 | [`EvcTimingAndHrd`](../src/descriptors/h222_timing.rs) | Full |
+| 0x17 | LCEVC_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.137 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`LcevcVideo`](../src/descriptors/mpeg2_ext_codecs.rs) | Full |
+| 0x18 | LCEVC_linkage_descriptor | ITU-T H.222.0 (08/2023) | 2.6.139 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`LcevcLinkage`](../src/descriptors/mpeg2_ext_codecs.rs) | Typed-opaque — payload kept as bytes (its syntax is defined in ISO/IEC 23008-3) |
+| 0x19 | media_service_kind_descriptor | ITU-T H.222.0 (08/2023) | 2.6.141 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`MediaServiceKind`](../src/descriptors/mpeg2_ext_codecs.rs) | Full |
 
 ## Private and regional descriptors (PDS / registration scoped)
 
@@ -497,9 +497,9 @@ real fixture first.
 
 | Namespace | Count | Codes |
 |---|---|---|
-| table_id | 9 | 0x04 ISO_IEC_14496_scene_description_section, 0x05 ISO_IEC_14496_object_descriptor_section, 0x06 Metadata_section, 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x08 ISO_IEC_14496_section, 0x09 ISO/IEC 23001-11 green access unit section, 0x0A ISO/IEC 23001-10 quality access unit section, 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
-| Descriptor tags (SI / MPEG namespace) | 11 | 0x15–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored, so not itemised), 0x29 IPMP_descriptor (ISO/IEC 13818-11), 0x2D MPEG-4_text_descriptor, 0x2E MPEG-4_audio_extension_descriptor, 0x33 MVC_operation_point_descriptor, 0x34 MPEG2_stereoscopic_video_format_descriptor, 0x35 stereoscopic_program_info_descriptor, 0x36 stereoscopic_video_info_descriptor, 0x37 transport_profile_descriptor, 0x39 VVC_video_descriptor, 0x3A EVC_video_descriptor |
-| MPEG-2 extension_descriptor_tag | 17 | 0x02 ODUpdate_descriptor, 0x03 HEVC_timing_and_HRD_descriptor, 0x04 af_extensions_descriptor, 0x05 HEVC_operation_point_descriptor, 0x06 HEVC_hierarchy_extension_descriptor, 0x07 green_extension_descriptor, 0x0F quality_extension_descriptor, 0x10 virtual_segmentation_descriptor, 0x11 timed_metadata_extension_descriptor, 0x12 HEVC_tile_substream_descriptor, 0x13 HEVC_subregion_descriptor, 0x14 JXS_video_descriptor, 0x15 VVC_timing_and_HRD_descriptor, 0x16 EVC_timing_and_HRD_descriptor, 0x17 LCEVC_video_descriptor, 0x18 LCEVC_linkage_descriptor, 0x19 media_service_kind_descriptor |
+| table_id | 4 | 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x0A ISO/IEC 23001-10 quality access unit section, 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
+| Descriptor tags (SI / MPEG namespace) | 2 | 0x15–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored, so not itemised), 0x29 IPMP_descriptor (ISO/IEC 13818-11) |
+| MPEG-2 extension_descriptor_tag | 2 | 0x10 virtual_segmentation_descriptor, 0x13 HEVC_subregion_descriptor |
 | AIT descriptors | 10 | 0x06 application_recording_descriptor, 0x08 DVB-HTML_application_descriptor, 0x09 DVB-HTML_application_location_descriptor, 0x0A DVB-HTML_application_boundary_descriptor, 0x0B application_icons_descriptor, 0x0C pre-fetch_descriptor, 0x0D DII_location_descriptor, 0x10 application_storage_descriptor, 0x11 IP_signalling_descriptor, 0x14 graphics_constraints_descriptor |
 | INT descriptors | 15 | 0x06 target_smartcard_descriptor, 0x07 target_MAC_address_descriptor, 0x08 target_serial_number_descriptor, 0x09 target_IP_address_descriptor, 0x0A target_IPv6_address_descriptor, 0x0C IP/MAC_platform_name_descriptor, 0x0D IP/MAC_platform_provider_name_descriptor, 0x0E target_MAC_address_range_descriptor, 0x0F target_IP_slash_descriptor, 0x10 target_IP_source_slash_descriptor, 0x11 target_IPv6_slash_descriptor, 0x12 target_IPv6_source_slash_descriptor, 0x13 IP/MAC_stream_location_descriptor, 0x14 ISP_access_mode_descriptor, 0x15 IP/MAC_generic_stream_location_descriptor |
 | UNT (SSU) descriptors | 13 | 0x01 scheduling_descriptor, 0x02 update_descriptor, 0x03 ssu_location_descriptor, 0x04 message_descriptor, 0x05 ssu_event_name_descriptor, 0x06 target_smartcard_descriptor, 0x07 target_MAC_address_descriptor, 0x08 target_serial_number_descriptor, 0x09 target_IP_address_descriptor, 0x0A target_IPv6_address_descriptor, 0x0B ssu_subgroup_association_descriptor, 0x0C enhanced_message_descriptor, 0x0D ssu_uri_descriptor |
@@ -518,6 +518,6 @@ module cites a clause that is neither the verified clause nor a sub-clause of it
 
 Every module citation that names a clause agrees with the verified clause.
 
-173 implemented rows have their clause verified against the rendered PDF page
-(`verified_page` column of `coverage/allocations.tsv`); 74 not-implemented rows
+201 implemented rows have their clause verified against the rendered PDF page
+(`verified_page` column of `coverage/allocations.tsv`); 46 not-implemented rows
 carry a clause that is not yet page-verified (nothing cites it).
