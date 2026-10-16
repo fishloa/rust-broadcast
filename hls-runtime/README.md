@@ -166,7 +166,7 @@ of the data, never a second cache of it.
 
 ```toml
 [dependencies]
-hls-runtime = "0.7"
+hls-runtime = "0.8"
 ```
 
 ## License

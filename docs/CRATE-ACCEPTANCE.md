@@ -76,6 +76,7 @@ Plus **MSRV 1.95.0** (`rust-toolchain.toml`, single source) and, for `no_std` cr
 - **CLI** (if any) follows [`CLI-STANDARD.md`](CLI-STANDARD.md): clap derive, named flags, no positional magic numbers, auto `--help`/`--version`.
 
 ## 6. Docs & release ([`RELEASE-DOCS.md`](RELEASE-DOCS.md))
+README dependency snippets (`crate = "x.y"` / `crate = { version = "x.y", … }`) for workspace crates are **tool-checked, never hand-versioned**: `python3 tools/prepare-release.py --check-readmes [crate=ver …]` fails on any disagreement with the crate's current/planned version, and the release apply path rewrites them (`tools/readme_snippets.py`).
 CHANGELOG (Keep-a-Changelog) · `docs/release-notes/<ver>.md` · README (badges, install, quickstart, spec cite, license) · crate-root `//!` with spec citation + embedded example list · `[package.metadata.docs.rs]` (all-features + `doc(cfg)`) · GitHub Release. **Docs are updated in the same PR as the change**, not batched.
 
 ## 7. Versioning & releases
