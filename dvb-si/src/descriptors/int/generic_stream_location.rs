@@ -85,8 +85,9 @@ broadcast_common::impl_spec_display!(ModulationSystemType, Reserved);
 
 /// The selector of a generic stream location: either seven flag bits or a
 /// length-delimited byte string, discriminated by `selector_length_flag`.
-/// The content is defined by ETSI TS 102 606-2 §5.2.2.8 (not transcribed
-/// here), so it is carried opaque.
+/// The content is defined by ETSI TS 102 606-2 §5.2.2.8; that standard is not
+/// vendored (no PDF or transcription of it exists in the repository), so the
+/// selector is carried opaque.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]

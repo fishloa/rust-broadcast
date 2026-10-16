@@ -54,7 +54,7 @@
 //! | ETSI TS 101 154 | Audio/video coding in DVB | V2.10.1 | PMT `StreamType` values incl. AVS2/AVS3 (0xD2–0xD5); AVS private_data_specifier rules | Partial |
 //! | ETSI TS 101 162 | DVB identifiers | registry data from TSDuck (see registries/README.md) | CA_system_id and private_data_specifier value → name lookups | Partial |
 //! | NorDig Unified Requirements | Nordic IRD requirements | v3.2.2 (2025-11) | logical channel descriptor v1 (0x83) + v2 (0x87), PDS 0x00000029 | Full (scoped) |
-//! | EACEM / D-Book | Logical channel numbering | private (PDS 0x00000028); no vendored spec | logical_channel descriptor (0x83) | Full (scoped) |
+//! | EACEM / D-Book | Logical channel numbering | private (PDS 0x00000028); EACEM TR-030 is not vendored | logical_channel descriptor (0x83), 10-bit-LCN layout rests on real captures only; the vendored NorDig spec defines LCD v1 (0x83) and v2 (0x87) in §12.2.9 (both typed in `nordig.rs`) | Full (scoped) |
 //! | GY/T 270-2013 | China DTV closed captions | 2013 | caption_service_descriptor (0x86), `StreamType::ChinaClosedCaption` | Full (scoped) |
 //! | GY/T 420-2025, GY/T 422-2025 | China UHD encapsulation / multi-audio | 2025 | AVS2_video (0x40 under 'AVSV'), AVS3_video; GY/T 422 audio_preselection profile | Full (scoped) |
 //! | T/AI 109.6-2022, T/AI 109.7-2024 | AVS3 media format / audio transport | 2022 / 2024 | AVS3_video (0xD1), AVS3_audio (0xD2), AVS2_audio (0xD3) | Full (scoped) |
