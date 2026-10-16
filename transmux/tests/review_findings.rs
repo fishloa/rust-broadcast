@@ -221,3 +221,76 @@ fn short_largesize_sample_entries_panic_instead_of_erroring() {
     }
     assert!(bad.is_empty(), "panicked on hostile input: {bad:?}");
 }
+
+/// A compact box `fourcc` around `body`.
+fn compact_box(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut b = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+    b.extend_from_slice(fourcc);
+    b.extend_from_slice(body);
+    b
+}
+
+/// `av3c` parse reads `3 + sequence_header_length + 1` bytes and ignores any
+/// further bytes of the box body; the entry serializer then rewrites the
+/// config box from the typed record, so the trailing bytes vanish and the
+/// entry is NOT byte-identical after parse -> serialize (the workspace
+/// round-trip invariant). The same holds for `lavc`/`la2c` (bytes past
+/// `2 + 5 * num_temporal_layers`). Either reject the trailing bytes or keep them.
+/// (No real AVS3 MP4 fixture is committed for this crate, CRATE-ACCEPTANCE.)
+#[test]
+fn avs3_entry_with_trailing_config_bytes_is_not_byte_identical_after_round_trip() {
+    use broadcast_common::Serialize;
+    use transmux::AvsVideoSampleEntry;
+    // VisualSampleEntry fixed fields (78 bytes): dri 1, 1920x1080, 72 dpi, frame_count 1, depth 0x18, pre_defined -1.
+    let mut visual = vec![0u8; 78];
+    visual[7] = 1;
+    visual[24..28].copy_from_slice(&[0x07, 0x80, 0x04, 0x38]);
+    visual[28..36].copy_from_slice(&[0, 0x48, 0, 0, 0, 0x48, 0, 0]);
+    visual[40..42].copy_from_slice(&[0, 1]);
+    visual[74..78].copy_from_slice(&[0, 0x18, 0xFF, 0xFF]);
+    // av3c: version 1, sequence_header_length 4, header, reserved|idc, then 2 extra bytes.
+    let av3c = compact_box(
+        b"av3c",
+        &[1, 0, 4, 0, 0, 1, 0xB0, 0xFC, 0x11, 0x22],
+    );
+    let entry = compact_box(b"avs3", &[visual, av3c].concat());
+    match AvsVideoSampleEntry::parse_entry(&entry) {
+        Err(_) => {} // rejecting is acceptable
+        Ok(parsed) => {
+            let mut out = vec![0u8; parsed.serialized_len()];
+            let n = parsed.serialize_into(&mut out).expect("serialize");
+            assert_eq!(
+                &out[..n],
+                &entry[..],
+                "parse -> serialize silently dropped the av3c trailing bytes"
+            );
+        }
+    }
+}
+
+/// `VttCueBox` records each child in `child_order`, but keeps only the LAST
+/// `payl`/`iden`/`sttg` value while listing the kind once per occurrence. A cue
+/// carrying two `payl` children therefore parses, then `serialized_len` counts
+/// one `payl` while `serialize_into` writes two: `try_to_bytes` fails with
+/// `OutputBufferTooSmall` (and into a larger buffer it writes past the box size
+/// it declared). Parse must reject it or serialize must reproduce it.
+#[test]
+fn vttc_with_duplicate_payl_parses_but_cannot_be_serialized() {
+    use broadcast_common::{Parse, Serialize};
+    use transmux::VttCueBox;
+    let payl_a = compact_box(b"payl", b"one");
+    let payl_b = compact_box(b"payl", b"two");
+    let vttc = compact_box(b"vttc", &[payl_a, payl_b].concat());
+    let Ok(cue) = VttCueBox::parse(&vttc) else {
+        return; // rejecting is acceptable
+    };
+    let need = cue.serialized_len();
+    let mut big = vec![0u8; need + 64];
+    let written = cue.serialize_into(&mut big);
+    assert_eq!(
+        written.as_ref().ok().copied(),
+        Some(need),
+        "serialize_into must write exactly serialized_len() ({need}) bytes, got {written:?}"
+    );
+    assert_eq!(&big[..need], &vttc[..], "byte-identical round trip");
+}
