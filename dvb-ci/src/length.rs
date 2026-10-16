@@ -178,7 +178,9 @@ pub fn encoded_len_with(value: usize, form: LengthForm) -> usize {
 ///
 /// Errors with [`Error::LengthTooLarge`] when `value > `[`MAX_LENGTH`] and with
 /// [`Error::InvalidLength`] when `octets` is `0`, above [`MAX_LENGTH_OCTETS`],
-/// or too few to hold `value`.
+/// too few to hold `value`, or exactly the minimal count for `value >= 0x80`
+/// (that coding is [`LengthForm::Minimal`]; accepting it would make a
+/// hand-built value serialize to bytes that parse back as a different value).
 pub fn encode_with(value: usize, form: LengthForm, buf: &mut [u8]) -> Result<usize> {
     let LengthForm::Long { octets } = form else {
         return encode_into(value, buf);
@@ -193,6 +195,16 @@ pub fn encode_with(value: usize, form: LengthForm, buf: &mut [u8]) -> Result<usi
     if n < 4 && value >> (8 * n) != 0 {
         return Err(Error::InvalidLength(
             "length value does not fit the recorded length_field_size",
+        ));
+    }
+    // `Long` records only a NON-minimal coding (that is what `decode_form`
+    // returns). A `Long` whose octets are the minimal ones for `value`
+    // (`81 80` for 128, `82 01 00` for 256) is the same bytes as `Minimal`, so
+    // it would parse back as `Minimal` and `serialize -> parse` would change
+    // the value; refuse the alias instead of writing it.
+    if value >= 0x80 && n == minimal_octets(value) {
+        return Err(Error::InvalidLength(
+            "Long form with the minimal number of octets is LengthForm::Minimal",
         ));
     }
     let need = 1 + n;
@@ -352,6 +364,15 @@ mod tests {
         let mut buf = [0u8; 8];
         // 0x100 needs 2 octets.
         assert!(encode_with(0x100, LengthForm::Long { octets: 1 }, &mut buf).is_err());
+        // The minimal coding spelled as `Long` is an alias of `Minimal`: refused.
+        assert!(encode_with(0x80, LengthForm::Long { octets: 1 }, &mut buf).is_err());
+        assert!(encode_with(0xFF, LengthForm::Long { octets: 1 }, &mut buf).is_err());
+        assert!(encode_with(0x100, LengthForm::Long { octets: 2 }, &mut buf).is_err());
+        assert!(encode_with(0xFFFF, LengthForm::Long { octets: 2 }, &mut buf).is_err());
+        // Non-minimal long forms stay legal.
+        assert!(encode_with(0x7F, LengthForm::Long { octets: 1 }, &mut buf).is_ok());
+        assert!(encode_with(0x80, LengthForm::Long { octets: 2 }, &mut buf).is_ok());
+        assert!(encode_with(0x100, LengthForm::Long { octets: 3 }, &mut buf).is_ok());
         assert!(encode_with(5, LengthForm::Long { octets: 0 }, &mut buf).is_err());
         assert!(encode_with(5, LengthForm::Long { octets: 5 }, &mut buf).is_err());
         assert!(encode_with(0x1_0000, LengthForm::Long { octets: 4 }, &mut buf).is_err());

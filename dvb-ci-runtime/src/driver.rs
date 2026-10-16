@@ -1715,6 +1715,8 @@ pub(crate) mod tests {
 
         fn reply(ca_enable: Option<CaEnable>) -> CaPmtReply {
             CaPmtReply {
+                reserved_ca_enable: Default::default(),
+                reserved_version: Default::default(),
                 length_form: dvb_ci::length::LengthForm::Minimal,
                 program_number: 1,
                 version_number: 1,
@@ -1772,6 +1774,8 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaPmtReply {
+                    reserved_ca_enable: Default::default(),
+                    reserved_version: Default::default(),
                     length_form: dvb_ci::length::LengthForm::Minimal,
                     program_number: 7,
                     version_number: 1,
@@ -1806,6 +1810,8 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaPmtReply {
+                    reserved_ca_enable: Default::default(),
+                    reserved_version: Default::default(),
                     length_form: dvb_ci::length::LengthForm::Minimal,
                     program_number: 7,
                     version_number: 1,
@@ -1838,6 +1844,7 @@ pub(crate) mod tests {
             r_apdu(
                 MMI_SESSION,
                 &ser(&Enq {
+                    reserved: Default::default(),
                     length_form: dvb_ci::length::LengthForm::Minimal,
                     blind_answer: false,
                     answer_text_length: 0,
@@ -1863,6 +1870,7 @@ pub(crate) mod tests {
             r_apdu(
                 MMI_SESSION,
                 &ser(&Enq {
+                    reserved: Default::default(),
                     length_form: dvb_ci::length::LengthForm::Minimal,
                     blind_answer: false,
                     answer_text_length: 0,
@@ -2757,6 +2765,8 @@ pub(crate) mod tests {
             current_next_indicator: true,
             ca_enable,
             streams: vec![],
+            reserved_version: Default::default(),
+            reserved_ca_enable: Default::default(),
         }
     }
 

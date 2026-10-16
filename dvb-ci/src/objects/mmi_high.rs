@@ -11,6 +11,7 @@
 
 use crate::error::{Error, Result};
 use crate::length;
+use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
@@ -152,6 +153,11 @@ pub struct Enq<'a> {
     /// The prompt `text_char` bytes (EN 300 468 Annex A).
     #[cfg_attr(feature = "serde", serde(borrow, with = "super::bytes_serde"))]
     pub text_chars: &'a [u8],
+    /// The 7-bit `reserved` field as received, preserved so the object
+    /// re-serializes byte-for-byte; `0b111_1111` (the all-ones fill) when
+    /// hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<7>,
 }
 
 // reserved/blind_answer(1) + answer_text_length(1).
@@ -170,6 +176,7 @@ impl<'a> Parse<'a> for Enq<'a> {
         }
         Ok(Self {
             length_form,
+            reserved: ReservedOnes::from_bits(body[0] >> 1),
             blind_answer: (body[0] & 0x01) != 0,
             answer_text_length: body[1],
             text_chars: &body[ENQ_PREFIX..],
@@ -185,8 +192,8 @@ impl Serialize for Enq<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = ENQ_PREFIX + self.text_chars.len();
         let mut pos = super::write_apdu_header(tag::ENQ, body_len, self.length_form, buf)?;
-        // reserved(7)='1111111', blind_answer(1).
-        buf[pos] = 0xFE | u8::from(self.blind_answer);
+        // reserved(7), blind_answer(1).
+        buf[pos] = (self.reserved.get() << 1) | u8::from(self.blind_answer);
         buf[pos + 1] = self.answer_text_length;
         pos += ENQ_PREFIX;
         buf[pos..pos + self.text_chars.len()].copy_from_slice(self.text_chars);
@@ -561,6 +568,7 @@ impl<'a> Parse<'a> for MenuAnsw {
             have: 0,
             what: "menu_answ choice_ref",
         })?;
+        super::reject_trailing_body(body, 1, "menu_answ")?;
         Ok(Self {
             length_form,
             choice_ref,
@@ -640,6 +648,7 @@ mod tests {
         // Spec worked example: enq "PLEASE TYPE YOUR PIN CODE", blind_answer=1.
         let prompt = b"PLEASE TYPE YOUR PIN CODE";
         let e = Enq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             blind_answer: true,
             answer_text_length: 4,

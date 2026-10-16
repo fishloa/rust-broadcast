@@ -6,6 +6,7 @@
 //! - `ask_release` (`9F 84 03`, Table 30) — header-only release request.
 
 use crate::error::{Error, Result};
+use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use broadcast_common::{Parse, Serialize};
@@ -95,6 +96,15 @@ pub struct Replace {
     pub replaced_pid: Pid,
     /// 13-bit `replacement_PID` — PID to replace it with.
     pub replacement_pid: Pid,
+    /// The 3-bit `reserved` field in front of `replaced_PID` as received,
+    /// preserved so the object re-serializes byte-for-byte; `0b111` (the
+    /// all-ones fill) when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub replaced_reserved: ReservedOnes<3>,
+    /// The 3-bit `reserved` field in front of `replacement_PID` as received
+    /// (see [`Replace::replaced_reserved`]).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub replacement_reserved: ReservedOnes<3>,
 }
 
 // replacement_ref(1) + reserved/replaced_PID(2) + reserved/replacement_PID(2).
@@ -120,6 +130,8 @@ impl<'a> Parse<'a> for Replace {
             replacement_ref,
             replaced_pid,
             replacement_pid,
+            replaced_reserved: ReservedOnes::from_bits(body[1] >> 5),
+            replacement_reserved: ReservedOnes::from_bits(body[3] >> 5),
         })
     }
 }
@@ -132,11 +144,13 @@ impl Serialize for Replace {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::REPLACE, REPLACE_BODY, self.length_form, buf)?;
         buf[pos] = self.replacement_ref;
-        // reserved(3)='111', replaced_PID(13).
-        buf[pos + 1] = 0xE0 | ((self.replaced_pid.value() >> 8) as u8 & 0x1F);
+        // reserved(3), replaced_PID(13).
+        buf[pos + 1] =
+            (self.replaced_reserved.get() << 5) | ((self.replaced_pid.value() >> 8) as u8 & 0x1F);
         buf[pos + 2] = self.replaced_pid.value() as u8;
-        // reserved(3)='111', replacement_PID(13).
-        buf[pos + 3] = 0xE0 | ((self.replacement_pid.value() >> 8) as u8 & 0x1F);
+        // reserved(3), replacement_PID(13).
+        buf[pos + 3] = (self.replacement_reserved.get() << 5)
+            | ((self.replacement_pid.value() >> 8) as u8 & 0x1F);
         buf[pos + 4] = self.replacement_pid.value() as u8;
         pos += REPLACE_BODY;
         Ok(pos)
@@ -173,6 +187,7 @@ impl<'a> Parse<'a> for ClearReplace {
             have: 0,
             what: "clear_replace replacement_ref",
         })?;
+        super::reject_trailing_body(body, 1, "clear_replace")?;
         Ok(Self {
             length_form,
             replacement_ref,
@@ -265,6 +280,8 @@ mod tests {
             replacement_ref: 0x07,
             replaced_pid: Pid::new(0x0123),    // 13-bit
             replacement_pid: Pid::new(0x01FF), // 13-bit
+            replaced_reserved: Default::default(),
+            replacement_reserved: Default::default(),
         };
         let bytes = r.try_to_bytes().unwrap();
         // body: 07, reserved(111)+0x0123 => 0xE1 0x23, reserved+0x01FF => 0xE1 0xFF

@@ -839,6 +839,8 @@ mod tests {
         let reply = s.handle(Event::Readable(&r_apdu(
             ca_nb,
             &ser(&CaPmtReply {
+                reserved_ca_enable: Default::default(),
+                reserved_version: Default::default(),
                 length_form: dvb_ci::length::LengthForm::Minimal,
                 program_number: 1,
                 version_number: 1,

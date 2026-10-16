@@ -651,6 +651,7 @@ mod tests {
         let mut h = Mmi;
         // enquiry
         let enq = s(&Enq {
+            reserved: Default::default(),
             length_form: dvb_ci::length::LengthForm::Minimal,
             blind_answer: true,
             answer_text_length: 4,
@@ -803,6 +804,8 @@ mod tests {
             replacement_ref: 0x07,
             replaced_pid: Pid::new(0x0123),
             replacement_pid: Pid::new(0x01FF),
+            replaced_reserved: Default::default(),
+            replacement_reserved: Default::default(),
         });
         assert_eq!(
             h.on_apdu(&replace).unwrap().notify,
@@ -916,6 +919,8 @@ mod tests {
         );
         // ca_pmt_reply (descrambling possible) -> CaPmtReply notification
         let reply = s(&CaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: dvb_ci::length::LengthForm::Minimal,
             program_number: 0x0042,
             version_number: 0,
@@ -939,6 +944,8 @@ mod tests {
         h.on_open().unwrap();
         // Programme `CA_enable_flag` clear -> no programme-level status given.
         let reply = s(&CaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: dvb_ci::length::LengthForm::Minimal,
             program_number: 0x0007,
             version_number: 0,

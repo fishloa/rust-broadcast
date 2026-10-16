@@ -153,7 +153,29 @@ fn long_form_one_octet_for_a_large_body_does_not_round_trip() {
         length_form: dvb_ci::length::LengthForm::Long { octets: 1 },
         ca_system_ids: (0..64u16).collect(),
     };
-    let wire = info.try_to_bytes().unwrap();
-    let back = dvb_ci::objects::ca_info::CaInfo::parse(&wire).unwrap();
-    assert_eq!(back, info, "serialize -> parse changed length_form");
+    // The `Long { octets: 1 }` coding of 128 IS the minimal coding (`81 80`),
+    // so `parse` can only ever hand back `Minimal` for it. The fix is to refuse
+    // to serialize the alias (the reviewer's "reject or normalise"): a value
+    // that does serialize must round-trip equal.
+    match info.try_to_bytes() {
+        Err(e) => assert!(
+            matches!(e, dvb_ci::Error::InvalidLength(r) if r.contains("minimal")),
+            "expected the minimal-alias rejection, got {e:?}"
+        ),
+        Ok(wire) => {
+            let back = dvb_ci::objects::ca_info::CaInfo::parse(&wire).unwrap();
+            assert_eq!(back, info, "serialize -> parse changed length_form");
+        }
+    }
+    // A genuinely non-minimal long form still round-trips equal.
+    let wide = dvb_ci::objects::ca_info::CaInfo {
+        length_form: dvb_ci::length::LengthForm::Long { octets: 2 },
+        ca_system_ids: (0..64u16).collect(),
+    };
+    let wire = wide.try_to_bytes().unwrap();
+    assert_eq!(&wire[3..6], &[0x82, 0x00, 0x80]);
+    assert_eq!(
+        dvb_ci::objects::ca_info::CaInfo::parse(&wire).unwrap(),
+        wide
+    );
 }

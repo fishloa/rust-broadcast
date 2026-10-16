@@ -15,6 +15,7 @@
 //! - `download_reply` (`9F 88 17`, Table 45) — object_id + download_reply_id.
 
 use crate::error::{Error, Result};
+use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
@@ -289,6 +290,10 @@ pub struct PixelDepth {
     pub pixels_per_byte: u8,
     /// 8-bit `region_overhead` (×16 = pixel reduction per added region).
     pub region_overhead: u8,
+    /// The 2-bit `reserved` field closing the entry as received, preserved
+    /// so the object re-serializes byte-for-byte; `0b11` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<2>,
 }
 
 /// The graphics-characteristics profile body of a [`DisplayReply`] (Table 35,
@@ -318,10 +323,6 @@ pub struct GraphicsCharacteristics {
 
 // Fixed part of the graphics body: h(2)+v(2)+packed(1)+display/comp/obj/n(4).
 const GFX_FIXED: usize = 9;
-/// The 2 `reserved` bits closing each `pixel_depth` entry (EN 50221 Table 35,
-/// `docs/en_50221/mmi-low-level.md`): written as `1`s, the workspace reserved-bit
-/// convention (audit r10-O-2).
-const PIXEL_DEPTH_RESERVED: u8 = 0x03;
 
 /// The branch-dependent body of a [`DisplayReply`] (Table 35).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -389,9 +390,11 @@ impl DisplayReply {
                 display_depth: (b[pos] >> 5) & 0x07,
                 pixels_per_byte: (b[pos] >> 2) & 0x07,
                 region_overhead: b[pos + 1],
+                reserved: ReservedOnes::from_bits(b[pos]),
             });
             pos += 2;
         }
+        super::reject_trailing_body(b, pos, "display_reply graphics")?;
         Ok(GraphicsCharacteristics {
             display_horizontal_size,
             display_vertical_size,
@@ -450,7 +453,7 @@ impl DisplayReply {
         buf[8] = ((g.object_cache_bytes & 0x0F) << 4) | n;
         let mut pos = GFX_FIXED;
         for d in &g.depths {
-            buf[pos] = (d.display_depth << 5) | (d.pixels_per_byte << 2) | PIXEL_DEPTH_RESERVED;
+            buf[pos] = (d.display_depth << 5) | (d.pixels_per_byte << 2) | d.reserved.get();
             buf[pos + 1] = d.region_overhead;
             pos += 2;
         }
@@ -494,9 +497,13 @@ impl<'a> Parse<'a> for DisplayReply {
                     have: 0,
                     what: "display_reply mmi_mode_ack",
                 })?;
+                super::reject_trailing_body(rest, 1, "display_reply mmi_mode_ack")?;
                 DisplayReplyBody::MmiModeAck(MmiMode::from_u8(m))
             }
-            _ => DisplayReplyBody::None,
+            _ => {
+                super::reject_trailing_body(rest, 0, "display_reply")?;
+                DisplayReplyBody::None
+            }
         };
         Ok(Self {
             length_form,
@@ -637,6 +644,7 @@ impl<'a> Parse<'a> for KeypadControl {
         let key_codes = if cmd.carries_key_codes() {
             body[1..].to_vec()
         } else {
+            super::reject_trailing_body(body, 1, "keypad_control")?;
             Vec::new()
         };
         Ok(Self {
@@ -700,6 +708,7 @@ impl<'a> Parse<'a> for Keypress {
             have: 0,
             what: "keypress key_code",
         })?;
+        super::reject_trailing_body(body, 1, "keypress")?;
         Ok(Self {
             length_form,
             key_code,
@@ -908,6 +917,7 @@ impl<'a> Parse<'a> for DisplayMessage {
             have: 0,
             what: "display_message id",
         })?);
+        super::reject_trailing_body(body, 1, "display_message")?;
         Ok(Self {
             length_form,
             message_id,
@@ -951,6 +961,11 @@ pub struct SceneEndMark {
     pub send_scene_done: bool,
     /// 4-bit `scene_tag`.
     pub scene_tag: u8,
+    /// The 1-bit `reserved` field (bit `[4]`) as received, preserved so the
+    /// object re-serializes byte-for-byte; `1` (the all-ones fill) when
+    /// hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<1>,
 }
 
 impl<'a> Parse<'a> for SceneEndMark {
@@ -963,6 +978,7 @@ impl<'a> Parse<'a> for SceneEndMark {
             have: 0,
             what: "scene_end_mark",
         })?;
+        super::reject_trailing_body(body, 1, "scene_end_mark")?;
         Ok(Self {
             length_form,
             decoder_continue_flag: (b & 0x80) != 0,
@@ -970,6 +986,7 @@ impl<'a> Parse<'a> for SceneEndMark {
             send_scene_done: (b & 0x20) != 0,
             // bit `[4]` reserved, scene_tag in `[3:0]`.
             scene_tag: b & 0x0F,
+            reserved: ReservedOnes::from_bits(b >> 4),
         })
     }
 }
@@ -981,11 +998,11 @@ impl Serialize for SceneEndMark {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::SCENE_END_MARK, 1, self.length_form, buf)?;
-        // decoder_continue(1) reveal(1) send_done(1) reserved(1)=1 scene_tag(4).
+        // decoder_continue(1) reveal(1) send_done(1) reserved(1) scene_tag(4).
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
             | (u8::from(self.send_scene_done) << 5)
-            | 0x10
+            | (self.reserved.get() << 4)
             | (self.scene_tag & 0x0F);
         pos += 1;
         Ok(pos)
@@ -1016,6 +1033,11 @@ pub struct SceneDoneMessage {
     pub scene_reveal_flag: bool,
     /// 4-bit `scene_tag` — duplicates the causing scene end mark.
     pub scene_tag: u8,
+    /// The 2-bit `reserved` field (bits `[5:4]`) as received, preserved so the
+    /// object re-serializes byte-for-byte; `0b11` (the all-ones fill) when
+    /// hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<2>,
 }
 
 impl<'a> Parse<'a> for SceneDoneMessage {
@@ -1028,12 +1050,14 @@ impl<'a> Parse<'a> for SceneDoneMessage {
             have: 0,
             what: "scene_done_message",
         })?;
+        super::reject_trailing_body(body, 1, "scene_done_message")?;
         Ok(Self {
             length_form,
             decoder_continue_flag: (b & 0x80) != 0,
             scene_reveal_flag: (b & 0x40) != 0,
             // bits `[5:4]` reserved, scene_tag in `[3:0]`.
             scene_tag: b & 0x0F,
+            reserved: ReservedOnes::from_bits(b >> 4),
         })
     }
 }
@@ -1045,10 +1069,10 @@ impl Serialize for SceneDoneMessage {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::SCENE_DONE, 1, self.length_form, buf)?;
-        // decoder_continue(1) reveal(1) reserved(2)=11 scene_tag(4).
+        // decoder_continue(1) reveal(1) reserved(2) scene_tag(4).
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
-            | 0x30
+            | (self.reserved.get() << 4)
             | (self.scene_tag & 0x0F);
         pos += 1;
         Ok(pos)
@@ -1076,6 +1100,11 @@ pub struct SceneControl {
     pub scene_reveal_flag: bool,
     /// 4-bit `scene_tag` — the scene end mark being operated upon.
     pub scene_tag: u8,
+    /// The 2-bit `reserved` field (bits `[5:4]`) as received, preserved so the
+    /// object re-serializes byte-for-byte; `0b11` (the all-ones fill) when
+    /// hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<2>,
 }
 
 impl<'a> Parse<'a> for SceneControl {
@@ -1088,11 +1117,13 @@ impl<'a> Parse<'a> for SceneControl {
             have: 0,
             what: "scene_control",
         })?;
+        super::reject_trailing_body(body, 1, "scene_control")?;
         Ok(Self {
             length_form,
             decoder_continue_flag: (b & 0x80) != 0,
             scene_reveal_flag: (b & 0x40) != 0,
             scene_tag: b & 0x0F,
+            reserved: ReservedOnes::from_bits(b >> 4),
         })
     }
 }
@@ -1104,10 +1135,10 @@ impl Serialize for SceneControl {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::SCENE_CONTROL, 1, self.length_form, buf)?;
-        // decoder_continue(1) reveal(1) reserved(2)=11 scene_tag(4).
+        // decoder_continue(1) reveal(1) reserved(2) scene_tag(4).
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
-            | 0x30
+            | (self.reserved.get() << 4)
             | (self.scene_tag & 0x0F);
         pos += 1;
         Ok(pos)
@@ -1384,11 +1415,13 @@ mod tests {
             object_cache_bytes: 0x34,
             depths: alloc::vec![
                 PixelDepth {
+                    reserved: Default::default(),
                     display_depth: 2,
                     pixels_per_byte: 4,
                     region_overhead: 0x10,
                 },
                 PixelDepth {
+                    reserved: Default::default(),
                     display_depth: 7,
                     pixels_per_byte: 1,
                     region_overhead: 0x20,
@@ -1479,6 +1512,7 @@ mod tests {
         let mut g = base_graphics();
         g.depths = (0..16)
             .map(|_| PixelDepth {
+                reserved: Default::default(),
                 display_depth: 0,
                 pixels_per_byte: 0,
                 region_overhead: 0,
@@ -1614,6 +1648,7 @@ mod tests {
             scene_reveal_flag: false,
             send_scene_done: true,
             scene_tag: 0x05,
+            reserved: Default::default(),
         };
         let bytes = s.try_to_bytes().unwrap();
         // 1_0_1_1_0101 = 0xB5
@@ -1631,6 +1666,7 @@ mod tests {
             decoder_continue_flag: false,
             scene_reveal_flag: true,
             scene_tag: 0x0A,
+            reserved: Default::default(),
         };
         let bytes = s.try_to_bytes().unwrap();
         // 0_1_11_1010 = 0x7A
@@ -1648,6 +1684,7 @@ mod tests {
             decoder_continue_flag: true,
             scene_reveal_flag: true,
             scene_tag: 0x03,
+            reserved: Default::default(),
         };
         let bytes = s.try_to_bytes().unwrap();
         // 1_1_11_0011 = 0xF3

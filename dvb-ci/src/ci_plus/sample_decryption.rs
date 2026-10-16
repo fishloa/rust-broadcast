@@ -18,6 +18,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
@@ -108,6 +109,7 @@ impl<'a> Parse<'a> for SdInfoReply {
         for _ in 0..n_uuid {
             drm_uuids.push(r.uuid()?);
         }
+        r.finish()?;
         Ok(Self {
             length_form,
             drm_system_ids,
@@ -229,6 +231,10 @@ pub struct SampleTrack<'a> {
     /// The DRM metadata records for this track.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub records: Vec<DrmMetadataRecord<'a>>,
+    /// The 3-bit `reserved` field in front of `track_PID` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<3>,
 }
 
 // reserved(3)+track_PID(13) = 2 bytes, then number_of_metadata_records(1).
@@ -275,7 +281,11 @@ impl<'a> SamplePayload<'a> {
                 for _ in 0..m {
                     records.push(DrmMetadataRecord::parse_from(r)?);
                 }
-                tracks.push(SampleTrack { track_pid, records });
+                tracks.push(SampleTrack {
+                    track_pid,
+                    records,
+                    reserved: ReservedZero::from_bits((pid_word >> 13) as u8),
+                });
             }
             Ok(Self::Tracks(tracks))
         }
@@ -351,9 +361,9 @@ impl<'a> SamplePayload<'a> {
             Self::Tracks(tracks) => {
                 w.u8(tracks.len() as u8);
                 for track in tracks {
-                    // reserved(3)='000' + track_PID(13). Range-checked by
+                    // reserved(3) + track_PID(13). Range-checked by
                     // validate(), so no mask is needed to fit the field.
-                    w.u16(track.track_pid.value());
+                    w.u16((u16::from(track.reserved.get()) << 13) | track.track_pid.value());
                     w.u8(track.records.len() as u8);
                     for rec in &track.records {
                         rec.write_into(w);
@@ -383,6 +393,10 @@ pub struct SdStart<'a> {
     /// The `ts_flag`-selected payload.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub payload: SamplePayload<'a>,
+    /// The 7-bit `reserved` field in front of `ts_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
 }
 
 // LTS_id(1) + program_number(2) + reserved(7)+ts_flag(1) byte.
@@ -397,13 +411,16 @@ impl<'a> Parse<'a> for SdStart<'a> {
         let mut r = Reader::new(body, "sd_start");
         let lts_id = r.u8()?;
         let program_number = r.u16()?;
-        let ts_flag = r.u8()? & TS_FLAG_BIT != 0;
+        let flags = r.u8()?;
+        let ts_flag = flags & TS_FLAG_BIT != 0;
         let payload = SamplePayload::parse_from(&mut r, ts_flag)?;
+        r.finish()?;
         Ok(Self {
             length_form,
             lts_id,
             program_number,
             payload,
+            reserved: ReservedZero::from_bits(flags >> 1),
         })
     }
 }
@@ -419,11 +436,7 @@ impl Serialize for SdStart<'_> {
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.lts_id);
         w.u16(self.program_number);
-        w.u8(if self.payload.ts_flag() {
-            TS_FLAG_BIT
-        } else {
-            0
-        });
+        w.u8((self.reserved.get() << 1) | u8::from(self.payload.ts_flag()));
         self.payload.write_into(&mut w);
         Ok(pos + body_len)
     }
@@ -625,6 +638,10 @@ pub struct SdUpdate<'a> {
     /// The `ts_flag`-selected payload (shall match the `sd_start` `ts_flag`).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub payload: SamplePayload<'a>,
+    /// The 7-bit `reserved` field in front of `ts_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
 }
 
 // LTS_id(1) + reserved(7)+ts_flag(1) byte.
@@ -636,12 +653,15 @@ impl<'a> Parse<'a> for SdUpdate<'a> {
         let (length_form, body) = objects::parse_apdu_header(bytes, tag::SD_UPDATE, "sd_update")?;
         let mut r = Reader::new(body, "sd_update");
         let lts_id = r.u8()?;
-        let ts_flag = r.u8()? & TS_FLAG_BIT != 0;
+        let flags = r.u8()?;
+        let ts_flag = flags & TS_FLAG_BIT != 0;
         let payload = SamplePayload::parse_from(&mut r, ts_flag)?;
+        r.finish()?;
         Ok(Self {
             length_form,
             lts_id,
             payload,
+            reserved: ReservedZero::from_bits(flags >> 1),
         })
     }
 }
@@ -656,11 +676,7 @@ impl Serialize for SdUpdate<'_> {
         let pos = objects::write_apdu_header(tag::SD_UPDATE, body_len, self.length_form, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.lts_id);
-        w.u8(if self.payload.ts_flag() {
-            TS_FLAG_BIT
-        } else {
-            0
-        });
+        w.u8((self.reserved.get() << 1) | u8::from(self.payload.ts_flag()));
         self.payload.write_into(&mut w);
         Ok(pos + body_len)
     }
@@ -776,6 +792,11 @@ impl<'a> Reader<'a> {
         let s = self.take(2)?;
         Ok(u16::from_be_bytes([s[0], s[1]]))
     }
+    /// Reject any body bytes the typed fields did not consume (they would be
+    /// dropped on re-serialize).
+    fn finish(&self) -> Result<()> {
+        objects::reject_trailing_body(self.buf, self.pos, self.what)
+    }
     fn uuid(&mut self) -> Result<[u8; DRM_UUID_LEN]> {
         let s = self.take(DRM_UUID_LEN)?;
         let mut u = [0u8; DRM_UUID_LEN];
@@ -864,6 +885,7 @@ mod tests {
     #[test]
     fn sd_start_ts_flag_round_trips_and_bites() {
         let s = SdStart {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x07,
             program_number: 0x0042,
@@ -903,11 +925,13 @@ mod tests {
     #[test]
     fn sd_start_tracks_two_tracks() {
         let s = SdStart {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x01,
             program_number: 0x1000,
             payload: SamplePayload::Tracks(alloc::vec![
                 SampleTrack {
+                    reserved: Default::default(),
                     track_pid: Pid::new(0x0100),
                     records: alloc::vec![DrmMetadataRecord {
                         drm_metadata_source: 0x01,
@@ -917,6 +941,7 @@ mod tests {
                     }],
                 },
                 SampleTrack {
+                    reserved: Default::default(),
                     track_pid: Pid::new(0x0101),
                     records: Vec::new(),
                 },
@@ -972,10 +997,12 @@ mod tests {
     #[test]
     fn sd_update_round_trips() {
         let u = SdUpdate {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x09,
             payload: SamplePayload::Tracks(alloc::vec![
                 SampleTrack {
+                    reserved: Default::default(),
                     track_pid: Pid::new(0x0200),
                     records: alloc::vec![DrmMetadataRecord {
                         drm_metadata_source: 0x05,
@@ -985,6 +1012,7 @@ mod tests {
                     }],
                 },
                 SampleTrack {
+                    reserved: Default::default(),
                     track_pid: Pid::new(0x0201),
                     records: Vec::new(),
                 },
@@ -1042,10 +1070,12 @@ mod tests {
     #[test]
     fn max_track_pid_still_serializes_and_round_trips() {
         let s = SdStart {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             program_number: 0,
             payload: SamplePayload::Tracks(alloc::vec![SampleTrack {
+                reserved: Default::default(),
                 track_pid: Pid::new(0x1FFF),
                 records: Vec::new(),
             }]),
@@ -1060,6 +1090,7 @@ mod tests {
         // drm_metadata_length field.
         let big = alloc::vec![0u8; 65_536];
         let s = SdStart {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             program_number: 0,

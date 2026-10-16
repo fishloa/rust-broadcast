@@ -164,6 +164,8 @@ impl CaPmtBuilt {
     #[must_use]
     pub fn as_ca_pmt(&self) -> CaPmt<'_> {
         CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: self.list_management,
             program_number: self.program_number,
@@ -175,6 +177,8 @@ impl CaPmtBuilt {
                 .streams
                 .iter()
                 .map(|s| CaPmtStream {
+                    reserved_es_info: Default::default(),
+                    reserved_pid: Default::default(),
                     stream_type: s.stream_type,
                     elementary_pid: s.elementary_pid,
                     cmd_id: cmd_for(self.cmd_id, &s.ca_descriptors),

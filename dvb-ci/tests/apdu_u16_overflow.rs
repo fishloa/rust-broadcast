@@ -41,6 +41,7 @@ fn over_range_u16_fields_are_errors_not_wraps() {
     );
     assert!(
         PlayerStartReq {
+            reserved: Default::default(),
             length_form: LengthForm::Minimal,
             input_max_bitrate: 0,
             output_max_bitrate: 0,
@@ -64,6 +65,7 @@ fn over_range_u16_fields_are_errors_not_wraps() {
             length_form: LengthForm::Minimal,
             component_types: vec![
                 ComponentType {
+                    reserved: Default::default(),
                     stream_content: 1,
                     component_type: 1
                 };

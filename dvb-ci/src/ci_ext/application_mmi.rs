@@ -14,6 +14,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Application MMI (Tables 62-68).
@@ -149,6 +150,10 @@ pub struct FileAck<'a> {
     /// `FileByte`s — the file payload (opaque; empty when `file_ok == false`).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub file: &'a [u8],
+    /// The 7 `reserved` bits in front of `FileOK` as received, preserved so
+    /// the object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
 }
 
 /// `AppAbortReq()` (Table 67): host → app **or** app → host — opaque,
@@ -210,6 +215,7 @@ impl<'a> Parse<'a> for RequestStart<'a> {
                 what: "RequestStart",
             });
         }
+        objects::reject_trailing_body(body, need, "RequestStart")?;
         let domain_start = REQUEST_START_FIXED;
         let object_start = domain_start + domain_len;
         Ok(Self {
@@ -323,7 +329,7 @@ impl Serialize for FileReq<'_> {
 // --- FileAck ---
 
 /// The `FileOK` flag occupies the low bit of the leading byte; the upper 7 bits
-/// are reserved (`0`).
+/// are reserved (`0`, preserved as parsed in [`FileAck::reserved`]).
 const FILE_OK_BIT: u8 = 0x01;
 
 impl<'a> Parse<'a> for FileAck<'a> {
@@ -341,6 +347,7 @@ impl<'a> Parse<'a> for FileAck<'a> {
             length_form,
             file_ok: body[0] & FILE_OK_BIT != 0,
             file: &body[1..],
+            reserved: ReservedZero::from_bits(body[0] >> 1),
         })
     }
 }
@@ -352,7 +359,7 @@ impl Serialize for FileAck<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = 1 + self.file.len();
         let mut pos = objects::write_apdu_header(tag::FILE_ACK, body_len, self.length_form, buf)?;
-        buf[pos] = u8::from(self.file_ok);
+        buf[pos] = (self.reserved.get() << 1) | u8::from(self.file_ok);
         pos += 1;
         buf[pos..pos + self.file.len()].copy_from_slice(self.file);
         Ok(pos + self.file.len())
@@ -506,6 +513,7 @@ mod tests {
     #[test]
     fn file_ack_round_trips_and_bites() {
         let ack = FileAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             file_ok: true,
             file: &[0xDE, 0xAD, 0xBE, 0xEF],
@@ -519,6 +527,7 @@ mod tests {
         assert_eq!(FileAck::parse(&bytes).unwrap(), ack);
         // file_ok false => flag byte 0x00.
         let unavailable = FileAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             file_ok: false,
             file: &[],

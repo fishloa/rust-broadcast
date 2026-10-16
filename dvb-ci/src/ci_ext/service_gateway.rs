@@ -21,6 +21,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::{ReservedOnes, ReservedZero};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -163,6 +164,10 @@ pub struct ServiceDescAck<'a> {
     /// walk it with the dvb-si descriptor parsers.
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub descriptors: &'a [u8],
+    /// The 6-bit `reserved` field (`reserved_future_use`) in front of `EIT_schedule_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0b11_1111` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<6>,
 }
 
 /// `GetServiceReq()` (Table 29) — A → R: request the resource to provide a
@@ -203,6 +208,10 @@ pub struct GetServiceAck {
     /// `ActualService` — the actual service id (MPEG program number) delivered;
     /// `0` = no valid TS (the host should not attempt to decode).
     pub actual_service: u16,
+    /// The 5-bit `reserved` field in front of `ServiceTerminated` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<5>,
 }
 
 // --- header-only objects ---
@@ -229,6 +238,7 @@ macro_rules! version_byte_object {
                         what: $what,
                     });
                 }
+                objects::reject_trailing_body(body, 1, $what)?;
                 Ok(Self {
                     length_form,
                     version_number: body[0],
@@ -289,6 +299,7 @@ impl<'a> Parse<'a> for ServiceListAck {
                 actual: list.len(),
             });
         }
+        objects::reject_trailing_body(list, count * SERVICE_REF_LEN, "ServiceListAck")?;
         let mut services = Vec::with_capacity(count);
         for chunk in list[..count * SERVICE_REF_LEN].chunks_exact(SERVICE_REF_LEN) {
             services.push(ServiceReference {
@@ -347,6 +358,7 @@ impl<'a> Parse<'a> for ServiceDescReq {
                 what: "ServiceDescReq",
             });
         }
+        objects::reject_trailing_body(body, SERVICE_REF_LEN, "ServiceDescReq")?;
         Ok(Self {
             length_form,
             service: ServiceReference {
@@ -408,6 +420,7 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
                 actual: body.len() - desc_start,
             });
         }
+        objects::reject_trailing_body(body, desc_end, "ServiceDescAck")?;
         Ok(Self {
             length_form,
             service: ServiceReference {
@@ -419,6 +432,7 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
             running_status,
             free_ca_mode,
             descriptors: &body[desc_start..desc_end],
+            reserved: ReservedOnes::from_bits(flags >> 2),
         })
     }
 }
@@ -447,8 +461,8 @@ impl Serialize for ServiceDescAck<'_> {
             objects::write_apdu_header(tag::SERVICE_DESC_ACK, body_len, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
-        // reserved_future_use(6)=0b111111, EIT_schedule(1), EIT_present_following(1).
-        buf[pos + 4] = 0xFC
+        // reserved_future_use(6), EIT_schedule(1), EIT_present_following(1).
+        buf[pos + 4] = (self.reserved.get() << 2)
             | (u8::from(self.eit_schedule_flag) << 1)
             | u8::from(self.eit_present_following_flag);
         let loop_len = self.descriptors.len() as u16;
@@ -481,6 +495,7 @@ impl<'a> Parse<'a> for GetServiceReq {
                     what: "GetServiceReq",
                 });
             }
+            objects::reject_trailing_body(body, SERVICE_REF_LEN, "GetServiceReq")?;
             Some(ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
                 service_id: u16::from_be_bytes([body[2], body[3]]),
@@ -552,6 +567,7 @@ impl<'a> Parse<'a> for GetServiceAck {
             service_not_available: (flags & 0x02) != 0,
             ca_service_flag: (flags & 0x01) != 0,
             actual_service: u16::from_be_bytes([body[5], body[6]]),
+            reserved: ReservedZero::from_bits(flags >> 3),
         })
     }
 }
@@ -569,8 +585,9 @@ impl Serialize for GetServiceAck {
         )?;
         buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
-        // Reserved(5)=0, then the three flag bits.
-        buf[pos + 4] = (u8::from(self.service_terminated) << 2)
+        // Reserved(5), then the three flag bits.
+        buf[pos + 4] = (self.reserved.get() << 3)
+            | (u8::from(self.service_terminated) << 2)
             | (u8::from(self.service_not_available) << 1)
             | u8::from(self.ca_service_flag);
         buf[pos + 5..pos + 7].copy_from_slice(&self.actual_service.to_be_bytes());
@@ -718,6 +735,7 @@ mod tests {
         // 2 descriptors: 0x48 (service descriptor) len 2, and 0x52 len 1.
         let desc = [0x48, 0x02, 0xAA, 0xBB, 0x52, 0x01, 0x03];
         let ack = ServiceDescAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 0x0001,
@@ -755,6 +773,7 @@ mod tests {
     #[test]
     fn service_desc_ack_empty_loop() {
         let ack = ServiceDescAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 0xAAAA,
@@ -803,6 +822,7 @@ mod tests {
     #[test]
     fn get_service_ack_round_trips_and_bites() {
         let ack = GetServiceAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 0x0001,
@@ -839,6 +859,7 @@ mod tests {
             ServiceGatewayApdu::ServiceListReq(_)
         ));
         let gs = GetServiceAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference::default(),
             service_terminated: true,
@@ -858,6 +879,7 @@ mod tests {
         // Before the fix, 0x0A (exceeds 3 bits) silently wrapped to 0x02 in
         // the running_status field and returned Ok.
         let ack = ServiceDescAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 1,
@@ -879,6 +901,7 @@ mod tests {
     #[test]
     fn max_running_status_still_serializes_and_round_trips() {
         let ack = ServiceDescAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 1,

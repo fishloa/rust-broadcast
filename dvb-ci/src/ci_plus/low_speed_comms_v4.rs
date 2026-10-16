@@ -35,6 +35,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
@@ -208,6 +209,14 @@ pub struct CommsInfoReply {
     /// `inputDeliveryPID` (13) — TS-interface delivery PID for hybrid connections
     /// (`0x0020`–`0x1FFE`); `0x0000` if not a hybrid connection.
     pub input_delivery_pid: Pid,
+    /// The 7-bit `reserved` field in front of `status` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_status: ReservedZero<7>,
+    /// The 3-bit `reserved` field in front of `inputDeliveryPID` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_pid: ReservedZero<3>,
 }
 
 // LTS_id(1) + reserved/status(1) + source_IPaddress(16) + source_port(2) +
@@ -244,6 +253,8 @@ impl<'a> Parse<'a> for CommsInfoReply {
             source_ip_address,
             source_port,
             input_delivery_pid,
+            reserved_status: ReservedZero::from_bits(body[1] >> 1),
+            reserved_pid: ReservedZero::from_bits(body[p + 2] >> 5),
         })
     }
 }
@@ -260,13 +271,16 @@ impl Serialize for CommsInfoReply {
             buf,
         )?;
         buf[pos] = self.lts_id;
-        // reserved(7)='0000000' + status(1).
-        buf[pos + 1] = u8::from(self.status);
+        // reserved(7) + status(1).
+        buf[pos + 1] = (self.reserved_status.get() << 1) | u8::from(self.status);
         buf[pos + 2..pos + 2 + IP_ADDR_LEN].copy_from_slice(&self.source_ip_address);
         let p = pos + 2 + IP_ADDR_LEN;
         buf[p..p + 2].copy_from_slice(&self.source_port.to_be_bytes());
-        // reserved(3)='000' + inputDeliveryPID(13). Range-checked above.
-        buf[p + 2..p + 4].copy_from_slice(&self.input_delivery_pid.value().to_be_bytes());
+        // reserved(3) + inputDeliveryPID(13). Range-checked above.
+        buf[p + 2..p + 4].copy_from_slice(
+            &(((u16::from(self.reserved_pid.get())) << 13) | self.input_delivery_pid.value())
+                .to_be_bytes(),
+        );
         Ok(pos + INFO_REPLY_BODY)
     }
 }
@@ -341,6 +355,10 @@ pub struct CommsIpConfigReply {
     pub physical_address: [u8; MAC_LEN],
     /// IP configuration, present iff `connection_state == Connected` (`0x01`).
     pub ip_config: Option<IpConfig>,
+    /// The 6-bit `reserved` field after `connection_state` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<6>,
 }
 
 // connection_state/reserved(1) + physical_address(6).
@@ -412,6 +430,7 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
                 dns_server_addresses.push(read_addr(body, p));
                 p += IP_ADDR_LEN;
             }
+            objects::reject_trailing_body(body, p, "comms_IP_config_reply")?;
             Some(IpConfig {
                 ip_address,
                 network_mask,
@@ -420,6 +439,8 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
                 dns_server_addresses,
             })
         } else {
+            // Table 79: no fields follow `physical_address` unless connected.
+            objects::reject_trailing_body(body, IP_CONFIG_PREFIX, "comms_IP_config_reply")?;
             None
         };
         Ok(Self {
@@ -427,6 +448,7 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
             connection_state,
             physical_address,
             ip_config,
+            reserved: ReservedZero::from_bits(body[0]),
         })
     }
 }
@@ -463,8 +485,8 @@ impl Serialize for CommsIpConfigReply {
             self.length_form,
             buf,
         )?;
-        // connection_state(2) << 6 + reserved(6)='000000'.
-        buf[pos] = self.connection_state.to_u8() << 6;
+        // connection_state(2) << 6 + reserved(6).
+        buf[pos] = (self.connection_state.to_u8() << 6) | self.reserved.get();
         buf[pos + 1..pos + 1 + MAC_LEN].copy_from_slice(&self.physical_address);
         pos += IP_CONFIG_PREFIX;
         if let Some(c) = &self.ip_config {
@@ -806,6 +828,8 @@ mod tests {
     #[test]
     fn info_reply_round_trips_and_bites() {
         let r = CommsInfoReply {
+            reserved_pid: Default::default(),
+            reserved_status: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x07,
             status: true,
@@ -852,6 +876,7 @@ mod tests {
     #[test]
     fn ip_config_reply_disconnected_round_trips() {
         let r = CommsIpConfigReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Disconnected,
             physical_address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
@@ -871,6 +896,7 @@ mod tests {
     #[test]
     fn ip_config_reply_connected_two_dns_round_trips_and_bites() {
         let r = CommsIpConfigReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Connected,
             physical_address: [0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F],
@@ -906,6 +932,7 @@ mod tests {
     fn ip_config_reply_rejects_state_ip_config_mismatch() {
         // Disconnected but claims an ip_config.
         let r = CommsIpConfigReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Disconnected,
             physical_address: [0; MAC_LEN],
@@ -924,6 +951,7 @@ mod tests {
 
         // Connected but has no ip_config.
         let r = CommsIpConfigReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Connected,
             physical_address: [0; MAC_LEN],
@@ -997,6 +1025,8 @@ mod tests {
             LscV4Apdu::CommsInfoReq(_)
         ));
         let reply = CommsInfoReply {
+            reserved_pid: Default::default(),
+            reserved_status: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             status: false,
@@ -1014,6 +1044,7 @@ mod tests {
         ));
         // comms_IP_config_reply is dispatched by the same enum (r10-O-7).
         let cfg = CommsIpConfigReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Disconnected,
             physical_address: [0; MAC_LEN],
@@ -1038,6 +1069,8 @@ mod tests {
     #[test]
     fn max_input_delivery_pid_still_serializes_and_round_trips() {
         let reply = CommsInfoReply {
+            reserved_pid: Default::default(),
+            reserved_status: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             status: false,
@@ -1053,6 +1086,7 @@ mod tests {
     fn oversized_num_dns_servers_is_rejected_not_wrapped() {
         // 256 entries silently wrapped num_DNS_servers (u8) to 0 before the fix.
         let r = CommsIpConfigReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Connected,
             physical_address: [0; MAC_LEN],

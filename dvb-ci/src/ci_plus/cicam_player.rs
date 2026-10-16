@@ -37,6 +37,7 @@
 use crate::error::{Error, Result};
 use crate::length::LengthForm;
 use crate::objects;
+use crate::reserved::{ReservedOnes, ReservedZero};
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -388,6 +389,8 @@ fn parse_service_location<'a>(body: &'a [u8], what: &'static str) -> Result<&'a 
             actual: body.len().saturating_sub(SERVICE_LOCATION_PREFIX),
         });
     }
+    // `service_location` is the last field of both objects using this helper.
+    objects::reject_trailing_body(body, end, what)?;
     Ok(&body[SERVICE_LOCATION_PREFIX..end])
 }
 
@@ -502,6 +505,10 @@ pub struct ComponentType {
     pub stream_content: u8,
     /// `component_type` (8).
     pub component_type: u8,
+    /// The 4-bit `reserved` field after `stream_content` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0b1111` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<4>,
 }
 
 /// `CICAM_player_capabilities_reply()` (Table 53): Host → CICAM.
@@ -556,6 +563,7 @@ impl<'a> Parse<'a> for PlayerCapabilitiesReply {
                 // stream_content(4) + reserved(4).
                 stream_content: (body[pos] >> 4) & STREAM_CONTENT_MASK,
                 component_type: body[pos + 1],
+                reserved: ReservedOnes::from_bits(body[pos]),
             });
             pos += COMPONENT_TYPE_LEN;
         }
@@ -585,8 +593,8 @@ impl Serialize for PlayerCapabilitiesReply {
         buf[pos..pos + 2].copy_from_slice(&(self.component_types.len() as u16).to_be_bytes());
         pos += CAPABILITIES_PREFIX;
         for c in &self.component_types {
-            // stream_content(4) << 4 + reserved(4)='1111'.
-            buf[pos] = ((c.stream_content & STREAM_CONTENT_MASK) << 4) | 0x0F;
+            // stream_content(4) << 4 + reserved(4).
+            buf[pos] = ((c.stream_content & STREAM_CONTENT_MASK) << 4) | c.reserved.get();
             buf[pos + 1] = c.component_type;
             pos += COMPONENT_TYPE_LEN;
         }
@@ -617,6 +625,10 @@ pub struct PlayerStartReq<'a> {
     /// `PMT_byte` body (`PMT_length` bytes) — opaque PMT (first byte = `table_id`).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub pmt: &'a [u8],
+    /// The 7-bit `reserved` field after `linearChannel` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
 }
 
 // input_max_bitrate(2)+output_max_bitrate(2)+linearChannel/reserved(1)+PMT_length(2).
@@ -647,12 +659,14 @@ impl<'a> Parse<'a> for PlayerStartReq<'a> {
                 actual: body.len().saturating_sub(START_REQ_PREFIX),
             });
         }
+        objects::reject_trailing_body(body, end, "CICAM_player_start_req")?;
         Ok(Self {
             length_form,
             input_max_bitrate,
             output_max_bitrate,
             linear_channel,
             pmt: &body[START_REQ_PREFIX..end],
+            reserved: ReservedZero::from_bits(body[4]),
         })
     }
 }
@@ -666,12 +680,13 @@ impl Serialize for PlayerStartReq<'_> {
         let pos = objects::write_apdu_header(tag::START_REQ, body_len, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.input_max_bitrate.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.output_max_bitrate.to_be_bytes());
-        // linearChannel(1) + reserved(7)='0000000'.
-        buf[pos + 4] = if self.linear_channel {
-            LINEAR_CHANNEL_BIT
-        } else {
-            0
-        };
+        // linearChannel(1) + reserved(7).
+        buf[pos + 4] = (self.reserved.get() & 0x7F)
+            | if self.linear_channel {
+                LINEAR_CHANNEL_BIT
+            } else {
+                0
+            };
         buf[pos + 5..pos + 7].copy_from_slice(&(self.pmt.len() as u16).to_be_bytes());
         buf[pos + START_REQ_PREFIX..pos + body_len].copy_from_slice(self.pmt);
         Ok(pos + body_len)
@@ -803,6 +818,10 @@ pub struct PlayerStatusError {
     pub lts_id: u8,
     /// `player_status` (8) — Table 59.
     pub player_status: PlayStatus,
+    /// The 7-bit `reserved` field in front of `valid_LTS_id` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
 }
 
 // reserved(7)+valid_LTS_id(1) + LTS_id(8) + player_status(8).
@@ -827,6 +846,7 @@ impl<'a> Parse<'a> for PlayerStatusError {
             valid_lts_id: body[0] & VALID_LTS_ID_BIT != 0,
             lts_id: body[1],
             player_status: PlayStatus::from_u8(body[2]),
+            reserved: ReservedZero::from_bits(body[0] >> 1),
         })
     }
 }
@@ -842,12 +862,8 @@ impl Serialize for PlayerStatusError {
             self.length_form,
             buf,
         )?;
-        // reserved(7)='0000000' + valid_LTS_id(1).
-        buf[pos] = if self.valid_lts_id {
-            VALID_LTS_ID_BIT
-        } else {
-            0
-        };
+        // reserved(7) + valid_LTS_id(1).
+        buf[pos] = (self.reserved.get() << 1) | u8::from(self.valid_lts_id);
         buf[pos + 1] = self.lts_id;
         buf[pos + 2] = self.player_status.to_u8();
         Ok(pos + STATUS_ERROR_BODY)
@@ -1085,6 +1101,7 @@ fn parse_lts_id_body(
             what,
         });
     }
+    objects::reject_trailing_body(body, LTS_ID_BODY, what)?;
     Ok((length_form, body[0]))
 }
 
@@ -1254,13 +1271,15 @@ pub struct PlayerAssetEnd {
     pub lts_id: u8,
     /// `beginning` (1) — `true` = start of asset reached; otherwise end reached.
     pub beginning: bool,
+    /// The 7-bit `reserved` field in front of `beginning` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0x7F` (§8.8.16 mandates `0x7F`) when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<7>,
 }
 
 // LTS_id(1) + reserved(7)+beginning(1).
 const ASSET_END_BODY: usize = 2;
 const BEGINNING_BIT: u8 = 0x01;
-// reserved field shall be 0x7F per §8.8.16.
-const ASSET_END_RESERVED: u8 = 0x7F << 1;
 
 impl<'a> Parse<'a> for PlayerAssetEnd {
     type Error = Error;
@@ -1279,6 +1298,7 @@ impl<'a> Parse<'a> for PlayerAssetEnd {
             length_form,
             lts_id: body[0],
             beginning: body[1] & BEGINNING_BIT != 0,
+            reserved: ReservedOnes::from_bits(body[1] >> 1),
         })
     }
 }
@@ -1291,8 +1311,8 @@ impl Serialize for PlayerAssetEnd {
         let pos =
             objects::write_apdu_header(tag::ASSET_END, ASSET_END_BODY, self.length_form, buf)?;
         buf[pos] = self.lts_id;
-        // reserved(7) shall be 0x7F + beginning(1).
-        buf[pos + 1] = ASSET_END_RESERVED | u8::from(self.beginning);
+        // reserved(7) (0x7F per §8.8.16 unless a peer sent otherwise) + beginning(1).
+        buf[pos + 1] = (self.reserved.get() << 1) | u8::from(self.beginning);
         Ok(pos + ASSET_END_BODY)
     }
 }
@@ -1343,6 +1363,7 @@ impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
                 actual: body.len().saturating_sub(UPDATE_REQ_PREFIX),
             });
         }
+        objects::reject_trailing_body(body, end, "CICAM_player_update_req")?;
         Ok(Self {
             length_form,
             lts_id,
@@ -1524,10 +1545,12 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             component_types: alloc::vec![
                 ComponentType {
+                    reserved: Default::default(),
                     stream_content: 0x01,
                     component_type: 0x03,
                 },
                 ComponentType {
+                    reserved: Default::default(),
                     stream_content: 0x02,
                     component_type: 0x05,
                 },
@@ -1548,6 +1571,7 @@ mod tests {
     fn start_req_round_trips_and_bites() {
         // 512 kbps = 0x0034 input; output 0x0040; linear; 3-byte PMT.
         let req = PlayerStartReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             input_max_bitrate: 0x0034,
             output_max_bitrate: 0x0040,
@@ -1595,6 +1619,7 @@ mod tests {
     #[test]
     fn status_error_round_trips_and_bites() {
         let e = PlayerStatusError {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             valid_lts_id: true,
             lts_id: 0x09,
@@ -1734,6 +1759,7 @@ mod tests {
     #[test]
     fn asset_end_round_trips_and_reserved_is_7f() {
         let e = PlayerAssetEnd {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x04,
             beginning: true,
@@ -1743,6 +1769,7 @@ mod tests {
         assert_eq!(bytes, [0x9F, 0xA0, 0x0D, 0x02, 0x04, 0xFF]);
         assert_eq!(PlayerAssetEnd::parse(&bytes).unwrap(), e);
         let other = PlayerAssetEnd {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x04,
             beginning: false,
@@ -1809,6 +1836,7 @@ mod tests {
             .try_to_bytes()
             .unwrap(),
             PlayerStartReq {
+                reserved: Default::default(),
                 length_form: crate::length::LengthForm::Minimal,
                 input_max_bitrate: 0,
                 output_max_bitrate: 0,
@@ -1831,6 +1859,7 @@ mod tests {
             .try_to_bytes()
             .unwrap(),
             PlayerStatusError {
+                reserved: Default::default(),
                 length_form: crate::length::LengthForm::Minimal,
                 valid_lts_id: false,
                 lts_id: 0,
@@ -1873,6 +1902,7 @@ mod tests {
             .try_to_bytes()
             .unwrap(),
             PlayerAssetEnd {
+                reserved: Default::default(),
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 beginning: false

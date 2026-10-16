@@ -39,6 +39,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -125,6 +126,15 @@ pub struct TuneTripletReq {
     /// `delivery_system_descriptor_tag == 0x7F`, else the trailing `reserved(8)`
     /// byte is present but ignored (modeled as `None`).
     pub descriptor_tag_extension: Option<u8>,
+    /// The 5-bit `reserved` field in front of the three flags as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<5>,
+    /// The `reserved(8)` byte that stands in for `descriptor_tag_extension` when
+    /// `delivery_system_descriptor_tag != 0x7F`, as received (ignored on
+    /// serialize when `descriptor_tag_extension` is `Some`); `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_ext: ReservedZero<8>,
 }
 
 // flags/reserved(1) + onid(2) + tsid(2) + sid(2) + dsd_tag(1) + ext/reserved(1).
@@ -167,6 +177,12 @@ impl<'a> Parse<'a> for TuneTripletReq {
             service_id: u16::from_be_bytes([body[5], body[6]]),
             delivery_system_descriptor_tag: dsd_tag,
             descriptor_tag_extension,
+            reserved: ReservedZero::from_bits(flags >> 3),
+            reserved_ext: if dsd_tag == DSD_TAG_EXTENSION {
+                ReservedZero::default()
+            } else {
+                ReservedZero::from_bits(body[8])
+            },
         })
     }
 }
@@ -179,7 +195,7 @@ impl Serialize for TuneTripletReq {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let pos =
             objects::write_apdu_header(tag::TUNE_TRIPLET_REQ, TRIPLET_BODY, self.length_form, buf)?;
-        let mut flags = 0u8;
+        let mut flags = self.reserved.get() << 3;
         if self.background_tune {
             flags |= TRIPLET_BACKGROUND_BIT;
         }
@@ -194,8 +210,10 @@ impl Serialize for TuneTripletReq {
         buf[pos + 3..pos + 5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[pos + 5..pos + 7].copy_from_slice(&self.service_id.to_be_bytes());
         buf[pos + 7] = self.delivery_system_descriptor_tag;
-        // descriptor_tag_extension when tag==0x7F, else reserved(8) = 0.
-        buf[pos + 8] = self.descriptor_tag_extension.unwrap_or(0);
+        // descriptor_tag_extension when tag==0x7F, else reserved(8).
+        buf[pos + 8] = self
+            .descriptor_tag_extension
+            .unwrap_or(self.reserved_ext.get());
         Ok(pos + TRIPLET_BODY)
     }
 }
@@ -219,6 +237,10 @@ pub struct TuneLcnReq {
     pub keep_app_running: bool,
     /// `logical_channel_number` (14) — range 0..9999.
     pub logical_channel_number: u16,
+    /// The 7-bit `reserved` field in front of `background_tune_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
 }
 
 // flags/reserved(1) + flags/lcn-hi(1) + lcn-lo(1).
@@ -259,6 +281,7 @@ impl<'a> Parse<'a> for TuneLcnReq {
             tune_quietly,
             keep_app_running,
             logical_channel_number,
+            reserved: ReservedZero::from_bits(body[0] >> 1),
         })
     }
 }
@@ -277,11 +300,12 @@ impl Serialize for TuneLcnReq {
             "tune_lcn_req logical_channel_number",
         )?;
         let pos = objects::write_apdu_header(tag::TUNE_LCN_REQ, LCN_BODY, self.length_form, buf)?;
-        buf[pos] = if self.background_tune {
-            LCN_BACKGROUND_BIT
-        } else {
-            0
-        };
+        buf[pos] = (self.reserved.get() << 1)
+            | if self.background_tune {
+                LCN_BACKGROUND_BIT
+            } else {
+                0
+            };
         let mut hi = (self.logical_channel_number >> 8) as u8 & (LCN_MASK >> 8) as u8;
         if self.tune_quietly {
             hi |= LCN_QUIETLY_BIT;
@@ -320,6 +344,12 @@ pub struct TuneIpReq<'a> {
     /// `service_location_data` (the `service_location_length`-byte body) — opaque.
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub service_location_data: &'a [u8],
+    /// The reserved bits `[7:6]` of the first byte as received (in
+    /// [`HostControlMode::MultiStream`] only bit `[7]` is reserved — bit `[6]` is
+    /// `background_tune_flag` — so the value is `0` or `2`); preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<2>,
 }
 
 // flags/reserved+length(2) prefix, then service_location_data.
@@ -369,6 +399,11 @@ impl<'a> TuneIpReq<'a> {
                 what: "tune_ip_req service_location_data",
             });
         }
+        objects::reject_trailing_body(data, sll, "tune_ip_req")?;
+        let reserved_bits = match mode {
+            HostControlMode::MultiStream => (body[0] >> 6) & 0b10,
+            HostControlMode::BaseV3 => body[0] >> 6,
+        };
         Ok(Self {
             length_form,
             mode,
@@ -376,6 +411,7 @@ impl<'a> TuneIpReq<'a> {
             tune_quietly,
             keep_app_running,
             service_location_data: &data[..sll],
+            reserved: ReservedZero::from_bits(reserved_bits),
         })
     }
 }
@@ -397,6 +433,8 @@ impl Serialize for TuneIpReq<'_> {
         let mut byte0 = (sll >> 8) as u8;
         match self.mode {
             HostControlMode::MultiStream => {
+                // Only bit `[7]` is reserved; bit `[6]` is background_tune_flag.
+                byte0 |= (self.reserved.get() & 0b10) << 6;
                 if self.background_tune {
                     byte0 |= IP_MS_BACKGROUND_BIT;
                 }
@@ -408,6 +446,7 @@ impl Serialize for TuneIpReq<'_> {
                 }
             }
             HostControlMode::BaseV3 => {
+                byte0 |= self.reserved.get() << 6;
                 // Table 100 has no `background_tune_flag`; silently dropping a
                 // `true` would emit bytes that parse back as `false`.
                 if self.background_tune {
@@ -476,6 +515,15 @@ pub struct TunerStatusDsd {
     /// `delivery_system_descriptor_tag == 0x7F`, else the trailing `reserved(8)`
     /// byte is ignored (`None`).
     pub descriptor_tag_extension: Option<u8>,
+    /// The 7-bit `reserved` field in front of `connected_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
+    /// The `reserved(8)` byte that stands in for `descriptor_tag_extension` when
+    /// `delivery_system_descriptor_tag != 0x7F`, as received (ignored on
+    /// serialize when `descriptor_tag_extension` is `Some`); `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_ext: ReservedZero<8>,
 }
 
 /// `tuner_status_reply()` (Table 102): Host → CICAM.
@@ -537,9 +585,16 @@ impl<'a> Parse<'a> for TunerStatusReply {
                 connected,
                 delivery_system_descriptor_tag: dsd_tag,
                 descriptor_tag_extension,
+                reserved: ReservedZero::from_bits(rest[0] >> 1),
+                reserved_ext: if dsd_tag == DSD_TAG_EXTENSION {
+                    ReservedZero::default()
+                } else {
+                    ReservedZero::from_bits(rest[2])
+                },
             });
             rest = &rest[DSD_ENTRY_LEN..];
         }
+        objects::reject_trailing_body(rest, 0, "tuner_status_reply")?;
         Ok(Self {
             length_form,
             ip_tune_capable,
@@ -566,9 +621,11 @@ impl Serialize for TunerStatusReply {
         buf[pos] = byte0;
         pos += 1;
         for dsd in &self.dsds {
-            buf[pos] = if dsd.connected { DSD_CONNECTED_BIT } else { 0 };
+            buf[pos] = (dsd.reserved.get() << 1) | u8::from(dsd.connected);
             buf[pos + 1] = dsd.delivery_system_descriptor_tag;
-            buf[pos + 2] = dsd.descriptor_tag_extension.unwrap_or(0);
+            buf[pos + 2] = dsd
+                .descriptor_tag_extension
+                .unwrap_or(dsd.reserved_ext.get());
             pos += DSD_ENTRY_LEN;
         }
         Ok(pos)
@@ -651,6 +708,8 @@ mod tests {
     #[test]
     fn tune_triplet_round_trips_and_bites() {
         let t = TuneTripletReq {
+            reserved_ext: Default::default(),
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             background_tune: true,
             tune_quietly: false,
@@ -680,6 +739,8 @@ mod tests {
     #[test]
     fn tune_triplet_with_descriptor_extension() {
         let t = TuneTripletReq {
+            reserved_ext: Default::default(),
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             background_tune: false,
             tune_quietly: true,
@@ -704,6 +765,7 @@ mod tests {
     #[test]
     fn tune_lcn_round_trips_and_bites() {
         let t = TuneLcnReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             background_tune: true,
             tune_quietly: true,
@@ -732,6 +794,7 @@ mod tests {
         let mut buf = [0u8; 16];
         // 0x4000 used to be masked to LCN 0.
         let lcn = TuneLcnReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             background_tune: false,
             tune_quietly: false,
@@ -744,6 +807,7 @@ mod tests {
         ));
         // 14-bit maximum still serializes: LCN 0x3FFF -> hi 0x3F, lo 0xFF.
         let max = TuneLcnReq {
+            reserved: Default::default(),
             logical_channel_number: 0x3FFF,
             ..lcn
         };
@@ -751,6 +815,7 @@ mod tests {
         assert_eq!(bytes[bytes.len() - 2..], [0x3F, 0xFF]);
         // BaseV3 has no background_tune bit: `true` used to be dropped silently.
         let v3 = TuneIpReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::BaseV3,
             background_tune: true,
@@ -769,6 +834,7 @@ mod tests {
         // Same logical request, both with background_tune set where applicable.
         let data: &[u8] = &[0xAA, 0xBB];
         let ms = TuneIpReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: true,
@@ -777,6 +843,7 @@ mod tests {
             service_location_data: data,
         };
         let v3 = TuneIpReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::BaseV3,
             background_tune: false, // not on the wire in v3
@@ -808,6 +875,7 @@ mod tests {
         // parsing the multi-stream bytes as v3 must NOT see a flag there, and the
         // background flag is dropped (v3 has no background_tune_flag).
         let ms = TuneIpReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: true,
@@ -827,6 +895,7 @@ mod tests {
     #[test]
     fn tune_ip_empty_location() {
         let t = TuneIpReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: false,
@@ -859,11 +928,15 @@ mod tests {
             ip_tune_capable: true,
             dsds: alloc::vec![
                 TunerStatusDsd {
+                    reserved_ext: Default::default(),
+                    reserved: Default::default(),
                     connected: true,
                     delivery_system_descriptor_tag: 0x44, // DVB-S2 dsd, say
                     descriptor_tag_extension: None,
                 },
                 TunerStatusDsd {
+                    reserved_ext: Default::default(),
+                    reserved: Default::default(),
                     connected: false,
                     delivery_system_descriptor_tag: 0x7F,
                     descriptor_tag_extension: Some(0x79),
@@ -902,6 +975,8 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let triplet = TuneTripletReq {
+            reserved_ext: Default::default(),
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             background_tune: false,
             tune_quietly: false,
@@ -919,6 +994,7 @@ mod tests {
             MultistreamHostControlApdu::TuneTripletReq(_)
         ));
         let ip = TuneIpReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: true,
@@ -948,6 +1024,7 @@ mod tests {
         // wrapped the 12-bit service_location_length field to 0.
         let big = alloc::vec![0u8; 4096];
         let req = TuneIpReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: false,
@@ -966,6 +1043,7 @@ mod tests {
     fn max_service_location_length_still_serializes_and_round_trips() {
         let data = alloc::vec![0xABu8; 0x0FFF];
         let req = TuneIpReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: false,
@@ -988,6 +1066,8 @@ mod tests {
             ip_tune_capable: false,
             dsds: (0..128)
                 .map(|_| TunerStatusDsd {
+                    reserved_ext: Default::default(),
+                    reserved: Default::default(),
                     connected: false,
                     delivery_system_descriptor_tag: 0,
                     descriptor_tag_extension: None,

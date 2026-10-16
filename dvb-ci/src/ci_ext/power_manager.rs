@@ -10,6 +10,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Power Manager (Tables 52, 54).
@@ -116,6 +117,10 @@ pub struct ActivationStateChangeRequest {
 
     /// The requested new activation state (low 4 bits; top 4 bits reserved).
     pub activation_state: ActivationState,
+    /// The 4-bit `reserved` field in front of `activation_state` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<4>,
 }
 
 /// `activation_state_change_ack()` (Table 54): module → host.
@@ -160,6 +165,7 @@ impl<'a> Parse<'a> for ActivationStateChangeRequest {
         Ok(Self {
             length_form,
             activation_state: ActivationState::from_u8(body[0] & 0x0F),
+            reserved: ReservedZero::from_bits(body[0] >> 4),
         })
     }
 }
@@ -175,8 +181,8 @@ impl Serialize for ActivationStateChangeRequest {
             self.length_form,
             buf,
         )?;
-        // reserved(4)='0000', activation_state(4).
-        buf[pos] = self.activation_state.to_u8() & 0x0F;
+        // reserved(4), activation_state(4).
+        buf[pos] = (self.reserved.get() << 4) | (self.activation_state.to_u8() & 0x0F);
         Ok(pos + REQUEST_BODY)
     }
 }
@@ -240,6 +246,7 @@ mod tests {
     #[test]
     fn request_round_trips_and_bites() {
         let r = ActivationStateChangeRequest {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::StandbyPassive,
         };
@@ -248,6 +255,7 @@ mod tests {
         assert_eq!(ActivationStateChangeRequest::parse(&bytes).unwrap(), r);
         assert_eq!(r.activation_state.name(), "Standby-passive");
         let other = ActivationStateChangeRequest {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::Reserved(5),
         };
@@ -305,6 +313,7 @@ mod tests {
     #[test]
     fn dispatch_routes_both_tags() {
         let req = ActivationStateChangeRequest {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::StandbyPassive,
         }

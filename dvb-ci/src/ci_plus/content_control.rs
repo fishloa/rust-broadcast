@@ -22,6 +22,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -54,6 +55,14 @@ pub struct CcPinReply {
     /// `PINcode_status_field` (8) — semantics in CI Plus V1.3 \[3\] §11.3.2.3
     /// (proprietary, carried verbatim).
     pub pincode_status: u8,
+    /// The 7-bit `reserved` field in front of `LTS_bound_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
+    /// The `reserved(8)` byte of the `LTS_bound_flag == 0` branch as received
+    /// (ignored on serialize when `lts_id` is `Some`); `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_lts: ReservedZero<8>,
 }
 
 // reserved(7)+LTS_bound_flag(1) byte + LTS_id-or-reserved(1) + PINcode_status(1).
@@ -80,6 +89,12 @@ impl<'a> Parse<'a> for CcPinReply {
             length_form,
             lts_id,
             pincode_status: body[2],
+            reserved: ReservedZero::from_bits(body[0] >> 1),
+            reserved_lts: if lts_bound {
+                ReservedZero::default()
+            } else {
+                ReservedZero::from_bits(body[1])
+            },
         })
     }
 }
@@ -97,13 +112,13 @@ impl Serialize for CcPinReply {
         )?;
         match self.lts_id {
             Some(id) => {
-                buf[pos] = LTS_BOUND_FLAG_BIT;
+                buf[pos] = (self.reserved.get() << 1) | LTS_BOUND_FLAG_BIT;
                 buf[pos + 1] = id;
             }
             None => {
-                buf[pos] = 0;
+                buf[pos] = self.reserved.get() << 1;
                 // else branch: reserved(8).
-                buf[pos + 1] = 0;
+                buf[pos + 1] = self.reserved_lts.get();
             }
         }
         buf[pos + 2] = self.pincode_status;
@@ -608,6 +623,8 @@ mod tests {
     #[test]
     fn cc_pin_reply_bound_round_trips_and_bites() {
         let r = CcPinReply {
+            reserved_lts: Default::default(),
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: Some(0x07),
             pincode_status: 0x42,
@@ -618,6 +635,8 @@ mod tests {
         assert_eq!(CcPinReply::parse(&bytes).unwrap(), r);
         // Field-mutation: dropping the LTS binding changes the wire.
         let other = CcPinReply {
+            reserved_lts: Default::default(),
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: None,
             pincode_status: 0x42,
@@ -727,6 +746,8 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let r = CcPinReply {
+            reserved_lts: Default::default(),
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: None,
             pincode_status: 0,

@@ -7,6 +7,7 @@
 //! optional 7-bit `CA_enable`.
 
 use crate::error::{Error, Result};
+use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
@@ -80,6 +81,16 @@ pub struct CaPmtReplyStream {
     pub elementary_pid: Pid,
     /// ES-level `CA_enable` — `Some` iff the `CA_enable_flag` bit was set.
     pub ca_enable: Option<CaEnable>,
+    /// The 3-bit `reserved` field in front of `elementary_PID` as received,
+    /// preserved so the object re-serializes byte-for-byte; `0b111` when
+    /// hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_pid: ReservedOnes<3>,
+    /// The 7-bit field after `CA_enable_flag` when the flag is clear (`reserved`),
+    /// as received so the object re-serializes byte-for-byte; ignored on
+    /// serialize when `ca_enable` is `Some`. `0b111_1111` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_ca_enable: ReservedOnes<7>,
 }
 
 /// `ca_pmt_reply()` object (Table 26).
@@ -103,6 +114,16 @@ pub struct CaPmtReply {
     pub ca_enable: Option<CaEnable>,
     /// Per-ES entries in wire order.
     pub streams: Vec<CaPmtReplyStream>,
+    /// The 2-bit `reserved` field in front of `version_number` as received,
+    /// preserved so the object re-serializes byte-for-byte; `0b11` when
+    /// hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_version: ReservedOnes<2>,
+    /// The 7-bit field after `CA_enable_flag` when the flag is clear (`reserved`),
+    /// as received so the object re-serializes byte-for-byte; ignored on
+    /// serialize when `ca_enable` is `Some`. `0b111_1111` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_ca_enable: ReservedOnes<7>,
 }
 
 const REPLY_PREFIX: usize = 4; // program_number(2) + version/cni/flag/enable(2)
@@ -123,12 +144,7 @@ impl<'a> Parse<'a> for CaPmtReply {
         let program_number = u16::from_be_bytes([body[0], body[1]]);
         let version_number = (body[2] >> 1) & 0x1F;
         let current_next_indicator = (body[2] & 0x01) != 0;
-        let ca_enable_flag = (body[3] & 0x80) != 0;
-        let ca_enable = if ca_enable_flag {
-            Some(CaEnable::from_u8(body[3] & 0x7F))
-        } else {
-            None
-        };
+        let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[3]);
 
         let mut pos = REPLY_PREFIX;
         let mut streams = Vec::new();
@@ -142,15 +158,12 @@ impl<'a> Parse<'a> for CaPmtReply {
             }
             let elementary_pid =
                 Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
-            let es_flag = (body[pos + 2] & 0x80) != 0;
-            let es_enable = if es_flag {
-                Some(CaEnable::from_u8(body[pos + 2] & 0x7F))
-            } else {
-                None
-            };
+            let (es_enable, es_reserved) = decode_enable_byte(body[pos + 2]);
             streams.push(CaPmtReplyStream {
                 elementary_pid,
                 ca_enable: es_enable,
+                reserved_pid: ReservedOnes::from_bits(body[pos] >> 5),
+                reserved_ca_enable: es_reserved,
             });
             pos += ES_LEN;
         }
@@ -162,6 +175,8 @@ impl<'a> Parse<'a> for CaPmtReply {
             current_next_indicator,
             ca_enable,
             streams,
+            reserved_version: ReservedOnes::from_bits(body[2] >> 6),
+            reserved_ca_enable,
         })
     }
 }
@@ -181,27 +196,39 @@ impl Serialize for CaPmtReply {
         let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). Range-checked above.
-        buf[pos + 2] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
-        buf[pos + 3] = encode_enable_byte(self.ca_enable);
+        buf[pos + 2] = (self.reserved_version.get() << 6)
+            | (self.version_number << 1)
+            | u8::from(self.current_next_indicator);
+        buf[pos + 3] = encode_enable_byte(self.ca_enable, self.reserved_ca_enable);
         pos += REPLY_PREFIX;
         for s in &self.streams {
             // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos] = 0xE0 | (s.elementary_pid.value() >> 8) as u8;
+            buf[pos] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
             buf[pos + 1] = s.elementary_pid.value() as u8;
-            buf[pos + 2] = encode_enable_byte(s.ca_enable);
+            buf[pos + 2] = encode_enable_byte(s.ca_enable, s.reserved_ca_enable);
             pos += ES_LEN;
         }
         Ok(pos)
     }
 }
 
-/// Encode a `CA_enable_flag` + 7-bit `CA_enable`/reserved byte. When absent the
-/// flag is 0 and the 7 reserved bits are set (`0x7F`) per the reserved-bit
-/// convention.
-pub(crate) fn encode_enable_byte(enable: Option<CaEnable>) -> u8 {
+/// Encode a `CA_enable_flag` + 7-bit `CA_enable`/reserved byte. When `enable`
+/// is absent the flag is 0 and the 7 bits are the `reserved` field as parsed.
+pub(crate) fn encode_enable_byte(enable: Option<CaEnable>, reserved: ReservedOnes<7>) -> u8 {
     match enable {
         Some(e) => 0x80 | (e.to_u8() & 0x7F),
-        None => 0x7F,
+        None => reserved.get(),
+    }
+}
+
+/// Decode a `CA_enable_flag` + 7-bit `CA_enable`/reserved byte (the inverse of
+/// [`encode_enable_byte`]); the reserved bits are only meaningful (and only
+/// kept) when the flag is clear.
+pub(crate) fn decode_enable_byte(b: u8) -> (Option<CaEnable>, ReservedOnes<7>) {
+    if b & 0x80 != 0 {
+        (Some(CaEnable::from_u8(b & 0x7F)), ReservedOnes::default())
+    } else {
+        (None, ReservedOnes::from_bits(b))
     }
 }
 
@@ -217,6 +244,8 @@ mod tests {
     #[test]
     fn reply_with_prog_and_es_enable_round_trips() {
         let r = CaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             program_number: 0x0001,
             version_number: 1,
@@ -224,10 +253,14 @@ mod tests {
             ca_enable: Some(CaEnable::Possible),
             streams: alloc::vec![
                 CaPmtReplyStream {
+                    reserved_ca_enable: Default::default(),
+                    reserved_pid: Default::default(),
                     elementary_pid: Pid::new(0x0200),
                     ca_enable: Some(CaEnable::Possible),
                 },
                 CaPmtReplyStream {
+                    reserved_ca_enable: Default::default(),
+                    reserved_pid: Default::default(),
                     elementary_pid: Pid::new(0x0201),
                     ca_enable: Some(CaEnable::NotPossibleNoEntitlement),
                 },
@@ -244,12 +277,16 @@ mod tests {
     #[test]
     fn reply_without_enable_flags() {
         let r = CaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             program_number: 9,
             version_number: 0,
             current_next_indicator: true,
             ca_enable: None,
             streams: alloc::vec![CaPmtReplyStream {
+                reserved_ca_enable: Default::default(),
+                reserved_pid: Default::default(),
                 elementary_pid: Pid::new(0x00FF),
                 ca_enable: None,
             }],
@@ -272,6 +309,8 @@ mod tests {
         // Before the fix, 0x20 (exceeds 5 bits) silently wrapped to 0x00 in
         // the version_number field and returned Ok.
         let r = CaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             program_number: 1,
             version_number: 0x20,
@@ -289,6 +328,8 @@ mod tests {
     #[test]
     fn max_version_number_still_serializes_and_round_trips() {
         let r = CaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             program_number: 1,
             version_number: 0x1F, // the 5-bit maximum
@@ -303,6 +344,8 @@ mod tests {
     #[test]
     fn mutating_enable_changes_bytes() {
         let r = CaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             program_number: 1,
             version_number: 1,

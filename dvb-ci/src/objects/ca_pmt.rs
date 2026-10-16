@@ -10,6 +10,7 @@
 //! `PmtSection`.
 
 use crate::error::{Error, Result};
+use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
@@ -153,6 +154,15 @@ pub struct CaPmtStream<'a> {
     /// The ES-level `CA_descriptor()` loop, verbatim wire bytes (no `cmd_id`).
     #[cfg_attr(feature = "serde", serde(borrow, with = "super::bytes_serde"))]
     pub ca_descriptors: &'a [u8],
+    /// The 3-bit `reserved` field in front of `elementary_PID` as received,
+    /// preserved so the object re-serializes byte-for-byte; `0b111` when
+    /// hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_pid: ReservedOnes<3>,
+    /// The 4-bit `reserved` field in front of `ES_info_length` as received
+    /// (see [`CaPmtStream::reserved_pid`]); `0b1111` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_es_info: ReservedOnes<4>,
 }
 
 /// `ca_pmt()` object (Table 25).
@@ -181,6 +191,15 @@ pub struct CaPmt<'a> {
     pub program_ca_descriptors: &'a [u8],
     /// Elementary streams in wire order.
     pub streams: Vec<CaPmtStream<'a>>,
+    /// The 2-bit `reserved` field in front of `version_number` as received,
+    /// preserved so the object re-serializes byte-for-byte; `0b11` (the all-ones
+    /// fill) when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_version: ReservedOnes<2>,
+    /// The 4-bit `reserved` field in front of `program_info_length` as
+    /// received (see [`CaPmt::reserved_version`]); `0b1111` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_program_info: ReservedOnes<4>,
 }
 
 // Fixed prefix after the header: list_management(1) + program_number(2) +
@@ -221,6 +240,8 @@ impl<'a> Parse<'a> for CaPmt<'a> {
                 });
             }
             let stream_type = body[pos];
+            let reserved_pid = ReservedOnes::from_bits(body[pos + 1] >> 5);
+            let reserved_es_info = ReservedOnes::from_bits(body[pos + 3] >> 4);
             let elementary_pid =
                 Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
             let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
@@ -232,6 +253,8 @@ impl<'a> Parse<'a> for CaPmt<'a> {
                 elementary_pid,
                 cmd_id: es_cmd,
                 ca_descriptors,
+                reserved_pid,
+                reserved_es_info,
             });
         }
 
@@ -244,6 +267,8 @@ impl<'a> Parse<'a> for CaPmt<'a> {
             cmd_id,
             program_ca_descriptors,
             streams,
+            reserved_version: ReservedOnes::from_bits(body[3] >> 6),
+            reserved_program_info: ReservedOnes::from_bits(body[4] >> 4),
         })
     }
 }
@@ -310,9 +335,11 @@ impl Serialize for CaPmt<'_> {
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). version_number was
         // range-checked above, so no mask is needed to fit the field.
-        buf[pos + 3] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
+        buf[pos + 3] = (self.reserved_version.get() << 6)
+            | (self.version_number << 1)
+            | u8::from(self.current_next_indicator);
         // reserved(4)='1111', program_info_length(12). Range-checked above.
-        buf[pos + 4] = 0xF0 | (program_info_length >> 8) as u8;
+        buf[pos + 4] = (self.reserved_program_info.get() << 4) | (program_info_length >> 8) as u8;
         buf[pos + 5] = program_info_length as u8;
         pos += CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;
@@ -321,10 +348,10 @@ impl Serialize for CaPmt<'_> {
             let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
             buf[pos] = s.stream_type;
             // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos + 1] = 0xE0 | (s.elementary_pid.value() >> 8) as u8;
+            buf[pos + 1] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
             buf[pos + 2] = s.elementary_pid.value() as u8;
             // reserved(4)='1111', ES_info_length(12). Range-checked above.
-            buf[pos + 3] = 0xF0 | (es_info_length >> 8) as u8;
+            buf[pos + 3] = (s.reserved_es_info.get() << 4) | (es_info_length >> 8) as u8;
             buf[pos + 4] = es_info_length as u8;
             pos += ES_PREFIX;
             pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
@@ -395,6 +422,8 @@ mod tests {
     fn missing_cmd_id_with_descriptors_is_rejected() {
         let desc = sample_ca_descriptor(0x0500, 0x0100);
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 0x1234,
@@ -411,6 +440,8 @@ mod tests {
 
         // Same defect at ES level.
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 0x1234,
@@ -419,6 +450,8 @@ mod tests {
             cmd_id: Some(CaPmtCmdId::OkDescrambling),
             program_ca_descriptors: &[],
             streams: alloc::vec![CaPmtStream {
+                reserved_es_info: Default::default(),
+                reserved_pid: Default::default(),
                 stream_type: 0x02,
                 elementary_pid: Pid::new(0x0101),
                 cmd_id: None,
@@ -434,6 +467,8 @@ mod tests {
     #[test]
     fn empty_ca_pmt_round_trips() {
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 0x1234,
@@ -454,6 +489,8 @@ mod tests {
         let es0_desc = sample_ca_descriptor(0x0500, 0x0101);
         let es1_desc = sample_ca_descriptor(0x0B00, 0x0201);
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 0x0001,
@@ -463,12 +500,16 @@ mod tests {
             program_ca_descriptors: &prog_desc,
             streams: alloc::vec![
                 CaPmtStream {
+                    reserved_es_info: Default::default(),
+                    reserved_pid: Default::default(),
                     stream_type: 0x02,
                     elementary_pid: Pid::new(0x0200),
                     cmd_id: Some(CaPmtCmdId::OkDescrambling),
                     ca_descriptors: &es0_desc,
                 },
                 CaPmtStream {
+                    reserved_es_info: Default::default(),
+                    reserved_pid: Default::default(),
                     stream_type: 0x03,
                     elementary_pid: Pid::new(0x0201),
                     cmd_id: Some(CaPmtCmdId::OkDescrambling),
@@ -496,6 +537,8 @@ mod tests {
     #[test]
     fn es_without_ca_info_omits_cmd_id() {
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Add,
             program_number: 7,
@@ -504,6 +547,8 @@ mod tests {
             cmd_id: None,
             program_ca_descriptors: &[],
             streams: alloc::vec![CaPmtStream {
+                reserved_es_info: Default::default(),
+                reserved_pid: Default::default(),
                 stream_type: 0x1B,
                 elementary_pid: Pid::new(0x00FF),
                 cmd_id: None,
@@ -528,6 +573,8 @@ mod tests {
     #[test]
     fn max_pid_still_serializes_and_round_trips() {
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
@@ -536,6 +583,8 @@ mod tests {
             cmd_id: None,
             program_ca_descriptors: &[],
             streams: alloc::vec![CaPmtStream {
+                reserved_es_info: Default::default(),
+                reserved_pid: Default::default(),
                 stream_type: 0x02,
                 elementary_pid: Pid::new(0x1FFF), // the 13-bit maximum
                 cmd_id: None,
@@ -552,6 +601,8 @@ mod tests {
         // program_info_length field (max 0x0FFF).
         let big = alloc::vec![0u8; 4096];
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
@@ -571,6 +622,8 @@ mod tests {
     #[test]
     fn oversized_version_number_is_rejected() {
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 1,

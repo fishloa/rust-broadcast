@@ -14,6 +14,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
@@ -113,6 +114,10 @@ pub struct PidSelectRequest {
     pub critical_for_descrambling: bool,
     /// `PID` (13) — requested PID value (the Host ignores [`NULL_PID`]).
     pub pid: Pid,
+    /// The 2-bit `reserved` field in front of `critical_for_descrambling_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<2>,
 }
 
 /// `PID_select_req()` (Table 4): CICAM → Host. PIDs are listed in descending
@@ -169,8 +174,10 @@ impl<'a> Parse<'a> for PidSelectReq {
             pids.push(PidSelectRequest {
                 critical_for_descrambling: critical,
                 pid,
+                reserved: ReservedZero::from_bits(chunk[0] >> 6),
             });
         }
+        objects::reject_trailing_body(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_req")?;
         Ok(Self {
             length_form,
             lts_id,
@@ -192,7 +199,7 @@ impl Serialize for PidSelectReq {
         buf[pos + 1] = self.pids.len() as u8;
         pos += 2;
         for entry in &self.pids {
-            let mut hi = (entry.pid.value() >> 8) as u8;
+            let mut hi = (entry.reserved.get() << 6) | (entry.pid.value() >> 8) as u8;
             if entry.critical_for_descrambling {
                 hi |= CRITICAL_FLAG_BIT;
             }
@@ -215,6 +222,10 @@ pub struct PidSelectedEntry {
     pub pid_selected: bool,
     /// `PID` (13) — PID value to which `PID_selected_flag` applies.
     pub pid: Pid,
+    /// The 2-bit `reserved` field in front of `PID_selected_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<2>,
 }
 
 /// `PID_select_reply()` (Table 5): Host → CICAM.
@@ -234,6 +245,10 @@ pub struct PidSelectReply {
     pub pid_selection: bool,
     /// The per-PID selection results (loop count = `num_PID`).
     pub pids: Vec<PidSelectedEntry>,
+    /// The 7-bit `reserved` field in front of `PID_selection_flag` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
 }
 
 // The PID_selected_flag bit within the high byte (bit 5 of the 16-bit word).
@@ -272,13 +287,16 @@ impl<'a> Parse<'a> for PidSelectReply {
             pids.push(PidSelectedEntry {
                 pid_selected: selected,
                 pid,
+                reserved: ReservedZero::from_bits(chunk[0] >> 6),
             });
         }
+        objects::reject_trailing_body(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_reply")?;
         Ok(Self {
             length_form,
             lts_id,
             pid_selection,
             pids,
+            reserved: ReservedZero::from_bits(body[1] >> 1),
         })
     }
 }
@@ -293,15 +311,16 @@ impl Serialize for PidSelectReply {
         let mut pos =
             objects::write_apdu_header(tag::PID_SELECT_REPLY, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
-        buf[pos + 1] = if self.pid_selection {
-            PID_SELECTION_FLAG_BIT
-        } else {
-            0
-        };
+        buf[pos + 1] = (self.reserved.get() << 1)
+            | if self.pid_selection {
+                PID_SELECTION_FLAG_BIT
+            } else {
+                0
+            };
         buf[pos + 2] = self.pids.len() as u8;
         pos += 3;
         for entry in &self.pids {
-            let mut hi = (entry.pid.value() >> 8) as u8;
+            let mut hi = (entry.reserved.get() << 6) | (entry.pid.value() >> 8) as u8;
             if entry.pid_selected {
                 hi |= PID_SELECTED_FLAG_BIT;
             }
@@ -355,10 +374,12 @@ mod tests {
             lts_id: 0x07,
             pids: alloc::vec![
                 PidSelectRequest {
+                    reserved: Default::default(),
                     critical_for_descrambling: true,
                     pid: Pid::new(0x0123),
                 },
                 PidSelectRequest {
+                    reserved: Default::default(),
                     critical_for_descrambling: false,
                     pid: Pid::new(0x1FFE),
                 },
@@ -395,15 +416,18 @@ mod tests {
     #[test]
     fn pid_select_reply_round_trips_with_two_entries() {
         let reply = PidSelectReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x05,
             pid_selection: true,
             pids: alloc::vec![
                 PidSelectedEntry {
+                    reserved: Default::default(),
                     pid_selected: true,
                     pid: Pid::new(0x0064),
                 },
                 PidSelectedEntry {
+                    reserved: Default::default(),
                     pid_selected: false,
                     pid: Pid::new(0x00C8),
                 },
@@ -430,6 +454,7 @@ mod tests {
     #[test]
     fn pid_select_reply_whole_ts() {
         let reply = PidSelectReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x01,
             pid_selection: false,
@@ -454,6 +479,7 @@ mod tests {
             MultistreamApdu::CicamMultistreamCapability(_)
         ));
         let reply = PidSelectReply {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             pid_selection: false,
@@ -472,6 +498,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             pids: alloc::vec![PidSelectRequest {
+                reserved: Default::default(),
                 critical_for_descrambling: false,
                 pid: Pid::new(0x1FFF),
             }],
@@ -488,6 +515,7 @@ mod tests {
             lts_id: 0,
             pids: (0..256)
                 .map(|_| PidSelectRequest {
+                    reserved: Default::default(),
                     critical_for_descrambling: false,
                     pid: Pid::new(0x0100),
                 })

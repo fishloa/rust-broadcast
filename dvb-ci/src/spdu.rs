@@ -162,6 +162,13 @@ impl<'a> Parse<'a> for OpenSessionRequest {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, v) =
             parse_spdu_header(bytes, tags::OPEN_SESSION_REQUEST, "open_session_request")?;
+        // Table 5: `length_field` = 4 — exactly one resource_identifier().
+        if v.len() != ResourceId::LEN {
+            return Err(Error::InvalidObject {
+                what: "open_session_request",
+                reason: "value must be 4 bytes",
+            });
+        }
         Ok(Self {
             length_form,
             resource: ResourceId::parse(v)?,
