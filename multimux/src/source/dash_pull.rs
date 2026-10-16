@@ -801,12 +801,29 @@ fn plan_timeline(
     };
     let period_end_ticks = period_len
         .map(|d| (d.as_secs_f64() * st.timescale as f64).ceil() as u64)
-        .filter(|t| *t > 0);
+        .filter(|t| *t > 0)
+        // `S@t` is on the media timeline, which `@presentationTimeOffset`
+        // shifts from Period-relative time (ISO/IEC 23009-1 §5.3.9.6: MPD time
+        // is `(S@t - PTO) / timescale`; DVB-DASH / TS 103 285 sets the PTO to
+        // the earliest media time), so the Period end on that timeline is the
+        // Period length PLUS the offset - else a negative `S@r` (run to the
+        // Period end) resolves to zero segments for any large PTO.
+        .map(|t| t.saturating_add(st.presentation_time_offset));
     let mut segs = timeline
         .resolve(st.start_number, period_end_ticks)
         .map_err(|e| MultimuxError::Connect {
             reason: format!("dash-pull: segment timeline: {e}"),
         })?;
+    // A timeline whose last segment ends BEFORE the high-water mark has gone
+    // backwards (a new Period, or an encoder restart resetting the media
+    // clock): a sliding window only ever moves forward, and an unchanged
+    // refresh ends exactly AT the mark. Filtering such a timeline by
+    // `time >= mark` would drop every segment and stall the route, so it is
+    // re-baselined like an initial plan.
+    let after_end = after_end.filter(|mark| {
+        segs.last()
+            .is_none_or(|last| last.time.saturating_add(last.duration) >= *mark)
+    });
     match after_end {
         Some(end) => segs.retain(|seg| seg.time >= end),
         None => {
@@ -1503,6 +1520,43 @@ mod tests {
             "10 s Period / 2 s segments = 5 segments, got {plan:?}"
         );
         assert_eq!(plan[0].1, Some(900_000_000));
+    }
+
+    /// A timeline that restarts LOWER than the high-water mark (a new Period,
+    /// or an encoder restart that resets the media clock) is a new baseline:
+    /// filtering by `time >= after_end` would drop every segment and stall the
+    /// route forever.
+    #[test]
+    fn a_timeline_that_restarts_lower_is_rebaselined_not_filtered_away() {
+        let template = |t: u64| {
+            let mpd = format!(
+                r#"<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="2024-01-01T00:00:00Z" minimumUpdatePeriod="PT2S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period id="p" start="PT0S">
+    <AdaptationSet mimeType="video/mp4">
+      <SegmentTemplate timescale="90000" initialization="init.mp4" media="$Time$.m4s">
+        <SegmentTimeline><S t="{t}" d="180000" r="3"/></SegmentTimeline>
+      </SegmentTemplate>
+      <Representation id="v" bandwidth="1000000" codecs="avc1.42c01e"/>
+    </AdaptationSet>
+  </Period>
+</MPD>"#
+            );
+            Mpd::parse(&mpd).expect("parse").periods[0].adaptation_sets[0].representations[0]
+                .segment_template
+                .clone()
+                .expect("template")
+        };
+        let (first, end) = plan_timeline(&template(900_000_000), None, None, Some(8)).expect("a");
+        assert_eq!(first.len(), 4);
+        // Same MPD again: nothing new (the ordinary refresh is unchanged).
+        let (same, _) = plan_timeline(&template(900_000_000), None, end, Some(8)).expect("same");
+        assert!(same.is_empty());
+        // The timeline restarts at t = 0, far below `end`.
+        let (restarted, new_end) = plan_timeline(&template(0), None, end, Some(8)).expect("b");
+        assert_eq!(restarted.len(), 4, "restart must be re-baselined");
+        assert_eq!(restarted[0].1, Some(0));
+        assert_eq!(new_end, Some(4 * 180_000));
     }
 
     /// W16: a hostile MPD with a huge `mediaPresentationDuration` and a tiny

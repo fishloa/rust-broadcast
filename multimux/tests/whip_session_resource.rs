@@ -258,12 +258,26 @@ async fn patch_trickles_a_candidate_into_the_live_transport() {
     })
     .await;
 
-    // No If-Match is a plain trickle update too (the state machine's rule).
-    let again = http(
+    // RFC 9725 sections 4.3.1/4.3.2: a trickle PATCH with no If-Match is 428
+    // (this session supports ICE restarts); nothing reaches the transport.
+    let missing = http(
         addr,
         "PATCH",
         &loc,
         &[("Content-Type", &format!("{TRICKLE}; charset=utf-8"))],
+        &fragment("abcd", "3 1 udp 2130706431 10.0.0.10 5556 typ host"),
+    )
+    .await;
+    assert_eq!(missing.status, 428);
+    // Media-type parameters are ignored (RFC 9110 section 8.3.1).
+    let again = http(
+        addr,
+        "PATCH",
+        &loc,
+        &[
+            ("Content-Type", &format!("{TRICKLE}; charset=utf-8")),
+            ("If-Match", &etag),
+        ],
         &fragment("abcd", "3 1 udp 2130706431 10.0.0.10 5556 typ host"),
     )
     .await;
@@ -848,4 +862,27 @@ async fn review_ice_restart_with_empty_ufrag_is_refused_not_acknowledged() {
     .await;
     assert_eq!(still.status, 204, "the old ICE session must be kept");
     token.cancel();
+}
+
+/// A `POST` whose admit channel is closed (the route is shutting down) must
+/// not hand out a `201` + `Location` for a session nothing will ever drive:
+/// it is `503`. `whip_router_for_test` drops its admit receiver, so every
+/// admission hits the closed channel.
+#[tokio::test]
+async fn post_with_a_closed_admit_channel_is_503_not_a_dangling_201() {
+    use tower::ServiceExt as _;
+    let router = multimux::source::whip::whip_router_for_test(4, 8);
+    let resp = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/whip")
+                .header("content-type", "application/sdp")
+                .body(axum::body::Body::from(OFFER))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    assert!(resp.headers().get("location").is_none());
 }

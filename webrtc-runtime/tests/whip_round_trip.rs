@@ -494,21 +494,14 @@ fn whip_server_wrong_state_errors() {
 }
 
 #[test]
-fn whip_server_trickle_no_if_match() {
+fn whip_server_trickle_without_if_match_is_428() {
     let mut session = WhipSession::new(SESSION.into());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "e".into());
 
-    // PATCH without If-Match is valid for trickle ICE
-    let event = session.on_patch(ICE_FRAG.to_vec(), &trickle_ct()).unwrap();
-    match event {
-        server::Event::TrickleIce {
-            sdp_fragment,
-            if_match,
-        } => {
-            assert_eq!(sdp_fragment, ICE_FRAG);
-            assert!(if_match.is_none());
-        }
-        other => panic!("expected TrickleIce, got {other:?}"),
-    }
+    // RFC 9725 section 4.3.1: a missing entity-tag is 428 Precondition Required.
+    let err = session
+        .on_patch(ICE_FRAG.to_vec(), &trickle_ct())
+        .unwrap_err();
+    assert!(matches!(err, Error::PreconditionRequired { .. }), "{err:?}");
 }

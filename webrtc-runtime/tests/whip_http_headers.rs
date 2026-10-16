@@ -99,11 +99,13 @@ fn an_unquoted_etag_and_a_quoted_star_are_malformed() {
 }
 
 #[test]
-fn a_patch_without_if_match_is_a_plain_trickle() {
+fn a_patch_without_if_match_is_precondition_required() {
+    // RFC 9725 sections 4.3.1/4.3.2: a session that supports ICE restarts
+    // answers a PATCH with no entity-tag with 428.
     let mut s = established_whip();
     assert!(matches!(
-        s.on_patch(b"f".to_vec(), &trickle_headers(None)).unwrap(),
-        Event::TrickleIce { if_match: None, .. }
+        s.on_patch(b"f".to_vec(), &trickle_headers(None)),
+        Err(Error::PreconditionRequired { .. })
     ));
 }
 
@@ -292,14 +294,11 @@ fn whip_patch_requires_the_trickle_ice_media_type() {
         );
     }
     let mut s = established_whip();
-    let ev = s
-        .on_patch(
-            b"f".to_vec(),
-            &h(
-                header::CONTENT_TYPE,
-                "Application/Trickle-ICE-SDPFrag; charset=utf-8",
-            ),
-        )
-        .unwrap();
+    let mut headers = h(
+        header::CONTENT_TYPE,
+        "Application/Trickle-ICE-SDPFrag; charset=utf-8",
+    );
+    headers.insert(header::IF_MATCH, HeaderValue::from_static("\"etag1\""));
+    let ev = s.on_patch(b"f".to_vec(), &headers).unwrap();
     assert!(matches!(ev, Event::TrickleIce { .. }));
 }

@@ -115,6 +115,8 @@ impl WhipSession {
     /// [`Error::InvalidSdpFragment`] when `Content-Type` is not
     /// `application/trickle-ice-sdpfrag`;
     /// [`Error::InvalidHeader`] for a malformed `If-Match`;
+    /// [`Error::PreconditionRequired`] when `If-Match` is absent (RFC 9725
+    /// §4.3.1, `428`);
     /// [`Error::ETagMismatch`] if it does not strongly match the session's tag;
     /// [`Error::WrongState`] outside [`State::Established`].
     pub fn on_patch(&mut self, sdp_fragment: Vec<u8>, headers: &HeaderMap) -> Result<Event, Error> {
@@ -138,10 +140,11 @@ impl WhipSession {
                         sdp_fragment,
                         if_match: Some(etag.clone()),
                     }),
-                    Precondition::Absent => Ok(Event::TrickleIce {
-                        sdp_fragment,
-                        if_match: None,
-                    }),
+                    // RFC 9725 §4.3.1: this session always generates an ETag
+                    // (it supports ICE restarts), so a missing entity-tag is
+                    // `428 Precondition Required`; §4.3.2 makes entity-tags
+                    // and conditional requests mandatory for Trickle ICE.
+                    Precondition::Absent => Err(Error::PreconditionRequired { operation: "PATCH" }),
                 }
             }
             _ => Err(Error::WrongState {

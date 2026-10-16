@@ -38,6 +38,16 @@ pub enum Error {
         got: alloc::string::String,
     },
 
+    /// A conditional request was required but carried no `If-Match` header
+    /// (RFC 9725 section 4.3.1: a session that supports ICE restarts answers
+    /// a `PATCH` without an entity-tag with `428 Precondition Required`,
+    /// RFC 6585 section 3).
+    #[error("precondition required: {operation} needs an If-Match header")]
+    PreconditionRequired {
+        /// Name of the operation that was attempted.
+        operation: &'static str,
+    },
+
     /// A header value could not be parsed as (or built into) its typed form.
     #[error("invalid {header} header")]
     InvalidHeader {
