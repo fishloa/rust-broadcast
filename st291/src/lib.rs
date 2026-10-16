@@ -183,7 +183,7 @@ pub use anc::{
     ANC_PES_HEADER_DATA_LENGTH, ANC_STREAM_ID, AncDataPacket, AncPacket, PACKET_START_CODE_PREFIX,
     STUFFING_BYTE,
 };
-pub use anc_content::AncContent;
+pub use anc_content::{AncContent, ValidationReport};
 #[cfg(feature = "ts")]
 pub use descriptor::{
     ANC_DATA_DESCRIPTOR_TAG, ANC_STREAM_TYPE, AncDataDescriptor, VANC_FORMAT_IDENTIFIER,

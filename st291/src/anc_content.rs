@@ -69,6 +69,59 @@ pub(crate) fn check_field_width(what: &'static str, value: u64, bits: u32) -> Re
     Ok(value)
 }
 
+/// Mask of a 10-bit ANC word.
+const WORD_MASK: u16 = 0x3FF;
+/// Mask of the 8-bit payload value `b7..b0` of a parity-protected word.
+const PAYLOAD_MASK: u16 = 0xFF;
+
+/// Result of [`AncContent::validate`]: one flag per ST 291-1:2011 rule,
+/// `true` = the rule holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ValidationReport {
+    /// `DID` parity: `b8` even parity of `b7..b0`, `b9 = NOT b8` (§6.1).
+    pub did_parity: bool,
+    /// `SDID` (Type 2) / `DBN` (Type 1) parity, same rule (§6.2, §6.4).
+    pub sdid_parity: bool,
+    /// `Data_Count` parity, same rule (§6.5).
+    pub data_count_parity: bool,
+    /// `Data_Count & 0xFF` equals the number of stored `User_Data_Words`.
+    pub data_count_matches_udw: bool,
+    /// `Checksum_Word` equals the §6.7 computation (including `b9 = NOT b8`).
+    pub checksum: bool,
+}
+
+impl ValidationReport {
+    /// Assemble a report from its five rule results.
+    #[must_use]
+    pub fn new(
+        did_parity: bool,
+        sdid_parity: bool,
+        data_count_parity: bool,
+        data_count_matches_udw: bool,
+        checksum: bool,
+    ) -> Self {
+        Self {
+            did_parity,
+            sdid_parity,
+            data_count_parity,
+            data_count_matches_udw,
+            checksum,
+        }
+    }
+
+    /// `true` when every rule holds.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.did_parity
+            && self.sdid_parity
+            && self.data_count_parity
+            && self.data_count_matches_udw
+            && self.checksum
+    }
+}
+
 /// One ST 291-1 ANC data packet's **content**: `DID`/`SDID`/`Data_Count`/
 /// `User_Data_Words`/`Checksum_Word`, every value the raw 10-bit wire word
 /// (including the ST 291-1 parity bits) stored verbatim — parity/checksum are
@@ -112,6 +165,53 @@ impl AncContent {
         let b8 = u16::from((value.count_ones() % 2) as u8);
         let b9 = 1 - b8;
         (b9 << 9) | (b8 << 8) | u16::from(value)
+    }
+
+    /// `true` if `word` is a well-formed ST 291-1 parity-protected word
+    /// (`DID`/`SDID`-or-`DBN`/`Data_Count`, §6.1/§6.2/§6.4/§6.5): a 10-bit
+    /// value whose `b8` is the even parity of `b7..b0` and whose `b9` is
+    /// `NOT b8`. `User_Data_Words` and the `Checksum_Word` are **not** of this
+    /// form (§6.6 gives a UDW all ten bits; §6.7 defines the checksum
+    /// separately), so do not call this on them.
+    #[must_use]
+    pub fn has_valid_parity(word: u16) -> bool {
+        word <= WORD_MASK && Self::with_parity((word & PAYLOAD_MASK) as u8) == word
+    }
+
+    /// Check the parity bits (`b8`/`b9`) of `DID`, `SDID`/`DBN` and
+    /// `Data_Count` (ST 291-1:2011 §6.1, §6.2/§6.4, §6.5). `User_Data_Words`
+    /// carry no parity rule (§6.6) and are not checked. Like
+    /// [`Self::verify_checksum`] this is explicit; parsing never calls it.
+    ///
+    /// # Errors
+    /// [`Error::ParityMismatch`] naming the first offending word.
+    pub fn verify_parity(&self) -> Result<()> {
+        for (what, word) in [
+            ("DID", self.did),
+            ("SDID", self.sdid),
+            ("Data_Count", self.data_count),
+        ] {
+            if !Self::has_valid_parity(word) {
+                return Err(Error::ParityMismatch { what, word });
+            }
+        }
+        Ok(())
+    }
+
+    /// Check everything ST 291-1:2011 defines as checkable on this content
+    /// and report each result separately (never short-circuits, never an
+    /// error): word parity, `Data_Count` agreeing with the number of stored
+    /// `User_Data_Words`, and the `Checksum_Word`. A caller handling traffic
+    /// with known-bad parity can see exactly which rule failed.
+    #[must_use]
+    pub fn validate(&self) -> ValidationReport {
+        ValidationReport::new(
+            Self::has_valid_parity(self.did),
+            Self::has_valid_parity(self.sdid),
+            Self::has_valid_parity(self.data_count),
+            self.user_data_words.len() == self.udw_loop_count(),
+            self.verify_checksum().is_ok(),
+        )
     }
 
     /// Compute the ST 291-1 `Checksum_Word` for this content's current
@@ -400,6 +500,149 @@ mod parity_checksum_tests {
             c.verify_checksum().is_ok(),
             "a built content sequence must satisfy its own checksum"
         );
+    }
+
+    /// ST 291-1:2011 Annex C (PDF p.17, informative) lists real DID/DBN/DC
+    /// words "inclusive of parity bits": each must satisfy §6.1/§6.2/§6.5.
+    #[test]
+    fn annex_c_words_have_valid_parity() {
+        let words = [
+            // DID row
+            0x2FF, 0x1FD, 0x2FC, 0x180, 0x2F5, 0x260, 0x2C0, 0x140, 0x104,
+            // DBN/SDID row
+            0x101, 0x200, 0x110, // DC row
+            0x230, 0x224, 0x206, 0x108,
+        ];
+        for w in words {
+            assert!(AncContent::has_valid_parity(w), "{w:#05X}");
+        }
+        // And they are exactly what with_parity produces from the 8-bit value.
+        assert_eq!(AncContent::with_parity(0xF5), 0x2F5);
+        assert_eq!(AncContent::with_parity(0x30), 0x230); // 48 words
+        assert_eq!(AncContent::with_parity(0x24), 0x224); // 36 words
+        assert_eq!(AncContent::with_parity(0x08), 0x108); // 8 words
+    }
+
+    #[test]
+    fn parity_rejects_each_flipped_bit() {
+        for good in [0x2F5u16, 0x108, 0x200, 0x1FD] {
+            for bit in 0..10 {
+                let bad = good ^ (1 << bit);
+                // Flipping any one bit changes the data parity or b8/b9, so
+                // it must always be caught (b9 and b8 included).
+                assert!(
+                    !AncContent::has_valid_parity(bad),
+                    "{good:#05X} with bit {bit} flipped ({bad:#05X}) wrongly accepted"
+                );
+            }
+        }
+        // b9 == b8 (both set / both clear) is invalid.
+        assert!(!AncContent::has_valid_parity(0x300));
+        assert!(!AncContent::has_valid_parity(0x000));
+        // Not a 10-bit word.
+        assert!(!AncContent::has_valid_parity(0x400 | 0x200));
+    }
+
+    /// A fully valid packet built by hand from the spec text: DID 0xF5,
+    /// DBN 0x00, 8 UDW of 0x0AA. Checksum: low-9-bit sum
+    /// 0x0F5 + 0x000 + 0x108 + 8*0x0AA = 0x74D, mod 2^9 = 0x14D, b8 = 1 so
+    /// b9 = 0 -> 0x14D.
+    fn valid_packet() -> AncContent {
+        AncContent {
+            did: 0x2F5,
+            sdid: 0x200,
+            data_count: 0x108,
+            user_data_words: vec![0x0AA; 8],
+            checksum: 0x14D,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_hand_computed_valid_packet() {
+        let c = valid_packet();
+        assert_eq!(c.compute_checksum(), 0x14D);
+        assert!(c.verify_parity().is_ok());
+        let r = c.validate();
+        assert!(r.is_valid());
+        assert_eq!(r, ValidationReport::new(true, true, true, true, true));
+        // The producer-side builder agrees with the hand computation (it
+        // also sets parity on the UDWs, 0xAA -> 0x2AA, which does not change
+        // the low-9-bit checksum sum).
+        let built = AncContent::build(0xF5, 0x00, &[0xAA; 8]).unwrap();
+        assert_eq!(built.user_data_words, vec![0x2AA; 8]);
+        assert_eq!(
+            (built.did, built.sdid, built.data_count, built.checksum),
+            (c.did, c.sdid, c.data_count, c.checksum)
+        );
+        assert!(built.validate().is_valid());
+    }
+
+    #[test]
+    fn validate_flags_each_flipped_bit_on_its_own_rule() {
+        // b8 and b9 of DID / SDID / Data_Count.
+        for bit in [8u16, 9] {
+            let mut c = valid_packet();
+            c.did ^= 1 << bit;
+            let r = c.validate();
+            assert!(!r.did_parity && r.sdid_parity && r.data_count_parity);
+            assert_eq!(
+                c.verify_parity(),
+                Err(Error::ParityMismatch {
+                    what: "DID",
+                    word: c.did
+                })
+            );
+
+            let mut c = valid_packet();
+            c.sdid ^= 1 << bit;
+            let r = c.validate();
+            assert!(r.did_parity && !r.sdid_parity && r.data_count_parity);
+            assert!(matches!(
+                c.verify_parity(),
+                Err(Error::ParityMismatch { what: "SDID", .. })
+            ));
+
+            let mut c = valid_packet();
+            c.data_count ^= 1 << bit;
+            let r = c.validate();
+            assert!(r.did_parity && r.sdid_parity && !r.data_count_parity);
+            assert!(matches!(
+                c.verify_parity(),
+                Err(Error::ParityMismatch {
+                    what: "Data_Count",
+                    ..
+                })
+            ));
+        }
+        // Checksum b9 (NOT b8) and b8 each flipped: caught by the checksum
+        // rule only.
+        for bit in [8u16, 9] {
+            let mut c = valid_packet();
+            c.checksum ^= 1 << bit;
+            let r = c.validate();
+            assert!(!r.checksum && r.did_parity && r.sdid_parity && r.data_count_parity);
+            assert!(!r.is_valid());
+        }
+    }
+
+    #[test]
+    fn udw_has_no_parity_rule_but_is_covered_by_checksum() {
+        // §6.6: a UDW is a free 10-bit word; one with b9 == b8 is legal and
+        // must not trip a parity rule, only (if altered) the checksum.
+        let mut c = valid_packet();
+        c.user_data_words[0] = 0x300;
+        c.checksum = c.compute_checksum();
+        assert!(c.validate().is_valid());
+        c.user_data_words[0] ^= 0x001;
+        let r = c.validate();
+        assert!(!r.checksum && r.did_parity);
+    }
+
+    #[test]
+    fn validate_reports_data_count_vs_udw_len() {
+        let mut c = valid_packet();
+        c.user_data_words.pop();
+        assert!(!c.validate().data_count_matches_udw);
     }
 
     #[test]

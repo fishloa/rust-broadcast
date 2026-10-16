@@ -103,6 +103,16 @@ pub enum Error {
         /// fields.
         computed: u16,
     },
+    /// [`crate::AncContent::verify_parity`] found a `DID`/`SDID`/`Data_Count`
+    /// word whose `b8` is not the even parity of `b7..b0` or whose `b9` is
+    /// not `NOT b8` (ST 291-1:2011 §6.1, §6.2, §6.5).
+    #[error("{what} word {word:#05X} has wrong ST 291-1 parity bits (b8 even parity, b9 = NOT b8)")]
+    ParityMismatch {
+        /// Which word (`"DID"`, `"SDID"` or `"Data_Count"`).
+        what: &'static str,
+        /// The offending 10-bit word.
+        word: u16,
+    },
     /// Underlying bit reader/writer error.
     #[error("bit stream error: {0}")]
     Bits(BitError),
