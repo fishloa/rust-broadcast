@@ -17,6 +17,7 @@
 //! | Private / regional (PDS- or registration-scoped) | [`DescriptorRegistry`] opt-ins: [`logical_channel`], [`nordig`], [`avs2_video`], [`avs2_audio`], [`avs3_video`], [`avs3_audio`], [`tuwa_avs3_video`], [`china_caption_service`] | EACEM / NorDig / GY/T / T/AI / T/UWA |
 //! | AIT descriptors | [`parse_ait_loop`] → [`AnyAitDescriptor`] | ETSI TS 102 809 Table 38, TS 102 727 |
 //! | INT / UNT / RNT descriptor loops | [`parse_int_loop`] → [`AnyIntDescriptor`], [`parse_unt_loop`] → [`AnyUntDescriptor`], [`parse_rnt_loop`] → [`AnyRntDescriptor`] (SI fall-through where the spec hands back to EN 300 468) | ETSI EN 301 192 Table 19, ETSI TS 102 006 Table 19, ETSI TS 102 323 Table 4 |
+//! | DSM-CC data-carousel descriptors | [`parse_carousel_loop`] → [`AnyCarouselDescriptor`] | ETSI EN 301 192 Table 48, TS 102 006 |
 //!
 //! Every tag, its verified clause, Rust type and status — and every allocated
 //! tag with no implementation yet — is listed in the generated
@@ -44,6 +45,7 @@ pub mod bouquet_name;
 pub mod ca;
 pub mod ca_identifier;
 pub mod cable_delivery_system;
+pub mod carousel;
 pub mod carousel_identifier;
 pub mod cell_frequency_link;
 pub mod cell_list;
@@ -228,6 +230,9 @@ pub(crate) fn descriptor_body<'a>(
 
 pub use ait::{AitDescriptorIter, AitDescriptorLoop, AnyAitDescriptor, parse_ait_loop};
 pub use any::{AnyDescriptor, DescriptorIter, DescriptorLoop, parse_loop};
+pub use carousel::{
+    AnyCarouselDescriptor, CarouselDescriptorIter, CarouselDescriptorLoop, parse_carousel_loop,
+};
 pub use extension::registry::{ExtensionObject, ExtensionRegistry, RegisteredExtension};
 pub use registry::{
     DescriptorObject, DescriptorRegistry, ExtIterItem, ExtRegistryIter, RegistryIter,

@@ -19,10 +19,11 @@ use alloc::vec::Vec;
 
 use super::{
     BINDING_NCONTEXT, BINDING_NOBJECT, BIOP_MAGIC, BIOP_VERSION_MAJOR, BIOP_VERSION_MINOR,
-    BYTE_ORDER_BIG_ENDIAN, COMPRESSED_MODULE_DESCRIPTOR_TAG,
+    BYTE_ORDER_BIG_ENDIAN,
     ior::{Ior, NameComponent, Tap},
 };
-use crate::descriptors::DescriptorLoop;
+pub use crate::descriptors::carousel::CompressedModuleDescriptor;
+use crate::descriptors::carousel::{AnyCarouselDescriptor, CarouselDescriptorLoop};
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize};
 
@@ -1554,32 +1555,36 @@ pub struct ModuleInfo<'a> {
     /// BIOP::Tap entries (≥1 BIOP_OBJECT_USE tap).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub taps: Vec<super::ior::Tap<'a>>,
-    /// `userInfo` descriptor loop (r02-W12 — was a raw `&'a [u8]`; this is a
-    /// private DSM-CC BIOP tag space, not the DVB SI `descriptor_tag`
-    /// registry, so entries stay body-agnostic `(tag, body)` pairs rather
-    /// than typed-parsing through [`crate::descriptors::AnyDescriptor`]).
+    /// `userInfo` descriptor loop, walked in the DVB data-carousel tag space
+    /// (EN 301 192 Table 48) — typed via
+    /// [`CarouselDescriptorLoop::iter`] / [`AnyCarouselDescriptor`]; unallocated
+    /// tags (e.g. the MHP `label` 0x70 / `caching_priority` 0x71) surface as
+    /// `Unknown { tag, body }`.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub user_info: DescriptorLoop<'a>,
+    pub user_info: CarouselDescriptorLoop<'a>,
 }
 
 impl ModuleInfo<'_> {
-    /// Iterate over descriptors in the `userInfo` loop.
-    ///
-    /// Each item is `(tag: u8, data: &[u8])`.
+    /// Iterate over the raw `(tag, body)` pairs of the `userInfo` loop
+    /// without typed parsing.
     pub fn descriptors(&self) -> impl Iterator<Item = (u8, &[u8])> {
         self.user_info.raw_tags()
     }
 
     /// Return the `compressed_module_descriptor` (tag 0x09) from the userInfo
-    /// loop, if present. `Some(Err(_))` if a matching tag's body is shorter
-    /// than the fixed `compression_method`/`original_size` fields.
-    pub fn compressed_module_descriptor(&self) -> Option<Result<CompressedModuleDescriptor<'_>>> {
-        for (tag, data) in self.descriptors() {
-            if tag == COMPRESSED_MODULE_DESCRIPTOR_TAG {
-                return Some(CompressedModuleDescriptor::from_body(data));
-            }
-        }
-        None
+    /// loop, if present. `Some(Err(_))` if a matching tag's body is malformed
+    /// (not the 5 bytes of Table 59).
+    pub fn compressed_module_descriptor(&self) -> Option<Result<CompressedModuleDescriptor>> {
+        self.user_info.iter().find_map(|d| match d {
+            Ok(AnyCarouselDescriptor::CompressedModule(c)) => Some(Ok(c)),
+            Err(
+                e @ Error::InvalidDescriptor {
+                    tag: crate::descriptors::carousel::compressed_module::TAG,
+                    ..
+                },
+            ) => Some(Err(e)),
+            Ok(_) | Err(_) => None,
+        })
     }
 }
 
@@ -1624,7 +1629,7 @@ impl<'a> Parse<'a> for ModuleInfo<'a> {
                 available: end - pos,
             });
         }
-        let user_info = DescriptorLoop::new(&bytes[pos..pos + user_info_len]);
+        let user_info = CarouselDescriptorLoop::new(&bytes[pos..pos + user_info_len]);
 
         Ok(ModuleInfo {
             module_timeout,
@@ -1677,52 +1682,6 @@ impl Serialize for ModuleInfo<'_> {
         buf[pos..pos + self.user_info.len()].copy_from_slice(self.user_info.raw());
         pos += self.user_info.len();
         Ok(pos)
-    }
-}
-
-// ── CompressedModuleDescriptor ────────────────────────────────────────────────
-
-/// A `compressed_module_descriptor` (tag 0x09) found in a `ModuleInfo` userInfo loop.
-/// EN 301 192 §10.2.11 Table 59 / TR 101 202 §4.6.6.10.
-///
-/// `zlib_data` is the zlib-encoded module payload (RFC 1950 CMF+FLG header,
-/// DEFLATE stream, Adler-32 checksum). Decompression requires the `flate2` feature
-/// (see [`decompress_zlib`]/[`decompress_zlib_bounded`], the latter usable with
-/// [`original_size`](Self::original_size) as a tighter cap than
-/// [`MAX_DECOMPRESSED_MODULE_SIZE`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CompressedModuleDescriptor<'a> {
-    /// `compression_method` — always 0 (zlib) per the spec; carried verbatim.
-    pub compression_method: u8,
-    /// `original_size` — the module's uncompressed size in bytes.
-    pub original_size: u32,
-    /// The zlib-encoded stream (descriptor body minus the two fixed fields above).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub zlib_data: &'a [u8],
-}
-
-/// Fixed-field length of a `compressed_module_descriptor` body:
-/// `compression_method`(1) + `original_size`(4), per Table 59.
-const COMPRESSED_MODULE_FIXED_LEN: usize = 5;
-
-impl<'a> CompressedModuleDescriptor<'a> {
-    /// Parse a `compressed_module_descriptor` body (the bytes after
-    /// `descriptor_tag`/`descriptor_length`, as yielded by
-    /// [`ModuleInfo::descriptors`]).
-    fn from_body(body: &'a [u8]) -> Result<Self> {
-        let (hdr, rest) = body
-            .split_first_chunk::<COMPRESSED_MODULE_FIXED_LEN>()
-            .ok_or(Error::BufferTooShort {
-                need: COMPRESSED_MODULE_FIXED_LEN,
-                have: body.len(),
-                what: "compressed_module_descriptor fixed fields",
-            })?;
-        Ok(CompressedModuleDescriptor {
-            compression_method: hdr[0],
-            original_size: u32::from_be_bytes([hdr[1], hdr[2], hdr[3], hdr[4]]),
-            zlib_data: rest,
-        })
     }
 }
 
@@ -2021,7 +1980,7 @@ mod tests {
                 association_tag: 0x0042,
                 selector: &[],
             }],
-            user_info: DescriptorLoop::new(&[]),
+            user_info: CarouselDescriptorLoop::new(&[]),
         };
         let mut buf = vec![0u8; info.serialized_len()];
         info.serialize_into(&mut buf).unwrap();
@@ -2061,7 +2020,7 @@ mod tests {
                 association_tag: 0x0047,
                 selector: &[],
             }],
-            user_info: DescriptorLoop::new(&[]),
+            user_info: CarouselDescriptorLoop::new(&[]),
         };
         let mut buf = vec![0u8; info.serialized_len()];
         info.serialize_into(&mut buf).unwrap();
@@ -2173,44 +2132,16 @@ mod tests {
         assert_eq!(decompressed.as_slice(), original.as_slice());
     }
 
-    /// Regression for r02-W12: `CompressedModuleDescriptor` used to expose a
-    /// single raw `body: &[u8]` field, so `compression_method`/`original_size`
-    /// (Table 59) were left for the caller to hand-slice out of the front of
-    /// the zlib stream — a caller could easily feed the whole body, header
-    /// included, straight into a zlib decoder. `from_body` now splits them.
-    #[test]
-    fn compressed_module_descriptor_splits_fixed_fields_from_zlib_data() {
-        #[rustfmt::skip]
-        let body: &[u8] = &[
-            0x00,                    // compression_method = 0 (zlib)
-            0x00, 0x00, 0x00, 0x2A,  // original_size = 42
-            0x78, 0x9C, 0xAB, 0xCD,  // (stand-in zlib bytes)
-        ];
-        let cmd = CompressedModuleDescriptor::from_body(body).unwrap();
-        assert_eq!(cmd.compression_method, 0);
-        assert_eq!(cmd.original_size, 42);
-        assert_eq!(cmd.zlib_data, &[0x78, 0x9C, 0xAB, 0xCD]);
-    }
-
-    /// A body shorter than the fixed `compression_method`/`original_size`
-    /// fields is rejected instead of panicking on the slice split.
-    #[test]
-    fn compressed_module_descriptor_short_body_errors() {
-        let body: &[u8] = &[0x00, 0x00, 0x00];
-        assert!(matches!(
-            CompressedModuleDescriptor::from_body(body),
-            Err(Error::BufferTooShort { .. })
-        ));
-    }
-
     /// `ModuleInfo::compressed_module_descriptor` surfaces the typed fields
-    /// through the userInfo descriptor loop, and `Some(Err(_))` (not a panic
-    /// or silent `None`) for a too-short body under a matching tag.
+    /// through the typed userInfo walk, skips unrelated entries (an unallocated
+    /// MHP tag and a CRC32) and reports a malformed 0x09 body as `Some(Err(_))`
+    /// (not a panic or a silent `None`).
     #[test]
     fn module_info_compressed_module_descriptor_found_and_typed() {
         #[rustfmt::skip]
         let user_info: &[u8] = &[
-            COMPRESSED_MODULE_DESCRIPTOR_TAG, 0x05, // tag, length=5
+            0x71, 0x02, 0x02, 0xFF, // unallocated tag, skipped
+            crate::descriptors::carousel::compressed_module::TAG, 0x05, // tag, length=5
             0x00,                   // compression_method
             0x00, 0x00, 0x01, 0x00, // original_size = 256
         ];
@@ -2219,11 +2150,22 @@ mod tests {
             block_timeout: 0,
             min_block_time: 0,
             taps: vec![],
-            user_info: DescriptorLoop::new(user_info),
+            user_info: CarouselDescriptorLoop::new(user_info),
         };
         let cmd = info.compressed_module_descriptor().unwrap().unwrap();
         assert_eq!(cmd.original_size, 256);
-        assert!(cmd.zlib_data.is_empty());
+        assert_eq!(cmd.compression_method, 0);
+
+        let bad = ModuleInfo {
+            user_info: CarouselDescriptorLoop::new(&[0x09, 0x03, 0x00, 0x00, 0x00]),
+            ..info.clone()
+        };
+        assert!(bad.compressed_module_descriptor().unwrap().is_err());
+        let none = ModuleInfo {
+            user_info: CarouselDescriptorLoop::new(&[0x06, 0x01, 0x07]),
+            ..info
+        };
+        assert!(none.compressed_module_descriptor().is_none());
     }
 
     #[cfg(feature = "flate2")]

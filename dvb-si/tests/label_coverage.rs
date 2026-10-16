@@ -38,6 +38,7 @@ const SKIP: &[&str] = &[
     "AnyUntDescriptor",
     "AnyRntDescriptor",
     "GenericStreamSelector",
+    "AnyCarouselDescriptor",
     "AnyTableSection",
     "DescriptorTag",
     "TableId",
