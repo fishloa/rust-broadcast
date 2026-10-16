@@ -26,4 +26,14 @@ pub enum Error {
         /// The byte actually found at position 0.
         found: u8,
     },
+
+    /// The buffer given to [`crate::pes::reconstruct_access_units`] is not a
+    /// whole number of 188-byte TS packets.
+    ///
+    /// ISO/IEC 13818-1 §2.4.3.2 — TS packets are fixed at 188 bytes.
+    #[error("unaligned TS buffer: {len} bytes is not a multiple of 188")]
+    UnalignedInput {
+        /// Length of the buffer supplied by the caller.
+        len: usize,
+    },
 }

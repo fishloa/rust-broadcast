@@ -137,6 +137,13 @@ struct Anchor {
     /// Last monotonic observation: (packet_count, 27 MHz) — for Interpolate rate.
     last_obs_pkt: u64,
     last_obs_27mhz: u64,
+    /// Unwrapped 27 MHz ticks from the anchor to the last monotonic
+    /// observation: the sum of every adopted forward step. Kept as a running
+    /// total, not re-derived as a modular forward distance between the two
+    /// endpoints, because that distance aliases once the window outgrows one
+    /// PCR wrap (`PCR_27MHZ_MODULUS`, ~26.5 h) and the extrapolation rate
+    /// would then be wrong by a whole modulus.
+    span_ticks: u128,
     /// #562: once `Interpolate` mode has hit a genuine, unflagged
     /// discontinuity on this PID, it is permanently "frozen" onto the
     /// pre-break rate — every later observation is on the (still unflagged)
@@ -246,6 +253,7 @@ impl Op for PcrRestampOp {
                 anchor_pkt: now,
                 last_obs_pkt: now,
                 last_obs_27mhz: current.as_27mhz(),
+                span_ticks: 0,
                 frozen: false,
             };
             self.anchors.insert(pid, a);
@@ -262,6 +270,7 @@ impl Op for PcrRestampOp {
                 anchor_pkt: now,
                 last_obs_pkt: now,
                 last_obs_27mhz: current.as_27mhz(),
+                span_ticks: 0,
                 frozen: false,
             };
             self.anchors.insert(pid, a);
@@ -306,24 +315,25 @@ impl Op for PcrRestampOp {
                     // advance the anchor's observation window.
                     anchor.last_obs_pkt = now;
                     anchor.last_obs_27mhz = obs;
+                    anchor.span_ticks += u128::from(fwd);
                     obs
                 } else {
                     // Frozen, or a non-monotonic/corrupt observation: recompute
                     // from the anchor using the last known (pre-break) rate.
                     let span_pkt = anchor.last_obs_pkt.saturating_sub(anchor.anchor_pkt).max(1);
-                    // Modular forward distance (W-TF-1), matching `fwd` above:
-                    // a plain `saturating_sub` collapses to 0 (and the rate to
-                    // 1 tick/packet) if the anchor window happens to span a
-                    // legal 33-bit PCR wrap, since the raw `last_obs_27mhz`
-                    // can be numerically smaller than `anchor_27mhz`.
-                    let span_ticks =
-                        pcr_forward_distance(anchor.anchor_27mhz, anchor.last_obs_27mhz);
+                    // The anchor->last-observation span is the running unwrapped
+                    // total (`Anchor::span_ticks`): a modular forward distance
+                    // between the endpoints (W-TF-1) is right only while the
+                    // window is shorter than one PCR wrap, and a long clean run
+                    // followed by a corrupt packet would extrapolate from an
+                    // aliased rate.
+                    let span_ticks = anchor.span_ticks;
                     let delta = now.saturating_sub(anchor.anchor_pkt);
                     // Exact rational rate (span_ticks / span_pkt) applied to
                     // the whole `delta` in one `u128` division, rather than a
                     // per-packet-truncated rate compounded `delta` times
                     // (up to ~500 ppm at 20 Mbit/s, growing with span length).
-                    let ticks = (u128::from(span_ticks) * u128::from(delta)) / u128::from(span_pkt);
+                    let ticks = (span_ticks * u128::from(delta)) / u128::from(span_pkt);
                     Self::wrap_add(anchor.anchor_27mhz, ticks)
                 }
             }
@@ -341,5 +351,64 @@ impl Op for PcrRestampOp {
     fn flush(&mut self, _model: &mut StreamModel, _out: &mut dyn FnMut(&[u8])) {
         // PCR restamp is stateless across packets beyond its per-PID anchors;
         // nothing is buffered, so there is nothing to flush.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Adaptation-field-only packet on PID 0x100 carrying a PCR.
+    fn pcr_packet() -> [u8; TS_PACKET_SIZE] {
+        let mut b = [0xFFu8; TS_PACKET_SIZE];
+        b[0] = 0x47;
+        b[1] = 0x01;
+        b[2] = 0x00;
+        b[3] = 0x20; // adaptation field only
+        b[4] = 183; // adaptation_field_length
+        b[5] = 0x10; // PCR_flag
+        b[6..12].fill(0);
+        b
+    }
+
+    fn pcr_of(p: &[u8]) -> u64 {
+        PcrRestampOp::read_pcr(p).expect("PCR packet").1.as_27mhz()
+    }
+
+    /// Extrapolating after a clean run longer than one PCR wrap
+    /// (`PCR_27MHZ_MODULUS`, ~26.5 h) must keep the observed rate. The span
+    /// from the first anchor to the last observation used to be a modular
+    /// forward distance, which aliases by a whole modulus once the window
+    /// outgrows one wrap, so the corrupt packet after the run was
+    /// extrapolated from a rate ~M/N too small. The PCR is advanced 99 ms per
+    /// packet (just under the 100 ms TR 101 290 2.3b threshold, so every step
+    /// is a "sane" observation); one packet buffer is rewritten in place, so
+    /// the ~1M-packet stream is never materialised.
+    #[test]
+    fn interpolate_extrapolates_correctly_after_more_than_one_pcr_wrap() {
+        const STEP: u64 = 2_673_000; // 99 ms at 27 MHz
+        const N: u64 = 1_000_000; // N * STEP = 2.673e12 > PCR_27MHZ_MODULUS (~2.576e12)
+        assert!(N * STEP > PCR_27MHZ_MODULUS);
+
+        let mut op = PcrRestampOp::new(PcrRestamp::Interpolate);
+        let mut model = StreamModel::default();
+        let mut buf = pcr_packet();
+        let mut last = [0u8; TS_PACKET_SIZE];
+
+        // Packet k (0-based) observes PCR k*STEP; the first is the anchor.
+        for k in 0..N {
+            let obs = (k * STEP) % PCR_27MHZ_MODULUS;
+            OwnedTsPacket::set_pcr(&mut buf, Pcr::from_27mhz(obs)).unwrap();
+            op.process(&buf, &mut model, &mut |p| last.copy_from_slice(p));
+            assert_eq!(pcr_of(&last), obs, "clean packet {k} must pass through");
+        }
+
+        // A corrupt (backwards, non-sane) observation is restamped from the
+        // anchor at the observed rate: exactly N steps after the anchor.
+        let corrupt = ((N - 1) * STEP % PCR_27MHZ_MODULUS + PCR_27MHZ_MODULUS - 135_000_000)
+            % PCR_27MHZ_MODULUS;
+        OwnedTsPacket::set_pcr(&mut buf, Pcr::from_27mhz(corrupt)).unwrap();
+        op.process(&buf, &mut model, &mut |p| last.copy_from_slice(p));
+        assert_eq!(pcr_of(&last), (N * STEP) % PCR_27MHZ_MODULUS);
     }
 }
