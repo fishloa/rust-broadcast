@@ -305,6 +305,7 @@ mod tests {
                 start: 100,
                 additional: 0
             }],
+            padding: Vec::new(),
         };
         let out = s.on_range_nack(&nack, T0);
         assert_eq!(out.len(), 1);
@@ -325,6 +326,7 @@ mod tests {
                 start: 10,
                 additional: 4
             }],
+            padding: Vec::new(),
         };
         let out = s.on_range_nack(&nack, T0);
         let seqs: Vec<u16> = out.iter().map(|r| r.seq).collect();
@@ -344,6 +346,7 @@ mod tests {
                 start: 1,
                 additional: 0
             }],
+            padding: Vec::new(),
         };
         assert!(s.on_range_nack(&nack, T0).is_empty());
     }
@@ -365,6 +368,7 @@ mod tests {
                 },
                 NackFci { pid: 117, blp: 0 },
             ],
+            padding: Vec::new(),
         };
         let out = s.on_generic_nack(&nack, T0);
         let seqs: Vec<u16> = out.iter().map(|r| r.seq).collect();
@@ -381,6 +385,7 @@ mod tests {
                 start: 0,
                 additional: 0xFFFF
             }],
+            padding: Vec::new(),
         };
         // Must not attempt to allocate/iterate 65536 entries unbounded in a
         // way that panics or hangs; with nothing in the lookup buffer the
@@ -414,6 +419,7 @@ mod tests {
                 start: 0,
                 additional: 0xFFFF
             }],
+            padding: Vec::new(),
         };
 
         // `Instant` needs `std`; `--no-default-features` lib tests run `no_std`.
@@ -456,6 +462,7 @@ mod tests {
         let nack = RangeNack {
             ssrc_media: 1,
             ranges: alloc::vec![one_range; 16],
+            padding: Vec::new(),
         };
 
         let out = s.on_range_nack(&nack, T0);
@@ -490,6 +497,7 @@ mod tests {
                 start: 0,
                 additional: 9
             }],
+            padding: Vec::new(),
         };
 
         let first = s.on_range_nack(&nack, T0);
@@ -526,6 +534,7 @@ mod tests {
                 start: 0,
                 additional: 9
             }],
+            padding: Vec::new(),
         };
         s.on_range_nack(&nack, T0);
         // `now` advanced by exactly `MIN_RETRANSMIT_INTERVAL` (not "less

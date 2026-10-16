@@ -21,6 +21,7 @@ fn generic_nack_single_fci_round_trip() {
             pid: 42,
             blp: 0xABCD,
         }],
+        padding: Vec::new(),
     };
     let bytes = nack.try_to_bytes().unwrap();
     let parsed = GenericNack::parse(&bytes).unwrap();
@@ -47,6 +48,7 @@ fn generic_nack_multiple_fci_round_trip() {
                 blp: 0x0000,
             },
         ],
+        padding: Vec::new(),
     };
     let bytes = nack.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
@@ -61,6 +63,7 @@ fn generic_nack_empty_blp_round_trip() {
         ssrc_sender: 1,
         ssrc_media: 2,
         nacks: vec![NackFci { pid: 0, blp: 0 }],
+        padding: Vec::new(),
     };
     let bytes = nack.try_to_bytes().unwrap();
     let parsed = GenericNack::parse(&bytes).unwrap();
@@ -80,6 +83,7 @@ fn range_nack_single_range_round_trip() {
             start: 100,
             additional: 0,
         }],
+        padding: Vec::new(),
     };
     let bytes = rn.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
@@ -106,6 +110,7 @@ fn range_nack_multiple_ranges_round_trip() {
                 additional: 3,
             },
         ],
+        padding: Vec::new(),
     };
     let bytes = rn.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
@@ -124,6 +129,7 @@ fn range_nack_max_entries_round_trip() {
                 additional: i,
             })
             .collect(),
+        padding: Vec::new(),
     };
     let bytes = rn.try_to_bytes().unwrap();
     let parsed = RangeNack::parse(&bytes).unwrap();
@@ -283,6 +289,7 @@ fn receiver_compound_rr_sdes_nack_round_trip() {
             ssrc_sender: 0xAAAA_BBBB,
             ssrc_media: 0xCCCC_DDDD,
             nacks: vec![NackFci { pid: 500, blp: 0 }],
+            padding: Vec::new(),
         }],
         range_nacks: vec![],
         rtt_echo: None,
@@ -341,6 +348,7 @@ fn receiver_compound_full_round_trip() {
                 ssrc_sender: 0xAAAA_BBBB,
                 ssrc_media: 0xCCCC_DDDD,
                 nacks: vec![NackFci { pid: 500, blp: 0 }],
+                padding: Vec::new(),
             },
             GenericNack {
                 ssrc_sender: 0xAAAA_BBBB,
@@ -349,6 +357,7 @@ fn receiver_compound_full_round_trip() {
                     pid: 700,
                     blp: 0x00FF,
                 }],
+                padding: Vec::new(),
             },
         ],
         range_nacks: vec![
@@ -358,6 +367,7 @@ fn receiver_compound_full_round_trip() {
                     start: 100,
                     additional: 3,
                 }],
+                padding: Vec::new(),
             },
             RangeNack {
                 ssrc_media: 0xCCCC_DDDD,
@@ -371,6 +381,7 @@ fn receiver_compound_full_round_trip() {
                         additional: 5,
                     },
                 ],
+                padding: Vec::new(),
             },
         ],
         rtt_echo: Some(RttEcho {
@@ -405,6 +416,7 @@ fn generic_nack_mutation_bites_pid() {
             pid: 1000,
             blp: 0xAAAA,
         }],
+        padding: Vec::new(),
     };
     let mut bytes = nack.try_to_bytes().unwrap();
     // PID is at offset 12-13.
@@ -422,6 +434,7 @@ fn range_nack_mutation_bites_additional() {
             start: 100,
             additional: 10,
         }],
+        padding: Vec::new(),
     };
     let mut bytes = rn.try_to_bytes().unwrap();
     // additional is at offset 14-15.

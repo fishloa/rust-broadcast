@@ -5,8 +5,8 @@
 //!   oversized UDP datagram, and must not stitch a trailing partial packet
 //!   from one datagram onto the next, unrelated one.
 
-#[cfg(feature = "udp")]
 use mpeg_ts::pid::Pid;
+#[cfg(feature = "udp")]
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::pin::Pin;
 use std::task::{Context, Poll};

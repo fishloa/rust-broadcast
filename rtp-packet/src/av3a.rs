@@ -581,23 +581,66 @@ pub fn packetize(frame: &[u8], max_payload: usize) -> impl Iterator<Item = (&[u8
 /// Feed each packet's payload with its `M` bit in sequence order; a complete
 /// frame is returned when `M == 1`. Loss detection (RTP sequence numbers) is the
 /// caller's job: call [`Av3aDepacketizer::reset`] on a gap.
-#[derive(Debug, Default, Clone)]
+///
+/// The partial frame is bounded: a stream that never sets `M` (lost marker,
+/// hostile sender) would otherwise buffer without limit. The cap defaults to
+/// [`DEFAULT_MAX_FRAME_BYTES`] and is set with
+/// [`Av3aDepacketizer::with_max_frame_bytes`].
+#[derive(Debug, Clone)]
 pub struct Av3aDepacketizer {
     buf: Vec<u8>,
+    max_frame_bytes: usize,
 }
 
+impl Default for Av3aDepacketizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Default upper bound on one reassembled `aatf_frame()`.
+///
+/// The frame length field `raw_frame_length` is 16 bits (T/AI 109.3 Annex A,
+/// Table A.4/A.6), so a conformant frame is at most 64 KiB plus its short
+/// header; 1 MiB is a deliberately conservative cap that no conformant
+/// stream approaches.
+pub const DEFAULT_MAX_FRAME_BYTES: usize = 1 << 20;
+
 impl Av3aDepacketizer {
-    /// An empty reassembler.
+    /// An empty reassembler with the [`DEFAULT_MAX_FRAME_BYTES`] cap.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self::with_max_frame_bytes(DEFAULT_MAX_FRAME_BYTES)
+    }
+
+    /// An empty reassembler that rejects frames larger than `max_frame_bytes`.
+    #[must_use]
+    pub fn with_max_frame_bytes(max_frame_bytes: usize) -> Self {
+        Self {
+            buf: Vec::new(),
+            max_frame_bytes,
+        }
     }
 
     /// Append one packet's payload; returns the complete `aatf_frame()` bytes
     /// when `marker` is set.
-    pub fn push(&mut self, marker: bool, payload: &[u8]) -> Option<Vec<u8>> {
+    ///
+    /// # Errors
+    /// [`Error::InvalidValue`] when the frame would exceed the configured
+    /// maximum; the partial frame is dropped so the caller can carry on with
+    /// the next one.
+    pub fn push(&mut self, marker: bool, payload: &[u8]) -> Result<Option<Vec<u8>>> {
+        let total = self.buf.len().saturating_add(payload.len());
+        if total > self.max_frame_bytes {
+            self.buf.clear();
+            return Err(bad(
+                "aatf_frame size",
+                total as u64,
+                "exceeds the depacketizer's maximum frame size",
+            ));
+        }
         self.buf.extend_from_slice(payload);
-        marker.then(|| core::mem::take(&mut self.buf))
+        Ok(marker.then(|| core::mem::take(&mut self.buf)))
     }
 
     /// Drop any partially collected frame (after packet loss).
@@ -667,6 +710,15 @@ fn hex_val(c: u8) -> Option<u8> {
     }
 }
 
+/// Decimal digits only: `str::parse` also accepts a leading `+`, which is not
+/// part of the SDP/MIME integer grammar.
+fn parse_unsigned(v: &str, field: &'static str) -> Result<u32> {
+    if v.is_empty() || !v.bytes().all(|c| c.is_ascii_digit()) {
+        return Err(bad(field, 0, "not an unsigned decimal integer"));
+    }
+    v.parse().map_err(|_| bad(field, 0, "not a 32-bit integer"))
+}
+
 impl Av3aFmtp {
     /// The clock rate to use: `rate`, or [`DEFAULT_CLOCK_RATE`].
     #[must_use]
@@ -679,27 +731,50 @@ impl Av3aFmtp {
     /// case-insensitive).
     ///
     /// # Errors
-    /// [`Error::InvalidValue`] for a malformed value of a known parameter.
+    /// [`Error::InvalidValue`] for a malformed value of a known parameter
+    /// (a leading `+`, `rate=0`) or a known parameter given twice.
     pub fn parse(s: &str) -> Result<Self> {
         let mut out = Self::default();
+        let mut seen = [false; 4];
         for part in s.split(';') {
             let part = part.trim();
             let Some((k, v)) = part.split_once('=') else {
                 continue;
             };
             let v = v.trim();
-            match k.trim().to_ascii_lowercase().as_str() {
+            let key = k.trim().to_ascii_lowercase();
+            let slot = match key.as_str() {
+                "rate" => Some((0, "rate")),
+                "bitrate" => Some((1, "bitrate")),
+                "codec-nn-id" => Some((2, "codec-nn-id")),
+                "config" => Some((3, "config")),
+                _ => None,
+            };
+            if let Some((i, name)) = slot {
+                if seen[i] {
+                    return Err(bad(name, 0, "parameter given more than once"));
+                }
+                seen[i] = true;
+            }
+            match key.as_str() {
                 "rate" => {
-                    out.rate = Some(v.parse().map_err(|_| bad("rate", 0, "not an integer"))?);
+                    let r: u32 = parse_unsigned(v, "rate")?;
+                    if r == 0 {
+                        return Err(bad("rate", 0, "RTP clock rate must be non-zero"));
+                    }
+                    out.rate = Some(r);
                 }
                 "bitrate" => {
-                    out.bitrate = Some(v.parse().map_err(|_| bad("bitrate", 0, "not an integer"))?);
+                    out.bitrate = Some(parse_unsigned(v, "bitrate")?);
                 }
                 "codec-nn-id" => {
                     let h = v
                         .strip_prefix("0x")
                         .or_else(|| v.strip_prefix("0X"))
                         .unwrap_or(v);
+                    if !h.bytes().all(|c| c.is_ascii_hexdigit()) {
+                        return Err(bad("codec-nn-id", 0, "not a 16-bit hex value"));
+                    }
                     let n = u16::from_str_radix(h, 16)
                         .map_err(|_| bad("codec-nn-id", 0, "not a 16-bit hex value"))?;
                     out.codec_nn_id = Some(CodecNnId::from_u16(n));
@@ -1001,17 +1076,17 @@ mod tests {
             [false, false, true]
         );
         let mut d = Av3aDepacketizer::new();
-        assert!(d.push(false, parts[0].0).is_none());
+        assert!(d.push(false, parts[0].0).unwrap().is_none());
         assert_eq!(d.buffered(), 100);
-        assert!(d.push(false, parts[1].0).is_none());
-        assert_eq!(d.push(true, parts[2].0).unwrap(), frame);
+        assert!(d.push(false, parts[1].0).unwrap().is_none());
+        assert_eq!(d.push(true, parts[2].0).unwrap().unwrap(), frame);
         assert_eq!(d.buffered(), 0);
         // a frame that fits is a single M=1 packet; an empty frame yields none
         let single: Vec<_> = packetize(&frame[..10], 100).collect();
         assert_eq!(single.len(), 1);
         assert!(single[0].1);
         assert_eq!(packetize(&[], 100).count(), 0);
-        d.push(false, &[1]);
+        d.push(false, &[1]).unwrap();
         d.reset();
         assert_eq!(d.buffered(), 0);
     }
@@ -1066,6 +1141,35 @@ mod tests {
         assert!(Av3aFmtp::parse("config=abc").is_err());
         assert!(Av3aFmtp::parse("codec-nn-id=zz").is_err());
         assert!(Av3aFmtp::parse("rate=x").is_err());
+        // no leading '+', no zero clock rate, no duplicated parameter
+        assert!(Av3aFmtp::parse("codec-nn-id=+201").is_err());
+        assert!(Av3aFmtp::parse("codec-nn-id=0x+201").is_err());
+        assert!(Av3aFmtp::parse("rate=+48000").is_err());
+        assert!(Av3aFmtp::parse("bitrate=+320").is_err());
+        assert!(Av3aFmtp::parse("rate=0").is_err());
+        assert!(Av3aFmtp::parse("rate=48000; rate=44100").is_err());
+        assert!(Av3aFmtp::parse("RATE=48000; rate=48000").is_err());
+        assert!(Av3aFmtp::parse("codec-nn-id=0x0201; codec-nn-id=0x0201").is_err());
+        assert!(Av3aFmtp::parse("config=00; config=00").is_err());
+        assert!(Av3aFmtp::parse("bitrate=1; bitrate=1").is_err());
+        assert_eq!(Av3aFmtp::parse("rate=48000").unwrap().rate, Some(48000));
+    }
+
+    /// An endless run of M=0 packets must not buffer without bound.
+    #[test]
+    fn depacketizer_caps_buffered_frame() {
+        let mut d = Av3aDepacketizer::with_max_frame_bytes(10);
+        assert!(d.push(false, &[0; 6]).unwrap().is_none());
+        assert!(d.push(false, &[0; 4]).unwrap().is_none());
+        assert!(d.push(false, &[0; 1]).is_err(), "11 bytes > cap of 10");
+        assert_eq!(d.buffered(), 0, "partial frame dropped on overflow");
+        // a frame exactly at the cap still completes, and the next one works
+        assert_eq!(d.push(true, &[7; 10]).unwrap().unwrap().len(), 10);
+        assert_eq!(d.push(true, &[1]).unwrap().unwrap(), [1]);
+        // the default cap applies to `new()`
+        let mut d = Av3aDepacketizer::new();
+        assert!(d.push(false, &vec![0u8; DEFAULT_MAX_FRAME_BYTES]).is_ok());
+        assert!(d.push(false, &[0]).is_err());
         assert_eq!(Av3aFmtp::parse("").unwrap(), Av3aFmtp::default());
     }
 }

@@ -1,3 +1,5 @@
+use alloc::vec;
+use alloc::vec::Vec;
 use core::time::Duration;
 use mpeg_ts::pid::Pid;
 

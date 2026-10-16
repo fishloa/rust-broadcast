@@ -82,6 +82,13 @@ jobs:
       - name: Doctests (no optional features, std on)
         timeout-minutes: 15
         run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --doc
+      # The excluded crates above never see a bare --no-default-features
+      # test build; build (not run) them separately, one invocation each so
+      # feature unification cannot leak between them.
+      - name: Tests compile without default features (excluded crates)
+        run: |
+          cargo test -p dvb-conformance --no-default-features --no-run --locked
+          cargo test -p dvb-tools --no-default-features --no-run --locked
 
   examples:
     name: examples (MSRV 1.95.0)
@@ -276,6 +283,11 @@ jobs:
       - name: Doctests
         timeout-minutes: 10
         run: cargo test -p dvb-stream --all-features --locked --doc
+      # The core no-default-features lane excludes dvb-stream, so a test that
+      # only compiles with the default `udp` feature (e.g. a cfg that no
+      # longer covers an import) would otherwise go unseen.
+      - name: Tests compile without default features
+        run: cargo test -p dvb-stream --no-default-features --no-run --locked
       - name: Clippy
         run: cargo clippy -p dvb-stream --all-features --all-targets --locked -- -D warnings
       - name: rustfmt

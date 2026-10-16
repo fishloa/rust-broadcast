@@ -19,6 +19,7 @@ fn main() {
                 blp: 0x0003,
             },
         ],
+        padding: Vec::new(),
     };
 
     let bytes = nack.try_to_bytes().unwrap();

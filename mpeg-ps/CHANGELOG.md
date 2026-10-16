@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Serialize: `SystemHeader` `rate_bound` (22 bit), `audio_bound` (6), `video_bound` (5), `P-STD_buffer_size_bound` (13), `stream_id_extension` (7) and the pack-header SCR `base` (33) / `extension` (9) were masked silently; each is now a checked `fit_bits` returning `FieldOverflow`.
+- Serialize -> parse is now the identity for the stream loop (Table 2-40, `nextbits() == '1'`): a `stream_id` without its MSB, `0xB7` without / a non-`0xB7` with a `stream_id_extension`, and a `trailing_reserved` whose first byte has the MSB set (re-read as a stream-bound entry) are rejected with the new `Error::InvalidField` instead of serializing to bytes that parse back differently (#1119 review).
 - Serialize: `SystemHeader` `reserved_bits` was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
 
 ### Changed

@@ -52,6 +52,7 @@ fn appendix_a_bitmask_nack() {
                 blp: 0x001F,
             },
         ],
+        padding: Vec::new(),
     };
 
     let bytes = nack.try_to_bytes().unwrap();
@@ -106,6 +107,7 @@ fn appendix_a_bitmask_nack_loss_set() {
                 blp: 0x001F,
             },
         ],
+        padding: Vec::new(),
     };
 
     // Expand the NACK into a set of lost sequence numbers.
@@ -149,6 +151,7 @@ fn appendix_a_range_nack() {
                 additional: 19,
             },
         ],
+        padding: Vec::new(),
     };
 
     let bytes = rn.try_to_bytes().unwrap();
@@ -205,6 +208,7 @@ fn appendix_a_range_nack_loss_set() {
                 additional: 19,
             },
         ],
+        padding: Vec::new(),
     };
 
     // Expand ranges into a set of lost sequence numbers.
@@ -241,6 +245,7 @@ fn appendix_a_cross_verify_both_formats() {
                 blp: 0x001F,
             },
         ],
+        padding: Vec::new(),
     };
     let mut bitmask_lost = Vec::new();
     for fci in &bitmask_nack.nacks {
@@ -267,6 +272,7 @@ fn appendix_a_cross_verify_both_formats() {
                 additional: 19,
             },
         ],
+        padding: Vec::new(),
     };
     let mut range_lost: Vec<u16> = Vec::new();
     for range in &range_nack.ranges {
@@ -364,6 +370,7 @@ fn generic_nack_rejects_wrong_version() {
         ssrc_sender: 1,
         ssrc_media: 2,
         nacks: vec![NackFci { pid: 1, blp: 0 }],
+        padding: Vec::new(),
     };
     let mut bytes = nack.try_to_bytes().unwrap();
     // Set V=1 instead of V=2.
@@ -379,6 +386,7 @@ fn range_nack_rejects_wrong_subtype() {
             start: 1,
             additional: 0,
         }],
+        padding: Vec::new(),
     };
     let mut bytes = rn.try_to_bytes().unwrap();
     // Change subtype from 0 to 5.
