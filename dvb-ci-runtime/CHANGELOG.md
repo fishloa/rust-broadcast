@@ -10,20 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `ManagedCa::required_pids()` now always includes the CAT PID (0x0001). Hardware-evidenced, not mandated by EN 50221: on a Digital Devices CXD2099 with an entitled AlphaCrypt One4All V2.5 (CAID 0x0650), ORF1, 180 s runs, CAT + EMM PID 0x259 descrambled from about 55 s while all seven EMM PIDs without the CAT never did (#1296).
 - `ManagedCa::set_cat` no longer collapses several `CA_descriptor`s with the same CA_system_id to one PID (it keyed a map by CAID); every EMM PID of a CAM-advertised CAID is now routed (#1296).
-
-### Documentation
-- README and crate-root docs rewritten to the cluster standard: what it does / does not (no CI Plus, no LSC), standards table, feature table, hardware-verification facts as recorded in this CHANGELOG, stale test-count and roadmap lines removed.
-
-### Changed (BREAKING: epoch — requires broadcast-common 10)
-- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `dvb-ci` 0.9 -> 0.10, `dvb-si` 11 -> 12, `mpeg-ts` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
-
-### Added
-- `CiDataDevice::write` contract: whole packets only, `WouldBlock` + `PartialWrite`
-  on backpressure; `dataplane::{PartialWrite, partial_write_progress}` (re-exported).
-- `LinuxCiDataDevice::open_split(adapter, ci)` / `LinuxCiDataDevice::from_split(write, read)`: the data plane as two one-direction descriptors (`O_WRONLY` write, `O_RDONLY | O_NONBLOCK` read). The Digital Devices CXD2099 `ci0` (dddvb, Ubuntu 5.15) rejects `O_RDWR` with `EINVAL`, so `LinuxCiDataDevice::open` now tries `O_RDWR` first and falls back to the split open on `EINVAL` and only `EINVAL`. Verified on that hardware with two `from_file`-wrapped fds: 150 s, 111k `feed_ts` calls, max 249 us, 0 errors (#1066).
-- `DeviceOpError` (re-exported): every failing Linux device operation (`open`, `read`, `write`, `poll`, `ioctl CA_RESET`, `ioctl CA_GET_SLOT_INFO`) now names the operation, the device path and the errno, e.g. `/dev/dvb/adapter3/ca0: write (17 byte frame: slot 0, connection 1) failed: Invalid argument (os error 22)`. The `io::ErrorKind` is unchanged; the errno is `DeviceOpError::errno_of(&err)` (a wrapped error no longer answers `raw_os_error()` itself) (#1032).
-
-### Fixed
+- `CaDescrambler::feed_ts` no longer discards descrambled TS it had already drained when a later write or drain fails (hard error, or the stalled-write give-up). The bytes are retained and returned first by the next `feed_ts`, or recovered with the new `CaDescrambler::take_undelivered()`. Signature unchanged (not breaking).
+- Docs: `required_pids` now names the CAT PID; `emm_pids` describes the `(CAID, PID)` entry list instead of a CAID map.
 - `LinuxCiDataDevice::write` never leaves a half-written TS packet in the device
   (adversarial review `review/ci-cam-crypto`). The duplex fd is `O_NONBLOCK`, so
   a burst larger than the device buffer used to stop mid-packet with a bare
@@ -40,14 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Driver`'s buffer is 4096 bytes; a CAM that negotiates a larger link buffer is
   now reported, not silently corrupted).
 "- `Driver::pump`: the first write after the post-`CA_RESET` settle (the `Create_T_C`) that fails `EINVAL` is retried every 250 ms for up to 12 s past the settle window instead of aborting the pump. The kernel's `dvb_ca_en50221` answers `EINVAL` to a write until the slot reaches its RUNNING state, and how long a CAM needs after a reset varies: on a DD CXD2099 with an AlphaCrypt, the 4th re-open within ~12 minutes returned `EINVAL` from the first handshake pump (no CA PMT sent; the kernel logged CAM init OK afterwards). A slot that never comes up is still reported once the window ends (#1032).
-
-### Changed
-- `TransportConnection::init` uses an explicit justified `expect` for the fixed-size `Create_T_C` TPDU.
-
-### Changed (BREAKING)
-- **BREAKING (r10-W-4, #1091):** follows `dvb-ci`'s `length_form` fields: the `dvb-ci` objects built or matched in this crate's APIs and tests carry the new field (`Default`/`Minimal` for host-built values).
-
-### Fixed
 - A CAM that codes a `length_field` in a long form (`82 00 09`, #337) no longer misframes the link: `SessionLayer::on_spdu` slices the APDU after `SessionNumber::header_len()` (it assumed the 4-byte minimal header, handing the APDU layer two stray session bytes), and `Transport` decodes the `T_SB` status `length_field` and the `C_T_C_Reply` object length instead of assuming `80 02 ..` and a 3-byte object. `trace::decode_frame` labels are diagnostic only and still assume minimal forms.
 - Linux backend: the `CA_RESET`/`CA_GET_SLOT_INFO` request numbers are built
   by `rustix::ioctl::opcode` instead of a hand-rolled asm-generic `_IOC`
@@ -58,6 +38,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asserts, verified with `cargo check --tests` on x86_64, musl and
   powerpc64le; the real ioctl path (ENOTTY fallback) runs in the Linux
   container test run. Not exercised against a real CI adapter.
+
+### Documentation
+- README and crate-root docs rewritten to the cluster standard: what it does / does not (no CI Plus, no LSC), standards table, feature table, hardware-verification facts as recorded in this CHANGELOG, stale test-count and roadmap lines removed.
+
+### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `dvb-ci` 0.9 -> 0.10, `dvb-si` 11 -> 12, `mpeg-ts` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
+### Added
+- `CiDataDevice::write` contract: whole packets only, `WouldBlock` + `PartialWrite`
+  on backpressure; `dataplane::{PartialWrite, partial_write_progress}` (re-exported).
+- `LinuxCiDataDevice::open_split(adapter, ci)` / `LinuxCiDataDevice::from_split(write, read)`: the data plane as two one-direction descriptors (`O_WRONLY` write, `O_RDONLY | O_NONBLOCK` read). The Digital Devices CXD2099 `ci0` (dddvb, Ubuntu 5.15) rejects `O_RDWR` with `EINVAL`, so `LinuxCiDataDevice::open` now tries `O_RDWR` first and falls back to the split open on `EINVAL` and only `EINVAL`. Verified on that hardware with two `from_file`-wrapped fds: 150 s, 111k `feed_ts` calls, max 249 us, 0 errors (#1066).
+- `DeviceOpError` (re-exported): every failing Linux device operation (`open`, `read`, `write`, `poll`, `ioctl CA_RESET`, `ioctl CA_GET_SLOT_INFO`) now names the operation, the device path and the errno, e.g. `/dev/dvb/adapter3/ca0: write (17 byte frame: slot 0, connection 1) failed: Invalid argument (os error 22)`. The `io::ErrorKind` is unchanged; the errno is `DeviceOpError::errno_of(&err)` (a wrapped error no longer answers `raw_os_error()` itself) (#1032).
+
+### Changed
+- `TransportConnection::init` uses an explicit justified `expect` for the fixed-size `Create_T_C` TPDU.
+
+### Changed (BREAKING)
+- **BREAKING (r10-W-4, #1091):** follows `dvb-ci`'s `length_form` fields: the `dvb-ci` objects built or matched in this crate's APIs and tests carry the new field (`Default`/`Minimal` for host-built values).
 
 ### Changed (BREAKING)
 

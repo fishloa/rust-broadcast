@@ -374,7 +374,7 @@ impl<D: CaDevice> Driver<D> {
     }
 
     /// The EMM PIDs to route into `ci0` — the last [`set_cat`](Self::set_cat)'s
-    /// CAID → EMM-PID map intersected with the CAM's advertised CAIDs (#763
+    /// list of `(CAID, EMM PID)` entries (a CAID may have several) intersected with the CAM's advertised CAIDs (#763
     /// Task 4).
     #[must_use]
     pub fn emm_pids(&self) -> &[Pid] {
@@ -397,7 +397,7 @@ impl<D: CaDevice> Driver<D> {
         self.managed.ca_pids()
     }
 
-    /// `descramble_pids() ∪ ca_pids() ∪ emm_pids() ∪ PCR` — every PID class
+    /// `descramble_pids() ∪ ca_pids() ∪ emm_pids() ∪ PCR ∪ CAT` — every PID class
     /// this slot needs on `ci0` (ES to descramble ∪ ECM for control words ∪
     /// EMM for entitlements ∪ each active service's PCR PID — ISO/IEC
     /// 13818-1 §2.4.4.8 — so the descrambled TS keeps its clock reference

@@ -121,6 +121,10 @@ pub struct CaDescrambler<D: CaDevice, C: CiDataDevice> {
     /// r10-W-22: running count of packets [`Self::feed_ts`] has skipped for
     /// a bad sync byte (see [`Self::bad_sync_packets`]).
     bad_sync_packets: u64,
+    /// Descrambled TS already drained from the device by a [`Self::feed_ts`]
+    /// call that then failed. Kept (never dropped) and returned at the front
+    /// of the next call's output, or via [`Self::take_undelivered`].
+    undelivered: Vec<u8>,
 }
 
 impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
@@ -133,7 +137,16 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
             driver,
             ci,
             bad_sync_packets: 0,
+            undelivered: Vec::new(),
         }
+    }
+
+    /// Take the descrambled TS that an earlier failed [`Self::feed_ts`] had
+    /// already drained from the device before its error. Normally the next
+    /// `feed_ts` returns these bytes first (in order); call this to recover
+    /// them without feeding more input, e.g. before giving up on the device.
+    pub fn take_undelivered(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.undelivered)
     }
 
     /// Total TS packets [`Self::feed_ts`] has skipped across its lifetime
@@ -173,6 +186,13 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
     /// grounds to reject the whole batch (r10-W-22) — see
     /// [`Self::bad_sync_packets`] for the running count of how many.
     ///
+    /// Descrambled output is never silently lost: if a later write or drain
+    /// fails after some output was already drained, those bytes are retained
+    /// and returned first by the next `feed_ts` call (or recovered with
+    /// [`Self::take_undelivered`]). Input packets not yet accepted by the
+    /// device when the error occurs are not retained; the caller re-feeds
+    /// them.
+    ///
     /// # Errors
     /// [`io::ErrorKind::InvalidInput`] if `scrambled` is not a whole number
     /// of [`TS_PACKET_LEN`]-byte packets; otherwise any I/O error from the
@@ -181,12 +201,23 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
         let allow: BTreeSet<Pid> = self.required_pids().into_iter().collect();
         let (kept, bad_sync_count) = filter_ts(scrambled, &allow)?;
         self.bad_sync_packets += bad_sync_count as u64;
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.undelivered);
+        match self.write_and_drain(&kept, &mut out) {
+            Ok(()) => Ok(out),
+            Err(e) => {
+                self.undelivered = out;
+                Err(e)
+            }
+        }
+    }
+
+    /// Write `kept` to the device, draining descrambled output into `out`.
+    fn write_and_drain(&mut self, kept: &[u8], out: &mut Vec<u8>) -> io::Result<()> {
         // A full device buffer is not fatal: the device reports the whole
         // packets it took ([`PartialWrite`]), and draining the descrambled
         // output is what makes room, so drain and retry the unsent tail. Give
         // up only after a bounded number of rounds that moved nothing.
-        let mut pending: &[u8] = &kept;
+        let mut pending: &[u8] = kept;
         let mut stalled = 0;
         while !pending.is_empty() {
             match self.ci.write(pending) {
@@ -201,12 +232,11 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
                     if stalled > MAX_STALLED_WRITES {
                         return Err(e);
                     }
-                    self.drain_into(&mut out)?;
+                    self.drain_into(out)?;
                 }
             }
         }
-        self.drain_into(&mut out)?;
-        Ok(out)
+        self.drain_into(out)
     }
 
     /// Read everything the module has descrambled so far into `out`.
@@ -221,8 +251,8 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
         }
     }
 
-    /// `descramble_pids ∪ ca_pids ∪ emm_pids ∪ PCR` — the PIDs the CAM needs
-    /// on `ci0` (delegates to [`Driver::required_pids`]).
+    /// `descramble_pids ∪ ca_pids ∪ emm_pids ∪ PCR ∪ CAT` — the PIDs the CAM
+    /// needs on `ci0` (the CAT PID is always included; delegates to [`Driver::required_pids`]).
     #[must_use]
     pub fn required_pids(&self) -> Vec<Pid> {
         self.driver.required_pids()
@@ -507,6 +537,90 @@ mod tests {
         fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
             Ok(!self.buffered.is_empty())
         }
+    }
+
+    /// Scripted device: `write` is either accepted or always a zero-progress
+    /// `PartialWrite`; `read` replays `reads` in order (`Err` entries fail).
+    struct ScriptedDevice {
+        reject_writes: bool,
+        reads: std::collections::VecDeque<io::Result<Vec<u8>>>,
+    }
+    impl CiDataDevice for ScriptedDevice {
+        fn write(&mut self, ts: &[u8]) -> io::Result<()> {
+            if !self.reject_writes {
+                return Ok(());
+            }
+            Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                PartialWrite {
+                    written: 0,
+                    requested: ts.len(),
+                    device: "test".to_owned(),
+                },
+            ))
+        }
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            match self.reads.pop_front() {
+                None => Ok(0),
+                Some(Err(e)) => Err(e),
+                Some(Ok(ts)) => {
+                    buf[..ts.len()].copy_from_slice(&ts);
+                    Ok(ts.len())
+                }
+            }
+        }
+        fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            Ok(!self.reads.is_empty())
+        }
+    }
+
+    fn scripted(
+        reject_writes: bool,
+        reads: Vec<io::Result<Vec<u8>>>,
+    ) -> CaDescrambler<MockCaDevice, ScriptedDevice> {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        CaDescrambler::new(
+            d,
+            ScriptedDevice {
+                reject_writes,
+                reads: reads.into(),
+            },
+        )
+    }
+
+    /// Output already drained when a later read fails must not be dropped: it
+    /// is delivered, in order, by the next `feed_ts`.
+    #[test]
+    fn feed_ts_keeps_drained_output_when_a_later_read_fails() {
+        let a = packet(Pid::new(0x100), 0xA1);
+        let b = packet(Pid::new(0x100), 0xB2);
+        let mut descrambler = scripted(
+            false,
+            vec![
+                Ok(a.clone()),
+                Err(io::Error::other("boom")),
+                Ok(b.clone()),
+            ],
+        );
+        let err = descrambler.feed_ts(&[]).unwrap_err();
+        assert_eq!(err.to_string(), "boom");
+        let got = descrambler.feed_ts(&[]).unwrap();
+        assert_eq!(got, [a, b].concat(), "A drained before the error must survive");
+        assert!(descrambler.take_undelivered().is_empty());
+    }
+
+    /// Same guarantee on the stalled-write give-up path, recovered via
+    /// `take_undelivered`.
+    #[test]
+    fn feed_ts_keeps_drained_output_when_the_device_stalls() {
+        let a = packet(Pid::new(0x100), 0xA1);
+        let mut descrambler = scripted(true, vec![Ok(a.clone())]);
+        let input = packet(CAT_PID, 0x11);
+        let err = descrambler.feed_ts(&input).unwrap_err();
+        assert!(partial_write_progress(&err).is_some());
+        assert_eq!(descrambler.take_undelivered(), a);
+        assert!(descrambler.take_undelivered().is_empty());
     }
 
     /// Review ci-cam #7: a device buffer smaller than the burst must not lose
