@@ -30,6 +30,20 @@ multiplexed extension elements out of a `HeaderExtension`'s opaque `data`
 (the profile-specific interpretation RFC 3550 itself leaves to the
 profile). See `docs/rfc8285_header_ext.md` for the curated transcription.
 
+The optional `av3a` feature adds the **AV3A-AATF RTP payload**
+(T/AI 109.7-2024 clause 10.1). The payload has no header of its own, so the
+`av3a` module provides the typed `AatfFrame`/`AatfFrameHeader`
+(T/AI 109.3-2023 Annex A Tables A.4-A.7: `audio_codec_id` 0 general high-rate,
+1 lossless up to `aatf_error_check()`, 2 general full-rate),
+`packetize`/`Av3aDepacketizer` (MTU split, `M` marks the last fragment),
+`is_dynamic_payload_type`, and `Av3aFmtp`/`CodecNnId` for the SDP
+`rate`/`codec-nn-id`/`config`/`bitrate` parameters (the spec examples
+`0x0000`/`0x0100`/`0x0201` are tested). CRC bytes are carried, not verified
+(the polynomial is not in the vendored extract).
+
+`OneByteElements`/`TwoByteElements::serialize_into` validate every element
+before writing, so an invalid element leaves the output buffer untouched.
+
 `#![no_std]` + `alloc`; depends only on `broadcast-common`.
 
 ## Quick start
@@ -69,6 +83,7 @@ cargo run -p rtp-packet --example rfc8285_extensions --features rfc8285
 | `std`     | yes     | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
 | `serde`   | no      | `serde::Serialize` derives on public types. |
 | `rfc8285` | no      | RFC 8285 one-byte/two-byte multiplexed header-extension element decoding (`rfc8285` module). |
+| `av3a`    | no      | AV3A-AATF RTP payload (T/AI 109.7-2024 clause 10.1): frame codec, packetizer/depacketizer, SDP fmtp (`av3a` module). |
 
 ## Minimum Supported Rust Version
 

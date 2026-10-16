@@ -109,6 +109,41 @@ accessors returning `core::time::Duration`. The 33-bit `pts_adjustment` field
 likewise has a `pts_adjustment_duration()` accessor (carry-ignored wrap per the
 spec).
 
+### Robustness and strictness
+
+- A clear section whose `splice_command_length` is the deprecated `0xFFF`
+  "backwards compatibility" value (SCTE 35 §9.6.1: "shall be ignored by
+  downstream equipment") is parsed by deriving the command's extent from its
+  own structure (never guessed: an underivable layout is an error).
+  `ClearPayload::legacy_command_length_sentinel` records it so
+  `serialize_into` writes `0xFFF` back and the section round-trips byte for
+  byte. Found with a real TSDuck capture (`tests/real_capture.rs`).
+- `serialize_into` rejects `sap_type` > 3, `encryption_algorithm` > 63,
+  `AudioDescriptor` `bit_stream_mode` > 7 and `num_channels` > 15 with
+  `Error::FieldOverflow` instead of masking them into a different valid-looking
+  value; `time::ticks_to_duration` saturates rather than wrapping.
+
+### DVB Targeted Advertising (`dvb_ta`, ETSI TS 103 752-1 V1.2.1)
+
+| Item | Notes |
+|---|---|
+| `DVB_DAS_descriptor()` (§5.3.5.16, tag `0xF0`) | DVB-private splice descriptor, integrated into `AnySpliceDescriptor` |
+| Compact SCTE 35 (§8.3.3) | `compact_time_signal()` / `compact_splice_insert()` with the bit packing of Tables 6 and 8 as re-aligned from the PDF (no reserved bits between `encryption_algorithm`/`cw_index`/`pts_time`; typed, preserved `reserved` fields on `CompactSpliceInsert` and `CompactDas`) |
+| `DSM-CC_stream_event_payload_binary()` (§6.3.1) | wraps or references a full SCTE 35 section; RFC 4648 base-64 helper |
+| PPO/DPO profiling (§5.3.4-5.3.5) | typed helpers over the base `segmentation_type_id` constraints (no new wire syntax) |
+
+**Open question, not guessed:** Table 1 (stand-alone `DVB_DAS_descriptor()`,
+`equivalent_segmentation_type` in the low nibble) and Table 8
+(`compact_splice_insert()`, type in the high nibble) disagree on the nibble
+order of the same body, and no corrigendum, byte example or independent
+implementation resolves it. `dvb_ta::DasNibbleOrder` (`TypeHigh` = Table 8,
+`TypeLow` = Table 1) with `parse_with_order` / `serialize_into_with_order` on
+`DvbDasDescriptor` and `CompactSpliceInsert` selects either reading; default
+wire behaviour is Table 1 for the descriptor and Table 8 for the compact form,
+and both are pinned by `tests/das_nibble_order.rs`. Independent-oracle compact
+vectors: `tests/dvb_ta_compact_vectors.rs`. Evidence:
+`docs/dvb_ta/compact-scte35.md`.
+
 ### Dispatch and drift tests
 
 `AnyCommand` and `AnySpliceDescriptor` are each generated from a single

@@ -35,6 +35,24 @@ Implemented from the EN 50221 specification.
   `/dev/dvb/adapterN/caM` (control plane) and `ciM` (TS data plane, `CiDataDevice`
   — scrambled-in / descrambled-out for separate-CI hardware) behind the `linux`
   feature (`libc`).
+- **Split-fd data plane**: `LinuxCiDataDevice::open_split(adapter, ci)` /
+  `from_split(write, read)` drive `ciM` as two one-direction descriptors
+  (`O_WRONLY` write, `O_RDONLY | O_NONBLOCK` read). `open` tries `O_RDWR`
+  first and falls back to the split open on `EINVAL` only, for hardware such
+  as the Digital Devices CXD2099 `ci0` that rejects `O_RDWR` (verified on that
+  hardware, #1066).
+- **Named device errors**: every failing Linux device operation (`open`,
+  `read`, `write`, `poll`, `CA_RESET`, `CA_GET_SLOT_INFO`) returns a
+  `DeviceOpError` naming the operation, device path and errno
+  (`DeviceOpError::errno_of(&err)`); the `io::ErrorKind` is unchanged. The
+  first `Create_T_C` write that fails `EINVAL` while the kernel slot is still
+  coming up is retried (every 250 ms, up to 12 s past the settle window)
+  instead of aborting the pump.
+- **Long-form `length_field` safe**: follows `dvb-ci`'s preserved
+  `LengthForm`, so a CAM coding `82 00 09` no longer misframes the session or
+  transport layer. PID accessors (`es_pids`, `emm_pids`, `descramble_pids`,
+  `required_pids`, ...) are typed `mpeg_ts::pid::Pid`. Linux ioctl request
+  numbers come from `rustix::ioctl::opcode` (correct on mips/powerpc/sparc).
 - **Diagnostics**: `RecordingCaDevice` captures the link both ways;
   `trace::decode_frame` / `decode_log` annotate a capture (TPDU → SPDU → APDU)
   for live-CAM debugging.
@@ -53,9 +71,12 @@ Implemented from the EN 50221 specification.
   service set; `set_cat(&CatSection)` computes the EMM-PID feed (CAT EMM PIDs
   ∩ the CAM's `ca_info` CAIDs); `emm_pids()`/`descramble_pids()`/`ca_pids()`/
   `required_pids()` (EMM ∪ ES ∪ ECM ∪ PCR) give the PIDs to route into `ci0`.
-  `set_requery_interval(dt)` periodically re-queries (`cmd_id = query`) so a
-  card entitled *after* the initial `ca_pmt` refreshes — a per-programme
-  status change surfaces as an edge-triggered `Notification::Entitlement`.
+  `set_requery_interval(dt)` (**opt-in**: the default `REQUERY_DEFAULT` is
+  `Duration::ZERO`, disabled, because no CAM verified so far answers the
+  `query` half) periodically re-queries with a `list_management = update`
+  `ca_pmt` pair so a card entitled *after* the initial `ca_pmt` refreshes — a
+  per-programme status change surfaces as an edge-triggered
+  `Notification::Entitlement`.
   `CaDescrambler<D, C>` is the turnkey wrapper that also owns the `ci0`
   `CiDataDevice`: `feed_ts(scrambled)` filters to `required_pids()` and returns
   the descrambled TS. One `CaDescrambler` = one CI slot = one TS path

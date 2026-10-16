@@ -96,6 +96,18 @@ sub-second glass-to-glass latency — the epic's headline acceptance bar — plu
 asserts blocking-reload and preload-hint prefetch are actually exercised, and
 that a genuinely non-LL origin still plays via the full-segment fallback.
 
+## Typed identifiers
+
+`server::{SegmentSeq, PartIndex}` are re-exports of
+`media_plane::ids::{SegmentSeq, PartIndex}` (one canonical definition) and
+`server::Generation` types the init-segment generation, so a swapped
+segment/part/generation argument is a compile error rather than a wrong
+resource name. `ClosedSegment::sequence_number`, `ClosedSegment::init_generation`
+/`with_init_generation` and `HlsOrigin::init_name(track_id, generation)` use
+them; track ids are `transmux::TrackId` (`DEFAULT_TRACK_ID`,
+`HlsOrigin::render_playlist`, `Output::Samples { track_id }`). The wire names
+(`seg-1-5-7.m4s`, `init-1-5-2.mp4`, `part-..`) are unchanged.
+
 ## The `server` module (feature `std`)
 
 The sans-IO LL-HLS **origin engine**, rendering from a shared

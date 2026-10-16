@@ -47,6 +47,24 @@ table with the reasoning behind every cell.
 - [`webvtt_to_srt`] / [`srt_to_webvtt`]: the WebVTT <-> SRT conversion pair,
   the former returning whether anything was dropped.
 
+## Behaviour pinned by real captures and review
+
+- 608 -> WebVTT/SRT: captions loaded with a repeated RCL before EDM/EOC are
+  converted instead of dropped, and same-PTS caption updates no longer yield
+  zero-length cues (fixes in `cc-data` / `timed-metadata`, covered here by
+  real-capture tests).
+- `matrix::lookup` returns `Option<&'static MatrixEntry>` rather than
+  panicking when the matrix has no row for a `(from, to)` pair (both format
+  enums are `#[non_exhaustive]`); `check` maps the absent row to
+  `Error::Unsupported { support: NotImplemented, .. }`.
+- Timestamps are digits-only (a `+` sign is rejected), `parse_webvtt` /
+  `parse_srt` reject a cue whose end precedes its start, and `write_srt` folds
+  a lone CR (and CRLF) inside cue text to LF exactly like the WebVTT writer.
+- The matrix no longer claims 608/708/Teletext cue timing "carries over
+  exactly": cue times are the carrying frame/packet PTS.
+- Timestamp parsing/formatting and odd parity are delegated to
+  `timed_metadata::webvtt` and `broadcast_common::parity` (one copy each).
+
 ## Quick start
 
 ```rust

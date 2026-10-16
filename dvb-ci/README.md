@@ -36,29 +36,32 @@ assert_eq!(any.name(), "CA_INFO");
 assert_eq!(any.try_to_bytes().unwrap(), wire);          // round-trips byte-for-byte
 ```
 
-## What's implemented (v0.1.0)
+## What's implemented
 
 | Layer | Objects |
 |---|---|
-| **APDU framework** | 3-byte `ApduTag` + Table 58 constants; ASN.1 `length_field` codec; `AnyApdu` tag dispatch (Def-trait + `declare_apdus!` macro + drift test); 4-octet `ResourceId` |
+| **APDU framework** | 3-byte `ApduTag` + Table 58 constants; ASN.1 `length_field` codec with the coding form preserved (`length::LengthForm`, see below); `AnyApdu` tag dispatch (Def-trait + `declare_apdus!` macro + drift test); 4-octet `ResourceId` |
 | **CA support** | `ca_info_enq` / `ca_info`, `ca_pmt`, `ca_pmt_reply` |
 | **CA_PMT builder** | `build_ca_pmt(PmtSection, list_management, cmd_id)` — strips all non-CA descriptors, keeps `CA_descriptor`s at programme + ES level; `build_ca_pmt_for_caids(…, allowed)` / `CaPmtBuilt::retain_caids(&[u16])` filter to the CAM's advertised `CA_system_id`s |
 | **Application Information** | `application_info_enq` / `application_info` / `enter_menu` |
 | **Resource Manager** | `profile_enq` / `profile` (reply) / `profile_change` |
 | **Date-Time** | `date_time_enq` / `date_time` (optional `local_offset`) |
-| **MMI** | `close_mmi` |
+| **Host Control** | `objects::host_control` (tune / replace / clear_replace / ask_release) |
+| **MMI** | low-level/display/keypad/subtitle/download objects (`objects::mmi_display`, `mmi_close`) and high-level menu/list/enq/answ (`objects::mmi_high`) |
+| **Low-Speed Communications** | `objects::low_speed_comms` |
 | **Session (SPDU)** | `open`/`create`/`close` session request+response, `session_number`, status values |
 | **Transport (TPDU)** | C_TPDU / R_TPDU (+ Status Byte), Create/Delete/Request/New_T_C, T_C_Error, SB_value |
+| **DVB CI extensions** (`ci_ext`, ETSI TS 101 699) | resource-scoped dispatch (`CiExtApdu`, keyed on `resource_identifier()` because the extension resources reuse `0x9F80xx` tags): Resource Manager v2, Application Information v2, Power Manager, Event Manager, Copy Protection, StreamInput, ServiceGateway, BroadcastServiceGateway, Status Query, Application MMI, Download, CA Pipeline |
+| **CI Plus extensions** (`ci_plus`, ETSI TS 103 205) | resource-scoped dispatch (`CiPlusApdu`): Multi-stream, Content Control (`cc_PIN_*` + SAC datatype model), Multi-stream Host Control (tune APDUs), Sample Decryption, CICAM Player, Auxiliary File System; the extended CA Support `ca_pmt`, LSC v4, URI v3 and Sample-Mode descriptors are standalone typed structs outside `CiPlusApdu` dispatch |
 
-### Deferred to a follow-up
+### Typed PIDs and preserved length coding
 
-The MMI **high-level** objects (text / enq / answ / menu / list, Tables 46-51),
-the MMI low-level/display objects, and the **Host Control** (tune / replace) and
-**Low-Speed Communications** resources are not yet typed. Their `apdu_tag`s are
-retained in [`docs/en_50221/apdu-tag-values.md`](docs/en_50221/apdu-tag-values.md);
-until implemented, `AnyApdu::parse` yields them as `AnyApdu::Unknown` with the
-raw body preserved (lossless round-trip). CI+ crypto (the CC resource) and the
-PC-Card hardware transport are out of scope (separate specs).
+- Every 13-bit PID field (`CaPmtStream::elementary_pid`, `CaPmtReplyStream::elementary_pid`, `Replace::{replaced_pid,replacement_pid}`, the CI+ PID-select / sample-track / comms fields) is `mpeg_ts::pid::Pid`, so an out-of-range PID is unrepresentable rather than checked at serialize time (new dependency: `mpeg-ts`).
+- A CAM may code a length in a longer form than necessary (`82 00 09` for 9, captured on hardware). `length::LengthForm` (`Minimal`, or `Long { octets }`) is captured by `parse` on every APDU, SPDU and TPDU object and re-emitted by `serialize`, so parse -> serialize is byte-exact. The header-only objects are therefore no longer unit structs (use `Default::default()`).
+
+### Out of scope
+
+CI+ crypto (the CC resource's cryptography) and the PC-Card hardware transport are not implemented (separate specs). An unallocated/private `apdu_tag` is produced by `AnyApdu::parse` as `AnyApdu::Unknown` with the raw body preserved (lossless round-trip).
 
 ## Features
 
