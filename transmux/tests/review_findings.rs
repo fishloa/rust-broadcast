@@ -95,6 +95,80 @@ fn eac3_cc_gap_in_next_pes_drops_the_held_intact_access_unit() {
     assert_eq!(n, 156, "streaming: only the damaged PES's access unit is lost");
 }
 
+fn decode_pts(b: &[u8]) -> u64 {
+    (u64::from(b[0] >> 1) & 0x07) << 30
+        | u64::from(b[1]) << 22
+        | (u64::from(b[2]) >> 1) << 15
+        | u64::from(b[3]) << 7
+        | u64::from(b[4]) >> 1
+}
+
+fn encode_pts(prefix: u8, v: u64) -> [u8; 5] {
+    [
+        (prefix << 4) | (((v >> 30) as u8 & 0x07) << 1) | 1,
+        (v >> 22) as u8,
+        (((v >> 15) as u8) << 1) | 1,
+        (v >> 7) as u8,
+        ((v as u8) << 1) | 1,
+    ]
+}
+
+/// The E-AC-3 hold-back retimes a held, COMPLETE access unit onto the NEXT
+/// PES's timeline. When the next PES's PTS jumps (a splice / timeline
+/// discontinuity), `emit_audio_au` re-anchors on the new wire stamp and places
+/// every `from_carry` frame `lead_ticks` before it - correct for a frame that
+/// straddled the PES boundary, wrong for an access unit that lay wholly in the
+/// previous PES and was only *held*: AU 79 (PTS T79 on the old timeline) comes
+/// out at `T80' - 1536`, i.e. 10 s late. Before the hold-back it was emitted
+/// with the old timeline's stamp as soon as PES 79 completed.
+#[test]
+fn eac3_held_access_unit_is_retimed_onto_the_next_pes_timeline_after_a_pts_jump() {
+    let Some(ts) = private("eac3-dep/gw_ffmpeg.ts") else {
+        return;
+    };
+    const JUMP: u64 = 10 * 90_000; // +10 s from PES 80 on
+    const SPLICE: usize = 80;
+    let mut out = ts.clone();
+    let mut pes_index = 0usize;
+    for (i, p) in ts.chunks(TS_PACKET).enumerate() {
+        if pid_of(p) != 0x100 || !pusi(p) {
+            continue;
+        }
+        if pes_index >= SPLICE {
+            let afc = (p[3] >> 4) & 3;
+            let mut off = 4;
+            if afc & 2 != 0 {
+                off += 1 + usize::from(p[4]);
+            }
+            let pes = &p[off..];
+            assert_eq!(&pes[..3], &[0, 0, 1]);
+            assert_eq!(pes[7] & 0xC0, 0x80, "PTS only");
+            let pts = decode_pts(&pes[9..14]);
+            let at = i * TS_PACKET + off + 9;
+            out[at..at + 5].copy_from_slice(&encode_pts(0x2, (pts + JUMP) & ((1 << 33) - 1)));
+        }
+        pes_index += 1;
+    }
+    let media = TsDemux::new().unpackage(&out).expect("demux");
+    let track = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. }))
+        .expect("E-AC-3 track");
+    assert_eq!(track.samples.len(), 157);
+    let dts0 = track.samples[0].dts.unwrap();
+    // 48 kHz track: AU k (k < SPLICE) belongs to the old timeline.
+    let got = track.samples[SPLICE - 1].dts.unwrap();
+    assert_eq!(
+        got,
+        dts0 + (SPLICE as i64 - 1) * 1536,
+        "AU {} (wholly inside PES {}) moved by {} ticks",
+        SPLICE - 1,
+        SPLICE - 1,
+        got - (dts0 + (SPLICE as i64 - 1) * 1536)
+    );
+}
+
 /// `SegmentTimeline::resolve` compares `S@t` with the Period end as if `S@t`
 /// were Period-relative, but `S@t` is on the MEDIA timeline: the Period-
 /// relative start is `S@t - @presentationTimeOffset` (ISO/IEC 23009-1 Table 17;
