@@ -304,7 +304,7 @@ fn every_committed_ts_adaptation_field_round_trips() {
 ///   `test-147.ts` are scrambling-test streams whose adaptation-field bytes are
 ///   pseudo-random (non-DVB `transport_scrambling_control` values, AF-only
 ///   packets with random flags), so a private-data length overruns the AF;
-///   likewise e.g. `hotbird-mhp.ts` pkt 391355: PID 0x1125, scrambled,
+///   likewise e.g. `hotbird-mhp-si.ts` pkt 29872 (pkt 391355 of the full `hotbird-mhp.ts`): PID 0x1125, scrambled,
 ///   whose bytes 4.. are `47 03 B8 1F ..` — a duplicated header of the *next*
 ///   packet spliced in (capture glitch), so `transport_private_data_length`
 ///   overruns the AF. That is stream damage, not a sender convention, so the
@@ -336,7 +336,7 @@ fn full_archive_adaptation_fields_round_trip() {
     // Only the documented damaged packets may fail to parse.
     for e in &r.parse_errors {
         assert!(
-            e.contains("hotbird-mhp.ts: pkt 391355")
+            e.contains("hotbird-mhp-si.ts: pkt 29872")
                 || e.contains("tsduck-test/input/test-143.ts")
                 || e.contains("tsduck-test/reference/test-147/"),
             "undocumented AF parse error: {e}"

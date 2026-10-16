@@ -1,7 +1,7 @@
 //! Real-capture MHP/BIOP capture test — exercises DSM-CC object-carousel
 //! parsing against a real Hot Bird 13E Italian mux (issue #218).
 //!
-//! Keyed on `private/fixtures/ts/hotbird-mhp.ts` (~336 MB, Git LFS). When the capture is
+//! Keyed on `private/fixtures/ts/hotbird-mhp-si.ts` (27 MB: the whole capture minus video/audio PES). When the capture is
 //! present, scans for DSM-CC sections (table_id 0x3B/0x3C) and parses them as
 //! `DsmccSection`, then attempts to decode `UnMessage` payloads (DSI/DII).
 //!
@@ -20,7 +20,7 @@ use dvb_si::tables::dsmcc::DsmccSection;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
-const CAPTURE: &str = "hotbird-mhp";
+const CAPTURE: &str = "hotbird-mhp-si";
 
 /// Empirically known DSM-CC PIDs from this capture (may carry MHP carousels).
 /// We scan all non-well-known PIDs between 0x0030–0x1FFE for DSM-CC sections.

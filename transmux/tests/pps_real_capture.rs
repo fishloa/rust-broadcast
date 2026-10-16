@@ -3,11 +3,15 @@
 //! announced with new content (A -> B -> A on one id) is re-reported at every
 //! switch, while several ids rotating (#1166) stay silent.
 //!
-//! Real captures: the committed TS fixtures and the first 48 MB of the local
-//! archive's `france-tnt-uhf32.ts` / `hotbird-mhp.ts` /
-//! `transformers-eia608-h264.ts` (skipped cleanly when absent; never
-//! committed). The assertion is that the number of `TrackUpdated` events each
-//! produces equals what the demuxer produced before the per-id change (a
+//! Real captures: the committed TS fixtures plus, from the private fixtures
+//! repo, the video-intact 6 MB heads of the France TNT and Hot Bird muxes
+//! (`tools/make-fixture-excerpts.py prefix`; the originals were 187/352 MB) and
+//! the 14 MB `transformers-eia608-h264.ts` (skipped loudly without `private/`).
+//! Measured when these were cut: with the demuxer mutated so every repeated PPS
+//! counts as a change, the France head yields 2 `TrackUpdated` events (so the
+//! assertion still bites), the Hot Bird head 0 (the 48 MB prefix also gave 0, so
+//! no PPS-flap coverage was lost there), transformers 5. The assertion is that the number of `TrackUpdated` events
+//! each produces equals what the demuxer produced before the per-id change (a
 //! real encoder repeating or rotating its headers must not start flapping).
 
 use std::io::Read;
@@ -63,8 +67,8 @@ fn real_captures_track_update_counts() {
         checked += 1;
     }
     for name in [
-        "france-tnt-uhf32.ts",
-        "hotbird-mhp.ts",
+        "france-tnt-uhf32-video-head-6MB.ts",
+        "hotbird-mhp-video-head-6MB.ts",
         "transformers-eia608-h264.ts",
     ] {
         let Some(path) = test_fixtures::require(&format!("ts/{name}"), "pps_real_capture") else {

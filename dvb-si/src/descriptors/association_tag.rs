@@ -211,7 +211,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for AssociationTagDescriptor<'a> {
 mod tests {
     use super::*;
 
-    // ── real fixture: ETSI Hot Bird MHP mux (private/fixtures/ts/hotbird-mhp.ts) ────
+    // ── real fixture: ETSI Hot Bird MHP mux (private/fixtures/ts/hotbird-mhp-si.ts) ────
     //
     // Two association_tag_descriptor instances extracted from the live capture
     // (each appears 13× across the PMTs). Both use the `use == 0x0000` branch.

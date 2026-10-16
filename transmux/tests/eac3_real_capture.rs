@@ -8,7 +8,8 @@
 //!
 //! Inputs: the committed `fixtures/ts/dolby/eac3.ts` and
 //! `fixtures/ts/gulli-opengop.ts`, plus (skipped cleanly when absent) the
-//! first 24 MB of the private fixtures repo's `france-tnt-uhf32.ts`.
+//! `france-tnt-uhf32-si-audio.ts` from the private fixtures repo (the whole
+//! capture's non-video packets).
 
 use std::path::PathBuf;
 
@@ -92,32 +93,33 @@ fn committed_real_eac3_captures_unchanged() {
 
 #[test]
 fn real_capture_france_tnt_eac3_unchanged() {
-    let Some(path) = test_fixtures::require("ts/france-tnt-uhf32.ts", "eac3_real_capture") else {
+    // The whole 62 s capture, video PES dropped (`tools/make-fixture-excerpts.py
+    // si-audio`). Per-track values below are re-derived from the excerpt. They
+    // are equivalent in coverage to the previous pin over the first 24 MB of the
+    // full capture: that pin (3..8 timeline gaps per track) was reproduced
+    // exactly from the same 24 MB with the video removed, so the E-AC-3
+    // demux result does not depend on the video packets, and the whole-capture
+    // run extends it to 1.5k+ frames per track.
+    let Some(buf) =
+        test_fixtures::require_bytes("ts/france-tnt-uhf32-si-audio.ts", "eac3_real_capture")
+    else {
         return;
     };
-    let f = std::fs::File::open(&path).expect("open capture");
-    use std::io::Read;
-    let mut buf = Vec::new();
-    f.take(24 * 1024 * 1024).read_to_end(&mut buf).unwrap();
-    // Cut to a whole number of TS packets.
-    buf.truncate(buf.len() / 188 * 188);
-    // Pinned from the pre-#1186 demuxer's output over the same bytes (the
-    // capture itself carries timeline gaps); identical after the change.
     assert_eq!(
-        check("france-tnt-uhf32.ts[..24MB]", &buf),
+        check("france-tnt-uhf32-si-audio.ts", &buf),
         [
-            (222, 3),
-            (222, 3),
-            (217, 5),
-            (216, 5),
-            (216, 5),
-            (204, 7),
-            (210, 6),
-            (189, 5),
-            (210, 8),
-            (222, 4),
-            (222, 4),
-            (217, 4)
+            (1560, 49),
+            (1536, 51),
+            (1533, 34),
+            (1518, 55),
+            (1542, 52),
+            (1536, 53),
+            (1566, 47),
+            (1540, 33),
+            (1566, 48),
+            (1524, 51),
+            (1542, 50),
+            (1603, 31)
         ]
     );
 }

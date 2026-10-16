@@ -167,7 +167,7 @@ fn eacem_logical_channel_reserved_run_is_all_ones_in_real_captures() {
     let mut nordig = 0usize;
     let who = "local_archive_reserved_defaults";
     let captures = [
-        test_fixtures::require("ts/france-tnt-uhf32.ts", who),
+        test_fixtures::require("ts/france-tnt-uhf32-si-audio.ts", who),
         test_fixtures::tsduck("input/test-059.ts", who),
         test_fixtures::tsduck("input/test-092.ts", who),
         test_fixtures::tsduck("reference/test-124/test-124.ts", who),

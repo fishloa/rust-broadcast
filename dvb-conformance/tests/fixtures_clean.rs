@@ -162,12 +162,55 @@ fn tnt_fixture_events_are_documented() {
     );
 }
 
-// ── #736: france-tnt-uhf32.ts (real DVB-T broadcast) ─────────────────────
+// ── #736: france-tnt-uhf32-si-audio.ts (real DVB-T broadcast, video PES dropped) ─────────────────────
 
 fn read_france_tnt() -> Option<Vec<u8>> {
     // Private repo fixture (`private/fixtures/ts/`): skipped loudly only when
     // the private repo is not checked out.
-    test_fixtures::require_bytes("ts/france-tnt-uhf32.ts", "fixtures_clean")
+    test_fixtures::require_bytes("ts/france-tnt-uhf32-si-audio.ts", "fixtures_clean")
+}
+
+/// Per-packet arrival time (microseconds) from the PCR of the first PCR PID,
+/// linearly interpolated between neighbouring PCR packets (extrapolated with
+/// the nearest interval outside the first/last PCR).
+///
+/// The excerpt has the video PES dropped, so packet index no longer tracks
+/// time. Measured against the full capture, an SI section's arrival time from
+/// this clock is within 6.5 ms (mean 2.4 ms) of the full capture's own
+/// PCR-interpolated time over all 1481 SI section starts, against 341 ms for a
+/// single constant packet spacing: well inside the 25 ms minimum-gap check.
+fn pcr_packet_times_us(data: &[u8]) -> Vec<f64> {
+    let mut pcrs: Vec<(usize, f64)> = Vec::new();
+    let mut first_pid: Option<u16> = None;
+    let n = data.len() / TS_PACKET_SIZE;
+    for (i, p) in data.chunks_exact(TS_PACKET_SIZE).enumerate() {
+        // adaptation field present, length >= 7, PCR flag set
+        if p[0] != 0x47 || p[3] & 0x20 == 0 || p[4] < 7 || p[5] & 0x10 == 0 {
+            continue;
+        }
+        let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
+        if *first_pid.get_or_insert(pid) != pid {
+            continue;
+        }
+        let base = (u64::from(p[6]) << 25)
+            | (u64::from(p[7]) << 17)
+            | (u64::from(p[8]) << 9)
+            | (u64::from(p[9]) << 1)
+            | (u64::from(p[10]) >> 7);
+        let pcr = base * 300 + (u64::from(p[10] & 1) << 8 | u64::from(p[11]));
+        pcrs.push((i, pcr as f64 / 27.0));
+    }
+    assert!(pcrs.len() >= 2, "capture carries a repeating PCR PID");
+    let mut out = Vec::with_capacity(n);
+    let mut k = 0usize;
+    for i in 0..n {
+        while k + 2 < pcrs.len() && pcrs[k + 1].0 <= i {
+            k += 1;
+        }
+        let ((i0, t0), (i1, t1)) = (pcrs[k], pcrs[k + 1]);
+        out.push(t0 + (t1 - t0) * (i as f64 - i0 as f64) / (i1 as f64 - i0 as f64));
+    }
+    out
 }
 
 /// THE HARD GATE: a conformant real DVB-T broadcast produces ZERO new-indicator
@@ -182,6 +225,9 @@ fn france_tnt_uhf32_clean_on_new_736_indicators() {
 
     let mut monitor = ConformanceMonitor::new();
     let n_packets = data.len() / TS_PACKET_SIZE;
+    // The excerpt has the video PES dropped (`tools/make-fixture-excerpts.py
+    // si-audio`); the kept PCR packets carry the real clock.
+    let times_us = pcr_packet_times_us(&data);
 
     let new_indicators: &[Indicator] = &[
         Indicator::EitPfError,
@@ -193,13 +239,13 @@ fn france_tnt_uhf32_clean_on_new_736_indicators() {
 
     let mut violations: Vec<dvb_conformance::ConformanceEvent> = Vec::new();
 
-    for i in 0..n_packets {
+    for (i, &time_us) in times_us.iter().enumerate().take(n_packets) {
         let start = i * TS_PACKET_SIZE;
         let end = start + TS_PACKET_SIZE;
         if end > data.len() {
             break;
         }
-        let t = Duration::from_micros(i as u64 * INTER_PACKET_US);
+        let t = Duration::from_micros(time_us as u64);
         let events = monitor.feed(&data[start..end], t);
         for e in events {
             if new_indicators.contains(&e.indicator) {

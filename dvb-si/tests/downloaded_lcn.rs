@@ -1,7 +1,7 @@
 //! Real-capture LCN capture test — exercises PDS-scoped logical_channel
 //! descriptor decoding against the French TNT mux (issue #218).
 //!
-//! Keyed on `private/fixtures/ts/france-tnt-uhf32.ts`. Uses `SectionSetCollector` to
+//! Keyed on `private/fixtures/ts/france-tnt-uhf32-si-audio.ts` (non-video packets of the whole capture). Uses `SectionSetCollector` to
 //! gather the complete NIT, then walks the transport-stream loop with a
 //! PDS-scoped registry (`PDS_EACEM`, `PDS_NORDIG`). When a transport stream
 //! carries a logical_channel descriptor (tag 0x83) under a recognised PDS, the
@@ -20,7 +20,7 @@ use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry, PDS_EACEM, PDS_NORDIG};
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
-const CAPTURE: &str = "france-tnt-uhf32";
+const CAPTURE: &str = "france-tnt-uhf32-si-audio";
 
 #[test]
 fn france_tnt_lcn_descriptors_parse() {

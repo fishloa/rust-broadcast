@@ -2,8 +2,15 @@
 //! raise `Buffer_error` (TR 101 290 indicator 3.3).
 //!
 //! Uses the real French TNT UHF-32 off-air multiplex from the private
-//! fixtures repo (`private/fixtures/ts/france-tnt-uhf32.ts`, Git LFS; the test
-//! skips loudly when `private/` is not checked out). The capture carries PCR, so packet arrival times are PCR-derived (a
+//! fixtures repo: `private/fixtures/ts/france-tnt-uhf32-video-w30MB-10MB.ts`, a
+//! 10 MiB video-intact window of the capture opening at a PAT packet (the test
+//! skips loudly when `private/` is not checked out). Window choice is measured:
+//! with the #1035 fix reverted the first `Buffer_error` appears 38-39 MiB into
+//! the capture, and only windows opening early enough to warm the buffer
+//! model (30 MiB+10 MiB reproduces it; 34+8 and 36+6 do not, nor do prefixes
+//! under 39 MiB) fail, so this window keeps the test biting at 10 MiB instead
+//! of the former 60 MB read. Video is intact because TBn buffers of the video
+//! PIDs are part of the model. Packet arrival times are PCR-derived (a
 //! constant rate from the first-to-last PCR of the first PCR PID — ~24
 //! Mbit/s), not invented. Before the fix, the EIT PID (0x0012), which is DVB
 //! SI and not PSI, was fed into TBsys; its back-to-back packets overflowed
@@ -34,12 +41,18 @@ fn pcr_of(p: &[u8]) -> Option<(u16, u64)> {
 
 #[test]
 fn real_multiplex_raises_no_buffer_error() {
-    let Some(path) = test_fixtures::require("ts/france-tnt-uhf32.ts", "tbsys_real_capture") else {
+    let Some(path) = test_fixtures::require(
+        "ts/france-tnt-uhf32-video-w30MB-10MB.ts",
+        "tbsys_real_capture",
+    ) else {
         return;
     };
-    let mut f = std::fs::File::open(&path).expect("open capture");
-    let mut data = vec![0u8; READ_BYTES];
-    f.read_exact(&mut data).expect("read capture prefix");
+    let f = std::fs::File::open(&path).expect("open capture");
+    let mut data = Vec::new();
+    f.take(READ_BYTES as u64)
+        .read_to_end(&mut data)
+        .expect("read capture prefix");
+    data.truncate(data.len() / TS_PACKET * TS_PACKET);
     let n = data.len() / TS_PACKET;
 
     let mut first: Option<(usize, u16, u64)> = None;

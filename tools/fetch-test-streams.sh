@@ -4,7 +4,8 @@
 #
 # The captures the tests need are already mirrored, with a PROVENANCE.md per
 # topic, in the private fixtures repo (`private/fixtures/{ts,mpegh,dash,tsduck}/`,
-# the `private/` submodule; the two >50 MB files are Git LFS). The shared
+# the `private/` submodule; the 187/352 MB captures are kept there as small excerpts made by
+# `tools/make-fixture-excerpts.py`, not as LFS objects). The shared
 # resolver (`test-fixtures` crate: public `fixtures/` -> `private/fixtures/` ->
 # `.test-streams/`) finds them there with no script run. This script exists to
 # (a) re-derive/verify a mirrored file from upstream, (b) fetch the one capture
