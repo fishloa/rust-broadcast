@@ -1464,6 +1464,47 @@ mod tests {
         assert_eq!(counts, vec![297, 297, 297, 303]);
     }
 
+    /// REVIEW FINDING (review/runtimes): a negative `S@r` on the last `S` runs
+    /// to the Period end, but `S@t` is in the presentation-time domain, which
+    /// is offset by `@presentationTimeOffset` (ISO/IEC 23009-1 §5.3.9.6: the
+    /// MPD start time is `(S@t - @presentationTimeOffset) / @timescale`; ETSI TS
+    /// 103 285 / DVB-DASH sets PTO to the earliest media time with Period
+    /// start 0, so a large PTO and a matching large `S@t` are the normal
+    /// shape). `plan_timeline` passes the Period length in ticks as if it were
+    /// an `S@t`-domain end, so `end - t` saturates to 0 and the whole run
+    /// resolves to ZERO segments: a static 10 s Period of 2 s segments
+    /// ingests nothing (before #1187 it was at least one segment).
+    #[test]
+    fn review_negative_r_with_presentation_time_offset_runs_to_period_end() {
+        let mpd = r#"<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT10S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period id="p0" start="PT0S">
+    <AdaptationSet mimeType="video/mp4">
+      <SegmentTemplate timescale="90000" presentationTimeOffset="900000000" initialization="init.mp4" media="$Time$.m4s">
+        <SegmentTimeline>
+          <S t="900000000" d="180000" r="-1"/>
+        </SegmentTimeline>
+      </SegmentTemplate>
+      <Representation id="v" bandwidth="1000000" codecs="avc1.42c01e"/>
+    </AdaptationSet>
+  </Period>
+</MPD>"#;
+        let mpd = Mpd::parse(mpd).expect("parse");
+        let period = &mpd.periods[0];
+        let st = period.adaptation_sets[0].representations[0]
+            .segment_template
+            .clone()
+            .expect("template");
+        assert_eq!(st.presentation_time_offset, 900_000_000);
+        let (plan, _) = plan_timeline(&st, period_length(period, &mpd), None, None).expect("plan");
+        assert_eq!(
+            plan.len(),
+            5,
+            "10 s Period / 2 s segments = 5 segments, got {plan:?}"
+        );
+        assert_eq!(plan[0].1, Some(900_000_000));
+    }
+
     /// W16: a hostile MPD with a huge `mediaPresentationDuration` and a tiny
     /// `@duration` must not collect an unbounded plan.
     #[test]
