@@ -1,0 +1,57 @@
+---
+status: DRAFT
+---
+# media-plane 0.7.0
+
+_Released 2026-10-16._
+
+**Breaking release.** Segment and part numbers become `SegmentSeq`/`PartIndex` newtypes with checked arithmetic, and track ids are `transmux::TrackId`, so a swapped segment/part argument is a compile error. At `u32::MAX` `next_sequence_number` saturates and a further segment is rejected.
+
+## Why this version
+
+- **Proposed version:** 0.6.0 -> **0.7.0** (major-class: 0.x minor-epoch bump).
+- **Own API/behaviour change class:** major (SegmentSeq/PartIndex/TrackId typed ids).
+- **cargo-semver-checks vs live 0.6.0 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common, scte35-splice, timed-metadata, transmux.
+- **Caret epoch:** 0.6 -> 0.7; every workspace dependent must move with it.
+
+## Dependency changes
+
+```toml
+-broadcast-common = "9.4"
++broadcast-common = "10.0"
+-timed-metadata = "0.6"
++timed-metadata = "0.7"
+-transmux = "0.26"
++transmux = "0.27"
+-scte35-splice = "3.0" # dev-dependency
++scte35-splice = "4.0" # dev-dependency
+```
+
+## Breaking changes and migration
+
+```rust
+// before
+trunk.part_bytes(segment_number, part_index);          // (u32, u32)
+// after
+trunk.part_bytes(SegmentSeq::new(segment_number), PartIndex::new(part_index));
+```
+
+`SegmentEntry::sequence_number`, `PartEntry::{segment_number,part_index}` (and their `new`), `EventAnchor::Segment { segment_number }`, `Trunk::{part_bytes,parts_in_segment,events_in_segment,last_closed_segment}`, `SegmentWriter::{next_sequence_number,note_segment_start}`, `RetentionDriver::locate` and `NonMonotonicSequenceNumber::{attempted,last_published}` use the newtypes (`media_plane::ids`; `checked_next`/`checked_add`/`checked_sub`/`checked_distance_from`, explicit `wrapping_next`/`saturating_next`, no operator impls that overflow silently). `TrackSelection::track_ids`, `TrunkWriter::publish(track_id, ..)`, `SampleCursorItem::Timed { track_id }` and `SessionEvent::Sample { track_id }` use `transmux::TrackId`.
+
+## What changed (from CHANGELOG `[Unreleased]`)
+
+#### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+
+- **BREAKING (#1188):** new `media_plane::ids::{SegmentSeq, PartIndex}` newtypes (checked `checked_next`/`checked_add`/`checked_sub`/`checked_distance_from`, explicit `wrapping_next`/`saturating_next`, no operator impls that could overflow silently). `SegmentEntry::sequence_number`, `PartEntry::segment_number`/`part_index` (and their `new` arguments), `EventAnchor::Segment { segment_number }`, `Trunk::part_bytes`/`parts_in_segment`/`events_in_segment`/`last_closed_segment`, `SegmentWriter::next_sequence_number`/`note_segment_start`, `RetentionDriver::locate` and `NonMonotonicSequenceNumber::{attempted, last_published}` use them instead of `u32`, so a swapped segment/part argument is a compile error. At `u32::MAX` `next_sequence_number` saturates and a further segment is rejected (pinned by `segment_sequence_at_u32_max_saturates_and_rejects_the_next`).
+
+- **BREAKING (#1159):** `TrackSelection::track_ids`, `TrunkWriter::publish(track_id, ..)`, `SampleCursorItem::Timed { track_id }` and `SessionEvent::Sample { track_id }` use `transmux::TrackId` instead of `u32`.
+
+## Merged changes since `media-plane-v0.6.0`
+
+- media-plane: SegmentSeq/PartIndex newtypes across media-plane, hls-runtime, multimux (BREAKING) (#1194)
+- Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
+- Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)
+- Audit critical-bug verification pass: 72 issues re-verified against main; fixes for #1012 #1022 #1034 #1035 #1056 + regression tests (NO release) (#1180)
+- Typed ids wave 2: TrackId/ProgramNumber + HLS naming newtypes, Pid inside dvb-si (BREAKING, NO release) (#1178)
