@@ -27,9 +27,13 @@ parsing inside `dvb-mabr` — that would duplicate `rmt-flute` and drift from it
 The **byte-exact LCT/ALC/FLUTE header layout is out of scope of this document** — see
 `rmt-flute/docs/lct.md`, `alc.md`, `flute.md` in this workspace for that transcription
 (RFC 5651/5775/6726, already spec-cited there). Likewise the exact ROUTE/LCT-extension
-bit layout (`EXT_TOL`, `EXT_TIME`, Codepoint semantics) is **not established here** — it
-lives in ATSC A/331 Annex A, which is not yet vendored or transcribed anywhere in this
-workspace (see [`README.md`](README.md) "could not establish" list).
+bit layout (`EXT_TOL`, `EXT_TIME`, Codepoint semantics) is **not transcribed here** — it
+lives in ATSC A/331 Annex A, which IS vendored
+(`private/specs/atsc_a331_2026-04_signaling_delivery_sync_fec.pdf`: A.3.7.1
+`EXT_ROUTE_PRESENTATION_TIME`, A.3.7.2 `EXT_TIME`, A.3.8.1 `EXT_TOL`, Table A.3.6
+Codepoint values) but not yet transcribed into `dvb-mabr/docs`; the `atsc3-route` crate
+(`src/ext.rs`, `src/codepoint.rs`) carries the HET constants and Codepoint semantics
+(see the open-items list in [`README.md`](README.md)).
 
 What follows is everything TS 103 769 itself specifies: the multicast-transport-object
 concept common to both protocols (clause 8), the FLUTE-specific XML/URI profiling
@@ -206,7 +210,7 @@ H.0): only Codepoints 5-9 are used (clause H.4); MPD-less start-up mode is **pro
 
 **The ROUTE/LCT packet header bit layout itself (the figure in clause H.2.0 showing UDP
 header + Default LCT header + FEC Payload ID + payload) is defined by ATSC A/331 Annex
-A / RFC 5651 / RFC 5775, not by TS 103 769, and is not transcribed here** — see §0 above.
+A (vendored, not yet transcribed into this directory) / RFC 5651 / RFC 5775, not by TS 103 769, and is not transcribed here** — see §0 above.
 What follows is only what TS 103 769 additionally constrains.
 
 ### 3.1 Signalling in the multicast session configuration (clause H.1)

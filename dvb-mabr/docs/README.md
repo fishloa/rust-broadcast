@@ -102,13 +102,14 @@ This list has been updated after the **adversarial fidelity audit** (2026-07-30 
 "Audit history" below) and now records only genuine unknowns, not resolved gaps:
 
 1. **The exact bit layout of `EXT_TOL` and `EXT_TIME`** (ROUTE-specific LCT header
-   extensions used by Annex H, clause H.2.1) — defined in ATSC A/331 Annex A, which is
-   not vendored or transcribed anywhere in this workspace. Needed before Annex H can be
+   extensions used by Annex H, clause H.2.1) — defined in ATSC A/331 Annex A (A.3.7.1, A.3.7.2, A.3.8.1), which is
+   vendored (`private/specs/atsc_a331_2026-04_signaling_delivery_sync_fec.pdf`) but not yet
+   transcribed into `dvb-mabr/docs`; `atsc3-route` holds the HET constants. Needed before Annex H can be
    fully implemented; see the #750 overlap above.
 2. **The ROUTE `Codepoint` registry's full semantics** (ATSC A/331 Table A.3.6) — TS 103
    769 clause H.4 only says Codepoints 5-9 are used and what each means at a summary
    level (init segment vs. media segment, File vs. Entity mode); the full registry
-   table lives in ATSC A/331, not read for this pass.
+   table lives in ATSC A/331 Annex A (vendored; not transcribed into `dvb-mabr/docs`, not read for this pass).
 3. **The overall ROUTE packet diagram** (clause H.2.0, figure H.2.0-1: UDP header +
    Default LCT header + FEC Payload ID + payload) — present in the PDF as an ASCII-art
    bit-ruler diagram that the textlayer conversion reproduced as a garbled fragment
