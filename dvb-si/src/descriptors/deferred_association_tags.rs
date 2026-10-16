@@ -277,15 +277,11 @@ mod tests {
     fn malformed_is_rejected() {
         // odd association_tags_loop_length
         assert!(
-            DeferredAssociationTagsDescriptor::parse(&[
-                0x15, 0x08, 0x03, 0, 1, 2, 0, 1, 0, 2
-            ])
-            .is_err()
+            DeferredAssociationTagsDescriptor::parse(&[0x15, 0x08, 0x03, 0, 1, 2, 0, 1, 0, 2])
+                .is_err()
         );
         // loop longer than body
-        assert!(
-            DeferredAssociationTagsDescriptor::parse(&[0x15, 0x05, 0x04, 0, 1, 0, 2]).is_err()
-        );
+        assert!(DeferredAssociationTagsDescriptor::parse(&[0x15, 0x05, 0x04, 0, 1, 0, 2]).is_err());
         // one private byte cannot hold org_network_id
         assert!(
             DeferredAssociationTagsDescriptor::parse(&[0x15, 0x06, 0x00, 0, 1, 0, 2, 0xFF])

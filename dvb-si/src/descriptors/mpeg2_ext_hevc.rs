@@ -849,10 +849,7 @@ mod tests {
         assert_eq!(d.layouts.len(), 2);
         let l0 = &d.layouts[0];
         assert_eq!(l0.preamble.unwrap().preamble_substream_id, 0x11);
-        assert_eq!(
-            (l0.substream_count_minus_1, l0.level),
-            (2, 0x3C)
-        );
+        assert_eq!((l0.substream_count_minus_1, l0.level), (2, 0x3C));
         assert_eq!((l0.picture_size_hor, l0.picture_size_vert), (1920, 1080));
         assert_eq!(l0.patterns, [vec![1i8, -1], vec![2, -2]]);
         let l1 = &d.layouts[1];

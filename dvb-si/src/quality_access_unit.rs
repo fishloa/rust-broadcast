@@ -245,8 +245,7 @@ impl Serialize for QualityAccessUnit<'_> {
                         reason: "length differs from field_size_bytes",
                     });
                 }
-                let dts =
-                    broadcast_common::len::fit_bits(s.media_dts, DTS_BITS, "media_DTS")?;
+                let dts = broadcast_common::len::fit_bits(s.media_dts, DTS_BITS, "media_DTS")?;
                 buf[pos..pos + DTS_FIELD_LEN].copy_from_slice(&pack_marked(dts, DTS_PREFIX));
                 pos += DTS_FIELD_LEN;
                 buf[pos..pos + s.quality_metric_sample.len()]
@@ -285,7 +284,8 @@ mod tests {
             0x02, 0x02, // field_size_bytes=2, metric_count=2
             0x00, 0x00, 0x00, 0x01, 0x02, // metric 0: code 1, 2 samples
             0x29, 0x8D, 0x15, 0xCF, 0x13, 0x01, 0x02, // DTS 0x1_2345_6789, sample 0x0102
-            0x21, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, // DTS 0 (0010 000 1, 0x0001, 0x0001), sample 0
+            0x21, 0x00, 0x01, 0x00, 0x01, 0x00,
+            0x00, // DTS 0 (0010 000 1, 0x0001, 0x0001), sample 0
             0x00, 0x00, 0x00, 0x02, 0x00, // metric 1: code 2, 0 samples
         ];
         let d = QualityAccessUnit::parse(&b).unwrap();
@@ -325,13 +325,17 @@ mod tests {
         // truncated sample
         assert!(QualityAccessUnit::parse(&[0x01, 0x01, 0, 0, 0, 1, 1, 0x21, 0, 1]).is_err());
         // bad DTS prefix ('0011' instead of '0010')
-        let bad = [0x01, 0x01, 0, 0, 0, 1, 1, 0x31, 0x00, 0x01, 0x00, 0x01, 0x07];
+        let bad = [
+            0x01, 0x01, 0, 0, 0, 1, 1, 0x31, 0x00, 0x01, 0x00, 0x01, 0x07,
+        ];
         assert!(matches!(
             QualityAccessUnit::parse(&bad),
             Err(Error::ReservedBitsViolation { .. })
         ));
         // clear marker bit
-        let bad = [0x01, 0x01, 0, 0, 0, 1, 1, 0x20, 0x00, 0x01, 0x00, 0x01, 0x07];
+        let bad = [
+            0x01, 0x01, 0, 0, 0, 1, 1, 0x20, 0x00, 0x01, 0x00, 0x01, 0x07,
+        ];
         assert!(QualityAccessUnit::parse(&bad).is_err());
         // trailing byte
         let ok = [0x01, 0x00, 0xFF];

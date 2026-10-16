@@ -173,10 +173,12 @@ mod tests {
 
     #[test]
     fn empty_loop_and_errors() {
-        assert!(ProviderExportDescriptor::parse(&[TAG, 0])
-            .unwrap()
-            .providers
-            .is_empty());
+        assert!(
+            ProviderExportDescriptor::parse(&[TAG, 0])
+                .unwrap()
+                .providers
+                .is_empty()
+        );
         // name present, class length byte missing
         assert!(ProviderExportDescriptor::parse(&[TAG, 2, 1, b'a']).is_err());
         // class overruns
