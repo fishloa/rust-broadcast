@@ -59,6 +59,18 @@ impl<'a> BitReader<'a> {
         Ok(v)
     }
 
+    /// Read `n` (1..=64) bits.
+    pub(crate) fn bits64(&mut self, n: usize) -> Result<u64> {
+        if self.remaining_bits() < n {
+            return Err(self.short(n));
+        }
+        let mut v: u64 = 0;
+        for _ in 0..n {
+            v = (v << 1) | u64::from(self.bits(1)?);
+        }
+        Ok(v)
+    }
+
     /// Read `n` (1..=8) bits as a `u8`.
     pub(crate) fn u8(&mut self, n: usize) -> Result<u8> {
         Ok(u8::try_from(self.bits(n)?).unwrap_or(u8::MAX))

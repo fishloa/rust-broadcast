@@ -12,7 +12,7 @@ _Rec. ITU-T H.222.0 (08/2023) §2.6.119; printed p.144 (PDF p.166). Verified aga
 | } |  |  |
 
 ## Table 2-129 — Virtual segmentation descriptor (ext 0x10)
-_§2.6.120–2.6.121; printed p.145 (PDF p.167). Verified against the rendered page (byte alignment checked: each partition is 8 + 8 + MDL×8 bits or 8 + 8 + 16 bits)._
+_§2.6.120–2.6.121; printed p.145 (PDF p.167). Verified on the rendered page (PDF p.167, printed p.145). Byte alignment checked: a partition is 8 + 3 + (MDL×8 + 5) = 16 + MDL×8 bits when explicit (MDL = field + 1, or 0 without timescale), or 8 + 24 bits when it references a boundary PID._
 
 | Syntax | No. of bits | Mnemonic |
 |---|---|---|
@@ -37,7 +37,7 @@ _§2.6.120–2.6.121; printed p.145 (PDF p.167). Verified against the rendered p
 | &nbsp;&nbsp;} |  |  |
 | } |  |  |
 
-> **Deferred (ambiguous text), not implemented.** §2.6.121 (printed p.145) says, verbatim: "timescale_flag: If set to '1', timescale information is present. If set to '0', ticks_per_second is inferred to be 1, and MDL is inferred to be 0 (i.e., maximum_duration_length_minus_1=−1)." and "maximum_duration_length_minus_1: Length, in bytes (minus one), of the maximum_duration field variable byte length. This provides additional bytes in addition to the 5 bits pre-allocated to the maximum_duration field." while Table 2-129 labels the 2-bit field itself "(MDL)" and sizes `maximum_duration` as `MDL*8 + 5` bits. Two readings of the extra byte count are possible (`MDL` = field value, or field value + 1); the text does not settle it. TSDuck 3.44 (`tstabcomp`) encodes the first reading (a 13-bit `maximum_duration` is written with the 2-bit field = 1, and its model limits `maximum_duration` to 29 bits = field 3), but a single implementation is not the spec. The descriptor therefore stays `Mpeg2ExtensionBody::Other` (verbatim bytes) until the text is clarified. `descriptor_length` here is the size of the body after `extension_descriptor_tag` (cf. Table 2-130 "N1 = descriptor_length minus 1").
+> **Spec note (implemented per the text; TSDuck 3.44 differs).** §2.6.121 (printed p.145) says, verbatim: "timescale_flag: If set to '1', timescale information is present. If set to '0', ticks_per_second is inferred to be 1, and MDL is inferred to be 0 (i.e., maximum_duration_length_minus_1=−1)." and "maximum_duration_length_minus_1: Length, in bytes (minus one), of the maximum_duration field variable byte length. This provides additional bytes in addition to the 5 bits pre-allocated to the maximum_duration field." Table 2-129 labels the 2-bit field "(MDL)" and sizes `maximum_duration` as `MDL*8 + 5` bits. The text is determinate: the field holds MDL − 1 (the "minus_1" of its name, and the explicit statement that `timescale_flag = 0` gives MDL = 0, i.e. field = −1), so **MDL = field + 1** and `maximum_duration` is 13, 21, 29 or 37 bits for field = 0..3 (a bare 5 bits, "up to 31 seconds", without timescale). `descriptor_length` here is the size of the body after `extension_descriptor_tag` (cf. Table 2-130 "N1 = descriptor_length minus 1"): the fields are present only for a body longer than one byte; an empty body is accepted as "no fields" and a one-byte body, which the syntax does not define, is rejected. **TSDuck 3.44** (`tstabcomp`) writes the field as MDL itself (a 13-bit `maximum_duration` is written with the 2-bit field = 1) and so disagrees with the spec text by one byte; the bytes it produced (recorded in `tests/h222_descriptors.rs`; the committed `tsduck-h222-descriptors-pmt.bin` carries ext 0x13 but no ext 0x10, and is not edited) are rejected by this implementation as a truncated partition, and parse cleanly only when the field is patched to MDL − 1. The test asserts exactly this.
 
 ## Table 2-130 — HEVC tile substream descriptor (ext 0x12)
 _§2.6.122–2.6.123; printed p.146 (PDF p.168). Verified against the rendered page._
@@ -56,7 +56,7 @@ _§2.6.122–2.6.123; printed p.146 (PDF p.168). Verified against the rendered p
 N1 = descriptor_length − 1 (body size minus the first byte). When the body is a single byte, `ReferenceFlag` is reserved.
 
 ## Table 2-131 — HEVC subregion descriptor (ext 0x13)
-_§2.6.125–2.6.126; printed p.147 (PDF p.169). Verified against the rendered page._
+_§2.6.125–2.6.126; printed p.147 (PDF p.169; semantics p.148, PDF p.170). Verified on the rendered pages (PDF pp.169-170, printed pp.147-148)._
 
 | Syntax | No. of bits | Mnemonic |
 |---|---|---|
@@ -79,7 +79,7 @@ _§2.6.125–2.6.126; printed p.147 (PDF p.169). Verified against the rendered p
 
 N1 is implied by the descriptor size.
 
-> **Deferred (loop bound in doubt), not implemented.** The table prints the inner loop as `for (k=0; k<SubstreamCountMinus1[i]; k++)`, i.e. `SubstreamCountMinus1` offsets per pattern, while §2.6.126 describes `SubstreamCountMinus1[i]` (range 0..TotalSubstreamIDs−1) as "the number of HEVC tile substreams to be appended". TSDuck 3.44 (`tstabcomp`) disagrees with the printed bound: for two `<Substream offset>` entries it writes `SubstreamCountMinus1 = 1` followed by **two** offset bytes (see `dvb-si/tests/fixtures/tsduck-h222-descriptors-pmt.bin`, ext 0x13). Because the printed syntax and the only independent implementation disagree, the descriptor stays `Mpeg2ExtensionBody::Other` (verbatim bytes) until the text is clarified.
+> **Spec note (implemented per the text; TSDuck 3.44 differs).** The table prints the inner loop as `for (k=0; k<SubstreamCountMinus1[i]; k++)`, i.e. `SubstreamCountMinus1` offsets per pattern, and §2.6.126 (printed p.148) describes `SubstreamCountMinus1[i]` (range 0..TotalSubstreamIDs−1) as "the number of HEVC tile substreams to be appended" (SubstreamMarkingFlag = 1) or "to be added to the list of SubstreamIDs" (= 0). The printed bound and the semantics agree, so the loop count is the field value; the outer `i<N1` loop is implied by the descriptor size ("The value N1 is implied by the descriptor size", NOTE under the table), i.e. layouts run to the end of the body. The prose also calls `PatternCount[i]` "the number of different subregion layouts" where the loop uses it as the number of offset patterns of layout `i`; the loop structure is what is implemented. **TSDuck 3.44** (`tstabcomp`) writes `SubstreamCountMinus1 = 1` followed by **two** offset bytes per pattern (see `dvb-si/tests/fixtures/tsduck-h222-descriptors-pmt.bin`, ext 0x13, which is not edited): one more than the spec loop. This implementation rejects those bytes (the stray second offset is read as the start of a truncated second layout) and parses them cleanly only when `SubstreamCountMinus1` is patched to 2; `tests/h222_descriptors.rs` asserts both. Reserved bits are typed and preserved; `SubstreamOffset` is an 8-bit `tcimsbf` (`i8`).
 
 ## Table 2-132 — JPEG XS video descriptor (ext 0x14)
 _§2.6.127–2.6.128; printed p.149 (PDF p.171). Verified against the rendered page._

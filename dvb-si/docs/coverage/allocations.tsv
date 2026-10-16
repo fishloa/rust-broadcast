@@ -238,10 +238,10 @@ mpeg2_extension_tag	0x0C	MPEG-H_3dAudio_multi-stream_descriptor	ITU-T H.222.0 (0
 mpeg2_extension_tag	0x0D	MPEG-H_3dAudio_drc_loudness_descriptor	ITU-T H.222.0 (08/2023)	2.6.116	163
 mpeg2_extension_tag	0x0E	MPEG-H_3dAudio_command_descriptor	ITU-T H.222.0 (08/2023)	2.6.118	165
 mpeg2_extension_tag	0x0F	quality_extension_descriptor	ITU-T H.222.0 (08/2023)	2.6.119	166
-mpeg2_extension_tag	0x10	virtual_segmentation_descriptor	ITU-T H.222.0 (08/2023)	2.6.120
+mpeg2_extension_tag	0x10	virtual_segmentation_descriptor	ITU-T H.222.0 (08/2023)	2.6.120	167
 mpeg2_extension_tag	0x11	timed_metadata_extension_descriptor	ITU-T H.222.0 (08/2023)
 mpeg2_extension_tag	0x12	HEVC_tile_substream_descriptor	ITU-T H.222.0 (08/2023)	2.6.122	168
-mpeg2_extension_tag	0x13	HEVC_subregion_descriptor	ITU-T H.222.0 (08/2023)	2.6.125
+mpeg2_extension_tag	0x13	HEVC_subregion_descriptor	ITU-T H.222.0 (08/2023)	2.6.125	169
 mpeg2_extension_tag	0x14	JXS_video_descriptor	ITU-T H.222.0 (08/2023)	2.6.127	171
 mpeg2_extension_tag	0x15	VVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.131	176
 mpeg2_extension_tag	0x16	EVC_timing_and_HRD_descriptor	ITU-T H.222.0 (08/2023)	2.6.135	179

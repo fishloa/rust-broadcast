@@ -29,7 +29,7 @@ text; **Source cites** is what the module's own doc comment says (see the
 | Section types (table_id) | **31** typed `*Section` parsers covering **72** table_id values — every allocated EN 300 468 Table 2 id |
 | Descriptors (tag 0x00–0x7F) | **116** auto-dispatched: **52** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
 | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
-| MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (7 MPEG-H 3D audio, plus HEVC/VVC/EVC/LCEVC/JPEG XS timing and structure, green, quality, OD update, timed metadata, media service kind) |
+| MPEG-2 extension descriptors (0x3F) | **24** typed `extension_descriptor_tag` bodies (7 MPEG-H 3D audio, plus HEVC/VVC/EVC/LCEVC/JPEG XS timing and structure, green, quality, OD update, timed metadata, media service kind) |
 | AIT descriptors (TS 102 809 / MHP) | **21** typed in the separate AIT descriptor namespace |
 | INT / UNT / RNT descriptors | **26** typed in their own scoped namespaces (`AnyIntDescriptor`, `AnyUntDescriptor`, `AnyRntDescriptor`) |
 | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
@@ -37,14 +37,14 @@ text; **Source cites** is what the module's own doc comment says (see the
 | DSM-CC carousel | **12** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree |
 | Registries | **171** CA_system_id and **174** private_data_specifier names (TSDuck data, build-time) |
 | Standards | **19** standards / families — see the table below |
-| Known gaps | **9** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
+| Known gaps | **7** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
 
 ## Standards
 
 | Standard | Title | Edition implemented | Scope covered | Status |
 |---|---|---|---|---|
 | ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (98/98 allocated codes) |
-| Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (80/85 allocated codes) |
+| Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (82/85 allocated codes) |
 | ISO/IEC 13818-6 | DSM-CC (data/object carousel) | as profiled by ETSI TR 101 202 V1.2.1 (13818-6 itself is not vendored) | DSM-CC sections, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel_identifier + association_tag descriptors | Partial (3/5 allocated codes) |
 | ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Full (29/29 allocated codes) |
 | ETSI TS 102 006 | DVB System Software Update (SSU) | V1.4.1 | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Full (16/16 allocated codes) |
@@ -304,10 +304,10 @@ Allocated by Rec. ITU-T H.222.0 (08/2023) Table 2-110.
 | 0x0D | MPEG-H_3dAudio_drc_loudness_descriptor | ITU-T H.222.0 (08/2023) | 2.6.116 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioDrcLoudness`](../src/descriptors/mpegh_3d_audio.rs) | Full |
 | 0x0E | MPEG-H_3dAudio_command_descriptor | ITU-T H.222.0 (08/2023) | 2.6.118 | Rec. ITU-T H.222.0 (06/2021 \| 08/2023) \| ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127 | [`MpegH3dAudioCommand`](../src/descriptors/mpegh_3d_audio.rs) | Typed-opaque — payload kept as bytes (its syntax is defined in ISO/IEC 23008-3) |
 | 0x0F | quality_extension_descriptor | ITU-T H.222.0 (08/2023) | 2.6.119 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`QualityExtension`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
-| 0x10 | virtual_segmentation_descriptor | ITU-T H.222.0 (08/2023) | 2.6.120 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
+| 0x10 | virtual_segmentation_descriptor | ITU-T H.222.0 (08/2023) | 2.6.120 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`VirtualSegmentation`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
 | 0x11 | timed_metadata_extension_descriptor | ITU-T H.222.0 (08/2023) | — | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`TimedMetadataExtension`](../src/descriptors/mpeg2_ext_misc.rs) | Typed-opaque — body kept as bytes (ISO/IEC 23001-13 clause 8.2.3, not vendored) |
 | 0x12 | HEVC_tile_substream_descriptor | ITU-T H.222.0 (08/2023) | 2.6.122 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`HevcTileSubstream`](../src/descriptors/mpeg2_ext_hevc.rs) | Full |
-| 0x13 | HEVC_subregion_descriptor | ITU-T H.222.0 (08/2023) | 2.6.125 | — | — | Not implemented — kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly |
+| 0x13 | HEVC_subregion_descriptor | ITU-T H.222.0 (08/2023) | 2.6.125 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023 | [`HevcSubregion`](../src/descriptors/mpeg2_ext_hevc.rs) | Full |
 | 0x14 | JXS_video_descriptor | ITU-T H.222.0 (08/2023) | 2.6.127 | Rec. ITU-T H.222.0 (08/2023) \| ISO/IEC 13818-1:2023, extension_descriptor_tag | [`JxsVideo`](../src/descriptors/mpeg2_ext_misc.rs) | Full |
 | 0x15 | VVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.131 | Rec. ITU-T H.222.0 (08/2023) §2.6.97, §2.6.131, §2.6.135 | [`VvcTimingAndHrd`](../src/descriptors/h222_timing.rs) | Full |
 | 0x16 | EVC_timing_and_HRD_descriptor | ITU-T H.222.0 (08/2023) | 2.6.135 | Rec. ITU-T H.222.0 (08/2023) §2.6.97, §2.6.131, §2.6.135 | [`EvcTimingAndHrd`](../src/descriptors/h222_timing.rs) | Full |
@@ -507,7 +507,6 @@ real fixture first.
 |---|---|---|
 | table_id | 4 | 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x0A ISO/IEC 23001-10 quality access unit section, 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
 | Descriptor tags (SI / MPEG namespace) | 2 | 0x16–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored and its layouts for tags 0x16-0x1A appear in no vendored spec: 0x17-0x1A are the stream-event / NPT descriptors, and TS 102 809 B.2.4.2 says NPT is obsolete and gives no layout), 0x29 IPMP_descriptor (ISO/IEC 13818-11) |
-| MPEG-2 extension_descriptor_tag | 2 | 0x10 virtual_segmentation_descriptor, 0x13 HEVC_subregion_descriptor |
 | AIT descriptors | 1 | 0x08 DVB-HTML_application_descriptor |
 
 ## Citation cross-check
@@ -520,6 +519,6 @@ module cites a clause that is neither the verified clause nor a sub-clause of it
 
 Every module citation that names a clause agrees with the verified clause.
 
-255 implemented rows have their clause verified against the rendered PDF page
-(`verified_page` column of `coverage/allocations.tsv`); 5 not-implemented rows
+257 implemented rows have their clause verified against the rendered PDF page
+(`verified_page` column of `coverage/allocations.tsv`); 3 not-implemented rows
 carry a clause that is not yet page-verified (nothing cites it).

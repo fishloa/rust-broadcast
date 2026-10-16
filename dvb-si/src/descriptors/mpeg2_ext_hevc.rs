@@ -7,10 +7,15 @@
 //!   the same quantity.
 //! * 0x06 `HEVC_hierarchy_extension_descriptor()` — §2.6.102, Table 2-118.
 //! * 0x12 `HEVC_tile_substream_descriptor()` — §2.6.122, Table 2-130.
+//! * 0x13 `HEVC_subregion_descriptor()` — §2.6.125, Table 2-131 (semantics §2.6.126).
 //!
-//! (0x13 `HEVC_subregion_descriptor()`, Table 2-131, is deliberately not typed:
-//! its inner `SubstreamOffset` loop is bounded by `k < SubstreamCountMinus1[i]`
-//! as printed, which TSDuck 3.44 contradicts — see the docs.)
+//! `HEVC_subregion_descriptor` follows the printed syntax and §2.6.126: the
+//! inner `SubstreamOffset` loop runs `k < SubstreamCountMinus1[i]` times (the
+//! field is "the number of HEVC tile substreams to be appended", so the loop
+//! count is the field value), and the outer `N1` loop is implied by the
+//! descriptor size (it runs to the end of the body). TSDuck 3.44 writes one
+//! more offset per pattern than that and so disagrees; the divergence is
+//! pinned in `tests/h222_descriptors.rs` and noted in the docs.
 //!
 //! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
 //! and `…-0x0f-0x19.md`. `profile_tier_level_info[i]` is carried as 12 opaque
@@ -602,10 +607,300 @@ impl HevcTileSubstream {
     }
 }
 
+// ───────────────────────── 0x13 HEVC_subregion_descriptor ───────────────────
+
+/// `reserved(1) + PreambleSubstreamID[i](7)`, present when
+/// `SubstreamMarkingFlag == 1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct HevcSubregionPreamble {
+    /// `reserved(1)`, default 1.
+    pub reserved: bool,
+    /// `PreambleSubstreamID[i]` (7 bits): 0 or `TotalSubstreamIDs + 1..=127`.
+    pub preamble_substream_id: u8,
+}
+
+impl HevcSubregionPreamble {
+    /// Build with the spec `reserved` fill.
+    #[must_use]
+    pub const fn new(preamble_substream_id: u8) -> Self {
+        Self {
+            reserved: true,
+            preamble_substream_id,
+        }
+    }
+}
+
+/// One subregion layout (`i` loop entry) of the HEVC subregion descriptor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct HevcSubregionLayout {
+    /// `PreambleSubstreamID[i]`, present iff `SubstreamMarkingFlag == 1`.
+    pub preamble: Option<HevcSubregionPreamble>,
+    /// `SubstreamCountMinus1[i]` (8 bits): the number of tile substreams to be
+    /// appended (also the number of `SubstreamOffset`s in each pattern).
+    pub substream_count_minus_1: u8,
+    /// `Level[i]`.
+    pub level: u8,
+    /// `PictureSizeHor[i]`, pixels.
+    pub picture_size_hor: u16,
+    /// `PictureSizeVert[i]`, pixels.
+    pub picture_size_vert: u16,
+    /// `reserved(1)` before `PatternCount`, default 1.
+    pub reserved: bool,
+    /// `SubstreamOffset[k][j][i]` (8-bit `tcimsbf`): one inner vector per
+    /// pattern `j` (`PatternCount[i]` of them, at most 127), each holding
+    /// `substream_count_minus_1` offsets.
+    pub patterns: Vec<Vec<i8>>,
+}
+
+impl HevcSubregionLayout {
+    /// Build with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        preamble: Option<HevcSubregionPreamble>,
+        substream_count_minus_1: u8,
+        level: u8,
+        picture_size_hor: u16,
+        picture_size_vert: u16,
+        patterns: Vec<Vec<i8>>,
+    ) -> Self {
+        Self {
+            preamble,
+            substream_count_minus_1,
+            level,
+            picture_size_hor,
+            picture_size_vert,
+            reserved: true,
+            patterns,
+        }
+    }
+}
+
+/// `HEVC_subregion_descriptor()` — Table 2-131 (`extension_descriptor_tag` 0x13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct HevcSubregion {
+    /// `SubstreamMarkingFlag`: each tile substream is in its own ES.
+    pub substream_marking_flag: bool,
+    /// `SubstreamIDsPerLine` (7 bits).
+    pub substream_ids_per_line: u8,
+    /// `TotalSubstreamIDs` (8 bits).
+    pub total_substream_ids: u8,
+    /// `LevelFullPanorama` (8 bits).
+    pub level_full_panorama: u8,
+    /// The `N1` subregion layouts (`N1` is implied by the descriptor size).
+    pub layouts: Vec<HevcSubregionLayout>,
+}
+
+impl HevcSubregion {
+    /// Build a descriptor from its fields.
+    #[must_use]
+    pub fn new(
+        substream_marking_flag: bool,
+        substream_ids_per_line: u8,
+        total_substream_ids: u8,
+        level_full_panorama: u8,
+        layouts: Vec<HevcSubregionLayout>,
+    ) -> Self {
+        Self {
+            substream_marking_flag,
+            substream_ids_per_line,
+            total_substream_ids,
+            level_full_panorama,
+            layouts,
+        }
+    }
+
+    pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
+        let mut r = BitReader::new(body, "HevcSubregion");
+        let substream_marking_flag = r.flag()?;
+        let substream_ids_per_line = r.u8(7)?;
+        let total_substream_ids = r.u8(8)?;
+        let level_full_panorama = r.u8(8)?;
+        let mut layouts = Vec::new();
+        while r.remaining_bytes() > 0 {
+            let preamble = if substream_marking_flag {
+                Some(HevcSubregionPreamble {
+                    reserved: r.flag()?,
+                    preamble_substream_id: r.u8(7)?,
+                })
+            } else {
+                None
+            };
+            let substream_count_minus_1 = r.u8(8)?;
+            let level = r.u8(8)?;
+            let picture_size_hor = r.u16(16)?;
+            let picture_size_vert = r.u16(16)?;
+            let reserved = r.flag()?;
+            let pattern_count = r.u8(7)?;
+            let mut patterns = Vec::new();
+            for _ in 0..pattern_count {
+                let mut offsets = Vec::new();
+                for _ in 0..substream_count_minus_1 {
+                    offsets.push(i8::from_be_bytes([r.u8(8)?]));
+                }
+                patterns.push(offsets);
+            }
+            layouts.push(HevcSubregionLayout {
+                preamble,
+                substream_count_minus_1,
+                level,
+                picture_size_hor,
+                picture_size_vert,
+                reserved,
+                patterns,
+            });
+        }
+        Ok(Self {
+            substream_marking_flag,
+            substream_ids_per_line,
+            total_substream_ids,
+            level_full_panorama,
+            layouts,
+        })
+    }
+
+    pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
+        let mut w = BitWriter::new();
+        w.flag(self.substream_marking_flag, "SubstreamMarkingFlag")?;
+        w.put(
+            u64::from(self.substream_ids_per_line),
+            7,
+            "SubstreamIDsPerLine",
+        )?;
+        w.put(u64::from(self.total_substream_ids), 8, "TotalSubstreamIDs")?;
+        w.put(u64::from(self.level_full_panorama), 8, "LevelFullPanorama")?;
+        for l in &self.layouts {
+            match (self.substream_marking_flag, &l.preamble) {
+                (true, Some(p)) => {
+                    w.flag(p.reserved, "reserved")?;
+                    w.put(u64::from(p.preamble_substream_id), 7, "PreambleSubstreamID")?;
+                }
+                (false, None) => {}
+                _ => {
+                    return Err(invalid(
+                        TAG,
+                        "HEVC_subregion_descriptor PreambleSubstreamID must be present exactly when SubstreamMarkingFlag is 1",
+                    ));
+                }
+            }
+            w.put(
+                u64::from(l.substream_count_minus_1),
+                8,
+                "SubstreamCountMinus1",
+            )?;
+            w.put(u64::from(l.level), 8, "Level")?;
+            w.put(u64::from(l.picture_size_hor), 16, "PictureSizeHor")?;
+            w.put(u64::from(l.picture_size_vert), 16, "PictureSizeVert")?;
+            w.flag(l.reserved, "reserved")?;
+            w.put(l.patterns.len() as u64, 7, "PatternCount")?;
+            for pattern in &l.patterns {
+                if pattern.len() != usize::from(l.substream_count_minus_1) {
+                    return Err(invalid(
+                        TAG,
+                        "HEVC_subregion_descriptor pattern length differs from SubstreamCountMinus1",
+                    ));
+                }
+                for o in pattern {
+                    w.put(u64::from(o.to_be_bytes()[0]), 8, "SubstreamOffset")?;
+                }
+            }
+        }
+        Ok(w.into_vec())
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
+
+    // ── Table 2-131 spec vectors (hand-built) ──
+
+    #[test]
+    fn subregion_marked_two_layouts() {
+        // SubstreamMarkingFlag=1 SubstreamIDsPerLine=4                  -> 84
+        // TotalSubstreamIDs=0x10, LevelFullPanorama=0x5A                -> 10 5A
+        // layout 0: reserved=1 PreambleSubstreamID=0x11                 -> 91
+        //   SubstreamCountMinus1=2 Level=0x3C hor=1920 vert=1080        -> 02 3C 07 80 04 38
+        //   reserved=1 PatternCount=2                                   -> 82
+        //   pattern0 (2 offsets)=[1,-1]  pattern1=[2,-2]                -> 01 FF 02 FE
+        // layout 1: reserved=1 PreambleSubstreamID=0x7F                 -> FF
+        //   SubstreamCountMinus1=0 Level=0x1E hor=1280 vert=720         -> 00 1E 05 00 02 D0
+        //   reserved=1 PatternCount=1 (one pattern, zero offsets)       -> 81
+        let b = [
+            0x84, 0x10, 0x5A, 0x91, 0x02, 0x3C, 0x07, 0x80, 0x04, 0x38, 0x82, 0x01, 0xFF, 0x02,
+            0xFE, 0xFF, 0x00, 0x1E, 0x05, 0x00, 0x02, 0xD0, 0x81,
+        ];
+        let d = HevcSubregion::parse_body(&b).unwrap();
+        assert!(d.substream_marking_flag);
+        assert_eq!(
+            (
+                d.substream_ids_per_line,
+                d.total_substream_ids,
+                d.level_full_panorama
+            ),
+            (4, 0x10, 0x5A)
+        );
+        assert_eq!(d.layouts.len(), 2);
+        let l0 = &d.layouts[0];
+        assert_eq!(l0.preamble.unwrap().preamble_substream_id, 0x11);
+        assert_eq!(
+            (l0.substream_count_minus_1, l0.level),
+            (2, 0x3C)
+        );
+        assert_eq!((l0.picture_size_hor, l0.picture_size_vert), (1920, 1080));
+        assert_eq!(l0.patterns, [vec![1i8, -1], vec![2, -2]]);
+        let l1 = &d.layouts[1];
+        assert_eq!(l1.preamble.unwrap().preamble_substream_id, 0x7F);
+        assert_eq!(l1.patterns, [Vec::<i8>::new()]);
+        assert_eq!(d.write_body().unwrap(), b);
+    }
+
+    #[test]
+    fn subregion_unmarked_has_no_preamble() {
+        // SubstreamMarkingFlag=0 IDsPerLine=4 -> 04 ; total 0x10 level 0x5A
+        // layout: SubstreamCountMinus1=1 Level=0x3C 1920x1080 reserved=1 PatternCount=1 -> 01 3C 07 80 04 38 81
+        //   one pattern of ONE offset (the loop is `k < SubstreamCountMinus1`): -5 = FB
+        let b = [
+            0x04, 0x10, 0x5A, 0x01, 0x3C, 0x07, 0x80, 0x04, 0x38, 0x81, 0xFB,
+        ];
+        let d = HevcSubregion::parse_body(&b).unwrap();
+        assert!(!d.substream_marking_flag);
+        assert!(d.layouts[0].preamble.is_none());
+        assert_eq!(d.layouts[0].patterns, [vec![-5i8]]);
+        assert_eq!(d.write_body().unwrap(), b);
+        // No layouts at all (N1 = 0) is the bare 3-byte header.
+        let bare = HevcSubregion::parse_body(&[0x04, 0x10, 0x5A]).unwrap();
+        assert!(bare.layouts.is_empty());
+        assert_eq!(bare.write_body().unwrap(), [0x04, 0x10, 0x5A]);
+    }
+
+    #[test]
+    fn subregion_rejects_inconsistent_values() {
+        // truncated layout
+        assert!(HevcSubregion::parse_body(&[0x04, 0x10, 0x5A, 0x01, 0x3C]).is_err());
+        // pattern length != SubstreamCountMinus1
+        let mut d = HevcSubregion::parse_body(&[
+            0x04, 0x10, 0x5A, 0x01, 0x3C, 0x07, 0x80, 0x04, 0x38, 0x81, 0xFB,
+        ])
+        .unwrap();
+        d.layouts[0].patterns[0].push(1);
+        assert!(d.write_body().is_err());
+        // preamble presence must match SubstreamMarkingFlag
+        d.layouts[0].patterns[0].pop();
+        d.layouts[0].preamble = Some(HevcSubregionPreamble::new(0x11));
+        assert!(d.write_body().is_err());
+        // PatternCount is 7 bits
+        d.layouts[0].preamble = None;
+        d.layouts[0].substream_count_minus_1 = 0;
+        d.layouts[0].patterns = vec![Vec::new(); 128];
+        assert!(d.write_body().is_err());
+    }
 
     // Hand-built from Table 2-117 (see docs): reserved bits all ones.
     #[test]
