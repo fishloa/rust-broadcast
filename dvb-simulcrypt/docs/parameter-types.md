@@ -16,9 +16,13 @@ framing) `message-framing.md`. All values are big-endian.
 | NMS ⇔ SIMF Agent | `0x03` |
 | (P)SIG ⇔ MUX | `0x04` |
 | EIS ⇔ SCS | `0x04` |
+| ACG ⇔ EIS | `0x04` (§11.5, "It shall have the value 0x04 according to the present document", p. 166) |
+| SIMCOMP ⇔ MUXCONFIG | `0x04` (§12.3, "The value of protocol_version shall be 0x04", p. 177) |
 
-`0x05` on ECMG⇔SCS and EMMG⇔MUX = DVB-H (annex N). ACG⇔EIS and
-SIMCOMP⇔MUXCONFIG versions not in Table 2 (defined in §11/§12, not transcribed).
+`0x05` on ECMG⇔SCS and EMMG⇔MUX = DVB-H (annex N). The last two rows are not in
+Table 2; they are stated in the interfaces' own parameter-semantics clauses
+(§11.5 and §12.3), verified on the rendered pages (PDF pp. 166 and 177, printed
+pp. 166 and 177).
 
 ## 2. message_type registry, grouped per interface (Table 3, §4.4.1 pp. 27-28)
 
