@@ -1,5 +1,5 @@
 ## Table 31 — Syntax of the scheduling descriptor
-_§9.5.2.8, PDF pp. 30-30_
+_§9.5.2.9, PDF pp. 30-30_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

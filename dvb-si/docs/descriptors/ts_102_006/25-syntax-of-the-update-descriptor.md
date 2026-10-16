@@ -1,5 +1,5 @@
 ## Table 25 — Syntax of the update_descriptor
-_§9.5.2, PDF pp. 28-28_
+_§9.5.2.6, PDF pp. 28-28_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

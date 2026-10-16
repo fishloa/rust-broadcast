@@ -1,5 +1,5 @@
 ## Table 26 — Syntax of the target_IP_address_descriptor
-_§8.4.5.3, PDF pp. 34-34_
+_§8.4.5.8, PDF pp. 34-34_
 
 | Name | No. of bits | Identifier | Remarks |
 |---|---|---|---|

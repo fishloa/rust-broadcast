@@ -1,4 +1,4 @@
-//! Update Notification Table — ETSI TS 102 006 v1.4.1 §9.4.
+//! Update Notification Table — ETSI TS 102 006 V1.4.1 §9.4.
 //!
 //! The UNT delivers software-update instructions for DVB receivers. It is
 //! carried on a PID that is **signalled** — there is no fixed PID. The PMT
@@ -12,7 +12,7 @@
 //! SI tag/length descriptor).
 
 use crate::compatibility::CompatibilityDescriptor;
-use crate::descriptors::DescriptorLoop;
+use crate::descriptors::unt::UntDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -92,6 +92,10 @@ const OFFSET_COMMON_DESC_LEN: usize = HEADER_LEN + FIXED_BODY_LEN;
 const PLATFORM_LOOP_LEN_FIELD: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 
+/// A target/operational descriptor-loop pair in the UNT platform loop (Table 11),
+/// in the UNT descriptor namespace (ETSI TS 102 006 Table 19).
+pub type UntLoopEntry<'a> = crate::tables::TargetOperationalLoop<'a, UntDescriptorLoop<'a>>;
+
 /// A single platform entry in the UNT platform loop
 /// (Tables 11/15/17/18, §9.4.2.2–9.4.2.4).
 ///
@@ -108,7 +112,7 @@ pub struct UntPlatform<'a> {
     /// N target/operational descriptor-loop pairs per TS 102 006 Table 11 —
     /// the same typed pair the INT body loop uses (r02-W22), replacing the
     /// previous anonymous tuple.
-    pub target_operational_pairs: Vec<crate::tables::TargetOperationalLoop<'a>>,
+    pub target_operational_pairs: Vec<UntLoopEntry<'a>>,
 }
 
 impl<'a> UntPlatform<'a> {
@@ -116,7 +120,7 @@ impl<'a> UntPlatform<'a> {
     #[must_use]
     pub fn new(
         compatibility_descriptor: CompatibilityDescriptor<'a>,
-        target_operational_pairs: Vec<crate::tables::TargetOperationalLoop<'a>>,
+        target_operational_pairs: Vec<UntLoopEntry<'a>>,
     ) -> Self {
         Self {
             compatibility_descriptor,
@@ -130,11 +134,11 @@ fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
         + PLATFORM_LOOP_LEN_FIELD
         + p.target_operational_pairs
             .iter()
-            .map(crate::tables::TargetOperationalLoop::serialized_len)
+            .map(|p| p.serialized_len())
             .sum::<usize>()
 }
 
-/// Update Notification Table (UNT), ETSI TS 102 006 v1.4.1 §9.4, Table 11.
+/// Update Notification Table (UNT), ETSI TS 102 006 V1.4.1 §9.4, Table 11.
 ///
 /// The platform loop is unfolded into typed [`UntPlatform`] entries.
 /// The `compatibilityDescriptor()` within each entry is typed as
@@ -163,7 +167,7 @@ pub struct UntSection<'a> {
     pub processing_order: u8,
     /// Body of `common_descriptor_loop()` — the bytes AFTER the 12-bit length
     /// field.
-    pub common_descriptors: DescriptorLoop<'a>,
+    pub common_descriptors: UntDescriptorLoop<'a>,
     /// Platform entries — unfolded per §9.4.2.2–9.4.2.4.
     pub platforms: Vec<UntPlatform<'a>>,
     /// Header bit fields (`reserved_for_future_use`, `reserved(2)` x2; default
@@ -188,7 +192,7 @@ impl<'a> UntSection<'a> {
         last_section_number: u8,
         oui: u32,
         processing_order: u8,
-        common_descriptors: DescriptorLoop<'a>,
+        common_descriptors: UntDescriptorLoop<'a>,
         platforms: Vec<UntPlatform<'a>>,
     ) -> Self {
         Self {
@@ -255,7 +259,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
                 available: (total - CRC_LEN).saturating_sub(common_desc_start),
             });
         }
-        let common_descriptors = DescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
+        let common_descriptors = UntDescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
 
         let payload_end = total - CRC_LEN;
         let mut pos = common_desc_end;
@@ -333,7 +337,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
                     });
                 }
                 let reserved_target_length = super::len_reserved_of(bytes[pos]);
-                let target_descriptors = DescriptorLoop::new(&bytes[target_start..target_end]);
+                let target_descriptors = UntDescriptorLoop::new(&bytes[target_start..target_end]);
                 pos = target_end;
 
                 if pos + DESC_LOOP_LEN_FIELD > platform_end {
@@ -353,16 +357,15 @@ impl<'a> Parse<'a> for UntSection<'a> {
                     });
                 }
                 let reserved_operational_length = super::len_reserved_of(bytes[pos]);
-                let operational_descriptors = DescriptorLoop::new(&bytes[op_start..op_end]);
+                let operational_descriptors = UntDescriptorLoop::new(&bytes[op_start..op_end]);
                 pos = op_end;
 
-                let mut pair = crate::tables::TargetOperationalLoop::new(
+                target_operational_pairs.push(UntLoopEntry::from_parts(
                     target_descriptors,
                     operational_descriptors,
-                );
-                pair.reserved_target_length = reserved_target_length;
-                pair.reserved_operational_length = reserved_operational_length;
-                target_operational_pairs.push(pair);
+                    reserved_target_length,
+                    reserved_operational_length,
+                ));
             }
             if pos != platform_end {
                 return Err(Error::SectionLengthOverflow {
@@ -465,7 +468,7 @@ impl Serialize for UntSection<'_> {
             let inner_len: usize = platform
                 .target_operational_pairs
                 .iter()
-                .map(crate::tables::TargetOperationalLoop::serialized_len)
+                .map(|p| p.serialized_len())
                 .sum();
             let inner_len = broadcast_common::len::fit_u16(inner_len, "platform_loop_length")?;
             buf[pos..pos + PLATFORM_LOOP_LEN_FIELD].copy_from_slice(&inner_len.to_be_bytes());
@@ -533,7 +536,7 @@ mod tests {
                 0,
                 oui,
                 0,
-                DescriptorLoop::new(&[]),
+                UntDescriptorLoop::new(&[]),
                 vec![],
             )
         };
@@ -563,14 +566,14 @@ mod tests {
             0,
             oui,
             0x00,
-            DescriptorLoop::new(common_descs),
+            UntDescriptorLoop::new(common_descs),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
                     descriptors: vec![],
                 },
                 vec![crate::tables::TargetOperationalLoop::new(
-                    DescriptorLoop::new(&[]),
-                    DescriptorLoop::new(&[]),
+                    UntDescriptorLoop::new(&[]),
+                    UntDescriptorLoop::new(&[]),
                 )],
             )],
         );
@@ -604,7 +607,7 @@ mod tests {
             2,
             0x00015A,
             0x01,
-            DescriptorLoop::new(&[]),
+            UntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; unt.serialized_len()];
@@ -627,14 +630,14 @@ mod tests {
             5,
             0x00015A,
             0x02,
-            DescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
+            UntDescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
                     descriptors: vec![],
                 },
                 vec![crate::tables::TargetOperationalLoop::new(
-                    DescriptorLoop::new(target_desc),
-                    DescriptorLoop::new(op_desc),
+                    UntDescriptorLoop::new(target_desc),
+                    UntDescriptorLoop::new(op_desc),
                 )],
             )],
         );
@@ -682,19 +685,19 @@ mod tests {
             0,
             0x00015A,
             0x02,
-            DescriptorLoop::new(&[]),
+            UntDescriptorLoop::new(&[]),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
                     descriptors: vec![],
                 },
                 vec![
                     crate::tables::TargetOperationalLoop::new(
-                        DescriptorLoop::new(t0),
-                        DescriptorLoop::new(o0),
+                        UntDescriptorLoop::new(t0),
+                        UntDescriptorLoop::new(o0),
                     ),
                     crate::tables::TargetOperationalLoop::new(
-                        DescriptorLoop::new(t1),
-                        DescriptorLoop::new(o1),
+                        UntDescriptorLoop::new(t1),
+                        UntDescriptorLoop::new(o1),
                     ),
                 ],
             )],
@@ -733,7 +736,7 @@ mod tests {
             0,
             0x00015A,
             0x00,
-            DescriptorLoop::new(&[]),
+            UntDescriptorLoop::new(&[]),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
                     descriptors: vec![CompatibilityDescriptorEntry {
@@ -749,8 +752,8 @@ mod tests {
                     }],
                 },
                 vec![crate::tables::TargetOperationalLoop::new(
-                    DescriptorLoop::new(&[]),
-                    DescriptorLoop::new(&[]),
+                    UntDescriptorLoop::new(&[]),
+                    UntDescriptorLoop::new(&[]),
                 )],
             )],
         );
@@ -778,7 +781,7 @@ mod tests {
             0,
             0x00015A,
             0x00,
-            DescriptorLoop::new(&[]),
+            UntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; unt.serialized_len()];
@@ -809,7 +812,7 @@ mod tests {
             0,
             0x00015A,
             0x00,
-            DescriptorLoop::new(&[]),
+            UntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; unt.serialized_len() - 1];
@@ -849,7 +852,7 @@ mod tests {
             0,
             0,
             0,
-            DescriptorLoop::new(&desc),
+            UntDescriptorLoop::new(&desc),
             vec![],
         );
         let mut buf = vec![0u8; unt.serialized_len()];
@@ -871,7 +874,7 @@ mod tests {
             0,
             0,
             0,
-            DescriptorLoop::new(&desc),
+            UntDescriptorLoop::new(&desc),
             vec![],
         );
         let mut buf = vec![0u8; unt.serialized_len()];

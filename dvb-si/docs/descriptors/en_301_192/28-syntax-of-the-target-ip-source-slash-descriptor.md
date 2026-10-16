@@ -1,5 +1,5 @@
 ## Table 28 — Syntax of the target_IP_source slash_descriptor
-_§8.4.5.3, PDF pp. 35-35_
+_§8.4.5.10, PDF pp. 35-35_
 
 | Name | No. of bits | Identifier | Remarks |
 |---|---|---|---|

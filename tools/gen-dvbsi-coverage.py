@@ -425,6 +425,28 @@ def load_ait() -> list[Impl]:
     return out
 
 
+def load_scoped() -> list[Impl]:
+    """The INT / UNT / RNT scoped namespaces (``declare_scoped_namespace!``)."""
+    out = []
+    for subdir, ns in (
+        ("int", "int_descriptor_tag"),
+        ("unt", "unt_descriptor_tag"),
+        ("rnt", "rnt_descriptor_tag"),
+    ):
+        path = SRC / "descriptors" / subdir / "mod.rs"
+        body = strip_line_comments(macro_body(read(path), "declare_scoped_namespace", path))
+        n = 0
+        for m in re.finditer(r"(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*=>\s*(crate::descriptors::[\w:]+)::(\w+)", body):
+            variant, tag, mod, ty = m.groups()
+            f = module_path_to_file(mod)
+            v = int(tag, 16)
+            out.append(Impl(ns, [(v, v)], variant, ty, f, True, cite=citation(module_doc(f))))
+            n += 1
+        if not n:
+            raise GenError(f"declare_scoped_namespace! in {rel(path)} yielded nothing")
+    return out
+
+
 def opaque_struct(ty: str, text: str) -> bool:
     m = re.search(r"pub struct " + re.escape(ty) + r"\b[^{;]*\{(.*?)\n\}", text, re.S)
     if not m:
@@ -673,7 +695,7 @@ STANDARDS = [
     {
         "id": "ETSI TS 102 006",
         "title": "DVB System Software Update (SSU)",
-        "edition": "V1.7.1 (some module docs still cite V1.4.1)",
+        "edition": "V1.4.1",
         "scope": "UNT section, compatibilityDescriptor, SSU data_broadcast_id selector",
         "match": ["ETSI TS 102 006"],
     },
@@ -789,6 +811,7 @@ class Model:
     ext: list[Impl]
     mpeg2ext: list[Impl]
     ait: list[Impl]
+    scoped: list[Impl]
     extra: list[Impl]
     allocs: list[Alloc]
     charsets: list[str]
@@ -797,7 +820,7 @@ class Model:
     registries: dict[str, int]
 
     def impls(self, ns: str) -> list[Impl]:
-        pool = self.tables + self.descriptors + self.ext + self.mpeg2ext + self.ait + self.extra
+        pool = self.tables + self.descriptors + self.ext + self.mpeg2ext + self.ait + self.scoped + self.extra
         return [i for i in pool if i.namespace == ns]
 
     def allocs_in(self, ns: str) -> list[Alloc]:
@@ -817,16 +840,17 @@ def build() -> Model:
     ext = load_extension_bodies()
     mpeg2ext = load_mpeg2_extension()
     ait = load_ait()
+    scoped = load_scoped()
     extra = load_extra()
     apply_partial(descriptors + ext + private)
     allocs = load_allocations()
     m = Model(
-        tables, descriptors, private, ext, mpeg2ext, ait, extra, allocs,
+        tables, descriptors, private, ext, mpeg2ext, ait, scoped, extra, allocs,
         load_charsets(), load_carousel(), load_layers(), registry_counts(),
     )
     # Every implemented code must appear in the allocation list of its
     # namespace — otherwise allocations.tsv is incomplete (or the code is wrong).
-    for ns in ("table_id", "descriptor_tag", "dvb_extension_tag", "mpeg2_extension_tag", "ait_descriptor_tag", "dii_descriptor_tag"):
+    for ns in ("table_id", "descriptor_tag", "dvb_extension_tag", "mpeg2_extension_tag", "ait_descriptor_tag", "dii_descriptor_tag", "int_descriptor_tag", "unt_descriptor_tag", "rnt_descriptor_tag"):
         allocs_ns = m.allocs_in(ns)
         for i in m.impls(ns):
             for lo, hi in i.ranges:
@@ -844,10 +868,10 @@ NOT_IMPL_NOTE = {
     "dvb_extension_tag": "kept as `ExtensionBody::Raw` — round-trips losslessly",
     "mpeg2_extension_tag": "kept as `Mpeg2ExtensionBody::Other` — round-trips losslessly",
     "ait_descriptor_tag": "surfaces as `AnyAitDescriptor::Unknown` — bytes kept",
-    "int_descriptor_tag": "INT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #{namespace})",
-    "unt_descriptor_tag": "UNT loops are `DescriptorLoop`s walked in the SI/MPEG tag space, so these tags decode as the wrong descriptor (issue #{namespace})",
+    "int_descriptor_tag": "surfaces as `AnyIntDescriptor::Unknown` — bytes kept",
+    "unt_descriptor_tag": "surfaces as `AnyUntDescriptor::Unknown` — bytes kept",
     "dii_descriptor_tag": "kept as raw bytes inside `ModuleInfo` / DII `moduleInfo`",
-    "rnt_descriptor_tag": "the RNT loop is walked in the SI tag space, so 0x40–0x42 decode as network_name / service_list / stuffing (issue #{namespace})",
+    "rnt_descriptor_tag": "decoded through the SI dispatch (`AnyRntDescriptor::Si`) — bytes kept",
 }
 
 
@@ -894,6 +918,7 @@ def counts(m: Model) -> dict:
         "ext": len(m.ext),
         "mpeg2ext": len(m.mpeg2ext),
         "ait": len(m.ait),
+        "scoped": len({i.rust_type for i in m.scoped}),
         "private": len(m.private),
         "charsets": len([c for c in m.charsets if c != "Unsupported"]),
         "carousel": len(m.carousel),
@@ -901,7 +926,7 @@ def counts(m: Model) -> dict:
         "not_impl": not_impl,
         "cas": m.registries["cas"],
         "pds": m.registries["pds"],
-        "typed_total": len(m.tables) + len(nd) + len(m.ext) + len(m.mpeg2ext) + len(m.ait) + len(m.private),
+        "typed_total": len(m.tables) + len(nd) + len(m.ext) + len(m.mpeg2ext) + len(m.ait) + len({i.rust_type for i in m.scoped}) + len(m.private),
     }
 
 
@@ -915,6 +940,7 @@ def at_a_glance_rows(c: dict) -> list[tuple[str, str]]:
         ("DVB extension descriptors (0x7F)", f"**{c['ext']}** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates"),
         ("MPEG-2 extension descriptors (0x3F)", f"**{c['mpeg2ext']}** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio)"),
         ("AIT descriptors (TS 102 809 / MHP)", f"**{c['ait']}** typed in the separate AIT descriptor namespace"),
+        ("INT / UNT / RNT descriptors", f"**{c['scoped']}** typed in their own scoped namespaces (`AnyIntDescriptor`, `AnyUntDescriptor`, `AnyRntDescriptor`)"),
         ("Private / regional descriptors", f"**{c['private']}** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA)"),
         ("Text (EN 300 468 Annex A)", f"**{c['charsets']}** charset decoders covering every Table A.3 selector + Annex A.1 control codes"),
         ("DSM-CC carousel", f"**{c['carousel']}** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree"),
@@ -1178,14 +1204,17 @@ def render_coverage(m: Model) -> str:
     L += ["", "## INT, UNT, data-carousel and RNT scoped descriptors", ""]
     L += [
         "These standards define their own descriptor tag spaces (EN 301 192 and TS 102 006 forbid",
-        "MPEG descriptors 0x00–0x3F in the INT/UNT). Only the DSM-CC `compressed_module_descriptor`",
-        "is typed today.",
+        "MPEG descriptors 0x00–0x3F in the INT/UNT; TS 102 323 Table 4 overrides 0x40–0x42 inside the",
+        "RNT). Each table's loops are walked by its own namespace (`parse_int_loop` / `AnyIntDescriptor`,",
+        "`parse_unt_loop` / `AnyUntDescriptor`, `parse_rnt_loop` / `AnyRntDescriptor`), which falls back",
+        "to the SI dispatch (`Si`) for the tags the spec hands back to EN 300 468. Of the DSM-CC",
+        "data-carousel descriptors only `compressed_module_descriptor` is typed today.",
         "",
         "### INT (ETSI EN 301 192 V1.7.1 Table 19)",
         "",
     ]
     L += tag_rows(m, "int_descriptor_tag")
-    L += ["", "### UNT / SSU (ETSI TS 102 006 V1.7.1 Table 19)", ""]
+    L += ["", "### UNT / SSU (ETSI TS 102 006 V1.4.1 Table 19)", ""]
     L += tag_rows(m, "unt_descriptor_tag")
     L += ["", "### DSM-CC data carousel (ETSI EN 301 192 V1.7.1 Table 48)", ""]
     L += tag_rows(m, "dii_descriptor_tag")
@@ -1236,8 +1265,6 @@ def render_coverage(m: Model) -> str:
     ]
     L += not_impl_summary(m)
     L += [
-        "",
-        f"Tracking: wrong-namespace decoding of INT/UNT/RNT loops is issue #{ISSUES['namespace']}.",
         "",
         "## Citation cross-check",
         "",

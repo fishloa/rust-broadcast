@@ -34,7 +34,7 @@ marked *private*.
 | Standard | Title | Edition implemented | Crate(s) | Status | Transcription | Notes |
 |---|---|---|---|---|---|---|
 | ETSI EN 300 468 | DVB Service Information | V1.20.1 (baseline V1.19.1 plus the delta) | `dvb-si` | Full | `dvb-si/docs/` (tables, descriptors, enums, text), `dvb-si/docs/en300468-v1.20.1-delta.md` | Every allocated `table_id` (Table 2) and `descriptor_tag` (Table 12); Annex A text decoding. |
-| ETSI TS 102 006 | System Software Update (SSU) | V1.7.1 | `dvb-si` | Full (UNT + SSU selectors) | `dvb-si/docs/` | UNT (table_id 0x4B), `data_broadcast_id` 0x000A selector, GroupInfoIndication. |
+| ETSI TS 102 006 | System Software Update (SSU) | V1.4.1 (2015-06; the vendored file is named `v01.07.01` but its title page says V1.4.1) | `dvb-si` | Full (UNT + SSU selectors) | `dvb-si/docs/` | UNT (table_id 0x4B), `data_broadcast_id` 0x000A selector, GroupInfoIndication. |
 | ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | `dvb-si` | Partial | `dvb-si/docs/` | INT (0x4C) and MPE sections. |
 | ETSI TR 101 202 | Data broadcasting implementation guidelines | V1.2.1 | `dvb-si` | Reference | `dvb-si/docs/text/` | DVB profile semantics for the carousel; byte syntax is ISO/IEC 13818-6. |
 | ETSI TS 102 809 | Signalling of interactive applications (HbbTV AIT) | V1.3.1 | `dvb-si` | Partial | `dvb-si/docs/` | AIT (0x74) and protection message (0x7B). |

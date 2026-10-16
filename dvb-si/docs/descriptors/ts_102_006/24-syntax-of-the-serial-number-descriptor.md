@@ -1,5 +1,5 @@
 ## Table 24 — Syntax of the serial_number_descriptor
-_§9.5.2, PDF pp. 27-27_
+_§9.5.2.5, PDF pp. 27-27_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

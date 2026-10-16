@@ -80,6 +80,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "si_scoped_descriptor_loop"
+path = "fuzz_targets/si_scoped_descriptor_loop.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "si_demux"
 path = "fuzz_targets/si_demux.rs"
 test = false

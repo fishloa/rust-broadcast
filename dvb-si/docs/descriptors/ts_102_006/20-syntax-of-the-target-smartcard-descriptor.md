@@ -1,5 +1,5 @@
 ## Table 20 — Syntax of the target_smartcard_descriptor
-_§9.5.2, PDF pp. 26-26_
+_§9.5.2.1, PDF pp. 26-26_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

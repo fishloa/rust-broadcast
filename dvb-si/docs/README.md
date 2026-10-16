@@ -54,7 +54,7 @@ co-locates a `.toml` drift guard with its page. Module `//!` docs cite these fil
 | Descriptor syntax | [ETSI TS 102 809 — application signalling (AIT)](descriptors/ts_102_809/) | 22 |
 | Descriptor syntax | [ETSI TS 102 825 — CPCM](descriptors/ts_102_825/) | 2 |
 | Coded-value tables (with `.toml` drift guards) | [ETSI EN 300 468 — DVB Service Information](enums/en_300_468/) | 84 |
-| Coded-value tables (with `.toml` drift guards) | [ETSI EN 301 192 — DVB data broadcasting (MPE, INT, data carousel)](enums/en_301_192/) | 13 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI EN 301 192 — DVB data broadcasting (MPE, INT, data carousel)](enums/en_301_192/) | 14 |
 | Coded-value tables (with `.toml` drift guards) | [ETSI EN 303 560 — DVB TTML subtitling](enums/en_303_560/) | 3 |
 | Coded-value tables (with `.toml` drift guards) | [Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 — MPEG-2 Systems](enums/iso_13818_1/) | 12 |
 | Coded-value tables (with `.toml` drift guards) | [ISO/IEC 13818-6 — DSM-CC (hand transcription, provenance-documented)](enums/iso_13818_6/) | 3 |

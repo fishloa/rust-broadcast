@@ -1,5 +1,5 @@
 ## Table 29 — Syntax of the target_IPv6_address_descriptor
-_§8.4.5.3, PDF pp. 36-36_
+_§8.4.5.11, PDF pp. 36-36_
 
 | Name | No. of bits | Identifier | Remarks |
 |---|---|---|---|

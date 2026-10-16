@@ -24,7 +24,7 @@ now lives in `rust-broadcast-specs`.
 |---|---|---|
 | `etsi_en_300_468_v01.19.01_dvb_si.pdf` | EN 300 468 v1.19.1 — DVB Service Information | `dvb-si` (all SI tables, incl. SAT §5.2.11) |
 | `etsi_en_301_192_v01.07.01_dvb_databcast.pdf` | EN 301 192 v1.7.1 — DVB data broadcasting | `dvb-si` (INT, table_id 0x4C) |
-| `etsi_ts_102_006_v01.07.01_dvb_ssu.pdf` | TS 102 006 v1.7.1 — System Software Update | `dvb-si` (UNT, table_id 0x4B) |
+| `etsi_ts_102_006_v01.07.01_dvb_ssu.pdf` | TS 102 006 V1.4.1 (2015-06; the file name says v01.07.01 but the title page is V1.4.1) — System Software Update | `dvb-si` (UNT, table_id 0x4B) |
 | `etsi_ts_102_323_v01.04.01_dvb_tvanytime.pdf` | TS 102 323 v1.4.1 — TV-Anytime carriage | `dvb-si` (RCT 0x76, CIT 0x77, RNT 0x79, container 0x75) |
 | `etsi_ts_102_809_v01.03.01_dvb_app_signalling.pdf` | TS 102 809 v1.3.1 — Signalling and carriage of interactive applications | `dvb-si` (AIT 0x74, protection message 0x7B) |
 | `etsi_ts_102_772_v01.01.01_dvb_mpe_ifec.pdf` | TS 102 772 v1.1.1 — MPE inter-burst FEC | `dvb-si` (MPE-IFEC section 0x7A) |

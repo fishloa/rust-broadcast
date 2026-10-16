@@ -1,4 +1,4 @@
-//! Resolution provider Notification Table — ETSI TS 102 323 v1.4.1 §5.2.2.
+//! Resolution provider Notification Table — ETSI TS 102 323 V1.4.1 §5.2.2.
 //!
 //! Carries the locations of CRI (Content Referencing Information) and metadata
 //! for CRID authorities. Carried on PID 0x0016 with table_id 0x79.
@@ -6,7 +6,7 @@
 //! The resolution-provider loop is unfolded into [`ResolutionProvider`] and
 //! [`CridAuthority`] entries (Table 1, §5.2.2).
 
-use crate::descriptors::DescriptorLoop;
+use crate::descriptors::rnt::RntDescriptorLoop;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
@@ -154,7 +154,7 @@ pub struct CridAuthority<'a> {
     /// 0 = permanent, 1 = transient, 2 = either, 3 = reserved.
     pub crid_authority_policy: CridAuthorityPolicy,
     /// CRID authority descriptor loop.
-    pub descriptors: DescriptorLoop<'a>,
+    pub descriptors: RntDescriptorLoop<'a>,
     /// `reserved(2)` above `CRID_authority_policy` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub reserved: u8,
@@ -166,7 +166,7 @@ impl<'a> CridAuthority<'a> {
     pub fn new(
         name: DvbText<'a>,
         crid_authority_policy: CridAuthorityPolicy,
-        descriptors: DescriptorLoop<'a>,
+        descriptors: RntDescriptorLoop<'a>,
     ) -> Self {
         Self {
             name,
@@ -185,7 +185,7 @@ pub struct ResolutionProvider<'a> {
     /// Resolution provider name (EN 300 468 Annex A text).
     pub name: DvbText<'a>,
     /// Per-provider descriptor loop.
-    pub descriptors: DescriptorLoop<'a>,
+    pub descriptors: RntDescriptorLoop<'a>,
     /// CRID authority sub-entries.
     pub crid_authorities: Vec<CridAuthority<'a>>,
     /// `reserved(4)` before `resolution_provider_info_length` (`1111`);
@@ -203,7 +203,7 @@ impl<'a> ResolutionProvider<'a> {
     #[must_use]
     pub fn new(
         name: DvbText<'a>,
-        descriptors: DescriptorLoop<'a>,
+        descriptors: RntDescriptorLoop<'a>,
         crid_authorities: Vec<CridAuthority<'a>>,
     ) -> Self {
         Self {
@@ -231,7 +231,7 @@ fn resolution_provider_serialized_len(rp: &ResolutionProvider) -> usize {
             .sum::<usize>()
 }
 
-/// Resolution provider Notification Table (ETSI TS 102 323 v1.4.1 §5.2.2,
+/// Resolution provider Notification Table (ETSI TS 102 323 V1.4.1 §5.2.2,
 /// Table 1).
 ///
 /// The resolution-provider loop is unfolded into typed
@@ -255,7 +255,7 @@ pub struct RntSection<'a> {
     pub context_id_type: ContextIdType,
     /// Common descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
-    pub common_descriptors: DescriptorLoop<'a>,
+    pub common_descriptors: RntDescriptorLoop<'a>,
     /// Resolution-provider entries — unfolded per Table 1.
     pub resolution_providers: Vec<ResolutionProvider<'a>>,
     /// Header bit fields (`reserved`, `reserved(2)` x2; default
@@ -278,7 +278,7 @@ impl<'a> RntSection<'a> {
         section_number: u8,
         last_section_number: u8,
         context_id_type: ContextIdType,
-        common_descriptors: DescriptorLoop<'a>,
+        common_descriptors: RntDescriptorLoop<'a>,
         resolution_providers: Vec<ResolutionProvider<'a>>,
     ) -> Self {
         Self {
@@ -336,7 +336,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                 available: (total - CRC_LEN).saturating_sub(common_desc_start),
             });
         }
-        let common_descriptors = DescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
+        let common_descriptors = RntDescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
 
         let payload_end = total - CRC_LEN;
         let mut pos = common_desc_end;
@@ -398,7 +398,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                     available: rp_end.saturating_sub(rp_desc_start),
                 });
             }
-            let descriptors = DescriptorLoop::new(&bytes[rp_desc_start..rp_desc_end]);
+            let descriptors = RntDescriptorLoop::new(&bytes[rp_desc_start..rp_desc_end]);
             pos = rp_desc_end;
 
             let mut crid_authorities = Vec::new();
@@ -442,7 +442,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                         available: rp_end.saturating_sub(ca_desc_start),
                     });
                 }
-                let ca_descriptors = DescriptorLoop::new(&bytes[ca_desc_start..ca_desc_end]);
+                let ca_descriptors = RntDescriptorLoop::new(&bytes[ca_desc_start..ca_desc_end]);
                 pos = ca_desc_end;
 
                 let mut authority =
@@ -612,11 +612,11 @@ mod tests {
         let common_desc = [0x83u8, 0x02, 0xAB, 0xCD];
         let rp = ResolutionProvider::new(
             DvbText::new(b"bb"),
-            DescriptorLoop::new(&[]),
+            RntDescriptorLoop::new(&[]),
             vec![CridAuthority::new(
                 DvbText::new(b"au"),
                 CridAuthorityPolicy::Transient,
-                DescriptorLoop::new(&[]),
+                RntDescriptorLoop::new(&[]),
             )],
         );
         let rnt = RntSection::new(
@@ -626,7 +626,7 @@ mod tests {
             0,
             0,
             ContextIdType::BouquetId,
-            DescriptorLoop::new(&common_desc),
+            RntDescriptorLoop::new(&common_desc),
             vec![rp],
         );
         let mut buf = vec![0u8; rnt.serialized_len()];
@@ -660,7 +660,7 @@ mod tests {
             0,
             0,
             ContextIdType::BouquetId,
-            DescriptorLoop::new(&[]),
+            RntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; rnt.serialized_len()];
@@ -674,17 +674,17 @@ mod tests {
     fn byte_exact_round_trip() {
         let rp = ResolutionProvider::new(
             DvbText::new(b"provider"),
-            DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
+            RntDescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
             vec![
                 CridAuthority::new(
                     DvbText::new(b"auth1"),
                     CridAuthorityPolicy::Permanent,
-                    DescriptorLoop::new(&[]),
+                    RntDescriptorLoop::new(&[]),
                 ),
                 CridAuthority::new(
                     DvbText::new(b"auth2"),
                     CridAuthorityPolicy::Either,
-                    DescriptorLoop::new(&[0x42, 0x00]),
+                    RntDescriptorLoop::new(&[0x42, 0x00]),
                 ),
             ],
         );
@@ -695,7 +695,7 @@ mod tests {
             1,
             2,
             ContextIdType::NetworkId,
-            DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
+            RntDescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
             vec![rp],
         );
         let mut buf = vec![0u8; rnt.serialized_len()];
@@ -723,7 +723,7 @@ mod tests {
             0,
             0,
             ContextIdType::BouquetId,
-            DescriptorLoop::new(&[]),
+            RntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; rnt.serialized_len()];
@@ -752,7 +752,7 @@ mod tests {
             0,
             0,
             ContextIdType::BouquetId,
-            DescriptorLoop::new(&[]),
+            RntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; 2];
@@ -791,7 +791,7 @@ mod tests {
             0,
             0,
             ContextIdType::BouquetId,
-            DescriptorLoop::new(&desc),
+            RntDescriptorLoop::new(&desc),
             vec![],
         );
         let mut buf = vec![0u8; rnt.serialized_len()];
@@ -811,7 +811,7 @@ mod tests {
             0,
             0,
             ContextIdType::BouquetId,
-            DescriptorLoop::new(&desc),
+            RntDescriptorLoop::new(&desc),
             vec![],
         );
         let mut buf = vec![0u8; rnt.serialized_len()];

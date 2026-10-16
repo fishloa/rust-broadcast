@@ -1,4 +1,4 @@
-//! IP/MAC Notification Table — ETSI EN 301 192 v1.7.1 §8.4.
+//! IP/MAC Notification Table — ETSI EN 301 192 V1.7.1 §8.4.
 //!
 //! INT is referenced by a `data_broadcast_id_descriptor` (data_broadcast_id 0x000B)
 //! in the PMT ES_info loop; there is no fixed PID.  table_id is 0x4C.
@@ -6,7 +6,7 @@
 //! The target/operational descriptor-loop pairs in the body loop are unfolded
 //! into [`IntLoopEntry`] instances (Tables 13/17/18, §8.4.4.1).
 
-use crate::descriptors::DescriptorLoop;
+use crate::descriptors::int::IntDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -84,9 +84,9 @@ const OFF_PLATFORM_DESC_LEN: usize = 12;
 ///
 /// Shared with the UNT platform loop (r02-W22); kept as a local alias so
 /// each spec's name remains discoverable from its own table module.
-pub type IntLoopEntry<'a> = crate::tables::TargetOperationalLoop<'a>;
+pub type IntLoopEntry<'a> = crate::tables::TargetOperationalLoop<'a, IntDescriptorLoop<'a>>;
 
-/// IP/MAC Notification Table (INT), ETSI EN 301 192 v1.7.1 §8.4, Table 13.
+/// IP/MAC Notification Table (INT), ETSI EN 301 192 V1.7.1 §8.4, Table 13.
 ///
 /// The `loops` field is unfolded into typed [`IntLoopEntry`] instances
 /// (target + operational descriptor-loop pairs).
@@ -114,7 +114,7 @@ pub struct IntSection<'a> {
     /// The `platform_descriptor_loop` (descriptors only, not the 2-byte length
     /// field). Serializes as the typed descriptor sequence; `.raw()` yields the
     /// wire bytes.
-    pub platform_descriptors: DescriptorLoop<'a>,
+    pub platform_descriptors: IntDescriptorLoop<'a>,
     /// Target/operational descriptor-loop pairs — unfolded per Tables 17/18.
     pub loops: Vec<IntLoopEntry<'a>>,
     /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
@@ -139,7 +139,7 @@ impl<'a> IntSection<'a> {
         last_section_number: u8,
         platform_id: u32,
         processing_order: u8,
-        platform_descriptors: DescriptorLoop<'a>,
+        platform_descriptors: IntDescriptorLoop<'a>,
         loops: Vec<IntLoopEntry<'a>>,
     ) -> Self {
         Self {
@@ -210,7 +210,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
                 available: (total - CRC_LEN).saturating_sub(plat_desc_start),
             });
         }
-        let platform_descriptors = DescriptorLoop::new(&bytes[plat_desc_start..plat_desc_end]);
+        let platform_descriptors = IntDescriptorLoop::new(&bytes[plat_desc_start..plat_desc_end]);
 
         let payload_end = total - CRC_LEN;
         let mut pos = plat_desc_end;
@@ -233,7 +233,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
                 });
             }
             let reserved_target_length = super::len_reserved_of(bytes[pos]);
-            let target_descriptors = DescriptorLoop::new(&bytes[target_start..target_end]);
+            let target_descriptors = IntDescriptorLoop::new(&bytes[target_start..target_end]);
             pos = target_end;
 
             if pos + LOOP_LEN_FIELD > payload_end {
@@ -253,15 +253,15 @@ impl<'a> Parse<'a> for IntSection<'a> {
                 });
             }
             let reserved_operational_length = super::len_reserved_of(bytes[pos]);
-            let operational_descriptors = DescriptorLoop::new(&bytes[op_start..op_end]);
+            let operational_descriptors = IntDescriptorLoop::new(&bytes[op_start..op_end]);
             pos = op_end;
 
-            loops.push(IntLoopEntry {
+            loops.push(IntLoopEntry::from_parts(
                 target_descriptors,
                 operational_descriptors,
                 reserved_target_length,
                 reserved_operational_length,
-            });
+            ));
         }
 
         Ok(IntSection {
@@ -291,11 +291,7 @@ impl Serialize for IntSection<'_> {
             + INT_FIXED_LEN
             + LOOP_LEN_FIELD
             + self.platform_descriptors.len()
-            + self
-                .loops
-                .iter()
-                .map(crate::tables::TargetOperationalLoop::serialized_len)
-                .sum::<usize>()
+            + self.loops.iter().map(|p| p.serialized_len()).sum::<usize>()
             + CRC_LEN
     }
 
@@ -403,7 +399,7 @@ mod tests {
                 0,
                 platform_id,
                 0,
-                DescriptorLoop::new(&[]),
+                IntDescriptorLoop::new(&[]),
                 vec![],
             )
         };
@@ -431,7 +427,7 @@ mod tests {
             0,
             0x00_12_34,
             0x00,
-            DescriptorLoop::new(plat_desc),
+            IntDescriptorLoop::new(plat_desc),
             Vec::new(),
         );
         let mut buf = vec![0u8; int.serialized_len()];
@@ -456,13 +452,13 @@ mod tests {
             1,
             0x00_56_78,
             0x01,
-            DescriptorLoop::new(&[]),
+            IntDescriptorLoop::new(&[]),
             vec![
                 IntLoopEntry::new(
-                    DescriptorLoop::new(target_desc),
-                    DescriptorLoop::new(op_desc),
+                    IntDescriptorLoop::new(target_desc),
+                    IntDescriptorLoop::new(op_desc),
                 ),
-                IntLoopEntry::new(DescriptorLoop::new(&[]), DescriptorLoop::new(&[])),
+                IntLoopEntry::new(IntDescriptorLoop::new(&[]), IntDescriptorLoop::new(&[])),
             ],
         );
         let mut buf = vec![0u8; int.serialized_len()];
@@ -487,10 +483,10 @@ mod tests {
             3,
             0x00_AB_CD,
             0x00,
-            DescriptorLoop::new(plat_desc),
+            IntDescriptorLoop::new(plat_desc),
             vec![IntLoopEntry::new(
-                DescriptorLoop::new(&[]),
-                DescriptorLoop::new(&[]),
+                IntDescriptorLoop::new(&[]),
+                IntDescriptorLoop::new(&[]),
             )],
         );
         let mut buf = vec![0u8; int.serialized_len()];
@@ -513,7 +509,7 @@ mod tests {
             0,
             0,
             0,
-            DescriptorLoop::new(&[]),
+            IntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; int.serialized_len()];
@@ -547,7 +543,7 @@ mod tests {
             0,
             0,
             0,
-            DescriptorLoop::new(&[]),
+            IntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; 2];
@@ -588,7 +584,7 @@ mod tests {
             0,
             0,
             0,
-            DescriptorLoop::new(&desc),
+            IntDescriptorLoop::new(&desc),
             vec![],
         );
         let mut buf = vec![0u8; int.serialized_len()];
@@ -610,7 +606,7 @@ mod tests {
             0,
             0,
             0,
-            DescriptorLoop::new(&desc),
+            IntDescriptorLoop::new(&desc),
             vec![],
         );
         let mut buf = vec![0u8; int.serialized_len()];
@@ -630,7 +626,7 @@ mod tests {
             0,
             0x00FF_FFFF,
             0x00,
-            DescriptorLoop::new(&[]),
+            IntDescriptorLoop::new(&[]),
             Vec::new(),
         );
         let mut buf = vec![0u8; int.serialized_len()];

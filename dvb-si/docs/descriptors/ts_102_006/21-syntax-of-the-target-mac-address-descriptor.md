@@ -1,5 +1,5 @@
 ## Table 21 — Syntax of the target_MAC_address_descriptor
-_§9.5.2, PDF pp. 26-26_
+_§9.5.2.2, PDF pp. 26-26_
 
 | Syntax | No. of | Identifier | Default value |
 |---|---|---|---|

@@ -1,5 +1,5 @@
 ## Table 25 — Syntax of the target_MAC_address_range_descriptor
-_§8.4.5.3, PDF pp. 34-34_
+_§8.4.5.7, PDF pp. 34-34_
 
 | Name | No. of bits | Identifier | Remarks |
 |---|---|---|---|

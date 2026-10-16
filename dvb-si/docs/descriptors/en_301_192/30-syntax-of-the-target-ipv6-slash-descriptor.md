@@ -1,5 +1,5 @@
 ## Table 30 — Syntax of the target_IPv6_slash_descriptor
-_§8.4.5.3, PDF pp. 36-36_
+_§8.4.5.12, PDF pp. 36-36_
 
 | Name | No. of bits | Identifier | Remarks |
 |---|---|---|---|
