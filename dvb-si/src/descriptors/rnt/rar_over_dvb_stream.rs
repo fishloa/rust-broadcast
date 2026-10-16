@@ -4,7 +4,7 @@
 //! Encapsulates a RAR (resolution authority record) for a CRID authority whose
 //! data is found on a DVB stream. Permitted in the CRID authority descriptor
 //! loop of an RNT section (Table 4); tag 0x40 here "overrides the definition
-//! of that descriptor tag value defined in EN 300 468 [1], when this
+//! of that descriptor tag value defined in EN 300 468, when this
 //! descriptor tag is used inside an RNT" (`network_name_descriptor` in SI).
 
 use crate::descriptors::mjd_time::{MJD_BCD_LEN, MjdBcdTime};

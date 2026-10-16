@@ -4,7 +4,7 @@
 //! reuses the SI tag space except for three tags: Table 4 (clause 5.3.3.1)
 //! NOTE 2 — "The descriptor tag values 0x40-0x42, inclusive, in the above
 //! table, override the definition of the meaning of those descriptor tags in
-//! EN 300 468 [1], when they are used in the RNT table only". So RNT tag 0x40
+//! EN 300 468, when they are used in the RNT table only". So RNT tag 0x40
 //! is `RAR_over_DVB_stream_descriptor` (not `network_name`), 0x41
 //! `RAR_over_IP_descriptor` (not `service_list`) and 0x42 `RNT_scan_descriptor`
 //! (not `stuffing`) (issue #1285). Every other tag — including the
