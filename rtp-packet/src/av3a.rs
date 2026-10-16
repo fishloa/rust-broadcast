@@ -17,15 +17,22 @@
 //! * [`Av3aFmtp`] / [`CodecNnId`] — the SDP `a=fmtp` / MIME parameters
 //!   (`rate`, `codec-nn-id`, `config`, `bitrate`) of encoding name `AV3A-AATF`.
 //!
-//! Source gaps (no value is guessed): the lossless (`audio_codec_id` 1) header
-//! carries `channel_number` as `{4;8}` bits; that field is not yet typed (it is
-//! defined by T/AI 109.3 Annex A, which is vendored), so the lossless header is
-//! typed up to `aatf_error_check()` and the byte-aligned remainder
-//! (`channel_number`, `resolution`, alignment, raw data) stays in
-//! [`AatfFrame::body`]. T/AI 109.3 Table A.5 names `crc_check` as `rpchof` but
-//! states no polynomial or initial value: CRC bytes are carried, not verified.
-//! `audio_codec_id` 3..=15 have no defined header
-//! ([`Error::InvalidValue`] on parse).
+//! Source gap (no value is guessed), verified on the rendered pages of T/AI
+//! 109.3-2023 (PDF pp.128-129 Table A.6, p.131 semantics; transcription in
+//! `docs/av3a-aatf-frame-header.md`): the lossless (`audio_codec_id` 1) header
+//! carries `channel_number` as `{4; 8}` bits, and the only rule given is the
+//! semantics sentence "When audio_codec_id is 1 and the number of channels is
+//! less than 16, this field contains 4 bits. 0xf indicates extension, and others
+//! indicate the number of channels. When audio_codec_id is 1 and the number of
+//! channels is not less than 16, this field contains 8 bits." It does not say
+//! whether the 8-bit form replaces the nibble or follows a `0xf` nibble, what
+//! the 8-bit value encodes, or how a reader learns the channel count before
+//! reading the field that carries it (and `0xf` = 15 is itself "less than 16").
+//! Everything after `aatf_error_check()` (`channel_number`, `resolution`,
+//! alignment, raw data) therefore stays in [`AatfFrame::body`]. `crc_check`
+//! (`rpchof`) is carried, not verified: T/AI 109.3 Table A.5 names `crc_check`
+//! as `rpchof` but states no polynomial or initial value. `audio_codec_id`
+//! 3..=15 have no defined header ([`Error::InvalidValue`] on parse).
 
 use crate::error::{Error, Result};
 use alloc::string::String;

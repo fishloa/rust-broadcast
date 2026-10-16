@@ -162,42 +162,53 @@ const MAX_ES_INFO_LENGTH: usize = 0x0FFF;
 /// stream as scrambled.
 const DESCRIPTOR_TAG_CA: u8 = 0x09;
 
-// ── MPEG-H_3dAudio_descriptor (ISO/IEC 13818-1 §2.6.106, ETSI TS 101 154
-// §4.1.8.31) ─────────────────────────────────────────────────────────────
+// ── MPEG-H_3dAudio_descriptor (ISO/IEC 13818-1 §2.6.106, Table 2-121) ───────
+//
+// Syntax transcribed (verified on the rendered page, H.222.0 08/2023 PDF p.156)
+// in `transmux/docs/codec/mpegh-3daudio-descriptor-h222.md`. The wire form is
+// built by `dvb-si`'s typed `MpegH3dAudio` inside an `Mpeg2ExtensionDescriptor`
+// (tag 0x3F, `extension_descriptor_tag` 0x08), not by hand-assembled bytes.
 
 /// `extension_descriptor` tag (ISO/IEC 13818-1 Table 2-45) — the umbrella
 /// descriptor under which post-2013 additions, including MPEG-H signalling,
 /// register a second-level `extension_descriptor_tag`.
 const DESCRIPTOR_TAG_EXTENSION: u8 = 0x3F;
-/// `MPEGH_3dAudio_descriptor`'s `extension_descriptor_tag`. ITU-T H.222.0
-/// (08/2023, vendored) §2.6.106 Table 2-121 defines the descriptor and the
-/// extension-tag table lists it as `0x08`; the value is also confirmed by the real Fraunhofer MPEG-H-in-TS fixture's ES_info
-/// bytes (`3F 04 08 10 7F C1` — see `transmux/docs/codec/mpegh-ts-101154.md`),
-/// real DVB-conformant broadcast content from the format's own originator.
-const MPEGH_3DAUDIO_EXTENSION_TAG: u8 = 0x08;
-/// Body length (bytes after `descriptor_length`) of the
-/// `MPEGH_3dAudio_descriptor` this muxer emits: the sum of one
-/// `extension_descriptor_tag` byte and one `mpegh3daProfileLevelIndication`
-/// byte. ETSI TS 101 154 §4.1.8.31 documents `mpegh3daProfileLevelIndication`
-/// as the field that "shall be signalled" — the only part of the
-/// descriptor's body this crate has spec grounding for. The real fixture's
-/// descriptor carries 2 further bytes (`7F C1`) this crate cannot ground
-/// (the full syntax is in the paid ISO/IEC 13818-1 §2.6.106) and therefore
-/// does not reproduce; a shorter, correctly-length-prefixed descriptor is
-/// spec-legal (§2.6.10 defines the generic `descriptor_length`-bounded
-/// extension mechanism precisely so a decoder skips exactly that many
-/// bytes).
-const MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN: u8 = 2;
 
-/// Build the `MPEG-H_3dAudio_descriptor` ES_info entry carrying
-/// `mpegh3daProfileLevelIndication` (issue #579).
-fn mpegh_3daudio_descriptor(profile_level_indication: u8) -> Vec<u8> {
-    alloc::vec![
-        DESCRIPTOR_TAG_EXTENSION,
-        MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN,
-        MPEGH_3DAUDIO_EXTENSION_TAG,
+/// Widest value of the 6-bit `referenceChannelLayout` field (Table 2-121).
+const MPEGH_REFERENCE_CHANNEL_LAYOUT_MAX: u8 = 0x3F;
+
+/// Build the `MPEG-H_3dAudio_descriptor` ES_info entry (issue #579) from the
+/// `mhaC` fields transmux holds: `mpegh3daProfileLevelIndication` and
+/// `referenceChannelLayout` (6 bits in Table 2-121; the `mhaC` byte must fit).
+///
+/// `interactivityEnabled` is written `0` and `compatibleProfileSetsPresent` is
+/// written `1` (no `CompatibleSetIndication` list): the IR carries neither, and
+/// the spec defines `0` as "no user interactivity of any kind is available".
+/// The `reserved` runs are all-ones (`MpegH3dAudio::new`).
+fn mpegh_3daudio_descriptor(
+    profile_level_indication: u8,
+    reference_channel_layout: u8,
+) -> Result<Vec<u8>> {
+    use broadcast_common::Serialize as _;
+    use dvb_si::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
+    use dvb_si::descriptors::mpegh_3d_audio::MpegH3dAudio;
+
+    if reference_channel_layout > MPEGH_REFERENCE_CHANNEL_LAYOUT_MAX {
+        return Err(Error::InvalidValue {
+            field: "referenceChannelLayout",
+            value: u64::from(reference_channel_layout),
+            reason: "does not fit the 6-bit field of MPEG-H_3dAudio_descriptor (H.222.0 Table 2-121)",
+        });
+    }
+    let body = MpegH3dAudio::new(
         profile_level_indication,
-    ]
+        false,
+        None,
+        reference_channel_layout,
+    );
+    Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudio(body))
+        .try_to_bytes()
+        .map_err(|_| Error::InvalidInput("MPEG-H_3dAudio_descriptor does not encode"))
 }
 
 // ── PES / stream_id constants (ISO/IEC 13818-1 §2.4.3.6, Table 2-22) ────────
@@ -768,8 +779,9 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         let synthesized: Vec<Vec<u8>> = match &track.spec.config {
             CodecConfig::MpegH { config, .. } => {
                 alloc::vec![mpegh_3daudio_descriptor(
-                    config.mpegh3da_profile_level_indication
-                )]
+                    config.mpegh3da_profile_level_indication,
+                    config.reference_channel_layout,
+                )?]
             }
             _ => Vec::new(),
         };
@@ -2109,21 +2121,43 @@ mod tests {
         assert_ne!(pkts[0][1] & 0x40, 0, "PUSI must be set on the first packet");
     }
 
+    /// `extension_descriptor_tag` of `MPEG-H_3dAudio_descriptor` (H.222.0
+    /// Table 2-110), as it appears on the wire in these tests.
+    const MPEGH_EXT_TAG_FOR_TEST: u8 = 0x08;
+
     #[test]
-    fn mpegh_3daudio_descriptor_carries_profile_level() {
-        let bytes = mpegh_3daudio_descriptor(0x0B);
-        assert_eq!(
-            bytes,
-            alloc::vec![
-                DESCRIPTOR_TAG_EXTENSION,
-                MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN,
-                MPEGH_3DAUDIO_EXTENSION_TAG,
-                0x0B,
-            ]
-        );
-        // Mutating the profile-level must change the descriptor bytes (not a
-        // fixed/cached template).
-        assert_ne!(bytes, mpegh_3daudio_descriptor(0x10));
+    fn mpegh_3daudio_descriptor_matches_real_fixture_bytes() {
+        // Real Fraunhofer MPEG-H-in-TS fixture ES_info
+        // (`private/fixtures/ts/mpegh-cicp01-baseline.ts`): `3F 04 08 10 7F C1`.
+        // Table 2-121 bit layout of the 3 body bytes after the 0x08 ext tag:
+        //   0x10                       mpegh3daProfileLevelIndication
+        //   0x7F = 0 1 111111          interactivityEnabled=0,
+        //                              compatibleProfileSetsPresent=1, reserved(6 of 8)
+        //   0xC1 = 11 000001           reserved(last 2 of 8), referenceChannelLayout=1
+        let bytes = mpegh_3daudio_descriptor(0x10, 0x01).expect("encodes");
+        assert_eq!(bytes, alloc::vec![0x3F, 0x04, 0x08, 0x10, 0x7F, 0xC1]);
+    }
+
+    #[test]
+    fn mpegh_3daudio_descriptor_fields_each_change_the_bytes() {
+        // Hand-computed: profile 0x0B, layout 0x06 -> 3F 04 08 0B 7F C6.
+        let bytes = mpegh_3daudio_descriptor(0x0B, 0x06).expect("encodes");
+        assert_eq!(bytes, alloc::vec![0x3F, 0x04, 0x08, 0x0B, 0x7F, 0xC6]);
+        assert_ne!(bytes, mpegh_3daudio_descriptor(0x10, 0x06).unwrap());
+        assert_ne!(bytes, mpegh_3daudio_descriptor(0x0B, 0x01).unwrap());
+    }
+
+    #[test]
+    fn mpegh_3daudio_descriptor_rejects_layout_wider_than_six_bits() {
+        let err = mpegh_3daudio_descriptor(0x10, 0x40).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidValue {
+                field: "referenceChannelLayout",
+                value: 0x40,
+                ..
+            }
+        ));
     }
 
     // ── ES_info descriptor passthrough policy (issue #775) ──────────────────
@@ -2172,8 +2206,8 @@ mod tests {
         let before = alloc::vec![0x88u8, 0x01, 0x01];
         let stale_mpegh = alloc::vec![
             DESCRIPTOR_TAG_EXTENSION,
-            MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN,
-            MPEGH_3DAUDIO_EXTENSION_TAG,
+            0x02, // body length
+            MPEGH_EXT_TAG_FOR_TEST,
             0xFF, // stale/wrong profile-level
         ];
         let after = alloc::vec![0x89u8, 0x01, 0x02];
@@ -2181,7 +2215,7 @@ mod tests {
         inherited.extend_from_slice(&stale_mpegh);
         inherited.extend_from_slice(&after);
 
-        let synthesized = alloc::vec![mpegh_3daudio_descriptor(0x0B)];
+        let synthesized = alloc::vec![mpegh_3daudio_descriptor(0x0B, 0x01).unwrap()];
         let merged = merge_es_info_descriptors(&inherited, &synthesized).expect("no overflow");
 
         // Exactly one occurrence of the extension tag, holding the
@@ -2190,7 +2224,7 @@ mod tests {
         // and the synthesized descriptor is appended after them.
         let mut expected = before;
         expected.extend_from_slice(&after);
-        expected.extend_from_slice(&mpegh_3daudio_descriptor(0x0B));
+        expected.extend_from_slice(&mpegh_3daudio_descriptor(0x0B, 0x01).unwrap());
         assert_eq!(
             merged, expected,
             "inherited duplicate of a synthesized tag must be dropped, keeping only the \
@@ -2212,7 +2246,7 @@ mod tests {
         // Two `extension_descriptor` (0x3F) entries that share only the
         // outer tag: the inherited one carries a *different* second-level
         // extension_descriptor_tag (0x15) than the synthesized MPEG-H one
-        // (0x08, `MPEGH_3DAUDIO_EXTENSION_TAG`). Keying dedup on 0x3F alone
+        // (0x08, `MPEGH_EXT_TAG_FOR_TEST`). Keying dedup on 0x3F alone
         // (the pre-R4 behaviour) would wrongly collapse these two unrelated
         // registrations onto one; keyed on `(tag, extension_descriptor_tag)`
         // both must survive.
@@ -2225,11 +2259,11 @@ mod tests {
         ];
         let inherited = other_extension.clone();
 
-        let synthesized = alloc::vec![mpegh_3daudio_descriptor(0x0B)];
+        let synthesized = alloc::vec![mpegh_3daudio_descriptor(0x0B, 0x01).unwrap()];
         let merged = merge_es_info_descriptors(&inherited, &synthesized).expect("no overflow");
 
         let mut expected = other_extension;
-        expected.extend_from_slice(&mpegh_3daudio_descriptor(0x0B));
+        expected.extend_from_slice(&mpegh_3daudio_descriptor(0x0B, 0x01).unwrap());
         assert_eq!(
             merged, expected,
             "two extension_descriptor entries with distinct extension_descriptor_tag values \
