@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Documentation
+- README and crate-root docs restructured: archived/unpublished status stated first, standards table, feature flags, explicit not-implemented list.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

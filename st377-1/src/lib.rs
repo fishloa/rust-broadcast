@@ -1,124 +1,122 @@
-//! SMPTE ST 377-1:2019 "Material Exchange Format (MXF) — File Format
-//! Specification".
+//! SMPTE ST 377-1:2019 Material Exchange Format (MXF): KLV framing, Partition
+//! Pack, Primer Pack, the Header Metadata Sets of an OP1a file, and the
+//! Random Index Pack, `no_std` + `alloc`.
 //!
-//! This crate implements exactly the wire structure described in the
-//! curated spec transcription at `st377-1/docs/st377-1.md` (fetched
-//! directly from `https://pub.smpte.org/latest/st377-1/st377-1-2019.pdf`) —
-//! cite that file, not this doc comment, as the field-semantics oracle. It
-//! also documents in detail this crate's scope decision: MXF is a huge
-//! ecosystem spec (Operational Patterns, Essence Container mappings, DM/
-//! Application Metadata plug-ins, per-essence-kind Descriptors all live in
-//! sibling documents this crate does not attempt to anticipate), so this
-//! first pass fully types the format's own backbone and the four Root
-//! Metadata Sets every real MXF file has, and falls back to an identified-
-//! but-generic passthrough for everything else — see `docs/st377-1.md`'s
-//! "Scope decision for this crate" section for the full breakdown with
-//! spec citations.
+//! The wire structures follow the curated transcription at
+//! `st377-1/docs/st377-1.md` (from
+//! `https://pub.smpte.org/latest/st377-1/st377-1-2019.pdf`); cite that file,
+//! not this comment, as the field-semantics oracle. See also
+//! `docs/st378-op1a.md` for the OP1a transcription.
 //!
-//! - [`KlvItem`] — the generic KLV (Key-Length-Value) triplet (§6.3) every
-//!   other structure in an MXF file rides on; [`walk_klv_items`] /
-//!   [`collect_klv_items`] walk a sequence of them.
-//! - [`PartitionPack`] — the Header/Body/Footer Partition Pack (§7.1-§7.4,
-//!   Tables 4-8): [`PartitionKind`] + [`PartitionStatus`] plus every Table 5
-//!   field.
-//! - [`PrimerPack`] — the per-Partition local-tag lookup table (§9.2).
-//! - [`LocalSet`] — the generic "local set" KLV-lite framing (§9.3) used by
-//!   every Header Metadata Set; [`StructuralSetKind`] identifies which Set
-//!   a given instance is (Table 17), even for the many Sets this crate does
-//!   not deeply type.
-//! - [`Preface`], [`Identification`], [`ContentStorage`],
-//!   [`EssenceContainerData`] — the four Root Metadata Sets (Annex A) every
-//!   real MXF file has exactly one/more of, decoded field-by-field.
-//! - [`MaterialPackage`], [`SourcePackage`] — the two concrete Package
-//!   kinds (Annex E / B.1), carrying Package UID, dates, and Track
-//!   references.
-//! - [`TimelineTrack`], [`EventTrack`], [`StaticTrack`] — the three Track
-//!   kinds (B.12/B.13/B.14), wrapping a Sequence reference plus timing
-//!   properties.
-//! - [`Sequence`] — the ordered component collection inside every Track
-//!   (B.9).
-//! - [`SourceClip`] — a component referencing a span of Source Package
-//!   essence (B.10).
-//! - [`TimecodeComponent`] — a component carrying a timecode reference
-//!   (B.17).
-//! - [`FillerComponent`] — a gap placeholder inside a Sequence (B.11).
-//! - [`op1a`] — OP1a Operational Pattern UL helpers (ST 378).
-//! - [`RandomIndexPack`] — the optional file-trailer Partition index (§12).
+//! # What it does / what it does not
 //!
-//! **Out of scope entirely**: Essence Container payload bytes (the actual
-//! audio/video/data samples) — carried opaquely via [`KlvItem`], never
-//! decoded, the same boundary as `st337`'s `burst_payload`/`rdd29`'s
-//! `AudioDataDLC`. Index Table *contents*, Descriptors (F.*), DM Segments/
-//! Source Clips (B.32-B.33), and Application Metadata Sets (C.*) are
-//! identified via [`StructuralSetKind`] but not individually typed — see
-//! `docs/st377-1.md`.
+//! MXF is the professional file-interchange wrapper for audio/video. This
+//! crate reads and writes the **structure** of an MXF file: KLV triplets, the
+//! partition layout and the structural metadata describing the contents. It is
+//! the workspace's first file-based-interchange crate.
+//!
+//! It does **not**:
+//!
+//! - decode essence: Essence Container payload bytes stay opaque
+//!   [`KlvItem`]s;
+//! - type Essence Descriptors (F.2 to F.6 and per-codec registrations):
+//!   [`SourcePackage::descriptor`] is a bare [`StrongRef`] this crate can
+//!   neither resolve nor build a target for;
+//! - decode Index Table contents, DM Segments / DM Source Clips or
+//!   Application Metadata Sets (identified via [`StructuralSetKind`], kept as
+//!   generic [`LocalSet`]s);
+//! - assemble a file: nothing computes cross-Partition offsets,
+//!   `HeaderByteCount`/`IndexByteCount`, or a [`RandomIndexPack`] pointing at
+//!   real offsets;
+//! - implement other Operational Patterns or Essence Container mappings.
+//!
+//! # Standards supported
+//!
+//! | Standard | Edition | Scope / clauses | Status | Notes |
+//! |---|---|---|---|---|
+//! | SMPTE ST 377-1, MXF File Format Specification | 2019 (vendored; revision of 377-1-2009) | §6.3 KLV/BER, §7.1-7.4 Partition Pack, §9.2 Primer Pack, §9.3 local sets, Table 17 Set identification, §12 Random Index Pack, Annex A root sets, Annex B/E structural sets | Partial | typed vs opaque split below |
+//! | SMPTE ST 378, MXF OP1a | 2004 (378M-2004, vendored) | [`op1a`] Operational Pattern UL identification and qualifier bits | Partial | UL helpers only; the minimum-file `EssenceDescriptor` requirement is not met |
+//! | Essence-container mapping specs (ST 379 family) | not vendored | none | Not implemented | essence stays opaque |
+//!
+//! Typed Header Metadata Sets (dedicated struct, field-by-field,
+//! byte-identical re-serialization):
+//!
+//! - Root sets (Annex A): [`Preface`], [`Identification`], [`ContentStorage`],
+//!   [`EssenceContainerData`].
+//! - Packages: [`MaterialPackage`], [`SourcePackage`].
+//! - Tracks: [`TimelineTrack`], [`EventTrack`], [`StaticTrack`].
+//! - Components: [`Sequence`], [`SourceClip`], [`TimecodeComponent`],
+//!   [`FillerComponent`].
+//!
+//! Typed packs: [`PartitionPack`] ([`PartitionKind`] x [`PartitionStatus`]),
+//! [`PrimerPack`], [`RandomIndexPack`] ([`PartitionLocation`]).
+//!
+//! Identified only ([`StructuralSetKind`] name + generic [`LocalSet`], bytes
+//! preserved): DM Segment, DM Source Clip, Package Marker Object, the File /
+//! Generic Picture / CDCI / RGBA / Generic Sound / Generic Data / Multiple
+//! Descriptors, Network and Text Locators, Application Plug-In and Referenced
+//! Objects, and `Unknown([u8; 2])` for any Set not in Table 17.
+//!
+//! # Feature flags
+//!
+//! | Feature | Default | Description |
+//! |---|---|---|
+//! | `std` | yes | Link the standard library; without it the crate is `#![no_std]` + `alloc`. |
+//! | `serde` | no | `serde::Serialize`/`Deserialize` derives on public types. |
+//!
+//! # What is implemented
+//!
+//! - **KLV**: [`KlvItem`], [`walk_klv_items`], [`collect_klv_items`],
+//!   fill-item helpers ([`is_fill_item_key`]) and [`BerLength`], which records
+//!   the on-wire BER length width so re-serialization is byte-identical even
+//!   for the fixed-width long forms real encoders use (issue #1047).
+//! - **Packs**: [`PartitionPack`], [`PrimerPack`], [`RandomIndexPack`].
+//! - **Local sets**: [`LocalSet`] / [`LocalSetItem`] ([`ItemLengthMode`]) and
+//!   [`StructuralSetKind`] (Table 17).
+//! - **Value types**: [`Auid`], [`PackageId`], [`StrongRef`], [`Rational`],
+//!   [`MxfTimestamp`], [`ProductVersion`], [`UlBytes`], UTF-16BE helpers.
+//! - **[`op1a`]**: `OP1A_UL_PREFIX`, `Op1aQualifier`, `is_op1a`, `op1a_ul`.
+//! - Validated against a real ffmpeg-muxed OP1a file
+//!   (`tests/fixtures/op1a_mpeg2_pcm.mxf`; all 25 of its partition packs
+//!   round-trip byte-identically) and a small synthetic file.
 //!
 //! ## OP1a support is structural-metadata-only (issue #937)
 //!
-//! [`op1a`] plus [`MaterialPackage`]/[`SourcePackage`]/[`TimelineTrack`]/
-//! [`EventTrack`]/[`StaticTrack`]/[`Sequence`]/[`SourceClip`]/
-//! [`TimecodeComponent`]/[`FillerComponent`] parse and *value*-losslessly
-//! round-trip every OP1a Header Metadata Set this crate types (see
-//! `docs/st378-op1a.md`), and are validated against a real `ffmpeg`-muxed
-//! OP1a file in `tests/fixture_real_op1a.rs`. [`PartitionPack`],
-//! [`PrimerPack`], [`RandomIndexPack`], [`LocalSet`] and [`KlvItem`] ALSO
-//! round-trip **byte-identically** (issue #1047): each stores the on-wire
-//! BER length-field width it was parsed with ([`BerLength`]) and reproduces
-//! it exactly on serialize, rather than always re-canonicalizing to the
-//! shortest form that fits — real encoders routinely use a longer,
-//! fixed-width form instead (`docs/st377-1.md` §6.3.4 permits any form; a
-//! fixed width lets a pack be rewritten in place, e.g. Open -> Closed,
-//! without shifting every later absolute offset). Measured directly
-//! against the real fixture: a clear majority of its top-level items
-//! (including all 25 Partition Packs) use a non-minimal length token, and
-//! every one of them now reproduces its exact original bytes
-//! (`tests/fixture_real_op1a.rs`'s
-//! `real_fixture_non_minimal_ber_lengths_round_trip_byte_identically`
-//! quantifies and verifies this). `len_size` defaults to
-//! [`BerLength::Minimal`] for a freshly built value, so canonical
-//! minimal-form output is unaffected. Two more things this does **not**
-//! add up to:
+//! The typed OP1a Header Metadata Sets parse and round-trip losslessly, but two
+//! gaps remain by design:
 //!
-//! - **No Essence Descriptor type.** `docs/st378-op1a.md`'s minimum OP1a
-//!   file requires the File Package to carry an `EssenceDescriptor`
-//!   (§6.5/§8), but this crate has no typed representation of any
-//!   Descriptor (F.2-F.6) — [`SourcePackage::descriptor`] is a bare
-//!   [`StrongRef`], a 16-byte Instance UID this crate can neither resolve
-//!   nor build a target for. Doing so properly would mean typing not just
-//!   ST 377-1's own generic Descriptor Sets but the per-essence-kind
-//!   registrations that actually appear on the wire (this crate's real
-//!   fixture carries an MPEG Video Descriptor and a Wave Audio Descriptor,
-//!   both defined by *sibling* essence-container-mapping specs, not
-//!   ST 377-1 itself) — exactly the ecosystem-anticipation problem the
-//!   Scope section above already declines to take on.
-//! - **No file assembler.** Nothing in this crate computes cross-Partition
-//!   byte offsets (`ThisPartition`/`PreviousPartition`/`FooterPartition`),
-//!   `HeaderByteCount`/`IndexByteCount`, or builds a [`RandomIndexPack`]
-//!   that actually points at the Partitions it describes.
-//!   [`PartitionPack`], [`PrimerPack`], the typed Header Metadata Sets, and
-//!   [`RandomIndexPack`] each parse and serialize correctly in isolation,
-//!   but nothing stitches them into one valid, playable OP1a file —
-//!   confirm this yourself in `tests/round_trip.rs`'s
-//!   `full_op1a_structure_builds_and_round_trips`: every offset/byte-count
-//!   field there is a hardcoded placeholder (`0`, or `9999` for the
-//!   `RandomIndexPack` byte offset), not a computed value.
+//! - **No Essence Descriptor type.** A minimal OP1a file needs the File Package
+//!   to carry an `EssenceDescriptor` (`docs/st378-op1a.md` §6.5/§8). The real
+//!   fixture carries an MPEG Video Descriptor and a Wave Audio Descriptor, both
+//!   defined by sibling essence-container-mapping specs, which this crate does
+//!   not anticipate.
+//! - **No file assembler.** Every offset/byte-count field in
+//!   `tests/round_trip.rs`'s `full_op1a_structure_builds_and_round_trips` is a
+//!   hardcoded placeholder, not a computed value. A full implementation would
+//!   need a typed `EssenceDescriptor` family plus a writer that lays out
+//!   Partitions, tracks running offsets, backpatches the byte counts and emits a
+//!   `RandomIndexPack` from the real offsets: a second, comparably-sized
+//!   project, tracked separately.
 //!
-//! A full implementation would need, at minimum: a typed `EssenceDescriptor`
-//! family (File/Generic Picture/CDCI/RGBA/Generic Sound/Generic Data/
-//! Multiple, F.2-F.6) plus a way to plug in essence-kind-specific
-//! descriptors from sibling specs; and a writer that lays out Partitions in
-//! order, tracks running byte offsets as it serializes each one, backpatches
-//! `HeaderByteCount`/`IndexByteCount`/`ThisPartition`/`PreviousPartition`/
-//! `FooterPartition`, and emits a `RandomIndexPack` from the real offsets.
-//! That is a second, comparably-sized project; tracked separately rather
-//! than attempted here.
+//! # Design notes
 //!
-//! Depends only on `broadcast-common`. `#![no_std]` + `alloc` when the
-//! `std` feature is disabled.
+//! - Symmetric `Parse`/`Serialize` with byte-identical round-trips; equality
+//!   ignores the serialization-form field `len_size`, and a freshly built value
+//!   defaults to [`BerLength::Minimal`].
+//! - [`Preface::identifications`] is an `Option` so an absent property is
+//!   distinguished from an empty batch.
+//! - Public enums are `#[non_exhaustive]` with `name()` + `Display` labels.
+//! - `no_std` + `alloc`; one `thiserror` enum, [`Error`]. MSRV 1.95.0; licence
+//!   MIT OR Apache-2.0.
+//!
+//! # Related crates
+//!
+//! Depends only on `broadcast-common`. Sibling "container, not codec" crates:
+//! `st337` and `rdd29`.
 //!
 //! # Examples
 //!
-//! Parse a Partition Pack and walk its Header Metadata:
+//! Build a Partition Pack and round-trip it:
 //!
 //! ```
 //! use broadcast_common::{Parse, Serialize};

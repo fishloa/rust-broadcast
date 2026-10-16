@@ -1,31 +1,68 @@
-//! SMPTE ST 12-1:2014 "Time and Control Code" — the §9 Linear Time Code
-//! (LTC) 80-bit logical codeword.
+//! SMPTE ST 12-1:2014 Linear Time Code (LTC): parse and build the 80-bit
+//! logical codeword (BCD time address, drop/color flags, binary groups, sync
+//! word), `no_std`.
 //!
-//! This crate implements exactly the wire structure described in the curated
-//! spec transcription at `st12-1/docs/st12-1.md` (fetched directly from
-//! `https://pub.smpte.org/pub/st12-1/st0012-1-2014.pdf`) — cite that file,
-//! not this doc comment, as the field-semantics oracle.
+//! The field semantics follow the curated transcription at
+//! `st12-1/docs/st12-1.md` (from `https://pub.smpte.org/pub/st12-1/st0012-1-2014.pdf`);
+//! cite that file, not this comment, as the oracle.
 //!
-//! - [`LtcFrame`] — the 80-bit LTC codeword (§9.2): BCD hours/minutes/
-//!   seconds/frames, the drop-frame and color-frame flags, four
-//!   rate-dependent flag bits (resolved via [`FrameRate`]), eight 4-bit
-//!   binary groups ("user bits"), and the fixed synchronization word.
-//! - [`FrameRate`] — which of ST 12-1 Table 3's three flag-bit-position
-//!   columns (30-frame / 25-frame / 24-frame) applies; the codeword itself
-//!   carries no self-describing frame-rate field.
-//! - [`BinaryGroupUsage`] / [`BinaryGroupFlags`] — Table 1's classification
-//!   of what the binary groups contain, from the three binary group flag
-//!   bits.
+//! # What it does / what it does not
 //!
-//! **Scope**: this crate models only the already-demodulated logical 80-bit
-//! codeword — never the §9.3 biphase-mark-encoded physical/analog audio
-//! waveform LTC is carried as on a wire. That line-encoding/clock-recovery
-//! layer is out of scope for this project, the same way it never decodes PCM
-//! or AC-3 audio samples. See `docs/st12-1.md`'s "Scope" section.
+//! The crate takes the **already-demodulated 10-byte (80-bit) codeword** and
+//! returns typed fields, and builds the same 10 bytes from typed fields. It
+//! does **not** decode the section 9.3 biphase-mark audio waveform, implement
+//! VITC (section 10) / sections 11-12, implement ST 12-2 (timecode in ANC) or
+//! ST 12-3 (high frame rate), or detect the frame rate (the codeword has no
+//! rate field; rate-dependent flag meanings are resolved against a
+//! caller-supplied [`FrameRate`]).
 //!
-//! Depends only on `broadcast-common`. `#![no_std]` when the `std` feature
-//! is disabled (this crate needs no heap allocation at all — every field is
-//! a fixed-size scalar).
+//! # Standards supported
+//!
+//! | Standard | Edition | Scope / clauses | Status | Notes |
+//! |---|---|---|---|---|
+//! | SMPTE ST 12-1, Time and Control Code | 2014 (vendored spec verified) | §8.1-8.5 numeric code, drop/color flags, Table 1 binary-group usage; §9.2 LTC codeword, Tables 2-4, Table 3 rate-dependent flags, sync word `0xFCBF` | Partial (LTC codeword only) | §9.3 waveform, §10 VITC, §11, §12 not implemented |
+//! | SMPTE ST 12-2, Time Code in the ANC space | 2014 (vendored) | none | Not implemented | see the `st291` crate for the ANC container |
+//! | SMPTE ST 12-3, High Frame Rate time code | 2016 (vendored) | none | Not implemented | |
+//!
+//! # Feature flags
+//!
+//! | Feature | Default | Description |
+//! |---|---|---|
+//! | `std` | yes | Link the standard library; without it the crate is `#![no_std]` (no allocation needed). |
+//! | `serde` | no | `serde::Serialize`/`Deserialize` derives on public types. |
+//!
+//! # What is implemented
+//!
+//! - [`LtcFrame`]: hours, minutes, seconds, frames (BCD), drop-frame (bit 10)
+//!   and color-frame (bit 11) flags, the four rate-dependent flag bits at
+//!   their wire positions, eight 4-bit binary groups (`user_bits`), and the
+//!   fixed [`SYNC_WORD`] (validated on parse, always written on serialize);
+//!   [`FRAME_LEN`] is 10.
+//! - [`FrameRate`] (30/25/24-frame): selects Table 3's column;
+//!   [`LtcFrame::polarity_correction`] and [`LtcFrame::binary_group_flags`]
+//!   resolve the flag bits; [`FrameRate::max_frame`] and
+//!   [`LtcFrame::validate_for_rate`] give the rate-aware frame bound.
+//! - [`BinaryGroupFlags`] / [`BinaryGroupUsage`]: Table 1's eight-way
+//!   classification of the binary-group contents.
+//!
+//! # Design notes
+//!
+//! - `Parse`/`Serialize` are symmetric with byte-exact round-trips, tested
+//!   against spec vectors.
+//! - Parsing is strict: BCD digits are range-checked
+//!   ([`Error::InvalidBcdDigit`]), field maxima enforced
+//!   ([`Error::InvalidValue`]) and the sync word must match
+//!   ([`Error::SyncWordMismatch`]), so a malformed codeword cannot
+//!   re-serialize to different bytes.
+//! - `parse` validates frames against the widest bound ([`MAX_FRAMES`]); the
+//!   tighter per-rate check is [`LtcFrame::validate_for_rate`].
+//! - Public enums are `#[non_exhaustive]` with `name()` + `Display` labels.
+//!   MSRV 1.95.0; licence MIT OR Apache-2.0.
+//!
+//! # Related crates
+//!
+//! Depends only on `broadcast-common`. Timecode inside ANC packets would sit
+//! on top of the `st291` crate.
 //!
 //! # Examples
 //!

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- README and crate-root docs restructured: what it does / does not, standards-supported table (ST 2038:2021, RFC 8331, ST 2110-40, ST 291-1), feature table, design notes; removed the stale "parity/checksum not validated" claim (explicit `verify_checksum`/`build` helpers exist).
+
 ### Changed (BREAKING: epoch — requires broadcast-common 10)
 - Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `rtp-packet` 0.4 -> 0.5). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 

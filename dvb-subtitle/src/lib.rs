@@ -1,26 +1,4 @@
-//! DVB subtitling (bitmap) segment parser — ETSI EN 300 743 V1.6.1.
-//!
-//! Parses the subtitling segments carried in a DVB subtitle PES data field:
-//! display-definition, page-composition, region-composition, CLUT-definition,
-//! object-data (incl. 2/4/8-bit pixel-data sub-blocks), disparity-signalling,
-//! alternative-CLUT and end-of-display-set segments. Feed it a reassembled PES
-//! payload (e.g. from `mpeg-pes`); it depends only on `broadcast-common` and is
-//! `#![no_std]` (+ `alloc`).
-//!
-//! ```
-//! use broadcast_common::Parse;
-//! use dvb_subtitle::{PesDataField, DATA_IDENTIFIER, SYNC_BYTE, END_OF_PES_MARKER};
-//!
-//! let bytes = [
-//!     DATA_IDENTIFIER,               // 0x20
-//!     0x00,                         // subtitle_stream_id
-//!     SYNC_BYTE,                     // 0x0F
-//!     0x80, 0x00, 0x01, 0x00, 0x00, // end_of_display_set
-//!     END_OF_PES_MARKER,               // 0xFF
-//! ];
-//! let field = PesDataField::parse(&bytes).unwrap();
-//! assert_eq!(field.segments.len(), 1);
-//! ```
+#![doc = include_str!("../README.md")]
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]

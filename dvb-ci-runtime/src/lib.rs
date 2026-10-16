@@ -2,10 +2,36 @@
 //! the [`dvb_ci`] codecs.
 //!
 //! [`dvb_ci`] is `no_std` and owns the *wire* layer (TPDU / SPDU / APDU
-//! parse+serialize, CA_PMT building, CI Plus extensions). This crate adds the
+//! parse+serialize, CA_PMT building, CI Plus extension APDUs). This crate adds the
 //! *runtime*: device I/O, the TPDU poll loop, SPDU session management, and the
 //! per-resource state machines that together drive a physical CAM, per
-//! ETSI EN 50221 and TS 101 699.
+//! ETSI EN 50221.
+//!
+//! # What it does / what it does not
+//!
+//! **Does:** drives a CI module end to end — slot reset, transport connection,
+//! Resource Manager handshake, the six host-provided resources, `ca_pmt` for the
+//! services you add, and (with a `ci0` data device) scrambled-in /
+//! descrambled-out TS. Sync and sans-IO at the core: the caller owns the clock.
+//!
+//! **Does not:** run CI Plus (authentication, Content Control, multi-stream), serve
+//! Low-Speed Communications or any TS 101 699 extension resource, re-tune on a
+//! `host_control` request (it surfaces the request), or descramble itself.
+//!
+//! # Standards supported
+//!
+//! | Standard | Edition | Scope | Status |
+//! |---|---|---|---|
+//! | CENELEC EN 50221 | February 1997 | TPDU poll loop, session layer, host-provided Resource Manager / Application Information / Conditional Access / Date-Time / MMI / Host Control | Partial (no Low-Speed Communications; Host Control surfaced, not acted on) |
+//! | ETSI TS 101 699 V1.1.1 | 1999-11 | none at runtime (typed in `dvb-ci`) | Not implemented |
+//! | Linux DVB CA API (`dvb_ca_en50221`) | kernel ABI | `CA_RESET`, `CA_GET_SLOT_INFO`, `[slot, connection_id, ...]` frames, `ciM` data plane | Full for the calls used |
+//!
+//! # Features
+//!
+//! | Feature | Default | Effect |
+//! |---|---|---|
+//! | (none) | yes | Portable sync core and mocks; needs `std` |
+//! | `linux` | no | `LinuxCaDevice`, `LinuxCiDataDevice`, `DeviceOpError`, the `ci-probe` binary |
 //!
 //! # Design
 //!
@@ -13,38 +39,39 @@
 //! hardware-abstraction boundary), so it runs against either:
 //! - a real Linux CA device (`/dev/dvb/adapterN/caM`, the `linux` feature), or
 //! - the in-memory [`MockCaDevice`], which makes the state machines testable
-//!   without hardware and enables differential testing against an external
-//!   reference (drive both with the same scripted mock CAM and assert the
-//!   emitted `write`/ioctl byte sequences match).
+//!   without hardware.
 //!
-//! Implemented from the EN 50221 specification.
+//! `#![deny(unsafe_code)]`: only the Linux device leaf uses `unsafe`. Long-form
+//! `length_field`s follow `dvb-ci`'s preserved `LengthForm`; PID accessors are
+//! typed `mpeg_ts::pid::Pid`.
 //!
 //! # What's implemented
 //!
-//! - **Transport** (TPDU, §A.4): `Create_T_C` handshake, empty-`T_Data_Last`
-//!   poll cadence, `T_SB` data-available → `T_RCV`, `T_Data_More/Last`
-//!   reassembly, reply timeout.
-//! - **Session** (SPDU, §7.2): session table; `open_session_request`/response,
+//! - **Transport** (TPDU, Annex A): `Create_T_C` handshake, empty-`T_Data_Last`
+//!   poll cadence (half-duplex), `T_SB` data-available → `T_RCV`,
+//!   `T_Data_More/Last` reassembly, reply timeout.
+//! - **Session** (SPDU): session table; `open_session_request`/response,
 //!   host-initiated `create_session`, `close_session`; `session_number` + APDU
 //!   routing.
-//! - **Resources** (§8): Resource Manager handshake (profile exchange →
-//!   [`Notification::CamReady`], then opens module resources),
-//!   application_information, conditional_access (`ca_pmt`/`ca_pmt_reply`),
-//!   date_time (MJD + BCD), and mmi (surfaces module menus/enquiries as
-//!   [`Notification::Mmi`]).
+//! - **Resources** (all host-provided): Resource Manager handshake (profile
+//!   exchange → [`Notification::CamReady`]), application_information,
+//!   conditional_access (`ca_pmt`/`ca_pmt_reply`), date_time (MJD + BCD), mmi
+//!   (menus/enquiries as [`Notification::Mmi`], answered via
+//!   `Driver::mmi_menu_answer` / `mmi_enquiry_answer` / `mmi_cancel`), and
+//!   [`resource::HostControl`] (`tune`/`replace`/`clear_replace`/`ask_release`
+//!   surfaced as [`Notification::HostControl`]).
 //! - **Descramble helper**: [`Driver::descramble`](crate::driver::Driver::descramble)
-//!   / [`HostRequest::Descramble`] runs the full `ca_pmt` query → reply →
+//!   / [`HostRequest::Descramble`] runs the `ca_pmt` query → reply →
 //!   ok_descrambling sequence, CAID-filtered to the CAM's `ca_info`.
 //! - **Devices**: the in-memory [`MockCaDevice`] + [`MockCiDataDevice`], and the
-//!   Linux `/dev/dvb/adapterN/caM` (control) + `ciM` (TS data-plane) devices
-//!   behind the `linux` feature. The data plane ([`CiDataDevice`]) carries the
-//!   scrambled-in / descrambled-out TS for separate-CI hardware.
-//!
+//!   Linux `caM` (control) + `ciM` (TS data-plane) devices behind the `linux`
+//!   feature. The data plane ([`CiDataDevice`]) carries the scrambled-in /
+//!   descrambled-out TS for separate-CI hardware.
 //! - **Diagnostics**: [`RecordingCaDevice`] captures the link in both directions;
 //!   [`trace::decode_frame`]/[`decode_log`](crate::trace::decode_log) annotate a
-//!   capture (TPDU → SPDU → APDU) for live-CAM debugging.
+//!   capture (TPDU → SPDU → APDU).
 //!
-//! # Managed CAS layer (#763)
+//! # Managed CAS layer
 //!
 //! A single-slot CA orchestration layer sits on top of the raw `ca_pmt` /
 //! `ca_pmt_reply` surface, fed **parsed `dvb-si` structs** (never raw bytes):
@@ -52,7 +79,7 @@
 //! - [`Driver::add_service`](crate::Driver::add_service) /
 //!   [`remove_service`](crate::Driver::remove_service) — build + send the
 //!   `ca_pmt` from a [`dvb_si::tables::pmt::PmtSection`] and track the slot's
-//!   active service set (multi-programme list-management handled internally).
+//!   active service set.
 //! - [`Driver::set_cat`](crate::Driver::set_cat) — feed the CAT; the EMM-PID
 //!   set becomes the CAT's EMM PIDs ∩ the CAM's advertised `ca_info` CAIDs.
 //! - [`Driver::emm_pids`](crate::Driver::emm_pids) /
@@ -60,14 +87,21 @@
 //!   [`ca_pids`](crate::Driver::ca_pids) /
 //!   [`required_pids`](crate::Driver::required_pids) — the PIDs to route into
 //!   the `ci0` data plane (EMM ∪ ES ∪ ECM ∪ PCR = `required_pids`).
-//! - [`Driver::set_requery_interval`](crate::Driver::set_requery_interval) — a
-//!   periodic `ca_pmt` re-query (`cmd_id = query`) so a card entitled *after*
-//!   the initial `ca_pmt` still refreshes; a per-programme status transition
+//! - [`Driver::set_requery_interval`](crate::Driver::set_requery_interval) —
+//!   opt-in periodic `ca_pmt` re-query; a per-programme status transition
 //!   surfaces as an edge-triggered [`Notification::Entitlement`].
-//! - [`CaDescrambler`] — a turnkey wrapper that additionally owns the `ci0`
+//! - [`CaDescrambler`] — turnkey wrapper that also owns the `ci0`
 //!   [`CiDataDevice`]: `feed_ts` filters a scrambled TS chunk to
 //!   `required_pids()` and returns the descrambled TS. One `CaDescrambler` =
-//!   one CI slot = one TS path (multi-tuner ⇒ one per slot).
+//!   one CI slot = one TS path.
+//!
+//! # Hardware verification
+//!
+//! Only what the CHANGELOG records: an AlphaCrypt / Irdeto module (live) for the
+//! Resource Manager handshake, `application_information` and `ca_info` (18
+//! CA_system_ids); a Digital Devices CXD2099 `ci0` for the split-fd data plane
+//! (150 s, 111k `feed_ts` calls, 0 errors). The periodic re-query is not
+//! verified on any CAM.
 //!
 //! # `ci-probe`
 //!
@@ -75,8 +109,10 @@
 //! discovers and engages an installed CAM: `ci-probe list` / `info` /
 //! `descramble <pmt>` / `mmi`, with `--trace` for an annotated link dump.
 //!
-//! Roadmap: a differential test harness against an external reference (the
-//! `host_control` resource has since landed — see [`resource::HostControl`]).
+//! # Related crates
+//!
+//! Depends on [`dvb_ci`] (re-exported), `dvb-si`, `mpeg-ts` and
+//! `broadcast-common`. MSRV 1.95.0; MIT OR Apache-2.0.
 //!
 //! # Example
 //!

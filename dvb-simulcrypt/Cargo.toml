@@ -2,7 +2,7 @@
 name    = "dvb-simulcrypt"
 version = "0.6.0"
 edition = "2024"
-description = "DVB SimulCrypt head-end CA message framing (ETSI TS 103 197): the generic TLV message structure plus the ECMG⇔SCS and EMMG/PDG⇔MUX message_type / parameter_type registries. Signalling only — CW/ECM/EMM/datagram payloads are opaque."
+description = "DVB SimulCrypt head-end CA message framing (ETSI TS 103 197): the generic TLV message structure plus the ECMG⇔SCS, EMMG/PDG⇔MUX and C(P)SIG⇔(P)SIG message_type / parameter_type registries. Signalling only — CW/ECM/EMM/datagram payloads are opaque."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["simulcrypt", "dvb", "ecmg", "emmg", "ca"]

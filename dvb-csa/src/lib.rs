@@ -1,6 +1,48 @@
 //! DVB Common Scrambling Algorithm (CSA2) — the cipher underneath conditional
 //! access on DVB-S, DVB-T, and DVB-C.
 //!
+//! # What it does / does not
+//!
+//! Does: [`scramble`] / [`descramble`] a payload with an 8-byte
+//! [`ControlWord`]; [`ts::scramble_ts_packet`] / [`ts::descramble_ts_packet`]
+//! at TS-packet level (adaptation-field aware, sets
+//! `transport_scrambling_control` via [`ts::KeyParity`]); and, with feature
+//! `bitsliced`, a 64-payload batch fast path. Does not: fetch control words
+//! (ECM/EMM, CAS, CAM: see `dvb-ci-runtime`, `dvb-simulcrypt`), implement
+//! DVB-CSA3 or any other scrambling scheme, or parse the TS beyond payload
+//! location (see `mpeg-ts`).
+//!
+//! # Standards supported
+//!
+//! | Standard | Scope | Status |
+//! |---|---|---|
+//! | DVB-CSA (version 1/2), no public specification | the cipher | Full, oracle-validated against libdvbcsa 1.1.0 (18 golden vectors) |
+//! | ISO/IEC 13818-1 §2.4.3.3 / §2.4.3.4 | `transport_scrambling_control`, payload location | Full |
+//! | ETSI TS 100 289 V1.1.1 (DVB Scrambling Algorithm version 3) | §5.1 Table 1 even/odd signalling only ([`ts::KeyParity`]) | Partial: the CSA3 cipher is not implemented |
+//!
+//! # Feature flags
+//!
+//! | Feature | Default | Effect |
+//! |---|---|---|
+//! | `std` | yes | `std::error::Error` on [`Error`]; enables `mpeg-ts/std` |
+//! | `bitsliced` | no | adds the `bitsliced` batch fast path |
+//!
+//! `no_std` without default features. MSRV 1.95.0, MIT OR Apache-2.0. Related:
+//! `mpeg-ts` (dependency), `dvb-simulcrypt`, `dvb-ci`, `dvb-ci-runtime`.
+//!
+//! # Quick start
+//!
+//! ```
+//! use dvb_csa::{ControlWord, scramble, descramble};
+//!
+//! let cw = ControlWord::from_bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+//!
+//! let mut payload = vec![0xAA; 184];
+//! scramble(&cw, &mut payload);
+//! descramble(&cw, &mut payload);
+//! assert_eq!(payload, vec![0xAA; 184]);
+//! ```
+//!
 //! # Status: reverse-engineered, not spec-cited
 //!
 //! **DVB-CSA has no public normative specification.** The algorithm was

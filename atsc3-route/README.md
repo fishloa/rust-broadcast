@@ -3,68 +3,40 @@
 [![Crates.io](https://img.shields.io/crates/v/atsc3-route.svg)](https://crates.io/crates/atsc3-route)
 [![docs.rs](https://img.shields.io/docsrs/atsc3-route)](https://docs.rs/atsc3-route)
 
-ATSC A/331 Annex A **ROUTE** (Real-time Object delivery over Unidirectional
-Transport) binary framing — split out of the `atsc3` crate (issue #943) so a
-`no_std` ROUTE receiver doesn't have to pull in an XML stack. `atsc3` keeps
-the signalling half (LLS today, SLS XML planned — it is what needs `roxmltree`
-+ `flate2`); this crate
-is the binary ROUTE delta, built directly on [`rmt-flute`](../rmt-flute)'s
-LCT/ALC/FLUTE implementation of the RFC 5651/5775/6726 base A/331 Annex A
-profiles.
+ATSC 3.0 ROUTE (A/331 Annex A) binary framing: the ROUTE-specific delta on top of the LCT/ALC/FLUTE wire formats in `rmt-flute`.
 
-## Install
+> **ARCHIVED: ATSC 3.0 work in this workspace is abandoned.** The sibling `atsc3` signalling crate is permanently unpublished; `atsc3-route` was published before the work stopped (see its CHANGELOG) and receives only maintenance releases. The market is closed enough that real captures are scarce: the two ROUTE header extensions this crate once decoded appear in zero of 14,000+ real captured packets. `rmt-flute` is useful independently.
 
 ```toml
 [dependencies]
 atsc3-route = "0.2"
 ```
 
-## What this implements
+## What it does / what it does not
 
-A/331 Annex A is written as a profile-and-delta on RFC 5651 (LCT), RFC 5775
-(ALC) and RFC 6726 (FLUTE) — this crate implements exactly the delta, not the
-base RFCs (that's `rmt-flute`'s job). The full transcription lives at
-`atsc3/docs/a331-route.md` (a sibling crate's `docs/`, since the doc predates
-this crate's split and documents both halves of A/331 Annex A).
+A/331 Annex A defines ROUTE as a profile-and-delta on RFC 5651 (LCT), RFC 5775 (ALC) and RFC 6726 (FLUTE). This crate implements exactly the delta (the constrained LCT header, the two FEC Payload ID layouts, the Codepoint semantics, extension-type constants) and leaves the base RFCs to `rmt-flute`. It was split out of `atsc3` so a `no_std` ROUTE receiver does not need an XML stack.
 
-- **[`RoutePacket`]** — a composed ROUTE ALC/LCT packet: an
-  `rmt_flute::LctHeader` constrained to A/331's mandated field widths
-  (§A.3.4/§A.3.6: `V`=1, `C`=00, `S`=1, `O`=01, `H`=0, and the PSI/SPI rule),
-  the SPI-bit-dispatched `RouteFecPayloadId`, and the opaque delivery-object
-  payload.
-- **Header-extension type (HET) constants** — `HET_EXT_ROUTE_PRESENTATION_TIME` (66, §A.3.7.1)
-  and `HET_EXT_TOL_24` / `HET_EXT_TOL_48` (194 / 67, §A.3.8.1) for walking an LCT extension
-  chain. The typed `EXT_ROUTE_PRESENTATION_TIME` / `EXT_TOL` decoders were removed: no public
-  ATSC 3.0 capture carries either extension, so they could not meet this crate's
-  real-fixture round-trip bar.
-- **FEC Payload ID layouts** (§A.3.5.1/§A.3.5.2) — `SourceFecPayloadId`
-  (Compact No-Code `start_offset`, source flows) and `RepairFecPayloadId`
-  (RaptorQ `SBN`/`ESI` per RFC 6330 §3.2, repair flows), dispatched by the
-  LCT SPI bit via `RouteFecPayloadId`.
-- **Codepoint (`CP`) semantics** (§A.3.6, Table A.3.6) — `Codepoint`,
-  `FormatId` (Table A.3.2), `FragMode`, and `Codepoint::known_semantics()`
-  for the directly-resolvable `CP` values 1-9.
+It does **not**:
 
-## Scope
+- parse the ROUTE signalling documents (S-TSID, USBD, MPD, FDT Instance XML) or any Service Layer Signalling: those ride as opaque payload bytes;
+- implement RaptorQ encoding or decoding (RFC 6330 is not vendored here; only the SBN/ESI Payload ID field layout that A/331 Figure A.3.4 and RFC 6330 §3.2 agree on is implemented);
+- decode `EXT_ROUTE_PRESENTATION_TIME` or `EXT_TOL`: only their HET constants remain, because no public capture carries them;
+- run a receiver or sender session.
 
-Out of scope, same as `rmt-flute`: the FDT/S-TSID/USBD/MPD **XML** documents
-carried as opaque ROUTE payload bytes (the `atsc3` crate's job, or a
-consumer's own XML layer), and the RaptorQ encode/decode procedure itself
-(RFC 6330 is not vendored in this repository).
+## Standards supported
 
-## ⚠ Repair-flow coverage gap
+| Standard | Edition | Scope covered | Status | Notes |
+|----------|---------|---------------|--------|-------|
+| ATSC A/331 — Signaling, Delivery, Synchronization, and Error Protection, Annex A (ROUTE) | Code cites A/331:2025-06; the vendored transcription is A/331:2026-04 (the workspace transcription notes record no differing value in the clauses transcribed) | §A.3.4 / §A.3.6 constrained LCT fields (`V`=1, `C`=00, `S`=1, `O`=01, `H`=0, PSI/SPI rule); §A.3.5.1 / §A.3.5.2 source and repair FEC Payload IDs; §A.3.6 Table A.3.6 Codepoint semantics and Table A.3.2 format IDs; §A.3.7.1 and §A.3.8.1 extension HET constants | Partial | Extension bodies (`EXT_ROUTE_PRESENTATION_TIME`, `EXT_TOL`) not decoded: HET constants only. Repair-flow Payload ID is verified against the spec figure only, not a real capture. |
+| IETF RFC 5651 / RFC 5775 / RFC 6726 (LCT / ALC / FLUTE) | October 2009 / April 2010 / November 2012 | Base wire formats | Delegated | Implemented by `rmt-flute`; this crate wraps its `LctHeader`. |
+| IETF RFC 6330 — RaptorQ FEC Scheme §3.2 | Not vendored: unverified | `SBN`/`ESI` FEC Payload ID field widths only | Typed-opaque | No encode/decode procedure. |
 
-The real ROUTE capture fixtures this crate is verified against
-(`fixtures/atsc3/route-*.bin`) come from a session that ran with the LCT SPI
-bit set on **every** packet across both source `.pcap` files (8,885 frames
-scanned) — no FEC-repair flow was ever active in that capture.
-`RepairFecPayloadId` is implemented directly from A/331's own Figure A.3.4
-bit-diagram (matching RFC 6330 §3.2 exactly) and unit-tested against
-hand-built vectors, but has **no real-capture corroboration**. See
-`fixtures/atsc3/PROVENANCE.md`'s "What was not obtained" section.
+## Feature flags
 
-`#![no_std]` + `alloc` (via `rmt-flute`); depends only on `rmt-flute` and
-`broadcast-common`.
+| Feature | Default | Enables |
+|---------|---------|---------|
+| `std`   | yes     | Links the standard library (also enables `std` in `rmt-flute`, `broadcast-common`). Without it the crate is `#![no_std]` + `alloc`. |
+| `serde` | no      | `serde::Serialize` derives on the public types (and `rmt-flute/serde`). |
 
 ## Quick start
 
@@ -101,24 +73,31 @@ assert_eq!(re, pkt);
 assert!(matches!(re.codepoint(), Codepoint::Indirect(128)));
 ```
 
-## Examples
+The packet above is hand-built. The crate's integration tests parse and byte-exact round-trip real captures (`fixtures/atsc3/route-*.bin`: an FDT instance, audio and video media fragments, and a signed SLS package). Runnable examples:
 
 ```sh
 cargo run -p atsc3-route --example parse_route_fdt
 cargo run -p atsc3-route --example build_route_media_fragment
 ```
 
-## Features
+## What is implemented
 
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `std`   | yes     | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
-| `serde` | no      | `serde::Serialize` derives on public types. |
+- `RoutePacket`: an `rmt_flute::LctHeader` constrained to A/331's mandated widths (`ROUTE_VERSION`, `ROUTE_CCI_LEN`, `ROUTE_TSI_LEN`, `ROUTE_TOI_LEN`, `ROUTE_PSI_SOURCE`), the SPI-dispatched `RouteFecPayloadId` and the opaque delivery-object payload; `spi()` and `codepoint()` accessors.
+- `ext`: `HET_EXT_ROUTE_PRESENTATION_TIME` (66), `HET_EXT_TOL_24` (194), `HET_EXT_TOL_48` (67), for walking an LCT extension chain.
+- `fec`: `SourceFecPayloadId` (Compact No-Code `start_offset`, source flows), `RepairFecPayloadId` (`SBN`/`ESI`, repair flows, `MAX_ESI`), dispatched by `RouteFecPayloadId` on the LCT SPI bit (`ROUTE_FEC_PAYLOAD_ID_LEN` bytes).
+- `codepoint`: `Codepoint` (named values 1-9, reserved 0 and 10-127, indirect 128-255), `FormatId` (Table A.3.2: File, Entity, Unsigned Package, Signed Package), `FragMode`, `CodepointSemantics` and `Codepoint::known_semantics()` for the directly-resolvable values 1-9.
+- The `rmt_flute` crate is re-exported so a `RoutePacket` can be built without a direct `rmt-flute` dependency.
 
-## Minimum Supported Rust Version
+## Design notes
 
-1.95.0
+- Zero-copy, symmetric `Parse`/`Serialize`; round-trip tested against the real captures. Fixture discipline is why the two extension decoders were removed (0.2.0): a type without a real-capture round-trip does not ship.
+- **Known coverage gap:** the committed captures never had an active FEC-repair flow (the SPI bit was set on every packet across 8,885 frames), so `RepairFecPayloadId` is unit-tested against hand-built vectors from A/331 Figure A.3.4 only. See `fixtures/atsc3/PROVENANCE.md`.
+- One `thiserror` enum, `Error`; public enums are `#[non_exhaustive]` with `name()` / `Display` labels; `#![no_std]` + `alloc`.
 
-## License
+## Related crates
 
-MIT OR Apache-2.0
+Depends on `rmt-flute` and `broadcast-common` only. `atsc3` (archived, unpublished) is the signalling-side sibling; the ROUTE transcription lives in that crate's `docs/a331-route.md`.
+
+## MSRV and licence
+
+Minimum supported Rust version 1.95.0. Licensed under MIT OR Apache-2.0.

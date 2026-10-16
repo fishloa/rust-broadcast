@@ -18,6 +18,94 @@
 //! reassembly + the C0/C1/G0/G1/G2/G3 window / pen command interpreter, services
 //! 1–6) — and exposes the decoded caption screen / window text. Grounded in
 //! ANSI/CTA-608-E, ANSI/CTA-708-E and 47 CFR §79.102 (see `cc-data/docs/decode/`).
+//!
+//! # What it does / what it does not
+//!
+//! Parses and builds `cc_data()` byte-exactly, splits CEA-608 (`cc_type` 0/1)
+//! from CEA-708 (`cc_type` 2/3), and (with `decode`) interprets the pairs into
+//! caption text. It does **not** locate `cc_data()` in picture `user_data` / SEI,
+//! render pixels, or decode the XDS metadata catalogue (field-2 XDS is detected
+//! and skipped). Conversion to WebVTT / SRT is in `timed-metadata` and
+//! `caption-convert`.
+//!
+//! # Standards supported
+//!
+//! | Standard | Edition | Scope | Status |
+//! |---|---|---|---|
+//! | ETSI TS 101 154 | V2.6.1 (transcribed in `docs/ts_101_154/`) | §B.5 / Table B.9 `cc_data()` | Full |
+//! | ANSI/CTA-608-E | -E; not vendored, so byte tables unverified against the document | line-21 decode, CC1-CC4, PACs, character sets | Partial (decode); XDS skipped |
+//! | ANSI/CTA-708-E | -E; not vendored, same caveat | DTVCC packets, service blocks, windows, pens; services 1-6 | Partial (decode) |
+//! | 47 CFR §79.102 | public domain (`docs/decode/cea708-conformance.md`) | 708 semantic model | Full as a grounding source |
+//!
+//! # Feature flags
+//!
+//! | Feature | Default | Effect |
+//! |---|---|---|
+//! | `std` | on | link `std`; off = `no_std` + `alloc` |
+//! | `decode` | on | [`decode`](crate::decode) module: 608 / 708 decoders |
+//! | `serde` | off | `serde::Serialize` on public types |
+//!
+//! # Quick start
+//!
+//! ```
+//! use broadcast_common::{Parse, Serialize};
+//! use cc_data::{CcData, CcTriplet, CcType};
+//!
+//! // Build a cc_data() with one 608 field-1 pair and one 708 start triplet.
+//! let cc = CcData {
+//!     process_em_data_flag: true,
+//!     process_cc_data_flag: true,
+//!     additional_data_flag: false,
+//!     reserved_byte1: 0xFF,
+//!     triplets: vec![
+//!         CcTriplet {
+//!             cc_valid: true,
+//!             cc_type: CcType::Dtvcc708Start,
+//!             cc_data_1: 0xC1,
+//!             cc_data_2: 0x02,
+//!         },
+//!         CcTriplet {
+//!             cc_valid: true,
+//!             cc_type: CcType::Ntsc608Field1,
+//!             cc_data_1: 0x94,
+//!             cc_data_2: 0x2C,
+//!         },
+//!     ],
+//! };
+//!
+//! // Serialize, parse back byte-exactly, and split 608 from 708.
+//! let bytes = cc.try_to_bytes().unwrap();
+//! let back = CcData::parse(&bytes).unwrap();
+//! assert_eq!(back, cc);
+//! assert_eq!(back.cea608().count(), 1);
+//! assert_eq!(back.cea708().count(), 1);
+//! ```
+//!
+//! Decoding (feature `decode`):
+//!
+//! ```
+//! # #[cfg(feature = "decode")]
+//! # {
+//! use cc_data::decode::{Cea608Channel, Cea608Decoder};
+//!
+//! let mut dec = Cea608Decoder::new();
+//! // RCL, PAC row 15, "HI", EOC: a pop-on caption on CC1 (field 1).
+//! dec.push_pair(false, 0x14, 0x20); // RCL (field 1 -> CC1)
+//! dec.push_pair(false, 0x14, 0x20); // doubled control, ignored
+//! dec.push_pair(false, 0x14, 0x70); // PAC row 15 indent 0
+//! dec.push_pair(false, b'H', b'I');
+//! dec.push_pair(false, 0x14, 0x2F); // EOC -> flip
+//! assert_eq!(dec.channel_text(Cea608Channel::Cc1), "HI");
+//! # }
+//! ```
+//!
+//! # Design notes and related crates
+//!
+//! Symmetric `Parse` / `Serialize` with a byte-identical carriage round trip
+//! (flag bits and `reserved_byte1` preserved); [`Error`] is `#[non_exhaustive]`;
+//! both decoders are one-way and panic-free on hostile input. Depends only on
+//! `broadcast-common`; used by `timed-metadata` and `caption-convert`. MSRV
+//! 1.95.0; MIT OR Apache-2.0.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]

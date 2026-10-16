@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- README and new crate-root docs rewritten to the cluster standard: what it does / does not, standards table (BS.1770-5, R 128 v5, Tech 3341/3342 v4, GY/T 282/377/379), feature table, compiling quick start; Tech 3341 case coverage corrected to what the test suite exercises.
+
 ### Changed (BREAKING: epoch — requires broadcast-common 10)
 - Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
