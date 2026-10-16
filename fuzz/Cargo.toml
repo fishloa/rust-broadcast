@@ -284,6 +284,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "transmux_sample_entries"
+path = "fuzz_targets/transmux_sample_entries.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "transmux_cenc_boxes"
 path = "fuzz_targets/transmux_cenc_boxes.rs"
 test = false

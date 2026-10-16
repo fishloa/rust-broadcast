@@ -574,6 +574,16 @@ pub struct TrackFragmentRunBox {
 
 impl TrackFragmentRunBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        Self::parse_body_budgeted(body, &mut { MAX_ZERO_WIDTH_TRUN_SAMPLES })
+    }
+
+    /// [`TrackFragmentRunBox::parse_body`] drawing every zero-width sample
+    /// (a `trun` with no per-sample fields, which the buffer length cannot
+    /// bound) from `zero_width_budget`, so a caller parsing a whole `moof` (or
+    /// a run of `moof`s) shares ONE [`MAX_ZERO_WIDTH_TRUN_SAMPLES`] allowance
+    /// rather than getting a fresh one per `trun` (16-byte `trun`s x 2^20
+    /// samples x 40 bytes each is a ~40 MiB-per-16-bytes amplification).
+    pub(crate) fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
         let (ver, tr_flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
         if payload.len() < 4 {
@@ -639,10 +649,13 @@ impl TrackFragmentRunBox {
         // `trun` declaring 2^32-1 samples would push ~170 GB of `TrunSample`s
         // (#1130). Such a `trun` is legal (sizes/durations come from `tfhd`),
         // so cap the count at a generous real-world ceiling instead.
-        if entry_size == 0 && sc > MAX_ZERO_WIDTH_TRUN_SAMPLES {
-            return Err(Error::InvalidInput(
-                "trun sample_count with no per-sample fields exceeds MAX_ZERO_WIDTH_TRUN_SAMPLES",
-            ));
+        if entry_size == 0 {
+            if sc > *zero_width_budget {
+                return Err(Error::ZeroWidthTrunBudgetExceeded {
+                    limit: MAX_ZERO_WIDTH_TRUN_SAMPLES,
+                });
+            }
+            *zero_width_budget -= sc;
         }
         let mut samples = Vec::with_capacity(crate::init_segment::bounded_entry_count(
             payload.len().saturating_sub(c),
@@ -1134,6 +1147,12 @@ impl TrackFragmentBox {
     }
 
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        Self::parse_body_budgeted(body, &mut { MAX_ZERO_WIDTH_TRUN_SAMPLES })
+    }
+
+    /// [`TrackFragmentBox::parse_body`] sharing `zero_width_budget` across its
+    /// `trun`s (see [`TrackFragmentRunBox::parse_body_budgeted`]).
+    pub(crate) fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
         let mut tfhd: Option<TrackFragmentHeaderBox> = None;
         let mut tfdt: Option<TrackFragmentBaseMediaDecodeTimeBox> = None;
         let mut trun: Vec<TrackFragmentRunBox> = Vec::new();
@@ -1150,7 +1169,8 @@ impl TrackFragmentBox {
                 )?);
                 order.push(TrafChild::Tfdt);
             } else if child.is(b"trun") {
-                let parsed = TrackFragmentRunBox::parse_body(child.payload)?;
+                let parsed =
+                    TrackFragmentRunBox::parse_body_budgeted(child.payload, zero_width_budget)?;
                 order.push(TrafChild::Trun(trun.len()));
                 trun.push(parsed);
             } else {
@@ -1285,6 +1305,14 @@ impl MovieFragmentBox {
     }
 
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        Self::parse_body_budgeted(body, &mut { MAX_ZERO_WIDTH_TRUN_SAMPLES })
+    }
+
+    /// [`MovieFragmentBox::parse_body`] drawing zero-width `trun` samples from
+    /// the caller's `zero_width_budget`: the allowance is shared by every
+    /// `trun` of every `traf` of this `moof`, and a demuxer holding several
+    /// `moof`s before their `mdat` passes the same budget to each.
+    pub(crate) fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
         let mut mfhd: Option<MovieFragmentHeaderBox> = None;
         let mut traf: Vec<TrackFragmentBox> = Vec::new();
         let mut order: Vec<MoofChild> = Vec::new();
@@ -1293,7 +1321,8 @@ impl MovieFragmentBox {
                 mfhd = Some(MovieFragmentHeaderBox::parse_body(child.payload)?);
                 order.push(MoofChild::Mfhd);
             } else if child.is(b"traf") {
-                let parsed = TrackFragmentBox::parse_body(child.payload)?;
+                let parsed =
+                    TrackFragmentBox::parse_body_budgeted(child.payload, zero_width_budget)?;
                 order.push(MoofChild::Traf(traf.len()));
                 traf.push(parsed);
             } else {

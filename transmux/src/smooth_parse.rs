@@ -61,6 +61,9 @@
 //!   `AudioSpecificConfig`, carried straight into `CodecConfig::Aac` via
 //!   [`crate::rtp_sdp::aac_config_from_asc_bytes`]; when absent, an ASC is
 //!   synthesised from `SamplingRate`/`Channels`.
+//! - `Type="text"` with `FourCC="stpp"`/`"wvtt"` (the stream `SmoothPackager`
+//!   writes): a [`CodecConfig::Subtitle`] with a synthesised ISOBMFF sample
+//!   entry.
 //!
 //! [`track_spec_from_quality_level`] dispatches on `QualityLevel@FourCC`
 //! (case-insensitively) and rejects any other token (a Dolby `EC-3`/`AC-3`
@@ -80,9 +83,10 @@ use crate::annexb::iter_annexb_nals;
 use crate::error::{Error as CrateError, Result as CrateResult};
 use crate::nal::{NalCodec, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps};
-use crate::pipeline::{CodecConfig, TrackSpec};
+use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264, SMOOTH_TIMESCALE};
+use crate::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
 use crate::xml_chars::{char_data, is_xml_char};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
@@ -877,6 +881,11 @@ fn parse_quality_level(attrs: &[(String, String)]) -> Result<QualityLevel> {
 /// H.264 `nal_unit_type` for a sequence parameter set (SPS) —
 /// ITU-T H.264 §7.4.1 Table 7-1.
 const AVC_NAL_SPS: u8 = 7;
+/// The TTML namespace a synthesised `stpp` sample entry names (W3C TTML2).
+const TTML_NAMESPACE: &str = "http://www.w3.org/ns/ttml";
+/// The bare WebVTT file-header block a synthesised `wvtt` `vttC` carries
+/// (WebVTT §4.1 file signature; ISO/IEC 14496-30 §9.2).
+const WEBVTT_HEADER: &str = "WEBVTT";
 /// H.264 `nal_unit_type` for a picture parameter set (PPS).
 const AVC_NAL_PPS: u8 = 8;
 
@@ -896,8 +905,11 @@ const AVC_NAL_PPS: u8 = 8;
 ///   [`crate::rtp_sdp::aac_config_from_asc_bytes`]. When it is absent (allowed
 ///   by [MS-SSTR]), the ASC is synthesised from the `QualityLevel`'s
 ///   `SamplingRate`/`Channels`.
-/// - [`StreamType::Text`]: not carriable in this crate's ISOBMFF/fMP4 mux
-///   path — returns [`crate::Error::UnsupportedCodec`].
+/// - [`StreamType::Text`]: `FourCC` `stpp` (TTML) or `wvtt` (WebVTT) — the
+///   `SmoothPackager`'s own text stream — becomes a
+///   [`CodecConfig::Subtitle`] carrying a synthesised ISOBMFF sample entry
+///   (TTML namespace / `WEBVTT` header; the manifest holds neither). Any other
+///   text FourCC is [`crate::Error::UnsupportedCodec`].
 ///
 /// `FourCC` matching is case-insensitive (real manifests use `AACL` and
 /// `aacl`); any unrecognised token is [`crate::Error::UnsupportedCodec`].
@@ -986,9 +998,39 @@ pub fn track_spec_from_quality_level(
             let config = aac_config_from_asc_bytes(asc)?;
             Ok(TrackSpec::new(track_id, timescale, config))
         }
-        StreamType::Text => Err(CrateError::UnsupportedCodec {
-            codec: "Smooth text (timed-text) stream",
-        }),
+        StreamType::Text => {
+            // The manifest names the sample format by its ISOBMFF sample-entry
+            // fourcc ([MS-SSTR] §2.2.2.5: a registered MPEG4-RA code) and
+            // carries no `CodecPrivateData` for it (what `SmoothPackager`
+            // writes), so the entry is rebuilt from the format's own identity:
+            // the W3C TTML namespace for `stpp`, the bare `WEBVTT` header
+            // block for `wvtt` (ISO/IEC 14496-30 §7.2 / §9.2).
+            use crate::pipeline::SubtitleSampleEntry;
+            use crate::smooth::{FOURCC_STPP, FOURCC_WVTT};
+            let (format, entry) = if is_fourcc(&quality.four_cc, FOURCC_STPP) {
+                (
+                    SubtitleFormat::Ttml,
+                    SubtitleSampleEntry::Ttml(XmlSubtitleSampleEntry::new(TTML_NAMESPACE)),
+                )
+            } else if is_fourcc(&quality.four_cc, FOURCC_WVTT) {
+                (
+                    SubtitleFormat::WebVtt,
+                    SubtitleSampleEntry::WebVtt(WvttSampleEntry::new(WEBVTT_HEADER)),
+                )
+            } else {
+                return Err(CrateError::UnsupportedCodec {
+                    codec: "Smooth text FourCC (only stpp/wvtt is synthesised)",
+                });
+            };
+            Ok(TrackSpec::new(
+                track_id,
+                timescale,
+                CodecConfig::Subtitle {
+                    format,
+                    sample_entry: Some(entry),
+                },
+            ))
+        }
     }
 }
 

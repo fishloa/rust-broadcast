@@ -88,6 +88,22 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),
 
+    /// The zero-width `trun`s (no per-sample fields, so the buffer length cannot
+    /// bound their `sample_count`) of one `moof` — or of the run of `moof`s a
+    /// demuxer holds before their `mdat` — declare more samples in total than
+    /// [`MAX_ZERO_WIDTH_TRUN_SAMPLES`](crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES)
+    /// allows. The allowance is aggregate: a 16-byte `trun` may legally declare
+    /// 2^20 samples, so a per-`trun` cap would let N such `trun`s allocate
+    /// N x 40 MiB.
+    #[error(
+        "trun sample_count with no per-sample fields exceeds MAX_ZERO_WIDTH_TRUN_SAMPLES \
+         ({limit}, aggregate per moof)"
+    )]
+    ZeroWidthTrunBudgetExceeded {
+        /// The aggregate allowance (`MAX_ZERO_WIDTH_TRUN_SAMPLES`).
+        limit: usize,
+    },
+
     /// A [`CodecConfig`](crate::pipeline::CodecConfig) has no ISOBMFF/fMP4
     /// carriage in this crate (e.g. the WebM-native VP8 / Vorbis codecs, which
     /// are carried in the IR for `{WebM} → IR → {WebM}` and inspection only).

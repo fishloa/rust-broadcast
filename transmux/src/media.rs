@@ -173,6 +173,11 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         // fragment that follows it, per §8.8.4's "the `mdat` carrying a
         // fragment's data follows that fragment".
         let mut pending_moofs: Vec<(usize, MovieFragmentBox)> = Vec::new();
+        // The zero-width-`trun` sample allowance is shared by every `moof`
+        // queued here (and refilled once an `mdat` consumes them): a per-`trun`
+        // or per-`moof` cap lets N tiny fragments held before one `mdat` cost
+        // N x 40 MiB of `TrunSample`s.
+        let mut zero_width_budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
         // A `moof` whose body does not parse is skipped and reported (audit
         // T16, #1144): the box framing is intact, so the next box is read from
         // a correct offset and one corrupt fragment costs only itself.
@@ -204,7 +209,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             };
             let ty = bx.header.box_type.0;
             if &ty == b"moof" {
-                match MovieFragmentBox::parse_body(bx.body) {
+                match MovieFragmentBox::parse_body_budgeted(bx.body, &mut zero_width_budget) {
                     Ok(moof) => pending_moofs.push((offset, moof)),
                     Err(_) => degraded.push(InputDegradation::MalformedUnit {
                         position: offset as u64,
@@ -221,6 +226,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                         });
                     }
                 }
+                zero_width_budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
             }
             if consumed == 0 {
                 break;

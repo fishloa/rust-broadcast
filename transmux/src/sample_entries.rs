@@ -86,14 +86,7 @@ impl VisualSampleEntryFields {
     /// Parse the VisualSampleEntry fixed fields from full box bytes (including the
     /// 8-byte box header). `what` names the box for error context.
     pub fn parse_body(bytes: &[u8], what: &'static str) -> Result<Self> {
-        if bytes.len() < 8 + VISUAL_SAMPLE_ENTRY_SIZE {
-            return Err(Error::BufferTooShort {
-                need: 8 + VISUAL_SAMPLE_ENTRY_SIZE,
-                have: bytes.len(),
-                what,
-            });
-        }
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::box_body(bytes, VISUAL_SAMPLE_ENTRY_SIZE, what)?;
         Ok(Self {
             data_reference_index: u16::from_be_bytes([body[6], body[7]]),
             width: u16::from_be_bytes([body[24], body[25]]),
@@ -110,6 +103,16 @@ impl VisualSampleEntryFields {
             depth: u16::from_be_bytes([body[74], body[75]]),
             predefined: u16::from_be_bytes([body[76], body[77]]),
         })
+    }
+
+    /// The child-box region of a whole visual sample-entry box `bytes`: the
+    /// bytes after the header and the fixed fields, with the length checked
+    /// against the box's real header size (8 or, for `largesize`, 16).
+    pub(crate) fn children_region<'a>(bytes: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
+        Ok(
+            &crate::box_types::box_body(bytes, VISUAL_SAMPLE_ENTRY_SIZE, what)?
+                [VISUAL_SAMPLE_ENTRY_SIZE..],
+        )
     }
 
     /// Serialize the fixed fields into a buffer (public for external sample entries).

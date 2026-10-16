@@ -105,16 +105,8 @@ impl XmlSubtitleSampleEntry {
 
     /// Parse from full box bytes (including the 8-byte box header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        // Minimum: box header (8) + SampleEntry reserved+dri (8) + 3 NUL bytes = 19
-        if bytes.len() < 19 {
-            return Err(Error::BufferTooShort {
-                need: 19,
-                have: bytes.len(),
-                what: "stpp",
-            });
-        }
-        // body starts past the 8-byte box header
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        // Minimum body: SampleEntry reserved+dri (8) + 3 NUL bytes = 11
+        let body = crate::box_types::box_body(bytes, 11, "stpp")?;
         // SampleEntry: reserved(6) + data_reference_index(2)
         let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
         let pos = 8usize; // into body
@@ -425,16 +417,30 @@ impl VttCueBox {
             let end = (pos + sz).min(body.len());
             let child = &body[pos..end];
             let fourcc = &child[4..8];
+            // ISO/IEC 14496-30 `VTTCueBox` lists each of `iden`/`sttg`/`payl`
+            // once (docs/codec/captions-14496-30.md): a repeat cannot be held
+            // in the typed fields (the last would win while the order listed
+            // both, so `serialized_len` and `serialize_into` disagreed), so
+            // it is rejected.
             match fourcc {
                 b"payl" => {
+                    if payload.is_some() {
+                        return Err(duplicate_cue_child("payl"));
+                    }
                     payload = Some(CuePayloadBox::bare_parse(child)?);
                     child_order.push(CueChild::Payl);
                 }
                 b"sttg" => {
+                    if settings.is_some() {
+                        return Err(duplicate_cue_child("sttg"));
+                    }
                     settings = Some(CueSettingsBox::bare_parse(child)?);
                     child_order.push(CueChild::Sttg);
                 }
                 b"iden" => {
+                    if cue_id.is_some() {
+                        return Err(duplicate_cue_child("iden"));
+                    }
                     cue_id = Some(CueIdBox::bare_parse(child)?);
                     child_order.push(CueChild::Iden);
                 }
@@ -487,6 +493,15 @@ impl VttCueBox {
         add(CueChild::Sttg);
         add(CueChild::Payl);
         order
+    }
+}
+
+/// A `vttc` child that the class admits at most once appeared a second time.
+fn duplicate_cue_child(field: &'static str) -> Error {
+    Error::InvalidValue {
+        field,
+        value: 2,
+        reason: "vttc admits at most one such child (ISO/IEC 14496-30 VTTCueBox)",
     }
 }
 

@@ -264,7 +264,24 @@ pub(crate) fn parse_sequence_header_record(
             what,
         });
     }
+    reject_trailing(bytes.len() - need, what)?;
     Ok((bytes[0], bytes[3..3 + len].to_vec()))
+}
+
+/// The record is fully modelled (no reserved tail the typed fields drop), so
+/// bytes past it cannot be re-emitted by the serializer: a parse -> serialize
+/// would silently shorten the box (the workspace round-trip invariant). Reject
+/// them instead of discarding them.
+fn reject_trailing(extra: usize, what: &'static str) -> Result<()> {
+    if extra == 0 {
+        Ok(())
+    } else {
+        Err(Error::InvalidValue {
+            field: what,
+            value: extra as u64,
+            reason: "trailing bytes after the configuration record",
+        })
+    }
 }
 
 impl Serialize for Avs3ConfigurationBox {
@@ -385,6 +402,7 @@ impl<'a> Parse<'a> for LAvsConfigurationBox {
                 what: "lavc/la2c layers",
             });
         }
+        reject_trailing(bytes.len() - need, "lavc/la2c")?;
         let layers = bytes[2..need]
             .chunks_exact(LAYER_LEN)
             .map(|c| {
@@ -565,7 +583,7 @@ impl AvsVideoSampleEntry {
             expected: "avs3/lav3/avst/lav2",
         })?;
         let visual = VisualSampleEntryFields::parse_body(bytes, "AVS sample entry")?;
-        let region = &bytes[BOX_HDR + VisualSampleEntryFields::serialized_len()..];
+        let region = VisualSampleEntryFields::children_region(bytes, "AVS sample entry")?;
         let cfg_fourcc = kind.config_fourcc();
         let cfg = crate::sample_entries::find_config_box(region, &cfg_fourcc).ok_or(
             Error::UnexpectedBox {
