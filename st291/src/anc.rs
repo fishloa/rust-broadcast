@@ -22,7 +22,8 @@
 //! lower 8 bits of `data_count`** (`data_count & 0xFF`) are used. The full
 //! 10-bit values are stored verbatim as `u16`; ST 291-1 parity/checksum
 //! derivation is **not** computed or validated here (ST 2038 defers it to
-//! ST 291-1, which is not vendored).
+//! ST 291-1, which is vendored as SMPTE ST 291-1:2011: §6.1/6.2/6.4 DID/SDID/DBN
+//! parity, §6.7 checksum word; the derivation is simply not implemented yet).
 //!
 //! ## Shared content (issue #648)
 //! The `DID`/`SDID`/`data_count`/`user_data_words`/`checksum` bit sequence is
