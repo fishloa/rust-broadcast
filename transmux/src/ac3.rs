@@ -1517,7 +1517,7 @@ fn acmod_channels(acmod: u8) -> u8 {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use alloc::vec;
 
@@ -1785,7 +1785,7 @@ mod tests {
     /// 5.1, and ffmpeg's native `eac3` encoder refuses any layout above 5.1 —
     /// so this vector is built directly from the §E.1.2.2 syntax rather than
     /// copied from a capture.
-    fn seven_one_eac3_es() -> Vec<u8> {
+    pub(crate) fn seven_one_eac3_es() -> Vec<u8> {
         let mut es = Vec::new();
         es.extend_from_slice(&eac3_bsi(0, 0, 64, 7, true, 0, 3, None, Some(0)));
         es.extend_from_slice(&eac3_bsi(
@@ -2026,6 +2026,32 @@ mod tests {
             ),
             "a repeated-AU substream list must be rejected at construction"
         );
+    }
+
+    /// A first access unit is complete when the next independent frame begins
+    /// it, or when the frame chain breaks (the bytes after a whole frame are
+    /// not a syncword: packets were lost). Running out of data, or a truncated
+    /// next frame, is *not* completion (issue #1186): a dependent frame may
+    /// still be on its way.
+    #[test]
+    fn first_au_completes_on_a_broken_chain_but_not_on_missing_data() {
+        let one_au = seven_one_eac3_es();
+        let complete = |d: &[u8]| Ec3SyncframeInfo::from_es_first_complete_au(d).map(|f| f.len());
+
+        assert_eq!(complete(&one_au), None, "data just ends: more may follow");
+        assert_eq!(complete(&one_au[..one_au.len() - 3]), None, "cut mid-frame");
+        // Next AU begins (a repeated independent frame): complete, 2 frames.
+        let mut two = one_au.clone();
+        two.extend_from_slice(&one_au);
+        assert_eq!(complete(&two), Some(2));
+        // The chain breaks right after the AU: complete with what was seen.
+        let mut broken = one_au.clone();
+        broken.extend_from_slice(&[0x43, 0x8B, 0x88, 0xBC, 0xA9, 0xB4, 0x00, 0x15]);
+        assert_eq!(complete(&broken), Some(2));
+        // A single trailing byte cannot be judged either way.
+        let mut one_byte = one_au.clone();
+        one_byte.push(0x43);
+        assert_eq!(complete(&one_byte), None);
     }
 
     /// r04-W5: `bsmod` is read from `infomdate` (§E.1.3.1.x) and lands in the

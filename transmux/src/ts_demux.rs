@@ -6146,6 +6146,179 @@ mod tests {
         out
     }
 
+    /// Mux a never-resolving H.264 PID (rank 0: every sample non-sync, so no
+    /// SPS/PPS is ever carried) followed by `data_pids` opaque data PIDs (each
+    /// resolves on its first access unit), `video_aus` access units on the
+    /// stalled PID and `data_aus` on each data PID.
+    fn stalled_head_ts(video_aus: u32, data_pids: usize, data_aus: u32) -> Vec<u8> {
+        use crate::TsMux;
+        use crate::media::{Media, Track};
+        use crate::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
+        use crate::rtp_sdp::avc_config_from_sprop;
+        use broadcast_common::Package;
+
+        let frame_dur = VIDEO_TIMESCALE / 30;
+        let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
+        let video_samples: Vec<Sample> = (0..video_aus)
+            .map(|i| {
+                let nal = alloc::vec![0x41u8, 0xAA, 0xBB];
+                let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                data.extend_from_slice(&nal);
+                let dts = i64::from(i) * i64::from(frame_dur);
+                Sample::new(data, Some(dts), Some(dts), Some(frame_dur), false)
+            })
+            .collect();
+        let mut tracks = vec![Track::new(
+            TrackSpec::new(
+                TrackId::new(1),
+                VIDEO_TIMESCALE,
+                CodecConfig::Avc {
+                    config: avc,
+                    width: 0,
+                    height: 0,
+                },
+            ),
+            video_samples,
+        )];
+        for k in 0..data_pids {
+            let samples: Vec<Sample> = (0..data_aus)
+                .map(|i| {
+                    let dts = i64::from(i) * i64::from(frame_dur);
+                    Sample::new(
+                        alloc::vec![0xBBu8; 32],
+                        Some(dts),
+                        Some(dts),
+                        Some(frame_dur),
+                        true,
+                    )
+                })
+                .collect();
+            tracks.push(Track::new(
+                TrackSpec::new(
+                    TrackId::new(2 + k as u32),
+                    VIDEO_TIMESCALE,
+                    CodecConfig::Data {
+                        stream_type: 0x7F,
+                        descriptors: Vec::new(),
+                        carriage: DataCarriage::Pes,
+                    },
+                ),
+                samples,
+            ));
+        }
+        TsMux::default()
+            .package(&Media::new(tracks, VIDEO_TIMESCALE))
+            .expect("mux to TS")
+    }
+
+    /// TrackAdded source PIDs seen while feeding `ts` (no `finish()`: a live
+    /// feed never ends).
+    fn live_track_added_pids(ts: &[u8]) -> Vec<u16> {
+        let mut demux = StreamingTsDemux::new();
+        let mut pids = Vec::new();
+        for chunk in ts.chunks(TS_PACKET_SIZE * 16) {
+            demux.feed(chunk);
+            while let Some(ev) = demux.poll_event() {
+                if let DemuxEvent::TrackAdded(spec) = ev {
+                    pids.push(spec.source_pid.map_or(0, |p| p.value()));
+                }
+            }
+        }
+        pids
+    }
+
+    /// An E-AC-3 PID whose first access unit can never be proven complete (an
+    /// independent frame followed only by dependent frames, every one chained,
+    /// so neither a repeated independent frame nor a broken chain ever ends the
+    /// access unit) resolves from the frames held after `EAC3_PROBE_MAX_AUS`
+    /// access units, with no `finish()`. One access unit fewer and it must
+    /// still be waiting.
+    #[test]
+    fn eac3_probe_that_never_completes_resolves_after_the_bound() {
+        use crate::ac3::Ec3SyncframeInfo;
+        use crate::ac3::tests::seven_one_eac3_es;
+        use crate::pipeline::CodecConfig;
+
+        let au = seven_one_eac3_es();
+        let frames = Ec3SyncframeInfo::from_es_all(&au);
+        assert_eq!(frames.len(), 2, "independent + dependent");
+        let dep_at = (frames[0].frmsiz as usize + 1) * 2;
+        let (first_au, dep_only) = (au.clone(), au[dep_at..].to_vec());
+
+        let build = |pes_count: usize| -> Vec<u8> {
+            let mut ts = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+            ts.extend(psi_section_packets(
+                PMT_PID_UNDER_TEST,
+                0,
+                0x02,
+                &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_EAC3),
+            ));
+            let mut cc = 0u8;
+            for n in 0..pes_count {
+                let es = if n == 0 { &first_au } else { &dep_only };
+                let pts = 90_000u64 + 2_880 * n as u64;
+                let mut pes = alloc::vec![0, 0, 1, 0xBD];
+                pes.extend_from_slice(&((3 + 5 + es.len()) as u16).to_be_bytes());
+                pes.extend_from_slice(&[0x80, 0x80, 5]);
+                pes.push(0x21 | ((pts >> 29) as u8 & 0x0E));
+                pes.push((pts >> 22) as u8);
+                pes.push(0x01 | ((pts >> 14) as u8 & 0xFE));
+                pes.push((pts >> 7) as u8);
+                pes.push(0x01 | ((pts << 1) as u8 & 0xFE));
+                pes.extend_from_slice(es);
+                ts.extend(pes_packets(ES_PID_UNDER_TEST, cc, &pes));
+                cc = cc.wrapping_add(pes.len().div_ceil(TS_PACKET_SIZE - 4) as u8);
+            }
+            ts
+        };
+        let eac3_tracks = |ts: &[u8]| -> usize {
+            let mut demux = StreamingTsDemux::new();
+            demux.feed(ts);
+            let mut n = 0;
+            while let Some(ev) = demux.poll_event() {
+                if let DemuxEvent::TrackAdded(spec) = ev
+                    && matches!(spec.config, CodecConfig::Eac3 { .. })
+                {
+                    n += 1;
+                }
+            }
+            n
+        };
+        // A PES is only delivered when the next one starts, so `k` access units
+        // reach the probe from `k + 1` PES.
+        let bound = EAC3_PROBE_MAX_AUS as usize;
+        assert_eq!(eac3_tracks(&build(bound)), 0, "one access unit short");
+        assert_eq!(eac3_tracks(&build(bound + 1)), 1, "bound reached");
+    }
+
+    /// Head-of-line blocking: a PMT-first PID whose probe never resolves must
+    /// not hold back the PIDs after it forever. Two later PIDs (one stalled
+    /// head, two unstalled followers) must both be promoted, in PMT order,
+    /// once the head has been `Probing` for `PROBE_HEAD_BLOCK_AUS` access
+    /// units — with no `finish()`.
+    #[test]
+    fn stalled_probe_does_not_block_later_pids_forever() {
+        let ts = stalled_head_ts(PROBE_HEAD_BLOCK_AUS + 20, 2, 4);
+        let pids = live_track_added_pids(&ts);
+        assert_eq!(
+            pids,
+            vec![0x0101, 0x0102],
+            "both data PIDs promoted, in PMT order, past the stalled head"
+        );
+    }
+
+    /// The other half of the bound: below `PROBE_HEAD_BLOCK_AUS` the head
+    /// still blocks, so PMT declaration order (track ids) is preserved for a
+    /// probe that is merely slow.
+    #[test]
+    fn slow_probe_still_blocks_later_pids_below_the_bound() {
+        let ts = stalled_head_ts(PROBE_HEAD_BLOCK_AUS - 20, 2, 4);
+        assert!(
+            live_track_added_pids(&ts).is_empty(),
+            "a probe below the bound keeps PMT-order promotion"
+        );
+    }
+
     /// r04-W51 review: an AAC track must NOT report a config change merely
     /// because the ADTS *frame length* varies.
     ///
