@@ -335,6 +335,38 @@ fn sintel_ac3_and_eac3_straddling_pes_recover_every_syncframe() {
     }
 }
 
+/// An AC-3 stream signalled as AC-3 stays AC-3: accepting an AC-3 syncframe as
+/// independent substream 0 of an E-AC-3 stream (ETSI TS 102 366 §E.1.3.1.2) is
+/// confined to PIDs the PMT signals as E-AC-3. In the sintel capture the AC-3 PID
+/// yields an `Ac3` track of single AC-3 frames (bsid <= 8, each exactly its
+/// Table 4.13 length) and the E-AC-3 PID an `Eac3` track of E-AC-3 frames
+/// (bsid 16); neither leaks into the other.
+#[test]
+fn sintel_plain_ac3_stays_ac3_and_eac3_stays_eac3() {
+    let aligned = local_fixture("sintel-ac3-eac3-aligned.ts");
+    let media = TsDemux::new().unpackage(aligned.as_slice()).expect("demux");
+    let (mut ac3, mut eac3) = (0, 0);
+    for t in &media.tracks {
+        match t.config() {
+            transmux::pipeline::CodecConfig::Ac3 { .. } => {
+                ac3 += 1;
+                for s in &t.samples {
+                    assert_eq!(s.data[..2], [0x0B, 0x77]);
+                    assert!(s.data[5] >> 3 <= 8, "an AC-3 frame (bsid <= 8)");
+                }
+            }
+            transmux::pipeline::CodecConfig::Eac3 { .. } => {
+                eac3 += 1;
+                for s in &t.samples {
+                    assert_eq!(s.data[5] >> 3, 16, "an E-AC-3 frame (bsid 16)");
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_eq!((ac3, eac3), (1, 1), "one AC-3 track and one E-AC-3 track");
+}
+
 /// The straddling invariant over every other audio family the workspace has a
 /// real fixture for: AAC (ADTS), MPEG-1 Layer II, DTS core.
 #[test]
@@ -377,7 +409,12 @@ fn real_capture_eac3_recovers_straddling_syncframes() {
         }
     }
     counts.sort_unstable();
-    assert_eq!(counts, [3, 6, 7], "was [1, 4, 5] before the carry (#1160)");
+    // Was [1, 4, 5] before the carry (#1160), then [3, 6, 7]. The 7 -> 8 is one
+    // more real frame (bsid 16, contiguous with the previous frame's timestamp):
+    // a `0B 77` pair inside the payload whose byte 5 reads as bsid <= 8 used to
+    // be parsed as an E-AC-3 header with a garbage length and swallow it; such a
+    // pair is now an AC-3-shaped candidate and is rejected by its CRC.
+    assert_eq!(counts, [3, 6, 8]);
 }
 
 /// Drop the first PES of `pid` (from its first start packet up to, but not

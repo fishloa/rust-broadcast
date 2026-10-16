@@ -4,6 +4,18 @@
 //! `tests/golden/track_ids.txt`, which was captured when `track_id` was a bare
 //! `u32`. A `TrackId` newtype must render and number identically.
 //!
+//! Intentional changes since the capture (each justified; do not re-bless casually):
+//! - `fixtures/ts/m6-{single,discontinuity,duplicate}.ts` track 1 `1x7` -> `1x8` (#1255).
+//!   Track 1 is PID 0x82, signalled `stream_type 0x06` + DVB Enhanced AC-3
+//!   descriptor (0x7A), i.e. E-AC-3 (the PMT of `m6-single.ts`; the other two are
+//!   cuts of the same broadcast). The track did not change codec, id or order:
+//!   it gains one real E-AC-3 frame (bsid 16, contiguous with the previous
+//!   frame's timestamp). A `0B 77` pair inside the payload whose byte 5 reads as
+//!   bsid <= 8 used to be parsed as an E-AC-3 header with a garbage length and
+//!   swallow that frame; an AC-3-shaped candidate is now judged by its AC-3 CRC
+//!   and rejected. Plain AC-3 PIDs (stream_type 0x81 / AC-3 descriptor) are
+//!   unaffected (`audio_pes_straddle::sintel_plain_ac3_stays_ac3_*`).
+//!
 //! Regenerate (only for an intentional behaviour change):
 //! `TRACK_ID_BLESS=1 cargo test -p transmux --all-features --test track_id_baseline`
 #![cfg(feature = "std")]

@@ -52,6 +52,40 @@ const AC3_BLOCKS_PER_SYNCFRAME: u32 = 6;
 /// channel" (excerpt appended to `docs/codec/ac3-syncframe.md`).
 pub const AC3_SAMPLES_PER_SYNCFRAME: u32 = AC3_BLOCKS_PER_SYNCFRAME * SAMPLES_PER_AUDIO_BLOCK;
 
+/// Largest `bsid` of an AC-3 syncframe (ETSI TS 102 366 §4.4.2.1: "01000 (= 8)
+/// in this version ... values of bsid smaller than 8 will be used for versions
+/// of AC-3 which are backward compatible"); an E-AC-3 syncframe has `bsid`
+/// 11..=16 (§E.1.3.1.6). Both put `bsid` at the same bit offset (40), so byte 5
+/// tells the two framings apart.
+const AC3_MAX_BSID: u8 = 8;
+
+/// Generator of the AC-3 CRC words: x^16 + x^15 + x^2 + 1 (ETSI TS 102 366
+/// §6.10.1), the low 16 bits of which are `0x8005`.
+const AC3_CRC_POLY: u16 = 0x8005;
+/// The top bit of the 16-bit CRC register, shifted out each step.
+const CRC16_TOP_BIT: u16 = 0x8000;
+/// Bytes of the `0x0B77` syncword, excluded from the CRC.
+const AC3_SYNCWORD_BYTES: usize = 2;
+
+/// CRC-16 of `bytes` with the AC-3 generator, register initialised to zero, no
+/// reflection, no final XOR. Run over a whole syncframe **after** the 16-bit
+/// syncword, the stored `crc2` (§4.4.5.2: "applies to the entire syncframe")
+/// drives it to zero, so `== 0` means the frame is intact.
+fn ac3_crc16(bytes: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for &b in bytes {
+        crc ^= u16::from(b) << 8;
+        for _ in 0..8 {
+            crc = if crc & CRC16_TOP_BIT != 0 {
+                (crc << 1) ^ AC3_CRC_POLY
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
 /// `strmtyp` value marking a dependent-substream E-AC-3 syncframe — ETSI TS
 /// 102 366 Annex E §E.1.2.2 `bsi()`: `if(strmtyp == 0x1) /* if dependent
 /// stream */`.
@@ -324,6 +358,16 @@ impl Ec3SyncframeInfo {
                 what: "E-AC-3 syncframe",
             });
         }
+        // An AC-3 syncframe (bsid <= 8) is a valid independent substream 0 of an
+        // E-AC-3 bit stream: ETSI TS 102 366 §E.1.3.1.2 "If an AC-3 bit stream is
+        // present in the Enhanced AC-3 bit stream, then the AC-3 bit stream shall
+        // be treated as an independent substream assigned substream ID 0", and
+        // Annex J.1.5.2.2 (CMAF) allows independent substream 0 of a stream with a
+        // dependent substream to have bsid 6 or 8. Real 7.1 / Atmos streams carry
+        // exactly that: an AC-3 core frame followed by a dependent E-AC-3 frame.
+        if data[off + 5] >> 3 <= AC3_MAX_BSID {
+            return Self::from_ac3_independent(data, off);
+        }
         let es = &data[off..];
         let mut bit_pos = 0usize;
 
@@ -376,6 +420,46 @@ impl Ec3SyncframeInfo {
             sample_rate_khz,
             chanmap,
             bsmod,
+        })
+    }
+
+    /// An AC-3 syncframe standing in as independent substream 0 (`strmtyp` 0,
+    /// `substreamid` 0, 6 blocks per frame, `frmsiz` = frame words - 1), see
+    /// [`Self::parse_at`].
+    fn from_ac3_independent(data: &[u8], off: usize) -> Result<Self> {
+        let ac3 = Ac3SyncframeInfo::parse_at(data, off)?;
+        let words = ac3_frame_words(ac3.fscod, ac3.frmsizecod).ok_or(Error::InvalidValue {
+            field: "AC-3 frmsizecod/fscod",
+            value: u64::from(ac3.frmsizecod),
+            reason: "reserved fscod or frmsizecod (Tables 4.1 / 4.13)",
+        })?;
+        // E-AC-3 payload is full of `0B 77` pairs and a header-shaped 5 bytes is
+        // cheap to hit after a resync, so once the whole frame is in hand require
+        // its CRC (§4.4.5.2 / §6.10.1) to check out: a false sync passes this by
+        // chance 1 in 65536, not 1 in a few.
+        let len = usize::from(words) * BYTES_PER_WORD;
+        if let Some(frame) = data.get(off..off + len)
+            && ac3_crc16(&frame[AC3_SYNCWORD_BYTES..]) != 0
+        {
+            return Err(Error::InvalidValue {
+                field: "AC-3 crc2",
+                value: u64::from(ac3_crc16(&frame[AC3_SYNCWORD_BYTES..])),
+                reason: "syncframe CRC does not check out (false sync or damaged frame)",
+            });
+        }
+        Ok(Self {
+            strmtyp: EAC3_STRMTYP_INDEPENDENT,
+            substreamid: 0,
+            frmsiz: words - 1,
+            fscod: ac3.fscod,
+            numblks: AC3_BLOCKS_PER_SYNCFRAME as u8,
+            acmod: ac3.acmod,
+            lfeon: ac3.lfeon,
+            bsid: ac3.bsid,
+            sample_rate: ac3.sample_rate,
+            sample_rate_khz: ac3_sample_rate_khz(ac3.fscod),
+            chanmap: None,
+            bsmod: ac3.bsmod,
         })
     }
 
@@ -779,11 +863,20 @@ impl Ec3SpecificBox {
     ///
     /// Independent frames (`strmtyp` 0 or 2) become substreams; the dependent
     /// frames (`strmtyp` 1) that follow one are folded into its
-    /// `num_dep_sub`/`chan_loc`: `num_dep_sub` is the `substreamid` of the last
-    /// dependent frame before the next independent one (§F.6.2.12), and
-    /// `chan_loc` collects the channel locations of every dependent frame's
-    /// `chanmap` (§F.6.2.13). `num_ind_sub` is the `substreamid` of the last
-    /// independent frame (§F.6.2.3) — 0 for a single-programme stream.
+    /// `num_dep_sub`/`chan_loc`: `num_dep_sub` is the number of dependent
+    /// substreams, i.e. the highest dependent `substreamid` + 1, and `chan_loc`
+    /// collects the channel locations of every dependent frame's `chanmap`
+    /// (§F.6.2.13). `num_ind_sub` is the `substreamid` of the last independent
+    /// frame (§F.6.2.3) — 0 for a single-programme stream.
+    ///
+    /// §F.6.2.12 literally says "the value of the `substreamid` field found in
+    /// the dependent frame", but dependent substreams are numbered from 0
+    /// (§E.1.3.1.2), so that reading gives 0 for the first (often only)
+    /// dependent substream and, with it, no `chan_loc` at all (`if num_dep_sub >
+    /// 0 { chan_loc }`). Real producers write the count: MP4Box (GPAC 26.07)
+    /// and ffmpeg 8.1.2 both emit `num_dep_sub` = 1 for the real 7.1 stream in
+    /// `tests/eac3_real_dependent_substreams.rs`, whose lone dependent frame has
+    /// `substreamid` 0.
     ///
     /// The pre-fix builder derived `num_ind_sub` from the frame's own
     /// `substreamid` and always wrote `num_dep_sub == 0`/`chan_loc == None`, so a
@@ -815,7 +908,10 @@ impl Ec3SpecificBox {
                 // frame with no independent predecessor carries no substream of
                 // its own, so it is dropped rather than inventing one.
                 if let Some(prev) = substreams.last_mut() {
-                    prev.num_dep_sub = f.substreamid;
+                    // Dependent substreams are numbered from 0 per independent
+                    // substream (§E.1.3.1.2; Annex J.1.5.2.3 pins the first to
+                    // 0), so the count is the highest `substreamid` + 1.
+                    prev.num_dep_sub = prev.num_dep_sub.max(f.substreamid + 1);
                     prev.chan_loc = Some(match prev.chan_loc {
                         Some(loc) => loc | chan_loc_for_frame(f),
                         None => chan_loc_for_frame(f),
@@ -1673,7 +1769,7 @@ mod tests {
         es.extend_from_slice(&eac3_bsi(0, 0, 64, 7, true, 0, 3, None, Some(0)));
         es.extend_from_slice(&eac3_bsi(
             1,
-            1,
+            0, // dependent substreams are numbered from 0 (§E.1.3.1.2)
             64,
             2,
             false,
@@ -1724,7 +1820,10 @@ mod tests {
         assert_eq!(bx.num_ind_sub, 0, "last independent substream id");
         assert_eq!(bx.substreams.len(), 1);
         let s0 = bx.substreams[0];
-        assert_eq!(s0.num_dep_sub, 1, "the dependent frame's substreamid");
+        assert_eq!(
+            s0.num_dep_sub, 1,
+            "one dependent substream (its substreamid is 0)"
+        );
         // chanmap bits 6 (Lrs/Rrs) and 7 (Cs) → chan_loc bits 1 and 2.
         assert_eq!(
             s0.chan_loc,
@@ -1748,7 +1847,7 @@ mod tests {
     fn leading_orphan_dependent_frame_is_dropped() {
         let orphan = eac3_bsi(1, 2, 64, 1, false, 0, 3, Some(0x0100), None);
         let independent = eac3_bsi(0, 0, 64, 1, false, 0, 3, None, None);
-        let dependent = eac3_bsi(1, 1, 64, 1, false, 0, 3, Some(0x0100), None);
+        let dependent = eac3_bsi(1, 0, 64, 1, false, 0, 3, Some(0x0100), None);
         let es = [orphan.clone(), independent.clone(), dependent.clone()].concat();
         let units = split_eac3_syncframes(&es);
         assert_eq!(units.len(), 1, "the orphan is not its own access unit");
@@ -1763,6 +1862,75 @@ mod tests {
         );
         // A payload that is nothing but an orphan yields no access unit.
         assert!(split_eac3_syncframes(&orphan).is_empty());
+    }
+
+    /// `num_dep_sub` counts the dependent substreams (highest `substreamid` + 1,
+    /// they are numbered from 0), so a lone dependent substream with id 0 is 1,
+    /// not 0 - the literal §F.6.2.12 reading would give 0 and drop `chan_loc`
+    /// (MP4Box and ffmpeg both write 1 for the real stream in
+    /// `tests/eac3_real_dependent_substreams.rs`).
+    #[test]
+    fn num_dep_sub_counts_dependent_substreams() {
+        let ind = eac3_bsi(0, 0, 64, 7, true, 0, 3, None, None);
+        let dep0 = eac3_bsi(1, 0, 64, 2, false, 0, 3, Some(wire_chanmap(&[6])), None);
+        let dep1 = eac3_bsi(1, 1, 64, 2, false, 0, 3, Some(wire_chanmap(&[7])), None);
+        let one = scan_eac3_frames(&[ind.clone(), dep0.clone()].concat());
+        let b1 = Ec3SpecificBox::from_syncframes(&one).unwrap();
+        assert_eq!(b1.substreams[0].num_dep_sub, 1);
+        assert_eq!(b1.substreams[0].chan_loc, Some(0b010), "Lrs/Rrs");
+        let two = scan_eac3_frames(&[ind, dep0, dep1].concat());
+        let b2 = Ec3SpecificBox::from_syncframes(&two).unwrap();
+        assert_eq!(b2.substreams[0].num_dep_sub, 2);
+        assert_eq!(b2.substreams[0].chan_loc, Some(0b110), "Lrs/Rrs + Cs");
+        assert_eq!(
+            Ec3SpecificBox::parse(&b2.try_to_bytes().unwrap()).unwrap(),
+            b2
+        );
+    }
+
+    /// An AC-3 syncframe stands as independent substream 0 of an E-AC-3 stream
+    /// (§E.1.3.1.2), so it parses as one, and a following dependent frame folds
+    /// into the same access unit.
+    #[test]
+    fn ac3_core_frame_is_independent_substream_zero() {
+        // Real AC-3 core frame header of the 7.1 stream, padded to 2304 bytes:
+        // sync 0B77, crc1, fscod 0 / frmsizecod 34, bsid 6, bsmod 0, acmod 7, lfeon 1.
+        let mut core = vec![0x0B, 0x77, 0xFD, 0x0D, 0x22, 0x30, 0xE1, 0xFC];
+        core.resize(2304, 0);
+        let crc2 = ac3_crc16(&core[AC3_SYNCWORD_BYTES..core.len() - 2]);
+        let n = core.len();
+        core[n - 2..].copy_from_slice(&crc2.to_be_bytes());
+        assert_eq!(
+            ac3_crc16(&core[AC3_SYNCWORD_BYTES..]),
+            0,
+            "crc2 closes the frame"
+        );
+        let info = Ec3SyncframeInfo::parse_at(&core, 0).unwrap();
+        assert_eq!((info.strmtyp, info.substreamid, info.bsid), (0, 0, 6));
+        assert_eq!(info.frmsiz as usize + 1, 1152);
+        assert_eq!((info.acmod, info.lfeon, info.fscod), (7, true, 0));
+        assert_eq!(info.samples_per_frame(), 1536);
+        let dep = eac3_bsi(
+            1,
+            0,
+            1151,
+            5,
+            false,
+            0,
+            3,
+            Some(wire_chanmap(&[3, 4, 6])),
+            None,
+        );
+        let units = split_eac3_syncframes(&[core.clone(), dep.clone()].concat());
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].data, [core.clone(), dep].concat());
+
+        // A header-shaped false sync fails the CRC once its whole frame is in
+        // hand; a frame still being received is judged on the header alone.
+        let mut damaged = core.clone();
+        damaged[100] ^= 0x01;
+        assert!(Ec3SyncframeInfo::parse_at(&damaged, 0).is_err());
+        assert!(Ec3SyncframeInfo::parse_at(&damaged[..1000], 0).is_ok());
     }
 
     /// r04-W5: a dependent-only (or empty) input describes no substream, so

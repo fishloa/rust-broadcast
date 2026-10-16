@@ -136,7 +136,12 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // offsets), so the old code built the `dec3` from an unverified frame;
     // the chain-verified frames of the stream, and 6 of its 7 samples, are
     // `bsmod` 0, which is what the config now says.
-    ("ts/m6-single.ts", 0x0cb20e5f751550f5),
+    // Re-captured for #1255: one more real E-AC-3 frame is recovered on the
+    // first track (7 -> 8 samples, `audio_pes_straddle` pins the counts). A `0B 77`
+    // pair inside the payload whose byte 5 reads as bsid <= 8 used to be parsed as
+    // an E-AC-3 header with a garbage length and swallow it; it is now an
+    // AC-3-shaped candidate rejected by its CRC. The other tracks are unchanged.
+    ("ts/m6-single.ts", 0x9f5eebcfded0fbdd),
     // 0x322faa14c5c28795 before #1161: the capture is field-coded (PAFF), and
     // is now one sample per field pair (293 fields -> 147 samples) instead of
     // one per field. Every other fixture is unchanged.
