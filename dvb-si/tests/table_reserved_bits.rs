@@ -337,6 +337,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
             dvb_si::descriptors::unt::UntDescriptorLoop::new(DESC),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
+                    empty_count_present: false,
                     descriptors: vec![],
                 },
                 vec![unt_pair(), unt_pair()],

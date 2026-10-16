@@ -39,6 +39,9 @@ use broadcast_common::{Parse, Serialize};
 
 pub(crate) const COMPAT_DESC_LEN_FIELD: usize = 2;
 const DESC_COUNT_FIELD: usize = 2;
+/// Table 15 empty form: `compatibilityDescriptorLength = 2`, `descriptorCount = 0`.
+const EMPTY_WITH_COUNT_FORM: [u8; COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD] =
+    [0x00, 0x02, 0x00, 0x00];
 const DESC_HEADER_LEN: usize = 2;
 const DESC_FIXED_LEN: usize = 9;
 const SUB_DESC_HEADER_LEN: usize = 2;
@@ -185,9 +188,21 @@ broadcast_common::impl_spec_display!(SubDescriptorType, Unallocated);
 /// [`Serialize`] emits it. An empty descriptor (no entries) serialises as the
 /// 2-byte `0x00 0x00` length-only form, matching the DSM-CC convention for
 /// "no compatibility information".
+///
+/// Two empty forms exist on the wire: `compatibilityDescriptorLength = 0`
+/// (TR 101 202 "zero-length" form, the default) and
+/// `compatibilityDescriptorLength = 2` with `descriptorCount = 0` (the full
+/// Table 15 structure with no entries). [`Parse`] records which one it read in
+/// [`empty_count_present`](Self::empty_count_present) so [`Serialize`]
+/// reproduces it byte-for-byte (issue #1298).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CompatibilityDescriptor<'a> {
+    /// Only meaningful when `descriptors` is empty: `true` = the 4-byte
+    /// `00 02 00 00` form (`compatibilityDescriptorLength = 2`,
+    /// `descriptorCount = 0`); `false` = the 2-byte `00 00` form
+    /// (`compatibilityDescriptorLength = 0`). Ignored when entries exist.
+    pub empty_count_present: bool,
     /// Descriptor entries (may be empty).
     pub descriptors: Vec<CompatibilityDescriptorEntry<'a>>,
 }
@@ -264,6 +279,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
         }
         if compat_desc_len == 0 {
             return Ok(CompatibilityDescriptor {
+                empty_count_present: false,
                 descriptors: Vec::new(),
             });
         }
@@ -368,7 +384,10 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
                 reason: "trailing bytes after compatibility descriptor entries",
             });
         }
-        Ok(CompatibilityDescriptor { descriptors })
+        Ok(CompatibilityDescriptor {
+            empty_count_present: descriptors.is_empty(),
+            descriptors,
+        })
     }
 }
 
@@ -377,7 +396,11 @@ impl Serialize for CompatibilityDescriptor<'_> {
 
     fn serialized_len(&self) -> usize {
         if self.descriptors.is_empty() {
-            return COMPAT_DESC_LEN_FIELD;
+            return if self.empty_count_present {
+                COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD
+            } else {
+                COMPAT_DESC_LEN_FIELD
+            };
         }
         COMPAT_DESC_LEN_FIELD
             + DESC_COUNT_FIELD
@@ -397,6 +420,11 @@ impl Serialize for CompatibilityDescriptor<'_> {
             });
         }
         if self.descriptors.is_empty() {
+            if self.empty_count_present {
+                // compatibilityDescriptorLength = 2, descriptorCount = 0.
+                buf[..EMPTY_WITH_COUNT_FORM.len()].copy_from_slice(&EMPTY_WITH_COUNT_FORM);
+                return Ok(COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD);
+            }
             buf[0] = 0x00;
             buf[1] = 0x00;
             return Ok(COMPAT_DESC_LEN_FIELD);
@@ -452,6 +480,7 @@ mod tests {
     #[test]
     fn empty_round_trip() {
         let cd = CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: vec![],
         };
         let mut buf = vec![0u8; cd.serialized_len()];
@@ -466,9 +495,23 @@ mod tests {
         let bytes: &[u8] = &[0x00, 0x02, 0x00, 0x00];
         let cd = CompatibilityDescriptor::parse(bytes).unwrap();
         assert!(cd.descriptors.is_empty());
+        assert!(cd.empty_count_present);
         let mut buf = vec![0u8; cd.serialized_len()];
         cd.serialize_into(&mut buf).unwrap();
-        assert_eq!(buf, &[0x00, 0x00]);
+        assert_eq!(buf, bytes);
+    }
+
+    /// Both empty forms round-trip byte-identically (issue #1298).
+    #[test]
+    fn both_empty_forms_round_trip() {
+        for bytes in [&[0x00u8, 0x00][..], &[0x00, 0x02, 0x00, 0x00][..]] {
+            let cd = CompatibilityDescriptor::parse(bytes).unwrap();
+            assert_eq!(cd.empty_count_present, bytes.len() == 4);
+            let mut buf = vec![0u8; cd.serialized_len()];
+            assert_eq!(cd.serialize_into(&mut buf).unwrap(), bytes.len());
+            assert_eq!(buf, bytes);
+            assert_eq!(CompatibilityDescriptor::parse(&buf).unwrap(), cd);
+        }
     }
 
     /// Hand-built wire bytes (not serializer-derived) pinning every field
@@ -534,6 +577,7 @@ mod tests {
     #[test]
     fn one_descriptor_with_sub_round_trip() {
         let cd = CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: vec![CompatibilityDescriptorEntry {
                 descriptor_type: DescriptorType::SystemHardware,
                 specifier_type: SpecifierType::IeeeOui,
@@ -582,6 +626,7 @@ mod tests {
     #[test]
     fn two_descriptors_round_trip() {
         let cd = CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: vec![
                 CompatibilityDescriptorEntry {
                     descriptor_type: DescriptorType::SystemHardware,
@@ -627,6 +672,7 @@ mod tests {
         let big = vec![0u8; 256];
         // sub_descriptor_length 256 > 255.
         let cd = CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: vec![entry(vec![SubDescriptor {
                 sub_descriptor_type: SubDescriptorType::Unallocated(0x80),
                 data: &big,
@@ -639,6 +685,7 @@ mod tests {
         ));
         // 256 sub-descriptors: subDescriptorCount > 255.
         let cd = CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: vec![entry(
                 (0..256)
                     .map(|_| SubDescriptor {
@@ -655,6 +702,7 @@ mod tests {
         ));
         // 65 536 entries: descriptorCount > 65 535.
         let cd = CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: (0..65_536).map(|_| entry(vec![])).collect(),
         };
         let mut buf = vec![0u8; cd.serialized_len()];
@@ -697,6 +745,7 @@ mod tests {
     #[test]
     fn serialize_rejects_small_buffer() {
         let cd = CompatibilityDescriptor {
+            empty_count_present: false,
             descriptors: vec![],
         };
         assert!(matches!(

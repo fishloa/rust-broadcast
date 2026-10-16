@@ -569,6 +569,7 @@ mod tests {
             UntDescriptorLoop::new(common_descs),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
+                    empty_count_present: false,
                     descriptors: vec![],
                 },
                 vec![crate::tables::TargetOperationalLoop::new(
@@ -633,6 +634,7 @@ mod tests {
             UntDescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
+                    empty_count_present: false,
                     descriptors: vec![],
                 },
                 vec![crate::tables::TargetOperationalLoop::new(
@@ -688,6 +690,7 @@ mod tests {
             UntDescriptorLoop::new(&[]),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
+                    empty_count_present: false,
                     descriptors: vec![],
                 },
                 vec![
@@ -739,6 +742,7 @@ mod tests {
             UntDescriptorLoop::new(&[]),
             vec![UntPlatform::new(
                 CompatibilityDescriptor {
+                    empty_count_present: false,
                     descriptors: vec![CompatibilityDescriptorEntry {
                         descriptor_type: DescriptorType::SystemHardware,
                         specifier_type: SpecifierType::IeeeOui,

@@ -331,6 +331,7 @@ mod tests {
             t_c_download_window: 0,
             t_c_download_scenario: 0,
             compatibility_descriptor: CompatibilityDescriptor {
+                empty_count_present: false,
                 descriptors: vec![],
             },
             modules,
