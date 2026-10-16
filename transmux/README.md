@@ -79,12 +79,15 @@ round-trips through the IR.
 | H.265 / HEVC | `hvc1` (`hev1`) | `hvcC` + **VPS/SPS + profile_tier_level decode** | `hvc1.…` | ✅ |
 | AAC | `mp4a` | `esds` / ES_Descriptor + `AudioSpecificConfig` (+ADTS) | `mp4a.40.N` | ✅ |
 | AC-3 | `ac-3` | `dac3` + syncframe BSI parse | `ac-3` | ✅ |
-| E-AC-3 | `ec-3` | `dec3` + syncframe BSI parse | `ec-3` | ✅ |
+| E-AC-3 | `ec-3` | `dec3` + syncframe BSI parse; **dependent substreams** (7.1 / Atmos) join their independent frame's access unit across PES boundaries, an AC-3 syncframe is an independent substream 0, an orphan dependent frame is dropped, and `Ec3SpecificBox::from_syncframes` counts `num_dep_sub` as the number of dependent substreams (matches MP4Box byte for byte on a real 7.1 stream) | `ec-3` | ✅ |
 | HE-AAC (SBR/PS) | `mp4a` | explicit-SBR/PS ASC | `mp4a.40.5/29` | ✅ |
 | AC-4 | `ac-4` | `dac4` | `ac-4` | ✅ |
 | MPEG-H 3D | `mha1`/`mhm1` | `mhaC` (record decode) | — | ✅ |
 | AV1 | `av01` | `av1C` | `av01.…` | ✅ |
 | Opus / FLAC / VP9 | `Opus`/`fLaC`/`vp09` | `dOps`/`dfLa`/`vpcC` | — | ✅ |
+| **AVS3 video** (GY/T 420-2025 Annex A) | `avs3`/`lav3`/`avst`/`lav2` (`AvsVideoSampleEntry`, byte-exact children) | `av3c` (`Avs3ConfigurationBox`, `LibraryDependencyIdc`), `lavc`/`la2c` (`LAvsConfigurationBox`, per-layer `TemporalLayerInfo`, typed `AvsFrameRateCode`), sample groups `telg`/`lrap`/`a3lg`; `sequence_header()` carried verbatim | — | ✅ |
+| **AVS2 video** | (via `AvsVideoSampleEntry`) | `av2c` (`Avs2ConfigurationBox`) | — | ✅ |
+| **Audio Vivid / AVS3 audio** | `av3a` (config only; not wired into the init-segment machinery) | `dca3` (`Ca3SpecificBox`) with general-bit-rate and lossless `Avs3Audio*SpecificConfig` (bit-packed, typed `content_type`) | — | 🟡 |
 | DTS | `dtsc`/`dtsh`/`dtsl`/`dtse` | `ddts` + core-substream frame-header parse (TS) | `dtsc` | ✅ |
 | **H.266 / VVC** | `vvc1`/`vvi1` | `vvcC` + **SPS/profile_tier_level decode** | `vvc1.…` | ✅ |
 | **VP8** | (WebM `V_VP8`) | keyframe-header dims (RFC 6386) | — | 🟡 |
@@ -96,14 +99,21 @@ round-trips through the IR.
 
 | Format | Sample entry | Status |
 |---|---|---|
-| WebVTT / TTML | `wvtt` / `stpp` | ✅ |
-| CEA-608/708 (in-band SEI) | SEI extraction | ⬜ [#430](https://github.com/fishloa/rust-broadcast/issues/430) |
+| WebVTT / TTML | `wvtt` / `stpp` — `CodecConfig::Subtitle` carries its ISOBMFF sample entry (`SubtitleSampleEntry::{Ttml, WebVtt}`), `Fmp4Demux` fills it and `build_init_segment` and every packager re-emit it with an `sthd`/`nmhd` media header; a TS DVB/Teletext subtitle (no sample entry) is still `UnmuxableSubtitleTrack` | ✅ |
+| `wvtt` samples | `VttCueBox` (keeps unknown `vttc` children in `extra_children` and the wire order, MP4Box/gpac write `iden, sttg, payl`), `VttAdditionalTextBox` (`vtta`), `WvttSampleBox`, `parse_wvtt_sample`; real MP4Box/gpac artifacts under `fixtures/subtitles/` | ✅ |
+| DASH / Smooth subtitle tracks | `DashPackager`: `AdaptationSet contentType="text"`, `mimeType="application/mp4"`, `codecs` `stpp`/`wvtt` (ETSI TS 103 285 §7.1.1; `MediaKind::Text`); `SmoothPackager`: `StreamIndex Type="text" Subtype="SUBT"`, `QualityLevel FourCC` `stpp`/`wvtt` ([MS-SSTR] §2.2.2.3; `SmoothStreamType::Text`) | ✅ |
+| CEA-608/708 (in-band SEI) | `caption_cc_data` SEI extraction: ATSC (`itu_t_t35_country_code` 0xB5) and the China GY/T 270-2013 clause 6.3.3 form (0x26, provider 0x0031, `GA94`, type 0x03); interpretation lives in `cc-data` / `caption-convert` | ✅ |
 
 ### Pipeline & packaging
 
 | Feature | API | Status |
 |---|---|---|
 | Init segment | `build_init_segment` (ftyp + fragmented-init moov) | ✅ |
+| Typed ids | `TrackId(u32)` / `ProgramNumber(u16)` newtypes (`new`/`value`, no silent `From`, serde `transparent` so goldens/JSON/manifests are unchanged; `TrackId::next()`); `TrackSpec::source_pid` is `Option<mpeg_ts::pid::Pid>` | ✅ |
+| `xs:duration` | `dash::xs_duration(Duration)` — the workspace's one ISO 8601 spelling (saturates beyond `i64::MAX` seconds) | ✅ |
+| DASH `SegmentTimeline` | `SegmentTimeline::resolve(start_number, period_end_ticks)` -> `TimelineSegment { number, time, duration }`: absolute first `S@t`, explicit `S@t` gaps and a negative `S@r` repeating to the next `@t` or the Period end (ISO/IEC 23009-1 §5.3.9.6, DASH-IF IOP v4.3 §3.10.2.2.4); `enumerate` stays the no-Period-end wrapper | ✅ |
+| Large boxes | every variable-size box writer uses the `size = 1` + 64-bit `largesize` form past `u32::MAX` (ISO/IEC 14496-12 §4.2) and counts it in `serialized_len`; typed readers accept it; fixed-layout boxes return `FieldOverflow` rather than a wrapped size | ✅ |
+| Version-0 field checks | `mvhd`/`tkhd`/`mdhd` times and durations, `prft` `media_time`, `mp4esds` `bufferSizeDB`, `stsz` over range are `Error::FieldOverflow` (never `as u32`); `trun` with no per-sample fields is capped at `MAX_ZERO_WIDTH_TRUN_SAMPLES` (2^20) | ✅ |
 | Media segment (batch) | `build_media_segment` (styp + moof + mdat) from `TrackSpec` / `Sample` | ✅ |
 | **Streaming segmenter** | `Segmenter` — `push` samples → `take_ready` segments, keyframe-cut at a target duration | ✅ |
 | **LL-HLS segmenter** | `LlHlsSegmenter` — `with_part_target` + `take_ready_parts` → partial-segment CMAF chunks (RFC 8216bis §4.4.4.9) before the segment closes | ✅ |
@@ -122,7 +132,8 @@ round-trips through the IR.
 | Spoke | Type | API | Status |
 |---|---|---|---|
 | TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config: H.264 `avcC` · H.265 `hvcC` · MPEG-2 video `esds` · AAC/MPEG audio `esds` · AC-3/E-AC-3 · DTS core `ddts`); every other `stream_type` carried as an opaque `Data` track (PES or reassembled sections) — nothing dropped. This "nothing dropped" guarantee is **TS-specific**: it does not extend to the FLV demux below, which silently skips non-AVC video and non-AAC audio. `is_sync` marks IDR **and** open-GOP RAPs (recovery-point SEI / SPS-led I-frame) so `Segmenter` anchors broadcast H.264. Every track carries `TrackSpec::source_pid` + `es_info_descriptors` (verbatim PMT ES_info) for player track-selection/labeling | ✅ |
-| TS demux (streaming) | `feed`/`poll_event`/`finish` | `StreamingTsDemux` (event-driven incremental core; `TsDemux` is a batch wrapper over it) | ✅ |
+| TS demux (streaming) | `feed`/`poll_event`/`finish` | `StreamingTsDemux` (event-driven incremental core; `TsDemux` is a batch wrapper over it). **PPS tracking** is keyed by `pic_parameter_set_id` (H.264 §7.3.2.2 / H.265 §7.3.2.3.1): re-sending an id with identical bytes is silent however ids interleave, an id announced with different bytes is a `TrackUpdated` at every switch (`A -> B -> A` included). E-AC-3 config recovery waits for a complete access unit (7.1 is no longer signalled as 5.1) | ✅ |
+| Damaged-input tolerance | — | one damaged unit no longer aborts a one-shot demux: `PsDemux` resynchronises past a bad pack, `Fmp4Demux` skips a bad `moof`/`traf`, `WebmDemux` a corrupt `Cluster`/`TrackEntry`/Block, `FlvDemux` a damaged tag chain, batch `RtpDepacketiser` a malformed packet; each is reported in `Media::degraded` (`InputDegradation::MalformedUnit { position }`), never silent | ✅ |
 | fMP4 demux | `Unpackage` | `Fmp4Demux` (moov/moof → IR, all codecs) | ✅ |
 | Progressive MP4 demux | `Unpackage` | `ProgressiveDemux` (non-fragmented `moov` sample tables: `stts`/`ctts`/`stss`/`stsz`/`stsc`+`stco`/`co64` → IR; `sidx` v0/v1) | ✅ |
 | MPEG-PS demux | `Unpackage` | `PsDemux` | ✅ |
@@ -133,7 +144,7 @@ round-trips through the IR.
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
 | IR timeline conditioning (rebase / offset / gap) | — | `rebase_to_zero` · `apply_offset` · `insert_discontinuity_gap` (over `Track::start_decode_time`; 33-bit MPEG-2/32-bit RTP wrap unroll happens once at the demux edge, not as a caller transform) | ✅ |
 | IR timeline splice / concat → SSAI | — | `concat` · `splice_insert` (keyframe-snapped via `snap_to_preceding_sync`, → `SpliceResult` with `discontinuity_points`) | ✅ |
-| CENC/CBCS decrypt + encrypt | `Decrypt`/`Encrypt` | `CencDecryptor` (`from_fmp4` / zero-copy `from_fmp4_bytes`) · `CencEncryptor` (`cenc` AES-CTR, `cbcs` AES-CBC pattern; populates `Track::encryption` for `protect_init_segment`/`protect_media_segment`'s `sinf`/`senc`/`saio`/`saiz` emission) | ✅ |
+| CENC/CBCS decrypt + encrypt | `Decrypt`/`Encrypt` | (`KeyMap` and `CencEncryptor` wipe content keys on drop via `zeroize`; `KeyMap` equality is constant-time; `cenc`/`sample-aes` build on bare-metal) `CencDecryptor` (`from_fmp4` / zero-copy `from_fmp4_bytes`) · `CencEncryptor` (`cenc` AES-CTR, `cbcs` AES-CBC pattern; populates `Track::encryption` for `protect_init_segment`/`protect_media_segment`'s `sinf`/`senc`/`saio`/`saiz` emission) | ✅ |
 | CENC/CBCS DRM signalling | — | DASH: `DashPackager::content_protection` auto-derives the generic-CENC `ContentProtection` from `Track::encryption`. HLS: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs` (`METHOD=SAMPLE-AES`) and `cenc` (`METHOD=SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4) | ✅ |
 | HLS Sample-AES / AES-128 encrypt+decrypt | — | `sample_aes` (`h264_encrypt_nal` · `aac_encrypt_frame` · `ac3_encrypt_frame` · `eac3_encrypt_frame` / `eac3_decrypt_frame` · `aes128_encrypt_segment` · `ExtXKey`; feature `sample-aes`) | ✅ |
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
