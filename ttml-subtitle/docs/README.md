@@ -27,14 +27,15 @@ Both documents are still current — no newer TTML2 or IMSC revision has
 superseded either REC as of the fetch date (checked via each page's own
 "Latest published version" link, which resolved to the same document).
 
-## What could NOT be established from a readable source (do not guess these)
+## Deferred: not yet transcribed (the sources ARE vendored)
 
-The following are referenced by the specs but were **not** transcribed
-because doing so would have required either (a) content not practical to
-verify from the fetched HTML (image/table-heavy appendices), or (b) material
-outside what this prep pass had time to fully read. Anyone implementing
-against these tables must go back to the primary spec text — do not infer
-values from the summaries in `ttml2-syntax.md`/`imsc11-profiles.md`:
+The full specs are vendored as `specs/w3c_ttml2.html`, `specs/w3c_imsc1.1.html`
+and `specs/w3c_imsc1.2.html`. The items below are scoping choices of the prep
+pass (image/table-heavy appendices, or material not needed for
+parse/serialize), NOT missing sources: **deferred, transcribe from
+`specs/w3c_*.html` when needed**. Until then, anyone implementing against these
+tables must go back to the vendored spec text — do not infer values from the
+summaries in `ttml2-syntax.md`/`imsc11-profiles.md`:
 
 - **TTML2 §10.4 Style Resolution algorithm** (the full CSS-cascade-like
   resolution procedure: specified → computed → used value, per-property
