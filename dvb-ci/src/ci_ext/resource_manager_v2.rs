@@ -14,6 +14,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use crate::resource::ResourceId;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -82,6 +83,10 @@ pub struct ModuleIdSend {
     /// The 6-bit Module ID (`0` if the host has not allocated one). Only the low
     /// 6 bits are significant; the top 2 bits are reserved.
     pub module_id: u8,
+    /// The 2-bit `reserved` field in front of `module_id` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<2>,
 }
 
 /// `command` values for `module_id_command()` (Table 7).
@@ -142,6 +147,10 @@ pub struct ModuleIdCommand {
     pub command: ModuleIdCommandKind,
     /// The 6-bit Module ID (significant only for `Set_ModuleID`).
     pub module_id: u8,
+    /// The 2-bit `reserved` field in front of `module_id` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<2>,
 }
 
 // --- profile_enq / profile_changed / profile_reply ---
@@ -248,6 +257,7 @@ impl<'a> Parse<'a> for ModuleIdSend {
         Ok(Self {
             length_form,
             module_id: body[0] & 0x3F,
+            reserved: ReservedZero::from_bits(body[0] >> 6),
         })
     }
 }
@@ -264,8 +274,8 @@ impl Serialize for ModuleIdSend {
             self.length_form,
             buf,
         )?;
-        // reserved(2)='00', module_id(6). Range-checked above.
-        buf[pos] = self.module_id;
+        // reserved(2), module_id(6). Range-checked above.
+        buf[pos] = (self.reserved.get() << 6) | self.module_id;
         Ok(pos + MODULE_ID_SEND_BODY)
     }
 }
@@ -292,6 +302,7 @@ impl<'a> Parse<'a> for ModuleIdCommand {
             length_form,
             command: ModuleIdCommandKind::from_u8(body[0]),
             module_id: body[1] & 0x3F,
+            reserved: ReservedZero::from_bits(body[1] >> 6),
         })
     }
 }
@@ -309,8 +320,8 @@ impl Serialize for ModuleIdCommand {
             buf,
         )?;
         buf[pos] = self.command.to_u8();
-        // reserved(2)='00', module_id(6). Range-checked above.
-        buf[pos + 1] = self.module_id;
+        // reserved(2), module_id(6). Range-checked above.
+        buf[pos + 1] = (self.reserved.get() << 6) | self.module_id;
         Ok(pos + MODULE_ID_COMMAND_BODY)
     }
 }
@@ -378,6 +389,7 @@ mod tests {
     #[test]
     fn module_id_send_round_trips_and_bites() {
         let m = ModuleIdSend {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             module_id: 0x03,
         };
@@ -388,6 +400,7 @@ mod tests {
         let parsed = ModuleIdSend::parse(&[0x9F, 0x80, 0x13, 0x01, 0xC3]).unwrap();
         assert_eq!(parsed.module_id, 0x03);
         let other = ModuleIdSend {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             module_id: 0x04,
         };
@@ -397,6 +410,7 @@ mod tests {
     #[test]
     fn module_id_command_round_trips_and_bites() {
         let m = ModuleIdCommand {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             command: ModuleIdCommandKind::SetModuleId,
             module_id: 0x05,
@@ -418,6 +432,7 @@ mod tests {
             ResourceManagerV2Apdu::ProfileEnq(_)
         ));
         let mic = ModuleIdCommand {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             command: ModuleIdCommandKind::Acknowledgement,
             module_id: 1,
@@ -435,6 +450,7 @@ mod tests {
         // Before the fix, 0x43 (exceeds 6 bits) silently wrapped to 0x03 in
         // the module_id field and returned Ok.
         let m = ModuleIdSend {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             module_id: 0x43,
         };
@@ -448,6 +464,7 @@ mod tests {
     #[test]
     fn max_module_id_send_still_serializes_and_round_trips() {
         let m = ModuleIdSend {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             module_id: 0x3F,
         }; // the 6-bit maximum
@@ -458,6 +475,7 @@ mod tests {
     #[test]
     fn oversized_module_id_command_is_rejected_not_wrapped() {
         let m = ModuleIdCommand {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             command: ModuleIdCommandKind::SetModuleId,
             module_id: 0x43,

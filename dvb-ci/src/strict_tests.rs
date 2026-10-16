@@ -183,6 +183,36 @@ fn every_fixed_layout_parser_rejects_a_padding_byte() {
         broadcast_service_gateway::tag::EIT_SECTION_REQ
     );
     strict!(stream_input::ScanAck, stream_input::tag::SCAN_ACK);
+    // Fixed-layout APDUs the first r10-O-1 pass missed (review ci-cam #1).
+    strict!(mmi_high::MenuAnsw, t::MENU_ANSW);
+    strict!(mmi_display::Keypress, t::KEYPRESS);
+    strict!(mmi_display::KeypadControl, t::KEYPAD_CONTROL, [0x01]); // no key_code list
+    strict!(mmi_display::DisplayMessage, t::DISPLAY_MESSAGE);
+    strict!(mmi_display::SceneEndMark, t::SCENE_END_MARK);
+    strict!(mmi_display::SceneDoneMessage, t::SCENE_DONE);
+    strict!(mmi_display::SceneControl, t::SCENE_CONTROL);
+    strict!(host_control::ClearReplace, t::CLEAR_REPLACE);
+    strict!(
+        service_gateway::ServiceListChanged,
+        service_gateway::tag::SERVICE_LIST_CHANGED
+    );
+    strict!(
+        service_gateway::ServiceListVersionAck,
+        service_gateway::tag::SERVICE_LIST_VERSION_ACK
+    );
+    strict!(
+        service_gateway::GetServiceReq,
+        service_gateway::tag::GET_SERVICE_REQ,
+        [0x00, 0x01, 0x00, 0x02]
+    );
+    strict!(
+        service_gateway::ServiceDescReq,
+        service_gateway::tag::SERVICE_DESC_REQ
+    );
+    strict!(copy_protection::CpQuery, copy_protection::tag::CP_QUERY);
+    strict!(cp::PlayerStop, cp::tag::STOP);
+    strict!(cp::PlayerEnd, cp::tag::END);
+    strict!(cp::PlayerInfoReq, cp::tag::INFO_REQ);
     strict!(stream_input::TuneTSAck, stream_input::tag::TUNE_TS_ACK);
 
     // ci_plus/

@@ -192,6 +192,7 @@ macro_rules! status_item_object {
                         what: $what,
                     });
                 }
+                objects::reject_trailing_body(body, STATUS_ITEM_LEN, $what)?;
                 let raw = read_u32(body);
                 Ok(Self {
                     length_form,

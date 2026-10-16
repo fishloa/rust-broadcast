@@ -11,11 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `dvb-ci` 0.9 -> 0.10, `dvb-si` 11 -> 12, `mpeg-ts` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 ### Added
+- `CiDataDevice::write` contract: whole packets only, `WouldBlock` + `PartialWrite`
+  on backpressure; `dataplane::{PartialWrite, partial_write_progress}` (re-exported).
 - `LinuxCiDataDevice::open_split(adapter, ci)` / `LinuxCiDataDevice::from_split(write, read)`: the data plane as two one-direction descriptors (`O_WRONLY` write, `O_RDONLY | O_NONBLOCK` read). The Digital Devices CXD2099 `ci0` (dddvb, Ubuntu 5.15) rejects `O_RDWR` with `EINVAL`, so `LinuxCiDataDevice::open` now tries `O_RDWR` first and falls back to the split open on `EINVAL` and only `EINVAL`. Verified on that hardware with two `from_file`-wrapped fds: 150 s, 111k `feed_ts` calls, max 249 us, 0 errors (#1066).
 - `DeviceOpError` (re-exported): every failing Linux device operation (`open`, `read`, `write`, `poll`, `ioctl CA_RESET`, `ioctl CA_GET_SLOT_INFO`) now names the operation, the device path and the errno, e.g. `/dev/dvb/adapter3/ca0: write (17 byte frame: slot 0, connection 1) failed: Invalid argument (os error 22)`. The `io::ErrorKind` is unchanged; the errno is `DeviceOpError::errno_of(&err)` (a wrapped error no longer answers `raw_os_error()` itself) (#1032).
 
 ### Fixed
-- `Driver::pump`: the first write after the post-`CA_RESET` settle (the `Create_T_C`) that fails `EINVAL` is retried every 250 ms for up to 12 s past the settle window instead of aborting the pump. The kernel's `dvb_ca_en50221` answers `EINVAL` to a write until the slot reaches its RUNNING state, and how long a CAM needs after a reset varies: on a DD CXD2099 with an AlphaCrypt, the 4th re-open within ~12 minutes returned `EINVAL` from the first handshake pump (no CA PMT sent; the kernel logged CAM init OK afterwards). A slot that never comes up is still reported once the window ends (#1032).
+- `LinuxCiDataDevice::write` never leaves a half-written TS packet in the device
+  (adversarial review `review/ci-cam-crypto`). The duplex fd is `O_NONBLOCK`, so
+  a burst larger than the device buffer used to stop mid-packet with a bare
+  `WouldBlock` and no byte count. Writes now go in 21-packet chunks, a short or
+  mid-packet write is completed (waiting up to 2 s for room), and a device that
+  is full at a packet boundary is waited on with `poll(POLLOUT)` for 50 ms
+  before the call returns `WouldBlock` carrying a new `PartialWrite { written,
+  requested, device }` (read with `partial_write_progress`), the number of
+  whole-packet bytes accepted. `CaDescrambler::feed_ts` resumes after them,
+  draining the device between attempts, and gives up only after 20 consecutive
+  attempts that moved nothing.
+- `LinuxCaDevice::read` returns an `InvalidData` error when a TPDU is larger than
+  the caller's buffer instead of copying a truncated one and returning `Ok`
+  (`Driver`'s buffer is 4096 bytes; a CAM that negotiates a larger link buffer is
+  now reported, not silently corrupted).
+"- `Driver::pump`: the first write after the post-`CA_RESET` settle (the `Create_T_C`) that fails `EINVAL` is retried every 250 ms for up to 12 s past the settle window instead of aborting the pump. The kernel's `dvb_ca_en50221` answers `EINVAL` to a write until the slot reaches its RUNNING state, and how long a CAM needs after a reset varies: on a DD CXD2099 with an AlphaCrypt, the 4th re-open within ~12 minutes returned `EINVAL` from the first handshake pump (no CA PMT sent; the kernel logged CAM init OK afterwards). A slot that never comes up is still reported once the window ends (#1032).
 
 ### Changed
 - `TransportConnection::init` uses an explicit justified `expect` for the fixed-size `Create_T_C` TPDU.

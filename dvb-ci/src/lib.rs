@@ -51,7 +51,10 @@ mod dispatch;
 pub mod error;
 pub mod length;
 pub mod objects;
+pub mod reserved;
 pub mod resource;
+#[cfg(test)]
+mod roundtrip_property;
 pub mod spdu;
 #[cfg(test)]
 mod strict_tests;

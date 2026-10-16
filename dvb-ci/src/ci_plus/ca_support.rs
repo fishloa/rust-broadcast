@@ -30,7 +30,8 @@ use crate::objects;
 use crate::objects::ca_pmt::{
     CaPmtCmdId, CaPmtListManagement, info_block_len, parse_cmd_and_descriptors, write_info_block,
 };
-use crate::objects::ca_pmt_reply::{CaEnable, encode_enable_byte};
+use crate::objects::ca_pmt_reply::{CaEnable, decode_enable_byte, encode_enable_byte};
+use crate::reserved::ReservedOnes;
 use crate::tag::{CA_PMT, CA_PMT_REPLY};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -59,6 +60,14 @@ pub struct MsCaPmtStream<'a> {
     /// ES-level `CA_descriptor()` loop, verbatim wire bytes (no `cmd_id`).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub ca_descriptors: &'a [u8],
+    /// The 3-bit `reserved` field as received, preserved so the object
+    /// re-serializes byte-for-byte; all ones when hand-built. (before `elementary_PID`)
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_pid: ReservedOnes<3>,
+    /// The 4-bit `reserved` field as received, preserved so the object
+    /// re-serializes byte-for-byte; all ones when hand-built. (before `ES_info_length`)
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_es_info: ReservedOnes<4>,
 }
 
 /// CI Plus multi-stream `ca_pmt()` (Table 14): Host → CICAM. Differs from the
@@ -92,6 +101,18 @@ pub struct MsCaPmt<'a> {
     /// Elementary streams in wire order.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub streams: Vec<MsCaPmtStream<'a>>,
+    /// The 3-bit `reserved` field as received, preserved so the object
+    /// re-serializes byte-for-byte; all ones when hand-built. (before `PMT_PID`)
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_pmt_pid: ReservedOnes<3>,
+    /// The 2-bit `reserved` field as received, preserved so the object
+    /// re-serializes byte-for-byte; all ones when hand-built. (before `version_number`)
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_version: ReservedOnes<2>,
+    /// The 4-bit `reserved` field as received, preserved so the object
+    /// re-serializes byte-for-byte; all ones when hand-built. (before `program_info_length`)
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_program_info: ReservedOnes<4>,
 }
 
 // LTS_id(1) + list_management(1) + program_number(2) + reserved/PMT_PID(2) +
@@ -116,6 +137,9 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
         let program_number = u16::from_be_bytes([body[2], body[3]]);
         // reserved(3) + PMT_PID(13).
         let pmt_pid = Pid::new((((body[4] & 0x1F) as u16) << 8) | body[5] as u16);
+        let reserved_pmt_pid = ReservedOnes::from_bits(body[4] >> 5);
+        let reserved_version = ReservedOnes::from_bits(body[6] >> 6);
+        let reserved_program_info = ReservedOnes::from_bits(body[7] >> 4);
         // reserved(2) + version(5) + cni(1).
         let version_number = (body[6] >> 1) & 0x1F;
         let current_next_indicator = (body[6] & 0x01) != 0;
@@ -140,6 +164,8 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
                 });
             }
             let stream_type = body[pos];
+            let reserved_pid = ReservedOnes::from_bits(body[pos + 1] >> 5);
+            let reserved_es_info = ReservedOnes::from_bits(body[pos + 3] >> 4);
             let elementary_pid =
                 Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
             let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
@@ -151,6 +177,8 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
                 elementary_pid,
                 cmd_id: es_cmd,
                 ca_descriptors,
+                reserved_pid,
+                reserved_es_info,
             });
         }
 
@@ -165,6 +193,9 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
             cmd_id,
             program_ca_descriptors,
             streams,
+            reserved_pmt_pid,
+            reserved_version,
+            reserved_program_info,
         })
     }
 }
@@ -200,13 +231,15 @@ impl Serialize for MsCaPmt<'_> {
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.list_management.to_u8();
         buf[pos + 2..pos + 4].copy_from_slice(&self.program_number.to_be_bytes());
-        // reserved(3)='111', PMT_PID(13). Range-checked above.
-        buf[pos + 4] = 0xE0 | (self.pmt_pid.value() >> 8) as u8;
+        // reserved(3), PMT_PID(13). Range-checked above.
+        buf[pos + 4] = (self.reserved_pmt_pid.get() << 5) | (self.pmt_pid.value() >> 8) as u8;
         buf[pos + 5] = self.pmt_pid.value() as u8;
-        // reserved(2)='11', version(5), current_next(1). Range-checked above.
-        buf[pos + 6] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
-        // reserved(4)='1111', program_info_length(12). Range-checked above.
-        buf[pos + 7] = 0xF0 | (program_info_length >> 8) as u8;
+        // reserved(2), version(5), current_next(1). Range-checked above.
+        buf[pos + 6] = (self.reserved_version.get() << 6)
+            | (self.version_number << 1)
+            | u8::from(self.current_next_indicator);
+        // reserved(4), program_info_length(12). Range-checked above.
+        buf[pos + 7] = (self.reserved_program_info.get() << 4) | (program_info_length >> 8) as u8;
         buf[pos + 8] = program_info_length as u8;
         pos += MS_CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;
@@ -214,10 +247,10 @@ impl Serialize for MsCaPmt<'_> {
         for s in &self.streams {
             let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
             buf[pos] = s.stream_type;
-            // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos + 1] = 0xE0 | (s.elementary_pid.value() >> 8) as u8;
+            // reserved(3), elementary_PID(13). Range-checked above.
+            buf[pos + 1] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
             buf[pos + 2] = s.elementary_pid.value() as u8;
-            buf[pos + 3] = 0xF0 | (es_info_length >> 8) as u8;
+            buf[pos + 3] = (s.reserved_es_info.get() << 4) | (es_info_length >> 8) as u8;
             buf[pos + 4] = es_info_length as u8;
             pos += MS_ES_PREFIX;
             pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
@@ -238,6 +271,15 @@ pub struct MsCaPmtReplyStream {
     pub elementary_pid: Pid,
     /// ES-level `CA_enable` — `Some` iff the `CA_enable_flag` bit was set.
     pub ca_enable: Option<CaEnable>,
+    /// The 3-bit `reserved` field as received, preserved so the object
+    /// re-serializes byte-for-byte; all ones when hand-built. (before `elementary_PID`)
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_pid: ReservedOnes<3>,
+    /// The 7-bit field after `CA_enable_flag` when the flag is clear (`reserved`),
+    /// as received so the object re-serializes byte-for-byte; ignored on
+    /// serialize when `ca_enable` is `Some`. `0b111_1111` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_ca_enable: ReservedOnes<7>,
 }
 
 /// CI Plus multi-stream `ca_pmt_reply()` (Table 16): CICAM → Host. Differs from
@@ -264,6 +306,15 @@ pub struct MsCaPmtReply {
     pub ca_enable: Option<CaEnable>,
     /// Per-ES entries in wire order.
     pub streams: Vec<MsCaPmtReplyStream>,
+    /// The 2-bit `reserved` field as received, preserved so the object
+    /// re-serializes byte-for-byte; all ones when hand-built. (before `version_number`)
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_version: ReservedOnes<2>,
+    /// The 7-bit field after `CA_enable_flag` when the flag is clear (`reserved`),
+    /// as received so the object re-serializes byte-for-byte; ignored on
+    /// serialize when `ca_enable` is `Some`. `0b111_1111` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_ca_enable: ReservedOnes<7>,
 }
 
 // LTS_id(1) + program_number(2) + reserved/version/cni(1) + flag/enable(1).
@@ -286,12 +337,7 @@ impl<'a> Parse<'a> for MsCaPmtReply {
         let program_number = u16::from_be_bytes([body[1], body[2]]);
         let version_number = (body[3] >> 1) & 0x1F;
         let current_next_indicator = (body[3] & 0x01) != 0;
-        let ca_enable_flag = (body[4] & 0x80) != 0;
-        let ca_enable = if ca_enable_flag {
-            Some(CaEnable::from_u8(body[4] & 0x7F))
-        } else {
-            None
-        };
+        let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[4]);
 
         let mut pos = MS_REPLY_PREFIX;
         let mut streams = Vec::new();
@@ -305,15 +351,12 @@ impl<'a> Parse<'a> for MsCaPmtReply {
             }
             let elementary_pid =
                 Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
-            let es_flag = (body[pos + 2] & 0x80) != 0;
-            let es_enable = if es_flag {
-                Some(CaEnable::from_u8(body[pos + 2] & 0x7F))
-            } else {
-                None
-            };
+            let (es_enable, es_reserved) = decode_enable_byte(body[pos + 2]);
             streams.push(MsCaPmtReplyStream {
                 elementary_pid,
                 ca_enable: es_enable,
+                reserved_pid: ReservedOnes::from_bits(body[pos] >> 5),
+                reserved_ca_enable: es_reserved,
             });
             pos += MS_REPLY_ES_LEN;
         }
@@ -326,6 +369,8 @@ impl<'a> Parse<'a> for MsCaPmtReply {
             current_next_indicator,
             ca_enable,
             streams,
+            reserved_version: ReservedOnes::from_bits(body[3] >> 6),
+            reserved_ca_enable,
         })
     }
 }
@@ -348,15 +393,17 @@ impl Serialize for MsCaPmtReply {
         let mut pos = crate::objects::write_apdu_header(CA_PMT_REPLY, body, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
-        // reserved(2)='11', version(5), current_next(1). Range-checked above.
-        buf[pos + 3] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
-        buf[pos + 4] = encode_enable_byte(self.ca_enable);
+        // reserved(2), version(5), current_next(1). Range-checked above.
+        buf[pos + 3] = (self.reserved_version.get() << 6)
+            | (self.version_number << 1)
+            | u8::from(self.current_next_indicator);
+        buf[pos + 4] = encode_enable_byte(self.ca_enable, self.reserved_ca_enable);
         pos += MS_REPLY_PREFIX;
         for s in &self.streams {
-            // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos] = 0xE0 | (s.elementary_pid.value() >> 8) as u8;
+            // reserved(3), elementary_PID(13). Range-checked above.
+            buf[pos] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
             buf[pos + 1] = s.elementary_pid.value() as u8;
-            buf[pos + 2] = encode_enable_byte(s.ca_enable);
+            buf[pos + 2] = encode_enable_byte(s.ca_enable, s.reserved_ca_enable);
             pos += MS_REPLY_ES_LEN;
         }
         Ok(pos)
@@ -406,6 +453,9 @@ mod tests {
         let prog = sample_ca_descriptor(0x1234, 0x0100);
         let es_desc = sample_ca_descriptor(0x1234, 0x0101);
         let pmt = MsCaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
+            reserved_pmt_pid: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x02,
             list_management: CaPmtListManagement::Only,
@@ -416,6 +466,8 @@ mod tests {
             cmd_id: Some(CaPmtCmdId::OkDescrambling),
             program_ca_descriptors: &prog,
             streams: alloc::vec![MsCaPmtStream {
+                reserved_es_info: Default::default(),
+                reserved_pid: Default::default(),
                 stream_type: 0x02,
                 elementary_pid: Pid::new(0x0200),
                 cmd_id: Some(CaPmtCmdId::OkDescrambling),
@@ -458,6 +510,9 @@ mod tests {
     #[test]
     fn ms_ca_pmt_no_descriptors() {
         let pmt = MsCaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
+            reserved_pmt_pid: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x00,
             list_management: CaPmtListManagement::Update,
@@ -483,6 +538,8 @@ mod tests {
     #[test]
     fn ms_ca_pmt_reply_round_trips_and_bites() {
         let reply = MsCaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x03,
             program_number: 0x0001,
@@ -491,10 +548,14 @@ mod tests {
             ca_enable: Some(CaEnable::Possible),
             streams: alloc::vec![
                 MsCaPmtReplyStream {
+                    reserved_ca_enable: Default::default(),
+                    reserved_pid: Default::default(),
                     elementary_pid: Pid::new(0x0200),
                     ca_enable: Some(CaEnable::Possible),
                 },
                 MsCaPmtReplyStream {
+                    reserved_ca_enable: Default::default(),
+                    reserved_pid: Default::default(),
                     elementary_pid: Pid::new(0x0201),
                     ca_enable: None,
                 },
@@ -523,6 +584,9 @@ mod tests {
     #[test]
     fn dispatch_helper_routes_by_tag() {
         let pmt = MsCaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
+            reserved_pmt_pid: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             list_management: CaPmtListManagement::Only,
@@ -540,6 +604,8 @@ mod tests {
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
         let reply = MsCaPmtReply {
+            reserved_ca_enable: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 1,
             program_number: 1,
@@ -558,6 +624,9 @@ mod tests {
     #[test]
     fn max_pmt_pid_still_serializes_and_round_trips() {
         let pmt = MsCaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
+            reserved_pmt_pid: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             list_management: CaPmtListManagement::Only,

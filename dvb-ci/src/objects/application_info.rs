@@ -177,6 +177,8 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
                 actual: body.len() - APP_INFO_PREFIX,
             });
         }
+        // EN 50221 Table 21 / TS 101 699 §5 define no field after menu_string.
+        super::reject_trailing_body(body, menu_end, "application_info")?;
         Ok(Self {
             length_form,
             application_type,

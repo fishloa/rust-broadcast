@@ -127,6 +127,7 @@ impl<'a> Parse<'a> for FileSystemOffer<'a> {
                 actual: body.len().saturating_sub(OFFER_PREFIX),
             });
         }
+        objects::reject_trailing_body(body, end, "FileSystemOffer")?;
         Ok(Self {
             length_form,
             domain_identifier: &body[OFFER_PREFIX..end],

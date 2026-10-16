@@ -209,6 +209,8 @@ mod tests {
     #[test]
     fn dispatch_ca_pmt() {
         let pmt = CaPmt {
+            reserved_program_info: Default::default(),
+            reserved_version: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 1,

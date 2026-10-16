@@ -18,6 +18,7 @@
 use super::service_gateway::ServiceGatewayApdu;
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::reserved::ReservedZero;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -103,6 +104,10 @@ pub struct EitSectionReq {
     /// `OKToDisruptService` — `1`: a current service may be disrupted to obtain
     /// the requested event information; `0`: delivery shall not be disrupted.
     pub ok_to_disrupt_service: bool,
+    /// The 7-bit `reserved` field in front of `OKToDisruptService` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<7>,
 }
 
 /// One EIT event in an [`EitSectionAck`] loop — modelled on the EIT event loop in
@@ -140,6 +145,10 @@ pub struct EitSectionAck<'a> {
     /// The events (`Length` is the byte count of the event loop, may be 0).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub events: Vec<EitEvent<'a>>,
+    /// The 2-bit `reserved` field in front of `ResponseCode` as received, preserved so the
+    /// object re-serializes byte-for-byte; `0` when hand-built.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedZero<2>,
 }
 
 // --- EITSectionReq ---
@@ -168,6 +177,7 @@ impl<'a> Parse<'a> for EitSectionReq {
             section_number: body[4],
             original_network_id: u16::from_be_bytes([body[5], body[6]]),
             ok_to_disrupt_service: (body[7] & 0x01) != 0,
+            reserved: ReservedZero::from_bits(body[7] >> 1),
         })
     }
 }
@@ -187,8 +197,8 @@ impl Serialize for EitSectionReq {
         buf[pos + 2..pos + 4].copy_from_slice(&self.service_id.to_be_bytes());
         buf[pos + 4] = self.section_number;
         buf[pos + 5..pos + 7].copy_from_slice(&self.original_network_id.to_be_bytes());
-        // Reserved(7)=0, OKToDisruptService(1).
-        buf[pos + 7] = u8::from(self.ok_to_disrupt_service);
+        // Reserved(7), OKToDisruptService(1).
+        buf[pos + 7] = (self.reserved.get() << 1) | u8::from(self.ok_to_disrupt_service);
         Ok(pos + EIT_SECTION_REQ_BODY)
     }
 }
@@ -224,6 +234,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
                 actual: body.len() - loop_start,
             });
         }
+        objects::reject_trailing_body(body, loop_end, "EITSectionAck")?;
         let mut events = Vec::new();
         let mut p = loop_start;
         while p < loop_end {
@@ -266,6 +277,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
             length_form,
             response_code,
             events,
+            reserved: ReservedZero::from_bits(body[0] >> 6),
         })
     }
 }
@@ -297,8 +309,10 @@ impl Serialize for EitSectionAck<'_> {
         let mut pos =
             objects::write_apdu_header(tag::EIT_SECTION_ACK, body_len, self.length_form, buf)?;
         let len16 = length as u16;
-        // Reserved(2)=0, ResponseCode(2), Length(12).
-        buf[pos] = (self.response_code.to_u8() << 4) | ((len16 >> 8) as u8 & 0x0F);
+        // Reserved(2), ResponseCode(2), Length(12).
+        buf[pos] = (self.reserved.get() << 6)
+            | (self.response_code.to_u8() << 4)
+            | ((len16 >> 8) as u8 & 0x0F);
         buf[pos + 1] = len16 as u8;
         pos += EIT_SECTION_ACK_PREFIX;
         for e in &self.events {
@@ -395,6 +409,7 @@ mod tests {
     #[test]
     fn eit_section_req_round_trips_and_bites() {
         let req = EitSectionReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             table_id: 0x004E,
             service_id: 0x0064,
@@ -438,6 +453,7 @@ mod tests {
             descriptors: &[],
         };
         let ack = EitSectionAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             response_code: EitResponseCode::SectionFound,
             events: alloc::vec![e0, e1],
@@ -462,6 +478,7 @@ mod tests {
     #[test]
     fn eit_section_ack_empty_loop() {
         let ack = EitSectionAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             response_code: EitResponseCode::NotAvailable,
             events: alloc::vec![],
@@ -476,6 +493,7 @@ mod tests {
     #[test]
     fn bsg_routes_eit_tags() {
         let req = EitSectionReq {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             table_id: 0x4E,
             service_id: 1,
@@ -505,6 +523,7 @@ mod tests {
         // 9F8006 ServiceDescAck inherited too.
         use super::super::service_gateway::ServiceDescAck;
         let sda = ServiceDescAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 1,
@@ -539,6 +558,7 @@ mod tests {
             descriptors: &[],
         };
         let ack = EitSectionAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             response_code: EitResponseCode::SectionFound,
             events: alloc::vec![e],
@@ -561,6 +581,7 @@ mod tests {
             descriptors: &[],
         };
         let ack = EitSectionAck {
+            reserved: Default::default(),
             length_form: crate::length::LengthForm::Minimal,
             response_code: EitResponseCode::SectionFound,
             events: alloc::vec![e],

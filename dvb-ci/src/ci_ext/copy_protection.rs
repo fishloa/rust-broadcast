@@ -172,6 +172,7 @@ impl<'a> Parse<'a> for CpQuery {
                 what: "cp_query",
             });
         }
+        objects::reject_trailing_body(body, CP_ID_LEN, "cp_query")?;
         Ok(Self {
             length_form,
             copy_protection_id: read_cp_id(body),

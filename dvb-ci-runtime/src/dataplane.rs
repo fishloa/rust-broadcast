@@ -28,6 +28,14 @@ pub const TS_PACKET_LEN: usize = 188;
 pub trait CiDataDevice {
     /// Write scrambled TS to the module. `ts` must be a whole number of
     /// [`TS_PACKET_LEN`]-byte packets.
+    ///
+    /// An implementation must never leave a packet half written. When the
+    /// device cannot take all of `ts` (its buffer is full) it returns an
+    /// [`io::ErrorKind::WouldBlock`] error carrying a [`PartialWrite`] — read
+    /// it with [`partial_write_progress`] — whose `written` is the number of
+    /// whole-packet bytes the device did accept, so the caller can resume
+    /// after them (see [`CaDescrambler::feed_ts`](crate::descrambler::CaDescrambler::feed_ts),
+    /// which drains the device and retries the unsent tail).
     fn write(&mut self, ts: &[u8]) -> io::Result<()>;
 
     /// Read descrambled TS into `buf` (sized to a multiple of [`TS_PACKET_LEN`]);
@@ -37,6 +45,44 @@ pub trait CiDataDevice {
     /// Wait up to `timeout` for descrambled TS to become readable; `Ok(true)` if
     /// readable.
     fn poll(&mut self, timeout: Duration) -> io::Result<bool>;
+}
+
+/// Payload of the [`io::ErrorKind::WouldBlock`] error a [`CiDataDevice::write`]
+/// returns when the device buffer filled before all of the TS was accepted.
+/// Read it back with [`partial_write_progress`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartialWrite {
+    /// Bytes the device accepted — always a whole number of
+    /// [`TS_PACKET_LEN`]-byte packets (never a torn packet).
+    pub written: usize,
+    /// Bytes the caller asked to write.
+    pub requested: usize,
+    /// The device, for the error message.
+    pub device: String,
+}
+
+impl std::fmt::Display for PartialWrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: device buffer full, {} of {} bytes ({} packets) written",
+            self.device,
+            self.written,
+            self.requested,
+            self.written / TS_PACKET_LEN
+        )
+    }
+}
+
+impl std::error::Error for PartialWrite {}
+
+/// The whole-packet byte count a [`CiDataDevice::write`] error accepted before
+/// the device filled, or `None` when `err` is not a [`PartialWrite`].
+#[must_use]
+pub fn partial_write_progress(err: &io::Error) -> Option<usize> {
+    err.get_ref()
+        .and_then(|inner| inner.downcast_ref::<PartialWrite>())
+        .map(|p| p.written)
 }
 
 /// Reject a buffer that is not a whole number of TS packets.
