@@ -21,6 +21,7 @@ Inputs ("what the code implements" — read lexically, never hand-typed):
 * ``declare_descriptors!``       dvb-si/src/descriptors/any.rs
 * ``declare_extension_bodies!``  dvb-si/src/descriptors/extension/mod.rs
 * ``declare_ait_descriptors!``   dvb-si/src/descriptors/ait/mod.rs
+* ``declare_carousel_descriptors!`` dvb-si/src/descriptors/carousel/mod.rs
 * ``Mpeg2ExtensionBody``         dvb-si/src/descriptors/mpeg2_extension.rs
 * each module's leading ``//!`` paragraph (the spec citation), ``TAG`` consts,
   the ``DescriptorRegistry::with_*`` opt-ins, the ``Charset`` enum, and the
@@ -485,22 +486,24 @@ def load_mpeg2_extension() -> list[Impl]:
     return out
 
 
-# Implementations living outside the declare_* lists (each verified to exist).
-EXTRA = [
-    ("dii_descriptor_tag", 0x09, "CompressedModuleDescriptor", "carousel/biop/message.rs",
-     "decompressed with the `flate2` feature; parsed from DII `moduleInfo` userInfo by `ModuleInfo`",
-     "ETSI TR 101 202 Table 4.14 (BIOP ModuleInfo userInfo)"),
-]
+def load_carousel_descriptors() -> list[Impl]:
+    """The DVB data-carousel namespace (``declare_carousel_descriptors!``)."""
+    path = SRC / "descriptors" / "carousel" / "mod.rs"
+    body = strip_line_comments(macro_body(read(path), "declare_carousel_descriptors", path))
+    out = []
+    for m in re.finditer(r"(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*=>\s*(crate::descriptors::[\w:]+)::(\w+)", body):
+        variant, tag, mod, ty = m.groups()
+        f = module_path_to_file(mod)
+        v = int(tag, 16)
+        out.append(Impl("dii_descriptor_tag", [(v, v)], variant, ty, f, True, cite=citation(module_doc(f))))
+    if not out:
+        raise GenError("declare_carousel_descriptors! yielded nothing")
+    return out
 
 
 def load_extra() -> list[Impl]:
-    out = []
-    for ns, tag, ty, file, note, cite in EXTRA:
-        f = SRC / file
-        if not re.search(r"^pub struct " + re.escape(ty) + r"\b", read(f), re.M):
-            raise GenError(f"{file}: `pub struct {ty}` not found (update EXTRA in the generator)")
-        out.append(Impl(ns, [(tag, tag)], ty, ty, f, True, note=note, cite=cite))
-    return out
+    """Implementations living outside the AIT/SI declare_* lists."""
+    return load_carousel_descriptors()
 
 
 def apply_partial(impls: list[Impl]) -> None:
@@ -870,7 +873,7 @@ NOT_IMPL_NOTE = {
     "ait_descriptor_tag": "surfaces as `AnyAitDescriptor::Unknown` — bytes kept",
     "int_descriptor_tag": "surfaces as `AnyIntDescriptor::Unknown` — bytes kept",
     "unt_descriptor_tag": "surfaces as `AnyUntDescriptor::Unknown` — bytes kept",
-    "dii_descriptor_tag": "kept as raw bytes inside `ModuleInfo` / DII `moduleInfo`",
+    "dii_descriptor_tag": "surfaces as `AnyCarouselDescriptor::Unknown` — bytes kept",
     "rnt_descriptor_tag": "decoded through the SI dispatch (`AnyRntDescriptor::Si`) — bytes kept",
 }
 
