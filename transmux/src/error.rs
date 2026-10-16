@@ -95,7 +95,10 @@ pub enum Error {
     /// allows. The allowance is aggregate: a 16-byte `trun` may legally declare
     /// 2^20 samples, so a per-`trun` cap would let N such `trun`s allocate
     /// N x 40 MiB.
-    #[error("zero-width trun samples exceed the aggregate limit of {limit} per moof")]
+    #[error(
+        "trun sample_count with no per-sample fields exceeds MAX_ZERO_WIDTH_TRUN_SAMPLES \
+         ({limit}, aggregate per moof)"
+    )]
     ZeroWidthTrunBudgetExceeded {
         /// The aggregate allowance (`MAX_ZERO_WIDTH_TRUN_SAMPLES`).
         limit: usize,
