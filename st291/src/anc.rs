@@ -132,6 +132,15 @@ impl AncPacket {
         usize::from(self.data_count & 0xFF)
     }
 
+    /// Run every ST 291-1 check on this packet's content
+    /// ([`AncContent::validate`]): parity of `DID`/`SDID`/`Data_Count`,
+    /// `Data_Count` vs the stored UDW count, and the `Checksum_Word`.
+    /// Parsing never validates; this is the explicit opt-in.
+    #[must_use]
+    pub fn validate(&self) -> crate::ValidationReport {
+        self.as_content().validate()
+    }
+
     /// Borrow this packet's transport-independent content as the shared
     /// [`AncContent`] type (see `crate::anc_content`'s module doc for why
     /// [`AncPacket`]'s own flat field layout is kept as-is rather than
