@@ -372,8 +372,12 @@ fn int_target_and_operational_loops_with_multiple_descriptors_round_trip() {
     .concat();
     // pair 1 operational: two stream locations (different services)
     let o1: Vec<u8> = [
-        &[0x13, 0x09, 0x30, 0x40, 0x20, 0x01, 0x10, 0x02, 0x00, 0x64, 0x05][..],
-        &[0x13, 0x09, 0x30, 0x40, 0x20, 0x01, 0x10, 0x02, 0x00, 0x65, 0x06][..],
+        &[
+            0x13, 0x09, 0x30, 0x40, 0x20, 0x01, 0x10, 0x02, 0x00, 0x64, 0x05,
+        ][..],
+        &[
+            0x13, 0x09, 0x30, 0x40, 0x20, 0x01, 0x10, 0x02, 0x00, 0x65, 0x06,
+        ][..],
     ]
     .concat();
     // pair 2 target: 172.16.0.0/12 ; 127.0.0.1/32
@@ -384,8 +388,12 @@ fn int_target_and_operational_loops_with_multiple_descriptors_round_trip() {
     .concat();
     // pair 2 operational
     let o2: Vec<u8> = [
-        &[0x13, 0x09, 0x30, 0x41, 0x20, 0x02, 0x10, 0x03, 0x01, 0x00, 0x07][..],
-        &[0x13, 0x09, 0x30, 0x41, 0x20, 0x02, 0x10, 0x03, 0x01, 0x01, 0x08][..],
+        &[
+            0x13, 0x09, 0x30, 0x41, 0x20, 0x02, 0x10, 0x03, 0x01, 0x00, 0x07,
+        ][..],
+        &[
+            0x13, 0x09, 0x30, 0x41, 0x20, 0x02, 0x10, 0x03, 0x01, 0x01, 0x08,
+        ][..],
     ]
     .concat();
 
@@ -405,7 +413,11 @@ fn int_target_and_operational_loops_with_multiple_descriptors_round_trip() {
         }
     }
     let section_length = u16::try_from(body.len() + 4).unwrap();
-    let mut sec = vec![0x4C, 0xF0 | (section_length >> 8) as u8, (section_length & 0xFF) as u8];
+    let mut sec = vec![
+        0x4C,
+        0xF0 | (section_length >> 8) as u8,
+        (section_length & 0xFF) as u8,
+    ];
     sec.extend_from_slice(&body);
     let crc = broadcast_common::crc32_mpeg2::compute(&sec);
     sec.extend_from_slice(&crc.to_be_bytes());
@@ -424,6 +436,9 @@ fn int_target_and_operational_loops_with_multiple_descriptors_round_trip() {
         walk_int(pair.target_descriptors.raw(), &mut tn);
         walk_int(pair.operational_descriptors.raw(), &mut on);
         assert_eq!(tn.into_iter().collect::<Vec<_>>(), ["TARGET_IP_SLASH"]);
-        assert_eq!(on.into_iter().collect::<Vec<_>>(), ["IP_MAC_STREAM_LOCATION"]);
+        assert_eq!(
+            on.into_iter().collect::<Vec<_>>(),
+            ["IP_MAC_STREAM_LOCATION"]
+        );
     }
 }

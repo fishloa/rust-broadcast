@@ -461,7 +461,11 @@ where
     T: Parse<'a, Error = dvb_si::Error> + Serialize<Error = dvb_si::Error>,
 {
     let v = T::parse(bytes).expect("hand-written vector parses");
-    assert_eq!(ser(&v), bytes, "hand-written vector must re-serialize identically");
+    assert_eq!(
+        ser(&v),
+        bytes,
+        "hand-written vector must re-serialize identically"
+    );
     v
 }
 
@@ -486,7 +490,10 @@ fn hand_written_spec_byte_vectors() {
     assert_eq!(i.text.raw(), b"hello");
     // Table 53 module_link: 04 len=3 position=0x01 (intermediate) module_id=0x0102
     let l: ModuleLinkDescriptor = rt(&[0x04, 0x03, 0x01, 0x01, 0x02]);
-    assert_eq!((l.position, l.module_id), (LinkPosition::Intermediate, 0x0102));
+    assert_eq!(
+        (l.position, l.module_id),
+        (LinkPosition::Intermediate, 0x0102)
+    );
     // Table 54 CRC32: 05 len=4 CRC_32=0x0376E6E7
     let c: Crc32Descriptor = rt(&[0x05, 0x04, 0x03, 0x76, 0xE6, 0xE7]);
     assert_eq!(c.crc_32, 0x0376_E6E7);
@@ -511,7 +518,10 @@ fn hand_written_spec_byte_vectors() {
     let pf: PrefetchDescriptor = rt(&[0x0C, 0x06, 0x01, 0x03, 0x69, 0x6D, 0x67, 0x32]);
     assert_eq!(pf.transport_protocol_label, 1);
     assert_eq!(pf.entries.len(), 1);
-    assert_eq!((pf.entries[0].label, pf.entries[0].prefetch_priority), (&b"img"[..], 50));
+    assert_eq!(
+        (pf.entries[0].label, pf.entries[0].prefetch_priority),
+        (&b"img"[..], 50)
+    );
     // Table 83 DII_location: 0D len=5 label=1, { rfu(1)=1 DII_identification(15)=0x0102
     // -> 0x81 0x02 ; association_tag=0x0304 }
     let dl: DiiLocationDescriptor = rt(&[0x0D, 0x05, 0x01, 0x81, 0x02, 0x03, 0x04]);
@@ -539,8 +549,9 @@ fn hand_written_spec_byte_vectors() {
     assert_eq!(hb.regular_expression.raw(), b".*");
     // TS 102 809 Table 25 application_icons: 0B len=9 icon_locator_length=6 "/icons"
     // icon_flags(16)=0x0005 (Table 7: 24x32 16:9 = 0x0004 | 32x32 square = 0x0001)
-    let ic: ApplicationIconsDescriptor =
-        rt(&[0x0B, 0x09, 0x06, 0x2F, 0x69, 0x63, 0x6F, 0x6E, 0x73, 0x00, 0x05]);
+    let ic: ApplicationIconsDescriptor = rt(&[
+        0x0B, 0x09, 0x06, 0x2F, 0x69, 0x63, 0x6F, 0x6E, 0x73, 0x00, 0x05,
+    ]);
     assert_eq!(ic.icon_locator.raw(), b"/icons");
     assert_eq!(
         ic.icon_flags,
@@ -553,7 +564,10 @@ fn hand_written_spec_byte_vectors() {
     // graphics_configuration_byte=3 (Table 9: full screen 1280x720)
     let gc: GraphicsConstraintsDescriptor = rt(&[0x14, 0x02, 0xFC, 0x03]);
     assert!(gc.can_run_without_visible_ui);
-    assert_eq!(gc.graphics_configurations, [GraphicsConfiguration::FullScreen1280x720]);
+    assert_eq!(
+        gc.graphics_configurations,
+        [GraphicsConfiguration::FullScreen1280x720]
+    );
     // Table 21 application_recording: 06 len=11 flags: scheduled_recording=1, 5 more flags 0,
     // reserved(2)=11 -> 1000_0011=0x83 ; label_count=1 ; { label_length=3 "lbl"
     // storage_properties(2)=01 (critical to store) reserved(6)=111111 -> 0x7F } ;
@@ -563,7 +577,10 @@ fn hand_written_spec_byte_vectors() {
     ]);
     assert!(rec.scheduled_recording_flag);
     assert_eq!(rec.labels.len(), 1);
-    assert_eq!(rec.labels[0].storage_properties, StorageProperties::CriticalToStore);
+    assert_eq!(
+        rec.labels[0].storage_properties,
+        StorageProperties::CriticalToStore
+    );
     assert_eq!(rec.component_tags, [0x10]);
     assert_eq!(rec.private, &[0xAA]);
 }
