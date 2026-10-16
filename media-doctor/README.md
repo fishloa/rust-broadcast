@@ -27,7 +27,7 @@ cross-reload state are listed explicitly under "Deferred manifest rules".
 ## Standards supported
 
 Editions are the ones cited in the module docs; where the specification is not
-in the vendored `private/specs-md` set the edition is marked unverified.
+in the vendored `private/specs` set (ISO/IEC 14496-12/-15 and 23009-1) the edition is marked unverified.
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
@@ -36,8 +36,8 @@ in the vendored `private/specs-md` set the edition is marked unverified.
 | ANSI/SCTE 35 | 2023r1 (vendored; verified) | `splice_insert` out/in pairing, duplicate open "out"s (`Scte35Check`) | Partial: `splice_insert` | |
 | ITU-T H.264 / H.265 | vendored (editions per `private/specs-md/INDEX.md`) | §7.4 / §E.2.1 SPS decode via `transmux`: stream_type vs actual codec, VUI frame rate, parameter sets before IDR/IRAP, interlace (`frame_mbs_only_flag`) | Partial: the fields named | Codec bitstreams are never decoded beyond headers. |
 | ISO/IEC 14496-12 / 14496-15 | 14496-15:2017 as cited (not vendored; unverified) | `avcC`/`hvcC` profile/level/chroma/bit-depth vs in-band SPS; sample-entry dims vs SPS dims; no Annex B start codes in samples (`check_container_codec`) | Partial | |
-| RFC 8216bis (HLS) | draft-pantos-hls-rfc8216bis-22 (as cited; not vendored; unverified) | Structured parse via `broadcast_hls::MediaPlaylist` plus 8 rules | Partial | See below and "Deferred manifest rules". |
-| ISO/IEC 23009-1 (DASH MPD) | 2012 edition as cited (not vendored; unverified) | Structured parse via `transmux::Mpd` plus 6 rules | Partial | No profile / interoperability-point rules (spec text not vendored: any such rule would be fabricated). |
+| RFC 8216bis (HLS) | draft-pantos-hls-rfc8216bis-22 (vendored: `specs/ietf_draft_pantos_hls_rfc8216bis.txt`, 1 May 2026) | Structured parse via `broadcast_hls::MediaPlaylist` plus 8 rules | Partial | See below and "Deferred manifest rules". |
+| ISO/IEC 23009-1 (DASH MPD) | 2012 edition as cited (ISO/IEC 23009-1 itself is not vendored; unverified) | Structured parse via `transmux::Mpd` plus 6 rules | Partial | No profile / interoperability-point rules yet. DVB-DASH profile rules are available and deferred: ETSI TS 103 285 V1.4.1 is vendored (`private/specs/etsi_ts_103_285_v01.04.01_dvb_mpeg_dash_profile.pdf`, profile identifiers `urn:dvb:dash:profile:dvb-dash:2014`/`2017`). The ISO/IEC 23009-1 §8 interoperability points are not vendored, so no rule is written for them. |
 
 ## Feature flags
 
@@ -205,7 +205,7 @@ re-rendered at most every 250 ms and once more when the feed goes quiet.
 
 Each spec-mandated rule not implemented has a stated reason, so an absence is
 never mistaken for an oversight. Categories: **source not available** (spec text
-not vendored, so any rule would be fabricated), **information not in manifest**
+not vendored, so any rule would be fabricated; vendored sources with deferred rules are marked "deferred"), **information not in manifest**
 (needs fetched segments or cross-reload state), **model gap** (the `transmux`
 parser does not carry the field).
 
@@ -229,7 +229,7 @@ parser does not carry the field).
 | `@bandwidth` vs codecs plausibility | §5.3.5.2 | Model gap |
 | BaseURL resolution | §5.6 | Information not in manifest: network fetch |
 | `@id` collisions across AdaptationSets | §5.3.2 | Rare in practice; low-priority additive check |
-| Profile / interoperability-point validation | §8 | Source not available: ISO 23009-1 is not vendored |
+| Profile / interoperability-point validation | §8 | ISO 23009-1 §8 interoperability points: source not available (not vendored). DVB-DASH profile rules (ETSI TS 103 285 V1.4.1, vendored): deferred |
 
 ### Not spec requirements (so not deferred rules)
 
