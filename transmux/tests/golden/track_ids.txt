@@ -393,3 +393,8 @@ test-streams/tsduck-test/reference/test-205/test-205.3.ts: 1x292 2x477 3x14 4x57
 test-streams/tsduck-test/reference/test-206/test-206.1.ts: 1x118 2x198 3x12 4x248 5x9 6x5 7x5
 test-streams/tsduck-test/reference/test-206/test-206.2.ts: 1x118 2x207 3x13 4x248 5x9 6x5 7x5
 test-streams/tsduck-test/reference/test-206/test-206.3.ts: 1x118 2x207 3x13 4x248 5x9 6x5 7x5
+test-streams/france-tnt-uhf32-si-audio.ts: 1x1560 2x1536 3x1533 4x1518 5x1542 6x569 7x1536 8x1566 9x1540 10x1566 11x1524 12x1542 13x1603 14x143 15x142 16x143 17x142 18x134 19x141 20x63 21x142 22x64 23x139 24x142 25x64 26x225
+test-streams/france-tnt-uhf32-video-head-6MB.ts: 1x63 2x54 3x54 4x49 5x47 6x54 7x54 8x49 9x48 10x48 11x42 12x55 13x48 14x55 15x48 16x48 17x56 18x5 19x5 20x5 21x4 22x4 23x4 24x3 25x4 26x3 27x4 28x5 29x3 30x7
+test-streams/france-tnt-uhf32-video-w30MB-10MB.ts: 1x96 2x72 3x78 4x56 5x72 6x72 7x72 8x66 9x72 10x72 11x77 12x67 13x78 14x86 15x66 16x66 17x91 18x8 19x8 20x8 21x8 22x5 23x8 24x4 25x8 26x4 27x9 28x8 29x4 30x9
+test-streams/hotbird-mhp-si.ts: 1x1534 2x30 3x31 4x2059 5x1289 6x1534
+test-streams/hotbird-mhp-video-head-6MB.ts: 1x42 2x42 3x36 4x42 5x42 6x28 7x42 8x42 9x27 10x1 11x46 12x18 13x27

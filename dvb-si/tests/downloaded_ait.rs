@@ -1,7 +1,7 @@
 //! Real-capture AIT capture test — exercises AIT descriptor paths
 //! against the real French TNT HbbTV mux (issue #218).
 //!
-//! Keyed on `private/fixtures/ts/france-tnt-uhf32.ts`. When the capture is present,
+//! Keyed on `private/fixtures/ts/france-tnt-uhf32-si-audio.ts` (non-video packets of the whole capture). When the capture is present,
 //! feeds it through `SiDemux`, collects AIT sections (table_id 0x74), and
 //! walks each application's `ait_descriptors()` + the common descriptor loop
 //! via `common_ait_descriptors()`, asserting typed `AnyAitDescriptor` variants
@@ -18,7 +18,7 @@ use dvb_si::tables::AnyTableSection;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
-const CAPTURE: &str = "france-tnt-uhf32";
+const CAPTURE: &str = "france-tnt-uhf32-si-audio";
 
 #[test]
 fn france_tnt_ait_descriptors_parse() {
