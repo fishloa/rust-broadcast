@@ -25,6 +25,24 @@ fn declaration_with_quote_in_version_reparses_after_to_xml() {
     );
 }
 
+/// Silent data loss: `parse_metadata_element_impl` stores an unmodeled child
+/// of `<metadata>` in `MetadataElement::unknown_children`, but the
+/// `MetadataChild::Metadata` arm of `serialize_metadata_child` only walks
+/// `m.children` - `unknown_children` is counted for `has_children` and then
+/// never written. Real SMPTE-TT / IMSC image documents keep `<smpte:image>`
+/// exactly there, so `to_xml` deletes the subtitle images. (Pre-existing in
+/// 0.3.0; contradicts the #1110 TT-W1 "unmodeled content is preserved" fix.)
+#[test]
+fn foreign_element_inside_metadata_survives_to_xml() {
+    let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt"><head><metadata><smpte:image xml:id="img0" imagetype="PNG" encoding="Base64">iVBORw0KGgo=</smpte:image></metadata></head><body/></tt>"#;
+    let mut doc = Document::parse_str(xml).unwrap();
+    let out = doc.to_xml();
+    assert!(
+        out.contains("iVBORw0KGgo="),
+        "<smpte:image> inside <metadata> was dropped:\n{out}"
+    );
+}
+
 /// XML 1.0 §2.8: the XMLDecl may only appear at the very start of the
 /// document (and a PI target matching [Xx][Mm][Ll] is reserved). A
 /// declaration after a comment is not well-formed but is accepted and then
