@@ -7,6 +7,7 @@ One-table-per-file spec reference, organised as `docs/{tables,descriptors,enums,
 | Spec | Files |
 |---|---|
 | TS 102 773 | [`tables/ts_102_773/`](tables/ts_102_773/) — L1-current/future signalling, T2-MI functions, FEF sub-parts |
+| TS 101 191 | [`tables/ts_101_191/`](tables/ts_101_191/) — §6.1 individual addressing functions 0x00-0x06 (Tables 7-13) |
 
 ## Enums (coded-value tables)
 
