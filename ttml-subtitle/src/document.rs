@@ -123,6 +123,19 @@ pub struct XmlDeclaration {
     pub standalone: Option<bool>,
 }
 
+/// XML 1.0 §2.8 `VersionNum ::= '1.' [0-9]+`.
+pub(crate) fn is_version_num(v: &str) -> bool {
+    v.strip_prefix("1.")
+        .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// XML 1.0 §4.3.3 `EncName ::= [A-Za-z] ([A-Za-z0-9._] | '-')*`.
+pub(crate) fn is_enc_name(e: &str) -> bool {
+    let mut it = e.bytes();
+    it.next().is_some_and(|b| b.is_ascii_alphabetic())
+        && it.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 impl XmlDeclaration {
     pub(crate) fn from_parts(
         version: String,
@@ -201,9 +214,17 @@ impl Document {
             }
         });
         let standalone = decl.standalone.map(|s| if s { "yes" } else { "no" });
+        // `BytesDecl::new` writes the strings unescaped, so a hand-built
+        // version that is not a `VersionNum` would corrupt the declaration;
+        // fall back to the default (a parsed one was validated at parse).
+        let version = if is_version_num(&decl.version) {
+            decl.version.as_str()
+        } else {
+            "1.0"
+        };
         emit(
             &mut w,
-            Event::Decl(BytesDecl::new(&decl.version, encoding, standalone)),
+            Event::Decl(BytesDecl::new(version, encoding, standalone)),
         );
         put_nl(&mut w);
         let mut ns = collect_namespaces(&mut self.tt);
@@ -5441,6 +5462,7 @@ fn serialize_metadata_child(
 ) {
     enum Frame<'a> {
         Node(&'a MetadataChild, usize),
+        Unknown(&'a UnknownElement, usize),
         Close(&'static str, usize),
     }
 
@@ -5465,6 +5487,11 @@ fn serialize_metadata_child(
                 }
                 start_line(w, t);
                 stack.push(Frame::Close("metadata", depth));
+                // Unmodelled children (e.g. `<smpte:image>`) follow the
+                // modelled ones; the stack is LIFO so push them first.
+                for u in m.unknown_children.iter().rev() {
+                    stack.push(Frame::Unknown(u, depth + 1));
+                }
                 for c in m.children.iter().rev() {
                     stack.push(Frame::Node(c, depth + 1));
                 }
@@ -5513,11 +5540,11 @@ fn serialize_metadata_child(
                 register_scoped(ns, &scoped);
                 start_line(w, t);
                 stack.push(Frame::Close("ebuttm:documentMetadata", depth));
+                for u in eb.unknown_children.iter().rev() {
+                    stack.push(Frame::Unknown(u, depth + 1));
+                }
                 for c in eb.children.iter().rev() {
                     stack.push(Frame::Node(c, depth + 1));
-                }
-                for u in eb.unknown_children.iter().rev() {
-                    serialize_unknown_element(u, w, depth + 1, ns);
                 }
             }
             Frame::Node(MetadataChild::EbuttmConformsToStandard(cs), depth) => {
@@ -5540,11 +5567,12 @@ fn serialize_metadata_child(
                 serialize_ns_attrs(&mut t, &alt.foreign_attributes, ns);
                 let scoped = alt.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                start_inline(w, t);
-                put_text(w, &alt.text);
-                end_inline_line(w, "ittm:altText");
+                write_text_body(w, t, &alt.text, &alt.unknown_children, "ittm:altText", ns);
             }
             Frame::Node(MetadataChild::Unknown(u), depth) => {
+                serialize_unknown_element(u, w, depth, ns);
+            }
+            Frame::Unknown(u, depth) => {
                 serialize_unknown_element(u, w, depth, ns);
             }
             Frame::Close(tag, depth) => {
@@ -5552,6 +5580,48 @@ fn serialize_metadata_child(
             }
         }
     }
+}
+
+/// Write `<tag ...>text[unknown children]</tag>` on one line. Unmodelled child
+/// elements follow the text with no layout whitespace (character data is
+/// significant here), so nothing preserved at parse is dropped on write.
+fn write_text_body(
+    w: &mut W,
+    t: BytesStart<'_>,
+    text: &str,
+    unknown_children: &[UnknownElement],
+    name: &str,
+    ns: &mut NamespaceMap,
+) {
+    start_inline(w, t);
+    put_text(w, text);
+    w.compact += 1;
+    for u in unknown_children {
+        serialize_unknown_element(u, w, 0, ns);
+    }
+    w.compact -= 1;
+    end_inline_line(w, name);
+}
+
+/// Close out a block element's opening tag `t`: `<x/>` when it has no
+/// unmodelled children, else `<x>` + the children + `</x>`.
+fn finish_with_unknowns(
+    w: &mut W,
+    t: BytesStart<'_>,
+    unknown_children: &[UnknownElement],
+    indent: usize,
+    name: &str,
+    ns: &mut NamespaceMap,
+) {
+    if unknown_children.is_empty() {
+        empty_line(w, t);
+        return;
+    }
+    start_line(w, t);
+    for u in unknown_children {
+        serialize_unknown_element(u, w, indent + 1, ns);
+    }
+    end_line(w, indent, name);
 }
 
 /// Serialize a text-only TT Metadata element (`ttm:title`/`ttm:desc`/
@@ -5573,9 +5643,7 @@ fn serialize_ttm_text_like(
     serialize_ns_attrs(&mut t, &elem.foreign_attributes, ns);
     let scoped = elem.scoped_namespaces.clone().unwrap_or_default();
     register_scoped(ns, &scoped);
-    start_inline(w, t);
-    put_text(w, &elem.text);
-    end_inline_line(w, tag);
+    write_text_body(w, t, &elem.text, &elem.unknown_children, tag, ns);
 }
 
 /// Serialize `<ttm:name>` — TTML2 §14.1.7.
@@ -5591,9 +5659,7 @@ fn serialize_ttm_name(n: &TtmNameElement, w: &mut W, depth: usize, ns: &mut Name
     serialize_ns_attrs(&mut t, &n.foreign_attributes, ns);
     let scoped = n.scoped_namespaces.clone().unwrap_or_default();
     register_scoped(ns, &scoped);
-    start_inline(w, t);
-    put_text(w, &n.text);
-    end_inline_line(w, "ttm:name");
+    write_text_body(w, t, &n.text, &n.unknown_children, "ttm:name", ns);
 }
 
 /// Serialize `<ttm:item>` — TTML2 §14.1.6.
@@ -5662,7 +5728,7 @@ fn serialize_styling_element(
         serialize_opt_attr(&mut t, "condition", &init.condition);
         serialize_style_attrs(&init.style_attributes, &mut t);
         serialize_ns_attrs(&mut t, &init.foreign_attributes, ns);
-        empty_line(w, t);
+        finish_with_unknowns(w, t, &init.unknown_children, indent + 1, "initial", ns);
     }
     for style in &styling.styles {
         put_indent(w, indent + 1);
@@ -5675,7 +5741,7 @@ fn serialize_styling_element(
         serialize_opt_attr(&mut t, "style", &style.style);
         serialize_style_attrs(&style.style_attributes, &mut t);
         serialize_ns_attrs(&mut t, &style.foreign_attributes, ns);
-        empty_line(w, t);
+        finish_with_unknowns(w, t, &style.unknown_children, indent + 1, "style", ns);
     }
     for unknown in &styling.unknown_children {
         serialize_unknown_element(unknown, w, indent + 1, ns);

@@ -281,8 +281,12 @@ impl<'a> Pull<'a> {
 
     /// The document's root start tag; rejects content before it.
     pub(crate) fn root(&mut self) -> Result<StartTag> {
+        let mut at_start = true;
         loop {
             let (ns, event) = self.read()?;
+            // XML 1.0 §2.8: the XMLDecl may only be the very first thing in
+            // the document (no comment, whitespace or PI before it).
+            let is_first = core::mem::replace(&mut at_start, false);
             match event {
                 Event::Start(e) => return self.start_tag(ns, &e, false),
                 Event::Empty(e) => return self.start_tag(ns, &e, true),
@@ -296,12 +300,20 @@ impl<'a> Pull<'a> {
                     return Err(self.fail("DOCTYPE declarations are not allowed"));
                 }
                 Event::Decl(d) => {
+                    if !is_first {
+                        return Err(self.fail(
+                            "the XML declaration must be at the very start of the document",
+                        ));
+                    }
                     // XML 1.0 §2.8 XMLDecl: version, optional encoding and
                     // standalone ("yes"/"no").
                     let version = d
                         .version()
                         .map(alloc::borrow::Cow::into_owned)
                         .map_err(|e| self.fail(&e.to_string()))?;
+                    if !crate::document::is_version_num(&version) {
+                        return Err(self.fail("XML declaration version must be '1.' [0-9]+"));
+                    }
                     let encoding = d
                         .encoding()
                         .map(|r| {
@@ -309,6 +321,11 @@ impl<'a> Pull<'a> {
                                 .map_err(|e| self.fail(&e.to_string()))
                         })
                         .transpose()?;
+                    if let Some(enc) = &encoding
+                        && !crate::document::is_enc_name(enc)
+                    {
+                        return Err(self.fail("XML declaration encoding is not a valid EncName"));
+                    }
                     let standalone = match d
                         .standalone()
                         .map(|r| {

@@ -6,6 +6,10 @@
       <ebuttm:documentMetadata>
         <ebuttm:conformsToStandard>urn:a</ebuttm:conformsToStandard>
       </ebuttm:documentMetadata>
+      <ttm:desc><b/>x</ttm:desc>
+      <ebuttm:documentMetadata>
+        <ebuttm:other/>
+      </ebuttm:documentMetadata>
     </metadata>
   </head>
   <body/>
