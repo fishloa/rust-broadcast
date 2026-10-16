@@ -1,7 +1,7 @@
 //! Shared wire plumbing for the "language code + length-prefixed text"
 //! entry loops: `multilingual_network_name` (§6.2.24), `multilingual_bouquet_name`
 //! (§6.2.22), `multilingual_service_name` (§6.2.25), `multilingual_component`
-//! (§6.2.23) and the AIT `application_name_descriptor` (TS 102 809 §5.3.5.6.2).
+//! (§6.2.23) and the AIT `application_name_descriptor` (TS 102 809 §5.3.5.6.1).
 //!
 //! Every one is a loop of `ISO_639_language_code (24) + text_length (8) +
 //! text`, differing only in the field *names* (kept on each descriptor's own

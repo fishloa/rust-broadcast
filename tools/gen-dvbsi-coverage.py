@@ -235,6 +235,9 @@ class Alloc:
     name: str
     standard: str
     clause: str
+    # PDF page (1-based, of the vendored PDF of the edition in `standard`) on which the
+    # clause heading AND its syntax were read from the rendered page. Empty = unverified.
+    verified_page: str = ""
 
 
 def load_allocations() -> list[Alloc]:
@@ -243,13 +246,15 @@ def load_allocations() -> list[Alloc]:
         if not line.strip() or line.startswith("#"):
             continue
         cols = line.rstrip("\n").split("\t")
-        if len(cols) == 4:  # empty trailing `clause` column
+        while len(cols) < 6:  # empty trailing `clause` / `verified_page` columns
             cols.append("")
-        if len(cols) != 5:
-            raise GenError(f"{rel(ALLOCATIONS)}:{n}: expected 5 TAB-separated columns, got {len(cols)}")
-        ns, code, name, std, clause = (c.strip() for c in cols)
+        if len(cols) != 6:
+            raise GenError(f"{rel(ALLOCATIONS)}:{n}: expected at most 6 TAB-separated columns, got {len(cols)}")
+        ns, code, name, std, clause, page = (c.strip() for c in cols)
+        if page and not page.isdigit():
+            raise GenError(f"{rel(ALLOCATIONS)}:{n}: verified_page must be a PDF page number, got {page!r}")
         lo, hi = parse_code(code)
-        out.append(Alloc(ns, lo, hi, name, std, clause))
+        out.append(Alloc(ns, lo, hi, name, std, clause, page))
     return out
 
 
@@ -1005,21 +1010,64 @@ def not_impl_summary(m: Model) -> list[str]:
     return out
 
 
-def cross_check(m: Model) -> list[str]:
+# Citations that may legitimately name a clause other than the verified one. Empty on
+# purpose: a module doc must cite the clause that DEFINES its structure, in the edition
+# the Standard column names (issue #1287). Add an entry only with a reason, keyed by
+# (namespace, code) -> why.
+CITATION_ALLOWLIST: dict[tuple[str, int], str] = {}
+
+
+def citation_mismatches(m: Model) -> list[tuple[Alloc, Impl, set[str]]]:
+    """Modules whose ``//!`` citation names no clause equal to (or a sub-clause of) the verified one.
+
+    Strict: citing only an enclosing parent clause (``§6.2`` for ``6.2.27``) is also a
+    disagreement, because the parent does not say which sub-clause defines the structure.
+    """
     out = []
     for a in m.allocs:
         i = m.impl_for(a)
-        if not i or not a.clause:
+        if not i or not a.clause or (a.namespace, a.lo) in CITATION_ALLOWLIST:
             continue
         named = cited_clauses(i.cite)
         if not named:
             continue
-        if not clause_agrees(a.clause, named):
-            out.append(
-                f"| {a.namespace} {fmt_code(a.lo, a.hi)} | {md_link(i.module)} | {', '.join(sorted(named))} | {a.clause} ({a.standard}) |"
-            )
+        if not any(c == a.clause or c.startswith(a.clause + ".") for c in named):
+            out.append((a, i, named))
+    return out
+
+
+# Implemented rows whose clause may stay unverified (owner-approved, with the reason).
+# Empty: every clause an implemented module is checked against must have been read off the
+# rendered PDF page (`verified_page` in allocations.tsv), not trusted from converted text.
+UNVERIFIED_ALLOWLIST: dict[tuple[str, int], str] = {}
+
+
+def unverified_rows(m: Model) -> list[tuple[Alloc, Impl]]:
+    """Implemented rows carrying a clause but no ``verified_page`` (the strict check would trust them)."""
+    return [
+        (a, i)
+        for a in m.allocs
+        if a.clause and not a.verified_page and (a.namespace, a.lo) not in UNVERIFIED_ALLOWLIST
+        for i in [m.impl_for(a)]
+        if i
+    ]
+
+
+def cross_check(m: Model) -> list[str]:
+    out = [
+        f"| {a.namespace} {fmt_code(a.lo, a.hi)} | {md_link(i.module)} | {', '.join(sorted(named))} | {a.clause} ({a.standard}) |"
+        for a, i, named in citation_mismatches(m)
+    ]
+    n_ver = sum(1 for a in m.allocs if a.clause and a.verified_page and m.impl_for(a))
+    n_not = sum(1 for a in m.allocs if a.clause and not a.verified_page and not m.impl_for(a))
     if not out:
-        return ["Every module citation that names a clause agrees with the verified clause."]
+        return [
+            "Every module citation that names a clause agrees with the verified clause.",
+            "",
+            f"{n_ver} implemented rows have their clause verified against the rendered PDF page",
+            f"(`verified_page` column of `coverage/allocations.tsv`); {n_not} not-implemented rows",
+            "carry a clause that is not yet page-verified (nothing cites it).",
+        ]
     return [
         "| Code | Module | Module doc cites | Verified clause (edition) |",
         "|---|---|---|---|",
@@ -1173,10 +1221,11 @@ def render_coverage(m: Model) -> str:
         "",
         "## Citation cross-check",
         "",
-        "Rows where the clause named in a module's `//!` doc differs from the clause verified against",
-        "the edition in the Standard column. Most are clause numbers carried over from an older",
-        f"edition; they are tracked in issue #{ISSUES['citations']} and disappear from this list as",
-        "the module docs are corrected.",
+        "Every module's `//!` citation is compared with the clause verified against the edition in",
+        "the Standard column. The generator (and so the `docs_coverage_drift` test) **fails** if a",
+        "module cites a clause that is neither the verified clause nor a sub-clause of it (issue",
+        f"#{ISSUES['citations']}); reasoned exceptions live in `CITATION_ALLOWLIST` in",
+        "`tools/gen-dvbsi-coverage.py`.",
         "",
     ]
     L += cross_check(m)
@@ -1216,6 +1265,23 @@ def main(argv: list[str]) -> int:
     check = "--check" in argv[1:]
     try:
         m = build()
+        bad = citation_mismatches(m)
+        if bad:
+            raise GenError(
+                "module `//!` citations disagree with the verified clause in allocations.tsv (issue #1287):\n"
+                + "\n".join(
+                    f"  {rel(i.module)}: cites {', '.join(sorted(n))}, verified {a.clause} ({a.standard})"
+                    for a, i, n in bad
+                )
+                + "\nFix the module doc: cite the clause that defines the structure, with the edition."
+            )
+        unv = unverified_rows(m)
+        if unv:
+            raise GenError(
+                "implemented rows without a verified_page in allocations.tsv (render the PDF page, read the "
+                "clause heading + syntax, then record the PDF page number):\n"
+                + "\n".join(f"  {a.namespace} {fmt_code(a.lo, a.hi)} {a.standard} §{a.clause}" for a, _ in unv)
+            )
         outs = outputs(m)
     except GenError as e:
         print(f"gen-dvbsi-coverage: {e}", file=sys.stderr)

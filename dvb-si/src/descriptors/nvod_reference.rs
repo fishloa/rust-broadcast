@@ -1,4 +1,4 @@
-//! NVOD Reference Descriptor — ETSI EN 300 468 §6.2.28 (tag 0x4B).
+//! NVOD Reference Descriptor — ETSI EN 300 468 V1.20.1 §6.2.26 (tag 0x4B).
 //!
 //! Table 80 (PDF p. 96). Carried in the SDT for an NVOD reference service.
 //! Body is a loop of (transport_stream_id, original_network_id, service_id)

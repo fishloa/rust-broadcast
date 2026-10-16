@@ -1,4 +1,4 @@
-//! Default Authority Descriptor — ETSI TS 102 323 §12.2.1 (tag 0x73).
+//! Default Authority Descriptor — ETSI TS 102 323 V1.4.1 §6.3.3 (tag 0x73).
 //!
 //! Carried inside NIT, BAT, SDT, EIT to provide the default TV-Anytime
 //! authority prefix used when resolving relative CRIDs.

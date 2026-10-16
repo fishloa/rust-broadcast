@@ -1,5 +1,5 @@
 ## Table 39 — Service identifier descriptor
-_§7.2, PDF pp. 62-62_
+_§6.2.1, PDF pp. 62-62_
 
 |  | No.of bits | Identifier | Value |
 |---|---|---|---|

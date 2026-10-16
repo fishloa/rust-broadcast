@@ -1,4 +1,4 @@
-//! CI Ancillary Data Descriptor — ETSI EN 300 468 §6.4.3, Table 112 (tag_extension 0x14).
+//! CI Ancillary Data Descriptor — ETSI EN 300 468 V1.20.1 §6.4.2, Table 112 (tag_extension 0x14).
 //!
 //! Carries CI Plus ancillary data as an opaque byte run; its format is defined
 //! by the CI ecosystem, so it is preserved verbatim as a borrowed slice.
@@ -9,7 +9,7 @@ impl<'a> ExtensionBodyDef<'a> for CiAncillaryData<'a> {
     const NAME: &'static str = "CI_ANCILLARY_DATA";
 }
 
-/// CI_ancillary_data descriptor body (Table 112, §6.4.3).
+/// CI_ancillary_data descriptor body (Table 112, §6.4.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]

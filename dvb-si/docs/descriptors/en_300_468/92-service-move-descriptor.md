@@ -1,5 +1,5 @@
 ## Table 92 — Service move descriptor
-_§6.2.37, PDF pp. 102-102_
+_§6.2.36, PDF pp. 102-102_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

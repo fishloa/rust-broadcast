@@ -1,5 +1,5 @@
 ## Table 159 — URI linkage descriptor
-_§6.4.16.1, PDF pp. 146-146_
+_§6.4.15, PDF pp. 146-146_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

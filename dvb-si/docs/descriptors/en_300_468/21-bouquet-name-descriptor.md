@@ -1,5 +1,5 @@
 ## Table 21 — Bouquet name descriptor
-_§6.2.6, PDF pp. 57-57_
+_§6.2.4, PDF pp. 57-57_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

@@ -1,4 +1,4 @@
-//! AC-3 Descriptor — ETSI EN 300 468 Annex D (tag 0x6A).
+//! AC-3 Descriptor — ETSI EN 300 468 V1.20.1 Annex D §D.3 (tag 0x6A).
 //!
 //! Carried inside PMT's ES_info loop for AC-3 audio components. The layout
 //! is a flag byte followed by four optional 1-byte fields and an optional

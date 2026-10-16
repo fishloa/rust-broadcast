@@ -1,5 +1,5 @@
 ## Table 79 — Multilingual service name descriptor
-_§6.2.26, PDF pp. 95-95_
+_§6.2.25, PDF pp. 95-95_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

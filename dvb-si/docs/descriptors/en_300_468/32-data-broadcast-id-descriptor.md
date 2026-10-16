@@ -1,5 +1,5 @@
 ## Table 32 — Data broadcast id descriptor
-_§6.2.13.1, PDF pp. 72-72_
+_§6.2.12, PDF pp. 72-72_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

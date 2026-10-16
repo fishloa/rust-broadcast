@@ -1,5 +1,5 @@
 ## Table 17 — Application signalling descriptor syntax
-_§5.3.5.2.1, PDF pp. 37-37_
+_§5.3.5.1, PDF pp. 37-37_
 
 |  | No. of bits | Identifier |
 |---|---|---|

@@ -1,4 +1,4 @@
-//! Enhanced AC-3 Descriptor — ETSI EN 300 468 Annex D (tag 0x7A).
+//! Enhanced AC-3 Descriptor — ETSI EN 300 468 V1.20.1 Annex D §D.5 (tag 0x7A).
 //!
 //! Carried inside PMT's ES_info loop for Enhanced AC-3 (E-AC-3, Dolby Digital
 //! Plus) audio components.  The layout is a single flags byte whose eight bits

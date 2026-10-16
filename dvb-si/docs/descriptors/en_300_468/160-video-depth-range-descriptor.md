@@ -1,5 +1,5 @@
 ## Table 160 — Video depth range descriptor
-_§6.4.16.1, PDF pp. 147-147_
+_§6.4.16, PDF pp. 147-147_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

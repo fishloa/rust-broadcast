@@ -1,4 +1,4 @@
-//! Registration Descriptor — ISO/IEC 13818-1 §2.6.13 (tag 0x05).
+//! Registration Descriptor — ISO/IEC 13818-1 (H.222.0 08/2023) §2.6.8 (tag 0x05).
 //!
 //! Identifies the registration of a stream or program via a 4-byte
 //! `format_identifier`. Optionally followed by additional identification

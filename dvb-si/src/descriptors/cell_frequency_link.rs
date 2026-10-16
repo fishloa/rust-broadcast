@@ -1,4 +1,4 @@
-//! Cell Frequency Link Descriptor — ETSI EN 300 468 §6.2.7 (tag 0x6D, Table 23, PDF p. 58).
+//! Cell Frequency Link Descriptor — ETSI EN 300 468 V1.20.1 §6.2.6 (tag 0x6D, Table 23, PDF p. 58).
 //!
 //! Carried inside the NIT. Associates terrestrial cells with their transmit
 //! frequency and any transposer (gap-filler) sub-cells. Body layout (Table 23):
@@ -16,7 +16,7 @@
 //! ```
 //!
 //! Both loops are typed. `frequency`/`transposer_frequency` are raw u32 units
-//! (4 bytes, 10 Hz units per §6.2.7); we preserve the numeric value verbatim.
+//! (4 bytes, 10 Hz units per §6.2.6); we preserve the numeric value verbatim.
 
 use super::descriptor_body;
 use crate::error::{Error, Result};

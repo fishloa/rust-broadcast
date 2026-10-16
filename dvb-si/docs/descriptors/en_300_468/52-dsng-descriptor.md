@@ -1,5 +1,5 @@
 ## Table 52 — DSNG descriptor
-_§6.2.15, PDF pp. 78-78_
+_§6.2.14, PDF pp. 78-78_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

@@ -1,4 +1,4 @@
-//! Extension descriptor — ETSI EN 300 468 §6.2.18.1 (tag `0x7F`).
+//! Extension descriptor — ETSI EN 300 468 V1.20.1 §6.2.16 (tag `0x7F`).
 //!
 //! The extension descriptor is a container whose first payload byte,
 //! `descriptor_tag_extension`, selects one of a large family of sub-descriptors
@@ -34,12 +34,12 @@
 //!   Table 146, coordinate_system per Table 147.
 //! - `0x01` cpcm_delivery_signalling (ETSI TS 102 825-9 Table 2, §4.1.5) — `cpcm_version`
 //!   + version-dependent selector bytes.
-//! - `0x02` CP (Table 113, §6.4.3) / `0x03` CP_identifier (Table 114, §6.4.6.1).
+//! - `0x02` CP (Table 113, §6.4.3) / `0x03` CP_identifier (Table 114, §6.4.4).
 //! - `0x04` T2_delivery_system (Table 133, §6.4.6.3) — cell loop unfolded.
 //! - `0x05` SH_delivery_system (Table 119, §6.4.6.2) — fully typed modulation loop.
 //! - `0x06` supplementary_audio (Table 153, §6.4.11).
 //! - `0x07` network_change_notify (Table 149, §6.4.9) — cell/change loop unfolded.
-//! - `0x08` message (Table 148, §6.4.9).
+//! - `0x08` message (Table 148, §6.4.8).
 //! - `0x09` target_region (Table 156, §6.4.12) — region loop unfolded.
 //! - `0x0A` target_region_name (Table 157, §6.4.13) — region loop unfolded.
 //! - `0x0B` service_relocated (Table 152, §6.4.10).
@@ -49,8 +49,8 @@
 //! - `0x0F` DTS_Neural (Annex L.1, Table L.1) — `config_id` + optional info bytes.
 //! - `0x10` video_depth_range (Table 160, §6.4.16.1) — fully typed range loop.
 //! - `0x11` T2MI (Table 158, §6.4.14).
-//! - `0x13` URI_linkage (Table 159, §6.4.16.1) — uri/private split typed.
-//! - `0x14` CI_ancillary_data (Table 112, §6.4.3) — anchor_loop typed.
+//! - `0x13` URI_linkage (Table 159, §6.4.15) — uri/private split typed.
+//! - `0x14` CI_ancillary_data (Table 112, §6.4.2) — anchor_loop typed.
 //! - `0x15` AC-4 (annex D syntax table, §D.5) — first level; toc/extra raw.
 //! - `0x16` C2_bundle_delivery_system (Table 139, §6.4.6.4) — full fixed loop.
 //! - `0x17` S2X_satellite_delivery_system (Table 140, §6.4.6.5.2) — primary
@@ -137,7 +137,7 @@ pub use video_depth_range::*;
 pub use vvc_subpictures::*;
 pub use xait_pid::*;
 
-/// Descriptor tag for extension_descriptor (EN 300 468 Table 54, §6.2.18.1).
+/// Descriptor tag for extension_descriptor (EN 300 468 Table 54, §6.2.16).
 pub const TAG: u8 = 0x7F;
 pub(crate) const HEADER_LEN: usize = 2;
 /// `descriptor_tag_extension` occupies one byte immediately after the header.
@@ -182,7 +182,7 @@ pub enum ExtensionTag {
     CpcmDeliverySignalling = 0x01,
     /// CP_descriptor (Table 113, §6.4.3).
     Cp = 0x02,
-    /// CP_identifier_descriptor (Table 114, §6.4.6.1).
+    /// CP_identifier_descriptor (Table 114, §6.4.4).
     CpIdentifier = 0x03,
     /// T2_delivery_system_descriptor.
     T2DeliverySystem = 0x04,
@@ -214,7 +214,7 @@ pub enum ExtensionTag {
     T2mi = 0x11,
     /// URI_linkage_descriptor.
     UriLinkage = 0x13,
-    /// CI_ancillary_data_descriptor (Table 112, §6.4.3).
+    /// CI_ancillary_data_descriptor (Table 112, §6.4.2).
     CiAncillaryData = 0x14,
     /// AC-4_descriptor (annex D).
     Ac4 = 0x15,
@@ -373,7 +373,7 @@ declare_extension_bodies! {'a;
     CpcmDeliverySignalling = 0x01 => CpcmDeliverySignalling<'a>,
     /// `0x02` — CP (Table 113, §6.4.3).
     Cp = 0x02 => Cp<'a>,
-    /// `0x03` — CP_identifier (Table 114, §6.4.6.1).
+    /// `0x03` — CP_identifier (Table 114, §6.4.4).
     CpIdentifier = 0x03 => CpIdentifier,
     /// `0x04` — T2_delivery_system (Table 133, §6.4.6.3).
     T2DeliverySystem = 0x04 => T2DeliverySystem,
@@ -383,7 +383,7 @@ declare_extension_bodies! {'a;
     SupplementaryAudio = 0x06 => SupplementaryAudio<'a>,
     /// `0x07` — network_change_notify (Table 149, §6.4.9).
     NetworkChangeNotify = 0x07 => NetworkChangeNotify,
-    /// `0x08` — message (Table 148, §6.4.9).
+    /// `0x08` — message (Table 148, §6.4.8).
     Message = 0x08 => Message<'a>,
     /// `0x09` — target_region (Table 156, §6.4.12).
     TargetRegion = 0x09 => TargetRegion,
@@ -403,9 +403,9 @@ declare_extension_bodies! {'a;
     VideoDepthRange = 0x10 => VideoDepthRange<'a>,
     /// `0x11` — T2-MI (Table 158, §6.4.14).
     T2mi = 0x11 => T2mi<'a>,
-    /// `0x13` — URI_linkage (Table 159, §6.4.16.1).
+    /// `0x13` — URI_linkage (Table 159, §6.4.15).
     UriLinkage = 0x13 => UriLinkage<'a>,
-    /// `0x14` — CI_ancillary_data (Table 112, §6.4.3).
+    /// `0x14` — CI_ancillary_data (Table 112, §6.4.2).
     CiAncillaryData = 0x14 => CiAncillaryData<'a>,
     /// `0x15` — AC-4 (annex D).
     Ac4 = 0x15 => Ac4<'a>,
@@ -439,7 +439,7 @@ pub trait ExtensionBodyDef<'a>: broadcast_common::Parse<'a, Error = crate::error
     const NAME: &'static str;
 }
 
-/// Extension descriptor (EN 300 468 Table 54, §6.2.18.1).
+/// Extension descriptor (EN 300 468 Table 54, §6.2.16).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]

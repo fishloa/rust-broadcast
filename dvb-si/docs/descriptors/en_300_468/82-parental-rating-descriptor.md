@@ -1,5 +1,5 @@
 ## Table 82 — Parental rating descriptor
-_§6.2.30, PDF pp. 97-97_
+_§6.2.28, PDF pp. 97-97_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

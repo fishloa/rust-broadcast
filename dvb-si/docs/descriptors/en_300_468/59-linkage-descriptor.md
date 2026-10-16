@@ -1,5 +1,5 @@
 ## Table 59 — Linkage descriptor
-_§6.2.19.1, PDF pp. 84-84_
+_§6.2.19, PDF pp. 84-84_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

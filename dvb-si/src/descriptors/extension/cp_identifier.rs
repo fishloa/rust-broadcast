@@ -1,4 +1,4 @@
-//! CP Identifier Descriptor — ETSI EN 300 468 §6.4.6.1, Table 114 (tag_extension 0x03).
+//! CP Identifier Descriptor — ETSI EN 300 468 V1.20.1 §6.4.4, Table 114 (tag_extension 0x03).
 //!
 //! Lists the CP_system_ids of the content protection systems available for the
 //! associated service/bouquet — a loop of 16-bit identifiers.
@@ -10,7 +10,7 @@ impl ExtensionBodyDef<'_> for CpIdentifier {
     const NAME: &'static str = "CP_IDENTIFIER";
 }
 
-/// CP_identifier descriptor body (Table 114, §6.4.6.1).
+/// CP_identifier descriptor body (Table 114, §6.4.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]

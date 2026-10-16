@@ -1,4 +1,4 @@
-//! Conditional Access Table — ISO/IEC 13818-1 §2.4.4.6.
+//! Conditional Access Table — ISO/IEC 13818-1 (H.222.0 08/2023) §2.4.4.7.
 //!
 //! Carried on PID 0x0001 with table_id 0x01. Contains a flat
 //! list of CA descriptors (tag 0x09) identifying every CA system
@@ -55,7 +55,7 @@ pub struct CatSection<'a> {
     /// last_section_number (typically 0).
     pub last_section_number: u8,
     /// Descriptor loop (byte 8 → CRC), preserved verbatim. ISO/IEC 13818-1
-    /// §2.4.4.6 permits descriptors other than CA in this loop; keeping the loop
+    /// §2.4.4.7 permits descriptors other than CA in this loop; keeping the loop
     /// raw makes parse → serialize identity hold for all of them. Serializes as
     /// the typed descriptor sequence; `.raw()` yields the wire bytes. Use
     /// [`CatSection::ca_descriptors`] for the typed CA (tag 0x09) view.
@@ -65,7 +65,7 @@ pub struct CatSection<'a> {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub bits: super::SectionBits,
     /// The 16 reserved bits at bytes 3-4 (the `reserved(18)` of `CA_section`,
-    /// ISO/IEC 13818-1 §2.4.4.6; all ones = `0xFFFF`), preserved from the wire.
+    /// ISO/IEC 13818-1 §2.4.4.7; all ones = `0xFFFF`), preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub reserved_extension: u16,
 }
@@ -313,7 +313,7 @@ mod tests {
         assert!(matches!(err, Error::BufferTooShort { .. }));
     }
 
-    /// §2.4.4.6 permits non-CA descriptors in the CAT loop: the typed view
+    /// §2.4.4.7 permits non-CA descriptors in the CAT loop: the typed view
     /// skips them, but parse → serialize MUST preserve them byte-for-byte.
     #[test]
     fn non_ca_descriptors_skipped_by_view_but_round_trip() {

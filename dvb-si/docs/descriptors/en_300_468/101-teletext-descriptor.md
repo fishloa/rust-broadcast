@@ -1,5 +1,5 @@
 ## Table 101 — Teletext descriptor
-_§6.2.44, PDF pp. 108-108_
+_§6.2.43, PDF pp. 108-108_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

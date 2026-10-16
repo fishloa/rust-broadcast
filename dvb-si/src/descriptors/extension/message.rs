@@ -1,4 +1,4 @@
-//! Message Descriptor — ETSI EN 300 468 §6.4.9 (tag_extension 0x08).
+//! Message Descriptor — ETSI EN 300 468 V1.20.1 §6.4.8 (tag_extension 0x08).
 use super::*;
 
 impl<'a> ExtensionBodyDef<'a> for Message<'a> {

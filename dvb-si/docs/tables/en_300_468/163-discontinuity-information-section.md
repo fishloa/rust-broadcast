@@ -1,5 +1,5 @@
 ## Table 163 — Discontinuity information section
-_§7.1.2, PDF pp. 153-153_
+_§7.1.1, PDF pp. 153-153_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

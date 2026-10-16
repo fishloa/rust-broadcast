@@ -1,4 +1,4 @@
-//! Subtitling Descriptor — ETSI EN 300 468 §6.2.42 (tag 0x59).
+//! Subtitling Descriptor — ETSI EN 300 468 V1.20.1 §6.2.41 (tag 0x59).
 //!
 //! Carried inside PMT's ES_info loop. Enumerates DVB subtitle services:
 //! one entry per 3-char language code + subtitling_type + composition/

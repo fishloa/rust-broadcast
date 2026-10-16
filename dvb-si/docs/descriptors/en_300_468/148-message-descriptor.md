@@ -1,5 +1,5 @@
 ## Table 148 — Message descriptor
-_§6.4.9, PDF pp. 137-137_
+_§6.4.8, PDF pp. 137-137_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

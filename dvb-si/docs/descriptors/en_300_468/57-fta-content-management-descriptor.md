@@ -1,5 +1,5 @@
 ## Table 57 — FTA content management descriptor
-_§6.2.18.1, PDF pp. 82-82_
+_§6.2.18, PDF pp. 82-82_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

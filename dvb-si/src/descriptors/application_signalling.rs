@@ -1,4 +1,4 @@
-//! Application Signalling Descriptor — ETSI TS 102 809 §5.3.5.2.1, Table 17
+//! Application Signalling Descriptor — ETSI TS 102 809 V1.3.1 §5.3.5.1, Table 17
 //! (tag 0x6F).
 //!
 //! Carried in the PMT to point at the AIT and enumerate the application types
@@ -66,7 +66,7 @@ pub struct ApplicationSignallingEntry {
     /// right-aligned), captured on parse and re-emitted verbatim.
     pub reserved_future_use_3: u8,
     /// 15-bit application_type — reuses [`crate::tables::ait::ApplicationType`]
-    /// (ETSI TS 102 809 §5.3.5.2.1 / DVB Services registry).
+    /// (ETSI TS 102 809 §5.3.5.1 / DVB Services registry).
     pub application_type: ApplicationType,
     /// 5-bit AIT_version_number this entry refers to.
     pub ait_version_number: u8,

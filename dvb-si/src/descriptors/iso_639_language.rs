@@ -1,4 +1,4 @@
-//! ISO 639 Language Descriptor — MPEG-2 ISO/IEC 13818-1 §2.6.19 (tag 0x0A).
+//! ISO 639 Language Descriptor — MPEG-2 ISO/IEC 13818-1 (H.222.0 08/2023) §2.6.18 (tag 0x0A).
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
@@ -11,7 +11,7 @@ pub const TAG: u8 = 0x0A;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
 
-/// Audio type — ISO/IEC 13818-1 §2.6.19 Table 2-63.
+/// Audio type — ISO/IEC 13818-1 §2.6.18 Table 2-63.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

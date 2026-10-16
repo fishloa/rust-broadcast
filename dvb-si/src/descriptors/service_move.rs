@@ -1,4 +1,4 @@
-//! Service Move Descriptor — ETSI EN 300 468 §6.2.37 (tag 0x60).
+//! Service Move Descriptor — ETSI EN 300 468 V1.20.1 §6.2.36 (tag 0x60).
 //!
 //! Table 92 (PDF p. 102). Carried in the SDT when a service is being moved to a
 //! new location; gives the new (original_network_id, transport_stream_id,

@@ -1,4 +1,4 @@
-//! Bouquet Name Descriptor — ETSI EN 300 468 §6.2.6 (tag 0x47).
+//! Bouquet Name Descriptor — ETSI EN 300 468 V1.20.1 §6.2.4 (tag 0x47).
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
@@ -17,7 +17,7 @@ pub const HEADER_LEN: usize = 2;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct BouquetNameDescriptor<'a> {
-    /// DVB Annex-A encoded bouquet name (EN 300 468 §6.2.6).
+    /// DVB Annex-A encoded bouquet name (EN 300 468 §6.2.4).
     pub bouquet_name: DvbText<'a>,
 }
 

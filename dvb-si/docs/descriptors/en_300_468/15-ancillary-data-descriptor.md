@@ -1,5 +1,5 @@
 ## Table 15 — Ancillary data descriptor
-_§6.2.3, PDF pp. 55-55_
+_§6.2.2, PDF pp. 55-55_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

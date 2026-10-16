@@ -1,5 +1,5 @@
 ## Table 22 — CA identifier descriptor
-_§6.2.6, PDF pp. 57-57_
+_§6.2.5, PDF pp. 57-57_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

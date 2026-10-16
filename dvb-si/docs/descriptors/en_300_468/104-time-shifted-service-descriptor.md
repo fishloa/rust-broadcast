@@ -1,5 +1,5 @@
 ## Table 104 — Time shifted service descriptor
-_§6.2.46, PDF pp. 109-109_
+_§6.2.45, PDF pp. 109-109_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

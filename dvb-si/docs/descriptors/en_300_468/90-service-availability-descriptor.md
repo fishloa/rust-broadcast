@@ -1,5 +1,5 @@
 ## Table 90 — Service availability descriptor
-_§6.2.36, PDF pp. 101-101_
+_§6.2.34, PDF pp. 101-101_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

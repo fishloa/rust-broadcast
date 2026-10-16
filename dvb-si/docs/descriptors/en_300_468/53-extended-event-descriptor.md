@@ -1,5 +1,5 @@
 ## Table 53 — Extended event descriptor
-_§6.2.16, PDF pp. 79-79_
+_§6.2.15, PDF pp. 79-79_
 
 | Syntax | Number of bits | Identifier |
 |---|---|---|

@@ -1,4 +1,4 @@
-//! Service Identifier Descriptor — ETSI TS 102 809 §7.2, Table 39 (tag 0x71).
+//! Service Identifier Descriptor — ETSI TS 102 809 V1.3.1 §6.2.1, Table 39 (tag 0x71).
 //!
 //! Carried in the SDT/service loop to give a service a stable textual
 //! identifier. The body is a run of `textual_service_identifier_bytes`
