@@ -1,5 +1,5 @@
 ## Table 9 — Syntax of SSU_type_descriptor
-_§8.3, PDF pp. 18-18_
+_§8.2.1, PDF pp. 18-18_
 
 | Syntax | No. of | Remarks |
 |---|---|---|

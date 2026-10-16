@@ -1,5 +1,5 @@
 ## Table 50 — Syntax of type_descriptor
-_§10.2.4, PDF pp. 65-65_
+_§10.2.2, PDF pp. 65-65_
 
 | type_descriptor(){ | No. of bytes | Value |
 |---|---|---|

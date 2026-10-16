@@ -17,6 +17,7 @@
 //! `GroupInfoIndication::parse(dsi.private_data)`.
 
 use crate::compatibility::CompatibilityDescriptor;
+use crate::descriptors::carousel::CarouselDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -80,6 +81,17 @@ pub struct GroupInfo<'a> {
     /// `PrivateDataByte` loop — private extension bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
+}
+
+impl<'a> GroupInfo<'a> {
+    /// The `GroupInfoByte` loop walked as DVB data-carousel descriptors
+    /// (EN 301 192 §10.2.1 Table 48: type, name, info, location,
+    /// est_download_time, group_link, subgroup_association). Never panics;
+    /// unallocated tags surface as `Unknown`.
+    #[must_use]
+    pub const fn descriptors(&self) -> CarouselDescriptorLoop<'a> {
+        CarouselDescriptorLoop::new(self.group_info)
+    }
 }
 
 /// GroupInfoIndication — TS 102 006 §8.1.1 Table 6.
@@ -331,6 +343,20 @@ pub struct DiiModule<'a> {
     /// moduleInfo, raw (object carousel: BIOP::ModuleInfo, TR 101 202
     /// Table 4.14).
     pub module_info: &'a [u8],
+}
+
+impl<'a> DiiModule<'a> {
+    /// The `moduleInfo` of a plain DVB **data** carousel walked as data-carousel
+    /// descriptors (EN 301 192 §10.2.1 Table 48: type, name, info,
+    /// module_link, CRC32, location, est_download_time, compressed_module,
+    /// SSU_module_type). Valid when `moduleInfo` is just a descriptor loop; an
+    /// object carousel's `moduleInfo` is a BIOP `ModuleInfo` (timeouts, taps,
+    /// then a `userInfo` loop) — parse that with
+    /// [`ModuleInfo::parse`](crate::carousel::biop::message::ModuleInfo).
+    #[must_use]
+    pub const fn descriptors(&self) -> CarouselDescriptorLoop<'a> {
+        CarouselDescriptorLoop::new(self.module_info)
+    }
 }
 
 /// DownloadInfoIndication (§7.3.3, messageId 0x1002).

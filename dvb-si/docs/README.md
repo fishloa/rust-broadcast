@@ -49,7 +49,7 @@ co-locates a `.toml` drift guard with its page. Module `//!` docs cite these fil
 | Descriptor syntax | [T/UWA 012.2-2023 — UWA UHD TS encapsulation](descriptors/t_uwa_012_2/) | 1 |
 | Descriptor syntax | [ETSI TS 102 006 — System Software Update](descriptors/ts_102_006/) | 25 |
 | Descriptor syntax | [ETSI TS 102 323 — TV-Anytime carriage](descriptors/ts_102_323/) | 11 |
-| Descriptor syntax | [ETSI TS 102 727 — DVB-MHP (descriptor subset)](descriptors/ts_102_727/) | 3 |
+| Descriptor syntax | [ETSI TS 102 727 — DVB-MHP (descriptor subset)](descriptors/ts_102_727/) | 9 |
 | Descriptor syntax | [ETSI TS 102 772 — MPE-IFEC](descriptors/ts_102_772/) | 1 |
 | Descriptor syntax | [ETSI TS 102 809 — application signalling (AIT)](descriptors/ts_102_809/) | 22 |
 | Descriptor syntax | [ETSI TS 102 825 — CPCM](descriptors/ts_102_825/) | 2 |
@@ -60,9 +60,9 @@ co-locates a `.toml` drift guard with its page. Module `//!` docs cite these fil
 | Coded-value tables (with `.toml` drift guards) | [ISO/IEC 13818-6 — DSM-CC (hand transcription, provenance-documented)](enums/iso_13818_6/) | 3 |
 | Coded-value tables (with `.toml` drift guards) | [ETSI TS 101 154 — audio/video coding in DVB](enums/ts_101_154/) | 2 |
 | Coded-value tables (with `.toml` drift guards) | [ETSI TS 101 162 — DVB identifier registries](enums/ts_101_162/) | 74 |
-| Coded-value tables (with `.toml` drift guards) | [ETSI TS 102 006 — System Software Update](enums/ts_102_006/) | 8 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI TS 102 006 — System Software Update](enums/ts_102_006/) | 9 |
 | Coded-value tables (with `.toml` drift guards) | [ETSI TS 102 323 — TV-Anytime carriage](enums/ts_102_323/) | 19 |
-| Coded-value tables (with `.toml` drift guards) | [ETSI TS 102 809 — application signalling (AIT)](enums/ts_102_809/) | 14 |
+| Coded-value tables (with `.toml` drift guards) | [ETSI TS 102 809 — application signalling (AIT)](enums/ts_102_809/) | 15 |
 | Prose references | [ISO/IEC 13818-6 — DSM-CC (hand transcription, provenance-documented)](text/iso_13818_6/) | 20 |
 | Prose references | [ETSI TR 101 211 — DVB SI implementation guidelines](text/tr_101_211/) | 9 |
 | Prose references | [ETSI TR 101 290 — DVB measurement guidelines](text/tr_101_290/) | 4 |

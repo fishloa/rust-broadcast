@@ -256,16 +256,16 @@ ait_descriptor_tag	0x02	transport_protocol_descriptor	ETSI TS 102 809 V1.3.1	5.3
 ait_descriptor_tag	0x03	DVB-J_application_descriptor	ETSI TS 102 727 V1.1.1	10.9.1	171
 ait_descriptor_tag	0x04	DVB-J_application_location_descriptor	ETSI TS 102 727 V1.1.1	10.9.2	171
 ait_descriptor_tag	0x05	external_application_authorisation_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.7	43
-ait_descriptor_tag	0x06	application_recording_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.4
-ait_descriptor_tag	0x08	DVB-HTML_application_descriptor	ETSI TS 102 727 V1.1.1	10.10.1
-ait_descriptor_tag	0x09	DVB-HTML_application_location_descriptor	ETSI TS 102 727 V1.1.1	10.10.2
-ait_descriptor_tag	0x0A	DVB-HTML_application_boundary_descriptor	ETSI TS 102 727 V1.1.1	10.10.3
-ait_descriptor_tag	0x0B	application_icons_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.6.2
-ait_descriptor_tag	0x0C	pre-fetch_descriptor	ETSI TS 102 727 V1.1.1	10.8.3.2
-ait_descriptor_tag	0x0D	DII_location_descriptor	ETSI TS 102 727 V1.1.1	10.8.3.3
-ait_descriptor_tag	0x10	application_storage_descriptor	ETSI TS 102 809 V1.3.1	5.3.10.1
-ait_descriptor_tag	0x11	IP_signalling_descriptor	ETSI TS 102 727 V1.1.1	10.8.2
-ait_descriptor_tag	0x14	graphics_constraints_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.8
+ait_descriptor_tag	0x06	application_recording_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.4	40
+ait_descriptor_tag	0x08	DVB-HTML_application_descriptor	ETSI TS 102 727 V1.1.1	10.10.1	172
+ait_descriptor_tag	0x09	DVB-HTML_application_location_descriptor	ETSI TS 102 727 V1.1.1	10.10.2	173
+ait_descriptor_tag	0x0A	DVB-HTML_application_boundary_descriptor	ETSI TS 102 727 V1.1.1	10.10.3	174
+ait_descriptor_tag	0x0B	application_icons_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.6.2	43
+ait_descriptor_tag	0x0C	pre-fetch_descriptor	ETSI TS 102 727 V1.1.1	10.8.3.2	169
+ait_descriptor_tag	0x0D	DII_location_descriptor	ETSI TS 102 727 V1.1.1	10.8.3.3	170
+ait_descriptor_tag	0x10	application_storage_descriptor	ETSI TS 102 809 V1.3.1	5.3.10.1	51
+ait_descriptor_tag	0x11	IP_signalling_descriptor	ETSI TS 102 727 V1.1.1	10.8.2	169
+ait_descriptor_tag	0x14	graphics_constraints_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.8	44
 ait_descriptor_tag	0x15	simple_application_location_descriptor	ETSI TS 102 809 V1.3.1	5.3.7	47
 ait_descriptor_tag	0x16	application_usage_descriptor	ETSI TS 102 809 V1.3.1	5.3.5.5	41
 ait_descriptor_tag	0x17	simple_application_boundary_descriptor	ETSI TS 102 809 V1.3.1	5.3.8	48
@@ -304,17 +304,17 @@ unt_descriptor_tag	0x0C	enhanced_message_descriptor	ETSI TS 102 006 V1.4.1	9.5.2
 unt_descriptor_tag	0x0D	ssu_uri_descriptor	ETSI TS 102 006 V1.4.1	9.5.2.15	35
 
 # ── DSM-CC data-carousel descriptors (DII moduleInfo / DSI groupInfo) — ETSI EN 301 192 V1.7.1 Table 48 (clause 10.2.2)
-dii_descriptor_tag	0x01	type_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x02	name_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x03	info_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x04	module_link_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x05	CRC32_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x06	location_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x07	est_download_time_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x08	group_link_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x09	compressed_module_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	64
-dii_descriptor_tag	0x0A	SSU_module_type_descriptor	ETSI TS 102 006 V1.4.1
-dii_descriptor_tag	0x0B	subgroup_association_descriptor	ETSI TS 102 006 V1.4.1
+dii_descriptor_tag	0x01	type_descriptor	ETSI EN 301 192 V1.7.1	10.2.2	65
+dii_descriptor_tag	0x02	name_descriptor	ETSI EN 301 192 V1.7.1	10.2.3	65
+dii_descriptor_tag	0x03	info_descriptor	ETSI EN 301 192 V1.7.1	10.2.4	65
+dii_descriptor_tag	0x04	module_link_descriptor	ETSI EN 301 192 V1.7.1	10.2.5	66
+dii_descriptor_tag	0x05	CRC32_descriptor	ETSI EN 301 192 V1.7.1	10.2.6	66
+dii_descriptor_tag	0x06	location_descriptor	ETSI EN 301 192 V1.7.1	10.2.7	67
+dii_descriptor_tag	0x07	est_download_time_descriptor	ETSI EN 301 192 V1.7.1	10.2.8	67
+dii_descriptor_tag	0x08	group_link_descriptor	ETSI EN 301 192 V1.7.1	10.2.9	67
+dii_descriptor_tag	0x09	compressed_module_descriptor	ETSI EN 301 192 V1.7.1	10.2.11	68
+dii_descriptor_tag	0x0A	SSU_module_type_descriptor	ETSI TS 102 006 V1.4.1	8.2.1	18
+dii_descriptor_tag	0x0B	subgroup_association_descriptor	ETSI TS 102 006 V1.4.1	9.6.2.1	36
 
 # ── RNT descriptor scope — ETSI TS 102 323 V1.4.1 Table 4 (clause 5.3.3.1); these tags reuse 0x40–0x42 inside the RNT only
 rnt_descriptor_tag	0x40	RAR_over_DVB_stream_descriptor	ETSI TS 102 323 V1.4.1	5.3.5	24

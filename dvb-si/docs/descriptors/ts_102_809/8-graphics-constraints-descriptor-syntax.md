@@ -1,5 +1,5 @@
 ## Table 8 — Graphics constraints descriptor syntax
-_§5.2.10.2, PDF pp. 25-25_
+_§5.2.9.2, PDF pp. 25-25_
 
 |  | No. of bits | Identifier | Value |
 |---|---|---|---|

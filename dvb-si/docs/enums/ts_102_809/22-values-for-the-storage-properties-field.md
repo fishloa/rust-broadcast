@@ -1,5 +1,5 @@
 ## Table 22 — Values for the storage_properties field
-_§5.3.5.5, PDF pp. 41-41_
+_§5.3.5.4, PDF pp. 41-41_
 
 | storage_properties value | Definition |
 |---|---|

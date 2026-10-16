@@ -1,5 +1,5 @@
 ## Table 53 — Syntax of module_link_descriptor
-_§10.2.7, PDF pp. 66-66_
+_§10.2.5, PDF pp. 66-66_
 
 | module_link_descriptor(){ | No. of bytes | Value |
 |---|---|---|

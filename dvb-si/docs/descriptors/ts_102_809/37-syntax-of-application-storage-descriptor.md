@@ -1,5 +1,5 @@
 ## Table 37 — Syntax of application storage descriptor
-_§5.4.0, PDF pp. 51-51_
+_§5.3.10.1, PDF pp. 51-51_
 
 |  | No.of bits | Identifier | Value |
 |---|---|---|---|

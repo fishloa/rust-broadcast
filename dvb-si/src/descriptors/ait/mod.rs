@@ -40,22 +40,42 @@
 //! ```
 
 pub mod application;
+pub mod application_icons;
 pub mod application_name;
+pub mod application_recording;
+pub mod application_storage;
 pub mod application_usage;
+pub mod dii_location;
+pub mod dvb_html_application_boundary;
+pub mod dvb_html_application_location;
 pub mod dvb_j_application;
 pub mod dvb_j_application_location;
 pub mod external_application_authorisation;
+pub mod graphics_constraints;
+pub mod ip_signalling;
+pub mod prefetch;
 pub mod simple_application_boundary;
 pub mod simple_application_location;
 pub mod transport_protocol;
 
 pub use application::ApplicationDescriptor;
 pub use application::Visibility;
+pub use application_icons::{ApplicationIconsDescriptor, IconFlags, IconFormat};
 pub use application_name::ApplicationNameDescriptor;
+pub use application_recording::{
+    ApplicationRecordingDescriptor, RecordingLabel, StorageProperties,
+};
+pub use application_storage::{ApplicationStorageDescriptor, StorageProperty};
 pub use application_usage::ApplicationUsageDescriptor;
+pub use dii_location::{DiiLocation, DiiLocationDescriptor};
+pub use dvb_html_application_boundary::DvbHtmlApplicationBoundaryDescriptor;
+pub use dvb_html_application_location::DvbHtmlApplicationLocationDescriptor;
 pub use dvb_j_application::DvbJApplicationDescriptor;
 pub use dvb_j_application_location::DvbJApplicationLocationDescriptor;
 pub use external_application_authorisation::ExternalApplicationAuthorisationDescriptor;
+pub use graphics_constraints::{GraphicsConfiguration, GraphicsConstraintsDescriptor};
+pub use ip_signalling::IpSignallingDescriptor;
+pub use prefetch::{PrefetchDescriptor, PrefetchEntry};
 pub use simple_application_boundary::SimpleApplicationBoundaryDescriptor;
 pub use simple_application_location::SimpleApplicationLocationDescriptor;
 pub use transport_protocol::TransportProtocolDescriptor;
@@ -165,6 +185,15 @@ declare_ait_descriptors! {'a;
     DvbJApplication          = 0x03 => crate::descriptors::ait::dvb_j_application::DvbJApplicationDescriptor<'a>,
     DvbJApplicationLocation  = 0x04 => crate::descriptors::ait::dvb_j_application_location::DvbJApplicationLocationDescriptor<'a>,
     ExternalAppAuthorisation = 0x05 => crate::descriptors::ait::external_application_authorisation::ExternalApplicationAuthorisationDescriptor,
+    ApplicationRecording     = 0x06 => crate::descriptors::ait::application_recording::ApplicationRecordingDescriptor<'a>,
+    DvbHtmlApplicationLocation = 0x09 => crate::descriptors::ait::dvb_html_application_location::DvbHtmlApplicationLocationDescriptor<'a>,
+    DvbHtmlApplicationBoundary = 0x0A => crate::descriptors::ait::dvb_html_application_boundary::DvbHtmlApplicationBoundaryDescriptor<'a>,
+    ApplicationIcons         = 0x0B => crate::descriptors::ait::application_icons::ApplicationIconsDescriptor<'a>,
+    Prefetch                 = 0x0C => crate::descriptors::ait::prefetch::PrefetchDescriptor<'a>,
+    DiiLocation              = 0x0D => crate::descriptors::ait::dii_location::DiiLocationDescriptor,
+    ApplicationStorage       = 0x10 => crate::descriptors::ait::application_storage::ApplicationStorageDescriptor,
+    IpSignalling             = 0x11 => crate::descriptors::ait::ip_signalling::IpSignallingDescriptor,
+    GraphicsConstraints      = 0x14 => crate::descriptors::ait::graphics_constraints::GraphicsConstraintsDescriptor,
     SimpleAppLocation        = 0x15 => crate::descriptors::ait::simple_application_location::SimpleApplicationLocationDescriptor<'a>,
     ApplicationUsage         = 0x16 => crate::descriptors::ait::application_usage::ApplicationUsageDescriptor,
     SimpleAppBoundary        = 0x17 => crate::descriptors::ait::simple_application_boundary::SimpleApplicationBoundaryDescriptor<'a>,
@@ -345,7 +374,10 @@ mod tests {
     fn dispatched_tags_covers_all_known() {
         assert_eq!(
             AnyAitDescriptor::DISPATCHED_TAGS,
-            &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x15, 0x16, 0x17]
+            &[
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x10, 0x11,
+                0x14, 0x15, 0x16, 0x17
+            ]
         );
     }
 }

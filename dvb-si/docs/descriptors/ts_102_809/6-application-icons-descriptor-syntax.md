@@ -1,5 +1,5 @@
 ## Table 6 — Application icons descriptor syntax
-_§5.2.8.3, PDF pp. 23-23_
+_§5.2.8.2, PDF pp. 23-23_
 
 |  | No.of bits | Identifier | Value |
 |---|---|---|---|

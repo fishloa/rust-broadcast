@@ -1,5 +1,5 @@
 ## Table 56 — Syntax of est_download_time_descriptor
-_§10.2.9, PDF pp. 67-67_
+_§10.2.8, PDF pp. 67-67_
 
 | est_download_time_descriptor(){ | No. of bytes | Value |
 |---|---|---|

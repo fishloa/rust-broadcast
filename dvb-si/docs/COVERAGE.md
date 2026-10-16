@@ -30,14 +30,14 @@ text; **Source cites** is what the module's own doc comment says (see the
 | Descriptors (tag 0x00–0x7F) | **115** auto-dispatched: **51** MPEG-2 / DSM-CC (0x02–0x3F) + all **64** DVB tags (0x40–0x7F) |
 | DVB extension descriptors (0x7F) | **30** typed `descriptor_tag_extension` bodies — every one EN 300 468 V1.20.1 Table 109 allocates |
 | MPEG-2 extension descriptors (0x3F) | **22** typed `extension_descriptor_tag` bodies (MPEG-H 3D audio) |
-| AIT descriptors (TS 102 809 / MHP) | **9** typed in the separate AIT descriptor namespace |
+| AIT descriptors (TS 102 809 / MHP) | **18** typed in the separate AIT descriptor namespace |
 | INT / UNT / RNT descriptors | **26** typed in their own scoped namespaces (`AnyIntDescriptor`, `AnyUntDescriptor`, `AnyRntDescriptor`) |
 | Private / regional descriptors | **9** PDS- or registration-scoped opt-ins (NorDig, EACEM/D-Book, China GY/T + T/AI AVS2/AVS3, T/UWA) |
 | Text (EN 300 468 Annex A) | **7** charset decoders covering every Table A.3 selector + Annex A.1 control codes |
 | DSM-CC carousel | **12** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree |
 | Registries | **171** CA_system_id and **174** private_data_specifier names (TSDuck data, build-time) |
 | Standards | **19** standards / families — see the table below |
-| Known gaps | **28** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
+| Known gaps | **9** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
 
 ## Standards
 
@@ -46,10 +46,10 @@ text; **Source cites** is what the module's own doc comment says (see the
 | ETSI EN 300 468 | DVB Service Information (SI) | V1.20.1 (2026-09); RFU defaults audited back to V1.3.1 | all SI tables (NIT, BAT, SDT, EIT, TDT, TOT, RST, ST, SAT, DIT, SIT), Table 12 descriptors 0x40–0x7F, Table 109 extension descriptors, Annex A text, Annexes D/G/H/L audio descriptors | Full (97/97 allocated codes) |
 | Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 | MPEG-2 Systems — PSI and descriptors | 08/2023 text (clause numbers in COVERAGE.md); MPEG-H 3D audio descriptors 06/2021 | PAT, CAT, PMT, TSDT; Table 2-45 descriptors; Table 2-110 extension descriptors | Partial (80/85 allocated codes) |
 | ISO/IEC 13818-6 | DSM-CC (data/object carousel) | as profiled by ETSI TR 101 202 V1.2.1 (13818-6 itself is not vendored) | DSM-CC sections, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel_identifier + association_tag descriptors | Partial (3/5 allocated codes) |
-| ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Partial (20/28 allocated codes) |
-| ETSI TS 102 006 | DVB System Software Update (SSU) | V1.4.1 | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Partial (14/16 allocated codes) |
-| ETSI TS 102 809 | Application signalling (HbbTV AIT) | V1.3.1 | AIT section, AIT descriptor namespace, application_signalling + service_identifier descriptors, protection message section + descriptor | Partial (12/16 allocated codes) |
-| ETSI TS 102 727 | DVB-MHP 1.1.3 | V1.1.1 (descriptor subset) | DVB-J application + location AIT descriptors, XAIT_location, XAIT_PID | Partial (4/10 allocated codes) |
+| ETSI EN 301 192 | DVB data broadcasting | V1.7.1 | MPE datagram, MPE-FEC, INT section; time_slice_fec_identifier + ECM_repetition_rate descriptors; DII carousel descriptors | Full (28/28 allocated codes) |
+| ETSI TS 102 006 | DVB System Software Update (SSU) | V1.4.1 | UNT section, compatibilityDescriptor, SSU data_broadcast_id selector | Full (16/16 allocated codes) |
+| ETSI TS 102 809 | Application signalling (HbbTV AIT) | V1.3.1 | AIT section, AIT descriptor namespace, application_signalling + service_identifier descriptors, protection message section + descriptor | Full (16/16 allocated codes) |
+| ETSI TS 102 727 | DVB-MHP 1.1.3 | V1.1.1 (descriptor subset) | DVB-J application + location AIT descriptors, XAIT_location, XAIT_PID | Partial (9/10 allocated codes) |
 | ETSI TS 102 323 | TV-Anytime carriage in DVB | V1.4.1 | container, RCT, CIT, RNT sections; default_authority, related_content, TVA_id, content_identifier descriptors | Full (11/11 allocated codes) |
 | ETSI TS 102 772 | MPE-IFEC | V1.1.1 | MPE-IFEC section | Full (1/1 allocated codes) |
 | ETSI EN 303 560 | DVB TTML subtitling | V1.1.1 | TTML_subtitling descriptor, downloadable font info section (DFIS) | Full (2/2 allocated codes) |
@@ -347,16 +347,16 @@ Table 38 (HbbTV) plus the MHP-only tags of ETSI TS 102 727 V1.1.1.
 | 0x03 | DVB-J_application_descriptor | ETSI TS 102 727 V1.1.1 | 10.9.1 | ETSI TS 102 727 §10.9.1, Table 84 (AIT tag 0x03) | [`DvbJApplicationDescriptor`](../src/descriptors/ait/dvb_j_application.rs) | Full |
 | 0x04 | DVB-J_application_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.9.2 | ETSI TS 102 727 §10.9.2, Table 85 (AIT tag 0x04) | [`DvbJApplicationLocationDescriptor`](../src/descriptors/ait/dvb_j_application_location.rs) | Full |
 | 0x05 | external_application_authorisation_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.7 | ETSI TS 102 809 §5.3.5.7, Table 26 (AIT tag 0x05) | [`ExternalApplicationAuthorisationDescriptor`](../src/descriptors/ait/external_application_authorisation.rs) | Full |
-| 0x06 | application_recording_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.4 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
+| 0x06 | application_recording_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.4 | ETSI TS 102 809 V1.3.1 §5.3.5.4, Table 21 (AIT tag 0x06; storage_properties values Table 22) | [`ApplicationRecordingDescriptor`](../src/descriptors/ait/application_recording.rs) | Full |
 | 0x08 | DVB-HTML_application_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.1 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
-| 0x09 | DVB-HTML_application_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.2 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
-| 0x0A | DVB-HTML_application_boundary_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.3 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
-| 0x0B | application_icons_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.6.2 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
-| 0x0C | pre-fetch_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.3.2 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
-| 0x0D | DII_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.3.3 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
-| 0x10 | application_storage_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.10.1 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
-| 0x11 | IP_signalling_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.2 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
-| 0x14 | graphics_constraints_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.8 | — | — | Not implemented — surfaces as `AnyAitDescriptor::Unknown` — bytes kept |
+| 0x09 | DVB-HTML_application_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.2 | ETSI TS 102 727 V1.1.1 §10.10.2, Table 87 (AIT tag 0x09; physical-root semantics Table 88) | [`DvbHtmlApplicationLocationDescriptor`](../src/descriptors/ait/dvb_html_application_location.rs) | Full |
+| 0x0A | DVB-HTML_application_boundary_descriptor | ETSI TS 102 727 V1.1.1 | 10.10.3 | ETSI TS 102 727 V1.1.1 §10.10.3, Table 89 (AIT tag 0x0A) | [`DvbHtmlApplicationBoundaryDescriptor`](../src/descriptors/ait/dvb_html_application_boundary.rs) | Full |
+| 0x0B | application_icons_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.6.2 | ETSI TS 102 809 V1.3.1 §5.3.5.6.2, Table 25 (AIT tag 0x0B); the icon_flags values are §5.2.8.2 Table 7 (PDF p.43 / p.23, transcribed in … | [`ApplicationIconsDescriptor`](../src/descriptors/ait/application_icons.rs) | Full |
+| 0x0C | pre-fetch_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.3.2 | ETSI TS 102 727 V1.1.1 §10.8.3.2, Table 82 (AIT tag 0x0C) | [`PrefetchDescriptor`](../src/descriptors/ait/prefetch.rs) | Full |
+| 0x0D | DII_location_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.3.3 | ETSI TS 102 727 V1.1.1 §10.8.3.3, Table 83 (AIT tag 0x0D) | [`DiiLocationDescriptor`](../src/descriptors/ait/dii_location.rs) | Full |
+| 0x10 | application_storage_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.10.1 | ETSI TS 102 809 V1.3.1 §5.3.10.1, Table 37 (AIT tag 0x10; same layout as §5.2.11.2 Table 14, storage_property values Table 15) | [`ApplicationStorageDescriptor`](../src/descriptors/ait/application_storage.rs) | Full |
+| 0x11 | IP_signalling_descriptor | ETSI TS 102 727 V1.1.1 | 10.8.2 | ETSI TS 102 727 V1.1.1 §10.8.2, Table 81 (AIT tag 0x11) | [`IpSignallingDescriptor`](../src/descriptors/ait/ip_signalling.rs) | Full |
+| 0x14 | graphics_constraints_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.8 | ETSI TS 102 809 V1.3.1 §5.3.5.8, Table 27 (AIT tag 0x14; same layout as §5.2.9.2 Table 8, byte values Table 9) | [`GraphicsConstraintsDescriptor`](../src/descriptors/ait/graphics_constraints.rs) | Full |
 | 0x15 | simple_application_location_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.7 | ETSI TS 102 809 §5.3.7.0, Table 33 (AIT tag 0x15) | [`SimpleApplicationLocationDescriptor`](../src/descriptors/ait/simple_application_location.rs) | Full |
 | 0x16 | application_usage_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.5.5 | ETSI TS 102 809 §5.3.5.5, Table 23 (AIT tag 0x16) | [`ApplicationUsageDescriptor`](../src/descriptors/ait/application_usage.rs) | Full |
 | 0x17 | simple_application_boundary_descriptor | ETSI TS 102 809 V1.3.1 | 5.3.8 | ETSI TS 102 809 §5.3.8, Table 35 (AIT tag 0x17) | [`SimpleApplicationBoundaryDescriptor`](../src/descriptors/ait/simple_application_boundary.rs) | Full |
@@ -412,17 +412,17 @@ data-carousel descriptors only `compressed_module_descriptor` is typed today.
 
 | tag | Descriptor | Standard | Clause (verified) | Source cites | Rust type | Status |
 |---|---|---|---|---|---|---|
-| 0x01 | type_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x02 | name_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x03 | info_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x04 | module_link_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x05 | CRC32_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x06 | location_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x07 | est_download_time_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x08 | group_link_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x09 | compressed_module_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | ETSI TR 101 202 Table 4.14 (BIOP ModuleInfo userInfo) | [`CompressedModuleDescriptor`](../src/carousel/biop/message.rs) | Full — decompressed with the `flate2` feature; parsed from DII `moduleInfo` userInfo by `ModuleInfo` |
-| 0x0A | SSU_module_type_descriptor | ETSI TS 102 006 V1.4.1 | — | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
-| 0x0B | subgroup_association_descriptor | ETSI TS 102 006 V1.4.1 | — | — | — | Not implemented — kept as raw bytes inside `ModuleInfo` / DII `moduleInfo` |
+| 0x01 | type_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.2 | ETSI EN 301 192 V1.7.1 §10.2.2, Table 50 (data-carousel tag 0x01) | [`TypeDescriptor`](../src/descriptors/carousel/type_descriptor.rs) | Full |
+| 0x02 | name_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.3 | ETSI EN 301 192 V1.7.1 §10.2.3, Table 51 (data-carousel tag 0x02) | [`NameDescriptor`](../src/descriptors/carousel/name.rs) | Full |
+| 0x03 | info_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.4 | ETSI EN 301 192 V1.7.1 §10.2.4, Table 52 (data-carousel tag 0x03) | [`InfoDescriptor`](../src/descriptors/carousel/info.rs) | Full |
+| 0x04 | module_link_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.5 | ETSI EN 301 192 V1.7.1 §10.2.5, Table 53 (data-carousel tag 0x04) | [`ModuleLinkDescriptor`](../src/descriptors/carousel/module_link.rs) | Full |
+| 0x05 | CRC32_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.6 | ETSI EN 301 192 V1.7.1 §10.2.6, Table 54 (data-carousel tag 0x05) | [`Crc32Descriptor`](../src/descriptors/carousel/crc32.rs) | Full |
+| 0x06 | location_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.7 | ETSI EN 301 192 V1.7.1 §10.2.7, Table 55 (data-carousel tag 0x06) | [`LocationDescriptor`](../src/descriptors/carousel/location.rs) | Full |
+| 0x07 | est_download_time_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.8 | ETSI EN 301 192 V1.7.1 §10.2.8, Table 56 (data-carousel tag 0x07) | [`EstDownloadTimeDescriptor`](../src/descriptors/carousel/est_download_time.rs) | Full |
+| 0x08 | group_link_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.9 | ETSI EN 301 192 V1.7.1 §10.2.9, Table 57 (data-carousel tag 0x08) | [`GroupLinkDescriptor`](../src/descriptors/carousel/group_link.rs) | Full |
+| 0x09 | compressed_module_descriptor | ETSI EN 301 192 V1.7.1 | 10.2.11 | ETSI EN 301 192 V1.7.1 §10.2.11, Table 59 (data-carousel tag 0x09) | [`CompressedModuleDescriptor`](../src/descriptors/carousel/compressed_module.rs) | Full |
+| 0x0A | SSU_module_type_descriptor | ETSI TS 102 006 V1.4.1 | 8.2.1 | ETSI TS 102 006 §8.2.1, Table 9 (data-carousel tag 0x0A, allocated by EN 301 192 Table 48; module types Table 10) | [`SsuModuleTypeDescriptor`](../src/descriptors/carousel/ssu_module_type.rs) | Full |
+| 0x0B | subgroup_association_descriptor | ETSI TS 102 006 V1.4.1 | 9.6.2.1 | ETSI TS 102 006 §9.6.2.1, Table 39 (data-carousel tag 0x0B, allocated by EN 301 192 Table 48; DSI GroupInfoBytes) | [`SubgroupAssociationDescriptor`](../src/descriptors/carousel/subgroup_association.rs) | Full |
 
 ### RNT scope (ETSI TS 102 323 V1.4.1 Table 4)
 
@@ -504,8 +504,7 @@ real fixture first.
 | table_id | 4 | 0x07 IPMP_Control_Information_section (ISO/IEC 13818-11), 0x0A ISO/IEC 23001-10 quality access unit section, 0x0B ISO/IEC 23001-13 media orchestration access unit section, 0x38–0x39 DSM-CC sections (ISO/IEC 13818-6 range) |
 | Descriptor tags (SI / MPEG namespace) | 2 | 0x15–0x1A other ISO/IEC 13818-6 descriptors (Table 2-45 "19..26 defined in ISO/IEC 13818-6"; 13818-6 is not vendored, so not itemised), 0x29 IPMP_descriptor (ISO/IEC 13818-11) |
 | MPEG-2 extension_descriptor_tag | 2 | 0x10 virtual_segmentation_descriptor, 0x13 HEVC_subregion_descriptor |
-| AIT descriptors | 10 | 0x06 application_recording_descriptor, 0x08 DVB-HTML_application_descriptor, 0x09 DVB-HTML_application_location_descriptor, 0x0A DVB-HTML_application_boundary_descriptor, 0x0B application_icons_descriptor, 0x0C pre-fetch_descriptor, 0x0D DII_location_descriptor, 0x10 application_storage_descriptor, 0x11 IP_signalling_descriptor, 0x14 graphics_constraints_descriptor |
-| DSM-CC data-carousel (DII/DSI) descriptors | 10 | 0x01 type_descriptor, 0x02 name_descriptor, 0x03 info_descriptor, 0x04 module_link_descriptor, 0x05 CRC32_descriptor, 0x06 location_descriptor, 0x07 est_download_time_descriptor, 0x08 group_link_descriptor, 0x0A SSU_module_type_descriptor, 0x0B subgroup_association_descriptor |
+| AIT descriptors | 1 | 0x08 DVB-HTML_application_descriptor |
 
 ## Citation cross-check
 
@@ -517,6 +516,6 @@ module cites a clause that is neither the verified clause nor a sub-clause of it
 
 Every module citation that names a clause agrees with the verified clause.
 
-232 implemented rows have their clause verified against the rendered PDF page
-(`verified_page` column of `coverage/allocations.tsv`); 15 not-implemented rows
+251 implemented rows have their clause verified against the rendered PDF page
+(`verified_page` column of `coverage/allocations.tsv`); 5 not-implemented rows
 carry a clause that is not yet page-verified (nothing cites it).

@@ -1,5 +1,5 @@
 ## Table 49 — Allocation of tag values for DVB data carousel private descriptors
-_§10.2.2, PDF pp. 64-64_
+_§10.2.1, PDF pp. 64-64_
 
 | Private descriptor tag in DVB data carousels | Value |
 |---|---|

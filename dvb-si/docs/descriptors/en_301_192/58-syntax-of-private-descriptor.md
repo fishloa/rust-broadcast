@@ -1,5 +1,5 @@
 ## Table 58 — Syntax of private_descriptor
-_§10.2.11, PDF pp. 68-68_
+_§10.2.10, PDF pp. 68-68_
 
 | Private_descriptor () { | No. of bytes | Value |
 |---|---|---|
