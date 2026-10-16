@@ -109,8 +109,10 @@ impl VisualSampleEntryFields {
     /// bytes after the header and the fixed fields, with the length checked
     /// against the box's real header size (8 or, for `largesize`, 16).
     pub(crate) fn children_region<'a>(bytes: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
-        Ok(&crate::box_types::box_body(bytes, VISUAL_SAMPLE_ENTRY_SIZE, what)?
-            [VISUAL_SAMPLE_ENTRY_SIZE..])
+        Ok(
+            &crate::box_types::box_body(bytes, VISUAL_SAMPLE_ENTRY_SIZE, what)?
+                [VISUAL_SAMPLE_ENTRY_SIZE..],
+        )
     }
 
     /// Serialize the fixed fields into a buffer (public for external sample entries).

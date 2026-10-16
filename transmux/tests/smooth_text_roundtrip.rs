@@ -54,5 +54,10 @@ fn packager_text_stream_parses_back() {
         }
     ));
     // The same manifest still carries the video stream.
-    assert!(parsed.streams.iter().any(|s| s.stream_type == StreamType::Video));
+    assert!(
+        parsed
+            .streams
+            .iter()
+            .any(|s| s.stream_type == StreamType::Video)
+    );
 }

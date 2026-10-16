@@ -92,7 +92,10 @@ fn eac3_cc_gap_in_next_pes_drops_the_held_intact_access_unit() {
             n += 1;
         }
     }
-    assert_eq!(n, 156, "streaming: only the damaged PES's access unit is lost");
+    assert_eq!(
+        n, 156,
+        "streaming: only the damaged PES's access unit is lost"
+    );
 }
 
 fn decode_pts(b: &[u8]) -> u64 {
@@ -215,9 +218,7 @@ fn segment_timeline_negative_r_ignores_presentation_time_offset() {
         .expect("resolve");
     assert_eq!(segs.len(), 15, "PTO > Period length must not yield zero");
     // Explicit media-timeline end (PTO + length) through the raw entry point.
-    let segs = tl
-        .resolve(1, Some(900_000 + 30 * 90_000))
-        .expect("resolve");
+    let segs = tl.resolve(1, Some(900_000 + 30 * 90_000)).expect("resolve");
     assert_eq!(segs.len(), 15);
 }
 
@@ -347,10 +348,7 @@ fn avs3_entry_with_trailing_config_bytes_is_not_byte_identical_after_round_trip(
     visual[40..42].copy_from_slice(&[0, 1]);
     visual[74..78].copy_from_slice(&[0, 0x18, 0xFF, 0xFF]);
     // av3c: version 1, sequence_header_length 4, header, reserved|idc, then 2 extra bytes.
-    let av3c = compact_box(
-        b"av3c",
-        &[1, 0, 4, 0, 0, 1, 0xB0, 0xFC, 0x11, 0x22],
-    );
+    let av3c = compact_box(b"av3c", &[1, 0, 4, 0, 0, 1, 0xB0, 0xFC, 0x11, 0x22]);
     let entry = compact_box(b"avs3", &[visual, av3c].concat());
     match AvsVideoSampleEntry::parse_entry(&entry) {
         Err(_) => {} // rejecting is acceptable
