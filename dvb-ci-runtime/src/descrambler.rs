@@ -21,7 +21,8 @@
 //! DVB configuration, the descrambled TS still needs its clock reference).
 //! [`CaDescrambler::feed_ts`] filters the input TS to
 //! [`required_pids`](CaDescrambler::required_pids) = `descramble_pids ∪
-//! ca_pids ∪ emm_pids ∪ PCR` and writes only those packets to `ci0` — a 30–50
+//! ca_pids ∪ emm_pids ∪ PCR ∪ CAT` (the CAT PID is hardware-evidenced as
+//! required, #1296) and writes only those packets to `ci0` — a 30–50
 //! Mbit/s mux collapses to the handful of wanted services plus a low-rate
 //! ECM/EMM trickle. PAT/PMT are **not** fed on `ci0`: the CAM receives the
 //! PMT via the `ca_pmt` control-plane APDU (Layer 1). [`required_pids`](CaDescrambler::required_pids)
@@ -278,6 +279,7 @@ mod tests {
     };
     use crate::managed::CaError;
     use broadcast_common::Parse;
+    use mpeg_ts::pid::well_known::CAT as CAT_PID;
 
     fn packet(pid: Pid, fill: u8) -> Vec<u8> {
         let mut p = vec![fill; TS_PACKET_LEN];
@@ -385,13 +387,14 @@ mod tests {
         assert_eq!(
             d.required_pids(),
             vec![
+                CAT_PID,
                 Pid::new(0x0064),
                 Pid::new(0x0065),
                 Pid::new(0x0100),
                 Pid::new(0x0101),
                 Pid::new(0x1FF0)
             ],
-            "precondition: required_pids = descramble_pids ∪ ca_pids ∪ emm_pids"
+            "precondition: required_pids = CAT ∪ descramble_pids ∪ ca_pids ∪ emm_pids"
         );
 
         let descrambled_script = packet(Pid::new(0x100), 0xEE);
@@ -399,6 +402,7 @@ mod tests {
         assert_eq!(
             descrambler.required_pids(),
             vec![
+                CAT_PID,
                 Pid::new(0x0064),
                 Pid::new(0x0065),
                 Pid::new(0x0100),
