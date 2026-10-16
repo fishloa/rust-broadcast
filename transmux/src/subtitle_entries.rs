@@ -417,16 +417,30 @@ impl VttCueBox {
             let end = (pos + sz).min(body.len());
             let child = &body[pos..end];
             let fourcc = &child[4..8];
+            // ISO/IEC 14496-30 `VTTCueBox` lists each of `iden`/`sttg`/`payl`
+            // once (docs/codec/captions-14496-30.md): a repeat cannot be held
+            // in the typed fields (the last would win while the order listed
+            // both, so `serialized_len` and `serialize_into` disagreed), so
+            // it is rejected.
             match fourcc {
                 b"payl" => {
+                    if payload.is_some() {
+                        return Err(duplicate_cue_child("payl"));
+                    }
                     payload = Some(CuePayloadBox::bare_parse(child)?);
                     child_order.push(CueChild::Payl);
                 }
                 b"sttg" => {
+                    if settings.is_some() {
+                        return Err(duplicate_cue_child("sttg"));
+                    }
                     settings = Some(CueSettingsBox::bare_parse(child)?);
                     child_order.push(CueChild::Sttg);
                 }
                 b"iden" => {
+                    if cue_id.is_some() {
+                        return Err(duplicate_cue_child("iden"));
+                    }
                     cue_id = Some(CueIdBox::bare_parse(child)?);
                     child_order.push(CueChild::Iden);
                 }
@@ -479,6 +493,15 @@ impl VttCueBox {
         add(CueChild::Sttg);
         add(CueChild::Payl);
         order
+    }
+}
+
+/// A `vttc` child that the class admits at most once appeared a second time.
+fn duplicate_cue_child(field: &'static str) -> Error {
+    Error::InvalidValue {
+        field,
+        value: 2,
+        reason: "vttc admits at most one such child (ISO/IEC 14496-30 VTTCueBox)",
     }
 }
 

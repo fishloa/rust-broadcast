@@ -192,9 +192,33 @@ fn segment_timeline_negative_r_ignores_presentation_time_offset() {
             r: -1,
         }],
     };
-    // The documented contract: `period_end_ticks` = (PEwc - PSwc) in ticks.
-    let segs = tl.resolve(1, Some(30 * 90_000)).expect("resolve");
+    // `resolve` has no presentationTimeOffset input, so the same call cannot
+    // be right for both PTO = 900_000 (15 segments) and PTO = 0 (10 segments):
+    // its `period_end_ticks` is on the S@t (media) timeline. The caller that
+    // knows the Period LENGTH uses `resolve_in_period`, which adds the offset.
+    let segs = tl
+        .resolve_in_period(1, 900_000, Some(30 * 90_000))
+        .expect("resolve");
     assert_eq!(segs.len(), 15, "30 s Period / 2 s segments");
+    assert_eq!(segs[0].time, 900_000, "$Time$ stays on the media timeline");
+    // The usual live case: PTO (= S@t) far larger than the Period length.
+    let epoch = 1_700_000_000u64 * 90_000;
+    let live = SegmentTimeline {
+        segments: vec![S {
+            t: Some(epoch),
+            d: 180_000,
+            r: -1,
+        }],
+    };
+    let segs = live
+        .resolve_in_period(1, epoch, Some(30 * 90_000))
+        .expect("resolve");
+    assert_eq!(segs.len(), 15, "PTO > Period length must not yield zero");
+    // Explicit media-timeline end (PTO + length) through the raw entry point.
+    let segs = tl
+        .resolve(1, Some(900_000 + 30 * 90_000))
+        .expect("resolve");
+    assert_eq!(segs.len(), 15);
 }
 
 /// A negative `@r` whose next `S@t` is not after this one's start yields ZERO

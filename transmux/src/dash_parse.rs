@@ -151,6 +151,16 @@ pub enum DashParseError {
         /// The segment count (or a hint of it) that breached the cap.
         count_hint: u64,
     },
+    /// A `<S>` with a negative `@r` is followed by an `<S>` whose explicit
+    /// `@t` is not after its own start, so the repeat count
+    /// `ceil((t_next - t) / d)` (ISO/IEC 23009-1 §5.3.9.6.2) is not positive:
+    /// a malformed timeline, rejected rather than silently dropping the `S`.
+    TimelineNotIncreasing {
+        /// The start (`@t`, or the running time) of the `S` with the negative `@r`.
+        t: u64,
+        /// The following `S`'s explicit `@t`.
+        next_t: u64,
+    },
     /// An end tag's name does not match the element currently open — a
     /// malformed nesting that would silently truncate the structure.
     MismatchedEndTag {
@@ -210,6 +220,11 @@ impl fmt::Display for DashParseError {
                     MAX_TIMELINE_SEGMENTS
                 )
             }
+            DashParseError::TimelineNotIncreasing { t, next_t } => write!(
+                f,
+                "SegmentTimeline <S t={t} r=\"-1\"> is followed by an <S> starting at {next_t}, \
+                 which is not later"
+            ),
             DashParseError::MismatchedEndTag { expected, found } => {
                 if found.is_empty() {
                     write!(f, "expected closing tag </{expected}>, found none")
@@ -725,6 +740,23 @@ impl SegmentTimeline {
             .collect())
     }
 
+    /// [`SegmentTimeline::resolve`] for a caller that knows the Period's
+    /// length rather than its media-timeline end: the Period end handed to
+    /// `resolve` is `presentation_time_offset + period_duration_ticks`
+    /// (`@presentationTimeOffset + (PEwc - PSwc)` in `@timescale` ticks, with
+    /// the sum saturating). `None` for an unbounded (live, open-ended) Period.
+    pub fn resolve_in_period(
+        &self,
+        start_number: u64,
+        presentation_time_offset: u64,
+        period_duration_ticks: Option<u64>,
+    ) -> Result<Vec<TimelineSegment>> {
+        self.resolve(
+            start_number,
+            period_duration_ticks.map(|d| d.saturating_add(presentation_time_offset)),
+        )
+    }
+
     /// Expand every `<S>` run into one [`TimelineSegment`] per segment, in
     /// presentation order (ISO/IEC 23009-1 §5.3.9.6; the derivation below is
     /// the one DASH-IF IOP v4.3 §3.10.2.2.4 transcribes, see
@@ -732,17 +764,33 @@ impl SegmentTimeline {
     ///
     /// * `number` starts at `start_number` (the enclosing
     ///   [`SegmentTemplate::start_number`]) and increments per segment.
-    /// * `time` is the segment's start in `@timescale` ticks **relative to the
-    ///   Period start**: the explicit [`S::t`] when present — absolute, so the
-    ///   first `S` may start anywhere and any later `S` may jump ahead (a gap,
-    ///   §5.3.9.6.2) — else the previous segment's `time + duration`; `0` when
-    ///   the very first `S` omits `@t`.
+    /// * `time` is the segment's start in `@timescale` ticks **on the media
+    ///   timeline** (the value `$Time$` substitutes, §5.3.9.4.4): the explicit
+    ///   [`S::t`] when present — absolute, so the first `S` may start anywhere
+    ///   and any later `S` may jump ahead (a gap, §5.3.9.6.2) — else the
+    ///   previous segment's `time + duration`; `0` when the very first `S`
+    ///   omits `@t`. Its Period-relative presentation time is
+    ///   `time - @presentationTimeOffset` (ETSI TS 103 285 §10.9.7 sets the
+    ///   offset to the earliest media presentation time of the Period, and
+    ///   §10.6.1 takes the play position as composition time minus the offset).
     /// * A non-negative `r` yields `r + 1` segments. A **negative** `r`
     ///   repeats the duration until the next `S`'s explicit `@t`
-    ///   (`ceil((t_next - t) / d)` segments) or, for the last `S` (or one whose
-    ///   successor has no explicit `@t`), until `period_end_ticks`
-    ///   (`ceil((period_end - t) / d)`), the Period end in the same tick domain
-    ///   (`PEwc - PSwc`). With neither bound known it is a single occurrence.
+    ///   (`ceil((t_next - t) / d)` segments; an `@t` not after this `S`'s start
+    ///   is [`DashParseError::TimelineNotIncreasing`]) or, for the last `S` (or
+    ///   one whose successor has no explicit `@t`), until `period_end_ticks`
+    ///   (`ceil((period_end - t) / d)`). With neither bound known it is a
+    ///   single occurrence.
+    ///
+    /// # `period_end_ticks` contract
+    ///
+    /// `period_end_ticks` is on the SAME timeline as [`S::t`] — the **media
+    /// timeline**, i.e. `@presentationTimeOffset + (PEwc - PSwc)` in
+    /// `@timescale` ticks — NOT the Period-relative duration. `S@t` and the
+    /// Period end are compared as-is, so a caller holding the Period length
+    /// must add the offset (or call [`SegmentTimeline::resolve_in_period`],
+    /// which does). Passing the bare Period length under-counts by
+    /// `presentationTimeOffset / d` segments, and yields none once the offset
+    /// exceeds the Period length (the usual live case).
     ///
     /// Errors with [`DashParseError::TimelineTooLong`] if the total count
     /// would exceed [`MAX_TIMELINE_SEGMENTS`] (hostile `r` values), checked
@@ -764,6 +812,11 @@ impl SegmentTimeline {
                 (s.r as u64).saturating_add(1)
             } else {
                 let next_t = self.segments.get(idx + 1).and_then(|n| n.t);
+                if let Some(next_t) = next_t
+                    && next_t <= time
+                {
+                    return Err(DashParseError::TimelineNotIncreasing { t: time, next_t });
+                }
                 match (next_t.or(period_end_ticks), s.d) {
                     (Some(end), d) if d > 0 => end.saturating_sub(time).div_ceil(d),
                     _ => 1,
@@ -800,8 +853,9 @@ impl SegmentTimeline {
 pub struct TimelineSegment {
     /// `$Number$` of this segment.
     pub number: u64,
-    /// Start time in `@timescale` ticks relative to the Period start
-    /// (`$Time$`).
+    /// Start time in `@timescale` ticks on the media timeline (`$Time$`);
+    /// Period-relative presentation time is this minus
+    /// `@presentationTimeOffset`.
     pub time: u64,
     /// Duration in `@timescale` ticks.
     pub duration: u64,
