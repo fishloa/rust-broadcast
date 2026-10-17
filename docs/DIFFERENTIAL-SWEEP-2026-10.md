@@ -1,116 +1,102 @@
 # Differential sweep, 2026-10 release wave
 
-The last published crates versus `main` (db41ae3c0), over every real capture and
-fixture the repo tests use. Purpose: find behavioural differences that no
-in-repo test pins, before the wave is tagged (the wave's regressions so far were
-found by a downstream user on a real lossy capture, not by CI).
+The last published crates versus `main`, over every real capture and fixture the
+repo tests use. Purpose: find behavioural differences that no in-repo test pins,
+before the wave is tagged (the wave's regressions so far were found by a
+downstream user on a real lossy capture, not by CI).
 
 Tool and how to rerun: [`tools/differential-sweep/`](../tools/differential-sweep/README.md).
 Acknowledged differences (with reasons): [`tools/differential-sweep/expected.json`](../tools/differential-sweep/expected.json).
 
-## Method and coverage
+Two runs are recorded: **run 2** (HEAD = `ca638fbaf`, after #1319 / #1322 / #1326)
+is the current state; **run 1** (HEAD = `db41ae3c0`) is kept below for comparison.
 
-* **Baseline** = commit `a9e9694a6` (the newest commit any live `<crate>-v*` / `v11.1.0` tag points at). Every crate's `Cargo.toml` version there equals the "Live now" column of `docs/release-plan-2026-10.md` section 3 (spot-checked: transmux 0.26.0, dvb-si/dvb-t2mi/dvb-tools 11.1.0, ts-fix 0.6.0 (src identical to its tag), hls-runtime 0.8.0, media-doctor 0.10.0, broadcast-common 9.4.0, mpeg-ts 0.5.0, scte35-splice 3.0.1, st291 0.4.1, broadcast-hls 0.3.1).
-* **HEAD** = this branch off `main`.
-* **Fixtures**: 293 files from `fixtures/` + `private/fixtures/` (same files fed to both trees; submodule pinned at `4d876654`), 277 of which at least one probe applies to; `.ts/.m2ts/.mpg/.mp4/.m4s/.mkv/.webm/.flv/.ps/.mxf/.bin/.m3u8/.mpd`, up to 100 MB. No network fetches (the 4.9 GB `russia-t2mi-scte35` capture is therefore **not** covered).
-* **1181 (fixture, probe) results per tree**, 14 probes, **0 panics, 0 timeouts** in either tree. Probe list: `transmux.stream` (StreamingTsDemux, live `pre_finish` vs `at_finish` track announcement, per-track SHA-256), `transmux.batch` (TsDemux), `transmux.run` (container autodetect + CMAF / CMAF-HLS / TS-HLS / DASH / TS / progressive, per segment SHA-256), `dvb-si.sections` (+ `section_bin`), `dvb-t2mi.pump`, `mpeg-ts.packets`, `scte35.sections`, `st291.parse`, `media-doctor.findings`, `hls.playlist`, `dash.mpd`, and subprocess `cli.dvb-tools` / `cli.ts-fix` (102 TS files each).
-* Probes adapted between trees (`cfg` split, see the README): PID argument types for dvb-t2mi (`Pid` vs `u16`), PID printing, and two APIs absent from the baseline (`InnerTsRecovery::plps_seen`, `AnyDescriptor::reserialize`): those two outputs are emitted as `head_only_*` keys that the diff ignores.
+## Method and coverage (both runs)
 
-## Result
+* **Baseline** = commit `a9e9694a6` (the newest commit any live `<crate>-v*` / `v11.1.0` tag points at). Re-verified for run 2 against `docs/release-plan-2026-10.md` section 3 "Live now": transmux 0.26.0, dvb-si / dvb-t2mi / dvb-tools 11.1.0, ts-fix 0.6.0, multimux 0.12.0, media-plane 0.6.0, hls-runtime 0.8.0, media-doctor 0.10.0, mpeg-ts 0.5.0 all equal the `Cargo.toml` versions at the baseline commit.
+* **Fixtures**: 293 files from `fixtures/` + `private/fixtures/` (same files fed to both trees; submodule pinned at `4d876654`), 277 of which at least one probe applies to. No network fetches (the 4.9 GB `russia-t2mi-scte35` capture is **not** covered).
+* **Run 2: 1273 (fixture, probe) results per tree**, 15 probes, 0 panics, 0 timeouts in either tree. Run 2 added the `multimux.ts_ingest` probe (92 TS captures) and, to `transmux.stream`, the counters `tracks_resolved:{pre,at}_finish` and `samples_before_first_resolved`.
+* `multimux.ts_ingest` drives multimux's `TsIngestSession` (the shared ingest of `ts_udp` / `ts_http` / `srt`) with 7-packet feeds and records the programmes announced and, per track, the samples it publishes (count, bytes, first / last dts, SHA-256). The programmes are recorded as sorted track-id sets: `ProgramTracker` assigns `ProgramId`s by iterating a `HashMap`, so ids and announce order are random per process on an MPTS (observation O-3).
 
-| | records (fixture x probe) | fixtures |
+## Run 2 result (HEAD `ca638fbaf`)
+
+| class | fixtures x probes | detail |
 |---|---|---|
-| identical | 1047 | 192 of 277 fixtures have no difference in any probe |
-| INTENDED (explained, cited) | 62 | 30 transmux, 18 dvb-si, 1 dvb-t2mi, 1 ts-fix |
-| BUG | 72 | 72 (`dvb-tools dump --json`, one issue) |
-| UNEXPLAINED | 0 | 0 |
+| identical | 1128 of 1273 records | |
+| INTENDED (cited in `expected.json`) | 72 records | 29 transmux.run, 18 dvb-si.sections, 13 transmux.stream, 6 transmux.batch, 4 multimux.ts_ingest, 1 dvb-t2mi.pump, 1 ts-fix |
+| INTENDED, closed since run 1 | 72 records | dvb-tools `dump --json` (run 1's BUG): now stated in the dvb-tools CHANGELOG (#1324), reclassified INTENDED |
+| BUG (red, not acknowledged away) | 2 records | BUG-1 (`test-002` TracksResolved), BUG-2b (`eac3_dvb_0x06` multimux loss) |
+| UNEXPLAINED | 0 | |
 
-`diff.py` against `expected.json` exits non-zero (the one BUG class remains).
-Zero differences in `mpeg-ts`, `scte35-splice` (5 sections, all re-serialize
-identically in both), `st291`, `media-doctor` (235 records, 47 with findings),
-`broadcast-hls` (26 playlists, parse + re-render identical) and `transmux.run`
-for every non-subtitle, non-E-AC-3, non-MPEG-H container.
+`diff.py` exits non-zero: two BUG rows remain on purpose.
 
-## Differences by crate
+### What is NEW since run 1 (introduced or revealed by #1319 / #1322 / #1326)
 
-### dvb-tools: BUG (1 issue, 72 fixtures) - `dump --json` output grew, undocumented
+| | fixture | change | class |
+|---|---|---|---|
+| regression | `private/fixtures/tsduck/input/test-002.ts` | HEAD never emits `TracksResolved` (22 tracks, all announced at `finish()`); the baseline emits it at `finish()` | **BUG-1** |
+| regression vs run 1 HEAD (equals the published baseline) | `private/fixtures/ts/france-tnt-uhf32-si-audio.ts` (the downstream user's capture class) | run 1: all 26 tracks announced live; now 0 of 26 live, all at `finish()`. Cause: #1322 restricted the 512-AU head-of-line step-over to non-video heads, and this capture's 4 video PIDs (0x00DC, 0x0208, 0x026C, 0x02D0: 3293 packets, 1547 PES starts each) carry data but never yield an SPS. The CHANGELOG documents the trade-off (video stays track 1), but it re-creates the original failure for exactly this capture | **BUG-3** (design trade-off, owner decision; no diff row because HEAD now equals the baseline) |
+| improvement | `fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` | 19 tracks: 0 live -> 19 live, `TracksResolved` live | INTENDED |
+| improvement | `private/fixtures/tsduck/input/test-170.ts` | 11 tracks: 9 live -> 11 live | INTENDED |
+| improvement | `private/fixtures/ts/france-tnt-m6-eac3-zenith.ts` | 5 of 7 live -> 7 of 7 live | INTENDED (already under the zenith entry) |
+| event order | `hotbird-mhp-si.ts`, `hotbird-mhp-video-head-6MB.ts`, `test-002.ts`, `test-062.ts` | `finish()` now emits the late promotions before the abandoned events; PID -> track_id map, abandoned set, per-track sample counts and SHA-256 identical | INTENDED |
 
-`dvb-tools dump <file> --json` differs on 72 of 102 TS fixtures (e.g.
-`fixtures/ts/m6-single.ts`: 9715 -> 9895 bytes, `ts_204_stride_SYNTHETIC.ts`
-1372 -> 1402). Every change is an additive JSON key or a retyped descriptor:
+Disappeared since run 1: the `france-tnt-uhf32-si-audio.ts` row (see BUG-3) and the dvb-tools BUG (closed by #1324). Everything else in run 1's table reproduces unchanged (below).
 
-* new `reserved_future_use` / `reserved_future_use_1` / `_3` keys (dvb-si now stores the reserved bits);
-* new `"trailing": []` on service / short_event / telephone / audio_preselection descriptors (dvb-si BREAKING `trailing` field);
-* tag 0x3F bodies move from `"unknown": {tag: 63, body: [...]}` to the typed `Mpeg2Extension` (all MPEG-H captures).
+### Run 2: transmux checks requested for this rerun
 
-Cause is intended dvb-si work, but `dvb-tools/CHANGELOG.md` `[Unreleased]` says
-of `t2mi --pid` "All other text/JSON output is byte-identical" and lists no
-`dump --json` schema change. A consumer parsing that JSON is affected.
-Repro: `dvb-tools dump fixtures/ts/m6-single.ts --json` on `v11.1.0` vs HEAD,
-`diff` shows 3 added keys. **Action (not done here):** add the schema note to the
-dvb-tools CHANGELOG and release note and decide whether it needs its own BREAKING line.
+* **Live announcement** (tracks announced before `finish()`, 92 TS captures): captures with at least one track announced only at `finish()`: baseline 17, **HEAD 14**. Captures whose `TracksResolved` fires live went 58 -> 60 (tnt-5w, test-170); zenith moved from 5 of 7 to 7 of 7 tracks live; no capture got worse versus the baseline. Still all-late at HEAD (video head with no recoverable SPS in the excerpt, by design): `m6-single/duplicate/discontinuity` (0 of 6), `france-tnt-pcr` and `france-pcr-discontinuity` (0 of 6), `csa2-plain` (0 of 28), `csa2-scrambled` (0 of 27), `hotbird-mhp-si` (0 of 6), `test-002` (0 of 22), `test-062` (0 of 15), `test-012`, `scte35-other-pid`, `france-tnt-uhf32-si-audio` (0 of 26); partly late: `hotbird-mhp-video-head-6MB` (1 of 13).
+* **Track ids / order**: for every one of the 92 captures the PID -> (track_id, codec) map and the announce order are identical to the baseline, the abandoned and removed sets are identical, and the video track keeps its baseline track id (checked by script over all `added` events; no `video track N -> M` finding).
+* **Per-track samples / SHA-256**: identical to the baseline on every capture except the INTENDED E-AC-3 ones (`m6-*` +1 frame, zenith +1 frame, `eac3-dep/gw_*` 236 -> 157 AUs, #1255).
+* **`TracksResolved`**: observable and probed (`counters.tracks_resolved:*`). Baseline: fires only at `finish()` on every capture that has one. HEAD: fires live on 60 captures, at `finish()` on 14, and **never on `test-002`** (BUG-1).
+* **dvb-si**: section counts, parse ok/err, descriptor err counts, bad-CRC counts identical on all 92 captures; only the INTENDED identity / typed-descriptor gains (18 fixtures). **dvb-t2mi**: only `colombia-capital-t2mi.ts` PID 0x40 (247 -> 258 ok, 11 -> 0 errors); packet counts, CRC failures and inner-TS SHA-256 identical. **ts-fix**: only `test-184.ts` `--regen-psi`; `--repair-continuity`, `--drop-nulls`, `--restamp-pcr-interpolate` output SHA-256 identical on 102 captures. `mpeg-ts`, `scte35-splice`, `st291`, `media-doctor` (235 records), `broadcast-hls` (26 playlists): zero differences.
 
-### transmux: INTENDED (30 fixtures)
+### BUG-1: HEAD never emits `TracksResolved` on `test-002.ts` (regression from #1326)
+
+Repro: `transmux.stream` probe on `private/fixtures/tsduck/input/test-002.ts`: baseline `counters.tracks_resolved:at_finish = 1`, HEAD no `tracks_resolved:*` key at all (22 tracks announced at `finish()` in both). Likely cause, by reading `StreamingTsDemux::finish()` (not yet fixed): its abandon loop does `self.resolved.insert(pid)` for a stepped-over PID without `self.skipped.remove(&pid)`, so `resolved.len() + skipped.len() == known` in `maybe_signal_tracks_resolved` can never hold (the PID is counted twice). Consumers that wait on the signal (`multimux`) never announce the programme.
+
+### BUG-2: `multimux` `TsIngestSession` drops samples (pre-existing, unchanged vs baseline; another agent is fixing it)
+
+Measured against `transmux.stream`'s per-track counts on the same 92 captures:
+
+* Samples emitted before the first `TracksResolved` are dropped by `ProgramTracker`'s `track_program` guard. Captures where the signal precedes the data lose only the final access units; captures where it comes late lose almost everything. `france-tnt-dvbt-20s.ts`: 3093 emitted, 2443 published (622 emitted before the signal); `france-tnt-uhf32-video-head-6MB.ts`: 928 -> 266; `test-092.ts`: 2908 -> 16 (2864 before the signal); `h264/baseline.ts`: 15 -> 13.
+* **15 captures publish zero samples and zero programmes at HEAD** (17 at the baseline), including the downstream capture `france-tnt-uhf32-si-audio.ts` (20819 samples emitted, 0 published) and `france-tnt-m6-eac3-zenith.ts` (69 -> 0).
+* `TsIngestSession::finish()` is `Ok(())` and never calls `StreamingTsDemux::finish()`, so held-back final access units (one-behind video, E-AC-3 / MPEG-H hold-back) are never published: single-track captures with no pre-signal samples still lose 2 (`mpegh_cicp_01_baseline_32kbps_single.ts` 29 -> 27, `h264/main.ts` 15 -> 13).
+* Totals: baseline 45,987 samples missing across 75 of 92 captures, HEAD 44,478 across 75 (the HEAD figure drops because tnt-5w and test-170 now resolve live; `gw_*` fewer emitted).
+* **BUG-2b (the one diff row)**: `fixtures/ts/dolby/eac3_dvb_0x06.ts` publishes 55 of 58 samples at HEAD (baseline 56): the E-AC-3 track now resolves after 2 AUs instead of 1, so a second sample is lost and `first_dts` moves 5946 -> 7482.
+
+### dvb-tools: closed
+
+Run 1's BUG (`dump --json` grew on 72 of 102 TS fixtures, undocumented) is closed by #1324: `dvb-tools/CHANGELOG.md` `[Unreleased]` now states the schema growth. Reclassified INTENDED in `expected.json`.
+
+### transmux: INTENDED (carried from run 1, unchanged)
 
 | fixture(s) | probe | difference | explained by |
 |---|---|---|---|
-| `fixtures/ts/m6-single.ts`, `m6-duplicate.ts`, `m6-discontinuity.ts`, `private/.../france-tnt-m6-eac3-zenith.ts` | stream, batch, run | the PID 0x82 E-AC-3 track gains one frame: 7 -> 8 samples, 4096 -> 4608 bytes, last dts 3956370328 -> 3956371864; every CMAF/DASH/HLS/TS/progressive output of that track changes with it | CHANGELOG "Fixed (E-AC-3 dependent substreams, a real 7.1 stream, #1255)": a `0B 77` pair parsed as an E-AC-3 header with a garbage length used to swallow a real frame |
-| `private/fixtures/eac3-dep/gw_ffmpeg.ts`, `gw_gpac.ts` | stream, batch, run | 236 / 235 samples, 505 kB, **47 / 43 `timeline reanchored` discontinuities** -> 157 samples, 723456 bytes, 0 discontinuities (both producers' files now byte-identical output, one SHA-256) | CHANGELOG "Fixed (TS demux, #1186)" + #1255: dependent substreams join their access unit |
-| `private/fixtures/ts/france-tnt-uhf32-si-audio.ts` (the downstream user's class of capture: 26 tracks, video + E-AC-3 + data, 16287 continuity gaps) | stream | identical 26 tracks (ids, PIDs, codecs, per-track sample count/bytes/SHA-256 all equal; the same 4 PIDs abandoned) but all announced **live** (`pre_finish`) instead of all at `finish()` | CHANGELOG "Fixed (StreamingTsDemux E-AC-3 promotion regression, zenith)" and the new `PROBE_HEAD_BLOCK_AUS` step-over (absent from the baseline) |
-| 8 `private/fixtures/mpegh/*.ts`, 4 `private/fixtures/ts/mpegh-*.ts`, `fixtures/mp4/frag/mpegh_stereo.frag.mp4` | run | TS and TS-HLS output bytes differ (SHA-256) | CHANGELOG "Fixed (MPEG-H TS descriptor, H.222.0 Table 2-121)": complete 6-byte `MPEG-H_3dAudio_descriptor` |
-| 9 `fixtures/subtitles/**` mp4s + `fixtures/mp4/stpp.mp4` | run | baseline: every packager returns `select_tracks_by: predicate kept no track`; HEAD packages CMAF/DASH/progressive and (fragmented inputs) HLS; HLS of a progressive-only input now fails with `cannot render an HLS playlist with no segments` | CHANGELOG "BREAKING #1186" (subtitle `sample_entry`) and "Added (subtitles in manifests, #1243)" |
+| `fixtures/ts/m6-single.ts`, `m6-duplicate.ts`, `m6-discontinuity.ts`, `private/.../france-tnt-m6-eac3-zenith.ts` | stream, batch, run | the PID 0x82 E-AC-3 track gains one frame: 7 -> 8 samples, 4096 -> 4608 bytes; every CMAF/DASH/HLS/TS/progressive output of that track changes with it | CHANGELOG "Fixed (E-AC-3 dependent substreams, a real 7.1 stream, #1255)" |
+| `private/fixtures/eac3-dep/gw_ffmpeg.ts`, `gw_gpac.ts` | stream, batch, run | 236 / 235 samples, 47 / 43 `timeline reanchored` -> 157 samples, 0 discontinuities | CHANGELOG "Fixed (TS demux, #1186)" + #1255 |
+| 8 `private/fixtures/mpegh/*.ts`, 4 `private/fixtures/ts/mpegh-*.ts`, `fixtures/mp4/frag/mpegh_stereo.frag.mp4` | run | TS and TS-HLS output bytes differ | CHANGELOG "Fixed (MPEG-H TS descriptor, H.222.0 Table 2-121)" |
+| 9 `fixtures/subtitles/**` mp4s + `fixtures/mp4/stpp.mp4` | run | baseline rejects every packager ("predicate kept no track"); HEAD packages them | CHANGELOG "BREAKING #1186" and "Added (subtitles in manifests, #1243)" |
 
-No fixture lost a track, a sample, or a byte anywhere in transmux: every
-difference is a gain or a timing improvement. The tool pins the live behaviour
-that the in-repo tests did not: the downstream capture class now announces all
-26 tracks before `finish()`.
+### dvb-si / dvb-t2mi / ts-fix: INTENDED (carried from run 1, unchanged)
 
-### dvb-si: INTENDED (18 fixtures, 0 parse-result changes)
+* dvb-si (18 fixtures, 0 parse-result changes): `parse -> serialize` identity gained on `tsduck/input/test-012,016,062,120,170` and `reference/test-109` (CHANGELOG "`section_syntax_indicator` is preserved on every table"); tag 0x3F `Extension_descriptor` typed on the 12 MPEG-H fixtures; tag 0x34 typed on `test-062`.
+* dvb-t2mi: `colombia-capital-t2mi.ts` PID 0x40, 11 individual-addressing packets now parse (CHANGELOG "BREAKING (fix): `function_length`").
+* ts-fix: `test-184.ts` `--regen-psi`, 5555 -> 5556 packets (CHANGELOG "Fixed (#1288)"). Human look still worthwhile: in both trees the capture's 615 in-position PATs are replaced by nothing / one empty PAT at the very end.
 
-Section counts, parse ok/err, descriptor err counts and CRC counts are
-identical on every fixture. Differences are only:
+## Observations (not baseline-vs-HEAD differences)
 
-* `parse -> serialize` identity gained on `tsduck/input/test-012,016,062,120,170` and `reference/test-109` (e.g. test-012 PAT 0 -> 78 identical of 78, test-120 TDT 0 -> 30 identical of 30): CHANGELOG "`section_syntax_indicator` is preserved on every table" and the typed reserved fields;
-* tag 0x3F `Extension_descriptor` typed on the 12 MPEG-H fixtures (7-10 per file; CHANGELOG "tag 0x3F used to parse as `Unknown`; auto-dispatched ... `Mpeg2Extension`");
-* tag 0x34 `MPEG2_stereoscopic_video_format` typed on `test-062` (new typed descriptors 0x2D-0x3A).
+* **O-1. Live announcement is still head-of-line blocked on captures whose video head never resolves**: 14 of 92 captures announce some or all tracks at `finish()` (list above), including the downstream user's `france-tnt-uhf32-si-audio.ts` (BUG-3). A live stream with a video PID that carries data but never an SPS delays every later PID until the 4 MiB probe-backlog cap.
+* **O-2.** `transmux.stream` abandons the same PMT-declared PIDs at `finish()` in both trees (e.g. `m6-single.ts`: 0x78, 0x8D, 0xAC `config unrecoverable`), as documented.
+* **O-3. `ProgramTracker` ProgramId assignment is nondeterministic on an MPTS**: `resolving` is a `HashMap`, drained with `into_iter()`, so which programme gets `ProgramId(0)` (and the `NewProgram` order) differs between runs of the same input (seen on `france-tnt-dvbt-20s.ts`, 5 programmes). Not a data loss, but anything keyed on `ProgramId` (route names, Trunk ids) is unstable across restarts.
 
-### dvb-t2mi: INTENDED (1 fixture)
+## Run 1 (HEAD `db41ae3c0`), for comparison
 
-`fixtures/dvb-t2mi/colombia-capital-t2mi.ts` PID 0x40: payload errors 11 -> 0,
-payload ok 247 -> 258, individual-addressing payloads 0 -> 11. CHANGELOG
-"BREAKING (fix): `function_length` is the length of the whole `function()`
-including its 2-byte header ... made the real Colombia capture's 0x21 packets
-fail to parse". The same bytes parse in both trees except those 11 packets;
-CRC failure counts, packet counts and inner-TS SHA-256 are identical. (This is
-the "T2-MI function_length framing" regression class: **fixed at HEAD**, and the
-sweep confirms it is the only T2-MI change on the corpus.)
+1181 results per tree, 14 probes, 0 panics, 0 timeouts. 1047 identical, 62 INTENDED (30 transmux, 18 dvb-si, 1 dvb-t2mi, 1 ts-fix), 72 BUG (dvb-tools `dump --json`), 0 UNEXPLAINED. It reported that `france-tnt-uhf32-si-audio.ts` announced all 26 tracks live at HEAD; run 2 shows that no longer holds (BUG-3). It reported 19 of 92 captures announcing late in both trees (run 2 counts 17 baseline / 14 HEAD by the definition "at least one track announced at `finish()`").
 
-### ts-fix: INTENDED (1 fixture)
-
-`private/fixtures/tsduck/input/test-184.ts`, `--regen-psi` (and the combo that
-includes it): 5555 -> 5556 packets. The input's PAT lists 5 PMT PIDs that carry
-no packets in the capture; the baseline wrote no PAT at all, HEAD writes one
-program-less PAT (tsid 4) at end of stream. CHANGELOG "Fixed (#1288)". Worth a
-human look (not a diff): in **both** trees the capture's 615 in-position PATs
-are replaced by nothing / one empty PAT at the very end, so `--regen-psi` on a
-PAT-only excerpt still destroys the valid PAT.
-
-### Identical (no difference on any fixture)
-
-`mpeg-ts` (packet / PID / PCR / CC / resync counts at three chunkings),
-`scte35-splice`, `st291`, `media-doctor` (all ten TS diagnostics + ISOBMFF/HLS/MPD
-checkers), `broadcast-hls`, `transmux` MPD parse, `dvb-tools` `services` / `epg` /
-`pids` / `t2mi`, `ts-fix` `--repair-continuity` / `--drop-nulls` /
-`--restamp-pcr-interpolate` (output SHA-256 on 102 captures).
-
-## Observations (not baseline-vs-HEAD differences, same in both trees)
-
-* **Live announcement is head-of-line blocked on short captures.** 19 of the 92 TS captures announce some or all tracks only at `finish()` in *both* trees (`fixtures/ts/m6-single.ts`: 0 of 6 live; `fixtures/france-tnt-pcr.ts`: 0 of 6; `csa2-plain.ts`: 0 of 28; `hotbird-mhp-video-head-6MB.ts`: 1 of 13 live although 12 tracks carry 36-46 samples each). The mechanism is `try_promote_ready`'s PMT-order promotion held at the first still-probing PID (an AVC PID whose SPS never arrives in the excerpt) until `PROBE_HEAD_BLOCK_AUS` (512 access units) or `finish()`. By design and documented, but it is exactly the live-consumer failure class the downstream user hit; a live stream with one permanently silent early PID delays every later PID by 512 AUs of that PID.
-* `transmux.stream` abandons the same PMT-declared PIDs at `finish()` in both trees (e.g. `fixtures/ts/m6-single.ts`: 0x78, 0x8D, 0xAC `config unrecoverable`), as documented.
-
-## Coverage gaps (what this sweep could not see)
+## Coverage gaps (what this sweep cannot see)
 
 * The 4.9 GB `russia-t2mi-scte35` capture and the `.test-streams/` tsduck clone beyond what is mirrored under `private/fixtures/tsduck/`: not fetched (no network).
 * TS files above 30 MB are skipped for the `cli.*` subprocess probes; above 100 MB for every probe.
-* Network crates (`rtsp-runtime`, `hls-runtime`, `multimux`, `srt-runtime`, `rtmp-runtime`, `webrtc-runtime`, `rist-runtime`) and `dvb-ci`/`dvb-ci-runtime`, `ssai-runtime`, `playout-runtime`, `caption-convert`, `ttml-subtitle` have no fixture-driven probe here (the task scoped these as optional); their wave risk is the typed-id churn, caught by the compiler, plus the behaviour changes in their CHANGELOGs, not by this tool.
+* `multimux.ts_ingest` exercises the session only, not the `IngestDriver` / `Trunk` publication or any transport; network crates (`rtsp-runtime`, `hls-runtime`, `srt-runtime`, `rtmp-runtime`, `webrtc-runtime`, `rist-runtime`), `dvb-ci` / `dvb-ci-runtime`, `ssai-runtime`, `playout-runtime`, `caption-convert`, `ttml-subtitle` have no fixture-driven probe.
 * `.pcap` fixtures (rist, st2022, webrtc) are not read.
