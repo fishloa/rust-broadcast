@@ -187,6 +187,33 @@ impl InputDegradation {
 
 broadcast_common::impl_spec_display!(InputDegradation);
 
+/// One [`DemuxEvent::InputDegraded`] as kept on [`Media::degraded_at`](crate::ir::Media::degraded_at):
+/// the [`InputDegradation`] plus *where* it was observed, so a consumer can
+/// tell damage on an unused data PID (a DSM-CC carousel) from damage on a
+/// track it keeps. `#[non_exhaustive]`: build one with [`DegradationRecord::new`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DegradationRecord {
+    /// What degraded.
+    pub kind: InputDegradation,
+    /// The track the carrying PID had resolved to when the event fired, or
+    /// `None` (never fabricated — see [`DemuxEvent::InputDegraded::track`]).
+    pub track: Option<TrackId>,
+    /// The TS PID and packet index the event was observed at.
+    pub provenance: EventProvenance,
+}
+
+impl DegradationRecord {
+    /// Build a record from the fields of a [`DemuxEvent::InputDegraded`].
+    pub fn new(kind: InputDegradation, track: Option<TrackId>, provenance: EventProvenance) -> Self {
+        Self {
+            kind,
+            track,
+            provenance,
+        }
+    }
+}
+
 /// A demux event, drained incrementally from a streaming demuxer (issue #555:
 /// [`crate::ts_demux::StreamingTsDemux`]; issue #738:
 /// [`crate::flv_stream::StreamingFlvDemux`]).

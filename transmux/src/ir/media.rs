@@ -7,7 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use super::{InputDegradation, Track};
+use super::{DegradationRecord, InputDegradation, Track};
 
 /// One PCR observation from a TS adaptation field (ISO/IEC 13818-1 §2.4.3.4).
 ///
@@ -107,6 +107,13 @@ pub struct Media {
     /// transport errors, continuity gaps). Empty for a clean input and for
     /// every demuxer that never resynchronises.
     pub degraded: Vec<InputDegradation>,
+    /// Where each [`degraded`](Self::degraded) entry was observed. For a TS
+    /// input this is parallel to `degraded` (same length, same order:
+    /// `degraded_at[i].kind == degraded[i]`) and carries the PID and packet
+    /// index, so a consumer can ignore damage on PIDs it does not keep (a
+    /// DSM-CC carousel, say) and act on damage to its tracks. Empty for
+    /// every demuxer whose container has no PID/packet provenance.
+    pub degraded_at: Vec<DegradationRecord>,
 }
 
 impl Media {
@@ -119,6 +126,7 @@ impl Media {
             pcr: Vec::new(),
             skipped: Vec::new(),
             degraded: Vec::new(),
+            degraded_at: Vec::new(),
         }
     }
 
