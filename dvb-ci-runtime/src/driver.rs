@@ -347,8 +347,8 @@ impl<D: CaDevice> Driver<D> {
     /// immediately followed by `cmd_id = ok_descrambling` — see
     /// `requery_tick` for why both, #1032. `Duration::ZERO` disables
     /// re-query. **Opt-in**: defaults to [`managed::REQUERY_DEFAULT`]
-    /// (`Duration::ZERO`) at construction — see that constant's doc for why
-    /// (#1032: not hardware-verified).
+    /// (`Duration::ZERO`) at construction (the periodic re-query is hardware-verified
+    /// on an entitled AlphaCrypt module since #1032, but stays opt-in).
     pub fn set_requery_interval(&mut self, interval: Duration) {
         self.managed.set_requery_interval(interval);
     }
@@ -2983,9 +2983,8 @@ pub(crate) mod tests {
         use broadcast_common::Parse;
 
         // #1032: no `set_requery_interval` call at all — `REQUERY_DEFAULT`
-        // (`Duration::ZERO`) must leave re-query off by default (the live
-        // AlphaCrypt `stack.rs` notes never answers `query`, so the `query`
-        // half is not hardware-verified).
+        // (`Duration::ZERO`) must leave re-query off by default (it stays opt-in
+        // although the `query` + `ok_descrambling` pair is hardware-verified).
         let mut d = driver_with_sessions();
         d.take_notifications();
 
