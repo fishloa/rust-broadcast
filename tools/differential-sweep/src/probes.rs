@@ -1,7 +1,7 @@
 //! The probes. Each returns `None` when it does not apply to the fixture, else
 //! a JSON object that is compared field-by-field between the two trees.
 
-use crate::{Cfg, Fixture, bump, hx, hx_opt, sha, ts_packets, variant_name};
+use crate::{Cfg, Fixture, PidRaw, bump, hx, hx_opt, sha, ts_packets, variant_name};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -324,12 +324,18 @@ fn survey_descs(descs: &mut BTreeMap<String, DescStat>, t: &AnyTableSection<'_>)
                     };
                     let st = descs.entry(key).or_default();
                     st.typed += 1;
+                    // `AnyDescriptor::reserialize` does not exist in the
+                    // published baseline: identity counts are HEAD-only and
+                    // reported under `head_only_*` (ignored by diff.py).
+                    #[cfg(feature = "head")]
                     match d.reserialize() {
                         None => {}
                         Some(Err(_)) => st.ser_err += 1,
                         Some(Ok(v)) if v == raw => st.identical += 1,
                         Some(Ok(_)) => st.mismatch += 1,
                     }
+                    #[cfg(feature = "baseline")]
+                    let _ = &raw;
                 }
                 Some(Err(_)) | None => {
                     descs.entry(format!("0x{tag:02X} PARSE_ERR")).or_default().err += 1;
@@ -345,7 +351,7 @@ pub fn dvb_si_sections(fx: &Fixture, _: &Cfg) -> Option<Value> {
     }
     let packets = ts_packets(&fx.data)?;
     // Pass 1: PIDs that carry sections outside the well-known SI set.
-    let mut extra: BTreeSet<_> = BTreeSet::new();
+    let mut extra: BTreeSet<u16> = BTreeSet::new();
     {
         let mut d = SiDemux::builder().build();
         for pkt in &packets {
@@ -353,7 +359,7 @@ pub fn dvb_si_sections(fx: &Fixture, _: &Cfg) -> Option<Value> {
                 if let Ok(AnyTableSection::PmtSection(pmt)) = ev.table_section() {
                     for st in &pmt.streams {
                         if [0x05u8, 0x0A, 0x0B, 0x0C, 0x0D].contains(&st.stream_type.to_u8()) {
-                            extra.insert(st.elementary_pid);
+                            extra.insert(st.elementary_pid.raw());
                         }
                     }
                 }
@@ -364,7 +370,7 @@ pub fn dvb_si_sections(fx: &Fixture, _: &Cfg) -> Option<Value> {
     for (label, repeats) in [("gated", false), ("all", true)] {
         let mut b = SiDemux::builder().emit_repeats(repeats);
         for pid in &extra {
-            b = b.pid(*pid);
+            b = b.pid(mpeg_ts::pid::Pid::new(*pid));
         }
         let mut demux = b.build();
         let mut secs: BTreeMap<String, SecStat> = BTreeMap::new();
@@ -409,8 +415,9 @@ pub fn dvb_si_sections(fx: &Fixture, _: &Cfg) -> Option<Value> {
                     (
                         k,
                         json!({ "typed": v.typed, "unknown": v.unknown, "err": v.err,
-                                "identical": v.identical, "mismatch": v.mismatch,
-                                "ser_err": v.ser_err }),
+                                "head_only_identical": v.identical,
+                                "head_only_mismatch": v.mismatch,
+                                "head_only_ser_err": v.ser_err }),
                     )
                 })
                 .collect();
@@ -446,7 +453,10 @@ pub fn dvb_si_section_bin(fx: &Fixture, _: &Cfg) -> Option<Value> {
                 .map(|(k, v)| {
                     (
                         k,
-                        json!([v.typed, v.unknown, v.err, v.identical, v.mismatch, v.ser_err]),
+                        json!({ "typed": v.typed, "unknown": v.unknown, "err": v.err,
+                                "head_only_identical": v.identical,
+                                "head_only_mismatch": v.mismatch,
+                                "head_only_ser_err": v.ser_err }),
                     )
                 })
                 .collect();
@@ -522,7 +532,10 @@ pub fn dvb_t2mi(fx: &Fixture, _: &Cfg) -> Option<Value> {
                 inner.extend_from_slice(ip);
             }
         }
+        #[cfg(feature = "head")]
         let plps: Vec<u8> = rec.plps_seen().collect();
+        #[cfg(feature = "baseline")]
+        let plps: Vec<u8> = Vec::new();
         let rs = rec.stats();
         out.insert(
             format!("pid_{pid:04X}"),
@@ -628,7 +641,7 @@ pub fn scte35(fx: &Fixture, _: &Cfg) -> Option<Value> {
     let mut stats: BTreeMap<String, u64> = BTreeMap::new();
     if fx.is_ts_ext() {
         let packets = ts_packets(&fx.data)?;
-        let mut pids = BTreeSet::new();
+        let mut pids: BTreeSet<u16> = BTreeSet::new();
         {
             let mut d = SiDemux::builder().build();
             for pkt in &packets {
@@ -636,7 +649,7 @@ pub fn scte35(fx: &Fixture, _: &Cfg) -> Option<Value> {
                     if let Ok(AnyTableSection::PmtSection(pmt)) = ev.table_section() {
                         for st in &pmt.streams {
                             if st.stream_type.to_u8() == 0x86 {
-                                pids.insert(st.elementary_pid);
+                                pids.insert(st.elementary_pid.raw());
                             }
                         }
                     }
@@ -648,7 +661,7 @@ pub fn scte35(fx: &Fixture, _: &Cfg) -> Option<Value> {
         }
         let mut b = SiDemux::builder().emit_repeats(true);
         for p in &pids {
-            b = b.pid(*p);
+            b = b.pid(mpeg_ts::pid::Pid::new(*p));
         }
         let mut d = b.build();
         for pkt in &packets {

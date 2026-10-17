@@ -18,7 +18,6 @@
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fmt::UpperHex;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -32,13 +31,30 @@ pub fn sha(data: &[u8]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Hex of anything `UpperHex` (`u16` at the baseline, `Pid` at HEAD), so the
-/// two trees print the same text for the same PID.
-pub fn hx<T: UpperHex>(v: T) -> String {
-    format!("{v:04X}")
+/// The raw 13-bit value of a PID, whether the tree models it as a bare `u16`
+/// or as `mpeg_ts::pid::Pid` (and whichever formatting traits that type has),
+/// so the two trees print the same text for the same PID.
+pub trait PidRaw {
+    fn raw(&self) -> u16;
 }
 
-pub fn hx_opt<T: UpperHex>(v: Option<T>) -> String {
+impl PidRaw for u16 {
+    fn raw(&self) -> u16 {
+        *self
+    }
+}
+
+impl PidRaw for mpeg_ts::pid::Pid {
+    fn raw(&self) -> u16 {
+        self.value()
+    }
+}
+
+pub fn hx<T: PidRaw>(v: T) -> String {
+    format!("{:04X}", v.raw())
+}
+
+pub fn hx_opt<T: PidRaw>(v: Option<T>) -> String {
     v.map_or_else(|| "-".to_string(), hx)
 }
 
