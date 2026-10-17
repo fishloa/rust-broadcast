@@ -1,6 +1,6 @@
 [package]
 name          = "st2022"
-version       = "0.1.0"
+version       = "0.2.0"
 description   = "SMPTE ST 2022-6 HBRMT (SDI-over-IP) RTP payload header parser"
 authors.workspace     = true
 edition.workspace     = true
@@ -11,7 +11,7 @@ categories   = ["multimedia::video", "parser-implementations", "no-std"]
 keywords     = ["smpte", "st2022", "hbrmt", "sdi-over-ip", "broadcast"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
 thiserror        = { version = "2", default-features = false }
 
 [features]

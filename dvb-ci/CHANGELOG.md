@@ -6,6 +6,7 @@ versioning.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs rewritten to the cluster standard: what it does / does not, standards table (EN 50221, TS 101 699 V1.1.1, TS 103 205 V1.4.1), feature table, compiling quick start.
 

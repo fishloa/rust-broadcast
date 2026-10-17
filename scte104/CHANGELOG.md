@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs restructured: scope, standards table (ANSI/SCTE 104 2023), operation coverage by group, feature table; the README quick start now matches the compiled doctest.
 

@@ -7,7 +7,7 @@ RTCP control packets (RFC 3550 §6): SR, RR, SDES, BYE, APP and the §6.1 compou
 
 ```toml
 [dependencies]
-rtcp-packet = "0.5"
+rtcp-packet = "0.6"
 ```
 
 ## What it does / what it does not

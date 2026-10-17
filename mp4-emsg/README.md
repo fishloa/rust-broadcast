@@ -7,7 +7,7 @@ ISO BMFF / DASH Event Message Box (`emsg`, ISO/IEC 23009-1): parse and serialize
 
 ```toml
 [dependencies]
-mp4-emsg = "0.4"
+mp4-emsg = "0.5"
 ```
 
 ## What it does / what it does not

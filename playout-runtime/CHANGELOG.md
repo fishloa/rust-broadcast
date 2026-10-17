@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs rewritten to the cluster standard: what it does / does not, standards table (SCTE 35 2023r1 `splice_insert` only), feature table, compiling quick start.
 

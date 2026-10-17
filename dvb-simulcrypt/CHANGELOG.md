@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-17
 ### Documentation
 - `docs/`: the protocol_version registry now lists ACG-EIS (`0x04`, TS 103 197 §11.5) and SIMCOMP-MUXCONFIG (`0x04`, §12.3), both verified on the rendered pages (PDF pp.166, 177); the "not transcribed" notes are removed. The crate models only ECMG-SCS, EMMG/PDG-MUX and C(P)SIG-(P)SIG; no code change.
 - README and crate-root docs rewritten to the workspace documentation standard: what the crate does and does not do, a standards-supported table (edition, scope, status), feature flags, a doctested quick start, and related crates.

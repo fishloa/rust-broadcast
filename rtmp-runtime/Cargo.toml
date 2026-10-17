@@ -1,6 +1,6 @@
 [package]
 name    = "rtmp-runtime"
-version = "0.7.2"
+version = "0.8.0"
 edition = "2024"
 description = "Sans-IO RTMP 1.0 (Adobe Real-Time Messaging Protocol) ingest session engine — a driveable server-side publish state machine over the handshake, chunk stream, AMF0, and message layers; optional tokio socket adapter."
 license      = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
 thiserror = "2"
 log       = "0.4"
 # Constant-time stream-key comparison (issue #1142).
@@ -43,7 +43,7 @@ name = "capture_publish"
 required-features = ["tokio"]
 
 [dev-dependencies]
-transmux   = { path = "../transmux", version = "0.26", default-features = false, features = ["std"] }
+transmux   = { path = "../transmux", version = "0.27", default-features = false, features = ["std"] }
 serde_json = { workspace = true }
 test-alloc = { path = "../test-alloc" }
 tokio      = { version = "1", features = ["full", "test-util"] }

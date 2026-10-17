@@ -105,7 +105,7 @@ anything that needs to reason about a broadcast stream's signalling.
 
 ```toml
 [dependencies]
-dvb-si = "11"
+dvb-si = "12"
 ```
 
 ### Parse one section, walk it, serialize it back
@@ -255,7 +255,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `flate2` | no | zlib-decompress `compressed_module_descriptor` modules in object carousels (implies `std`). |
 
 ```toml
-dvb-si = { version = "11", default-features = false }   # no_std + alloc, bring your own sections
+dvb-si = { version = "12", default-features = false }   # no_std + alloc, bring your own sections
 ```
 
 ## Detailed coverage

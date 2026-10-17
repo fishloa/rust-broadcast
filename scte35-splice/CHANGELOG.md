@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs restructured: what it does / does not, standards table (SCTE 35 2023r1, ETSI TS 103 752-1 V1.2.1), command/descriptor coverage matrix, feature table.
 

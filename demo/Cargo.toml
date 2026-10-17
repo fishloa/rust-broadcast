@@ -16,14 +16,14 @@ publish     = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
 dvb-si           = { path = "../dvb-si",           features = ["ts", "serde", "chrono"] }
-mpeg-ts          = { path = "../mpeg-ts",          version = "0.5", default-features = false }
-dvb-conformance  = { path = "../dvb-conformance",  version = "11.1" }
-scte35-splice    = { path = "../scte35-splice",    version = "3.0" }
-mpeg-pes         = { path = "../mpeg-pes",         version = "0.5" }
-dvb-subtitle     = { path = "../dvb-subtitle",     version = "0.5" }
-transmux         = { path = "../transmux",         version = "0.26" }
+mpeg-ts          = { path = "../mpeg-ts",          version = "0.6", default-features = false }
+dvb-conformance  = { path = "../dvb-conformance",  version = "12.0" }
+scte35-splice    = { path = "../scte35-splice",    version = "4.0" }
+mpeg-pes         = { path = "../mpeg-pes",         version = "0.6" }
+dvb-subtitle     = { path = "../dvb-subtitle",     version = "0.6" }
+transmux         = { path = "../transmux",         version = "0.27" }
 wasm-bindgen     = "0.2"
 serde_json       = "1.0"
 serde            = { version = "1", features = ["derive"] }

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs restructured: scope, standards table (TS 101 154 V2.6.1 vendored; CTA-608-E / 708-E stated as not vendored), feature table, compiled quick-start doctests.
 

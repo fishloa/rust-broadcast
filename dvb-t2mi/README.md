@@ -49,7 +49,7 @@ Every optional feature except `std` is `no_std` + `alloc` clean (built on
 
 ```toml
 [dependencies]
-dvb-t2mi = "11"
+dvb-t2mi = "12"
 ```
 
 ## Quick start

@@ -35,7 +35,7 @@ with `Error::Mpeg1NotSupported`, never mis-parsed as corrupt data.
 
 ```toml
 [dependencies]
-mpeg-ps = "0.5"
+mpeg-ps = "0.6"
 ```
 
 ## Quick start

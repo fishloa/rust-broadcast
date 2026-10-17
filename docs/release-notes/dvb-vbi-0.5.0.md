@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # dvb-vbi 0.5.0
 
 _Released 2026-10-16._

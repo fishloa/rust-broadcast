@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-17
 ### Documentation
 - README and new crate-root docs rewritten to the cluster standard: what it does / does not, standards table (BS.1770-5, R 128 v5, Tech 3341/3342 v4, GY/T 282/377/379), feature table, compiling quick start; Tech 3341 case coverage corrected to what the test suite exercises.
 

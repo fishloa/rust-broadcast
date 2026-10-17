@@ -39,7 +39,7 @@ them).
 
 ```toml
 [dependencies]
-ts-fix = { version = "0.6", default-features = false } # library only
+ts-fix = { version = "0.7", default-features = false } # library only
 ```
 
 ## Library quick start

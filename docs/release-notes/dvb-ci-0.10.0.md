@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # dvb-ci 0.10.0
 
 _Released 2026-10-16._

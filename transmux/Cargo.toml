@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.26.0"
+version      = "0.27.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -13,7 +13,7 @@ readme       = "README.md"
 [dependencies]
 # Floored at 9.2: `cenc::CencScheme` and `hex::hex_encode` (the definitions this
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
-broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 # Hex codec for every hex site (SP5); `alloc` only, so the core stays no_std.
 hex        = { version = "0.4", default-features = false, features = ["alloc"] }
@@ -29,19 +29,19 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
 # produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
 # syntax itself no longer lives in this crate.
-broadcast-hls = { path = "../broadcast-hls", version = "0.3", default-features = false }
-mp4-emsg   = { path = "../mp4-emsg",  version = "0.4", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts",  version = "0.5", default-features = false }
-mpeg-pes   = { path = "../mpeg-pes", version = "0.5", default-features = false }
-mpeg-ps    = { path = "../mpeg-ps",  version = "0.5", default-features = false }
-rtp-packet = { path = "../rtp-packet", version = "0.4", default-features = false }
-rtcp-packet = { path = "../rtcp-packet", version = "0.5", default-features = false }
+broadcast-hls = { path = "../broadcast-hls", version = "0.4", default-features = false }
+mp4-emsg   = { path = "../mp4-emsg",  version = "0.5", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts",  version = "0.6", default-features = false }
+mpeg-pes   = { path = "../mpeg-pes", version = "0.6", default-features = false }
+mpeg-ps    = { path = "../mpeg-ps",  version = "0.6", default-features = false }
+rtp-packet = { path = "../rtp-packet", version = "0.5", default-features = false }
+rtcp-packet = { path = "../rtcp-packet", version = "0.6", default-features = false }
 bytes      = { version = "1", default-features = false }
 # Typed PMT ES_info audio metadata (issue #1162 R1): `TrackSpec::audio_metadata`
 # reuses dvb-si's `iso_639_language_descriptor` + `supplementary_audio_descriptor`
 # parsers instead of re-parsing. dvb-si does not depend on transmux (no cycle);
 # `no_std`+`alloc` with default features off.
-dvb-si     = { path = "../dvb-si", version = "11.1", default-features = false }
+dvb-si     = { path = "../dvb-si", version = "12.0", default-features = false }
 # Start-code scan (`annexb::find_start_code_prefix`): find each `01` byte
 # instead of testing every offset. no_std without its `std` feature.
 memchr     = { version = "2", default-features = false }
@@ -61,7 +61,7 @@ clap       = { workspace = true, optional = true, features = ["derive"] }
 # `detect_container` used a fixed-offset TS check that missed M2TS (192-byte
 # stride) and mid-packet captures; `container-probe` is the crate built to
 # replace exactly that. Optional so the `no_std` library build stays free of it.
-container-probe = { path = "../container-probe", version = "0.1", default-features = false, optional = true }
+container-probe = { path = "../container-probe", version = "0.2", default-features = false, optional = true }
 
 [[bin]]
 name = "transmux"
@@ -104,7 +104,7 @@ serde_json   = { workspace = true }
 # dependency (see `splice.rs`'s module docs, "Follow-up") — selecting splice
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
-scte35-splice  = { path = "../scte35-splice", version = "3.0", default-features = false, features = ["std"] }
+scte35-splice  = { path = "../scte35-splice", version = "4.0", default-features = false, features = ["std"] }
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
 # ts_mux_psi_repeat.rs checks the muxer's output against the independent ETSI
 # TR 101 290 monitor (PAT/PMT repetition, continuity). Dev-dependency only;

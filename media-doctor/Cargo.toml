@@ -1,6 +1,6 @@
 [package]
 name         = "media-doctor"
-version      = "0.10.0"
+version      = "0.11.0"
 edition      = "2024"
 description  = "Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation."
 license      = "MIT OR Apache-2.0"
@@ -29,22 +29,22 @@ name = "watch_metrics_server"
 required-features = ["cli"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
-mpeg-pes         = { path = "../mpeg-pes", version = "0.5", default-features = false }
-mpeg-ts          = { path = "../mpeg-ts", version = "0.5", default-features = false }
-dvb-si           = { path = "../dvb-si", version = "11.1", default-features = false, features = ["ts"] }
-dvb-conformance  = { path = "../dvb-conformance", version = "11.1", default-features = false }
-scte35-splice    = { path = "../scte35-splice", version = "3.0", default-features = false }
-timed-metadata   = { path = "../timed-metadata", version = "0.6", default-features = false }
-transmux         = { path = "../transmux", version = "0.26", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
+mpeg-pes         = { path = "../mpeg-pes", version = "0.6", default-features = false }
+mpeg-ts          = { path = "../mpeg-ts", version = "0.6", default-features = false }
+dvb-si           = { path = "../dvb-si", version = "12.0", default-features = false, features = ["ts"] }
+dvb-conformance  = { path = "../dvb-conformance", version = "12.0", default-features = false }
+scte35-splice    = { path = "../scte35-splice", version = "4.0", default-features = false }
+timed-metadata   = { path = "../timed-metadata", version = "0.7", default-features = false }
+transmux         = { path = "../transmux", version = "0.27", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the validator parses playlists
 # via this crate directly rather than reaching through `transmux` for it.
-broadcast-hls    = { path = "../broadcast-hls", version = "0.3", default-features = false }
+broadcast-hls    = { path = "../broadcast-hls", version = "0.4", default-features = false }
 # Container-format detection for the `check` CLI's input routing (issue #1112
 # / audit MD-W7): a file that is a TS but does not start on a packet boundary,
 # or uses the 192-byte M2TS / 204-byte RS framing, must still be routed to the
 # TS diagnostics. Only the binary needs it, so it is behind `cli`.
-container-probe  = { path = "../container-probe", version = "0.1", optional = true, default-features = false }
+container-probe  = { path = "../container-probe", version = "0.2", optional = true, default-features = false }
 clap             = { workspace = true, optional = true, features = ["derive"] }
 serde            = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 serde_json       = { version = "1.0", default-features = false, features = ["alloc"], optional = true }
@@ -93,7 +93,7 @@ test-alloc = { path = "../test-alloc" }
 # the library dependency above stays `default-features = false` (no `cli`,
 # no `clap`); Cargo unifies the two requirements for test builds only, same
 # pattern as `rtmp-runtime`'s dev-dependency on `transmux`.
-transmux = { path = "../transmux", version = "0.26", default-features = false, features = ["cli"] }
+transmux = { path = "../transmux", version = "0.27", default-features = false, features = ["cli"] }
 # Real SSAI Interstitial `EXT-X-DATERANGE` rendering (issue #1140): the
 # oracle test renders through `ssai-runtime`'s own
 # `InterstitialDateRange::to_tag_line`, not a hand-typed approximation of
@@ -104,9 +104,9 @@ ssai-runtime = { path = "../ssai-runtime", default-features = false }
 # tests follow (issue #1112). `dvb-si` is already a normal dependency, so this
 # adds no crate to the graph; the feature set is raised for the section
 # builders only in test builds.
-dvb-si = { path = "../dvb-si", version = "11", default-features = false, features = ["ts"] }
+dvb-si = { path = "../dvb-si", version = "12.0", default-features = false, features = ["ts"] }
 # `mpeg-ts`'s `SectionPacketiser` wraps those sections into real TS packets.
-mpeg-ts = { path = "../mpeg-ts", version = "0.5", default-features = false }
+mpeg-ts = { path = "../mpeg-ts", version = "0.6", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true

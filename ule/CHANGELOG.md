@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs restructured: what is / is not covered, standards table (RFC 4326, RFC 5163), feature flags, design notes.
 

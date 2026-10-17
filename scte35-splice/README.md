@@ -14,7 +14,7 @@ cueing) parser **and builder**, with the rust-broadcast family's symmetric
 
 ```toml
 [dependencies]
-scte35-splice = "3"
+scte35-splice = "4"
 ```
 
 ## What it does / what it does not

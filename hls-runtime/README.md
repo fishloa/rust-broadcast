@@ -9,7 +9,7 @@ Formerly published as `ll-hls-runtime` (last release 0.3.1 under that name); sea
 
 ```toml
 [dependencies]
-hls-runtime = "0.8"
+hls-runtime = "0.9"
 ```
 
 ## What it does / what it does not
