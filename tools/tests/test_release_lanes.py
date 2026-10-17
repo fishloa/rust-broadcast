@@ -18,7 +18,7 @@ PAIRS_FILE = REPO / "docs" / "release-plan-2026-10.pairs"
 LANES = sorted(WF.glob("release-*.yml"))
 LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 ABANDONED = {"atsc3"}  # lane fails safe by design; never in the pair list
-UNRELEASED = {"buffering-runtime"}  # new crate, lane staged; released in a later plan (owner sign-off), so in no pair list
+UNRELEASED: set[str] = set()  # no staged-but-unplanned lane: buffering-runtime ships via docs/release-plan-2026-10-patch4.pairs
 
 
 def _pr():
@@ -37,6 +37,14 @@ def _glob(path):
 
 def _pairs():
     return [tuple(t.split("=", 1)) for t in PAIRS_FILE.read_text().split()]
+
+
+def _planned():
+    """Crates in the main plan or any follow-up patch plan (`release-plan-2026-10*.pairs`)."""
+    out = set()
+    for f in sorted((REPO / "docs").glob("release-plan-2026-10*.pairs")):
+        out |= {t.split("=", 1)[0] for t in f.read_text().split()}
+    return out
 
 
 def test_lane_set_is_not_vacuous():
@@ -65,7 +73,7 @@ def test_lane_glob_publish_package_and_note_path_name_the_same_crate(path):
 
 def test_every_plan_crate_has_exactly_one_lane_and_the_lockstep_has_none_of_its_own():
     lane_crates = {_glob(p)[: -len("-v*")] for p in LANES}
-    planned = {c for c, _ in _pairs()}
+    planned = _planned()
     assert planned - set(LOCKSTEP) <= lane_crates, f"no lane for: {sorted(planned - set(LOCKSTEP) - lane_crates)}"
     assert not (lane_crates & set(LOCKSTEP)), "a lockstep crate has its own lane: it would publish twice"
     assert lane_crates - planned == ABANDONED | UNRELEASED, f"unplanned lanes: {sorted(lane_crates - planned - ABANDONED - UNRELEASED)}"

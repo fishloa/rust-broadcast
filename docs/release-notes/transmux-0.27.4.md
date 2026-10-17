@@ -1,6 +1,6 @@
 # transmux 0.27.4
 
-_Released 2026-10-17._
+_Released 2026-10-18._
 
 **Patch release.** On a multi-program transport stream, `StreamingTsDemux` emitted a `DemuxEvent::ClockReference` for the PCR on *any* PID and attached no program, so a consumer saw stray PCR PIDs and could not tell which program a clock belonged to. 0.27.4 emits a clock reference only from a PID that a PMT names as its `PCR_PID`, and says which program it belongs to. It also adds an opt-in cap on queued `InputDegraded` events and documents the draining requirement. Reported by zenith (issues #1354 and #1352).
 

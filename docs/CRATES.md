@@ -89,7 +89,7 @@ change, so the old versions stay live.
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**59 workspace members.** 54 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**59 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -122,7 +122,7 @@ change, so the old versions stay live.
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.2.0 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
 | [`transmux`](#transmux) | Containers and adaptive streaming | 0.27.4 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
-| [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.1.0 | — | yes | 1 | not on crates.io |
+| [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.1.0 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
 | [`rtcp-packet`](#rtcp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtcp-packet.svg)](https://crates.io/crates/rtcp-packet) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | no | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
@@ -486,14 +486,14 @@ Sans-IO session engines and packet codecs for RTSP, RTP/RTCP, RTMP, SRT, RIST, W
 
 #### buffering-runtime
 
-Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer depth and explicit StartPlaying / Pause / Resume events for a player that cannot change playback rate. Integer-only, no I/O or clock, `max_us` is a hard cap. Unpublished; the spec-posture departure (policy half implementation-defined) awaits owner approval.
+Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer depth and explicit StartPlaying / Pause / Resume events for a player that cannot change playback rate. Integer-only, no I/O or clock, `max_us` is a hard cap. The policy half is implementation-defined (owner-approved spec-posture departure).
 
 - **Standards:** RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined
 - **Cargo description:** Sans-IO live-TS playout buffer controller: measures delivery jitter (RFC 5481 PDV), keeps a stall memory, and decides when a player should start, pause and resume and how deep its buffer must be. Integer-only, no_std + alloc.
-- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
+- **Version (in-tree):** 0.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../buffering-runtime/README.md) · [CHANGELOG](../buffering-runtime/CHANGELOG.md)
+- **Links:** [README](../buffering-runtime/README.md) · [CHANGELOG](../buffering-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/buffering-runtime) · [docs.rs](https://docs.rs/buffering-runtime)
 
 #### rtcp-packet
 

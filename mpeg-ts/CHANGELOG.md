@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.6.2] - 2026-10-17
+## [0.6.2] - 2026-10-18
 ### Documentation
 - `TsResync::feed` / `take_losses` now state that the loss list is unbounded and only `take_losses()` drains it (#1352).
 

@@ -1,6 +1,6 @@
 # mpeg-ts 0.6.2
 
-_Released 2026-10-17._
+_Released 2026-10-18._
 
 **Patch release, documentation only.** `TsResync::feed` and `TsResync::take_losses` now state that the loss list is unbounded and that only `take_losses()` drains it. No code, signature or behaviour changed from 0.6.1. Reported alongside the `transmux` draining review (issue #1352).
 
