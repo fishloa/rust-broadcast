@@ -28,8 +28,11 @@ No source-level migration is required beyond bumping the version requirement and
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
-#### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 #### Fixed
 
@@ -40,6 +43,9 @@ No source-level migration is required beyond bumping the version requirement and
 
 ## Merged changes since `rtcp-packet-v0.5.0`
 
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
+- Fix confirmed transport/ancillary review defects (supersedes #1277) (#1280)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)
 - Audit critical-bug verification pass: 72 issues re-verified against main; fixes for #1012 #1022 #1034 #1035 #1056 + regression tests (NO release) (#1180)

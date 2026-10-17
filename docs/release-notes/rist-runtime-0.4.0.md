@@ -30,10 +30,14 @@ _Released 2026-10-16._
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
-#### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `rtcp-packet` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 #### Changed (breaking)
+- `GenericNack` and `RangeNack` gain a `padding: Vec<u8>` field (RFC 3550 §6.4.1 padding octets without the count byte): a padded standalone NACK now round-trips byte-identically (P bit, count and fill preserved) instead of re-serializing with `P = 0` and the padding gone. A padding count that leaves a partial FCI / range entry is rejected with `InvalidPaddingCount` instead of silently dropping the orphan bytes. Struct literals must add `padding: Vec::new()`.
 - `Error` gains `PaddingBitSet` (`#[non_exhaustive]`, so additive for matchers): `RttEcho::parse` rejects a set P bit (TR-06-1 §5.2.6 fixes `P = 0`; its padding is the message's own field) instead of silently clearing it on re-serialize (#1086/RIST-W5).
 
 #### Fixed
@@ -42,6 +46,9 @@ _Released 2026-10-16._
 
 ## Merged changes since `rist-runtime-v0.3.0`
 
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
+- Fix confirmed transport/ancillary review defects (supersedes #1277) (#1280)
 - test: shared test-fixtures loader crate, migrate hand-written loaders, drop CRC copies (#1214) (#1215)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)

@@ -34,6 +34,21 @@ _Released 2026-10-16._
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
+#### Documentation
+- README and crate-root docs restructured: what it does / does not, standards table (SCTE 35 2023r1, ETSI TS 103 752-1 V1.2.1), command/descriptor coverage matrix, feature table.
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `mpeg-ts` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
+#### Fixed (adversarial review of signalling/captions)
+- **BREAKING (behavioural):** `EquivalentSegmentationType::bits()` / `TimelineType::bits()` return a `Reserved(v)` verbatim instead of masking it to 4 bits, and the compact `splice_insert` DAS block, the stand-alone `DVB_DAS_descriptor()` and `DSM-CC_stream_event_payload_binary()` serializers reject a value above `0xF` with `FieldOverflow` (it used to be written as a different valid-looking value, e.g. `Reserved(0x12)` as `ProviderPlacementOpportunity` / `Temi`).
+- **BREAKING (behavioural):** `StreamEventPayload::serialize_into` requires the `temi_*` bytes exactly when the wire `timeline_type` is `0x2` (`{Temi, temi: None}` and `{VideoPts, temi: Some}` are rejected instead of producing output the parser rejects or silently loses).
+- **BREAKING (additive field on a literal-constructible struct):** `StreamEventPayload` gains `reserved_dvb_data: &[u8]`, the `reserved_zero_future_use` run inside `DVB_data_length` that parse used to skip and serialize used to drop; it is now preserved so such a payload re-serializes byte-exactly (`&[]` for hand-built payloads).
+- **BREAKING (behavioural):** `CompactTimeSignal` / `CompactSpliceInsert` serialize rejects `encrypted_packet: true` with `e_crc_32: None` (it wrote `E_CRC_32 = 0`, which re-parsed as `Some(0)`) and `e_crc_32: Some` when not encrypted (silently dropped).
+
+#### Fixed
+- Serialize: the DVB-TA DAS `reserved` nibble in the compact encoder was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
+
 #### Added (item 3 - DVB DAS nibble-order ambiguity, ETSI TS 103 752-1)
 - `dvb_ta::DasNibbleOrder` (`TypeHigh` = Table 8, `TypeLow` = Table 1) plus `DvbDasDescriptor::{parse,serialize_into}_with_order` and `CompactSpliceInsert::{parse,serialize_into}_with_order`: Table 1 (stand-alone `DVB_DAS_descriptor()`, type in the low nibble) and Table 8 (`compact_splice_insert()`, type in the high nibble) disagree about the `equivalent_segmentation_type`/`reserved` nibble order of the same body. After searching for a resolution (no newer edition or corrigendum, no byte examples in TS 103 752-1/TR 103 752-2/A178-1r1, no independent implementation, no real capture) the question stays open: default wire behaviour is unchanged (descriptor: Table 1, compact: Table 8), both readings are selectable and pinned by `tests/das_nibble_order.rs` (revert-verified), and the evidence is recorded in `docs/dvb_ta/compact-scte35.md` and the `DasNibbleOrder` docs.
 
@@ -46,9 +61,6 @@ _Released 2026-10-16._
 
 #### Changed (BREAKING, #1202)
 - **BREAKING (behavioural):** `SpliceInfoSection::serialize_into` rejects `sap_type` > 3 and `encryption_algorithm` > 63, and `AudioDescriptor::serialize_into` rejects `bit_stream_mode` > 7 / `num_channels` > 15, with `Error::FieldOverflow` instead of masking them into a different valid-looking value (the #1129 class). Guarded by `tests/serialize_mask_guard.rs` and `tests/serialize_field_width.rs`; `tests/hostility.rs` sweeps CRC-repaired mutations of real sections for panics (none found).
-
-#### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 #### Changed (BREAKING)
 - `dvb_ta::compact`: `compact_time_signal()` / `compact_splice_insert()` now use
@@ -69,6 +81,10 @@ _Released 2026-10-16._
 
 ## Merged changes since `scte35-splice-v3.0.1`
 
+- docs: cluster C crate READMEs + crate-root docs (standards tables, feature flags, scope, verified editions) (#1284)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
+- chore: pre-release hygiene (README coverage, snippet tool, docsrs, examples, CLAUDE.md) (#1278)
+- Fix the confirmed defects of the dvb-si descriptor review (supersedes #1268) (#1272)
 - tests: one fixture resolver (public -> private/fixtures -> .test-streams); move local-only captures to the private repo (#1259) (#1260)
 - feat(scte35-splice): DasNibbleOrder - pin both readings of the DVB DAS type/reserved nibble order; record the evidence (item 3) (#1248)
 - fix(scte35-splice): accept the deprecated 0xFFF splice_command_length (derive from structure, round-trip preserved); independent compact vectors; real-capture tests (#1204) (#1205)

@@ -39,6 +39,12 @@ The tokio `ClientCodec` delivers the events decoded before the error and raises 
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
+#### Changed (BREAKING: epoch — requires broadcast-auth 0.5)
+- Builds against new caret epochs of workspace siblings (`broadcast-auth` 0.4 -> 0.5). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff.
+
 #### Security (secrets and identity handling, #1142)
 
 - The `Session` id comparison uses `subtle::ConstantTimeEq` (new `subtle` dependency) instead of a hand-written fold; new `tests/secret_debug_guard.rs`.
@@ -52,6 +58,9 @@ The tokio `ClientCodec` delivers the events decoded before the error and raises 
 
 ## Merged changes since `rtsp-runtime-v0.7.1`
 
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
+- chore: pre-release hygiene (README coverage, snippet tool, docsrs, examples, CLAUDE.md) (#1278)
 - tests: one fixture resolver (public -> private/fixtures -> .test-streams); move local-only captures to the private repo (#1259) (#1260)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)
 - Audit per-crate rollups: verified against main, 54 commits of real fixes across ~40 crates (BREAKING items marked, NO release) (#1179)

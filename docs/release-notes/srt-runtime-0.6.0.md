@@ -28,11 +28,20 @@ No API break of its own; the major is the `broadcast-common` epoch cascade.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 #### Added
 - `io::SrtSocket::rendezvous` / `rendezvous_with`: the tokio adapter now drives the sans-IO `RendezvousHandshake` (§4.3.2) over a bound UDP socket, so two peers can connect in Rendezvous mode (previously only the sans-IO engine existed). Verified against a REAL peer: `tests/libsrt_rendezvous.rs` runs `srt-live-transmit` in `mode=rendezvous` over loopback in both data directions, repeated with fresh random cookies so both Initiator/Responder outcomes occur (skips loudly when libsrt is absent, like the other `libsrt_*` tests; `SRT_REQUIRE_LIBSRT=1` makes the skip a failure). `tests/io_rendezvous.rs` is the self-vs-self counterpart that runs everywhere. The Caller path's post-handshake wiring is now the shared `SrtSocket::established`.
 
 ## Merged changes since `srt-runtime-v0.5.0`
 
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
+- chore: pre-release hygiene (README coverage, snippet tool, docsrs, examples, CLAUDE.md) (#1278)
 - srt-runtime: tokio Rendezvous mode + real libsrt rendezvous interop (#1200) (#1201)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)

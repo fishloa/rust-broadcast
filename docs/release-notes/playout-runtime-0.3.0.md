@@ -34,11 +34,16 @@ No source-level migration is required beyond bumping the version requirement and
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
-#### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+#### Documentation
+- README and crate-root docs rewritten to the cluster standard: what it does / does not, standards table (SCTE 35 2023r1 `splice_insert` only), feature table, compiling quick start.
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `mp4-emsg` 0.4 -> 0.5, `scte35-splice` 3 -> 4, `ssai-runtime` 0.2 -> 0.3). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 ## Merged changes since `playout-runtime-v0.2.1`
 
+- docs: cluster C crate READMEs + crate-root docs (standards tables, feature flags, scope, verified editions) (#1284)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
 - clock33: shared PCR constants + modular distance; migrate 5 crates; fix ts-fix post-wrap observations (#1206) [stacked on #1196] (#1207)
 - Audit sweep of the nine small crates: fit_mask serializers, hostility + guard tests (#1202) [stacked on #1199] (#1203)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
