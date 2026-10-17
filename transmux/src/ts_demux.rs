@@ -121,6 +121,78 @@
 //! the TS adaptation fields, both into [`Media`]'s `pcr` field (batch) and as
 //! [`DemuxEvent::ClockReference`] (streaming).
 //!
+//! # E-AC-3: which frame describes the stream
+//!
+//! The `dec3` is built from the first access unit the probe can trust. Every
+//! E-AC-3 syncframe carries one `crc2` over the whole frame, which a decoder
+//! "shall verify" (ETSI TS 102 366 §E.2.2), so the probe prefers an access
+//! unit whose frames all verify (`Ec3SyncframeInfo::from_es_first_au_crc_verified`),
+//! skipping header-shaped `0B 77` pairs inside coded data and frames damaged by
+//! lost packets. Waiting for one would stall a lossy capture (and, in PMT order,
+//! every track behind it: the zenith report), so when none is held yet the
+//! track is announced from the first header-valid frame, as before.
+//!
+//! `bsmod` is a property of the *stream*, but a frame carries it only when its
+//! `infomdate` bit is set, and the encoder of the French TNT audio-description
+//! track sets it in some frames only; `dec3.bsmod` of a frame without it is 0
+//! (§F.6.2.8). The probe therefore takes `bsmod` from the first intact frame in
+//! its window that carries one (`Ec3SpecificBox` `bsmod`, via
+//! `Ec3SyncframeInfo::first_crc_verified_bsmod`), not from whichever frame the
+//! config happens to be read from. Pinned on `m6-single.ts` and the private
+//! zenith capture against an independent parse of every intact frame and the PMT
+//! `component_type` (`tests/streaming_ts_demux_eac3_bsmod.rs`: 0x82 / 0x84 main,
+//! `bsmod` 0; 0x83 visually impaired, `bsmod` 2). **Limit:** an unverified first
+//! frame is not corrected later: if the window holds no intact frame carrying
+//! `bsmod` at the time the track is announced (only possible on a capture that
+//! loses almost every frame), a damaged frame's `bsmod` stands.
+//!
+//! # Why an E-AC-3 track cannot be announced from the PMT alone
+//!
+//! ffmpeg lists an E-AC-3 stream from the PMT `enhanced_AC-3_descriptor` (0x7A,
+//! ETSI EN 300 468 Table D.7) before any frame arrives. A [`CodecConfig::Eac3`]
+//! needs a complete `dec3` (ETSI TS 102 366 §F.6.1, page 198), and the
+//! descriptor cannot supply it:
+//!
+//! | `dec3` field | from the 0x7A descriptor? |
+//! |---|---|
+//! | `data_rate` (13) | no: a bitrate is not signalled |
+//! | `num_ind_sub` (3) | partly: `substream1..3_flag` count extra independent substreams |
+//! | `fscod` (2) | no: the sample rate is not signalled |
+//! | `bsid` (5) | yes: the descriptor's `bsid` field (only when `bsid_flag`) |
+//! | `asvc` (1) | no: the descriptor's `asvc` is a bitmap of main services it attaches to, a different field; the service-type flags of `component_type` only imply it |
+//! | `bsmod` (3) | no: not signalled; `component_type` service-type flags merely agree with it by numbering (EN 300 468 Table D.4 / TS 102 366 Table 4.2) |
+//! | `acmod` (3) | no: `component_type`'s channel flags give mono / 1+1 / stereo / "> 2 channels" only |
+//! | `lfeon` (1) | no |
+//! | `num_dep_sub` (4), `chan_loc` (9) | no: dependent substreams are not signalled at all |
+//!
+//! `fscod`, `data_rate`, `acmod`, `lfeon` and the dependent-substream fields can
+//! only come from a syncframe, so the demuxer does not fabricate a `dec3`: an
+//! E-AC-3 PID is announced (`TrackAdded`) when a frame has been parsed, never
+//! from the PMT alone.
+//!
+//! # Programs and declared-but-silent PIDs
+//!
+//! The demuxer follows the **PAT**: every `(program_number, PMT PID)` it lists is
+//! followed, and each announced track carries its `TrackSpec::program_number`.
+//! A PMT section whose `program_number` is not the PAT's entry for the PID it
+//! arrived on is dropped (the #774 cross-check). The real TNT capture shows the
+//! consequence: its PAT lists only program 0x0401, while the same PMT PID also
+//! carries a PMT for 0x0601 whose components overlap 0x0401's (and contradict
+//! it: 0x83/0x84 swap their `component_type`), so 0x0601 yields no tracks. No
+//! data is lost: 0x0601's only PIDs of its own (0x96, 0x97, subtitles) have no
+//! packets in the capture.
+//!
+//! A PMT-declared PID that never carries a packet is likewise never announced:
+//! a track is announced when its first access unit arrives (an opaque
+//! [`CodecConfig::Data`] track, needing no header, on that very first access
+//! unit). This is deliberate: announcing it from the PMT would add an empty
+//! `Data` track to every service whose subtitle PID is idle, which every ISOBMFF
+//! muxer rejects (`Error::UnmuxableDataTrack`, so each consumer
+//! would have to filter it) and which would shift `track_id`s. The cost is that
+//! [`DemuxEvent::TracksResolved`] is withheld until each such PID has produced
+//! data (or [`finish`](StreamingTsDemux::finish) abandons it): PID 0x8D (HD DVB
+//! subtitles, no PES in the capture) is one.
+//!
 //! [`CodecConfig`]: crate::pipeline::CodecConfig
 //! [`DataCarriage`]: crate::pipeline::DataCarriage
 //!
