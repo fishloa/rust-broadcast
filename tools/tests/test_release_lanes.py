@@ -1,4 +1,4 @@
-"""Structural pins on the 50 release lanes, the lockstep lane, the pair list and the
+"""Structural pins on the 51 release lanes, the lockstep lane, the pair list and the
 plan document: the audit found every one of these unpinned, and a drift in any of
 them only shows up LIVE, mid-wave, on an immutable crates.io publish."""
 
@@ -18,6 +18,7 @@ PAIRS_FILE = REPO / "docs" / "release-plan-2026-10.pairs"
 LANES = sorted(WF.glob("release-*.yml"))
 LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 ABANDONED = {"atsc3"}  # lane fails safe by design; never in the pair list
+UNRELEASED = {"live-buffer"}  # new crate, lane staged; released in a later plan (owner sign-off), so in no pair list
 
 
 def _pr():
@@ -39,7 +40,7 @@ def _pairs():
 
 
 def test_lane_set_is_not_vacuous():
-    assert len(LANES) == 50, [p.name for p in LANES]
+    assert len(LANES) == 51, [p.name for p in LANES]
 
 
 @pytest.mark.parametrize("path", LANES, ids=lambda p: p.name)
@@ -67,9 +68,10 @@ def test_every_plan_crate_has_exactly_one_lane_and_the_lockstep_has_none_of_its_
     planned = {c for c, _ in _pairs()}
     assert planned - set(LOCKSTEP) <= lane_crates, f"no lane for: {sorted(planned - set(LOCKSTEP) - lane_crates)}"
     assert not (lane_crates & set(LOCKSTEP)), "a lockstep crate has its own lane: it would publish twice"
-    assert lane_crates - planned == ABANDONED, f"unplanned lanes: {sorted(lane_crates - planned - ABANDONED)}"
+    assert lane_crates - planned == ABANDONED | UNRELEASED, f"unplanned lanes: {sorted(lane_crates - planned - ABANDONED - UNRELEASED)}"
     assert set(LOCKSTEP) <= planned
     assert not (planned & ABANDONED)
+    assert not (planned & UNRELEASED), "an unreleased crate must not be in the pair list"
 
 
 def test_every_planned_tag_matches_exactly_one_lane_glob():
