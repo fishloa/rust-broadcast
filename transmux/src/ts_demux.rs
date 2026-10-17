@@ -5410,11 +5410,9 @@ impl StreamingTsDemux {
                     stream.track = Some(other);
                     let never_sent = stream.payload_packets == 0;
                     let aus_stalled = stream.probe_aus >= PROBE_HEAD_BLOCK_AUS
-                        && !matches!(
-                            stream.codec,
-                            Codec::H264 | Codec::Hevc | Codec::Mpeg2Video
-                        );
-                    let silent = never_sent && self.parked_behind(next_pid) >= SILENT_HEAD_PARKED_BYTES;
+                        && !matches!(stream.codec, Codec::H264 | Codec::Hevc | Codec::Mpeg2Video);
+                    let silent =
+                        never_sent && self.parked_behind(next_pid) >= SILENT_HEAD_PARKED_BYTES;
                     if silent || aus_stalled {
                         // Stalled: it no longer holds back the PIDs after it
                         // (see `PROBE_HEAD_BLOCK_AUS`); it stays unresolved and
@@ -7061,12 +7059,17 @@ mod tests {
         // the parked bytes from below to at-or-above it.
         let (_, before) = first_announce(&ts).expect("audio announced");
         assert!(
-            before < SILENT_HEAD_PARKED_BYTES
-                && before + 512 >= SILENT_HEAD_PARKED_BYTES,
+            before < SILENT_HEAD_PARKED_BYTES && before + 512 >= SILENT_HEAD_PARKED_BYTES,
             "announced with {before} parked bytes, criterion {SILENT_HEAD_PARKED_BYTES}"
         );
         // Below the criterion (past the old 8192-packet bound) the head blocks.
-        let early = silent_head_ts(STREAM_TYPE_AVC, &[], STREAM_TYPE_AAC_ADTS, adts_frame, 15_000);
+        let early = silent_head_ts(
+            STREAM_TYPE_AVC,
+            &[],
+            STREAM_TYPE_AAC_ADTS,
+            adts_frame,
+            15_000,
+        );
         assert!(first_announce(&early).is_none());
     }
 
