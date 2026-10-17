@@ -123,7 +123,7 @@ Runnable examples: `cargo run -p mpeg-ts --example demux`, `--example iter_packe
 | `pid` | `Pid`, `PidOutOfRange`, `well_known::{PAT, CAT, TSDT, IPMP_CIT, NIT, SDT_BAT, EIT, RST, TDT_TOT, NETWORK_SYNC, RNT, SAT, INBAND_SIGNALLING, MEASUREMENT, DIT, SIT, ATSC_PSIP, NULL}` | Typed 13-bit PID newtype |
 | `section` | `Section<'a>` | Generic section header (`table_id`, syntax indicator, length, version, section numbers, CRC validation) |
 | `mux` | `SectionPacketiser`, `SiMux` (`upsert`, `upsert_pat`, `upsert_pmt`, `upsert_sdt_actual`, `upsert_nit`, `upsert_tdt`, `upsert_tot`, `poll`, `poll_into`) | Sections to TS packets with continuity and stuffing; interval-scheduled SI repetition |
-| `resync` | `TsResync`, `PacketStride` (`Ts188`, `Rs204`), `ResyncStats` | Alignment recovery from raw bytes; `feed_into` appends to a caller-owned vector |
+| `resync` | `TsResync`, `PacketStride` (`Ts188`, `Rs204`), `ResyncStats` | Alignment recovery from raw bytes; `feed_into` appends to a caller-owned vector. Drain `take_losses()` regularly: the post-lock loss list is unbounded and only that call empties it |
 | `pusi` | `PusiReassembler`, `DEFAULT_MAX_UNIT_SIZE` | PUSI-delimited unit accumulation for non-PSI PIDs, size-capped |
 | `error` | `Error`, `Result` | Structured `thiserror` errors (`BufferTooShort`, `CrcMismatch`, `InvalidSyncByte`, `OutputBufferTooSmall`, `FieldOverflow`, ...) |
 

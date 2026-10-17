@@ -36,6 +36,13 @@ pub struct EventProvenance {
     /// whatever unit the container demuxes in (e.g. the 188-byte TS packet
     /// index), when the container has one.
     pub packet_index: Option<u64>,
+    /// The MPEG-2 TS `program_number` (ISO/IEC 13818-1 §2.4.4.8, PAT/PMT)
+    /// the event is attributed to, when the container has programs and the
+    /// attribution is known. Today only [`DemuxEvent::ClockReference`] sets
+    /// it: the program whose PMT names the carrying PID as its `PCR_PID`.
+    /// `None` means "not attributable (yet)" — never a fabricated value; see
+    /// [`DemuxEvent::ClockReference`] for the pre-PMT behaviour.
+    pub program_number: Option<u16>,
 }
 
 /// Why a [`DemuxEvent::Discontinuity`] was raised. `#[non_exhaustive]`: a
@@ -327,6 +334,23 @@ pub enum DemuxEvent {
     /// A clock reference observed in the source container (e.g. an MPEG-2 TS
     /// PCR, ISO/IEC 13818-1 §2.4.3.4/§2.4.3.5). A container with no such
     /// concept (FLV, RTP) never emits this.
+    ///
+    /// **TS attribution (issue #1354).** A program's clock is the PCR carried
+    /// on the `PCR_PID` its PMT names (§2.4.4.8-9, Table 2-33; §2.4.3.5: the PCR
+    /// fields are "carried in the adaptation field of the transport stream
+    /// packets with a PID value equal to the PCR_PID"), and a multiplex has one
+    /// independent clock per program. So once the PMTs the PAT announces are
+    /// all known, a PCR is emitted **only** from a PID that some program names
+    /// as its `PCR_PID`, with `provenance.program_number` set to that
+    /// program (one event per program when several share a PCR_PID, so a
+    /// per-program consumer never has to guess; dedupe on `provenance.pid`
+    /// for a PID-level view). A PCR on any other PID is dropped. **Before**
+    /// that point (PAT not seen, or an announced PMT still pending) a PCR on
+    /// a PID no applied PMT claims is emitted with `program_number: None`
+    /// rather than held: holding would lose the first PMT-interval of clock
+    /// samples, and a PID whose program has not been described yet cannot be
+    /// ruled out as a PCR_PID. `None` therefore means "not yet attributable",
+    /// never "no program".
     #[non_exhaustive]
     ClockReference {
         /// The clock value, in the container's native clock rate (`clock_hz`).

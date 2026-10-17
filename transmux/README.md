@@ -116,7 +116,7 @@ let again = TsDemux::new().unpackage(&ts_again[..]).unwrap();
 assert_eq!(again.tracks.len(), media.tracks.len());
 ```
 
-For a live source `Segmenter` owns the segment-cutting state machine (`push` samples, `take_ready` segments, `flush` at end of stream); `StreamingTsDemux` is the incremental demux (`feed`, `poll_event`, `finish`). Runnable programs: `transmux_any_to_any` and `ssai_ad_stitch` (`cargo run -p transmux --example <name>`).
+For a live source `Segmenter` owns the segment-cutting state machine (`push` samples, `take_ready` segments, `flush` at end of stream); `StreamingTsDemux` is the incremental demux (`feed`, `poll_event`, `finish`) - drain `poll_event` after every `feed`: the event queue is unbounded and only `poll_event` empties it (opt-in `with_max_degraded_events` caps the `InputDegraded` diagnostics). Runnable programs: `transmux_any_to_any` and `ssai_ad_stitch` (`cargo run -p transmux --example <name>`).
 
 ## Command-line packager (`cli` feature)
 
