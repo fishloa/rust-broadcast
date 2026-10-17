@@ -584,7 +584,7 @@ impl RouteRegistry {
         let new_config = Config::from_json_file(&path)?;
         let _guard = self.mutation_lock.lock().await;
 
-        let current: HashMap<String, Route> = {
+        let current: std::collections::BTreeMap<String, Route> = {
             self.inner
                 .read()
                 .iter()

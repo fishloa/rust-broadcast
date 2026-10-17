@@ -227,7 +227,32 @@ impl Stage for RtpUdpIngestSession {
         self.pending.pop_front()
     }
 
+    /// End of input: flush every track's depacketiser. At end of stream a
+    /// partially-assembled access unit (the packets since the last marker /
+    /// timestamp change) and the one-AU-late `pending` sample (held only to
+    /// measure its duration against the *next* AU) are complete by
+    /// definition — without this flush the last frame of every track is
+    /// never emitted. Idempotent: a second flush emits nothing.
     fn finish(&mut self) -> core::result::Result<(), MultimuxError> {
+        for spec in self.depacketiser.track_specs() {
+            let track_id = spec.track_id;
+            match self.depacketiser.flush(track_id) {
+                Ok(samples) => {
+                    for sample in samples {
+                        self.pending.push_back(SessionEvent::Sample {
+                            program: ProgramId(0),
+                            track_id,
+                            retention: RetentionClass::Timed,
+                            sample,
+                        });
+                    }
+                }
+                Err(e) => {
+                    self.depay_dropped += 1;
+                    tracing::debug!(%track_id, error = %e, "rtp/udp end-of-input flush failed");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -477,6 +502,37 @@ mod tests {
         pkt.extend_from_slice(&SSRC.to_be_bytes());
         pkt.extend_from_slice(nal);
         pkt
+    }
+
+    fn count_samples(session: &mut RtpUdpIngestSession) -> usize {
+        let mut n = 0;
+        while let Some(ev) = session.poll() {
+            if matches!(ev, SessionEvent::Sample { .. }) {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// End of input must flush the trailing AU: one marker-terminated AU
+    /// (held one-AU-late for its duration) plus one AU with no marker yet
+    /// (still in the reassembly buffer). Before the flush `finish` was a
+    /// no-op and neither was ever emitted.
+    #[test]
+    fn finish_flushes_pending_and_partial_trailing_access_units() {
+        let mut dialer = RtpUdpDialer::new(sdp_body());
+        let mut session = dialer.dial().unwrap();
+        session
+            .feed(&rtp_packet(1, 1000, true, &[0x65, 0xAA]), Timestamp::ZERO)
+            .unwrap();
+        session
+            .feed(&rtp_packet(2, 4000, false, &[0x41, 0xBB]), Timestamp::ZERO)
+            .unwrap();
+        assert_eq!(count_samples(&mut session), 0, "nothing emitted yet");
+        session.finish().unwrap();
+        assert_eq!(count_samples(&mut session), 2, "both trailing AUs flushed");
+        session.finish().unwrap();
+        assert_eq!(count_samples(&mut session), 0, "finish is idempotent");
     }
 
     #[test]

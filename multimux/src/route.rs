@@ -110,7 +110,7 @@
 //! does not have to rediscover it.
 
 use parking_lot::{Mutex, RwLock};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -806,7 +806,7 @@ pub struct RouteHandle {
     /// of concurrent readers proceed together and blocks only around the
     /// rare write — at most once per announced program, bounded by
     /// `max_programs`, never a steady-state cost.
-    programs: RwLock<HashMap<ProgramId, Arc<ProgramServing>>>,
+    programs: RwLock<BTreeMap<ProgramId, Arc<ProgramServing>>>,
     /// This route's name, for labelling metrics that are per-route but
     /// recorded from code with no other way to know it (issue #809:
     /// `crate::source::segment::drive_program_segmenters`'s parts/segments
@@ -852,7 +852,7 @@ impl RouteHandle {
             window_segments_cap: window_segments,
             container: Container::default(),
             created_at: SystemTime::now(),
-            programs: RwLock::new(HashMap::new()),
+            programs: RwLock::new(BTreeMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
             dvr_config: None,
             archive_floor: 0,

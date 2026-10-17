@@ -1618,7 +1618,21 @@ impl Stage for WhipIngestSession {
         self.pending.pop_front()
     }
 
+    /// End of input: flush every track's depacketiser (a pending AU is
+    /// complete by definition at end of stream). Idempotent.
     fn finish(&mut self) -> Result<()> {
+        for spec in self.depacketiser.track_specs() {
+            let track_id = spec.track_id;
+            let samples = self
+                .depacketiser
+                .flush(track_id)
+                .map_err(|e| MultimuxError::Depay {
+                    reason: e.to_string(),
+                })?;
+            for sample in samples {
+                self.observe_sample(track_id, sample);
+            }
+        }
         Ok(())
     }
 
@@ -2856,6 +2870,81 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 .is_some(),
             "SPS+PPS must capture a config"
         );
+    }
+
+    /// End of input must flush the trailing AU through the whip session:
+    /// AU0 (SPS+PPS+IDR, marker-terminated, held one-AU-late) and AU1 (no
+    /// marker yet, still in reassembly). Before the flush `finish` was a
+    /// no-op: nothing was emitted and the program was never announced.
+    #[tokio::test]
+    async fn finish_flushes_pending_and_partial_trailing_access_units() {
+        let (control, resource) = test_control_and_resource();
+        let admitted = AdmittedWhip {
+            socket: {
+                let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+                s.set_nonblocking(true).unwrap();
+                Arc::new(UdpSocket::from_std(s).unwrap())
+            },
+            media: MediaTransport::new(
+                MediaTransportConfig {
+                    local_addr: "127.0.0.1:0".parse().unwrap(),
+                    local_ice_ufrag: crate::secure_random::token(8),
+                    local_ice_pwd: crate::secure_random::token(24),
+                    remote_ice_ufrag: crate::secure_random::token(8),
+                    remote_ice_pwd: crate::secure_random::token(24),
+                    is_controlling: false,
+                    local_setup: SetupRole::Passive,
+                    stun_server: None,
+                    remote_fingerprint: OFFER_FINGERPRINT.into(),
+                    max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                },
+                Instant::now(),
+            )
+            .unwrap(),
+            tracks: vec![WhipTrack {
+                track_id: TrackId::new(1),
+                payload_type: 96,
+                clock_rate: 90_000,
+            }],
+            control,
+            resource,
+        };
+        let mut session = WhipIngestSession::new(admitted);
+        let rtp = |seq: u16, ts: u32, marker: bool, nal: &[u8]| {
+            let mut p = vec![0x80, if marker { 0x80 | 96 } else { 96 }];
+            p.extend_from_slice(&seq.to_be_bytes());
+            p.extend_from_slice(&ts.to_be_bytes());
+            p.extend_from_slice(&0xCAFEBABEu32.to_be_bytes());
+            p.extend_from_slice(nal);
+            p
+        };
+        let now = Timestamp::ZERO;
+        session
+            .feed(&rtp(1, 1000, false, &[0x67, 0x42, 0x00, 0x1F]), now)
+            .unwrap();
+        session
+            .feed(&rtp(2, 1000, false, &[0x68, 0xCE]), now)
+            .unwrap();
+        session
+            .feed(&rtp(3, 1000, true, &[0x65, 0xAA]), now)
+            .unwrap();
+        session
+            .feed(&rtp(4, 4000, false, &[0x41, 0xBB]), now)
+            .unwrap();
+        let count = |s: &mut WhipIngestSession| {
+            let mut n = 0;
+            while let Some(ev) = s.poll() {
+                if matches!(ev, SessionEvent::Sample { .. }) {
+                    n += 1;
+                }
+            }
+            n
+        };
+        assert_eq!(count(&mut session), 0, "nothing emitted yet");
+        session.finish().unwrap();
+        assert_eq!(count(&mut session), 2, "both trailing AUs flushed");
+        session.finish().unwrap();
+        assert_eq!(count(&mut session), 0, "finish is idempotent");
     }
 
     /// `max_sessions: 0` means the very first connection is already "at

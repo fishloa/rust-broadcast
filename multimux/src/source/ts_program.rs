@@ -48,7 +48,7 @@
 //! PMT resolving is a per-*program* one that `NewProgram` already carries
 //! (see `SessionEvent::Established`'s "Why not called `TracksResolved`").
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use transmux::{ProgramNumber, TrackId};
 
@@ -109,11 +109,13 @@ pub(crate) struct ProgramTracker {
     held_bytes: usize,
     pending: VecDeque<SessionEvent>,
     /// Tracks buffered before the first `TracksResolved`, grouped by
-    /// `program_number`.
-    resolving: HashMap<Option<ProgramNumber>, Vec<TrackSpec>>,
+    /// `program_number`. A `BTreeMap` so `ProgramId`s are minted (and
+    /// `NewProgram` announced) in ascending `program_number` order: stable
+    /// across processes, so a URL for a program survives a restart.
+    resolving: BTreeMap<Option<ProgramNumber>, Vec<TrackSpec>>,
     resolved_once: bool,
     /// Resolved programs keyed by `program_number`.
-    programs: HashMap<Option<ProgramNumber>, PerProgram>,
+    programs: BTreeMap<Option<ProgramNumber>, PerProgram>,
     /// Reverse map: `track_id → ProgramId` (for `Sample` routing).
     track_program: HashMap<TrackId, ProgramId>,
     /// Programs whose track set changed since last `TracksResolved`.
@@ -124,7 +126,7 @@ pub(crate) struct ProgramTracker {
 struct PerProgram {
     program_id: ProgramId,
     /// Complete current track specs for this program, keyed by `track_id`.
-    track_specs: HashMap<TrackId, TrackSpec>,
+    track_specs: BTreeMap<TrackId, TrackSpec>,
 }
 
 impl ProgramTracker {
@@ -135,9 +137,9 @@ impl ProgramTracker {
             held: VecDeque::new(),
             held_bytes: 0,
             pending: VecDeque::from(vec![SessionEvent::Established]),
-            resolving: HashMap::new(),
+            resolving: BTreeMap::new(),
             resolved_once: false,
-            programs: HashMap::new(),
+            programs: BTreeMap::new(),
             track_program: HashMap::new(),
             changed: HashSet::new(),
             next_program_id: 0,
@@ -172,7 +174,7 @@ impl ProgramTracker {
                             }
                             let program = ProgramId(self.next_program_id);
                             self.next_program_id += 1;
-                            let mut track_specs = HashMap::new();
+                            let mut track_specs = BTreeMap::new();
                             for spec in &tracks {
                                 self.track_program.insert(spec.track_id, program);
                                 track_specs.insert(spec.track_id, spec.clone());
@@ -326,7 +328,7 @@ impl ProgramTracker {
             pn,
             PerProgram {
                 program_id: program,
-                track_specs: HashMap::new(),
+                track_specs: BTreeMap::new(),
             },
         );
         // Mid-stream NewProgram — emitted before any TracksChanged so the
@@ -338,7 +340,7 @@ impl ProgramTracker {
         program
     }
 
-    fn track_specs_for_program(&mut self, program: ProgramId) -> &mut HashMap<TrackId, TrackSpec> {
+    fn track_specs_for_program(&mut self, program: ProgramId) -> &mut BTreeMap<TrackId, TrackSpec> {
         &mut self
             .program_for_program_id_mut(program)
             .expect("program must exist")
@@ -509,6 +511,94 @@ mod tests {
 
     fn sample_at(nal: u8) -> Sample {
         Sample::new(vec![0x65, nal], Some(0), Some(0), Some(3000), true)
+    }
+
+    /// Determinism: an MPTS announces programs in ascending `program_number`
+    /// order with `ProgramId`s 0,1,2 in that order, every time. A fresh
+    /// tracker per iteration gets a fresh `RandomState`, so a `HashMap`
+    /// iteration order would differ between iterations (each of the 6
+    /// orders is equally likely: 200 iterations make a pass by luck
+    /// vanishingly improbable).
+    #[test]
+    fn mpts_programs_announced_in_ascending_program_number_order() {
+        for _ in 0..200 {
+            let mut tracker = ProgramTracker::new();
+            // Arrival order deliberately not sorted.
+            for (pn, tid) in [(300u16, 31u32), (100, 11), (200, 21), (100, 12)] {
+                tracker.handle(DemuxEvent::TrackAdded(
+                    track_spec(TrackId::new(tid)).with_program(ProgramNumber::new(pn)),
+                ));
+            }
+            tracker.handle(DemuxEvent::tracks_resolved(0));
+            assert!(matches!(tracker.poll(), Some(SessionEvent::Established)));
+            let mut got = Vec::new();
+            while let Some(ev) = tracker.poll() {
+                match ev {
+                    SessionEvent::NewProgram { program, tracks } => {
+                        got.push((
+                            program,
+                            tracks.iter().map(|t| t.track_id).collect::<Vec<_>>(),
+                        ));
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            assert_eq!(
+                got,
+                vec![
+                    (ProgramId(0), vec![TrackId::new(11), TrackId::new(12)]),
+                    (ProgramId(1), vec![TrackId::new(21)]),
+                    (ProgramId(2), vec![TrackId::new(31)]),
+                ]
+            );
+        }
+    }
+
+    /// Determinism of the mid-stream path: `TracksChanged` is emitted in
+    /// ascending `ProgramId`/`program_number` order, each with its tracks
+    /// sorted by `track_id`.
+    #[test]
+    fn mid_stream_tracks_changed_is_ordered() {
+        for _ in 0..200 {
+            let mut tracker = ProgramTracker::new();
+            for (pn, tid) in [(100u16, 11u32), (200, 21), (300, 31)] {
+                tracker.handle(DemuxEvent::TrackAdded(
+                    track_spec(TrackId::new(tid)).with_program(ProgramNumber::new(pn)),
+                ));
+            }
+            tracker.handle(DemuxEvent::tracks_resolved(0));
+            while tracker.poll().is_some() {}
+            // Dirty every program, several tracks each.
+            for (pn, tid) in [(300u16, 39u32), (100, 19), (200, 29), (100, 15), (300, 33)] {
+                tracker.handle(DemuxEvent::TrackAdded(
+                    track_spec(TrackId::new(tid)).with_program(ProgramNumber::new(pn)),
+                ));
+            }
+            tracker.handle(DemuxEvent::tracks_resolved(1));
+            let mut got = Vec::new();
+            while let Some(ev) = tracker.poll() {
+                match ev {
+                    SessionEvent::TracksChanged { program, tracks } => {
+                        got.push((
+                            program,
+                            tracks
+                                .iter()
+                                .map(|t| t.track_id.value())
+                                .collect::<Vec<_>>(),
+                        ));
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            assert_eq!(
+                got,
+                vec![
+                    (ProgramId(0), vec![11, 15, 19]),
+                    (ProgramId(1), vec![21, 29]),
+                    (ProgramId(2), vec![31, 33, 39]),
+                ]
+            );
+        }
     }
 
     #[test]

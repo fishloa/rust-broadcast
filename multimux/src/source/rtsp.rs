@@ -434,7 +434,32 @@ impl Stage for RtspIngestSession {
         self.pending.pop_front()
     }
 
+    /// End of input: flush every track's depacketiser (a pending AU is
+    /// complete by definition at end of stream — see
+    /// `RtpStreamDepacketiser::flush`). Idempotent.
     fn finish(&mut self) -> Result<()> {
+        let Some(depa) = self.depacketiser.as_mut() else {
+            return Ok(());
+        };
+        for spec in depa.track_specs() {
+            let track_id = spec.track_id;
+            match depa.flush(track_id) {
+                Ok(samples) => {
+                    for sample in samples {
+                        self.pending.push_back(SessionEvent::Sample {
+                            program: ProgramId(0),
+                            track_id,
+                            retention: RetentionClass::Timed,
+                            sample,
+                        });
+                    }
+                }
+                Err(e) => {
+                    self.malformed_media_frames += 1;
+                    tracing::warn!(error = %e, %track_id, "rtsp: end-of-input flush failed");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1342,6 +1367,73 @@ mod tests {
             }
             other => panic!("expected Timed, got {other:?}"),
         }
+    }
+
+    /// End of input must flush the trailing AU (a marker-terminated AU held
+    /// one-AU-late for its duration, plus an AU still in the reassembly
+    /// buffer). Before the flush `finish` was a no-op: neither was emitted.
+    #[test]
+    fn finish_flushes_pending_and_partial_trailing_access_units() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial");
+        let _ = session.poll_transmit();
+        session
+            .feed(
+                &rtsp_response(
+                    1,
+                    "200 OK",
+                    "Content-Type: application/sdp\r\n",
+                    &sdp_body(),
+                ),
+                Timestamp::ZERO,
+            )
+            .unwrap();
+        let _ = session.poll_transmit();
+        session
+            .feed(
+                &rtsp_response(
+                    2,
+                    "200 OK",
+                    "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
+                    "",
+                ),
+                Timestamp::ZERO,
+            )
+            .unwrap();
+        let _ = session.poll_transmit();
+        session
+            .feed(&rtsp_response(3, "200 OK", "", ""), Timestamp::ZERO)
+            .unwrap();
+        let rtp = |seq: u16, ts: u32, marker: bool, nal: &[u8]| {
+            let mut p = vec![0x80, if marker { 0x80 | 96 } else { 96 }];
+            p.extend_from_slice(&seq.to_be_bytes());
+            p.extend_from_slice(&ts.to_be_bytes());
+            p.extend_from_slice(&0xCAFEBABEu32.to_be_bytes());
+            p.extend_from_slice(nal);
+            rtsp_runtime::interleaved::InterleavedFrame::new(4, p)
+                .to_bytes()
+                .expect("frame")
+        };
+        session
+            .feed(&rtp(1, 1000, true, &[0x65, 0xAA]), Timestamp::ZERO)
+            .unwrap();
+        session
+            .feed(&rtp(2, 4000, false, &[0x41, 0xBB]), Timestamp::ZERO)
+            .unwrap();
+        let count = |s: &mut RtspIngestSession| {
+            let mut n = 0;
+            while let Some(ev) = s.poll() {
+                if matches!(ev, SessionEvent::Sample { .. }) {
+                    n += 1;
+                }
+            }
+            n
+        };
+        assert_eq!(count(&mut session), 0, "nothing emitted yet");
+        session.finish().unwrap();
+        assert_eq!(count(&mut session), 2, "both trailing AUs flushed");
+        session.finish().unwrap();
+        assert_eq!(count(&mut session), 0, "finish is idempotent");
     }
 
     /// Severing `poll_transmit` (the no-hidden-I/O proof `media_plane::ingress`'s
