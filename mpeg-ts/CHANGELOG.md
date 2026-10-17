@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-17
 ### Added
 - `resync::ResyncLoss`, `TsResync::take_losses()` and `TsResync::finish()`: every span the resynchroniser discards *after* its first lock (broken sync byte, garbage between packets, a tail that never re-locks, a truncated trailing packet) is now reported with its stream byte offset, length and packet index instead of only bumping `ResyncStats` (the cause of a silent sample loss in `transmux`'s `TsDemux`). Additive; junk before the first lock is still only counted.
 

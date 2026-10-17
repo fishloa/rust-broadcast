@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-10-17
 ### Fixed (a damaged TS no longer passes the `Media::degraded.is_empty()` gate)
 - **`TsDemux` reported nothing for a damaged transport stream.** Zeroing the sync byte of every 7th packet of a real 720p50 H.264 + AC-3 + 3x MP2 capture (`orf1-dvbs2-raw-zenith-tv.ts`, packets 56392..56792, 58 packets) lost samples (h264 1471 -> 1468, ac3 916 -> 912, mp2 1224 -> 1224 / 1216 / 1220) while `Media::degraded` stayed empty. Two causes, both present in 0.26.0 and 0.27.0 (0.26.0 had no `degraded` field at all): (1) `mpeg_ts::resync::TsResync` silently skipped the 188 bytes of a packet with a broken sync byte (only an internal counter moved), and (2) the batch `TsDemux::demux` threw away *every* `DemuxEvent::InputDegraded` the streaming core had raised (transport_error_indicator, continuity gaps, rejected parameter sets), so `Media::degraded` could never be non-empty for a TS.
 - `Media::degraded` now carries every `InputDegraded` the streaming core raises, in input order, plus the two new variants below. Behaviour change: captures with real continuity gaps (`m6-*.ts`, the `france-tnt-*` and `hotbird-*` excerpts) now report them; they used to report an empty list only because the events were dropped.
