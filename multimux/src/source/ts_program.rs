@@ -1021,6 +1021,53 @@ mod tests {
         assert!(matches!(tracker.poll(), Some(SessionEvent::Sample { .. })));
     }
 
+    fn flushed_dts(tracker: &mut ProgramTracker) -> Vec<i64> {
+        let mut out = Vec::new();
+        while let Some(ev) = tracker.poll() {
+            if let SessionEvent::Sample { sample, .. } = ev {
+                out.push(sample.dts.expect("dts"));
+            }
+        }
+        out
+    }
+
+    /// The hold is bounded: past `MAX_HELD_SAMPLES` the OLDEST samples are
+    /// dropped and the newest survive, in order.
+    #[test]
+    fn held_backlog_is_bounded_by_count_dropping_oldest() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        let total = MAX_HELD_SAMPLES + 5;
+        for i in 0..total {
+            let s = Sample::new(vec![0x65], Some(i as i64), Some(i as i64), Some(1), true);
+            tracker.handle(DemuxEvent::sample(TrackId::new(1), s));
+        }
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let got = flushed_dts(&mut tracker);
+        assert_eq!(got.len(), MAX_HELD_SAMPLES);
+        assert_eq!(got[0], 5, "the 5 oldest were dropped");
+        assert_eq!(*got.last().unwrap(), total as i64 - 1, "newest kept");
+        assert!(got.windows(2).all(|w| w[0] + 1 == w[1]), "order preserved");
+    }
+
+    /// The byte cap bounds the hold independently of the sample count.
+    #[test]
+    fn held_backlog_is_bounded_by_bytes_dropping_oldest() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        const MIB: usize = 1024 * 1024;
+        let total = MAX_HELD_BYTES / MIB + 3;
+        for i in 0..total {
+            let s = Sample::new(vec![0u8; MIB], Some(i as i64), Some(i as i64), Some(1), true);
+            tracker.handle(DemuxEvent::sample(TrackId::new(1), s));
+        }
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let got = flushed_dts(&mut tracker);
+        assert_eq!(got.len(), MAX_HELD_BYTES / MIB, "capped at the byte budget");
+        assert_eq!(got[0], 3, "the 3 oldest were dropped");
+        assert_eq!(*got.last().unwrap(), total as i64 - 1);
+    }
+
     /// A copy of [`track_spec`] with a different coded size, so a config
     /// change is observable in the announced spec.
     fn track_spec_sized(track_id: TrackId, width: u16, height: u16) -> TrackSpec {
