@@ -56,8 +56,17 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{IngestSession, ProgramId, SessionEvent};
 use media_plane::trunk::RetentionClass;
 
-use transmux::pipeline::TrackSpec;
+use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{DemuxEvent, StreamingTsDemux};
+
+/// Most samples [`ProgramTracker`] holds for tracks the demux has announced
+/// but whose programme is not yet announced (before the first
+/// `TracksResolved`). See [`ProgramTracker`]'s "Pre-resolution backlog".
+pub(crate) const MAX_HELD_SAMPLES: usize = 65_536;
+
+/// Most sample payload bytes [`ProgramTracker`] holds in that pre-resolution
+/// backlog (64 MiB). Whichever of the two caps is hit first applies.
+pub(crate) const MAX_HELD_BYTES: usize = 64 * 1024 * 1024;
 
 /// Translates [`transmux::DemuxEvent`]s into [`SessionEvent`]s and tracks
 /// which [`ProgramId`] owns each `track_id` — a plain, byte-free state
@@ -76,7 +85,28 @@ use transmux::{DemuxEvent, StreamingTsDemux};
 ///
 /// Mid-stream `TrackAdded` (issue #781) is preserved PER PROGRAM: a track
 /// added mid-stream joins the program keyed by its `program_number`.
+///
+/// # Pre-resolution backlog
+///
+/// The demux promotes a track (`TrackAdded`) as soon as its codec config is
+/// known and replays that track's probe backlog as `Sample`s right away -
+/// which is *before* `TracksResolved`, the signal this tracker announces the
+/// programme on. A [`SessionEvent::Sample`] must follow its programme's
+/// `NewProgram`, so those samples are **held** (in arrival order, across
+/// tracks) and flushed immediately after the `NewProgram` events, ahead of
+/// any later sample: no loss, no duplicate, no reordering. Only samples of a
+/// track that was already announced are held; a sample for a track the demux
+/// never announced is still dropped.
+///
+/// The hold is bounded by [`MAX_HELD_SAMPLES`] / [`MAX_HELD_BYTES`]. On
+/// overflow (a head that never resolves, with other tracks flowing) the
+/// **oldest** held sample is dropped and counted in the
+/// `multimux_ts_backlog_dropped_total` counter, so the newest media (the
+/// live edge) survives.
 pub(crate) struct ProgramTracker {
+    /// Samples for announced-but-not-yet-programmed tracks, oldest first.
+    held: VecDeque<(TrackId, Sample)>,
+    held_bytes: usize,
     pending: VecDeque<SessionEvent>,
     /// Tracks buffered before the first `TracksResolved`, grouped by
     /// `program_number`.
@@ -102,6 +132,8 @@ impl ProgramTracker {
     /// module doc.
     pub(crate) fn new() -> Self {
         ProgramTracker {
+            held: VecDeque::new(),
+            held_bytes: 0,
             pending: VecDeque::from(vec![SessionEvent::Established]),
             resolving: HashMap::new(),
             resolved_once: false,
@@ -155,6 +187,19 @@ impl ProgramTracker {
                             self.pending
                                 .push_back(SessionEvent::NewProgram { program, tracks });
                         }
+                        // Flush the pre-resolution backlog, oldest first,
+                        // now that every sample's programme is announced.
+                        self.held_bytes = 0;
+                        for (track_id, sample) in std::mem::take(&mut self.held) {
+                            if let Some(&program) = self.track_program.get(&track_id) {
+                                self.pending.push_back(SessionEvent::Sample {
+                                    program,
+                                    track_id,
+                                    retention: RetentionClass::Timed,
+                                    sample,
+                                });
+                            }
+                        }
                     }
                 } else {
                     // Mid-stream TracksResolved: only emit TracksChanged for
@@ -186,6 +231,19 @@ impl ProgramTracker {
                     retention: RetentionClass::Timed,
                     sample,
                 });
+            }
+            // Before the first `TracksResolved` the programme is not yet
+            // announced: hold the sample of an announced track (the demux's
+            // probe-backlog replay) until it is. See "Pre-resolution backlog".
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } if !self.resolved_once
+                && self
+                    .resolving
+                    .values()
+                    .any(|specs| specs.iter().any(|s| s.track_id == track_id)) =>
+            {
+                self.hold(track_id, sample);
             }
             DemuxEvent::TrackRemoved { track_id, .. } => {
                 // A mid-stream PMT version bump dropped a previously-live
@@ -237,6 +295,24 @@ impl ProgramTracker {
 
     pub(crate) fn poll(&mut self) -> Option<SessionEvent> {
         self.pending.pop_front()
+    }
+
+    /// Hold one pre-resolution sample, dropping the oldest held ones (counted)
+    /// while either cap would be exceeded.
+    fn hold(&mut self, track_id: TrackId, sample: Sample) {
+        self.held_bytes += sample.data.len();
+        self.held.push_back((track_id, sample));
+        let mut dropped = 0u64;
+        while self.held.len() > MAX_HELD_SAMPLES || self.held_bytes > MAX_HELD_BYTES {
+            let Some((_, old)) = self.held.pop_front() else {
+                break;
+            };
+            self.held_bytes -= old.data.len();
+            dropped += 1;
+        }
+        if dropped > 0 {
+            metrics::counter!(crate::prometheus::TS_BACKLOG_DROPPED_TOTAL).increment(dropped);
+        }
     }
 
     /// Find or create the `ProgramId` for a given `program_number`.
@@ -891,12 +967,12 @@ mod tests {
         assert_session_equals_raw_demux(&ts);
     }
 
-    /// The same on the private France TNT E-AC-3 capture (audio promoted
-    /// ahead of the resolved signal).
+    /// The same on the private France TNT multiplex capture (several tracks
+    /// promoted ahead of the resolved signal).
     #[test]
-    fn samples_before_tracks_resolved_reach_the_session_zenith() {
+    fn samples_before_tracks_resolved_reach_the_session_france_tnt() {
         let Some(path) = test_fixtures::require(
-            "ts/france-tnt-m6-eac3-zenith.ts",
+            "ts/france-tnt-dvbt-20s.ts",
             "multimux backlog replay",
         ) else {
             return;

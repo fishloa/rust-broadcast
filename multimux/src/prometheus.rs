@@ -130,6 +130,12 @@ pub(crate) const PULL_FRAGMENT_ABANDONED_TOTAL: &str = "multimux_pull_fragment_a
 /// operator can tell the two apart. Labels: none.
 pub(crate) const PULL_STREAM_REFRESH_MISS_TOTAL: &str = "multimux_pull_stream_refresh_miss_total";
 
+/// Counter: total TS samples dropped (oldest first) because the demux
+/// replayed more pre-`TracksResolved` backlog than the ingest session's
+/// bounded hold (`MAX_HELD_SAMPLES` / `MAX_HELD_BYTES`) allows - a head
+/// track that never resolves while others flow. Labels: none.
+pub(crate) const TS_BACKLOG_DROPPED_TOTAL: &str = "multimux_ts_backlog_dropped_total";
+
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
 /// Install the process-wide Prometheus recorder exactly once, returning a
