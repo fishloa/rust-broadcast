@@ -128,10 +128,7 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
             mix(e.to_record().media_27mhz);
         }
         let s = c.stats();
-        assert_eq!(
-            s.state == State::Playing,
-            playing || (s.state == State::Playing && !started && false)
-        );
+        assert_eq!(s.state == State::Playing, playing);
         mix(u64::from(s.state.code()));
         mix(s.target_us);
         mix(s.est.baseline_us);

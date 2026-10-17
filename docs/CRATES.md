@@ -493,7 +493,7 @@ Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../live-buffer/README.md)
+- **Links:** [README](../live-buffer/README.md) · [CHANGELOG](../live-buffer/CHANGELOG.md)
 
 #### rtcp-packet
 

@@ -123,6 +123,7 @@ fn main() -> ExitCode {
         if i > 0 && arrival - last_arrival >= gap_us {
             c.on_hint(last_arrival, Hint::SourceEnded);
             c.on_hint(arrival, Hint::Reconnected);
+            out(&mut c, arrival, &mut running, &mut clock, &mut t_set);
         }
         while next_tick <= arrival {
             let p = running.then(|| pos(clock, t_set, next_tick));

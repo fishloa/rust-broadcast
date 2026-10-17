@@ -87,10 +87,10 @@ fn q15_forgetting_is_within_one_lsb_per_step_of_the_exact_rational() {
         // ramped factor, exact integer rational
         let f = forget.min((step << 15) / (step + 1));
         let idx = ((v / u64::from(bucket_us)) as usize).min(399);
-        for i in 0..400 {
+        for (i, &prev) in before.iter().enumerate() {
             let gain = if i == idx { 32768 - f } else { 0 };
             // exact next weight * 32768 = w_prev * f + gain * 32768
-            let exact_num = u64::from(before[i]) * f + gain * 32768;
+            let exact_num = u64::from(prev) * f + gain * 32768;
             let got = u64::from(h.weight(i));
             assert!(
                 got * 32768 <= exact_num && exact_num < (got + 1) * 32768,
