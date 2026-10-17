@@ -100,6 +100,11 @@ assert!(c.target_us() <= ControllerConfig::default().policy.max_us);
 
 Full design and evidence: [`docs/live-buffer/DESIGN.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/live-buffer/DESIGN.md), [`TRACE-ANALYSIS.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/live-buffer/TRACE-ANALYSIS.md).
 
+## Examples
+
+- `cargo run -p live-buffer --example replay_trace` replays a built-in synthetic trace (clean link, one 1.4 s stall, a burst); pass a CSV path (`arrival_ns,bytes,pcr_27mhz`) to replay a real trace.
+- `cargo run -p live-buffer --example live_loop` shows the caller loop and the pause/resume contract with a mock renderer.
+
 ## Related crates
 
 `broadcast-common` (clock33 PCR arithmetic, the label macro) is the only dependency. A caller typically feeds it from `transmux` / `mpeg-ts` output, but this crate depends on neither. See `docs/CRATES.md`.
