@@ -232,7 +232,7 @@ fn rai3_clean_golden() {
 /// apart. The log's media rows are per demuxed MP2 frame (24 ms steps, a PES
 /// of ~0.3 s per chunk); the controller coalesces them per delivery, so the
 /// granularity floor engages (before the 2.0 s PDV lift: 412 ms = 312 ms step
-/// + margin at 1.03 s). With the PDV term at its minimum the floor alone holds
+/// plus margin at 1.03 s). With the PDV term at its minimum the floor alone holds
 /// 412 ms; with the floor off too the target stays at the 300 ms floor. (Until
 /// the coalescing the floor never engaged on this log.)
 #[test]
