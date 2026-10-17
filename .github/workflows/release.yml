@@ -37,7 +37,16 @@ jobs:
 
       # dvb-stream is intentionally excluded from the lockstep v-tag publish
       # (it is versioned and released independently; see dvb-stream/Cargo.toml).
+      # NOT identical to ci.yml's test lane on purpose: CI excludes dvb-tools and
+      # dvb-conformance (feature-forcing leaves) and runs nextest with private
+      # fixtures; this gate runs after ~33 crates are already live, so it is a
+      # superset that must never be the FIRST place a failure shows. The release
+      # runbook therefore requires the identical CI gate green on the release
+      # commit, plus `cargo test -p dvb-tools -p dvb-conformance --all-features
+      # --locked`, BEFORE the first tag. The timeout keeps a hung test from
+      # holding the wave for the 6 h job default (plain `cargo test` has none).
       - name: Gate — full test suite
+        timeout-minutes: 60
         run: cargo test --workspace --exclude dvb-stream --all-features --locked
 
       - name: Gate — clippy

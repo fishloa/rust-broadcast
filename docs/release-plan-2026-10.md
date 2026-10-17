@@ -113,10 +113,12 @@ Second-order effects the script handles but a human should know about (from the 
 | `dvb-tools` | 11.1.0 | **12.0.0** |
 
 * One tag `v12.0.0`, `release.yml`: gates (workspace tests excluding `dvb-stream`, clippy, tag == version for all five, **`docs/release-notes/v12.0.0.md` must exist and be non-empty**), then `cargo publish` in the order `dvb-bbframe`, `dvb-si`, `dvb-conformance`, `dvb-t2mi`, `dvb-tools` (idempotent; a re-run skips what already shipped), then the GitHub Release from `v12.0.0.md`.
-* External prerequisites of the five (versioned normal + dev edges): **only `broadcast-common` 10.0.0 and `mpeg-ts` 0.6.0** must be live first. That is why the lockstep tag sits right after `mpeg-ts` in the order below (`mpeg-ts` itself waits for `mp4-emsg`, because of its versioned dev-dependency on it) and **before** `transmux`, `dvb-ci`, `dvb-ci-runtime`, `dvb-stream`, `ts-fix`, `media-doctor` and `multimux`, which all depend on `dvb-si`/`dvb-conformance`/`dvb-t2mi`.
+* External prerequisites of the five (versioned normal + dev edges): **only `broadcast-common` 10.0.0 and `mpeg-ts` 0.6.0** must be live first. That is why the lockstep tag is available as soon as `mpeg-ts` is live (`mpeg-ts` itself waits for `mp4-emsg`, because of its versioned dev-dependency on it); the generated order (`prepare-release.py --tag-order`, alphabetical within each ready batch) places it after the other batch-mates that become ready with `mpeg-ts` (position 34 of 50) and **before** `transmux`, `dvb-ci`, `dvb-ci-runtime`, `dvb-stream`, `ts-fix`, `media-doctor` and `multimux`, which all depend on `dvb-si`/`dvb-conformance`/`dvb-t2mi`.
 * `dvb-tools` ships a binary but its binaries job is disabled in `release.yml` (ARM runner); use `attach-binaries.yml` (`workflow_dispatch`) after publish.
 
 ## 6. Topological tag order
+
+> This list is GENERATED: `python3 tools/prepare-release.py --tag-needs $(cat docs/release-plan-2026-10.pairs)` prints it, and `tools/tests/test_release_lanes.py` fails if it drifts from `--tag-order`.
 
 Computed from `cargo metadata` over normal + build edges **and versioned dev-dependency edges** (a versioned dev-dependency must resolve on the index at `cargo publish` time; path-only ones are ignored), with the lockstep five collapsed into one slot. No cycle exists. Every crate lists what must already be live on crates.io. **One tag at a time** (trap a): a push of more than three tags fires no workflows (#933), and each lane stops at the `crates-io` environment approval gate, so the loop is push -> approve -> wait for the index -> next.
 
@@ -174,21 +176,21 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
    needs live first: `broadcast-common`, `mpeg-pes`
 27. `mpeg-ts-v0.6.0`  
    needs live first: `broadcast-common`, `mp4-emsg`
-28. `v12.0.0`  
-   needs live first: `broadcast-common`, `mpeg-ts`  
-   five crates in one lane, publishes bbframe -> si -> conformance -> t2mi -> tools; **push by hand** (`push-release-tags.sh` refuses `v*`)
-29. `rist-runtime-v0.4.0`  
+28. `rist-runtime-v0.4.0`  
    needs live first: `broadcast-common`, `rtcp-packet`
-30. `st291-v0.5.0`  
+29. `st291-v0.5.0`  
    needs live first: `broadcast-common`, `rtp-packet`
-31. `webrtc-runtime-v0.4.0`  
+30. `webrtc-runtime-v0.4.0`  
    needs live first: `broadcast-common`, `rtcp-packet`, `rtp-packet`
-32. `container-probe-v0.2.0`  
+31. `container-probe-v0.2.0`  
    needs live first: `broadcast-common`, `mpeg-ps`, `mpeg-ts`, `st377-1`
-33. `dvb-csa-v0.4.0`  
+32. `dvb-csa-v0.4.0`  
    needs live first: `mpeg-ts`
-34. `scte35-splice-v4.0.0`  
+33. `scte35-splice-v4.0.0`  
    needs live first: `broadcast-common`, `mpeg-ts`
+34. `v12.0.0`  
+   needs live first: `broadcast-common`, `mpeg-ts`  
+   five crates in one lane, publishes bbframe -> si -> conformance -> t2mi -> tools; **push by hand** (`push-release-tags.sh` refuses `v*` in explicit-tag mode; `--plan` stops here, exit 2)
 35. `dvb-ci-v0.10.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `mpeg-ts`
 36. `dvb-stream-v0.7.0`  
@@ -199,20 +201,20 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
    needs live first: `broadcast-common`, `broadcast-hls`, `cc-data`, `dvb-vbi`, `mp4-emsg`, `scte35-splice`
 39. `transmux-v0.27.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `container-probe`, `mp4-emsg`, `mpeg-pes`, `mpeg-ps`, `mpeg-ts`, `rtcp-packet`, `rtp-packet`, `scte35-splice`
-40. `caption-convert-v0.3.0`  
-   needs live first: `broadcast-common`, `cc-data`, `dvb-vbi`, `timed-metadata`
-41. `dvb-ci-runtime-v0.18.0`  
-   needs live first: `v12.0.0`, `broadcast-common`, `dvb-ci`, `mpeg-ts`
-42. `media-doctor-v0.11.0`  
-   needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `container-probe`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`, `timed-metadata`, `transmux`
-43. `media-plane-v0.7.0`  
-   needs live first: `broadcast-common`, `scte35-splice`, `timed-metadata`, `transmux`
-44. `playout-runtime-v0.3.0`  
-   needs live first: `broadcast-common`, `mp4-emsg`, `scte35-splice`, `ssai-runtime`
-45. `rtmp-runtime-v0.8.0`  
-   needs live first: `broadcast-common`, `transmux`
-46. `ts-fix-v0.7.0`  
+40. `ts-fix-v0.7.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`
+41. `caption-convert-v0.3.0`  
+   needs live first: `broadcast-common`, `cc-data`, `dvb-vbi`, `timed-metadata`
+42. `dvb-ci-runtime-v0.18.0`  
+   needs live first: `v12.0.0`, `broadcast-common`, `dvb-ci`, `mpeg-ts`
+43. `media-doctor-v0.11.0`  
+   needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `container-probe`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`, `timed-metadata`, `transmux`
+44. `media-plane-v0.7.0`  
+   needs live first: `broadcast-common`, `scte35-splice`, `timed-metadata`, `transmux`
+45. `playout-runtime-v0.3.0`  
+   needs live first: `broadcast-common`, `mp4-emsg`, `scte35-splice`, `ssai-runtime`
+46. `rtmp-runtime-v0.8.0`  
+   needs live first: `broadcast-common`, `transmux`
 47. `compliance-probe-v0.4.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `media-doctor`, `media-plane`, `mpeg-ts`, `scte35-splice`, `timed-metadata`
 48. `hls-runtime-v0.9.0`  
@@ -222,7 +224,7 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
 50. `multimux-cli-v0.11.0`  
    needs live first: `multimux`
 
-Equivalent grouped view (everything inside a group is independent of its own group, pushed still one by one): `broadcast-common` first; then the leaf tier that needs only it (`mp4-emsg`, `mpeg-pes`, `rtp-packet`, `rtcp-packet`, `dvb-vbi`, `cc-data`, `rmt-flute`, `st377-1`, ...); then `mpeg-ts` (gated by its dev-dependency on `mp4-emsg`); then the lockstep tag; then `transmux`; then the `transmux`/`dvb-si` dependents (`media-plane`, `hls-runtime`, `dvb-stream`, `ts-fix`, `dvb-ci`, `media-doctor`, ...); then `multimux`; `multimux-cli` last.
+Equivalent grouped view (everything inside a group is independent of its own group, pushed still one by one): `broadcast-common` first; then the leaf tier that needs only it (`mp4-emsg`, `mpeg-pes`, `rtp-packet`, `rtcp-packet`, `dvb-vbi`, `cc-data`, `rmt-flute`, `st377-1`, ...); then `mpeg-ts` (gated by its dev-dependency on `mp4-emsg`) and the rest of that batch (`rist-runtime`, `st291`, `webrtc-runtime`, `container-probe`, `dvb-csa`, `scte35-splice`); then the lockstep tag (`v12.0.0`, position 34); then `transmux`; then the `transmux`/`dvb-si` dependents (`media-plane`, `hls-runtime`, `dvb-stream`, `ts-fix`, `dvb-ci`, `media-doctor`, ...); then `multimux`; `multimux-cli` last.
 
 ## 7. Release lanes
 
@@ -327,7 +329,7 @@ webrtc-runtime=0.4.0
 | (b) crates.io 429 | no *new* crate in this wave (all 54 exist), so the 5-per-10-minute new-crate limit does not apply; existing-crate version publishes are allowed a burst of 30 then 1 per minute, which one-at-a-time with approval easily stays under. If a 429 still appears: wait, re-run the lane (publish is idempotent) |
 | (c) `push-release-tags.sh` exits 0 with missing tags | create all 50 tags **locally** at the release commit first, then `prepare-release.py --verify` after each push (it exits non-zero when a crate is not live); never trust the script's exit code |
 | (d) epoch purity | the whole cascade above; `tools/check-published-dep-consistency.py` (checks 1-2) runs blocking on every release tag, see audit |
-| (e) lockstep | `broadcast-common-v10.0.0` first and **live**, then `mp4-emsg-v0.5.0`, `mpeg-ts-v0.6.0`, then `v12.0.0` |
+| (e) lockstep | `broadcast-common-v10.0.0` first and **live**, then `mp4-emsg-v0.5.0`, `mpeg-ts-v0.6.0`, then `v12.0.0` (no earlier than `mpeg-ts`; the script places it at position 34 of 50) |
 | (f) `#[non_exhaustive]` | applied, see section 2 |
 | lockstep gate runs the **whole workspace** test suite | `cargo test --workspace --exclude dvb-stream --all-features --locked` inside `release.yml`: it must be green on the release commit; run CI on the bump PR first |
 | `Cargo.lock` | `--locked` everywhere: commit the refreshed lock |

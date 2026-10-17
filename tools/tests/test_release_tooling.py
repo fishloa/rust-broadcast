@@ -235,6 +235,92 @@ def test_apply_end_to_end_finalises_notes_refreshes_lock_and_check_is_read_only(
     assert locked.returncode == 0
 
 
+def test_lock_guard_member_set_change_is_only_tolerated_when_asked(pr):
+    new = LOCK_OLD + '\n[[package]]\nname = "newmember"\nversion = "0.1.0"\n'
+    assert any("added to Cargo.lock: newmember@member" in b for b in pr.lock_violations(LOCK_OLD, new))
+    assert pr.lock_violations(LOCK_OLD, new, allow_member_set_change=True) == []
+    # ...but a third-party change is never tolerated, even with the flag
+    bad = LOCK_OLD.replace('checksum = "aa"', 'checksum = "zz"')
+    assert pr.lock_violations(LOCK_OLD, bad, allow_member_set_change=True)
+
+
+@pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo not installed")
+def test_demo_lock_is_refreshed_with_the_guard(pr, capsys):
+    """demo/ is its own workspace with a committed lock recording member versions."""
+    root = pr.ROOT
+    (root / "Cargo.toml").write_text('[workspace]\nmembers = ["lib"]\nexclude = ["demo"]\nresolver = "2"\n')
+    _ws(root, {"lib": ("0.25.0", "")})
+    demo = root / "demo"
+    (demo / "src").mkdir(parents=True)
+    (demo / "src" / "lib.rs").write_text("")
+    (demo / "Cargo.toml").write_text(
+        '[package]\nname = "dvb-demo"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n\n'
+        '[dependencies]\nlib = { path = "../lib", version = "0.25" }\n'
+    )
+    subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=demo, check=True, capture_output=True)
+    assert 'name = "lib"\nversion = "0.25.0"' in (demo / "Cargo.lock").read_text()
+    # the release bump
+    (root / "lib" / "Cargo.toml").write_text((root / "lib" / "Cargo.toml").read_text().replace("0.25.0", "0.26.0"))
+    (demo / "Cargo.toml").write_text((demo / "Cargo.toml").read_text().replace('version = "0.25"', 'version = "0.26"'))
+
+    assert pr.refresh_demo_lock(False) == 0 and "would run: cargo metadata" in capsys.readouterr().out
+    assert 'name = "lib"\nversion = "0.25.0"' in (demo / "Cargo.lock").read_text(), "dry run wrote the lock"
+    assert pr.refresh_demo_lock(True) == 0
+    assert 'name = "lib"\nversion = "0.26.0"' in (demo / "Cargo.lock").read_text()
+    assert "demo/Cargo.lock refreshed" in capsys.readouterr().out
+    locked = subprocess.run(["cargo", "metadata", "--locked", "--offline", "--format-version", "1", "--manifest-path", "demo/Cargo.toml"], cwd=root, capture_output=True)
+    assert locked.returncode == 0
+
+
+def test_demo_lock_absent_is_a_noop(pr, capsys):
+    assert pr.refresh_demo_lock(True) == 0
+    assert "absent" in capsys.readouterr().out
+
+
+REAL_ROOT = pathlib.Path(__file__).parents[2]
+
+
+def test_manifests_gap_is_harmless_spikes_and_differential_sweep_carry_no_versioned_sibling_requirement():
+    """prepare-release.py's manifests() does not scan spikes/ or tools/differential-sweep.
+    That is only safe while neither carries a *versioned* requirement on a workspace
+    member (path-only deps have nothing to bump). If one gains one, this fails and
+    manifests() must grow."""
+    import tomllib
+
+    members = {p.parent.name for p in REAL_ROOT.glob("*/Cargo.toml")}
+    for rel in ("spikes/trunk-bench/Cargo.toml", "tools/differential-sweep/Cargo.toml"):
+        data = tomllib.loads((REAL_ROOT / rel).read_text())
+        tables = [data] + list((data.get("target") or {}).values())
+        for t in tables:
+            for kind in ("dependencies", "dev-dependencies", "build-dependencies"):
+                for name, spec in (t.get(kind) or {}).items():
+                    real = spec.get("package", name) if isinstance(spec, dict) else name
+                    if real in members:
+                        assert isinstance(spec, dict) and "version" not in spec, f"{rel}: {name} carries a version requirement"
+
+
+def test_tag_needs_lists_direct_dependencies_and_the_lockstep_slot_first(pr):
+    _ws(
+        pr.ROOT,
+        {
+            "broadcast-common": ("10.0.0", ""),
+            "dvb-si": ("12.0.0", '[dependencies]\nbroadcast-common = { path = "../broadcast-common", version = "10.0" }\n'),
+            "dvb-t2mi": ("12.0.0", '[dependencies]\ndvb-si = { path = "../dvb-si", version = "12.0" }\n'),
+            "dvb-bbframe": ("12.0.0", ""),
+            "dvb-conformance": ("12.0.0", ""),
+            "dvb-tools": ("12.0.0", ""),
+            "consumer": ("0.1.0", '[dependencies]\ndvb-conformance = { path = "../dvb-conformance", version = "12.0" }\nbroadcast-common = { path = "../broadcast-common", version = "10.0" }\n'),
+        },
+    )
+    pairs = [("consumer", "0.1.0"), ("broadcast-common", "10.0.0")] + [(c, "12.0.0") for c in pr.LOCKSTEP]
+    needs = pr.tag_needs(pairs)
+    assert needs["broadcast-common-v10.0.0"] == []
+    assert needs["v12.0.0"] == ["broadcast-common"]  # the intra-lockstep edge dvb-t2mi -> dvb-si is not an external need
+    assert needs["consumer-v0.1.0"] == ["v12.0.0", "broadcast-common"]
+    md = pr.tag_needs_markdown(pairs)
+    assert md.splitlines()[0] == "1. `broadcast-common-v10.0.0`  " and "needs live first: (nothing in this wave)" in md
+
+
 def test_preflight_aborts_before_editing_anything(pr, capsys):
     root = pr.ROOT
     _ws(root, {"lib": ("0.25.0", "")})

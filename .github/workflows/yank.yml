@@ -4,17 +4,20 @@ name: Yank
 # crates.io. Uses the CARGO_REGISTRY_TOKEN repository secret — the CLI never
 # holds the token (publishing and yanking are CI-only operations in this repo).
 #
-#   gh workflow run yank.yml -f version=3.0.0
-#   gh workflow run yank.yml -f version=3.0.0 -f undo=true
-#   gh workflow run yank.yml -f crates=smpte2038 -f version=0.1.0,0.1.1,0.2.0
+#   gh workflow run yank.yml -f crates=dvb-si -f version=3.0.0
+#   gh workflow run yank.yml -f crates=dvb-si -f version=3.0.0 -f undo=true
+#   gh workflow run yank.yml -f crates=st291 -f version=0.1.0,0.1.1,0.2.0
+#
+# `crates` has NO default: the old default list (`dvb-common,...`) named a
+# crate that no longer exists and silently omitted every other crate, so a
+# bare `-f version=X` yanked the wrong set. Name every crate explicitly.
 
 on:
   workflow_dispatch:
     inputs:
       crates:
-        description: "Comma-separated crate names to yank"
-        required: false
-        default: "dvb-common,dvb-si,dvb-t2mi,dvb-bbframe"
+        description: "Comma-separated crate names to yank (REQUIRED, no default: name them explicitly, e.g. dvb-si,dvb-t2mi,dvb-bbframe,dvb-conformance,dvb-tools for a lockstep yank)"
+        required: true
       version:
         description: "Comma-separated version(s) to yank (e.g. 3.0.0 or 0.1.0,0.1.1)"
         required: true

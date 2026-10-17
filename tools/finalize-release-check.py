@@ -6,6 +6,8 @@ Usage:
     tools/finalize-release-check.py crate=version [crate=version ...]
     tools/finalize-release-check.py PAIRS_FILE --skip-cargo     # no cargo calls
     tools/finalize-release-check.py PAIRS_FILE --root DIR       # check another tree
+    tools/finalize-release-check.py PAIRS_FILE --package        # + cargo package (SLOW)
+    tools/finalize-release-check.py PAIRS_FILE --package-no-verify  # + package, no verify build
 
 Run it on the bumped tree (after `tools/prepare-release.py <pairs>` and before
 the bump PR / the first tag). It writes nothing. Exit 0 only when every check
@@ -24,6 +26,15 @@ Checks:
   README snippets      tools/readme_snippets.py agrees with the bumped versions
   Cargo.lock           contains every bumped version as a workspace member
   cargo metadata       `cargo metadata --locked --offline` succeeds
+  cargo package        OPT-IN (`--package`; ~2 min warm, minutes cold; never run by
+                       default): `cargo package --workspace --locked` over every
+                       publishable member, then a sanity pass over each produced
+                       .crate of the plan (size < 10 MiB, Cargo.toml + the declared
+                       readme/license file + every literal `include` path present).
+                       This is what the lane gates never test: they build the repo
+                       tree, not the tarball cargo publishes. `--package-no-verify`
+                       skips the verify-build of each tarball (use it when a sibling
+                       version of the plan is not on the index yet).
   bindings (INFO)      bindings/python + bindings/transmux-py still pin the OLD
                        published epochs; they are bumped AFTER publish
 """
@@ -31,8 +42,10 @@ Checks:
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import subprocess
+import tarfile
 import sys
 import tomllib
 from pathlib import Path
@@ -42,6 +55,10 @@ DEFAULT_ROOT = HERE.parent
 LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 BINDINGS = ("bindings/python/Cargo.toml", "bindings/transmux-py/Cargo.toml")
 DEP_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
+
+# Not packaged: abandoned (atsc3) and the publish = false test helpers.
+PACKAGE_EXCLUDES = ("atsc3", "test-fixtures", "test-alloc", "test-bounded")
+PACKAGE_MAX_BYTES = 10 * 1024 * 1024  # crates.io's own upload cap is 10 MiB
 
 PASS, FAIL, INFO = "PASS", "FAIL", "INFO"
 
@@ -242,6 +259,66 @@ def check_metadata_locked(root):
     return PASS, "cargo metadata --locked --offline OK"
 
 
+def package_command(verify: bool) -> list[str]:
+    cmd = ["cargo", "package", "--workspace", "--locked"]
+    for x in PACKAGE_EXCLUDES:
+        cmd += ["--exclude", x]
+    if not verify:
+        cmd.append("--no-verify")
+    return cmd
+
+
+def crate_file_problems(crate_file: Path, manifest: dict) -> list[str]:
+    """Sanity-check one packaged .crate tarball against its own manifest."""
+    problems: list[str] = []
+    pkg = manifest.get("package") or {}
+    size = crate_file.stat().st_size
+    if size >= PACKAGE_MAX_BYTES:
+        problems.append(f"{crate_file.name} is {size / 1048576:.1f} MiB (>= 10 MiB)")
+    try:
+        with tarfile.open(crate_file, "r:gz") as tf:
+            prefix = crate_file.name.removesuffix(".crate") + "/"
+            names = {m.name.removeprefix(prefix) for m in tf.getmembers() if m.isfile()}
+    except (tarfile.TarError, OSError) as e:
+        return [f"{crate_file.name}: unreadable tarball ({e})"]
+    if "Cargo.toml" not in names:
+        problems.append(f"{crate_file.name}: no Cargo.toml in the tarball")
+    for key in ("readme", "license-file"):
+        val = pkg.get(key)
+        if isinstance(val, str) and val.replace("\\", "/").removeprefix("./") not in names:
+            problems.append(f"{crate_file.name}: `{key} = {val!r}` is not in the tarball")
+    for pat in pkg.get("include") or []:
+        if any(ch in pat for ch in "*?[{"):
+            continue  # a glob may match nothing in a given tree
+        lit = pat.removeprefix("./").rstrip("/")
+        if lit and lit not in names and not any(n.startswith(lit + "/") for n in names):
+            problems.append(f"{crate_file.name}: `include` path {pat!r} is missing from the tarball")
+    if not any(n.startswith("src/") for n in names) and not pkg.get("build"):
+        problems.append(f"{crate_file.name}: no src/ in the tarball")
+    return problems
+
+
+def check_package(root, pairs, verify: bool = True):
+    try:
+        r = subprocess.run(package_command(verify), cwd=root, capture_output=True, text=True)
+    except FileNotFoundError:
+        return FAIL, "cargo not found"
+    if r.returncode != 0:
+        tail = [l for l in (r.stderr or "").strip().splitlines() if l.strip()][-3:]
+        return FAIL, "cargo package failed: " + short(tail)
+    target = Path(os.environ.get("CARGO_TARGET_DIR") or root / "target")
+    ws = workspace_manifests(root)
+    bad: list[str] = []
+    for c, v in pairs:
+        f = target / "package" / f"{c}-{v}.crate"
+        if not f.is_file():
+            bad.append(f"{c}-{v}.crate was not produced")
+        elif c in ws:
+            bad += crate_file_problems(f, ws[c][1])
+    mode = "verified" if verify else "NOT verify-built (--package-no-verify)"
+    return (FAIL, short(bad)) if bad else (PASS, f"{len(pairs)} crates packaged ({mode}), tarballs sane")
+
+
 def check_bindings(root, pairs):
     new = dict(pairs)
     notes = []
@@ -260,7 +337,9 @@ def check_bindings(root, pairs):
     return INFO, short(notes, 8) or "no bindings depend on a bumped crate"
 
 
-def run_checks(root: Path, pairs: list[tuple[str, str]], skip_cargo: bool = False) -> list[tuple[str, str, str]]:
+def run_checks(
+    root: Path, pairs: list[tuple[str, str]], skip_cargo: bool = False, package: str | None = None
+) -> list[tuple[str, str, str]]:
     ws = workspace_manifests(root)
     rows = [
         ("manifest versions", *check_manifest_versions(ws, pairs)),
@@ -275,6 +354,10 @@ def run_checks(root: Path, pairs: list[tuple[str, str]], skip_cargo: bool = Fals
         rows.append(("cargo metadata --locked", INFO, "skipped (--skip-cargo)"))
     else:
         rows.append(("cargo metadata --locked", *check_metadata_locked(root)))
+    if package and skip_cargo:
+        rows.append(("cargo package", FAIL, "--package conflicts with --skip-cargo"))
+    elif package:
+        rows.append(("cargo package", *check_package(root, pairs, verify=package == "verify")))
     rows.append(("bindings pin old (report)", *check_bindings(root, pairs)))
     return rows
 
@@ -289,7 +372,8 @@ def render(rows: list[tuple[str, str, str]]) -> str:
 def main(argv: list[str]) -> int:
     args = list(argv[1:])
     skip = "--skip-cargo" in args
-    args = [a for a in args if a != "--skip-cargo"]
+    package = "verify" if "--package" in args else "no-verify" if "--package-no-verify" in args else None
+    args = [a for a in args if a not in ("--skip-cargo", "--package", "--package-no-verify")]
     root = DEFAULT_ROOT
     if "--root" in args:
         i = args.index("--root")
@@ -299,7 +383,7 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     pairs = parse_pairs(args)
-    rows = run_checks(root, pairs, skip)
+    rows = run_checks(root, pairs, skip, package)
     print(render(rows))
     failed = [n for n, s, _ in rows if s == FAIL]
     print(f"\n{'FAILED: ' + ', '.join(failed) if failed else 'ALL CHECKS PASS'} ({len(pairs)} crates, root {root})")

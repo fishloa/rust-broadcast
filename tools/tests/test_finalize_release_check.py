@@ -151,6 +151,123 @@ def test_bindings_report_old_pins_without_failing(tree):
     assert "ALREADY on new epoch" in row[2]
 
 
+def _crate_tar(path, name, ver, files, size_pad=0):
+    import io
+    import tarfile
+
+    with tarfile.open(path, "w:gz") as tf:
+        for rel, data in files.items():
+            raw = data if isinstance(data, bytes) else data.encode()
+            ti = tarfile.TarInfo(f"{name}-{ver}/{rel}")
+            ti.size = len(raw)
+            tf.addfile(ti, io.BytesIO(raw))
+        if size_pad:
+            import os
+
+            raw = os.urandom(size_pad)  # incompressible, so the .crate really is that big
+            ti = tarfile.TarInfo(f"{name}-{ver}/blob.bin")
+            ti.size = len(raw)
+            tf.addfile(ti, io.BytesIO(raw))
+
+
+GOOD = {"Cargo.toml": "x", "src/lib.rs": "", "README.md": "r", "LICENSE": "l", "data/a.bin": "d"}
+MANIFEST = {"package": {"name": "lib", "readme": "README.md", "license-file": "LICENSE", "include": ["src/", "data/a.bin", "README.md", "tests/*.rs"]}}
+
+
+def test_crate_file_sanity_passes_a_complete_tarball(tmp_path):
+    fc = _load()
+    f = tmp_path / "lib-0.26.0.crate"
+    _crate_tar(f, "lib", "0.26.0", GOOD)
+    assert fc.crate_file_problems(f, MANIFEST) == []
+
+
+@pytest.mark.parametrize(
+    "drop,needle",
+    [
+        ("README.md", "`readme = 'README.md'` is not in the tarball"),
+        ("LICENSE", "`license-file = 'LICENSE'` is not in the tarball"),
+        ("data/a.bin", "`include` path 'data/a.bin' is missing"),
+        ("Cargo.toml", "no Cargo.toml"),
+        ("src/lib.rs", "no src/"),
+    ],
+)
+def test_crate_file_sanity_flags_each_missing_piece(tmp_path, drop, needle):
+    fc = _load()
+    f = tmp_path / "lib-0.26.0.crate"
+    _crate_tar(f, "lib", "0.26.0", {k: v for k, v in GOOD.items() if k != drop})
+    problems = fc.crate_file_problems(f, MANIFEST)
+    assert any(needle in p for p in problems), problems
+
+
+def test_crate_file_sanity_flags_oversize(tmp_path):
+    fc = _load()
+    f = tmp_path / "lib-0.26.0.crate"
+    _crate_tar(f, "lib", "0.26.0", GOOD, size_pad=10 * 1024 * 1024 + 1024)
+    assert any("MiB (>= 10 MiB)" in p for p in fc.crate_file_problems(f, MANIFEST))
+
+
+STUB_CARGO = """#!/bin/sh
+echo "$@" >> "$STUB_LOG"
+[ -n "$STUB_FAIL" ] && { echo "error: failed to verify package tarball" >&2; exit 101; }
+mkdir -p target/package
+for c in $STUB_CRATES; do cp "$STUB_TAR/$c.crate" "target/package/$c.crate"; done
+exit 0
+"""
+
+
+@pytest.fixture()
+def stub_cargo(tmp_path, monkeypatch):
+    bindir = tmp_path / "stubbin"
+    bindir.mkdir()
+    exe = bindir / "cargo"
+    exe.write_text(STUB_CARGO)
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    monkeypatch.setenv("STUB_LOG", str(tmp_path / "cargo.log"))
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+    return tmp_path
+
+
+def test_package_step_runs_workspace_package_and_checks_every_planned_crate(tree, stub_cargo, monkeypatch):
+    fc = _load()
+    tar = stub_cargo / "tars"
+    tar.mkdir()
+    _crate_tar(tar / "lib-0.26.0.crate", "lib", "0.26.0", GOOD)
+    _crate_tar(tar / "app-0.4.0.crate", "app", "0.4.0", GOOD)
+    monkeypatch.setenv("STUB_TAR", str(tar))
+    monkeypatch.setenv("STUB_CRATES", "lib-0.26.0 app-0.4.0")
+    rows = fc.run_checks(tree, PAIRS, skip_cargo=False, package="verify")
+    st = status(rows)
+    assert st["cargo package"] == "PASS", [r for r in rows if r[0] == "cargo package"]
+    log = (stub_cargo / "cargo.log").read_text()
+    assert "package --workspace --locked --exclude atsc3 --exclude test-fixtures --exclude test-alloc --exclude test-bounded" in log
+    assert "--no-verify" not in log
+    fc.run_checks(tree, PAIRS, skip_cargo=False, package="no-verify")
+    assert "--no-verify" in (stub_cargo / "cargo.log").read_text()
+
+
+def test_package_step_fails_when_cargo_package_fails_or_a_crate_is_missing(tree, stub_cargo, monkeypatch):
+    fc = _load()
+    tar = stub_cargo / "tars"
+    tar.mkdir()
+    _crate_tar(tar / "lib-0.26.0.crate", "lib", "0.26.0", GOOD)
+    _crate_tar(tar / "app-0.4.0.crate", "app", "0.4.0", GOOD)
+    monkeypatch.setenv("STUB_TAR", str(tar))
+    monkeypatch.setenv("STUB_CRATES", "lib-0.26.0")  # app never produced
+    rows = fc.run_checks(tree, PAIRS, skip_cargo=False, package="verify")
+    assert status(rows)["cargo package"] == "FAIL" and "app-0.4.0.crate was not produced" in str(rows)
+    monkeypatch.setenv("STUB_FAIL", "1")
+    rows = fc.run_checks(tree, PAIRS, skip_cargo=False, package="verify")
+    assert status(rows)["cargo package"] == "FAIL" and "failed to verify package tarball" in str(rows)
+
+
+def test_package_step_is_off_by_default(tree, stub_cargo):
+    fc = _load()
+    rows = fc.run_checks(tree, PAIRS, skip_cargo=True)
+    assert "cargo package" not in status(rows)
+    assert not (stub_cargo / "cargo.log").exists()
+
+
 def test_main_exit_code_and_pair_file(tree, capsys):
     fc = _load()
     pf = tree / "pairs"
