@@ -5848,6 +5848,20 @@ impl<'a> TsDemux<'a> {
                 DemuxEvent::TracksResolved { .. } => {}
             }
         }
+        // The streaming core stamps `track: None` on damage seen before its PID
+        // resolved to a track (a Data/DSM-CC PID is announced only once its
+        // first section completes or at `finish()`, issue #1348). `tracks` is
+        // final here, so resolve every still-unresolved record against it by
+        // source PID. A PID that never became a track, and stream-wide damage
+        // (`pid: None`), stay `None`.
+        for record in &mut degraded_at {
+            if record.track.is_none()
+                && let Some(pid) = record.provenance.pid
+                && let Some(t) = tracks.iter().find(|t| t.spec.source_pid == Some(pid))
+            {
+                record.track = Some(t.spec.track_id);
+            }
+        }
         let mut media = Media::new(tracks, VIDEO_TIMESCALE).with_pcr(pcr);
         media.degraded = degraded;
         media.degraded_at = degraded_at;

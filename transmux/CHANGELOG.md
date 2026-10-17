@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **`Media::degraded_at[i].track` was `None` for a PID that is in `Media::tracks` (#1348).** The streaming core stamps `InputDegraded::track` with what had resolved when the event fired, and a Data/DSM-CC PID only becomes a track once its first section completes (or at `finish()`), so on `orf3-dvbs2-raw-zenith-tv.ts` every record for PID 0x1C90 had `track: None` although it is a Data track. The batch `TsDemux` now resolves each still-`None` record against the final tracks (`spec.source_pid == provenance.pid`). A record whose PID never became a track, or stream-wide damage (`provenance.pid == None`), stays `None`; the live `DemuxEvent::InputDegraded::track` is unchanged (only what had resolved at that moment; documented).
 
 ## [0.27.2] - 2026-10-17
 ### Fixed

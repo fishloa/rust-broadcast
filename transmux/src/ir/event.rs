@@ -203,8 +203,15 @@ broadcast_common::impl_spec_display!(InputDegradation);
 pub struct DegradationRecord {
     /// What degraded.
     pub kind: InputDegradation,
-    /// The track the carrying PID had resolved to when the event fired, or
-    /// `None` (never fabricated — see [`DemuxEvent::InputDegraded::track`]).
+    /// The track the carrying PID maps to. On a [`Media::degraded_at`](crate::ir::Media::degraded_at)
+    /// record from the one-shot TS demuxer this is resolved against the final
+    /// [`Media::tracks`](crate::ir::Media::tracks) (match on
+    /// `spec.source_pid == provenance.pid`), so damage seen before a Data /
+    /// DSM-CC PID was announced still names its track (issue #1348). `None`
+    /// means the PID never became a track, or the damage is stream-wide
+    /// (`provenance.pid == None`, e.g. sync loss); never fabricated. The live
+    /// [`DemuxEvent::InputDegraded::track`] is only what had resolved when the
+    /// event fired, so it may be `None` for a PID that later becomes a track.
     pub track: Option<TrackId>,
     /// The TS PID and packet index the event was observed at.
     pub provenance: EventProvenance,
