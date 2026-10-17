@@ -161,61 +161,95 @@ fn drain(c: &mut BufferController, r: &mut Renderer, now: u64, log: &mut Vec<(u6
     }
 }
 
+/// One controller with its obedient renderer, steppable chunk by chunk so
+/// several sessions can be interleaved.
+pub struct Session {
+    pub c: BufferController,
+    r: Renderer,
+    o: Opts,
+    pub log: Vec<(u64, Event)>,
+    pub targets: Vec<u64>,
+    pub min_lead: Option<i64>,
+    next_tick: u64,
+    last_arrival: u64,
+    seen: bool,
+}
+
+impl Session {
+    pub fn new(o: &Opts) -> Self {
+        Self {
+            c: BufferController::new(o.cfg, None).unwrap(),
+            r: Renderer {
+                running: false,
+                set: false,
+                clock: 0,
+                t_set: 0,
+            },
+            o: o.clone(),
+            log: Vec::new(),
+            targets: Vec::new(),
+            min_lead: None,
+            next_tick: 0,
+            last_arrival: 0,
+            seen: false,
+        }
+    }
+
+    fn tick(&mut self, now: u64) {
+        let reported = self
+            .r
+            .set
+            .then(|| shift27(self.r.pos(now), self.o.clock_err_ticks));
+        self.c.on_tick(now, reported);
+        drain(&mut self.c, &mut self.r, now, &mut self.log);
+        if self.c.state() == State::Playing {
+            let l = self.c.stats().lead_us;
+            self.min_lead = Some(self.min_lead.map_or(l, |m| m.min(l)));
+        }
+    }
+
+    /// Deliver one chunk (ticking the renderer up to its arrival first).
+    pub fn feed(&mut self, ch: &Chunk) {
+        let a = ch.arrival_us;
+        if self.seen && a - self.last_arrival >= self.o.reconnect_gap_us && self.o.send_hints {
+            self.c.on_hint(self.last_arrival, Hint::SourceEnded);
+            drain(&mut self.c, &mut self.r, self.last_arrival, &mut self.log);
+            self.c.on_hint(a, Hint::Reconnected);
+            drain(&mut self.c, &mut self.r, a, &mut self.log);
+        }
+        while self.next_tick <= a {
+            self.tick(self.next_tick);
+            self.next_tick += self.o.tick_us;
+        }
+        self.c.on_chunk(a, ch.bytes, ch.pcr);
+        drain(&mut self.c, &mut self.r, a, &mut self.log);
+        if let Some(pcr) = ch.pcr {
+            self.targets.push(self.c.target_us());
+            self.c.on_media(a, shift27(pcr, -self.o.offset_ticks));
+        }
+        self.tick(a);
+        self.last_arrival = a;
+        self.seen = true;
+    }
+
+    pub fn finish(self) -> Run {
+        Run {
+            events: self.log,
+            ctl: self.c,
+            targets: self.targets,
+            min_lead_playing: self.min_lead,
+            late_restarts: 0,
+        }
+    }
+}
+
 /// Replay `chunks` through a controller with an obedient renderer.
 pub fn replay(chunks: &[Chunk], o: &Opts) -> Run {
-    let mut c = BufferController::new(o.cfg, None).unwrap();
-    let mut r = Renderer {
-        running: false,
-        set: false,
-        clock: 0,
-        t_set: 0,
-    };
-    let mut log = Vec::new();
-    let mut targets = Vec::new();
-    let mut min_lead: Option<i64> = None;
-    let mut next_tick = 0u64;
-    let mut last_arrival = 0u64;
-    let tick = |c: &mut BufferController,
-                r: &mut Renderer,
-                now: u64,
-                log: &mut Vec<(u64, Event)>,
-                min_lead: &mut Option<i64>| {
-        let reported = r.set.then(|| shift27(r.pos(now), o.clock_err_ticks));
-        c.on_tick(now, reported);
-        drain(c, r, now, log);
-        if c.state() == State::Playing {
-            let l = c.stats().lead_us;
-            *min_lead = Some(min_lead.map_or(l, |m| m.min(l)));
-        }
-    };
-    for (i, ch) in chunks.iter().enumerate() {
-        let a = ch.arrival_us;
-        if i > 0 && a - last_arrival >= o.reconnect_gap_us && o.send_hints {
-            c.on_hint(last_arrival, Hint::SourceEnded);
-            drain(&mut c, &mut r, last_arrival, &mut log);
-            c.on_hint(a, Hint::Reconnected);
-            drain(&mut c, &mut r, a, &mut log);
-        }
-        while next_tick <= a {
-            tick(&mut c, &mut r, next_tick, &mut log, &mut min_lead);
-            next_tick += o.tick_us;
-        }
-        c.on_chunk(a, ch.bytes, ch.pcr);
-        drain(&mut c, &mut r, a, &mut log);
-        if let Some(pcr) = ch.pcr {
-            targets.push(c.target_us());
-            c.on_media(a, shift27(pcr, -o.offset_ticks));
-        }
-        tick(&mut c, &mut r, a, &mut log, &mut min_lead);
-        last_arrival = a;
+    let mut s = Session::new(o);
+    for ch in chunks {
+        s.feed(ch);
     }
-    Run {
-        events: log,
-        ctl: c,
-        targets,
-        min_lead_playing: min_lead,
-        late_restarts: 0,
-    }
+    s.finish()
 }
 
 // ---------------------------------------------------------------- synthetic

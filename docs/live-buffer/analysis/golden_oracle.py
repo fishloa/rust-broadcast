@@ -55,6 +55,7 @@ class Jitter:
     def reset_baseline(self):
         self.win = []                      # (t, d) monotonic: strictly increasing d
         self.last_t = None
+        self.recovering = False
         self.w = [0] * self.c["buckets"]
         self.k = 0
         self.base = 0
@@ -112,8 +113,13 @@ class Jitter:
         if self.istart is None:
             self.istart = arrival
         elif arrival >= self.istart + c["interval"]:
-            if self.imax is not None and self.imax <= c["outlier"]:
-                self.hist_add(self.imax)
+            if self.imax is not None:
+                if self.imax > c["outlier"]:
+                    self.recovering = True          # stall interval: max-hold only
+                elif self.recovering:
+                    self.recovering = False         # aftermath (burst tail): skipped once
+                else:
+                    self.hist_add(self.imax)
             self.istart += ((arrival - self.istart) // c["interval"]) * c["interval"]
             self.imax = None
         self.imax = pdv if self.imax is None else max(self.imax, pdv)

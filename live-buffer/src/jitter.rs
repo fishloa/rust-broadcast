@@ -83,6 +83,7 @@ pub struct DeliveryJitter {
     last_arrival: Option<u64>,
     istart: Option<u64>,
     imax: Option<u64>,
+    recovering: bool,
     base: u64,
     pdv_last: u64,
     j16: i64,
@@ -121,6 +122,7 @@ impl DeliveryJitter {
             last_arrival: None,
             istart: None,
             imax: None,
+            recovering: false,
             base: 0,
             pdv_last: 0,
             j16: 0,
@@ -196,11 +198,18 @@ impl DeliveryJitter {
         match self.istart {
             None => self.istart = Some(arrival_us),
             Some(start) if arrival_us >= start.saturating_add(self.cfg.interval_us) => {
-                if let Some(m) = self.imax.take()
-                    && m <= self.cfg.outlier_us
-                {
-                    self.hist.add(m);
-                    self.base = self.hist.quantile_us();
+                if let Some(m) = self.imax.take() {
+                    if m > self.cfg.outlier_us {
+                        // a stall interval: max-hold only; its aftermath is not baseline either
+                        self.recovering = true;
+                    } else if self.recovering {
+                        // the interval after a stall holds the tail of a catch-up burst
+                        // (D still above the minimum while the backlog drains): skip it once
+                        self.recovering = false;
+                    } else {
+                        self.hist.add(m);
+                        self.base = self.hist.quantile_us();
+                    }
                 }
                 let whole = (arrival_us - start) / self.cfg.interval_us;
                 self.istart =
@@ -254,6 +263,7 @@ impl DeliveryJitter {
         self.base = 0;
         self.istart = None;
         self.imax = None;
+        self.recovering = false;
         self.origin = None;
         self.prev_raw = None;
         self.unrolled_ticks = 0;
