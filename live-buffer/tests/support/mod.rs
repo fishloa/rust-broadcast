@@ -343,10 +343,12 @@ impl Synth {
     }
 }
 
-/// RFC 6298 retransmission timeout gap lengths used in the synthetic suite.
-pub const RTO_1S: u64 = 1_000_000;
-pub const RTO_2S: u64 = 2_000_000;
-pub const RTO_4S: u64 = 4_000_000;
+/// Delivery-stall lengths of the synthetic suite: 1x/2x/4x, the pattern of a
+/// transport that retransmits with exponential backoff (RFC 6298); the cause of
+/// the real ~1.4 s stalls is undetermined, only their size is measured.
+pub const GAP_1S: u64 = 1_000_000;
+pub const GAP_2S: u64 = 2_000_000;
+pub const GAP_4S: u64 = 4_000_000;
 
 /// PTS-domain helper for tests: 90 kHz PTS to 27 MHz.
 pub fn pts(p: u64) -> u64 {

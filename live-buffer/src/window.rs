@@ -14,6 +14,7 @@ pub struct MinWindow {
     window_us: u64,
     cap: usize,
     overflows: u32,
+    last_t: Option<u64>,
 }
 
 impl MinWindow {
@@ -31,17 +32,30 @@ impl MinWindow {
             window_us,
             cap,
             overflows: 0,
+            last_t: None,
         })
     }
 
     /// Add a sample at time `t` (non-decreasing) and return the minimum of
     /// the samples within the trailing window (inclusive of this one).
+    ///
+    /// **Long-gap rule.** If the silence since the previous sample is at
+    /// least the window, expiry is skipped for this one push: otherwise a
+    /// delivery stall longer than the window (2 s, 4 s) would
+    /// evict the whole pre-stall baseline and the first post-stall sample
+    /// would read a PDV of 0. The next push (normal spacing) expires the old
+    /// entries as usual.
     pub fn push(&mut self, t: u64, v: i64) -> i64 {
+        let long_gap = self
+            .last_t
+            .is_some_and(|p| t.saturating_sub(p) >= self.window_us);
+        self.last_t = Some(t);
         while self.dq.back().is_some_and(|b| b.1 >= v) {
             self.dq.pop_back();
         }
         self.dq.push_back((t, v));
-        while self.dq.len() > 1
+        while !long_gap
+            && self.dq.len() > 1
             && self
                 .dq
                 .front()
@@ -83,5 +97,6 @@ impl MinWindow {
     /// Drop every sample (the overflow counter is kept).
     pub fn clear(&mut self) {
         self.dq.clear();
+        self.last_t = None;
     }
 }

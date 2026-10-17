@@ -21,14 +21,22 @@ fn min_window_matches_a_brute_force_scan() {
         let mut all: Vec<(u64, i64)> = Vec::new();
         let mut t = 0u64;
         for _ in 0..20_000 {
+            let prev_t = all.last().map(|a| a.0);
             t += rng.below(window / 4 + 2); // equal timestamps happen
+            if rng.below(200) == 0 {
+                t += window + rng.below(window); // a stall at least as long as the window
+            }
             let v = rng.below(2001) as i64 - 1000;
             all.push((t, v));
             let got = w.push(t, v);
-            // brute force: min over samples not yet expired (`s.t + window > t`)
+            // brute force: min over samples not yet expired (`s.t + window > ref`), where
+            // ref is `t`, except after a silence >= window, when expiry is judged at the
+            // PREVIOUS sample's time (long-gap rule: the pre-stall baseline survives once)
+            let long_gap = prev_t.is_some_and(|p| t - p >= window);
+            let reference = if long_gap { prev_t.unwrap() } else { t };
             let want = all
                 .iter()
-                .filter(|(s, _)| s + window > t)
+                .filter(|(s, _)| s + window > reference)
                 .map(|&(_, x)| x)
                 .min()
                 .unwrap();

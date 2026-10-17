@@ -31,7 +31,7 @@ Nothing here is a wire format, so `Parse`/`Serialize` do not apply. The columns 
 |---|---|---|---|---|
 | RFC 3550, RTP | July 2003 | s6.4.1 and A.8 interarrival jitter `J` (integer form, x16 scaled) | Reference | reported as `rfc3550_jitter_us`, never used for sizing; tested against the A.8 algorithm |
 | RFC 5481, Packet Delay Variation Metrics | March 2009 | s4.2 / s7.1.2 PDV = `D - Dmin` | Reference | the sample definition of the estimator |
-| RFC 6298, TCP RTO | June 2011 | 1 s RTO floor, exponential back-off | Reference | explains the 1.0/2.0/4.0 s gaps used in the synthetic suite; no value is encoded from it |
+| RFC 6298, TCP RTO | June 2011 | exponential back-off (1x/2x/4x) | Reference | source of the 1x/2x/4x stall pattern in the synthetic suite only (a transport that retransmits with exponential backoff); NOT the diagnosis of the real ~1.4 s stalls, whose cause is undetermined |
 | RFC 9002 s5, QUIC loss detection (RTT estimation) | May 2021 | minimum-filter idea | Reference | idea only |
 | ExoPlayer/Media3, hls.js, Shaka (Apache-2.0), dash.js, libwebrtc (BSD-3) | n/a | live-offset adaptation, 60 s stability window, NetEq 500 ms interval maxima and forgetting histogram, `VCMTiming` 100 ms/s slew | Not implemented as code | ideas only, no code taken; GStreamer (LGPL) idea only |
 | Queue/target heuristics (the policy) | n/a | start/resume thresholds, stall max-hold, hysteresis | **Implementation-defined** | every default is tagged tuned / sourced / guess in the design |
@@ -96,7 +96,7 @@ assert!(c.target_us() <= ControllerConfig::default().policy.max_us);
 - PCR wrap arithmetic only through `broadcast_common::clock33` (a `clock33_guard` test bans `abs_diff` and a literal 2^33).
 - Public enums carry `name()` and `Display` (workspace label convention; `tests/label_coverage.rs`).
 - No panics on any input: `u64` extremes, non-monotonic clocks and zero config values return typed errors or are ignored and counted.
-- Oracles: a brute-force sliding window, an exact Q15 reference, the RFC 3550 A.8 algorithm, the RFC 5481 definition and the stdlib Python scripts in `docs/live-buffer/analysis/` (an independent second implementation) against the real traces. The traces live in the private fixtures repo; the public suite carries a synthetic generator (RFC 6298 gap patterns, loss, ramping jitter, drift, reconnect).
+- Oracles: a brute-force sliding window, an exact Q15 reference, the RFC 3550 A.8 algorithm, the RFC 5481 definition and the stdlib Python scripts in `docs/live-buffer/analysis/` (an independent second implementation) against the real traces. The traces live in the private fixtures repo; the public suite carries a synthetic generator (1x/2x/4x stall patterns, loss, ramping jitter, drift, reconnect).
 
 Full design and evidence: [`docs/live-buffer/DESIGN.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/live-buffer/DESIGN.md), [`TRACE-ANALYSIS.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/live-buffer/TRACE-ANALYSIS.md).
 

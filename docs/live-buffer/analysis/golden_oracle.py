@@ -54,6 +54,7 @@ class Jitter:
 
     def reset_baseline(self):
         self.win = []                      # (t, d) monotonic: strictly increasing d
+        self.last_t = None
         self.w = [0] * self.c["buckets"]
         self.k = 0
         self.base = 0
@@ -98,7 +99,10 @@ class Jitter:
         while self.win and self.win[-1][1] >= d:
             self.win.pop()
         self.win.append((t, d))
-        while len(self.win) > 1 and self.win[0][0] + c["min_window"] <= t:
+        # long-gap rule: a silence >= the window skips expiry for this one sample
+        long_gap = self.last_t is not None and t - self.last_t >= c["min_window"]
+        self.last_t = t
+        while not long_gap and len(self.win) > 1 and self.win[0][0] + c["min_window"] <= t:
             self.win.pop(0)
         pdv = d - self.win[0][1]
         # max-hold (sample driven)
