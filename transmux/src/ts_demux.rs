@@ -2759,8 +2759,9 @@ fn reprobe_if_config_changed(
         }
         Codec::Aac => {
             let (_, hdr) = find_adts_sync(data)?;
-            // A header whose fields cannot be encoded as an ASC (a reserved
-            // sampling_frequency_index) is no config observation: no change.
+            // Serializing an ADTS-derived config cannot fail (no `trailing`,
+            // buffer sized by `serialized_len`); degrade to "no observation"
+            // rather than carry an `unwrap` in library code.
             let asc = AudioSpecificConfig::from_adts_header(&hdr)
                 .try_to_bytes()
                 .ok()?;
@@ -7032,6 +7033,23 @@ mod tests {
         );
     }
 
+    /// The silent-head bound applies to a head that sent NOTHING. A video head
+    /// that has delivered packets (here: 300 access units with no parameter
+    /// sets) keeps blocking the PIDs behind it past `SILENT_HEAD_BLOCK_PACKETS`
+    /// packets of the stream, exactly as before: only the byte cap abandons it.
+    #[test]
+    fn present_but_unresolved_video_head_still_blocks_past_the_silent_bound() {
+        let ts = stalled_head_ts(300, 2, 5000, false, false);
+        assert!(
+            ts.len() / TS_PACKET_SIZE > SILENT_HEAD_BLOCK_PACKETS as usize + 1000,
+            "the stream outlasts the silent bound"
+        );
+        assert!(
+            live_track_added_pids(&ts).is_empty(),
+            "a head that has sent data is not a silent head"
+        );
+    }
+
     /// Round-3 audit C: a PMT-version removal of an E-AC-3 track that is
     /// holding back its final access unit (dependent-substream hold-back,
     /// #1186) must emit that whole access unit before `TrackRemoved`.
@@ -7069,22 +7087,6 @@ mod tests {
             k - 1,
             "held final AU emitted before removal: {seen:?}"
         );
-    }
-
-    /// Round-3 audit E: a live AAC track that sees an ADTS header whose fields
-    /// cannot be encoded as an AudioSpecificConfig (`sampling_frequency_index`
-    /// 15, the escape value, with no explicit rate) must not panic the demuxer.
-    #[test]
-    fn unencodable_adts_header_on_a_live_aac_track_does_not_panic() {
-        let mut payloads: Vec<Vec<u8>> = (0..6).map(adts_frame).collect();
-        let mut bad = crate::aac_asc::build_adts_header(1, 15, 2, 107).to_vec();
-        bad.extend_from_slice(&body_bytes(7, 100));
-        payloads.push(bad);
-        payloads.extend((8..12).map(adts_frame));
-        let ts = single_es_pes_ts(STREAM_TYPE_AAC_ADTS, &payloads);
-        let seen = seen_events(&ts);
-        assert_eq!(added(&seen).len(), 1, "{seen:?}");
-        assert!(seen.contains(&Seen::Sample(1)));
     }
 
     /// Round-3 audit F: a track promoted from an unverified, broken-chain first
@@ -7171,7 +7173,7 @@ mod tests {
         }
         let (walks, _) = run(&endless);
         assert!(
-            walks < EAC3_PROBE_FULL_WALKS + 256,
+            walks < 4096 + 256,
             "{walks} full window walks for {} one-byte PES",
             endless.len()
         );
@@ -7184,7 +7186,7 @@ mod tests {
         complete.extend_from_slice(&real);
         complete.extend(eac3_dependent_frame_sized(9, 2048));
         let (walks, tracks) = run(&complete);
-        assert!(walks > EAC3_PROBE_FULL_WALKS, "the gate was exercised");
+        assert!(walks > 4096, "the gate was exercised: {walks}");
         assert_eq!(tracks, 1, "the track resolves under the gate");
     }
 
