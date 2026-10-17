@@ -317,6 +317,14 @@ impl<D: CaDevice> CaDevice for RecordingCaDevice<D> {
         self.inner.reset()
     }
 
+    /// Forwarded: without this the wrapper falls back to the trait default
+    /// (`Duration::ZERO`) and `Driver::init` writes the first TPDU straight
+    /// after `CA_RESET` (EINVAL on a CXD2099). Guarded by
+    /// `tests/wrapper_forwards_defaults.rs`.
+    fn reset_settle(&self) -> std::time::Duration {
+        self.inner.reset_settle()
+    }
+
     fn slot_info(&mut self) -> io::Result<SlotInfo> {
         let si = self.inner.slot_info()?;
         if self.last_slot != Some(si) {

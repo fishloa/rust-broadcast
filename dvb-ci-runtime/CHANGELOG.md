@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `RecordingCaDevice<D>` now forwards `CaDevice::reset_settle()` to the wrapped device. It fell back to the trait default (`Duration::ZERO`), so with a `LinuxCaDevice` inside (CXD2099, `RESET_SETTLE` = 3 s) `Driver::init` wrote the first TPDU straight after `CA_RESET` and every attempt failed with `EINVAL` (reported on 0.18.0; also affected `ci-probe`). An audit of every `CaDevice`/`CiDataDevice` impl in the workspace found no other wrapper dropping a defaulted method; the new `tests/wrapper_forwards_defaults.rs` pins this (a behavioural test plus a lexical guard that fails when a defaulted trait method is added without being forwarded by a wrapper impl). Not exercised on real hardware.
+
 ## [0.18.0] - 2026-10-17
 ### Documentation
 - The periodic `ca_pmt` re-query is documented as hardware-verified on an entitled AlphaCrypt One4All V2.5 (CAID 0x0650, CXD2099 `ci0`, 180 s runs, 2026-10-16): `update/query` + `update/ok_descrambling` pairs, `ca_enable = 0x81` replies, no descrambling gap, `feed_ts` max 412 us; it stays opt-in (`REQUERY_DEFAULT` = `Duration::ZERO`). README, `REQUERY_DEFAULT` and `Driver::set_requery_interval` docs no longer say it is unverified or that the module never answers `query`.
