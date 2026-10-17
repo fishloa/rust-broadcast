@@ -884,10 +884,11 @@ mod tests {
                     if !resolved {
                         before += 1;
                     }
-                    by_track
-                        .entry(track_id)
-                        .or_default()
-                        .push((sample.data.to_vec(), sample.dts, sample.pts));
+                    by_track.entry(track_id).or_default().push((
+                        sample.data.to_vec(),
+                        sample.dts,
+                        sample.pts,
+                    ));
                 }
                 _ => {}
             }
@@ -917,13 +918,16 @@ mod tests {
                     ..
                 } => {
                     assert!(
-                        announced.get(&program).is_some_and(|t| t.contains(&track_id)),
+                        announced
+                            .get(&program)
+                            .is_some_and(|t| t.contains(&track_id)),
                         "a sample for {track_id:?} preceded its programme's announcement"
                     );
-                    by_track
-                        .entry(track_id)
-                        .or_default()
-                        .push((sample.data.to_vec(), sample.dts, sample.pts));
+                    by_track.entry(track_id).or_default().push((
+                        sample.data.to_vec(),
+                        sample.dts,
+                        sample.pts,
+                    ));
                 }
                 _ => {}
             }
@@ -946,7 +950,11 @@ mod tests {
                 expect.len() - got.len().min(expect.len()),
                 expect.len()
             );
-            assert_eq!(got, expect.as_slice(), "{track:?}: bytes/timestamps/order differ");
+            assert_eq!(
+                got,
+                expect.as_slice(),
+                "{track:?}: bytes/timestamps/order differ"
+            );
         }
         assert_eq!(published.len(), raw.len(), "a track went missing");
     }
@@ -971,10 +979,9 @@ mod tests {
     /// promoted ahead of the resolved signal).
     #[test]
     fn samples_before_tracks_resolved_reach_the_session_france_tnt() {
-        let Some(path) = test_fixtures::require(
-            "ts/france-tnt-dvbt-20s.ts",
-            "multimux backlog replay",
-        ) else {
+        let Some(path) =
+            test_fixtures::require("ts/france-tnt-dvbt-20s.ts", "multimux backlog replay")
+        else {
             return;
         };
         assert_session_equals_raw_demux(&std::fs::read(path).expect("read fixture"));
@@ -1058,7 +1065,13 @@ mod tests {
         const MIB: usize = 1024 * 1024;
         let total = MAX_HELD_BYTES / MIB + 3;
         for i in 0..total {
-            let s = Sample::new(vec![0u8; MIB], Some(i as i64), Some(i as i64), Some(1), true);
+            let s = Sample::new(
+                vec![0u8; MIB],
+                Some(i as i64),
+                Some(i as i64),
+                Some(1),
+                true,
+            );
             tracker.handle(DemuxEvent::sample(TrackId::new(1), s));
         }
         tracker.handle(DemuxEvent::tracks_resolved(0));
