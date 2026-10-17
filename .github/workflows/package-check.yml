@@ -1,0 +1,57 @@
+name: Package check
+
+# MANUAL pre-tag check: does the TARBALL cargo would publish build?
+#
+# The release lanes gate the repo tree (`cargo test -p <crate>`), never the
+# packaged .crate, so a missing `include` path, a bad `readme` path or a
+# verify-build failure first shows up LIVE, mid-wave, on an immutable publish.
+# This job runs `tools/finalize-release-check.py --package` (cargo package
+# --workspace --locked over every publishable member, then a size / readme /
+# license-file / include sanity pass over each produced .crate) on the ref you
+# dispatch it on. Run it on the bumped release commit BEFORE the first tag.
+#
+#   gh workflow run package-check.yml --ref release/2026-10
+#
+# Cargo 1.95 verifies workspace members against each other (an overlay of the
+# not-yet-published sibling versions), so this works before anything is live;
+# it was run on a bumped scratch tree for the 2026-10 wave (54 crates, PASS).
+# Never publishes anything and holds no secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pairs:
+        description: "Pair file listing the crates=versions to check"
+        required: false
+        default: "docs/release-plan-2026-10.pairs"
+      verify:
+        description: "Verify-build every tarball (slow). false = --package-no-verify"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package-check:
+    name: cargo package (workspace) + tarball sanity
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      # The finalize check runs `cargo metadata --offline`, which needs the
+      # registry cache populated on a fresh runner.
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+      - name: Package check
+        env:
+          PAIRS: ${{ inputs.pairs }}
+          VERIFY: ${{ inputs.verify }}
+        run: |
+          FLAG=--package
+          if [ "$VERIFY" = "false" ]; then FLAG=--package-no-verify; fi
+          python3 tools/finalize-release-check.py "$PAIRS" "$FLAG"
