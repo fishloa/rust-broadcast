@@ -127,7 +127,7 @@ impl Hint {
             Self::Reconnected => "reconnected",
         }
     }
-    /// Stable ABI code (`bufrt_on_hint`).
+    /// Stable ABI code (`br_on_hint`).
     #[must_use]
     pub fn code(&self) -> u32 {
         match self {

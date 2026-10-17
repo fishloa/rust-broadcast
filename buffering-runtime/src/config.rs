@@ -1,7 +1,7 @@
 //! Configuration, units and the single source of defaults.
 //!
 //! Every default is a named constant in a `DEFAULT` block and `Default` is
-//! implemented from it, so a C wrapper asks the crate (`bufrt_config_default`)
+//! implemented from it, so a C wrapper asks the crate (`br_config_default`)
 //! instead of duplicating numbers. Each default carries its evidence tag in
 //! `docs/buffering-runtime/DESIGN.md` section 4 (`[tuned]` / `[sourced]` /
 //! `[guess]`); all of them are **implementation-defined** (no standard

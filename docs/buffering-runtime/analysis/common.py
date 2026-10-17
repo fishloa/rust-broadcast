@@ -1,7 +1,7 @@
 """Shared loaders for the buffering-runtime trace analysis (deterministic, stdlib only).
 
 Traces live in the PRIVATE repo checkout (private/fixtures/buffering-runtime/); pass
---dir or set LIVE_BUFFER_TRACES. Time bases: arrival in integer microseconds
+--dir or set BUFFERING_RUNTIME_TRACES. Time bases: arrival in integer microseconds
 (arrival_ns // 1000), media time in integer microseconds (pcr_27mhz // 27),
 with the 33-bit-base PCR wrap unrolled with the clock33 semantics
 (signed distance, half-range pivot).
@@ -19,7 +19,7 @@ def trace_dir():
     a = sys.argv[1:]
     if "--dir" in a:
         return a[a.index("--dir") + 1]
-    return os.environ.get("LIVE_BUFFER_TRACES", DEFAULT_DIR)
+    return os.environ.get("BUFFERING_RUNTIME_TRACES", DEFAULT_DIR)
 
 
 def pcr_signed_distance(frm, to):
