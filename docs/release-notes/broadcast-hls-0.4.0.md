@@ -1,6 +1,6 @@
 # broadcast-hls 0.4.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release; no source migration.** `broadcast-hls` has one behavioural fix of its own (`computed_version` no longer over-counts the open segment's `EXT-X-MAP`), but no public API change. It ships as 0.4.0 because it builds against `broadcast-common` 10, and the workspace's epoch-purity rule forbids publishing a crate that still requires the old epoch next to the new one. The README and crate-root docs were also restructured to state what the crate does and does not do.
 

@@ -1,6 +1,6 @@
 # cc-data 0.7.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break, plus the `broadcast-common` 10 epoch).** `CcData` gains two public fields, `process_em_data_flag` (byte 0 bit 7) and `additional_data_flag` (bit 5), and `CcData::parse` now keeps those bits instead of rejecting real ATSC A/53 captures (shaka-player's `captions-test.ts` carries `process_em_data_flag = 0` on all 599 frames). Adding public fields breaks struct-literal construction, and `Error::InvalidFixedBits` no longer carries `what: "reserved/zero_bit"`. `Cea608Decoder`'s RCL no longer discards captions that real SCC files re-issue before EDM/EOC. README and crate-root docs were restructured (scope, standards table, feature table, compiled quick-start doctests).
 

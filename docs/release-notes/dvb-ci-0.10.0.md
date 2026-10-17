@@ -1,6 +1,6 @@
 # dvb-ci 0.10.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break, plus the `broadcast-common` 10 / `dvb-si` 12 / `mpeg-ts` 0.6 epoch).** Three source-breaking changes: (1) `length_field` coding is preserved, so every APDU, SPDU and TPDU object gains a `length_form: LengthForm` field (a CAM may code `82 00 09` for 9, captured raw on hardware; parse used to accept it but every object re-serialized the minimal form); (2) every 13-bit PID field is now `mpeg_ts::pid::Pid` instead of `u16`; (3) parse -> serialize is now byte-exact for every object or the parse is an error: fixed and count-delimited layouts reject trailing bytes, and the reserved/unused bits a peer sent are kept in new public `reserved` fields and written back instead of being rewritten to the spec fill. The README and crate-root docs were rewritten to the workspace standard.
 

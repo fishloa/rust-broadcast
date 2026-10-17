@@ -1,6 +1,6 @@
 # ttml-subtitle 0.4.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (own API changes plus the `broadcast-common` 10 epoch).** This is a TTML round-trip fidelity release. `to_xml` no longer deletes content it does not model (`<metadata>` including the `<smpte:image>` subtitle images of SMPTE-TT / IMSC image documents, which had been dropped since 0.3.0; `ttm:` title/description/copyright/name, `ittm:altText`, `<initial>`, `<style>` children; unmodeled attributes; a `<span>`'s `<metadata>`/`<set>`), the XML declaration is parsed, validated and re-emitted, unmodeled elements inside `<p>`/`<span>` stay at their original position, and dropping a million-level-deep hand-built tree no longer overflows the stack. The README and crate-root docs are rewritten to the workspace documentation standard.
 

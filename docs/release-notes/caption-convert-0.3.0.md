@@ -1,6 +1,6 @@
 # caption-convert 0.3.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break, plus the `broadcast-common` 10 / `cc-data` 0.7 / `dvb-vbi` 0.5 / `timed-metadata` 0.7 epoch).** `matrix::lookup` now returns an `Option` instead of panicking when the matrix has no row for a `(from, to)` pair. The release also fixes real conversion defects: CEA-608 to WebVTT/SRT no longer drops captions that re-issue RCL before EDM/EOC, same-PTS caption updates no longer yield zero-length cues, timestamp parsing is digits-only and rejects a cue whose end precedes its start, `parse_srt` keeps accepting the `.` millisecond separator, and `write_srt` folds a lone CR like the WebVTT writer does.
 

@@ -1,6 +1,6 @@
 # compliance-probe 0.4.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release, mostly from the epoch cascade plus one public field type change.** `PcrSample::pid` is now `mpeg_ts::pid::Pid` instead of a bare integer (#1159), and the crate moves to the new caret epochs of `broadcast-common`, `dvb-conformance`, `media-doctor`, `media-plane`, `mpeg-ts`, `scte35-splice` and `timed-metadata`. It also fixes the PCR drift estimate across a PCR wrap: the inter-PCR delta used `wrapping_sub(..) % (2^33*300)`, which is wrong whenever the PCR wraps or steps backward, so a steady PCR crossing the roughly 26.5 hour wrap is no longer discarded as a discontinuity and keeps about 0 ppm drift.
 

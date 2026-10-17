@@ -1,6 +1,6 @@
 # mpeg-ts 0.6.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release, twice over: its own API breaks and it moves to `broadcast-common` 10.** `mpeg-ts` is the first of the typed-id crates: `TsHeader::pid` and every PID-taking API is the validated 13-bit `pid::Pid` instead of a bare `u16`, `AdaptationField`/`AdaptationFieldExtension` now carry every Table 2-6 bit so parse -> serialize is byte-exact, and `From<u16> for Pid` (which silently masked) is removed. Smaller changes: `TsResync::feed_into` appends to a caller-owned vector (and `feed` now allocates once), `Pid::from_wire_masked` names the masking constructor, and an over-range hand-set `reserved_flags` / `piecewise_rate_reserved` now returns `FieldOverflow` instead of being masked into a different value. Real-capture evidence: `tests/pid_typed.rs` checks every packet of every committed `.ts` fixture (and 7.1 M packets / 294 files from the local archive with `--ignored`) against an independently extracted 13-bit PID.
 

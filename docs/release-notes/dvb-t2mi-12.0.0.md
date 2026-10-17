@@ -1,6 +1,6 @@
 # dvb-t2mi 12.0.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** Lockstep major. Three groups of breaks. (1) Framing fix: `function_length` of an individual-addressing `function()` is the length of the whole function including its 2-byte tag+length header (TS 102 773 section 5.2.8.2.0), not just the body; it was parsed and serialized as the body length, which made a real capture's `0x21` packets fail to parse and mis-framed every typed T2 function (`0x10`-`0x17`) on the wire. (2) Individual-addressing function tags `0x00`-`0x06` (TS 101 191 section 6.1) are now typed `FunctionBody` variants instead of `Raw`, and serializing a `FunctionEntry` whose `tag` disagrees with its `body` fails with a new error instead of writing bytes that re-parse differently. (3) `T2miPump::new` and `InnerTsRecovery::{new,new_for_plp}` take `mpeg_ts::pid::Pid`. Also new: `InnerTsRecovery::plps_seen()`; `InnerTsRecovery` keeps its 256-slot extractor table on the heap (66 KB -> under 4 KB of stack); and the crate builds against `broadcast-common` 10, `dvb-bbframe` 12 and `mpeg-ts` 0.6.
 

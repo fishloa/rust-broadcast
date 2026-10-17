@@ -1,6 +1,6 @@
 # broadcast-common 10.0.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break).** The foundation crate takes its tenth major: the panicking `Serialize::to_bytes()` default method is gone (`try_to_bytes()` is the only allocate-and-serialize entry point), and the DVB 16-bit MJD field follows the EN 300 468 v1.20.1 2038 wrap rule, with the MJD-to-calendar conversion rewritten as integer arithmetic that is correct over the whole new range. It also grows the shared building blocks the wave moved out of ten crates: `clock33` PCR and marker-bit helpers, the `parity` module, and `len::fit_mask`. Because 49 workspace crates depend on it, **its caret epoch moving 9 -> 10 forces a major-class release of every dependent** (see the wave overview).
 

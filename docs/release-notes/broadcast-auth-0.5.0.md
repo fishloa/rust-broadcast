@@ -1,6 +1,6 @@
 # broadcast-auth 0.5.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break, not an epoch cascade).** Secrets are now wiped on drop and compared in constant time (#1142). `Credentials` implements `Drop`, so a value can no longer be destructured by move; that is a source-breaking change even though the type's fields and variants are unchanged. The README was restructured at the same time (what the crate does and does not do, standards table, feature flags, a doctested quick start).
 

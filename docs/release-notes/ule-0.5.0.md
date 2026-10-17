@@ -1,6 +1,6 @@
 # ule 0.5.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (own API change plus the `broadcast-common` 10 epoch).** The never-constructed `Error::TsMapping` variant is removed, the TS receiver hands a completed SNDU out by move (`split_off`) instead of copying it and its tail, and the crate now builds against `broadcast-common` 10. The README and crate-root docs are restructured (what is and is not covered, standards table for RFC 4326 and RFC 5163, feature flags, design notes).
 

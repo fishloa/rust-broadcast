@@ -1,6 +1,6 @@
 # dvb-stream 0.7.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** Own breaks: the T2-MI stream constructors take a typed `mpeg_ts::pid::Pid` instead of a `u16`, and the crate now builds against new epochs of `broadcast-common` (10), `dvb-si`/`dvb-t2mi` (12), `mpeg-ts` (0.6) and `rtp-packet` (0.5). It also fixes a framing bug: `TsDecoder::datagram` (and so `UdpSectionStream` and `UdpT2miStream`) now unwraps RTP-encapsulated MPEG-2 TS datagrams (RFC 3550 section 5.1 header, CSRCs, header extension and padding skipped), where previously a `0x47` byte inside the RTP header could lock the decoder onto misaligned bytes.
 

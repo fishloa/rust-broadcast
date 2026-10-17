@@ -1,6 +1,6 @@
 # dvb-mabr 0.3.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-cascade release; no source migration.** `dvb-mabr` 0.3.0 changes no public API. It ships because it depends on `broadcast-common`, which moves from 9 to 10 in this wave, and the workspace epoch-purity rule forbids publishing a crate that still requires the old `broadcast-common` epoch next to the new one. The only own change is internal: optional XML attributes are read through `StartTag::attr_owned` (no behaviour change) and the manifest picks up the workspace `quick-xml` and lint tables.
 

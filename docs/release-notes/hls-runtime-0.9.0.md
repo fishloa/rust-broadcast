@@ -1,6 +1,6 @@
 # hls-runtime 0.9.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** The HLS origin and client follow the typed ids introduced across the wave: `DEFAULT_TRACK_ID` and the client's `Output::Samples { track_id }` are `transmux::TrackId`, `server::{SegmentSeq, PartIndex}` are now re-exports of `media_plane::ids`, and a new `server::Generation` newtype replaces the bare init-generation integer. Wire names (`seg-1-5-7.m4s`, `init-1-5-2.mp4`, `part-..`) are unchanged. The crate also builds against `broadcast-common` 10, `broadcast-auth` 0.5, `broadcast-hls` 0.4, `media-plane` 0.7, `timed-metadata` 0.7 and `transmux` 0.27.
 

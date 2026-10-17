@@ -1,6 +1,6 @@
 # rmt-flute 0.7.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release; no API change of its own.** `rmt-flute` follows the `broadcast-common` 9 -> 10 caret epoch. Its own change since 0.6.0 is documentation and manifest only: the README and crate-root docs are restructured (what is and is not covered, standards table RFC 5651/5775/6726/5740/5052, feature flags, design notes).
 

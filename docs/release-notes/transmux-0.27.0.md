@@ -1,6 +1,6 @@
 # transmux 0.27.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (typed ids, API changes, behaviour changes and the epoch cascade).** This is the largest release of the wave. The container hub gets typed ids (`TrackId`, `ProgramNumber`, `Pid`), subtitle tracks (`stpp`/`wvtt`) that survive a remux and appear in DASH and Smooth manifests, real `wvtt` producer fidelity (MP4Box and gpac), E-AC-3 7.1 (dependent substream) support verified against a real stream, a reworked `StreamingTsDemux` E-AC-3 / head-of-line path, a complete MPEG-H 3D audio descriptor, DASH `SegmentTimeline::resolve`, ISOBMFF `largesize` boxes, hostile-input bounds (#1130: a 10 GB allocation from four overwritten bytes; a 1.28 GiB allocation from 256 bytes of zero-width `trun`s; a panic on short `largesize` sample entries), AVS2/AVS3 and Audio Vivid boxes, and demuxers that skip one damaged unit instead of aborting (`Media::degraded`). It also rebuilds against eleven moved siblings (`broadcast-common` 10, `dvb-si` 12, `mpeg-ts`/`mpeg-pes`/`mpeg-ps` 0.6 and others), so a consumer's whole dependency graph must move together.
 

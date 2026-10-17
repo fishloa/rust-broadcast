@@ -1,6 +1,6 @@
 # rtp-packet 0.5.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release; additive feature plus one serializer fix.** `rtp-packet` follows the `broadcast-common` 9 -> 10 caret epoch. New: the `av3a` feature, the AV3A-AATF RTP payload (T/AI 109.7-2024 clause 10.1) with typed `AatfFrame`/`AatfFrameHeader` (T/AI 109.3-2023 Annex A Tables A.4-A.7), `packetize`/`Av3aDepacketizer` (MTU split, `M` marks the last fragment), `is_dynamic_payload_type`, and the SDP `Av3aFmtp`/`CodecNnId` (`rate`/`codec-nn-id`/`config`/`bitrate`). Two stated limits, both quoted from the spec rather than guessed: the AATF `crc_check` is carried but not verified (Tables A.5/A.7 name it `rpchof` but give no polynomial or initial value), and the lossless-frame `channel_number` is not decoded because the spec's only rule ("When audio_codec_id is 1 and the number of channels is less than 16, this field contains 4 bits. 0xf indicates extension, and others indicate the number of channels. When audio_codec_id is 1 and the number of channels is not less than 16, this field contains 8 bits.") does not say whether the 8-bit form replaces the nibble or follows a `0xf` nibble, what it encodes, or how the width is known before the field is read; the bytes after `aatf_error_check()` stay in `AatfFrame::body`. Also fixed: `OneByteElements`/`TwoByteElements::serialize_into` validate every element before writing, so an invalid element no longer leaves a half-serialized buffer.
 

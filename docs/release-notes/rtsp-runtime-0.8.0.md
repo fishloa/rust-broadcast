@@ -1,6 +1,6 @@
 # rtsp-runtime 0.8.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** `ClientSession::handle_data` returns `HandleOutcome { events, error }` instead of `Result<Vec<ClientEvent>>`, so a terminal protocol error (an unparseable message head, an over-long header, an unfulfillable `Content-Length`: TCP framing is lost) no longer discards the media frames and responses decoded in the same call (audit T16, #1144). It also decodes with a cursor and drains the consumed prefix once per call (600 interleaved frames in one read: ~17x faster, 4.2 ms -> 0.24 ms in a debug build), compares `Session` ids in constant time (`subtle::ConstantTimeEq`), and follows `broadcast-auth` 0.4 -> 0.5.
 

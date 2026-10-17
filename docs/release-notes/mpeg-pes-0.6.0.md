@@ -1,6 +1,6 @@
 # mpeg-pes 0.6.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** Everything `PesPacket::parse` used to accept but `serialize` silently rewrote is now a typed, preserved field, so parse -> serialize is byte-exact for non-conformant input (a real TSDuck stream has a `0` leading ES_rate marker bit that the writer forced to `1`): header stuffing is kept verbatim (`PesHeader::header_stuffing: &[u8]`), `PesExtension` and `PesHeader` keep every reserved and marker bit, and `additional_copy_info`, `Escr` and `TrickMode::FreezeFrame` keep theirs too. `PesPacket::parse` now rejects a non-`10` header marker (MPEG-1 PES or damage) and a `PES_header_data_length` that overruns a bounded `PES_packet_length`; over-range `P-STD_buffer_size` and `PES_extension` reserved bits are `FieldOverflow` errors instead of being masked. AVS3 stream-id extensions are added, and the crate builds against `broadcast-common` 10.
 

@@ -1,6 +1,6 @@
 # atsc3-route 0.3.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release; no source migration.** `atsc3-route` has no API change of its own in this release. It ships because it builds against `broadcast-common` 10 and `rmt-flute` 0.7, and the workspace's epoch-purity rule forbids publishing a crate that still requires the old epoch next to the new one. The crate is archived (ATSC 3.0 work in this workspace is abandoned and the sibling `atsc3` crate stays unpublished); this release is a maintenance release. The README and crate-root docs were restructured to say exactly what is and is not covered, including a known repair-flow coverage gap.
 

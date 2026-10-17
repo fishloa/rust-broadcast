@@ -1,6 +1,6 @@
 # broadcast-loudness 0.5.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break, plus the `broadcast-common` 10 epoch).** The never-constructed `Error::ChannelOutOfRange` variant is removed, which breaks any exhaustive `match` on `Error`. The release also adds the Chinese loudness target profiles (GY/T 282-2014, GY/T 377-2023 quiet and noisy) with GY/T 379-2023 channel-monitoring helpers, and a 30-minute bounded-memory test that pins the streaming design. README and crate-root docs were rewritten, and the Tech 3341 case coverage is now stated as what the test suite actually exercises.
 

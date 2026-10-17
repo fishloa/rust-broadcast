@@ -1,6 +1,6 @@
 # dvb-simulcrypt 0.7.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-cascade release; no source migration.** `dvb-simulcrypt` 0.7.0 changes no code and no public API. It ships because it depends on `broadcast-common`, which moves from 9 to 10 in this wave, and the workspace epoch-purity rule forbids publishing a crate that still requires the old `broadcast-common` epoch next to the new one. Its own changes since 0.6.0 are documentation: the protocol_version registry in `docs/` now lists ACG-EIS (`0x04`) and SIMCOMP-MUXCONFIG (`0x04`), and the README and crate-root docs follow the workspace crate-documentation standard.
 

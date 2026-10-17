@@ -1,6 +1,6 @@
 # ssai-runtime 0.3.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release; no API or behaviour change of its own.** ssai-runtime rebuilds against `broadcast-common` 10 and `broadcast-hls` 0.4 (its dev-dependencies `scte35-splice` 4 and `mp4-emsg` 0.5 move too), and the workspace epoch-purity rule makes that a `0.2` -> `0.3` bump. `broadcast-hls` types are part of this crate's public surface (the interstitial playlist session is built from a `broadcast_hls::MediaPlaylist` and `Error::HlsAttrValue` wraps `broadcast_hls::Error`), so callers must use the matching `broadcast-hls` 0.4. The README and crate-root docs are rewritten (what it does and does not do, standards table for the HLS Interstitials draft and SCTE 35, feature table, compiling quick start).
 

@@ -1,6 +1,6 @@
 # multimux-cli 0.11.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release.** No source change: `multimux-cli` follows `multimux` 0.13's caret epoch. The route JSON gains `allow_open_ingest` (default `false`) and WHIP/WHEP clients must follow the per-session `Location`; see the multimux note. Because the binary is a thin wrapper over the library it also picks up, with no flag changes, the multimux 0.13 ingest fixes: no lost first/last access units on TS, FLV and RTP inputs, stable `ProgramId`s on multi-program transport streams, and the new `multimux_ts_backlog_dropped_total` metric.
 

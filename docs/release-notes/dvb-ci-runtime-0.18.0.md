@@ -1,6 +1,6 @@
 # dvb-ci-runtime 0.18.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break, plus the `dvb-ci` 0.10 / `dvb-si` 12 / `mpeg-ts` 0.6 / `broadcast-common` 10 epoch).** Every PID in the managed-CAS API is now `mpeg_ts::pid::Pid` instead of `u16`, and the `dvb-ci` objects built or matched in this crate's APIs carry `dvb-ci`'s new `length_form` field. The release is mostly hardware-driven driver hardening, verified on a Digital Devices CXD2099 `ci0` with an AlphaCrypt One4All V2.5 (CAID 0x0650): `ManagedCa::required_pids()` now always includes the CAT PID (without it the EMM PIDs never descrambled, with it they did from about 55 s), every EMM PID of a CAM-advertised CAID is routed, `CaDescrambler::feed_ts` no longer loses descrambled output on a later error (recover it with `take_undelivered()`), the data plane falls back to two one-direction descriptors when the kernel rejects `O_RDWR`, the post-reset `EINVAL` window is retried for up to 12 s, a CAM that codes `82 00 09` long-form lengths no longer misframes the link, and every device error names the operation, device path and errno.
 
