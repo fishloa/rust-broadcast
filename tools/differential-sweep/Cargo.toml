@@ -1,0 +1,39 @@
+# Differential sweep harness (release-wave regression hunt, 2026-10).
+#
+# NOT a workspace member: the empty `[workspace]` table below detaches it. The
+# SAME source is built twice -- once inside a checkout of the last published
+# wave (`--features baseline`) and once inside HEAD (`--features head`) -- and
+# the two JSONL outputs are compared by `diff.py`. See README.md.
+[package]
+name         = "differential-sweep"
+version      = "0.0.0"
+edition      = "2024"
+publish      = false
+description  = "Run the last published crates and HEAD over every fixture and diff the behaviour."
+
+[workspace]
+
+[features]
+# Exactly one of these is enabled. They only gate the few call sites whose API
+# signature differs between the published baseline and HEAD.
+baseline = []
+head     = []
+
+[dependencies]
+broadcast-common = { path = "../../broadcast-common" }
+mpeg-ts          = { path = "../../mpeg-ts" }
+dvb-si           = { path = "../../dvb-si" }
+dvb-t2mi         = { path = "../../dvb-t2mi" }
+transmux         = { path = "../../transmux", features = ["cli"] }
+scte35-splice    = { path = "../../scte35-splice" }
+st291            = { path = "../../st291", features = ["ts", "rtp"] }
+broadcast-hls    = { path = "../../broadcast-hls" }
+media-doctor     = { path = "../../media-doctor" }
+sha2             = "0.10"
+serde_json       = "1"
+
+[profile.release]
+opt-level     = 2
+debug         = false
+codegen-units = 16
+lto           = false
