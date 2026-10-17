@@ -85,6 +85,16 @@ understanding transmux's incremental/streaming APIs. `transmux::media::Fmp4Demux
 (fragmented ISOBMFF/CMAF input) exists in the Rust crate too and is a natural
 follow-up if fMP4-sourced ML pipelines need it.
 
+## Changes
+
+### 0.3.0
+
+- Rebuilt against `transmux` 0.27 / `broadcast-common` 10 (`mpeg-ts` 0.6).
+  `track_id` (`transmux::TrackId`) and `source_pid` (`mpeg_ts::pid::Pid`) are
+  typed newtypes in Rust; the returned dict still exposes plain ints, so the
+  Python output shape is unchanged (verified on `fixtures/ts/h264_aac.ts`: same
+  keys, 75 video / 131 audio samples).
+
 ## Build from source
 
 ```console

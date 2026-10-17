@@ -91,10 +91,12 @@ fn media_to_py(py: Python<'_>, media: &Media) -> PyResult<PyObject> {
 fn track_to_py(py: Python<'_>, track: &Track) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
     let spec = &track.spec;
-    dict.set_item("track_id", spec.track_id)?;
+    // `TrackId` / `Pid` are typed newtypes (transmux 0.27 / mpeg-ts 0.6); the
+    // Python dict keeps exposing plain ints.
+    dict.set_item("track_id", spec.track_id.value())?;
     dict.set_item("timescale", spec.timescale)?;
     dict.set_item("start_decode_time", track.start_decode_time)?;
-    dict.set_item("source_pid", spec.source_pid)?;
+    dict.set_item("source_pid", spec.source_pid.map(|p| p.value()))?;
 
     let identity = codec_identity(&spec.config);
     dict.set_item("codec", identity.codec)?;
