@@ -32,6 +32,8 @@ pub enum ConfigField {
     Discontinuity,
     /// `max_step_down_us_per_s` is zero.
     Slew,
+    /// `track_silence_timeout_us` is zero.
+    TrackSilence,
 }
 
 impl ConfigField {
@@ -52,6 +54,7 @@ impl ConfigField {
             Self::Decay => "decay",
             Self::Discontinuity => "discontinuity",
             Self::Slew => "slew",
+            Self::TrackSilence => "track_silence",
         }
     }
 }

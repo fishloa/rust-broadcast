@@ -23,6 +23,7 @@ fn events_serialize() {
         reason: Reason::NoData,
         depth_us: 1,
         resume_target_us: 2,
+        track: None,
     };
     let j = serde_json::to_string(&e).unwrap();
     assert!(j.contains("Pause") && j.contains("NoData"));
