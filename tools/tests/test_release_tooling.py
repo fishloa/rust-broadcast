@@ -245,3 +245,28 @@ def test_preflight_aborts_before_editing_anything(pr, capsys):
     assert pr.main(["x", "lib=0.26.0"]) == 1
     assert (root / "lib" / "Cargo.toml").read_text() == before
     assert "no front matter" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------- CI wiring
+
+WORKFLOWS = pathlib.Path(__file__).parents[2] / ".github" / "workflows"
+
+
+def test_ci_runs_both_generated_doc_gates():
+    import yaml
+
+    doc = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())
+    runs = [s.get("run", "") for j in doc["jobs"].values() for s in j.get("steps", [])]
+    assert "python3 tools/readme_snippets.py --check" in runs
+    assert "python3 tools/gen-crate-index.py --check" in runs
+
+
+def test_dep_consistency_is_blocking_on_release_tags():
+    import yaml
+
+    doc = yaml.safe_load((WORKFLOWS / "published-dep-consistency.yml").read_text())
+    steps = doc["jobs"]["check"]["steps"]
+    blocking = [s for s in steps if s.get("run", "").endswith("--blocking")]
+    assert len(blocking) == 1 and "refs/tags/" in blocking[0]["if"]
+    trig = doc.get(True, doc.get("on"))
+    assert "*-v*" in trig["push"]["tags"] and "v*" in trig["push"]["tags"]
