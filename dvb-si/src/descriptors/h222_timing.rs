@@ -182,7 +182,7 @@ impl HevcTimingAndHrd {
         if let Some(p) = &self.picture_timing {
             p.write(&mut w)?;
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -268,7 +268,7 @@ impl VvcTimingAndHrd {
             self.reserved,
             self.picture_timing.as_ref(),
         )?;
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -323,7 +323,7 @@ impl EvcTimingAndHrd {
             self.reserved,
             self.picture_timing.as_ref(),
         )?;
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }

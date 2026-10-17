@@ -120,7 +120,7 @@ impl LcevcVideo {
             4,
             "video_properties_tag",
         )?;
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -173,8 +173,8 @@ impl LcevcLinkage {
             8,
             "num_lcevc_stream_tags",
         )?;
-        w.bytes(&self.lcevc_stream_tags);
-        w.bytes(&self.trailing);
+        w.bytes(&self.lcevc_stream_tags)?;
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -500,7 +500,7 @@ impl MediaServiceKind {
                         "Media_service_kind_descriptor media_ID_field length disagrees with ID_length_code",
                     ));
                 }
-                w.bytes(&id.media_id);
+                w.bytes(&id.media_id)?;
             }
             for l in &e.languages {
                 w.put(
@@ -521,8 +521,8 @@ impl MediaServiceKind {
                         ));
                     }
                 }
-                w.bytes(&l.language_code);
-                w.bytes(&l.media_service_types);
+                w.bytes(&l.language_code)?;
+                w.bytes(&l.media_service_types)?;
             }
         }
         Ok(w.into_vec())

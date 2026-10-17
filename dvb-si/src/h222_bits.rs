@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 use broadcast_common::len::fit_bits;
 
 const BITS_PER_BYTE: usize = 8;
+const MISALIGNED_BYTES: &str = "whole-byte access at a non-byte-aligned bit position";
 
 /// MSB-first bit reader over a descriptor body.
 pub(crate) struct BitReader<'a> {
@@ -85,9 +86,15 @@ impl<'a> BitReader<'a> {
         Ok(self.bits(1)? == 1)
     }
 
-    /// Read `n` whole bytes (byte aligned).
+    /// Read `n` whole bytes. Errors (in release builds too) when the reader
+    /// is not byte aligned, instead of silently reading shifted data.
     pub(crate) fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
-        debug_assert_eq!(self.pos % BITS_PER_BYTE, 0);
+        if self.pos % BITS_PER_BYTE != 0 {
+            return Err(Error::ValueOutOfRange {
+                field: self.what,
+                reason: MISALIGNED_BYTES,
+            });
+        }
         if self.remaining_bytes() < n {
             return Err(self.short(n * BITS_PER_BYTE));
         }
@@ -137,10 +144,17 @@ impl BitWriter {
         self.put(u64::from(v), 1, field)
     }
 
-    /// Append whole bytes (the writer must be byte aligned).
-    pub(crate) fn bytes(&mut self, b: &[u8]) {
-        debug_assert_eq!(self.used, 0);
+    /// Append whole bytes. Errors (in release builds too) when the writer is
+    /// not byte aligned, instead of emitting shifted data.
+    pub(crate) fn bytes(&mut self, b: &[u8]) -> Result<()> {
+        if self.used != 0 {
+            return Err(Error::ValueOutOfRange {
+                field: "byte run",
+                reason: MISALIGNED_BYTES,
+            });
+        }
         self.buf.extend_from_slice(b);
+        Ok(())
     }
 
     pub(crate) fn into_vec(self) -> Vec<u8> {
@@ -201,4 +215,36 @@ pub(crate) use impl_h222_descriptor;
 /// Error for a value the syntax cannot express.
 pub(crate) fn invalid(tag: u8, reason: &'static str) -> Error {
     Error::InvalidDescriptor { tag, reason }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reader_bytes_rejects_misaligned_access() {
+        let mut r = BitReader::new(&[0xFF, 0xAA, 0xBB], "test");
+        r.bits(3).unwrap();
+        assert!(matches!(
+            r.bytes(1).unwrap_err(),
+            Error::ValueOutOfRange { field: "test", .. }
+        ));
+        let mut r = BitReader::new(&[0xFF, 0xAA, 0xBB], "test");
+        r.bits(8).unwrap();
+        assert_eq!(r.bytes(2).unwrap(), &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn writer_bytes_rejects_misaligned_access() {
+        let mut w = BitWriter::new();
+        w.put(1, 3, "x").unwrap();
+        assert!(matches!(
+            w.bytes(&[1]).unwrap_err(),
+            Error::ValueOutOfRange { .. }
+        ));
+        let mut w = BitWriter::new();
+        w.put(0xAB, 8, "x").unwrap();
+        w.bytes(&[1]).unwrap();
+        assert_eq!(w.into_vec(), [0xAB, 1]);
+    }
 }

@@ -71,7 +71,7 @@ impl Mpeg2StereoscopicVideoFormatDescriptor {
             Some(a) => w.put(u64::from(a), 7, "arrangement_type")?,
             None => w.put(u64::from(self.reserved), 7, "reserved")?,
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -184,7 +184,7 @@ impl StereoscopicProgramInfoDescriptor {
             3,
             "stereoscopic_service_type",
         )?;
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -375,7 +375,7 @@ impl StereoscopicVideoInfoDescriptor {
                 )?;
             }
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }

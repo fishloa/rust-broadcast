@@ -99,6 +99,20 @@ impl Serialize for FmxBufferSizeDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
+        // Hand-built structs can violate the layout the parser guarantees;
+        // re-parsing such output would split differently, so refuse it.
+        if self.default_flex_mux_buffer_descriptor.len() != DEFAULT_FLEX_MUX_BUFFER_DESCRIPTOR_LEN {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "DefaultFlexMuxBufferDescriptor must be exactly 3 bytes",
+            });
+        }
+        if self.flex_mux_buffer_descriptors.len() % FLEX_MUX_BUFFER_DESCRIPTOR_LEN != 0 {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "FlexMuxBufferDescriptor loop is not a whole number of 4-byte entries",
+            });
+        }
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
@@ -106,14 +120,6 @@ impl Serialize for FmxBufferSizeDescriptor<'_> {
             });
         }
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        debug_assert_eq!(
-            self.default_flex_mux_buffer_descriptor.len(),
-            DEFAULT_FLEX_MUX_BUFFER_DESCRIPTOR_LEN
-        );
-        debug_assert_eq!(
-            self.flex_mux_buffer_descriptors.len() % FLEX_MUX_BUFFER_DESCRIPTOR_LEN,
-            0
-        );
         let mut off = HEADER_LEN;
         buf[off..off + self.default_flex_mux_buffer_descriptor.len()]
             .copy_from_slice(self.default_flex_mux_buffer_descriptor);
@@ -191,6 +197,26 @@ mod tests {
         assert_eq!(buf[1], 3 + 8);
         let reparsed = FmxBufferSizeDescriptor::parse(&buf).unwrap();
         assert_eq!(d, reparsed);
+    }
+
+    #[test]
+    fn serialize_rejects_malformed_layout() {
+        let bad_default = FmxBufferSizeDescriptor {
+            default_flex_mux_buffer_descriptor: &[0, 0],
+            flex_mux_buffer_descriptors: &[],
+        };
+        assert!(matches!(
+            bad_default.serialize_into(&mut [0u8; 16]).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
+        let bad_loop = FmxBufferSizeDescriptor {
+            default_flex_mux_buffer_descriptor: &[0, 0, 0],
+            flex_mux_buffer_descriptors: &[1, 2, 3],
+        };
+        assert!(matches!(
+            bad_loop.serialize_into(&mut [0u8; 16]).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
     }
 
     #[test]
