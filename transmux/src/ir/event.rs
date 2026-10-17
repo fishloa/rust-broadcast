@@ -328,6 +328,15 @@ pub enum DemuxEvent {
     /// not something this event can paper over by pretending every container
     /// has a track-count declaration.
     ///
+    /// A PID that the demuxer has *stepped over* — a non-video probe that saw
+    /// 512 access units without resolving, or a declared PID that has sent no
+    /// packet at all for 8192 TS packets — counts as resolved for this signal:
+    /// it means "nothing more is being waited on", not "every declared PID has a
+    /// track". Such a PID is not abandoned: if it does resolve later it is
+    /// announced with a [`DemuxEvent::TrackAdded`] (a later id, its backlog
+    /// replayed) and this event fires again, so a consumer that keys a
+    /// track-set change off it sees the late track.
+    ///
     /// `generation` is a monotonic counter bumped once per applied track-set
     /// change (add/update/remove — issue #774): it is *not* a PID count, so a
     /// removal immediately followed by an addition that returns the known-PID

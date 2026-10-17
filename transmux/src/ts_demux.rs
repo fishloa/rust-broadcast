@@ -4256,7 +4256,12 @@ enum CcVerdict {
 /// takes that long, and a video PID must keep the lower track id (track 1 for
 /// a video-first PMT), which `ts_hls`/`multimux` rely on. A video that never
 /// resolves is bounded by the 4 MiB probe-backlog cap instead (it is then
-/// abandoned and the PIDs behind it proceed).
+/// abandoned and the PIDs behind it proceed) — unless it is *silent*: a
+/// declared PID (of any codec) that has delivered no payload packet at all for
+/// `SILENT_HEAD_BLOCK_PACKETS` (8192) TS packets of the stream is stepped over
+/// too, since nothing would ever grow toward the cap. A stepped-over PID counts
+/// toward [`DemuxEvent::TracksResolved`] and, if it resolves later, is promoted
+/// with a later track id and re-arms that signal.
 ///
 /// # Chunk-size invariance
 ///
