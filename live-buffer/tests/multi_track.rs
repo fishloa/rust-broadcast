@@ -426,3 +426,81 @@ fn event_record_layout_is_abi_v2() {
     assert_eq!(off(core::ptr::addr_of!(r.track) as usize), 32);
     assert_eq!(off(core::ptr::addr_of!(r.track_valid) as usize), 36);
 }
+
+/// Removing a replaced track un-gates the first fill: a registered track that
+/// never delivers (the old audio) blocks until `unregister_track`.
+#[test]
+fn unregister_replaced_track_ungates_start() {
+    let mut s = Sim::new(cfg());
+    s.c.on_tick(s.now, None);
+    s.c.register_track(AUDIO);
+    s.c.on_track_media(s.now, VIDEO, BASE);
+    for _ in 0..30 {
+        s.now += STEP_US;
+        s.t_us += STEP_US;
+        s.c.on_track_media(s.now, VIDEO, at(BASE, s.t_us + 2_500_000));
+        s.tick();
+    }
+    assert!(s.starts().is_empty(), "registered silent track must block");
+    s.c.unregister_track(AUDIO);
+    s.tick();
+    assert_eq!(s.starts().len(), 1, "unregister must release the start");
+}
+
+/// Same for a resume: audio replaced while paused no longer gates it, and an
+/// unknown track is a no-op.
+#[test]
+fn unregister_replaced_track_ungates_resume() {
+    let mut s = started_sim();
+    s.c.unregister_track(99); // unknown: no-op
+    assert_eq!(s.c.stats().limiting_track, Some(AUDIO));
+    // Audio stops (replaced); video keeps going, so the lead is audio-limited
+    // and starves.
+    while s.pauses().is_empty() {
+        s.step(false, true);
+        assert!(s.t_us < 30_000_000, "never paused");
+    }
+    assert_eq!(s.pauses()[0].1, Some(AUDIO));
+    s.c.unregister_track(AUDIO);
+    assert_eq!(s.c.stats().limiting_track, None, "one track left");
+    s.step(false, true);
+    s.step(false, true);
+    assert_eq!(s.resumes().len(), 1, "video alone must now resume");
+}
+
+/// Removing the last track leaves no effective end; ticks are inert and a
+/// later delivery works again.
+#[test]
+fn unregister_last_track_is_inert() {
+    let mut s = Sim::new(cfg());
+    s.c.on_track_media(s.now, AUDIO, BASE);
+    s.c.unregister_track(AUDIO);
+    s.tick();
+    assert!(s.starts().is_empty());
+    assert_eq!(s.c.stats().limiting_track, None);
+    s.c.on_track_media(s.now, VIDEO, BASE);
+    while s.starts().is_empty() {
+        s.now += STEP_US;
+        s.t_us += STEP_US;
+        s.c.on_track_media(s.now, VIDEO, at(BASE, s.t_us + 2_500_000));
+        s.tick();
+        assert!(s.t_us < 10_000_000, "never started");
+    }
+    assert_eq!(s.starts().len(), 1);
+}
+
+/// A `PcrDiscontinuity` while playing yields `Pause` then `Resume`, never a
+/// second `StartPlaying`: callers must treat both as "go".
+#[test]
+fn discontinuity_while_playing_resumes_not_restarts() {
+    let mut s = started_sim();
+    s.c.on_hint(s.now, live_buffer::Hint::PcrDiscontinuity);
+    s.drain();
+    while s.resumes().is_empty() {
+        s.step(true, true);
+        assert!(s.t_us < 30_000_000, "never resumed");
+    }
+    assert_eq!(s.starts().len(), 1, "no second StartPlaying");
+    assert_eq!(s.pauses().len(), 1);
+    assert_eq!(s.resumes().len(), 1);
+}

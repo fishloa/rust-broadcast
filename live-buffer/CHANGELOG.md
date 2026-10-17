@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `BufferController::unregister_track(track)`: remove a replaced/dead track from the per-track minimum so it
+  cannot hold back the lead (unknown track: no-op). No ABI layout change.
+- Docs: after a `PcrDiscontinuity` while playing the controller emits `Pause` then `Resume`, never a new
+  `StartPlaying`; callers must treat both as "go" (README, DESIGN, `Event::Resume`). Pinned by a test.
+- `StallMemorySnapshot::new` documented as the FFI/foreign-crate constructor (`const fn`; struct is `#[non_exhaustive]`).
 - Per-track media ends: `BufferController::on_track_media(now, track, end)` / `register_track(track)`; the lead is
   measured against the minimum over the active tracks (a TS mux sends video ~1 s ahead and audio near
   real time; judging video alone made every audio buffer late). A track silent for

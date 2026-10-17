@@ -190,7 +190,14 @@ pub enum Event {
         track: Option<u32>,
     },
     /// Refilled. Re-seed the renderer clock to exactly `media_27mhz` and set
-    /// rate 1 in one step. If that differs from the clock at pause (after a
+    /// rate 1 in one step.
+    ///
+    /// **Resume is also a "go".** After a `Hint::PcrDiscontinuity` (or
+    /// `SyncLoss`/`Reconnected`) while `Playing` the controller emits `Pause`
+    /// then, once refilled, `Resume`, never a second `StartPlaying`
+    /// (`StartPlaying` happens once per controller until `reset`). A caller
+    /// must therefore treat `StartPlaying` and `Resume` identically as "set the
+    /// clock to `media_27mhz` and rate 1". If that differs from the clock at pause (after a
     /// discontinuity) it is a time jump on the caller's side: re-enqueue
     /// from there if the audio renderer flushes.
     Resume {

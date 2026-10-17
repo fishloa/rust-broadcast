@@ -9,6 +9,10 @@
 //! * a track announced with [`BufferController::register_track`](crate::BufferController::register_track) that has not delivered yet
 //!   **blocks** the reduction (no effective end) until it delivers or has been
 //!   silent for `silence_timeout_us`;
+//! * a track removed with
+//!   [`BufferController::unregister_track`](crate::BufferController::unregister_track)
+//!   (a replaced or dead track) leaves the reduction at once; if no track is
+//!   left there is no effective end until one delivers;
 //! * a track silent for `silence_timeout_us` is **excluded**, so a dead track
 //!   cannot starve playback forever;
 //! * the effective end is the earliest end over the non-excluded tracks; when
@@ -86,6 +90,11 @@ impl TrackSet {
         if let Some(t) = self.slot(id, now) {
             t.registered = true;
         }
+    }
+
+    /// Forget `id` entirely (registration and end). Unknown id: no-op.
+    pub(crate) fn unregister(&mut self, id: u32) {
+        self.v.retain(|t| t.id != id);
     }
 
     /// Record a delivery. `None` when the track cap was hit; otherwise whether
