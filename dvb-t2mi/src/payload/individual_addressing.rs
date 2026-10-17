@@ -526,7 +526,15 @@ pub struct TransmitterEntry<'a> {
 
 /// One function entry within a transmitter's function loop (§5.2.8.2).
 ///
-/// Wire layout: `function_tag(8) · function_length(8) · function_body(function_length bytes)`
+/// Wire layout: `function_tag(8) · function_length(8) · function_body(function_length - 2 bytes)`
+/// — `function_length` counts the **whole** `function()` including the 2-byte
+/// tag + length header, so the body is `function_length - 2` bytes.
+///
+/// `tag` and `body` must agree: the typed [`FunctionBody`] variants each belong
+/// to exactly one tag, and [`FunctionBody::Raw`] is only for a tag/length that
+/// does *not* parse as a typed body. [`Serialize`] rejects a mismatch with
+/// [`crate::Error::FunctionTagBodyMismatch`] (parse always produces agreeing
+/// pairs, so serialize -> parse is the identity).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
@@ -1075,6 +1083,54 @@ fn serialize_body_into(
     }
 }
 
+/// The `function_tag` a typed body belongs to; `None` for [`FunctionBody::Raw`].
+fn typed_body_tag(body: &FunctionBody<'_>) -> Option<u8> {
+    let tag = match body {
+        FunctionBody::TimeOffset(_) => AddressingFunctionTag::TimeOffset,
+        FunctionBody::FrequencyOffset(_) => AddressingFunctionTag::FrequencyOffset,
+        FunctionBody::Power(_) => AddressingFunctionTag::Power,
+        FunctionBody::PrivateData(_) => AddressingFunctionTag::PrivateData,
+        FunctionBody::CellId(_) => AddressingFunctionTag::CellId,
+        FunctionBody::Enable(_) => AddressingFunctionTag::Enable,
+        FunctionBody::Bandwidth(_) => AddressingFunctionTag::Bandwidth,
+        FunctionBody::AcePapr(_) => AddressingFunctionTag::AcePapr,
+        FunctionBody::MisoGroup(_) => AddressingFunctionTag::MisoGroup,
+        FunctionBody::TrPapr(_) => AddressingFunctionTag::TrPapr,
+        FunctionBody::L1AcePapr(_) => AddressingFunctionTag::L1AcePapr,
+        FunctionBody::TxSigFefSeqNum(_) => AddressingFunctionTag::TxSigFefSeqNum,
+        FunctionBody::TxSigAuxStreamTxId(_) => AddressingFunctionTag::TxSigAuxStreamTxId,
+        FunctionBody::Frequency(_) => AddressingFunctionTag::Frequency,
+        FunctionBody::Raw(_) => return None,
+    };
+    Some(tag as u8)
+}
+
+/// Reject an entry whose `tag` and `body` could not survive serialize -> parse.
+fn check_tag_matches_body(entry: &FunctionEntry<'_>) -> Result<(), crate::Error> {
+    match typed_body_tag(&entry.body) {
+        Some(expected) if expected != entry.tag => Err(crate::Error::FunctionTagBodyMismatch {
+            tag: entry.tag,
+            body: entry.body.name(),
+            reason: "a typed body is only valid under its own function_tag",
+        }),
+        Some(_) => Ok(()),
+        None => {
+            let FunctionBody::Raw(bytes) = &entry.body else {
+                return Ok(());
+            };
+            if try_parse_typed_body(entry.tag, bytes).is_some() {
+                Err(crate::Error::FunctionTagBodyMismatch {
+                    tag: entry.tag,
+                    body: entry.body.name(),
+                    reason: "this tag/length parses as a typed body; use the typed variant",
+                })
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
 fn function_entry_serialized_len(entry: &FunctionEntry<'_>) -> usize {
     FUNC_HEADER_LEN + body_serialized_len(&entry.body)
 }
@@ -1166,9 +1222,8 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
                 // the real capture), so the body is `function_length - 2`.
                 let function_length = data[pos + 1] as usize;
                 let body_len = function_length.checked_sub(FUNC_HEADER_LEN).ok_or(
-                    crate::Error::ReservedBitsViolation {
-                        field: "function_length",
-                        reason: "function_length must include the 2-byte tag+length header",
+                    crate::Error::InvalidFunctionLength {
+                        function_length: data[pos + 1],
                     },
                 )?;
                 pos += FUNC_HEADER_LEN;
@@ -1243,6 +1298,12 @@ impl Serialize for IndividualAddressingPayload<'_> {
                 field: "individual_addressing_length",
                 reason: "transmitter loop exceeds 255 bytes (8-bit length field)",
             });
+        }
+
+        // Validate every entry before writing a byte: tag and body must agree,
+        // or serialize -> parse would not be the identity.
+        for func in self.transmitters.iter().flat_map(|tx| tx.functions.iter()) {
+            check_tag_matches_body(func)?;
         }
 
         buf[0] = self.rfu;
@@ -2076,7 +2137,18 @@ mod tests {
         let tx = [0x00, 0x01, 0x02, 0x00, 0x01];
         let mut buf = vec![0x00, tx.len() as u8];
         buf.extend_from_slice(&tx);
-        assert!(IndividualAddressingPayload::parse(&buf).is_err());
+        assert_eq!(
+            IndividualAddressingPayload::parse(&buf),
+            Err(crate::Error::InvalidFunctionLength { function_length: 1 })
+        );
+        // function_length 0 likewise.
+        let tx = [0x00, 0x01, 0x02, 0x00, 0x00];
+        let mut buf = vec![0x00, tx.len() as u8];
+        buf.extend_from_slice(&tx);
+        assert_eq!(
+            IndividualAddressingPayload::parse(&buf),
+            Err(crate::Error::InvalidFunctionLength { function_length: 0 })
+        );
         // function_length 2 = empty body.
         let tx = [0x00, 0x01, 0x02, 0x99, 0x02];
         let mut buf = vec![0x00, tx.len() as u8];
@@ -2086,6 +2158,77 @@ mod tests {
             parsed.transmitters[0].functions[0].body,
             FunctionBody::Raw(&[])
         ));
+    }
+
+    fn one_function(tag: u8, body: FunctionBody<'_>) -> IndividualAddressingPayload<'_> {
+        IndividualAddressingPayload {
+            rfu: 0,
+            transmitters: vec![TransmitterEntry {
+                transmitter_id: 1,
+                functions: vec![FunctionEntry { tag, body }],
+            }],
+        }
+    }
+
+    fn serialize_err(p: &IndividualAddressingPayload<'_>) -> crate::Error {
+        let mut out = vec![0u8; p.serialized_len()];
+        p.serialize_into(&mut out).unwrap_err()
+    }
+
+    /// A typed body under another tag, or a `Raw` body whose tag/length parses
+    /// as a typed body, would not survive serialize -> parse: rejected.
+    #[test]
+    fn serialize_rejects_tag_body_mismatch() {
+        // Typed body, wrong tag.
+        let p = one_function(
+            AddressingFunctionTag::Power as u8,
+            FunctionBody::TimeOffset(TimeOffsetBody { time_offset: 7 }),
+        );
+        assert!(matches!(
+            serialize_err(&p),
+            crate::Error::FunctionTagBodyMismatch { tag, .. } if tag == AddressingFunctionTag::Power as u8
+        ));
+        // Raw under a known fixed-size tag with the matching length: would
+        // re-parse as TimeOffset.
+        let p = one_function(
+            AddressingFunctionTag::TimeOffset as u8,
+            FunctionBody::Raw(&[0x00, 0x07]),
+        );
+        assert!(matches!(
+            serialize_err(&p),
+            crate::Error::FunctionTagBodyMismatch { .. }
+        ));
+        // Raw under an any-length typed tag (private data, enable).
+        for tag in [
+            AddressingFunctionTag::PrivateData as u8,
+            AddressingFunctionTag::Enable as u8,
+        ] {
+            let p = one_function(tag, FunctionBody::Raw(&[1, 2, 3]));
+            assert!(matches!(
+                serialize_err(&p),
+                crate::Error::FunctionTagBodyMismatch { .. }
+            ));
+        }
+    }
+
+    /// The legitimate Raw uses still serialize and round-trip identically: an
+    /// unknown tag, and a known fixed-size tag with a non-matching length.
+    #[test]
+    fn serialize_accepts_legitimate_raw_and_matching_typed() {
+        let unknown = one_function(0xEE, FunctionBody::Raw(&[1, 2, 3]));
+        let wrong_len = one_function(
+            AddressingFunctionTag::TimeOffset as u8,
+            FunctionBody::Raw(&[1, 2, 3]),
+        );
+        let typed = one_function(
+            AddressingFunctionTag::TimeOffset as u8,
+            FunctionBody::TimeOffset(TimeOffsetBody { time_offset: -5 }),
+        );
+        for p in [unknown, wrong_len, typed] {
+            let mut out = vec![0u8; p.serialized_len()];
+            p.serialize_into(&mut out).unwrap();
+            assert_eq!(IndividualAddressingPayload::parse(&out).unwrap(), p);
+        }
     }
 
     #[test]

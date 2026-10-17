@@ -36,9 +36,9 @@ fn parses_expected_fields() {
             horizontal_offset: 0,
             did: 0x161,
             sdid: 0x101,
-            data_count: 0x002,
+            data_count: 0x102,
             user_data_words: vec![0x2CF, 0x101],
-            checksum: 0x233,
+            checksum: 0x134,
         }
     );
 
@@ -51,9 +51,9 @@ fn parses_expected_fields() {
             horizontal_offset: 0x10,
             did: 0x241,
             sdid: 0x102,
-            data_count: 0x003,
+            data_count: 0x203,
             user_data_words: vec![0x111, 0x222, 0x333],
-            checksum: 0x1AB,
+            checksum: 0x1AC,
         }
     );
 

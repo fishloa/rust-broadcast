@@ -526,7 +526,9 @@ impl Ec3SyncframeInfo {
     /// call. Running out of data, or a truncated next frame, is still `None`.
     pub fn from_es_first_au_or_broken_chain(data: &[u8]) -> Option<Vec<Self>> {
         let (frames, end) = Self::first_au(data, false);
-        (end != AuEnd::Open).then_some(frames)
+        // A chain broken at frame 0 (bad syncword / unparseable header) has no
+        // access unit at all: `None`, never `Some(vec![])`.
+        (end != AuEnd::Open && !frames.is_empty()).then_some(frames)
     }
 
     /// The integrity-checked form of [`Self::from_es_first_complete_au`] (and,
@@ -2172,6 +2174,15 @@ pub(crate) mod tests {
         .concat();
         assert_eq!(strict(&broken), None);
         assert_eq!(lenient(&broken), Some(2));
+        // Frame 0 itself broken (not a syncword, or a header that does not
+        // parse): there is no access unit, so never `Some(vec![])`.
+        let junk = alloc::vec![0x43u8, 0x8B, 0x88, 0xBC, 0xA9, 0xB4, 0x00, 0x15];
+        assert_eq!(lenient(&junk), None, "no sync at frame 0");
+        let mut bad_hdr = one_au[..8].to_vec();
+        bad_hdr.extend_from_slice(&one_au);
+        bad_hdr[2] = 0xFF;
+        bad_hdr[3] = 0xFF;
+        assert_eq!(lenient(&bad_hdr), None, "frame 0 header does not parse");
     }
 
     /// r04-W5: `bsmod` is read from `infomdate` (§E.1.3.1.x) and lands in the

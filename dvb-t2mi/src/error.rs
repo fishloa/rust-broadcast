@@ -39,6 +39,31 @@ pub enum Error {
         reason: &'static str,
     },
 
+    /// An individual-addressing `function_length` is below 2. It counts the whole
+    /// `function()` including its own `function_tag` and `function_length`
+    /// bytes (ETSI TS 102 773 §5.2.8.2), so no valid value is less than 2.
+    #[error(
+        "invalid function_length {function_length}: it includes the 2-byte function_tag + function_length header, so must be at least 2"
+    )]
+    InvalidFunctionLength {
+        /// The `function_length` byte actually read.
+        function_length: u8,
+    },
+
+    /// An individual-addressing `FunctionEntry` whose `tag` does not agree with
+    /// its `body` (a typed body under the wrong tag, or a `Raw` body under a
+    /// tag that parses back as a typed body), so serialize -> parse would not
+    /// be the identity.
+    #[error("function tag {tag:#04x} does not match its body ({body}): {reason}")]
+    FunctionTagBodyMismatch {
+        /// The entry's `tag` byte.
+        tag: u8,
+        /// Label of the body variant it was paired with.
+        body: &'static str,
+        /// Why the pairing cannot round-trip.
+        reason: &'static str,
+    },
+
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error("serialize: output buffer too small — need {need}, have {have}")]
     OutputBufferTooSmall {

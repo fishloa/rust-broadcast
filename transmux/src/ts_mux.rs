@@ -176,10 +176,17 @@ const DESCRIPTOR_TAG_EXTENSION: u8 = 0x3F;
 
 /// Widest value of the 6-bit `referenceChannelLayout` field (Table 2-121).
 const MPEGH_REFERENCE_CHANNEL_LAYOUT_MAX: u8 = 0x3F;
+/// `referenceChannelLayout` written when the `mhaC` value does not fit the
+/// 6-bit field: `0`, the "unspecified/not derived" marker (also what
+/// `ts_demux` records for a TS-sourced track).
+const MPEGH_REFERENCE_CHANNEL_LAYOUT_FALLBACK: u8 = 0;
 
 /// Build the `MPEG-H_3dAudio_descriptor` ES_info entry (issue #579) from the
 /// `mhaC` fields transmux holds: `mpegh3daProfileLevelIndication` and
-/// `referenceChannelLayout` (6 bits in Table 2-121; the `mhaC` byte must fit).
+/// `referenceChannelLayout` (6 bits in Table 2-121). An `mhaC` value above
+/// `0x3F` cannot be represented and is written as `0` (unspecified) rather than
+/// failing the mux or dropping the descriptor, which H.222.0 §2.6.106 requires
+/// for `stream_type` 0x2D.
 ///
 /// `interactivityEnabled` is written `0` and `compatibleProfileSetsPresent` is
 /// written `1` (no `CompatibleSetIndication` list): the IR carries neither, and
@@ -193,13 +200,17 @@ fn mpegh_3daudio_descriptor(
     use dvb_si::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
     use dvb_si::descriptors::mpegh_3d_audio::MpegH3dAudio;
 
-    if reference_channel_layout > MPEGH_REFERENCE_CHANNEL_LAYOUT_MAX {
-        return Err(Error::InvalidValue {
-            field: "referenceChannelLayout",
-            value: u64::from(reference_channel_layout),
-            reason: "does not fit the 6-bit field of MPEG-H_3dAudio_descriptor (H.222.0 Table 2-121)",
-        });
-    }
+    // The `mhaC` byte is 8 bits but Table 2-121 carries 6: a wider value is
+    // not a valid ISO/IEC 23001-8 ChannelConfiguration code point. The
+    // descriptor SHALL be present for stream_type 0x2D (H.222.0 §2.6.106), so
+    // neither omitting it nor failing the whole mux is acceptable; fall back
+    // to the "unspecified" marker 0 (the same one the demuxer writes) instead.
+    let reference_channel_layout = if reference_channel_layout > MPEGH_REFERENCE_CHANNEL_LAYOUT_MAX
+    {
+        MPEGH_REFERENCE_CHANNEL_LAYOUT_FALLBACK
+    } else {
+        reference_channel_layout
+    };
     let body = MpegH3dAudio::new(
         profile_level_indication,
         false,
@@ -2148,16 +2159,21 @@ mod tests {
     }
 
     #[test]
-    fn mpegh_3daudio_descriptor_rejects_layout_wider_than_six_bits() {
-        let err = mpegh_3daudio_descriptor(0x10, 0x40).unwrap_err();
-        assert!(matches!(
-            err,
-            Error::InvalidValue {
-                field: "referenceChannelLayout",
-                value: 0x40,
-                ..
-            }
-        ));
+    fn mpegh_3daudio_descriptor_layout_wider_than_six_bits_falls_back_to_zero() {
+        // 0x3F is the widest representable value and is kept verbatim ...
+        assert_eq!(
+            mpegh_3daudio_descriptor(0x10, 0x3F).unwrap(),
+            alloc::vec![0x3F, 0x04, 0x08, 0x10, 0x7F, 0xFF]
+        );
+        // ... 0x40 and 0xFF do not fit: the mux still succeeds, writing 0
+        // (and never leaking the excess bits into the reserved run).
+        for wide in [0x40u8, 0x81, 0xFF] {
+            assert_eq!(
+                mpegh_3daudio_descriptor(0x10, wide).unwrap(),
+                alloc::vec![0x3F, 0x04, 0x08, 0x10, 0x7F, 0xC0],
+                "layout {wide:#04x}"
+            );
+        }
     }
 
     // ── ES_info descriptor passthrough policy (issue #775) ──────────────────

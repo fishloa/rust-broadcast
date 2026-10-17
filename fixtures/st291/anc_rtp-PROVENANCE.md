@@ -14,6 +14,18 @@ would produce" weight as the ST 2038 fixture, while the RTP-specific framing
 around it (placement fields, payload header, word-alignment) is exercised
 fresh.
 
+## Conformance regeneration (round-2 audit)
+
+The first revision of this fixture (and of `anc.bin`) carried hand-typed
+`Data_Count` words without ST 291-1 parity bits and hand-computed checksums
+that were off by one, so it did not conform to ST 291-1:2011. Both fixtures
+are now regenerated: the same placement/UDW values, but `Data_Count` =
+`with_parity(count)` (`0x102`, `0x203`) and `Checksum_Word` =
+`compute_checksum()` (`0x134`, `0x1AC`), via `st291`'s own builders; every
+other byte is unchanged, and `st291/tests/fixture_validate.rs` asserts
+`is_valid()` on both. They remain **synthetic and spec-conformant, not real
+captures** (the values in step 1 below are the pre-regeneration words).
+
 ## How it was generated
 
 1. Took the same two ANC packets' content values already asserted by
