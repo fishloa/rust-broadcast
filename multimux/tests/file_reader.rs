@@ -278,7 +278,10 @@ async fn ts_with_a_silent_declared_pid_publishes_everything_at_end_of_input() {
     for (track_id, _) in drain_samples(&trunk) {
         *got.entry(track_id).or_default() += 1;
     }
-    assert_eq!(got, expected, "per-track published counts vs demux+finish()");
+    assert_eq!(
+        got, expected,
+        "per-track published counts vs demux+finish()"
+    );
 }
 
 /// The FLV path has the same end-of-input obligation: each track's trailing

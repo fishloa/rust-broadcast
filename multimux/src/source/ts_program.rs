@@ -1010,7 +1010,7 @@ mod tests {
 
     /// **End-of-input flush.** A stalled head with too few access units to be
     /// stepped over (100 < 512) never resolves mid-stream, so `TracksResolved`
-    /// - and with it `NewProgram` and every sample - waits for the demux's
+    /// (and with it `NewProgram` and every sample) waits for the demux's
     /// `finish()`. `TsIngestSession::finish` used to be a no-op, so nothing was
     /// ever announced. After `finish()` the session must publish exactly what
     /// the raw demux emits after its own `finish()`.
@@ -1026,7 +1026,10 @@ mod tests {
         }
         assert!(!announced_before, "premise: no NewProgram before finish()");
         let (raw, _) = raw_demux_samples(&ts, true);
-        assert!(!raw.is_empty(), "premise: the demux emits media at finish()");
+        assert!(
+            !raw.is_empty(),
+            "premise: the demux emits media at finish()"
+        );
         assert_session_equals_raw_demux_with(&ts, true);
     }
 
