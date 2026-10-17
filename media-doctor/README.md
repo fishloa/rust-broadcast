@@ -136,6 +136,13 @@ Options:
   -h, --help           Print help
 ```
 
+Two runnable library examples (`std::fs`, committed fixtures, no network): `check_ts` runs the TS diagnostic harness over a capture and prints a per-rule tally; `check_playlists` lints the committed `fixtures/hls/*.m3u8` set with `check_playlist`.
+
+```console
+$ cargo run -p media-doctor --example check_ts --all-features
+$ cargo run -p media-doctor --example check_playlists --all-features
+```
+
 Example invocations on committed fixtures (run from the repository root):
 
 ```console

@@ -131,6 +131,9 @@ Examples: `cargo run -p dvb-t2mi --example parse_header` and `--example pump_cap
   serialize them as 0. The one exception is individual addressing (0x21), which
   preserves its leading RFU byte verbatim so gateway streams round-trip
   byte-exactly.
+- **Individual addressing framing.** `function_length` counts the whole
+  `function()` including its 2-byte tag+length header (TS 102 773 §5.2.8.2.0),
+  and a value below 2 is rejected; functions 0x00-0x06 (TS 101 191 §6.1) are typed.
 - **Trait-driven dispatch.** Adding a packet type is one line in
   `declare_payloads!`; the completeness test walks the generated set.
 - **Label convention.** Public enums carry `name()` and `Display`.
