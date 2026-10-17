@@ -89,7 +89,7 @@ impl<'a> BitReader<'a> {
     /// Read `n` whole bytes. Errors (in release builds too) when the reader
     /// is not byte aligned, instead of silently reading shifted data.
     pub(crate) fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
-        if self.pos % BITS_PER_BYTE != 0 {
+        if !self.pos.is_multiple_of(BITS_PER_BYTE) {
             return Err(Error::ValueOutOfRange {
                 field: self.what,
                 reason: MISALIGNED_BYTES,

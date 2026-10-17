@@ -8,7 +8,7 @@
 //! 16 bits, the value of the `subgroup_association_descriptor` in the DSI's
 //! GroupInfoBytes. The syntax is identical to that carousel descriptor
 //! (Table 39), so both use the shared typed
-//! [`SubgroupTag`](crate::descriptors::carousel::SubgroupTag). UNT
+//! [`SubgroupTag`]. UNT
 //! operational loop only (Table 19).
 
 use crate::descriptors::carousel::SubgroupTag;

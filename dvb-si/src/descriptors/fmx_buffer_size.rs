@@ -107,7 +107,11 @@ impl Serialize for FmxBufferSizeDescriptor<'_> {
                 reason: "DefaultFlexMuxBufferDescriptor must be exactly 3 bytes",
             });
         }
-        if self.flex_mux_buffer_descriptors.len() % FLEX_MUX_BUFFER_DESCRIPTOR_LEN != 0 {
+        if !self
+            .flex_mux_buffer_descriptors
+            .len()
+            .is_multiple_of(FLEX_MUX_BUFFER_DESCRIPTOR_LEN)
+        {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "FlexMuxBufferDescriptor loop is not a whole number of 4-byte entries",
