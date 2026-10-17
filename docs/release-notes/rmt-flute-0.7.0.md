@@ -5,12 +5,12 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Epoch-forced major-class release.** Epoch-forced release. Own change since `rmt-flute-v0.6.0`: manifest only. Its public API does not change in a way that needs source migration; it ships because a workspace sibling it depends on moves to a new caret epoch (see below), and the workspace's epoch-purity rule forbids publishing a crate that still requires the old epoch next to the new one.
+**Epoch-forced major-class release; no API change of its own.** `rmt-flute` follows the `broadcast-common` 9 -> 10 caret epoch. Its own change since 0.6.0 is documentation and manifest only: the README and crate-root docs are restructured (what is and is not covered, standards table RFC 5651/5775/6726/5740/5052, feature flags, design notes).
 
 ## Why this version
 
 - **Proposed version:** 0.6.0 -> **0.7.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** patch (manifest only).
+- **Own API/behaviour change class:** none (documentation and manifest only).
 - **cargo-semver-checks vs live 0.6.0 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
 - **Epoch cascade:** epoch cascade from broadcast-common. Siblings it depends on that move epoch in this wave: broadcast-common.
 - **Caret epoch:** 0.6 -> 0.7; every workspace dependent must move with it.
@@ -24,7 +24,20 @@ _Released 2026-10-16._
 
 ## Breaking changes and migration
 
-No source-level migration is required beyond bumping the version requirement and, if the crate exposes `broadcast-common` types in its API, moving to `broadcast-common` 10 in the same dependency graph.
+No `rmt-flute` type or function changed. The only source-level change you may hit is in `broadcast-common` 10:
+
+`broadcast-common` 10 removed `Serialize::to_bytes()` (the default method that panicked when `serialize_into` failed). Code that serialises any `rmt-flute` type through it must switch to the fallible form:
+
+```rust
+// before
+let bytes = value.to_bytes();
+// after
+let bytes = value.try_to_bytes()?;   // Result<Vec<u8>, _>
+```
+
+Your dependency graph must resolve a single `broadcast-common` 10 (a second copy on 9.x is a different `Serialize` trait and the types will not satisfy it).
+
+`dvb-flute` and `atsc3-route` build on this crate; they move to `rmt-flute` 0.7 in the same wave.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 

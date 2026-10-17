@@ -5,12 +5,12 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Epoch-forced major-class release.** Epoch-forced release. Own change since `playout-runtime-v0.2.1`: internal. Its public API does not change in a way that needs source migration; it ships because a workspace sibling it depends on moves to a new caret epoch (see below), and the workspace's epoch-purity rule forbids publishing a crate that still requires the old epoch next to the new one.
+**Epoch-forced major-class release; no API change of its own.** `playout-runtime` follows the `broadcast-common` 9 -> 10, `scte35-splice` 3 -> 4, `ssai-runtime` 0.2 -> 0.3 and `mp4-emsg` 0.4 -> 0.5 caret epochs. Its own change since 0.2.1 is documentation only: the README and crate-root docs are rewritten to the workspace standard (what it does and does not do, standards table: SCTE 35 2023r1 `splice_insert` only, feature table, compiling quick start).
 
 ## Why this version
 
 - **Proposed version:** 0.2.1 -> **0.3.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** patch (internal).
+- **Own API/behaviour change class:** none (documentation only).
 - **cargo-semver-checks vs live 0.2.1 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
 - **Epoch cascade:** epoch cascade from broadcast-common. Siblings it depends on that move epoch in this wave: broadcast-common, mp4-emsg, scte35-splice, ssai-runtime.
 - **Caret epoch:** 0.2 -> 0.3; every workspace dependent must move with it.
@@ -30,7 +30,19 @@ _Released 2026-10-16._
 
 ## Breaking changes and migration
 
-No source-level migration is required beyond bumping the version requirement and, if the crate exposes `broadcast-common` types in its API, moving to `broadcast-common` 10 in the same dependency graph.
+No `playout-runtime` type or function changed. What you may hit comes from the siblings:
+
+- `broadcast-common` 10 removed `Serialize::to_bytes()` (the default method that panicked when `serialize_into` failed). Code that serialises any `playout-runtime` type through it must switch to the fallible form:
+
+```rust
+// before
+let bytes = value.to_bytes();
+// after
+let bytes = value.try_to_bytes()?;   // Result<Vec<u8>, _>
+```
+
+Your dependency graph must resolve a single `broadcast-common` 10 (a second copy on 9.x is a different `Serialize` trait and the types will not satisfy it).
+- The SCTE 35 `splice_insert()` messages it emits are built with `scte35-splice` 4.0, which now rejects over-range `sap_type`/`encryption_algorithm` with `FieldOverflow` instead of masking them (see the scte35-splice 4.0.0 note); the values `playout-runtime` writes are in range, so its output is unchanged.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
