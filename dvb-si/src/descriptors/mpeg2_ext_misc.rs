@@ -156,7 +156,7 @@ impl GreenExtension {
         for v in &self.max_variations {
             w.put(u64::from(*v), 16, "max_variation")?;
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -209,7 +209,7 @@ impl QualityExtension {
         for c in &self.metric_codes {
             w.put(u64::from(*c), 32, "metric_code")?;
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -505,7 +505,7 @@ impl VirtualSegmentation {
                 "Virtual_segmentation_descriptor trailing bytes need a config (an empty body has none)",
             ));
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         let out = w.into_vec();
         if out.len() == 1 {
             return Err(invalid(
@@ -750,7 +750,7 @@ impl JxsVideo {
             w.put(u64::from(m.max_cll), 16, "MaxCLL")?;
             w.put(u64::from(m.max_fall), 16, "MaxFALL")?;
         }
-        w.bytes(&self.private_data);
+        w.bytes(&self.private_data)?;
         Ok(w.into_vec())
     }
 }

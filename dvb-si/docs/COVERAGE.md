@@ -408,7 +408,7 @@ data-carousel descriptors (EN 301 192 Table 48) are typed in `descriptors::carou
 | 0x08 | target_serial_number_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.5 | ETSI EN 301 192 V1.7.1 §8.4.5.4 Table 22 (INT) / ETSI TS 102 006 §9.5.2.5 Table 24 (UNT) (tag 0x08) | [`TargetSerialNumberDescriptor`](../src/descriptors/target/serial_number.rs) | Full |
 | 0x09 | target_IP_address_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.3 | ETSI EN 301 192 V1.7.1 §8.4.5.8 Table 26 (INT) / ETSI TS 102 006 §9.5.2.3 Table 22 (UNT) (tag 0x09) | [`TargetIpAddressDescriptor`](../src/descriptors/target/ip_address.rs) | Full |
 | 0x0A | target_IPv6_address_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.4 | ETSI EN 301 192 V1.7.1 §8.4.5.11 Table 29 (INT) / ETSI TS 102 006 §9.5.2.4 Table 23 (UNT) (tag 0x0A) | [`TargetIpv6AddressDescriptor`](../src/descriptors/target/ipv6_address.rs) | Full |
-| 0x0B | ssu_subgroup_association_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.8 | ETSI TS 102 006 §9.5.2.8 Table 30 (UNT tag 0x0B) | [`SsuSubgroupAssociationDescriptor`](../src/descriptors/unt/subgroup_association.rs) | Full |
+| 0x0B | ssu_subgroup_association_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.8 | ETSI TS 102 006 §9.5.2.8 Table 30 (UNT tag 0x0B; rendered PDF p.29 verified) | [`SsuSubgroupAssociationDescriptor`](../src/descriptors/unt/subgroup_association.rs) | Full |
 | 0x0C | enhanced_message_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.14 | ETSI TS 102 006 §9.5.2.14 Table 37 (UNT tag 0x0C) | [`EnhancedMessageDescriptor`](../src/descriptors/unt/enhanced_message.rs) | Full |
 | 0x0D | ssu_uri_descriptor | ETSI TS 102 006 V1.4.1 | 9.5.2.15 | ETSI TS 102 006 §9.5.2.15 Table 38 (UNT tag 0x0D) | [`SsuUriDescriptor`](../src/descriptors/unt/ssu_uri.rs) | Full |
 

@@ -84,12 +84,12 @@ impl Mpeg4AudioExtensionDescriptor {
             4,
             "num_of_loops",
         )?;
-        w.bytes(&self.audio_profile_level_indications);
+        w.bytes(&self.audio_profile_level_indications)?;
         if let Some(asc) = &self.audio_specific_config {
             w.put(asc.len() as u64, 8, "ASC_size")?;
-            w.bytes(asc);
+            w.bytes(asc)?;
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }

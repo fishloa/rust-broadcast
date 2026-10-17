@@ -456,7 +456,7 @@ impl HevcOperationPoint {
                 w.put(u64::from(v), 24, "max_bit_rate")?;
             }
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -594,7 +594,7 @@ impl HevcHierarchyExtension {
             w.put(u64::from(l.reserved), 2, "reserved")?;
             w.put(u64::from(l.index), 6, "hierarchy_ext_embedded_layer_index")?;
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
@@ -723,7 +723,7 @@ impl HevcTileSubstream {
             } => {
                 w.flag(*preamble_flag, "PreambleFlag")?;
                 w.put(u64::from(*pattern_reference), 7, "PatternReference")?;
-                w.bytes(trailing);
+                w.bytes(trailing)?;
             }
             HevcTileSubstreamDetail::Additional(v) => {
                 for a in v {

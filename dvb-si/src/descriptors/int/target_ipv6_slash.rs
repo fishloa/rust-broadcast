@@ -47,7 +47,9 @@ pub struct TargetIpv6SlashDescriptor<'a> {
     /// The address/mask entries.
     pub entries: Vec<Ipv6Slash>,
     /// Bytes after the last whole entry inside `descriptor_length`; the spec
-    /// defines none (kept for byte-identical re-serialization).
+    /// defines none, so this is parse tolerance only and is always shorter than
+    /// one entry; serialize rejects a longer `trailing` (it would re-parse as
+    /// entries).
     pub trailing: &'a [u8],
 }
 
@@ -78,6 +80,19 @@ impl<'a> crate::traits::DescriptorDef<'a> for TargetIpv6SlashDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serialize_rejects_entry_sized_trailing() {
+        // A trailing of >= one entry would re-parse as an extra entry.
+        let mut d = TargetIpv6SlashDescriptor::parse(&[TAG, 0]).unwrap();
+        let long = [0u8; ENTRY_LEN];
+        d.trailing = &long;
+        assert!(d.serialize_into(&mut [0u8; 64]).is_err());
+        let mut buf = [0u8; 64];
+        d.trailing = &long[..ENTRY_LEN - 1];
+        let n = d.serialize_into(&mut buf).unwrap();
+        assert_eq!(TargetIpv6SlashDescriptor::parse(&buf[..n]).unwrap(), d);
+    }
 
     #[test]
     fn parse_and_round_trip() {

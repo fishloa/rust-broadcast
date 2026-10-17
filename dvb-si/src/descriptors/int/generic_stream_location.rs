@@ -83,6 +83,75 @@ impl ModulationSystemType {
 }
 broadcast_common::impl_spec_display!(ModulationSystemType, Reserved);
 
+/// Bit shift of the high sub-field of a two-sub-field `PHY_stream_id`.
+const PHY_HIGH_SHIFT: u32 = 8;
+
+/// `PHY_stream_id` decoded per its `modulation_system_type` — EN 301 192
+/// §8.4.5.15 Table 35 (verified on the rendered page 39).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[non_exhaustive]
+pub enum PhyStreamId {
+    /// DVB-S2: the 16-bit Input Stream Identifier (ISI).
+    Isi(u16),
+    /// DVB-T2 / DVB-NGH: the 16-bit Physical Layer Pipe (PLP) identifier.
+    Plp(u16),
+    /// DVB-C2: data slice id in `b15..b8`, PLP id in `b7..b0`.
+    DataSlicePlp {
+        /// Data slice identifier (`b15..b8`).
+        data_slice_id: u8,
+        /// PLP identifier (`b7..b0`).
+        plp_id: u8,
+    },
+    /// DVB-S2X: time slice number in `b15..b8`, ISI in `b7..b0`.
+    TimeSliceIsi {
+        /// Time slice number (`b15..b8`).
+        time_slice: u8,
+        /// Input Stream Identifier (`b7..b0`).
+        isi: u8,
+    },
+    /// Reserved `modulation_system_type`: Table 35 defines no encoding, so
+    /// the raw 16 bits are kept.
+    Unspecified(u16),
+}
+
+impl PhyStreamId {
+    /// Decode the 16-bit wire value for a given `modulation_system_type`.
+    #[must_use]
+    pub fn decode(system: ModulationSystemType, raw: u16) -> Self {
+        let [hi, lo] = raw.to_be_bytes();
+        match system {
+            ModulationSystemType::Dvbs2 => Self::Isi(raw),
+            ModulationSystemType::Dvbt2 | ModulationSystemType::DvbNgh => Self::Plp(raw),
+            ModulationSystemType::Dvbc2 => Self::DataSlicePlp {
+                data_slice_id: hi,
+                plp_id: lo,
+            },
+            ModulationSystemType::Dvbs2x => Self::TimeSliceIsi {
+                time_slice: hi,
+                isi: lo,
+            },
+            ModulationSystemType::Reserved(_) => Self::Unspecified(raw),
+        }
+    }
+
+    /// Encode to the 16-bit wire value. Inverse of [`decode`](Self::decode).
+    #[must_use]
+    pub const fn to_u16(self) -> u16 {
+        match self {
+            Self::Isi(v) | Self::Plp(v) | Self::Unspecified(v) => v,
+            Self::DataSlicePlp {
+                data_slice_id,
+                plp_id,
+            } => ((data_slice_id as u16) << PHY_HIGH_SHIFT) | plp_id as u16,
+            Self::TimeSliceIsi { time_slice, isi } => {
+                ((time_slice as u16) << PHY_HIGH_SHIFT) | isi as u16
+            }
+        }
+    }
+}
+
 /// The selector of a generic stream location: either seven flag bits or a
 /// length-delimited byte string, discriminated by `selector_length_flag`.
 /// The content is defined by ETSI TS 102 606-2 §5.2.2.8; that standard is not
@@ -121,6 +190,13 @@ pub struct IpMacGenericStreamLocationDescriptor<'a> {
 }
 
 impl<'a> IpMacGenericStreamLocationDescriptor<'a> {
+    /// `PHY_stream_id` split into its Table 35 sub-fields according to
+    /// [`modulation_system_type`](Self::modulation_system_type).
+    #[must_use]
+    pub fn phy_stream(&self) -> PhyStreamId {
+        PhyStreamId::decode(self.modulation_system_type, self.phy_stream_id)
+    }
+
     fn selector_len(&self) -> usize {
         match self.selector {
             GenericStreamSelector::Flags(_) => 1,
@@ -299,6 +375,56 @@ mod tests {
         };
         let mut out = vec![0u8; d.serialized_len()];
         assert!(d.serialize_into(&mut out).is_err());
+    }
+
+    #[test]
+    fn phy_stream_id_sub_fields_per_table_35() {
+        let mk = |t, id| IpMacGenericStreamLocationDescriptor {
+            interactive_network_id: 0,
+            modulation_system_type: t,
+            modulation_system_id: 0,
+            phy_stream_id: id,
+            selector: GenericStreamSelector::Flags(0),
+            trailing: &[],
+        };
+        assert_eq!(
+            mk(ModulationSystemType::Dvbs2, 0x1234).phy_stream(),
+            PhyStreamId::Isi(0x1234)
+        );
+        assert_eq!(
+            mk(ModulationSystemType::DvbNgh, 0x1234).phy_stream(),
+            PhyStreamId::Plp(0x1234)
+        );
+        assert_eq!(
+            mk(ModulationSystemType::Dvbc2, 0x1234).phy_stream(),
+            PhyStreamId::DataSlicePlp {
+                data_slice_id: 0x12,
+                plp_id: 0x34
+            }
+        );
+        assert_eq!(
+            mk(ModulationSystemType::Dvbs2x, 0x1234).phy_stream(),
+            PhyStreamId::TimeSliceIsi {
+                time_slice: 0x12,
+                isi: 0x34
+            }
+        );
+        assert_eq!(
+            mk(ModulationSystemType::Reserved(9), 0x1234).phy_stream(),
+            PhyStreamId::Unspecified(0x1234)
+        );
+        for t in [
+            ModulationSystemType::Dvbs2,
+            ModulationSystemType::Dvbt2,
+            ModulationSystemType::Dvbc2,
+            ModulationSystemType::DvbNgh,
+            ModulationSystemType::Dvbs2x,
+            ModulationSystemType::Reserved(7),
+        ] {
+            for raw in [0u16, 0x00FF, 0xFF00, 0xABCD, 0xFFFF] {
+                assert_eq!(PhyStreamId::decode(t, raw).to_u16(), raw);
+            }
+        }
     }
 
     #[test]

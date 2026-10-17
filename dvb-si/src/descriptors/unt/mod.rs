@@ -54,7 +54,7 @@ declare_scoped_namespace! {'a;
     TargetSerialNumber = 0x08 => crate::descriptors::target::serial_number::TargetSerialNumberDescriptor<'a>,
     TargetIpAddress = 0x09 => crate::descriptors::target::ip_address::TargetIpAddressDescriptor<'a>,
     TargetIpv6Address = 0x0A => crate::descriptors::target::ipv6_address::TargetIpv6AddressDescriptor<'a>,
-    SsuSubgroupAssociation = 0x0B => crate::descriptors::unt::subgroup_association::SsuSubgroupAssociationDescriptor<'a>,
+    SsuSubgroupAssociation = 0x0B => crate::descriptors::unt::subgroup_association::SsuSubgroupAssociationDescriptor,
     EnhancedMessage = 0x0C => crate::descriptors::unt::enhanced_message::EnhancedMessageDescriptor<'a>,
     SsuUri = 0x0D => crate::descriptors::unt::ssu_uri::SsuUriDescriptor<'a>,
 }

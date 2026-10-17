@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, pre-release audit LOW findings)
+- The carousel `subgroup_association_descriptor` (TS 102 006 Table 39) and the UNT `SSU_subgroup_association_descriptor` (Table 30, rendered p.29) have the identical wire syntax (tag 0x0B, `descriptor_length` 5, 40-bit `subgroup_tag`), so both now share one typed `carousel::SubgroupTag { oui, subgroup }`. `carousel::SubgroupAssociationDescriptor` replaces its `oui`/`subgroup_tag: u16` fields with `subgroup_tag: SubgroupTag`; `unt::SsuSubgroupAssociationDescriptor` loses its lifetime, its `u64` `subgroup_tag`, the `oui()`/`subgroup()` accessors and `trailing`, and parses strictly (`descriptor_length` must be 5, as Table 30 fixes it).
+- AIT `RecordingLabel::label` and `PrefetchEntry::label` are now `LabelBytes<'a>` (an opaque byte string compared byte-for-byte) instead of `&[u8]`. TS 102 809 Table 21 (rendered p.41): `label_char` "carry an array of bytes", and NOTE 3 leaves the label format to platform specifications, so it is deliberately not `DvbText`. `RecordingLabel::new` takes a `LabelBytes`.
+- The INT/UNT/RNT/target entry-list descriptors (`target_ip_slash`, `target_mac_address_range`, `rnt::scan`, `target_ip_source_slash`, the IPv6 and address variants) now return `Error::InvalidDescriptor` from `serialize_into` when a hand-built `trailing` is one entry or longer (it would re-parse as extra entries, breaking `parse(serialize(x)) == x`). `trailing` is documented as parse tolerance only.
+- `FmxBufferSizeDescriptor::serialize_into` returns `Error::InvalidDescriptor` for a default record that is not 3 bytes or a loop that is not whole 4-byte entries (was a `debug_assert`, silent in release). The internal H.222 `BitReader::bytes` / `BitWriter::bytes` return `Error::ValueOutOfRange` on a non-byte-aligned call in release builds too.
+
+### Added (pre-release audit LOW findings)
+- `PhyStreamId` and `IpMacGenericStreamLocationDescriptor::phy_stream()`: `PHY_stream_id` decoded per EN 301 192 Table 35 (rendered p.39) as ISI (DVB-S2), PLP (DVB-T2/NGH), data slice + PLP (DVB-C2), time slice + ISI (DVB-S2X); a reserved `modulation_system_type` stays `Unspecified(u16)`. The `phy_stream_id: u16` field is unchanged (all 16 bits are assigned, so it stays lossless). The selector content (TS 102 606-2) stays opaque, as it is not vendored.
+
+### Documentation
+- EN 301 192 Tables 53/55/56/57 transcriptions now carry the `position` (0x00 first, 0x01 intermediate, 0x02 last), `module_id`/`group_id` ("ignored for the last value"), `location_tag` and `est_download_time` ("in seconds") prose, verified on the rendered pages 66-68.
+
 ### Added (structures the vendored specs define that were wrongly documented as undefined)
 - AIT descriptors `provider_export` 0x12 (`ProviderExportDescriptor`) and `provider_usage` 0x13 (`ProviderUsageDescriptor`), ETSI TS 102 727 §10.15 Tables 93/94 (PDF p.181). The tables print the inner loops as `For(j=0; i<N; i++)` (a `j`/`i` typo); the unambiguous length-prefixed reading is implemented and the typo is quoted in the transcription. Spec vector only (no real capture carries them).
 - AIT dispatch now routes tag 0x5F to the SI `PrivateDataSpecifierDescriptor` (TS 102 809 §5.3.4.7 / Table 38 note 2: "the DVB SI private data specifier descriptor is defined for use in the Application Information Table").

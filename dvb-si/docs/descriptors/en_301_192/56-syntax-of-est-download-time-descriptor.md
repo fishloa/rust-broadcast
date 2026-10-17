@@ -8,3 +8,7 @@ _§10.2.8, PDF pp. 67-67_
 | est_download_time | 4 |  |
 | } |  |  |
 
+Semantics (EN 301 192 V1.7.1 §10.2.8, PDF p.67; verified on rendered page):
+
+- est_download_time: "this 32-bit field gives the estimated download time of data in seconds." (unit: seconds)
+

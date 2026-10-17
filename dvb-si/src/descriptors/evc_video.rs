@@ -185,7 +185,7 @@ impl EvcVideoDescriptor {
         if let Some(t) = &self.temporal_layer_subset {
             t.write(&mut w)?;
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }

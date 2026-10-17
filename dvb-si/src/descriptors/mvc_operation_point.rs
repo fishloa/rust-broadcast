@@ -211,7 +211,7 @@ impl MvcOperationPointDescriptor {
                 }
             }
         }
-        w.bytes(&self.trailing);
+        w.bytes(&self.trailing)?;
         Ok(w.into_vec())
     }
 }
