@@ -21,7 +21,7 @@
 ### Changed
 
 - **BREAKING (#1034):** `t2mi --inner` without `--plp` now scans the capture first and, when it carries more than one PLP, exits non-zero listing the PLPs and asking for `--plp N` — each PLP is an independent transport stream, and the old behaviour interleaved them into one garbled mux on stdout. A single-PLP capture needs no `--plp`.
-- `t2mi --pid` rejects a PID above `0x1FFF` as a usage error (was accepted and matched nothing). All other text/JSON output is byte-identical.
+- `t2mi --pid` rejects a PID above `0x1FFF` as a usage error (was accepted and matched nothing). `dump --json` output grows (found by the differential sweep, docs/DIFFERENTIAL-SWEEP-2026-10.md; e.g. `fixtures/ts/m6-single.ts` 9715 -> 9895 bytes): descriptors and tables now carry their reserved bits as typed `reserved_future_use*` / `reserved*` keys, list-bearing structures carry `"trailing": []`, and descriptor tag 0x3F (`extension_descriptor`) decodes to a typed `Mpeg2Extension` body instead of `unknown`. Existing keys keep their names and values; a consumer that rejects unknown keys must be updated. `services`, `epg`, `pids` and `t2mi` output is byte-identical except where `t2mi` now parses individual-addressing packets it previously failed on (dvb-t2mi function_length framing fix).
 
 ## [11.0.1] - 2026-10-11
 ### Changed
