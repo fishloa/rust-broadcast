@@ -786,6 +786,165 @@ mod tests {
         );
     }
 
+    /// Per-track `(count, first sample bytes, timestamps)` from the raw
+    /// demux output, in emission order, plus how many samples the demux
+    /// emitted *before* its first `TracksResolved`.
+    fn raw_demux_samples(
+        ts: &[u8],
+    ) -> (
+        std::collections::BTreeMap<TrackId, Vec<(Vec<u8>, Option<i64>, Option<i64>)>>,
+        usize,
+    ) {
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(ts);
+        let mut by_track: std::collections::BTreeMap<_, Vec<_>> = Default::default();
+        let (mut resolved, mut before) = (false, 0usize);
+        while let Some(ev) = demux.poll_event() {
+            match ev {
+                DemuxEvent::TracksResolved { .. } => resolved = true,
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    if !resolved {
+                        before += 1;
+                    }
+                    by_track
+                        .entry(track_id)
+                        .or_default()
+                        .push((sample.data.to_vec(), sample.dts, sample.pts));
+                }
+                _ => {}
+            }
+        }
+        (by_track, before)
+    }
+
+    /// What the session publishes, per track, asserting the contract on the
+    /// way: a `Sample` never precedes its program's `NewProgram`, and a
+    /// sample's track is one the program announced.
+    fn session_samples(
+        ts: &[u8],
+    ) -> std::collections::BTreeMap<TrackId, Vec<(Vec<u8>, Option<i64>, Option<i64>)>> {
+        let mut session = TsIngestSession::new();
+        session.feed(ts, Timestamp::ZERO).expect("infallible");
+        let mut announced: HashMap<ProgramId, HashSet<TrackId>> = HashMap::new();
+        let mut by_track: std::collections::BTreeMap<_, Vec<_>> = Default::default();
+        while let Some(ev) = session.poll() {
+            match ev {
+                SessionEvent::NewProgram { program, tracks } => {
+                    announced.insert(program, tracks.iter().map(|t| t.track_id).collect());
+                }
+                SessionEvent::Sample {
+                    program,
+                    track_id,
+                    sample,
+                    ..
+                } => {
+                    assert!(
+                        announced.get(&program).is_some_and(|t| t.contains(&track_id)),
+                        "a sample for {track_id:?} preceded its programme's announcement"
+                    );
+                    by_track
+                        .entry(track_id)
+                        .or_default()
+                        .push((sample.data.to_vec(), sample.dts, sample.pts));
+                }
+                _ => {}
+            }
+        }
+        by_track
+    }
+
+    fn assert_session_equals_raw_demux(ts: &[u8]) {
+        let (raw, before_resolved) = raw_demux_samples(ts);
+        let published = session_samples(ts);
+        assert!(!raw.is_empty(), "fixture demuxed no samples");
+        println!("samples demuxed before TracksResolved: {before_resolved}");
+        for (track, expect) in &raw {
+            let got = published.get(track).map_or(&[][..], |v| v.as_slice());
+            assert_eq!(
+                got.len(),
+                expect.len(),
+                "{track:?}: the session lost {} of {} samples (first-AU data loss at \
+                 stream start; {before_resolved} samples were demuxed before TracksResolved)",
+                expect.len() - got.len().min(expect.len()),
+                expect.len()
+            );
+            assert_eq!(got, expect.as_slice(), "{track:?}: bytes/timestamps/order differ");
+        }
+        assert_eq!(published.len(), raw.len(), "a track went missing");
+    }
+
+    /// **Stream-start data loss.** Samples the demux replays from its probe
+    /// backlog when a track is promoted arrive *before* `TracksResolved`;
+    /// the programme is only announced at `TracksResolved`, so the
+    /// `track_program` guard dropped every one of them. Synthetic stream
+    /// (a stalled head holds `TracksResolved` back for 512 access units
+    /// while two healthy PIDs are promoted): every healthy track's samples
+    /// must reach the session byte-identical, with the raw demux's
+    /// timestamps and order.
+    #[test]
+    fn samples_before_tracks_resolved_reach_the_session_synthetic() {
+        let ts = stalled_head_ts_bytes();
+        let (_, before) = raw_demux_samples(&ts);
+        assert!(before > 0, "premise: samples precede TracksResolved");
+        assert_session_equals_raw_demux(&ts);
+    }
+
+    /// The same on the private France TNT E-AC-3 capture (audio promoted
+    /// ahead of the resolved signal).
+    #[test]
+    fn samples_before_tracks_resolved_reach_the_session_zenith() {
+        let Some(path) = test_fixtures::require(
+            "ts/france-tnt-m6-eac3-zenith.ts",
+            "multimux backlog replay",
+        ) else {
+            return;
+        };
+        assert_session_equals_raw_demux(&std::fs::read(path).expect("read fixture"));
+    }
+
+    /// Unit form: samples for buffered (not yet announced) tracks are held
+    /// and flushed in arrival order, interleaved across tracks as received,
+    /// right after `NewProgram`; none is emitted before it; a later sample
+    /// follows them. Samples for a never-announced track are still dropped.
+    #[test]
+    fn pre_resolution_samples_flush_in_order_after_new_program() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        tracker.handle(DemuxEvent::sample(TrackId::new(1), sample_at(0x01)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(2))));
+        tracker.handle(DemuxEvent::sample(TrackId::new(2), sample_at(0x02)));
+        tracker.handle(DemuxEvent::sample(TrackId::new(1), sample_at(0x03)));
+        tracker.handle(DemuxEvent::sample(TrackId::new(9), sample_at(0x09)));
+        assert!(matches!(tracker.poll(), Some(SessionEvent::Established)));
+        assert!(tracker.poll().is_none(), "nothing before the programme");
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        assert!(matches!(
+            tracker.poll(),
+            Some(SessionEvent::NewProgram { .. })
+        ));
+        let mut got = Vec::new();
+        while let Some(ev) = tracker.poll() {
+            match ev {
+                SessionEvent::Sample {
+                    track_id, sample, ..
+                } => got.push((track_id, sample.data.to_vec())),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!(
+            got,
+            vec![
+                (TrackId::new(1), vec![0x65, 0x01]),
+                (TrackId::new(2), vec![0x65, 0x02]),
+                (TrackId::new(1), vec![0x65, 0x03]),
+            ]
+        );
+        tracker.handle(DemuxEvent::sample(TrackId::new(2), sample_at(0x04)));
+        assert!(matches!(tracker.poll(), Some(SessionEvent::Sample { .. })));
+    }
+
     /// A copy of [`track_spec`] with a different coded size, so a config
     /// change is observable in the announced spec.
     fn track_spec_sized(track_id: TrackId, width: u16, height: u16) -> TrackSpec {
