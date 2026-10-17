@@ -38,12 +38,15 @@ SyncByte                        SYNC_BYTE
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
+#### Documentation
+- README and crate-root docs rewritten to the workspace documentation standard: what the crate does and does not do, a standards-supported table (edition, scope, status), feature flags, a doctested quick start, and related crates.
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `mpeg-pes` 0.5 -> 0.6). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 #### Changed (BREAKING, #1202)
 - **BREAKING (behavioural):** serializers reject a value wider than its wire bit-field with `Error::FieldOverflow` instead of shifting/masking it into a different valid-looking segment (the #1129 class): the `*_version_number` nibbles, `reserved*` runs, `page_state` / `region_level_of_compatibility` / `region_depth` / `object_coding_method` codes, the 4/2-bit region pixel codes, the alternative-CLUT parameter fields and 8/10-bit entry values, and the disparity-signalling fractional shift / reserved flags. The `Reserved(v)` payload of those code enums is now returned verbatim by `to_bits` (so the serializer's range check can see a wide value) instead of being masked. Guarded by `tests/serialize_mask_guard.rs` (lexical) and `tests/serialize_field_width.rs` (real-capture segments, one field one step over range).
 - New `tests/hostility.rs`: real M6 data fields truncated at every length and mutated at every byte never panic.
-
-#### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 #### Fixed
 
@@ -61,6 +64,8 @@ SyncByte                        SYNC_BYTE
 
 ## Merged changes since `dvb-subtitle-v0.5.0`
 
+- docs: cluster C crate READMEs + crate-root docs (standards tables, feature flags, scope, verified editions) (#1284)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
 - O1: ordering hygiene — registry tables in wire-value order + ordering guard (#1238)
 - Audit sweep of the nine small crates: fit_mask serializers, hostility + guard tests (#1202) [stacked on #1199] (#1203)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)

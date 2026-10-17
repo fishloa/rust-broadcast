@@ -35,6 +35,15 @@ Stuffing bytes must be `0xFF` (else `Error::InvalidField`). New opt-in strict `D
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
+#### Documentation
+- README and crate-root docs rewritten to the workspace documentation standard: what the crate does and does not do, a standards-supported table (edition, scope, status), feature flags, a doctested quick start, and related crates.
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
+#### Fixed (adversarial review of signalling/captions)
+- **BREAKING (behavioural):** `DataUnit::serialize_into` and `DataUnit::padded_to` reject a non-zero `stuffing` on an `Opaque` or `Stuffing` payload (which own their whole `data_unit_length` body): `Opaque([DE, AD])` with stuffing 3 used to re-parse as `Opaque([DE, AD, FF, FF, FF])` with stuffing 0.
+
 #### Changed (BREAKING)
 - `LineHeader` gains `reserved: u8` (the 2-bit `reserved_future_use` prefix),
   `WssDataField` gains `reserved_tail: u8` (its trailing 2 bits) and
@@ -59,6 +68,8 @@ Stuffing bytes must be `0xFF` (else `Error::InvalidField`). New opt-in strict `D
 
 ## Merged changes since `dvb-vbi-v0.4.2`
 
+- docs: cluster C crate READMEs + crate-root docs (standards tables, feature flags, scope, verified editions) (#1284)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
 - test: shared test-fixtures loader crate, migrate hand-written loaders, drop CRC copies (#1214) (#1215)
 - Audit sweep of the nine small crates: fit_mask serializers, hostility + guard tests (#1202) [stacked on #1199] (#1203)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)

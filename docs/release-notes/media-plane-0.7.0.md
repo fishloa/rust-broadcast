@@ -41,8 +41,16 @@ trunk.part_bytes(SegmentSeq::new(segment_number), PartIndex::new(part_index));
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
+#### Fixed
+- `IngestDriver::programs()` iterates in ascending `ProgramId` order (the program map is a `BTreeMap`, was a `HashMap`), so the order in which a caller drives per-program work is reproducible across processes.
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `scte35-splice` 3 -> 4, `timed-metadata` 0.6 -> 0.7, `transmux` 0.26 -> 0.27). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 #### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 - **BREAKING (#1188):** new `media_plane::ids::{SegmentSeq, PartIndex}` newtypes (checked `checked_next`/`checked_add`/`checked_sub`/`checked_distance_from`, explicit `wrapping_next`/`saturating_next`, no operator impls that could overflow silently). `SegmentEntry::sequence_number`, `PartEntry::segment_number`/`part_index` (and their `new` arguments), `EventAnchor::Segment { segment_number }`, `Trunk::part_bytes`/`parts_in_segment`/`events_in_segment`/`last_closed_segment`, `SegmentWriter::next_sequence_number`/`note_segment_start`, `RetentionDriver::locate` and `NonMonotonicSequenceNumber::{attempted, last_published}` use them instead of `u32`, so a swapped segment/part argument is a compile error. At `u32::MAX` `next_sequence_number` saturates and a further segment is rejected (pinned by `segment_sequence_at_u32_max_saturates_and_rejects_the_next`).
 
@@ -50,6 +58,10 @@ trunk.part_bytes(SegmentSeq::new(segment_number), PartIndex::new(part_index));
 
 ## Merged changes since `media-plane-v0.6.0`
 
+- fix(multimux): deterministic ProgramIds on MPTS; flush RTP depacketisers at end of input (#1332)
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
+- chore: pre-release hygiene (README coverage, snippet tool, docsrs, examples, CLAUDE.md) (#1278)
 - media-plane: SegmentSeq/PartIndex newtypes across media-plane, hls-runtime, multimux (BREAKING) (#1194)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)

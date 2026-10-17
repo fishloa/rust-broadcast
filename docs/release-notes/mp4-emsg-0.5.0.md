@@ -36,6 +36,12 @@ EmsgBox { flags: EMSG_FLAGS, .. }               // migrate struct literals
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 #### Changed (BREAKING)
 - `EmsgBox` gains a typed `flags: u32` field (the `FullBox` 24-bit flags,
   mandated 0, `EMSG_FLAGS`): plain `parse` now keeps it and `serialize_into`
@@ -51,6 +57,9 @@ EmsgBox { flags: EMSG_FLAGS, .. }               // migrate struct literals
 
 ## Merged changes since `mp4-emsg-v0.4.1`
 
+- docs: correct false 'not vendored' / 'edition unverified' claims (#1311)
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
 - test: shared test-fixtures loader crate, migrate hand-written loaders, drop CRC copies (#1214) (#1215)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)

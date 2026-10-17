@@ -45,6 +45,12 @@ origin.init_name(TrackId::new(track_id_u32), Generation::new(2));      ClosedSeg
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it). The former published name `ll-hls-runtime` is noted.
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `broadcast-auth` 0.4 -> 0.5, `broadcast-hls` 0.3 -> 0.4, `media-plane` 0.6 -> 0.7, `timed-metadata` 0.6 -> 0.7, `transmux` 0.26 -> 0.27). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
+
 #### Changed
 
 - **BREAKING (#1188):** `server::SegmentSeq`/`PartIndex` are now re-exports of `media_plane::ids::{SegmentSeq, PartIndex}` (one canonical definition); `ClosedSegment::sequence_number` and `ClosedSegment::new`'s first argument are `SegmentSeq`.
@@ -53,6 +59,9 @@ origin.init_name(TrackId::new(track_id_u32), Generation::new(2));      ClosedSeg
 
 ## Merged changes since `hls-runtime-v0.8.0`
 
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
+- chore: pre-release hygiene (README coverage, snippet tool, docsrs, examples, CLAUDE.md) (#1278)
 - media-plane: SegmentSeq/PartIndex newtypes across media-plane, hls-runtime, multimux (BREAKING) (#1194)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)
