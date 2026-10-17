@@ -3534,12 +3534,16 @@ fn advance_track(
             // independent frame, so the config describes the stream's first
             // access unit (not whichever later one happens to complete inside
             // the newest PES alone); issue #1186.
-            let eac3_window = if stream.codec == Codec::Eac3 {
-                audio_probe_window(stream.codec, &stream.probe_tail, &latest.data)
-            } else {
-                None
-            };
-            let mut resolved = match &eac3_window {
+            // The held tail joined to the newest payload, built ONCE per
+            // payload and shared by the three E-AC-3 users below (the
+            // early-window probe, the broken-chain fallback and the next held
+            // tail) instead of one allocation + copy each.
+            let eac3_all: Option<Vec<u8>> = (stream.codec == Codec::Eac3)
+                .then(|| [stream.probe_tail.as_slice(), latest.data.as_slice()].concat());
+            let eac3_window: Option<&[u8]> = eac3_all
+                .as_deref()
+                .filter(|_| !stream.probe_tail.is_empty());
+            let mut resolved = match eac3_window {
                 Some(w) => finalize_probe(stream.codec, &stream.descriptors, &mut probe, w),
                 None => None,
             };
@@ -3569,9 +3573,14 @@ fn advance_track(
             // order everything behind it, for as long as the loss lasts); and,
             // after `EAC3_PROBE_MAX_FRAMES` chained frames, whatever the access
             // unit holds (as `finish` does).
-            if resolved.is_none() && stream.codec == Codec::Eac3 {
-                let window = [stream.probe_tail.as_slice(), latest.data.as_slice()].concat();
-                resolved = eac3_probe_result(&window, Eac3Accept::BrokenChain);
+            if resolved.is_none()
+                && let Some(window) = eac3_all.as_deref()
+                // A window shorter than one minimum syncframe cannot hold a
+                // whole frame, so no fallback can resolve (all need a first
+                // frame): skip the walk. Result-identical.
+                && window.len() >= Eac3Sync::MIN_FRAME_LEN
+            {
+                resolved = eac3_probe_result(window, Eac3Accept::BrokenChain);
                 // No CRC-valid access unit is held yet. Announce the track from
                 // the first (unverified) frame rather than wait for one: on a
                 // lossy capture intact frames can be minutes apart and every
@@ -3580,18 +3589,20 @@ fn advance_track(
                 // above), and `bsmod` still comes from one when the window has
                 // it (`eac3_probe_result`).
                 if resolved.is_none() {
-                    resolved = eac3_probe_result(&window, Eac3Accept::UnverifiedBrokenChain);
+                    resolved = eac3_probe_result(window, Eac3Accept::UnverifiedBrokenChain);
                 }
                 if resolved.is_none()
-                    && let Some(start) = first_eac3_independent_offset(&window, false)
+                    && let Some(start) = first_eac3_independent_offset(window, false)
                     && Ec3SyncframeInfo::from_es_all(&window[start..]).len()
                         >= EAC3_PROBE_MAX_FRAMES
                 {
-                    resolved = eac3_probe_result(&window, Eac3Accept::Anything);
+                    resolved = eac3_probe_result(window, Eac3Accept::Anything);
                 }
             }
             stream.probe_tail = if resolved.is_some() {
                 Vec::new()
+            } else if let Some(all) = eac3_all.as_deref() {
+                eac3_probe_tail(all)
             } else {
                 audio_probe_next_tail(stream.codec, &stream.probe_tail, &latest.data)
             };
@@ -3683,20 +3694,24 @@ fn audio_probe_next_tail(codec: Codec, tail: &[u8], latest: &[u8]) -> Vec<u8> {
             let all = [tail, latest].concat();
             all[all.len().saturating_sub(AUDIO_PROBE_BOUNDARY_BYTES)..].to_vec()
         }
-        Codec::Eac3 => {
-            let all = [tail, latest].concat();
-            // From the first valid *independent* header (a dependent frame is
-            // mid-access-unit, #1186), or a header prefix not yet judgeable.
-            let start = (0..all.len()).find(|&at| match Eac3Sync::parse(&all[at..]) {
-                SyncParse::Frame(hdr, _) => hdr.strmtyp != EAC3_STRMTYP_DEPENDENT,
-                SyncParse::NeedMore => Eac3Sync::is_partial_sync(&all[at..]),
-                SyncParse::NotSync => false,
-            });
-            match start {
-                Some(start) if all.len() - start <= EAC3_PROBE_TAIL_MAX => all[start..].to_vec(),
-                _ => Vec::new(),
-            }
-        }
+        Codec::Eac3 => eac3_probe_tail(&[tail, latest].concat()),
+        _ => Vec::new(),
+    }
+}
+
+/// The E-AC-3 probe tail to hold after an unresolved payload, given the held
+/// tail already joined to that payload (`all`): from the first valid
+/// *independent* header (a dependent frame is mid-access-unit, #1186), or a
+/// header prefix not yet judgeable; empty when it exceeds
+/// [`EAC3_PROBE_TAIL_MAX`] (a frame not complete by then never will be).
+fn eac3_probe_tail(all: &[u8]) -> Vec<u8> {
+    let start = (0..all.len()).find(|&at| match Eac3Sync::parse(&all[at..]) {
+        SyncParse::Frame(hdr, _) => hdr.strmtyp != EAC3_STRMTYP_DEPENDENT,
+        SyncParse::NeedMore => Eac3Sync::is_partial_sync(&all[at..]),
+        SyncParse::NotSync => false,
+    });
+    match start {
+        Some(start) if all.len() - start <= EAC3_PROBE_TAIL_MAX => all[start..].to_vec(),
         _ => Vec::new(),
     }
 }
