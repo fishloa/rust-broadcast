@@ -8,17 +8,68 @@ downstream user on a real lossy capture, not by CI).
 Tool and how to rerun: [`tools/differential-sweep/`](../tools/differential-sweep/README.md).
 Acknowledged differences (with reasons): [`tools/differential-sweep/expected.json`](../tools/differential-sweep/expected.json).
 
-Two runs are recorded: **run 2** (HEAD = `ca638fbaf`, after #1319 / #1322 / #1326)
-is the current state; **run 1** (HEAD = `db41ae3c0`) is kept below for comparison.
+Three runs are recorded: **run 3** (HEAD = `f5d6aa430`, the release candidate, after #1327 / #1329 / #1330 / #1332) is the current state and is the first section below; **run 2** (HEAD = `ca638fbaf`, after #1319 / #1322 / #1326) and **run 1** (HEAD = `db41ae3c0`) are kept for comparison.
 
-## Method and coverage (both runs)
+## Run 3 result (HEAD `f5d6aa430`, final pre-release sweep)
+
+Baseline `a9e9694a6` (transmux 0.26.0 tag commit; re-verified: `transmux/Cargo.toml` there is 0.26.0, matching `docs/release-plan-2026-10.md` "Live now"). Same corpus as run 2 (293 files, private submodule `4d876654`), 1273 (fixture, probe) results per tree, 15 probes, 0 panics, 0 timeouts. `diff.py`: **UNEXPLAINED 0, BUG 0, INTENDED 2998 rows over 210 differing records**, exit 0. Exit 0 is earned by fixes, not by acknowledgement: run 2's two BUG rows were deleted from `expected.json` because the code is fixed, and the one new blanket `multimux.ts_ingest` entry is backed by `crosscheck.py` (below).
+
+| class | records | detail |
+|---|---|---|
+| identical | 1063 of 1273 | |
+| INTENDED | 210 | 75 multimux.ts_ingest (improvements, see BUG-2), 72 cli.dvb-tools, 29 transmux.run, 18 dvb-si.sections, 8 transmux.stream, 6 transmux.batch, 1 dvb-t2mi.pump, 1 cli.ts-fix |
+| BUG / UNEXPLAINED | 0 | |
+| OWNER-DECISION (no diff row: HEAD equals the baseline) | 17 captures | head-of-line live announcement, see below |
+
+### Run 2 items, one by one
+
+| item | run 2 | run 3 | verdict |
+|---|---|---|---|
+| BUG-1: `TracksResolved` never emitted on `tsduck/input/test-002.ts` | no `tracks_resolved:*` key | `tracks_resolved:at_finish = 1` (as the baseline); 22 tracks, 10 programmes announced, 2004 of 2004 samples published | **fixed** (#1329 `finish()` removes from `skipped`) |
+| BUG-2: ingest drops samples emitted before `TracksResolved` | 45,987 (baseline) / 44,478 (HEAD) samples missing, 75 of 92 captures | **baseline 45,987, HEAD 0**; 0 mismatching tracks, per-track count and SHA-256 equal to `transmux.stream` on all 92 captures | **fixed** (#1327 replay hold, #1330, #1332) |
+| `test-092` | 2908 emitted / 16 published | 2908 / 2908 | fixed |
+| `france-tnt-dvbt-20s` | 3093 / 2443 | 3093 / 3093 | fixed |
+| `h264/baseline.ts` (and `h264/main.ts`) | 15 / 13 | 15 / 15 | fixed |
+| `france-tnt-uhf32-si-audio` | 20819 / 0, 0 programmes | 20819 / 20819, 5 programmes (26 tracks) | fixed |
+| zenith capture | 69 / 0 | 69 / 69, 1 programme | fixed |
+| 15 captures publishing 0 programmes | 15 (17 at baseline) | 0 captures with a shortfall. 17 captures still publish nothing, but `transmux.stream` yields no track on them either (T2-MI / BBFrame / PCR-only / PTS-wrap / tsduck PSI-only captures), so nothing is lost | fixed |
+| BUG-2b `eac3_dvb_0x06` | 55 of 58 published | 58 of 58 (baseline 56 of 58); `samples_before_first_resolved` 1 -> 2 is the intended hold-back (kept INTENDED, `transmux.stream` row) | fixed |
+| single-track trailing AU loss `mpegh_cicp_01_baseline_32kbps_single` | 29 / 27 | 29 / 29 (`h264/main.ts` 15 / 13 -> 15 / 15) | fixed |
+| BUG-3 `france-tnt-uhf32-si-audio` announces 0 of 26 tracks live | 0 of 26 | 0 of 26 (identical to the baseline) | **not fixed, OWNER-DECISION** (documented trade-off, see O-1) |
+| O-3 ProgramId nondeterminism on an MPTS | random per process | `multimux.ts_ingest` run twice over the 92 captures: output byte-identical, including the new `head_only_program_order` (announce order + `ProgramId`, e.g. `france-tnt-dvbt-20s`: `ProgramId(0..4)` over tracks `[8..]`, `[14..]`, `[1..]`, `[5..]`, `[12..]`) | **fixed** (#1332) |
+
+Totals (92 captures): samples missing between `transmux.stream` and `multimux.ts_ingest`: baseline 45,987 on 75 captures, HEAD **0**. Captures publishing zero tracks: baseline 34, HEAD 17 (all 17 emit zero tracks upstream).
+
+### NEW difference versus run 2 (a regression of run 2's improvements, not versus the baseline)
+
+**Live announcement is back to the baseline's.** Run 2 reported three captures that announced live at HEAD: `fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` (19 of 19 tracks live), `private/fixtures/tsduck/input/test-170.ts` (11 of 11) and zenith (7 of 7). At the run-3 HEAD they announce 0 of 19, 9 of 11 and 5 of 7 live, exactly the baseline (`counters.tracks_resolved:at_finish = 1`, `events[*].phase = at_finish`). Per-track samples and SHA-256 are unchanged and, since the ingest fixes, nothing is lost: the whole programme is simply announced and published at end of input instead of live. Cause (by reading the CHANGELOG; not bisected): #1329 replaced the silent-head criterion by "no payload packet at all from the head, and 2 MiB of other-track backlog" and states "a head that has delivered any data keeps blocking exactly as in 0.26.0"; these captures' stalled heads (video PIDs `0x00DC` / `0x0208` on tnt-5w, abandoned at `finish()` as `config unrecoverable`) do deliver data. Captures announcing at least one track only at `finish()`: baseline 17, HEAD **17** (run 2: HEAD 14). The list is identical to the baseline's: `tnt-5w` (0/19), `france-tnt-pcr` and `france-pcr-discontinuity` (0/6), `m6-single/duplicate/discontinuity` (0/6), `scte35-other-pid` (0/1), `csa2-plain` (0/28), `csa2-scrambled` (0/27), zenith (5/7), `france-tnt-uhf32-si-audio` (0/26), `hotbird-mhp-si` (0/6), `hotbird-mhp-video-head-6MB` (1/13), `test-002` (0/22), `test-012` (0/1), `test-062` (0/15), `test-170` (9/11). No diff row exists (equals the baseline), so this is recorded here and **not** acknowledged in `expected.json`: it is the BUG-3 class (head-of-line blocked live announcement), an **OWNER-DECISION** (the CHANGELOG documents the trade-off in favour of "video stays track 1"). For a downstream user on a live lossy capture it means programme announcement waits for end of input or the 4 MiB probe-backlog cap, exactly as in 0.26.0.
+
+No other NEW difference: `transmux.stream` differs from the baseline on 8 captures (7 INTENDED E-AC-3: `m6-*` and zenith +1 frame on the PID 0x82 track, `gw_*` 236 / 235 -> 157, `eac3_dvb_0x06` `samples_before_first_resolved` 1 -> 2; plus `hotbird-mhp-si` event order), down from 13 in run 2 because the three live-announcement improvements and the `test-002` / `test-062` / `hotbird-mhp-video-head` event reordering are gone. Track ids, PID -> track map, abandoned/removed sets and every per-track SHA-256 outside those are identical to the baseline.
+
+### Other crates (unchanged versus run 2)
+
+* `transmux.run` (every capture, CMAF / CMAF-HLS / TS-HLS / DASH / TS / progressive via `cli::run_bytes`; this probe already covers TS -> HLS/CMAF on every capture, so no new probe was added): 29 differing fixtures, the same INTENDED set as run 2 (E-AC-3 frame, MPEG-H descriptor, subtitles).
+* `dvb-si.sections`: 18 fixtures, the same INTENDED identity / typed-descriptor gains. `dvb-t2mi`: only `colombia-capital-t2mi.ts`. `cli.ts-fix`: only `test-184.ts` `--regen-psi` / combo. `cli.dvb-tools`: 72 `dump --json` (INTENDED since #1324). `transmux.batch`: the same 6.
+* Zero differences: `mpeg-ts.packets` (92), `scte35.sections` (5), `st291.parse` (2), `media-doctor.findings` (235), `hls.playlist` (26), `dash.mpd` (14), `dvb-si.section_bin` (14).
+* RTP: the only RTP fixtures are `st291/anc_rtp.bin` (covered, identical) and a webrtc `.pcap` (not read). No RTP-depacketiser probe was added: no fixture carries a depacketiser input worth probing (a coverage gap, below).
+
+### Tooling added in run 3
+
+* `tools/differential-sweep/crosscheck.py <head.jsonl> [base.jsonl]`: per-track comparison of `multimux.ts_ingest` against `transmux.stream` inside one output; exit 1 on any shortfall. HEAD: 92 captures, 0 mismatching tracks. Baseline: 453 mismatching tracks, 45,987 samples. Run it with every sweep; it is the guard behind the blanket `multimux.ts_ingest` entry in `expected.json`.
+* `multimux.ts_ingest` records `head_only_program_order` (announce order + `ProgramId`), ignored by `diff.py`, so ProgramId determinism can be diffed between two HEAD runs.
+
+### Rerun determinism and caveats
+
+Two consecutive HEAD runs of `multimux.ts_ingest` are byte-identical. The probe's `programs` lists show only the tracks of the `NewProgram` event: on `test-016` / `test-059` a second programme is announced empty and its tracks arrive through `TracksChanged` (same in the baseline), so a programme-vs-published comparison shows 7 of 8 / 10 of 16; that is a probe limitation, not a loss (published equals emitted).
+
+## Method and coverage (runs 1 and 2)
 
 * **Baseline** = commit `a9e9694a6` (the newest commit any live `<crate>-v*` / `v11.1.0` tag points at). Re-verified for run 2 against `docs/release-plan-2026-10.md` section 3 "Live now": transmux 0.26.0, dvb-si / dvb-t2mi / dvb-tools 11.1.0, ts-fix 0.6.0, multimux 0.12.0, media-plane 0.6.0, hls-runtime 0.8.0, media-doctor 0.10.0, mpeg-ts 0.5.0 all equal the `Cargo.toml` versions at the baseline commit.
 * **Fixtures**: 293 files from `fixtures/` + `private/fixtures/` (same files fed to both trees; submodule pinned at `4d876654`), 277 of which at least one probe applies to. No network fetches (the 4.9 GB `russia-t2mi-scte35` capture is **not** covered).
 * **Run 2: 1273 (fixture, probe) results per tree**, 15 probes, 0 panics, 0 timeouts in either tree. Run 2 added the `multimux.ts_ingest` probe (92 TS captures) and, to `transmux.stream`, the counters `tracks_resolved:{pre,at}_finish` and `samples_before_first_resolved`.
 * `multimux.ts_ingest` drives multimux's `TsIngestSession` (the shared ingest of `ts_udp` / `ts_http` / `srt`) with 7-packet feeds and records the programmes announced and, per track, the samples it publishes (count, bytes, first / last dts, SHA-256). The programmes are recorded as sorted track-id sets: `ProgramTracker` assigns `ProgramId`s by iterating a `HashMap`, so ids and announce order are random per process on an MPTS (observation O-3).
 
-## Run 2 result (HEAD `ca638fbaf`)
+## Run 2 result (HEAD `ca638fbaf`; BUG-1, BUG-2, BUG-2b and O-3 below are fixed in run 3, see its table)
 
 | class | fixtures x probes | detail |
 |---|---|---|
