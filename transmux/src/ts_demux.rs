@@ -3447,6 +3447,7 @@ fn abandon_backlog(
         provenance: EventProvenance {
             pid: Some(pid),
             packet_index: None,
+            program_number: None,
         },
     });
     TrackState::Abandoned
@@ -3493,6 +3494,7 @@ fn advance_track(
             provenance: EventProvenance {
                 pid: Some(pid),
                 packet_index: None,
+                program_number: None,
             },
         });
     }
@@ -4008,6 +4010,7 @@ fn feed_pes_bounded(
             provenance: EventProvenance {
                 pid: Some(pid),
                 packet_index: None,
+                program_number: None,
             },
         });
     }
@@ -4491,6 +4494,7 @@ impl StreamingTsDemux {
             provenance: EventProvenance {
                 pid: None,
                 packet_index: Some(loss.packet_index),
+                program_number: None,
             },
         });
     }
@@ -4522,6 +4526,7 @@ impl StreamingTsDemux {
             let provenance = EventProvenance {
                 pid: Some(pkt.header.pid),
                 packet_index: Some(idx),
+                program_number: None,
             };
             self.events.push_back(DemuxEvent::InputDegraded {
                 track: self.live_track_id(pkt.header.pid),
@@ -4544,6 +4549,7 @@ impl StreamingTsDemux {
             let provenance = EventProvenance {
                 pid: Some(pkt.header.pid),
                 packet_index: Some(idx),
+                program_number: None,
             };
             if af.discontinuity_indicator {
                 // §2.4.3.5: a system time-base discontinuity is signalled by
@@ -4588,12 +4594,40 @@ impl StreamingTsDemux {
                 });
             }
             if let Some(pcr) = af.pcr {
-                self.events.push_back(DemuxEvent::ClockReference {
-                    ticks: pcr.as_27mhz(),
-                    clock_hz: PCR_CLOCK_HZ,
-                    discontinuous: af.discontinuity_indicator,
-                    provenance,
-                });
+                // Issue #1354 / §2.4.3.5 + §2.4.4.8: only a program's
+                // PCR_PID carries that program's clock. One event per
+                // program naming this PID; see `DemuxEvent::ClockReference`
+                // for the pre-PMT (`program_number: None`) policy.
+                let mut programs: Vec<u16> = self
+                    .pmt_reasm
+                    .values()
+                    .filter(|pmt| pmt.pcr_pid == Some(pkt.header.pid))
+                    .map(|pmt| pmt.program_number)
+                    .collect();
+                programs.sort_unstable();
+                programs.dedup();
+                let pmts_pending = self.pmt_reasm.is_empty()
+                    || self.pmt_reasm.values().any(|pmt| pmt.pcr_pid.is_none());
+                let mut emit = |program_number: Option<u16>| {
+                    self.events.push_back(DemuxEvent::ClockReference {
+                        ticks: pcr.as_27mhz(),
+                        clock_hz: PCR_CLOCK_HZ,
+                        discontinuous: af.discontinuity_indicator,
+                        provenance: EventProvenance {
+                            program_number,
+                            ..provenance
+                        },
+                    });
+                };
+                if programs.is_empty() {
+                    if pmts_pending {
+                        emit(None);
+                    }
+                } else {
+                    for program in programs {
+                        emit(Some(program));
+                    }
+                }
             }
         }
 
@@ -4928,6 +4962,7 @@ impl StreamingTsDemux {
                                     provenance: EventProvenance {
                                         pid: Some(pid),
                                         packet_index: Some(packet_index),
+                                        program_number: None,
                                     },
                                 });
                             }
@@ -4946,6 +4981,7 @@ impl StreamingTsDemux {
                         provenance: EventProvenance {
                             pid: Some(pid),
                             packet_index: Some(packet_index),
+                            program_number: None,
                         },
                     });
                     // The gap lost at least one packet, so the access unit the
@@ -5195,6 +5231,7 @@ impl StreamingTsDemux {
                 provenance: EventProvenance {
                     pid: Some(pid),
                     packet_index: None,
+                    program_number: None,
                 },
             });
         }
@@ -5645,6 +5682,7 @@ impl StreamingTsDemux {
                         provenance: EventProvenance {
                             pid: Some(next_pid),
                             packet_index: None,
+                            program_number: None,
                         },
                     });
                     self.try_promote_ready();
