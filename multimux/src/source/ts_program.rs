@@ -535,7 +535,10 @@ mod tests {
             while let Some(ev) = tracker.poll() {
                 match ev {
                     SessionEvent::NewProgram { program, tracks } => {
-                        got.push((program, tracks.iter().map(|t| t.track_id).collect::<Vec<_>>()));
+                        got.push((
+                            program,
+                            tracks.iter().map(|t| t.track_id).collect::<Vec<_>>(),
+                        ));
                     }
                     other => panic!("unexpected {other:?}"),
                 }
@@ -576,7 +579,13 @@ mod tests {
             while let Some(ev) = tracker.poll() {
                 match ev {
                     SessionEvent::TracksChanged { program, tracks } => {
-                        got.push((program, tracks.iter().map(|t| t.track_id.value()).collect::<Vec<_>>()));
+                        got.push((
+                            program,
+                            tracks
+                                .iter()
+                                .map(|t| t.track_id.value())
+                                .collect::<Vec<_>>(),
+                        ));
                     }
                     other => panic!("unexpected {other:?}"),
                 }

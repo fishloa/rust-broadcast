@@ -2919,10 +2919,18 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             p
         };
         let now = Timestamp::ZERO;
-        session.feed(&rtp(1, 1000, false, &[0x67, 0x42, 0x00, 0x1F]), now).unwrap();
-        session.feed(&rtp(2, 1000, false, &[0x68, 0xCE]), now).unwrap();
-        session.feed(&rtp(3, 1000, true, &[0x65, 0xAA]), now).unwrap();
-        session.feed(&rtp(4, 4000, false, &[0x41, 0xBB]), now).unwrap();
+        session
+            .feed(&rtp(1, 1000, false, &[0x67, 0x42, 0x00, 0x1F]), now)
+            .unwrap();
+        session
+            .feed(&rtp(2, 1000, false, &[0x68, 0xCE]), now)
+            .unwrap();
+        session
+            .feed(&rtp(3, 1000, true, &[0x65, 0xAA]), now)
+            .unwrap();
+        session
+            .feed(&rtp(4, 4000, false, &[0x41, 0xBB]), now)
+            .unwrap();
         let count = |s: &mut WhipIngestSession| {
             let mut n = 0;
             while let Some(ev) = s.poll() {

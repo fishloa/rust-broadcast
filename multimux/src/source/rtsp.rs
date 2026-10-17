@@ -1379,7 +1379,12 @@ mod tests {
         let _ = session.poll_transmit();
         session
             .feed(
-                &rtsp_response(1, "200 OK", "Content-Type: application/sdp\r\n", &sdp_body()),
+                &rtsp_response(
+                    1,
+                    "200 OK",
+                    "Content-Type: application/sdp\r\n",
+                    &sdp_body(),
+                ),
                 Timestamp::ZERO,
             )
             .unwrap();
