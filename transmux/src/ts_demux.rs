@@ -6999,7 +6999,13 @@ mod tests {
     #[test]
     fn declared_but_absent_video_does_not_block_audio() {
         let flood = SILENT_HEAD_BLOCK_PACKETS as usize + 1000;
-        let ts = silent_head_ts(STREAM_TYPE_AVC, &[], STREAM_TYPE_AAC_ADTS, adts_frame, flood);
+        let ts = silent_head_ts(
+            STREAM_TYPE_AVC,
+            &[],
+            STREAM_TYPE_AAC_ADTS,
+            adts_frame,
+            flood,
+        );
         let seen = seen_events(&ts);
         assert_eq!(added(&seen), vec![(0x0101, 1)], "{seen:?}");
         assert!(seen.contains(&Seen::Resolved), "TracksResolved fires");
@@ -7140,7 +7146,10 @@ mod tests {
         assert_eq!(samples[0], ind, "the broken-chain first frame");
         assert!(samples.len() >= 6, "{}", samples.len());
         for (n, s) in samples.iter().enumerate().skip(1) {
-            assert_eq!(s, &au, "sample {n} must be a whole independent+dependent AU");
+            assert_eq!(
+                s, &au,
+                "sample {n} must be a whole independent+dependent AU"
+            );
         }
     }
 
