@@ -1,6 +1,6 @@
 # dvb-si 12.0.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** Twelfth lockstep major. `dvb-si` now brings EN 300 468 up to **V1.20.1**; preserves every `reserved` / `reserved_future_use` bit of every table and descriptor in typed fields (a real sender's section re-serializes byte-identically, CRC recomputed); types every PID as `mpeg_ts::pid::Pid`; and makes serializers reject values wider than their wire field (`fit_mask`, ~220 sites) instead of silently masking them. It also adds a large body of new typed coverage: the Rec. ITU-T H.222.0 (08/2023) descriptors and sections (including the MPEG-2 `Extension_descriptor` and MPEG-H 3D audio), the AIT/MHP and DSM-CC data-carousel descriptor families, separate INT, UNT and RNT descriptor namespaces (these loops used to be decoded in the SI tag space and so mis-decoded), the Chinese AVS/GY/T descriptor families, and new `INT`/`UNT`/`RNT` entry descriptors.
 

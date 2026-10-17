@@ -1,6 +1,6 @@
 # rtmp-runtime 0.8.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release with hardening of its own.** `rtmp-runtime` follows the `broadcast-common` 9 -> 10 caret epoch (and `transmux` 0.26 -> 0.27 as a dev-dependency). Its own changes: stream keys are compared in constant time (`subtle::ConstantTimeEq`) and never printed by `Debug` (`ServerConfig`, `ClientConfig`, `RtmpTarget`, `ServerEvent`, `ServerSession`; `Media` prints its length, not its bytes); an RTMP message length over 24 bits is rejected with the new `RtmpError::FieldOverflow` instead of silently dropping the high byte (#1129); and `ServerSession::handle_data` copies each post-handshake read once instead of twice (60,000-byte read: 246,976 -> 186,976 bytes allocated).
 

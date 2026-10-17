@@ -1,6 +1,6 @@
 # dvb-vbi 0.5.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** Reserved and stuffing bits are now preserved typed fields (`LineHeader::reserved`, `WssDataField::reserved_tail`, `DataUnit::stuffing`), so parse -> serialize is byte-exact for non-conformant input; a data unit padded to the mandated `0x2C` length now parses instead of being rejected; and `DataUnit::serialize_into`/`padded_to` refuse a non-zero `stuffing` on an `Opaque` or `Stuffing` payload. The crate also builds against `broadcast-common` 10. Anything that builds these structs with literals, or matches them exhaustively, must change.
 

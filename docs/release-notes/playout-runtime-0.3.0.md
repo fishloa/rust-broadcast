@@ -1,6 +1,6 @@
 # playout-runtime 0.3.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release; no API change of its own.** `playout-runtime` follows the `broadcast-common` 9 -> 10, `scte35-splice` 3 -> 4, `ssai-runtime` 0.2 -> 0.3 and `mp4-emsg` 0.4 -> 0.5 caret epochs. Its own change since 0.2.1 is documentation only: the README and crate-root docs are rewritten to the workspace standard (what it does and does not do, standards table: SCTE 35 2023r1 `splice_insert` only, feature table, compiling quick start).
 

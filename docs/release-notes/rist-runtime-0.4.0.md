@@ -1,6 +1,6 @@
 # rist-runtime 0.4.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own struct fields plus the `broadcast-common`/`rtcp-packet` epoch cascade).** `GenericNack` and `RangeNack` gain a `padding: Vec<u8>` field so a padded standalone NACK round-trips byte-identically, and both now honour the RFC 3550 section 6.4.1 P bit when parsing: padding is validated and stripped, so a P-bit NACK inside a compound packet no longer fails with `BufferTooShort` and padding words are no longer misparsed as FCI / range entries. `RttEcho::parse` now rejects a set P bit (TR-06-1 section 5.2.6 fixes `P = 0`) instead of silently clearing it on re-serialize, and `RttEstimator::update` saturates on an extreme sample.
 

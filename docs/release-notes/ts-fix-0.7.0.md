@@ -1,6 +1,6 @@
 # ts-fix 0.7.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (typed PIDs, two behavioural changes, and the `broadcast-common` 10 epoch).** Four themes: (1) PCR restamping fixes: `PcrRestamp::Interpolate` kept extrapolating from the pre-wrap rate forever after a legal 33-bit PCR wrap, and its extrapolation rate aliased by a whole ~26.5 h PCR wrap on very long runs; (2) `--regen-psi` fixes: a filter that dropped every PMT (for example `--keep-pids 120,130 --regen-psi`) used to emit no PAT at all, `TsFix::finish` discarded the flush output of the last op in a multi-op pipeline, and the original PAT is now reassembled across TS packets before its `transport_stream_id`/`network_PID` hints are read; (3) PID parameters are `mpeg_ts::pid::Pid`, and `--keep-pids` rejects a PID above `0x1FFF`; (4) `pes::reconstruct_access_units` returns a `Result` and reports unaligned input as an error instead of panicking. The README is rewritten to the workspace standard and is now the crate-root documentation.
 

@@ -1,6 +1,6 @@
 # dvb-bbframe 12.0.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break, lockstep major).** `Bbheader::serialize()` now returns `Result<[u8; BBHEADER_LEN], Error>` instead of a bare array. The old form panicked (via `to_bytes()`) on a hand-built header that violates a wire constraint such as `dfl > DFL_MAX_BITS`; the new form reports `Error::DflOutOfRange` or `Error::InconsistentBbheaderMode` and serializes straight into a stack array. The crate also moves to `broadcast-common` 10 and the README and crate-root docs were rewritten to the workspace standard. `dvb-bbframe` is one of the five lockstep crates, so it takes the shared 12.0.0 version.
 

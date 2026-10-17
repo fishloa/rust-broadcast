@@ -1,6 +1,6 @@
 # mpeg-ps 0.6.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** `SystemHeader` gains `trailing_reserved: Vec<u8>`, preserving the bytes `header_length` declares after the stream-bound loop instead of dropping them and shrinking `header_length` on re-serialize. Serializers now reject over-range fields (`FieldOverflow`) and any `SystemHeader` that would serialize to bytes that parse back differently (new `Error::InvalidField`), where before they were masked silently. The crate also builds against `broadcast-common` 10 and `mpeg-pes` 0.6.
 

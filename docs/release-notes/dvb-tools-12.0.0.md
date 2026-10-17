@@ -1,6 +1,6 @@
 # dvb-tools 12.0.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (CLI behaviour).** Lockstep major. `t2mi --inner` without `--plp` now exits non-zero when the capture carries more than one PLP (each PLP is an independent transport stream; the old behaviour interleaved them into a garbled mux), `t2mi --pid` rejects a PID above `0x1FFF`, and the `dump --json` schema grows (typed reserved-bit keys, `"trailing": []`, a typed body for descriptor tag `0x3F`), which a consumer that rejects unknown keys must accommodate. Every subcommand now streams the capture in 1 MiB reads (peak memory on a 152 MB capture: 19 MB), and a closed stdout pipe (`| head`) is a clean stop. The binary builds against `dvb-si` 12, `dvb-t2mi` 12, `mpeg-ts` 0.6 and `broadcast-common` 10.
 

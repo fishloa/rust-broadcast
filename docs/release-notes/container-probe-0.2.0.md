@@ -1,6 +1,6 @@
 # container-probe 0.2.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release; no source migration, one behaviour correction.** `container-probe` has no public API change. It ships as 0.2.0 because it builds against `broadcast-common` 10 and its versioned dev-dependencies (`mpeg-ts`, `mpeg-ps`, `st377-1`) move epoch, and the workspace's epoch-purity rule forbids publishing a crate that still requires the old epoch next to the new one. Its own change: a prefix too short for a literal magic that already contradicts it is now reported as "stop" for that prober instead of "read more", which changes what a caller's read loop is told for such input (details below). README and crate-root docs were rewritten to the workspace standard.
 

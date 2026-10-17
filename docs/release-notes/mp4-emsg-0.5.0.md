@@ -1,6 +1,6 @@
 # mp4-emsg 0.5.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** `EmsgBox` gains a typed `flags: u32` field (the `FullBox` 24-bit flags, mandated to be 0), so a non-conformant box now round-trips byte-exactly through plain `parse`/`serialize_into`; the `parse_with_flags` / `serialize_into_with_flags` pair added in 0.4.1 is removed. `EmsgBox::is_scte35` no longer classifies `urn:scte:scte35x...` as SCTE 35. The crate also builds against `broadcast-common` 10.
 

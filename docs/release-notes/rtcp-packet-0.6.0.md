@@ -1,6 +1,6 @@
 # rtcp-packet 0.6.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking only through the `broadcast-common` 9 -> 10 epoch cascade, plus one tightened serializer.** `ReportBlock::cumulative_lost` outside the 24-bit signed range is no longer masked into a different loss count: `serialize_into` returns `Error::InvalidValue` (#1129). SDES item text and BYE reason are now UTF-8 validated before the `String` is allocated, so a long invalid text field no longer costs a copy of itself.
 

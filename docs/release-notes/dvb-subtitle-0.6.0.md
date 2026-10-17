@@ -1,6 +1,6 @@
 # dvb-subtitle 0.6.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** Serializers now reject a value wider than its wire bit-field with `Error::FieldOverflow` (or the new `Error::InvalidValue` for CLUT entries) instead of masking it into a different valid-looking segment; the CamelCase constant re-exports become SCREAMING_SNAKE; and the crate builds against `broadcast-common` 10. Parsing of valid streams is unchanged. The `mpeg-pes` 0.6 bump affects only the dev-dependency used by the real-capture integration test.
 

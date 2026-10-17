@@ -1,6 +1,6 @@
 # media-plane 0.7.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** Segment and part numbers become `SegmentSeq` / `PartIndex` newtypes with checked arithmetic and track ids become `transmux::TrackId`, so a swapped segment/part argument is a compile error; at `u32::MAX`, `next_sequence_number` saturates and a further segment is rejected. One behaviour fix rides along: `IngestDriver::programs()` now iterates in ascending `ProgramId` order (it was backed by a `HashMap`), so per-program work is driven in a reproducible order across processes. The crate also builds against `broadcast-common` 10, `timed-metadata` 0.7, `transmux` 0.27 and (dev-dependency) `scte35-splice` 4.
 

@@ -1,6 +1,6 @@
 # media-doctor 0.11.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release.** Diagnostics follow the typed ids: `Location::at_pid(packet, Pid)` and `Location::at_track(packet, TrackId)` make the kind of identifier explicit (all TS diagnostics use `at_pid`), and `WatchSnapshot`'s `PidFlag::pid` is an `mpeg_ts::pid::Pid`. The continuity-counter anomaly check also drops from O(packets) to O(PIDs) allocations. The crate builds against new epochs of ten workspace siblings (`broadcast-common` 10, `dvb-si`/`dvb-conformance` 12, `mpeg-ts` 0.6, `transmux` 0.27 and others, listed below).
 

@@ -1,6 +1,6 @@
 # timed-metadata 0.7.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release with additive API and one behavioural fix; no API break of its own.** The WebVTT/SRT text helpers (`parse_timestamp`, `format_timestamp_with`, `hms_ms`, `unescape_payload`, `normalize_line_endings`, `payload_lines`, `TimestampError`) now live in one place, a new `webvtt::text` module (previously the hour/minute/second math was duplicated in `caption-convert`), and the CEA-608/708 and Teletext cue extractors no longer emit zero-length or negative cues. The crate rebuilds against `broadcast-common` 10, `broadcast-hls` 0.4, `cc-data` 0.7, `dvb-vbi` 0.5, `mp4-emsg` 0.5 and `scte35-splice` 4, which is what makes the version `0.7.0`. The README and crate-root docs are restructured (scope, standards table, SCTE-35 / DATERANGE / emsg conversion matrix, feature table, compiled quick start).
 

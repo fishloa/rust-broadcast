@@ -1,6 +1,6 @@
 # webrtc-runtime 0.4.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (behavioural changes plus the `broadcast-common` 10 epoch).** No type signature of the WHIP/WHEP engine changes, but three behaviours do: `WhipClient`/`WhepPlayer` send the bearer token only to the origin of the configured endpoint; `WhipSession::on_patch` now rejects a PATCH with no `If-Match` (new `Error::PreconditionRequired`, HTTP 428) and one whose `Content-Type` is not `application/trickle-ice-sdpfrag` (`Error::InvalidSdpFragment`), matching WHEP. It also adds `MediaTransport::restart_ice` (feature `media`), an in-place ICE restart (RFC 8445 section 9, RFC 9725 section 4.3.2) with media still flowing, and stops printing secrets in `Debug`.
 

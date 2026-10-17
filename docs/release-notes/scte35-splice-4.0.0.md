@@ -1,6 +1,6 @@
 # scte35-splice 4.0.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own wire-layout and serializer changes, plus the `broadcast-common` 9 -> 10 and `mpeg-ts` 0.5 -> 0.6 epoch cascade).** Three groups of change. (1) Decode correctness: DVB TA compact `time_signal`/`splice_insert` were misdecoded (the PDF table's bit column is offset one row; the old layout inserted SCTE 35-style reserved bits the table does not list) and now follow ETSI TS 103 752-1 V1.2.1 Tables 6 and 8; a `splice_info_section` carrying the deprecated `0xFFF` `splice_command_length` (SCTE 35 section 9.6.1: "shall be ignored by downstream equipment") now parses, found with a real capture (TSDuck `test-091.ts`). (2) Serializers stop masking: over-range `sap_type`, `encryption_algorithm`, `bit_stream_mode`, `num_channels`, reserved nibbles, and inconsistent `encrypted_packet`/`e_crc_32` or `temi` combinations return `FieldOverflow`/an error instead of writing a different valid-looking value. (3) Round-trip fidelity: the `reserved_zero_future_use` run inside `DVB_data_length` is preserved in `StreamEventPayload::reserved_dvb_data`.
 

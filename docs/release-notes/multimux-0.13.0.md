@@ -1,6 +1,6 @@
 # multimux 0.13.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release: several behaviour changes of its own, plus the `broadcast-common` 10 epoch cascade.** The origin gets real WHIP/WHEP session resources (per-session `Location`, `DELETE`, Trickle-ICE `PATCH` that now requires `If-Match`, ICE restart, CORS for the session resource), a secure-by-default ingest policy (`Config::allow_open_ingest`), origin-bound pull credentials, a corrected DASH `availabilityStartTime`/`SegmentTimeline` model, CSPRNG-drawn ICE credentials and session ids, and typed ids throughout. It also fixes three ingest data-loss bugs that predate this release: the first access units of every track at TS stream start (replay backlog now held until the programme is announced; overflow is counted in `multimux_ts_backlog_dropped_total`), the last access unit of every track at end of input (TS/FLV file reader, `ts_udp`/`ts_http`/`srt`, and the RTP depacketisers behind `rtp_udp`/`rtsp`/`whip`), and unstable `ProgramId`s on multi-program transport streams (now assigned in ascending `program_number` order). Read the migration list: several of these change behaviour for existing deployments.
 

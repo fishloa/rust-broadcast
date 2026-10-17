@@ -1,6 +1,6 @@
 # srt-runtime 0.6.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release with one additive feature.** `srt-runtime` follows the `broadcast-common` 9 -> 10 caret epoch. New: `io::SrtSocket::rendezvous` / `rendezvous_with`, so the tokio adapter now drives the sans-IO Rendezvous handshake (section 4.3.2) over a bound UDP socket; before, only the sans-IO engine existed. It is verified against a real peer: `tests/libsrt_rendezvous.rs` runs `srt-live-transmit` in `mode=rendezvous` over loopback in both data directions, repeated with fresh random cookies so both Initiator and Responder outcomes occur (it skips loudly when libsrt is absent; `SRT_REQUIRE_LIBSRT=1` turns the skip into a failure), and `tests/io_rendezvous.rs` is the self-vs-self counterpart that runs everywhere.
 

@@ -1,6 +1,6 @@
 # dvb-conformance 12.0.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Breaking release (its own break, lockstep major).** `ConformanceEvent::pid` is now `Option<mpeg_ts::pid::Pid>` instead of `Option<u16>` (serde output is unchanged: `Pid` serializes as the number). The release also corrects TR 101 290 indicator 3.3 (`Buffer_error`), which raised false errors on legal streams: the T-STD `TBsys` model is now fed per TS packet and only by PSI (PAT, CAT, PMT, NIT), and the report is latched per overflow episode. Other changes: the 27 MHz PCR arithmetic moved to `broadcast_common::clock33`, and the per-PID continuity state no longer allocates per packet (about 9% less time per packet on the 2.4 MB T2-MI fixture, release build). `dvb-conformance` is one of the five lockstep crates, so it takes the shared 12.0.0 version.
 

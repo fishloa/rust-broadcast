@@ -1,6 +1,6 @@
 # dvb-csa 0.4.0
 
-_Released 2026-10-16._
+_Released 2026-10-17._
 
 **Epoch-forced major-class release; no source migration.** `ControlWord` equality is now constant-time (`subtle::ConstantTimeEq` instead of a hand-written XOR fold, #1142), and a new `tests/secret_debug_guard.rs` guards against secret-bearing `Debug` output. Neither changes the public API. The release is a major only because `mpeg-ts`, a dependency whose `ScramblingControl` type appears in this crate's public `Error` variants, moves to 0.6 and the workspace's epoch-purity rule forbids publishing a crate that still requires the old epoch next to the new one. README and crate-root docs were rewritten to the workspace standard.
 
