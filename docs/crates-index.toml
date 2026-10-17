@@ -551,7 +551,7 @@ what = "K-weighting at any non-zero sample rate (coefficients derived by bilinea
 crates_io = true
 lifecycle = "active"
 
-[crate.live-buffer]
+[crate.buffering-runtime]
 domain = "live"
 summary = "Sans-IO live-TS playout buffer controller: jitter measurement, stall memory, start/pause/resume decisions."
 standards = "RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined"
