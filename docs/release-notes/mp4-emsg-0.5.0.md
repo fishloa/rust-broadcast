@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** `EmsgBox` gains a typed `flags: u32` (the FullBox 24-bit flags, mandated 0), so a non-conformant box round-trips byte-exactly; `is_scte35` no longer matches `urn:scte:scte35x...`.
+**Breaking release.** `EmsgBox` gains a typed `flags: u32` field (the `FullBox` 24-bit flags, mandated to be 0), so a non-conformant box now round-trips byte-exactly through plain `parse`/`serialize_into`; the `parse_with_flags` / `serialize_into_with_flags` pair added in 0.4.1 is removed. `EmsgBox::is_scte35` no longer classifies `urn:scte:scte35x...` as SCTE 35. The crate also builds against `broadcast-common` 10.
 
 ## Why this version
 
 - **Proposed version:** 0.4.1 -> **0.5.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (EmsgBox.flags field, parse_with_flags removed).
-- **cargo-semver-checks vs live 0.4.1 (all features):** MAJOR (2 major, 0 minor lint failures). (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common.
+- **Own API/behaviour change class:** major (`EmsgBox.flags` field added; `parse_with_flags` and `serialize_into_with_flags` removed).
+- **cargo-semver-checks vs the live release (all features):** MAJOR (2 major, 0 minor lint failures: the new field and the removed pair). (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by `broadcast-common` 9 -> 10.
 - **Caret epoch:** 0.4 -> 0.5; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -25,16 +25,25 @@ _Released 2026-10-16._
 ## Breaking changes and migration
 
 ```rust
-// before (0.4.1): the *_with_flags pair existed to round-trip a non-zero flags field
-EmsgBox::parse_with_flags(..)      EmsgBox::serialize_into_with_flags(..)
-// after: plain parse keeps the flags
-let b = EmsgBox::parse(bytes)?;                 // b.flags
-EmsgBox { flags: EMSG_FLAGS, .. }               // migrate struct literals
+// before (0.4.1): a separate pair existed to round-trip a non-zero flags field
+let b = EmsgBox::parse_with_flags(bytes)?;
+// after: plain parse keeps the flags and serialize_into writes them back
+let b = EmsgBox::parse(bytes)?;      // b.flags
+// struct literals need the new field (EMSG_FLAGS = 0 is the mandated value)
+EmsgBox { flags: EMSG_FLAGS, /* ..existing fields.. */ }
 ```
 
-`parse_with_flags` / `serialize_into_with_flags` (added in 0.4.1) are removed.
+Behaviour: `EmsgBox::is_scte35` matches the scheme prefix together with its colon (`urn:scte:scte35:`), so an unrelated scheme that merely starts with the same letters (`urn:scte:scte35x...`) is no longer treated as SCTE 35.
+
+Manifest: `broadcast-common` 9.4 -> 10.0. `Serialize::to_bytes` was removed from `broadcast-common` 10; use `try_to_bytes`.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
+
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 #### Changed (BREAKING)
 - `EmsgBox` gains a typed `flags: u32` field (the `FullBox` 24-bit flags,
@@ -51,6 +60,9 @@ EmsgBox { flags: EMSG_FLAGS, .. }               // migrate struct literals
 
 ## Merged changes since `mp4-emsg-v0.4.1`
 
+- docs: correct false 'not vendored' / 'edition unverified' claims (#1311)
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
 - test: shared test-fixtures loader crate, migrate hand-written loaders, drop CRC copies (#1214) (#1215)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)
