@@ -352,7 +352,7 @@
 //! so a permanently-failing dialer cannot spin the attempt count or allocate
 //! per call, however many times it is polled.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::Arc;
 use transmux::TrackId;
@@ -753,7 +753,7 @@ pub struct IngestDriver<S: IngestSession> {
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     max_programs: NonZeroUsize,
-    programs: HashMap<ProgramId, Arc<Trunk>>,
+    programs: BTreeMap<ProgramId, Arc<Trunk>>,
     writers: HashMap<ProgramId, TrunkWriter>,
     /// Count of `NewProgram` events refused because `max_programs` was
     /// already reached — see
@@ -784,7 +784,7 @@ impl<S: IngestSession> IngestDriver<S> {
             trunk_config,
             handshake,
             max_programs,
-            programs: HashMap::new(),
+            programs: BTreeMap::new(),
             writers: HashMap::new(),
             refused_programs: 0,
             health: HealthState::Establishing,
