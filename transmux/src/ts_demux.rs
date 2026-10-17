@@ -3637,8 +3637,11 @@ const EAC3_PROBE_MAX_FRAMES: usize = 16;
 /// declaration order is kept whenever the earlier PID resolves in time, but a
 /// probe that has seen this many access units without resolving no longer
 /// blocks them: they are promoted past it, and it is promoted whenever (if
-/// ever) it does resolve. An implementation bound — generous, because a video
-/// probe legitimately waits a whole GOP for its parameter sets.
+/// ever) it does resolve. An implementation bound. It applies to non-video
+/// heads only: a *video* probe legitimately waits a whole GOP for its
+/// parameter sets, and skipping it would give the video a later track id than
+/// audio PIDs that were promoted past it, so a video head blocks until it
+/// resolves or [`MAX_PROBE_BACKLOG_BYTES`] abandons it.
 const PROBE_HEAD_BLOCK_AUS: u32 = 512;
 
 /// The most an E-AC-3 probe holds: [`EAC3_PROBE_MAX_FRAMES`] syncframes of at
@@ -4129,6 +4132,15 @@ enum CcVerdict {
 /// demuxer's invariant, see `TrackState`), tracked via `codec_order` /
 /// `data_order` / `resolved`; these hold one `u16` PID per known ES, not
 /// per-sample data, so they stay tiny regardless of stream length.
+///
+/// The one exception to strict PMT order is a *non-video* head PID whose probe
+/// has seen `PROBE_HEAD_BLOCK_AUS` (512) access units without resolving: the
+/// PIDs behind it are promoted past it (it gets a later id if it ever
+/// resolves). A *video* head is never stepped over — a long GOP legitimately
+/// takes that long, and a video PID must keep the lower track id (track 1 for
+/// a video-first PMT), which `ts_hls`/`multimux` rely on. A video that never
+/// resolves is bounded by the 4 MiB probe-backlog cap instead (it is then
+/// abandoned and the PIDs behind it proceed).
 ///
 /// # Chunk-size invariance
 ///
@@ -5236,10 +5248,18 @@ impl StreamingTsDemux {
                 }
                 other @ TrackState::Probing { .. } => {
                     stream.track = Some(other);
-                    if stream.probe_aus >= PROBE_HEAD_BLOCK_AUS {
+                    if stream.probe_aus >= PROBE_HEAD_BLOCK_AUS
+                        && !matches!(stream.codec, Codec::H264 | Codec::Hevc | Codec::Mpeg2Video)
+                    {
                         // Stalled: it no longer holds back the PIDs after it
                         // (see `PROBE_HEAD_BLOCK_AUS`); it stays unresolved and
-                        // is promoted whenever it does resolve.
+                        // is promoted whenever it does resolve. Never applied
+                        // to a *video* head: its probe legitimately waits a
+                        // whole GOP, and stepping over it would hand the
+                        // video a later (higher) track id than the audio that
+                        // overtook it — consumers (ts_hls, multimux) expect
+                        // PMT order. A video that truly never resolves is
+                        // bounded by `MAX_PROBE_BACKLOG_BYTES` instead.
                         continue;
                     }
                     break; // blocked — an earlier-ranked PID isn't ready yet
@@ -6283,11 +6303,22 @@ mod tests {
         out
     }
 
-    /// Mux a never-resolving H.264 PID (rank 0: every sample non-sync, so no
-    /// SPS/PPS is ever carried) followed by `data_pids` opaque data PIDs (each
-    /// resolves on its first access unit), `video_aus` access units on the
-    /// stalled PID and `data_aus` on each data PID.
-    fn stalled_head_ts(video_aus: u32, data_pids: usize, data_aus: u32) -> Vec<u8> {
+    /// Mux a never-resolving head PID (rank 0) followed by `data_pids` opaque
+    /// data PIDs (each resolves on its first access unit), `video_aus` access
+    /// units on the head and `data_aus` on each data PID. The head is H.264
+    /// with every sample non-sync (no SPS/PPS ever carried) unless
+    /// `audio_head`, in which case it is an MPEG-2 audio (`stream_type` 0x04)
+    /// PID whose payload never carries a frame sync.
+    /// With `resolve_last` the final head access unit is a sync sample, so a
+    /// *video* head does resolve (on the second-to-last access unit: the last one
+    /// flushes the one-behind PES).
+    fn stalled_head_ts(
+        video_aus: u32,
+        data_pids: usize,
+        data_aus: u32,
+        audio_head: bool,
+        resolve_last: bool,
+    ) -> Vec<u8> {
         use crate::TsMux;
         use crate::media::{Media, Track};
         use crate::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
@@ -6298,23 +6329,37 @@ mod tests {
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let video_samples: Vec<Sample> = (0..video_aus)
             .map(|i| {
-                let nal = alloc::vec![0x41u8, 0xAA, 0xBB];
-                let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                let sync = resolve_last && i + 2 == video_aus;
+                let nal = if audio_head {
+                    alloc::vec![0xBBu8; 3]
+                } else {
+                    alloc::vec![0x41u8, 0xAA, 0xBB]
+                };
+                let mut data = if audio_head {
+                    Vec::new()
+                } else {
+                    (nal.len() as u32).to_be_bytes().to_vec()
+                };
                 data.extend_from_slice(&nal);
                 let dts = i64::from(i) * i64::from(frame_dur);
-                Sample::new(data, Some(dts), Some(dts), Some(frame_dur), false)
+                Sample::new(data, Some(dts), Some(dts), Some(frame_dur), sync)
             })
             .collect();
+        let head_config = if audio_head {
+            CodecConfig::Data {
+                stream_type: 0x04,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Pes,
+            }
+        } else {
+            CodecConfig::Avc {
+                config: avc,
+                width: 0,
+                height: 0,
+            }
+        };
         let mut tracks = vec![Track::new(
-            TrackSpec::new(
-                TrackId::new(1),
-                VIDEO_TIMESCALE,
-                CodecConfig::Avc {
-                    config: avc,
-                    width: 0,
-                    height: 0,
-                },
-            ),
+            TrackSpec::new(TrackId::new(1), VIDEO_TIMESCALE, head_config),
             video_samples,
         )];
         for k in 0..data_pids {
@@ -6515,14 +6560,29 @@ mod tests {
         );
     }
 
-    /// Head-of-line blocking: a PMT-first PID whose probe never resolves must
-    /// not hold back the PIDs after it forever. Two later PIDs (one stalled
-    /// head, two unstalled followers) must both be promoted, in PMT order,
-    /// once the head has been `Probing` for `PROBE_HEAD_BLOCK_AUS` access
-    /// units — with no `finish()`.
+    /// `(source PID, track_id)` of every `TrackAdded`, in event order.
+    fn live_track_added_ids(ts: &[u8]) -> Vec<(u16, u32)> {
+        let mut demux = StreamingTsDemux::new();
+        let mut out = Vec::new();
+        for chunk in ts.chunks(TS_PACKET_SIZE * 16) {
+            demux.feed(chunk);
+            while let Some(ev) = demux.poll_event() {
+                if let DemuxEvent::TrackAdded(spec) = ev {
+                    out.push((spec.source_pid.map_or(0, |p| p.value()), spec.track_id.value()));
+                }
+            }
+        }
+        out
+    }
+
+    /// Head-of-line blocking: a PMT-first (non-video) PID whose probe never
+    /// resolves must not hold back the PIDs after it forever. Two later PIDs
+    /// (one stalled head, two unstalled followers) must both be promoted, in
+    /// PMT order, once the head has been `Probing` for `PROBE_HEAD_BLOCK_AUS`
+    /// access units — with no `finish()`.
     #[test]
     fn stalled_probe_does_not_block_later_pids_forever() {
-        let ts = stalled_head_ts(PROBE_HEAD_BLOCK_AUS + 20, 2, 4);
+        let ts = stalled_head_ts(PROBE_HEAD_BLOCK_AUS + 20, 2, 4, true, false);
         let pids = live_track_added_pids(&ts);
         assert_eq!(
             pids,
@@ -6536,10 +6596,34 @@ mod tests {
     /// probe that is merely slow.
     #[test]
     fn slow_probe_still_blocks_later_pids_below_the_bound() {
-        let ts = stalled_head_ts(PROBE_HEAD_BLOCK_AUS - 20, 2, 4);
+        let ts = stalled_head_ts(PROBE_HEAD_BLOCK_AUS - 20, 2, 4, true, false);
         assert!(
             live_track_added_pids(&ts).is_empty(),
             "a probe below the bound keeps PMT-order promotion"
+        );
+    }
+
+    /// Round-2 audit: a *video* head that is slow to resolve (a long GOP: more
+    /// than `PROBE_HEAD_BLOCK_AUS` access units before the first parameter
+    /// sets) must NOT be stepped over. Otherwise the two later PIDs would be
+    /// promoted first as tracks 1 and 2 and the video would surface as track
+    /// 3, breaking consumers (`ts_hls`, `multimux`) that treat the PMT-first
+    /// video as track 1. Video must be track 1 and the others 2 and 3, in PMT
+    /// order, and nothing is announced before the video resolves.
+    #[test]
+    fn slow_video_head_keeps_track_id_one() {
+        // Still unresolved after the bound: nothing may be promoted.
+        let unresolved = stalled_head_ts(PROBE_HEAD_BLOCK_AUS + 20, 2, 4, false, false);
+        assert!(
+            live_track_added_ids(&unresolved).is_empty(),
+            "a video head past the bound must still block later PIDs"
+        );
+        // Resolves late (after the bound): ids follow PMT order.
+        let resolved = stalled_head_ts(PROBE_HEAD_BLOCK_AUS + 20, 2, 4, false, true);
+        assert_eq!(
+            live_track_added_ids(&resolved),
+            vec![(0x0100, 1), (0x0101, 2), (0x0102, 3)],
+            "slow video must be track 1, later PIDs 2 and 3"
         );
     }
 
