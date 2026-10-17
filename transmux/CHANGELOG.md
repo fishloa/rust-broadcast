@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **`InputDegradation::ContinuityGap` under-counted a run of identical repeats.** ISO/IEC 13818-1 §2.4.3.3 allows exactly one byte-identical repeat of a packet (the duplicate); every further repeat is a continuity fault (ETSI TR 101 290 1.4, "duplicate more than twice"). The first fault used to reset the PID's one-duplicate allowance, so the next repeat was accepted as legal again and a run alternated legal/fault: `orf3-dvbs2-raw-zenith-tv.ts` (DSM-CC carousel PID 0x1C90: 118 legal duplicates, 180 repeats beyond the first, 7 real gaps) reported 97 entries instead of 187. Now one fault per excess packet, and the run stays spent until a fresh original arrives. The excess copy's payload is discarded like a duplicate's (nothing was lost, so the access unit under construction is no longer dropped). Behaviour change: captures with long identical-repeat runs report more `ContinuityGap` entries (the other bundled captures are unchanged; their counts were checked per PID against an independent byte walk).
+
+### Added
+- `Media::degraded_at: Vec<DegradationRecord>`: for a TS input, parallel to `Media::degraded` (same order and length) with the TS PID, packet index and resolved track of every entry, so a consumer can ignore damage on PIDs it does not keep (a carousel) and act on damage to its tracks. Empty for containers without PID/packet provenance. Not breaking: `Media` and `DegradationRecord` are `#[non_exhaustive]`.
 
 ## [0.27.1] - 2026-10-17
 ### Fixed (a damaged TS no longer passes the `Media::degraded.is_empty()` gate)

@@ -119,10 +119,17 @@ pub enum InputDegradation {
     /// (ISO/IEC 13818-1 §2.4.3.2) — the demodulator could not correct this
     /// packet.
     TransportError,
-    /// A continuity-counter gap was observed, *excluding* legal duplicates
-    /// (same CC + byte-identical payload) and signalled discontinuities
-    /// (`discontinuity_indicator` in the adaptation field). `expected` is the
-    /// *last-observed* CC + 1 mod 16; `got` is the wire value that arrived.
+    /// A continuity-counter fault on one PID (ISO/IEC 13818-1 §2.4.3.3; ETSI
+    /// TR 101 290 1.4), counted per packet on payload-bearing non-null
+    /// packets only: a counter jump, a same-counter packet that is not a
+    /// byte-identical repeat (PCR field excepted), or an identical repeat
+    /// beyond the ONE duplicate the spec allows (`got` is then the last
+    /// counter, one entry per excess packet). Excluded: the one legal
+    /// duplicate and signalled discontinuities (`discontinuity_indicator` in
+    /// the adaptation field). `expected` is the *last-observed* CC + 1 mod 16;
+    /// `got` is the wire value that arrived. The entry names no PID itself:
+    /// see [`Media::degraded_at`](crate::ir::Media::degraded_at) /
+    /// [`DemuxEvent::InputDegraded`]'s `provenance`.
     ContinuityGap {
         /// The expected counter (`last_cc + 1 & 0x0F`).
         expected: u8,
