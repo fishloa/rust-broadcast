@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Tests: Apple TV controller input-log goldens (`tests/apple_tv_input_logs.rs`): rai-3, france-5 and a stalling rai-3 log replayed verbatim through the current controller (private fixtures).
+
 ### Fixed
 - Docs + test: caller contract for the start origin. The first reported end anchors the origin, so a caller must report
   the first end only from the join point (first video RAP) and withhold ends before it (audio reported ahead of the
