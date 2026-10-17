@@ -7,7 +7,7 @@
 
 [package]
 name    = "dvb-si-py"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Python bindings for dvb-si — parse DVB SI/PSI sections and demux MPEG-TS into Python dicts."
 license      = "MIT OR Apache-2.0"
@@ -28,5 +28,7 @@ serde      = "1"
 serde_json = "1"
 # Consumed by VERSION (from crates.io), not path — keeps the binding decoupled
 # from the workspace and its MSRV/lockstep.
-dvb-si     = { version = "9", features = ["ts", "serde", "chrono"] }
-dvb-t2mi   = { version = "9", features = ["ts", "serde"] }
+dvb-si     = { version = "12", features = ["ts", "serde", "chrono"] }
+dvb-t2mi   = { version = "12", features = ["ts", "serde"] }
+# `T2miPump::new` takes the typed 13-bit `mpeg_ts::pid::Pid` (dvb-t2mi 12).
+mpeg-ts    = "0.6"

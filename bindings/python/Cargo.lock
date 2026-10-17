@@ -19,12 +19,13 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "broadcast-common"
-version = "9.0.0"
+version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d64078b7abe52ed96cd70c22cf916a13901593d1bad4f217b98314ec5f6e7eb4"
+checksum = "929cfb6b3467025a1bb59c716fb91d7a2cead89560e18160b3a550c37bf33a8f"
 dependencies = [
  "chrono",
- "libm",
+ "hex",
+ "serde",
 ]
 
 [[package]]
@@ -75,20 +76,21 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "dvb-bbframe"
-version = "9.0.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7876aea55a3b452df3c06b90aab3b635e09efa8e326439dfecc1db8055f03a24"
+checksum = "6d6f2ba50dce5cf6793396448b7e78935da9543da092842a0af8946bc0d29870"
 dependencies = [
  "broadcast-common",
  "num_enum",
+ "serde",
  "thiserror",
 ]
 
 [[package]]
 name = "dvb-si"
-version = "9.0.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29759127c641614a9507f72dbb47fceadba4874288245af4ff62b45abe0ceba0"
+checksum = "b5df3cfe2fb92cde400e03d4bb28f9a81b4b0c7e335979b2690d57ab45a22670"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -104,10 +106,11 @@ dependencies = [
 
 [[package]]
 name = "dvb-si-py"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "dvb-si",
  "dvb-t2mi",
+ "mpeg-ts",
  "pyo3",
  "pythonize",
  "serde",
@@ -116,15 +119,16 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "9.0.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da707bcafac9f3c06dc1f5264793c2db9c31987f7a81a6d4afb4482eb93770d5"
+checksum = "c6c7bb232760f30d9eae5ea78e91ba2480e1367831ea100e532627eccca8a210"
 dependencies = [
  "broadcast-common",
  "bytes",
  "chrono",
  "dvb-bbframe",
  "erased-serde",
+ "mpeg-ts",
  "num_enum",
  "serde",
  "thiserror",
@@ -197,6 +201,12 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "iana-time-zone"
@@ -293,9 +303,9 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.3.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72f14760ae4b4dee888f6d3b77eaf20c8265476f7e969bf3b5d66bb29e4a74a0"
+checksum = "6dd5afd583a93854fd92cc2114a7d7af81d0c9da661029bc793c2f56eea4eff4"
 dependencies = [
  "broadcast-common",
  "bytes",

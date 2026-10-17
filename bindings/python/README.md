@@ -42,6 +42,19 @@ for i in range(0, len(data) - 188, 188):
 Keys mirror the Rust API (camelCase). The binding is read-only: it parses, it does
 not build/serialize wire bytes — use the Rust crates for that.
 
+## Changes
+
+### 0.3.0
+
+- Rebuilt against `dvb-si` 12 / `dvb-t2mi` 12 (typed `mpeg_ts::pid::Pid`,
+  `mpeg-ts` 0.6, `broadcast-common` 10).
+- Additive dict keys (the dvb-si 12 serde schema growth, e.g.
+  `reserved_future_use*` fields on application-signalling entries and the typed
+  `extension` descriptor bodies such as `supplementaryAudio`); no existing key
+  was removed or renamed on the PAT/PMT fixture check.
+- `T2miDemux(pid)` now validates the PID as a 13-bit value and raises
+  `ValueError` for `pid > 0x1FFF` (previously accepted any `u16`).
+
 ## Build from source
 
 ```console
