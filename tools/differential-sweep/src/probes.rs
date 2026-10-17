@@ -74,6 +74,13 @@ pub fn transmux_stream(fx: &Fixture, _: &Cfg) -> Option<Value> {
                         None => a.no_dts += 1,
                     }
                 }
+                DemuxEvent::TracksResolved { .. } => {
+                    bump(&mut counters, format!("tracks_resolved:{phase}"));
+                    let seen: u64 = agg.values().map(|a| a.samples).sum();
+                    counters
+                        .entry("samples_before_first_resolved".into())
+                        .or_insert(seen);
+                }
                 DemuxEvent::ClockReference { .. } => bump(&mut counters, "clock_reference"),
                 DemuxEvent::Discontinuity { kind, .. } => {
                     bump(&mut counters, format!("discontinuity:{}", kind.name()));
@@ -113,6 +120,87 @@ pub fn transmux_stream(fx: &Fixture, _: &Cfg) -> Option<Value> {
         "counters": counters,
         "tracks": tracks,
     }))
+}
+
+/// multimux `TsIngestSession` (the shared TS ingest of ts_udp/ts_http/srt):
+/// 7-packet feeds (UDP datagram size), every `SessionEvent` drained. Records
+/// the programs/tracks announced, whether samples came before the first
+/// `NewProgram`, and the per-track published sample count/bytes/first+last
+/// dts/SHA-256 (compare with `transmux.stream`'s per-track numbers: any
+/// shortfall is a sample the session dropped).
+pub fn multimux_ts_ingest(fx: &Fixture, _: &Cfg) -> Option<Value> {
+    use broadcast_common::{Stage, Timestamp};
+    use media_plane::ingress::SessionEvent;
+    if !fx.is_ts_ext() {
+        return None;
+    }
+    let packets = ts_packets(&fx.data)?;
+    let mut s = multimux::source::ts_program::TsIngestSession::new();
+    let mut agg: BTreeMap<String, TrackAgg> = BTreeMap::new();
+    let mut programs: Vec<Value> = Vec::new();
+    let mut counters: BTreeMap<String, u64> = BTreeMap::new();
+    let mut drain = |s: &mut multimux::source::ts_program::TsIngestSession| {
+        while let Some(ev) = s.poll() {
+            match ev {
+                // `ProgramTracker` assigns `ProgramId`s by iterating a
+                // `HashMap`, so the id (and the announce order) is random per
+                // process for an MPTS: record the track set only, sorted, and
+                // sort the programs below, so the probe is deterministic.
+                SessionEvent::NewProgram { tracks, .. } => {
+                    let mut ids: Vec<u64> = tracks
+                        .iter()
+                        .filter_map(|t| format!("{:?}", t.track_id).parse().ok())
+                        .collect();
+                    ids.sort_unstable();
+                    programs.push(json!(ids));
+                }
+                SessionEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    if programs.is_empty() {
+                        bump(&mut counters, "sample_before_new_program");
+                    }
+                    let a = agg.entry(format!("{track_id:?}")).or_default();
+                    a.samples += 1;
+                    a.bytes += sample.data.len() as u64;
+                    a.hasher.extend_from_slice(&sample.data);
+                    if let Some(t) = sample.dts {
+                        a.first_dts.get_or_insert(t);
+                        a.last_dts = Some(t);
+                    }
+                }
+                other => bump(
+                    &mut counters,
+                    format!("other:{}", variant_name(&format!("{other:?}"))),
+                ),
+            }
+        }
+    };
+    for chunk in packets.chunks(7) {
+        let mut buf = Vec::with_capacity(chunk.len() * 188);
+        for p in chunk {
+            buf.extend_from_slice(p);
+        }
+        s.feed(&buf, Timestamp::ZERO).ok();
+        drain(&mut s);
+    }
+    s.finish().ok();
+    drain(&mut s);
+    programs.sort_by_key(|p| p.to_string());
+    let tracks: Map<String, Value> = agg
+        .into_iter()
+        .map(|(k, a)| {
+            (
+                k,
+                json!({
+                    "samples": a.samples, "bytes": a.bytes,
+                    "first_dts": a.first_dts, "last_dts": a.last_dts,
+                    "sha256": sha(&a.hasher),
+                }),
+            )
+        })
+        .collect();
+    Some(json!({"programs": programs, "counters": counters, "tracks": tracks}))
 }
 
 pub fn transmux_batch(fx: &Fixture, _: &Cfg) -> Option<Value> {

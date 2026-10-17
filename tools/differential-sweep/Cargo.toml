@@ -29,6 +29,8 @@ scte35-splice    = { path = "../../scte35-splice" }
 st291            = { path = "../../st291", features = ["ts", "rtp"] }
 broadcast-hls    = { path = "../../broadcast-hls" }
 media-doctor     = { path = "../../media-doctor" }
+multimux         = { path = "../../multimux" }
+media-plane      = { path = "../../media-plane" }
 sha2             = "0.10"
 serde_json       = "1"
 

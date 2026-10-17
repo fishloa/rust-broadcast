@@ -106,6 +106,7 @@ pub struct Cfg {
 const PROBES: &[(&str, ProbeFn)] = &[
     ("transmux.stream", probes::transmux_stream),
     ("transmux.batch", probes::transmux_batch),
+    ("multimux.ts_ingest", probes::multimux_ts_ingest),
     ("transmux.run", probes::transmux_run),
     ("dvb-si.sections", probes::dvb_si_sections),
     ("dvb-si.section_bin", probes::dvb_si_section_bin),

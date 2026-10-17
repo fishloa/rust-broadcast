@@ -15,12 +15,6 @@
     "reason": "transmux CHANGELOG [Unreleased] 'Fixed (TS demux, #1186)' + '#1255': the real 7.1 stream (AC-3 core + dependent E-AC-3) now joins dependent substreams into their access unit (157 AUs, 723456 B, no 'timeline reanchored' discontinuities); the baseline split them (236 samples, 47 reanchors)."
   },
   {
-    "probe": "transmux.stream",
-    "fixture": "private/fixtures/ts/france-tnt-uhf32-si-audio.ts",
-    "path": "events*",
-    "reason": "transmux CHANGELOG [Unreleased] 'Fixed (StreamingTsDemux E-AC-3 promotion regression, zenith)' and the PROBE_HEAD_BLOCK_AUS step-over in try_promote_ready: the same 26 tracks (identical ids, PIDs, codecs, per-track samples/bytes/SHA-256) are now announced live (pre_finish) instead of all at finish(); the 4 abandoned PIDs are the same."
-  },
-  {
     "probe": "transmux.run",
     "fixture": "private/fixtures/mpegh/*",
     "path": "ts*",
@@ -92,7 +86,81 @@
   {
     "probe": "cli.dvb-tools",
     "path": "dump_json.*",
+    "class": "INTENDED",
+    "reason": "dvb-tools CHANGELOG [Unreleased] (#1324, found by the first sweep) now states the `dump --json` growth: typed reserved_future_use*/reserved* keys, `\"trailing\": []` on list-bearing structures, tag 0x3F decoded to a typed Mpeg2Extension body. Intended dvb-si work; the first run's BUG (undocumented schema change) is closed."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts",
+    "path": "*",
+    "reason": "transmux CHANGELOG [Unreleased] 'Fixed (StreamingTsDemux head-of-line, round-3 audit)' + the PROBE_HEAD_BLOCK_AUS step-over: the same 19 tracks (identical ids, PIDs, codecs, per-track samples/bytes/SHA-256) are announced live (pre_finish) instead of all at finish(), TracksResolved fires live, and the two abandoned-at-finish events now follow the late promotions in the event order."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "private/fixtures/tsduck/input/test-170.ts",
+    "path": "*",
+    "reason": "Same as tnt-5w: 11 tracks, ids/codecs/per-track SHA-256 identical, 11 of 11 announced live (was 9 of 11), TracksResolved live (round-3 head-of-line fix)."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "private/fixtures/ts/hotbird-mhp-si.ts",
+    "path": "*",
+    "reason": "transmux CHANGELOG [Unreleased] round-3 head-of-line: finish() now promotes the stepped-over PIDs before abandoning the unrecoverable ones, so the two event kinds swap positions in the stream and TracksResolved precedes the replayed backlog (samples_before_first_resolved 6475 -> 0). The PID -> track_id map, the abandoned set and every per-track sample/SHA-256 are identical (checked by script, not by this glob)."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "private/fixtures/ts/hotbird-mhp-video-head-6MB.ts",
+    "path": "events*",
+    "reason": "Same event-order change as hotbird-mhp-si: abandoned/added events swap positions at finish(); PID -> track_id map, abandoned set and per-track data identical."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "private/fixtures/tsduck/input/test-062.ts",
+    "path": "events*",
+    "reason": "Same event-order change as hotbird-mhp-si; PID -> track_id map, abandoned set and per-track data identical."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "fixtures/ts/dolby/eac3_dvb_0x06.ts",
+    "path": "counters.samples_before_first_resolved",
+    "reason": "transmux CHANGELOG [Unreleased] 'E-AC-3 hold-back (#1186)' / round-3: the E-AC-3 track now resolves one access unit later (TracksResolved after 2 AUs, was 1); tracks, ids and per-track SHA-256 identical. The consequence for multimux is the BUG row below."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "private/fixtures/tsduck/input/test-002.ts",
+    "path": "counters.*",
     "class": "BUG",
-    "reason": "dvb-tools `dump --json` output grew in 72 of 102 TS fixtures: dvb-si's new typed reserved_future_use*/reserved fields, the new `trailing` arrays on service/short_event/telephone/audio_preselection descriptors and the typed 0x3F Mpeg2Extension (replacing `unknown`) all serialize into the JSON, but dvb-tools CHANGELOG [Unreleased] claims 'All other text/JSON output is byte-identical' (t2mi --pid entry) and lists no dump --json schema change. Documentation/CHANGELOG defect (and an unannounced JSON schema change for consumers); fix the CHANGELOG/release note before release."
+    "reason": "REGRESSION since the first run (#1326 skipped-head logic): HEAD never emits TracksResolved for this capture (22 tracks, all announced at finish()), baseline emitted it at finish(). Likely cause (code reading, not yet fixed): StreamingTsDemux::finish()'s abandon loop does `resolved.insert(pid)` for a stepped-over PID without `skipped.remove(&pid)`, so `resolved.len() + skipped.len() == known` can never hold in maybe_signal_tracks_resolved."
+  },
+  {
+    "probe": "multimux.ts_ingest",
+    "fixture": "fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts",
+    "path": "*",
+    "reason": "Consequence of the transmux round-3 TracksResolved fix: the TsIngestSession now announces the 5 programmes (19 tracks) live and publishes 1315 of 3412 samples; at the baseline it announced nothing and published 0. (The remaining 2097 are the pre-resolution samples ProgramTracker drops: see the doc, BUG-2.)"
+  },
+  {
+    "probe": "multimux.ts_ingest",
+    "fixture": "private/fixtures/tsduck/input/test-170.ts",
+    "path": "*",
+    "reason": "Same as tnt-5w: 2 programmes now announced live, 141 samples published (baseline 0)."
+  },
+  {
+    "probe": "multimux.ts_ingest",
+    "fixture": "private/fixtures/eac3-dep/gw_*.ts",
+    "path": "*",
+    "reason": "transmux CHANGELOG 'Fixed (TS demux, #1186)' + #1255: dependent substreams join their access unit (stream-level 236 -> 157 AUs); multimux publishes 204/203 -> 154 samples accordingly (3 of the 157 are still dropped before resolution, BUG-2 in the doc)."
+  },
+  {
+    "probe": "multimux.ts_ingest",
+    "fixture": "fixtures/ts/dolby/eac3_dvb_0x06.ts",
+    "path": "tracks.*",
+    "class": "BUG",
+    "reason": "multimux TsIngestSession publishes 55 of 58 E-AC-3 samples (baseline 56): ProgramTracker drops every Sample that arrives before the first TracksResolved (its track_program guard), and the E-AC-3 hold-back now resolves one AU later (2 dropped instead of 1), so first_dts moves 5946 -> 7482. Same defect as the pre-existing loss on 75 of 92 captures; not fixed here."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "private/fixtures/tsduck/input/test-002.ts",
+    "path": "events*",
+    "reason": "Same event-order change as hotbird-mhp-si (round-3 head-of-line): abandoned/added events swap positions at finish(); PID -> track_id map, abandoned set and per-track data identical. (The missing TracksResolved on this capture is the separate BUG row.)"
   }
 ]
