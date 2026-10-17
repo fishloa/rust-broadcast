@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** Segment and part numbers become `SegmentSeq`/`PartIndex` newtypes with checked arithmetic, and track ids are `transmux::TrackId`, so a swapped segment/part argument is a compile error. At `u32::MAX` `next_sequence_number` saturates and a further segment is rejected.
+**Breaking release.** Segment and part numbers become `SegmentSeq` / `PartIndex` newtypes with checked arithmetic and track ids become `transmux::TrackId`, so a swapped segment/part argument is a compile error; at `u32::MAX`, `next_sequence_number` saturates and a further segment is rejected. One behaviour fix rides along: `IngestDriver::programs()` now iterates in ascending `ProgramId` order (it was backed by a `HashMap`), so per-program work is driven in a reproducible order across processes. The crate also builds against `broadcast-common` 10, `timed-metadata` 0.7, `transmux` 0.27 and (dev-dependency) `scte35-splice` 4.
 
 ## Why this version
 
 - **Proposed version:** 0.6.0 -> **0.7.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (SegmentSeq/PartIndex/TrackId typed ids).
-- **cargo-semver-checks vs live 0.6.0 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common, scte35-splice, timed-metadata, transmux.
+- **Own API/behaviour change class:** major (`SegmentSeq` / `PartIndex` / `TrackId` typed ids across the public API); plus the deterministic `programs()` order.
+- **cargo-semver-checks vs the live release (all features):** none flagged. (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by the sibling epochs it depends on: `broadcast-common` 9 -> 10, `timed-metadata` 0.6 -> 0.7, `transmux` 0.26 -> 0.27, `scte35-splice` 3 -> 4 (dev-dependency only).
 - **Caret epoch:** 0.6 -> 0.7; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -37,7 +37,9 @@ trunk.part_bytes(segment_number, part_index);          // (u32, u32)
 trunk.part_bytes(SegmentSeq::new(segment_number), PartIndex::new(part_index));
 ```
 
-`SegmentEntry::sequence_number`, `PartEntry::{segment_number,part_index}` (and their `new`), `EventAnchor::Segment { segment_number }`, `Trunk::{part_bytes,parts_in_segment,events_in_segment,last_closed_segment}`, `SegmentWriter::{next_sequence_number,note_segment_start}`, `RetentionDriver::locate` and `NonMonotonicSequenceNumber::{attempted,last_published}` use the newtypes (`media_plane::ids`; `checked_next`/`checked_add`/`checked_sub`/`checked_distance_from`, explicit `wrapping_next`/`saturating_next`, no operator impls that overflow silently). `TrackSelection::track_ids`, `TrunkWriter::publish(track_id, ..)`, `SampleCursorItem::Timed { track_id }` and `SessionEvent::Sample { track_id }` use `transmux::TrackId`.
+Ordering: `IngestDriver::programs()` yields programs in ascending `ProgramId` order. No code change is needed unless you relied on the previous (unspecified) hash order.
+
+The numbers and ids affected: `SegmentEntry::sequence_number`, `PartEntry::{segment_number,part_index}` (and their `new`), `EventAnchor::Segment { segment_number }`, `Trunk::{part_bytes,parts_in_segment,events_in_segment,last_closed_segment}`, `SegmentWriter::{next_sequence_number,note_segment_start}`, `RetentionDriver::locate` and `NonMonotonicSequenceNumber::{attempted,last_published}` use the newtypes (`media_plane::ids`; `checked_next`/`checked_add`/`checked_sub`/`checked_distance_from`, explicit `wrapping_next`/`saturating_next`, no operator impls that overflow silently). `TrackSelection::track_ids`, `TrunkWriter::publish(track_id, ..)`, `SampleCursorItem::Timed { track_id }` and `SessionEvent::Sample { track_id }` use `transmux::TrackId`.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 

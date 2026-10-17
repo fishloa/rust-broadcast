@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** PID-typed diagnostics: `Location::at_pid(packet, Pid)` / `Location::at_track(packet, TrackId)` make the kind explicit, `PidFlag::pid` is a `Pid`, the CC anomaly check is O(PIDs) allocations instead of O(packets), and the CLI-spawning tests no longer run without the `cli` feature.
+**Breaking release.** Diagnostics follow the typed ids: `Location::at_pid(packet, Pid)` and `Location::at_track(packet, TrackId)` make the kind of identifier explicit (all TS diagnostics use `at_pid`), and `WatchSnapshot`'s `PidFlag::pid` is an `mpeg_ts::pid::Pid`. The continuity-counter anomaly check also drops from O(packets) to O(PIDs) allocations. The crate builds against new epochs of ten workspace siblings (`broadcast-common` 10, `dvb-si`/`dvb-conformance` 12, `mpeg-ts` 0.6, `transmux` 0.27 and others, listed below).
 
 ## Why this version
 
 - **Proposed version:** 0.10.0 -> **0.11.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (Location::at_track(TrackId), PidFlag::pid is Pid).
-- **cargo-semver-checks vs live 0.10.0 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common, broadcast-hls, container-probe, dvb-conformance, dvb-si, mpeg-pes, mpeg-ts, scte35-splice, timed-metadata, transmux.
+- **Own API/behaviour change class:** major (`Location::at_track` takes `TrackId`; `PidFlag::pid` is `Pid`).
+- **cargo-semver-checks vs the live release (all features):** none flagged. (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by the sibling epochs it depends on: `broadcast-common` 9 -> 10, `broadcast-hls` 0.3 -> 0.4, `container-probe` 0.1 -> 0.2, `dvb-conformance` 11 -> 12, `dvb-si` 11 -> 12, `mpeg-pes` 0.5 -> 0.6, `mpeg-ts` 0.5 -> 0.6, `scte35-splice` 3 -> 4, `timed-metadata` 0.6 -> 0.7, `transmux` 0.26 -> 0.27.
 - **Caret epoch:** 0.10 -> 0.11; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -49,11 +49,23 @@ _Released 2026-10-16._
 ## Breaking changes and migration
 
 ```rust
+use mpeg_ts::pid::Pid;
+use transmux::TrackId;
+
 // before
-Location::at_track(packet, 1u32)       flag.pid: u16
+let loc = Location::at_track(packet, 1u32);
+let p: u16 = flag.pid;
 // after
-Location::at_track(packet, TrackId::new(1))      flag.pid: Pid     // Location::pid stays u32 (it also carries a 32-bit media track_ID)
+let loc = Location::at_track(packet, TrackId::new(1));
+let loc = Location::at_pid(packet, Pid::try_new(0x100)?);   // TS diagnostics
+let p: Pid = flag.pid;                                      // WatchSnapshot's PidFlag
 ```
+
+`Location::pid` stays `u32` on purpose: it also carries a 32-bit media `track_ID`, so narrowing it to a PID would alias track ids; the report's `pid` field still carries the raw number. Use `at_pid` / `at_track` so the kind of identifier is explicit.
+
+Non-API change: `CcAnomalyCheck` keeps each PID's previous packet in a fixed 188-byte array instead of allocating a `Vec` per payload packet, so a clean stream is O(PIDs) allocations rather than O(packets); results are unchanged.
+
+Dependencies move as listed above (resolve them in one graph); `Serialize::to_bytes` was removed from `broadcast-common` 10, use `try_to_bytes`.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 

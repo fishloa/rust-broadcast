@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** `SystemHeader` preserves the bytes `header_length` declares after the stream-bound loop (`trailing_reserved`), instead of dropping them and shrinking `header_length` on re-serialize.
+**Breaking release.** `SystemHeader` gains `trailing_reserved: Vec<u8>`, preserving the bytes `header_length` declares after the stream-bound loop instead of dropping them and shrinking `header_length` on re-serialize. Serializers now reject over-range fields (`FieldOverflow`) and any `SystemHeader` that would serialize to bytes that parse back differently (new `Error::InvalidField`), where before they were masked silently. The crate also builds against `broadcast-common` 10 and `mpeg-pes` 0.6.
 
 ## Why this version
 
 - **Proposed version:** 0.5.0 -> **0.6.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (SystemHeader.trailing_reserved field).
-- **cargo-semver-checks vs live 0.5.0 (all features):** MAJOR (1 major, 0 minor lint failures). (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common, mpeg-pes.
+- **Own API/behaviour change class:** major (`SystemHeader.trailing_reserved` field; stricter serializer; new `Error::InvalidField`).
+- **cargo-semver-checks vs the live release (all features):** MAJOR (1 major, 0 minor lint failures: the new public field). (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by `broadcast-common` 9 -> 10 and `mpeg-pes` 0.5 -> 0.6.
 - **Caret epoch:** 0.5 -> 0.6; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -28,10 +28,19 @@ _Released 2026-10-16._
 
 ```rust
 // before
-SystemHeader { .., reserved_bits, stream_bounds }
-// after
-SystemHeader { .., reserved_bits, stream_bounds, trailing_reserved: Vec::new() }
+SystemHeader { /* .. */ reserved_bits, stream_bounds }
+// after: struct literals need the new field (empty = nothing after the loop)
+SystemHeader { /* .. */ reserved_bits, stream_bounds, trailing_reserved: Vec::new() }
 ```
+
+Parsed headers need no change: `trailing_reserved` is filled on parse and written back, so parse -> serialize no longer shrinks `header_length`.
+
+Serializer strictness (these were silently masked or mis-framed before):
+
+- `SystemHeader` `rate_bound` (22 bits), `audio_bound` (6), `video_bound` (5), `P-STD_buffer_size_bound` (13), `stream_id_extension` (7) and `reserved_bits`, and the pack-header SCR `base` (33) / `extension` (9), return `FieldOverflow` when over range.
+- The stream loop (Table 2-40, `nextbits() == '1'`) must re-parse to the same value, so these are rejected with the new `Error::InvalidField`: a `stream_id` without its MSB, `0xB7` without (or a non-`0xB7` with) a `stream_id_extension`, and a `trailing_reserved` whose first byte has the MSB set (it would be re-read as a stream-bound entry). Handle `Err` when you build headers by hand.
+
+Manifest: `broadcast-common` 9.4 -> 10.0 and `mpeg-pes` 0.5 -> 0.6. `Serialize::to_bytes` was removed from `broadcast-common` 10; use `try_to_bytes`.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 

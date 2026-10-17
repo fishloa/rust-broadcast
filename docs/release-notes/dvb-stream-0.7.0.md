@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** `TsDecoder::datagram` (and so `UdpSectionStream`/`UdpT2miStream`) unwraps RTP-encapsulated MPEG-2 TS datagrams (RFC 3550 section 5.1 + RFC 2250), fixing a lattice mis-lock when a `0x47` appeared in the RTP header; `T2miStream::{new,from_socket,bind}` take `Pid`.
+**Breaking release.** Own breaks: the T2-MI stream constructors take a typed `mpeg_ts::pid::Pid` instead of a `u16`, and the crate now builds against new epochs of `broadcast-common` (10), `dvb-si`/`dvb-t2mi` (12), `mpeg-ts` (0.6) and `rtp-packet` (0.5). It also fixes a framing bug: `TsDecoder::datagram` (and so `UdpSectionStream` and `UdpT2miStream`) now unwraps RTP-encapsulated MPEG-2 TS datagrams (RFC 3550 section 5.1 header, CSRCs, header extension and padding skipped), where previously a `0x47` byte inside the RTP header could lock the decoder onto misaligned bytes.
 
 ## Why this version
 
 - **Proposed version:** 0.6.0 -> **0.7.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (T2miStream::{new,from_socket,bind} take Pid).
-- **cargo-semver-checks vs live 0.6.0 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common, dvb-si, dvb-t2mi, mpeg-ts, rtp-packet.
+- **Own API/behaviour change class:** major (`T2miEventStream::new` and `UdpT2miStream::{from_socket,bind,bind_multicast}` take `Pid`); plus the RTP datagram fix.
+- **cargo-semver-checks vs the live release (all features):** none flagged. (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by the sibling epochs it depends on: `broadcast-common` 9 -> 10, `dvb-si` 11 -> 12, `dvb-t2mi` 11 -> 12, `mpeg-ts` 0.5 -> 0.6, `rtp-packet` 0.4 -> 0.5.
 - **Caret epoch:** 0.6 -> 0.7; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -33,13 +33,19 @@ _Released 2026-10-16._
 ## Breaking changes and migration
 
 ```rust
+use mpeg_ts::pid::Pid;
+
 // before
-T2miStream::bind(&multicast_config, 0x1000).await?;   T2miStream::new(reader, 0x1000)
+let s = T2miEventStream::new(reader, 0x1000);
+let u = UdpT2miStream::bind(&multicast_config, 0x1000).await?;
 // after
-T2miStream::bind(&multicast_config, Pid::try_new(0x1000)?).await?;   T2miStream::new(reader, Pid::try_new(0x1000)?)
+let s = T2miEventStream::new(reader, Pid::try_new(0x1000)?);
+let u = UdpT2miStream::bind(&multicast_config, Pid::try_new(0x1000)?).await?;
 ```
 
-New dependencies: `rtp-packet`, `broadcast-common`.
+The same `Pid` argument applies to `UdpT2miStream::from_socket` and `UdpT2miStream::bind_multicast`. `Pid::try_new` rejects values above `0x1FFF`, so an out-of-range PID is now a construction-time error instead of a silently never-matching filter. `SectionStream`, `UdpSectionStream` and `TsDecoder` signatures are unchanged.
+
+New dependencies: `rtp-packet` and `broadcast-common` (for the RTP unwrap in `TsDecoder::datagram`). Because `dvb-si`, `dvb-t2mi` and `mpeg-ts` also move epoch, resolve them all at the versions above in one dependency graph; `Serialize::to_bytes` was removed from `broadcast-common` 10 (use `try_to_bytes`).
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
@@ -61,7 +67,7 @@ New dependencies: `rtp-packet`, `broadcast-common`.
 
 #### Changed (BREAKING)
 
-- **BREAKING (#1159):** `T2miStream::{new,from_socket,bind}` take `mpeg_ts::pid::Pid` instead of `u16`.
+- **BREAKING (#1159):** `T2miEventStream::new` and `UdpT2miStream::{from_socket,bind,bind_multicast}` take `mpeg_ts::pid::Pid` instead of `u16`.
 
 ## Merged changes since `dvb-stream-v0.6.0`
 

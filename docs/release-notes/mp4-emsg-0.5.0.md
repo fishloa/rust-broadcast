@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** `EmsgBox` gains a typed `flags: u32` (the FullBox 24-bit flags, mandated 0), so a non-conformant box round-trips byte-exactly; `is_scte35` no longer matches `urn:scte:scte35x...`.
+**Breaking release.** `EmsgBox` gains a typed `flags: u32` field (the `FullBox` 24-bit flags, mandated to be 0), so a non-conformant box now round-trips byte-exactly through plain `parse`/`serialize_into`; the `parse_with_flags` / `serialize_into_with_flags` pair added in 0.4.1 is removed. `EmsgBox::is_scte35` no longer classifies `urn:scte:scte35x...` as SCTE 35. The crate also builds against `broadcast-common` 10.
 
 ## Why this version
 
 - **Proposed version:** 0.4.1 -> **0.5.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (EmsgBox.flags field, parse_with_flags removed).
-- **cargo-semver-checks vs live 0.4.1 (all features):** MAJOR (2 major, 0 minor lint failures). (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common.
+- **Own API/behaviour change class:** major (`EmsgBox.flags` field added; `parse_with_flags` and `serialize_into_with_flags` removed).
+- **cargo-semver-checks vs the live release (all features):** MAJOR (2 major, 0 minor lint failures: the new field and the removed pair). (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by `broadcast-common` 9 -> 10.
 - **Caret epoch:** 0.4 -> 0.5; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -25,14 +25,17 @@ _Released 2026-10-16._
 ## Breaking changes and migration
 
 ```rust
-// before (0.4.1): the *_with_flags pair existed to round-trip a non-zero flags field
-EmsgBox::parse_with_flags(..)      EmsgBox::serialize_into_with_flags(..)
-// after: plain parse keeps the flags
-let b = EmsgBox::parse(bytes)?;                 // b.flags
-EmsgBox { flags: EMSG_FLAGS, .. }               // migrate struct literals
+// before (0.4.1): a separate pair existed to round-trip a non-zero flags field
+let b = EmsgBox::parse_with_flags(bytes)?;
+// after: plain parse keeps the flags and serialize_into writes them back
+let b = EmsgBox::parse(bytes)?;      // b.flags
+// struct literals need the new field (EMSG_FLAGS = 0 is the mandated value)
+EmsgBox { flags: EMSG_FLAGS, /* ..existing fields.. */ }
 ```
 
-`parse_with_flags` / `serialize_into_with_flags` (added in 0.4.1) are removed.
+Behaviour: `EmsgBox::is_scte35` matches the scheme prefix together with its colon (`urn:scte:scte35:`), so an unrelated scheme that merely starts with the same letters (`urn:scte:scte35x...`) is no longer treated as SCTE 35.
+
+Manifest: `broadcast-common` 9.4 -> 10.0. `Serialize::to_bytes` was removed from `broadcast-common` 10; use `try_to_bytes`.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 

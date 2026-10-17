@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** Header stuffing is preserved verbatim (`header_stuffing: &[u8]`), `PesExtension`/`PesHeader` keep every reserved and marker bit (a real TSDuck stream has a `0` ES_rate marker the writer forced to `1`), `PesPacket::parse` rejects a non-`10` header marker (MPEG-1 PES or damage) and an overlong `PES_header_data_length`, and AVS3 stream-id extensions are added.
+**Breaking release.** Everything `PesPacket::parse` used to accept but `serialize` silently rewrote is now a typed, preserved field, so parse -> serialize is byte-exact for non-conformant input (a real TSDuck stream has a `0` leading ES_rate marker bit that the writer forced to `1`): header stuffing is kept verbatim (`PesHeader::header_stuffing: &[u8]`), `PesExtension` and `PesHeader` keep every reserved and marker bit, and `additional_copy_info`, `Escr` and `TrickMode::FreezeFrame` keep theirs too. `PesPacket::parse` now rejects a non-`10` header marker (MPEG-1 PES or damage) and a `PES_header_data_length` that overruns a bounded `PES_packet_length`; over-range `P-STD_buffer_size` and `PES_extension` reserved bits are `FieldOverflow` errors instead of being masked. AVS3 stream-id extensions are added, and the crate builds against `broadcast-common` 10.
 
 ## Why this version
 
 - **Proposed version:** 0.5.0 -> **0.6.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (PesHeader::header_stuffing_len -> header_stuffing, new fields).
-- **cargo-semver-checks vs live 0.5.0 (all features):** MAJOR (2 major, 0 minor lint failures). (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common.
+- **Own API/behaviour change class:** major (`PesHeader::header_stuffing_len` replaced by `header_stuffing`; new public fields and types on `PesHeader`, `PesExtension`, `Escr`, `TrickMode::FreezeFrame`; `additional_copy_info` retyped; new `Error::BadHeaderMarker`).
+- **cargo-semver-checks vs the live release (all features):** MAJOR (2 major, 0 minor lint failures; note it misses the retyped `additional_copy_info`, the new `Escr` and `FreezeFrame` fields and the stricter parse, which the CHANGELOG lists). (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by `broadcast-common` 9 -> 10.
 - **Caret epoch:** 0.5 -> 0.6; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -26,12 +26,27 @@ _Released 2026-10-16._
 
 ```rust
 // before
-PesHeader { header_stuffing_len: 3, .. }
-// after: the stuffing bytes themselves (non-0xFF stuffing round-trips)
-PesHeader { header_stuffing: &[0xFF; 3], .. }       // use &[] for none
+PesHeader { header_stuffing_len: 3, /* .. */ }
+// after: the stuffing bytes themselves (non-0xFF stuffing now round-trips)
+PesHeader { header_stuffing: &[0xFF; 3], /* .. */ }    // use &[] for none
+
+// before
+header.additional_copy_info = Some(0x0A);
+// after: 7-bit info + marker bit; new() sets the spec marker 1
+header.additional_copy_info = Some(AdditionalCopyInfo::new(0x0A));
+
+// before
+TrickMode::FreezeFrame { field_id }
+// after: the 3 reserved bits are preserved; the spec-convention value is exported
+TrickMode::FreezeFrame { field_id, reserved: FREEZE_FRAME_RESERVED_VALUE }   // 0b111
 ```
 
-`PesExtension` gains `reserved_bits` and is `#[non_exhaustive]` with `PesExtension::new()`/`Default`; `PesHeader` gains `es_rate_marker_bits` and `PesHeader::new()`/`Default`. New `Error::BadHeaderMarker`. `P-STD_buffer_size` over 13 bits is rejected with `Error::FieldOverflow` instead of being masked.
+- `PesHeader` gains `es_rate_marker_bits` and `PesHeader::new()` / `Default`; `PesExtension` gains `reserved_bits`, is `#[non_exhaustive]` and is built with `PesExtension::new()` / `Default` (spec-convention `0b111`); `Escr` gains `reserved: u8` (spec `0b11`, set by `Escr::from_27mhz`). Prefer the constructors and `..Default::default()` over struct literals so future reserved fields do not break you again.
+- Parse: `PesPacket::parse` returns the new `Error::BadHeaderMarker` when the first flag byte is not `10`, and rejects a `PES_header_data_length` that does not fit inside a bounded `PES_packet_length`.
+- Serialize: `P-STD_buffer_size` over 13 bits and an over-range `PES_extension` `reserved_bits` return `Error::FieldOverflow` instead of being masked into a different value. The constructed `FreezeFrame` reserved bits are now `0b111`, where the old serializer wrote `000`.
+- Added: `StreamId::EXTENDED_STREAM_ID` (`0xFD`), `STREAM_ID_EXTENSION_AVS3_VIDEO` / `STREAM_ID_EXTENSION_AVS3_AUDIO`, `PesExtensionField::stream_id_extension()`, and `PesExtensionField` is now re-exported.
+
+Manifest: `broadcast-common` 9.4 -> 10.0. `Serialize::to_bytes` was removed from `broadcast-common` 10; use `try_to_bytes`.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 

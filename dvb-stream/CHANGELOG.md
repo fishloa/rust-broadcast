@@ -20,7 +20,7 @@
 
 ### Changed (BREAKING)
 
-- **BREAKING (#1159):** `T2miStream::{new,from_socket,bind}` take `mpeg_ts::pid::Pid` instead of `u16`.
+- **BREAKING (#1159):** `T2miEventStream::new` and `UdpT2miStream::{from_socket,bind,bind_multicast}` take `mpeg_ts::pid::Pid` instead of `u16`.
 
 ## [0.6.0] - 2026-10-05
 ### Added

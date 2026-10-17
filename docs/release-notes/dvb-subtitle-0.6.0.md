@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** Serializers reject values wider than their wire field, the CamelCase constant re-exports become SCREAMING_SNAKE, and `ClutDefinitionSegment` validates reduced-range entries.
+**Breaking release.** Serializers now reject a value wider than its wire bit-field with `Error::FieldOverflow` (or the new `Error::InvalidValue` for CLUT entries) instead of masking it into a different valid-looking segment; the CamelCase constant re-exports become SCREAMING_SNAKE; and the crate builds against `broadcast-common` 10. Parsing of valid streams is unchanged. The `mpeg-pes` 0.6 bump affects only the dev-dependency used by the real-capture integration test.
 
 ## Why this version
 
 - **Proposed version:** 0.5.0 -> **0.6.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (CamelCase consts renamed SCREAMING_SNAKE, Error::InvalidValue).
-- **cargo-semver-checks vs live 0.5.0 (all features):** MAJOR (1 major, 0 minor lint failures). (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common, mpeg-pes.
+- **Own API/behaviour change class:** major (CamelCase consts renamed SCREAMING_SNAKE; `Error::InvalidValue`; serializers reject over-range fields; `Reserved(v)` payloads returned verbatim by `to_bits`).
+- **cargo-semver-checks vs the live release (all features):** MAJOR (1 major, 0 minor lint failures: the constant renames). (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by `broadcast-common` 9 -> 10 (normal dependency) and `mpeg-pes` 0.5 -> 0.6 (dev-dependency only).
 - **Caret epoch:** 0.5 -> 0.6; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -26,6 +26,8 @@ _Released 2026-10-16._
 
 ## Breaking changes and migration
 
+Constants (rename at the import site; the values are unchanged):
+
 ```rust
 // before                       // after
 DataIdentifier                  DATA_IDENTIFIER
@@ -34,7 +36,12 @@ SubtitleStreamId                SUBTITLE_STREAM_ID
 SyncByte                        SYNC_BYTE
 ```
 
-`ClutDefinitionSegment` serialize rejects a reduced-range Y/Cr/Cb/T value wider than its 6/4/4/2-bit slot and a `reserved` flags value outside bits `[4:1]` with the new `Error::InvalidValue`. Version nibbles, `reserved*` runs, `page_state`, `region_depth`, `object_coding_method` codes, pixel codes, alternative-CLUT fields and disparity fields return `Error::FieldOverflow` when over range; `Reserved(v)` payloads are returned verbatim by `to_bits`. `interval_duration` over 24 bits is rejected.
+Serializer strictness (behavioural). A value that does not fit its wire field used to be shifted or masked into a neighbouring field and serialized as a different, valid-looking segment (the #1129 class). Now:
+
+- `ClutDefinitionSegment` serialize rejects a reduced-range Y/Cr/Cb/T value wider than its 6/4/4/2-bit slot and a `reserved` flags value outside bits `[4:1]` with the new `Error::InvalidValue`.
+- Version nibbles, `reserved*` runs, `page_state`, `region_depth`, `object_coding_method` codes, pixel codes, alternative-CLUT fields and disparity fields return `Error::FieldOverflow` when over range; `Reserved(v)` payloads are returned verbatim by `to_bits`. `interval_duration` over 24 bits is rejected with `Error::FieldOverflow`. If you build segments from computed values, handle `Err` from `Serialize::serialize_into`/`try_to_bytes`.
+
+The only manifest change is `broadcast-common` 9.4 -> 10.0 (and the dev-dependency above); `Serialize::to_bytes` was removed from `broadcast-common` 10, use `try_to_bytes`.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 

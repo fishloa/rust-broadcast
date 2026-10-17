@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** Reserved and stuffing data are preserved typed fields (`LineHeader::reserved`, `WssDataField::reserved_tail`, `DataUnit::stuffing`), so parse -> serialize is byte-exact for non-conformant input; a data unit padded to the mandated 0x2C length now parses.
+**Breaking release.** Reserved and stuffing bits are now preserved typed fields (`LineHeader::reserved`, `WssDataField::reserved_tail`, `DataUnit::stuffing`), so parse -> serialize is byte-exact for non-conformant input; a data unit padded to the mandated `0x2C` length now parses instead of being rejected; and `DataUnit::serialize_into`/`padded_to` refuse a non-zero `stuffing` on an `Opaque` or `Stuffing` payload. The crate also builds against `broadcast-common` 10. Anything that builds these structs with literals, or matches them exhaustively, must change.
 
 ## Why this version
 
 - **Proposed version:** 0.4.2 -> **0.5.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** major (LineHeader/WssDataField/DataUnit gain fields).
-- **cargo-semver-checks vs live 0.4.2 (all features):** MAJOR (1 major, 0 minor lint failures). (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common.
+- **Own API/behaviour change class:** major (`LineHeader`, `WssDataField` and `DataUnit` gain public fields; stuffing handling is stricter).
+- **cargo-semver-checks vs the live release (all features):** MAJOR (1 major, 0 minor lint failures: the new public fields). (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** also forced by `broadcast-common` 9 -> 10.
 - **Caret epoch:** 0.4 -> 0.5; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -24,14 +24,32 @@ _Released 2026-10-16._
 
 ## Breaking changes and migration
 
+Struct literals no longer compile because the structs gained a field. Use the constructors, which default the new fields to the canonical values:
+
 ```rust
-// before                                         // after
-LineHeader { field_parity, line_offset }          LineHeader::new(..)     // reserved defaults to 0b11
-WssDataField { .. }                               WssDataField::new(..)   // reserved_tail defaults to 0b11
-DataUnit { .. }                                   DataUnit::..            // stuffing defaults to 0
+// before
+let h = LineHeader { field_parity: true, line_offset: 9 };
+// after: `reserved` defaults to 0b11 (RESERVED_PREFIX)
+let h = LineHeader::new(true, 9);
+
+// before
+let wss = WssDataField { header: h, wss_data_block: 0x1234 };
+// after: `reserved_tail` defaults to 0b11
+let wss = WssDataField::new(h, 0x1234);
+
+// before
+let du = DataUnit { id: DataUnitId::Vps, payload: DataUnitPayload::Vps(vps) };
+// after: stuffing defaults to 0
+let du = DataUnit::vps(vps);        // also DataUnit::wss(..), DataUnit::stuffing(len)
 ```
 
-Stuffing bytes must be `0xFF` (else `Error::InvalidField`). New opt-in strict `DataUnit::validate` / `DataField::validate` / `DataUnit::padded_to` (EN 301 775 section 4.1/4.4.2).
+Behaviour changes:
+
+- Parsing: a data unit whose `data_unit_length` exceeds its typed field (EN 301 775 Table 1 trailing `stuffing_byte`s, as in a VPS/WSS/CC unit in a `data_identifier` `0x10`-`0x1F` field padded to `0x2C`) now parses, with the extra bytes recorded in `DataUnit::stuffing`. Those bytes must be `0xFF`, otherwise `Error::InvalidField`.
+- Serializing: `DataUnit::serialize_into` and `DataUnit::padded_to` reject a non-zero `stuffing` on an `Opaque` or `Stuffing` payload, which own their whole body (previously `Opaque([DE, AD])` with stuffing 3 re-parsed as `Opaque([DE, AD, FF, FF, FF])` with stuffing 0).
+- New, opt-in: `DataUnit::padded_to(length)` builds the fixed-length form, and `DataUnit::validate` / `DataField::validate(data_identifier)` check the strict EN 301 775 section 4.1 / 4.4.2 generation constraints. Parsing stays tolerant; validation is never run implicitly.
+
+Manifest: `broadcast-common` 9.4 -> 10.0. `Serialize::to_bytes` was removed from `broadcast-common` 10; use `try_to_bytes`.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 

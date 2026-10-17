@@ -5,14 +5,14 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Epoch-forced major-class release.** Epoch-forced release. Own change since `dvb-mabr-v0.2.0`: src/manifest change, no CHANGELOG entry (defect). Its public API does not change in a way that needs source migration; it ships because a workspace sibling it depends on moves to a new caret epoch (see below), and the workspace's epoch-purity rule forbids publishing a crate that still requires the old epoch next to the new one.
+**Epoch-cascade release; no source migration.** `dvb-mabr` 0.3.0 changes no public API. It ships because it depends on `broadcast-common`, which moves from 9 to 10 in this wave, and the workspace epoch-purity rule forbids publishing a crate that still requires the old `broadcast-common` epoch next to the new one. The only own change is internal: optional XML attributes are read through `StartTag::attr_owned` (no behaviour change) and the manifest picks up the workspace `quick-xml` and lint tables.
 
 ## Why this version
 
 - **Proposed version:** 0.2.0 -> **0.3.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** patch (src/manifest change, no CHANGELOG entry (defect)).
+- **Own API/behaviour change class:** none (internal refactor of optional-attribute reads and manifest tidy-up; parsed values and every error path are identical).
 - **cargo-semver-checks vs live 0.2.0 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** epoch cascade from broadcast-common. Siblings it depends on that move epoch in this wave: broadcast-common.
+- **Epoch cascade:** forced by `broadcast-common` 9 -> 10, the only workspace sibling it depends on that moves epoch in this wave.
 - **Caret epoch:** 0.2 -> 0.3; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -24,7 +24,7 @@ _Released 2026-10-16._
 
 ## Breaking changes and migration
 
-No source-level migration is required beyond bumping the version requirement and, if the crate exposes `broadcast-common` types in its API, moving to `broadcast-common` 10 in the same dependency graph.
+None for source code. Change `dvb-mabr = "0.2"` to `dvb-mabr = "0.3"`. If your own crate also depends on `broadcast-common`, move it to `10` so the dependency graph resolves a single `broadcast-common` epoch; note that `Serialize::to_bytes` was removed from `broadcast-common` 10 (use `try_to_bytes`), which matters only if you call it on `dvb-mabr` types.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
