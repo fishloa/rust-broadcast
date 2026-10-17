@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests: Apple TV controller input-log goldens (`tests/apple_tv_input_logs.rs`): rai-3, france-5 and a stalling rai-3 log replayed verbatim through the current controller (private fixtures).
 
 ### Fixed
+- A track registered BEFORE any media (`register_track` at pipeline creation, when the controller clock is still 0) was
+  stamped silent-since-0, so the first delivery on another track (video, wall clock far above the 3 s silence timeout)
+  excluded it at once: `StartPlaying` fired with the registered audio not yet delivered, and audio's first report then
+  joined behind the playback position (Apple TV, 4 channels: pause ~1 s in, lead -146..-383 ms). A never-delivered
+  track's silence clock now starts at the first delivery on any track (or its registration if later), so it blocks
+  start/resume until it delivers or has been silent for `track_silence_timeout_us` of delivery. Registration order and
+  time (before the first report) no longer change behaviour (`tests/registered_track_gate.rs`; fails before, 4 of 4).
+  No ABI change.
 - Analysis of the rai-3 stall log (test `rai3_stall_pauses_explained_late_registration_and_open_loop`): its first
   pause is a late track registration (audio registered 93 ms AFTER `StartPlaying`; register every track from the PMT
   before the first delivery, then the start waits for audio and the pause disappears) and its second is an open-loop

@@ -207,6 +207,11 @@ pub(crate) struct TrackSet {
     /// Arrival time of the most recent delivery on any track; the clock the
     /// silence rule measures against. `None` until a delivery.
     last_delivery: Option<Micros>,
+    /// Arrival time of the first delivery on any track since the set was
+    /// cleared or rebaselined: where a never-delivered track's silence clock
+    /// starts (a registration made before any media carries a clock that has
+    /// not started, so it cannot be the origin).
+    first_delivery: Option<Micros>,
 }
 
 impl TrackSet {
@@ -216,6 +221,7 @@ impl TrackSet {
             gran_hold_us,
             gran_decay_us,
             last_delivery: None,
+            first_delivery: None,
         }
     }
 
@@ -226,6 +232,7 @@ impl TrackSet {
     pub(crate) fn clear(&mut self) {
         self.v.clear();
         self.last_delivery = None;
+        self.first_delivery = None;
     }
 
     fn slot(&mut self, id: u32, now: Micros) -> Option<&mut Track> {
@@ -282,6 +289,7 @@ impl TrackSet {
         }
         t.observe_step(now, end, rules);
         self.last_delivery = Some(self.last_delivery.map_or(now, |l| l.max(now)));
+        self.first_delivery.get_or_insert(now);
         Some(first)
     }
 
@@ -294,8 +302,14 @@ impl TrackSet {
 
     /// Silent relative to the most recent delivery on any track.
     fn is_silent(&self, t: &Track, silence_us: Micros) -> bool {
+        // a track that never delivered has been waited for since the first
+        // delivery on any track at the earliest, whenever it was registered
+        let since = match (t.end, self.first_delivery) {
+            (None, Some(f)) => t.seen_at.max(f),
+            _ => t.seen_at,
+        };
         self.last_delivery
-            .is_some_and(|l| l.saturating_sub(t.seen_at) >= silence_us)
+            .is_some_and(|l| l.saturating_sub(since) >= silence_us)
     }
 
     /// Largest held delivery step over the non-excluded tracks at `now`.
@@ -329,6 +343,7 @@ impl TrackSet {
     pub(crate) fn rebaseline(&mut self, now: Micros) {
         self.v.retain(|t| t.registered);
         self.last_delivery = None;
+        self.first_delivery = None;
         for t in &mut self.v {
             t.end = None;
             t.step = None;
