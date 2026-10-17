@@ -21,7 +21,9 @@ fuzz_target!(|data: &[u8]| {
         // full-range values for some ops, small steps for the rest
         let wide = a << 32 | b;
         now = if op[1] & 1 == 0 { now.saturating_add(a % 100_000) } else { wide };
-        match op[0] % 7 {
+        match op[0] % 9 {
+            7 => c.on_track_media(now, u32::from(op[1] >> 1) % 20, wide),
+            8 => c.register_track(u32::from(op[1] >> 1) % 20),
             0 => c.on_chunk(now, b as u32, Some(wide)),
             1 => c.on_chunk(now, b as u32, None),
             2 => c.on_media(now, wide),

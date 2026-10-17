@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-track media ends: `BufferController::on_track_media(now, track, end)` / `register_track(track)`; the lead is
+  measured against the minimum over the active tracks (a TS mux sends video ~1 s ahead and audio near
+  real time; judging video alone made every audio buffer late). A track silent for
+  `ControllerConfig::track_silence_timeout_us` (default 3 s, validated non-zero,
+  `ConfigField::TrackSilence`, `with_track_silence_timeout_us`) is excluded; all silent falls back to the
+  latest end. `on_media` is documented as "end of media playable on ALL rendered tracks" and is track-0
+  (`DEFAULT_TRACK`) shorthand. `Event::Pause::track` and `Stats::limiting_track` name the starving track;
+  `EventRecord` gains `track`/`track_valid` (40 bytes), `ABI_VERSION` 1 -> 2. New `tracks` module, `MAX_TRACKS`.
 - Initial crate (unpublished; no release approved). Sans-IO live-TS playout buffer controller:
   - `DeliveryJitter`: RFC 5481 PDV over a sliding-minimum window (with a long-gap rule so a
     stall longer than the window is still measured), burst-aware per-interval maxima, a Q15

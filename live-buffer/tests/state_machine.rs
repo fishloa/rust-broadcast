@@ -874,7 +874,7 @@ fn config_validation_names_every_bad_field() {
 
 #[test]
 fn abi_surface_codes_are_stable() {
-    assert_eq!(live_buffer::ABI_VERSION, 1);
+    assert_eq!(live_buffer::ABI_VERSION, 2);
     for (h, code) in [
         (Hint::InputDegraded, 1),
         (Hint::InputRecovered, 2),
@@ -912,6 +912,7 @@ fn abi_surface_codes_are_stable() {
         reason: Reason::NoData,
         depth_us: 3,
         resume_target_us: 4,
+        track: None,
     }
     .to_record();
     assert_eq!(

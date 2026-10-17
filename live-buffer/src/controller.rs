@@ -14,6 +14,14 @@
 //! first PCR seen switches the estimator to PCR for good (its baseline is
 //! reset once because the two clocks differ); from then on `on_media` never
 //! feeds the estimator.
+//!
+//! **Several tracks.** A TS mux sends video well ahead of play time and audio
+//! close to real time, so the media that can be *played* ends at the least
+//! advanced rendered track. The lead is therefore measured against the
+//! **minimum media end over the rendered tracks**: either the caller reduces
+//! them and calls [`BufferController::on_media`] with that minimum, or it
+//! reports each track with [`BufferController::on_track_media`] and the
+//! controller does it (see [`crate::tracks`] for the active/silent rules).
 
 use crate::config::{ControllerConfig, Micros, REARM_DEN, REARM_NUM, TICKS_PER_US, Ticks27};
 use crate::error::Error;
@@ -21,6 +29,7 @@ use crate::events::{Event, EventQueue, Hint, Reason, State, Stats};
 use crate::jitter::{DeliveryJitter, SampleOutcome};
 use crate::policy::Policy;
 use crate::stall_memory::StallMemorySnapshot;
+use crate::tracks::{DEFAULT_TRACK, Effective, TrackSet};
 use broadcast_common::clock33::pcr_signed_distance;
 
 const TICKS_PER_US_I: i64 = TICKS_PER_US as i64;
@@ -48,7 +57,7 @@ pub struct BufferController {
     last_tick: u64,
     latest: u64,
     last_chunk_at: Option<u64>,
-    media_end: Option<Ticks27>,
+    tracks: TrackSet,
     queue_start: Option<Ticks27>,
     last_playback: Option<Ticks27>,
     fill_from: Option<Ticks27>,
@@ -89,7 +98,7 @@ impl BufferController {
             last_tick: 0,
             latest: 0,
             last_chunk_at: None,
-            media_end: None,
+            tracks: TrackSet::default(),
             queue_start: None,
             last_playback: None,
             fill_from: None,
@@ -146,15 +155,70 @@ impl BufferController {
     /// `PTS90k x 300`). The first value after (re)start is taken as the oldest
     /// buffered position; report the first sample's *start* PTS as a
     /// zero-length first report so that sample is not skipped.
+    ///
+    /// `media_end_27mhz` means **the end of the media playable on ALL rendered
+    /// tracks**: when audio and video are both rendered the caller must pass
+    /// the *minimum* of their ends (video is typically ~1 s ahead of audio in a
+    /// TS mux; judging the lead on video alone makes audio arrive after its
+    /// play time). Or use [`on_track_media`](Self::on_track_media) and let the
+    /// controller take the minimum.
+    ///
+    /// Mixing: this is shorthand for
+    /// `on_track_media(now_us, DEFAULT_TRACK, media_end_27mhz)` (track 0), so
+    /// it participates in the same per-track minimum as any explicit track.
     pub fn on_media(&mut self, now_us: Micros, media_end_27mhz: Ticks27) {
+        self.on_track_media(now_us, DEFAULT_TRACK, media_end_27mhz);
+    }
+
+    /// Announce that `track` will be rendered, so a start or resume waits for
+    /// it before its first delivery. A registered track that never delivers is
+    /// excluded after [`ControllerConfig::track_silence_timeout_us`]. Optional:
+    /// an unregistered track becomes active on its first delivery. At most
+    /// [`MAX_TRACKS`](crate::MAX_TRACKS) distinct tracks are kept.
+    pub fn register_track(&mut self, track: u32) {
+        self.tracks.register(track, self.latest);
+    }
+
+    /// Per-track media position: `media_end_27mhz` is the end of the last
+    /// demuxed sample of `track` in the playback (PTS) domain (same units and
+    /// first-report rule as [`on_media`](Self::on_media)). The controller keeps
+    /// every track's end and measures the lead against the **minimum over the
+    /// active tracks**; a track silent for
+    /// [`ControllerConfig::track_silence_timeout_us`] is excluded (all silent:
+    /// the latest known end is used). A `Pause` for starvation names the
+    /// limiting track in [`Event::Pause::track`] and [`Stats::limiting_track`].
+    pub fn on_track_media(&mut self, now_us: Micros, track: u32, media_end_27mhz: Ticks27) {
         self.latest = self.latest.max(now_us);
         self.jitter.anchor(now_us);
-        if !self.pcr_seen {
+        let Some(first) = self.tracks.deliver(track, now_us, media_end_27mhz) else {
+            return;
+        };
+        if !self.pcr_seen
+            && let Some(e) = self.effective()
+        {
             self.fed_media = true;
-            self.feed(now_us, media_end_27mhz, 0);
+            self.feed(now_us, e.end, 0);
         }
-        self.media_end = Some(media_end_27mhz);
-        self.queue_start.get_or_insert(media_end_27mhz);
+        match self.queue_start {
+            None => self.queue_start = Some(media_end_27mhz),
+            Some(q) if first && pcr_signed_distance(q, media_end_27mhz) < 0 => {
+                self.queue_start = Some(media_end_27mhz);
+            }
+            Some(_) => {}
+        }
+    }
+
+    fn effective(&self) -> Option<Effective> {
+        self.tracks
+            .effective(self.latest, self.cfg.track_silence_timeout_us)
+    }
+
+    /// The limiting track, only meaningful with two or more tracks known.
+    fn limiting(&self) -> Option<u32> {
+        if self.tracks.len() < 2 {
+            return None;
+        }
+        self.effective().map(|e| e.limiting)
     }
 
     fn feed(&mut self, arrival_us: Micros, media: Ticks27, bytes: u32) {
@@ -221,7 +285,7 @@ impl BufferController {
         if playback_27mhz.is_some() {
             self.last_playback = playback_27mhz;
         }
-        let Some(media_end) = self.media_end else {
+        let Some(media_end) = self.effective().map(|e| e.end) else {
             return;
         };
         if self.state == State::Playing {
@@ -288,6 +352,7 @@ impl BufferController {
         reason: Reason,
         neutral: bool,
         lead: i64,
+        track: Option<u32>,
     ) {
         self.reason = reason;
         self.neutral_pause = neutral;
@@ -303,6 +368,7 @@ impl BufferController {
             reason,
             depth_us: to_u64(lead),
             resume_target_us,
+            track,
         });
     }
 
@@ -317,7 +383,8 @@ impl BufferController {
             Reason::DataArriving
         };
         self.stalls = self.stalls.saturating_add(1);
-        self.enter_pause(now, hold_at, reason, false, lead);
+        let track = self.limiting();
+        self.enter_pause(now, hold_at, reason, false, lead, track);
         self.state = State::Starved;
         self.fill_from = Some(hold_at);
     }
@@ -332,7 +399,8 @@ impl BufferController {
             if now.saturating_sub(since) >= self.cfg.policy.reprime_hold_us {
                 let hold_at = if lead < 0 { media_end } else { playback };
                 self.reprimes = self.reprimes.saturating_add(1);
-                self.enter_pause(now, hold_at, Reason::Reprime, true, lead);
+                let track = self.limiting();
+                self.enter_pause(now, hold_at, Reason::Reprime, true, lead, track);
                 self.state = State::Starved;
                 self.fill_from = Some(hold_at);
             }
@@ -365,7 +433,8 @@ impl BufferController {
             self.jitter.reset_baseline();
         }
         self.discontinuities = self.discontinuities.saturating_add(1);
-        let old_end = self.media_end.take();
+        let old_end = self.effective().map(|e| e.end);
+        self.tracks.rebaseline(now);
         self.queue_start = None;
         match self.state {
             State::Playing => {
@@ -382,7 +451,7 @@ impl BufferController {
                     (None, None) => 0,
                 };
                 let lead = self.lead_us;
-                self.enter_pause(now, hold_at, Reason::Discontinuity, true, lead);
+                self.enter_pause(now, hold_at, Reason::Discontinuity, true, lead, None);
                 self.state = State::Buffering;
                 self.fill_from = None;
             }
@@ -434,6 +503,7 @@ impl BufferController {
             events_dropped: self.events.dropped_total(),
             input_degraded: self.degraded,
             window_overflows: self.jitter.window_overflows(),
+            limiting_track: self.limiting(),
         }
     }
 
@@ -468,7 +538,7 @@ impl BufferController {
         self.started = false;
         self.neutral_pause = false;
         self.last_chunk_at = None;
-        self.media_end = None;
+        self.tracks.clear();
         self.queue_start = None;
         self.last_playback = None;
         self.fill_from = None;

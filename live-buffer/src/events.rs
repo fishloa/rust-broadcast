@@ -184,6 +184,10 @@ pub enum Event {
         /// Resume target known now; it can rise when the first post-stall
         /// chunk reveals the stall depth.
         resume_target_us: Micros,
+        /// For an underrun or re-prime with two or more tracks known: the
+        /// track whose media end bounded the lead (the starving track).
+        /// `None` otherwise (single track, discontinuity).
+        track: Option<u32>,
     },
     /// Refilled. Re-seed the renderer clock to exactly `media_27mhz` and set
     /// rate 1 in one step. If that differs from the clock at pause (after a
@@ -249,6 +253,11 @@ pub mod kind {
 /// | 6 Rebaselined | 0 | 0 | 0 | 0 |
 /// | 7 EventsDropped | 0 | 0 | count | 0 |
 ///
+/// `track_valid` is 1 only for a `Pause` that names the starving track in
+/// `track` (two or more tracks known); otherwise both are 0. Layout (ABI
+/// version 2): 40 bytes, `kind@0 reason@4 media_27mhz@8 a_us@16 b_us@24
+/// track@32 track_valid@36`.
+///
 /// There is no separate "Starved" event: a starvation is a `Pause` whose
 /// `reason` is 2/3 and whose `a_us` is the lead at that instant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -265,6 +274,10 @@ pub struct EventRecord {
     pub a_us: u64,
     /// Second value (table above).
     pub b_us: u64,
+    /// The starving track when `track_valid == 1`, else 0.
+    pub track: u32,
+    /// 1 when `track` is meaningful, else 0.
+    pub track_valid: u32,
 }
 
 impl Event {
@@ -286,8 +299,13 @@ impl Event {
                 reason,
                 depth_us,
                 resume_target_us,
+                track,
             } => {
                 r.kind = kind::PAUSE;
+                if let Some(t) = track {
+                    r.track = t;
+                    r.track_valid = 1;
+                }
                 r.reason = reason.code();
                 r.media_27mhz = hold_at_27mhz;
                 r.a_us = depth_us;
@@ -380,6 +398,9 @@ pub struct Stats {
     pub input_degraded: bool,
     /// Minimum-window entries dropped by the cap.
     pub window_overflows: u32,
+    /// With two or more tracks known: the track currently bounding the media
+    /// end (the one that would starve first); `None` otherwise.
+    pub limiting_track: Option<u32>,
 }
 
 /// Bounded event queue: when full, the oldest non-critical event is dropped

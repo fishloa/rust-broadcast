@@ -218,6 +218,19 @@ pub struct ControllerConfig {
     pub starve_threshold_us: Micros,
     /// No chunk for this long => pause reason `NoData` (200 ms).
     pub nodata_after_us: Micros,
+    /// A track with no delivery for this long is excluded from the effective
+    /// media end (`on_track_media` / `register_track`), so a dead track cannot
+    /// starve playback forever (3 s).
+    #[cfg_attr(feature = "serde", serde(default = "default_track_silence_timeout_us"))]
+    pub track_silence_timeout_us: Micros,
+}
+
+/// Default of [`ControllerConfig::track_silence_timeout_us`].
+pub const DEFAULT_TRACK_SILENCE_TIMEOUT_US: Micros = 3_000_000;
+
+#[cfg(feature = "serde")]
+fn default_track_silence_timeout_us() -> Micros {
+    DEFAULT_TRACK_SILENCE_TIMEOUT_US
 }
 
 impl ControllerConfig {
@@ -227,9 +240,12 @@ impl ControllerConfig {
         policy: PolicyConfig::DEFAULT,
         starve_threshold_us: 20_000,
         nodata_after_us: 200_000,
+        track_silence_timeout_us: DEFAULT_TRACK_SILENCE_TIMEOUT_US,
     };
 
-    /// Build and validate a configuration.
+    /// Build and validate a configuration (the per-track silence timeout takes
+    /// its default; change it with
+    /// [`with_track_silence_timeout_us`](Self::with_track_silence_timeout_us)).
     ///
     /// # Errors
     /// See [`ControllerConfig::validate`].
@@ -244,13 +260,24 @@ impl ControllerConfig {
             policy,
             starve_threshold_us,
             nodata_after_us,
+            track_silence_timeout_us: DEFAULT_TRACK_SILENCE_TIMEOUT_US,
         };
         c.validate()?;
         Ok(c)
     }
 
+    /// Replace the per-track silence timeout and re-validate.
+    ///
+    /// # Errors
+    /// [`Error::InvalidConfig`] ([`ConfigField::TrackSilence`]) when zero.
+    pub fn with_track_silence_timeout_us(mut self, timeout_us: Micros) -> Result<Self, Error> {
+        self.track_silence_timeout_us = timeout_us;
+        self.validate()?;
+        Ok(self)
+    }
+
     /// Validate the parts and the cross-field rules (`max_us` within the
-    /// histogram range, `starve_threshold_us < min_us`).
+    /// histogram range, `starve_threshold_us < min_us`, non-zero silence timeout).
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] / [`Error::ZeroLengthWindow`].
@@ -262,6 +289,9 @@ impl ControllerConfig {
         }
         if self.starve_threshold_us >= self.policy.min_us || self.nodata_after_us == 0 {
             return Err(Error::InvalidConfig(ConfigField::Threshold));
+        }
+        if self.track_silence_timeout_us == 0 {
+            return Err(Error::InvalidConfig(ConfigField::TrackSilence));
         }
         Ok(())
     }

@@ -13,6 +13,7 @@ pub mod histogram;
 pub mod jitter;
 pub mod policy;
 pub mod stall_memory;
+pub mod tracks;
 pub mod window;
 
 pub use config::{ControllerConfig, JitterConfig, Micros, PolicyConfig, Ticks27, US_PER_S};
@@ -21,13 +22,15 @@ pub use error::{ConfigField, Error};
 pub use events::{Event, EventRecord, Hint, Reason, State, Stats, kind};
 pub use jitter::{DeliveryJitter, JitterEstimate, SampleOutcome};
 pub use stall_memory::StallMemorySnapshot;
+pub use tracks::{DEFAULT_TRACK, MAX_TRACKS};
 
 use broadcast_common::clock33::{PCR_EXT_MODULUS, PCR_WRAP_27MHZ, WRAP_33BIT};
 
 /// C-ABI revision of the plain-data surface ([`EventRecord`], the `u32`
 /// codes of [`State`]/[`Reason`]/[`Hint`], the event [`kind`] codes). Bumped
-/// when any of them changes shape or meaning.
-pub const ABI_VERSION: u32 = 1;
+/// when any of them changes shape or meaning. Version 2 added the
+/// `track` / `track_valid` pair to [`EventRecord`] (40 bytes, was 32).
+pub const ABI_VERSION: u32 = 2;
 
 /// A 90 kHz PTS (33-bit, wrapped) as 27 MHz ticks in the playback domain:
 /// `PTS x 300`, exact and wrap-consistent (one PTS wrap is one
