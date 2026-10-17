@@ -157,18 +157,26 @@ dep_live() {
 
 # Every workspace dependency of the given crates, as declared in <ref>'s tree,
 # must be live at the declared requirement. <skip> = comma list of crates that
-# publish in the same lane. Prints the first missing one. 0 ok, 1 missing, 3 unreadable.
+# publish in the same lane. Prints the first missing one. 0 ok, 1 missing,
+# 3 unreadable index, 4 the dependency list itself could not be computed
+# (release_deps.py failed: callers must abort, never read its output as crates).
 deps_live_at() {
     local ref="$1" skip="$2"
     shift 2
-    local c manifest dep req line rc
+    local c manifest dep req line rc deps_out drc members
+    members=$(git show "$ref:Cargo.toml" 2>/dev/null | python3 "$RELEASE_DEPS" members 2>/dev/null | paste -sd, -) || members=""
     for c in "$@"; do
         manifest=$(git show "$ref:$c/Cargo.toml" 2>/dev/null) || { echo "$c: no $c/Cargo.toml in $ref"; return 1; }
+        deps_out=$(printf '%s\n' "$manifest" | python3 "$RELEASE_DEPS" deps --skip "$skip" --members "$members" 2>&1); drc=$?
+        if [ "$drc" -ne 0 ]; then
+            echo "$c: release_deps.py deps failed (exit $drc): $deps_out"
+            return 4
+        fi
         while read -r dep req; do
             [ -n "$dep" ] || continue
             line=$(dep_live "$dep" "$req"); rc=$?
             if [ "$rc" -ne 0 ]; then echo "$c depends on $line"; return "$rc"; fi
-        done < <(printf '%s\n' "$manifest" | python3 "$RELEASE_DEPS" deps --skip "$skip")
+        done <<<"$deps_out"
     done
     return 0
 }
@@ -294,7 +302,13 @@ for tag in "${TAGS[@]}"; do
         fi
         ref="refs/tags/$tag"
         git rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1 || ref=HEAD
-        if ! missing=$(deps_live_at "$ref" "$LOCKSTEP_CSV" "${LOCKSTEP_CRATES[@]}"); then
+        missing=$(deps_live_at "$ref" "$LOCKSTEP_CSV" "${LOCKSTEP_CRATES[@]}"); rc=$?
+        if [ "$rc" -eq 4 ]; then
+            echo "=== $tag: ABORT, the dependency list of the lockstep five could not be computed:"
+            echo "    $missing"
+            exit 2
+        fi
+        if [ "$rc" -ne 0 ]; then
             echo "=== $tag: STOP, a dependency of the lockstep five is not live at the required version:"
             echo "    $missing"
             echo "    Do NOT push $tag yet. Wait for it (or fix the plan), then re-run this command."
@@ -322,6 +336,11 @@ for tag in "${TAGS[@]}"; do
         echo "STOP $tag: a workspace dependency is not live on crates.io at the required version:"
         echo "    $missing"
         echo "    Nothing was pushed for $tag. Publish that dependency first, then re-run this command."
+        exit 2
+    elif [ "$rc" -eq 4 ]; then
+        echo "ABORT $tag: the dependency list could not be computed (not treating that as 'no dependencies'):"
+        echo "    $missing"
+        echo "    Nothing was pushed for $tag."
         exit 2
     elif [ "$rc" -ne 0 ]; then
         echo "FAIL $tag: could not verify the dependencies: $missing"

@@ -87,3 +87,40 @@ def test_note_ok():
     assert rd.note_ok("   \n")[0] is False
     assert rd.note_ok("---\nstatus: DRAFT\n---\n\n# t\n")[0] is False
     assert rd.note_ok("# t\n\nstatus: DRAFT in prose is fine\n")[0] is True
+
+
+def test_member_dependency_declared_without_path_is_an_error_not_third_party():
+    """A sibling declared with a bare version would otherwise be silently ungated."""
+    text = '[package]\nname = "me"\nversion = "1.0.0"\n\n[dependencies]\nsib = "0.3"\n'
+    assert rd.workspace_deps(text) == []  # unknown membership: treated as third-party
+    with pytest.raises(ValueError, match="workspace member"):
+        rd.workspace_deps(text, members={"sib"})
+    table = '[package]\nname = "me"\nversion = "1.0.0"\n\n[dev-dependencies]\nsib = { version = "0.3" }\n'
+    with pytest.raises(ValueError, match="workspace member"):
+        rd.workspace_deps(table, members={"sib"})
+    # a real third-party crate, a pathed sibling and an inherited one are all fine
+    ok = (
+        '[package]\nname = "me"\nversion = "1.0.0"\n\n[dependencies]\nserde = "1"\n'
+        'sib = { path = "../sib", version = "0.3" }\ninh = { workspace = true }\n'
+    )
+    assert rd.workspace_deps(ok, members={"sib", "inh"}) == [("sib", "0.3")]
+
+
+def test_workspace_members_lists_directory_names():
+    assert rd.workspace_members('[workspace]\nmembers = ["a", "x/b", "c/"]\n') == ["a", "b", "c"]
+    assert rd.workspace_members("[package]\nname = 'x'\n") == []
+
+
+def test_cli_deps_failure_is_exit_3_with_err_prefix_and_members_flag():
+    import subprocess
+    import sys
+
+    def run(stdin, *args):
+        return subprocess.run([sys.executable, str(SCRIPT), *args], input=stdin, capture_output=True, text=True)
+
+    bad = run("this is [not toml", "deps")
+    assert bad.returncode == 3 and bad.stdout.startswith("ERR ")
+    text = '[package]\nname = "me"\nversion = "1.0.0"\n\n[dependencies]\nsib = "0.3"\n'
+    r = run(text, "deps", "--members", "sib")
+    assert r.returncode == 3 and "workspace member" in r.stdout
+    assert run(text, "deps", "--members", "other").returncode == 0

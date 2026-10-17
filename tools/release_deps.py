@@ -2,7 +2,9 @@
 """Small, testable helpers behind `tools/push-release-tags.sh`.
 
     release_deps.py version                 < Cargo.toml   -> the package version
-    release_deps.py deps [--skip a,b]       < Cargo.toml   -> "<crate> <req>" lines
+    release_deps.py deps [--skip a,b] [--members a,b]
+                                            < Cargo.toml   -> "<crate> <req>" lines
+    release_deps.py members                 < root Cargo.toml -> workspace member names
     release_deps.py max                     < index body   -> max non-yanked semver
     release_deps.py satisfies <req>         < index body   -> "OK <ver>" | "NO <vers>"
     release_deps.py note-ok                 < release note -> exit 0 unless DRAFT/empty
@@ -12,6 +14,11 @@ REQUIREMENT the manifest carries: an entry with a `path` and a `version` in
 [dependencies], [build-dependencies], [target.*.*] tables, plus VERSIONED
 [dev-dependencies] (cargo resolves those against the index at publish time; a
 path-only dev-dependency is stripped and gates nothing).
+
+With `--members`, a dependency on a name in that list declared WITHOUT a `path`
+(a bare version string, or a table with a version only) is an error (exit 3,
+`ERR ...`): the dependency would otherwise be taken for a third-party crate and
+silently not gated, when it is in fact a sibling the release must wait for.
 
 `max` / `satisfies` read the crates.io sparse-index body (one JSON object per
 line) and take the MAX SEMVER, never the last line: index order is publish
@@ -94,15 +101,31 @@ def max_version(body: str) -> str | None:
     return max(live, key=parse_version) if live else None
 
 
-def workspace_deps(manifest_text: str, skip: set[str] | None = None) -> list[tuple[str, str]]:
+def workspace_members(root_manifest_text: str) -> list[str]:
+    """Crate directory names listed in the root manifest's `[workspace] members`."""
+    data = tomllib.loads(root_manifest_text)
+    return [m.rstrip("/").rsplit("/", 1)[-1] for m in (data.get("workspace") or {}).get("members", [])]
+
+
+def workspace_deps(
+    manifest_text: str, skip: set[str] | None = None, members: set[str] | None = None
+) -> list[tuple[str, str]]:
     data = tomllib.loads(manifest_text)
     skip = skip or set()
+    members = members or set()
     own = (data.get("package") or {}).get("name")
     found: dict[str, str] = {}
 
     def take(table: dict) -> None:
         for kind in ("dependencies", "build-dependencies", "dev-dependencies"):
             for name, spec in (table.get(kind) or {}).items():
+                if name in members and not (isinstance(spec, dict) and "path" in spec):
+                    if isinstance(spec, dict) and spec.get("workspace") is True:
+                        continue  # inherited: resolved from the root, not declared here
+                    raise ValueError(
+                        f"{kind} entry {name!r} is a workspace member declared without a "
+                        "`path`; it would be treated as third-party and not gated"
+                    )
                 if not isinstance(spec, dict) or "path" not in spec or "version" not in spec:
                     continue  # third-party, or path-only (stripped at publish)
                 real = spec.get("package", name)
@@ -138,9 +161,17 @@ def main(argv: list[str]) -> int:
         if cmd == "version":
             print(package_version(data))
         elif cmd == "deps":
-            skip = set(rest[1].split(",")) if len(rest) == 2 and rest[0] == "--skip" else set()
-            for name, req in workspace_deps(data, skip):
+            opts = {"--skip": set(), "--members": set()}
+            it = iter(rest)
+            for flag in it:
+                if flag not in opts:
+                    raise ValueError(f"unknown deps option {flag!r}")
+                opts[flag] = {x for x in next(it, "").split(",") if x}
+            for name, req in workspace_deps(data, opts["--skip"], opts["--members"]):
                 print(f"{name} {req}")
+        elif cmd == "members":
+            for name in workspace_members(data):
+                print(name)
         elif cmd == "max":
             print(max_version(data) or "UNPUBLISHED")
         elif cmd == "satisfies":
