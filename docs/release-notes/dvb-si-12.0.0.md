@@ -5,14 +5,16 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Breaking release.** Twelfth lockstep major. `dvb-si` now brings EN 300 468 up to **V1.20.1**, preserves every `reserved`/`reserved_future_use` bit of every table and descriptor in typed fields (a real sender's section re-serializes byte-identically, CRC recomputed), types every PID as `mpeg_ts::pid::Pid`, and makes serializers reject values wider than their wire field (`fit_mask`, ~220 sites) instead of silently masking them. It also adds the Chinese AVS/GY/T descriptor families, MPEG-H 3D audio, and the MPEG-2 `Extension_descriptor`.
+**Breaking release.** Twelfth lockstep major. `dvb-si` now brings EN 300 468 up to **V1.20.1**; preserves every `reserved` / `reserved_future_use` bit of every table and descriptor in typed fields (a real sender's section re-serializes byte-identically, CRC recomputed); types every PID as `mpeg_ts::pid::Pid`; and makes serializers reject values wider than their wire field (`fit_mask`, ~220 sites) instead of silently masking them. It also adds a large body of new typed coverage: the Rec. ITU-T H.222.0 (08/2023) descriptors and sections (including the MPEG-2 `Extension_descriptor` and MPEG-H 3D audio), the AIT/MHP and DSM-CC data-carousel descriptor families, separate INT, UNT and RNT descriptor namespaces (these loops used to be decoded in the SI tag space and so mis-decoded), the Chinese AVS/GY/T descriptor families, and new `INT`/`UNT`/`RNT` entry descriptors.
+
+Behaviour changes to be aware of beyond the type changes: table_ids `0x04`-`0x06`, `0x08` and `0x09` now have typed section parsers that can return `Err` where they used to be `Ok(Unknown)`; a malformed typed `Extension_descriptor` (`0x3F`) body now fails the whole descriptor; NIT/BAT and SAT sections with undeclared trailing bytes are rejected; and the 2038 MJD wrap rule applies to every time field. The crate also builds against `broadcast-common` 10 and `mpeg-ts` 0.6.
 
 ## Why this version
 
-- **Proposed version:** 11.1.0 -> **12.0.0** (major-class: semver major).
-- **Own API/behaviour change class:** major (typed Pid, reserved-bit fields, non_exhaustive tables, CellCenter->CellCentre, fit_mask serializer errors).
-- **cargo-semver-checks vs live 11.1.0 (all features):** MAJOR (9 major, 0 minor lint failures). (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
-- **Epoch cascade:** none needed (own breaking change). Siblings it depends on that move epoch in this wave: broadcast-common, mpeg-ts.
+- **Proposed version:** 11.1.0 -> **12.0.0** (major-class: semver major; lockstep with `dvb-t2mi`, `dvb-bbframe`, `dvb-conformance` and `dvb-tools`).
+- **Own API/behaviour change class:** major (typed `Pid`, reserved-bit fields and `#[non_exhaustive]` tables/descriptors, `CellCenter` -> `CellCentre`, `fit_mask` serializer errors, new descriptor-loop types, new `Mpeg2ExtensionBody` / `TableId` / `DescriptorTag` variants, stricter section and extension parsing).
+- **cargo-semver-checks vs the live release (all features):** MAJOR (9 major, 0 minor lint failures). The lint misses retyped fields and the behavioural changes below, so the CHANGELOG BREAKING list is the primary evidence. (Lint-based: it misses type changes of existing fields and arguments, so the CHANGELOG BREAKING list is the primary evidence.)
+- **Epoch cascade:** none needed for its own sake; it also builds against `broadcast-common` 9 -> 10 and `mpeg-ts` 0.5 -> 0.6.
 - **Caret epoch:** 11 -> 12; every workspace dependent must move with it.
 
 ## Dependency changes
@@ -72,6 +74,55 @@ Applies to ~220 `(value & MASK)` sites (#1197) plus `ibp_descriptor.max_gop_leng
 ### 5. Removed placeholders
 
 The ten `PID = 0x0000` placeholder constants on `ait`, `container`, `downloadable_font_info`, `int`, `mpe`, `mpe_fec`, `mpe_ifec`, `protection_message`, `rct` and `unt` (they aliased the PAT PID) are removed (#1077), as is the hidden `owned::doc` helper.
+
+### 6. H.222.0 descriptors and sections: new variants and stricter parsing
+
+New typed coverage (auto-dispatched by `AnyDescriptor` / `AnyTableSection`): descriptors `0x2D`, `0x2E`, `0x33`-`0x37`, `0x39`, `0x3A`; `Extension_descriptor` (`0x3F`) bodies in `Mpeg2ExtensionBody`; and sections `Iso14496Section` (table_id `0x04`/`0x05`/`0x08`), `MetadataSection` (`0x06`), `GreenAccessUnitSection` (`0x09`). Consequences:
+
+- `DescriptorTag` and `TableId` (both `#[non_exhaustive]`) gain the matching variants (`Mpeg4Text`, `Mpeg4AudioExtension`, `MvcOperationPoint`, `Mpeg2StereoscopicVideoFormat`, `StereoscopicProgramInfo`, `StereoscopicVideoInfo`, `TransportProfile`, `VvcVideo`, `EvcVideo`; `Iso14496SceneDescription`, `Iso14496ObjectDescriptor`, `Metadata`, `Iso14496`, `GreenAccessUnit`). A `match` without a wildcard arm must add them. `Mpeg2ExtensionBody` gains 17 variants, and a hand-built `Other` carrying one of those `extension_descriptor_tag`s is rejected on serialize.
+- Behavioural: table_ids `0x04`, `0x05`, `0x06`, `0x08`, `0x09` now go to typed parsers in `AnyTableSection::parse`, so a malformed section with one of those ids returns `Err` where it used to be `Ok(Unknown)`. Tag `0x3F` used to parse as `AnyDescriptor::Unknown`; it is now `AnyDescriptor::Mpeg2Extension`, and a malformed typed body for `extension_descriptor_tag` `0x03`, `0x05`-`0x07`, `0x0F`, `0x10`, `0x12`, `0x13` or `0x14`-`0x19` (or a truncated MPEG-H `0x08` body) fails the whole `0x3F` descriptor with `Err` instead of yielding `Mpeg2ExtensionBody::Other`. If you walk descriptor loops from untrusted streams, treat a loop-level `Err` as "skip this descriptor", not "stop".
+- Serializing `Mpeg2ExtensionBody::Other` with an `extension_descriptor_tag` in `0x08..=0x0E` is `Error::InvalidDescriptor` (it used to be written as a typed MPEG-H body and re-parse as a different variant).
+- `HevcOperationPoint::profile_tier_levels` is `Vec<ProfileTierLevelInfo>` (was `Vec<[u8; 12]>`) and the `PROFILE_TIER_LEVEL_LEN` constant is removed; `ProfileTierLevelInfo` types the 96-bit general part (profile space/tier/idc, 32 compatibility flags, four source/constraint flags, `copied_44bits`, `general_level_idc`) and round-trips byte-identically.
+- `CompatibilityDescriptor` gains `empty_count_present: bool` (it now remembers whether an empty descriptor was `compatibilityDescriptorLength = 0` or `= 2` with `descriptorCount = 0`, so a UNT/DSI/DII round-trips byte-identically). Add `empty_count_present: false` to struct literals to keep the old `00 00` output.
+- The public structs introduced with this batch (`mpeg2_ext_*`, `h222_timing`, `vvc_video`, `evc_video`, `mvc_operation_point`, `stereoscopic`, `transport_profile`, `mpeg4_text`, `mpeg4_audio_extension`, `MetadataSection`) are `#[non_exhaustive]`: build them with their `new()` constructor and assign the remaining public fields; reading fields is unchanged. The MPEG-H 3D audio sub-structs (`SwitchGroup`, `GroupPreset`, `MpegH3dAudioConfig`, ...) gained public constructors for the same reason.
+
+```rust
+// before: a struct literal listing every field
+let d = VvcVideoDescriptor { profile_idc: 1, tier_flag: false, level_idc: 51, /* ... */ };
+// after: constructor, then assign any further public fields
+let mut d = VvcVideoDescriptor::new(1, false, 51, HdrWcgIdc::Sdr, 0);
+d.sub_profile_idcs = vec![2];
+```
+
+`Extension_descriptor` `0x10` (virtual segmentation) and `0x13` (HEVC subregion) are implemented per the determinate text of H.222.0 sections 2.6.121 and 2.6.126. **Interop note:** TSDuck 3.44 encodes both one unit differently (for `0x10` the 2-bit MDL field holds MDL rather than MDL-1, verified against a real `tstabcomp` output committed as `tests/fixtures/tsduck-h222-virtual-segmentation-pmt.{xml,bin}`; for `0x13` it writes `SubstreamCountMinus1 = 1` followed by two offsets). Such bodies are rejected with a clear `Err` and never misparsed. For `0x13` the spec text conflicts with itself (Table 2-131's loop `k < SubstreamCountMinus1` gives `count` offsets, while the field name and the reassembly text give `count + 1`); the printed syntax is kept and the conflict is quoted in the docs transcription.
+
+### 7. INT / UNT / RNT descriptor loops have their own namespaces
+
+`IntSection::platform_descriptors`, `UntSection::common_descriptors`, `RntSection::{common_descriptors, ResolutionProvider::descriptors, CridAuthority::descriptors}` and the target/operational loops are now `IntDescriptorLoop` / `UntDescriptorLoop` / `RntDescriptorLoop` instead of `DescriptorLoop`. The raw-bytes API is the same, but `.iter()` now yields `AnyIntDescriptor` / `AnyUntDescriptor` / `AnyRntDescriptor` (tags the spec hands back to EN 300 468 fall through as the `Si(AnyDescriptor)` variant). Before this release these loops were walked in the SI/MPEG tag space, so INT tag `0x06` read as `data_stream_alignment`, UNT `0x02` as `video_stream` and RNT `0x40`-`0x42` as `network_name` / `service_list` / `stuffing`; any code or JSON consumer that compensated for that must be updated. `TargetOperationalLoop<'a>` became `TargetOperationalLoop<'a, L>`; use the aliases `tables::int::IntLoopEntry<'a>` and `tables::unt::UntLoopEntry<'a>`. Constructors take the namespaced loop: `IntSection::new(.., IntDescriptorLoop::new(&[]), ..)`. The loops' serde output surfaces parse errors as `{"parseError": ...}`. Twenty-six typed INT/UNT/RNT descriptors are new (see below).
+
+The carousel `subgroup_association_descriptor` and the UNT `SSU_subgroup_association_descriptor` (identical wire syntax, tag `0x0B`) now share `carousel::SubgroupTag { oui, subgroup }` (build with `SubgroupTag::new(oui, subgroup)`): `carousel::SubgroupAssociationDescriptor` has `subgroup_tag: SubgroupTag` in place of `oui` / `subgroup_tag: u16`, and `unt::SsuSubgroupAssociationDescriptor` loses its lifetime, its `u64` `subgroup_tag`, the `oui()` / `subgroup()` accessors and `trailing`, and parses strictly (`descriptor_length` must be 5). The INT/UNT/RNT target and entry-list descriptors (`target_ip_slash`, `target_mac_address_range`, `rnt::scan`, `target_ip_source_slash`, the IPv6 and address variants) return `Error::InvalidDescriptor` from `serialize_into` when a hand-built `trailing` holds a whole entry or more, since it would re-parse as extra entries; `trailing` is parse tolerance only. `FmxBufferSizeDescriptor::serialize_into` returns `Error::InvalidDescriptor` for a malformed default record or loop (it was a `debug_assert`, silent in release).
+
+### 8. AIT, MHP and DSM-CC carousel descriptors
+
+- `ModuleInfo::user_info` is a `CarouselDescriptorLoop` (it was a `DescriptorLoop`, which walked the BIOP `userInfo` in the EN 300 468 tag space and mis-decoded e.g. tag `0x01` as `video_stream`). `ModuleInfo::descriptors()` still yields raw `(tag, body)` pairs; `DiiModule::descriptors()` / `GroupInfo::descriptors()` now walk the carousel tag space.
+- `CompressedModuleDescriptor` moved to `descriptors::carousel` (re-exported from `carousel::biop::message`) and is lifetime-free and symmetric: the `zlib_data` field is gone (the zlib stream is the module payload, not part of the 5-byte descriptor) and a body that is not exactly 5 bytes is an error. `ModuleInfo::compressed_module_descriptor()` returns `Option<Result<CompressedModuleDescriptor>>`.
+- AIT `RecordingLabel::label` and `PrefetchEntry::label` are `LabelBytes<'a>` (an opaque byte string compared byte-for-byte; TS 102 809 Table 21 NOTE 3 leaves the format to platform specifications, so it is deliberately not `DvbText`) instead of `&[u8]`. Migrate with `LabelBytes::new(bytes)` and read with `.as_bytes()`; `RecordingLabel::new` takes a `LabelBytes`.
+- AIT dispatch routes tag `0x5F` to the SI `PrivateDataSpecifierDescriptor`. `DVB-HTML_application_descriptor` `0x08` is deliberately not implemented: Table 86's loop bound (`i<N1` over 16-bit `application_id`) conflicts with the prose, and the vendored text does not resolve count versus byte length.
+
+### 9. Other typed fields that used to be dropped or rewritten (tables/core and descriptor review)
+
+- `section_syntax_indicator` is preserved on every table. It was neither checked nor kept (a PAT with SSI = 0 re-serialized with SSI = 1). It is now `SectionBits::section_syntax_indicator` (spec `1` for long-form tables, `0` for TDT/TOT/RST/DIT via `SectionBits::short_form()`) and a field on `CitSection`, `ContainerSection`, `MpeFecSection`, `MpeIfecSection`, `RctSection` and `SatSection`. `StSection::section_syntax_indicator` moved to `StSection::bits.section_syntax_indicator`.
+- A NIT/BAT whose `transport_stream_loop_length` is shorter than the bytes left before the CRC is now rejected (a real tnt-5w NIT cut by 64 bytes used to come back 578 bytes instead of 642), and a SAT body with bytes after its last whole entry is rejected instead of losing them.
+- Table headers no longer mask over-range values on serialize: `version_number` over 31 and a `reserved(n)` field wider than its width return `Error::FieldOverflow` (`PatSection::new(1, 32, ..)` used to write version 0).
+- New typed fields (struct literals must add them; use the constructors): `ShModulation::interleaver_type_when_absent` (`ShModulation::new` defaults it to `false`); `linkage::TargetId::UserDefined` gains `original_network_id_flag` / `service_id_flag` and is `#[non_exhaustive]` (build with `TargetId::user_defined(id)`); `TelephoneDescriptor`, `ServiceDescriptor`, `ShortEventDescriptor` and `AudioPreselection` gain `trailing` (bytes after the last field, which parse accepted and serialize used to drop); the SAT body structs gain `reserved_zero_future_use*` fields; `StSection` gains `section_syntax_indicator` via `bits`.
+- `Avs3FrameRateCode` gains `Fps119_88` (`0b1110`) and `Fps200` / `Fps240` / `Fps300` (`0b1011..=0b1101`), which used to be `Reserved(n)`; only `0b1111` stays `Reserved`.
+- `DescriptorRegistry::parse_loop_in_scope` and `RegistryIter::avs_scope` (plus `ExtRegistryIter::avs_scope` and `DescriptorLoop::iter_with_extensions_in_scope`) are the way to resolve the AVS descriptors, which live in the ES_info loop while their `'AVSV'` / `'AVSA'` registration sits in `program_info`: walk `program_info`, take `avs_scope()`, then walk each ES_info loop with `parse_loop_in_scope`.
+- SAT serializers: an over-range value (a count, a 9-bit `*_ext` above `0x1FF`, a signed latitude out of range) is `Error::FieldOverflow`, and `first_occurence` without a `center` is `ValueOutOfRange`.
+
+### 10. Not breaking, but worth knowing
+
+`Serialize::to_bytes` was removed from `broadcast-common` 10 (use `try_to_bytes`), so any call on a `dvb-si` type must change. New opt-in descriptors (`Avs2Video`, `Avs2Audio`, `Avs3Audio`, `Avs3Video`, `TuwaAvs3Video`, `ChinaCaptionService`) are enabled through `DescriptorRegistry::with_*`, not auto-dispatched, because their tags are context-dependent. A generated coverage reference, `docs/COVERAGE.md`, lists every implemented table_id, tag and extension and the 88 codes the vendored standards allocate that are not implemented.
+
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
