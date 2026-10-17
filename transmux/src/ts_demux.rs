@@ -6583,7 +6583,10 @@ mod tests {
             demux.feed(chunk);
             while let Some(ev) = demux.poll_event() {
                 if let DemuxEvent::TrackAdded(spec) = ev {
-                    out.push((spec.source_pid.map_or(0, |p| p.value()), spec.track_id.value()));
+                    out.push((
+                        spec.source_pid.map_or(0, |p| p.value()),
+                        spec.track_id.value(),
+                    ));
                 }
             }
         }
