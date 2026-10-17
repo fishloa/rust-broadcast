@@ -693,6 +693,99 @@ mod tests {
         }
     }
 
+    /// A real `TsMux` stream: a PMT-first non-video head `(0x04` private
+    /// audio-type PES that never carries a frame sync, so it can never
+    /// resolve) with 540 access units, followed by two healthy data PIDs.
+    fn stalled_head_ts_bytes() -> Vec<u8> {
+        use broadcast_common::Package;
+        use transmux::media::{Media, Track};
+        use transmux::pipeline::{CodecConfig, DataCarriage};
+        let dur = 3000u32;
+        let samples = |n: u32, len: usize, sync: bool| -> Vec<Sample> {
+            (0..n)
+                .map(|i| {
+                    let t = i64::from(i) * i64::from(dur);
+                    Sample::new(vec![0xBBu8; len], Some(t), Some(t), Some(dur), sync)
+                })
+                .collect()
+        };
+        let data = |stream_type: u8| CodecConfig::Data {
+            stream_type,
+            descriptors: Vec::new(),
+            carriage: DataCarriage::Pes,
+        };
+        let tracks = vec![
+            Track::new(
+                TrackSpec::new(TrackId::new(1), 90_000, data(0x04)),
+                samples(540, 3, true),
+            ),
+            Track::new(
+                TrackSpec::new(TrackId::new(2), 90_000, data(0x7F)),
+                samples(600, 32, true),
+            ),
+            Track::new(
+                TrackSpec::new(TrackId::new(3), 90_000, data(0x7E)),
+                samples(600, 32, true),
+            ),
+        ];
+        transmux::TsMux::default()
+            .package(&Media::new(tracks, 90_000))
+            .expect("mux to TS")
+    }
+
+    /// **Round-3 audit A, end to end.** A stalled non-video head (never
+    /// resolves) with two healthy PIDs behind it: the demuxer steps over the
+    /// head after 512 access units and, because the stepped-over head counts
+    /// toward `TracksResolved`, `ProgramTracker` announces the programme
+    /// (`NewProgram` with the two healthy tracks) and their samples reach the
+    /// session. Before the fix `TracksResolved` never fired, so no
+    /// `NewProgram` was emitted and every sample was dropped by the
+    /// `track_program` guard.
+    #[test]
+    fn stalled_head_does_not_hide_the_programme_from_the_session() {
+        use media_plane::ingress::IngestDriver;
+        use test_support::{handshake, trunk_config};
+
+        let ts = stalled_head_ts_bytes();
+        let mut session = TsIngestSession::new();
+        session
+            .feed(&ts, Timestamp::ZERO)
+            .expect("TS feed is infallible");
+        let mut programs = Vec::new();
+        let mut samples = std::collections::BTreeSet::new();
+        while let Some(ev) = session.poll() {
+            match ev {
+                SessionEvent::NewProgram { tracks, .. } => programs.push(tracks),
+                SessionEvent::Sample { track_id, .. } => {
+                    samples.insert(track_id);
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(programs.len(), 1, "the programme is announced");
+        let mut ids: Vec<TrackId> = programs[0].iter().map(|t| t.track_id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![TrackId::new(1), TrackId::new(2)]);
+        assert_eq!(
+            samples,
+            [TrackId::new(1), TrackId::new(2)].into_iter().collect(),
+            "both healthy tracks' samples flow"
+        );
+
+        // And through the driver: the programme's Trunk exists.
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        driver.feed(&ts, Timestamp::ZERO);
+        assert!(
+            driver.trunk(ProgramId(0)).is_some(),
+            "the driver minted the programme's Trunk"
+        );
+    }
+
     /// A copy of [`track_spec`] with a different coded size, so a config
     /// change is observable in the announced spec.
     fn track_spec_sized(track_id: TrackId, width: u16, height: u16) -> TrackSpec {
