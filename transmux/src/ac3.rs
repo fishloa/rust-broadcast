@@ -86,6 +86,13 @@ fn ac3_crc16(bytes: &[u8]) -> u16 {
     crc
 }
 
+/// Whether a whole E-AC-3 syncframe's `crc2` checks out: the CRC after the
+/// 16-bit syncword drives the register to zero (ETSI TS 102 366 §E.2.2: the one
+/// CRC of an E-AC-3 stream "covers the entire syncframe"; algorithm §6.10.1).
+pub(crate) fn eac3_frame_crc_ok(frame: &[u8]) -> bool {
+    frame.len() > AC3_SYNCWORD_BYTES && ac3_crc16(&frame[AC3_SYNCWORD_BYTES..]) == 0
+}
+
 /// `strmtyp` value marking a dependent-substream E-AC-3 syncframe — ETSI TS
 /// 102 366 Annex E §E.1.2.2 `bsi()`: `if(strmtyp == 0x1) /* if dependent
 /// stream */`.
@@ -346,6 +353,14 @@ impl Ec3SyncframeInfo {
     }
 
     pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
+        Self::parse_at_with_bsmod_presence(data, off).map(|(info, _)| info)
+    }
+
+    /// [`Self::parse_at`], also reporting whether the frame **carries** `bsmod`
+    /// (its `infomdate` bit is set). `bsmod` is `0` both when it is carried as 0
+    /// and when it is absent (§F.6.2.8), so the field alone cannot tell the two
+    /// apart; an encoder may send `infomdate` only in some frames.
+    fn parse_at_with_bsmod_presence(data: &[u8], off: usize) -> Result<(Self, bool)> {
         // We need at least syncword(16) + strmtyp(2) + substreamid(3) +
         // frmsiz(11) + fscod(2) + [sr_code2(2) or numblkscod(2)] +
         // acmod(3) + lfeon(1) + bsid(5)
@@ -366,7 +381,8 @@ impl Ec3SyncframeInfo {
         // dependent substream to have bsid 6 or 8. Real 7.1 / Atmos streams carry
         // exactly that: an AC-3 core frame followed by a dependent E-AC-3 frame.
         if data[off + 5] >> 3 <= AC3_MAX_BSID {
-            return Self::from_ac3_independent(data, off);
+            // An AC-3 `bsi()` always carries `bsmod` (§4.4.2.2).
+            return Self::from_ac3_independent(data, off).map(|info| (info, true));
         }
         let es = &data[off..];
         let mut bit_pos = 0usize;
@@ -406,21 +422,26 @@ impl Ec3SyncframeInfo {
         // and the informational-metadata `bsmod` (E.1.3.1.x).
         let (chanmap, bsmod) =
             parse_eac3_bsi_tail(es, &mut bit_pos, strmtyp, acmod, lfeon, numblks)?;
+        let bsmod_present = bsmod.is_some();
+        let bsmod = bsmod.unwrap_or(0);
 
-        Ok(Self {
-            strmtyp,
-            substreamid,
-            frmsiz,
-            fscod,
-            numblks,
-            acmod,
-            lfeon,
-            bsid,
-            sample_rate,
-            sample_rate_khz,
-            chanmap,
-            bsmod,
-        })
+        Ok((
+            Self {
+                strmtyp,
+                substreamid,
+                frmsiz,
+                fscod,
+                numblks,
+                acmod,
+                lfeon,
+                bsid,
+                sample_rate,
+                sample_rate_khz,
+                chanmap,
+                bsmod,
+            },
+            bsmod_present,
+        ))
     }
 
     /// An AC-3 syncframe standing in as independent substream 0 (`strmtyp` 0,
@@ -476,7 +497,7 @@ impl Ec3SyncframeInfo {
     /// serializer then rejects. Stops at the first bad sync word or truncated
     /// tail, like [`split_eac3_syncframes`].
     pub fn from_es_first_au(data: &[u8]) -> Vec<Self> {
-        Self::first_au(data).0
+        Self::first_au(data, false).0
     }
 
     /// Like [`Self::from_es_first_au`], but `Some` only when the access unit is
@@ -491,7 +512,7 @@ impl Ec3SyncframeInfo {
     /// signal a 7.1 programme as 5.1 (issue #1186). `data` must begin at an
     /// independent frame (a leading dependent frame is mid-access-unit).
     pub fn from_es_first_complete_au(data: &[u8]) -> Option<Vec<Self>> {
-        let (frames, end) = Self::first_au(data);
+        let (frames, end) = Self::first_au(data, false);
         (end == AuEnd::NextAu).then_some(frames)
     }
 
@@ -504,13 +525,66 @@ impl Ec3SyncframeInfo {
     /// frame may itself be damaged), which is why this is a separate, opt-in
     /// call. Running out of data, or a truncated next frame, is still `None`.
     pub fn from_es_first_au_or_broken_chain(data: &[u8]) -> Option<Vec<Self>> {
-        let (frames, end) = Self::first_au(data);
+        let (frames, end) = Self::first_au(data, false);
         (end != AuEnd::Open).then_some(frames)
     }
 
-    /// The frames of the first access unit and how its end was observed.
-    fn first_au(data: &[u8]) -> (Vec<Self>, AuEnd) {
-        let (frames, broken) = Self::walk(data);
+    /// The integrity-checked form of [`Self::from_es_first_complete_au`] (and,
+    /// with `accept_broken_chain`, of [`Self::from_es_first_au_or_broken_chain`]):
+    /// every frame of the access unit must carry a valid `crc2`, the single CRC
+    /// that "covers the entire syncframe" of an E-AC-3 stream, which a decoder
+    /// "shall verify" before using the frame (ETSI TS 102 366 §E.2.2). A whole
+    /// frame whose CRC fails is damaged (or a false syncword inside coded data)
+    /// and **ends the walk as a broken chain**; an unverifiable frame (the data
+    /// ends inside it) is never accepted. `None` when the very first frame is
+    /// unverified or damaged, so a config is never built from a frame that may
+    /// be corrupt, e.g. in a capture that lost packets.
+    pub fn from_es_first_au_crc_verified(
+        data: &[u8],
+        accept_broken_chain: bool,
+    ) -> Option<Vec<Self>> {
+        let (frames, end) = Self::first_au(data, true);
+        let ok = match end {
+            AuEnd::NextAu => true,
+            AuEnd::BrokenChain => accept_broken_chain,
+            AuEnd::Open => false,
+        };
+        (ok && !frames.is_empty()).then_some(frames)
+    }
+
+    /// The `bsmod` the *stream* signals for independent substream
+    /// `substreamid`, searched over **every** CRC-valid frame in `data`
+    /// (not only the first access unit's): the first one whose `infomdate` is
+    /// set. `dec3.bsmod` is "set to the same value as the bsmod field in the
+    /// independent substream", and `0` only "when the infomdate field in the
+    /// independent substream is set to '0'" (ETSI TS 102 366 §F.6.2.8), but an
+    /// encoder may send `infomdate` in some frames only, so one frame without it
+    /// says nothing about the stream's mode (the real TNT audio-description
+    /// track alternates, `bsmod` 2 with `infomdate` 1 / absent with 0). `None`
+    /// when no verified frame of that substream carries it.
+    pub fn first_crc_verified_bsmod(data: &[u8], substreamid: u8) -> Option<u8> {
+        let mut off = 0usize;
+        while off + AC3_SYNCWORD_BYTES <= data.len() {
+            if u16::from_be_bytes([data[off], data[off + 1]]) == AC3_SYNCWORD
+                && let Ok((info, true)) = Self::parse_at_with_bsmod_presence(data, off)
+                && info.strmtyp != EAC3_STRMTYP_DEPENDENT
+                && info.substreamid == substreamid
+                && let Some(frame) =
+                    data.get(off..off + (info.frmsiz as usize + 1) * BYTES_PER_WORD)
+                && eac3_frame_crc_ok(frame)
+            {
+                return Some(info.bsmod);
+            }
+            off += 1;
+        }
+        None
+    }
+
+    /// The frames of the first access unit and how its end was observed. With
+    /// `crc`, a whole frame whose `crc2` fails breaks the chain (see
+    /// [`Self::from_es_first_au_crc_verified`]).
+    fn first_au(data: &[u8], crc: bool) -> (Vec<Self>, AuEnd) {
+        let (frames, broken) = Self::walk(data, crc);
         let mut end = if broken {
             AuEnd::BrokenChain
         } else {
@@ -543,14 +617,14 @@ impl Ec3SyncframeInfo {
     /// spans many access units, and only the first one should reach
     /// [`Ec3SpecificBox::from_syncframes`].
     pub fn from_es_all(data: &[u8]) -> Vec<Self> {
-        Self::walk(data).0
+        Self::walk(data, false).0
     }
 
     /// Walk contiguous syncframes from `data[0]`. The flag is `true` when the
     /// walk stopped because the chain is **broken** (bytes that are not a
     /// syncword, or an unparseable header, where a frame was due) rather than
     /// because the data merely ended or truncated a frame.
-    fn walk(data: &[u8]) -> (Vec<Self>, bool) {
+    fn walk(data: &[u8], crc: bool) -> (Vec<Self>, bool) {
         let mut out = Vec::new();
         let mut off = 0usize;
         while off + 2 <= data.len() {
@@ -568,6 +642,9 @@ impl Ec3SyncframeInfo {
             }
             if off + len > data.len() {
                 return (out, false);
+            }
+            if crc && !eac3_frame_crc_ok(&data[off..off + len]) {
+                return (out, true);
             }
             out.push(info);
             off += len;
@@ -1228,7 +1305,8 @@ impl Serialize for Ec3SpecificBox {
 /// given `strmtyp`/`acmod`/`lfeon`/`numblks`, so the walk is exact — a truncated
 /// frame yields `Err` rather than a silently misread `bsmod`.
 ///
-/// Returns `(chanmap, bsmod)`.
+/// Returns `(chanmap, bsmod)`; `bsmod` is `None` when the frame carries no
+/// `infomdate` metadata.
 fn parse_eac3_bsi_tail(
     es: &[u8],
     bit_pos: &mut usize,
@@ -1236,7 +1314,7 @@ fn parse_eac3_bsi_tail(
     acmod: u8,
     lfeon: bool,
     numblks: u8,
-) -> Result<(Option<u16>, u8)> {
+) -> Result<(Option<u16>, Option<u8>)> {
     let dependent = strmtyp == EAC3_STRMTYP_DEPENDENT;
 
     // dialnorm(5), compre(1) + optional compr(8)
@@ -1372,12 +1450,12 @@ fn parse_eac3_bsi_tail(
             }
         }
     }
-    // infomdate → bsmod (§E.1.3.1.x). Absent means 0 (§F.6.2.8).
+    // infomdate → bsmod (§E.1.3.1.x). Absent means 0 in the `dec3` (§F.6.2.8).
     let infomdate = read_bits(es, bit_pos, 1, "infomdate")? != 0;
     let bsmod = if infomdate {
-        read_bits(es, bit_pos, 3, "bsmod")? as u8
+        Some(read_bits(es, bit_pos, 3, "bsmod")? as u8)
     } else {
-        0
+        None
     };
     Ok((chanmap, bsmod))
 }
@@ -1744,7 +1822,7 @@ pub(crate) mod tests {
     /// crate reads are ever nonzero; `mixmdate` is left 0 so the walk is the
     /// short path (the mixdata variants are exercised by the fixture below).
     #[allow(clippy::too_many_arguments)]
-    fn eac3_bsi(
+    pub(crate) fn eac3_bsi(
         strmtyp: u8,
         substreamid: u8,
         frmsiz: u16,
@@ -1794,7 +1872,17 @@ pub(crate) mod tests {
             bytes.len()
         );
         bytes.resize(frame_len, 0);
+        stamp_crc2(&mut bytes);
         bytes
+    }
+
+    /// Write a valid `crc2` into the last word of a whole E-AC-3 syncframe
+    /// (ETSI TS 102 366 §E.2.2 / §6.10.1): the CRC of everything between the
+    /// syncword and `crc2`, so the check over the whole frame leaves zero.
+    pub(crate) fn stamp_crc2(frame: &mut [u8]) {
+        let n = frame.len();
+        let crc = ac3_crc16(&frame[AC3_SYNCWORD_BYTES..n - 2]);
+        frame[n - 2..].copy_from_slice(&crc.to_be_bytes());
     }
 
     /// Format a synthetic E-AC-3 elementary stream for a 7.1 programme: an
@@ -2098,6 +2186,92 @@ pub(crate) mod tests {
         // A frame without infomdate signals bsmod 0 (§F.6.2.8).
         let es0 = eac3_bsi(0, 0, 64, 7, true, 0, 3, None, None);
         assert_eq!(Ec3SyncframeInfo::from_es(&es0).unwrap().bsmod, 0);
+    }
+
+    /// A frame with a flipped byte: its header still parses (the flip is past
+    /// `bsi()`), but its `crc2` fails.
+    pub(crate) fn damaged_for_tests(mut frame: Vec<u8>) -> Vec<u8> {
+        let mid = frame.len() / 2;
+        frame[mid] ^= 0x10;
+        frame
+    }
+
+    /// Hand-computed `bsi()` bits (ETSI TS 102 366 §E.1.2.2, page 114) of a
+    /// 128-byte stereo frame (`frmsiz` 63) carrying `bsmod` 2, pinning the
+    /// builder the CRC/`bsmod` tests below rely on:
+    ///
+    /// ```text
+    /// syncword            0000 1011 0111 0111          = 0B 77
+    /// strmtyp 00 substreamid 000 frmsiz 00000111111    = 0000 0000 0011 1111 = 00 3F
+    /// fscod 00 numblkscod 11 acmod 010 lfeon 0         = 0011 0100           = 34
+    /// bsid 10000 dialnorm(top 3 of 11111) 111          = 1000 0111           = 87
+    /// dialnorm(low 2) 11 compre 0 mixmdate 0 infomdate 1 bsmod(010)
+    ///                                                  = 1100 1010           = CA
+    /// ```
+    #[test]
+    fn eac3_bsi_bit_vector_is_hand_computed() {
+        let f = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2));
+        assert_eq!(f.len(), 128);
+        assert_eq!(f[..7], [0x0B, 0x77, 0x00, 0x3F, 0x34, 0x87, 0xCA]);
+        assert!(eac3_frame_crc_ok(&f), "builder stamps a valid crc2");
+        assert!(
+            !eac3_frame_crc_ok(&damaged_for_tests(f)),
+            "a flipped byte fails it"
+        );
+    }
+
+    /// The access unit a config is built from must be intact (§E.2.2): a
+    /// damaged first frame is not accepted, a damaged *following* frame is a
+    /// broken chain (accepted only when asked), and an unverifiable one (the
+    /// data ends inside it) is never accepted.
+    #[test]
+    fn crc_verified_first_au_rejects_damaged_frames() {
+        let good = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2));
+        let bad = damaged_for_tests(good.clone());
+        let verified = |d: &[u8], broken: bool| {
+            Ec3SyncframeInfo::from_es_first_au_crc_verified(d, broken).map(|f| f.len())
+        };
+        // Whole + chain-verified (the next AU's independent frame follows).
+        assert_eq!(
+            verified(&[good.clone(), good.clone()].concat(), false),
+            Some(1)
+        );
+        // A damaged first frame is never a source of config.
+        assert_eq!(verified(&[bad.clone(), good.clone()].concat(), true), None);
+        // A damaged next frame ends the chain: only when that is accepted.
+        let then_bad = [good.clone(), bad.clone()].concat();
+        assert_eq!(verified(&then_bad, false), None);
+        assert_eq!(verified(&then_bad, true), Some(1));
+        // Data that ends inside / right after the frame proves nothing.
+        assert_eq!(verified(&good, true), None);
+        assert_eq!(verified(&good[..good.len() - 1], true), None);
+        // The unchecked call still takes the damaged frame (its documented use).
+        assert_eq!(
+            Ec3SyncframeInfo::from_es_first_au_or_broken_chain(&[bad.clone(), good].concat())
+                .map(|f| f.len()),
+            Some(1)
+        );
+    }
+
+    /// `dec3.bsmod` is the stream's: a frame without `infomdate` carries none
+    /// (so says `0`, §F.6.2.8), a damaged frame is not believed, and the first
+    /// intact frame that carries one decides. Mirrors the TNT audio-description
+    /// track, whose intact frames alternate `infomdate` 1 (`bsmod` 2) / 0.
+    #[test]
+    fn first_crc_verified_bsmod_skips_absent_and_damaged() {
+        let none = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, None);
+        let two = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2));
+        let five_bad = damaged_for_tests(eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(5)));
+        let other_substream = eac3_bsi(0, 1, 63, 2, false, 0, 3, None, Some(6));
+        let es = [none.clone(), five_bad.clone(), other_substream, two].concat();
+        assert_eq!(Ec3SyncframeInfo::first_crc_verified_bsmod(&es, 0), Some(2));
+        assert_eq!(Ec3SyncframeInfo::first_crc_verified_bsmod(&es, 1), Some(6));
+        assert_eq!(Ec3SyncframeInfo::first_crc_verified_bsmod(&es, 2), None);
+        let no_carrier = [none, five_bad].concat();
+        assert_eq!(
+            Ec3SyncframeInfo::first_crc_verified_bsmod(&no_carrier, 0),
+            None
+        );
     }
 
     /// The mixdata walk must reach `infomdate` exactly: `mixdef == 1` (fixed

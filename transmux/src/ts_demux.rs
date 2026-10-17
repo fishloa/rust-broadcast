@@ -121,6 +121,78 @@
 //! the TS adaptation fields, both into [`Media`]'s `pcr` field (batch) and as
 //! [`DemuxEvent::ClockReference`] (streaming).
 //!
+//! # E-AC-3: which frame describes the stream
+//!
+//! The `dec3` is built from the first access unit the probe can trust. Every
+//! E-AC-3 syncframe carries one `crc2` over the whole frame, which a decoder
+//! "shall verify" (ETSI TS 102 366 §E.2.2), so the probe prefers an access
+//! unit whose frames all verify (`Ec3SyncframeInfo::from_es_first_au_crc_verified`),
+//! skipping header-shaped `0B 77` pairs inside coded data and frames damaged by
+//! lost packets. Waiting for one would stall a lossy capture (and, in PMT order,
+//! every track behind it: the zenith report), so when none is held yet the
+//! track is announced from the first header-valid frame, as before.
+//!
+//! `bsmod` is a property of the *stream*, but a frame carries it only when its
+//! `infomdate` bit is set, and the encoder of the French TNT audio-description
+//! track sets it in some frames only; `dec3.bsmod` of a frame without it is 0
+//! (§F.6.2.8). The probe therefore takes `bsmod` from the first intact frame in
+//! its window that carries one (`Ec3SpecificBox` `bsmod`, via
+//! `Ec3SyncframeInfo::first_crc_verified_bsmod`), not from whichever frame the
+//! config happens to be read from. Pinned on `m6-single.ts` and the private
+//! zenith capture against an independent parse of every intact frame and the PMT
+//! `component_type` (`tests/streaming_ts_demux_eac3_bsmod.rs`: 0x82 / 0x84 main,
+//! `bsmod` 0; 0x83 visually impaired, `bsmod` 2). **Limit:** an unverified first
+//! frame is not corrected later: if the window holds no intact frame carrying
+//! `bsmod` at the time the track is announced (only possible on a capture that
+//! loses almost every frame), a damaged frame's `bsmod` stands.
+//!
+//! # Why an E-AC-3 track cannot be announced from the PMT alone
+//!
+//! ffmpeg lists an E-AC-3 stream from the PMT `enhanced_AC-3_descriptor` (0x7A,
+//! ETSI EN 300 468 Table D.7) before any frame arrives. A [`CodecConfig::Eac3`]
+//! needs a complete `dec3` (ETSI TS 102 366 §F.6.1, page 198), and the
+//! descriptor cannot supply it:
+//!
+//! | `dec3` field | from the 0x7A descriptor? |
+//! |---|---|
+//! | `data_rate` (13) | no: a bitrate is not signalled |
+//! | `num_ind_sub` (3) | partly: `substream1..3_flag` count extra independent substreams |
+//! | `fscod` (2) | no: the sample rate is not signalled |
+//! | `bsid` (5) | yes: the descriptor's `bsid` field (only when `bsid_flag`) |
+//! | `asvc` (1) | no: the descriptor's `asvc` is a bitmap of main services it attaches to, a different field; the service-type flags of `component_type` only imply it |
+//! | `bsmod` (3) | no: not signalled; `component_type` service-type flags merely agree with it by numbering (EN 300 468 Table D.4 / TS 102 366 Table 4.2) |
+//! | `acmod` (3) | no: `component_type`'s channel flags give mono / 1+1 / stereo / "> 2 channels" only |
+//! | `lfeon` (1) | no |
+//! | `num_dep_sub` (4), `chan_loc` (9) | no: dependent substreams are not signalled at all |
+//!
+//! `fscod`, `data_rate`, `acmod`, `lfeon` and the dependent-substream fields can
+//! only come from a syncframe, so the demuxer does not fabricate a `dec3`: an
+//! E-AC-3 PID is announced (`TrackAdded`) when a frame has been parsed, never
+//! from the PMT alone.
+//!
+//! # Programs and declared-but-silent PIDs
+//!
+//! The demuxer follows the **PAT**: every `(program_number, PMT PID)` it lists is
+//! followed, and each announced track carries its `TrackSpec::program_number`.
+//! A PMT section whose `program_number` is not the PAT's entry for the PID it
+//! arrived on is dropped (the #774 cross-check). The real TNT capture shows the
+//! consequence: its PAT lists only program 0x0401, while the same PMT PID also
+//! carries a PMT for 0x0601 whose components overlap 0x0401's (and contradict
+//! it: 0x83/0x84 swap their `component_type`), so 0x0601 yields no tracks. No
+//! data is lost: 0x0601's only PIDs of its own (0x96, 0x97, subtitles) have no
+//! packets in the capture.
+//!
+//! A PMT-declared PID that never carries a packet is likewise never announced:
+//! a track is announced when its first access unit arrives (an opaque
+//! [`CodecConfig::Data`] track, needing no header, on that very first access
+//! unit). This is deliberate: announcing it from the PMT would add an empty
+//! `Data` track to every service whose subtitle PID is idle, which every ISOBMFF
+//! muxer rejects (`Error::UnmuxableDataTrack`, so each consumer
+//! would have to filter it) and which would shift `track_id`s. The cost is that
+//! [`DemuxEvent::TracksResolved`] is withheld until each such PID has produced
+//! data (or [`finish`](StreamingTsDemux::finish) abandons it): PID 0x8D (HD DVB
+//! subtitles, no PES in the capture) is one.
+//!
 //! [`CodecConfig`]: crate::pipeline::CodecConfig
 //! [`DataCarriage`]: crate::pipeline::DataCarriage
 //!
@@ -3500,8 +3572,18 @@ fn advance_track(
             if resolved.is_none() && stream.codec == Codec::Eac3 {
                 let window = [stream.probe_tail.as_slice(), latest.data.as_slice()].concat();
                 resolved = eac3_probe_result(&window, Eac3Accept::BrokenChain);
+                // No CRC-valid access unit is held yet. Announce the track from
+                // the first (unverified) frame rather than wait for one: on a
+                // lossy capture intact frames can be minutes apart and every
+                // track behind this one in PMT order waits too. A verified frame
+                // is preferred whenever one is already held (the attempts
+                // above), and `bsmod` still comes from one when the window has
+                // it (`eac3_probe_result`).
+                if resolved.is_none() {
+                    resolved = eac3_probe_result(&window, Eac3Accept::UnverifiedBrokenChain);
+                }
                 if resolved.is_none()
-                    && let Some(start) = first_eac3_independent_offset(&window)
+                    && let Some(start) = first_eac3_independent_offset(&window, false)
                     && Ec3SyncframeInfo::from_es_all(&window[start..]).len()
                         >= EAC3_PROBE_MAX_FRAMES
                 {
@@ -3620,28 +3702,43 @@ fn audio_probe_next_tail(codec: Codec, tail: &[u8], latest: &[u8]) -> Vec<u8> {
 /// `data`. A leading dependent frame belongs to an access unit that began
 /// before `data` (ETSI TS 102 366 §E.1.3.1.2: dependent substreams follow the
 /// independent substream they belong to), so a config must not be built from it.
-fn first_eac3_independent_offset(data: &[u8]) -> Option<usize> {
-    (0..data.len()).find(|&at| {
-        matches!(
-            Eac3Sync::parse(&data[at..]),
-            SyncParse::Frame(hdr, len) if len >= Eac3Sync::MIN_FRAME_LEN
+///
+/// With `crc`, the frame must also be whole in `data` and carry a valid `crc2`
+/// (ETSI TS 102 366 §E.2.2): a header-shaped `0B 77` inside coded data, or a
+/// frame a lost packet damaged, is skipped instead of becoming the stream's
+/// description.
+fn first_eac3_independent_offset(data: &[u8], crc: bool) -> Option<usize> {
+    (0..data.len()).find(|&at| match Eac3Sync::parse(&data[at..]) {
+        SyncParse::Frame(hdr, len) => {
+            len >= Eac3Sync::MIN_FRAME_LEN
                 && hdr.strmtyp != EAC3_STRMTYP_DEPENDENT
-        )
+                && (!crc
+                    || data
+                        .get(at..at + len)
+                        .is_some_and(crate::ac3::eac3_frame_crc_ok))
+        }
+        _ => false,
     })
 }
 
-/// How sure an E-AC-3 probe must be that the first access unit is whole before
-/// it builds a config from it (see [`eac3_probe_result`]).
+/// How sure an E-AC-3 probe must be that the first access unit is whole (and
+/// intact) before it builds a config from it (see [`eac3_probe_result`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Eac3Accept {
     /// The next access unit's independent frame was seen (issue #1186): the
-    /// access unit is provably complete. What a plain probe requires.
+    /// access unit is provably complete, and every frame of it passed its
+    /// `crc2` check. What a plain probe requires.
     ChainVerified,
-    /// Also an access unit followed by bytes that are not a syncword (lost
-    /// packets); see `Ec3SyncframeInfo::from_es_first_au_or_broken_chain`.
+    /// Also an access unit followed by bytes that are not a syncword, or by a
+    /// frame whose `crc2` fails (lost packets); see
+    /// `Ec3SyncframeInfo::from_es_first_au_crc_verified`. Its own frames are
+    /// still CRC-verified.
     BrokenChain,
-    /// Whatever the access unit holds: end of input, or the frame-count
-    /// backstop ([`EAC3_PROBE_MAX_FRAMES`]).
+    /// [`Self::BrokenChain`] without the CRC requirement: the fallback for a
+    /// lossy capture that has shown no verified frame yet.
+    UnverifiedBrokenChain,
+    /// Whatever the access unit holds, unverified: end of input, or the
+    /// frame-count backstop ([`EAC3_PROBE_MAX_FRAMES`]).
     Anything,
 }
 
@@ -3657,16 +3754,37 @@ enum Eac3Accept {
 /// The access unit must be **provably complete** (issue #1186): until a
 /// following independent frame has been seen, a dependent frame may still be
 /// on its way in the next PES, and a `dec3` built now would silently signal 5.1
-/// for a 7.1 stream. [`Eac3Accept`] says how complete the first access unit must be.
+/// for a 7.1 stream. And it must be **intact**: frames are chosen by their
+/// `crc2` (ETSI TS 102 366 §E.2.2), so on a capture that lost packets the config
+/// is never read from a corrupted frame, and `bsmod` is the one the stream's
+/// verified frames carry (`Ec3SyncframeInfo::first_crc_verified_bsmod`: a frame
+/// without `infomdate` carries none, which says nothing about the stream).
+/// [`Eac3Accept`] says how much of that the first access unit must show.
 fn eac3_probe_result(latest: &[u8], accept: Eac3Accept) -> Option<(CodecConfig, u32, LiveKind)> {
-    let start = first_eac3_independent_offset(latest)?;
-    let frames: alloc::vec::Vec<Ec3SyncframeInfo> = match accept {
+    let verified = matches!(accept, Eac3Accept::ChainVerified | Eac3Accept::BrokenChain);
+    let start = first_eac3_independent_offset(latest, verified)?;
+    let mut frames: alloc::vec::Vec<Ec3SyncframeInfo> = match accept {
         Eac3Accept::Anything => Ec3SyncframeInfo::from_es_first_au(&latest[start..]),
-        Eac3Accept::ChainVerified => Ec3SyncframeInfo::from_es_first_complete_au(&latest[start..])?,
+        Eac3Accept::ChainVerified => {
+            Ec3SyncframeInfo::from_es_first_au_crc_verified(&latest[start..], false)?
+        }
         Eac3Accept::BrokenChain => {
+            Ec3SyncframeInfo::from_es_first_au_crc_verified(&latest[start..], true)?
+        }
+        Eac3Accept::UnverifiedBrokenChain => {
             Ec3SyncframeInfo::from_es_first_au_or_broken_chain(&latest[start..])?
         }
     };
+    for f in frames
+        .iter_mut()
+        .filter(|f| f.strmtyp != EAC3_STRMTYP_DEPENDENT)
+    {
+        if let Some(bsmod) =
+            Ec3SyncframeInfo::first_crc_verified_bsmod(&latest[start..], f.substreamid)
+        {
+            f.bsmod = bsmod;
+        }
+    }
     let info = *frames.first()?;
     let sample_rate = info.sample_rate;
     let channel_count = info.channel_count() as u16;
@@ -6287,6 +6405,59 @@ mod tests {
             }
         }
         n
+    }
+
+    /// `dec3.bsmod` of the first (only) track of `ts`, live (no `finish()`).
+    fn live_eac3_bsmod(ts: &[u8]) -> Option<u8> {
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(ts);
+        while let Some(ev) = demux.poll_event() {
+            if let DemuxEvent::TrackAdded(spec) = ev
+                && let CodecConfig::Eac3 { config, .. } = spec.config
+            {
+                return Some(config.substreams[0].bsmod);
+            }
+        }
+        None
+    }
+
+    /// The probe chooses its frame by `crc2` (ETSI TS 102 366 §E.2.2): a
+    /// header-shaped frame a lost packet damaged, in front of an intact one,
+    /// must not describe the stream. The damaged frame says `bsmod` 5, the
+    /// intact one 0; the first PES holds both, then a second PES completes the
+    /// first. Unfixed (the first header-valid frame was used) this is 5.
+    #[test]
+    fn eac3_probe_skips_a_damaged_frame_in_front_of_an_intact_one() {
+        use crate::ac3::tests::{damaged_for_tests, eac3_bsi};
+        let bad = damaged_for_tests(eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(5)));
+        let good = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(0));
+        let pes = [bad, good.clone(), good].concat();
+        assert_eq!(live_eac3_bsmod(&eac3_pes_ts(&[pes.clone(), pes])), Some(0));
+    }
+
+    /// `bsmod` is the stream's, not the chosen frame's: the first intact frame
+    /// carries no `infomdate` (so `0` in isolation, §F.6.2.8) and a later one
+    /// in the same window carries `bsmod` 2 (the TNT audio-description track
+    /// alternates exactly so). Unfixed (the isolated first frame's `bsmod`) this
+    /// is 0, the value `m6-single`'s second track wrongly had before #1315.
+    #[test]
+    fn eac3_bsmod_comes_from_the_first_intact_frame_that_carries_it() {
+        use crate::ac3::tests::eac3_bsi;
+        let none = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, None);
+        let two = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2));
+        let pes = [none.clone(), two, none].concat();
+        assert_eq!(live_eac3_bsmod(&eac3_pes_ts(&[pes.clone(), pes])), Some(2));
+    }
+
+    /// Liveness is kept: when no intact frame is held at all (every frame of a
+    /// very lossy capture damaged) the track is still announced from the first
+    /// header-valid frame rather than never, as in #1315.
+    #[test]
+    fn eac3_probe_with_no_intact_frame_still_announces_the_track() {
+        use crate::ac3::tests::{damaged_for_tests, eac3_bsi};
+        let bad = damaged_for_tests(eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2)));
+        let pes = [bad.clone(), bad].concat();
+        assert_eq!(live_eac3_bsmod(&eac3_pes_ts(&[pes.clone(), pes])), Some(2));
     }
 
     /// An E-AC-3 PID whose first access unit can never be proven complete (an
@@ -11257,6 +11428,9 @@ mod tests {
         let hdr = h.len();
         h.extend_from_slice(&body_bytes(n + 1000, 64 - hdr));
         assert_eq!(h.len(), 64);
+        // Every real frame carries a valid `crc2` (§E.2.2), and the probe
+        // chooses frames by it.
+        crate::ac3::tests::stamp_crc2(&mut h);
         let info = Ec3SyncframeInfo::parse_at(&h, 0).unwrap();
         assert_eq!(info.strmtyp, EAC3_STRMTYP_DEPENDENT);
         h
