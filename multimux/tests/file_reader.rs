@@ -191,6 +191,9 @@ fn source_track_dts(rel: &str, track_id: TrackId) -> Vec<i64> {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = StreamingTsDemux::new();
     demux.feed(&bytes);
+    // End of input: the source's own sample set includes the access units the
+    // demux holds back until `finish()`.
+    demux.finish();
     let mut dts = Vec::new();
     while let Some(ev) = demux.poll_event() {
         let DemuxEvent::Sample {
@@ -233,6 +236,78 @@ fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(TrackId, i64)> {
         }
     }
     out
+}
+
+/// **End-of-input flush.** The private zenith capture declares PID 0x8D but
+/// never carries a byte of it, so the demux never reaches `TracksResolved` and
+/// holds every probing/parked track's backlog and each live track's one-behind
+/// access unit until `finish()`. The reader must publish every sample the
+/// demux emits after its own `finish()`, per track.
+#[tokio::test]
+async fn ts_with_a_silent_declared_pid_publishes_everything_at_end_of_input() {
+    let Some(path) = test_fixtures::require(
+        "ts/france-tnt-m6-eac3-zenith.ts",
+        "file_reader end-of-input demux finish",
+    ) else {
+        return;
+    };
+    let bytes = std::fs::read(&path).unwrap();
+    let mut demux = StreamingTsDemux::new();
+    demux.feed(&bytes);
+    demux.finish();
+    let mut expected: std::collections::BTreeMap<TrackId, usize> = Default::default();
+    while let Some(ev) = demux.poll_event() {
+        // Timestamp-less (section-carried) samples cannot be placed on the
+        // reader's presentation timeline and are skipped by design.
+        if let DemuxEvent::Sample {
+            track_id, sample, ..
+        } = ev
+            && sample.pts.is_some()
+        {
+            *expected.entry(track_id).or_default() += 1;
+        }
+    }
+    assert!(!expected.is_empty(), "premise: the demux emits samples");
+
+    let trunk = trunk();
+    let t = trunk.clone();
+    let handle = tokio::spawn(async move { reader(path, false, false, None, t).run().await });
+    handle.await.unwrap().expect("reader must finish cleanly");
+
+    let mut got: std::collections::BTreeMap<TrackId, usize> = Default::default();
+    for (track_id, _) in drain_samples(&trunk) {
+        *got.entry(track_id).or_default() += 1;
+    }
+    assert_eq!(got, expected, "per-track published counts vs demux+finish()");
+}
+
+/// The FLV path has the same end-of-input obligation: each track's trailing
+/// pending sample is only emitted by `StreamingFlvDemux::finish()`.
+#[tokio::test]
+async fn flv_publishes_its_trailing_samples_at_end_of_input() {
+    let rel = "fixtures/flv/av.flv";
+    let bytes = std::fs::read(fixture(rel)).unwrap();
+    let mut demux = transmux::StreamingFlvDemux::new();
+    demux.feed(&bytes).expect("feed flv");
+    demux.finish();
+    let mut expected = 0usize;
+    while let Some(ev) = demux.poll_event() {
+        if matches!(ev, DemuxEvent::Sample { .. }) {
+            expected += 1;
+        }
+    }
+    assert!(expected > 0, "premise: the FLV yields samples");
+
+    let trunk = trunk();
+    let t = trunk.clone();
+    let handle =
+        tokio::spawn(async move { reader(fixture(rel), false, false, None, t).run().await });
+    handle.await.unwrap().expect("reader must finish cleanly");
+    assert_eq!(
+        drain_samples(&trunk).len(),
+        expected,
+        "reader must publish every sample the FLV demux emits after finish()"
+    );
 }
 
 #[tokio::test]
@@ -382,6 +457,7 @@ fn source_sample_count(rel: &str) -> usize {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = StreamingTsDemux::new();
     demux.feed(&bytes);
+    demux.finish();
     let mut n = 0usize;
     while let Some(ev) = demux.poll_event() {
         if let DemuxEvent::Sample { .. } = ev {

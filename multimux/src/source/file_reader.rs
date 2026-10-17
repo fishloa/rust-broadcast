@@ -926,6 +926,10 @@ fn map_demux_error(e: DemuxError) -> FileReaderError {
 fn demux_streaming_ts(bytes: &[u8]) -> Result<Media, DemuxError> {
     let mut demux = StreamingTsDemux::new();
     demux.feed(bytes);
+    // End of input: without `finish()` the demux never announces a track whose
+    // sibling PID stayed silent and never emits each live track's held-back
+    // final access unit (it needs the *next* unit for its duration).
+    demux.finish();
     collect_streaming_media(&mut demux, |d| d.poll_event())
 }
 
@@ -934,6 +938,8 @@ fn demux_streaming_ts(bytes: &[u8]) -> Result<Media, DemuxError> {
 fn demux_streaming_flv(bytes: &[u8]) -> Result<Media, DemuxError> {
     let mut demux = StreamingFlvDemux::new();
     demux.feed(bytes).map_err(DemuxError::Flv)?;
+    // End of input: flush each track's held-back trailing sample.
+    demux.finish();
     collect_streaming_media(&mut demux, |d| d.poll_event())
 }
 
