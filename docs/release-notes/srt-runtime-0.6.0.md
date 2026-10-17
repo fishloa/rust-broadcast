@@ -5,12 +5,12 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Epoch-forced major-class release.** `SrtSocket::rendezvous` / `rendezvous_with`: the tokio adapter now drives the sans-IO Rendezvous handshake (section 4.3.2) over a bound UDP socket, verified against a real peer (`srt-live-transmit` in `mode=rendezvous`).
+**Epoch-forced major-class release with one additive feature.** `srt-runtime` follows the `broadcast-common` 9 -> 10 caret epoch. New: `io::SrtSocket::rendezvous` / `rendezvous_with`, so the tokio adapter now drives the sans-IO Rendezvous handshake (section 4.3.2) over a bound UDP socket; before, only the sans-IO engine existed. It is verified against a real peer: `tests/libsrt_rendezvous.rs` runs `srt-live-transmit` in `mode=rendezvous` over loopback in both data directions, repeated with fresh random cookies so both Initiator and Responder outcomes occur (it skips loudly when libsrt is absent; `SRT_REQUIRE_LIBSRT=1` turns the skip into a failure), and `tests/io_rendezvous.rs` is the self-vs-self counterpart that runs everywhere.
 
 ## Why this version
 
 - **Proposed version:** 0.5.0 -> **0.6.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** minor (SrtSocket::rendezvous (additive)).
+- **Own API/behaviour change class:** minor (additive `SrtSocket::rendezvous`/`rendezvous_with`; the Caller path's post-handshake wiring is now the shared `SrtSocket::established`, an internal refactor).
 - **cargo-semver-checks vs live 0.5.0 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
 - **Epoch cascade:** epoch cascade from broadcast-common. Siblings it depends on that move epoch in this wave: broadcast-common.
 - **Caret epoch:** 0.5 -> 0.6; every workspace dependent must move with it.
@@ -24,7 +24,31 @@ _Released 2026-10-16._
 
 ## Breaking changes and migration
 
-No API break of its own; the major is the `broadcast-common` epoch cascade.
+`srt-runtime` has no source-breaking change of its own; the major is the `broadcast-common` epoch cascade.
+
+### 1. `broadcast-common` 10
+
+`broadcast-common` 10 removed `Serialize::to_bytes()` (the default method that panicked when `serialize_into` failed). Code that serialises any `srt-runtime` type through it must switch to the fallible form:
+
+```rust
+// before
+let bytes = value.to_bytes();
+// after
+let bytes = value.try_to_bytes()?;   // Result<Vec<u8>, _>
+```
+
+Your dependency graph must resolve a single `broadcast-common` 10 (a second copy on 9.x is a different `Serialize` trait and the types will not satisfy it).
+
+### 2. Rendezvous mode (new)
+
+Both peers bind a known local port and send to each other's address at the same time; the cookie contest picks Initiator or Responder. Enable the `tokio` feature and call:
+
+```rust
+let sock = SrtSocket::rendezvous(local_addr, remote_addr, handshake_config).await?;
+// or SrtSocket::rendezvous_with(local_addr, remote_addr, handshake_config, io_config).await?
+```
+
+`local_addr`'s port must be the one the peer targets. Like `connect`, it refuses a `crypto`-enabled `HandshakeConfig` with `Error::EncryptionUnsupported` before any I/O (the Rendezvous engine never negotiates keys). `Error::Rejected` carries the peer's rejection reason and `Error::HandshakeTimedOut` means the peer never completed the exchange within the handshake budget.
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
