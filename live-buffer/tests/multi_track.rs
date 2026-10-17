@@ -277,25 +277,89 @@ fn registered_but_silent_track_blocks_then_times_out() {
     assert!(waited < timeout + 2 * STEP_US);
 }
 
-/// Every track silent: fall back to the latest known end.
+/// A global delivery gap (nothing delivered anywhere) excludes nobody: the
+/// effective end stays the MIN of the last ends, not the latest.
 #[test]
-fn all_tracks_silent_falls_back_to_the_latest_end() {
+fn global_gap_keeps_the_minimum_of_the_last_ends() {
     let mut s = Sim::new(cfg());
     s.c.on_track_media(s.now, AUDIO, BASE);
     s.c.on_track_media(s.now, VIDEO, BASE);
     s.now += STEP_US;
     s.c.on_track_media(s.now, AUDIO, at(BASE, 1_000_000));
-    s.c.on_track_media(s.now, VIDEO, at(BASE, 2_500_000));
+    s.c.on_track_media(s.now, VIDEO, at(BASE, 4_000_000));
     s.tick();
     // min = audio at 1.0 s: below the 1.8 s start threshold.
     assert!(s.starts().is_empty());
     assert_eq!(s.c.stats().limiting_track, Some(AUDIO));
-    s.now += cfg().track_silence_timeout_us + STEP_US;
+    let gap_end = s.now + 2 * cfg().track_silence_timeout_us;
+    while s.now < gap_end {
+        s.now += STEP_US;
+        s.tick();
+    }
+    assert!(s.starts().is_empty(), "started on stale video end in a gap");
+    assert_eq!(s.c.stats().limiting_track, Some(AUDIO));
+    // Audio returns: the start lead is the audio (minimum) end.
+    s.c.on_track_media(s.now, AUDIO, at(BASE, 3_000_000));
     s.tick();
-    // Both silent: the latest known end (video, 2.5 s) is used.
     let starts = s.starts();
     assert_eq!(starts.len(), 1);
-    assert_eq!(starts[0].1, 2_500_000);
+    assert_eq!(starts[0].1, 3_000_000);
+}
+
+/// The integrator's repro: Pause with audio starving, then a global gap longer
+/// than the silence timeout. No Resume during the gap; Resume only once audio
+/// data is back and its lead satisfied; no second stall.
+#[test]
+fn global_gap_after_pause_does_not_resume_on_stale_data() {
+    let mut s = started_sim();
+    let stopped = s.now;
+    while s.pauses().is_empty() {
+        s.step(false, true);
+        assert!(s.now - stopped < 2_900_000, "never starved");
+    }
+    assert_eq!(s.c.state(), State::Starved);
+    // Global gap: nothing delivered for well over the timeout.
+    let gap_end = s.now + cfg().track_silence_timeout_us + 2_000_000;
+    while s.now < gap_end {
+        s.now += STEP_US;
+        s.tick();
+        assert!(s.resumes().is_empty(), "Resume during a global gap");
+    }
+    assert_eq!(s.c.state(), State::Starved);
+    assert_eq!(s.c.stats().limiting_track, Some(AUDIO));
+    // Data returns on both tracks; Resume only after audio is delivered.
+    let back = s.now;
+    while s.resumes().is_empty() {
+        s.step(true, true);
+        assert!(s.now - back < 6_000_000, "never resumed");
+    }
+    assert!(s.resumes()[0] > back);
+    assert_eq!(s.pauses().len(), 1, "second stall after the gap");
+    assert_eq!(s.c.state(), State::Playing);
+}
+
+/// A registered track that never delivered is not excluded by a global gap:
+/// it blocks until another track delivers again (only then is it silent
+/// relative to a delivering track).
+#[test]
+fn never_delivered_track_is_excluded_only_while_others_deliver() {
+    let mut s = Sim::new(cfg());
+    s.c.on_tick(s.now, None);
+    s.c.register_track(AUDIO);
+    // One big video delivery (enough lead to start), then nothing at all.
+    s.c.on_track_media(s.now, VIDEO, BASE);
+    s.now += STEP_US;
+    s.c.on_track_media(s.now, VIDEO, at(BASE, 2_500_000));
+    let end = s.now + 3 * cfg().track_silence_timeout_us;
+    while s.now < end {
+        s.now += STEP_US;
+        s.tick();
+        assert!(s.starts().is_empty(), "started in a global gap");
+    }
+    // Video delivers again: AUDIO is now silent relative to it and excluded.
+    s.c.on_track_media(s.now, VIDEO, at(BASE, 2_600_000));
+    s.tick();
+    assert_eq!(s.starts().len(), 1);
 }
 
 /// `on_media` is track-0 shorthand: it joins the per-track minimum.
