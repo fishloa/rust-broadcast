@@ -26,12 +26,13 @@ use dvb_si::tables::pmt::PmtSection;
 /// field is in place before the re-query timer is wired up.
 ///
 /// **`Duration::ZERO` (opt-in, since #1032).** The feature was on by default
-/// at 10s until #1032: the timer's `query` half (EN 50221 §8.4.3.5) is
-/// needed to elicit a fresh `ca_pmt_reply`, but `stack.rs`'s `descramble`
-/// already documents that a live AlphaCrypt/Irdeto module never answers
-/// `query` at all — so on the one CAM this crate has verified against, the
-/// query half is a no-op and the feature delivers nothing a host doesn't
-/// already get from spontaneous `ca_pmt_reply`s. Call
+/// at 10s until #1032, when a lone `query` every 10 s was found to stop an
+/// AlphaCrypt/Irdeto module descrambling. The timer now sends `update/query`
+/// immediately followed by `update/ok_descrambling`, which was hardware-verified
+/// on an entitled AlphaCrypt One4All V2.5 (the module answered most queries with
+/// `ca_enable = 0x81` and descrambling never gapped), but it stays opt-in: the
+/// periodic re-query only helps a host that wants a fresh `ca_pmt_reply`, and it
+/// has been verified on that one CAM only. Call
 /// [`Driver::set_requery_interval`](crate::driver::Driver::set_requery_interval)
 /// explicitly once re-query is verified against your own CAM.
 pub const REQUERY_DEFAULT: Duration = Duration::ZERO;

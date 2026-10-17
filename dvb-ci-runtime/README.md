@@ -154,9 +154,17 @@ Only what the CHANGELOG records:
   was run for 150 s, 111k `feed_ts` calls, max 249 us, 0 errors (#1066); the
   device rejects `O_RDWR` with `EINVAL` and `CA_GET_SLOT_INFO` may return `EINVAL`
   (the slot is then assumed ready).
-- Not verified on hardware: the periodic `ca_pmt` re-query (no CAM tested answers
-  the `query` half), CardInserted/Removed/Changed inference, and every path not
-  listed above.
+- Same CXD2099 `ci0` with an entitled AlphaCrypt One4All V2.5 (CAID 0x0650,
+  ORF1 on 19.2E 11302H), 180 s runs, 2026-10-16: the opt-in 10 s `ca_pmt`
+  re-query is sent as `update/query` immediately followed by
+  `update/ok_descrambling` (12 pairs in the decrypted span); the module answered
+  most with `ca_enable = 0x81` (possible), descrambling continued with no gap in
+  any 10 s window, and `feed_ts` never stalled (max 412 us over 133k calls).
+  Before the `ok_descrambling` follow-up, the lone `query` every 10 s stopped
+  descrambling (#1032). Stock `CaDescrambler::feed_ts` decrypts from about 55 s
+  (card warm-up after the CA reset) once the CAT PID is routed (#1296).
+- Not verified on hardware: CardInserted/Removed/Changed inference, and every
+  path not listed above.
 
 ## `ci-probe` — discover and engage an installed CAM
 
