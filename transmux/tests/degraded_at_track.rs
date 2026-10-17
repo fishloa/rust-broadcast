@@ -161,11 +161,7 @@ fn orf3_every_record_on_a_track_pid_names_that_track() {
         let Some(pid) = r.provenance.pid else {
             continue;
         };
-        if let Some(t) = media
-            .tracks
-            .iter()
-            .find(|t| t.spec.source_pid == Some(pid))
-        {
+        if let Some(t) = media.tracks.iter().find(|t| t.spec.source_pid == Some(pid)) {
             assert_eq!(r.track, Some(t.spec.track_id), "pid {pid:?}");
             checked += 1;
         } else {
