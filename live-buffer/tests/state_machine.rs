@@ -1028,3 +1028,15 @@ fn seeded_memory_raises_the_start_target_for_the_hold_and_decay() {
     let s2 = c.snapshot_memory();
     assert_eq!(s2.peak_us, 1_450_000);
 }
+
+/// `StallMemorySnapshot::new` is `const` (FFI wrappers build statics with it;
+/// the struct is `#[non_exhaustive]`, so no literal outside the crate).
+#[test]
+fn snapshot_new_is_const_and_matches_fields() {
+    const S: StallMemorySnapshot = StallMemorySnapshot::new(7, 9);
+    assert_eq!((S.peak_us, S.age_us), (7, 9));
+    assert_eq!(
+        StallMemorySnapshot::new(0, 0),
+        StallMemorySnapshot::default()
+    );
+}

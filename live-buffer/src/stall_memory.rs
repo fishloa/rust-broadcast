@@ -22,7 +22,10 @@ pub struct StallMemorySnapshot {
 }
 
 impl StallMemorySnapshot {
-    /// Build a snapshot.
+    /// Build a snapshot. The struct is `#[non_exhaustive]`, so a foreign
+    /// crate or FFI wrapper cannot use a struct literal: this `const fn` is
+    /// the constructor (usable in `const`/`static` context; `Default` is the
+    /// empty memory and the fields stay public for reading).
     #[must_use]
     pub const fn new(peak_us: Micros, age_us: Micros) -> Self {
         Self { peak_us, age_us }

@@ -179,6 +179,19 @@ impl BufferController {
         self.tracks.register(track, self.latest);
     }
 
+    /// Remove `track` (a replaced or dead audio/video track) so it can no
+    /// longer hold back the lead: its end and any registration are forgotten
+    /// at once, so the minimum is taken over the remaining tracks and a
+    /// start/resume that was waiting on it is released on the next tick.
+    /// [`Stats::limiting_track`] and the track named by a later `Pause` follow
+    /// the remaining set. An unknown `track` is a no-op. If no track is left
+    /// there is no effective end (ticks do nothing, as before the first
+    /// delivery) until a track delivers or is registered again. The track may
+    /// be reported again later; it then rejoins as a new one.
+    pub fn unregister_track(&mut self, track: u32) {
+        self.tracks.unregister(track);
+    }
+
     /// Per-track media position: `media_end_27mhz` is the end of the last
     /// demuxed sample of `track` in the playback (PTS) domain (same units and
     /// first-report rule as [`on_media`](Self::on_media)). The controller keeps
