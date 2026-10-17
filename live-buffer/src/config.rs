@@ -223,14 +223,44 @@ pub struct ControllerConfig {
     /// starve playback forever (3 s).
     #[cfg_attr(feature = "serde", serde(default = "default_track_silence_timeout_us"))]
     pub track_silence_timeout_us: Micros,
+    /// Per-track delivery-granularity floor on/off (default on): the target is
+    /// kept at least `max over tracks of (largest media-end step) + policy.margin_us`,
+    /// so a track that delivers in coarse bursts (MP2 audio in ~0.3 s bursts)
+    /// cannot starve between bursts. See `DESIGN.md` section 0.7.
+    #[cfg_attr(feature = "serde", serde(default = "default_track_granularity"))]
+    pub track_granularity: bool,
+    /// How long a track's largest delivery step is held before it decays (30 s).
+    #[cfg_attr(feature = "serde", serde(default = "default_granularity_hold_us"))]
+    pub granularity_hold_us: Micros,
+    /// Linear decay of a held delivery step to zero after the hold (30 s).
+    #[cfg_attr(feature = "serde", serde(default = "default_granularity_decay_us"))]
+    pub granularity_decay_us: Micros,
 }
 
 /// Default of [`ControllerConfig::track_silence_timeout_us`].
 pub const DEFAULT_TRACK_SILENCE_TIMEOUT_US: Micros = 3_000_000;
+/// Default of [`ControllerConfig::track_granularity`].
+pub const DEFAULT_TRACK_GRANULARITY: bool = true;
+/// Default of [`ControllerConfig::granularity_hold_us`].
+pub const DEFAULT_GRANULARITY_HOLD_US: Micros = 30_000_000;
+/// Default of [`ControllerConfig::granularity_decay_us`].
+pub const DEFAULT_GRANULARITY_DECAY_US: Micros = 30_000_000;
 
 #[cfg(feature = "serde")]
 fn default_track_silence_timeout_us() -> Micros {
     DEFAULT_TRACK_SILENCE_TIMEOUT_US
+}
+#[cfg(feature = "serde")]
+fn default_track_granularity() -> bool {
+    DEFAULT_TRACK_GRANULARITY
+}
+#[cfg(feature = "serde")]
+fn default_granularity_hold_us() -> Micros {
+    DEFAULT_GRANULARITY_HOLD_US
+}
+#[cfg(feature = "serde")]
+fn default_granularity_decay_us() -> Micros {
+    DEFAULT_GRANULARITY_DECAY_US
 }
 
 impl ControllerConfig {
@@ -241,6 +271,9 @@ impl ControllerConfig {
         starve_threshold_us: 20_000,
         nodata_after_us: 200_000,
         track_silence_timeout_us: DEFAULT_TRACK_SILENCE_TIMEOUT_US,
+        track_granularity: DEFAULT_TRACK_GRANULARITY,
+        granularity_hold_us: DEFAULT_GRANULARITY_HOLD_US,
+        granularity_decay_us: DEFAULT_GRANULARITY_DECAY_US,
     };
 
     /// Build and validate a configuration (the per-track silence timeout takes
@@ -261,6 +294,9 @@ impl ControllerConfig {
             starve_threshold_us,
             nodata_after_us,
             track_silence_timeout_us: DEFAULT_TRACK_SILENCE_TIMEOUT_US,
+            track_granularity: DEFAULT_TRACK_GRANULARITY,
+            granularity_hold_us: DEFAULT_GRANULARITY_HOLD_US,
+            granularity_decay_us: DEFAULT_GRANULARITY_DECAY_US,
         };
         c.validate()?;
         Ok(c)
@@ -272,6 +308,28 @@ impl ControllerConfig {
     /// [`Error::InvalidConfig`] ([`ConfigField::TrackSilence`]) when zero.
     pub fn with_track_silence_timeout_us(mut self, timeout_us: Micros) -> Result<Self, Error> {
         self.track_silence_timeout_us = timeout_us;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Switch the per-track delivery-granularity floor on or off.
+    #[must_use]
+    pub fn with_track_granularity(mut self, enabled: bool) -> Self {
+        self.track_granularity = enabled;
+        self
+    }
+
+    /// Replace the granularity memory (hold, then linear decay) and re-validate.
+    ///
+    /// # Errors
+    /// [`Error::InvalidConfig`] ([`ConfigField::GranularityDecay`]) when `decay_us` is zero.
+    pub fn with_granularity_memory_us(
+        mut self,
+        hold_us: Micros,
+        decay_us: Micros,
+    ) -> Result<Self, Error> {
+        self.granularity_hold_us = hold_us;
+        self.granularity_decay_us = decay_us;
         self.validate()?;
         Ok(self)
     }
@@ -292,6 +350,9 @@ impl ControllerConfig {
         }
         if self.track_silence_timeout_us == 0 {
             return Err(Error::InvalidConfig(ConfigField::TrackSilence));
+        }
+        if self.granularity_decay_us == 0 {
+            return Err(Error::InvalidConfig(ConfigField::GranularityDecay));
         }
         Ok(())
     }

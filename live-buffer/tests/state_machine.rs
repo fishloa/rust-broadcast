@@ -215,6 +215,8 @@ fn table_playing() {
         r.c.on_tick(r.now + 5_000, Some(media_end - 10_000 * TICKS_PER_US));
         r.drain()
     };
+    // the starvation is charged to the stall memory, so the target follows
+    // the Pause in the same call (TargetChanged after Pause)
     match ev[..] {
         [
             Event::Pause {
@@ -222,6 +224,7 @@ fn table_playing() {
                 hold_at_27mhz,
                 ..
             },
+            Event::TargetChanged { .. },
         ] => {
             assert_eq!(reason, Reason::DataArriving);
             assert_eq!(hold_at_27mhz, media_end - 10_000 * TICKS_PER_US);

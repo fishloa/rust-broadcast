@@ -244,6 +244,14 @@ impl DeliveryJitter {
         self.hold.value(now_us)
     }
 
+    /// A starvation with data still arriving proves the buffer was too small
+    /// by an unknown amount: remember `depth_us` (the target that failed) in
+    /// the stall memory, so a repeat ratchets the target even when the PDV is
+    /// low.
+    pub(crate) fn note_starvation(&mut self, now_us: Micros, depth_us: Micros) {
+        self.hold.observe(now_us, depth_us);
+    }
+
     /// Anchor a restored snapshot at the clock reading `now_us`.
     pub(crate) fn anchor(&mut self, now_us: Micros) {
         self.hold.anchor(now_us);

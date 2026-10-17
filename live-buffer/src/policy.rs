@@ -25,12 +25,38 @@ impl Policy {
         }
     }
 
-    /// Unclamped need: `max(k1 * baseline + margin, k2 * stall_peak)`.
+    /// Unclamped need:
+    /// `max(k1 * baseline + margin, k2 * stall_peak, granularity + margin)`
+    /// (the last term only when `granularity_us > 0`).
     #[must_use]
-    pub fn need_us(&self, baseline_us: Micros, stall_peak_us: Micros) -> Micros {
+    pub fn need_with_granularity_us(
+        &self,
+        baseline_us: Micros,
+        stall_peak_us: Micros,
+        granularity_us: Micros,
+    ) -> Micros {
         let a = mul_q(baseline_us, self.cfg.k1_q8, Q8_SHIFT).saturating_add(self.cfg.margin_us);
         let b = mul_q(stall_peak_us, self.cfg.k2_q8, Q8_SHIFT);
-        a.max(b)
+        let c = self.granularity_need_us(granularity_us);
+        a.max(b).max(c)
+    }
+
+    /// Unclamped need without a granularity floor:
+    /// `max(k1 * baseline + margin, k2 * stall_peak)`.
+    #[must_use]
+    pub fn need_us(&self, baseline_us: Micros, stall_peak_us: Micros) -> Micros {
+        self.need_with_granularity_us(baseline_us, stall_peak_us, 0)
+    }
+
+    /// The delivery-granularity floor: `granularity + margin`, 0 when there is
+    /// no granularity to cover.
+    #[must_use]
+    pub fn granularity_need_us(&self, granularity_us: Micros) -> Micros {
+        if granularity_us == 0 {
+            0
+        } else {
+            granularity_us.saturating_add(self.cfg.margin_us)
+        }
     }
 
     /// Clamp into `[min_us, max_us]`.
