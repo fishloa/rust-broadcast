@@ -72,6 +72,29 @@ pub struct ResyncStats {
     pub dropped_bytes: u64,
 }
 
+/// One span of bytes the resynchroniser discarded **after** it had locked
+/// (the stream lost sync mid-way, or ended on a truncated packet).
+///
+/// Drained with [`TsResync::take_losses`]; one entry per lost-sync event, so a
+/// caller can report each skipped unit exactly once. Junk *before* the first
+/// lock (a capture that starts mid-packet) is not a loss and is only counted in
+/// [`ResyncStats::dropped_bytes`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct ResyncLoss {
+    /// Byte offset, from the first byte ever fed, where the discarded span starts.
+    pub offset: u64,
+    /// Length of the discarded span in bytes.
+    pub dropped_bytes: u64,
+    /// Number of whole packets emitted before this loss, i.e. the index the
+    /// next intact packet will carry.
+    pub packet_index: u64,
+    /// `true` when the span is a truncated trailing packet found by
+    /// [`TsResync::finish`] rather than a sync loss in mid-stream.
+    pub truncated_tail: bool,
+}
+
 /// Stateful TS byte-stream resynchroniser (ISO/IEC 13818-1 §2.4.3.2).
 ///
 /// Recovers 188-byte MPEG-TS packet alignment from an arbitrary byte stream
@@ -97,6 +120,12 @@ pub struct TsResync {
     head: usize,
     stride: Option<PacketStride>,
     stats: ResyncStats,
+    /// Bytes already compacted away (stream offset of `buf[0]`).
+    consumed: u64,
+    /// Stream offset where the currently open sync loss began.
+    open_loss: Option<u64>,
+    /// Closed losses not yet drained by [`take_losses`](Self::take_losses).
+    losses: Vec<ResyncLoss>,
 }
 
 impl TsResync {
@@ -134,6 +163,14 @@ impl TsResync {
                         self.stats.dropped_bytes += offset as u64;
                         self.head += offset;
                         self.stride = Some(s);
+                        if let Some(start) = self.open_loss.take() {
+                            self.losses.push(ResyncLoss {
+                                offset: start,
+                                dropped_bytes: self.consumed + self.head as u64 - start,
+                                packet_index: self.stats.packets,
+                                truncated_tail: false,
+                            });
+                        }
                     } else {
                         // Keep at most enough bytes to detect a future lock.
                         let keep = LOCK_CONFIRMATIONS * RS_PACKET_SIZE;
@@ -167,6 +204,8 @@ impl TsResync {
                         // Sync byte missing — record the loss and re-scan.
                         self.stats.resyncs += 1;
                         self.stats.dropped_bytes += 1;
+                        self.open_loss
+                            .get_or_insert(self.consumed + self.head as u64);
                         self.head += 1;
                         self.stride = None;
                     }
@@ -180,6 +219,36 @@ impl TsResync {
         self.stride
     }
 
+    /// Drain the sync losses recorded since the last call (see [`ResyncLoss`]).
+    pub fn take_losses(&mut self) -> Vec<ResyncLoss> {
+        core::mem::take(&mut self.losses)
+    }
+
+    /// Declare end of input: close a sync loss that never re-locked and record a
+    /// truncated trailing packet, both retrievable with
+    /// [`take_losses`](Self::take_losses). The buffer is discarded.
+    pub fn finish(&mut self) {
+        let end = self.consumed + self.buf.len() as u64;
+        if let Some(start) = self.open_loss.take() {
+            self.losses.push(ResyncLoss {
+                offset: start,
+                dropped_bytes: end - start,
+                packet_index: self.stats.packets,
+                truncated_tail: false,
+            });
+        } else if self.stride.is_some() && self.head < self.buf.len() {
+            self.losses.push(ResyncLoss {
+                offset: self.consumed + self.head as u64,
+                dropped_bytes: (self.buf.len() - self.head) as u64,
+                packet_index: self.stats.packets,
+                truncated_tail: true,
+            });
+        }
+        self.stats.dropped_bytes += (self.buf.len() - self.head) as u64;
+        self.head = self.buf.len();
+        self.compact();
+    }
+
     /// Accumulated statistics.
     pub fn stats(&self) -> ResyncStats {
         self.stats
@@ -188,6 +257,7 @@ impl TsResync {
     /// Compact the internal buffer by discarding consumed bytes.
     fn compact(&mut self) {
         if self.head > 0 {
+            self.consumed += self.head as u64;
             self.buf.drain(..self.head);
             self.head = 0;
         }
@@ -425,6 +495,42 @@ mod tests {
     // Test 6 — aligned 188 stream yields same packets as plain chunks(188)
     //   (equivalence: fixture-less variant using synthetic data)
     // ------------------------------------------------------------------
+    #[test]
+    fn broken_sync_byte_after_lock_is_one_loss_with_offset() {
+        let mut bytes = Vec::new();
+        for t in 1..=12u8 {
+            bytes.extend_from_slice(&ts_packet(t));
+        }
+        bytes[5 * TS_PACKET_SIZE] = 0x00;
+        let mut r = TsResync::new();
+        let got = r.feed(&bytes);
+        assert_eq!(got.len(), 11);
+        r.finish();
+        let losses = r.take_losses();
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].offset, 5 * TS_PACKET_SIZE as u64);
+        assert_eq!(losses[0].dropped_bytes, TS_PACKET_SIZE as u64);
+        assert_eq!(losses[0].packet_index, 5);
+        assert!(!losses[0].truncated_tail);
+    }
+
+    #[test]
+    fn leading_junk_is_not_a_loss_but_truncated_tail_is() {
+        let mut bytes = vec![0x11; 30];
+        for t in 1..=8u8 {
+            bytes.extend_from_slice(&ts_packet(t));
+        }
+        bytes.extend_from_slice(&[0x22; 50]);
+        let mut r = TsResync::new();
+        let _ = r.feed(&bytes);
+        r.finish();
+        let losses = r.take_losses();
+        assert_eq!(losses.len(), 1);
+        assert!(losses[0].truncated_tail);
+        assert_eq!(losses[0].offset, 30 + 8 * TS_PACKET_SIZE as u64);
+        assert_eq!(losses[0].dropped_bytes, 50);
+    }
+
     #[test]
     fn aligned_188_matches_plain_chunks() {
         let pkts: Vec<_> = (0u8..10).map(|i| ts_packet(i + 1)).collect();

@@ -20,11 +20,17 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         .fold(OFFSET, |h, &b| (h ^ u64::from(b)).wrapping_mul(PRIME))
 }
 
-/// `Debug` of a `Media` minus the always-empty `degraded` field added by
-/// #1144, so the goldens captured before that field keep proving the demux
-/// output itself is unchanged (a non-empty `degraded` still shows).
+/// `Debug` of a `Media` minus the trailing `degraded` field added by #1144,
+/// so the goldens captured before that field keep proving the demux output
+/// itself is unchanged. `degraded` is the last field; the TS demux now fills
+/// it (continuity gaps on `m6-single.ts`), which is pinned by
+/// `ts_sync_loss_degraded.rs` instead.
 fn media_debug(media: &transmux::Media) -> String {
-    legacy_pid_debug(&format!("{media:?}")).replace(", degraded: []", "")
+    let s = legacy_pid_debug(&format!("{media:?}"));
+    match s.rfind(", degraded: [") {
+        Some(i) => format!("{} }}", &s[..i]),
+        None => s,
+    }
 }
 
 /// Typed PIDs (#1159) render as `Pid(0x0100)` in `Debug`; the goldens were

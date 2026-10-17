@@ -4455,9 +4455,43 @@ impl StreamingTsDemux {
     /// processes every newly-aligned packet.
     pub fn feed(&mut self, data: &[u8]) {
         let packets = self.resync.feed(data);
+        let mut losses = self.resync.take_losses().into_iter().peekable();
         for raw in &packets {
+            // A loss sits *between* two packets: report it before the first
+            // intact packet that follows it.
+            while let Some(loss) = losses.next_if(|l| l.packet_index <= self.packet_index) {
+                self.push_resync_loss(loss);
+            }
             self.process_packet(raw);
         }
+        for loss in losses {
+            self.push_resync_loss(loss);
+        }
+    }
+
+    /// Surface one [`mpeg_ts::resync::ResyncLoss`] as a
+    /// [`DemuxEvent::InputDegraded`]: a bad sync byte, garbage or a truncated
+    /// tail is data the demuxer discarded and must not pass silently.
+    fn push_resync_loss(&mut self, loss: mpeg_ts::resync::ResyncLoss) {
+        let kind = if loss.truncated_tail {
+            InputDegradation::TruncatedPacket {
+                offset: loss.offset,
+                dropped_bytes: loss.dropped_bytes,
+            }
+        } else {
+            InputDegradation::SyncLoss {
+                offset: loss.offset,
+                dropped_bytes: loss.dropped_bytes,
+            }
+        };
+        self.events.push_back(DemuxEvent::InputDegraded {
+            track: None,
+            kind,
+            provenance: EventProvenance {
+                pid: None,
+                packet_index: Some(loss.packet_index),
+            },
+        });
     }
 
     /// Best-effort resolved track ID for `pid`, when it has already been
@@ -5509,6 +5543,10 @@ impl StreamingTsDemux {
     /// conclusion, which likewise needed the whole file), and emits the
     /// final one-behind pending sample for every live video/data track.
     pub fn finish(&mut self) {
+        self.resync.finish();
+        for loss in self.resync.take_losses() {
+            self.push_resync_loss(loss);
+        }
         for (&pid, stream) in self.streams.iter_mut() {
             // Only a PES assembler has a trailing partial payload to flush; a
             // trailing partial (incomplete) section is genuinely undecodable
@@ -5715,6 +5753,7 @@ impl<'a> TsDemux<'a> {
         let mut tracks: Vec<Track> = Vec::new();
         let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
         let mut pcr: Vec<PcrSample> = Vec::new();
+        let mut degraded: Vec<InputDegradation> = Vec::new();
         while let Some(event) = demux.poll_event() {
             match event {
                 DemuxEvent::TrackAdded(spec) => {
@@ -5769,11 +5808,13 @@ impl<'a> TsDemux<'a> {
                     discontinuity: discontinuous,
                 }),
                 DemuxEvent::Discontinuity { .. } => {}
-                DemuxEvent::InputDegraded { .. } => {}
+                DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
                 DemuxEvent::TracksResolved { .. } => {}
             }
         }
-        Ok(Media::new(tracks, VIDEO_TIMESCALE).with_pcr(pcr))
+        let mut media = Media::new(tracks, VIDEO_TIMESCALE).with_pcr(pcr);
+        media.degraded = degraded;
+        Ok(media)
     }
 }
 

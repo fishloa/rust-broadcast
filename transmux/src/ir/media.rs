@@ -101,8 +101,11 @@ pub struct Media {
     pub skipped: Vec<SkippedTrack>,
     /// Damage a one-shot demuxer skipped over instead of failing the whole
     /// input (audit T16, #1144): one entry per skipped container unit (see
-    /// [`InputDegradation::MalformedUnit`]), in input order. Empty for a clean
-    /// input and for every demuxer that never resynchronises.
+    /// [`InputDegradation::MalformedUnit`]), in input order. For a TS input it
+    /// also carries every `InputDegraded` the streaming core raised
+    /// ([`InputDegradation::SyncLoss`], [`InputDegradation::TruncatedPacket`],
+    /// transport errors, continuity gaps). Empty for a clean input and for
+    /// every demuxer that never resynchronises.
     pub degraded: Vec<InputDegradation>,
 }
 

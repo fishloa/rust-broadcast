@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `resync::ResyncLoss`, `TsResync::take_losses()` and `TsResync::finish()`: every span the resynchroniser discards *after* its first lock (broken sync byte, garbage between packets, a tail that never re-locks, a truncated trailing packet) is now reported with its stream byte offset, length and packet index instead of only bumping `ResyncStats` (the cause of a silent sample loss in `transmux`'s `TsDemux`). Additive; junk before the first lock is still only counted.
+
 ## [0.6.0] - 2026-10-17
 ### Documentation
 - README rewritten to the workspace crate-README standard: what the crate does and does not do, a standards table (edition, scope, status), feature flags, a doctested quick start, the implemented API surface, design notes and related crates. Where the crate has a library target the crate-root docs are now `include_str!("../README.md")`, so docs.rs and crates.io show the same text.
