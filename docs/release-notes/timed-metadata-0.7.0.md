@@ -5,7 +5,7 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Epoch-forced major-class release.** `webvtt` text helpers (`parse_timestamp`, `format_timestamp_with`, `unescape_payload`, `normalize_line_endings`, `payload_lines`) now have one owner (previously split with `caption-convert`), and the 608/708/Teletext extractors no longer emit zero-length cues.
+**Epoch-forced major-class release with additive API and one behavioural fix; no API break of its own.** The WebVTT/SRT text helpers (`parse_timestamp`, `format_timestamp_with`, `hms_ms`, `unescape_payload`, `normalize_line_endings`, `payload_lines`, `TimestampError`) now live in one place, a new `webvtt::text` module (previously the hour/minute/second math was duplicated in `caption-convert`), and the CEA-608/708 and Teletext cue extractors no longer emit zero-length or negative cues. The crate rebuilds against `broadcast-common` 10, `broadcast-hls` 0.4, `cc-data` 0.7, `dvb-vbi` 0.5, `mp4-emsg` 0.5 and `scte35-splice` 4, which is what makes the version `0.7.0`. The README and crate-root docs are restructured (scope, standards table, SCTE-35 / DATERANGE / emsg conversion matrix, feature table, compiled quick start).
 
 ## Why this version
 
@@ -34,9 +34,26 @@ _Released 2026-10-16._
 
 ## Breaking changes and migration
 
-No API break of its own; the major is the epoch cascade (`broadcast-common`, `cc-data`, `scte35-splice`, `mp4-emsg`, `dvb-vbi`).
+No API break of its own. What to do:
+
+- Resolve a single copy of each moved sibling in your dependency graph: `broadcast-common` 10, `broadcast-hls` 0.4, `mp4-emsg` 0.5, `scte35-splice` 4 and, with the optional `cc-data` / `teletext` features, `cc-data` 0.7 and `dvb-vbi` 0.5. Types from these crates (SCTE-35 commands, `emsg` boxes, cc_data triplets, Teletext data fields) are consumed by this crate's API, so a mixed graph fails to type-check.
+- `Serialize::to_bytes` was removed in `broadcast-common` 10 (it could panic); use `try_to_bytes()?`.
+- Behavioural: caption cue streams can contain fewer cues than before. Several caption updates under one access-unit PTS (21 of them on CC1 of the mux.js multi-channel TS) used to produce intermediate cues whose end equalled their start; those are no longer emitted, so counts or goldens that included them change.
+- If you carry your own copy of WebVTT/SRT timestamp or line-ending handling, switch to the shared helpers:
+
+```rust
+use timed_metadata::webvtt::{parse_timestamp, normalize_line_endings, payload_lines};
+```
+
+(`format_timestamp` and `cue_block` are now built on the same helpers; `teletext::{encode,decode}_odd_parity` keep their signatures and delegate to `broadcast_common::parity`.)
 
 ## What changed (from CHANGELOG `[Unreleased]`)
+
+#### Documentation
+- README and crate-root docs restructured: scope, standards table, SCTE-35 / DATERANGE / emsg conversion matrix, feature table, and a compiled quick-start doctest.
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `broadcast-hls` 0.3 -> 0.4, `cc-data` 0.6 -> 0.7, `dvb-vbi` 0.4 -> 0.5, `mp4-emsg` 0.4 -> 0.5, `scte35-splice` 3 -> 4). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 #### Fixed
 - The 608/708/Teletext cue extractors no longer emit zero-length (or negative) cues. Several caption updates under one access-unit PTS (common in real captures: 21 on CC1 of the mux.js multi-channel TS) produced intermediate cues whose end equalled their start, which are never on screen (#1220).
@@ -47,11 +64,11 @@ No API break of its own; the major is the epoch cascade (`broadcast-common`, `cc
 #### Changed
 - Internal: odd-parity encode/check comes from `broadcast_common::parity` instead of a local copy (`timed_metadata::webvtt::teletext::{encode,decode}_odd_parity` stay as thin wrappers, public API unchanged); no behaviour change (#1212).
 
-#### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
-
 ## Merged changes since `timed-metadata-v0.6.1`
 
+- docs: correct false 'not vendored' / 'edition unverified' claims (#1311)
+- docs: cluster C crate READMEs + crate-root docs (standards tables, feature flags, scope, verified editions) (#1284)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
 - tests: one fixture resolver (public -> private/fixtures -> .test-streams); move local-only captures to the private repo (#1259) (#1260)
 - Real CEA-608/708 captures: fixtures, tests, and the bugs they exposed (#1220) (#1221)
 - broadcast_common::parity: shared odd-parity helpers; migrate cc-data, timed-metadata, caption-convert (#1212) (#1213)
