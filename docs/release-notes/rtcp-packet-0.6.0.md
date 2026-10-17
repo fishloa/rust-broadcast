@@ -5,12 +5,12 @@ status: DRAFT
 
 _Released 2026-10-16._
 
-**Epoch-forced major-class release.** Epoch-forced release. Own change since `rtcp-packet-v0.5.0`: fixes. Its public API does not change in a way that needs source migration; it ships because a workspace sibling it depends on moves to a new caret epoch (see below), and the workspace's epoch-purity rule forbids publishing a crate that still requires the old epoch next to the new one.
+**Breaking only through the `broadcast-common` 9 -> 10 epoch cascade, plus one tightened serializer.** `ReportBlock::cumulative_lost` outside the 24-bit signed range is no longer masked into a different loss count: `serialize_into` returns `Error::InvalidValue` (#1129). SDES item text and BYE reason are now UTF-8 validated before the `String` is allocated, so a long invalid text field no longer costs a copy of itself.
 
 ## Why this version
 
 - **Proposed version:** 0.5.0 -> **0.6.0** (major-class: 0.x minor-epoch bump).
-- **Own API/behaviour change class:** patch (fixes).
+- **Own API/behaviour change class:** patch-level fixes (a hand-built `ReportBlock` with an out-of-range `cumulative_lost` now fails to serialize instead of writing a different value; values produced by `parse` always fit).
 - **cargo-semver-checks vs live 0.5.0 (all features):** none flagged. (Lint-based: it misses type changes of existing fields/arguments, so the CHANGELOG BREAKING list is the primary evidence.)
 - **Epoch cascade:** epoch cascade from broadcast-common. Siblings it depends on that move epoch in this wave: broadcast-common.
 - **Caret epoch:** 0.5 -> 0.6; every workspace dependent must move with it.
@@ -24,12 +24,37 @@ _Released 2026-10-16._
 
 ## Breaking changes and migration
 
-No source-level migration is required beyond bumping the version requirement and, if the crate exposes `broadcast-common` types in its API, moving to `broadcast-common` 10 in the same dependency graph.
+### 1. `ReportBlock::cumulative_lost` is range-checked
+
+`cumulative_lost` is a 24-bit signed field (`-0x80_0000..=0x7F_FFFF`). Previously `0x80_0000` was masked with `& 0x00FF_FFFF` and serialized as a different loss count; now:
+
+```rust
+let rb = ReportBlock { cumulative_lost: 0x80_0000, ..rb };
+assert!(rb.serialize_into(&mut buf).is_err());   // Error::InvalidValue
+```
+
+Clamp or saturate on your side if you compute the value from counters.
+
+### 2. `broadcast-common` 10
+
+`broadcast-common` 10 removed `Serialize::to_bytes()` (the default method that panicked when `serialize_into` failed). Code that serialises any `rtcp-packet` type through it must switch to the fallible form:
+
+```rust
+// before
+let bytes = value.to_bytes();
+// after
+let bytes = value.try_to_bytes()?;   // Result<Vec<u8>, _>
+```
+
+Your dependency graph must resolve a single `broadcast-common` 10 (a second copy on 9.x is a different `Serialize` trait and the types will not satisfy it).
 
 ## What changed (from CHANGELOG `[Unreleased]`)
 
-#### Changed
-- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+#### Documentation
+- README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
+
+#### Changed (BREAKING: epoch — requires broadcast-common 10)
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 #### Fixed
 
@@ -40,6 +65,9 @@ No source-level migration is required beyond bumping the version requirement and
 
 ## Merged changes since `rtcp-packet-v0.5.0`
 
+- docs: clear per-crate documentation for cluster B (16 crates) (#1291)
+- Fix the confirmed signalling/captions review findings (supersedes #1279) (#1282)
+- Fix confirmed transport/ancillary review defects (supersedes #1277) (#1280)
 - Cleanups: remove panicking Serialize::to_bytes (BREAKING, #1143) + serde default-features off in 32 no_std manifests with CI thumbv7em serde matrix (#1183) (#1185)
 - Systemic umbrellas T1/T2/T14: serializer width guards (28 crates), hostile-count DoS fix, secrets hygiene, origin-scoped credentials, secure ingest default (BREAKING items marked, NO release) (#1182)
 - Audit critical-bug verification pass: 72 issues re-verified against main; fixes for #1012 #1022 #1034 #1035 #1056 + regression tests (NO release) (#1180)
