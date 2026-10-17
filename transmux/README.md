@@ -52,6 +52,8 @@ Rows are the demux (`Unpackage`) inputs, columns the mux (`Package`) outputs. A 
 
 Notes. The TS-carriable codecs are AVC, HEVC, MPEG-2 video, AAC, MPEG-1/2 audio, AC-3, E-AC-3, DTS, MPEG-H and opaque `Data`; VVC, AV1, VP9, Opus, FLAC, AC-4, subtitles, VP8 and Vorbis have no TS mapping in this crate, and `TsMux` drops such a track rather than erroring. The MKV mux carries AVC, HEVC, VP9, VP8, AV1, AAC, Opus, Vorbis, AC-3 and E-AC-3. `FlvMux` and `RtmpMux` carry only AVC video and AAC audio and reject any other codec with `FlvError::UnsupportedCodec`; `SmoothPackager` likewise rejects everything but H.264, AAC-LC and text. `FlvDemux` skips non-AVC video and non-AAC audio with no track and no error, whereas `TsDemux` never drops a stream (unknown stream types become opaque `Data` tracks). Where a cell names only some codecs, whether a track outside that set is rejected or dropped is per output (for TS it is dropped); this README does not enumerate it for MKV. Live producers also exist: `Segmenter` (CMAF), `LlHlsSegmenter`, `StreamingTsHlsSegmenter`, `LlSegmenter` / `LlDashPackager`.
 
+MPEG-H over TS: the synthesized `MPEG-H_3dAudio_descriptor` (H.222.0 Table 2-121) writes `interactivityEnabled` = 0 and `compatibleProfileSetsPresent` = 1 (no compatible-set list) because the IR carries neither. The descriptor's 6-bit `referenceChannelLayout` is taken from the `mhaC` byte; a value above `0x3F` cannot be represented there and is written as `0` (unspecified) instead of failing the mux.
+
 ## Codec matrix
 
 Header parse and the container box only; no encode or decode.
