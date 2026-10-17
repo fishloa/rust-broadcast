@@ -8,6 +8,7 @@
 //! `component_tag_list_length`(8) + tags; `private_length`(8) + private bytes;
 //! then `reserved_future_use`(8)×N4 up to `descriptor_length`.
 
+use super::label_bytes::LabelBytes;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
@@ -92,7 +93,7 @@ pub struct RecordingLabel<'a> {
     /// `label_char` bytes — labels a part of the application within its
     /// transport protocol. The format is defined by platform specifications
     /// (Note 3), so the bytes are opaque here.
-    pub label: &'a [u8],
+    pub label: LabelBytes<'a>,
     /// `storage_properties`.
     pub storage_properties: StorageProperties,
     /// `reserved`(6) after `storage_properties`; parsed value kept, default
@@ -103,7 +104,7 @@ pub struct RecordingLabel<'a> {
 impl<'a> RecordingLabel<'a> {
     /// A label with the spec-default reserved bits.
     #[must_use]
-    pub const fn new(label: &'a [u8], storage_properties: StorageProperties) -> Self {
+    pub const fn new(label: LabelBytes<'a>, storage_properties: StorageProperties) -> Self {
         Self {
             label,
             storage_properties,
@@ -206,7 +207,7 @@ impl<'a> Parse<'a> for ApplicationRecordingDescriptor<'a> {
                 reason: "application_recording_descriptor missing storage_properties byte",
             })?;
             labels.push(RecordingLabel {
-                label,
+                label: LabelBytes::new(label),
                 storage_properties: StorageProperties::from_u8(props >> STORAGE_PROPERTIES_SHIFT),
                 reserved: props & LABEL_RESERVED_MASK,
             });
@@ -277,7 +278,7 @@ impl Serialize for ApplicationRecordingDescriptor<'_> {
         for l in &self.labels {
             buf[pos] = broadcast_common::len::fit_u8(l.label.len(), "label_length")?;
             pos += 1;
-            buf[pos..pos + l.label.len()].copy_from_slice(l.label);
+            buf[pos..pos + l.label.len()].copy_from_slice(l.label.as_bytes());
             pos += l.label.len();
             let props = broadcast_common::len::fit_mask(
                 l.storage_properties.to_u8(),
@@ -325,7 +326,7 @@ mod tests {
         assert!(!d.av_synced_flag && !d.initiating_replay_flag);
         assert_eq!(d.reserved, 3);
         assert_eq!(d.labels.len(), 1);
-        assert_eq!(d.labels[0].label, b"ab");
+        assert_eq!(d.labels[0].label.as_bytes(), b"ab");
         assert_eq!(
             d.labels[0].storage_properties,
             StorageProperties::CriticalToStore
@@ -355,7 +356,7 @@ mod tests {
     fn default_and_builder_use_spec_reserved() {
         let d = ApplicationRecordingDescriptor {
             labels: vec![RecordingLabel::new(
-                b"x",
+                LabelBytes::new(b"x"),
                 StorageProperties::OptionalToStore,
             )],
             ..Default::default()
@@ -382,7 +383,9 @@ mod tests {
     #[test]
     fn over_range_values_rejected_on_serialize() {
         let labels: Vec<_> = (0..256)
-            .map(|_| RecordingLabel::new(b"", StorageProperties::ShouldNotBeStored))
+            .map(|_| {
+                RecordingLabel::new(LabelBytes::new(b""), StorageProperties::ShouldNotBeStored)
+            })
             .collect();
         let d = ApplicationRecordingDescriptor {
             labels,

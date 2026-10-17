@@ -19,14 +19,15 @@ use dvb_si::descriptors::ait::{
     ApplicationStorageDescriptor, DiiLocation, DiiLocationDescriptor,
     DvbHtmlApplicationBoundaryDescriptor, DvbHtmlApplicationLocationDescriptor,
     GraphicsConfiguration, GraphicsConstraintsDescriptor, IconFlags, IconFormat,
-    IpSignallingDescriptor, PrefetchDescriptor, PrefetchEntry, RecordingLabel, StorageProperties,
-    StorageProperty, parse_ait_loop,
+    IpSignallingDescriptor, LabelBytes, PrefetchDescriptor, PrefetchEntry, RecordingLabel,
+    StorageProperties, StorageProperty, parse_ait_loop,
 };
 use dvb_si::descriptors::carousel::{
     AnyCarouselDescriptor, CarouselDescriptorLoop, CompressedModuleDescriptor, Crc32Descriptor,
     EstDownloadTimeDescriptor, GroupLinkDescriptor, InfoDescriptor, LinkPosition,
     LocationDescriptor, ModuleLinkDescriptor, NameDescriptor, SsuModuleType,
-    SsuModuleTypeDescriptor, SubgroupAssociationDescriptor, SubgroupTag, TypeDescriptor, parse_carousel_loop,
+    SsuModuleTypeDescriptor, SubgroupAssociationDescriptor, SubgroupTag, TypeDescriptor,
+    parse_carousel_loop,
 };
 use dvb_si::tables::ait::AitSection;
 use dvb_si::tables::dsmcc::DsmccSection;
@@ -240,7 +241,7 @@ fn ait_loop_with_every_new_descriptor_walks_typed_and_round_trips() {
     let recording = ApplicationRecordingDescriptor {
         scheduled_recording_flag: true,
         labels: vec![RecordingLabel::new(
-            b"lbl",
+            LabelBytes::new(b"lbl"),
             StorageProperties::CriticalToStore,
         )],
         component_tags: vec![0x10],
@@ -261,7 +262,7 @@ fn ait_loop_with_every_new_descriptor_walks_typed_and_round_trips() {
     let prefetch = PrefetchDescriptor {
         transport_protocol_label: 1,
         entries: vec![PrefetchEntry {
-            label: b"img",
+            label: LabelBytes::new(b"img"),
             prefetch_priority: 50,
         }],
     };
@@ -518,7 +519,10 @@ fn hand_written_spec_byte_vectors() {
     assert_eq!(pf.transport_protocol_label, 1);
     assert_eq!(pf.entries.len(), 1);
     assert_eq!(
-        (pf.entries[0].label, pf.entries[0].prefetch_priority),
+        (
+            pf.entries[0].label.as_bytes(),
+            pf.entries[0].prefetch_priority
+        ),
         (&b"img"[..], 50)
     );
     // Table 83 DII_location: 0D len=5 label=1, { rfu(1)=1 DII_identification(15)=0x0102

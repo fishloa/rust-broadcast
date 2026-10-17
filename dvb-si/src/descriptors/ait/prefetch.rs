@@ -8,6 +8,7 @@
 //! `descriptor_length`. The label is matched byte-for-byte against the
 //! `label_descriptor`s of DII `moduleInfo` userInfo, hence opaque bytes.
 
+use super::label_bytes::LabelBytes;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
@@ -29,7 +30,7 @@ pub const PRIORITY_MAX: u8 = 100;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PrefetchEntry<'a> {
     /// `label_byte` array — module label (opaque, compared byte-for-byte).
-    pub label: &'a [u8],
+    pub label: LabelBytes<'a>,
     /// `prefetch_priority` — 1 (lowest) to 100 (highest) per spec; parsing is
     /// tolerant of out-of-range values, [`PrefetchEntry::in_range`] reports them.
     pub prefetch_priority: u8,
@@ -78,7 +79,7 @@ impl<'a> Parse<'a> for PrefetchDescriptor<'a> {
                 });
             }
             entries.push(PrefetchEntry {
-                label: &rest[LABEL_LEN_FIELD..LABEL_LEN_FIELD + n],
+                label: LabelBytes::new(&rest[LABEL_LEN_FIELD..LABEL_LEN_FIELD + n]),
                 prefetch_priority: rest[LABEL_LEN_FIELD + n],
             });
             rest = &rest[LABEL_LEN_FIELD + n + PRIORITY_LEN..];
@@ -116,7 +117,7 @@ impl Serialize for PrefetchDescriptor<'_> {
         for e in &self.entries {
             buf[pos] = broadcast_common::len::fit_u8(e.label.len(), "label_length")?;
             pos += LABEL_LEN_FIELD;
-            buf[pos..pos + e.label.len()].copy_from_slice(e.label);
+            buf[pos..pos + e.label.len()].copy_from_slice(e.label.as_bytes());
             pos += e.label.len();
             buf[pos] = e.prefetch_priority;
             pos += PRIORITY_LEN;
@@ -142,9 +143,9 @@ mod tests {
         let d = PrefetchDescriptor::parse(&BYTES).unwrap();
         assert_eq!(d.transport_protocol_label, 1);
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[0].label, b"img");
+        assert_eq!(d.entries[0].label.as_bytes(), b"img");
         assert!(d.entries[0].in_range());
-        assert_eq!(d.entries[1].label, b"");
+        assert_eq!(d.entries[1].label.as_bytes(), b"");
         assert_eq!(d.entries[1].prefetch_priority, 1);
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
@@ -171,7 +172,7 @@ mod tests {
         let d = PrefetchDescriptor {
             transport_protocol_label: 0,
             entries: vec![PrefetchEntry {
-                label: &long,
+                label: LabelBytes::new(&long),
                 prefetch_priority: 1,
             }],
         };
