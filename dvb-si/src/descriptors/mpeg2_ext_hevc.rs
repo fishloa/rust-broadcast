@@ -13,9 +13,18 @@
 //! inner `SubstreamOffset` loop runs `k < SubstreamCountMinus1[i]` times (the
 //! field is "the number of HEVC tile substreams to be appended", so the loop
 //! count is the field value), and the outer `N1` loop is implied by the
-//! descriptor size (it runs to the end of the body). TSDuck 3.44 writes one
-//! more offset per pattern than that and so disagrees; the divergence is
-//! pinned in `tests/h222_descriptors.rs` and noted in the docs.
+//! descriptor size (it runs to the end of the body).
+//!
+//! **Spec conflict (documented, printed text kept).** The spec contradicts
+//! itself here. Printed text: Table 2-131 `for ( k=0; k<SubstreamCountMinus1[i]; k++)`
+//! and §2.6.126 "the number of HEVC tile substreams to be appended" both give
+//! `SubstreamCountMinus1` offsets; but the field is *named* `Minus1`, and the
+//! reassembly text (§2.17.5.2/§2.17.5.3) has "`k` ranging from 0 to
+//! `SubstreamCountMinus1[i]`" (inclusive, i.e. count + 1 offsets). TSDuck 3.44
+//! takes the latter reading (`SubstreamCountMinus1 = 1` followed by TWO offsets).
+//! Per the spec-fidelity rule this crate reproduces the printed syntax and does
+//! not silently correct it, so TSDuck-encoded 0x13 bodies are **rejected with a
+//! clear `Err`** (not misparsed); pinned in `tests/h222_descriptors.rs`.
 //!
 //! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
 //! and `…-0x0f-0x19.md`. `profile_tier_level_info[i]` is typed as
@@ -389,7 +398,7 @@ impl HevcOperationPoint {
             reserved,
             profile_tier_levels,
             operation_points,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -567,7 +576,7 @@ impl HevcHierarchyExtension {
             reserved_b,
             hierarchy_channel,
             embedded_layers,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -677,7 +686,7 @@ impl HevcTileSubstream {
             HevcTileSubstreamDetail::Pattern {
                 preamble_flag: r.flag()?,
                 pattern_reference: r.u8(7)?,
-                trailing: r.rest().to_vec(),
+                trailing: r.rest()?.to_vec(),
             }
         } else {
             let mut v = Vec::new();

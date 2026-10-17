@@ -57,7 +57,7 @@ impl Mpeg2StereoscopicVideoFormatDescriptor {
         Ok(Self {
             arrangement_type: present.then_some(v),
             reserved: if present { RESERVED_7_DEFAULT } else { v },
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -172,7 +172,7 @@ impl StereoscopicProgramInfoDescriptor {
         Ok(Self {
             reserved: r.u8(5)?,
             stereoscopic_service_type: StereoscopicServiceType::from_u8(r.u8(3)?),
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -338,7 +338,7 @@ impl StereoscopicVideoInfoDescriptor {
         Ok(Self {
             reserved,
             view,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 

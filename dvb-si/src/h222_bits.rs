@@ -103,10 +103,11 @@ impl<'a> BitReader<'a> {
         Ok(&self.data[start..start + n])
     }
 
-    /// Everything left (byte aligned).
-    pub(crate) fn rest(&mut self) -> &'a [u8] {
+    /// Everything left. Errors when the reader is not byte aligned (the
+    /// leftover would otherwise be silently dropped).
+    pub(crate) fn rest(&mut self) -> Result<&'a [u8]> {
         let n = self.remaining_bytes();
-        self.bytes(n).unwrap_or(&[])
+        self.bytes(n)
     }
 }
 
@@ -232,6 +233,20 @@ mod tests {
         let mut r = BitReader::new(&[0xFF, 0xAA, 0xBB], "test");
         r.bits(8).unwrap();
         assert_eq!(r.bytes(2).unwrap(), &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn reader_rest_surfaces_misalignment_instead_of_dropping_data() {
+        let mut r = BitReader::new(&[0xFF, 0xAA, 0xBB], "test");
+        r.bits(3).unwrap();
+        assert!(matches!(
+            r.rest().unwrap_err(),
+            Error::ValueOutOfRange { field: "test", .. }
+        ));
+        let mut r = BitReader::new(&[0xFF, 0xAA, 0xBB], "test");
+        r.bits(8).unwrap();
+        assert_eq!(r.rest().unwrap(), &[0xAA, 0xBB]);
+        assert!(r.rest().unwrap().is_empty());
     }
 
     #[test]

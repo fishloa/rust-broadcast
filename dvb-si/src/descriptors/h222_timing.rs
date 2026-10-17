@@ -156,7 +156,7 @@ impl HevcTimingAndHrd {
                 RESERVED_IDX_DEFAULT
             },
             picture_timing,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -256,7 +256,7 @@ impl VvcTimingAndHrd {
             hrd_management_valid_flag,
             reserved,
             picture_timing,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -311,7 +311,7 @@ impl EvcTimingAndHrd {
             hrd_management_valid_flag,
             reserved,
             picture_timing,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 

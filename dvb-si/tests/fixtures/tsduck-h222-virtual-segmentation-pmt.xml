@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Input for: tstabcomp -c tsduck-h222-virtual-segmentation-pmt.xml -o tsduck-h222-virtual-segmentation-pmt.bin  (TSDuck 3.44-4676) -->
+<tsduck>
+  <PMT service_id="1" version="1" current="true" pcr_pid="0x100">
+    <component elementary_pid="0x100" stream_type="0x02">
+      <virtual_segmentation_descriptor ticks_per_second="100">
+        <partition partition_id="0" SAP_type_max="1" maximum_duration="4096" />
+        <partition partition_id="1" SAP_type_max="2" boundary_PID="0x200" />
+      </virtual_segmentation_descriptor>
+    </component>
+  </PMT>
+</tsduck>

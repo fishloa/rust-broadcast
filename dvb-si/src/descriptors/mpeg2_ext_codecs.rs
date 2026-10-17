@@ -96,7 +96,7 @@ impl LcevcVideo {
             hdr_wcg_idc: HdrWcgIdc::from_u8(r.u8(2)?),
             reserved_zero_2bit: r.u8(2)?,
             video_properties_tag: r.u8(4)?,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -162,7 +162,7 @@ impl LcevcLinkage {
         }
         Ok(Self {
             lcevc_stream_tags: tags,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
