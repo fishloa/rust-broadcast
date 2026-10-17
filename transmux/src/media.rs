@@ -255,6 +255,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             pcr: Vec::new(),
             skipped,
             degraded,
+            degraded_at: Vec::new(),
         })
     }
 }

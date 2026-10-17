@@ -119,10 +119,17 @@ pub enum InputDegradation {
     /// (ISO/IEC 13818-1 §2.4.3.2) — the demodulator could not correct this
     /// packet.
     TransportError,
-    /// A continuity-counter gap was observed, *excluding* legal duplicates
-    /// (same CC + byte-identical payload) and signalled discontinuities
-    /// (`discontinuity_indicator` in the adaptation field). `expected` is the
-    /// *last-observed* CC + 1 mod 16; `got` is the wire value that arrived.
+    /// A continuity-counter fault on one PID (ISO/IEC 13818-1 §2.4.3.3; ETSI
+    /// TR 101 290 1.4), counted per packet on payload-bearing non-null
+    /// packets only: a counter jump, a same-counter packet that is not a
+    /// byte-identical repeat (PCR field excepted), or an identical repeat
+    /// beyond the ONE duplicate the spec allows (`got` is then the last
+    /// counter, one entry per excess packet). Excluded: the one legal
+    /// duplicate and signalled discontinuities (`discontinuity_indicator` in
+    /// the adaptation field). `expected` is the *last-observed* CC + 1 mod 16;
+    /// `got` is the wire value that arrived. The entry names no PID itself:
+    /// see [`Media::degraded_at`](crate::ir::Media::degraded_at) /
+    /// [`DemuxEvent::InputDegraded`]'s `provenance`.
     ContinuityGap {
         /// The expected counter (`last_cc + 1 & 0x0F`).
         expected: u8,
@@ -186,6 +193,37 @@ impl InputDegradation {
 }
 
 broadcast_common::impl_spec_display!(InputDegradation);
+
+/// One [`DemuxEvent::InputDegraded`] as kept on [`Media::degraded_at`](crate::ir::Media::degraded_at):
+/// the [`InputDegradation`] plus *where* it was observed, so a consumer can
+/// tell damage on an unused data PID (a DSM-CC carousel) from damage on a
+/// track it keeps. `#[non_exhaustive]`: build one with [`DegradationRecord::new`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DegradationRecord {
+    /// What degraded.
+    pub kind: InputDegradation,
+    /// The track the carrying PID had resolved to when the event fired, or
+    /// `None` (never fabricated — see [`DemuxEvent::InputDegraded::track`]).
+    pub track: Option<TrackId>,
+    /// The TS PID and packet index the event was observed at.
+    pub provenance: EventProvenance,
+}
+
+impl DegradationRecord {
+    /// Build a record from the fields of a [`DemuxEvent::InputDegraded`].
+    pub fn new(
+        kind: InputDegradation,
+        track: Option<TrackId>,
+        provenance: EventProvenance,
+    ) -> Self {
+        Self {
+            kind,
+            track,
+            provenance,
+        }
+    }
+}
 
 /// A demux event, drained incrementally from a streaming demuxer (issue #555:
 /// [`crate::ts_demux::StreamingTsDemux`]; issue #738:

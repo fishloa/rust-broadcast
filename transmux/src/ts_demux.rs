@@ -4169,7 +4169,8 @@ fn on_completed_section(
 /// Re-exported from this path so `transmux::ts_demux::DemuxEvent` keeps
 /// resolving unchanged.
 pub use crate::ir::{
-    AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, InputDegradation,
+    AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
+    InputDegradation,
 };
 
 /// `program_clock_reference`'s native clock rate (ISO/IEC 13818-1 §2.4.3.5) —
@@ -4893,21 +4894,48 @@ impl StreamingTsDemux {
                 // not a duplicate.
                 if cc == state.last_cc
                     && let Some(prev) = state.last_packet
-                    && broadcast_common::ts_dup::check_duplicate(
+                {
+                    match broadcast_common::ts_dup::check_duplicate(
                         &prev,
                         raw,
                         state.dup_used_for_last,
-                    ) == broadcast_common::ts_dup::DuplicateVerdict::Legal
-                {
-                    // §2.4.3.3's one legal repeat. `dup_used_for_last` records
-                    // that this PID has now spent it, so a *third* identical
-                    // repeat (`cc == last_cc` again) is a continuity fault
-                    // rather than another duplicate — `check_duplicate` makes
-                    // that call, and this branch only ever takes the `Legal`
-                    // verdict.
-                    state.dup_used_for_last = true;
-                    state.last_packet = Some(*raw);
-                    return CcVerdict::Duplicate;
+                    ) {
+                        // §2.4.3.3's one legal repeat. `dup_used_for_last`
+                        // records that this PID has now spent it.
+                        broadcast_common::ts_dup::DuplicateVerdict::Legal => {
+                            state.dup_used_for_last = true;
+                            state.last_packet = Some(*raw);
+                            return CcVerdict::Duplicate;
+                        }
+                        // A third (or later) identical repeat: "two, and only
+                        // two" consecutive packets (§2.4.3.3; TR 101 290 1.4
+                        // "duplicate more than twice") makes it a continuity
+                        // fault, reported once PER excess packet. No packet
+                        // was lost - it is a redundant copy - so its payload
+                        // is discarded like a duplicate rather than dropping
+                        // the access unit under construction, and the run
+                        // stays "spent" (`dup_used_for_last` is NOT reset),
+                        // so a 5-packet run reports 3 faults, not an
+                        // alternating legal/illegal pattern.
+                        broadcast_common::ts_dup::DuplicateVerdict::IllegalThirdRepeat => {
+                            if !discontinuity_signalled {
+                                self.events.push_back(DemuxEvent::InputDegraded {
+                                    track,
+                                    kind: InputDegradation::ContinuityGap {
+                                        expected: (state.last_cc + 1) & 0x0F,
+                                        got: cc,
+                                    },
+                                    provenance: EventProvenance {
+                                        pid: Some(pid),
+                                        packet_index: Some(packet_index),
+                                    },
+                                });
+                            }
+                            state.last_packet = Some(*raw);
+                            return CcVerdict::Duplicate;
+                        }
+                        _ => {}
+                    }
                 }
                 let expected = (state.last_cc + 1) & 0x0F;
                 let mut verdict = CcVerdict::Deliver;
@@ -5754,6 +5782,7 @@ impl<'a> TsDemux<'a> {
         let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
         let mut pcr: Vec<PcrSample> = Vec::new();
         let mut degraded: Vec<InputDegradation> = Vec::new();
+        let mut degraded_at: Vec<DegradationRecord> = Vec::new();
         while let Some(event) = demux.poll_event() {
             match event {
                 DemuxEvent::TrackAdded(spec) => {
@@ -5808,12 +5837,20 @@ impl<'a> TsDemux<'a> {
                     discontinuity: discontinuous,
                 }),
                 DemuxEvent::Discontinuity { .. } => {}
-                DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
+                DemuxEvent::InputDegraded {
+                    track,
+                    kind,
+                    provenance,
+                } => {
+                    degraded.push(kind);
+                    degraded_at.push(DegradationRecord::new(kind, track, provenance));
+                }
                 DemuxEvent::TracksResolved { .. } => {}
             }
         }
         let mut media = Media::new(tracks, VIDEO_TIMESCALE).with_pcr(pcr);
         media.degraded = degraded;
+        media.degraded_at = degraded_at;
         Ok(media)
     }
 }
