@@ -8,10 +8,10 @@
 //! `test_fixtures`.
 
 use broadcast_common::Unpackage;
+use transmux::TsDemux;
 use transmux::ir::{DemuxEvent, InputDegradation};
 use transmux::media::Media;
 use transmux::ts_demux::StreamingTsDemux;
-use transmux::TsDemux;
 
 const PKT: usize = 188;
 const ORF1: &str = "ts/orf1-dvbs2-raw-zenith-tv.ts";
@@ -84,7 +84,10 @@ fn orf1_broken_sync_bytes_are_reported_and_counts_are_clean_minus_lost() {
     assert_eq!(counts(&media), counts(&removed_media), "clean minus lost");
 
     // ... and every loss is reported once, pointing at the damaged packet.
-    let expected: Vec<(u64, u64)> = idx.iter().map(|&i| ((i * PKT) as u64, PKT as u64)).collect();
+    let expected: Vec<(u64, u64)> = idx
+        .iter()
+        .map(|&i| ((i * PKT) as u64, PKT as u64))
+        .collect();
     assert_eq!(sync_losses(&media), expected);
     // Everything else (the continuity gaps the lost packets cause) is what the
     // stream with the packets removed reports.
@@ -207,9 +210,7 @@ fn transport_error_indicator_reaches_media_degraded() {
     bytes[i + 1] |= 0x80;
     let media = demux(&bytes);
     assert!(
-        media
-            .degraded
-            .contains(&InputDegradation::TransportError),
+        media.degraded.contains(&InputDegradation::TransportError),
         "{:?}",
         media.degraded
     );
