@@ -551,6 +551,14 @@ what = "K-weighting at any non-zero sample rate (coefficients derived by bilinea
 crates_io = true
 lifecycle = "active"
 
+[crate.live-buffer]
+domain = "live"
+summary = "Sans-IO live-TS playout buffer controller: jitter measurement, stall memory, start/pause/resume decisions."
+standards = "RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined"
+what = "Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer depth and explicit StartPlaying / Pause / Resume events for a player that cannot change playback rate. Integer-only, no I/O or clock, `max_us` is a hard cap. Unpublished; the spec-posture departure (policy half implementation-defined) awaits owner approval."
+crates_io = false
+lifecycle = "active"
+
 # ------------------------------------------------------------------ internal
 
 [crate.test-alloc]

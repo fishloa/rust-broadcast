@@ -89,7 +89,7 @@ change, so the old versions stay live.
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**58 workspace members.** 54 are on crates.io; 46 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**59 workspace members.** 54 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -122,6 +122,7 @@ change, so the old versions stay live.
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.2.0 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
 | [`transmux`](#transmux) | Containers and adaptive streaming | 0.27.3 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
+| [`live-buffer`](#live-buffer) | Live transport protocols | 0.1.0 | — | yes | 1 | not on crates.io |
 | [`rtcp-packet`](#rtcp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtcp-packet.svg)](https://crates.io/crates/rtcp-packet) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | no | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
@@ -177,7 +178,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 10.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 50 workspace crates
+- **Used by (workspace):** 51 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 ### MPEG-2 TS / PES / PS framing
@@ -482,6 +483,17 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 ### Live transport protocols
 
 Sans-IO session engines and packet codecs for RTSP, RTP/RTCP, RTMP, SRT, RIST, WebRTC (WHIP/WHEP), LL-HLS and ST 2022-6.
+
+#### live-buffer
+
+Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer depth and explicit StartPlaying / Pause / Resume events for a player that cannot change playback rate. Integer-only, no I/O or clock, `max_us` is a hard cap. Unpublished; the spec-posture departure (policy half implementation-defined) awaits owner approval.
+
+- **Standards:** RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined
+- **Cargo description:** Sans-IO live-TS playout buffer controller: measures delivery jitter (RFC 5481 PDV), keeps a stall memory, and decides when a player should start, pause and resume and how deep its buffer must be. Integer-only, no_std + alloc.
+- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
+- **Used by (workspace):** none
+- **Links:** [README](../live-buffer/README.md) · [CHANGELOG](../live-buffer/CHANGELOG.md)
 
 #### rtcp-packet
 
@@ -847,7 +859,7 @@ Layer 0 has no workspace dependencies; every other crate sits one layer above it
 
 ```text
 layer 0: broadcast-auth, broadcast-common, test-alloc, test-bounded, test-fixtures
-layer 1: atsc3, broadcast-hls, broadcast-loudness, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtcp-packet, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, scte35-splice, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
+layer 1: atsc3, broadcast-hls, broadcast-loudness, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, live-buffer, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtcp-packet, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, scte35-splice, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, ssai-runtime, st291, timed-metadata, webrtc-runtime
 layer 3: caption-convert, dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, transmux
 layer 4: dvb-ci-runtime, media-doctor, media-plane, ts-fix
@@ -875,6 +887,7 @@ flowchart BT
     dvb_simulcrypt["dvb-simulcrypt"]
     dvb_subtitle["dvb-subtitle"]
     dvb_vbi["dvb-vbi"]
+    live_buffer["live-buffer"]
     mp4_emsg["mp4-emsg"]
     mpeg_pes["mpeg-pes"]
     mpeg_ts["mpeg-ts"]
@@ -959,6 +972,7 @@ flowchart BT
   dvb_vbi --> broadcast_common
   hls_runtime --> broadcast_auth
   hls_runtime --> media_plane
+  live_buffer --> broadcast_common
   media_doctor --> dvb_conformance
   media_doctor --> timed_metadata
   media_doctor --> transmux

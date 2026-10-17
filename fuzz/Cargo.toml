@@ -47,6 +47,7 @@ rtsp-runtime  = { path = "../rtsp-runtime" }
 media-plane   = { path = "../media-plane" }
 ttml-subtitle = { path = "../ttml-subtitle" }
 broadcast-loudness = { path = "../broadcast-loudness" }
+live-buffer    = { path = "../live-buffer" }
 dvb-csa        = { path = "../dvb-csa" }
 dvb-mabr       = { path = "../dvb-mabr" }
 atsc3          = { path = "../atsc3" }
@@ -339,6 +340,12 @@ doc  = false
 [[bin]]
 name = "loudness"
 path = "fuzz_targets/loudness.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "live_buffer"
+path = "fuzz_targets/live_buffer.rs"
 test = false
 doc  = false
 
