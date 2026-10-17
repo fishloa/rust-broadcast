@@ -138,6 +138,9 @@ pub fn multimux_ts_ingest(fx: &Fixture, _: &Cfg) -> Option<Value> {
     let mut s = multimux::source::ts_program::TsIngestSession::new();
     let mut agg: BTreeMap<String, TrackAgg> = BTreeMap::new();
     let mut programs: Vec<Value> = Vec::new();
+    // Announce order with the `ProgramId` of each programme (run 3: after #1332
+    // the ids are deterministic; diff.py ignores `head_only_*` keys).
+    let mut program_order: Vec<Value> = Vec::new();
     let mut counters: BTreeMap<String, u64> = BTreeMap::new();
     let mut drain = |s: &mut multimux::source::ts_program::TsIngestSession| {
         while let Some(ev) = s.poll() {
@@ -146,12 +149,13 @@ pub fn multimux_ts_ingest(fx: &Fixture, _: &Cfg) -> Option<Value> {
                 // `HashMap`, so the id (and the announce order) is random per
                 // process for an MPTS: record the track set only, sorted, and
                 // sort the programs below, so the probe is deterministic.
-                SessionEvent::NewProgram { tracks, .. } => {
+                SessionEvent::NewProgram { program, tracks } => {
                     let mut ids: Vec<u64> = tracks
                         .iter()
                         .filter_map(|t| format!("{:?}", t.track_id).parse().ok())
                         .collect();
                     ids.sort_unstable();
+                    program_order.push(json!({"program": format!("{program:?}"), "tracks": ids}));
                     programs.push(json!(ids));
                 }
                 SessionEvent::Sample {
@@ -200,7 +204,10 @@ pub fn multimux_ts_ingest(fx: &Fixture, _: &Cfg) -> Option<Value> {
             )
         })
         .collect();
-    Some(json!({"programs": programs, "counters": counters, "tracks": tracks}))
+    Some(
+        json!({"programs": programs, "counters": counters, "tracks": tracks,
+                "head_only_program_order": program_order}),
+    )
 }
 
 pub fn transmux_batch(fx: &Fixture, _: &Cfg) -> Option<Value> {

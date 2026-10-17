@@ -8,7 +8,7 @@ explained (intended, spec-driven) or fixed *before* a release. Built after the
 framing failed) that the in-repo tests did not.
 
 Not a workspace member (own `[workspace]`, own `Cargo.lock`, `publish = false`).
-Triage of the 2026-10 runs (run 1 and the rerun): [`docs/DIFFERENTIAL-SWEEP-2026-10.md`](../../docs/DIFFERENTIAL-SWEEP-2026-10.md).
+Triage of the 2026-10 runs (runs 1-3): [`docs/DIFFERENTIAL-SWEEP-2026-10.md`](../../docs/DIFFERENTIAL-SWEEP-2026-10.md).
 
 ## How it works
 
@@ -85,6 +85,8 @@ python3 tools/differential-sweep/diff.py $SCR/base.jsonl $SCR/head.jsonl \
     --expected tools/differential-sweep/expected.json --json $SCR/diff.json
 git worktree remove --force $SCR/baseline
 ```
+
+`python3 tools/differential-sweep/crosscheck.py $SCR/head.jsonl $SCR/base.jsonl` compares `multimux.ts_ingest` with `transmux.stream` inside one output (exit 1 on any dropped sample); run it with every sweep.
 
 `--only <probe-prefix>` restricts to matching probes (`--only transmux.stream`).
 
