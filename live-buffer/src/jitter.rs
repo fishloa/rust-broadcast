@@ -90,6 +90,10 @@ pub struct DeliveryJitter {
     samples: u64,
 }
 
+/// RFC 3550 A.8 integer-form scaling: the estimate is kept x16, rounded by 8.
+const J_SHIFT: u32 = 4;
+const J_ROUND: i64 = 8;
+
 fn sat_i64(v: i128) -> i64 {
     i64::try_from(v).unwrap_or(if v < 0 { i64::MIN } else { i64::MAX })
 }
@@ -174,7 +178,10 @@ impl DeliveryJitter {
 
         if let Some(pd) = self.prev_d {
             let diff = sat_i64((i128::from(d) - i128::from(pd)).abs());
-            self.j16 = self.j16.saturating_add(diff - (self.j16 >> 4));
+            // RFC 3550 A.8 integer form: `jitter += d - ((jitter + 8) >> 4)`, reported `>> 4`.
+            self.j16 = self
+                .j16
+                .saturating_add(diff - (self.j16.saturating_add(J_ROUND) >> J_SHIFT));
         }
         self.prev_d = Some(d);
 
@@ -211,7 +218,7 @@ impl DeliveryJitter {
             pdv_last_us: self.pdv_last,
             baseline_us: self.base,
             stall_peak_us: self.stall_peak_at(self.last_arrival.unwrap_or(0)),
-            rfc3550_jitter_us: u64::try_from(self.j16 >> 4).unwrap_or(0),
+            rfc3550_jitter_us: u64::try_from(self.j16 >> J_SHIFT).unwrap_or(0),
             samples: self.samples,
         }
     }
