@@ -28,14 +28,28 @@ def pcr_signed_distance(frm, to):
     return d - PCR_WRAP if d >= PCR_WRAP // 2 else d
 
 
+ALL = ["t18", "rai-1", "rai-sport", "orf1", "orf-sport", "servustv", "6ter", "tf-1"]
+STALL = {"tf-1": 17897, "6ter": 37847, "servustv#1": 136}  # chunk index that ends the delivery gap (servustv#1: STARTUP gap, 0.49 s into the stream)
+CLEAN = ["t18", "rai-1", "rai-sport", "orf1", "orf-sport", "servustv#2"]
+RECONNECT = {"servustv": 1980}              # chunk index of the first chunk of the new connection
+STALL_TRACES = ["tf-1", "6ter", "servustv#1"]
+
+
 def load(name, d=None):
-    """Return list of (arrival_us, bytes, media_us_or_None) with arrival rebased to 0."""
+    """Return list of (arrival_us, bytes, media_us_or_None) with arrival rebased to 0.
+    'servustv#1' / 'servustv#2' are the two connections of servustv, split at the reconnect."""
+    seg = None
+    if "#" in name:
+        name, seg = name.split("#")
     d = d or trace_dir()
     rows = []
     with open(os.path.join(d, name + ".csv")) as f:
         for r in csv.DictReader(f):
             rows.append((int(r["arrival_ns"]) // 1000, int(r["bytes"]),
                          int(r["pcr_27mhz"]) if r["pcr_27mhz"] else None))
+    if seg:
+        k = RECONNECT[name]
+        rows = rows[:k] if seg == "1" else rows[k:]
     t0 = rows[0][0]
     out, prev, un = [], None, 0
     first = next(r[2] for r in rows if r[2] is not None)

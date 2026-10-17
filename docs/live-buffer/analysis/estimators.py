@@ -7,7 +7,7 @@ PCR-carrying chunk, arrival-timestamped.
 import os
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
-from common import load, pcr_samples, pdv_series
+from common import CLEAN, STALL, load, pcr_samples, pdv_series
 
 BUCKET_US = 10_000
 NBUCKETS = 400  # 0..4 s
@@ -50,7 +50,7 @@ def interval_max(samples, T):
 def run(name, rows):
     samp, _ = pdv_series(rows, 2_000_000)
     s = pcr_samples(rows)
-    gap_i = 17897 if name == "tf-1" else None
+    gap_i = STALL.get(name)
     gap_t = rows[gap_i][0] if gap_i else None
     series = {}
     for T in (250_000, 500_000):
@@ -111,6 +111,8 @@ def run(name, rows):
         print(f"\n#### {name}: estimator output (ms), clean trace (t>5 s)\n")
         print("| estimator | p50 | max | at end |\n|---|---|---|---|")
         for k, ser in series.items():
+            if "T250" in k or "120s" in k:
+                continue
             v = sorted(x for e, x in ser if e > warm)
             print(f"| {k} | {v[len(v)//2]/1e3:.0f} | {v[-1]/1e3:.0f} | {ser[-1][1]/1e3:.0f} |")
 
@@ -131,6 +133,8 @@ def hold_analytic():
 
 if __name__ == "__main__":
     print("### Estimator replay (PDV = D - 2 s windowed minimum; intervals with no PCR sample are skipped)")
-    for n in ("tf-1", "t18"):
+    for n in ("tf-1", "6ter"):
+        run(n, load(n))
+    for n in CLEAN:
         run(n, load(n))
     hold_analytic()
