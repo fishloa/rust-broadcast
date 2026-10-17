@@ -30,7 +30,7 @@
 //! **Delivery granularity.** Each track also remembers the largest *step* its
 //! end advanced between two distinct delivery instants (a burst of several
 //! calls at one arrival time is one step), as a max-hold with a hold and a
-//! linear decay ([`MaxHold`], bounded memory: a few scalars per track,
+//! linear decay (the stall-memory max-hold, bounded memory: a few scalars per track,
 //! at most [`MAX_TRACKS`] tracks). A step counts only when it looks like a
 //! delivery cadence: it advanced forward, the instants are less than the
 //! silence timeout apart, it is no more than the arrival interval plus
@@ -218,15 +218,17 @@ impl TrackSet {
         Some(first)
     }
 
+    /// Silent relative to the most recent delivery on any track.
+    fn is_silent(&self, t: &Track, silence_us: Micros) -> bool {
+        self.last_delivery
+            .is_some_and(|l| l.saturating_sub(t.seen_at) >= silence_us)
+    }
+
     /// Largest held delivery step over the non-excluded tracks at `now`.
     pub(crate) fn granularity_us(&self, now: Micros, silence_us: Micros) -> Micros {
         self.v
             .iter()
-            .filter(|t| {
-                !self
-                    .last_delivery
-                    .is_some_and(|l| l.saturating_sub(t.seen_at) >= silence_us)
-            })
+            .filter(|t| !self.is_silent(t, silence_us))
             .map(|t| t.gran.value(now))
             .max()
             .unwrap_or(0)
@@ -247,12 +249,8 @@ impl TrackSet {
     /// Earliest end over the non-excluded tracks (see the module docs for the
     /// relative-silence rule). `None` while a non-excluded track has no end.
     pub(crate) fn effective(&self, silence_us: Micros) -> Option<Effective> {
-        let silent = |t: &Track| {
-            self.last_delivery
-                .is_some_and(|l| l.saturating_sub(t.seen_at) >= silence_us)
-        };
         let mut min: Option<Effective> = None;
-        for t in self.v.iter().filter(|t| !silent(t)) {
+        for t in self.v.iter().filter(|t| !self.is_silent(t, silence_us)) {
             let end = t.end?;
             if min.is_none_or(|m| before(end, m.end)) {
                 min = Some(Effective {

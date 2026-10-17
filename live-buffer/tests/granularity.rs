@@ -101,14 +101,14 @@ impl Sim {
     fn step(&mut self) {
         self.t += STEP_US;
         let rel = self.t - 1_000_000;
-        if rel % 20_000 == 0 {
+        if rel.is_multiple_of(20_000) {
             self.c.on_chunk(self.t, 1000, Some(at(rel)));
         }
-        if rel % 40_000 == 0 {
+        if rel.is_multiple_of(40_000) {
             self.c.on_track_media(self.t, VIDEO, at(rel + 900_000));
         }
         if self.burst_us == 0 {
-            if rel % 20_000 == 0 {
+            if rel.is_multiple_of(20_000) {
                 self.c.on_track_media(self.t, AUDIO, at(rel));
             }
         } else if self.t >= self.next_burst {
@@ -139,8 +139,7 @@ impl Sim {
 
 /// The ~0.31 s audio-burst shape with the floor ON: the first bursts teach
 /// the step, the target rises to step + margin BEFORE start, and nothing ever
-/// stalls. Mutations: dropping the floor from `need` (stalls every cycle);
-/// not re-evaluating on delivery (start still fires at the 300 ms floor).
+/// stalls. Mutation: dropping the floor from `need` (stalls every cycle).
 #[test]
 fn rai3_burst_audio_floor_prevents_every_stall() {
     let mut s = Sim::new(cfg(), 310_000);

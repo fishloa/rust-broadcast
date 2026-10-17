@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   effective end stays the minimum of the tracks' last ends. The "all silent => latest end" fallback is removed.
 
 ### Added
+- Per-track delivery-granularity floor: each track remembers the largest media-end step between delivery
+  instants (max-hold, `granularity_hold_us`/`granularity_decay_us`, 30 s + 30 s) and the target is kept at least
+  `largest step + margin` (capped by `max_us`, slew-limited when falling). Fixes audio that arrives in ~0.3 s
+  bursts with low PDV (rai-3) stalling every ~10 s. Steps across a global data gap, faster-than-real-time
+  catch-ups and forward jumps are ignored. New `ControllerConfig` fields `track_granularity`,
+  `granularity_hold_us`, `granularity_decay_us` (+ `with_track_granularity`, `with_granularity_memory_us`,
+  `ConfigField::GranularityDecay`), `Policy::need_with_granularity_us`. No ABI layout change.
+- A starvation with data still arriving (`Reason::DataArriving`) is now charged to the stall memory (the failed
+  target), so repeated track-limited stalls ratchet the target and the resume bar even when the PDV is low
+  (before, only a PDV spike raised them). Behaviour change: such a `Pause` is now followed by a `TargetChanged`.
 - `BufferController::unregister_track(track)`: remove a replaced/dead track from the per-track minimum so it
   cannot hold back the lead (unknown track: no-op). No ABI layout change.
 - Docs: after a `PcrDiscontinuity` while playing the controller emits `Pause` then `Resume`, never a new
