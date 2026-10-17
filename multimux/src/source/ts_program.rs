@@ -396,7 +396,16 @@ impl Stage for TsIngestSession {
         self.tracker.poll()
     }
 
+    /// End of input: flush the demux (`StreamingTsDemux::finish`) so a declared
+    /// PID that never carried data cannot hold `TracksResolved` — and with it
+    /// `NewProgram` and every parked/probing track's backlog — hostage, then
+    /// translate what it emitted. Idempotent: the demux's second flush emits
+    /// nothing, so a repeated call queues no duplicate event.
     fn finish(&mut self) -> Result<(), Infallible> {
+        self.demux.finish();
+        while let Some(event) = self.demux.poll_event() {
+            self.tracker.handle(event);
+        }
         Ok(())
     }
 
@@ -773,6 +782,11 @@ mod tests {
     /// audio-type PES that never carries a frame sync, so it can never
     /// resolve) with 540 access units, followed by two healthy data PIDs.
     fn stalled_head_ts_bytes() -> Vec<u8> {
+        stalled_head_ts_bytes_n(540)
+    }
+
+    /// [`stalled_head_ts_bytes`] with `head_aus` access units on the stalled head.
+    fn stalled_head_ts_bytes_n(head_aus: u32) -> Vec<u8> {
         use broadcast_common::Package;
         use transmux::media::{Media, Track};
         use transmux::pipeline::{CodecConfig, DataCarriage};
@@ -793,7 +807,7 @@ mod tests {
         let tracks = vec![
             Track::new(
                 TrackSpec::new(TrackId::new(1), 90_000, data(0x04)),
-                samples(540, 3, true),
+                samples(head_aus, 3, true),
             ),
             Track::new(
                 TrackSpec::new(TrackId::new(2), 90_000, data(0x7F)),
@@ -869,9 +883,12 @@ mod tests {
     /// Per-track `(count, first sample bytes, timestamps)` from the raw
     /// demux output, in emission order, plus how many samples the demux
     /// emitted *before* its first `TracksResolved`.
-    fn raw_demux_samples(ts: &[u8]) -> (TrackSamples, usize) {
+    fn raw_demux_samples(ts: &[u8], finish: bool) -> (TrackSamples, usize) {
         let mut demux = StreamingTsDemux::new();
         demux.feed(ts);
+        if finish {
+            demux.finish();
+        }
         let mut by_track: std::collections::BTreeMap<_, Vec<_>> = Default::default();
         let (mut resolved, mut before) = (false, 0usize);
         while let Some(ev) = demux.poll_event() {
@@ -898,9 +915,12 @@ mod tests {
     /// What the session publishes, per track, asserting the contract on the
     /// way: a `Sample` never precedes its program's `NewProgram`, and a
     /// sample's track is one the program announced.
-    fn session_samples(ts: &[u8]) -> TrackSamples {
+    fn session_samples(ts: &[u8], finish: bool) -> TrackSamples {
         let mut session = TsIngestSession::new();
         session.feed(ts, Timestamp::ZERO).expect("infallible");
+        if finish {
+            session.finish().expect("infallible");
+        }
         let mut announced: HashMap<ProgramId, HashSet<TrackId>> = HashMap::new();
         let mut by_track: std::collections::BTreeMap<_, Vec<_>> = Default::default();
         while let Some(ev) = session.poll() {
@@ -933,8 +953,12 @@ mod tests {
     }
 
     fn assert_session_equals_raw_demux(ts: &[u8]) {
-        let (raw, before_resolved) = raw_demux_samples(ts);
-        let published = session_samples(ts);
+        assert_session_equals_raw_demux_with(ts, false);
+    }
+
+    fn assert_session_equals_raw_demux_with(ts: &[u8], finish: bool) {
+        let (raw, before_resolved) = raw_demux_samples(ts, finish);
+        let published = session_samples(ts, finish);
         assert!(!raw.is_empty(), "fixture demuxed no samples");
         println!("samples demuxed before TracksResolved: {before_resolved}");
         for (track, expect) in &raw {
@@ -967,7 +991,7 @@ mod tests {
     #[test]
     fn samples_before_tracks_resolved_reach_the_session_synthetic() {
         let ts = stalled_head_ts_bytes();
-        let (_, before) = raw_demux_samples(&ts);
+        let (_, before) = raw_demux_samples(&ts, false);
         assert!(before > 0, "premise: samples precede TracksResolved");
         assert_session_equals_raw_demux(&ts);
     }
@@ -982,6 +1006,62 @@ mod tests {
             return;
         };
         assert_session_equals_raw_demux(&std::fs::read(path).expect("read fixture"));
+    }
+
+    /// **End-of-input flush.** A stalled head with too few access units to be
+    /// stepped over (100 < 512) never resolves mid-stream, so `TracksResolved`
+    /// - and with it `NewProgram` and every sample - waits for the demux's
+    /// `finish()`. `TsIngestSession::finish` used to be a no-op, so nothing was
+    /// ever announced. After `finish()` the session must publish exactly what
+    /// the raw demux emits after its own `finish()`.
+    #[test]
+    fn finish_announces_programme_for_a_silent_declared_pid_synthetic() {
+        let ts = stalled_head_ts_bytes_n(100);
+        // Before finish nothing is announced (the premise of the bug).
+        let mut session = TsIngestSession::new();
+        session.feed(&ts, Timestamp::ZERO).expect("infallible");
+        let mut announced_before = false;
+        while let Some(ev) = session.poll() {
+            announced_before |= matches!(ev, SessionEvent::NewProgram { .. });
+        }
+        assert!(!announced_before, "premise: no NewProgram before finish()");
+        let (raw, _) = raw_demux_samples(&ts, true);
+        assert!(!raw.is_empty(), "premise: the demux emits media at finish()");
+        assert_session_equals_raw_demux_with(&ts, true);
+    }
+
+    /// `finish()` is idempotent: a second call queues no further event.
+    #[test]
+    fn finish_twice_emits_nothing_more() {
+        let ts = stalled_head_ts_bytes_n(100);
+        let mut session = TsIngestSession::new();
+        session.feed(&ts, Timestamp::ZERO).expect("infallible");
+        session.finish().expect("infallible");
+        let mut first = 0usize;
+        while session.poll().is_some() {
+            first += 1;
+        }
+        assert!(first > 1, "finish() produced events");
+        session.finish().expect("infallible");
+        assert!(
+            session.poll().is_none(),
+            "a second finish() must not duplicate events"
+        );
+    }
+
+    /// The real private capture whose declared PID 0x8D never carries data:
+    /// `TracksResolved` never fires mid-stream, so everything waits for
+    /// `finish()`.
+    #[test]
+    fn finish_announces_programme_for_the_zenith_capture() {
+        let Some(path) = test_fixtures::require(
+            "ts/france-tnt-m6-eac3-zenith.ts",
+            "multimux end-of-input demux finish",
+        ) else {
+            return;
+        };
+        let ts = std::fs::read(path).expect("read fixture");
+        assert_session_equals_raw_demux_with(&ts, true);
     }
 
     /// Unit form: samples for buffered (not yet announced) tracks are held
