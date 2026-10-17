@@ -862,15 +862,14 @@ mod tests {
         );
     }
 
+    /// Per track: `(bytes, dts, pts)` of each sample, in emission order.
+    type TrackSamples =
+        std::collections::BTreeMap<TrackId, Vec<(Vec<u8>, Option<i64>, Option<i64>)>>;
+
     /// Per-track `(count, first sample bytes, timestamps)` from the raw
     /// demux output, in emission order, plus how many samples the demux
     /// emitted *before* its first `TracksResolved`.
-    fn raw_demux_samples(
-        ts: &[u8],
-    ) -> (
-        std::collections::BTreeMap<TrackId, Vec<(Vec<u8>, Option<i64>, Option<i64>)>>,
-        usize,
-    ) {
+    fn raw_demux_samples(ts: &[u8]) -> (TrackSamples, usize) {
         let mut demux = StreamingTsDemux::new();
         demux.feed(ts);
         let mut by_track: std::collections::BTreeMap<_, Vec<_>> = Default::default();
@@ -899,9 +898,7 @@ mod tests {
     /// What the session publishes, per track, asserting the contract on the
     /// way: a `Sample` never precedes its program's `NewProgram`, and a
     /// sample's track is one the program announced.
-    fn session_samples(
-        ts: &[u8],
-    ) -> std::collections::BTreeMap<TrackId, Vec<(Vec<u8>, Option<i64>, Option<i64>)>> {
+    fn session_samples(ts: &[u8]) -> TrackSamples {
         let mut session = TsIngestSession::new();
         session.feed(ts, Timestamp::ZERO).expect("infallible");
         let mut announced: HashMap<ProgramId, HashSet<TrackId>> = HashMap::new();
