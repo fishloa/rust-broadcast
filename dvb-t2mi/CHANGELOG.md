@@ -7,6 +7,11 @@
 - **BREAKING (fix):** `function_length` is the length of the whole `function()` including its 2-byte tag+length header (TS 102 773 §5.2.8.2.0), not just the body. It was parsed/serialized as the body length, which made the real Colombia capture's 0x21 packets fail to parse and mis-framed every typed T2 function (0x10-0x17) on the wire. A `function_length` below 2 is rejected. Pinned by a byte-exact round trip over the capture's 11 real individual-addressing packets.
 - Spec note recorded, not silently corrected: TS 101 191 prose calls `ch_bandwidth` an "8-bit field" but Table 13 gives it 7 bits; the table width is implemented.
 
+### Changed (BREAKING, round-2 audit)
+- **BREAKING:** `Error` gains `InvalidFunctionLength { function_length }` and `FunctionTagBodyMismatch { tag, body, reason }` (the enum is `#[non_exhaustive]`, so only exhaustive matches without a wildcard are affected). A parsed `function_length` below 2 is now `InvalidFunctionLength` instead of the misleading `ReservedBitsViolation`.
+- **BREAKING:** serializing an individual-addressing `FunctionEntry` whose `tag` disagrees with its `body` now fails with `FunctionTagBodyMismatch` instead of writing bytes that re-parse differently: a typed `FunctionBody` variant under another tag, or a `FunctionBody::Raw` under a tag/length that parses as a typed body (any length for private data 0x03 / enable 0x05; the exact size for the fixed-size tags). Legitimate `Raw` (unknown tag, or a known fixed-size tag with a non-matching length) is unaffected. No in-tree construction (dvb-tools, tests) needed migrating. serialize -> parse is now the identity for every serializable entry.
+- Doc fix: `FunctionEntry` documented the body as `function_length` bytes; it is `function_length - 2` (the length includes the tag+length header).
+
 ### Documentation
 - README rewritten to the workspace crate-README standard: what the crate does and does not do, a standards table (edition, scope, status), feature flags, a doctested quick start, the implemented API surface, design notes and related crates. Where the crate has a library target the crate-root docs are now `include_str!("../README.md")`, so docs.rs and crates.io show the same text.
 
