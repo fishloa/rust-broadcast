@@ -13,10 +13,19 @@
 //!   [`BufferController::unregister_track`](crate::BufferController::unregister_track)
 //!   (a replaced or dead track) leaves the reduction at once; if no track is
 //!   left there is no effective end until one delivers;
-//! * a track silent for `silence_timeout_us` is **excluded**, so a dead track
-//!   cannot starve playback forever;
-//! * the effective end is the earliest end over the non-excluded tracks; when
-//!   every track is excluded it falls back to the latest known end.
+//! * a track is **excluded** when it is silent *relative to the other tracks*:
+//!   its own last delivery (or, if it never delivered, its registration) lies
+//!   at least `silence_timeout_us` before the most recent delivery on ANY
+//!   track. A dead track therefore cannot starve playback while the others
+//!   keep delivering, but the clock is the arrival time of the latest delivery,
+//!   not wall time: when nothing at all is delivered (a global stall such as a
+//!   reconnect or server restart) nobody becomes excluded, however long the
+//!   gap, and the stall is not mistaken for the tracks being dead. Before any
+//!   delivery (or after a rebaseline) nothing is excluded either;
+//! * the effective end is the earliest end over the non-excluded tracks, so a
+//!   global stall keeps the MIN of the tracks' last ends (there is no
+//!   "all silent" fallback: the most recently delivering track is never
+//!   excluded).
 //!
 //! All position comparisons are wrap-safe (`broadcast_common::clock33`).
 
@@ -56,6 +65,9 @@ pub(crate) struct Effective {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TrackSet {
     v: Vec<Track>,
+    /// Arrival time of the most recent delivery on any track; the clock the
+    /// silence rule measures against. `None` until a delivery.
+    last_delivery: Option<Micros>,
 }
 
 impl TrackSet {
@@ -65,6 +77,7 @@ impl TrackSet {
 
     pub(crate) fn clear(&mut self) {
         self.v.clear();
+        self.last_delivery = None;
     }
 
     fn slot(&mut self, id: u32, now: Micros) -> Option<&mut Track> {
@@ -107,6 +120,7 @@ impl TrackSet {
         if first {
             t.seen_at = now;
         }
+        self.last_delivery = Some(self.last_delivery.map_or(now, |l| l.max(now)));
         Some(first)
     }
 
@@ -114,14 +128,20 @@ impl TrackSet {
     /// again from `now`.
     pub(crate) fn rebaseline(&mut self, now: Micros) {
         self.v.retain(|t| t.registered);
+        self.last_delivery = None;
         for t in &mut self.v {
             t.end = None;
             t.seen_at = now;
         }
     }
 
-    pub(crate) fn effective(&self, now: Micros, silence_us: Micros) -> Option<Effective> {
-        let silent = |t: &Track| now.saturating_sub(t.seen_at) >= silence_us;
+    /// Earliest end over the non-excluded tracks (see the module docs for the
+    /// relative-silence rule). `None` while a non-excluded track has no end.
+    pub(crate) fn effective(&self, silence_us: Micros) -> Option<Effective> {
+        let silent = |t: &Track| {
+            self.last_delivery
+                .is_some_and(|l| l.saturating_sub(t.seen_at) >= silence_us)
+        };
         let mut min: Option<Effective> = None;
         for t in self.v.iter().filter(|t| !silent(t)) {
             let end = t.end?;
@@ -132,20 +152,6 @@ impl TrackSet {
                 });
             }
         }
-        if min.is_some() {
-            return min;
-        }
-        let mut max: Option<Effective> = None;
-        for t in &self.v {
-            if let Some(end) = t.end
-                && max.is_none_or(|m| before(m.end, end))
-            {
-                max = Some(Effective {
-                    end,
-                    limiting: t.id,
-                });
-            }
-        }
-        max
+        min
     }
 }

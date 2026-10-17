@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Docs + test: caller contract for the start origin. The first reported end anchors the origin, so a caller must report
+  the first end only from the join point (first video RAP) and withhold ends before it (audio reported ahead of the
+  join point anchors start early and loses audio cushion). `on_media`/`on_track_media`/`register_track` rustdoc, README,
+  DESIGN 0.1c; pinned by `audio_before_the_join_point_anchors_start_early`.
+- Per-track silence timeout is now relative: a track is excluded only when its last delivery (or registration)
+  is `track_silence_timeout_us` older than the latest delivery on ANY track. A global delivery gap (reconnect,
+  server restart) excludes nobody, so the controller no longer Resumes on stale data and stalls again; the
+  effective end stays the minimum of the tracks' last ends. The "all silent => latest end" fallback is removed.
+
 ### Added
 - `BufferController::unregister_track(track)`: remove a replaced/dead track from the per-track minimum so it
   cannot hold back the lead (unknown track: no-op). No ABI layout change.
@@ -15,10 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StallMemorySnapshot::new` documented as the FFI/foreign-crate constructor (`const fn`; struct is `#[non_exhaustive]`).
 - Per-track media ends: `BufferController::on_track_media(now, track, end)` / `register_track(track)`; the lead is
   measured against the minimum over the active tracks (a TS mux sends video ~1 s ahead and audio near
-  real time; judging video alone made every audio buffer late). A track silent for
+  real time; judging video alone made every audio buffer late). A track silent (relative to the others) for
   `ControllerConfig::track_silence_timeout_us` (default 3 s, validated non-zero,
-  `ConfigField::TrackSilence`, `with_track_silence_timeout_us`) is excluded; all silent falls back to the
-  latest end. `on_media` is documented as "end of media playable on ALL rendered tracks" and is track-0
+  `ConfigField::TrackSilence`, `with_track_silence_timeout_us`) is excluded. `on_media` is documented as "end of media playable on ALL rendered tracks" and is track-0
   (`DEFAULT_TRACK`) shorthand. `Event::Pause::track` and `Stats::limiting_track` name the starving track;
   `EventRecord` gains `track`/`track_valid` (40 bytes), `ABI_VERSION` 1 -> 2. New `tracks` module, `MAX_TRACKS`.
 - Initial crate (unpublished; no release approved). Sans-IO live-TS playout buffer controller:
