@@ -52,6 +52,11 @@
 //! boundary that ends the delivery, with identical events however the calls
 //! were split.
 //!
+//! **Start gate.** `TrackSet::granularity_known` tells the controller whether
+//! every delivering track has shown [`LEARN_STEPS`] closed steps (or has been
+//! delivering for a bounded wait), so a start/resume is never granted before the
+//! floor could have been learnt.
+//!
 //! All position comparisons are wrap-safe (`broadcast_common::clock33`).
 
 use crate::config::{Micros, TICKS_PER_US, Ticks27};
@@ -68,6 +73,11 @@ pub const DEFAULT_TRACK: u32 = 0;
 /// Fallback coalescing window (microseconds) for a caller that never calls
 /// `on_chunk`: calls this close are one delivery.
 pub const COALESCE_US: Micros = 1_000;
+
+/// Delivery steps a track must have shown before a start/resume is granted on
+/// its granularity (see `TrackSet::granularity_known`): the third delivery's
+/// window has closed, so two steps were measured.
+pub const LEARN_STEPS: u32 = 2;
 
 /// Wrap-safe: is `a` strictly before `b`?
 fn before(a: Ticks27, b: Ticks27) -> bool {
@@ -111,6 +121,10 @@ struct Track {
     /// Arrival time of the last delivery, or of the registration while none.
     seen_at: Micros,
     step: Option<Step>,
+    /// Arrival time of the first delivery since the slot was (re)started.
+    first_at: Micros,
+    /// Delivery windows closed so far (deliveries seen, minus the open one).
+    windows: u32,
     /// Largest delivery step (microseconds) with hold and decay.
     gran: MaxHold,
 }
@@ -134,6 +148,7 @@ impl Track {
             return;
         }
         s.pending = false;
+        self.windows = self.windows.saturating_add(1);
         let (prev_end, prev_at, cur_end, cur_at) = (s.prev_end, s.prev_at, s.cur_end, s.cur_at);
         s.prev_end = cur_end;
         s.prev_at = cur_at;
@@ -226,6 +241,8 @@ impl TrackSet {
                     end: None,
                     seen_at: now,
                     step: None,
+                    first_at: now,
+                    windows: 0,
                     gran: MaxHold::new(self.gran_hold_us, self.gran_decay_us),
                 });
                 self.v.len() - 1
@@ -261,6 +278,7 @@ impl TrackSet {
         if first {
             t.seen_at = now;
             t.step = None;
+            t.first_at = now;
         }
         t.observe_step(now, end, rules);
         self.last_delivery = Some(self.last_delivery.map_or(now, |l| l.max(now)));
@@ -288,6 +306,22 @@ impl TrackSet {
             .map(|t| t.gran.value(now))
             .max()
             .unwrap_or(0)
+    }
+
+    /// Has every non-excluded, delivering track shown enough deliveries for its
+    /// granularity to be known ([`LEARN_STEPS`] closed steps), or been
+    /// delivering for `max_wait_us` (so a slow or one-shot track never blocks
+    /// forever)? A start before this would be granted blind to the cadence.
+    pub(crate) fn granularity_known(
+        &self,
+        now: Micros,
+        silence_us: Micros,
+        max_wait_us: Micros,
+    ) -> bool {
+        self.v
+            .iter()
+            .filter(|t| t.end.is_some() && !self.is_silent(t, silence_us))
+            .all(|t| t.windows > LEARN_STEPS || now.saturating_sub(t.first_at) >= max_wait_us)
     }
 
     /// Forget every end (a discontinuity); registrations survive and wait

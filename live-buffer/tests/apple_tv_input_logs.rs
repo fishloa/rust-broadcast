@@ -82,6 +82,35 @@ fn config_with(f: impl FnOnce(ControllerConfig) -> ControllerConfig) -> Controll
 }
 
 fn replay(name: &str, cfg: ControllerConfig) -> Option<Replay> {
+    replay_with(name, cfg, &[], false)
+}
+
+/// Closed-loop renderer: plays at 1x from where the controller says to start or
+/// resume and holds where it says to pause, replacing the logged playback
+/// positions (which follow the OLD controller's decisions).
+struct Renderer {
+    clock: Ticks27,
+    since: Micros,
+    running: bool,
+}
+
+impl Renderer {
+    fn pos(&self, now: Micros) -> Ticks27 {
+        if self.running {
+            self.clock + (now - self.since) * 27
+        } else {
+            self.clock
+        }
+    }
+}
+
+/// `closed`: drive ticks from a [`Renderer`] instead of the logged positions.
+fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> Option<Replay> {
+    let mut rend = Renderer {
+        clock: 0,
+        since: 0,
+        running: false,
+    };
     let path = test_fixtures::require(
         &format!("live-buffer/{name}-apple-tv.lb.csv"),
         "live-buffer apple_tv_input_logs",
@@ -102,8 +131,14 @@ fn replay(name: &str, cfg: ControllerConfig) -> Option<Replay> {
         let now_raw: u64 = f.next().unwrap().parse().unwrap();
         let a = f.next().unwrap();
         let b = f.next().unwrap_or("");
+        let first_row = t0.is_none();
         let t0 = *t0.get_or_insert(now_raw);
         let now = now_raw - t0;
+        if first_row {
+            for t in pre {
+                c.register_track(*t);
+            }
+        }
         match kind {
             "chunk" => {
                 r.chunks += 1;
@@ -116,7 +151,11 @@ fn replay(name: &str, cfg: ControllerConfig) -> Option<Replay> {
                 c.on_track_media(now, track, b.parse().unwrap());
             }
             "tick" => {
-                let pos = (a == "1").then(|| b.parse::<Ticks27>().unwrap());
+                let pos = if closed {
+                    Some(rend.pos(now))
+                } else {
+                    (a == "1").then(|| b.parse::<Ticks27>().unwrap())
+                };
                 c.on_tick(now, pos);
             }
             "register" => c.register_track(a.parse().unwrap()),
@@ -124,8 +163,23 @@ fn replay(name: &str, cfg: ControllerConfig) -> Option<Replay> {
             other => panic!("unknown row kind {other}"),
         }
         while let Some(e) = c.poll_event() {
-            if let Event::TargetChanged { new_us, .. } = e {
-                r.targets.push((now, new_us));
+            match e {
+                Event::TargetChanged { new_us, .. } => r.targets.push((now, new_us)),
+                Event::StartPlaying { media_27mhz, .. } | Event::Resume { media_27mhz, .. } => {
+                    rend = Renderer {
+                        clock: media_27mhz,
+                        since: now,
+                        running: true,
+                    };
+                }
+                Event::Pause { hold_at_27mhz, .. } => {
+                    rend = Renderer {
+                        clock: hold_at_27mhz,
+                        since: now,
+                        running: false,
+                    };
+                }
+                _ => {}
             }
             r.events.push((now, e));
         }
@@ -281,8 +335,8 @@ fn france5_clean_golden() {
 /// leads -63 / 12 / 15 / 9 ms). Replayed through the CURRENT controller the
 /// log produces 2 audio `DataArriving` pauses (3 before the per-delivery
 /// coalescing made the floor engage on these per-frame media rows): the first
-/// ~97 ms after `StartPlaying`, before any granularity has been learnt (the
-/// start-up gap, flagged for follow-up), then the floor lifts the target to
+/// ~97 ms after `StartPlaying` (audio is registered only AFTER the start, see
+/// `rai3_stall_pauses_explained_late_registration_and_open_loop`), then the floor lifts the target to
 /// 412 ms (step 312 ms + margin) at 849 ms; the second pause at 1.417 s
 /// happens although the floor is in force (lead 16 ms: the open-loop replay's
 /// logged positions follow the OLD controller's earlier starts, so this is not
@@ -366,4 +420,45 @@ fn rai3_perchunk_golden() {
     // (a late PDV event at ~45 s may still move it; nothing before 40 s)
     assert!(neither.targets.iter().all(|(t, _)| *t > 40_000_000));
     assert_eq!(neither.target_at(5_000_000), FLOOR_US);
+}
+
+/// The two stall-log pauses, explained (analysis of the log, 2026-10-17).
+///
+/// * **Pause 1 (0.626 s, depth 0) is a late track registration, not an unknown
+///   granularity.** The log registers video at 0.179 s but audio only at
+///   0.622 s, 93 ms AFTER `StartPlaying` (0.529 s); the first audio end
+///   (43417.017) is 73 ms behind the playback position by then. The controller
+///   cannot wait for a track nobody announced. Registering both tracks at the
+///   first row (what a caller that knows its PMT does) makes the start wait for
+///   audio's first delivery (1.148 s) and pause 1 disappears.
+/// * **Pause 2 (1.417 s, lead 16 ms) is an open-loop artefact.** The logged
+///   playback position is the DEVICE's: the old controller resumed it at ~0.88 s
+///   and it ran 1x to 43417.601, while the controller under test (after its own
+///   pause 1) resumes at 1.148 s from 43417.017 and would be at ~43417.29, a
+///   lead of ~0.33 s. Driven by a closed-loop 1x renderer instead of the logged
+///   positions, the same recorded inputs give no pause at all.
+#[test]
+fn rai3_stall_pauses_explained_late_registration_and_open_loop() {
+    let Some(r) = replay_with("rai-3-stall", config(), &[VIDEO, AUDIO], false) else {
+        return;
+    };
+    assert_eq!(r.starts(), [1_147_776]);
+    let p = pause_summary(&r);
+    assert_eq!(p.len(), 1, "{p:?}");
+    assert_eq!(p[0].0, 1_417_065, "only the open-loop pause remains");
+    // closed loop, tracks registered up front: no stall
+    let c = replay_with("rai-3-stall", config(), &[VIDEO, AUDIO], true).unwrap();
+    assert_eq!(c.starts(), [1_147_776]);
+    assert!(c.pauses().is_empty(), "{:?}", pause_summary(&c));
+    assert_eq!(c.stalls, 0);
+    // closed loop with the log's own late registration: the unannounced audio
+    // costs exactly the first pause (it joins behind the position the
+    // video-only start already played); the second pause is gone
+    let late = replay_with("rai-3-stall", config(), &[], true).unwrap();
+    assert_eq!(late.starts(), [528_980]);
+    assert_eq!(
+        pause_summary(&late),
+        [(625_716, Some(AUDIO), Reason::DataArriving, 0, 450_000)]
+    );
+    assert_eq!(late.stalls, 1);
 }
