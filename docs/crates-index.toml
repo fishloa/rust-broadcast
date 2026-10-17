@@ -555,8 +555,8 @@ lifecycle = "active"
 domain = "live"
 summary = "Sans-IO live-TS playout buffer controller: jitter measurement, stall memory, start/pause/resume decisions."
 standards = "RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined"
-what = "Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer depth and explicit StartPlaying / Pause / Resume events for a player that cannot change playback rate. Integer-only, no I/O or clock, `max_us` is a hard cap. Unpublished; the spec-posture departure (policy half implementation-defined) awaits owner approval."
-crates_io = false
+what = "Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer depth and explicit StartPlaying / Pause / Resume events for a player that cannot change playback rate. Integer-only, no I/O or clock, `max_us` is a hard cap. The policy half is implementation-defined (owner-approved spec-posture departure)."
+crates_io = true
 lifecycle = "active"
 
 # ------------------------------------------------------------------ internal

@@ -7,7 +7,7 @@ Sans-IO playout buffer controller for live MPEG-TS players: it measures delivery
 ![licence](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)
 ![MSRV](https://img.shields.io/badge/MSRV-1.95-orange)
 
-> Status: **unpublished** (0.1.0 in the workspace, no release approved). The default numbers come from eight real delivery traces; see the design and trace analysis linked below.
+> Status: **0.1.0**, first release. The policy half (sizing, start/resume thresholds, stall memory) is **implementation-defined**: no standard specifies a de-jitter policy, and the owner approved this spec-posture departure for the release. The default numbers come from eight real delivery traces plus Apple TV controller input logs (held in a private fixtures repository); the design and trace analysis are linked below.
 
 ## What it does / what it does not
 

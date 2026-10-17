@@ -9,10 +9,11 @@ name: Release buffering-runtime
 # "10.0"), so broadcast-common must already be published at a compatible version
 # before this tag is pushed.
 #
-# STATUS: UNPUBLISHED crate. The owner has NOT approved a release; this lane
-# exists so that a future approved tag is gated like every other crate. It is
-# deliberately NOT in any docs/release-plan-2026-10*.pairs file. Never push a
-# `buffering-runtime-v*` tag without explicit owner sign-off.
+# It is released by docs/release-plan-2026-10-patch4.pairs together with mpeg-ts
+# and transmux; its tag is independent of theirs. broadcast-common 10.0 is already
+# live, so there is nothing to wait for. The private-fixture tests skip loudly in
+# this lane (no private checkout); the CI test matrix runs them with
+# REQUIRE_PRIVATE_FIXTURES=1 before the tag is pushed.
 
 on:
   push:
