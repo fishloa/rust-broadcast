@@ -44,7 +44,7 @@ pub mod target_ipv6_source_slash;
 pub mod target_mac_address_range;
 
 pub use generic_stream_location::{
-    GenericStreamSelector, IpMacGenericStreamLocationDescriptor, ModulationSystemType,
+    GenericStreamSelector, IpMacGenericStreamLocationDescriptor, ModulationSystemType, PhyStreamId,
 };
 pub use isp_access_mode::{IspAccessMode, IspAccessModeDescriptor};
 pub use platform_name::IpMacPlatformNameDescriptor;
