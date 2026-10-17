@@ -164,14 +164,14 @@ fn escalation_alone_ratchets_after_one_data_arriving_stall() {
     let p = s.pauses();
     assert_eq!(p.len(), 1, "exactly one stall then none: {p:?}");
     assert!(s.target() > 300_000, "target {}", s.target());
-    // the Pause carried the post-charge resume bar (1.5 x the failed target)
+    // the Pause carried the post-charge resume bar (1.25 x the failed target)
     let resume = s.log.iter().find_map(|(_, e)| match e {
         Event::Pause {
             resume_target_us, ..
         } => Some(*resume_target_us),
         _ => None,
     });
-    assert_eq!(resume, Some(450_000));
+    assert_eq!(resume, Some(375_000));
     assert!(s.c.stats().est.stall_peak_us >= 300_000);
 }
 

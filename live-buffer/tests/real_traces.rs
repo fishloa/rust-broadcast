@@ -219,12 +219,12 @@ fn the_default_initial_target_survives_the_tf1_and_6ter_gaps() {
 }
 
 /// `python3 docs/live-buffer/analysis/golden_oracle.py --initial-ms 500`:
-/// the old 500 ms start stalls once at the gap and resumes ~2.1 s later.
+/// the old 500 ms start stalls once at the gap and resumes ~1.75 s later.
 #[test]
 fn golden_initial_500_stalls_once_at_the_gap() {
     for (name, start, pause, resume, sum) in [
-        ("6ter", 525_799, 25_135_000, 28_209_171, 1_807_415_887),
-        ("tf-1", 500_679, 46_370_000, 49_383_175, 1_010_757_700),
+        ("6ter", 525_799, 25_135_000, 27_856_113, 1_807_415_887),
+        ("tf-1", 500_679, 46_370_000, 49_016_033, 1_010_757_700),
     ] {
         let Some(chunks) = trace(name) else { return };
         let r = replay(&chunks, &Opts::new(500_000));

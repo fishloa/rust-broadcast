@@ -156,7 +156,7 @@ pub struct PolicyConfig {
     pub margin_us: Micros,
     /// Stall-peak multiplier, Q8 (1.2 => 307).
     pub k2_q8: u16,
-    /// Resume target after a stall = `max(target, x * stall_peak)`, Q8 (1.5 => 384).
+    /// Resume target after a stall = `max(target, x * stall_peak)`, Q8 (1.25 => 320).
     pub after_rebuffer_q8: u16,
     /// Target decrease slew (100 ms per second).
     pub max_step_down_us_per_s: u32,
@@ -175,7 +175,7 @@ impl PolicyConfig {
         k1_q8: 512,
         margin_us: 100_000,
         k2_q8: 307,
-        after_rebuffer_q8: 384,
+        after_rebuffer_q8: 320,
         max_step_down_us_per_s: 100_000,
         reprime_floor_us: 0,
         reprime_hold_us: 2_000_000,

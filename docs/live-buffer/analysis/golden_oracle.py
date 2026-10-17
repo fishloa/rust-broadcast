@@ -33,7 +33,7 @@ CFG = dict(
     min_window=2_000_000, interval=500_000, outlier=500_000, bucket=10_000, buckets=400,
     forget=32113, quantile=990, hold=60_000_000, decay=60_000_000, disc=1_000_000,
     min=300_000, initial=1_800_000, max=3_000_000, k1=512, margin=100_000, k2=307,
-    after=384, step=100_000, starve=20_000, nodata=200_000,
+    after=320, step=100_000, starve=20_000, nodata=200_000,
 )
 
 
