@@ -9,7 +9,7 @@ ATSC 3.0 ROUTE (A/331 Annex A) binary framing: the ROUTE-specific delta on top o
 
 ```toml
 [dependencies]
-atsc3-route = "0.2"
+atsc3-route = "0.3"
 ```
 
 ## What it does / what it does not

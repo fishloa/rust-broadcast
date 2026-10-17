@@ -7,7 +7,7 @@ RTP fixed header, CSRC list and generic header extension (RFC 3550 §5.1 / §5.3
 
 ```toml
 [dependencies]
-rtp-packet = "0.4"
+rtp-packet = "0.5"
 ```
 
 ## What it does / what it does not

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-17
 ### Added
 - Explicit ST 291-1:2011 parity validation, grounded in the vendored standard itself (sections 6.1, 6.2, 6.4, 6.5, 6.7; verified on rendered PDF pp. 9, 12, 17): `AncContent::has_valid_parity`, `AncContent::verify_parity` (`Error::ParityMismatch`), `AncContent::validate` and `AncPacket::validate` returning a typed `ValidationReport` (DID/SDID/Data_Count parity, Data_Count vs UDW count, checksum). Opt-in only; parsing remains tolerant. Spec transcription in `docs/anc_parity_checksum.md`. Tests use Annex C's worked DID/DBN/DC words and hand-computed vectors with flipped-bit cases.
 - Finding and fix: the committed `anc.bin`/`anc_rtp.bin` fixtures are synthetic (hand-constructed from ST 2038 Table 2, not real captures) and used to fail ST 291-1 (Data_Count had no parity bits, checksums off by one). They are regenerated with the crate's own `AncContent::with_parity`/`compute_checksum` (`Data_Count` `0x102`/`0x203`, checksums `0x134`/`0x1AC`; all other bytes unchanged) and `tests/fixture_validate.rs` now asserts `is_valid()` on both, with a separate hand-built non-conformant packet providing the bite (it previously pinned the failures, so it could not catch a real defect).

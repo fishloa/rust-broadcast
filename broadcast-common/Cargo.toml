@@ -1,6 +1,6 @@
 [package]
 name         = "broadcast-common"
-version      = "9.4.0"
+version      = "10.0.0"
 edition      = "2024"
 description  = "Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc."
 license      = "MIT OR Apache-2.0"

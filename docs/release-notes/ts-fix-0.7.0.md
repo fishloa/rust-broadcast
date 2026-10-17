@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # ts-fix 0.7.0
 
 _Released 2026-10-16._

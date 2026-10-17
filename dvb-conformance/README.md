@@ -42,7 +42,7 @@ models only part of the T-STD (see below).
 
 ```toml
 [dependencies]
-dvb-conformance = "11"
+dvb-conformance = "12"
 ```
 
 ## Quick start

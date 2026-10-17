@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs restructured: explicit what-it-does / does-not (DVB bitmap not converted to text), standards table, full conversion matrix including WebVTT <-> SRT, feature table, compiled quick-start doctest.
 

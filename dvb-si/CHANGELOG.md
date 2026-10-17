@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [12.0.0] - 2026-10-17
 ### Changed (BREAKING, pre-release audit LOW findings)
 - The carousel `subgroup_association_descriptor` (TS 102 006 Table 39) and the UNT `SSU_subgroup_association_descriptor` (Table 30, rendered p.29) have the identical wire syntax (tag 0x0B, `descriptor_length` 5, 40-bit `subgroup_tag`), so both now share one typed `carousel::SubgroupTag { oui, subgroup }`. `carousel::SubgroupAssociationDescriptor` replaces its `oui`/`subgroup_tag: u16` fields with `subgroup_tag: SubgroupTag`; `unt::SsuSubgroupAssociationDescriptor` loses its lifetime, its `u64` `subgroup_tag`, the `oui()`/`subgroup()` accessors and `trailing`, and parses strictly (`descriptor_length` must be 5, as Table 30 fixes it).
 - AIT `RecordingLabel::label` and `PrefetchEntry::label` are now `LabelBytes<'a>` (an opaque byte string compared byte-for-byte) instead of `&[u8]`. TS 102 809 Table 21 (rendered p.41): `label_char` "carry an array of bytes", and NOTE 3 leaves the label format to platform specifications, so it is deliberately not `DvbText`. `RecordingLabel::new` takes a `LabelBytes`.

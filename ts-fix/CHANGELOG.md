@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-17
 ### Documentation
 - README rewritten to the workspace crate-README standard: what the crate does and does not do, a standards table (edition, scope, status), feature flags, a doctested quick start, the implemented API surface, design notes and related crates. Where the crate has a library target the crate-root docs are now `include_str!("../README.md")`, so docs.rs and crates.io show the same text.
 

@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-tools"
-version      = "11.1.0"
+version      = "12.0.0"
 description  = "Command-line DVB stream analyzer (dump / services / epg / pids / t2mi) over the rust-broadcast crates."
 edition      = "2024"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
@@ -16,10 +16,10 @@ name = "dvb-tools"
 path = "src/main.rs"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
-dvb-si    = { path = "../dvb-si",    version = "11.1", features = ["ts", "serde", "chrono"] }
-dvb-t2mi  = { path = "../dvb-t2mi",  version = "11.1", features = ["ts"] }
-mpeg-ts   = { path = "../mpeg-ts",   version = "0.5", default-features = false, features = ["std"] }
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
+dvb-si    = { path = "../dvb-si",    version = "12.0", features = ["ts", "serde", "chrono"] }
+dvb-t2mi  = { path = "../dvb-t2mi",  version = "12.0", features = ["ts"] }
+mpeg-ts   = { path = "../mpeg-ts",   version = "0.6", default-features = false, features = ["std"] }
 serde_json = { workspace = true }
 clap       = { workspace = true, features = ["derive"] }
 

@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs restructured: scope, standards table, SCTE-35 / DATERANGE / emsg conversion matrix, feature table, and a compiled quick-start doctest.
 

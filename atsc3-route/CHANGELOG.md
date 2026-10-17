@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs restructured: archived status, what is / is not covered, standards table (A/331 Annex A, delegated RFCs), feature flags, known repair-flow coverage gap.
 

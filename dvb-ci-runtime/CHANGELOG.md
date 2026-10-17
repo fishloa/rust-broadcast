@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-17
 ### Documentation
 - The periodic `ca_pmt` re-query is documented as hardware-verified on an entitled AlphaCrypt One4All V2.5 (CAID 0x0650, CXD2099 `ci0`, 180 s runs, 2026-10-16): `update/query` + `update/ok_descrambling` pairs, `ca_enable = 0x81` replies, no descrambling gap, `feed_ts` max 412 us; it stays opt-in (`REQUERY_DEFAULT` = `Duration::ZERO`). README, `REQUERY_DEFAULT` and `Driver::set_requery_interval` docs no longer say it is unverified or that the module never answers `query`.
 

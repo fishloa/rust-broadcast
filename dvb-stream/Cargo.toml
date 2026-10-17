@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-stream"
-version      = "0.6.0"
+version      = "0.7.0"
 edition      = "2024"
 description  = "Async/tokio stream adapters over dvb-si SiDemux and dvb-t2mi T2miPump."
 license      = "MIT OR Apache-2.0"
@@ -17,14 +17,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-si       = { path = "../dvb-si",   version = "11.1", default-features = false, features = ["ts", "std"] }
-dvb-t2mi     = { path = "../dvb-t2mi", version = "11.1", default-features = false, features = ["ts", "std"] }
-mpeg-ts      = { path = "../mpeg-ts",  version = "0.5", default-features = false, features = ["std"] }
+dvb-si       = { path = "../dvb-si",   version = "12.0", default-features = false, features = ["ts", "std"] }
+dvb-t2mi     = { path = "../dvb-t2mi", version = "12.0", default-features = false, features = ["ts", "std"] }
+mpeg-ts      = { path = "../mpeg-ts",  version = "0.6", default-features = false, features = ["std"] }
 # RTP fixed-header decode (RFC 3550 §5.1) to unwrap RTP-encapsulated MPEG-2 TS
 # datagrams (RFC 2250 §2) in `TsDecoder::datagram` rather than hunting for a
 # 0x47 inside the RTP header bytes.
-rtp-packet   = { path = "../rtp-packet", version = "0.4", default-features = false, features = ["std"] }
-broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false, features = ["std"] }
+rtp-packet   = { path = "../rtp-packet", version = "0.5", default-features = false, features = ["std"] }
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false, features = ["std"] }
 futures-core = "0.3"
 tokio        = { version = "1", default-features = false, features = ["io-util", "net", "time"] }
 tokio-util   = { version = "0.7", default-features = false, features = ["codec"] }

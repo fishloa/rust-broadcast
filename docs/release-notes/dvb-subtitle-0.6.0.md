@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # dvb-subtitle 0.6.0
 
 _Released 2026-10-16._

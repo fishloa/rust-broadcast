@@ -53,7 +53,7 @@ Without `std` the library is `no_std` + `alloc`.
 
 ```toml
 [dependencies]
-media-doctor = { version = "0.10", default-features = false } # library only
+media-doctor = { version = "0.11", default-features = false } # library only
 ```
 
 ## Library quick start

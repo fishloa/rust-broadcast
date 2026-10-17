@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # broadcast-hls 0.4.0
 
 _Released 2026-10-16._

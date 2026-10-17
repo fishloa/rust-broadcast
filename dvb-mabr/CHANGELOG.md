@@ -4,6 +4,7 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs rewritten to the workspace documentation standard: what the crate does and does not do, a standards-supported table (edition, scope, status), feature flags, a doctested quick start, and related crates.
 

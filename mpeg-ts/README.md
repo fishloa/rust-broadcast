@@ -53,7 +53,7 @@ The crate is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`;
 
 ```toml
 [dependencies]
-mpeg-ts = "0.5"
+mpeg-ts = "0.6"
 # embedded:
 # mpeg-ts = { version = "0.5", default-features = false }
 ```

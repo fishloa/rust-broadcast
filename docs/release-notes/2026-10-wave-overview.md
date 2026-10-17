@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # The 2026-10 wave: typed ids, preserved bits, no more panicking serializers
 
 _Planned release 2026-10; dates are stamped at sign-off (`prepare-release.py --restamp`)._
