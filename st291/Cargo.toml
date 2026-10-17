@@ -50,6 +50,10 @@ required-features = ["ts"]
 name = "fixture_anc_rtp"
 required-features = ["rtp"]
 
+[[test]]
+name = "fixture_validate"
+required-features = ["ts"]
+
 [features]
 default = ["std", "ts"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
