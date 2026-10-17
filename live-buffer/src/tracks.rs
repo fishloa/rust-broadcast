@@ -52,7 +52,7 @@
 //! boundary that ends the delivery, with identical events however the calls
 //! were split.
 //!
-//! **Start gate.** [`TrackSet::granularity_known`] tells the controller whether
+//! **Start gate.** `TrackSet::granularity_known` tells the controller whether
 //! every delivering track has shown [`LEARN_STEPS`] closed steps (or has been
 //! delivering for a bounded wait), so a start/resume is never granted before the
 //! floor could have been learnt.
@@ -75,7 +75,7 @@ pub const DEFAULT_TRACK: u32 = 0;
 pub const COALESCE_US: Micros = 1_000;
 
 /// Delivery steps a track must have shown before a start/resume is granted on
-/// its granularity (see [`TrackSet::granularity_known`]): the third delivery's
+/// its granularity (see `TrackSet::granularity_known`): the third delivery's
 /// window has closed, so two steps were measured.
 pub const LEARN_STEPS: u32 = 2;
 
