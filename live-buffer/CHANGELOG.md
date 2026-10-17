@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Docs + test: caller contract for the start origin. The first reported end anchors the origin, so a caller must report
+  the first end only from the join point (first video RAP) and withhold ends before it (audio reported ahead of the
+  join point anchors start early and loses audio cushion). `on_media`/`on_track_media`/`register_track` rustdoc, README,
+  DESIGN 0.1c; pinned by `audio_before_the_join_point_anchors_start_early`.
 - Per-track silence timeout is now relative: a track is excluded only when its last delivery (or registration)
   is `track_silence_timeout_us` older than the latest delivery on ANY track. A global delivery gap (reconnect,
   server restart) excludes nobody, so the controller no longer Resumes on stale data and stalls again; the

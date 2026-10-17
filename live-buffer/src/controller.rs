@@ -156,6 +156,15 @@ impl BufferController {
     /// buffered position; report the first sample's *start* PTS as a
     /// zero-length first report so that sample is not skipped.
     ///
+    /// **Caller contract (join point).** The first end reported is the start
+    /// origin (with several tracks, the earliest first report). Report the
+    /// first end only from the join point (the first video random-access
+    /// point) and never report an end for media before it: audio reported
+    /// before the join point (normal in a TS mux, audio is ~1 s behind video)
+    /// anchors the origin that much early and the start loses that much audio
+    /// cushion. The controller cannot see RAPs, so the caller must withhold
+    /// ends before the join point.
+    ///
     /// `media_end_27mhz` means **the end of the media playable on ALL rendered
     /// tracks**: when audio and video are both rendered the caller must pass
     /// the *minimum* of their ends (video is typically ~1 s ahead of audio in a
@@ -175,7 +184,9 @@ impl BufferController {
     /// excluded once other tracks have delivered for
     /// [`ControllerConfig::track_silence_timeout_us`] without it (never after a
     /// global delivery gap). Optional:
-    /// an unregistered track becomes active on its first delivery. At most
+    /// an unregistered track becomes active on its first delivery (join-point
+    /// contract: see [`on_media`](Self::on_media), report only from the join
+    /// point). At most
     /// [`MAX_TRACKS`](crate::MAX_TRACKS) distinct tracks are kept.
     pub fn register_track(&mut self, track: u32) {
         self.tracks.register(track, self.latest);
@@ -196,7 +207,8 @@ impl BufferController {
 
     /// Per-track media position: `media_end_27mhz` is the end of the last
     /// demuxed sample of `track` in the playback (PTS) domain (same units and
-    /// first-report rule as [`on_media`](Self::on_media)). The controller keeps
+    /// first-report rule and join-point caller contract as
+    /// [`on_media`](Self::on_media)). The controller keeps
     /// every track's end and measures the lead against the **minimum over the
     /// active tracks**. A track is excluded only when it is silent *relative to
     /// the other tracks*: its last delivery is at least

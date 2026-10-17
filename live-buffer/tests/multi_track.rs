@@ -568,3 +568,34 @@ fn discontinuity_while_playing_resumes_not_restarts() {
     assert_eq!(s.pauses().len(), 1);
     assert_eq!(s.resumes().len(), 1);
 }
+
+/// Caller contract (join point): the first reported end is the start origin.
+/// Audio reported BEFORE the join point (audio is muxed ~1 s behind video in
+/// TS) anchors the origin early, so start fires with ~1 s less audio cushion
+/// past the join point than when the first report is from the join point.
+#[test]
+fn audio_before_the_join_point_anchors_start_early() {
+    const EARLY_US: u64 = 1_000_000;
+    // Both runs deliver identical ends from the join point (BASE) on; they
+    // differ only in the first audio report.
+    let run = |audio_first: Ticks27| {
+        let mut s = Sim::new(cfg());
+        s.c.on_track_media(s.now, AUDIO, audio_first);
+        s.c.on_track_media(s.now, VIDEO, BASE);
+        while s.starts().is_empty() {
+            s.step(true, true);
+            assert!(s.t_us < 10_000_000, "never started");
+        }
+        s.t_us // audio cushion past the join point at start
+    };
+    let early = run(BASE - EARLY_US * TICKS_PER_US);
+    let from_join = run(BASE);
+    assert!(
+        from_join >= cfg().policy.initial_us,
+        "join-point-first start with only {from_join} us of audio"
+    );
+    assert!(
+        early + EARLY_US <= from_join + 2 * STEP_US && early + 2 * STEP_US < from_join,
+        "early origin should lose ~{EARLY_US} us: early {early}, from join {from_join}"
+    );
+}
