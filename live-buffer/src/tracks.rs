@@ -6,7 +6,7 @@
 //! of the last delivered sample per track and reduces them to one position:
 //!
 //! * a track becomes **active** on its first delivery;
-//! * a track announced with [`TrackSet::register`] that has not delivered yet
+//! * a track announced with [`BufferController::register_track`](crate::BufferController::register_track) that has not delivered yet
 //!   **blocks** the reduction (no effective end) until it delivers or has been
 //!   silent for `silence_timeout_us`;
 //! * a track silent for `silence_timeout_us` is **excluded**, so a dead track
@@ -128,13 +128,13 @@ impl TrackSet {
         }
         let mut max: Option<Effective> = None;
         for t in &self.v {
-            if let Some(end) = t.end {
-                if max.is_none_or(|m| before(m.end, end)) {
-                    max = Some(Effective {
-                        end,
-                        limiting: t.id,
-                    });
-                }
+            if let Some(end) = t.end
+                && max.is_none_or(|m| before(m.end, end))
+            {
+                max = Some(Effective {
+                    end,
+                    limiting: t.id,
+                });
             }
         }
         max

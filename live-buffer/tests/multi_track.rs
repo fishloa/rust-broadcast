@@ -229,6 +229,7 @@ fn silent_track_is_excluded_after_the_timeout() {
     let last_audio = s.now;
     while s.pauses().is_empty() {
         s.step(false, true);
+        assert!(s.now - last_audio < 2_900_000, "never starved");
     }
     assert!(s.resumes().is_empty());
     let timeout = cfg().track_silence_timeout_us;

@@ -14,7 +14,7 @@ Sans-IO playout buffer controller for live MPEG-TS players: it measures delivery
 It turns three inputs into decisions:
 
 1. `on_chunk(arrival_us, bytes, pcr_27mhz)`: a chunk arrived, with its last PCR if any (feeds the jitter estimator only).
-2. `on_media(now_us, media_end_27mhz)`: the demuxer's media position, **in the playback (PTS) domain** (end of the last demuxed sample).
+2. `on_media(now_us, media_end_27mhz)`: the demuxer's media position, **in the playback (PTS) domain** (end of the last demuxed sample). It means *the end of the media playable on ALL rendered tracks*: a TS mux sends video ~1 s ahead of play time and audio near real time, so with audio and video rendered pass the **minimum** of their ends (judging the lead on video alone makes every audio buffer arrive after its play time). Or report each track with `on_track_media(now_us, track, media_end_27mhz)` and let the controller take the minimum over the active tracks (`register_track(track)` announces a track before its first delivery; a track silent for `ControllerConfig::track_silence_timeout_us`, default 3 s, is excluded; all silent: the latest known end). `on_media` is shorthand for track 0 (`DEFAULT_TRACK`), so it joins the same minimum. A starvation `Pause` names the limiting track (`Event::Pause::track`, `Stats::limiting_track`).
 3. `on_tick(now_us, playback_27mhz)`: the renderer clock, also PTS-domain.
 
 and emits `Event`s: `StartPlaying`, `Pause`, `Resume`, `TargetChanged`, `OverMax`, `Rebaselined`. The lead is `media_end - playback`; PCR is never used for it, because PCR runs ahead of PTS by the mux/decoder delay and would overstate what can play.
@@ -87,7 +87,7 @@ assert!(c.target_us() <= ControllerConfig::default().policy.max_us);
 - `Resume { media_27mhz }`: re-seed the clock to exactly this position and set rate 1 in one step. Rate 1 without the time re-creates the measured permanent starvation (a free-running clock is already ahead of the late data). After a discontinuity this differs from the pause position: it is a time jump on the caller's side, and if the audio renderer flushes on a time jump, re-enqueue from there.
 - Send `Hint::SourceEnded`/`SourceError` when a connection drops and `Hint::Reconnected` **before** feeding the first chunk of the new one (re-baselines, keeps the stall memory, resumes at the target, not the post-stall threshold).
 - Persist `snapshot_memory()` for the app session; on the next zap call `StallMemorySnapshot::aged(elapsed_us)` and pass it as the seed.
-- C ABI: `ABI_VERSION`, `Hint::code`/`from_code`, `State::code`, `Reason::code`, `Event::to_record` (a `#[repr(C)]` `EventRecord`, field table in the rustdoc), `ControllerConfig::default()`; see section 7 of the design.
+- C ABI: `ABI_VERSION`, `Hint::code`/`from_code`, `State::code`, `Reason::code`, `Event::to_record` (a `#[repr(C)]` `EventRecord`, 40 bytes since ABI version 2, field table in the rustdoc), `ControllerConfig::default()`; see section 7 of the design.
 
 ## Design notes
 

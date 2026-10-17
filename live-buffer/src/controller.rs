@@ -193,11 +193,11 @@ impl BufferController {
         let Some(first) = self.tracks.deliver(track, now_us, media_end_27mhz) else {
             return;
         };
-        if !self.pcr_seen {
-            if let Some(e) = self.effective() {
-                self.fed_media = true;
-                self.feed(now_us, e.end, 0);
-            }
+        if !self.pcr_seen
+            && let Some(e) = self.effective()
+        {
+            self.fed_media = true;
+            self.feed(now_us, e.end, 0);
         }
         match self.queue_start {
             None => self.queue_start = Some(media_end_27mhz),
