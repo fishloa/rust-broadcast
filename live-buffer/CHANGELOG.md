@@ -8,9 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Start/resume granularity gate: a `Buffering -> Playing` transition now also waits until every delivering
+  (non-excluded) track has shown two closed delivery steps (three deliveries), so its cadence is known and the
+  granularity floor (`G + margin`) is already in the target the lead is compared with. Bounded: a track that has
+  been delivering for `policy.start_us()` without showing two steps (a slow or one-shot track) no longer holds the
+  gate, and `track_granularity = false` disables it. Before, a start with `initial_us` below a track's PES step
+  (e.g. 300 ms vs 0.3-0.35 s audio bursts) was granted blind and stalled within the first second (closed-loop
+  `tests/start_granularity.rs`: start 250 ms + pause at 530 ms before, start 600 ms + no pause after). Cost with
+  `initial_us` 300 ms on the Apple TV logs: rai-3 +197 ms, rai-3 per-chunk +155 ms, france-5 +113 ms; none at
+  `initial_us` 500 ms / 1.8 s (the fill is already the longer wait). No ABI layout change.
 - Tests: Apple TV controller input-log goldens (`tests/apple_tv_input_logs.rs`): rai-3, france-5 and a stalling rai-3 log replayed verbatim through the current controller (private fixtures).
 
 ### Fixed
+- Analysis of the rai-3 stall log (test `rai3_stall_pauses_explained_late_registration_and_open_loop`): its first
+  pause is a late track registration (audio registered 93 ms AFTER `StartPlaying`; register every track from the PMT
+  before the first delivery, then the start waits for audio and the pause disappears) and its second is an open-loop
+  replay artefact (the logged positions are the device's, ~0.27 s ahead of where this controller resumes); a closed-loop
+  renderer on the same inputs stalls only once, at the late audio.
 - Docs + test: caller contract for the start origin. The first reported end anchors the origin, so a caller must report
   the first end only from the join point (first video RAP) and withhold ends before it (audio reported ahead of the
   join point anchors start early and loses audio cushion). `on_media`/`on_track_media`/`register_track` rustdoc, README,

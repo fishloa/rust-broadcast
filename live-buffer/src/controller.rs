@@ -394,9 +394,22 @@ impl BufferController {
         let lead = lead_between(origin, media_end);
         self.lead_us = lead;
         let need = self.exit_target(now);
-        if lead >= i64::try_from(need).unwrap_or(i64::MAX) {
+        if lead >= i64::try_from(need).unwrap_or(i64::MAX) && self.granularity_ready(now) {
             self.begin_playing(now, origin, lead);
         }
+    }
+
+    /// Start/resume gate on the delivery granularity (see the module docs of
+    /// [`crate::tracks`]): every delivering track must have shown enough
+    /// deliveries to know its cadence, bounded by the start fill so a slow
+    /// track cannot block forever.
+    fn granularity_ready(&self, now: u64) -> bool {
+        !self.cfg.track_granularity
+            || self.tracks.granularity_known(
+                now,
+                self.cfg.track_silence_timeout_us,
+                self.policy.start_us(),
+            )
     }
 
     fn exit_target(&self, now: u64) -> Micros {
