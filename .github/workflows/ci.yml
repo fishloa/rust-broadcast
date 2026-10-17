@@ -175,6 +175,11 @@ jobs:
       # Pure Python (tomllib, 3.11+); no cargo, no network.
       - name: crate index is current
         run: python3 tools/gen-crate-index.py --check
+      # README dependency snippets (`crate = "x.y"`) must name the epoch the
+      # workspace crate is at; they went stale every wave before this gate.
+      # Pure Python, no cargo, no network.
+      - name: README dependency snippets are current
+        run: python3 tools/readme_snippets.py --check
       - name: clippy
         run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 

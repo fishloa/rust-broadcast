@@ -5,7 +5,10 @@ Usage:
     tools/prepare-release.py <crate>=<version> [<crate>=<version> ...]
     tools/prepare-release.py --check <crate>=<version> [...]     # dry run
     tools/prepare-release.py --verify <crate>=<version> [...]    # post-publish
+    tools/prepare-release.py --tag-order <crate>=<version> [...]  # tags, push order
     tools/prepare-release.py --check-readmes [<crate>=<version> ...]
+
+Apply/--check options: --no-lock, --no-finalize-notes, --extra-note PATH (repeatable).
                                     # exit 1 if a README `crate = "x.y"` snippet
                                     # disagrees with the current/planned version
 
@@ -24,8 +27,24 @@ retyped by hand each time:
    a fresh empty `## [Unreleased]` goes back on top.
 4. **Release note** — scaffolds `docs/release-notes/<crate>-<version>.md` from
    the CHANGELOG section just cut, if one does not already exist.
-5. **Tag order** — prints the dependency-correct tag order, so a crate is never
-   tagged before something it depends on is live.
+4b. **Finalise notes** — strips the `status: DRAFT` front-matter block from the
+   note of every bumped pair, from `v<lockstep>.md` when the lockstep five are
+   bumped, and from any `--extra-note PATH`. Fails loudly (before anything is
+   edited) on a note with no front matter, unexpected front matter, or a
+   placeholder marker (a line starting `TODO`/`TBD`/`DRAFT`, or `[TODO]`,
+   `<TBD>`...). Skip with `--no-finalize-notes` (old scaffold-and-edit flow).
+4c. **Crate index** — runs `tools/gen-crate-index.py` (docs/CRATES.md and the
+   README crate table derive from the manifests) and then its `--check`.
+4d. **Cargo.lock** — runs `cargo metadata --format-version 1 --offline`, which
+   rewrites ONLY the workspace members' own `version` lines in the committed
+   lock (every third-party pin, which is MSRV-compatible by policy, is kept),
+   then verifies the lock diff touches nothing else (restoring the old lock if
+   it does) and that `cargo metadata --locked --offline` passes. Skip with
+   `--no-lock`.
+5. **Tag order** — prints the dependency-correct tag order (normal, build AND
+   versioned dev-dependency edges; the lockstep five collapse into one
+   `v<ver>` slot), so a crate is never tagged before something it depends on
+   is live. `--tag-order <pairs...>` prints just that, one tag per line.
 
 It does NOT tag, push, or publish. Those stay manual and need explicit
 sign-off; `tools/push-release-tags.sh` pushes tags one at a time afterwards.
@@ -39,12 +58,14 @@ sends the User-Agent crates.io requires, and never reports a failed request as
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 TODAY = _dt.date.today().isoformat()
 
 VERSION_RE = re.compile(r'^(version\s*=\s*)"([^"]+)"', re.M)
@@ -224,9 +245,11 @@ Published from tag `{crate}-v{new}`.
 
 def _publish_deps(manifest: Path) -> set[str]:
     """Names in [dependencies] / [build-dependencies] (incl. target-specific
-    tables). Dev-dependencies are excluded: they do not gate publishing, and
-    counting them creates cycles (e.g. a crate's tests depending on a dependent
-    crate) that used to collapse the order to alphabetical."""
+    tables), plus VERSIONED dev-dependencies: `cargo publish` resolves a
+    dev-dependency that carries a `version` against the index (mpeg-ts's dev-dep
+    on mp4-emsg gates its publish), while a path-only dev-dependency is stripped
+    and cannot gate anything -- counting those created cycles that used to
+    collapse the order to alphabetical."""
     import tomllib
 
     data = tomllib.loads(manifest.read_text())
@@ -236,6 +259,9 @@ def _publish_deps(manifest: Path) -> set[str]:
         for k in ("dependencies", "build-dependencies"):
             for name, spec in (table.get(k) or {}).items():
                 names.add(spec.get("package", name) if isinstance(spec, dict) else name)
+        for name, spec in (table.get("dev-dependencies") or {}).items():
+            if isinstance(spec, dict) and "version" in spec:
+                names.add(spec.get("package", name))
 
     take(data)
     for tgt in (data.get("target") or {}).values():
@@ -258,6 +284,204 @@ def dependency_order(crates: list[str]) -> list[str]:
         for c in ready:
             remaining.pop(c)
     return ordered
+
+
+def lockstep_version(pairs: list[tuple[str, str]]) -> str | None:
+    """The lockstep version if any of the five is in `pairs`; all five must be
+    present and agree, else SystemExit."""
+    d = dict(pairs)
+    present = [c for c in LOCKSTEP if c in d]
+    if not present:
+        return None
+    missing = [c for c in LOCKSTEP if c not in d]
+    versions = {d[c] for c in present}
+    if missing or len(versions) != 1:
+        raise SystemExit(f"lockstep five must be bumped together to ONE version: missing={missing} versions={sorted(versions)}")
+    return versions.pop()
+
+
+def tag_order(pairs: list[tuple[str, str]]) -> list[str]:
+    """Push order as tags: dependencies first, the lockstep five collapsed into
+    one `v<ver>` slot (alphabetical within a ready batch, as the plan lists)."""
+    ls = lockstep_version(pairs)
+    versions = dict(pairs)
+    node_of = {c: (f"v{ls}" if c in LOCKSTEP else f"{c}-v{versions[c]}") for c in versions}
+    deps: dict[str, set[str]] = {}
+    for c in versions:
+        crate_deps = {node_of[d] for d in (_publish_deps(crate_manifest(c)) & set(versions)) if d != c}
+        deps.setdefault(node_of[c], set()).update(crate_deps)
+    for n in deps:
+        deps[n].discard(n)
+    ordered: list[str] = []
+    remaining = dict(deps)
+    while remaining:
+        ready = sorted(
+            (n for n, d in remaining.items() if not (d - set(ordered))),
+            key=lambda n: (not n.startswith("broadcast-common-v"), n),  # the root crate leads
+        )
+        if not ready:
+            raise SystemExit(f"dependency cycle among: {sorted(remaining)}")
+        ordered.extend(ready)
+        for n in ready:
+            remaining.pop(n)
+    return ordered
+
+
+_PLACEHOLDER_RE = re.compile(
+    r"^[ \t]*(?:[-*>][ \t]+)?(?:\*\*)?(?:DRAFT|TODO|TBD)\b(?!\()"  # a line that STARTS with the marker
+    r"|\[(?:DRAFT|TODO|TBD)\]|<(?:DRAFT|TODO|TBD)>",
+    re.M,
+)
+
+
+def note_path_for(crate_or_tag: str, version: str | None = None) -> Path:
+    base = ROOT / "docs" / "release-notes"
+    return base / (f"{crate_or_tag}.md" if version is None else f"{crate_or_tag}-{version}.md")
+
+
+def notes_to_finalize(pairs: list[tuple[str, str]], extra: list[str]) -> list[Path]:
+    paths = [note_path_for(c, v) for c, v in pairs]
+    ls = lockstep_version(pairs)
+    if ls:
+        paths.append(note_path_for(f"v{ls}"))
+    paths.extend((ROOT / e if not Path(e).is_absolute() else Path(e)) for e in extra)
+    return paths
+
+
+def strip_draft_front_matter(text: str) -> tuple[str | None, str]:
+    """(new_text, problem). `problem` is "" when the note is finalisable. Only a
+    leading `---` block holding exactly `status: DRAFT` is removed; the body is
+    kept byte for byte."""
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None, "has no front matter (expected a leading `---` block with `status: DRAFT`)"
+    try:
+        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    except StopIteration:
+        return None, "front matter is not closed with `---`"
+    block = [l.strip() for l in lines[1:end] if l.strip()]
+    if block != ["status: DRAFT"]:
+        return None, f"unexpected front matter {block!r} (only `status: DRAFT` may be stripped)"
+    body = "\n".join(lines[end + 1 :])
+    m = _PLACEHOLDER_RE.search(body)
+    if m:
+        line = body.count("\n", 0, m.start()) + 1
+        return None, f"still contains placeholder text {m.group(0).strip()!r} (body line {line})"
+    if not body.strip():
+        return None, "has no body"
+    return body, ""
+
+
+def finalize_notes(paths: list[Path], apply: bool) -> tuple[list[str], list[str]]:
+    """Strip the DRAFT front matter from every note. Returns (log, problems);
+    nothing is written unless `apply` AND there are no problems at all."""
+    log: list[str] = []
+    problems: list[str] = []
+    todo: list[tuple[Path, str]] = []
+    for p in paths:
+        rel = p.relative_to(ROOT) if p.is_relative_to(ROOT) else p
+        if not p.is_file():
+            problems.append(f"  {rel}: MISSING release note")
+            continue
+        new, problem = strip_draft_front_matter(p.read_text())
+        if problem:
+            problems.append(f"  {rel}: {problem}")
+        else:
+            todo.append((p, new))
+            log.append(f"  {rel}: finalised (status: DRAFT front matter stripped)")
+    if apply and not problems:
+        for p, new in todo:
+            p.write_text(new)
+    return log, problems
+
+
+def run_gen_crate_index(apply: bool) -> int:
+    script = ROOT / "tools" / "gen-crate-index.py"
+    if not apply:
+        print("  would run: python3 tools/gen-crate-index.py  (regenerates docs/CRATES.md + README crate table), then --check")
+        return 0
+    for extra in ([], ["--check"]):
+        r = subprocess.run([sys.executable, str(script), *extra], cwd=ROOT, capture_output=True, text=True)
+        sys.stdout.write("".join(f"  {l}\n" for l in (r.stdout + r.stderr).splitlines()))
+        if r.returncode != 0:
+            print(f"ERROR: gen-crate-index.py {' '.join(extra)} failed", file=sys.stderr)
+            return 1
+    return 0
+
+
+def _lock_packages(text: str) -> list[dict]:
+    import tomllib
+
+    return tomllib.loads(text).get("package", [])
+
+
+def lock_violations(old: str, new: str) -> list[str]:
+    """Differences between two Cargo.lock texts OTHER than the workspace
+    members' own `version` lines (a member = a package with no `source`).
+    Third-party entries must be byte-identical as parsed; member entries must
+    match once `version` is dropped and member-to-member dependency strings are
+    reduced to the bare name."""
+    po, pn = _lock_packages(old), _lock_packages(new)
+    members = {p["name"] for p in pn if "source" not in p} | {p["name"] for p in po if "source" not in p}
+
+    def norm(p: dict) -> str:
+        q = dict(p)
+        if "source" not in q:
+            q.pop("version", None)
+            q["dependencies"] = sorted(
+                d.split(" ")[0] if d.split(" ")[0] in members and len(d.split(" ")) == 2 else d
+                for d in q.get("dependencies", [])
+            )
+        return json.dumps(q, sort_keys=True)
+
+    def index(pkgs: list[dict]) -> dict[str, str]:
+        return {
+            (f"{p['name']}@member" if "source" not in p else f"{p['name']}@{p['version']}@{p['source']}"): norm(p)
+            for p in pkgs
+        }
+
+    io, inn = index(po), index(pn)
+    bad: list[str] = []
+    for k in sorted(set(io) | set(inn)):
+        if k not in inn:
+            bad.append(f"  removed from Cargo.lock: {k}")
+        elif k not in io:
+            bad.append(f"  added to Cargo.lock: {k}")
+        elif io[k] != inn[k]:
+            bad.append(f"  changed in Cargo.lock beyond a member version: {k}")
+    return bad
+
+
+def refresh_lock(apply: bool) -> int:
+    """Rewrite only the workspace members' versions in Cargo.lock.
+
+    `cargo update --workspace` is NOT used: it re-resolves and can float
+    third-party pins past the MSRV-compatible ones the committed lock holds.
+    `cargo metadata --offline` resolves against the lock and only edits what the
+    manifests force -- here, each bumped member's own version -- and `--offline`
+    makes it fail rather than reach for the network or a newer index."""
+    cmd = ["cargo", "metadata", "--format-version", "1", "--offline"]
+    if not apply:
+        print(f"  would run: {' '.join(cmd)} > /dev/null, assert the lock diff is member-version lines only,")
+        print("  then `cargo metadata --locked --offline` (skip with --no-lock)")
+        return 0
+    lock = ROOT / "Cargo.lock"
+    old = lock.read_text()
+    r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"ERROR: `{' '.join(cmd)}` failed:\n{r.stderr}", file=sys.stderr)
+        lock.write_text(old)
+        return 1
+    new = lock.read_text()
+    bad = lock_violations(old, new)
+    if bad:
+        lock.write_text(old)
+        print("ERROR: the lock refresh changed more than workspace-member versions; Cargo.lock RESTORED:", file=sys.stderr)
+        print("\n".join(bad), file=sys.stderr)
+        return 1
+    n = sum(1 for a, b in zip(old.splitlines(), new.splitlines()) if a != b) if old != new else 0
+    print(f"  Cargo.lock refreshed: {n} line(s) changed, all workspace-member versions")
+    return 0
 
 
 def verify(pairs: list[tuple[str, str]]) -> int:
@@ -355,8 +579,29 @@ def check_readmes(pairs: list[tuple[str, str]]) -> int:
     return 0
 
 
+def _split_flags(args: list[str]) -> tuple[list[str], dict]:
+    opts = {"lock": True, "finalize": True, "extra": []}
+    rest: list[str] = []
+    it = iter(args)
+    for a in it:
+        if a == "--no-lock":
+            opts["lock"] = False
+        elif a == "--no-finalize-notes":
+            opts["finalize"] = False
+        elif a == "--extra-note":
+            try:
+                opts["extra"].append(next(it))
+            except StopIteration:
+                raise SystemExit("--extra-note needs a PATH") from None
+        elif a.startswith("--extra-note="):
+            opts["extra"].append(a.split("=", 1)[1])
+        else:
+            rest.append(a)
+    return rest, opts
+
+
 def main(argv: list[str]) -> int:
-    args = argv[1:]
+    args, opts = _split_flags(argv[1:])
     if not args:
         print(__doc__, file=sys.stderr)
         return 2
@@ -372,6 +617,8 @@ def main(argv: list[str]) -> int:
         mode, args = "restamp", args[1:]
     elif args[0] == "--restamp-check":
         mode, args = "restamp-check", args[1:]
+    elif args[0] == "--tag-order":
+        mode, args = "tag-order", args[1:]
 
     pairs: list[tuple[str, str]] = []
     for a in args:
@@ -383,6 +630,10 @@ def main(argv: list[str]) -> int:
     if mode == "verify":
         return verify(pairs)
 
+    if mode == "tag-order":
+        print("\n".join(tag_order(pairs)))
+        return 0
+
     if mode == "check-readmes":
         return check_readmes(pairs)
 
@@ -393,6 +644,16 @@ def main(argv: list[str]) -> int:
 
     apply = mode == "apply"
     print(f"{'APPLYING' if apply else 'DRY RUN —'} release prep for {len(pairs)} crate(s)\n")
+
+    # Preflight: refuse to start editing if a note cannot be finalised, so a
+    # failure never leaves a half-applied tree behind.
+    if opts["finalize"]:
+        _, problems = finalize_notes(notes_to_finalize(pairs, opts["extra"]), False)
+        if problems:
+            print("Release notes that cannot be finalised (nothing was edited):", file=sys.stderr)
+            print("\n".join(problems), file=sys.stderr)
+            print("Fix the notes, or pass --no-finalize-notes to scaffold-and-edit by hand.", file=sys.stderr)
+            return 1
 
     print("Version bumps:")
     for c, v in pairs:
@@ -431,25 +692,41 @@ def main(argv: list[str]) -> int:
     for c, v in pairs:
         print(scaffold_release_note(c, v, bodies.get(c, ""), apply))
 
-    if apply and verify_resolution() != 0:
+    if opts["finalize"]:
+        print("\nFinalise release notes (strip `status: DRAFT` front matter):")
+        log, problems = finalize_notes(notes_to_finalize(pairs, opts["extra"]), apply)
+        print("\n".join(log + problems))
+        if problems:
+            print("ERROR: a scaffolded note still has no front matter; edit it, then re-run with --no-finalize-notes", file=sys.stderr)
+            return 1
+
+    print("\nCrate index (docs/CRATES.md, README crate table):")
+    if run_gen_crate_index(apply) != 0:
         return 1
 
-    print("\nTag order (dependencies first — a crate must be LIVE before its dependents tag):")
-    for i, c in enumerate(dependency_order([c for c, _ in pairs]), 1):
-        v = dict(pairs)[c]
-        print(f"  {i}. {c}-v{v}")
+    print("\nCargo.lock:")
+    if opts["lock"]:
+        if refresh_lock(apply) != 0:
+            return 1
+        if apply and verify_resolution() != 0:
+            return 1
+    else:
+        print("  skipped (--no-lock): refresh and commit Cargo.lock yourself, or every release lane's --locked build fails")
+
+    print("\nTag order (dependencies first — a crate must be LIVE before its dependents tag; `v<ver>` is the lockstep slot, pushed by hand):")
+    for i, t in enumerate(tag_order(pairs), 1):
+        print(f"  {i}. {t}")
 
     print(
-        "\nNext steps (all manual, and needing explicit sign-off):\n"
-        "  1. Review and EDIT every scaffolded release note — the scaffold is the\n"
-        "     CHANGELOG body, not a written note.\n"
-        "  2. Update the root README coverage table for any NEW crate.\n"
-        "  3. Run the full gate suite.\n"
-        "  4. Commit, PR, merge.\n"
-        "  5. tools/push-release-tags.sh — pushes tags ONE AT A TIME, in the order\n"
+        "\nNext steps (all manual, and needing explicit sign-off; see docs/RELEASE-RUNBOOK-2026-10.md):\n"
+        "  1. Review the diff and every release note (a scaffolded note is the CHANGELOG body,\n"
+        "     not a written note).\n"
+        "  2. python3 tools/finalize-release-check.py <pairs-file>   # read-only PASS/FAIL table\n"
+        "  3. Run the full gate suite; commit, PR, merge.\n"
+        "  4. tools/push-release-tags.sh --plan <pairs-file> — one tag at a time, in the order\n"
         "     above, verifying each reaches crates.io before the next (issue #933).\n"
-        "  6. tools/prepare-release.py --verify <crate>=<version> ...\n"
-        "  7. Confirm docs.rs built green for each."
+        "  5. tools/prepare-release.py --verify <crate>=<version> ...\n"
+        "  6. Confirm docs.rs built green for each (status.json)."
     )
     if not apply:
         print("\n(dry run — nothing was written; drop --check to apply)")
