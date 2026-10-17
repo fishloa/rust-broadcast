@@ -110,8 +110,8 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 
 | Crate | What it does | Headline standards | Status |
 |---|---|---|---|
+| [`buffering-runtime`](buffering-runtime/) | Sans-IO live-TS playout buffer controller: jitter measurement, stall memory, start/pause/resume decisions. | RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined | not on crates.io |
 | [`hls-runtime`](hls-runtime/) | Sans-IO Low-Latency HLS client and origin engines; optional tokio+reqwest client adapter. | RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS) | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) |
-| [`live-buffer`](live-buffer/) | Sans-IO live-TS playout buffer controller: jitter measurement, stall memory, start/pause/resume decisions. | RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined | not on crates.io |
 | [`rist-runtime`](rist-runtime/) | RIST Simple Profile RTCP messages (Generic/Range NACK, RTT Echo, compounds) and a sans-IO ARQ engine. | VSF TR-06-1:2020 (RIST Simple Profile); RFC 4585 §6.2.1 | [![crates.io](https://img.shields.io/crates/v/rist-runtime.svg)](https://crates.io/crates/rist-runtime) |
 | [`rtcp-packet`](rtcp-packet/) | RTCP SR/RR/SDES/BYE/APP and compound packets. | RFC 3550 §6 | [![crates.io](https://img.shields.io/crates/v/rtcp-packet.svg)](https://crates.io/crates/rtcp-packet) |
 | [`rtmp-runtime`](rtmp-runtime/) | Sans-IO RTMP 1.0 ingest (publish) engine: handshake, chunk stream, AMF0 commands, server state machine. | Adobe RTMP 1.0 (Dec 2012); AMF0 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) |

@@ -1,0 +1,103 @@
+# Changelog
+
+All notable changes to `buffering-runtime` will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Changed
+- `PolicyConfig::after_rebuffer_q8` default 384 (x1.5) -> 320 (x1.25), owner decision 2026-10-17: the post-stall resume bar
+  `max(target, after_rebuffer * stall_depth)` trims the extra freeze after a stall/burst. Measured: freeze after a stall
+  -0.35 s (6ter 3.07 -> 2.72 s, tf-1 3.01 -> 2.65 s at `initial` 0.5 s), burst server freeze -0.34 s (extra freeze
+  `0.5 x gap` -> `0.25 x gap`); a same-size repeat is still survived but with less spare lead (min lead in the repeat
+  gap ~650 -> ~308 ms). Default-`initial` (1.8 s) traces and the rai-3/france-5/per-chunk Apple TV goldens are unchanged;
+  the rai-3 stall-log open-loop golden gains a third pause at 2.073 s (final target 494 -> 593 ms). The field is
+  unchanged and still configurable. Goldens updated: `real_traces` (6ter/tf-1 resume times, == `golden_oracle.py`),
+  `apple_tv_input_logs` rai-3 stall (2 tests), `granularity`, `synth`, `state_machine` bar/formula values. No ABI layout change.
+
+### Added
+- Start/resume granularity gate: a `Buffering -> Playing` transition now also waits until every delivering
+  (non-excluded) track has shown two closed delivery steps (three deliveries), so its cadence is known and the
+  granularity floor (`G + margin`) is already in the target the lead is compared with. Bounded: a track that has
+  been delivering for `policy.start_us()` without showing two steps (a slow or one-shot track) no longer holds the
+  gate, and `track_granularity = false` disables it. Before, a start with `initial_us` below a track's PES step
+  (e.g. 300 ms vs 0.3-0.35 s audio bursts) was granted blind and stalled within the first second (closed-loop
+  `tests/start_granularity.rs`: start 250 ms + pause at 530 ms before, start 600 ms + no pause after). Cost with
+  `initial_us` 300 ms on the Apple TV logs: rai-3 +197 ms, rai-3 per-chunk +155 ms, france-5 +113 ms; none at
+  `initial_us` 500 ms / 1.8 s (the fill is already the longer wait). No ABI layout change.
+- Tests: Apple TV controller input-log goldens (`tests/apple_tv_input_logs.rs`): rai-3, france-5 and a stalling rai-3 log replayed verbatim through the current controller (private fixtures).
+
+### Fixed
+- A track registered BEFORE any media (`register_track` at pipeline creation, when the controller clock is still 0) was
+  stamped silent-since-0, so the first delivery on another track (video, wall clock far above the 3 s silence timeout)
+  excluded it at once: `StartPlaying` fired with the registered audio not yet delivered, and audio's first report then
+  joined behind the playback position (Apple TV, 4 channels: pause ~1 s in, lead -146..-383 ms). A never-delivered
+  track's silence clock now starts at the first delivery on any track (or its registration if later), so it blocks
+  start/resume until it delivers or has been silent for `track_silence_timeout_us` of delivery. Registration order and
+  time (before the first report) no longer change behaviour (`tests/registered_track_gate.rs`; fails before, 4 of 4).
+  No ABI change.
+- Analysis of the rai-3 stall log (test `rai3_stall_pauses_explained_late_registration_and_open_loop`): its first
+  pause is a late track registration (audio registered 93 ms AFTER `StartPlaying`; register every track from the PMT
+  before the first delivery, then the start waits for audio and the pause disappears) and its second is an open-loop
+  replay artefact (the logged positions are the device's, ~0.27 s ahead of where this controller resumes); a closed-loop
+  renderer on the same inputs stalls only once, at the late audio.
+- Docs + test: caller contract for the start origin. The first reported end anchors the origin, so a caller must report
+  the first end only from the join point (first video RAP) and withhold ends before it (audio reported ahead of the
+  join point anchors start early and loses audio cushion). `on_media`/`on_track_media`/`register_track` rustdoc, README,
+  DESIGN 0.1c; pinned by `audio_before_the_join_point_anchors_start_early`.
+- Per-track silence timeout is now relative: a track is excluded only when its last delivery (or registration)
+  is `track_silence_timeout_us` older than the latest delivery on ANY track. A global delivery gap (reconnect,
+  server restart) excludes nobody, so the controller no longer Resumes on stale data and stalls again; the
+  effective end stays the minimum of the tracks' last ends. The "all silent => latest end" fallback is removed.
+
+### Added
+- Per-track delivery-granularity floor: each track remembers the largest media-end step between delivery
+  instants (max-hold, `granularity_hold_us`/`granularity_decay_us`, 30 s + 30 s) and the target is kept at least
+  `largest step + margin` (capped by `max_us`, slew-limited when falling). Fixes audio that arrives in ~0.3 s
+  bursts with low PDV (rai-3) stalling every ~10 s. Steps across a global data gap, faster-than-real-time
+  catch-ups and forward jumps are ignored. New `ControllerConfig` fields `track_granularity`,
+  `granularity_hold_us`, `granularity_decay_us` (+ `with_track_granularity`, `with_granularity_memory_us`,
+  `ConfigField::GranularityDecay`), `Policy::need_with_granularity_us`. No ABI layout change.
+- Delivery instant of the granularity floor is the chunk boundary: all `on_track_media` calls for a track between
+  two `on_chunk` calls are one delivery (step = end after the last call - end before the first), folded in at the
+  next `on_chunk`; a caller that never calls `on_chunk` gets calls under `COALESCE_US` (1 ms) coalesced instead.
+  Reporting once per delivered chunk or once per demuxed frame gives the same floor, and identical events (the
+  first integration reported per MP2 frame, 24 ms steps, so the floor never engaged on real rai-3). Replaying
+  the committed Apple TV input logs: clean rai-3 now lifts to 412 ms at 1.03 s (before start) and stays there
+  (was 300 ms floor until the 2.0 s PDV lift, then decaying to 360 ms); the stalling rai-3 log now pauses twice
+  instead of three times. No ABI change.
+- A starvation with data still arriving (`Reason::DataArriving`) is now charged to the stall memory (the failed
+  target), so repeated track-limited stalls ratchet the target and the resume bar even when the PDV is low
+  (before, only a PDV spike raised them). Behaviour change: such a `Pause` is now followed by a `TargetChanged`.
+- `BufferController::unregister_track(track)`: remove a replaced/dead track from the per-track minimum so it
+  cannot hold back the lead (unknown track: no-op). No ABI layout change.
+- Docs: after a `PcrDiscontinuity` while playing the controller emits `Pause` then `Resume`, never a new
+  `StartPlaying`; callers must treat both as "go" (README, DESIGN, `Event::Resume`). Pinned by a test.
+- `StallMemorySnapshot::new` documented as the FFI/foreign-crate constructor (`const fn`; struct is `#[non_exhaustive]`).
+- Per-track media ends: `BufferController::on_track_media(now, track, end)` / `register_track(track)`; the lead is
+  measured against the minimum over the active tracks (a TS mux sends video ~1 s ahead and audio near
+  real time; judging video alone made every audio buffer late). A track silent (relative to the others) for
+  `ControllerConfig::track_silence_timeout_us` (default 3 s, validated non-zero,
+  `ConfigField::TrackSilence`, `with_track_silence_timeout_us`) is excluded. `on_media` is documented as "end of media playable on ALL rendered tracks" and is track-0
+  (`DEFAULT_TRACK`) shorthand. `Event::Pause::track` and `Stats::limiting_track` name the starving track;
+  `EventRecord` gains `track`/`track_valid` (40 bytes), `ABI_VERSION` 1 -> 2. New `tracks` module, `MAX_TRACKS`.
+- Initial crate (unpublished; no release approved). Sans-IO live-TS playout buffer controller:
+  - `DeliveryJitter`: RFC 5481 PDV over a sliding-minimum window (with a long-gap rule so a
+    stall longer than the window is still measured), burst-aware per-interval maxima, a Q15
+    forgetting histogram (outlier split at 500 ms, the interval after a stall skipped once as
+    burst aftermath), a stall max-hold (60 s hold + 60 s linear decay) and the RFC 3550 A.8
+    jitter `J` (integer form) for reporting.
+  - `Policy`: need = `max(k1 x baseline + margin, k2 x stall peak)`, asymmetric slew-limited
+    follower, start and post-stall resume thresholds; `max_us` is a hard cap on all of them.
+  - `BufferController`: Buffering / Playing / Starved state machine with explicit
+    `StartPlaying` / `Pause` / `Resume` events, `Hint`s (`Reconnected`, `SourceEnded`, ...),
+    PCR for the estimator and a separate PTS-domain media position (`on_media`) for the lead,
+    PCR-less fallback, per-session `StallMemorySnapshot` (seed / snapshot / restore with aging).
+  - C-ABI-friendly plain data: `ABI_VERSION`, stable `u32` codes, `#[repr(C)] EventRecord`,
+    `Default` configs as the single source of defaults (initial target 1.8 s, owner-approved
+    2026-10-17).
+  - Examples `replay_trace` and `live_loop`; fuzz target `buffering_runtime`; synthetic generator and
+    oracle tests; real-trace golden tests against `docs/buffering-runtime/analysis/golden_oracle.py`
+    (private fixtures).

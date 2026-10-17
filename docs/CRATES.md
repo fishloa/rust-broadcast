@@ -122,7 +122,7 @@ change, so the old versions stay live.
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.2.0 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
 | [`transmux`](#transmux) | Containers and adaptive streaming | 0.27.4 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
-| [`live-buffer`](#live-buffer) | Live transport protocols | 0.1.0 | — | yes | 1 | not on crates.io |
+| [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.1.0 | — | yes | 1 | not on crates.io |
 | [`rtcp-packet`](#rtcp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtcp-packet.svg)](https://crates.io/crates/rtcp-packet) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | no | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
@@ -484,7 +484,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 
 Sans-IO session engines and packet codecs for RTSP, RTP/RTCP, RTMP, SRT, RIST, WebRTC (WHIP/WHEP), LL-HLS and ST 2022-6.
 
-#### live-buffer
+#### buffering-runtime
 
 Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer depth and explicit StartPlaying / Pause / Resume events for a player that cannot change playback rate. Integer-only, no I/O or clock, `max_us` is a hard cap. Unpublished; the spec-posture departure (policy half implementation-defined) awaits owner approval.
 
@@ -493,7 +493,7 @@ Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../live-buffer/README.md) · [CHANGELOG](../live-buffer/CHANGELOG.md)
+- **Links:** [README](../buffering-runtime/README.md) · [CHANGELOG](../buffering-runtime/CHANGELOG.md)
 
 #### rtcp-packet
 
@@ -859,7 +859,7 @@ Layer 0 has no workspace dependencies; every other crate sits one layer above it
 
 ```text
 layer 0: broadcast-auth, broadcast-common, test-alloc, test-bounded, test-fixtures
-layer 1: atsc3, broadcast-hls, broadcast-loudness, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, live-buffer, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtcp-packet, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, scte35-splice, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
+layer 1: atsc3, broadcast-hls, broadcast-loudness, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtcp-packet, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, scte35-splice, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, ssai-runtime, st291, timed-metadata, webrtc-runtime
 layer 3: caption-convert, dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, transmux
 layer 4: dvb-ci-runtime, media-doctor, media-plane, ts-fix
@@ -880,6 +880,7 @@ flowchart BT
     atsc3["atsc3"]
     broadcast_hls["broadcast-hls"]
     broadcast_loudness["broadcast-loudness"]
+    buffering_runtime["buffering-runtime"]
     cc_data["cc-data"]
     container_probe["container-probe"]
     dvb_bbframe["dvb-bbframe"]
@@ -887,7 +888,6 @@ flowchart BT
     dvb_simulcrypt["dvb-simulcrypt"]
     dvb_subtitle["dvb-subtitle"]
     dvb_vbi["dvb-vbi"]
-    live_buffer["live-buffer"]
     mp4_emsg["mp4-emsg"]
     mpeg_pes["mpeg-pes"]
     mpeg_ts["mpeg-ts"]
@@ -948,6 +948,7 @@ flowchart BT
   atsc3_route --> rmt_flute
   broadcast_hls --> broadcast_common
   broadcast_loudness --> broadcast_common
+  buffering_runtime --> broadcast_common
   caption_convert --> timed_metadata
   cc_data --> broadcast_common
   compliance_probe --> media_doctor
@@ -972,7 +973,6 @@ flowchart BT
   dvb_vbi --> broadcast_common
   hls_runtime --> broadcast_auth
   hls_runtime --> media_plane
-  live_buffer --> broadcast_common
   media_doctor --> dvb_conformance
   media_doctor --> timed_metadata
   media_doctor --> transmux

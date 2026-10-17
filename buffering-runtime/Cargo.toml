@@ -1,0 +1,45 @@
+[package]
+name    = "buffering-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "Sans-IO live-TS playout buffer controller: measures delivery jitter (RFC 5481 PDV), keeps a stall memory, and decides when a player should start, pause and resume and how deep its buffer must be. Integer-only, no_std + alloc."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["jitter", "buffer", "playout", "mpeg-ts", "live"]
+categories = ["multimedia", "no-std", "algorithms"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+exclude = ["fuzz/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
+serde            = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+serde_json    = { workspace = true }
+
+[features]
+default = ["std"]
+# `std` links the standard library; without it the crate is `#![no_std]` + `alloc`.
+std = ["broadcast-common/std", "serde?/std"]
+# `serde::Serialize` on every public data type; `Deserialize` on the configs and
+# the stall-memory snapshot (the two things a caller persists).
+serde = ["dep:serde"]
+
+[[example]]
+name = "replay_trace"
+
+[[example]]
+name = "live_loop"
+
+[[example]]
+name = "multi_track"
+
+[lints]
+workspace = true

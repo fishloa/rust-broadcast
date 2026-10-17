@@ -18,7 +18,7 @@ PAIRS_FILE = REPO / "docs" / "release-plan-2026-10.pairs"
 LANES = sorted(WF.glob("release-*.yml"))
 LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 ABANDONED = {"atsc3"}  # lane fails safe by design; never in the pair list
-UNRELEASED = {"live-buffer"}  # new crate, lane staged; released in a later plan (owner sign-off), so in no pair list
+UNRELEASED = {"buffering-runtime"}  # new crate, lane staged; released in a later plan (owner sign-off), so in no pair list
 
 
 def _pr():
