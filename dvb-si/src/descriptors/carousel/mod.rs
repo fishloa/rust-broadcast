@@ -57,7 +57,7 @@ pub use location::LocationDescriptor;
 pub use module_link::{LinkPosition, ModuleLinkDescriptor};
 pub use name::NameDescriptor;
 pub use ssu_module_type::{SsuModuleType, SsuModuleTypeDescriptor};
-pub use subgroup_association::SubgroupAssociationDescriptor;
+pub use subgroup_association::{SubgroupAssociationDescriptor, SubgroupTag};
 pub use type_descriptor::TypeDescriptor;
 
 /// Declares [`AnyCarouselDescriptor`] + its dispatcher from one tag list.

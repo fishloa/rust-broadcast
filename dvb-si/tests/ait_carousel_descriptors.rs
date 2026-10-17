@@ -26,7 +26,7 @@ use dvb_si::descriptors::carousel::{
     AnyCarouselDescriptor, CarouselDescriptorLoop, CompressedModuleDescriptor, Crc32Descriptor,
     EstDownloadTimeDescriptor, GroupLinkDescriptor, InfoDescriptor, LinkPosition,
     LocationDescriptor, ModuleLinkDescriptor, NameDescriptor, SsuModuleType,
-    SsuModuleTypeDescriptor, SubgroupAssociationDescriptor, TypeDescriptor, parse_carousel_loop,
+    SsuModuleTypeDescriptor, SubgroupAssociationDescriptor, SubgroupTag, TypeDescriptor, parse_carousel_loop,
 };
 use dvb_si::tables::ait::AitSection;
 use dvb_si::tables::dsmcc::DsmccSection;
@@ -370,8 +370,7 @@ fn carousel_loop_with_every_descriptor_walks_typed_and_round_trips() {
         ssu_module_type: SsuModuleType::Data,
     };
     let sub = SubgroupAssociationDescriptor {
-        oui: 0x00015A,
-        subgroup_tag: 3,
+        subgroup_tag: SubgroupTag::new(0x00015A, 3),
     };
     let mut lp = Vec::new();
     lp.extend(ser(&ty));
