@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-17
 ### Fixed
 - `RecordingCaDevice<D>` now forwards `CaDevice::reset_settle()` to the wrapped device. It fell back to the trait default (`Duration::ZERO`), so with a `LinuxCaDevice` inside (CXD2099, `RESET_SETTLE` = 3 s) `Driver::init` wrote the first TPDU straight after `CA_RESET` and every attempt failed with `EINVAL` (reported on 0.18.0; also affected `ci-probe`). An audit of every `CaDevice`/`CiDataDevice` impl in the workspace found no other wrapper dropping a defaulted method; the new `tests/wrapper_forwards_defaults.rs` pins this (a behavioural test plus a lexical guard that fails when a defaulted trait method is added without being forwarded by a wrapper impl). Not exercised on real hardware.
 

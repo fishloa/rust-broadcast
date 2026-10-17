@@ -108,7 +108,7 @@ change, so the old versions stay live.
 | [`dvb-simulcrypt`](#dvb-simulcrypt) | Common Interface, conditional access, scrambling, SimulCrypt | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/dvb-simulcrypt.svg)](https://crates.io/crates/dvb-simulcrypt) | yes | 1 | on crates.io |
 | [`dvb-csa`](#dvb-csa) | Common Interface, conditional access, scrambling, SimulCrypt | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/dvb-csa.svg)](https://crates.io/crates/dvb-csa) | yes | 2 | on crates.io |
 | [`dvb-ci`](#dvb-ci) | Common Interface, conditional access, scrambling, SimulCrypt | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/dvb-ci.svg)](https://crates.io/crates/dvb-ci) | yes | 3 | on crates.io |
-| [`dvb-ci-runtime`](#dvb-ci-runtime) | Common Interface, conditional access, scrambling, SimulCrypt | 0.18.0 | [![crates.io](https://img.shields.io/crates/v/dvb-ci-runtime.svg)](https://crates.io/crates/dvb-ci-runtime) | no | 4 | on crates.io |
+| [`dvb-ci-runtime`](#dvb-ci-runtime) | Common Interface, conditional access, scrambling, SimulCrypt | 0.18.1 | [![crates.io](https://img.shields.io/crates/v/dvb-ci-runtime.svg)](https://crates.io/crates/dvb-ci-runtime) | no | 4 | on crates.io |
 | [`cc-data`](#cc-data) | Subtitles, captions, teletext, VBI and ancillary data | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/cc-data.svg)](https://crates.io/crates/cc-data) | yes | 1 | on crates.io |
 | [`dvb-subtitle`](#dvb-subtitle) | Subtitles, captions, teletext, VBI and ancillary data | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/dvb-subtitle.svg)](https://crates.io/crates/dvb-subtitle) | yes | 1 | on crates.io |
 | [`dvb-vbi`](#dvb-vbi) | Subtitles, captions, teletext, VBI and ancillary data | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/dvb-vbi.svg)](https://crates.io/crates/dvb-vbi) | yes | 1 | on crates.io |
@@ -121,7 +121,7 @@ change, so the old versions stay live.
 | [`timed-metadata`](#timed-metadata) | Metadata and ad-insertion signalling | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/timed-metadata.svg)](https://crates.io/crates/timed-metadata) | yes | 2 | on crates.io |
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.2.0 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
-| [`transmux`](#transmux) | Containers and adaptive streaming | 0.27.2 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
+| [`transmux`](#transmux) | Containers and adaptive streaming | 0.27.3 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
 | [`rtcp-packet`](#rtcp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtcp-packet.svg)](https://crates.io/crates/rtcp-packet) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | no | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
@@ -319,7 +319,7 @@ Drives a physical CAM over the `dvb-ci` codecs: a `CaDevice` abstraction (with a
 
 - **Standards:** ETSI EN 50221:1997 §7-§8; TS 101 699
 - **Cargo description:** Pure-Rust EN 50221 DVB Common Interface driver runtime — device I/O, TPDU/SPDU poll loop, resource state machines, and CAM/card hot-plug notifications over the dvb-ci codecs.
-- **Version (in-tree):** 0.18.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 4
+- **Version (in-tree):** 0.18.1 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 4
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-ci`](#dvb-ci), [`dvb-si`](#dvb-si), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** none
 - **Links:** [README](../dvb-ci-runtime/README.md) · [CHANGELOG](../dvb-ci-runtime/CHANGELOG.md) · [spec transcriptions](../dvb-ci-runtime/docs/) · [crates.io](https://crates.io/crates/dvb-ci-runtime) · [docs.rs](https://docs.rs/dvb-ci-runtime)
@@ -474,7 +474,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 
 - **Standards:** ISO/IEC 14496-12 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
-- **Version (in-tree):** 0.27.2 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
+- **Version (in-tree):** 0.27.3 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [spec transcriptions](../transmux/docs/) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
