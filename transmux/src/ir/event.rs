@@ -147,6 +147,28 @@ pub enum InputDegradation {
         /// Byte offset / packet index of the skipped unit (see variant docs).
         position: u64,
     },
+    /// A byte-stream TS input **lost sync** (ISO/IEC 13818-1 §2.4.3.2): a
+    /// packet's `sync_byte` was not `0x47` (or garbage sat between packets), so
+    /// `dropped_bytes` bytes starting at byte `offset` were discarded until the
+    /// resynchroniser re-locked on a run of sync bytes. Whatever those bytes
+    /// carried (PES payload, a PSI section) is lost. One event per lost-sync
+    /// span, never for junk before the first lock (a capture that starts
+    /// mid-packet). `provenance.packet_index` is the index of the next intact
+    /// packet.
+    SyncLoss {
+        /// Byte offset of the first discarded byte, from the start of the input.
+        offset: u64,
+        /// Number of bytes discarded before sync was re-acquired.
+        dropped_bytes: u64,
+    },
+    /// The TS input **ended on a truncated packet**: `dropped_bytes` (fewer than
+    /// a whole packet) trailing bytes starting at `offset` were discarded.
+    TruncatedPacket {
+        /// Byte offset of the first discarded byte, from the start of the input.
+        offset: u64,
+        /// Number of trailing bytes discarded.
+        dropped_bytes: u64,
+    },
 }
 
 impl InputDegradation {
@@ -157,6 +179,8 @@ impl InputDegradation {
             InputDegradation::ContinuityGap { .. } => "continuity gap",
             InputDegradation::InvalidParameterSet => "invalid parameter set",
             InputDegradation::MalformedUnit { .. } => "malformed unit",
+            InputDegradation::SyncLoss { .. } => "sync loss",
+            InputDegradation::TruncatedPacket { .. } => "truncated packet",
         }
     }
 }
