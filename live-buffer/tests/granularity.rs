@@ -279,6 +279,8 @@ fn a_global_data_gap_is_not_delivery_granularity() {
         c2.on_chunk(t2, 1, Some(at(i * 100_000)));
     }
     c2.on_track_media(t2, AUDIO, at(1_200_000));
+    // the delivery is folded in at the chunk boundary that ends it
+    c2.on_chunk(t2, 1, Some(at(1_200_000)));
     assert!(c2.target_us() >= 1_300_000, "target {}", c2.target_us());
 }
 

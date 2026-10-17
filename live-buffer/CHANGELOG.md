@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catch-ups and forward jumps are ignored. New `ControllerConfig` fields `track_granularity`,
   `granularity_hold_us`, `granularity_decay_us` (+ `with_track_granularity`, `with_granularity_memory_us`,
   `ConfigField::GranularityDecay`), `Policy::need_with_granularity_us`. No ABI layout change.
+- Delivery instant of the granularity floor is the chunk boundary: all `on_track_media` calls for a track between
+  two `on_chunk` calls are one delivery (step = end after the last call - end before the first), folded in at the
+  next `on_chunk`; a caller that never calls `on_chunk` gets calls under `COALESCE_US` (1 ms) coalesced instead.
+  Reporting once per delivered chunk or once per demuxed frame gives the same floor, and identical events (the
+  first integration reported per MP2 frame, 24 ms steps, so the floor never engaged on real rai-3). Replaying
+  the committed Apple TV input logs: clean rai-3 now lifts to 412 ms at 1.03 s (before start) and stays there
+  (was 300 ms floor until the 2.0 s PDV lift, then decaying to 360 ms); the stalling rai-3 log now pauses twice
+  instead of three times. No ABI change.
 - A starvation with data still arriving (`Reason::DataArriving`) is now charged to the stall memory (the failed
   target), so repeated track-limited stalls ratchet the target and the resume bar even when the PDV is low
   (before, only a PDV spike raised them). Behaviour change: such a `Pause` is now followed by a `TargetChanged`.

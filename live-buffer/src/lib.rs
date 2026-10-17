@@ -22,7 +22,7 @@ pub use error::{ConfigField, Error};
 pub use events::{Event, EventRecord, Hint, Reason, State, Stats, kind};
 pub use jitter::{DeliveryJitter, JitterEstimate, SampleOutcome};
 pub use stall_memory::StallMemorySnapshot;
-pub use tracks::{DEFAULT_TRACK, MAX_TRACKS};
+pub use tracks::{COALESCE_US, DEFAULT_TRACK, MAX_TRACKS};
 
 use broadcast_common::clock33::{PCR_EXT_MODULUS, PCR_WRAP_27MHZ, WRAP_33BIT};
 
