@@ -110,8 +110,11 @@ Runnable versions: `examples/mock_cam_session.rs`, `examples/sans_io_core.rs`.
   structs (never raw bytes). `Driver::add_service(&PmtSection)` /
   `remove_service(pn)` build and send the `ca_pmt` and track the active service
   set; `set_cat(&CatSection)` computes the EMM-PID feed (CAT EMM PIDs intersected
-  with the CAM's `ca_info` CAIDs); `emm_pids()` / `descramble_pids()` /
+  with the CAM's `ca_info` CAIDs; the CAT keeps one `(CAID, EMM PID)` entry per
+  `CA_descriptor`, so a CAID may have several); `emm_pids()` / `descramble_pids()` /
   `ca_pids()` / `required_pids()` give the PIDs to route into `ci0`.
+  `required_pids()` always includes the CAT PID (0x0001): hardware-evidenced on a
+  CXD2099 with an AlphaCrypt One4All (CAID 0x0650), not mandated by EN 50221.
   `set_requery_interval(dt)` is **opt-in** (default `REQUERY_DEFAULT` is
   `Duration::ZERO`) because no CAM verified so far answers the `query` half; a
   per-programme change surfaces as an edge-triggered `Notification::Entitlement`.
