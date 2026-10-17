@@ -2012,6 +2012,17 @@ struct StreamState {
     /// how long an unresolved probe may hold back later PIDs
     /// ([`PROBE_HEAD_BLOCK_AUS`]).
     probe_aus: u32,
+    /// E-AC-3 only: payloads that got a full window walk (saturating). Past
+    /// [`EAC3_PROBE_FULL_WALKS`] the walk is gated (see there).
+    probe_walks: u32,
+    /// E-AC-3 only: length of the window at the last full walk.
+    probe_walked_len: usize,
+    /// Payload-bearing TS packets delivered to this PID (saturating), counting
+    /// those replayed from `unattributed`. Zero means the PID has been
+    /// completely silent since it was declared ([`SILENT_HEAD_BLOCK_PACKETS`]).
+    payload_packets: u32,
+    /// [`StreamingTsDemux::packet_index`] when this PID was registered.
+    registered_at: u64,
 }
 
 /// Advance a one-behind (video/data) pending slot with a newly-built sample,
@@ -2426,6 +2437,27 @@ fn emit_audio_au(
         ),
     };
 
+    // A live observation of a dependent substream (one folded into its access
+    // unit, ETSI TS 102 366 §E.1.3.1.2) turns the hold-back on even when the
+    // announced `dec3` carries none: a track promoted from an unverified or
+    // broken-chain first frame (a lossy capture) announces no dependent
+    // substream, yet a dependent frame can still begin a later PES. The
+    // `dec3` is not changed after announcement; this only stops later
+    // dependent frames being orphaned. A dependent frame that began a PES
+    // before any was observed is still lost (it has nothing to join).
+    if matches!(kind, AudioKind::Eac3)
+        && !anchor.hold_final_au
+        && let Some(p) = &plan
+        && p.frames.iter().any(|f| {
+            matches!(
+                Eac3Sync::parse(&data[f.start..f.end]),
+                SyncParse::Frame(_, first_len) if first_len < f.end - f.start
+            )
+        })
+    {
+        anchor.hold_final_au = true;
+    }
+
     let mut elapsed = 0u64;
     // E-AC-3 dependent-substream hold-back (issue #1186): the final whole
     // access unit may still gain a dependent substream from the next PES, so it
@@ -2648,7 +2680,10 @@ fn push_live_au(
             kind,
             anchor,
         } => {
-            anchor.hold_final_au = eac3_has_dependent_substreams(&live.config);
+            // Sticky: the announced config says whether dependents exist, and
+            // `emit_audio_au` also sets it on seeing one (a track promoted from
+            // an unverified first frame announces no dependent substream).
+            anchor.hold_final_au |= eac3_has_dependent_substreams(&live.config);
             emit_audio_au(
                 kind,
                 *sample_rate,
@@ -2724,9 +2759,11 @@ fn reprobe_if_config_changed(
         }
         Codec::Aac => {
             let (_, hdr) = find_adts_sync(data)?;
+            // A header whose fields cannot be encoded as an ASC (a reserved
+            // sampling_frequency_index) is no config observation: no change.
             let asc = AudioSpecificConfig::from_adts_header(&hdr)
                 .try_to_bytes()
-                .unwrap();
+                .ok()?;
             if live.config_header.as_deref() == Some(asc.as_slice()) {
                 false
             } else {
@@ -3291,7 +3328,7 @@ fn finalize_probe(
                     0,
                     0,
                     0,
-                    Some(DecoderSpecificInfo::new(asc.try_to_bytes().unwrap())),
+                    Some(DecoderSpecificInfo::new(asc.try_to_bytes().ok()?)),
                 )),
                 Some(SLConfigDescriptor::predefined_two()),
             ));
@@ -3538,8 +3575,22 @@ fn advance_track(
             // payload and shared by the three E-AC-3 users below (the
             // early-window probe, the broken-chain fallback and the next held
             // tail) instead of one allocation + copy each.
-            let eac3_all: Option<Vec<u8>> = (stream.codec == Codec::Eac3)
+            // Gate (see `EAC3_PROBE_FULL_WALKS`): after that many full walks a
+            // payload that grew the held window by less than an eighth is not
+            // re-walked; it is only appended. Never reached by a stream that
+            // resolves in a sane number of payloads.
+            let eac3_gated = stream.codec == Codec::Eac3
+                && stream.probe_walks >= EAC3_PROBE_FULL_WALKS
+                && !stream.probe_tail.is_empty()
+                && stream.probe_tail.len() + latest.data.len()
+                    < stream.probe_walked_len
+                        + Eac3Sync::MIN_FRAME_LEN.max(stream.probe_walked_len / 8);
+            let eac3_all: Option<Vec<u8>> = (stream.codec == Codec::Eac3 && !eac3_gated)
                 .then(|| [stream.probe_tail.as_slice(), latest.data.as_slice()].concat());
+            if let Some(all) = &eac3_all {
+                stream.probe_walks = stream.probe_walks.saturating_add(1);
+                stream.probe_walked_len = all.len();
+            }
             let eac3_window: Option<&[u8]> = eac3_all
                 .as_deref()
                 .filter(|_| !stream.probe_tail.is_empty());
@@ -3601,6 +3652,15 @@ fn advance_track(
             }
             stream.probe_tail = if resolved.is_some() {
                 Vec::new()
+            } else if eac3_gated {
+                // The held tail already starts at an independent header and
+                // only grows here.
+                let mut tail = core::mem::take(&mut stream.probe_tail);
+                tail.extend_from_slice(&latest.data);
+                if tail.len() > EAC3_PROBE_TAIL_MAX {
+                    tail.clear();
+                }
+                tail
             } else if let Some(all) = eac3_all.as_deref() {
                 eac3_probe_tail(all)
             } else {
@@ -3654,6 +3714,42 @@ const EAC3_PROBE_MAX_FRAMES: usize = 16;
 /// audio PIDs that were promoted past it, so a video head blocks until it
 /// resolves or [`MAX_PROBE_BACKLOG_BYTES`] abandons it.
 const PROBE_HEAD_BLOCK_AUS: u32 = 512;
+
+/// TS packets (of the whole stream, counted from the PID's registration) a
+/// declared PID may stay *completely silent* — not one payload-bearing packet —
+/// before it stops holding back the PIDs after it, whatever its codec. This is
+/// the bound [`PROBE_HEAD_BLOCK_AUS`] cannot provide: with no packet there is
+/// no access unit to count, and nothing grows toward
+/// [`MAX_PROBE_BACKLOG_BYTES`], so a video PID declared in the PMT but never
+/// sent (a radio service with a stale video entry, a feed whose video is
+/// dropped upstream) blocked every later track until end of input
+/// (`finish()`), in 0.26.0 as before. A PID that has delivered *any* payload
+/// keeps blocking exactly as before, so a slow-but-present video still gets
+/// the lowest track id. The silent PID is stepped over, not abandoned: if
+/// packets arrive later it resolves, is promoted with a later id and its
+/// backlog, and re-arms [`DemuxEvent::TracksResolved`].
+///
+/// Sized well below the point where the *other* PIDs' parked backlog would hit
+/// [`MAX_PROBE_BACKLOG_BYTES`] (checked at compile time below): 8192 packets
+/// is 1.5 MB of TS, about 1.2 s at 10 Mbit/s and about 12 s of a 128 kbit/s
+/// radio multiplex. Scrambled-but-present video still delivers payload packets
+/// and so remains bounded by the byte cap only.
+const SILENT_HEAD_BLOCK_PACKETS: u64 = 8192;
+const _: () = assert!(
+    (SILENT_HEAD_BLOCK_PACKETS as usize) * (TS_PACKET_SIZE - 4) < MAX_PROBE_BACKLOG_BYTES / 2
+);
+
+/// Payloads an E-AC-3 probe gets a full window re-walk for before the walk is
+/// gated. Each unresolved payload re-joins the held tail (up to
+/// [`EAC3_PROBE_TAIL_MAX`], ~64 KiB) to itself and re-walks it, so a stream of
+/// tiny PES whose frames are large would cost O(PES count x 64 KiB). After this
+/// many walks a payload that grew the window by less than an eighth (and
+/// [`Eac3Sync::MIN_FRAME_LEN`]) is appended without a walk, which bounds the
+/// total at this many walks plus a logarithmic number more. A stream that
+/// resolves in fewer payloads (every real capture, and the unchanged 16-frame
+/// bound for sane PES sizes) is untouched; only the pathological one resolves
+/// up to an eighth of a window later than it otherwise would.
+const EAC3_PROBE_FULL_WALKS: u32 = 4096;
 
 /// The most an E-AC-3 probe holds: [`EAC3_PROBE_MAX_FRAMES`] syncframes of at
 /// most `2^11` 16-bit words each (ETSI TS 102 366 Annex E §E.1.3.1.3 `frmsiz`),
@@ -4250,6 +4346,14 @@ pub struct StreamingTsDemux {
     /// track_id assigned and `TrackAdded` fired) or abandoned (config never
     /// recoverable / no access units ever arrived, concluded at `finish()`).
     resolved: BTreeSet<Pid>,
+    /// Unresolved `Probing` heads that [`PROBE_HEAD_BLOCK_AUS`] (or
+    /// [`SILENT_HEAD_BLOCK_PACKETS`]) stepped over. Disjoint from `resolved`.
+    /// They count toward [`DemuxEvent::TracksResolved`] (the declared set is
+    /// "stable enough": nothing more is being waited on) but are *not*
+    /// resolved: such a PID is still promoted, with a `TrackAdded` and its
+    /// whole backlog, if it later resolves, and that promotion re-arms
+    /// `TracksResolved` so a consumer learns of the late track.
+    skipped: BTreeSet<Pid>,
     next_track_id: TrackId,
     events: VecDeque<DemuxEvent>,
     /// Monotonic track-set generation (issue #774): bumped exactly once per
@@ -4316,6 +4420,7 @@ impl StreamingTsDemux {
             codec_order: Vec::new(),
             data_order: Vec::new(),
             resolved: BTreeSet::new(),
+            skipped: BTreeSet::new(),
             next_track_id: TrackId::new(1),
             events: VecDeque::new(),
             generation: 0,
@@ -4566,6 +4671,7 @@ impl StreamingTsDemux {
         }
 
         if let Some(stream) = self.streams.get_mut(&pid) {
+            stream.payload_packets = stream.payload_packets.saturating_add(1);
             let mut sections: Vec<Vec<u8>> = Vec::new();
             // ── r04-W49 intactness rule ────────────────────────────────────
             //
@@ -4914,11 +5020,16 @@ impl StreamingTsDemux {
             backlog_bytes: 0,
             probe_tail: Vec::new(),
             probe_aus: 0,
+            probe_walks: 0,
+            probe_walked_len: 0,
+            payload_packets: 0,
+            registered_at: self.packet_index,
         };
         // Replay any payloads that arrived on this PID before its PMT
         // registration completed (see `unattributed`'s doc).
         if let Some(buffered) = self.unattributed.remove(&es_pid) {
             for (buf_pusi, buf_payload) in buffered {
+                stream.payload_packets = stream.payload_packets.saturating_add(1);
                 self.unattributed_bytes = self.unattributed_bytes.saturating_sub(buf_payload.len());
                 let mut sections: Vec<Vec<u8>> = Vec::new();
                 let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
@@ -4972,6 +5083,7 @@ impl StreamingTsDemux {
         self.codec_order.retain(|&p| p != pid);
         self.data_order.retain(|&p| p != pid);
         self.resolved.remove(&pid);
+        self.skipped.remove(&pid);
         if let Some(buffered) = self.unattributed.remove(&pid) {
             for (_, payload) in &buffered {
                 self.unattributed_bytes = self.unattributed_bytes.saturating_sub(payload.len());
@@ -4986,8 +5098,17 @@ impl StreamingTsDemux {
         // unit as truncated).
         self.cc_states.remove(&pid);
         if let Some(stream) = self.streams.remove(&pid)
-            && let Some(TrackState::Live(live)) = stream.track
+            && let Some(TrackState::Live(mut live)) = stream.track
         {
+            // An E-AC-3 track holding back its final access unit for a
+            // possible dependent substream (#1186) received that unit whole:
+            // emit it before the track goes (as `finish()` does), or the
+            // removal silently drops the last access unit.
+            if let LiveKind::Audio { kind, anchor, .. } = &mut live.kind
+                && anchor.hold_final_au
+            {
+                flush_audio_carry(kind, anchor, live.track_id, &mut self.events);
+            }
             self.events.push_back(DemuxEvent::TrackRemoved {
                 track_id: live.track_id,
                 provenance: EventProvenance {
@@ -5247,11 +5368,9 @@ impl StreamingTsDemux {
                         && let Some(au) = backlog.last()
                         && let Some((_, hdr)) = find_adts_sync(&au.data)
                     {
-                        live.config_header = Some(
-                            AudioSpecificConfig::from_adts_header(&hdr)
-                                .try_to_bytes()
-                                .unwrap(),
-                        );
+                        live.config_header = AudioSpecificConfig::from_adts_header(&hdr)
+                            .try_to_bytes()
+                            .ok();
                     }
                     for au in backlog {
                         push_live_au(&mut live, &au.data, au.pts_uw, au.dts_uw, &mut self.events);
@@ -5259,12 +5378,26 @@ impl StreamingTsDemux {
                     stream.track = Some(TrackState::Live(live));
                     stream.backlog_bytes = 0;
                     self.resolved.insert(next_pid);
+                    if self.skipped.remove(&next_pid) {
+                        // A previously stepped-over head resolved late:
+                        // `TracksResolved` already fired without it, so
+                        // re-arm the signal (consumers learn of the new
+                        // track via this `TrackAdded` + a fresh signal).
+                        self.tracks_resolved_signalled_at = None;
+                    }
                     // loop again: the next-ranked PID may also already be parked
                 }
                 other @ TrackState::Probing { .. } => {
                     stream.track = Some(other);
-                    if stream.probe_aus >= PROBE_HEAD_BLOCK_AUS
-                        && !matches!(stream.codec, Codec::H264 | Codec::Hevc | Codec::Mpeg2Video)
+                    let silent = stream.payload_packets == 0
+                        && self.packet_index.saturating_sub(stream.registered_at)
+                            >= SILENT_HEAD_BLOCK_PACKETS;
+                    if silent
+                        || (stream.probe_aus >= PROBE_HEAD_BLOCK_AUS
+                            && !matches!(
+                                stream.codec,
+                                Codec::H264 | Codec::Hevc | Codec::Mpeg2Video
+                            ))
                     {
                         // Stalled: it no longer holds back the PIDs after it
                         // (see `PROBE_HEAD_BLOCK_AUS`); it stays unresolved and
@@ -5274,7 +5407,11 @@ impl StreamingTsDemux {
                         // video a later (higher) track id than the audio that
                         // overtook it — consumers (ts_hls, multimux) expect
                         // PMT order. A video that truly never resolves is
-                        // bounded by `MAX_PROBE_BACKLOG_BYTES` instead.
+                        // bounded by `MAX_PROBE_BACKLOG_BYTES` instead —
+                        // unless it is entirely silent (`silent`: no packet
+                        // at all in `SILENT_HEAD_BLOCK_PACKETS`), which is
+                        // stepped over whatever its codec.
+                        self.skipped.insert(next_pid);
                         continue;
                     }
                     break; // blocked — an earlier-ranked PID isn't ready yet
@@ -5284,6 +5421,7 @@ impl StreamingTsDemux {
                     // but stay consistent defensively and keep scanning.
                     stream.track = Some(other);
                     self.resolved.insert(next_pid);
+                    self.skipped.remove(&next_pid);
                 }
                 TrackState::Abandoned => {
                     // [`MAX_PROBE_BACKLOG_BYTES`] overflowed for this PID
@@ -5295,6 +5433,7 @@ impl StreamingTsDemux {
                     // proceed on the next loop iteration.
                     stream.track = Some(TrackState::Abandoned);
                     self.resolved.insert(next_pid);
+                    self.skipped.remove(&next_pid);
                 }
             }
         }
@@ -5320,7 +5459,7 @@ impl StreamingTsDemux {
         if known == 0 {
             return;
         }
-        if self.resolved.len() == known
+        if self.resolved.len() + self.skipped.len() == known
             && self.tracks_resolved_signalled_at != Some(self.generation)
         {
             self.tracks_resolved_signalled_at = Some(self.generation);
