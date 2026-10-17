@@ -5,9 +5,11 @@
 //! Every one of those descriptors is `descriptor_tag`, `descriptor_length`,
 //! an optional fixed-size leading field (an address mask), then a repeat of a
 //! fixed-size entry up to `descriptor_length`. The spec defines nothing after
-//! the last whole entry; a non-conformant sender's partial tail is kept
-//! verbatim in the descriptor's `trailing` field so it re-serializes
-//! byte-identically.
+//! the last whole entry. `trailing` is therefore **parse tolerance only**: a
+//! non-conformant sender's partial tail (strictly shorter than one entry) is
+//! kept verbatim so it re-serializes byte-identically. Serialize rejects a
+//! hand-built `trailing` of one entry or more (`check_trailing`), because it
+//! would re-parse as extra entries and break `parse(serialize(x)) == x`.
 
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
@@ -57,6 +59,18 @@ impl Octets<6> for [u8; 6] {
 pub(crate) trait Entry<const E: usize>: Sized {
     fn read(b: &[u8; E]) -> Self;
     fn write(&self, b: &mut [u8; E]);
+}
+
+/// Reject a `trailing` that is not a strictly partial entry (`>= entry_len`
+/// bytes would re-parse as whole entries).
+pub(crate) fn check_trailing(tag: u8, trailing: &[u8], entry_len: usize) -> Result<()> {
+    if trailing.len() >= entry_len {
+        return Err(Error::InvalidDescriptor {
+            tag,
+            reason: "trailing is not shorter than one entry (would re-parse as entries)",
+        });
+    }
+    Ok(())
 }
 
 /// Split `body` into whole `E`-octet entries and the partial tail.
@@ -111,6 +125,7 @@ pub(crate) fn write_masked<const N: usize, A: Octets<N>>(
     addrs: &[A],
     trailing: &[u8],
 ) -> Result<usize> {
+    check_trailing(tag, trailing, N)?;
     let len = HEADER_LEN + N + addrs.len() * N + trailing.len();
     if buf.len() < len {
         return Err(Error::OutputBufferTooSmall {
@@ -146,6 +161,7 @@ pub(crate) fn write_list<const E: usize, T: Entry<E>>(
     entries: &[T],
     trailing: &[u8],
 ) -> Result<usize> {
+    check_trailing(tag, trailing, E)?;
     let len = HEADER_LEN + entries.len() * E + trailing.len();
     if buf.len() < len {
         return Err(Error::OutputBufferTooSmall {

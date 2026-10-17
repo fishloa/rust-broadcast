@@ -25,7 +25,9 @@ pub struct TargetIpv6AddressDescriptor<'a> {
     /// `IPv6_addr` entries (a list of addressed receivers, OR-ed).
     pub addrs: Vec<Ipv6Addr>,
     /// Bytes after the last whole address inside `descriptor_length`; the
-    /// spec defines none (kept for byte-identical re-serialization).
+    /// spec defines none, so this is parse tolerance only and is always shorter
+    /// than one address; serialize rejects a longer `trailing` (it would
+    /// re-parse as addresses).
     pub trailing: &'a [u8],
 }
 

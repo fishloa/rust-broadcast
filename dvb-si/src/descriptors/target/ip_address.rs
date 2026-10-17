@@ -26,8 +26,9 @@ pub struct TargetIpAddressDescriptor<'a> {
     /// `IPv4_addr` entries (a list of addressed receivers, OR-ed).
     pub addrs: Vec<Ipv4Addr>,
     /// Bytes after the last whole address inside `descriptor_length`; the
-    /// spec defines none (kept so a non-conformant sender re-serializes
-    /// byte-identically). Empty for a conformant descriptor.
+    /// spec defines none, so this is parse tolerance only (empty for a
+    /// conformant descriptor, always shorter than one address); serialize
+    /// rejects a longer `trailing` (it would re-parse as addresses).
     pub trailing: &'a [u8],
 }
 
