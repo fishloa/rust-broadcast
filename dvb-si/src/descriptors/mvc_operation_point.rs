@@ -173,7 +173,7 @@ impl MvcOperationPointDescriptor {
             constraint_set_flags,
             avc_compatible_flags,
             levels,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 

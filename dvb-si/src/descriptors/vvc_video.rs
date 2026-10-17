@@ -188,7 +188,7 @@ impl VvcVideoDescriptor {
             reserved_2,
             video_properties_tag,
             temporal_layer_subset,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 

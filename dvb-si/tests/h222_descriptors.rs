@@ -379,15 +379,25 @@ fn virtual_segmentation_follows_the_spec_and_diverges_from_tsduck() {
     use dvb_si::descriptors::mpeg2_ext_misc::{VirtualSegmentation, VirtualSegmentationBoundary};
     // Table 2-129 / §2.6.121: maximum_duration_length_minus_1 holds MDL - 1
     // ("Length, in bytes (minus one)"), maximum_duration is MDL*8 + 5 bits.
-    // TSDuck 3.44 encodes (ticks=100, partition 0 explicit with a 13-bit duration,
-    // partition 1 a dependent partition on PID 0x0200) writing the 2-bit field as
-    // 1 = MDL itself:
-    //   3f 0c 10 | 5f 00 03 23 | 9f 50 00 | 2f 7f 10 07
+    // TSDuck 3.44 writes the 2-bit field as 1 = MDL itself. Fixture
+    // `tsduck-h222-virtual-segmentation-pmt.bin` (tstabcomp of the committed
+    // `.xml`: ticks=100, partition 0 explicit with a 13-bit duration 0x1000,
+    // partition 1 a dependent partition on PID 0x0200) carries:
+    //   3f 0c 10 | 5f 00 03 23 | 8f 30 00 | 1f 5f 10 07
+    let bin = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/tsduck-h222-virtual-segmentation-pmt.bin"
+    ))
+    .expect("committed TSDuck fixture");
     let b = [
-        0x3F, 0x0C, 0x10, 0x5F, 0x00, 0x03, 0x23, 0x9F, 0x50, 0x00, 0x2F, 0x7F, 0x10, 0x07,
+        0x3F, 0x0C, 0x10, 0x5F, 0x00, 0x03, 0x23, 0x8F, 0x30, 0x00, 0x1F, 0x5F, 0x10, 0x07,
     ];
+    assert!(
+        bin.windows(b.len()).any(|w| w == b),
+        "TSDuck fixture carries the vector"
+    );
     // Per the spec the field value 1 means MDL = 2, a 21-bit duration: partition 0
-    // consumes 50 00 2f, partition 1 then starts at 7f and is truncated. Rejected.
+    // consumes 30 00 1f, partition 1 then starts at 5f and is truncated. Rejected.
     assert!(matches!(
         Mpeg2ExtensionDescriptor::parse(&b),
         Err(Error::BufferTooShort { .. })

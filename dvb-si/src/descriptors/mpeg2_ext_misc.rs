@@ -17,7 +17,23 @@
 //! the field plus one; with `timescale_flag == 0` the text infers `MDL = 0`
 //! (field = -1) and `ticks_per_second = 1`, i.e. a bare 5-bit duration. TSDuck
 //! 3.44 writes the field as `MDL` itself (one byte fewer) and so disagrees; the
-//! divergence is pinned in `tests/h222_descriptors.rs` and noted in the docs.
+//! divergence is pinned in `tests/h222_descriptors.rs` (against a real
+//! `tstabcomp` output, `tests/fixtures/tsduck-h222-virtual-segmentation-pmt.*`).
+//! Unlike ext 0x13 this is not a spec self-contradiction: the text is
+//! determinate (`timescale_flag == 0` infers `MDL = 0` for `minus_1 = -1`), so
+//! the TSDuck bytes are simply non-conforming.
+//!
+//! `if (descriptor_length > 1)` in Table 2-129: for the ext 0x10..0x13 syntax
+//! tables this crate reads `descriptor_length` as the size of the body after
+//! `extension_descriptor_tag`, the same convention Table 2-130 (ext 0x12) states
+//! outright ("preceding header bytes excluded", `N1 = descriptor_length minus
+//! 1`). Under it an empty body is "no fields" (accepted), a body of two or more
+//! bytes carries the fields, and a body of exactly one byte is a size the syntax
+//! does not define (the fields are absent yet a byte is present), so it is
+//! rejected with a clear `Err` rather than guessed at. (Table 2-129 says nothing
+//! explicit about the header bytes, so a reading where the length counts the
+//! tag byte is conceivable; rejecting the one-byte case is the conservative
+//! choice under either reading and is pinned by a test.)
 //!
 //! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-*.md`.
 //! Every `reserved` field is a typed field re-emitted verbatim (default: all
@@ -132,7 +148,7 @@ impl GreenExtension {
             reserved_a,
             max_variations,
             reserved_b,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -198,7 +214,7 @@ impl QualityExtension {
         Ok(Self {
             field_size_bytes,
             metric_codes,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -452,7 +468,7 @@ impl VirtualSegmentation {
         }
         Ok(Self {
             config: Some(cfg),
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
@@ -707,7 +723,7 @@ impl JxsVideo {
             still_mode,
             zero_bits,
             mastering_display,
-            private_data: r.rest().to_vec(),
+            private_data: r.rest()?.to_vec(),
         })
     }
 
@@ -842,8 +858,11 @@ mod tests {
         let d = VirtualSegmentation::parse_body(&[]).unwrap();
         assert!(d.config.is_none());
         assert!(d.write_body().unwrap().is_empty());
-        // One byte is outside `if (descriptor_length > 1)`.
-        assert!(VirtualSegmentation::parse_body(&[0x1F]).is_err());
+        // Every one-byte body is outside `if (descriptor_length > 1)` and
+        // rejected, whatever it would promise (also the all-zero valid-looking 0x0F).
+        for one in [0x0Fu8, 0x1F, 0x3F] {
+            assert!(VirtualSegmentation::parse_body(&[one]).is_err());
+        }
         // Truncated partition.
         assert!(VirtualSegmentation::parse_body(&[0x3F, 0x8F]).is_err());
         // Two bytes, zero partitions, no timescale: the second byte is trailing.

@@ -71,7 +71,7 @@ impl Mpeg4AudioExtensionDescriptor {
             reserved,
             audio_profile_level_indications: indications,
             audio_specific_config,
-            trailing: r.rest().to_vec(),
+            trailing: r.rest()?.to_vec(),
         })
     }
 
