@@ -8,6 +8,7 @@
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
 use dvb_t2mi::pump::T2miPump;
+use mpeg_ts::pid::Pid;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde::Serialize;
@@ -22,8 +23,7 @@ fn to_py<T: Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
 /// Parse a single SI/PSI section (table) from raw bytes into a Python dict.
 #[pyfunction]
 fn parse_section(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
-    let section =
-        AnyTableSection::parse(data).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let section = AnyTableSection::parse(data).map_err(|e| PyValueError::new_err(e.to_string()))?;
     to_py(py, &section)
 }
 
@@ -64,10 +64,13 @@ struct T2miDemux {
 #[pymethods]
 impl T2miDemux {
     #[new]
-    fn new(pid: u16) -> Self {
-        T2miDemux {
+    fn new(pid: u16) -> PyResult<Self> {
+        // The PID is a 13-bit field: reject (rather than silently mask) an
+        // out-of-range caller-supplied value.
+        let pid = Pid::try_new(pid).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(T2miDemux {
             inner: T2miPump::new(pid),
-        }
+        })
     }
 
     /// Feed one TS packet; return dicts of the decoded T2-MI payloads.
