@@ -197,6 +197,7 @@ fn rai3_clean_golden() {
     assert_eq!(
         targets,
         [
+            (1_034_306, 412_000),
             (2_000_467, 560_000),
             (41_599_553, 547_968),
             (41_754_551, 532_470),
@@ -210,13 +211,11 @@ fn rai3_clean_golden() {
             (42_685_313, 439_414),
             (42_789_532, 428_994),
             (42_896_204, 418_329),
-            (43_037_617, 404_189),
-            (43_165_227, 391_431),
-            (43_283_663, 380_000),
-            (59_119_376, 367_283),
         ]
     );
-    assert_eq!(r.final_target, 360_000);
+    // the steady ~0.3 s audio cadence keeps refreshing the granularity floor
+    // (step 312 ms + 100 ms margin), so the target no longer decays to 360 ms
+    assert_eq!(r.final_target, 412_000);
     // The audio really is delivered in bursts of at least 0.3 s (from the log
     // itself), and once seen the target covers it plus the margin.
     let gap = max_audio_gap_us("rai-3", 0);
@@ -229,16 +228,15 @@ fn rai3_clean_golden() {
     assert_eq!(t, 560_000);
 }
 
-/// The golden above is not vacuous: with BOTH target drivers neutralised (the
-/// PDV term `k1` at its minimum AND the granularity floor off) the same log
-/// leaves the target at the 300 ms floor, so the `>= granularity + margin`
-/// assertion would fail. Finding recorded here on purpose: on these Apple TV
-/// logs the lift to 560 ms at +2.0 s comes from the PDV term alone. The
-/// per-track granularity floor never engages (the logged audio media ends
-/// advance in <= 24 ms steps, far below the target), so disabling it changes
-/// nothing, and neither does it lift the target with the PDV term off.
+/// The golden above is not vacuous, and the two target drivers are told
+/// apart. The log's media rows are per demuxed MP2 frame (24 ms steps, a PES
+/// of ~0.3 s per chunk); the controller coalesces them per delivery, so the
+/// granularity floor engages (before the 2.0 s PDV lift: 412 ms = 312 ms step
+/// + margin at 1.03 s). With the PDV term at its minimum the floor alone holds
+/// 412 ms; with the floor off too the target stays at the 300 ms floor. (Until
+/// the coalescing the floor never engaged on this log.)
 #[test]
-fn rai3_target_lift_comes_from_pdv_not_the_granularity_floor() {
+fn rai3_target_lift_comes_from_pdv_and_the_granularity_floor() {
     let pdv_off = |gran: bool| {
         config_with(|c| {
             let mut p = c.policy;
@@ -248,18 +246,18 @@ fn rai3_target_lift_comes_from_pdv_not_the_granularity_floor() {
                 .with_track_granularity(gran)
         })
     };
-    for gran in [true, false] {
-        let Some(r) = replay("rai-3", pdv_off(gran)) else {
-            return;
-        };
-        assert_eq!(r.target_at(5_000_000), FLOOR_US, "granularity {gran}");
-        assert!(r.targets.is_empty());
-    }
-    // granularity floor off, PDV on: identical to the default run
+    let floor_only = replay("rai-3", pdv_off(true)).unwrap();
+    assert_eq!(floor_only.target_at(5_000_000), 412_000);
+    assert_eq!(floor_only.targets.first(), Some(&(1_034_306, 412_000)));
+    let neither = replay("rai-3", pdv_off(false)).unwrap();
+    assert_eq!(neither.target_at(5_000_000), FLOOR_US);
+    assert!(neither.targets.is_empty());
+    // floor off, PDV on: the 560 ms PDV lift only, no early 412 ms step
     let on = replay("rai-3", config()).unwrap();
     let off = replay("rai-3", config_with(|c| c.with_track_granularity(false))).unwrap();
-    assert_eq!(on.targets, off.targets);
-    assert_eq!(on.final_target, off.final_target);
+    assert_eq!(off.targets.first(), Some(&(2_000_467, 560_000)));
+    assert_eq!(on.target_at(5_000_000), off.target_at(5_000_000));
+    assert_ne!(on.targets, off.targets);
 }
 
 /// france-5 (clean): audio gaps ~0.2 s, below the 300 ms floor, so the target
@@ -281,10 +279,14 @@ fn france5_clean_golden() {
 
 /// The stalling rai-3 session (old controller f512d3eaa paused 4x, all audio:
 /// leads -63 / 12 / 15 / 9 ms). Replayed through the CURRENT controller the
-/// log still produces 3 audio `DataArriving` pauses, the first ~97 ms after
-/// `StartPlaying`, before any granularity has been learnt (that is the
-/// start-up gap, flagged for follow-up). The 4th old pause (at target 360 ms)
-/// no longer occurs because the target has already been raised. NOTE: this is
+/// log produces 2 audio `DataArriving` pauses (3 before the per-delivery
+/// coalescing made the floor engage on these per-frame media rows): the first
+/// ~97 ms after `StartPlaying`, before any granularity has been learnt (the
+/// start-up gap, flagged for follow-up), then the floor lifts the target to
+/// 412 ms (step 312 ms + margin) at 849 ms; the second pause at 1.417 s
+/// happens although the floor is in force (lead 16 ms: the open-loop replay's
+/// logged positions follow the OLD controller's earlier starts, so this is not
+/// a prediction for the device). The old 4th pause no longer occurs. NOTE: this is
 /// an open-loop replay (the logged ticks carry the old controller's playback
 /// positions), so the golden pins the controller's decisions for these
 /// inputs, not what the device would have seen.
@@ -303,21 +305,16 @@ fn rai3_stall_golden_current_behaviour() {
                 Some(AUDIO),
                 Reason::DataArriving,
                 15_860,
-                539_647
+                618_000
             ),
-            (2_072_729, Some(AUDIO), Reason::DataArriving, 9_582, 647_154),
         ]
     );
-    assert_eq!(r.stalls, 3);
+    assert_eq!(r.stalls, 2);
     assert_eq!(
         r.targets,
-        [
-            (625_716, 359_765),
-            (1_417_065, 431_436),
-            (2_072_729, 517_386)
-        ]
+        [(625_716, 359_765), (848_712, 412_000), (1_417_065, 494_078)]
     );
-    assert_eq!(r.final_target, 517_386);
+    assert_eq!(r.final_target, 494_078);
     // after the last pause the run is clean: no pause past 3 s
     assert!(r.pauses().iter().all(|(t, _)| *t < 3_000_000));
 }

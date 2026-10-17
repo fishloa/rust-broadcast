@@ -58,6 +58,7 @@ pub struct BufferController {
     latest: u64,
     last_chunk_at: Option<u64>,
     gap_end_at: Option<u64>,
+    chunks: u64,
     tracks: TrackSet,
     queue_start: Option<Ticks27>,
     last_playback: Option<Ticks27>,
@@ -100,6 +101,7 @@ impl BufferController {
             latest: 0,
             last_chunk_at: None,
             gap_end_at: None,
+            chunks: 0,
             tracks: TrackSet::new(cfg.granularity_hold_us, cfg.granularity_decay_us),
             queue_start: None,
             last_playback: None,
@@ -137,8 +139,26 @@ impl BufferController {
     /// One chunk arrived. `pcr_27mhz` is the chunk's last PCR (raw, wrapped)
     /// if it has one. Call this BEFORE [`on_media`](Self::on_media) for the
     /// same chunk.
+    ///
+    /// **Delivery instant.** A chunk boundary is the delivery instant of the
+    /// per-track granularity floor: every
+    /// [`on_track_media`](Self::on_track_media) call for a track between two
+    /// `on_chunk` calls is ONE delivery (step = end after the last call - end
+    /// before the first). Reporting once per delivered chunk or once per
+    /// demuxed sample gives the same floor. A caller that never calls
+    /// `on_chunk` gets calls less than [`COALESCE_US`](crate::COALESCE_US)
+    /// apart coalesced instead. The step is folded in (and the target
+    /// re-evaluated) at the next `on_chunk`.
     pub fn on_chunk(&mut self, arrival_us: Micros, bytes: u32, pcr_27mhz: Option<Ticks27>) {
         self.latest = self.latest.max(arrival_us);
+        // the previous chunk's deliveries are complete: fold their steps before
+        // this chunk's arrival can mark a gap
+        self.tracks.close_windows(self.step_rules());
+        if self.cfg.track_granularity && self.granularity_need(arrival_us) > self.policy.target_us()
+        {
+            self.after_sample(arrival_us);
+        }
+        self.chunks = self.chunks.wrapping_add(1).max(1);
         if self
             .last_chunk_at
             .is_some_and(|t| arrival_us.saturating_sub(t) >= self.cfg.nodata_after_us)
@@ -228,11 +248,7 @@ impl BufferController {
     pub fn on_track_media(&mut self, now_us: Micros, track: u32, media_end_27mhz: Ticks27) {
         self.latest = self.latest.max(now_us);
         self.jitter.anchor(now_us);
-        let rules = StepRules {
-            max_interval_us: self.cfg.track_silence_timeout_us,
-            max_excess_us: self.cfg.nodata_after_us,
-            gap_end_at: self.gap_end_at,
-        };
+        let rules = self.step_rules();
         let Some(first) = self.tracks.deliver(track, now_us, media_end_27mhz, rules) else {
             return;
         };
@@ -253,6 +269,15 @@ impl BufferController {
                 self.queue_start = Some(media_end_27mhz);
             }
             Some(_) => {}
+        }
+    }
+
+    fn step_rules(&self) -> StepRules {
+        StepRules {
+            max_interval_us: self.cfg.track_silence_timeout_us,
+            max_excess_us: self.cfg.nodata_after_us,
+            gap_end_at: self.gap_end_at,
+            epoch: self.chunks,
         }
     }
 
