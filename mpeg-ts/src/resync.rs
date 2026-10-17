@@ -139,6 +139,11 @@ impl TsResync {
     /// For a 204-byte stream the 16 Reed-Solomon parity bytes are stripped;
     /// only the 188-byte TS payload is returned.  Bytes that cannot yet form
     /// a complete packet (or fall before lock) are buffered for the next call.
+    ///
+    /// **Drain [`take_losses`](Self::take_losses).** Every span discarded after
+    /// lock is appended to an internal list (about 32-40 bytes each) that only
+    /// `take_losses` empties; a caller that feeds forever and never drains it
+    /// grows memory linearly with the number of re-locks on a lossy input.
     pub fn feed(&mut self, data: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
         let mut emitted = Vec::new();
         self.feed_into(data, &mut emitted);
@@ -220,6 +225,12 @@ impl TsResync {
     }
 
     /// Drain the sync losses recorded since the last call (see [`ResyncLoss`]).
+    ///
+    /// This is the only thing that empties the internal loss list, which is
+    /// unbounded by design (dropping a loss would hide data loss): call it
+    /// regularly — e.g. after every [`feed`](Self::feed) — or the list grows
+    /// with every re-lock on a lossy input. If you do not need the losses,
+    /// still call it and discard the result.
     pub fn take_losses(&mut self) -> Vec<ResyncLoss> {
         core::mem::take(&mut self.losses)
     }

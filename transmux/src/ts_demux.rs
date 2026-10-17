@@ -117,9 +117,19 @@
 //! complete section becomes one `Sample` with no timestamp at all
 //! (`dts: None, pts: None` — never fabricated).
 //! [`CodecConfig::Data`]'s `carriage` field ([`DataCarriage`]) records which
-//! family a track uses. The demuxer also collects every PCR observation from
-//! the TS adaptation fields, both into [`Media`]'s `pcr` field (batch) and as
-//! [`DemuxEvent::ClockReference`] (streaming).
+//! family a track uses. The demuxer also collects every PCR observation on a
+//! program's PMT-announced `PCR_PID` (issue #1354: other PIDs' PCRs are
+//! dropped once the PMTs are known, and each event carries its
+//! `provenance.program_number`), both into [`Media`]'s `pcr` field (batch) and
+//! as [`DemuxEvent::ClockReference`] (streaming).
+//!
+//! # Draining the streaming queue
+//! [`StreamingTsDemux`] appends every event to an internal queue that only
+//! [`poll_event`](StreamingTsDemux::poll_event) empties: drain it after each
+//! [`feed`](StreamingTsDemux::feed), or memory grows linearly with the input
+//! (on lossy input about two `InputDegraded` per loss, issue #1352). The
+//! diagnostic volume alone can be bounded, with a counted overflow, via
+//! [`StreamingTsDemux::with_max_degraded_events`].
 //!
 //! # E-AC-3: which frame describes the stream
 //!
@@ -4322,11 +4332,20 @@ enum CcVerdict {
 ///   decoder on `Discontinuity`; [`LiveJoin::rejoin`](crate::LiveJoin::rejoin) is
 ///   the video-side helper. Transport errors (TEI) and continuity-counter gaps
 ///   are **not** `Discontinuity`: they are [`DemuxEvent::InputDegraded`].
-/// - **`ClockReference`** is every PCR, with `discontinuous` set on the packet
+/// - **`ClockReference`** is every PCR on a program's PMT-announced `PCR_PID` (issue #1354; see [`DemuxEvent::ClockReference`] for the pre-PMT policy), carrying `provenance.program_number`, with `discontinuous` set on the packet
 ///   that carries the indicator.
 pub struct StreamingTsDemux {
     resync: TsResync,
     packet_index: u64,
+    /// Opt-in cap on queued [`DemuxEvent::InputDegraded`] events (issue
+    /// #1352); `None` (default) = unbounded, the historical behaviour.
+    degraded_cap: Option<usize>,
+    /// `InputDegraded` events dropped because `degraded_cap` was reached.
+    degraded_dropped: u64,
+    /// Leading `events` entries already counted against `degraded_cap`.
+    queue_scanned: usize,
+    /// `InputDegraded` events among those `queue_scanned` entries.
+    degraded_queued: usize,
     pat_reasm: SectionReassembler,
     pmt_reasm: BTreeMap<Pid, PmtState>,
     es_seen: BTreeSet<Pid>,
@@ -4432,6 +4451,10 @@ impl StreamingTsDemux {
         Self {
             resync: TsResync::new(),
             packet_index: 0,
+            degraded_cap: None,
+            degraded_dropped: 0,
+            queue_scanned: 0,
+            degraded_queued: 0,
             pat_reasm: SectionReassembler::default(),
             pmt_reasm: BTreeMap::new(),
             es_seen: BTreeSet::new(),
@@ -4453,10 +4476,61 @@ impl StreamingTsDemux {
         }
     }
 
+    /// Cap the number of [`DemuxEvent::InputDegraded`] events that may sit
+    /// undrained in the queue (issue #1352). Once `cap` are queued, further
+    /// `InputDegraded` events are dropped and counted in
+    /// [`degraded_events_dropped`](Self::degraded_events_dropped) instead of
+    /// growing the queue; every other event kind is unaffected (their volume
+    /// is bounded by the input itself, and dropping a sample or track event
+    /// would corrupt the stream). The default is **no cap** — a caller that
+    /// drains [`poll_event`](Self::poll_event) after each
+    /// [`feed`](Self::feed) never needs one. The cap is enforced at the end of
+    /// each `feed`/`finish`, so one call may transiently queue more than `cap`.
+    #[must_use]
+    pub fn with_max_degraded_events(mut self, cap: usize) -> Self {
+        self.degraded_cap = Some(cap);
+        self
+    }
+
+    /// How many [`DemuxEvent::InputDegraded`] events were dropped because the
+    /// cap set by [`with_max_degraded_events`](Self::with_max_degraded_events)
+    /// was reached. Always `0` with the default (uncapped) configuration.
+    pub fn degraded_events_dropped(&self) -> u64 {
+        self.degraded_dropped
+    }
+
+    /// Enforce `degraded_cap` over the events queued since the last call.
+    fn enforce_degraded_cap(&mut self) {
+        let Some(cap) = self.degraded_cap else {
+            return;
+        };
+        let tail: Vec<DemuxEvent> = self.events.drain(self.queue_scanned..).collect();
+        for ev in tail {
+            if matches!(ev, DemuxEvent::InputDegraded { .. }) {
+                if self.degraded_queued >= cap {
+                    self.degraded_dropped += 1;
+                    continue;
+                }
+                self.degraded_queued += 1;
+            }
+            self.events.push_back(ev);
+        }
+        self.queue_scanned = self.events.len();
+    }
+
     /// Feed `data` — any size, any alignment (mid-packet chunk boundaries are
     /// legal, including one byte at a time). Internally resynchronises to
     /// `0x47` TS packet boundaries via [`mpeg_ts::resync::TsResync`] and
     /// processes every newly-aligned packet.
+    ///
+    /// **Drain after every call.** Every event produced is appended to an
+    /// internal queue that only [`poll_event`](Self::poll_event) empties; a
+    /// caller that feeds without polling grows memory linearly with the input
+    /// (samples, and — on lossy input — roughly two `InputDegraded` events per
+    /// loss). Loop `while let Some(ev) = demux.poll_event()` after each
+    /// `feed`. If events may legitimately go undrained, bound the
+    /// diagnostic volume with
+    /// [`with_max_degraded_events`](Self::with_max_degraded_events).
     pub fn feed(&mut self, data: &[u8]) {
         let packets = self.resync.feed(data);
         let mut losses = self.resync.take_losses().into_iter().peekable();
@@ -4471,6 +4545,7 @@ impl StreamingTsDemux {
         for loss in losses {
             self.push_resync_loss(loss);
         }
+        self.enforce_degraded_cap();
     }
 
     /// Surface one [`mpeg_ts::resync::ResyncLoss`] as a
@@ -5597,8 +5672,19 @@ impl StreamingTsDemux {
     }
 
     /// Drain the next pending event, if any (FIFO).
+    ///
+    /// This is the only thing that empties the event queue: call it in a loop
+    /// after every [`feed`](Self::feed) / [`finish`](Self::finish) (see
+    /// `feed` for what an undrained queue costs).
     pub fn poll_event(&mut self) -> Option<DemuxEvent> {
-        self.events.pop_front()
+        let ev = self.events.pop_front()?;
+        if self.queue_scanned > 0 {
+            self.queue_scanned -= 1;
+            if matches!(ev, DemuxEvent::InputDegraded { .. }) {
+                self.degraded_queued -= 1;
+            }
+        }
+        Some(ev)
     }
 
     /// Flush trailing partial access units (no more input coming): completes
@@ -5718,6 +5804,7 @@ impl StreamingTsDemux {
                 }
             }
         }
+        self.enforce_degraded_cap();
     }
 }
 

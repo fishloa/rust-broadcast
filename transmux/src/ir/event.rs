@@ -336,7 +336,7 @@ pub enum DemuxEvent {
     /// concept (FLV, RTP) never emits this.
     ///
     /// **TS attribution (issue #1354).** A program's clock is the PCR carried
-    /// on the `PCR_PID` its PMT names (§2.4.4.8, Table 2-33; §2.4.3.5: the PCR
+    /// on the `PCR_PID` its PMT names (§2.4.4.8-9, Table 2-33; §2.4.3.5: the PCR
     /// fields are "carried in the adaptation field of the transport stream
     /// packets with a PID value equal to the PCR_PID"), and a multiplex has one
     /// independent clock per program. So once the PMTs the PAT announces are
