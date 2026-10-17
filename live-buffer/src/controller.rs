@@ -193,7 +193,8 @@ impl BufferController {
         let old = self.reported_target;
         if new != old {
             let bound = new == self.cfg.policy.min_us || new == max;
-            if new.abs_diff(old) >= u64::from(self.cfg.jitter.bucket_us) || bound {
+            let moved = new.max(old) - new.min(old);
+            if moved >= u64::from(self.cfg.jitter.bucket_us) || bound {
                 self.reported_target = new;
                 self.events.push(Event::TargetChanged {
                     old_us: old,
