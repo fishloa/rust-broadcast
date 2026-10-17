@@ -25,7 +25,36 @@ PAIRS=docs/release-plan-2026-10.pairs
   step 1 below. Write the final text of `docs/release-notes/v12.0.0.md` and review the other
   notes now: step 1 refuses a note that still contains a placeholder line.
 * `gh auth status` is logged in as an account that can approve the `crates-io`
-  environment (step 7).
+  environment (step 5a).
+* **The publish gate must be real.** Read-only pre-flight (`gh api` + `gh secret list`):
+
+  ```bash
+  python3 tools/check-release-env.py
+  ```
+
+  It fails unless the `crates-io` environment exists with a `required_reviewers` rule
+  that names at least one reviewer, and `CARGO_REGISTRY_TOKEN` is a set repository secret.
+  It also prints `prevent_self_review`: when `true` the account that pushes a tag
+  **cannot approve its own run**, so a second reviewer is required (the check flags a
+  single-reviewer deadlock). **Finding on 2026-10-17: the environment exists with
+  `protection_rules: []` (no reviewer at all) and `can_admins_bypass: true`.** As it stands
+  no run would ever reach `waiting`: every tag would publish the moment its lane gates pass,
+  `push-release-tags.sh`'s exit-2 "waiting" branch could never fire, and section 5a would
+  have nothing to approve. Add the required reviewer(s) in repo Settings -> Environments ->
+  `crates-io` and re-run this check until it prints `crates-io gate OK`. The secret was
+  present (`CARGO_REGISTRY_TOKEN`, set 2026-06-05).
+* **The identical gate on CI, BEFORE the first tag.** The lockstep lane (`release.yml`)
+  runs its test gate only after ~33 crates are live, so a failure there strands the wave
+  halfway; it is a superset of CI's (CI excludes `dvb-tools` and `dvb-conformance`, and runs
+  nextest with the private fixtures, which `release.yml` has neither of). So, on the
+  release commit (the merge commit of step 3): every check of the CI run for that commit is
+  SUCCESS (`gh run list --commit <sha>`), and the two crates CI excludes pass on their own:
+
+  ```bash
+  cargo test -p dvb-tools -p dvb-conformance --all-features --locked
+  ```
+
+  (`release.yml`'s test gate now also carries `timeout-minutes: 60`.)
 
 ## 1. Prepare: one command
 
@@ -107,6 +136,28 @@ The last is graph-only until crates go live (checks 1-2 compare the published ma
 run blocking in CI on every tag). CI on the bump PR repeats all of it, including the MSRV
 lane.
 
+**Package check** (the lane gates test the repo tree; nothing else builds the tarball cargo
+will actually publish, so a missing `include` path, a bad `readme` path or a verify-build
+failure would first appear LIVE, mid-wave, on an immutable publish). It needs the bump
+COMMITTED (cargo refuses a dirty tree), so run it on the merge commit in step 3, or in the CI
+runner via the manual `Package check` workflow (`.github/workflows/package-check.yml`,
+`workflow_dispatch`, run on the bump PR branch or `main`):
+
+```bash
+python3 tools/finalize-release-check.py $PAIRS --package
+```
+
+This is `cargo package --workspace --locked --exclude atsc3 --exclude test-fixtures
+--exclude test-alloc --exclude test-bounded` (verify-builds every tarball) followed by a
+sanity pass over each plan crate's `.crate`: under 10 MiB, `Cargo.toml` + the declared
+`readme`/`license-file` + every literal `include` path present. Slow (about 2 minutes warm,
+longer cold); it is never part of the default check. Cargo 1.95 verifies workspace members
+against each other, so it works BEFORE any sibling version is on crates.io: it was run on a
+scratch bump of this plan (all 54 crates, 2026-10-17) and passed. `--package-no-verify` skips
+the verify-builds if a run ever needs it. Known warning, not a failure: the committed lock
+pins `chacha20 0.10.1`, which crates.io marks yanked (`cargo package` prints it once per
+crate that depends on it); decide on a lock update separately.
+
 ## 3. Bump PR and merge
 
 ```bash
@@ -139,9 +190,19 @@ python3 tools/prepare-release.py --tag-order $(cat $PAIRS) > /tmp/release-tags.t
 wc -l /tmp/release-tags.txt        # 50
 ```
 
+Nothing named like a planned tag may already exist on the remote. A stale remote tag makes
+the later push a silent no-op (#933); `push-release-tags.sh` also refuses it, but find out
+now. This must print nothing:
+
 ```bash
-for t in $(cat /tmp/release-tags.txt); do git tag "$t" "$SHA"; done
-git tag -l | wc -l                 # includes all 50 new tags
+git ls-remote --tags origin $(sed 's#^#refs/tags/#' /tmp/release-tags.txt)
+```
+
+Create the tags, stopping at the first failure (a half-created set must not look complete):
+
+```bash
+for t in $(cat /tmp/release-tags.txt); do git tag "$t" "$SHA" || { echo "FAILED to create $t"; break; }; done
+git tag --points-at "$SHA" | wc -l   # 50: counts only the tags on the release commit, not every tag in the repo
 ```
 
 (`/tmp/release-tags.txt` lists the lockstep slot as `v12.0.0`, so that tag is created too.)
@@ -151,8 +212,15 @@ Preview the push order. This touches no git state and no network:
 tools/push-release-tags.sh --dry-run --plan $PAIRS
 ```
 
-Check it against section 6 of the release plan: `broadcast-common-v10.0.0` first,
-`mp4-emsg` before `mpeg-ts`, the lockstep slot after `mpeg-ts` and marked `MANUAL`.
+Check it against section 6 of the release plan (generated from the same script, so they
+agree): `broadcast-common-v10.0.0` first, `mp4-emsg` before `mpeg-ts`, the lockstep slot
+(position 34 of 50, after `scte35-splice`, not right after `mpeg-ts`) marked `MANUAL`.
+
+A real run (no `--dry-run`) preflights every tag against the TAGGED tree before pushing
+anything: the local tag must point at `HEAD` (a pinned release commit that is not `HEAD` is
+named with `--allow-tag-commit <sha>`), `git show <tag>:<crate>/Cargo.toml` must carry the
+tag's version, `git show <tag>:docs/release-notes/<crate>-<ver>.md` must exist and not be
+`status: DRAFT`, and no tag of that name may sit on the remote at another commit.
 
 ## 5. Push, one tag at a time
 
@@ -170,10 +238,18 @@ status is truthful:
 |---|---|---|
 | 0 | every tag pushed or already live, every release workflow succeeded | continue to step 6 |
 | 1 | a refusal, push failure, unreadable index, timeout, or a failed/cancelled workflow; nothing after it was pushed | read the output, fix, re-run the same command |
-| 2 | stopped: a run is waiting on the `crates-io` approval gate, or the plan reached `v12.0.0` | approve (below) / push the lockstep tag by hand, re-run the same command |
+| 2 | stopped: a run is waiting on the `crates-io` approval gate, the plan reached `v12.0.0`, or a workspace dependency of the next tag is not live on crates.io at the version its tagged manifest requires (the output names it) | approve (below) / push the lockstep tag by hand / publish or wait for the named dependency, re-run the same command |
+
+Before pushing each tag (plan and explicit-tag mode alike, and for the `v12.0.0` slot over
+all five lockstep crates' external dependencies) the script reads the TAGGED manifest and
+checks every workspace dependency (normal, build, target tables, versioned dev-deps) is on
+the crates.io index at a version satisfying the manifest's requirement (max semver, yanked
+versions ignored). Ordering is therefore no longer enforced only by the tag order: the lanes
+themselves do not check their siblings, this script does, so **push only through it**.
 
 Re-running is always safe: crates already live are skipped, and a tag already on the remote
-is not pushed twice.
+is not pushed twice (it resumes waiting only when a release run exists for it; a remote tag
+with no run is the #933 shape and stops the script).
 
 ### 5a. Approving the `crates-io` gate
 
@@ -194,8 +270,11 @@ workflow is named `Release`; `release-stream.yml` is `Release dvb-stream`. The w
 
 ### 5b. The lockstep tag, by hand
 
-The plan reaches `v12.0.0` right after `mpeg-ts-v0.6.0`; the script stops there with exit 2
-(`broadcast-common-v10.0.0` and `mpeg-ts-v0.6.0` must be live first, and they are by then).
+The plan reaches `v12.0.0` at position 34 of 50 (after `mpeg-ts-v0.6.0` and the rest of its
+ready batch, up to `scte35-splice-v4.0.0`: the order is alphabetical within a ready batch);
+the script stops there with exit 2 (`broadcast-common-v10.0.0` and `mpeg-ts-v0.6.0` must be
+live first, and they are by then; it checks all five crates' external dependencies and says
+"Do NOT push v12.0.0 yet" if one is missing).
 
 ```bash
 git push origin refs/tags/v12.0.0
@@ -227,6 +306,14 @@ python3 tools/crates-io.py check $(cat $PAIRS)
 python3 tools/check-published-dep-consistency.py --blocking --enforce-dev-cycles
 ```
 
+**Expect red `Published-dependency consistency` runs.** That workflow
+(`published-dep-consistency.yml`) runs `tools/check-published-dep-consistency.py --blocking` on
+every tag push. While the wave is in flight the published manifests of the not-yet-published
+crates are still on the OLD epoch, so it will go RED for tags of the 50 as they are pushed
+(and stay red until the last dependent is live). It does NOT gate any release lane (lanes are
+independent workflows), so a red run there is not a reason to stop; the only verdict that
+counts is the final one in the block below, after everything is live.
+
 `--verify` and `crates-io.py check` exit non-zero when a crate is not live at exactly the
 planned version (a failed request is an error, never "absent"). Do not use hand-rolled
 `curl` against crates.io: it 403s without a User-Agent.
@@ -256,7 +343,16 @@ is disabled in `release.yml`):
 gh workflow run attach-binaries.yml -f tag=v12.0.0 -f crate=dvb-tools
 ```
 
-`multimux-cli` ships its binary from its own lane.
+`multimux-cli` does NOT ship its binary from its own lane either: that `binaries` job is
+commented out in `release-multimux-cli.yml` (the `ubuntu-24.04-arm` runner causes
+`startup_failure`), so attach it the same way once `multimux-cli-v0.11.0` is live:
+
+```bash
+gh workflow run attach-binaries.yml -f tag=multimux-cli-v0.11.0 -f crate=multimux-cli -f bin=multimux
+```
+
+Both binaries therefore need the manual `attach-binaries.yml` dispatch; confirm each
+Release page lists its archives afterwards.
 
 ## 7. Post-publish
 
@@ -274,14 +370,111 @@ those bump the bindings' own versions in the same PR.
 
 Then:
 
-* tell downstream consumers: point them at
-  [`migration-notes-downstream.md`](migration-notes-downstream.md) and
+* notify the downstream consumers: **zenith**, **zenith-tv** and **axis-origin**
+  (`fishloa/axis-origin`, the extracted multimux ACAP packager). Point each at
+  [`migration-notes-downstream.md`](migration-notes-downstream.md) (per-crate migration
+  steps for the breaking epochs) and
   [`release-notes/2026-10-wave-overview.md`](release-notes/2026-10-wave-overview.md);
 * update the CLAUDE.md "Unpublished" markers the audit flagged (owner edit), and the
   hand-edited README coverage items;
 * run `python3 tools/finalize-release-check.py $PAIRS` once more on `main` (the bindings row
   should now read "ALREADY on new epoch" after the follow-up PR);
 * delete `/tmp/release-tags.txt`.
+
+## 8. Failure playbook
+
+Ground rules: crates.io is immutable (a version can be yanked, never deleted or
+overwritten); never `cargo publish` from a workstation, even to "finish" a wave; never move
+a tag that has been pushed except in case (a) below; `push-release-tags.sh` stops at the
+first failure and pushes nothing after it, so a failure is always "tag N of 50 failed, N+1..
+not pushed". First find out what is true:
+
+```bash
+python3 tools/crates-io.py version <crate> ...   # what is live (a failed request is an error, never "absent")
+gh run list --branch <tag> --json databaseId,status,conclusion,workflowName,url
+gh run view <run-id> --log-failed                # was the publish step reached? "published <crate>" in the log?
+```
+
+**(a) A lane gate failed and NOTHING was published for that crate** (the index does not
+show the version and the run never logged `published <crate>`; every gate runs before the
+publish step). Fix forward on `main` by PR (fix, regenerate whatever the release prep
+touched, re-run the gates). The tag still points at the broken commit and the lane builds
+the TAGGED tree, so the tag has to move. Deleting a pushed tag is allowed **only** because
+nothing shipped from it:
+
+```bash
+git push origin --delete <tag>       # remote first; the lane never published
+git tag -d <tag>
+git tag <tag> <fixed-sha>            # recreate at the fixed release commit (all tags must point at HEAD, or pass --allow-tag-commit)
+tools/push-release-tags.sh --plan $PAIRS   # live crates are skipped, this one is pushed again
+```
+
+A re-created tag can fire `startup_failure` instead of a run (it is on the "Do not" list for
+that reason). If that happens, stop re-using the tag name: bump that crate by a patch (b)
+and tag the new version. If any crate in the lane DID publish before the failure, this
+case does not apply: use (b) or (c).
+
+**(b) A partial wave: some crates are live, one failed for a real reason.** Fix on `main`.
+Bump ONLY the failed crate and the crates after it in the tag order that are not yet
+published, with the semantics of the change (patch = fix only; minor = additive; major =
+breaking, and a changed caret epoch of a sibling is major-class for its dependents; epoch
+purity still applies). Already-live crates keep their versions: a requirement like `0.27`
+is satisfied by `0.27.1`, so their dependents need no bump unless they need the fix (then
+they raise their floor and take a patch too). Build a pair list of just those crates and
+run the normal tools over it:
+
+```bash
+python3 tools/prepare-release.py --check <crate>=<new-version> ...
+python3 tools/prepare-release.py <crate>=<new-version> ...
+python3 tools/finalize-release-check.py <crate>=<new-version> ...
+```
+
+then PR, merge, tag the new versions at the new commit and run
+`tools/push-release-tags.sh <crate>-v<new-version> ...` (or `--plan <subset-pairs-file>`; it
+skips what is live and its dependency check refuses anything whose siblings are not).
+
+**(c) A partial lockstep** (for example `dvb-si` 12.0.0 is live but `dvb-conformance`
+failed for a real reason; the lockstep gate needs all five at ONE version and the crates
+publish in the order `dvb-bbframe`, `dvb-si`, `dvb-conformance`, `dvb-t2mi`, `dvb-tools`).
+If the failure was transient (429, runner hiccup), re-run the failed workflow on the same
+tag: publish is idempotent ("already uploaded" counts as success), so already-live crates
+are skipped. If the code or manifest was wrong, `12.0.0` of the live ones is immutable, so
+**all five go to `12.0.1`** (`prepare-release.py` refuses fewer than all five): bump all five
+together, write `docs/release-notes/v12.0.1.md`, tag `v12.0.1`, push it by hand (section
+5b). `12.0.0` of the crates that did publish stays on crates.io; yank it only if it is
+actually harmful (d).
+
+**(d) Yank vs patch-republish.** Yank when a published version is dangerous to *new*
+resolution: it does not build, is unsound, has a wrong public API that would mislead
+dependents, or leaks something. A yank hides it from new resolves; existing lock files keep
+it, and it is never deleted. A yank is always paired with a patch-republish (nothing else
+gives resolvers a version to move to). Do not yank for a wrong CHANGELOG, doc typo, or
+cosmetic metadata: those cannot be fixed in place; ship the correction in the next release.
+Yanking is CI-only, through `yank.yml` (it uses the `CARGO_REGISTRY_TOKEN` secret):
+
+```bash
+gh workflow run yank.yml -f crates=dvb-si,dvb-t2mi -f version=12.0.0            # yank
+gh workflow run yank.yml -f crates=dvb-si,dvb-t2mi -f version=12.0.0 -f undo=true  # un-yank
+```
+
+`crates` is a REQUIRED input with no default: the workflow used to default to
+`dvb-common,dvb-si,dvb-t2mi,dvb-bbframe` (a crate that no longer exists, omitting the other
+50), so a bare `-f version=...` yanked the wrong set. `push-release-tags.sh` ignores
+yanked versions when deciding what is live (and `crates-io.py` reports the API's
+`max_version`), so after a yank take that crate out of the pair list you re-run with, or the
+script will treat it as unpublished and try to resume its tag.
+
+**(e) Rate limits and the three-tag rule.** crates.io: a new version of an existing crate is
+allowed a burst of 30 then about one a minute (new crates: 5 then one per 10 minutes, and no
+crate of this wave is new). A 429 shows up as "failed to publish" in that lane's publish
+step: wait out the `Retry-After` it prints, then "Re-run failed jobs" on that run (the
+publish step is idempotent), then re-run `push-release-tags.sh`. GitHub: pushing more than
+three tags in one push fires **no** workflows at all, silently (#933, and `git push --tags` is
+the usual cause); the script pushes exactly one tag per step for that reason. A GitHub API
+secondary rate limit (HTTP 403 from `gh`) while polling is not a failed release: wait a few
+minutes and re-run the script; never "catch up" by pushing several tags. If a tag was pushed
+and no run exists for it (the script says so, #933), and the crate is not live, delete that
+remote tag and push it again on its own (case (a) commands; nothing was published).
 
 ## Do not
 
