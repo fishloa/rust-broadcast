@@ -246,6 +246,8 @@ Read in full (`tools/prepare-release.py`, 418 lines). Modes:
 | `--restamp <crate>=<ver> ...` | **YES** | rewrites every CHANGELOG `## [ver] - date` heading and every release note `_Released <date>._` line to today; exits non-zero if a crate has no dated heading or no note |
 | `--restamp-check <crate>=<ver> ...` | no | dry run of `--restamp` |
 
+> **Update (release tooling PR):** apply mode now also rewrites README dependency snippets, strips the `status: DRAFT` front matter (pair notes, `v12.0.0.md`, `--extra-note`), regenerates `docs/CRATES.md`, and refreshes `Cargo.lock` (workspace-member versions only, verified); the tag order counts versioned dev-dependency edges. The paragraph below describes the script as first audited. The ordered commands are in [`RELEASE-RUNBOOK-2026-10.md`](RELEASE-RUNBOOK-2026-10.md); `tools/finalize-release-check.py` is the pre-tag gate and `tools/push-release-tags.sh --plan` pushes in order with a truthful exit code.
+
 Not edited by the script (a human must): `Cargo.lock` (refresh with `cargo update --workspace` / a build and commit it; the script's own `--locked --offline` resolution check will fail until the lock matches the new versions: previous waves committed the lock in the same PR, e.g. `57cdbf7a`); the root `README.md` coverage table and per-crate README dependency snippets (`"11"`, `"0.5"` pins listed in the audit); `bindings/*`; the `status: DRAFT` front matter in the notes; the lockstep note `v12.0.0.md` (the script scaffolds per-crate notes only, not the `v*` note, and the lane gate needs it).
 `dependency_order()` in the script counts only normal/build edges; the order in section 6 additionally counts versioned dev-dependency edges, and is the one to follow.
 
