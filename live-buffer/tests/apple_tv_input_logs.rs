@@ -318,3 +318,52 @@ fn rai3_stall_golden_current_behaviour() {
     // after the last pause the run is clean: no pause past 3 s
     assert!(r.pauses().iter().all(|(t, _)| *t < 3_000_000));
 }
+
+/// rai-3 recorded with PER-CHUNK media reporting (zenith 9e2d027: one audio end
+/// per delivered PES, 195 audio calls in 60 s, step median 0.288 s / max
+/// 0.312 s; the device saw 0 pauses, first frame 2.65 s). Replayed through the
+/// current controller: no pause, start at 1.362 s (the per-frame rai-3 log
+/// starts at 1.338 s: same shape, same start within 25 ms), and the
+/// granularity floor lifts the target to 412 ms (312 ms max step + margin) at
+/// 1.076 s, before the start; the 600/680 ms lifts at ~45 s are PDV. The floor
+/// is proven to be the cause with the PDV term at its minimum: floor on holds
+/// 412 ms from 1.076 s, floor off stays at 300 ms (mutation: disabling the
+/// floor).
+#[test]
+fn rai3_perchunk_golden() {
+    let Some(r) = replay("rai-3-perchunk", config()) else {
+        return;
+    };
+    assert_eq!(r.chunks, 10_967);
+    assert_eq!(r.starts(), [1_361_559]);
+    assert!(r.pauses().is_empty());
+    assert_eq!(r.stalls, 0);
+    assert_eq!(
+        r.targets,
+        [
+            (1_075_848, 412_000),
+            (45_527_825, 600_000),
+            (46_030_568, 680_000)
+        ]
+    );
+    assert_eq!(r.final_target, 680_000);
+    // the floor is in force before the start
+    assert!(r.target_at(1_361_559) >= 300_000 + MARGIN_US);
+
+    let pdv_off = |gran: bool| {
+        config_with(|c| {
+            let mut p = c.policy;
+            p.k1_q8 = 1;
+            ControllerConfig::new(c.jitter, p, c.starve_threshold_us, c.nodata_after_us)
+                .unwrap()
+                .with_track_granularity(gran)
+        })
+    };
+    let floor_only = replay("rai-3-perchunk", pdv_off(true)).unwrap();
+    assert_eq!(floor_only.targets.first(), Some(&(1_075_848, 412_000)));
+    assert_eq!(floor_only.target_at(5_000_000), 412_000);
+    let neither = replay("rai-3-perchunk", pdv_off(false)).unwrap();
+    // (a late PDV event at ~45 s may still move it; nothing before 40 s)
+    assert!(neither.targets.iter().all(|(t, _)| *t > 40_000_000));
+    assert_eq!(neither.target_at(5_000_000), FLOOR_US);
+}
