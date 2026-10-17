@@ -1,0 +1,98 @@
+[
+  {
+    "probe": "transmux.*",
+    "fixture": "fixtures/ts/m6-*.ts",
+    "reason": "transmux CHANGELOG [Unreleased] 'Fixed (E-AC-3 dependent substreams, a real 7.1 stream, #1255)': track 1 (PID 0x82) gains one real E-AC-3 frame (7 -> 8 samples) that an AC-3-shaped 0B 77 pair in the payload used to swallow; codec, track ids and other tracks unchanged (every output of that track changes accordingly)."
+  },
+  {
+    "probe": "transmux.*",
+    "fixture": "private/fixtures/ts/france-tnt-m6-eac3-zenith.ts",
+    "reason": "Same as m6-*.ts: #1255 one extra real E-AC-3 frame on the PID 0x82 track (7 -> 8 samples)."
+  },
+  {
+    "probe": "transmux.*",
+    "fixture": "private/fixtures/eac3-dep/gw_*.ts",
+    "reason": "transmux CHANGELOG [Unreleased] 'Fixed (TS demux, #1186)' + '#1255': the real 7.1 stream (AC-3 core + dependent E-AC-3) now joins dependent substreams into their access unit (157 AUs, 723456 B, no 'timeline reanchored' discontinuities); the baseline split them (236 samples, 47 reanchors)."
+  },
+  {
+    "probe": "transmux.stream",
+    "fixture": "private/fixtures/ts/france-tnt-uhf32-si-audio.ts",
+    "path": "events*",
+    "reason": "transmux CHANGELOG [Unreleased] 'Fixed (StreamingTsDemux E-AC-3 promotion regression, zenith)' and the PROBE_HEAD_BLOCK_AUS step-over in try_promote_ready: the same 26 tracks (identical ids, PIDs, codecs, per-track samples/bytes/SHA-256) are now announced live (pre_finish) instead of all at finish(); the 4 abandoned PIDs are the same."
+  },
+  {
+    "probe": "transmux.run",
+    "fixture": "private/fixtures/mpegh/*",
+    "path": "ts*",
+    "reason": "transmux CHANGELOG [Unreleased] 'Fixed (MPEG-H TS descriptor, H.222.0 Table 2-121)': the synthesized MPEG-H_3dAudio_descriptor ES_info entry is now the complete 6-byte form (the old 4-byte form omitted two mandatory bytes), so TS / TS-HLS output differs."
+  },
+  {
+    "probe": "transmux.run",
+    "fixture": "private/fixtures/ts/mpegh-*.ts",
+    "path": "ts*",
+    "reason": "Same as private/fixtures/mpegh/*: complete MPEG-H_3dAudio_descriptor (Table 2-121)."
+  },
+  {
+    "probe": "transmux.run",
+    "fixture": "fixtures/mp4/frag/mpegh_stereo.frag.mp4",
+    "path": "ts*",
+    "reason": "Same as private/fixtures/mpegh/*: complete MPEG-H_3dAudio_descriptor (Table 2-121) in the synthesized TS ES_info."
+  },
+  {
+    "probe": "transmux.run",
+    "fixture": "fixtures/subtitles/*",
+    "reason": "transmux CHANGELOG [Unreleased] 'BREAKING #1186' (CodecConfig::Subtitle carries its stpp/wvtt sample entry) + 'Added (subtitles in manifests, #1243)': a subtitle-only input was rejected by every packager at the baseline ('select_tracks_by: predicate kept no track') and is now packaged (CMAF/DASH/progressive), HLS of a progressive input fails with the clearer 'no segments' error."
+  },
+  {
+    "probe": "transmux.run",
+    "fixture": "fixtures/mp4/stpp.mp4",
+    "reason": "Same as fixtures/subtitles/*: #1186 + #1243."
+  },
+  {
+    "probe": "dvb-si.sections",
+    "fixture": "private/fixtures/mpegh/*",
+    "path": "descriptors.0x3F*",
+    "reason": "dvb-si CHANGELOG [Unreleased]: tag 0x3F is now auto-dispatched to AnyDescriptor::Mpeg2Extension (was Unknown); the MPEG-H 3D audio bodies are typed (typed 7/10/8, err 0, unknown 0)."
+  },
+  {
+    "probe": "dvb-si.sections",
+    "fixture": "private/fixtures/ts/mpegh-*.ts",
+    "path": "descriptors.0x3F*",
+    "reason": "Same as private/fixtures/mpegh/*: tag 0x3F typed as Mpeg2Extension."
+  },
+  {
+    "probe": "dvb-si.sections",
+    "fixture": "private/fixtures/tsduck/input/test-062.ts",
+    "path": "descriptors.0x34*",
+    "reason": "dvb-si CHANGELOG [Unreleased]: tags 0x2D, 0x2E, 0x33-0x37, 0x39, 0x3A are now dispatched typed (MPEG2_stereoscopic_video_format 0x34 was Unknown)."
+  },
+  {
+    "probe": "dvb-si.sections",
+    "fixture": "private/fixtures/tsduck/*",
+    "path": "sections_*",
+    "reason": "dvb-si CHANGELOG [Unreleased]: section_syntax_indicator and every reserved field are now preserved on re-serialize ('section-level reserved bits' graduated), so sections that mismatched the wire at the baseline (PAT test-012, NIT test-016, SDT/EIT/AIT test-062/109/170, TDT/TOT test-120, DSM-CC) now re-serialize byte-identically; section counts and parse results are unchanged."
+  },
+  {
+    "probe": "dvb-t2mi.pump",
+    "fixture": "fixtures/dvb-t2mi/colombia-capital-t2mi.ts",
+    "reason": "dvb-t2mi CHANGELOG [Unreleased] 'BREAKING (fix)': function_length covers the whole function() incl. its 2-byte header (TS 102 773 5.2.8.2.0); the capture's 11 individual-addressing (0x21) packets failed to parse at the baseline (payload_err 11, 247 ok) and now parse (258 ok, 11 individual addressing)."
+  },
+  {
+    "probe": "cli.ts-fix",
+    "fixture": "private/fixtures/tsduck/input/test-184.ts",
+    "path": "*regen_psi*",
+    "reason": "ts-fix CHANGELOG [Unreleased] 'Fixed (#1288)': --regen-psi now ends the stream with a program-less PAT (tsid 4) when no PMT was ever seen (the capture's PAT lists 5 PMT PIDs that carry no packets); the baseline emitted no PAT at all. NOTE: both trees replace the capture's 615 in-position PATs with nothing / one empty PAT at the end."
+  },
+  {
+    "probe": "cli.ts-fix",
+    "fixture": "private/fixtures/tsduck/input/test-184.ts",
+    "path": "combo.*",
+    "reason": "Same as regen_psi on test-184.ts (the combo variant includes --regen-psi): #1288."
+  },
+  {
+    "probe": "cli.dvb-tools",
+    "path": "dump_json.*",
+    "class": "BUG",
+    "reason": "dvb-tools `dump --json` output grew in 72 of 102 TS fixtures: dvb-si's new typed reserved_future_use*/reserved fields, the new `trailing` arrays on service/short_event/telephone/audio_preselection descriptors and the typed 0x3F Mpeg2Extension (replacing `unknown`) all serialize into the JSON, but dvb-tools CHANGELOG [Unreleased] claims 'All other text/JSON output is byte-identical' (t2mi --pid entry) and lists no dump --json schema change. Documentation/CHANGELOG defect (and an unannounced JSON schema change for consumers); fix the CHANGELOG/release note before release."
+  }
+]

@@ -59,7 +59,9 @@ pub fn transmux_stream(fx: &Fixture, _: &Cfg) -> Option<Value> {
                     "ev": "abandoned", "phase": phase,
                     "reason": reason.name(), "pid": hx_opt(provenance.pid),
                 })),
-                DemuxEvent::Sample { track_id, sample, .. } => {
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
                     let a = agg.entry(format!("{track_id:?}")).or_default();
                     a.samples += 1;
                     a.bytes += sample.data.len() as u64;
@@ -79,7 +81,10 @@ pub fn transmux_stream(fx: &Fixture, _: &Cfg) -> Option<Value> {
                 DemuxEvent::InputDegraded { kind, .. } => {
                     bump(&mut counters, format!("degraded:{}", kind.name()));
                 }
-                other => bump(&mut counters, format!("other:{}", variant_name(&format!("{other:?}")))),
+                other => bump(
+                    &mut counters,
+                    format!("other:{}", variant_name(&format!("{other:?}"))),
+                ),
             }
         }
     };
@@ -310,7 +315,10 @@ fn survey_descs(descs: &mut BTreeMap<String, DescStat>, t: &AnyTableSection<'_>)
             let first = parse_loop(&raw).next();
             match first {
                 Some(Ok(AnyDescriptor::Unknown { .. })) => {
-                    descs.entry(format!("0x{tag:02X} UNKNOWN")).or_default().unknown += 1;
+                    descs
+                        .entry(format!("0x{tag:02X} UNKNOWN"))
+                        .or_default()
+                        .unknown += 1;
                 }
                 Some(Ok(d)) => {
                     let key = if tag == 0x7F {
@@ -338,7 +346,10 @@ fn survey_descs(descs: &mut BTreeMap<String, DescStat>, t: &AnyTableSection<'_>)
                     let _ = &raw;
                 }
                 Some(Err(_)) | None => {
-                    descs.entry(format!("0x{tag:02X} PARSE_ERR")).or_default().err += 1;
+                    descs
+                        .entry(format!("0x{tag:02X} PARSE_ERR"))
+                        .or_default()
+                        .err += 1;
                 }
             }
         }
@@ -486,7 +497,9 @@ pub fn dvb_t2mi(fx: &Fixture, _: &Cfg) -> Option<Value> {
     // PIDs seen, by packet count; try every PID with enough packets.
     let mut counts: BTreeMap<u16, u64> = BTreeMap::new();
     for p in &packets {
-        *counts.entry((u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])).or_insert(0) += 1;
+        *counts
+            .entry((u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]))
+            .or_insert(0) += 1;
     }
     let mut out = Map::new();
     for (&pid, &n) in &counts {
@@ -545,7 +558,7 @@ pub fn dvb_t2mi(fx: &Fixture, _: &Cfg) -> Option<Value> {
                 "types": types, "payload_ok": payload_ok, "payload_err": payload_err,
                 "header_err": header_err, "individual_addressing": ind_addr,
                 "inner_bytes": inner.len(), "inner_sha256": sha(&inner),
-                "plps": plps, "inner_t2mi_packets": rs.t2mi_packets,
+                "head_only_plps": plps, "inner_t2mi_packets": rs.t2mi_packets,
                 "inner_crc_failures": rs.crc_failures, "inner_malformed": rs.malformed_packets,
             }),
         );
@@ -785,7 +798,9 @@ pub fn hls(fx: &Fixture, _: &Cfg) -> Option<Value> {
             Err(e) => json!({ "kind": "master", "err": variant_name(&format!("{e:?}")) }),
             Ok(p) => match p.to_m3u8() {
                 Err(e) => json!({ "kind": "master", "ser_err": variant_name(&format!("{e:?}")) }),
-                Ok(s) => json!({ "kind": "master", "identical": s == text, "rendered_sha256": sha(s.as_bytes()) }),
+                Ok(s) => {
+                    json!({ "kind": "master", "identical": s == text, "rendered_sha256": sha(s.as_bytes()) })
+                }
             },
         }
     } else {
@@ -793,7 +808,9 @@ pub fn hls(fx: &Fixture, _: &Cfg) -> Option<Value> {
             Err(e) => json!({ "kind": "media", "err": variant_name(&format!("{e:?}")) }),
             Ok(p) => match p.to_m3u8() {
                 Err(e) => json!({ "kind": "media", "ser_err": variant_name(&format!("{e:?}")) }),
-                Ok(s) => json!({ "kind": "media", "identical": s == text, "rendered_sha256": sha(s.as_bytes()) }),
+                Ok(s) => {
+                    json!({ "kind": "media", "identical": s == text, "rendered_sha256": sha(s.as_bytes()) })
+                }
             },
         }
     })
@@ -814,20 +831,23 @@ pub fn dash(fx: &Fixture, _: &Cfg) -> Option<Value> {
 // CLI binaries (subprocess), only when --bin-dir is given
 // ---------------------------------------------------------------------------
 
+/// Run `bin` with `cwd` as its working directory. Inputs/outputs are passed as
+/// bare relative names so the process id (different for the two sweeps) never
+/// leaks into the captured output.
 fn run_bin(
     bin: &std::path::Path,
+    cwd: &std::path::Path,
     args: &[String],
     timeout: std::time::Duration,
 ) -> Value {
     use std::process::{Command, Stdio};
-    let outdir = std::env::temp_dir().join(format!("sweep-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&outdir);
-    let so = outdir.join("stdout");
-    let se = outdir.join("stderr");
+    let so = cwd.join("stdout.txt");
+    let se = cwd.join("stderr.txt");
     let (Ok(fo), Ok(fe)) = (std::fs::File::create(&so), std::fs::File::create(&se)) else {
         return json!({ "harness_error": "tmp files" });
     };
     let child = Command::new(bin)
+        .current_dir(cwd)
         .args(args)
         .stdout(Stdio::from(fo))
         .stderr(Stdio::from(fe))
@@ -859,6 +879,13 @@ fn run_bin(
     }
 }
 
+fn scratch_dir(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("sweep-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
 fn exe(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     let p = dir.join(name);
     p.is_file().then_some(p)
@@ -869,9 +896,9 @@ pub fn cli_dvb_tools(fx: &Fixture, cfg: &Cfg) -> Option<Value> {
         return None;
     }
     let bin = exe(cfg.bin_dir.as_deref()?, "dvb-tools")?;
-    let tmp = std::env::temp_dir().join(format!("sweep-in-{}.ts", std::process::id()));
-    std::fs::write(&tmp, &fx.data).ok()?;
-    let path = tmp.to_string_lossy().to_string();
+    let cwd = scratch_dir("dvb-tools");
+    std::fs::write(cwd.join("input.ts"), &fx.data).ok()?;
+    let path = "input.ts".to_string();
     let mut out = Map::new();
     for (name, args) in [
         ("dump_json", vec!["dump", &path, "--json"]),
@@ -883,10 +910,10 @@ pub fn cli_dvb_tools(fx: &Fixture, cfg: &Cfg) -> Option<Value> {
         let args: Vec<String> = args.into_iter().map(String::from).collect();
         out.insert(
             name.into(),
-            run_bin(&bin, &args, std::time::Duration::from_secs(120)),
+            run_bin(&bin, &cwd, &args, std::time::Duration::from_secs(120)),
         );
     }
-    let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_dir_all(&cwd);
     Some(Value::Object(out))
 }
 
@@ -895,10 +922,9 @@ pub fn cli_ts_fix(fx: &Fixture, cfg: &Cfg) -> Option<Value> {
         return None;
     }
     let bin = exe(cfg.bin_dir.as_deref()?, "ts-fix")?;
-    let pid = std::process::id();
-    let input = std::env::temp_dir().join(format!("sweep-fix-in-{pid}.ts"));
-    let output = std::env::temp_dir().join(format!("sweep-fix-out-{pid}.ts"));
-    std::fs::write(&input, &fx.data).ok()?;
+    let cwd = scratch_dir("ts-fix");
+    let output = cwd.join("output.ts");
+    std::fs::write(cwd.join("input.ts"), &fx.data).ok()?;
     let mut out = Map::new();
     let variants: [(&str, &[&str]); 5] = [
         ("repair_continuity", &["--repair-continuity"]),
@@ -914,12 +940,12 @@ pub fn cli_ts_fix(fx: &Fixture, cfg: &Cfg) -> Option<Value> {
         let _ = std::fs::remove_file(&output);
         let mut args: Vec<String> = vec![
             "--input".into(),
-            input.to_string_lossy().into(),
+            "input.ts".into(),
             "--output".into(),
-            output.to_string_lossy().into(),
+            "output.ts".into(),
         ];
         args.extend(flags.iter().map(|s| (*s).to_string()));
-        let mut v = run_bin(&bin, &args, std::time::Duration::from_secs(120));
+        let mut v = run_bin(&bin, &cwd, &args, std::time::Duration::from_secs(120));
         if let Ok(bytes) = std::fs::read(&output) {
             if let Value::Object(m) = &mut v {
                 m.insert("output_len".into(), json!(bytes.len()));
@@ -929,7 +955,6 @@ pub fn cli_ts_fix(fx: &Fixture, cfg: &Cfg) -> Option<Value> {
         }
         out.insert(name.into(), v);
     }
-    let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&output);
+    let _ = std::fs::remove_dir_all(&cwd);
     Some(Value::Object(out))
 }

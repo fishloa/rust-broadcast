@@ -235,7 +235,8 @@ fn main() {
             if only.as_deref().is_some_and(|o| !name.starts_with(o)) {
                 continue;
             }
-            let Some(result) = run_guarded(*f, fx.clone(), cfg.clone(), Duration::from_secs(timeout))
+            let Some(result) =
+                run_guarded(*f, fx.clone(), cfg.clone(), Duration::from_secs(timeout))
             else {
                 continue;
             };
