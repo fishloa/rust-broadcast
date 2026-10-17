@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -4361,7 +4361,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.27.3"
+version = "0.27.4"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",

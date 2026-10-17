@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.27.4] - 2026-10-17
 ### Fixed
 - **`DemuxEvent::ClockReference` on a multi-program TS (#1354).** `StreamingTsDemux` emitted a `ClockReference` for the PCR on *any* PID and carried no program. Measured on the real captures before the fix: France TNT UHF32 5 PCR PIDs (all PCR_PIDs), Hot Bird MHP 20 PCR PIDs for 19 PMT-named PCR_PIDs - PID 985 carries one stray PCR (packet 68185) that no PMT names. It now emits only from a PID some program's PMT names as `PCR_PID` (ISO/IEC 13818-1 §2.4.3.5, §2.4.4.8-9), one event per program naming it, with the new `EventProvenance::program_number`. Before every announced PMT is known (PAT unseen or a PMT pending) a PCR on an as-yet-unclaimed PID is emitted with `program_number: None` instead of held (holding would lose the first PMT interval of clock samples, and the PID cannot yet be ruled out); `None` means "not yet attributable". `Media::pcr` (batch `TsDemux`) is filtered the same way. A byte offset is not added: `packet_index * 188` is the offset only when no resync loss preceded it, and `InputDegraded::SyncLoss` already reports true stream offsets.
 
