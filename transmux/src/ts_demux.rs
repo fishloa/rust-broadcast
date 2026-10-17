@@ -2019,10 +2019,8 @@ struct StreamState {
     probe_walked_len: usize,
     /// Payload-bearing TS packets delivered to this PID (saturating), counting
     /// those replayed from `unattributed`. Zero means the PID has been
-    /// completely silent since it was declared ([`SILENT_HEAD_BLOCK_PACKETS`]).
+    /// completely silent since it was declared ([`SILENT_HEAD_PARKED_BYTES`]).
     payload_packets: u32,
-    /// [`StreamingTsDemux::packet_index`] when this PID was registered.
-    registered_at: u64,
 }
 
 /// Advance a one-behind (video/data) pending slot with a newly-built sample,
@@ -3671,6 +3669,15 @@ fn advance_track(
             } else {
                 audio_probe_next_tail(stream.codec, &stream.probe_tail, &latest.data)
             };
+            // `probe_walked_len` describes the held window: it follows every
+            // clear or replacement of `probe_tail`, else a stale length above
+            // ~58 KiB made the gate demand growth past the tail cap, so the
+            // tail cleared first and the window was never re-walked in full.
+            stream.probe_walked_len = if eac3_gated && !stream.probe_tail.is_empty() {
+                stream.probe_walked_len
+            } else {
+                stream.probe_tail.len()
+            };
             match resolved {
                 Some((config, timescale, kind)) => TrackState::Parked {
                     config,
@@ -3680,6 +3687,7 @@ fn advance_track(
                 },
                 None if stream.backlog_bytes > MAX_PROBE_BACKLOG_BYTES => {
                     stream.probe_tail = Vec::new();
+                    stream.probe_walked_len = 0;
                     abandon_backlog(stream, pid, events)
                 }
                 None => TrackState::Probing { probe, backlog },
@@ -3720,29 +3728,30 @@ const EAC3_PROBE_MAX_FRAMES: usize = 16;
 /// resolves or [`MAX_PROBE_BACKLOG_BYTES`] abandons it.
 const PROBE_HEAD_BLOCK_AUS: u32 = 512;
 
-/// TS packets (of the whole stream, counted from the PID's registration) a
-/// declared PID may stay *completely silent* — not one payload-bearing packet —
-/// before it stops holding back the PIDs after it, whatever its codec. This is
-/// the bound [`PROBE_HEAD_BLOCK_AUS`] cannot provide: with no packet there is
-/// no access unit to count, and nothing grows toward
-/// [`MAX_PROBE_BACKLOG_BYTES`], so a video PID declared in the PMT but never
-/// sent (a radio service with a stale video entry, a feed whose video is
-/// dropped upstream) blocked every later track until end of input
-/// (`finish()`), in 0.26.0 as before. A PID that has delivered *any* payload
-/// keeps blocking exactly as before, so a slow-but-present video still gets
-/// the lowest track id. The silent PID is stepped over, not abandoned: if
-/// packets arrive later it resolves, is promoted with a later id and its
-/// backlog, and re-arms [`DemuxEvent::TracksResolved`].
+/// Bytes the PIDs *behind* a completely silent head (not one payload-bearing TS
+/// packet since it was declared) must have parked before the head stops holding
+/// them back, whatever its codec. This is the bound [`PROBE_HEAD_BLOCK_AUS`]
+/// cannot provide: with no packet there is no access unit to count, and nothing
+/// on the head's own PID grows toward [`MAX_PROBE_BACKLOG_BYTES`], so a video
+/// PID declared in the PMT but never sent (a radio service with a stale video
+/// entry, a feed whose video is dropped upstream) blocked every later track
+/// until end of input (`finish()`) in 0.26.0, which has no step-over at all
+/// (it held later tracks behind a head that never resolved until the byte cap
+/// abandoned them, and for a silent head not even then).
 ///
-/// Sized well below the point where the *other* PIDs' parked backlog would hit
-/// [`MAX_PROBE_BACKLOG_BYTES`] (checked at compile time below): 8192 packets
-/// is 1.5 MB of TS, about 1.2 s at 10 Mbit/s and about 12 s of a 128 kbit/s
-/// radio multiplex. Scrambled-but-present video still delivers payload packets
-/// and so remains bounded by the byte cap only.
-const SILENT_HEAD_BLOCK_PACKETS: u64 = 8192;
-const _: () = assert!(
-    (SILENT_HEAD_BLOCK_PACKETS as usize) * (TS_PACKET_SIZE - 4) < MAX_PROBE_BACKLOG_BYTES / 2
-);
+/// The criterion is the sum of [`StreamState::backlog_bytes`] over every
+/// unresolved PID other than the head, compared with half of
+/// [`MAX_PROBE_BACKLOG_BYTES`] (2 MiB). The per-PID cap is 4 MiB and a PID that
+/// reaches it is abandoned (its track lost), so stepping over at half the cap
+/// always happens while the parked audio is still intact, yet never before a
+/// late video has had 2 MiB of the *other* tracks' elementary stream (about
+/// 2 minutes at 128 kbit/s of audio, regardless of the mux bitrate) to start.
+/// A PID that has delivered *any* payload keeps blocking exactly as in 0.26.0
+/// (scrambled-but-present video stays bounded by the byte cap only), and a
+/// *video* head with data is never stepped over. The silent PID is stepped
+/// over, not abandoned: if packets arrive later it resolves, is promoted with a
+/// later id and its backlog, and re-arms [`DemuxEvent::TracksResolved`].
+const SILENT_HEAD_PARKED_BYTES: usize = MAX_PROBE_BACKLOG_BYTES / 2;
 
 /// Payloads an E-AC-3 probe gets a full window re-walk for before the walk is
 /// gated. Each unresolved payload re-joins the held tail (up to
@@ -3752,8 +3761,9 @@ const _: () = assert!(
 /// [`Eac3Sync::MIN_FRAME_LEN`]) is appended without a walk, which bounds the
 /// total at this many walks plus a logarithmic number more. A stream that
 /// resolves in fewer payloads (every real capture, and the unchanged 16-frame
-/// bound for sane PES sizes) is untouched; only the pathological one resolves
-/// up to an eighth of a window later than it otherwise would.
+/// bound for sane PES sizes) is untouched; only the pathological one defers its
+/// fallbacks until the window has grown by an eighth (the gate is dropped
+/// whenever the held tail is cleared, see `StreamState::probe_walked_len`).
 const EAC3_PROBE_FULL_WALKS: u32 = 4096;
 
 /// The most an E-AC-3 probe holds: [`EAC3_PROBE_MAX_FRAMES`] syncframes of at
@@ -4258,8 +4268,8 @@ enum CcVerdict {
 /// resolves is bounded by the 4 MiB probe-backlog cap instead (it is then
 /// abandoned and the PIDs behind it proceed) — unless it is *silent*: a
 /// declared PID (of any codec) that has delivered no payload packet at all for
-/// `SILENT_HEAD_BLOCK_PACKETS` (8192) TS packets of the stream is stepped over
-/// too, since nothing would ever grow toward the cap. A stepped-over PID counts
+/// while the PIDs behind it have parked `SILENT_HEAD_PARKED_BYTES` (2 MiB) in
+/// total is stepped over too, since nothing would ever grow toward the cap. A stepped-over PID counts
 /// toward [`DemuxEvent::TracksResolved`] and, if it resolves later, is promoted
 /// with a later track id and re-arms that signal.
 ///
@@ -4357,7 +4367,7 @@ pub struct StreamingTsDemux {
     /// recoverable / no access units ever arrived, concluded at `finish()`).
     resolved: BTreeSet<Pid>,
     /// Unresolved `Probing` heads that [`PROBE_HEAD_BLOCK_AUS`] (or
-    /// [`SILENT_HEAD_BLOCK_PACKETS`]) stepped over. Disjoint from `resolved`.
+    /// [`SILENT_HEAD_PARKED_BYTES`]) stepped over. Disjoint from `resolved`.
     /// They count toward [`DemuxEvent::TracksResolved`] (the declared set is
     /// "stable enough": nothing more is being waited on) but are *not*
     /// resolved: such a PID is still promoted, with a `TrackAdded` and its
@@ -5033,7 +5043,6 @@ impl StreamingTsDemux {
             probe_walks: 0,
             probe_walked_len: 0,
             payload_packets: 0,
-            registered_at: self.packet_index,
         };
         // Replay any payloads that arrived on this PID before its PMT
         // registration completed (see `unattributed`'s doc).
@@ -5399,16 +5408,12 @@ impl StreamingTsDemux {
                 }
                 other @ TrackState::Probing { .. } => {
                     stream.track = Some(other);
-                    let silent = stream.payload_packets == 0
-                        && self.packet_index.saturating_sub(stream.registered_at)
-                            >= SILENT_HEAD_BLOCK_PACKETS;
-                    if silent
-                        || (stream.probe_aus >= PROBE_HEAD_BLOCK_AUS
-                            && !matches!(
-                                stream.codec,
-                                Codec::H264 | Codec::Hevc | Codec::Mpeg2Video
-                            ))
-                    {
+                    let never_sent = stream.payload_packets == 0;
+                    let aus_stalled = stream.probe_aus >= PROBE_HEAD_BLOCK_AUS
+                        && !matches!(stream.codec, Codec::H264 | Codec::Hevc | Codec::Mpeg2Video);
+                    let silent =
+                        never_sent && self.parked_behind(next_pid) >= SILENT_HEAD_PARKED_BYTES;
+                    if silent || aus_stalled {
                         // Stalled: it no longer holds back the PIDs after it
                         // (see `PROBE_HEAD_BLOCK_AUS`); it stays unresolved and
                         // is promoted whenever it does resolve. Never applied
@@ -5419,8 +5424,9 @@ impl StreamingTsDemux {
                         // PMT order. A video that truly never resolves is
                         // bounded by `MAX_PROBE_BACKLOG_BYTES` instead —
                         // unless it is entirely silent (`silent`: no packet
-                        // at all in `SILENT_HEAD_BLOCK_PACKETS`), which is
-                        // stepped over whatever its codec.
+                        // at all while the PIDs behind it parked
+                        // `SILENT_HEAD_PARKED_BYTES`), which is stepped over
+                        // whatever its codec.
                         self.skipped.insert(next_pid);
                         continue;
                     }
@@ -5448,6 +5454,18 @@ impl StreamingTsDemux {
             }
         }
         self.maybe_signal_tracks_resolved();
+    }
+
+    /// Bytes currently held in the `Probing`/`Parked` backlogs of every
+    /// unresolved PID except `head` (the [`SILENT_HEAD_PARKED_BYTES`]
+    /// criterion).
+    fn parked_behind(&self, head: Pid) -> usize {
+        self.codec_order
+            .iter()
+            .chain(self.data_order.iter())
+            .filter(|p| **p != head && !self.resolved.contains(*p))
+            .filter_map(|p| self.streams.get(p))
+            .fold(0usize, |sum, s| sum.saturating_add(s.backlog_bytes))
     }
 
     /// Emit [`DemuxEvent::TracksResolved`] (issue #624) when every currently
@@ -5549,6 +5567,9 @@ impl StreamingTsDemux {
             match self.streams.get(&next_pid).and_then(|s| s.track.as_ref()) {
                 Some(TrackState::Probing { .. }) => {
                     self.resolved.insert(next_pid);
+                    // A head stepped over earlier is still in `skipped`;
+                    // keep the two sets disjoint (their sizes are summed).
+                    self.skipped.remove(&next_pid);
                     // This PID's codec config never became recoverable before
                     // end of input — `TrackAdded` never fired for it, so no
                     // `track_id` exists to report (issue #774).
@@ -6992,34 +7013,82 @@ mod tests {
         );
     }
 
-    /// Round-3 audit B (i): a video PID declared in the PMT that never sends a
-    /// packet (a radio service with a stale video entry) no longer holds the
-    /// audio back forever. After `SILENT_HEAD_BLOCK_PACKETS` packets of the
-    /// whole stream the audio is announced live, as track 1.
+    /// Feed `ts` one TS packet at a time; return the packet index at which the
+    /// first `TrackAdded` appeared and the backlog bytes PID 0x0101 held just
+    /// before that packet.
+    fn first_announce(ts: &[u8]) -> Option<(usize, usize)> {
+        let mut demux = StreamingTsDemux::new();
+        let mut prev = 0usize;
+        for (i, chunk) in ts.chunks(TS_PACKET_SIZE).enumerate() {
+            demux.feed(chunk);
+            while let Some(ev) = demux.poll_event() {
+                if matches!(ev, DemuxEvent::TrackAdded(_)) {
+                    return Some((i, prev));
+                }
+            }
+            prev = demux
+                .streams
+                .get(&Pid::new(0x0101))
+                .map_or(0, |s| s.backlog_bytes);
+        }
+        None
+    }
+
+    /// Enough flood packets (one-frame ADTS PES, ~100 ES bytes per TS packet) to
+    /// park well over `SILENT_HEAD_PARKED_BYTES`, but under the 4 MiB cap.
+    const FLOOD_PAST_CRITERION: usize = 25_000;
+
+    /// Round-4 audit 1: a video PID declared in the PMT that never sends a
+    /// packet no longer holds the audio back forever, but is stepped over only
+    /// once the audio behind it has parked `SILENT_HEAD_PARKED_BYTES`, not a
+    /// packet earlier.
     #[test]
     fn declared_but_absent_video_does_not_block_audio() {
-        let flood = SILENT_HEAD_BLOCK_PACKETS as usize + 1000;
         let ts = silent_head_ts(
             STREAM_TYPE_AVC,
             &[],
             STREAM_TYPE_AAC_ADTS,
             adts_frame,
-            flood,
+            FLOOD_PAST_CRITERION,
         );
         let seen = seen_events(&ts);
         assert_eq!(added(&seen), vec![(0x0101, 1)], "{seen:?}");
         assert!(seen.contains(&Seen::Resolved), "TracksResolved fires");
         assert!(seen.contains(&Seen::Sample(1)), "audio samples flow");
-        // Below the bound the silent head still blocks (PMT order is kept).
-        let early = silent_head_ts(STREAM_TYPE_AVC, &[], STREAM_TYPE_AAC_ADTS, adts_frame, 3000);
-        assert!(added(&seen_events(&early)).is_empty());
+        // Exactly at the criterion: the announcing push is the one that took
+        // the parked bytes from below to at-or-above it.
+        let (_, before) = first_announce(&ts).expect("audio announced");
+        assert!(
+            before < SILENT_HEAD_PARKED_BYTES && before + 512 >= SILENT_HEAD_PARKED_BYTES,
+            "announced with {before} parked bytes, criterion {SILENT_HEAD_PARKED_BYTES}"
+        );
+        // Below the criterion (past the old 8192-packet bound) the head blocks.
+        let early = silent_head_ts(
+            STREAM_TYPE_AVC,
+            &[],
+            STREAM_TYPE_AAC_ADTS,
+            adts_frame,
+            15_000,
+        );
+        assert!(first_announce(&early).is_none());
     }
 
-    /// Round-3 audit B (ii): the bound must not cost a slow-but-present head
-    /// its place. A head whose first packet arrives after 5000 packets of
-    /// other traffic (below the bound) is still track 1; one that is silent
-    /// past the bound is stepped over (later id) but still announced when its
-    /// frames do arrive.
+    /// Round-4 audit 1 (the regression): a video whose first packet arrives
+    /// after 9000 TS packets of other traffic (past the old 8192-packet bound,
+    /// well below the parked-bytes criterion) is still track 1, with the audio
+    /// announced after it.
+    #[test]
+    fn late_video_after_8192_stream_packets_keeps_track_one() {
+        let frames: Vec<Vec<u8>> = (0..4).map(|_| mp2_frame(1)).collect();
+        let ts = silent_head_ts(0x04, &frames, STREAM_TYPE_AAC_ADTS, adts_frame, 9000);
+        let seen = seen_events(&ts);
+        assert_eq!(added(&seen), vec![(0x0100, 1), (0x0101, 2)], "{seen:?}");
+    }
+
+    /// The bound must not cost a slow-but-present head its place. A head whose
+    /// first packet arrives after 5000 packets of other traffic is track 1; one
+    /// that is silent past the criterion is stepped over (later id) but still
+    /// announced when its frames do arrive.
     #[test]
     fn slow_but_present_head_keeps_track_one_and_a_late_one_is_still_announced() {
         let frames: Vec<Vec<u8>> = (0..4).map(|_| mp2_frame(1)).collect();
@@ -7034,30 +7103,99 @@ mod tests {
             &frames,
             STREAM_TYPE_AAC_ADTS,
             adts_frame,
-            SILENT_HEAD_BLOCK_PACKETS as usize + 1000,
+            FLOOD_PAST_CRITERION,
         );
         let seen = seen_events(&late);
         assert_eq!(
             added(&seen),
             vec![(0x0101, 1), (0x0100, 2)],
-            "silent past the bound: stepped over, announced when it arrives: {seen:?}"
+            "silent past the criterion: stepped over, announced when it arrives: {seen:?}"
         );
     }
 
-    /// The silent-head bound applies to a head that sent NOTHING. A video head
-    /// that has delivered packets (here: 300 access units with no parameter
-    /// sets) keeps blocking the PIDs behind it past `SILENT_HEAD_BLOCK_PACKETS`
-    /// packets of the stream, exactly as before: only the byte cap abandons it.
+    /// A head that has delivered ANY payload keeps blocking past the parked-bytes
+    /// criterion, exactly as in 0.26.0: an AVC head that sent three PES of
+    /// garbage (never any parameter sets) before a flood of 25 000 audio packets
+    /// is not a silent head, so only the byte cap can release the audio.
     #[test]
     fn present_but_unresolved_video_head_still_blocks_past_the_silent_bound() {
-        let ts = stalled_head_ts(300, 2, 5000, false, false);
+        let head = Pid::new(0x0100);
+        let flood = Pid::new(0x0101);
+        let mut ts = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        ts.extend(psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_multi(&[(head, STREAM_TYPE_AVC), (flood, STREAM_TYPE_AAC_ADTS)]),
+        ));
+        let mut cc = 0u8;
+        for i in 0..3 {
+            let pes = pes_packet(
+                ES_STREAM_ID_MPEG_AUDIO,
+                CARRY_BASE_PTS_90K + i as i64 * 2160,
+                None,
+                &[0xBB; 3],
+            );
+            let packets = pes_packets(head, cc, &pes);
+            cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            ts.extend_from_slice(&packets);
+        }
+        let mut fcc = 0u8;
+        for n in 0..FLOOD_PAST_CRITERION / 2 {
+            let pes = pes_packet(
+                ES_STREAM_ID_MPEG_AUDIO,
+                CARRY_BASE_PTS_90K + n as i64 * 1920,
+                None,
+                &adts_frame(n),
+            );
+            let packets = pes_packets(flood, fcc, &pes);
+            fcc = fcc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            ts.extend_from_slice(&packets);
+        }
+        let mut demux = StreamingTsDemux::new();
+        let mut parked = 0usize;
+        for chunk in ts.chunks(TS_PACKET_SIZE) {
+            demux.feed(chunk);
+            parked = parked.max(demux.streams.get(&flood).map_or(0, |s| s.backlog_bytes));
+        }
         assert!(
-            ts.len() / TS_PACKET_SIZE > SILENT_HEAD_BLOCK_PACKETS as usize + 1000,
-            "the stream outlasts the silent bound"
+            parked >= SILENT_HEAD_PARKED_BYTES,
+            "the audio parked past the criterion ({parked})"
         );
         assert!(
             live_track_added_pids(&ts).is_empty(),
             "a head that has sent data is not a silent head"
+        );
+    }
+
+    /// Round-4 audit 3: `finish()` abandoning a stepped-over head must remove
+    /// it from `skipped` (the two sets are summed by `TracksResolved`).
+    #[test]
+    fn finish_abandoning_a_skipped_head_keeps_resolved_and_skipped_disjoint() {
+        let garbage: Vec<Vec<u8>> = (0..4).map(|_| alloc::vec![0xBBu8; 3]).collect();
+        let ts = silent_head_ts(
+            STREAM_TYPE_AVC,
+            &garbage,
+            STREAM_TYPE_AAC_ADTS,
+            adts_frame,
+            FLOOD_PAST_CRITERION,
+        );
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&ts);
+        assert!(
+            demux.skipped.contains(&Pid::new(0x0100)),
+            "the silent head was stepped over"
+        );
+        demux.finish();
+        assert!(
+            demux.resolved.contains(&Pid::new(0x0100)),
+            "finish abandoned the head"
+        );
+        assert!(
+            demux.resolved.is_disjoint(&demux.skipped),
+            "resolved {:?} and skipped {:?} double-count",
+            demux.resolved,
+            demux.skipped
         );
     }
 
@@ -7202,6 +7340,44 @@ mod tests {
         let (walks, tracks) = run(&complete);
         assert!(walks > 4096, "the gate was exercised: {walks}");
         assert_eq!(tracks, 1, "the track resolves under the gate");
+    }
+
+    /// Round-4 audit 2: `probe_walked_len` describes the held window, so it must
+    /// never exceed the held tail (a stale length above ~58 KiB made the gate
+    /// demand growth past the 64 KiB tail cap, so the window was never
+    /// re-walked in full). One-byte PES, past `EAC3_PROBE_FULL_WALKS`, checked
+    /// after every TS packet.
+    #[test]
+    fn eac3_walked_len_follows_the_held_tail() {
+        let real = {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/dolby/eac3.ts");
+            let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
+            let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
+            media.tracks[0].samples[0].data.to_vec()
+        };
+        let mut es = real;
+        for n in 0..40 {
+            es.extend(eac3_dependent_frame_sized(n, 2048));
+        }
+        let payloads: Vec<Vec<u8>> = es.chunks(1).map(<[u8]>::to_vec).collect();
+        let ts = single_es_pes_ts(STREAM_TYPE_EAC3, &payloads);
+        let mut demux = StreamingTsDemux::new();
+        let mut gated_with_tail = false;
+        for chunk in ts.chunks(TS_PACKET_SIZE) {
+            demux.feed(chunk);
+            let Some(stream) = demux.streams.get(&ES_PID_UNDER_TEST) else {
+                continue;
+            };
+            assert!(
+                stream.probe_walked_len <= stream.probe_tail.len(),
+                "walked_len {} outlived the held tail ({})",
+                stream.probe_walked_len,
+                stream.probe_tail.len()
+            );
+            gated_with_tail |=
+                stream.probe_walks >= EAC3_PROBE_FULL_WALKS && !stream.probe_tail.is_empty();
+        }
+        assert!(gated_with_tail, "the gated branch was exercised");
     }
 
     /// r04-W51 review: an AAC track must NOT report a config change merely

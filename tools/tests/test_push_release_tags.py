@@ -273,6 +273,40 @@ def test_explicit_tag_refuses_when_a_dependency_is_not_live(env):
     assert env.remote_tags() == [], "nothing may be pushed when a dependency is missing"
 
 
+def test_unparsable_dependency_list_aborts_with_exit_2_and_is_not_read_as_crates(env):
+    """`release_deps.py deps` failing used to print `ERR ...`, which the read loop took
+    for a crate name; the stop was fail-closed only by accident (message and all)."""
+    _retag_b_with_dep(env)
+    real = env.repo / "tools" / "release_deps.py"
+    wrapper = env.repo / "tools" / "failing_deps.py"
+    wrapper.write_text(
+        "import runpy, sys\n"
+        "if sys.argv[1] == 'deps':\n"
+        "    print('ERR boom')\n"
+        "    sys.exit(3)\n"
+        f"sys.argv[0] = {str(real)!r}\n"
+        f"runpy.run_path({str(real)!r}, run_name='__main__')\n"
+    )
+    r = env.run("crateb-v1.0.0", RELEASE_DEPS="tools/failing_deps.py")
+    assert r.returncode == 2, r.stdout
+    assert "dependency list could not be computed" in r.stdout, r.stdout
+    assert "not on crates.io" not in r.stdout, r.stdout
+    assert env.remote_tags() == []
+
+
+def test_member_dependency_without_path_aborts_instead_of_passing_as_third_party(env):
+    env.commit_file("Cargo.toml", '[workspace]\nmembers = ["cratea", "crateb", "cratec"]\n')
+    env.commit_file(
+        "crateb/Cargo.toml",
+        '[package]\nname = "crateb"\nversion = "1.0.0"\n\n[dependencies]\ncratea = "1.0"\n',
+    )
+    env.git("tag", "-f", "crateb-v1.0.0")
+    r = env.run("crateb-v1.0.0")
+    assert r.returncode == 2, r.stdout
+    assert "workspace member" in r.stdout and "cratea" in r.stdout, r.stdout
+    assert env.remote_tags() == []
+
+
 def test_dependency_live_but_below_the_required_version_is_refused(env):
     _retag_b_with_dep(env)
     env.index("cratea", "0.9.0")
