@@ -1,49 +1,76 @@
 //! Explicit ST 291-1:2011 validation (`AncPacket::validate`) against the
 //! committed ST 2038 and RFC 8331 fixtures.
 //!
-//! HONEST FINDING: no real ST 2038 / ST 2110-40 capture exists in this repo;
-//! `fixtures/st291/anc.bin` is hand-constructed from ST 2038 Table 2 and
-//! `anc_rtp.bin` re-wraps the same ANC words. Those hand-typed words do NOT
-//! satisfy ST 291-1: both packets' `Data_Count` words carry no parity bits
-//! (`0x002`/`0x003` instead of `0x102`/`0x203`) and both `Checksum_Word`s are
-//! off by one (`0x233` vs `0x234`, `0x1AB` vs `0x1AC`, hand-computed from
-//! §6.7). Parsing stays tolerant and byte-exact (the fixtures are goldens), so
-//! this test pins the exact failures, which documents the finding and also
-//! proves `validate` bites on non-conformant input. Once a real capture is
-//! added, assert `is_valid()` on it here.
+//! No real ST 2038 / ST 2110-40 capture exists in this repo:
+//! `fixtures/st291/anc.bin` is a synthetic, hand-constructed ST 2038 Table 2
+//! PES and `anc_rtp.bin` re-wraps the same ANC words. They are regenerated so
+//! that every ANC packet **conforms to ST 291-1** (`Data_Count` carries its
+//! parity bits `0x102`/`0x203`; `Checksum_Word` is the §6.7 sum `0x134`/`0x1AC`),
+//! so `is_valid()` is asserted on both. Parsing stays tolerant, so the bite
+//! (that `validate` really can fail) comes from a separate hand-built
+//! NON-conformant vector below, not from the fixtures.
 
-use st291::{AncDataPacket, ValidationReport};
+use st291::{AncDataPacket, AncPacket, ValidationReport};
 
 #[test]
-fn synthetic_st2038_fixture_reports_its_known_nonconformances() {
+fn synthetic_st2038_fixture_conforms_to_st291() {
     let data = test_fixtures::read("st291/anc.bin");
     let pkt = AncDataPacket::parse(&data).unwrap();
+    assert!(!pkt.anc_packets.is_empty());
+    for (i, p) in pkt.anc_packets.iter().enumerate() {
+        let r = p.validate();
+        assert_eq!(
+            r,
+            ValidationReport::new(true, true, true, true, true),
+            "ANC packet {i}"
+        );
+        assert!(r.is_valid(), "ANC packet {i}");
+    }
+}
 
-    // Packet 0: DID 0x161 / SDID 0x101 are parity-correct; DC 0x002 is not
-    // (0x02 has one set bit -> b8 = 1, b9 = 0 -> 0x102); checksum
-    // (0x161+0x101+0x002+0x0CF+0x101 = 0x434 -> 0x034, b9 = 1) is 0x234.
-    let r0 = pkt.anc_packets[0].validate();
-    assert_eq!(r0, ValidationReport::new(true, true, false, true, false));
+/// The bite: a hand-built packet with the two defects the old fixtures had
+/// (`Data_Count` without parity bits, checksum off by one) must be reported,
+/// independently of any committed fixture.
+#[test]
+fn hand_built_nonconformant_packet_is_reported() {
+    // DID 0x161 / SDID 0x101 are parity-correct; DC 0x002 is not (0x02 has one
+    // set bit -> b8 = 1, b9 = 0 -> 0x102). With the correct DC 0x102 the
+    // checksum is 0x134 (0x161+0x101+0x102+0x2CF+0x101 = 0x734 -> 0x134, b8 = 1
+    // -> b9 = 0); 0x233 is wrong.
+    let bad = AncPacket {
+        c_not_y_channel_flag: false,
+        line_number: 9,
+        horizontal_offset: 0,
+        did: 0x161,
+        sdid: 0x101,
+        data_count: 0x002,
+        user_data_words: vec![0x2CF, 0x101],
+        checksum: 0x233,
+    };
+    let r = bad.validate();
+    assert_eq!(r, ValidationReport::new(true, true, false, true, false));
+    assert!(!r.is_valid());
 
-    // Packet 1: DID 0x241 / SDID 0x102 correct; DC 0x003 not (0x203);
-    // checksum (0x041+0x102+0x003+0x111+0x022+0x133 = 0x3AC -> 0x1AC) is
-    // 0x1AC, stored 0x1AB.
-    let r1 = pkt.anc_packets[1].validate();
-    assert_eq!(r1, ValidationReport::new(true, true, false, true, false));
+    // Fixing exactly those two words makes the same packet valid.
+    let good = AncPacket {
+        data_count: 0x102,
+        checksum: 0x134,
+        ..bad
+    };
+    assert!(good.validate().is_valid());
 }
 
 #[cfg(feature = "rtp")]
 #[test]
-fn synthetic_rtp_fixture_matches_the_st2038_findings() {
+fn synthetic_rtp_fixture_conforms_to_st291() {
     use broadcast_common::Parse;
     use st291::AncRtpPayload;
 
     let data = test_fixtures::read("st291/anc_rtp.bin");
     // 12-byte RTP header (no CSRC/extension) precedes the RFC 8331 payload.
     let payload = AncRtpPayload::parse(&data[12..]).unwrap();
+    assert!(!payload.anc_packets.is_empty());
     for p in &payload.anc_packets {
-        let r = p.content.validate();
-        assert!(r.did_parity && r.sdid_parity && r.data_count_matches_udw);
-        assert!(!r.data_count_parity && !r.checksum);
+        assert!(p.content.validate().is_valid());
     }
 }
