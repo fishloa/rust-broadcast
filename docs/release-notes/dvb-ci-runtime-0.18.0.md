@@ -69,7 +69,7 @@ if dvb_ci_runtime::DeviceOpError::errno_of(&err) == Some(libc::EINVAL) { /* ... 
 
 ## Known limitations (recorded in the CHANGELOG and README)
 
-- The periodic entitlement re-query (`Driver::set_requery_interval`) is opt-in (`REQUERY_DEFAULT` is `Duration::ZERO`) and is not verified on hardware: no CAM tested answers the `query` half.
+- The periodic entitlement re-query (`Driver::set_requery_interval`) stays opt-in (`REQUERY_DEFAULT` is `Duration::ZERO`). It is hardware-verified on one CAM: an entitled AlphaCrypt One4All V2.5 (CAID 0x0650) in a Digital Devices CXD2099 `ci0`, 180 s runs, 2026-10-16. The 10 s timer sends `update/query` immediately followed by `update/ok_descrambling` (the lone `query` of earlier versions stopped descrambling, #1032); the module answered most queries with `ca_enable = 0x81`, descrambling never gapped, and `feed_ts` stayed under 0.5 ms. Other CAMs are unverified.
 - The CAT-PID inclusion in `required_pids()` is hardware-evidenced on the CAM above, not mandated by EN 50221.
 - The `CA_RESET` / `CA_GET_SLOT_INFO` request numbers are now built by `rustix::ioctl::opcode`, pinned by compile-time asserts and checked with `cargo check --tests` on x86_64, musl and powerpc64le; the real ioctl path (ENOTTY fallback) runs in the Linux container test run and was not exercised against a real CI adapter.
 - `trace::decode_frame` labels are diagnostic only and still assume minimal length forms.
