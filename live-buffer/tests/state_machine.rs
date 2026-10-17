@@ -322,7 +322,7 @@ fn table_starved() {
     }
     // lead between th and the exit bar: stay (hysteresis, see below)
     // lead >= exit bar: -> Playing, Resume at the held position. The silence that
-    // starved it was ~1.8 s, so the stall memory asks for 1.5 x that (clamped at the 3 s cap).
+    // starved it was ~1.8 s, so the stall memory asks for 1.25 x that (clamped at the 3 s cap).
     let mut r = Rig::starved();
     let hold = r.clock;
     r.feed(95);
@@ -401,7 +401,7 @@ fn table_buffering_discontinuity() {
 
 #[test]
 fn hysteresis_exit_only_at_the_after_rebuffer_bar() {
-    // a 1.4 s gap makes the stall peak ~1.4 s: the exit bar is 1.5 x that
+    // a 1.4 s gap makes the stall peak ~1.4 s: the exit bar is 1.25 x that
     let mut r = Rig::new({
         let mut c = ControllerConfig::default();
         c.policy.initial_us = 500_000;
@@ -417,7 +417,7 @@ fn hysteresis_exit_only_at_the_after_rebuffer_bar() {
     r.feed(1); // first post-gap chunk reveals the depth
     let peak = r.c.stats().est.stall_peak_us;
     assert!(peak >= 1_300_000);
-    let bar = peak * 384 / 256;
+    let bar = peak * 320 / 256;
     let mut resumed_at = None;
     for i in 0..200 {
         r.feed(1);
@@ -444,7 +444,7 @@ fn hysteresis_exit_only_at_the_after_rebuffer_bar() {
 fn no_flapping_between_the_thresholds() {
     let mut r = Rig::starved();
     let hold = r.clock;
-    // lead 100 ms: above the 20 ms enter threshold, below the exit bar (1.5 x the stall that starved it)
+    // lead 100 ms: above the 20 ms enter threshold, below the exit bar (1.25 x the stall that starved it)
     r.feed(3);
     assert!(decisions(&r.tick()).is_empty());
     assert_eq!(r.c.state(), State::Starved);
@@ -478,7 +478,7 @@ fn startup_suppression_gap_during_the_first_fill() {
     let s = r.c.stats();
     assert_eq!(s.stalls, 0, "the first fill is never a stall");
     assert_eq!(s.longest_freeze_us, 0);
-    // never the after_rebuffer escalation (1.5 x 1.33 s = 2.0 s): the start
+    // never the after_rebuffer escalation (1.25 x 1.33 s = 1.7 s): the start
     // threshold is max(initial, target) = 1.8 s here
     assert!(lead < 2_000_000, "start lead {lead}");
     // ...but the gap fed the stall memory: the target rose
@@ -573,7 +573,7 @@ fn reconnect_keeps_the_stall_memory_and_resumes_at_the_target() {
         "{}",
         st.est.stall_peak_us
     );
-    // the resume after the reconnect used the target, not 1.5 x depth
+    // the resume after the reconnect used the target, not 1.25 x depth
     let resume_lead = r.events.iter().rev().find_map(|(_, e)| match e {
         Event::Resume { lead_us, .. } => Some(*lead_us),
         _ => None,
@@ -707,7 +707,7 @@ fn policy_need_start_and_resume_formulas() {
     assert_eq!(p.need_us(0, 1_447_000), 1_447_000 * 307 / 256);
     assert_eq!(p.need_us(1_000_000, 0), 2_100_000);
     assert_eq!(p.start_us(), 1_800_000);
-    assert_eq!(p.resume_us(1_000_000), 1_500_000);
+    assert_eq!(p.resume_us(1_000_000), 1_250_000);
     assert_eq!(p.resume_us(0), c.min_us);
 }
 

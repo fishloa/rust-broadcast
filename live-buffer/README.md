@@ -41,7 +41,7 @@ Nothing here is a wire format, so `Parse`/`Serialize` do not apply. The columns 
 
 ## Defaults
 
-All in `ControllerConfig::DEFAULT` (also `Default`): initial target **1.8 s** (owner-approved 2026-10-17), floor 300 ms, cap 3 s, 2 s sliding minimum, 500 ms interval maxima, 10 ms x 400 histogram, q99, forgetting 0.98, 500 ms outlier split, 60 s hold + 60 s decay, resume at 1.5 x the stall depth, target fall limited to 100 ms/s, starvation at 20 ms.
+All in `ControllerConfig::DEFAULT` (also `Default`): initial target **1.8 s** (owner-approved 2026-10-17), floor 300 ms, cap 3 s, 2 s sliding minimum, 500 ms interval maxima, 10 ms x 400 histogram, q99, forgetting 0.98, 500 ms outlier split, 60 s hold + 60 s decay, resume at 1.25 x the stall depth, target fall limited to 100 ms/s, starvation at 20 ms.
 
 ## Feature flags
 

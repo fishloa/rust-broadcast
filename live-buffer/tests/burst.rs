@@ -102,8 +102,8 @@ fn burst_with_a_short_initial_freezes_once_for_a_bounded_time() {
         let freeze = b - a;
         let gap = 1_400_000u64;
         // starved from `initial` into the gap until the burst: gap - initial. After the burst the
-        // lead is `gap` (the backlog) and the resume bar is 1.5 x depth: 0.5 x gap more real time.
-        let bound = (gap - initial) + gap / 2 + 250_000;
+        // lead is `gap` (the backlog) and the resume bar is 1.25 x depth: 0.25 x gap more real time.
+        let bound = (gap - initial) + gap / 4 + 250_000;
         assert!(
             freeze <= bound,
             "initial {initial}: freeze {freeze} > bound {bound}"
@@ -123,5 +123,65 @@ fn burst_with_a_short_initial_freezes_once_for_a_bounded_time() {
         }
         let st = r.ctl.stats();
         assert!(st.est.baseline_us <= 50_000 && st.est.stall_peak_us >= 1_300_000);
+    }
+}
+
+/// Freeze (pause -> resume), second-gap minimum lead and resume lead of the burst
+/// scenario for a given `after_rebuffer_q8`.
+fn burst_freeze(initial: u64, after_q8: u16) -> (u64, i64, i64) {
+    let mut o = opts(initial);
+    o.cfg.policy.after_rebuffer_q8 = after_q8;
+    let (r, w) = windows_min_lead(&burst_stream(), &o);
+    let p = r.pauses();
+    assert_eq!(p.len(), 1, "initial {initial} q8 {after_q8}: {p:?}");
+    assert_eq!(r.ctl.stats().stalls, 1);
+    let resume_lead = r
+        .events
+        .iter()
+        .find_map(|(_, e)| match e {
+            Event::Resume { lead_us, .. } => Some(i64::try_from(*lead_us).unwrap()),
+            _ => None,
+        })
+        .unwrap();
+    (
+        p[0].1.expect("resumed") - p[0].0,
+        w[1].unwrap(),
+        resume_lead,
+    )
+}
+
+/// The default `after_rebuffer` is 1.25 (320/256), not 1.5 (384/256): the
+/// burst-server freeze is shorter by about `0.25 x gap`, and the same-size repeat
+/// 20 s later is still survived. Mutation: default back to 384 => the default
+/// run equals the 1.5 run and the strictly-shorter assertion fails.
+#[test]
+fn after_rebuffer_default_is_1_25_and_trims_the_burst_freeze() {
+    assert_eq!(
+        live_buffer::PolicyConfig::DEFAULT.after_rebuffer_q8,
+        320,
+        "1.25 in Q8"
+    );
+    for initial in [500_000u64, 1_000_000] {
+        let new = burst_freeze(initial, 320);
+        let old = burst_freeze(initial, 384);
+        let default = burst_freeze(
+            initial,
+            live_buffer::PolicyConfig::DEFAULT.after_rebuffer_q8,
+        );
+        eprintln!(
+            "initial {initial}: (freeze, 2nd-gap min lead, resume lead) 1.25={new:?} 1.5={old:?}"
+        );
+        assert_eq!(default, new, "the default is the 1.25 run");
+        assert!(
+            new.0 + 250_000 <= old.0,
+            "initial {initial}: 1.25 freeze {} not >= 250 ms under 1.5 freeze {}",
+            new.0,
+            old.0
+        );
+        assert!(
+            new.1 > 20_000,
+            "the repeat gap is still survived: {}",
+            new.1
+        );
     }
 }

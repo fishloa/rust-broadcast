@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `PolicyConfig::after_rebuffer_q8` default 384 (x1.5) -> 320 (x1.25), owner decision 2026-10-17: the post-stall resume bar
+  `max(target, after_rebuffer * stall_depth)` trims the extra freeze after a stall/burst. Measured: freeze after a stall
+  -0.35 s (6ter 3.07 -> 2.72 s, tf-1 3.01 -> 2.65 s at `initial` 0.5 s), burst server freeze -0.34 s (extra freeze
+  `0.5 x gap` -> `0.25 x gap`); a same-size repeat is still survived but with less spare lead (min lead in the repeat
+  gap ~650 -> ~308 ms). Default-`initial` (1.8 s) traces and the rai-3/france-5/per-chunk Apple TV goldens are unchanged;
+  the rai-3 stall-log open-loop golden gains a third pause at 2.073 s (final target 494 -> 593 ms). The field is
+  unchanged and still configurable. Goldens updated: `real_traces` (6ter/tf-1 resume times, == `golden_oracle.py`),
+  `apple_tv_input_logs` rai-3 stall (2 tests), `granularity`, `synth`, `state_machine` bar/formula values. No ABI layout change.
+
 ### Added
 - Start/resume granularity gate: a `Buffering -> Playing` transition now also waits until every delivering
   (non-excluded) track has shown two closed delivery steps (three deliveries), so its cadence is known and the

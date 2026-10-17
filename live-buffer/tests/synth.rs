@@ -27,8 +27,8 @@ fn run(s: &Synth, o: &Opts) -> Run {
 #[test]
 fn single_stalls_of_1_2_and_4_seconds() {
     for (gap, bar) in [
-        (GAP_1S, 1_500_000u64),
-        (GAP_2S, 3_000_000),
+        (GAP_1S, 1_250_000u64),
+        (GAP_2S, 2_500_000),
         (GAP_4S, 3_000_000),
     ] {
         let mut s = Synth::new(60 * SEC);
@@ -42,7 +42,7 @@ fn single_stalls_of_1_2_and_4_seconds() {
         });
         assert_eq!(reason, Some(Reason::NoData));
         // the stall is only learned from the first post-gap chunk: resume lead is the
-        // 1.5 x depth bar, clamped to the cap
+        // 1.25 x depth bar, clamped to the cap
         let lead = r.events.iter().find_map(|(_, e)| match e {
             Event::Resume { lead_us, .. } => Some(*lead_us),
             _ => None,
@@ -111,7 +111,7 @@ fn periodic_stalls_every_five_minutes_decay_between_and_do_not_ratchet() {
         assert_eq!(at(k * 300 - 10), MIN, "before gap {k}");
     }
     // no ratchet: the target never exceeds what one 1.43 s stall implies, and every
-    // post-stall resume asks for the same ~1.5 x depth
+    // post-stall resume asks for the same ~1.25 x depth
     assert!(r.targets.iter().max().unwrap() <= &1_800_000);
     let leads: Vec<u64> = r
         .events
@@ -340,7 +340,7 @@ fn model_a_free_running_clock_starves_forever_model_b_obeys_and_recovers() {
         _ => None,
     });
     assert!(
-        resume.unwrap() >= 2_250_000,
+        resume.unwrap() >= 1_850_000,
         "ends the gap with lead >= the resume target"
     );
     assert_eq!(r.ctl.stats().stalls, 1, "zero further Pause events");

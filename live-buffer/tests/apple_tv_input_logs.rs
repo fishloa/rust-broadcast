@@ -333,7 +333,10 @@ fn france5_clean_golden() {
 
 /// The stalling rai-3 session (old controller f512d3eaa paused 4x, all audio:
 /// leads -63 / 12 / 15 / 9 ms). Replayed through the CURRENT controller the
-/// log produces 2 audio `DataArriving` pauses (3 before the per-delivery
+/// log produces 3 audio `DataArriving` pauses (2 at the former 1.5 x
+/// `after_rebuffer`: the lower 1.25 x resume bars (375/515 ms vs 450/618 ms) run
+/// into the device's logged positions once more at 2.073 s, an open-loop artefact
+/// the closed-loop assertions below do not show; 3 before the per-delivery
 /// coalescing made the floor engage on these per-frame media rows): the first
 /// ~97 ms after `StartPlaying` (audio is registered only AFTER the start, see
 /// `rai3_stall_pauses_explained_late_registration_and_open_loop`), then the floor lifts the target to
@@ -353,22 +356,28 @@ fn rai3_stall_golden_current_behaviour() {
     assert_eq!(
         pause_summary(&r),
         [
-            (625_716, Some(AUDIO), Reason::DataArriving, 0, 450_000),
+            (625_716, Some(AUDIO), Reason::DataArriving, 0, 375_000),
             (
                 1_417_065,
                 Some(AUDIO),
                 Reason::DataArriving,
                 15_860,
-                618_000
+                515_000
             ),
+            (2_072_729, Some(AUDIO), Reason::DataArriving, 9_582, 617_597),
         ]
     );
-    assert_eq!(r.stalls, 2);
+    assert_eq!(r.stalls, 3);
     assert_eq!(
         r.targets,
-        [(625_716, 359_765), (848_712, 412_000), (1_417_065, 494_078)]
+        [
+            (625_716, 359_765),
+            (848_712, 412_000),
+            (1_417_065, 494_078),
+            (2_072_729, 592_507)
+        ]
     );
-    assert_eq!(r.final_target, 494_078);
+    assert_eq!(r.final_target, 592_507);
     // after the last pause the run is clean: no pause past 3 s
     assert!(r.pauses().iter().all(|(t, _)| *t < 3_000_000));
 }
@@ -444,8 +453,11 @@ fn rai3_stall_pauses_explained_late_registration_and_open_loop() {
     };
     assert_eq!(r.starts(), [1_147_776]);
     let p = pause_summary(&r);
-    assert_eq!(p.len(), 1, "{p:?}");
-    assert_eq!(p[0].0, 1_417_065, "only the open-loop pause remains");
+    // two open-loop pauses remain (1.25 x resume bar: the lower resume leads run
+    // into the device's logged positions again at 2.073 s; was one at 1.5 x)
+    assert_eq!(p.len(), 2, "{p:?}");
+    assert_eq!(p[0].0, 1_417_065, "first open-loop pause");
+    assert_eq!(p[1].0, 2_072_729, "second open-loop pause (1.25 x bar)");
     // closed loop, tracks registered up front: no stall
     let c = replay_with("rai-3-stall", config(), &[VIDEO, AUDIO], true).unwrap();
     assert_eq!(c.starts(), [1_147_776]);
@@ -458,7 +470,7 @@ fn rai3_stall_pauses_explained_late_registration_and_open_loop() {
     assert_eq!(late.starts(), [528_980]);
     assert_eq!(
         pause_summary(&late),
-        [(625_716, Some(AUDIO), Reason::DataArriving, 0, 450_000)]
+        [(625_716, Some(AUDIO), Reason::DataArriving, 0, 375_000)]
     );
     assert_eq!(late.stalls, 1);
 }
