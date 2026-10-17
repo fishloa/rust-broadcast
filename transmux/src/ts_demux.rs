@@ -4169,7 +4169,8 @@ fn on_completed_section(
 /// Re-exported from this path so `transmux::ts_demux::DemuxEvent` keeps
 /// resolving unchanged.
 pub use crate::ir::{
-    AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance, InputDegradation,
+    AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
+    InputDegradation,
 };
 
 /// `program_clock_reference`'s native clock rate (ISO/IEC 13818-1 §2.4.3.5) —

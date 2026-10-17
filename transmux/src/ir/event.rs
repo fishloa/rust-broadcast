@@ -212,7 +212,11 @@ pub struct DegradationRecord {
 
 impl DegradationRecord {
     /// Build a record from the fields of a [`DemuxEvent::InputDegraded`].
-    pub fn new(kind: InputDegradation, track: Option<TrackId>, provenance: EventProvenance) -> Self {
+    pub fn new(
+        kind: InputDegradation,
+        track: Option<TrackId>,
+        provenance: EventProvenance,
+    ) -> Self {
         Self {
             kind,
             track,

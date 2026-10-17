@@ -95,7 +95,10 @@ fn gaps(packets: &[[u8; TS]]) -> Vec<(u16, u64, u8, u8)> {
         } = e
         {
             out.push((
-                provenance.pid.expect("TS provenance carries the PID").value(),
+                provenance
+                    .pid
+                    .expect("TS provenance carries the PID")
+                    .value(),
                 provenance.packet_index.expect("packet index"),
                 expected,
                 got,
@@ -188,7 +191,12 @@ fn discontinuity_indicator_lets_a_jump_through() {
 
 #[test]
 fn null_packets_are_exempt() {
-    let v = [pay(0x1FFF, 0), pay(0x1FFF, 9), pay(0x1FFF, 9), pay(0x1FFF, 9)];
+    let v = [
+        pay(0x1FFF, 0),
+        pay(0x1FFF, 9),
+        pay(0x1FFF, 9),
+        pay(0x1FFF, 9),
+    ];
     assert!(gaps(&v).is_empty());
 }
 

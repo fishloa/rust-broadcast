@@ -60,7 +60,10 @@ pub use audio_meta::{
     SupplementaryAudio,
 };
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat, SubtitleSampleEntry};
-pub use event::{AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance, InputDegradation};
+pub use event::{
+    AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
+    InputDegradation,
+};
 pub use ids::{ProgramNumber, TrackId};
 pub use media::{Media, PcrSample, SkippedTrack};
 pub use sample::{FragmentTrackData, Provenance, Sample, SampleFlags};
