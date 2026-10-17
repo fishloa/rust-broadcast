@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.27.0"
+version      = "0.27.1"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -31,7 +31,7 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 # syntax itself no longer lives in this crate.
 broadcast-hls = { path = "../broadcast-hls", version = "0.4", default-features = false }
 mp4-emsg   = { path = "../mp4-emsg",  version = "0.5", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts",  version = "0.6", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts",  version = "0.6.1", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.6", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.6", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.5", default-features = false }
