@@ -34,6 +34,8 @@ pub enum ConfigField {
     Slew,
     /// `track_silence_timeout_us` is zero.
     TrackSilence,
+    /// `granularity_decay_us` is zero.
+    GranularityDecay,
 }
 
 impl ConfigField {
@@ -55,6 +57,7 @@ impl ConfigField {
             Self::Discontinuity => "discontinuity",
             Self::Slew => "slew",
             Self::TrackSilence => "track_silence",
+            Self::GranularityDecay => "granularity_decay",
         }
     }
 }

@@ -29,7 +29,7 @@ use crate::events::{Event, EventQueue, Hint, Reason, State, Stats};
 use crate::jitter::{DeliveryJitter, SampleOutcome};
 use crate::policy::Policy;
 use crate::stall_memory::StallMemorySnapshot;
-use crate::tracks::{DEFAULT_TRACK, Effective, TrackSet};
+use crate::tracks::{DEFAULT_TRACK, Effective, StepRules, TrackSet};
 use broadcast_common::clock33::pcr_signed_distance;
 
 const TICKS_PER_US_I: i64 = TICKS_PER_US as i64;
@@ -57,6 +57,7 @@ pub struct BufferController {
     last_tick: u64,
     latest: u64,
     last_chunk_at: Option<u64>,
+    gap_end_at: Option<u64>,
     tracks: TrackSet,
     queue_start: Option<Ticks27>,
     last_playback: Option<Ticks27>,
@@ -98,7 +99,8 @@ impl BufferController {
             last_tick: 0,
             latest: 0,
             last_chunk_at: None,
-            tracks: TrackSet::default(),
+            gap_end_at: None,
+            tracks: TrackSet::new(cfg.granularity_hold_us, cfg.granularity_decay_us),
             queue_start: None,
             last_playback: None,
             fill_from: None,
@@ -137,6 +139,12 @@ impl BufferController {
     /// same chunk.
     pub fn on_chunk(&mut self, arrival_us: Micros, bytes: u32, pcr_27mhz: Option<Ticks27>) {
         self.latest = self.latest.max(arrival_us);
+        if self
+            .last_chunk_at
+            .is_some_and(|t| arrival_us.saturating_sub(t) >= self.cfg.nodata_after_us)
+        {
+            self.gap_end_at = Some(arrival_us);
+        }
         self.last_chunk_at = Some(self.last_chunk_at.map_or(arrival_us, |t| t.max(arrival_us)));
         if let Some(pcr) = pcr_27mhz {
             if !self.pcr_seen {
@@ -220,9 +228,19 @@ impl BufferController {
     pub fn on_track_media(&mut self, now_us: Micros, track: u32, media_end_27mhz: Ticks27) {
         self.latest = self.latest.max(now_us);
         self.jitter.anchor(now_us);
-        let Some(first) = self.tracks.deliver(track, now_us, media_end_27mhz) else {
+        let rules = StepRules {
+            max_interval_us: self.cfg.track_silence_timeout_us,
+            max_excess_us: self.cfg.nodata_after_us,
+            gap_end_at: self.gap_end_at,
+        };
+        let Some(first) = self.tracks.deliver(track, now_us, media_end_27mhz, rules) else {
             return;
         };
+        if self.granularity_need(now_us) > self.policy.target_us() {
+            // a coarser delivery cadence than the target covers: raise it now,
+            // not at the next PCR chunk
+            self.after_sample(now_us);
+        }
         if !self.pcr_seen
             && let Some(e) = self.effective()
         {
@@ -250,6 +268,17 @@ impl BufferController {
         self.effective().map(|e| e.limiting)
     }
 
+    /// Delivery-granularity floor (`step + margin`), 0 when disabled or unknown.
+    fn granularity_need(&self, now: u64) -> Micros {
+        if !self.cfg.track_granularity {
+            return 0;
+        }
+        let g = self
+            .tracks
+            .granularity_us(now, self.cfg.track_silence_timeout_us);
+        self.policy.granularity_need_us(g)
+    }
+
     fn feed(&mut self, arrival_us: Micros, media: Ticks27, bytes: u32) {
         match self.jitter.on_chunk(arrival_us, media, bytes) {
             SampleOutcome::Accepted => self.after_sample(arrival_us),
@@ -267,7 +296,13 @@ impl BufferController {
     fn after_sample(&mut self, now: u64) {
         let base = self.jitter.baseline_us();
         let peak = self.jitter.stall_peak_at(now);
-        let need = self.policy.need_us(base, peak);
+        let gran = if self.cfg.track_granularity {
+            self.tracks
+                .granularity_us(now, self.cfg.track_silence_timeout_us)
+        } else {
+            0
+        };
+        let need = self.policy.need_with_granularity_us(base, peak, gran);
         let max = self.cfg.policy.max_us;
         if need > max {
             if self.over_armed {
@@ -412,8 +447,18 @@ impl BufferController {
             Reason::DataArriving
         };
         self.stalls = self.stalls.saturating_add(1);
+        if reason == Reason::DataArriving {
+            // Starved with data flowing (track-limited delivery, no gap): the
+            // PDV never saw it, so charge the failed target to the stall memory
+            // (a repeat then ratchets the target and the resume bar).
+            self.jitter.note_starvation(now, self.policy.target_us());
+        }
         let track = self.limiting();
         self.enter_pause(now, hold_at, reason, false, lead, track);
+        if reason == Reason::DataArriving {
+            // after the Pause event: the target follows the new stall memory now
+            self.after_sample(now);
+        }
         self.state = State::Starved;
         self.fill_from = Some(hold_at);
     }
@@ -567,6 +612,7 @@ impl BufferController {
         self.started = false;
         self.neutral_pause = false;
         self.last_chunk_at = None;
+        self.gap_end_at = None;
         self.tracks.clear();
         self.queue_start = None;
         self.last_playback = None;
