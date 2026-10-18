@@ -108,7 +108,9 @@ def test_prepare_restores_the_cache_before_a_miss_conditional_checkout():
         with_ = step.get("with") or {}
         assert with_.get("path") == "private-fixtures"
         assert with_.get("key") == f"private-fixtures-v1-{KEY}"
-    assert "use" in str(restore[0]["with"].get("fail-on-cache-miss")), "a prepare miss means clone it, not fail"
+    miss = str(restore[0]["with"].get("fail-on-cache-miss"))
+    assert miss.startswith("${{") and miss.endswith("}}"), "must be an expression, not a literal string"
+    assert "'use'" in miss, "only `use` fails on a miss; a prepare miss means clone it"
     assert (steps[c].get("with") or {}).get("ref") == KEY
 
 
@@ -118,7 +120,10 @@ def test_use_restore_fails_on_a_cache_miss():
     (restore,) = [s for s in steps if _uses(s, RESTORE)]
     with_ = restore["with"]
     assert "checkout" in str(restore["if"])
-    assert str(with_.get("fail-on-cache-miss")) == "inputs.mode == 'use'", (
+    # actions/cache parses this input as a strict boolean: it MUST be a
+    # `${{ }}` expression (a bare `inputs.mode == 'use'` is the literal string
+    # and the step errors on every run).
+    assert str(with_.get("fail-on-cache-miss")) == "${{ inputs.mode == 'use' }}", (
         "a `use` cache miss is a job-ordering bug and must fail, never silently skip"
     )
     assert with_.get("key") == f"private-fixtures-v1-{KEY}"

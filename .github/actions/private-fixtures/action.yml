@@ -102,7 +102,7 @@ runs:
         key: private-fixtures-v1-${{ steps.pin.outputs.sha }}
         # Only `use` demands a hit; `prepare` treats a miss as "clone it".
         # A miss in `use` is a job-ordering bug, never a silent skip.
-        fail-on-cache-miss: inputs.mode == 'use'
+        fail-on-cache-miss: ${{ inputs.mode == 'use' }}
 
     # One clone per CI run: the cache key is the pinned sha, so an unchanged
     # pin hit restores instead of cloning, and a changed pin clones once and
