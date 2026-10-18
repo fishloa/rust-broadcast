@@ -18,7 +18,9 @@
 
 use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
-use crate::ir::{AspectRatioIdc, EXTENDED_SAR_IDC};
+use crate::ir::{
+    AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, VideoFormat, VideoSignalType,
+};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -198,6 +200,12 @@ pub(crate) struct DisplayFacts {
     /// or `aspect_ratio_info_present_flag` is absent or the VUI was truncated
     /// before the field was complete.
     pub(crate) aspect_ratio: Option<AspectRatioIdc>,
+    /// `overscan_appropriate_flag`, `None` when
+    /// `overscan_info_present_flag` is 0 or the VUI was truncated.
+    pub(crate) overscan_appropriate: Option<bool>,
+    /// `video_signal_type()`, `None` when `video_signal_type_present_flag` is
+    /// 0 or the VUI was truncated.
+    pub(crate) video_signal: Option<VideoSignalType>,
 }
 
 /// Decode the [`DisplayFacts`] of an H.264 SPS NAL unit (1-byte NAL header
@@ -375,6 +383,8 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, Di
         coded_width: clamp_u32(pic_width_in_mbs * AVC_MB_SIZE),
         coded_height: clamp_u32(frame_height_in_mbs * AVC_MB_SIZE),
         aspect_ratio: vui.aspect_ratio,
+        overscan_appropriate: vui.overscan_appropriate,
+        video_signal: vui.video_signal,
     };
 
     Ok((
@@ -416,6 +426,10 @@ const AVC_MB_SIZE: u64 = 16;
 struct AvcVuiFacts {
     /// `aspect_ratio_idc` (+ `sar_*` when Extended_SAR), §E.2.1 Table E-1.
     aspect_ratio: Option<AspectRatioIdc>,
+    /// `overscan_appropriate_flag`, `None` when its flag is 0.
+    overscan_appropriate: Option<bool>,
+    /// `video_signal_type()`, `None` when its flag is 0.
+    video_signal: Option<VideoSignalType>,
     /// `(num_units_in_tick, time_scale, fps)`.
     timing: (Option<u32>, Option<u32>, Option<f32>),
     pic_timing: Option<AvcPicTimingLayout>,
@@ -489,6 +503,39 @@ fn read_aspect_ratio(r: &mut BitReader) -> Result<AspectRatioIdc> {
 const ASPECT_RATIO_IDC_BITS: usize = 8;
 /// Width of `sar_width` / `sar_height`, `u(16)`.
 const SAR_DIMENSION_BITS: usize = 16;
+/// Width of `video_format`, `u(3)` (H.264 §E.1.1, H.265 §E.2.1).
+const VIDEO_FORMAT_BITS: usize = 3;
+/// Width of `colour_primaries` / `transfer_characteristics` /
+/// `matrix_coefficients`, `u(8)` (H.264 §E.1.1, H.265 §E.2.1).
+const COLOUR_CODE_BITS: usize = 8;
+
+/// Read `video_signal_type()` (H.264 §E.1.1 / H.265 §E.2.1; identical syntax
+/// in both, Tables E-2 / E-3..E-5 and E.2 / E.3..E.5): `video_format` `u(3)`,
+/// `video_full_range_flag` `u(1)`, `colour_description_present_flag` `u(1)`
+/// and, when set, `colour_primaries`, `transfer_characteristics` and
+/// `matrix_coefficients` (H.265: `matrix_coeffs`) `u(8)` each.
+///
+/// Truncation mid-field is an `Err`, so the caller records nothing half-read.
+/// A `video_format` the `u(3)` field cannot produce is a decode error rather
+/// than a silent clamp.
+fn read_video_signal_type(r: &mut BitReader) -> Result<VideoSignalType> {
+    let code = r.read_bits(VIDEO_FORMAT_BITS, "video_format")? as u8;
+    let video_format = VideoFormat::from_wire(code).ok_or(Error::InvalidValue {
+        field: "video_format",
+        value: u64::from(code),
+        reason: "not a u(3) value (H.264 Table E-2 / H.265 Table E.2)",
+    })?;
+    let full_range = r.read_flag("video_full_range_flag")?;
+    let colour = if r.read_flag("colour_description_present_flag")? {
+        let primaries = r.read_bits(COLOUR_CODE_BITS, "colour_primaries")? as u8;
+        let transfer = r.read_bits(COLOUR_CODE_BITS, "transfer_characteristics")? as u8;
+        let matrix = r.read_bits(COLOUR_CODE_BITS, "matrix_coefficients")? as u8;
+        Some(ColourDescription::from_wire(primaries, transfer, matrix))
+    } else {
+        None
+    };
+    Ok(VideoSignalType::new(video_format, full_range, colour))
+}
 
 fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::error::Result<()> {
     // vui_parameters_present_flag  u(1)
@@ -503,23 +550,16 @@ fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::err
         facts.aspect_ratio = Some(read_aspect_ratio(r)?);
     }
 
-    // overscan_info_present_flag  u(1)
-    let overscan_present = r.read_flag("overscan_info_present_flag")?;
-    if overscan_present {
-        let _ = r.read_flag("overscan_appropriate_flag")?;
+    // overscan_info_present_flag / overscan_appropriate_flag  u(1), u(1)
+    // (H.264 §E.1.1: overscan precedes video_signal_type).
+    if r.read_flag("overscan_info_present_flag")? {
+        facts.overscan_appropriate = Some(r.read_flag("overscan_appropriate_flag")?);
     }
 
-    // video_signal_type_present_flag  u(1)
-    let vst_present = r.read_flag("video_signal_type_present_flag")?;
-    if vst_present {
-        let _ = r.read_bits(3, "video_format")?;
-        let _ = r.read_flag("video_full_range_flag")?;
-        let colour_desc = r.read_flag("colour_description_present_flag")?;
-        if colour_desc {
-            let _ = r.read_bits(8, "colour_primaries")?;
-            let _ = r.read_bits(8, "transfer_characteristics")?;
-            let _ = r.read_bits(8, "matrix_coefficients")?;
-        }
+    // video_signal_type_present_flag  u(1) — video_format, full range and the
+    // colour description (H.264 §E.1.1, Tables E-2..E-5).
+    if r.read_flag("video_signal_type_present_flag")? {
+        facts.video_signal = Some(read_video_signal_type(r)?);
     }
 
     // chroma_loc_info_present_flag  u(1)
@@ -778,18 +818,20 @@ fn decode_hevc_sps_inner(
             != 0
             && general_constraint_indicator_flags & PTL_INTERLACED_SOURCE_BIT != 0,
     };
-    let mut aspect_ratio = None;
+    let mut vui_colour = HevcVuiColour::default();
     let (num_units_in_tick, time_scale, fps) = parse_hevc_sps_to_vui_timing(
         &mut r,
         sps_max_sub_layers_minus1,
         &mut interlace,
-        &mut aspect_ratio,
+        &mut vui_colour,
     );
     let clamp_u32 = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
     let display = DisplayFacts {
         coded_width: clamp_u32(pic_width_in_luma_samples),
         coded_height: clamp_u32(pic_height_in_luma_samples),
-        aspect_ratio,
+        aspect_ratio: vui_colour.aspect_ratio,
+        overscan_appropriate: vui_colour.overscan_appropriate,
+        video_signal: vui_colour.video_signal,
     };
 
     Ok((
@@ -827,10 +869,22 @@ fn parse_hevc_sps_to_vui_timing(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
-    aspect_ratio: &mut Option<AspectRatioIdc>,
+    colour: &mut HevcVuiColour,
 ) -> (Option<u32>, Option<u32>, Option<f32>) {
-    parse_hevc_sps_to_vui_timing_inner(r, sps_max_sub_layers_minus1, interlace, aspect_ratio)
+    parse_hevc_sps_to_vui_timing_inner(r, sps_max_sub_layers_minus1, interlace, colour)
         .unwrap_or((None, None, None))
+}
+
+/// The VUI display facts the H.265 walk collects (each stays at its default
+/// when the VUI or the governing `_present_flag` is absent).
+#[derive(Default)]
+struct HevcVuiColour {
+    /// `aspect_ratio_idc` (+ `sar_*` when `EXTENDED_SAR`).
+    aspect_ratio: Option<AspectRatioIdc>,
+    /// `overscan_appropriate_flag`, `None` when its flag is 0.
+    overscan_appropriate: Option<bool>,
+    /// `video_signal_type()`, `None` when its flag is 0.
+    video_signal: Option<VideoSignalType>,
 }
 
 /// Largest `num_negative_pics`/`num_positive_pics` (H.265 §7.4.8: at most
@@ -842,7 +896,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
-    aspect_ratio: &mut Option<AspectRatioIdc>,
+    colour: &mut HevcVuiColour,
 ) -> crate::error::Result<(Option<u32>, Option<u32>, Option<f32>)> {
     // log2_max_pic_order_cnt_lsb_minus4  ue(v)
     let log2_max_poc_lsb = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?;
@@ -1071,26 +1125,18 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // aspect_ratio_info_present_flag  u(1)
     let ari_present = r.read_flag("aspect_ratio_info_present_flag")?;
     if ari_present {
-        *aspect_ratio = Some(read_aspect_ratio(r)?);
+        colour.aspect_ratio = Some(read_aspect_ratio(r)?);
     }
 
-    // overscan_info_present_flag  u(1)
-    let overscan_present = r.read_flag("overscan_info_present_flag")?;
-    if overscan_present {
-        let _ = r.read_flag("overscan_appropriate_flag")?;
+    // overscan_info_present_flag / overscan_appropriate_flag  u(1), u(1)
+    // (H.265 §E.2.1: overscan precedes video_signal_type).
+    if r.read_flag("overscan_info_present_flag")? {
+        colour.overscan_appropriate = Some(r.read_flag("overscan_appropriate_flag")?);
     }
 
-    // video_signal_type_present_flag  u(1)
-    let vst_present = r.read_flag("video_signal_type_present_flag")?;
-    if vst_present {
-        let _ = r.read_bits(3, "video_format")?;
-        let _ = r.read_flag("video_full_range_flag")?;
-        let colour_desc = r.read_flag("colour_description_present_flag")?;
-        if colour_desc {
-            let _ = r.read_bits(8, "colour_primaries")?;
-            let _ = r.read_bits(8, "transfer_characteristics")?;
-            let _ = r.read_bits(8, "matrix_coefficients")?;
-        }
+    // video_signal_type_present_flag  u(1) — see read_video_signal_type.
+    if r.read_flag("video_signal_type_present_flag")? {
+        colour.video_signal = Some(read_video_signal_type(r)?);
     }
 
     // chroma_loc_info_present_flag  u(1)
