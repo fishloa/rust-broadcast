@@ -1,12 +1,26 @@
 name: Private fixtures
 description: >-
-  Check out the pinned private-fixtures commit with the read-only deploy key and
-  point the test-fixtures resolver at it, so real-capture tests RUN in a release
-  lane instead of skipping. Disabled when no key is available (fork repos), when
-  `skip` is `1`, or when the job env var SKIP_PRIVATE_FIXTURES is `1` — the skip
-  wins over REQUIRE_PRIVATE_FIXTURES, both in CI and in the Rust helper.
+  Make the pinned private-fixtures commit available to a job. The real captures
+  live in the private repo (the `private` submodule, ~374 MB) and CI clones skip
+  submodules, so without this every private-fixture test would SKIP. Disabled
+  when no key is available (fork repos), when `skip` is `1`, or when the job env
+  var SKIP_PRIVATE_FIXTURES is `1` — the skip wins over REQUIRE_PRIVATE_FIXTURES,
+  both in CI and in the Rust helper.
+
+  `mode: checkout` (default) checks the pinned commit out into the calling job,
+  so a release lane needs nothing else. `mode: prepare` and `mode: use` split
+  that in two so a whole CI run pays for the private clone at most once: the
+  `private-fixtures` job prepares the checkout and saves it to the Actions cache
+  under the pinned commit's sha, and every consuming job restores it.
 
 inputs:
+  mode:
+    description: >-
+      `checkout` — check the pinned commit out into this job (release lanes).
+      `prepare` — fetch it once and save it to the cache under its pinned sha.
+      `use` — restore that cache entry; a miss is a hard failure, never a skip.
+    required: false
+    default: checkout
   deploy-key:
     description: >-
       Read-only deploy key for fishloa/rust-broadcast-private
@@ -21,8 +35,13 @@ inputs:
 
 outputs:
   enabled:
-    description: "'true' when the pinned private checkout was made."
+    description: "'true' when the private fixtures are available to the caller."
     value: ${{ steps.decide.outputs.enabled }}
+  sha:
+    description: >-
+      The pinned private-fixtures commit sha (set by every mode when enabled;
+      empty when disabled).
+    value: ${{ steps.pin.outputs.sha }}
 
 runs:
   using: composite
@@ -34,7 +53,15 @@ runs:
         DEPLOY_KEY: ${{ inputs.deploy-key }}
         SKIP_INPUT: ${{ inputs.skip }}
         SKIP_ENV: ${{ env.SKIP_PRIVATE_FIXTURES }}
+        MODE: ${{ inputs.mode }}
       run: |
+        case "$MODE" in
+          checkout|prepare|use) ;;
+          *)
+            echo "::error::private-fixtures: unknown mode '$MODE' (expected checkout, prepare or use)"
+            exit 1
+            ;;
+        esac
         enabled=true
         reason=
         if [ -z "$DEPLOY_KEY" ]; then
@@ -50,30 +77,62 @@ runs:
         echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
         if [ "$enabled" = "false" ]; then
           echo "::notice::private fixtures disabled/unavailable: $reason - real-capture tests will SKIP loudly"
-          echo "SKIP_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
+          case "$MODE" in
+            checkout|use) echo "SKIP_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV" ;;
+          esac
         fi
 
+    # The pinned commit only exists in the superproject, so the pin is read
+    # from the main checkout in every mode (prepare included).
     - name: Pinned private-fixtures commit
       if: steps.decide.outputs.enabled == 'true'
-      id: private_pin
+      id: pin
       shell: bash
       run: echo "sha=$(git ls-tree HEAD private | awk '{print $3}')" >> "$GITHUB_OUTPUT"
 
+    # --------------------------------------------------- prepare / use / lane
+    # `checkout` restores nothing (a lane wants the real checkout, not a cache
+    # hit); `prepare` stores on a miss; `use` demands a hit.
+    - name: Restore the pinned private fixtures from the cache
+      if: inputs.mode != 'checkout' && steps.decide.outputs.enabled == 'true'
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: private-fixtures
+        key: private-fixtures-v1-${{ steps.pin.outputs.sha }}
+        # Only `use` demands a hit; `prepare` treats a miss as "clone it".
+        # A miss in `use` is a job-ordering bug, never a silent skip.
+        fail-on-cache-miss: inputs.mode == 'use'
+
+    # One clone per CI run: the cache key is the pinned sha, so an unchanged
+    # pin hit restores instead of cloning, and a changed pin clones once and
+    # saves for every other job.
     - name: Check out private fixtures (read-only deploy key)
-      if: steps.decide.outputs.enabled == 'true'
+      if: >-
+        steps.decide.outputs.enabled == 'true' &&
+        (inputs.mode == 'checkout' ||
+        (inputs.mode == 'prepare' && steps.cache.outputs.cache-hit != 'true'))
       uses: actions/checkout@v5
       with:
         repository: fishloa/rust-broadcast-private
         ssh-key: ${{ inputs.deploy-key }}
-        ref: ${{ steps.private_pin.outputs.sha }}
+        ref: ${{ steps.pin.outputs.sha }}
         path: private-fixtures
         sparse-checkout: fixtures
         lfs: false
         persist-credentials: false
 
+    - name: Save the pinned private fixtures to the cache
+      if: inputs.mode == 'prepare' && steps.decide.outputs.enabled == 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: private-fixtures
+        key: private-fixtures-v1-${{ steps.pin.outputs.sha }}
+
     - name: Point tests at the private fixtures
-      if: steps.decide.outputs.enabled == 'true'
+      if: inputs.mode != 'prepare' && steps.decide.outputs.enabled == 'true'
       shell: bash
       run: |
         echo "RUST_BROADCAST_PRIVATE=$GITHUB_WORKSPACE/private-fixtures" >> "$GITHUB_ENV"
         echo "REQUIRE_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
+
