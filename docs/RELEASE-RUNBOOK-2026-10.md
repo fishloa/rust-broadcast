@@ -140,6 +140,24 @@ absent (a loud `SKIPPED` line per fixture), so only the redistributable suite ru
 skip **wins** over `REQUIRE_PRIVATE_FIXTURES=1` - that is deliberate, so disabling a
 known-bad corpus cannot be defeated by the CI-only require flag.
 
+#### Modes of the composite action (CI clones the private repo once per run)
+
+The private repo is ~374 MB and GitHub jobs get separate runners, so `ci.yml` does the
+clone **at most once per run**. The action's `mode` input selects the behaviour:
+
+| `mode` | Used by | Behaviour |
+| --- | --- | --- |
+| `checkout` (default) | every `release*.yml` lane | exactly as before: pinned checkout into the calling job, `RUST_BROADCAST_PRIVATE` + `REQUIRE_PRIVATE_FIXTURES=1` |
+| `prepare` | the single `private-fixtures` job in `ci.yml` | restores `private-fixtures-v1-<pinned sha>` from the Actions cache; only on a miss does it clone the pinned commit (sparse `fixtures`, lfs off) and save the cache |
+| `use` | `test`, `test-no-default`, `dvb-stream` | restores the same cache key with `fail-on-cache-miss: true` (a miss is a job-ordering bug and FAILS), then points the tests at it |
+
+Because the cache key is the pinned commit, a run whose `private` submodule pointer is
+unchanged restores the cache and never clones at all; a changed pin clones once in
+`private-fixtures` and every consumer restores it. The prep job never fails just because
+the secret is absent (fork PRs): it reports `enabled=false`, succeeds, and the consumers
+set `SKIP_PRIVATE_FIXTURES=1` so the private tests skip loudly. Consumers carry
+`needs: private-fixtures`. `tools/tests/test_ci_private_once.py` pins this topology.
+
 ## 2. Gates on the bumped tree
 
 One command per line, each exit status read:
