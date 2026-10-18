@@ -479,3 +479,41 @@ fn rai3_stall_pauses_explained_late_registration_and_open_loop() {
     );
     assert_eq!(late.stalls, 1);
 }
+
+/// The start gate (`LEARN_STEPS` closed delivery windows per delivering track)
+/// on the real Apple TV input logs, closed loop, tracks registered up front.
+/// Measured against the same replay with the gate bypassed: at `initial_us`
+/// 500 ms and 1.8 s the gate costs NOTHING (the start is bound by the audio
+/// lead filling in lumps of one PES, 0.3 s: lead 703 ms at the rai-3 start for
+/// a 500 ms fill), and with a single learnt step instead of two the
+/// 300 ms fill starts rai-3 / rai-3-perchunk at 1.034 s / 1.076 s and STALLS
+/// on both. So the two-step gate stays and these starts are pinned: raising
+/// `LEARN_STEPS` moves them later, lowering it stalls.
+#[test]
+fn start_gate_is_free_at_500ms_and_prevents_the_300ms_stall() {
+    // (log, start at 300 ms fill, start at 500 ms fill, start at 1.8 s fill)
+    const CASES: [(&str, Micros, Micros, Micros); 4] = [
+        ("rai-3", 1_231_966, 1_337_896, 2_559_618),
+        ("rai-3-perchunk", 1_217_953, 1_361_559, 2_553_123),
+        ("rai-3-stall", 1_147_776, 1_147_776, 2_347_173),
+        ("france-5", 1_174_068, 1_257_133, 2_622_974),
+    ];
+    for (name, s300, s500, s1800) in CASES {
+        for (initial_us, want) in [(300_000, s300), (500_000, s500), (1_800_000, s1800)] {
+            let cfg = config_with(|mut c| {
+                c.policy.initial_us = initial_us;
+                c
+            });
+            let Some(r) = replay_with(name, cfg, &[VIDEO, AUDIO], true) else {
+                return;
+            };
+            assert_eq!(r.starts(), [want], "{name} initial {initial_us}");
+            assert!(
+                r.pauses().is_empty(),
+                "{name} initial {initial_us}: {:?}",
+                pause_summary(&r)
+            );
+            assert_eq!(r.stalls, 0, "{name} initial {initial_us}");
+        }
+    }
+}
