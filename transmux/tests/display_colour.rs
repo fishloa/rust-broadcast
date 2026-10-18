@@ -43,7 +43,7 @@ fn read(fixture: &str) -> Option<Vec<u8>> {
 fn streaming_display(data: &[u8]) -> Vec<Option<transmux::ir::DisplayGeometry>> {
     let mut demux = StreamingTsDemux::new();
     let mut out = Vec::new();
-    let mut take = |demux: &mut StreamingTsDemux, out: &mut Vec<_>| {
+    let take = |demux: &mut StreamingTsDemux, out: &mut Vec<_>| {
         while let Some(ev) = demux.poll_event() {
             if let DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) = ev
                 && matches!(spec.config, CodecConfig::Avc { .. })

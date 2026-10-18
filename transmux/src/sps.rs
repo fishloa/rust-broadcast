@@ -2805,11 +2805,14 @@ mod tests {
         VideoFormat, VideoSignalType,
     };
 
+    /// `(video_format, video_full_range_flag, colour_primaries/transfer/matrix)`.
+    type VideoSignalBits = (u8, bool, Option<(u8, u8, u8)>);
+
     /// What a test wants in the VUI's overscan + video signal type.
     #[derive(Clone, Copy, Default)]
     struct ColourVui {
         overscan: Option<bool>,
-        vst: Option<(u8, bool, Option<(u8, u8, u8)>)>,
+        vst: Option<VideoSignalBits>,
     }
 
     /// Append `overscan_info_present_flag(..)` then `video_signal_type(..)`.

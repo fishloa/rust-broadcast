@@ -1,8 +1,29 @@
 # Display geometry metadata in transmux: design
 
-Status: **design only, awaiting owner review.** No production code accompanies
-this document. Spec facts are transcribed and page-checked in
-[`SPEC-NOTES.md`](SPEC-NOTES.md); this document cites that file as `SN §n`.
+Status: **Phase 1 (static geometry) landed, split into 1a and 1b.**
+
+- **1a (SAR + coded size)** shipped in `transmux` 0.27.5: `ir::display`
+  with `DisplayGeometry` / `AspectRatioIdc` / `SampleAspectRatio`,
+  `TrackSpec::display` auto-derived in `TrackSpec::new`, the `TrackUpdated`
+  one-behind ordering fix (its first `### Fixed` entry), and the private
+  gitlink bump to the zenith-tv captures.
+- **1b (colour)** landed on top (CHANGELOG `[Unreleased]`): the
+  `overscan_appropriate` and `video_signal` fields of §4 with `VideoFormat`,
+  `ColourPrimaries`, `TransferCharacteristics`, `MatrixCoefficients`,
+  `ColourDescription` and `VideoSignalType`, read from both VUI walks in
+  `transmux/src/sps.rs`. Tables E-2..E-5 / E.2..E.5 are page-verified and
+  transcribed in `transmux/docs/codec/vui-colour-tables.md`; the real-fixture
+  combinations covered are absent, BT.601 SD (5/5/5, two captures), BT.709
+  (1/1/1) and full-range `component` without a colour description. HEVC
+  colour is spec-vector only: no HEVC capture in this worktree signals a
+  colour description and `test-074.hevc.ts` is not mirrored.
+- Still later phases: crop / conformance window (§3, out of 1b),
+  `default_display_rect`, the `colr nclx` overlay of §6.3, then Phase 2-4.
+
+Spec facts are transcribed and page-checked in
+[`SPEC-NOTES.md`](SPEC-NOTES.md) (and, for the colour tables, in
+`transmux/docs/codec/vui-colour-tables.md`); this document cites the former
+as `SN §n`.
 
 Requester: an integrator building an Apple TV player on `transmux` (and
 `media-plane`/`multimux` behind it). Owner direction: "we have a lot of useful
