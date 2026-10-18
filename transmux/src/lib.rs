@@ -64,6 +64,11 @@
 //! - **RTP/RTCP:** de/packetise ([`RtpPacketiser`] / [`RtpDepacketiser`]),
 //!   streaming depayload ([`RtpStreamDepacketiser`]) + SDP fmtp→config helpers
 //!   ([`rtp_sdp`]); RTCP control packets ([`RtcpPacket`]).
+//! - **Display geometry:** a video track's coded size and SPS VUI sample
+//!   aspect ratio ([`DisplayGeometry`], [`AspectRatioIdc`],
+//!   [`SampleAspectRatio`]) on `TrackSpec::display`, derived from the
+//!   `avcC`/`hvcC` first SPS by `TrackSpec::new` so every demux path carries
+//!   it (design: `docs/display-geometry/DESIGN.md`).
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
