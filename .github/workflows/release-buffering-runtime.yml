@@ -11,9 +11,9 @@ name: Release buffering-runtime
 #
 # It is released by docs/release-plan-2026-10-patch4.pairs together with mpeg-ts
 # and transmux; its tag is independent of theirs. broadcast-common 10.0 is already
-# live, so there is nothing to wait for. The private-fixture tests skip loudly in
-# this lane (no private checkout); the CI test matrix runs them with
-# REQUIRE_PRIVATE_FIXTURES=1 before the tag is pushed.
+# live, so there is nothing to wait for. The lane checks out the pinned private
+# fixtures (read-only deploy key, as ci.yml does) so the real-capture goldens run
+# here with REQUIRE_PRIVATE_FIXTURES=1; without the key they skip loudly.
 
 on:
   push:
@@ -35,8 +35,34 @@ jobs:
     # authenticates with CARGO_REGISTRY_TOKEN, not the GitHub token.
     permissions:
       contents: write
+    env:
+      HAS_PRIVATE_KEY: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY != '' }}
     steps:
       - uses: actions/checkout@v5
+      # The real-capture goldens (Apple TV input logs, TV delivery traces) live
+      # in the private repo. Check out exactly the pinned commit with the same
+      # read-only deploy key CI uses, so this gate RUNS them instead of skipping
+      # (REQUIRE_PRIVATE_FIXTURES=1 makes a missing fixture a hard failure).
+      - name: Pinned private-fixtures commit
+        if: env.HAS_PRIVATE_KEY == 'true'
+        id: private_pin
+        run: echo "sha=$(git ls-tree HEAD private | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+      - name: Check out private fixtures (read-only deploy key)
+        if: env.HAS_PRIVATE_KEY == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: fishloa/rust-broadcast-private
+          ssh-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          ref: ${{ steps.private_pin.outputs.sha }}
+          path: private-fixtures
+          sparse-checkout: fixtures
+          lfs: false
+          persist-credentials: false
+      - name: Point tests at the private fixtures
+        if: env.HAS_PRIVATE_KEY == 'true'
+        run: |
+          echo "RUST_BROADCAST_PRIVATE=$GITHUB_WORKSPACE/private-fixtures" >> "$GITHUB_ENV"
+          echo "REQUIRE_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
 
       - name: Gate — buffering-runtime tests (all features)
