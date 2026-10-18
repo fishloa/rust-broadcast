@@ -46,7 +46,7 @@ PAIRS=docs/release-plan-2026-10.pairs
 * **The identical gate on CI, BEFORE the first tag.** The lockstep lane (`release.yml`)
   runs its test gate only after ~33 crates are live, so a failure there strands the wave
   halfway; it is a superset of CI's (CI excludes `dvb-tools` and `dvb-conformance`, and runs
-  nextest with the private fixtures, which `release.yml` has neither of). So, on the
+  nextest, which `release.yml` does not; both lanes check out the private fixtures, below). So, on the
   release commit (the merge commit of step 3): every check of the CI run for that commit is
   SUCCESS (`gh run list --commit <sha>`), and the two crates CI excludes pass on their own:
 
@@ -115,6 +115,30 @@ about publication day.
 Review `git diff --stat` (expect about 195 files: 54 manifests + dependants + READMEs +
 CHANGELOGs + 56 notes + `Cargo.lock` + `docs/CRATES.md`) and read the `Cargo.lock` diff: only
 `version = ` lines may differ.
+
+### 1a. Private fixtures in the release lanes
+
+Every `release*.yml` lane (all 51 per-crate lanes and the lockstep `release.yml`) checks
+out the **pinned private-fixtures commit** through the shared composite action
+`./.github/actions/private-fixtures`, with the read-only deploy key
+(`secrets.PRIVATE_FIXTURES_DEPLOY_KEY`, the same one `ci.yml` already uses) and
+`REQUIRE_PRIVATE_FIXTURES=1`. A missing private fixture is therefore a hard lane failure,
+not a silent skip; fork repos have no secret, so there the action disables itself and the
+real-capture tests skip loudly.
+
+To **disable** the private fixtures (e.g. the key is revoked, or a private capture is
+known bad while a fix is in flight), any one of:
+
+* set the repository variable `SKIP_PRIVATE_FIXTURES` to `1` - Settings -> Secrets and
+  variables -> Actions -> **Variables** tab -> New repository variable (this is what the
+  lanes pass in as `skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}`); or
+* set a job-level `env: SKIP_PRIVATE_FIXTURES: "1"` in the lane; or
+* locally, export `SKIP_PRIVATE_FIXTURES=1` before `cargo test`.
+
+Locally the same variable makes the `test-fixtures` resolver treat the private tier as
+absent (a loud `SKIPPED` line per fixture), so only the redistributable suite runs. The
+skip **wins** over `REQUIRE_PRIVATE_FIXTURES=1` - that is deliberate, so disabling a
+known-bad corpus cannot be defeated by the CI-only require flag.
 
 ## 2. Gates on the bumped tree
 

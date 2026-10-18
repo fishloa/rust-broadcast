@@ -10,7 +10,7 @@ inputs:
   deploy-key:
     description: >-
       Read-only deploy key for fishloa/rust-broadcast-private
-      (secrets.PRIVATE_FIXTURES_DEPLOY_KEY). Empty disables the checkout.
+      (the PRIVATE_FIXTURES_DEPLOY_KEY secret). Empty disables the checkout.
     required: false
   skip:
     description: >-
