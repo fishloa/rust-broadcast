@@ -18,9 +18,12 @@
 //!   at least `silence_timeout_us` before the most recent delivery on ANY
 //!   track. A dead track therefore cannot starve playback while the others
 //!   keep delivering, but the clock is the arrival time of the latest delivery,
-//!   not wall time: when nothing at all is delivered (a global stall such as a
-//!   reconnect or server restart) nobody becomes excluded, however long the
-//!   gap, and the stall is not mistaken for the tracks being dead. Before any
+//!   not wall time, advanced towards now by at most the largest held delivery
+//!   step (the time the next delivery is expected; a source delivering every
+//!   2.3 s is not charged the quantisation of its own cadence): when nothing at
+//!   all is delivered (a global stall such as a reconnect or server restart)
+//!   nobody becomes excluded, however long the gap, and the stall is not
+//!   mistaken for the tracks being dead. Before any
 //!   delivery (or after a rebaseline) nothing is excluded either;
 //! * the effective end is the earliest end over the non-excluded tracks, so a
 //!   global stall keeps the MIN of the tracks' last ends (there is no
@@ -300,23 +303,37 @@ impl TrackSet {
         }
     }
 
-    /// Silent relative to the most recent delivery on any track.
-    fn is_silent(&self, t: &Track, silence_us: Micros) -> bool {
+    /// The clock the silence rule measures against at `now`: the latest
+    /// delivery, advanced towards `now` by at most the largest held delivery
+    /// step (the time the next delivery is *expected* after the last one). A
+    /// sparse-but-regular track (one picture every 2.3 s) is then not charged
+    /// the quantisation of its own cadence (a never-delivered track used to be
+    /// excluded only at the first delivery that landed `silence_us` after the
+    /// first one, up to a whole step late), while a global gap still moves the
+    /// clock by no more than one expected step, so it excludes nobody.
+    fn silence_clock(&self, now: Micros) -> Option<Micros> {
+        let last = self.last_delivery?;
+        let step = self.v.iter().map(|t| t.gran.value(now)).max().unwrap_or(0);
+        Some(last.max(now.min(last.saturating_add(step))))
+    }
+
+    /// Silent relative to the (expected) most recent delivery on any track.
+    fn is_silent(&self, t: &Track, silence_us: Micros, clock: Option<Micros>) -> bool {
         // a track that never delivered has been waited for since the first
         // delivery on any track at the earliest, whenever it was registered
         let since = match (t.end, self.first_delivery) {
             (None, Some(f)) => t.seen_at.max(f),
             _ => t.seen_at,
         };
-        self.last_delivery
-            .is_some_and(|l| l.saturating_sub(since) >= silence_us)
+        clock.is_some_and(|l| l.saturating_sub(since) >= silence_us)
     }
 
     /// Largest held delivery step over the non-excluded tracks at `now`.
     pub(crate) fn granularity_us(&self, now: Micros, silence_us: Micros) -> Micros {
+        let clock = self.silence_clock(now);
         self.v
             .iter()
-            .filter(|t| !self.is_silent(t, silence_us))
+            .filter(|t| !self.is_silent(t, silence_us, clock))
             .map(|t| t.gran.value(now))
             .max()
             .unwrap_or(0)
@@ -332,9 +349,10 @@ impl TrackSet {
         silence_us: Micros,
         max_wait_us: Micros,
     ) -> bool {
+        let clock = self.silence_clock(now);
         self.v
             .iter()
-            .filter(|t| t.end.is_some() && !self.is_silent(t, silence_us))
+            .filter(|t| t.end.is_some() && !self.is_silent(t, silence_us, clock))
             .all(|t| t.windows > LEARN_STEPS || now.saturating_sub(t.first_at) >= max_wait_us)
     }
 
@@ -353,9 +371,14 @@ impl TrackSet {
 
     /// Earliest end over the non-excluded tracks (see the module docs for the
     /// relative-silence rule). `None` while a non-excluded track has no end.
-    pub(crate) fn effective(&self, silence_us: Micros) -> Option<Effective> {
+    pub(crate) fn effective(&self, now: Micros, silence_us: Micros) -> Option<Effective> {
+        let clock = self.silence_clock(now);
         let mut min: Option<Effective> = None;
-        for t in self.v.iter().filter(|t| !self.is_silent(t, silence_us)) {
+        for t in self
+            .v
+            .iter()
+            .filter(|t| !self.is_silent(t, silence_us, clock))
+        {
             let end = t.end?;
             if min.is_none_or(|m| before(end, m.end)) {
                 min = Some(Effective {

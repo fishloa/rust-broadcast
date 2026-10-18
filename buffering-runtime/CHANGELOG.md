@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A sparse-but-regular track (a video-only still-image slate: one picture every 2.29 s) is no longer charged the quantisation of its own cadence by the track silence rule. The silence clock was the arrival time of the latest delivery, so a registered track that never delivers (audio of a programme that switched to a video-only slate) was excluded only at the first delivery landing the silence timeout (3 s) after the first one, up to a whole step late: the real slate log resumed 6.876 s after the discontinuity, now 5.303 s (3 s after the first slate delivery). The clock now runs past the last delivery by at most the largest held delivery step (the time the next delivery is expected), so a global delivery gap still excludes nobody. The 0.7b start gate was not the cause (DESIGN 0.7d). A caller that knows the new timeline has no audio should `unregister_track` it at the discontinuity (the slate then resumes at its first delivery, 2.288 s).
+
+### Tests
+- `tests/slate_start.rs`: slate log golden (resume 5.303 s, was 6.876 s; mutation-proven), the unregistered-audio variant (2.288 s), a fixture-free synthetic of the same shape, and the rai-gulp 600 s clean baseline golden (one `StartPlaying` at 0.597 s, 0 pauses, final target 412 ms).
+
 ## [0.1.0] - 2026-10-18
 
 Initial release. Sans-IO live-TS playout buffer controller for players that cannot change playback rate. The measurement half follows RFC 5481 / RFC 3550; the policy half (sizing, thresholds, stall memory) is **implementation-defined**: no standard specifies a de-jitter policy (owner-approved spec-posture departure).

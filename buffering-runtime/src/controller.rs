@@ -282,7 +282,8 @@ impl BufferController {
     }
 
     fn effective(&self) -> Option<Effective> {
-        self.tracks.effective(self.cfg.track_silence_timeout_us)
+        self.tracks
+            .effective(self.latest, self.cfg.track_silence_timeout_us)
     }
 
     /// The limiting track, only meaningful with two or more tracks known.
