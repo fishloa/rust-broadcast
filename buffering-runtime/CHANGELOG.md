@@ -7,12 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- A sparse-but-regular track (a video-only still-image slate: one picture every 2.29 s) is no longer charged the quantisation of its own cadence by the track silence rule. The silence clock was the arrival time of the latest delivery, so a registered track that never delivers (audio of a programme that switched to a video-only slate) was excluded only at the first delivery landing the silence timeout (3 s) after the first one, up to a whole step late: the real slate log resumed 6.876 s after the discontinuity, now 5.303 s (3 s after the first slate delivery). The clock now runs past the last delivery by at most the largest held delivery step (the time the next delivery is expected), so a global delivery gap still excludes nobody. The 0.7b start gate was not the cause (DESIGN 0.7d). A caller that knows the new timeline has no audio should `unregister_track` it at the discontinuity (the slate then resumes at its first delivery, 2.288 s).
-
-### Tests
-- `tests/slate_start.rs`: slate log golden (resume 5.303 s, was 6.876 s; mutation-proven), the unregistered-audio variant (2.288 s), a fixture-free synthetic of the same shape, and the rai-gulp 600 s clean baseline golden (one `StartPlaying` at 0.597 s, 0 pauses, final target 412 ms).
-
 ## [0.1.0] - 2026-10-18
 
 Initial release. Sans-IO live-TS playout buffer controller for players that cannot change playback rate. The measurement half follows RFC 5481 / RFC 3550; the policy half (sizing, thresholds, stall memory) is **implementation-defined**: no standard specifies a de-jitter policy (owner-approved spec-posture departure).
@@ -28,3 +22,10 @@ Initial release. Sans-IO live-TS playout buffer controller for players that cann
 - Plain-data C-ABI surface: `ABI_VERSION` (2), stable `u32` codes, `#[repr(C)] EventRecord` (40 bytes, with `track` / `track_valid`), and `Default` configs as the single source of defaults (initial target 1.8 s, floor 300 ms, cap 3 s).
 - Documented caller contract: report the first media end only from the join point (first video random-access point) and register every rendered track up front.
 - Examples `replay_trace`, `live_loop` and `multi_track` (all run with no arguments); fuzz target `buffering_runtime`; synthetic generator and oracle tests; real-trace goldens against `docs/buffering-runtime/analysis/golden_oracle.py` (eight delivery traces) and Apple TV controller input-log goldens (private fixtures; they skip loudly where the private repository is not checked out).
+
+### Fixed (found in integration soak before this release)
+- A sparse-but-regular track (a video-only still-image slate: one picture every 2.29 s) is no longer charged the quantisation of its own cadence by the track silence rule. The silence clock was the arrival time of the latest delivery, so a registered track that never delivers (audio of a programme that switched to a video-only slate) was excluded only at the first delivery landing the silence timeout (3 s) after the first one, up to a whole step late: the real slate log resumed 6.876 s after the discontinuity, now 5.303 s (3 s after the first slate delivery). The clock now runs past the last delivery by at most the largest held delivery step (the time the next delivery is expected), so a global delivery gap still excludes nobody. The 0.7b start gate was not the cause (DESIGN 0.7d). A caller that knows the new timeline has no audio should `unregister_track` it at the discontinuity (the slate then resumes at its first delivery, 2.288 s).
+
+### Tests (slate and baseline)
+- `tests/slate_start.rs`: slate log golden (resume 5.303 s, was 6.876 s; mutation-proven), the unregistered-audio variant (2.288 s), a fixture-free synthetic of the same shape, and the rai-gulp 600 s clean baseline golden (one `StartPlaying` at 0.597 s, 0 pauses, final target 412 ms).
+
