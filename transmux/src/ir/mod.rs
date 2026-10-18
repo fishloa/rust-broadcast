@@ -18,6 +18,9 @@
 //!   streams this crate does not decode — see [`DataCarriage`]).
 //! - [`FragmentTrackData`] — one track's samples for a single media segment,
 //!   the input shape [`crate::pipeline::build_media_segment`] consumes.
+//! - [`DisplayGeometry`] — a video track's display geometry (coded size and
+//!   the SPS VUI sample aspect ratio, [`AspectRatioIdc`]), carried on
+//!   [`TrackSpec::display`] (design: `docs/display-geometry/DESIGN.md`).
 //! - [`DemuxEvent`] — the streaming-demux event vocabulary (media plane step
 //!   2e), drained from [`crate::ts_demux::StreamingTsDemux`] /
 //!   [`crate::flv_stream::StreamingFlvDemux`]; [`EventProvenance`] carries the
@@ -49,6 +52,7 @@
 
 mod audio_meta;
 mod codec;
+mod display;
 mod event;
 mod ids;
 mod media;
@@ -60,6 +64,7 @@ pub use audio_meta::{
     SupplementaryAudio,
 };
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat, SubtitleSampleEntry};
+pub use display::{AspectRatioIdc, DisplayGeometry, EXTENDED_SAR_IDC, SampleAspectRatio};
 pub use event::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
     InputDegradation,

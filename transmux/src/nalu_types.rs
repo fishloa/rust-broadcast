@@ -13,7 +13,7 @@ use broadcast_common::Serialize;
 
 /// H.265 `nal_unit_type` for a sequence parameter set (`SPS_NUT`) — ITU-T H.265
 /// Table 7-1 (type 33).
-const HEVC_SPS_NUT: u8 = 33;
+pub(crate) const HEVC_SPS_NUT: u8 = 33;
 
 // ---------------------------------------------------------------------------
 // AVC: SPS, PPS, and SPSExt NAL units (sequenceParameterSetNALUnit)

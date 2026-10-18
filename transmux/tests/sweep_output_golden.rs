@@ -26,11 +26,50 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// it (continuity gaps on `m6-single.ts`), which is pinned by
 /// `ts_sync_loss_degraded.rs` instead.
 fn media_debug(media: &transmux::Media) -> String {
-    let s = legacy_pid_debug(&format!("{media:?}"));
+    let s = legacy_pid_debug(&no_display_debug(&format!("{media:?}")));
     match s.rfind(", degraded: [") {
         Some(i) => format!("{} }}", &s[..i]),
         None => s,
     }
+}
+
+/// `TrackSpec::display` (the display-geometry Phase 1a field) renders in
+/// `Debug` as `, display: <value>` (`None`, or `Some(DisplayGeometry { .. })`
+/// with nested commas); the goldens were captured before that field existed.
+/// Drop the field (the value runs to the next comma or closing brace at nesting
+/// depth 0) so every hash still proves the demux output itself is unchanged:
+/// no golden is re-captured for this field. The geometry is pinned by
+/// `display_geometry.rs`.
+fn no_display_debug(s: &str) -> String {
+    const FIELD: &str = ", display: ";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(FIELD) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + FIELD.len()..];
+        let mut depth = 0usize;
+        let mut end = after.len();
+        for (j, c) in after.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' => depth = depth.saturating_sub(1),
+                '}' if depth == 0 => {
+                    // keep the space `Debug` puts before the closing brace
+                    end = after[..j].trim_end().len();
+                    break;
+                }
+                '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    end = j;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Typed PIDs (#1159) render as `Pid(0x0100)` in `Debug`; the goldens were
