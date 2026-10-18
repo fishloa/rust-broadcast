@@ -29,8 +29,33 @@ jobs:
     # authenticates with CARGO_REGISTRY_TOKEN, not the GitHub token.
     permissions:
       contents: write
+    env:
+      HAS_PRIVATE_KEY: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY != '' }}
     steps:
       - uses: actions/checkout@v5
+      # Real-capture fixtures live in the private repo: check out exactly the
+      # pinned commit with the read-only deploy key ci.yml uses, so the gate RUNS
+      # the real-capture tests (REQUIRE_PRIVATE_FIXTURES=1) instead of skipping.
+      - name: Pinned private-fixtures commit
+        if: env.HAS_PRIVATE_KEY == 'true'
+        id: private_pin
+        run: echo "sha=$(git ls-tree HEAD private | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+      - name: Check out private fixtures (read-only deploy key)
+        if: env.HAS_PRIVATE_KEY == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: fishloa/rust-broadcast-private
+          ssh-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          ref: ${{ steps.private_pin.outputs.sha }}
+          path: private-fixtures
+          sparse-checkout: fixtures
+          lfs: false
+          persist-credentials: false
+      - name: Point tests at the private fixtures
+        if: env.HAS_PRIVATE_KEY == 'true'
+        run: |
+          echo "RUST_BROADCAST_PRIVATE=$GITHUB_WORKSPACE/private-fixtures" >> "$GITHUB_ENV"
+          echo "REQUIRE_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
 
       - name: Gate — transmux tests

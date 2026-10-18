@@ -300,6 +300,11 @@ fn rai3_target_lift_comes_from_pdv_and_the_granularity_floor() {
                 .with_track_granularity(gran)
         })
     };
+    // Skip loudly when the private fixture is unavailable (the publish lane
+    // does not check the private repo out), like every other test here.
+    if replay("rai-3", config()).is_none() {
+        return;
+    }
     let floor_only = replay("rai-3", pdv_off(true)).unwrap();
     assert_eq!(floor_only.target_at(5_000_000), 412_000);
     assert_eq!(floor_only.targets.first(), Some(&(1_034_306, 412_000)));
