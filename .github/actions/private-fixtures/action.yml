@@ -1,0 +1,79 @@
+name: Private fixtures
+description: >-
+  Check out the pinned private-fixtures commit with the read-only deploy key and
+  point the test-fixtures resolver at it, so real-capture tests RUN in a release
+  lane instead of skipping. Disabled when no key is available (fork repos), when
+  `skip` is `1`, or when the job env var SKIP_PRIVATE_FIXTURES is `1` — the skip
+  wins over REQUIRE_PRIVATE_FIXTURES, both in CI and in the Rust helper.
+
+inputs:
+  deploy-key:
+    description: >-
+      Read-only deploy key for fishloa/rust-broadcast-private
+      (secrets.PRIVATE_FIXTURES_DEPLOY_KEY). Empty disables the checkout.
+    required: false
+  skip:
+    description: >-
+      Pass vars.SKIP_PRIVATE_FIXTURES. `1` disables the private fixtures even
+      when the deploy key is available.
+    required: false
+    default: ""
+
+outputs:
+  enabled:
+    description: "'true' when the pinned private checkout was made."
+    value: ${{ steps.decide.outputs.enabled }}
+
+runs:
+  using: composite
+  steps:
+    - name: Decide whether private fixtures are available
+      id: decide
+      shell: bash
+      env:
+        DEPLOY_KEY: ${{ inputs.deploy-key }}
+        SKIP_INPUT: ${{ inputs.skip }}
+        SKIP_ENV: ${{ env.SKIP_PRIVATE_FIXTURES }}
+      run: |
+        enabled=true
+        reason=
+        if [ -z "$DEPLOY_KEY" ]; then
+          enabled=false
+          reason="no PRIVATE_FIXTURES_DEPLOY_KEY (fork repo or secret unset)"
+        elif [ "$SKIP_INPUT" = "1" ]; then
+          enabled=false
+          reason="SKIP_PRIVATE_FIXTURES=1 (repo/environment variable)"
+        elif [ "$SKIP_ENV" = "1" ]; then
+          enabled=false
+          reason="SKIP_PRIVATE_FIXTURES=1 (job env)"
+        fi
+        echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+        if [ "$enabled" = "false" ]; then
+          echo "::notice::private fixtures disabled/unavailable: $reason - real-capture tests will SKIP loudly"
+          echo "SKIP_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
+        fi
+
+    - name: Pinned private-fixtures commit
+      if: steps.decide.outputs.enabled == 'true'
+      id: private_pin
+      shell: bash
+      run: echo "sha=$(git ls-tree HEAD private | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+    - name: Check out private fixtures (read-only deploy key)
+      if: steps.decide.outputs.enabled == 'true'
+      uses: actions/checkout@v5
+      with:
+        repository: fishloa/rust-broadcast-private
+        ssh-key: ${{ inputs.deploy-key }}
+        ref: ${{ steps.private_pin.outputs.sha }}
+        path: private-fixtures
+        sparse-checkout: fixtures
+        lfs: false
+        persist-credentials: false
+
+    - name: Point tests at the private fixtures
+      if: steps.decide.outputs.enabled == 'true'
+      shell: bash
+      run: |
+        echo "RUST_BROADCAST_PRIVATE=$GITHUB_WORKSPACE/private-fixtures" >> "$GITHUB_ENV"
+        echo "REQUIRE_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
