@@ -34,13 +34,12 @@ fn media_debug(media: &transmux::Media) -> String {
 }
 
 /// `TrackSpec::display` (the display-geometry Phase 1a field) renders in
-/// `Debug` as `, display: <variant>` (or `, display: None`); the goldens were
-/// captured before that field existed. Drop the field so the hash still proves
-/// the demux output itself is unchanged (the geometry is pinned by
-/// `display_geometry.rs`). The demux/mux goldens were re-captured once when
-/// the field first landed (the muxers' internal `Media` Debug drew it too);
-/// every byte-level golden (CENC decrypted bytes, muxer output, fragments,
-/// DASH) kept its old value.
+/// `Debug` as `, display: <value>` (`None`, or `Some(DisplayGeometry { .. })`
+/// with nested commas); the goldens were captured before that field existed.
+/// Drop the field (the value runs to the next comma or closing brace at nesting
+/// depth 0) so every hash still proves the demux output itself is unchanged:
+/// no golden is re-captured for this field. The geometry is pinned by
+/// `display_geometry.rs`.
 fn no_display_debug(s: &str) -> String {
     const FIELD: &str = ", display: ";
     let mut out = String::with_capacity(s.len());
@@ -48,11 +47,25 @@ fn no_display_debug(s: &str) -> String {
     while let Some(i) = rest.find(FIELD) {
         out.push_str(&rest[..i]);
         let after = &rest[i + FIELD.len()..];
-        // The value runs to the next top-level `, ` (no nested `, ` at this
-        // depth) or the closing of the struct.
-        let end = after
-            .find(", ")
-            .unwrap_or_else(|| after.find(" }").unwrap_or(after.len()));
+        let mut depth = 0usize;
+        let mut end = after.len();
+        for (j, c) in after.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' => depth = depth.saturating_sub(1),
+                '}' if depth == 0 => {
+                    // keep the space `Debug` puts before the closing brace
+                    end = after[..j].trim_end().len();
+                    break;
+                }
+                '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    end = j;
+                    break;
+                }
+                _ => {}
+            }
+        }
         rest = &after[end..];
     }
     out.push_str(rest);
@@ -102,12 +115,12 @@ fn check(bad: &mut Vec<String>, name: &str, got: u64, want: u64) {
 }
 
 const PS_FIXTURES: &[(&str, u64)] = &[
-    ("ps/h264_ac3.ps", 0xf940cb94f99c073f),
-    ("ps/ffmpeg-h264-noaud.ps", 0xfa27c071739c9513),
-    ("ps/ffmpeg-mpeg2video-mp2.ps", 0x344d93f92e06dcf4),
-    ("ps/ffmpeg-mpeg2video-2xac3.ps", 0x2b1706507978756b),
-    ("ps/ffmpeg-ac3-dts.ps", 0x8c919b3e3927daf8),
-    ("mpeg-ps/ffmpeg-mpeg2-ps.mpg", 0x82e08a372d33c8b9),
+    ("ps/h264_ac3.ps", 0xe24863d1ee914de7),
+    ("ps/ffmpeg-h264-noaud.ps", 0x0f41a64caef35ce5),
+    ("ps/ffmpeg-mpeg2video-mp2.ps", 0x8310cf8cecaa56f7),
+    ("ps/ffmpeg-mpeg2video-2xac3.ps", 0xa7dbc0815658589c),
+    ("ps/ffmpeg-ac3-dts.ps", 0x4f5d8d8a7f521ba2),
+    ("mpeg-ps/ffmpeg-mpeg2-ps.mpg", 0x008239034562de4c),
 ];
 
 #[test]
@@ -130,12 +143,12 @@ fn ps_demux_output_is_unchanged() {
 // is what is hashed) holds codec config + samples + timing only, nothing about
 // the container flavour, so the `Debug` rendering is genuinely identical.
 const WEBM_FIXTURES: &[(&str, u64)] = &[
-    ("webm/vp9_opus.webm", 0xf9132305e0d7c01f),
-    ("webm/vp8_opus.webm", 0xb6d8fe1d61484c0f),
-    ("webm/vorbis.webm", 0xa8c2f22cb46d1c41),
-    ("mkv/h264_aac.mkv", 0xba8aabe8ee76bd3b),
-    ("mkv/vp9_opus.mkv", 0xf9132305e0d7c01f),
-    ("mkv/hevc_aac.mkv", 0x968d4f94df4a7c09),
+    ("webm/vp9_opus.webm", 0xfec110a63d715331),
+    ("webm/vp8_opus.webm", 0x44663f064ecc766b),
+    ("webm/vorbis.webm", 0x67143f51c09cf65e),
+    ("mkv/h264_aac.mkv", 0x9847beadbf70bead),
+    ("mkv/vp9_opus.mkv", 0xfec110a63d715331),
+    ("mkv/hevc_aac.mkv", 0xd77d3469e7e72cf3),
 ];
 
 #[test]
@@ -153,8 +166,8 @@ fn webm_demux_output_is_unchanged() {
 }
 
 const TS_FIXTURES: &[(&str, u64)] = &[
-    ("ts/h264/main.ts", 0xacee9f74e696087b),
-    ("ts/h264_aac.ts", 0x33f9e409365259db),
+    ("ts/h264/main.ts", 0xe8a04393ee137ee8),
+    ("ts/h264_aac.ts", 0x51871212618d1ded),
     // Re-captured for #1160: the real capture's three E-AC-3 tracks gain the
     // syncframes that straddled PES boundaries (4/5/1 -> 7/6/3 samples).
     // Re-blessed for #1186 (0x3f5fdf623443b19f before): ONLY the second E-AC-3
@@ -181,14 +194,14 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // stalled that track, and in PMT order every track behind it, on a live feed
     // (zenith regression). The config is built from that first frame, as 0.26.0
     // did, so its `bsmod` is the isolated frame's (see #1186 note above).
-    ("ts/m6-single.ts", 0xc7003d105314e195),
+    ("ts/m6-single.ts", 0xf1c0bc83662f59e7),
     // 0x322faa14c5c28795 before #1161: the capture is field-coded (PAFF), and
     // is now one sample per field pair (293 fields -> 147 samples) instead of
     // one per field. Every other fixture is unchanged.
-    ("ts/gulli-opengop.ts", 0xdb353e973c986444),
+    ("ts/gulli-opengop.ts", 0xb0b2ccb9bf3c83e7),
     ("ts/pts-wrap.ts", 0x446b6222520c1313),
-    ("ts/aac-5_1-640k.ts", 0x3df700a7bcf49a12),
-    ("ts/dts/dts_core.ts", 0x752977c25ed63b6b),
+    ("ts/aac-5_1-640k.ts", 0x0c69bd29aae724c7),
+    ("ts/dts/dts_core.ts", 0x049622d2b28d2388),
     // Re-captured for #1160 (cross-PES audio carry): this fixture re-chunks 39
     // real MP2 frames at 2000-byte PES payloads, so the old per-PES splitter
     // dropped every straddling frame; the carry now recovers all 39 (see
@@ -197,7 +210,7 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // Re-captured again for #1162 R2: the MPEG audio `esds` now carries
     // `maxBitrate`/`avgBitrate` from the first frame header (was 0), so the
     // IR `Debug` text changes; the samples are unchanged.
-    ("ts/legacy/mpeg2_mp2_pes_misaligned.ts", 0x98b3953453460387),
+    ("ts/legacy/mpeg2_mp2_pes_misaligned.ts", 0x3459220532f49676),
 ];
 
 #[test]
@@ -536,4 +549,4 @@ fn cenc_decrypted_output_is_unchanged() {
 }
 
 #[cfg(feature = "cenc")]
-const CENC_GOLDEN: [u64; 3] = [0x83039f8d14985d82, 0xfb42a9ef77a663dd, 0xb27101816b2a4137];
+const CENC_GOLDEN: [u64; 3] = [0xf124776756fb7155, 0xfb42a9ef77a663dd, 0x80b225c275a0c9a2];
