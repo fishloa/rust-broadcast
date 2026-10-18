@@ -395,7 +395,7 @@ pub enum ColourPrimaries {
 
 impl ColourPrimaries {
     /// Decode a `colour_primaries` value; unnamed rows are reserved.
-    fn from_wire(code: u8) -> Self {
+    pub fn from_wire(code: u8) -> Self {
         match code {
             1 => Self::Bt709,
             2 => Self::Unspecified,
@@ -506,7 +506,7 @@ pub enum TransferCharacteristics {
 
 impl TransferCharacteristics {
     /// Decode a `transfer_characteristics` value; unnamed rows are reserved.
-    fn from_wire(code: u8) -> Self {
+    pub fn from_wire(code: u8) -> Self {
         match code {
             1 => Self::Bt709,
             2 => Self::Unspecified,
@@ -642,7 +642,7 @@ pub enum MatrixCoefficients {
 
 impl MatrixCoefficients {
     /// Decode a `matrix_coefficients` value; unnamed rows are reserved.
-    fn from_wire(code: u8) -> Self {
+    pub fn from_wire(code: u8) -> Self {
         match code {
             0 => Self::Gbr,
             1 => Self::Bt709,

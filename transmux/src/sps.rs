@@ -2794,6 +2794,382 @@ mod tests {
         }
     }
 
+    // -----------------------------------------------------------------
+    // Colour signalling: overscan + video_signal_type() (H.264 §E.1.1 /
+    // H.265 §E.2.1; Tables E-2..E-5 / E.2..E.5, transcribed in
+    // `docs/codec/vui-colour-tables.md`).
+    // -----------------------------------------------------------------
+
+    use crate::ir::{
+        ColourDescription, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
+        VideoFormat, VideoSignalType,
+    };
+
+    /// What a test wants in the VUI's overscan + video signal type.
+    #[derive(Clone, Copy, Default)]
+    struct ColourVui {
+        overscan: Option<bool>,
+        vst: Option<(u8, bool, Option<(u8, u8, u8)>)>,
+    }
+
+    /// Append `overscan_info_present_flag(..)` then `video_signal_type(..)`.
+    fn put_colour_vui(s: &mut BitSink, v: ColourVui) {
+        match v.overscan {
+            Some(appropriate) => {
+                s.bit(true); // overscan_info_present_flag
+                s.bit(appropriate); // overscan_appropriate_flag
+            }
+            None => s.bit(false),
+        }
+        match v.vst {
+            Some((format, full_range, colour)) => {
+                s.bit(true); // video_signal_type_present_flag
+                s.bits(u64::from(format), 3); // video_format
+                s.bit(full_range); // video_full_range_flag
+                match colour {
+                    Some((primaries, transfer, matrix)) => {
+                        s.bit(true); // colour_description_present_flag
+                        s.bits(u64::from(primaries), 8);
+                        s.bits(u64::from(transfer), 8);
+                        s.bits(u64::from(matrix), 8);
+                    }
+                    None => s.bit(false),
+                }
+            }
+            None => s.bit(false),
+        }
+    }
+
+    /// A colour description from three wire code points.
+    fn colour(primaries: u8, transfer: u8, matrix: u8) -> ColourDescription {
+        ColourDescription::from_wire(primaries, transfer, matrix)
+    }
+
+    /// H.264 Table E-3 (H.265 E.3): defined rows -> primaries text.
+    const SPEC_TABLE_E3: [(u8, &str); 12] = [
+        (1, "Rec. ITU-R BT.709-6"),
+        (2, "Unspecified"),
+        (4, "Rec. ITU-R BT.470-7 System M (historical)"),
+        (5, "Rec. ITU-R BT.470-7 System B, G (historical)"),
+        (6, "Rec. ITU-R BT.601-7 525"),
+        (7, "SMPTE 240M (1999, historical)"),
+        (8, "Generic film (colour filters using Illuminant C)"),
+        (9, "Rec. ITU-R BT.2020-2"),
+        (10, "SMPTE ST 428-1 (2006)"),
+        (11, "SMPTE RP 431-2 (2011)"),
+        (12, "SMPTE EG 432-1 (2010)"),
+        (22, "EBU Tech. 3213-E (1975)"),
+    ];
+
+    /// H.264 Table E-4 / H.265 E.4: every defined row.
+    const SPEC_TABLE_E4_ROWS: [u8; 17] =
+        [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+    /// H.264 Table E-5 / H.265 E.5: every defined row 0..=17.
+    const SPEC_TABLE_E5_ROWS: [u8; 17] =
+        [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+
+    #[test]
+    fn colour_primaries_match_table_e3_rows() {
+        for (code, label) in SPEC_TABLE_E3 {
+            let p = <ColourPrimaries>::from_wire(code);
+            assert_eq!(p.code(), code);
+            assert_eq!(p.name(), label, "colour_primaries {code}");
+        }
+    }
+
+    #[test]
+    fn transfer_matches_table_e4_defined_rows() {
+        for code in SPEC_TABLE_E4_ROWS {
+            let t = TransferCharacteristics::from_wire(code);
+            assert_eq!(t.code(), code);
+            assert_ne!(t.name(), "reserved", "transfer {code} must be defined");
+        }
+        // The two HDR transfers a UHD player must not miss.
+        assert_eq!(
+            TransferCharacteristics::from_wire(16),
+            TransferCharacteristics::SmpteSt2084
+        );
+        assert_eq!(
+            TransferCharacteristics::from_wire(18),
+            TransferCharacteristics::AribStdB67
+        );
+    }
+
+    #[test]
+    fn matrix_coefficients_match_table_e5_defined_rows() {
+        for code in SPEC_TABLE_E5_ROWS {
+            let m = MatrixCoefficients::from_wire(code);
+            assert_eq!(m.code(), code);
+            assert_ne!(m.name(), "reserved", "matrix {code} must be defined");
+        }
+        // The classic Y'CbCr matrices a player must tell apart.
+        assert_eq!(
+            MatrixCoefficients::from_wire(5),
+            MatrixCoefficients::Bt470SystemB
+        );
+        assert_eq!(
+            MatrixCoefficients::from_wire(6),
+            MatrixCoefficients::Bt470SystemM
+        );
+        // BT.709 vs BT.601 must render differently (the whole point of Phase 1b).
+        assert_ne!(
+            MatrixCoefficients::from_wire(1).name(),
+            MatrixCoefficients::from_wire(6).name()
+        );
+    }
+
+    /// H.264 Table E-2 0..=7; 6 and 7 are reserved in both specs.
+    #[test]
+    fn video_format_matches_table_e2() {
+        const MEANINGS: [&str; 8] = [
+            "Component",
+            "PAL",
+            "NTSC",
+            "SECAM",
+            "MAC",
+            "Unspecified video format",
+            "reserved",
+            "reserved",
+        ];
+        for (code, label) in (0u8..).zip(MEANINGS) {
+            let f = VideoFormat::from_wire(code).expect("u(3) value");
+            assert_eq!(f.code(), code);
+            assert_eq!(f.name(), label);
+        }
+        // The field is u(3): nothing wider can come off the wire.
+        assert_eq!(VideoFormat::from_wire(8), None);
+        assert_eq!(VideoFormat::from_wire(255), None);
+    }
+
+    #[test]
+    fn every_colour_code_round_trips_and_has_a_label() {
+        for code in 0..=u8::MAX {
+            let p = ColourPrimaries::from_wire(code);
+            let t = TransferCharacteristics::from_wire(code);
+            let m = MatrixCoefficients::from_wire(code);
+            assert_eq!((p.code(), t.code(), m.code()), (code, code, code));
+            for label in [p.name(), t.name(), m.name()] {
+                assert!(!label.is_empty());
+            }
+            let d = colour(code, code, code);
+            assert_eq!(d.primaries.code(), code);
+            assert_eq!(d.transfer.code(), code);
+            assert_eq!(d.matrix.code(), code);
+        }
+        // Reserved rows keep their code and say so.
+        assert_eq!(ColourPrimaries::from_wire(0), ColourPrimaries::Reserved(0));
+        assert_eq!(
+            TransferCharacteristics::from_wire(19),
+            TransferCharacteristics::Reserved(19)
+        );
+        assert_eq!(
+            MatrixCoefficients::from_wire(3),
+            MatrixCoefficients::Reserved(3)
+        );
+        assert_eq!(ColourPrimaries::Reserved(255).code(), 255u8);
+    }
+
+    /// An H.264 Baseline SPS whose VUI carries `colour` and a timing block
+    /// after it: a mis-sized colour read shifts the walk and corrupts the fps.
+    fn avc_colour_sps(colour: ColourVui) -> Vec<u8> {
+        let mut nal = vec![0x67u8, 66, 0x00, 30];
+        let mut s = BitSink::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(0); // log2_max_frame_num_minus4
+        s.ue(2); // pic_order_cnt_type
+        s.ue(1); // max_num_ref_frames
+        s.bit(false); // gaps_in_frame_num_value_allowed_flag
+        s.ue(44); // pic_width_in_mbs_minus1 -> 720
+        s.ue(35); // pic_height_in_map_units_minus1 -> 576
+        s.bit(true); // frame_mbs_only_flag
+        s.bit(true); // direct_8x8_inference_flag
+        s.bit(false); // frame_cropping_flag
+        s.bit(true); // vui_parameters_present_flag
+        put_aspect(&mut s, Some((1, None)));
+        put_colour_vui(&mut s, colour);
+        s.bit(false); // chroma_loc_info_present_flag
+        s.bit(true); // timing_info_present_flag
+        s.bits(1, 32); // num_units_in_tick
+        s.bits(50, 32); // time_scale
+        s.bit(true); // fixed_frame_rate_flag
+        s.bit(false); // nal_hrd_parameters_present_flag
+        s.bit(false); // vcl_hrd_parameters_present_flag
+        s.bit(false); // pic_struct_present_flag
+        s.bit(false); // bitstream_restriction_flag
+        s.bit(true); // rbsp_stop_one_bit
+        nal.extend(s.finish());
+        nal
+    }
+
+    /// The same VUI tail on an H.265 SPS: after the colour block come
+    /// `field_seq_flag`/`frame_field_info_present_flag`, read and asserted.
+    fn hevc_colour_sps(colour: ColourVui) -> Vec<u8> {
+        let mut nal = vec![0x42u8, 0x01];
+        let mut s = BitSink::new();
+        s.bits(0, 4); // sps_video_parameter_set_id
+        s.bits(0, 3); // sps_max_sub_layers_minus1
+        s.bit(true); // sps_temporal_id_nesting_flag
+        s.bits(0, 2); // general_profile_space
+        s.bit(false); // general_tier_flag
+        s.bits(1, 5); // general_profile_idc
+        s.bits(0, 32); // general_profile_compatibility_flags
+        s.bits(0, 48); // general_constraint_indicator_flags
+        s.bits(93, 8); // general_level_idc
+        s.ue(0); // sps_seq_parameter_set_id
+        s.ue(1); // chroma_format_idc
+        s.ue(16); // pic_width_in_luma_samples
+        s.ue(16); // pic_height_in_luma_samples
+        s.bit(false); // conformance_window_flag
+        s.ue(0); // bit_depth_luma_minus8
+        s.ue(0); // bit_depth_chroma_minus8
+        s.ue(3); // log2_max_pic_order_cnt_lsb_minus4
+        s.bit(false); // sps_sub_layer_ordering_info_present_flag
+        s.ue(0); // sps_max_dec_pic_buffering_minus1
+        s.ue(0); // sps_max_num_reorder_pics
+        s.ue(0); // sps_max_latency_increase_plus1
+        s.ue(0);
+        s.ue(3);
+        s.ue(0);
+        s.ue(3); // coding/transform block sizes
+        s.ue(1);
+        s.ue(1); // max_transform_hierarchy_depth_inter/intra
+        s.bit(false); // scaling_list_enabled_flag
+        s.bit(false); // amp_enabled_flag
+        s.bit(false); // sample_adaptive_offset_enabled_flag
+        s.bit(false); // pcm_enabled_flag
+        s.ue(0); // num_short_term_ref_pic_sets
+        s.bit(false); // long_term_ref_pics_present_flag
+        s.bit(false); // sps_temporal_mvp_enabled_flag
+        s.bit(false); // strong_intra_smoothing_enabled_flag
+        s.bit(true); // vui_parameters_present_flag
+        put_aspect(&mut s, Some((1, None)));
+        put_colour_vui(&mut s, colour);
+        s.bit(false); // chroma_loc_info_present_flag
+        s.bit(false); // neutral_chroma_indication_flag
+        s.bit(true); // field_seq_flag
+        s.bit(true); // frame_field_info_present_flag
+        s.bit(false); // default_display_window_flag
+        s.bit(false); // vui_timing_info_present_flag
+        s.bit(false); // bitstream_restriction_flag
+        s.bit(true); // rbsp_stop_one_bit
+        nal.extend(s.finish());
+        nal
+    }
+
+    /// Decode a colour VUI on both codecs and hand back the geometry.
+    fn both_colour_geometries(v: ColourVui) -> [crate::ir::DisplayGeometry; 2] {
+        let avc = avc_colour_sps(v);
+        assert_eq!(decode_avc_sps(&avc).unwrap().fps, Some(25.0), "AVC walk");
+        let hevc = hevc_colour_sps(v);
+        let i = decode_hevc_interlace_sps(&hevc).expect("HEVC walk");
+        assert!(
+            i.field_seq && i.frame_field_info_present,
+            "HEVC walk past the colour block"
+        );
+        [
+            crate::ir::DisplayGeometry::from_avc_sps(&avc).unwrap(),
+            crate::ir::DisplayGeometry::from_hevc_sps(&hevc).unwrap(),
+        ]
+    }
+
+    #[test]
+    fn absent_video_signal_type_is_none_with_the_spec_inferred_defaults() {
+        let g = both_colour_geometries(ColourVui::default());
+        for g in g {
+            assert_eq!(g.video_signal, None);
+            assert_eq!(g.overscan_appropriate, None);
+            assert!(!g.full_range());
+            assert_eq!(g.video_format(), VideoFormat::Unspecified);
+            let d = g.colour_description();
+            assert_eq!(d.primaries, ColourPrimaries::Unspecified);
+            assert_eq!(d.transfer, TransferCharacteristics::Unspecified);
+            assert_eq!(d.matrix, MatrixCoefficients::Unspecified);
+        }
+    }
+
+    #[test]
+    fn video_signal_without_colour_description_keeps_colour_none() {
+        let g = both_colour_geometries(ColourVui {
+            overscan: None,
+            vst: Some((0, true, None)),
+        });
+        for g in g {
+            assert_eq!(
+                g.video_signal,
+                Some(VideoSignalType::new(VideoFormat::Component, true, None))
+            );
+            assert!(g.full_range());
+            // Signalled format survives; colour falls back to the inference.
+            assert_eq!(g.video_format(), VideoFormat::Component);
+            assert_eq!(
+                g.colour_description().matrix,
+                MatrixCoefficients::Unspecified
+            );
+        }
+    }
+
+    #[test]
+    fn full_colour_description_is_read_in_spec_order() {
+        // 5/5/5 = melodie; 1/1/1 = BT.709; 9/16/9 = BT.2020 PQ. Distinct
+        // codes catch a primaries/transfer/matrix read swap.
+        for (p, t, m) in [(5u8, 5u8, 5u8), (1, 1, 1), (9, 16, 9)] {
+            let g = both_colour_geometries(ColourVui {
+                overscan: None,
+                vst: Some((5, false, Some((p, t, m)))),
+            });
+            for g in g {
+                assert_eq!(g.colour_description(), colour(p, t, m));
+                assert_eq!(g.video_signal.unwrap().colour, Some(colour(p, t, m)));
+                assert!(!g.full_range());
+            }
+        }
+    }
+
+    #[test]
+    fn reserved_and_boundary_code_points_survive_the_walk() {
+        for (p, t, m) in [(0u8, 0u8, 0u8), (3, 3, 3), (255, 255, 255), (17, 19, 18)] {
+            let g = both_colour_geometries(ColourVui {
+                overscan: None,
+                vst: Some((5, false, Some((p, t, m)))),
+            });
+            for g in g {
+                let d = g.colour_description();
+                assert_eq!(
+                    (d.primaries.code(), d.transfer.code(), d.matrix.code()),
+                    (p, t, m)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn overscan_flag_precedes_the_video_signal_type() {
+        // The fixture that catches a swapped overscan/video_signal order: with
+        // overscan present, a walk reading video_signal_type first reads the
+        // overscan bits as the signal type and corrupts everything after it.
+        for appropriate in [true, false] {
+            let g = both_colour_geometries(ColourVui {
+                overscan: Some(appropriate),
+                vst: Some((5, true, Some((1, 1, 1)))),
+            });
+            for g in g {
+                assert_eq!(g.overscan_appropriate, Some(appropriate));
+                assert!(g.full_range());
+                assert_eq!(g.colour_description(), colour(1, 1, 1));
+            }
+        }
+        // Overscan present, video signal type absent.
+        let g = both_colour_geometries(ColourVui {
+            overscan: Some(true),
+            vst: None,
+        });
+        for g in g {
+            assert_eq!(g.overscan_appropriate, Some(true));
+            assert_eq!(g.video_signal, None);
+        }
+    }
+
     /// H.265 has no real fixture with a non-square SAR: spec vectors only.
     #[test]
     fn hevc_every_table_e1_idc_decodes_to_its_ratio() {
