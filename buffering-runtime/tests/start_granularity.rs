@@ -115,6 +115,31 @@ fn small_start_fill_with_coarse_audio_does_not_stall() {
     assert!(o.pauses.is_empty(), "stalled at {:?}", o.pauses);
 }
 
+/// At a start fill of 500 ms and above the gate costs nothing: the start is
+/// bound by the audio lead (one 300 ms PES per delivery) and by the gate's own
+/// bound (`start_us()` after the track's first delivery), never by waiting for
+/// three closed windows (which would be ~1.05 s here). Measured with the gate
+/// bypassed, the same simulation starts at the same instants. Zero stalls.
+#[test]
+fn gate_adds_no_start_delay_at_500ms_and_above() {
+    for (initial_us, jittered, steady) in
+        [(500_000, 600_000, 300_000), (1_800_000, 1_800_000, 900_000)]
+    {
+        for register in [true, false] {
+            let j = run(initial_us, &JITTERED, register, 30);
+            assert_eq!(
+                j.start_after,
+                Some(jittered),
+                "jittered, initial {initial_us}"
+            );
+            assert!(j.pauses.is_empty(), "stalled at {:?}", j.pauses);
+            let s = run(initial_us, &STEADY, register, 30);
+            assert_eq!(s.start_after, Some(steady), "steady, initial {initial_us}");
+            assert!(s.pauses.is_empty(), "stalled at {:?}", s.pauses);
+        }
+    }
+}
+
 /// Fine-grained tracks (audio every chunk, 100 ms) learn their cadence at once
 /// and the gate costs (almost) nothing: the start is at most one gate window
 /// after the plain start-fill would have been met.

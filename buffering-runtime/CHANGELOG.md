@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documented
+- Start-fill cost of the granularity gate, measured (DESIGN 0.7d): on the Apple TV input logs (rai-3, rai-3 per-chunk, rai-3-stall, france-5; closed loop, tracks registered up front) the gate costs nothing at `initial_us` 500 ms and 1.8 s; the first frame is bound by the audio lead filling in one-PES lumps (lead 703 ms at the rai-3 start for a 500 ms fill) and by audio's first delivery arriving ~0.43-0.62 s after video's. A one-step gate would start 0.1-0.2 s earlier at 300 ms but stalls rai-3 and rai-3 per-chunk, so the two-step gate and its bound are unchanged. No behaviour change.
+
+### Tests
+- `start_gate_is_free_at_500ms_and_prevents_the_300ms_stall` (real logs at 300 ms / 500 ms / 1.8 s fill: exact start instants, zero pauses) and `gate_adds_no_start_delay_at_500ms_and_above` (closed-loop simulation, jittered and steady audio, registered and not). Mutation-proved: one learnt step stalls rai-3 at 300 ms, three delays france-5 by 119 ms at 500 ms, dropping the `start_us()` bound delays the simulation start by 100 ms.
+
 ## [0.1.0] - 2026-10-18
 
 Initial release. Sans-IO live-TS playout buffer controller for players that cannot change playback rate. The measurement half follows RFC 5481 / RFC 3550; the policy half (sizing, thresholds, stall memory) is **implementation-defined**: no standard specifies a de-jitter policy (owner-approved spec-posture departure).
