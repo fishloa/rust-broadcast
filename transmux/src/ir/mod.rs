@@ -64,7 +64,11 @@ pub use audio_meta::{
     SupplementaryAudio,
 };
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat, SubtitleSampleEntry};
-pub use display::{AspectRatioIdc, DisplayGeometry, EXTENDED_SAR_IDC, SampleAspectRatio};
+pub use display::{
+    AspectRatioIdc, ColourDescription, ColourPrimaries, DisplayGeometry, EXTENDED_SAR_IDC,
+    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MatrixCoefficients,
+    SampleAspectRatio, TransferCharacteristics, VideoFormat, VideoSignalType,
+};
 pub use event::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
     InputDegradation,

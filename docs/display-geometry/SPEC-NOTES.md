@@ -91,16 +91,17 @@ if( video_signal_type_present_flag ) {
 }
 ```
 
-- `video_format` absent => inferred 5 (Unspecified). Table E-2 (H.264, md
-  line ~19020): 0 Component, 1 PAL, 2 NTSC, 3 SECAM, 4 MAC, 5 Unspecified,
-  6..7 Reserved. **Not yet checked on the rendered page** - do so before the
-  `VideoFormat` enum is written.
+- `video_format` absent => inferred 5 (Unspecified). Table E-2 (H.264,
+  rendered PDF p456 / printed 432): 0 Component, 1 PAL, 2 NTSC, 3 SECAM,
+  4 MAC, 5 Unspecified, 6..7 Reserved. **Checked on the rendered page** for
+  Phase 1b; the md table is intact, unlike Tables E-3..E-5 (see below).
 - `video_full_range_flag` absent => inferred 0.
 - `colour_primaries` absent => inferred 2 (Unspecified). Code-point tables:
   H.264 Tables E-3/E-4/E-5 (PDF pp ~457-465), H.265 Tables E.3/E.4/E.5. These
-  are long; they are **not** transcribed here and must be transcribed (and
-  checked on the rendered pages) as the first task of Phase 1. The enum
-  labels come from those tables, never from memory or from ffprobe's names.
+  are long; Phase 1b transcribed them, row by row, from the rendered pages
+  into `transmux/docs/codec/vui-colour-tables.md` (H.264 pp457-460 /
+  464-466; H.265 pp451-453 / 459-460). The enum labels come from those
+  tables, never from memory or from ffprobe's names.
 - `overscan_info_present_flag` / `overscan_appropriate_flag` precede
   `video_signal_type_present_flag` (both specs).
 
@@ -310,3 +311,30 @@ intended to be used by receivers to inform the user" (md line 2700). Table 26
 rows for H.264 SD video distinguish "4:3 aspect ratio", "16:9 aspect ratio",
 "> 16:9 aspect ratio" per frame rate. It is event-granular, not frame-accurate.
 Already parsed by `dvb-si` (`descriptors/component.rs`).
+
+## 9. Colour tables: markdown garbling found in Phase 1b
+
+Read from the **rendered** pages, not the md (details per table in
+`transmux/docs/codec/vui-colour-tables.md`):
+
+- **H.264 Table E-3 (md)**: each row 1..=12 is one multi-line cell in the PDF
+  (primary/green/blue/red/white with x, y); the md splits them into separate
+  rows, merges one row's informative remark into the next, and for row 11
+  emits `red 0.680 0.320` / `white 0.314 0.351` as a bare paragraph between
+  rows 11 and 12. No code point is lost.
+- **H.264 Table E-4 (md)**: `2 Unspecified` and `3 Reserved` lost their pipes
+  and merged into row 1's prose, so a naive md scrape **misses two defined
+  rows**.
+- **H.264 Table E-5 (md)**: the header lost its pipes (`Value Matrix
+  Informative remark`) and rows 0..=7, 9..=15 merged into one paragraph; only
+  16, 17 and 18..=255 survive as table rows. A naive scrape would treat 8
+  (YCgCo) and, worse, the BT.601/709 rows as absent.
+- **H.265 Tables E.3/E.5 (md)**: the header row is repeated mid-table at the
+  page break; E.5's YCgCo-R equation references differ from H.264's (H.265
+  numbering). Neither affects a label.
+- **Naming**: H.265 §E.2.1 spells the middle colour element `matrix_coeffs`,
+  H.264 `matrix_coefficients`; same `u(8)` field and same table.
+- **Row differences**: only `video_format` 6 and 7 differ in meaning between
+  the specs (H.264 "Reserved" with no interpretation; H.265 "interpret as 5").
+  Tables E-3/E-4/E-5 and E.3/E.4/E.5 define the same rows.
+
