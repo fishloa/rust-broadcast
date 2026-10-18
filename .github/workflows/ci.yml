@@ -29,39 +29,39 @@ env:
 # file with `cargo +nightly` / `cargo +<CANARY_RUST>`. See issue #574.
 
 jobs:
+  # The ONE place a CI run clones the private fixtures repo (~374 MB). GitHub
+  # jobs get separate runners, so a per-job checkout paid that clone up to
+  # three times a run; this job does it once (or, when the pinned commit is
+  # already cached, not at all) and every consuming job restores it.
+  # No secrets on a fork PR: the action then reports enabled=false, this job
+  # still succeeds, and the consumers skip the private tests loudly.
+  private-fixtures:
+    name: private fixtures (checkout once)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare the pinned private fixtures
+        uses: ./.github/actions/private-fixtures
+        with:
+          mode: prepare
+          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
+
   test:
     name: test (MSRV 1.95.0)
     runs-on: ubuntu-latest
-    env:
-      HAS_PRIVATE_KEY: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY != '' }}
+    needs: private-fixtures
     steps:
       - uses: actions/checkout@v5
-      # Real-capture / non-redistributable fixtures live in the private repo
-      # (the `private` submodule). CI clones skip submodules, so without this the
-      # private-fixture tests would all SKIP. With the read-only deploy key we
-      # fetch exactly the pinned commit (fixtures/ only) and tell the test-fixtures
-      # resolver where it is; REQUIRE_PRIVATE_FIXTURES=1 turns a missing private
-      # fixture into a hard failure. Fork PRs have no secrets and keep skipping.
-      - name: Pinned private-fixtures commit
-        if: env.HAS_PRIVATE_KEY == 'true'
-        id: private_pin
-        run: echo "sha=$(git ls-tree HEAD private | awk '{print $3}')" >> "$GITHUB_OUTPUT"
-      - name: Check out private fixtures (read-only deploy key)
-        if: env.HAS_PRIVATE_KEY == 'true'
-        uses: actions/checkout@v5
+      # Restores the private fixtures the `private-fixtures` job prepared (a
+      # cache miss fails this job — never a silent skip); without a deploy key
+      # on a fork PR it sets SKIP_PRIVATE_FIXTURES=1 so the tests skip loudly.
+      - name: Private fixtures (real-capture tests)
+        uses: ./.github/actions/private-fixtures
         with:
-          repository: fishloa/rust-broadcast-private
-          ssh-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
-          ref: ${{ steps.private_pin.outputs.sha }}
-          path: private-fixtures
-          sparse-checkout: fixtures
-          lfs: false
-          persist-credentials: false
-      - name: Point tests at the private fixtures
-        if: env.HAS_PRIVATE_KEY == 'true'
-        run: |
-          echo "RUST_BROADCAST_PRIVATE=$GITHUB_WORKSPACE/private-fixtures" >> "$GITHUB_ENV"
-          echo "REQUIRE_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
+          mode: use
+          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       # --locked: the committed Cargo.lock pins MSRV-compatible dependency
@@ -89,30 +89,18 @@ jobs:
   test-no-default:
     name: test (MSRV 1.95.0, no default features)
     runs-on: ubuntu-latest
-    env:
-      HAS_PRIVATE_KEY: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY != '' }}
+    needs: private-fixtures
     steps:
       - uses: actions/checkout@v5
-      - name: Pinned private-fixtures commit
-        if: env.HAS_PRIVATE_KEY == 'true'
-        id: private_pin
-        run: echo "sha=$(git ls-tree HEAD private | awk '{print $3}')" >> "$GITHUB_OUTPUT"
-      - name: Check out private fixtures (read-only deploy key)
-        if: env.HAS_PRIVATE_KEY == 'true'
-        uses: actions/checkout@v5
+      # Restores the private fixtures the `private-fixtures` job prepared (a
+      # cache miss fails this job — never a silent skip); without a deploy key
+      # on a fork PR it sets SKIP_PRIVATE_FIXTURES=1 so the tests skip loudly.
+      - name: Private fixtures (real-capture tests)
+        uses: ./.github/actions/private-fixtures
         with:
-          repository: fishloa/rust-broadcast-private
-          ssh-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
-          ref: ${{ steps.private_pin.outputs.sha }}
-          path: private-fixtures
-          sparse-checkout: fixtures
-          lfs: false
-          persist-credentials: false
-      - name: Point tests at the private fixtures
-        if: env.HAS_PRIVATE_KEY == 'true'
-        run: |
-          echo "RUST_BROADCAST_PRIVATE=$GITHUB_WORKSPACE/private-fixtures" >> "$GITHUB_ENV"
-          echo "REQUIRE_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
+          mode: use
+          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
@@ -333,30 +321,18 @@ jobs:
   dvb-stream:
     name: dvb-stream
     runs-on: ubuntu-latest
-    env:
-      HAS_PRIVATE_KEY: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY != '' }}
+    needs: private-fixtures
     steps:
       - uses: actions/checkout@v5
-      - name: Pinned private-fixtures commit
-        if: env.HAS_PRIVATE_KEY == 'true'
-        id: private_pin
-        run: echo "sha=$(git ls-tree HEAD private | awk '{print $3}')" >> "$GITHUB_OUTPUT"
-      - name: Check out private fixtures (read-only deploy key)
-        if: env.HAS_PRIVATE_KEY == 'true'
-        uses: actions/checkout@v5
+      # Restores the private fixtures the `private-fixtures` job prepared (a
+      # cache miss fails this job — never a silent skip); without a deploy key
+      # on a fork PR it sets SKIP_PRIVATE_FIXTURES=1 so the tests skip loudly.
+      - name: Private fixtures (real-capture tests)
+        uses: ./.github/actions/private-fixtures
         with:
-          repository: fishloa/rust-broadcast-private
-          ssh-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
-          ref: ${{ steps.private_pin.outputs.sha }}
-          path: private-fixtures
-          sparse-checkout: fixtures
-          lfs: false
-          persist-credentials: false
-      - name: Point tests at the private fixtures
-        if: env.HAS_PRIVATE_KEY == 'true'
-        run: |
-          echo "RUST_BROADCAST_PRIVATE=$GITHUB_WORKSPACE/private-fixtures" >> "$GITHUB_ENV"
-          echo "REQUIRE_PRIVATE_FIXTURES=1" >> "$GITHUB_ENV"
+          mode: use
+          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - name: Build

@@ -28,6 +28,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+      - name: Private fixtures (real-capture tests)
+        uses: ./.github/actions/private-fixtures
+        with:
+          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
       - uses: Swatinem/rust-cache@v2
 
       - name: Gate — dvb-subtitle tests
