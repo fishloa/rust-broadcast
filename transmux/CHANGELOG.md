@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.5] - 2026-10-18
 ### Added
 - **Display geometry on every video `TrackSpec` (design `docs/display-geometry/DESIGN.md`, Phase 1a).** A new `ir::display` module with `DisplayGeometry` (coded picture size plus the SPS VUI aspect ratio), the typed `AspectRatioIdc` (ITU-T H.264 §E.2.1 Table E-1 / H.265 §E.3.1 Table E.1: idc 0 `Unspecified`, 1..=16 named rows, 17..=254 `Reserved(u8)`, 255 `ExtendedSar { sar_width, sar_height }`) and `SampleAspectRatio` (both terms non-zero, `reduced()`). `DisplayGeometry::sample_aspect_ratio() -> Option<(u16, u16)>` is `None` for idc 0, a reserved idc, or an extended SAR with a zero term, never a `0:0` sentinel. `DisplayGeometry::from_avc_sps` / `from_hevc_sps` / `from_codec_config` are public. `TrackSpec::display: Option<DisplayGeometry>` is derived by `TrackSpec::new` from the first SPS in the `avcC`/`hvcC` (and re-derived on every `TrackUpdated`), so an anamorphic SD picture (real captures: SAR 64:45 via `Extended_SAR`, 16:11 via idc 4) reaches every demux path without per-path edits; `TrackSpec::with_display` lets a source with better information override it. The H.264 and H.265 VUI walks no longer discard `aspect_ratio_idc` / `sar_width` / `sar_height`. Additive on `#[non_exhaustive]` types: no `CodecConfig::Avc`/`Hevc` field added. Cropping, the colour description, a change event and per-sample tags are later phases.
 
