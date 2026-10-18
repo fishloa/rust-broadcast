@@ -16,7 +16,8 @@
 //! vacuous). The optional, non-redistributable corpus lives in the private
 //! submodule and is reached through [`private`], which is `None` when the
 //! submodule is not initialised so each caller makes the skip decision
-//! explicitly.
+//! explicitly. Setting `SKIP_PRIVATE_FIXTURES=1` disables that tier even when
+//! a checkout exists (and it wins over `REQUIRE_PRIVATE_FIXTURES=1`).
 //!
 //! `publish = false` and no workspace-sibling dependencies: a path-only
 //! dev-dependency on it never appears in a published manifest (same pattern as
@@ -68,9 +69,25 @@ pub const PRIVATE_ENV: &str = "RUST_BROADCAST_PRIVATE";
 /// (vacuous) skip.
 pub const REQUIRE_PRIVATE_ENV: &str = "REQUIRE_PRIVATE_FIXTURES";
 
+/// Environment variable that disables the private tier when it is exactly `1`:
+/// [`private_root`] then resolves to `None` (a loud skip) even when a checkout
+/// exists, and even when [`REQUIRE_PRIVATE_ENV`] is set - the skip wins. Set
+/// per job in CI, or locally to run only the redistributable suite.
+pub const SKIP_PRIVATE_ENV: &str = "SKIP_PRIVATE_FIXTURES";
+
 /// `true` when `v` is exactly `1` (the value of [`REQUIRE_PRIVATE_ENV`]).
 fn flag_set(v: Option<&std::ffi::OsStr>) -> bool {
     v.is_some_and(|v| v == "1")
+}
+
+/// [`private_root`]'s body with the two environment flags passed in, so the
+/// precedence (skip over require) is testable without touching process-global
+/// env vars.
+fn private_root_with(checkout: Option<PathBuf>, skip: bool) -> Option<PathBuf> {
+    if skip {
+        return None;
+    }
+    checkout
 }
 
 /// The workspace root (the directory holding `Cargo.toml`, `fixtures/`, `private/`).
@@ -84,8 +101,17 @@ fn workspace() -> PathBuf {
 /// a linked git worktree (whose own `private/` is an empty directory), the
 /// `private/` of the main checkout the worktree belongs to. `None` means the
 /// private repo is simply not available (public / CI clones).
+///
+/// `None` also when [`SKIP_PRIVATE_ENV`] is exactly `1`, whatever exists and
+/// whatever [`REQUIRE_PRIVATE_ENV`] says.
 #[must_use]
 pub fn private_root() -> Option<PathBuf> {
+    let skip = flag_set(std::env::var_os(SKIP_PRIVATE_ENV).as_deref());
+    private_root_with(private_checkout(), skip)
+}
+
+/// The private checkout without the [`SKIP_PRIVATE_ENV`] override.
+fn private_checkout() -> Option<PathBuf> {
     let has_fixtures = |p: &Path| p.join("fixtures").is_dir();
     if let Some(v) = std::env::var_os(PRIVATE_ENV) {
         let p = PathBuf::from(v);
@@ -184,6 +210,13 @@ pub fn find(rel: &str) -> Option<(PathBuf, Source)> {
 pub fn require(rel: &str, who: &str) -> Option<PathBuf> {
     if let Some((p, _)) = find(rel) {
         return Some(p);
+    }
+    if flag_set(std::env::var_os(SKIP_PRIVATE_ENV).as_deref()) {
+        eprintln!(
+            "{who}: SKIPPED - private fixture `{rel}`: the private tier is disabled by \
+             {SKIP_PRIVATE_ENV}=1"
+        );
+        return None;
     }
     match private_root() {
         None if flag_set(std::env::var_os(REQUIRE_PRIVATE_ENV).as_deref()) => panic!(
@@ -320,6 +353,36 @@ mod tests {
     fn require_skips_loudly_only_without_the_private_repo() {
         if private_root().is_none() {
             assert!(require("definitely/not/here.bin", "unit").is_none());
+        }
+    }
+
+    #[test]
+    fn skip_private_flag_is_exactly_one() {
+        use std::ffi::OsStr;
+        assert!(flag_set(Some(OsStr::new("1"))));
+        assert!(!flag_set(Some(OsStr::new("true"))));
+        assert!(!flag_set(None));
+    }
+
+    #[test]
+    fn skip_private_disables_a_present_checkout_and_wins_over_require() {
+        let present = Some(PathBuf::from("/private"));
+        assert_eq!(private_root_with(present.clone(), false), present);
+        assert_eq!(private_root_with(present, true), None);
+        assert_eq!(private_root_with(None, true), None);
+        assert_eq!(private_root_with(None, false), None);
+    }
+
+    #[test]
+    fn skip_private_env_disables_the_private_tier() {
+        // Same thread-safety rule as the other tests here: assert the unset
+        // case only when the variable is unset, and the disabled case always
+        // (the helper is a pure function of the flag).
+        if std::env::var_os(SKIP_PRIVATE_ENV).is_none() {
+            assert_eq!(private_root(), private_checkout());
+        } else if flag_set(std::env::var_os(SKIP_PRIVATE_ENV).as_deref()) {
+            assert_eq!(private_root(), None);
+            assert!(find("definitely/not/here.bin").is_none());
         }
     }
 
