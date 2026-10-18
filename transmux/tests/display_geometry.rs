@@ -48,10 +48,10 @@ fn streaming_video_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
     }
     demux.finish();
     while let Some(ev) = demux.poll_event() {
-        if let DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) = ev {
-            if matches!(spec.config, CodecConfig::Avc { .. }) {
-                specs.push(spec);
-            }
+        if let DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) = ev
+            && matches!(spec.config, CodecConfig::Avc { .. })
+        {
+            specs.push(spec);
         }
     }
     specs
@@ -80,7 +80,7 @@ fn check(fixture: &str, aspect_ratio: AspectRatioIdc, sar: (u16, u16)) {
             .as_ref()
             .unwrap_or_else(|| panic!("{fixture}: batch TrackSpec.display is None"));
         assert_eq!((g.coded_width, g.coded_height), (SD_WIDTH, SD_HEIGHT));
-        assert_eq!(g.aspect_ratio, Some(aspect_ratio.clone()), "{fixture}");
+        assert_eq!(g.aspect_ratio, Some(aspect_ratio), "{fixture}");
         assert_eq!(g.sample_aspect_ratio(), Some(sar), "{fixture}");
     }
     // Streaming: the same, from the announced spec (nothing in this capture
@@ -93,7 +93,7 @@ fn check(fixture: &str, aspect_ratio: AspectRatioIdc, sar: (u16, u16)) {
             .as_ref()
             .unwrap_or_else(|| panic!("{fixture}: streaming TrackSpec.display is None"));
         assert_eq!((g.coded_width, g.coded_height), (SD_WIDTH, SD_HEIGHT));
-        assert_eq!(g.aspect_ratio, Some(aspect_ratio.clone()), "{fixture}");
+        assert_eq!(g.aspect_ratio, Some(aspect_ratio), "{fixture}");
         assert_eq!(g.sample_aspect_ratio(), Some(sar), "{fixture}");
     }
 }
@@ -119,6 +119,7 @@ fn krone_table_sar_16_11() {
     );
 }
 
+/// One event of interest, in emission order (`Spec` boxes the rare side).
 #[derive(Debug)]
 enum Obs {
     Sample {
@@ -126,7 +127,7 @@ enum Obs {
         width: u16,
         dts: Option<i64>,
     },
-    Spec(transmux::ir::TrackSpec),
+    Spec(Box<transmux::ir::TrackSpec>),
 }
 
 /// Width of the AVC config last announced for `track_id` (the fixture's first
@@ -165,7 +166,9 @@ fn track_updated_lands_after_the_last_old_config_sample() {
         demux.feed(chunk);
         while let Some(ev) = demux.poll_event() {
             match ev {
-                DemuxEvent::Sample { track_id, sample, .. } => {
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
                     let CodecConfig::Avc { width, .. } = demux_config(&sequence, track_id) else {
                         continue;
                     };
@@ -178,7 +181,7 @@ fn track_updated_lands_after_the_last_old_config_sample() {
                     }
                 }
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
-                    sequence.push(Obs::Spec(spec));
+                    sequence.push(Obs::Spec(Box::new(spec)));
                 }
                 _ => {}
             }
@@ -227,7 +230,6 @@ fn track_updated_lands_after_the_last_old_config_sample() {
     assert_eq!(*dts, TWO_RESOLUTIONS_KEYFRAME_DTS);
 }
 
-
 /// The geometry survives an fMP4 (CMAF) round trip: anamorphic TS input,
 /// `CmafMux` then `Fmp4Demux`. Both `TrackSpec`s derive it from the same
 /// `avcC` (the muxer rewrites the init segment, so this is not a pass-through
@@ -241,18 +243,30 @@ fn cmaf_round_trip_keeps_the_sample_aspect_ratio() {
     let before: Vec<Option<(u16, u16)>> = media
         .tracks
         .iter()
-        .map(|t| t.spec.display.as_ref().and_then(|g| g.sample_aspect_ratio()))
+        .map(|t| {
+            t.spec
+                .display
+                .as_ref()
+                .and_then(|g| g.sample_aspect_ratio())
+        })
         .collect();
     assert!(
         before.contains(&Some((16, 11))),
         "TS input must carry 16:11: {before:?}"
     );
     let fmp4 = transmux::CmafMux::new(1).package(&media).expect("CMAF mux");
-    let back = transmux::Fmp4Demux::new().unpackage(&fmp4).expect("fMP4 demux");
+    let back = transmux::Fmp4Demux::new()
+        .unpackage(&fmp4)
+        .expect("fMP4 demux");
     let after: Vec<Option<(u16, u16)>> = back
         .tracks
         .iter()
-        .map(|t| t.spec.display.as_ref().and_then(|g| g.sample_aspect_ratio()))
+        .map(|t| {
+            t.spec
+                .display
+                .as_ref()
+                .and_then(|g| g.sample_aspect_ratio())
+        })
         .collect();
     assert_eq!(after, before);
     let video = back
@@ -261,7 +275,7 @@ fn cmaf_round_trip_keeps_the_sample_aspect_ratio() {
         .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
         .expect("video track");
     assert_eq!(
-        video.spec.display.as_ref().map(|g| g.aspect_ratio.clone()),
+        video.spec.display.as_ref().map(|g| g.aspect_ratio),
         Some(Some(AspectRatioIdc::Sar16x11))
     );
 }
