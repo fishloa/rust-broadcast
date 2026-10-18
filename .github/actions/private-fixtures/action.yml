@@ -129,8 +129,9 @@ runs:
         path: private-fixtures
         key: private-fixtures-v1-${{ steps.pin.outputs.sha }}
 
+    # Runs in `checkout` and `use` only (the prep job restores nothing here).
     - name: Point tests at the private fixtures
-      if: inputs.mode != 'prepare' && steps.decide.outputs.enabled == 'true'
+      if: inputs.mode == 'use' || inputs.mode == 'checkout'
       shell: bash
       run: |
         echo "RUST_BROADCAST_PRIVATE=$GITHUB_WORKSPACE/private-fixtures" >> "$GITHUB_ENV"

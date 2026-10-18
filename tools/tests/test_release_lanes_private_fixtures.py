@@ -100,4 +100,4 @@ def test_composite_action_honours_the_skip_switch():
     with_ = checkout[0].get("with") or {}
     assert with_.get("path") == "private-fixtures", "must not clobber the main checkout"
     assert with_.get("ssh-key") == "${{ inputs.deploy-key }}"
-    assert "steps.private_pin.outputs.sha" in str(with_.get("ref")), "the ref must be the pinned commit"
+    assert "steps.pin.outputs.sha" in str(with_.get("ref")), "the ref must be the pinned commit"
