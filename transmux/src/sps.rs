@@ -18,6 +18,7 @@
 
 use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
+use crate::ir::{AspectRatioIdc, EXTENDED_SAR_IDC};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -134,7 +135,7 @@ pub struct AvcSpsInfo {
 /// (as returned by [`iter_annexb_nals`](crate::iter_annexb_nals)).
 /// The NAL header byte is skipped; decoding starts at the next byte.
 pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
-    decode_avc_sps_inner(sps_bytes).map(|(info, _)| info)
+    decode_avc_sps_inner(sps_bytes).map(|(info, _, _)| info)
 }
 
 /// The SPS fields a slice-header parser needs (ITU-T H.264 §7.3.3 reads
@@ -179,10 +180,39 @@ pub struct AvcPicTimingLayout {
 /// Decode only the slice-header-relevant SPS fields ([`AvcSliceSps`]) from an
 /// H.264 SPS NAL unit (1-byte NAL header included).
 pub fn decode_avc_slice_sps(sps_bytes: &[u8]) -> Result<AvcSliceSps> {
-    decode_avc_sps_inner(sps_bytes).map(|(_, s)| s)
+    decode_avc_sps_inner(sps_bytes).map(|(_, s, _)| s)
 }
 
-fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps)> {
+/// The display-relevant facts of an SPS that [`AvcSpsInfo`]/[`HevcSpsInfo`]
+/// cannot carry (neither is `#[non_exhaustive]`, so a field added there would
+/// be a breaking change): consumed by
+/// [`DisplayGeometry`](crate::ir::DisplayGeometry).
+pub(crate) struct DisplayFacts {
+    /// Decoded picture width before cropping, luma samples (H.264
+    /// `PicWidthInSamplesL`; H.265 `pic_width_in_luma_samples`).
+    pub(crate) coded_width: u32,
+    /// Decoded picture height before cropping, luma samples (H.264
+    /// `16 * FrameHeightInMbs`; H.265 `pic_height_in_luma_samples`).
+    pub(crate) coded_height: u32,
+    /// VUI `aspect_ratio_idc` (+ `sar_width`/`sar_height`), `None` when the VUI
+    /// or `aspect_ratio_info_present_flag` is absent or the VUI was truncated
+    /// before the field was complete.
+    pub(crate) aspect_ratio: Option<AspectRatioIdc>,
+}
+
+/// Decode the [`DisplayFacts`] of an H.264 SPS NAL unit (1-byte NAL header
+/// included).
+pub(crate) fn decode_avc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts> {
+    decode_avc_sps_inner(sps_bytes).map(|(_, _, d)| d)
+}
+
+/// Decode the [`DisplayFacts`] of an H.265 SPS NAL unit (2-byte NAL header
+/// included).
+pub(crate) fn decode_hevc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts> {
+    decode_hevc_sps_inner(sps_bytes).map(|(_, _, d)| d)
+}
+
+fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, DisplayFacts)> {
     if sps_bytes.len() < 4 {
         return Err(Error::BufferTooShort {
             need: 4,
@@ -330,13 +360,22 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps)> {
     let crop_unit_x = sub_width_c(chroma_format_idc) as u64;
     let crop_unit_y = sub_height_c(chroma_format_idc) as u64 * (2 - frame_mbs_only as u64);
 
-    let width = (pic_width_in_mbs * 16).saturating_sub(crop_unit_x * (crop_left + crop_right));
-    let height = (frame_height_in_mbs * 16).saturating_sub(crop_unit_y * (crop_top + crop_bottom));
+    let width =
+        (pic_width_in_mbs * AVC_MB_SIZE).saturating_sub(crop_unit_x * (crop_left + crop_right));
+    let height =
+        (frame_height_in_mbs * AVC_MB_SIZE).saturating_sub(crop_unit_y * (crop_top + crop_bottom));
 
     // vui_parameters — ITU-T H.264 §E.1.1.  Walk in syntax order to reach
     // timing_info; stop reading after timing_info_present_flag.
     let vui = parse_avc_vui(&mut r);
     let (num_units_in_tick, time_scale, fps) = vui.timing;
+
+    let clamp_u32 = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+    let display = DisplayFacts {
+        coded_width: clamp_u32(pic_width_in_mbs * AVC_MB_SIZE),
+        coded_height: clamp_u32(frame_height_in_mbs * AVC_MB_SIZE),
+        aspect_ratio: vui.aspect_ratio,
+    };
 
     Ok((
         AvcSpsInfo {
@@ -365,12 +404,18 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps)> {
             mb_adaptive_frame_field,
             pic_timing: vui.pic_timing,
         },
+        display,
     ))
 }
+
+/// Luma samples per macroblock side (H.264 §7.4.2.1.1: `PicWidthInMbs * 16`).
+const AVC_MB_SIZE: u64 = 16;
 
 /// What the H.264 VUI walk yields (§E.1.1).
 #[derive(Default)]
 struct AvcVuiFacts {
+    /// `aspect_ratio_idc` (+ `sar_*` when Extended_SAR), §E.2.1 Table E-1.
+    aspect_ratio: Option<AspectRatioIdc>,
     /// `(num_units_in_tick, time_scale, fps)`.
     timing: (Option<u32>, Option<u32>, Option<f32>),
     pic_timing: Option<AvcPicTimingLayout>,
@@ -425,6 +470,26 @@ fn parse_avc_hrd(r: &mut BitReader) -> crate::error::Result<(u8, u8)> {
     Ok((cpb, dpb))
 }
 
+/// Read `aspect_ratio_idc` and, for Extended_SAR, `sar_width`/`sar_height`
+/// (H.264 §E.1.1 / H.265 §E.2.1; identical syntax in both). Truncation
+/// mid-field is an `Err`, so the caller never records a half-read value.
+fn read_aspect_ratio(r: &mut BitReader) -> Result<AspectRatioIdc> {
+    let idc = r.read_bits(ASPECT_RATIO_IDC_BITS, "aspect_ratio_idc")? as u8;
+    let extended = if idc == EXTENDED_SAR_IDC {
+        let w = r.read_bits(SAR_DIMENSION_BITS, "sar_width")? as u16;
+        let h = r.read_bits(SAR_DIMENSION_BITS, "sar_height")? as u16;
+        Some((w, h))
+    } else {
+        None
+    };
+    Ok(AspectRatioIdc::from_wire(idc, extended))
+}
+
+/// Width of `aspect_ratio_idc`, `u(8)` (H.264 §E.1.1, H.265 §E.2.1).
+const ASPECT_RATIO_IDC_BITS: usize = 8;
+/// Width of `sar_width` / `sar_height`, `u(16)`.
+const SAR_DIMENSION_BITS: usize = 16;
+
 fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::error::Result<()> {
     // vui_parameters_present_flag  u(1)
     let vui_present = r.read_flag("vui_parameters_present_flag")?;
@@ -435,12 +500,7 @@ fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::err
     // aspect_ratio_info_present_flag  u(1) — §E.1.1
     let ari_present = r.read_flag("aspect_ratio_info_present_flag")?;
     if ari_present {
-        let aspect_ratio_idc = r.read_bits(8, "aspect_ratio_idc")? as u8;
-        // Extended_SAR = 255 → sar_width u(16), sar_height u(16)
-        if aspect_ratio_idc == 255 {
-            let _ = r.read_bits(16, "sar_width")?;
-            let _ = r.read_bits(16, "sar_height")?;
-        }
+        facts.aspect_ratio = Some(read_aspect_ratio(r)?);
     }
 
     // overscan_info_present_flag  u(1)
@@ -594,7 +654,7 @@ pub struct HevcSpsInfo {
 ///            - SubHeightC * (conf_win_top_offset  + conf_win_bottom_offset)
 /// ```
 pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
-    decode_hevc_sps_inner(sps_bytes).map(|(info, _)| info)
+    decode_hevc_sps_inner(sps_bytes).map(|(info, _, _)| info)
 }
 
 /// The interlace-relevant facts of an H.265 SPS (ITU-T H.265 §E.3.1; see
@@ -613,7 +673,7 @@ pub struct HevcInterlaceSps {
 /// Decode only the interlace facts ([`HevcInterlaceSps`]) from an H.265 SPS
 /// NAL unit (2-byte NAL header included).
 pub fn decode_hevc_interlace_sps(sps_bytes: &[u8]) -> Result<HevcInterlaceSps> {
-    decode_hevc_sps_inner(sps_bytes).map(|(_, i)| i)
+    decode_hevc_sps_inner(sps_bytes).map(|(_, i, _)| i)
 }
 
 /// `general_progressive_source_flag` — bit 47 of the 48-bit
@@ -622,7 +682,9 @@ const PTL_PROGRESSIVE_SOURCE_BIT: u64 = 1 << 47;
 /// `general_interlaced_source_flag` — bit 46 (H.265 §7.3.3).
 const PTL_INTERLACED_SOURCE_BIT: u64 = 1 << 46;
 
-fn decode_hevc_sps_inner(sps_bytes: &[u8]) -> Result<(HevcSpsInfo, HevcInterlaceSps)> {
+fn decode_hevc_sps_inner(
+    sps_bytes: &[u8],
+) -> Result<(HevcSpsInfo, HevcInterlaceSps, DisplayFacts)> {
     if sps_bytes.len() < 2 {
         return Err(Error::BufferTooShort {
             need: 2,
@@ -716,8 +778,19 @@ fn decode_hevc_sps_inner(sps_bytes: &[u8]) -> Result<(HevcSpsInfo, HevcInterlace
             != 0
             && general_constraint_indicator_flags & PTL_INTERLACED_SOURCE_BIT != 0,
     };
-    let (num_units_in_tick, time_scale, fps) =
-        parse_hevc_sps_to_vui_timing(&mut r, sps_max_sub_layers_minus1, &mut interlace);
+    let mut aspect_ratio = None;
+    let (num_units_in_tick, time_scale, fps) = parse_hevc_sps_to_vui_timing(
+        &mut r,
+        sps_max_sub_layers_minus1,
+        &mut interlace,
+        &mut aspect_ratio,
+    );
+    let clamp_u32 = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+    let display = DisplayFacts {
+        coded_width: clamp_u32(pic_width_in_luma_samples),
+        coded_height: clamp_u32(pic_height_in_luma_samples),
+        aspect_ratio,
+    };
 
     Ok((
         HevcSpsInfo {
@@ -737,6 +810,7 @@ fn decode_hevc_sps_inner(sps_bytes: &[u8]) -> Result<(HevcSpsInfo, HevcInterlace
             fps,
         },
         interlace,
+        display,
     ))
 }
 
@@ -753,8 +827,9 @@ fn parse_hevc_sps_to_vui_timing(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
+    aspect_ratio: &mut Option<AspectRatioIdc>,
 ) -> (Option<u32>, Option<u32>, Option<f32>) {
-    parse_hevc_sps_to_vui_timing_inner(r, sps_max_sub_layers_minus1, interlace)
+    parse_hevc_sps_to_vui_timing_inner(r, sps_max_sub_layers_minus1, interlace, aspect_ratio)
         .unwrap_or((None, None, None))
 }
 
@@ -767,6 +842,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
+    aspect_ratio: &mut Option<AspectRatioIdc>,
 ) -> crate::error::Result<(Option<u32>, Option<u32>, Option<f32>)> {
     // log2_max_pic_order_cnt_lsb_minus4  ue(v)
     let log2_max_poc_lsb = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?;
@@ -995,12 +1071,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // aspect_ratio_info_present_flag  u(1)
     let ari_present = r.read_flag("aspect_ratio_info_present_flag")?;
     if ari_present {
-        let aspect_ratio_idc = r.read_bits(8, "aspect_ratio_idc")? as u8;
-        // Extended_SAR = 255 → sar_width u(16), sar_height u(16)
-        if aspect_ratio_idc == 255 {
-            let _ = r.read_bits(16, "sar_width")?;
-            let _ = r.read_bits(16, "sar_height")?;
-        }
+        *aspect_ratio = Some(read_aspect_ratio(r)?);
     }
 
     // overscan_info_present_flag  u(1)
@@ -2180,6 +2251,32 @@ mod tests {
     /// (so the VUI is only reachable with the exact (7-61)/(7-62) counts) and
     /// whose VUI carries `field_seq`/`frame_field_info_present`.
     fn hevc_interlace_sps(field_seq: bool, ffi: bool, vui: bool, ptl_bits: u64) -> Vec<u8> {
+        hevc_sps_full(field_seq, ffi, vui, ptl_bits, None)
+    }
+
+    /// `aspect_ratio_idc` and, for Extended_SAR, `(sar_width, sar_height)`; the
+    /// writer of the `aspect_ratio_info_present_flag` block (identical H.264
+    /// §E.1.1 / H.265 §E.2.1 syntax).
+    type AspectBits = Option<(u8, Option<(u16, u16)>)>;
+
+    fn put_aspect(s: &mut BitSink, aspect: AspectBits) {
+        s.bit(aspect.is_some()); // aspect_ratio_info_present_flag
+        if let Some((idc, ext)) = aspect {
+            s.bits(u64::from(idc), 8); // aspect_ratio_idc
+            if let Some((w, h)) = ext {
+                s.bits(u64::from(w), 16); // sar_width
+                s.bits(u64::from(h), 16); // sar_height
+            }
+        }
+    }
+
+    fn hevc_sps_full(
+        field_seq: bool,
+        ffi: bool,
+        vui: bool,
+        ptl_bits: u64,
+        aspect: AspectBits,
+    ) -> Vec<u8> {
         let mut nal = vec![0x42u8, 0x01];
         let mut s = BitSink::new();
         s.bits(0, 4); // sps_video_parameter_set_id
@@ -2244,7 +2341,7 @@ mod tests {
         s.bit(false); // strong_intra_smoothing_enabled_flag
         s.bit(vui); // vui_parameters_present_flag
         if vui {
-            s.bit(false); // aspect_ratio_info_present_flag
+            put_aspect(&mut s, aspect);
             s.bit(false); // overscan_info_present_flag
             s.bit(false); // video_signal_type_present_flag
             s.bit(false); // chroma_loc_info_present_flag
@@ -2560,5 +2657,209 @@ mod tests {
         assert_eq!(same.fields, 1);
         // Unknown PPS: no facts.
         assert!(avc_facts(&AvcParamSets::new(), &[top.as_slice()]).is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // Display geometry: aspect_ratio_idc / sar_width / sar_height
+    // (H.264 §E.1.1 + Table E-1; H.265 §E.2.1 + Table E.1).
+    // -----------------------------------------------------------------
+
+    /// H.264 Table E-1 / H.265 Table E.1 rows 1..=16 as `(idc, SAR w, SAR h)`,
+    /// transcribed from the rendered PDF pages (PDF p455 / p449) and kept as
+    /// a separate literal from `display::TABLE_E1` so the two can disagree.
+    const SPEC_TABLE_E1: [(u8, u16, u16); 16] = [
+        (1, 1, 1),
+        (2, 12, 11),
+        (3, 10, 11),
+        (4, 16, 11),
+        (5, 40, 33),
+        (6, 24, 11),
+        (7, 20, 11),
+        (8, 32, 11),
+        (9, 80, 33),
+        (10, 18, 11),
+        (11, 15, 11),
+        (12, 64, 33),
+        (13, 160, 99),
+        (14, 4, 3),
+        (15, 3, 2),
+        (16, 2, 1),
+    ];
+
+    /// Baseline-profile 720x576 progressive SPS whose VUI carries `aspect`
+    /// then overscan/video-signal/chroma-loc absent and `timing_info` 1/50 (so
+    /// a mis-sized aspect read shifts the walk and corrupts the frame rate).
+    fn avc_display_sps(vui: bool, aspect: AspectBits) -> Vec<u8> {
+        let mut nal = vec![0x67u8, 66, 0x00, 30];
+        let mut s = BitSink::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(0); // log2_max_frame_num_minus4
+        s.ue(2); // pic_order_cnt_type
+        s.ue(1); // max_num_ref_frames
+        s.bit(false); // gaps_in_frame_num_value_allowed_flag
+        s.ue(44); // pic_width_in_mbs_minus1 -> 720
+        s.ue(35); // pic_height_in_map_units_minus1 -> 576
+        s.bit(true); // frame_mbs_only_flag
+        s.bit(true); // direct_8x8_inference_flag
+        s.bit(false); // frame_cropping_flag
+        s.bit(vui); // vui_parameters_present_flag
+        if vui {
+            put_aspect(&mut s, aspect);
+            s.bit(false); // overscan_info_present_flag
+            s.bit(false); // video_signal_type_present_flag
+            s.bit(false); // chroma_loc_info_present_flag
+            s.bit(true); // timing_info_present_flag
+            s.bits(1, 32); // num_units_in_tick
+            s.bits(50, 32); // time_scale
+            s.bit(true); // fixed_frame_rate_flag
+            s.bit(false); // nal_hrd_parameters_present_flag
+            s.bit(false); // vcl_hrd_parameters_present_flag
+            s.bit(false); // pic_struct_present_flag
+            s.bit(false); // bitstream_restriction_flag
+        }
+        s.bit(true); // rbsp_stop_one_bit
+        nal.extend(s.finish());
+        nal
+    }
+
+    fn avc_geometry(aspect: AspectBits) -> crate::ir::DisplayGeometry {
+        let sps = avc_display_sps(true, aspect);
+        // The VUI walk stays aligned past the aspect field: timing is intact.
+        assert_eq!(decode_avc_sps(&sps).unwrap().fps, Some(25.0));
+        crate::ir::DisplayGeometry::from_avc_sps(&sps).unwrap()
+    }
+
+    fn hevc_geometry(aspect: AspectBits) -> crate::ir::DisplayGeometry {
+        let sps = hevc_sps_full(true, true, true, 0, aspect);
+        // The VUI walk stays aligned past the aspect field: field_seq_flag and
+        // frame_field_info_present_flag (read after it) are intact.
+        let i = decode_hevc_interlace_sps(&sps).unwrap();
+        assert!(i.field_seq && i.frame_field_info_present);
+        crate::ir::DisplayGeometry::from_hevc_sps(&sps).unwrap()
+    }
+
+    #[test]
+    fn avc_every_table_e1_idc_decodes_to_its_ratio() {
+        for (idc, w, h) in SPEC_TABLE_E1 {
+            let g = avc_geometry(Some((idc, None)));
+            assert_eq!(g.sample_aspect_ratio(), Some((w, h)), "H.264 idc {idc}");
+            assert_eq!(g.aspect_ratio.unwrap().idc(), idc);
+            assert_eq!((g.coded_width, g.coded_height), (720, 576));
+        }
+    }
+
+    /// H.265 has no real fixture with a non-square SAR: spec vectors only.
+    #[test]
+    fn hevc_every_table_e1_idc_decodes_to_its_ratio() {
+        for (idc, w, h) in SPEC_TABLE_E1 {
+            let g = hevc_geometry(Some((idc, None)));
+            assert_eq!(g.sample_aspect_ratio(), Some((w, h)), "H.265 idc {idc}");
+            assert_eq!(g.aspect_ratio.unwrap().idc(), idc);
+            assert_eq!((g.coded_width, g.coded_height), (16, 16));
+        }
+    }
+
+    #[test]
+    fn extended_sar_reads_width_then_height_for_both_codecs() {
+        // 64:45 is the melodie fixture's value; width != height catches a swap.
+        for g in [
+            avc_geometry(Some((255, Some((64, 45))))),
+            hevc_geometry(Some((255, Some((64, 45))))),
+        ] {
+            assert_eq!(
+                g.aspect_ratio,
+                Some(AspectRatioIdc::ExtendedSar {
+                    sar_width: 64,
+                    sar_height: 45
+                })
+            );
+            assert_eq!(g.sample_aspect_ratio(), Some((64, 45)));
+        }
+        // Full 16-bit range, not truncated to 8 bits.
+        let g = avc_geometry(Some((255, Some((0x1234, 0x0101)))));
+        assert_eq!(g.sample_aspect_ratio(), Some((0x1234, 0x0101)));
+    }
+
+    #[test]
+    fn unspecified_ratios_are_none_never_a_zero_sentinel() {
+        let cases: [AspectBits; 6] = [
+            Some((0, None)),            // idc 0: Unspecified
+            Some((17, None)),           // first reserved
+            Some((254, None)),          // last reserved
+            Some((255, Some((0, 45)))), // sar_width 0
+            Some((255, Some((64, 0)))), // sar_height 0
+            Some((255, Some((0, 0)))),  // both 0
+        ];
+        for c in cases {
+            for g in [avc_geometry(c), hevc_geometry(c)] {
+                // The wire value is kept, the ratio is unspecified.
+                assert!(g.aspect_ratio.is_some(), "{c:?}");
+                assert_eq!(g.sample_aspect_ratio(), None, "{c:?}");
+                assert_eq!(g.typed_sample_aspect_ratio(), None, "{c:?}");
+            }
+        }
+        assert_eq!(
+            avc_geometry(Some((17, None))).aspect_ratio,
+            Some(AspectRatioIdc::Reserved(17))
+        );
+        assert_eq!(
+            avc_geometry(Some((254, None))).aspect_ratio,
+            Some(AspectRatioIdc::Reserved(254))
+        );
+    }
+
+    #[test]
+    fn absent_aspect_info_is_none_for_both_codecs() {
+        // No VUI at all.
+        let g = crate::ir::DisplayGeometry::from_avc_sps(&avc_display_sps(false, None)).unwrap();
+        assert_eq!((g.aspect_ratio, g.sample_aspect_ratio()), (None, None));
+        let hevc = hevc_sps_full(false, false, false, 0, None);
+        let g = crate::ir::DisplayGeometry::from_hevc_sps(&hevc).unwrap();
+        assert_eq!((g.aspect_ratio, g.sample_aspect_ratio()), (None, None));
+        // VUI present, aspect_ratio_info_present_flag 0.
+        assert_eq!(avc_geometry(None).aspect_ratio, None);
+        assert_eq!(hevc_geometry(None).aspect_ratio, None);
+    }
+
+    #[test]
+    fn a_vui_truncated_inside_the_aspect_field_never_yields_a_half_read_value() {
+        let whole = avc_display_sps(true, Some((255, Some((64, 45)))));
+        let hevc_whole = hevc_sps_full(true, true, true, 0, Some((255, Some((64, 45)))));
+        let full = Some(AspectRatioIdc::ExtendedSar {
+            sar_width: 64,
+            sar_height: 45,
+        });
+        let mut absent_seen = false;
+        for cut in 0..whole.len() {
+            // Never a panic, and the field is either intact or absent.
+            if let Ok(g) = crate::ir::DisplayGeometry::from_avc_sps(&whole[..cut]) {
+                assert!(
+                    g.aspect_ratio.is_none() || g.aspect_ratio == full,
+                    "avc cut {cut}"
+                );
+                absent_seen |= g.aspect_ratio.is_none();
+            }
+        }
+        for cut in 0..hevc_whole.len() {
+            if let Ok(g) = crate::ir::DisplayGeometry::from_hevc_sps(&hevc_whole[..cut]) {
+                assert!(
+                    g.aspect_ratio.is_none() || g.aspect_ratio == full,
+                    "hevc cut {cut}"
+                );
+            }
+        }
+        // Not vacuous: some cut parsed the SPS but lost the field, and the
+        // whole SPS carries it.
+        assert!(absent_seen);
+        let g = crate::ir::DisplayGeometry::from_avc_sps(&whole).unwrap();
+        assert_eq!(g.aspect_ratio, full);
+    }
+
+    #[test]
+    fn a_non_reduced_wire_pair_is_kept_and_reduces_on_request() {
+        let g = avc_geometry(Some((255, Some((128, 90)))));
+        assert_eq!(g.sample_aspect_ratio(), Some((128, 90)));
+        let reduced = g.typed_sample_aspect_ratio().unwrap().reduced();
+        assert_eq!(reduced.as_pair(), (64, 45));
     }
 }

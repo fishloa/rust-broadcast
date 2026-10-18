@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use super::{CodecConfig, ProgramNumber, Sample, TrackId};
+use super::{CodecConfig, DisplayGeometry, ProgramNumber, Sample, TrackId};
 
 /// A track's identity + codec config, used to build the init segment.
 #[derive(Debug, Clone)]
@@ -29,12 +29,22 @@ pub struct TrackSpec {
     /// MPEG-2 TS program_number from the declaring PMT (ISO/IEC 13818-1
     /// §2.4.4.3); `None` for non-TS sources (fMP4/FLV/WebM/PS/RTP).
     pub program_number: Option<ProgramNumber>,
+    /// Display geometry (coded size + SPS VUI sample aspect ratio) of the
+    /// track's *current* codec config, derived by [`TrackSpec::new`] from the
+    /// first SPS in the `avcC`/`hvcC` record. `None` for non-AVC/HEVC codecs
+    /// and for a config with no decodable SPS (e.g. a placeholder record) —
+    /// never a fabricated value. A re-announced spec
+    /// ([`DemuxEvent::TrackUpdated`](super::DemuxEvent::TrackUpdated))
+    /// carries the geometry of the new config. See
+    /// [`DisplayGeometry::sample_aspect_ratio`].
+    pub display: Option<DisplayGeometry>,
 }
 
 impl TrackSpec {
     /// A track spec with no TS provenance (`source_pid = None`, no ES_info
     /// descriptors) — the common case for every non-TS demuxer/transform.
     pub fn new(track_id: TrackId, timescale: u32, config: CodecConfig) -> Self {
+        let display = DisplayGeometry::from_codec_config(&config);
         Self {
             track_id,
             timescale,
@@ -42,7 +52,15 @@ impl TrackSpec {
             source_pid: None,
             es_info_descriptors: Vec::new(),
             program_number: None,
+            display,
         }
+    }
+
+    /// Replace the auto-derived [`display`](Self::display) (for a source that
+    /// knows better than the SPS).
+    pub fn with_display(mut self, display: Option<DisplayGeometry>) -> Self {
+        self.display = display;
+        self
     }
 
     /// Attach TS provenance (issue #582): the source elementary-stream PID

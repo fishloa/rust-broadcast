@@ -302,8 +302,9 @@ pub use interlace::{
     PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,
 };
 pub use ir::{
-    AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,
-    ProgramNumber, SupplementaryAudio, TrackId,
+    AspectRatioIdc, AudioLanguage, AudioMetadata, AudioRole, AudioType, DisplayGeometry,
+    EXTENDED_SAR_IDC, EditorialClassification, MixType, ProgramNumber, SampleAspectRatio,
+    SupplementaryAudio, TrackId,
 };
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,

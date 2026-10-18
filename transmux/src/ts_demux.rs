@@ -3530,12 +3530,28 @@ fn advance_track(
             {
                 live.config = config;
                 live.timescale = timescale;
-                events.push_back(DemuxEvent::TrackUpdated(
+                let updated = DemuxEvent::TrackUpdated(
                     TrackSpec::new(live.track_id, live.timescale, live.config.clone())
                         .with_source(pid, stream.descriptors.clone()),
-                ));
+                );
+                // Video is emitted one access unit behind ([`advance_one_behind`]):
+                // pushing this access unit *first* releases the previous (last
+                // old-config) sample, so the event lands after it and before
+                // this access unit's own sample, which is released by the
+                // next one. Pushing the event first labelled that last
+                // old-config picture with the new config. Audio emits an
+                // access unit's frames immediately, so the new config
+                // correctly precedes them.
+                if matches!(live.kind, LiveKind::Video { .. }) {
+                    push_live_au(&mut live, data, pts_uw, dts_uw, events);
+                    events.push_back(updated);
+                } else {
+                    events.push_back(updated);
+                    push_live_au(&mut live, data, pts_uw, dts_uw, events);
+                }
+            } else {
+                push_live_au(&mut live, data, pts_uw, dts_uw, events);
             }
-            push_live_au(&mut live, data, pts_uw, dts_uw, events);
             TrackState::Live(live)
         }
         TrackState::Abandoned => TrackState::Abandoned,
