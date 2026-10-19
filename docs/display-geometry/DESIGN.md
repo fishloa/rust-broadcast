@@ -383,6 +383,7 @@ no lookup table, no event replay (R7).
 | SPS bytes change, parsed `DisplayGeometry` equal (e.g. level/HRD/timing edit) | **yes** (existing byte rule, unchanged) | **no** |
 | SPS bytes change and `DisplayGeometry` differs (e.g. SAR 16:11 -> 12:11) | yes | yes (`changed` names the fields) |
 | Different SPS **id** activated, same geometry | yes if the config record changed | no |
+| PMT `es_info` descriptors change, codec config unchanged (a programme-to-slate PMT; #774) | **yes**, config unchanged, raised when the PMT is processed | no |
 | AFD / bar data value changes in user data | no | yes |
 | AFD repeated with the same value (every picture, as on gulli) | no | no |
 
@@ -486,7 +487,7 @@ consumer draining `poll_event` sees, in this order:
 
 1. every `Sample` of T for AUs before N in decode order (for PAFF, the merged
    field pair counts as one AU);
-2. `TrackUpdated(T)` - only if T's codec config bytes changed at N;
+2. `TrackUpdated(T)` - only if T's codec config bytes changed at N (a PMT-descriptor-only `TrackUpdated`, config unchanged, is a separate event raised when the PMT is processed and may fall anywhere between two samples; a switch that changes both therefore yields two `TrackUpdated`, issue #1380: not a duplicate);
 3. `DisplayChanged { track_id: T, dts: N.dts, pts: N.pts, random_access:
    N.is_sync, .. }` - only if the parsed `DisplayInfo` changed at N;
 4. `Sample` of T for AU N, with `display` `Arc::ptr_eq` to step 3's.

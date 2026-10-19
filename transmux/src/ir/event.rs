@@ -281,17 +281,34 @@ pub enum DemuxEvent {
     /// full, current [`TrackSpec`] — always the same `track_id`, so a consumer
     /// that replaces its stored spec keyed by `track_id` keeps its timeline.
     ///
-    /// Two sources raise it today:
+    /// Three independent causes raise it today:
     /// - TS (issue #774): the PMT-derived metadata changed — its
-    ///   `es_info_descriptors` (e.g. a corrected `ISO_639_language_descriptor`)
-    ///   — with the codec config unchanged, since PMT-declared config recovery
-    ///   stays single-shot and permanent.
+    ///   `es_info_descriptors` (e.g. a corrected `ISO_639_language_descriptor`,
+    ///   or a broadcaster's programme-to-slate PMT that lists fewer
+    ///   descriptors) — with the codec config **unchanged**, since
+    ///   PMT-declared config recovery stays single-shot and permanent. It is
+    ///   raised when the PMT is processed, so it has no ordering relationship
+    ///   to the track's samples beyond arriving between two of them.
+    /// - TS (r04-W51): the in-band AVC/HEVC parameter sets or the AAC ADTS
+    ///   header changed (SD/HD switch, re-encode, slate), so `config` **does**
+    ///   change. For video it is released after the last sample of the old
+    ///   config and immediately before the first sample under the new one (and
+    ///   immediately before that access unit's [`DemuxEvent::DisplayChanged`],
+    ///   when one fires).
     /// - FLV (r04-W13): the publisher re-sent the track's sequence header
     ///   (`AVCPacketType`/`AACPacketType` == 0), which encoders do routinely
     ///   after a resolution, profile, sample-rate or channel-count change. Here
-    ///   `config` **does** change, and a consumer must treat it as "reload the
-    ///   init segment / rebuild the sample-entry" — the previous config described
-    ///   a stream that is no longer being sent.
+    ///   `config` **does** change.
+    ///
+    /// Whenever `config` changes a consumer must treat the event as "reload the
+    /// init segment / rebuild the sample-entry" — the previous config described
+    /// a stream that is no longer being sent. **Independent causes are
+    /// independent events**: a broadcaster that changes the PMT *and* the SPS at
+    /// the same programme switch produces two events (descriptors first, config
+    /// unchanged; then the config change), each carrying the full current
+    /// spec. Replacing the stored spec by `track_id` is therefore idempotent,
+    /// and a consumer that only needs the picture shape can listen to
+    /// [`DemuxEvent::DisplayChanged`] alone (issue #1380).
     TrackUpdated(TrackSpec),
     /// A previously-declared track is no longer listed in the source's track
     /// declaration (e.g. a PMT version change that drops a PID). Only ever
