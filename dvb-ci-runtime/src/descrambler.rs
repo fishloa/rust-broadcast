@@ -169,6 +169,15 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
         self.driver.add_service(pmt)
     }
 
+    /// Update a service in the descrambled set (delegates to
+    /// [`Driver::update_service`]).
+    ///
+    /// # Errors
+    /// See [`Driver::update_service`].
+    pub fn update_service(&mut self, pmt: &PmtSection<'_>) -> Result<(), CaError> {
+        self.driver.update_service(pmt)
+    }
+
     /// Feed a freshly-parsed CAT to the managed CAS-layer state (delegates to
     /// [`Driver::set_cat`]).
     ///

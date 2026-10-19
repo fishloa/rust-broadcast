@@ -79,6 +79,16 @@ pub enum CaError {
     /// could not extract the CAID/EMM-PID map.
     #[error("CAT CA_descriptor parse failed: {0}")]
     Cat(#[from] dvb_si::error::Error),
+    /// The programme is not in the slot's managed CAS-layer service set, so
+    /// there is nothing to `update` (EN 50221 §8.4.3.4 Table 25,
+    /// `ca_pmt_list_management = update`). Returned by
+    /// [`Driver::update_service`](crate::driver::Driver::update_service) for an
+    /// unknown `program_number`.
+    #[error("program_number {program_number} is not a managed service")]
+    NotManaged {
+        /// The programme that is not currently managed.
+        program_number: u16,
+    },
 }
 
 /// One actively-managed service (owned, no borrowed lifetime — copied out of

@@ -256,6 +256,35 @@ impl<D: CaDevice> Driver<D> {
         }
     }
 
+    /// Shared build + serialize half of [`add_service`](Self::add_service) and
+    /// [`update_service`](Self::update_service): validates the `CA_descriptor`
+    /// presence, builds the CAID-filtered `ca_pmt` (`try_to_bytes` first, so an
+    /// unencodable PMT is rejected before any state is touched or anything is
+    /// sent), and re-serializes the raw PMT bytes. Returns `(built_ca_pmt_bytes,
+    /// pmt_raw_bytes)`. Sending and recording are the caller's responsibility
+    /// so each entry point keeps its own `list_management` and managed-set
+    /// semantics.
+    fn build_service_bytes(
+        &self,
+        pmt: &PmtSection<'_>,
+        list_management: CaPmtListManagement,
+        cmd_id: CaPmtCmdId,
+    ) -> Result<(Vec<u8>, Vec<u8>), CaError> {
+        if !managed::pmt_has_ca(pmt) {
+            return Err(CaError::NoCaDescriptor {
+                program_number: pmt.program_number,
+            });
+        }
+        // r10-W-20: `try_to_bytes`, not `to_bytes`.
+        let built_bytes = self
+            .build_ca_pmt_filtered(pmt, list_management, cmd_id)
+            .try_to_bytes()?;
+        let mut pmt_raw = vec![0u8; pmt.serialized_len()];
+        let n = pmt.serialize_into(&mut pmt_raw)?;
+        pmt_raw.truncate(n);
+        Ok((built_bytes, pmt_raw))
+    }
+
     /// Build + send the `ca_pmt` for `pmt` (via
     /// [`dvb_ci::builder::build_ca_pmt`], ETSI EN 50221 §8.4.3.4 Table 25) and
     /// track it in the slot's managed active-service set (#763 Layer 1).
@@ -276,36 +305,54 @@ impl<D: CaDevice> Driver<D> {
     /// elementary-stream level — there would be nothing for the CAM to
     /// descramble. [`CaError::Io`] if sending the built `ca_pmt` fails.
     pub fn add_service(&mut self, pmt: &PmtSection<'_>) -> Result<(), CaError> {
-        if !managed::pmt_has_ca(pmt) {
-            return Err(CaError::NoCaDescriptor {
-                program_number: pmt.program_number,
-            });
-        }
         let list_management = if self.managed.is_empty() {
             CaPmtListManagement::Only
         } else {
             CaPmtListManagement::Add
         };
         let cmd_id = CaPmtCmdId::OkDescrambling;
-        // r10-W-20: `try_to_bytes`, not `to_bytes` — a PMT whose descriptor
-        // loop is corrupted past the section end projects into a `ca_pmt`
-        // with no valid wire encoding; reject that as `Err` instead of
-        // panicking inside the serializer. Checked BEFORE recording, so a
-        // PMT whose ca_pmt cannot be encoded is never added to the managed
-        // set (the re-query timer would fail the same encoding forever).
-        let built_bytes = self
-            .build_ca_pmt_filtered(pmt, list_management, cmd_id)
-            .try_to_bytes()?;
-        // `PmtSection` has no raw-bytes accessor — re-serialize (byte-identical
-        // round-trip, a project invariant) to recover owned PMT bytes so
-        // `remove_service` (#763 Task 6) can later re-drive `remove_program`
-        // (which needs the raw section), and so `requery_tick` (#765) can
-        // rebuild a fresh `query`-variant `ca_pmt` against the *current*
-        // active set on every re-query tick rather than freezing
-        // `list_management` at this moment.
-        let mut pmt_raw = vec![0u8; pmt.serialized_len()];
-        let n = pmt.serialize_into(&mut pmt_raw)?;
-        pmt_raw.truncate(n);
+        let (built_bytes, pmt_raw) = self.build_service_bytes(pmt, list_management, cmd_id)?;
+        self.send_ca_pmt(&built_bytes)?;
+        self.managed.record(
+            pmt.program_number,
+            managed::service_of(pmt, cmd_id, built_bytes, pmt_raw),
+        );
+        Ok(())
+    }
+
+    /// Update (re-send) the `ca_pmt` for a programme already in the managed
+    /// set, using `ca_pmt_list_management = update` (ETSI EN 50221 §8.4.3.4
+    /// Table 25, `ca_pmt_list_management` value `0x05` "update"). EN 50221
+    /// p. 31: "the CA PMT of a programme already in the list is sent again
+    /// because the version_number or the current_next_indicator has changed.
+    /// ... Since the list management commands act only at the programme level,
+    /// any changes at the elementary stream level in an existing programme
+    /// must be signalled by an 'update' command with the complete elementary
+    /// stream list re-sent." The same page notes that re-sending `add` for an
+    /// already-existing programme is already equivalent to `update`, so
+    /// [`add_service`](Self::add_service) remains spec-conforming; this method
+    /// exists as the explicit, clearer entry point for that case.
+    ///
+    /// The stored service record is **replaced** with the new PMT bytes, so
+    /// later [`remove_service`](Self::remove_service) and the periodic
+    /// re-query use the new PMT.
+    ///
+    /// # Errors
+    /// [`CaError::NotManaged`] if `pmt.program_number` is not currently
+    /// managed. [`CaError::NoCaDescriptor`] if `pmt` carries no
+    /// `CA_descriptor` (ETSI EN 300 468 §6.2.16, tag `0x09`) — the stored
+    /// record is left unchanged. [`CaError::Serialize`] if the projected
+    /// `ca_pmt` has no valid wire encoding — the record is left unchanged and
+    /// nothing is sent. [`CaError::Io`] if sending the built `ca_pmt` fails.
+    pub fn update_service(&mut self, pmt: &PmtSection<'_>) -> Result<(), CaError> {
+        if !self.managed.services().contains_key(&pmt.program_number) {
+            return Err(CaError::NotManaged {
+                program_number: pmt.program_number,
+            });
+        }
+        let list_management = CaPmtListManagement::Update;
+        let cmd_id = CaPmtCmdId::OkDescrambling;
+        let (built_bytes, pmt_raw) = self.build_service_bytes(pmt, list_management, cmd_id)?;
         self.send_ca_pmt(&built_bytes)?;
         self.managed.record(
             pmt.program_number,
@@ -3371,5 +3418,245 @@ pub(crate) mod tests {
             d.emm_pids().is_empty(),
             "emm_pids must be cleared on CamRemoved"
         );
+    }
+
+    #[test]
+    fn update_service_not_managed_returns_not_managed_and_sends_nothing() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt_bytes = build_clear_pmt_fixture(9999);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+
+        let before = d.device().ops.len();
+        let err = d
+            .update_service(&pmt)
+            .expect_err("unknown program must error");
+        assert!(
+            matches!(
+                err,
+                CaError::NotManaged {
+                    program_number: 9999
+                }
+            ),
+            "got {err:?}"
+        );
+        assert_eq!(d.device().ops.len(), before, "must send nothing");
+        assert!(d.managed_ca().services().is_empty());
+    }
+
+    #[test]
+    fn update_service_no_ca_descriptor_leaves_record_unchanged() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+
+        let svc_before = d.managed_ca().services().get(&1546).unwrap().clone();
+
+        let clear_bytes = build_clear_pmt_fixture(1546);
+        let clear_pmt = PmtSection::parse(&clear_bytes).unwrap();
+        let err = d
+            .update_service(&clear_pmt)
+            .expect_err("CA-free PMT must error");
+        assert!(
+            matches!(
+                err,
+                CaError::NoCaDescriptor {
+                    program_number: 1546
+                }
+            ),
+            "got {err:?}"
+        );
+
+        let svc_after = d.managed_ca().services().get(&1546).unwrap();
+        assert_eq!(svc_before, *svc_after, "record must be unchanged");
+    }
+
+    /// #1389 wire-level: A and B are added; A's PMT then changes its ECM PIDs
+    /// (`0x0064`/`0x0065` -> `0x0074`/`0x0075`, same programme number). Exactly
+    /// one new `ca_pmt` goes out: `list_management = update`, `cmd_id =
+    /// ok_descrambling`, carrying the NEW PIDs and none of the old; B's record
+    /// is untouched; A's record is the NEW one (its PIDs, built bytes and raw PMT).
+    #[test]
+    fn update_service_sends_one_update_ca_pmt_with_the_new_pids_and_replaces_only_that_record() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let a_bytes = build_ca_pmt_fixture(1546);
+        let a = PmtSection::parse(&a_bytes).unwrap();
+        d.add_service(&a).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let b_bytes = build_ca_pmt_fixture_dedicated_pcr(1547);
+        let b = PmtSection::parse(&b_bytes).unwrap();
+        d.add_service(&b).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let a_old_record = d.managed_ca().services().get(&1546).unwrap().clone();
+        let b_record_before = d.managed_ca().services().get(&1547).unwrap().clone();
+        assert_eq!(
+            a_old_record.ca_pids,
+            vec![Pid::new(0x0064), Pid::new(0x0065)],
+            "fixture sanity: A starts on the 0x0064/0x0065 ECM PIDs"
+        );
+
+        // Same programme number, different ECM PIDs.
+        let a2_bytes = build_ca_pmt_fixture_distinct_pids(1546);
+        let a2 = PmtSection::parse(&a2_bytes).unwrap();
+        let update =
+            build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::OkDescrambling).to_bytes();
+        let writes_before = d.device().ops.len();
+
+        d.update_service(&a2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        // Exactly ONE update ca_pmt, on the CA session, and nothing else carrying a ca_pmt.
+        assert_eq!(count_apdu_on_session(&d, CA_SESSION, &update), 1);
+        let new_ca_pmt_writes = d.device().ops[writes_before..]
+            .iter()
+            .filter(|op| matches!(op, DeviceOp::Write(w) if w.windows(3).any(|x| x == [0x9F, 0x80, 0x32])))
+            .count();
+        assert_eq!(new_ca_pmt_writes, 1, "exactly one ca_pmt APDU may be sent");
+
+        // The update carries the new ECM PIDs and none of the old ones.
+        let new_prog_ca = ca_descriptor(0x0500, Pid::new(0x0074));
+        let old_prog_ca = ca_descriptor(0x0500, Pid::new(0x0064));
+        assert!(update.windows(new_prog_ca.len()).any(|x| x == new_prog_ca));
+        assert!(!update.windows(old_prog_ca.len()).any(|x| x == old_prog_ca));
+
+        // A's record is replaced: new PIDs, new built bytes, new raw PMT.
+        let a_new_record = d.managed_ca().services().get(&1546).unwrap();
+        assert_eq!(
+            a_new_record.ca_pids,
+            vec![Pid::new(0x0074), Pid::new(0x0075)]
+        );
+        assert_eq!(a_new_record.built_ca_pmt, update);
+        assert_ne!(a_new_record.built_ca_pmt, a_old_record.built_ca_pmt);
+        assert_ne!(a_new_record.pmt_raw, a_old_record.pmt_raw);
+        assert_eq!(
+            a_new_record.pmt_raw, a2_bytes,
+            "raw PMT must be the new section"
+        );
+
+        // B is untouched, and so is the size of the managed set.
+        assert_eq!(
+            *d.managed_ca().services().get(&1547).unwrap(),
+            b_record_before
+        );
+        assert_eq!(d.managed_ca().services().len(), 2);
+    }
+
+    /// #1389: after an update, `remove_service` re-drives the removal from the
+    /// NEW raw PMT (distinct PIDs, so the old PMT would produce different bytes).
+    #[test]
+    fn remove_service_after_update_service_uses_the_new_pmt() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let a_bytes = build_ca_pmt_fixture(1546);
+        let a = PmtSection::parse(&a_bytes).unwrap();
+        d.add_service(&a).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        let a2_bytes = build_ca_pmt_fixture_distinct_pids(1546);
+        let a2 = PmtSection::parse(&a2_bytes).unwrap();
+        d.update_service(&a2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        d.remove_service(1546).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let removal_new =
+            build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
+        let removal_old =
+            build_ca_pmt(&a, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
+        assert_ne!(
+            removal_new, removal_old,
+            "fixture sanity: the two PMTs differ"
+        );
+        assert_eq!(count_apdu_on_session(&d, CA_SESSION, &removal_new), 1);
+        assert_eq!(count_apdu_on_session(&d, CA_SESSION, &removal_old), 0);
+        assert!(d.managed_ca().services().is_empty());
+    }
+
+    /// #1389: the update `ca_pmt` is CAID-filtered exactly like `add_service`'s
+    /// (#1067): a CAM advertising only Viaccess must not be sent the Nagra descriptor.
+    #[test]
+    fn update_service_filters_caids_like_add_service() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let two_caids = build_ca_pmt_fixture_two_caids(1546);
+        let pmt = PmtSection::parse(&two_caids).unwrap();
+        d.add_service(&pmt).unwrap();
+        let added = d
+            .managed_ca()
+            .services()
+            .get(&1546)
+            .unwrap()
+            .built_ca_pmt
+            .clone();
+
+        d.update_service(&pmt).unwrap();
+        let updated = d
+            .managed_ca()
+            .services()
+            .get(&1546)
+            .unwrap()
+            .built_ca_pmt
+            .clone();
+
+        // Same filtering as add_service: identical bytes except the list_management byte.
+        assert_eq!(added.len(), updated.len());
+        let diff: Vec<usize> = (0..added.len())
+            .filter(|&i| added[i] != updated[i])
+            .collect();
+        assert_eq!(
+            diff.len(),
+            1,
+            "only list_management may differ, got offsets {diff:?}"
+        );
+        assert_eq!(updated[diff[0]], 0x05, "list_management must be update");
+    }
+
+    #[test]
+    fn update_service_serialize_failure_leaves_record_unchanged() {
+        let mut d = driver_with_sessions();
+        // add a managed service for program_number 1 first
+        let pmt_bytes = build_ca_pmt_fixture(1);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+
+        let svc_before = d.managed_ca().services().get(&1).unwrap().clone();
+
+        let corrupt = corrupt_ca_section_ctor();
+        let err = d
+            .update_service(&corrupt)
+            .expect_err("unencodable PMT must error");
+        assert!(
+            matches!(err, CaError::Serialize(_)),
+            "expected CaError::Serialize, got {err:?}"
+        );
+
+        let svc_after = d.managed_ca().services().get(&1).unwrap();
+        assert_eq!(svc_before, *svc_after, "record must be unchanged");
     }
 }
