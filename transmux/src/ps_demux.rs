@@ -847,7 +847,7 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     // Stream genuinely recovers an absolute clock rather than leaving the
     // anchor at 0. `composition_offset` folds into the pts/dts pair.
     let mut display_tracker = SpsTracker::new(TrackCodec::Avc);
-    let mut samples: Vec<Sample> = order
+    let samples: Vec<Sample> = order
         .iter()
         .enumerate()
         .map(|(pos, &i)| {

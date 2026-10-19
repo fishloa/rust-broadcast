@@ -5712,6 +5712,7 @@ impl StreamingTsDemux {
                         .display
                         .and_then(|g| DisplayInfo::from_geometry(Some(g)))
                         .map(Arc::new);
+                    self.events.push_back(DemuxEvent::TrackAdded(spec));
                     if let Some(display) = &initial_display {
                         self.events.push_back(DemuxEvent::DisplayChanged {
                             track_id,
@@ -5727,7 +5728,6 @@ impl StreamingTsDemux {
                             },
                         });
                     }
-                    self.events.push_back(DemuxEvent::TrackAdded(spec));
                     let sps_tracker = match stream.codec {
                         Codec::H264 => Some(SpsTracker::new(TrackCodec::Avc)),
                         Codec::Hevc => Some(SpsTracker::new(TrackCodec::Hevc)),
