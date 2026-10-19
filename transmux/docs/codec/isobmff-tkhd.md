@@ -1,9 +1,12 @@
 # Track Header Box (`tkhd`) — width / height
 
+**Primary source now available:** ISO/IEC 14496-12:2012 §8.3.2 is transcribed and page-verified in
+[`isobmff-14496-12-2012-visual.md`](isobmff-14496-12-2012-visual.md); read that first. The sections
+below are corroborating sources (F4V layout, QuickTime ancestor, the DVB-DASH profile rule).
+
 Transcription for display-geometry follow-up "tkhd presentation size"
 (`docs/display-geometry/DESIGN.md` §8 Phase 4). **ISO/IEC 14496-12 §8.3.2 itself
-is not available in this workspace** (paid; the `specs/iso_iec_*` local copies
-are gone — see `specs/INCOMING-MANIFEST.md`). Two sources that ARE available
+was not available when this file was first written** (it is now; see above). Two sources that ARE available
 (both in the private submodule, both verified below against the rendered PDF
 page, not only the markdown) pin down what this crate needs:
 
