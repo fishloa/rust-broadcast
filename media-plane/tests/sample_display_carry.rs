@@ -69,10 +69,7 @@ fn the_per_sample_display_tag_survives_the_trunk() {
         "the trunk carries the demuxer's Arc, not a copy"
     );
     assert_eq!(
-        got_first
-            .geometry
-            .as_ref()
-            .and_then(|g| g.aspect_ratio),
+        got_first.geometry.as_ref().and_then(|g| g.aspect_ratio),
         Some(AspectRatioIdc::Sar16x11)
     );
     let got_second = seen[1].as_ref().expect("the second tag survives");

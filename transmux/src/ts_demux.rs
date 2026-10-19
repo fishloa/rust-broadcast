@@ -1655,6 +1655,13 @@ fn ts_provenance(dts: i64, pts: i64) -> Provenance {
 }
 
 /// Per-track live (config-known) processing state.
+///
+/// `clippy::large_enum_variant` (allow): an AVC/HEVC video track is the
+/// large variant once it carries its SPS-activation tracker (a `BTreeMap` of
+/// geometries and PPS bindings), but `TrackState::Live` owns one per live
+/// PID either way, and boxing it here would only move the allocation, not
+/// reduce it.
+#[allow(clippy::large_enum_variant)]
 enum LiveKind {
     /// H.264/HEVC/MPEG-2 video: one `Sample` per access unit.
     Video {
@@ -1748,9 +1755,7 @@ impl LiveTrack {
     /// it is released with the first sample (the level-triggered start of
     /// design §5.2, Q2 = emit).
     fn display(&mut self, au: &[u8], pts: Option<i64>) -> Option<Arc<DisplayInfo>> {
-        let Some(tracker) = self.sps_tracker.as_mut() else {
-            return None;
-        };
+        let tracker = self.sps_tracker.as_mut()?;
         if let ActivationOutcome::Changed {
             display, changed, ..
         } = tracker.observe(au, pts)
@@ -1771,6 +1776,13 @@ impl LiveTrack {
 /// itself resolved (see [`StreamingTsDemux::try_promote_ready`]) — at which
 /// point it becomes `Live` and its whole backlog replays as a burst of
 /// `DemuxEvent::Sample`s.
+///
+/// `clippy::large_enum_variant` (allow): `Live` carries a [`LiveTrack`], whose
+/// video `kind` now owns an SPS-activation tracker, so it dwarfs the other
+/// arms. Every `StreamingTsDemux` holds exactly one of these per PID either
+/// way (probe, parked or live), and boxing `Live` would only add a second
+/// allocation per track, not reduce the set.
+#[allow(clippy::large_enum_variant)]
 enum TrackState {
     /// No config recovered yet; `backlog` accumulates every access unit seen
     /// so far (replayed once config resolves and it's this PID's turn).
@@ -3680,10 +3692,8 @@ fn advance_track(
             if let Some((config, timescale)) = new_config {
                 live.config = config;
                 live.timescale = timescale;
-                let updated = DemuxEvent::TrackUpdated(
-                    TrackSpec::new(live.track_id, live.timescale, live.config.clone())
-                        .with_source(pid, stream.descriptors.clone()),
-                );
+                let updated = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
+                    .with_source(pid, stream.descriptors.clone());
                 // Video is emitted one access unit behind ([`advance_one_behind`]):
                 // an event raised while filling this access unit belongs to
                 // it and is released (after the previous access unit's
@@ -3694,12 +3704,10 @@ fn advance_track(
                 // Audio emits an access unit's frames immediately, so the new
                 // config correctly precedes them.
                 if let LiveKind::Video { pending_events, .. } = &mut live.kind {
-                    if let DemuxEvent::TrackUpdated(spec) = updated.clone() {
-                        pending_events.config = Some(spec);
-                    }
+                    pending_events.config = Some(updated);
                     push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events);
                 } else {
-                    events.push_back(updated);
+                    events.push_back(DemuxEvent::TrackUpdated(updated));
                     push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events);
                 }
             } else {

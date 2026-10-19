@@ -1061,7 +1061,7 @@ impl DisplayChangeSet {
                 if !out.is_empty() {
                     out.push(' ');
                 }
-                let _ = out.push_str(name);
+                out.push_str(name);
             }
         };
         push(self.initial, "initial");

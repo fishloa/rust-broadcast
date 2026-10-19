@@ -70,8 +70,10 @@
 //!   [`ColourDescription`] with [`ColourPrimaries`],
 //!   [`TransferCharacteristics`], [`MatrixCoefficients`]) on
 //!   `TrackSpec::display`, derived from the `avcC`/`hvcC` first SPS by
-//!   `TrackSpec::new` so every demux path carries it (design:
-//!   `docs/display-geometry/DESIGN.md`; tables:
+//!   `TrackSpec::new` so every demux path carries it, plus the per-picture
+//!   state ([`DisplayInfo`]) on `Sample::display` with a
+//!   [`DemuxEvent::DisplayChanged`] carrying the [`DisplayChangeSet`] that
+//!   names what changed (design: `docs/display-geometry/DESIGN.md`; tables:
 //!   `docs/codec/vui-colour-tables.md`).
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).

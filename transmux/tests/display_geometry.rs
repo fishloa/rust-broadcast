@@ -147,8 +147,6 @@ fn demux_config(sequence: &[Obs], track_id: transmux::ir::TrackId) -> CodecConfi
 /// 640x480 SPS/PPS pair (README oracle: keyframe 306000, 3.4 s).
 const TWO_RESOLUTIONS_KEYFRAME_DTS: i64 = 306_000;
 
-
-
 /// `TrackUpdated` lands between the samples it separates (design §2 / §6.5).
 ///
 /// `h264-two-resolutions.ts` (public fixture, README oracle) concatenates a
@@ -195,7 +193,9 @@ fn track_updated_lands_after_the_last_old_config_sample() {
     let track = sequence
         .iter()
         .find_map(|o| match o {
-            Obs::Spec(spec) if matches!(spec.config, CodecConfig::Avc { .. }) => Some(spec.track_id),
+            Obs::Spec(spec) if matches!(spec.config, CodecConfig::Avc { .. }) => {
+                Some(spec.track_id)
+            }
             _ => None,
         })
         .expect("the fixture announces an AVC track");

@@ -1,6 +1,7 @@
 # Display geometry metadata in transmux: design
 
-Status: **Phase 1 (static geometry) landed, split into 1a and 1b.**
+Status: **Phase 1 (static geometry) landed, split into 1a and 1b; Phase 2
+(change event + per-AU tag) landed on top (`[Unreleased]`).**
 
 - **1a (SAR + coded size)** shipped in `transmux` 0.27.5: `ir::display`
   with `DisplayGeometry` / `AspectRatioIdc` / `SampleAspectRatio`,
@@ -17,8 +18,14 @@ Status: **Phase 1 (static geometry) landed, split into 1a and 1b.**
   (1/1/1) and full-range `component` without a colour description. HEVC
   colour is spec-vector only: no HEVC capture in this worktree signals a
   colour description and `test-074.hevc.ts` is not mirrored.
+- **2 (change event + per-AU tag)** landed for the TS and PS paths: `DisplayInfo`,
+  `DisplayChangeSet`, `DemuxEvent::DisplayChanged`, `Sample::display`, SPS/PPS
+  tracking **by id** with activation from the slice headers, the level-triggered
+  start, output-order placement, and the batch tags. Decisions taken where the
+  design left a choice are recorded in §16.
 - Still later phases: crop / conformance window (§3, out of 1b),
-  `default_display_rect`, the `colr nclx` overlay of §6.3, then Phase 2-4.
+  `default_display_rect`, the `colr nclx` overlay of §6.3, Phase 3 (AFD) and
+  Phase 4; fMP4 in-band `avc3`/`hev1` tagging (2b) is not implemented.
 
 Spec facts are transcribed and page-checked in
 [`SPEC-NOTES.md`](SPEC-NOTES.md) (and, for the colour tables, in
@@ -756,3 +763,44 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
 | Q9 | Phase 4 changes init-segment/manifest bytes for anamorphic input: patch or minor? | minor-class note in CHANGELOG, still 0.27.x |
 | Q10 | Out-of-range crop: accept with full-picture `output_rect`, and raise `InputDegraded`? | accept, no event |
 | Q11 | Should `CodecConfig` variants become `#[non_exhaustive]` in the next planned breaking transmux release (separate from this work)? | yes, separately |
+
+## 16. Phase 2: decisions taken (where the design left a choice)
+
+- **Output order, one unit of lookahead (§6.2 "decode order").** The design's
+  §6.2 says the event "and the tag follow decode order". Measured on the real
+  captures, that mislabels a picture: at the `stimmungsgarten` 16:11 -> 1:1
+  splice the demuxer's PTS unwrap (the video PES carries PTS == DTS, the
+  `+25530 s` jump is in the audio only, and the last programme units then read
+  as a large negative PTS and are lifted to continue the clock) makes the last
+  programme keyframe display *after* the first slate pictures. Raising the
+  change at the IDR's decode position therefore tagged one programme picture
+  with the slate's shape. The tracker now resolves a change in decode order but
+  raises it with the first picture whose PTS is at or after the resolving
+  unit's, so nothing still to come in decode order can be displayed after it
+  with the old geometry. That is one access unit of lookahead for a conforming
+  stream and never more than a GOP for the rest.
+- **`random_access` is the *release* unit's IDR bit.** The event travels with
+  the one-behind slot it was raised for (so a `TrackUpdated` and a
+  `DisplayChanged` created at the same unit are released together,
+  `TrackUpdated` first), and therefore carries that released `Sample`'s
+  `dts`/`pts`/`is_sync` — this restores the Phase 1a `TrackUpdated` position
+  exactly. For a conforming IDR switch this is the IDR's own bit; where the
+  first switched unit is held for an unseen PPS the event may carry `false`.
+- **Unseen PPS/SPS.** A slice that references a PPS (or a PPS naming an SPS)
+  not yet received keeps the previous state and is remembered; the first unit
+  that resolves it reports the change. This is what the real slate captures
+  need (ffmpeg's "non-existing PPS 0 referenced").
+- **`TrackUpdated` count.** The by-id activation also changes *when* a
+  mid-file config re-probe sees the change on some captures (the probe is
+  driven by the same access unit), so a switch can carry two
+  `TrackUpdated`/`DisplayChanged` pairs where the old code emitted one
+  `TrackUpdated`. The track's `TrackAdded` is now emitted before its
+  `DisplayChanged { initial }` (the initial event used to be ordered first).
+- **Scope.** `StreamingTsDemux`, batch `TsDemux` and `PsDemux` tag samples;
+  fMP4 (2b), FLV/RTMP and RTP emit `Sample::display = None` (FLV's
+  `TrackUpdated` was audited and is not one sample early; it re-probes the
+  sequence header in the same frame it applies). AFD/bar data stay Phase 3.
+- **Budget.** The PS demux allocation budget rose 658 -> 676 per 100 x input
+  (the tracker's per-picture `Arc` and SPS/PPS map), re-blessed in
+  `alloc_counts_sweep.rs` with that reason; the copy-count invariant it guards
+  is unchanged.

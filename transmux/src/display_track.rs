@@ -132,6 +132,7 @@ pub(crate) struct Activation {
 }
 
 /// The outcome of [`SpsTracker::observe`] for one access unit.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivationOutcome {
     /// The access unit activates no parameter set the tracker follows (no
@@ -230,6 +231,7 @@ fn hevc_geometry(nal: &[u8]) -> Option<DisplayGeometry> {
 }
 
 /// Which codec's parameter sets a [`SpsTracker`] follows.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackCodec {
     /// H.264 (ITU-T H.264 §7.3.2).
