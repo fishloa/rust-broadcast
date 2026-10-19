@@ -4,9 +4,9 @@
     <Latency target="3000"/>
   </ServiceDescription>
   <Period id="0" start="PT0S">
-    <AdaptationSet id="t0" contentType="video" mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">
+    <AdaptationSet id="t0" contentType="video" mimeType="video/mp4" segmentAlignment="true" startWithSAP="1" par="4:3">
       <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
-      <Representation id="1" mimeType="video/mp4" codecs="avc1.4D400D" bandwidth="58141" width="320" height="240" frameRate="25/1">
+      <Representation id="1" mimeType="video/mp4" codecs="avc1.4D400D" bandwidth="58141" width="320" height="240" frameRate="25/1" sar="1:1">
         <SegmentTemplate timescale="90000" duration="270000" startNumber="1" initialization="init-stream$RepresentationID$.m4s" media="chunk-stream$RepresentationID$-$Number$.m4s" availabilityTimeOffset="1.5" availabilityTimeComplete="false"/>
       </Representation>
     </AdaptationSet>

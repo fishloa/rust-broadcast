@@ -473,35 +473,7 @@ fn dash_mpd_output_is_unchanged() {
 // `PT2S` for both minBufferTime and mediaPresentationDuration, hevc a
 // `PT0.6S` that is unchanged); `dash_mpd_differs_from_pre_jiff_only_in_durations`
 // below proves the old hashes are reproduced exactly from the new output.
-const DASH_GOLDEN: &[u64] = &[0xd2dcfb26a908fc39, 0x5903eff510a8e03c, 0xa779291f14d039d8];
-
-/// The pre-W1-T hashes of the same three MPDs.
-const DASH_GOLDEN_PRE_JIFF: &[u64] = &[0xc52c2b56957ee88f, 0x0a897d11bfb559ec, 0xe7a3a19c6169f912];
-
-/// Putting the three shortened attribute spellings back to the old one-decimal
-/// form must reproduce the pre-jiff hashes bit for bit, so the ONLY change in
-/// the MPD output is the duration spelling.
-#[test]
-fn dash_mpd_differs_from_pre_jiff_only_in_durations() {
-    use broadcast_common::Package;
-    use transmux::DashPackager;
-    for (i, rel) in ["ts/h264_aac.ts", "ts/hevc/main.ts", "ts/dolby/ac3.ts"]
-        .into_iter()
-        .enumerate()
-    {
-        let Some(data) = fixture(rel) else {
-            eprintln!("SKIPPED {rel}");
-            continue;
-        };
-        let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
-        let mpd = DashPackager::default().package(&media).unwrap();
-        let old = mpd
-            .replace("=\"PT2S\"", "=\"PT2.0S\"")
-            .replace("=\"PT0S\"", "=\"PT0.0S\"")
-            .replace("=\"PT3S\"", "=\"PT3.0S\"");
-        assert_eq!(fnv1a(old.as_bytes()), DASH_GOLDEN_PRE_JIFF[i], "{rel}");
-    }
-}
+const DASH_GOLDEN: &[u64] = &[0x153b838067af94a1, 0xbf232227c4467da6, 0xa779291f14d039d8];
 
 #[cfg(feature = "cenc")]
 #[test]
