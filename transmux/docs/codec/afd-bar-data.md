@@ -11,6 +11,7 @@ be used. Page numbers are printed page numbers.
 | SMPTE ST 2016-3 | 2009 | `private/specs/smpte_st2016-3_2009_afd_bar_data_anc.pdf` |
 | ETSI TS 101 154 Annex B (normative) | V2.10.1 (2026-05) | `private/specs/etsi_ts_101_154_v02.10.01_av_coding_in_dvb.pdf` |
 | ATSC A/53 Part 4 §6.2 | 2009 (7 Aug 2009) | `private/specs/atsc_a53_part4_2009_mpeg2_video.pdf` |
+| ANSI/SCTE 128-1 §8.1-8.2 (AVC in cable; ATSC A/72-1 §7.4.2 and A/341 §6.4.1-6.4.2 both defer to it) | 2020 | `private/specs/ansi_scte_128-1_2020_avc_video_constraints.pdf`, `atsc_a72_part1_2023-04_avc_video.pdf`, `atsc_a341_2023-03_video_hevc.pdf` |
 | ITU-T H.264 / H.265 SEI T.35 syntax | (V15) 08/2024 / (V11) 01/2026 | `itu_t_h264_avc.pdf` / `itu_t_h265_hevc.pdf` |
 
 ## 1. AFD codes — SMPTE ST 2016-1:2009 §5, Table 1 (printed p. 6)
@@ -320,6 +321,55 @@ ATSC television system. Values '0001', '0101' through '0111', and '1100' are res
 and bar data are present together, AFD should be used in preference to bar data, except in the cases of AFD
 '0000' and '0100'."
 
+## 4b. ANSI/SCTE 128-1:2020 §8 — the H.264 persistence rule (printed pp. 8, 17-22, rendered and checked)
+
+ATSC A/72 Part 1:2023-04 §7.4.1-7.4.2 and ATSC A/341:2023-03 §6.4.1-6.4.2 (HEVC) both say AFD and bar data
+"shall be as specified by ANSI/SCTE 128-1, Section 8.1 / 8.2"; neither adds syntax of its own (A/341 only adds an
+informative note that the Display Aspect Ratio in its tables is the aspect ratio of the active image area *before*
+AFD and bar data are applied, and that SMPTE 2016-1 "does not include Ultra HD resolutions at this time").
+
+Carriage (§8.1.1, p. 17), verbatim: "Caption, AFD and bar data shall be carried in the SEI raw byte sequence
+payload (RBSP) syntax of the video Elementary Stream." Table 12 = `user_data_registered_itu_t_t35()` with
+`itu_t_t35_country_code` 8, `itu_t_t35_provider_code` 16, `user_identifier` 32, `user_structure()`; "Note that SEI
+payload is a SEI payloadType of 4 which contains the itu_t_t35_payload_byte for the terminal provider".
+"Receiving devices are expected to silently discard any unrecognized SEI payloads". §8.1.2 (p. 18, text layer;
+page rendered only for the persistence clauses below): country code `0xB5`, provider code `0x0031` (registered
+by ATSC), Table 13 `user_identifier`: `0x47413934` ("GA94") -> `ATSC1_data()`; `0x44544731` ("DTG1") -> `afd_data()`.
+`ATSC1_data()` (Table 14) = `user_data_type_code` (8) + `user_data_type_structure()` + `marker_bits` (8, '11111111');
+Table 15: `0x03` cc_data(), `0x06` bar_data(), `0x07` CableLabs 3D extension, `0x08` SCTE DM App #1,
+`0x09` ST2094-10_data() (informative), others reserved.
+
+Syntax (Table 18, p. 22): `afd_data() { zero_bit '0' (1); active_format_flag (1); alignment_bits '00 0001' (6);
+if (active_format_flag == '1') { reserved '1111' (4); active_format (4) } }` — identical to TS 101 154 Table B.2 /
+A/53 Table 6.13. Table 19 (p. 22) is identical to A/53 Table 6.14 ('0010'-'0011' "Not recommended"; "Use of
+'0010' or '0011' is not recommended in the SCTE television system"). `bar_data()` (Table 16, pp. 19-20) is
+identical to Table B.7; the SCTE line-number table (Table 17, informative, p. 21) has 480i/480p/720p/1080i/1080p rows
+with the 1080 formats coded as **1088** lines (1080i `21 - 560` / `584 - 1123`; 1080p `42 - 1121`).
+
+**Persistence and reset — normative (§8.2.3, p. 19 and §8.2.4, p. 21), verbatim:**
+
+> At an SRAP, unless AFD data is present specifying otherwise, the absence of bar data shall indicate that the
+> rectangular picture area containing useful information extends to the full height and width of the coded frame.
+
+> When present, the AFD shall be carried within the SEI RBSP of the video Elementary Stream. For each SRAP
+> Picture the default aspect ratio of the area of interest shall be set as signalled by the Supplemental
+> Enhancement Information parameters. After introduction, an AFD shall remain in effect until the next SRAP or
+> until another AFD value is introduced. Receivers should interpret the absence of AFD in a sequence start to
+> mean the active format is the same as the coded frame, corresponding to AFD value '1000' (see Table 18).
+
+Also §8.2.3: "When bar_data() is present in the Video Elementary Stream, the SEI pan_scan_rect() parameters ...
+shall not be present. Bar data is to be preferred over the use of the SEI pan_scan_rect()."
+Definitions (§5.2, p. 8): "SRAP Picture: An I- or IDR-picture that is part of an SRAP Access Unit"; "SGOP: ... the
+group of pictures spanning two consecutive SRAPs including the prior SRAP AU but not including the subsequent SRAP
+AU". The composition rules of an SRAP access unit (§6.4.1) and its transport constraints (§6.4.2) are "specified in
+SCTE 128 Part 2" — **not held here**, so the exact set of pictures that count as an SRAP is not transcribed.
+
+**Consequence:** in the ATSC/SCTE system (AVC via A/72 and SCTE 128-1; HEVC via A/341 deferring to the same
+clauses) AFD and bar data are *sticky until the next SRAP or a replacement*, and **absence at an SRAP resets the
+active format to "same as coded frame" (`1000`) and bar data to "full frame"**. That is the opposite of an
+"AFD survives IDR/random access" model, and it is stated only for the ATSC/SCTE system: TS 101 154 (DVB) gives
+the same rule for MPEG-2 (`sequence_header()`) and VC-1 but is silent for H.264/HEVC (Gaps below).
+
 ### 4.5 H.264/AVC and HEVC — TS 101 154 B.7, B.8a (pp. 244-246)
 
 Carried as the SEI message "User data registered by Recommendation ITU-T T.35" (H.264 clauses D.8.5/D.9.5
@@ -391,15 +441,14 @@ centre `1011`; 1101->full format 4:3 shoot-and-protect 14:9 `0111`; 16:9: 1010->
 
 ## Gaps (read before implementing)
 
-1. **Persistence of AFD in H.264 and HEVC is NOT stated** in TS 101 154 Annex B (B.7, B.8a say nothing about
-   how long an AFD/bar data SEI applies), nor in ST 2016-1/-3 (which are per-frame, "frame by frame basis").
-   The only persistence rules are the MPEG-2 ones above ("until the next sequence_header() or a new AFD";
-   the VC-1 rule in TS 101 154 B.8.1 is equivalent) and they are stated in terms of `sequence_header()`, which
-   has no H.264/HEVC analogue. Any "sticky until replaced, regardless of IDR/sequence boundaries" model for
-   H.264/HEVC is therefore an implementation choice, not a citation. ATSC A/72 (H.264 in ATSC) or A/341
-   might state it; neither is in the private repo.
-2. **CTA-CEB16-B** (receiver recommended practice), cited by both TS 101 154 (B.4.1) and A/53 (6.2.3.2.1,
-   6.2.4.3) for how a receiver should *act* on AFD/bar data, is not available (paywalled). Receiver behaviour
+1. **Persistence of AFD in H.264 and HEVC:** *DVB:* not stated (TS 101 154 B.7, B.8a are silent; its only
+   persistence rules are MPEG-2 "until the next sequence_header() or a new AFD" and the equivalent VC-1 rule).
+   *ATSC/SCTE:* stated in SCTE 128-1 §8.2.3-8.2.4 (see §4b) — sticky until the next SRAP or a new AFD, with
+   absence at an SRAP meaning `1000` / no bars; A/72 and A/341 inherit it. The SRAP picture set (SCTE 128 Part 2)
+   is not held. A DVB stream therefore has no citable H.264/HEVC reset rule; applying the SCTE rule to it is an
+   implementation choice and must be documented as such. ST 2016-1/-3 are per-frame ("frame by frame basis").
+2. **CTA-CEB16-B** (receiver recommended practice), cited by TS 101 154 (B.4.1), A/53 (6.2.3.2.1, 6.2.4.3), A/72, A/341 and
+   SCTE 128-1 (8.2.7) — fetch attempts found only the paid CTA/ANSI listings and a preview of the -A edition — for how a receiver should *act* on AFD/bar data, is not available (paywalled). Receiver behaviour
    (crop vs letterbox decisions) is therefore not specified by any source we hold; only the signalled value is.
 3. AFD in HEVC: TS 101 154 allows IRDs to ignore it; interaction with Default Display Window only partly read
    (§4.6).
