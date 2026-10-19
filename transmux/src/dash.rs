@@ -51,6 +51,20 @@
 //! scheme the caller flags (mp4-emsg's [`crate::EmsgBox`] already carries the
 //! wire box; this only advertises it).
 //!
+//! # Display geometry (ETSI TS 103 285 v1.4.1 §4.4)
+//!
+//! A video `AdaptationSet` carries `@par="w:h"` (picture aspect ratio) when
+//! every `Representation` in the set agrees on one, and each video
+//! `Representation` carries `@sar="w:h"` (sample aspect ratio) whenever the
+//! track's `TrackSpec::display` supplies one (SPS VUI via the Phase 1a API).
+//! Unknown/unspecified SAR yields no attribute. `@par` is derived arithmetic
+//! (`(width*sar_w):(height*sar_h)`, gcd-reduced), exactly the relation
+//! ISO/IEC 23009-1:2022 Table 5 requires between `@par`, `@width`, `@height`
+//! and `@sar`; `@width`/`@height` remain the cropped sample counts (Table 14),
+//! the pixel shape being carried by `@sar`. The clauses are transcribed in
+//! `transmux/docs/codec/dash-23009-1-2022-aspect.md` (5th edition; the 2026
+//! 6th edition is paywalled and was not checked).
+//!
 //! # CENC/CBCS signalling (issue #564)
 //!
 //! When any [`Track::encryption`](crate::media::Track::encryption) in an
@@ -481,6 +495,9 @@ struct ReprInfo {
     // Video geometry.
     width: Option<u32>,
     height: Option<u32>,
+    /// Sample (pixel) aspect ratio `w:h` from the track's display geometry,
+    /// reduced. `None` when unknown (no VUI / unspecified idc) — no `@sar`.
+    sar: Option<(u32, u32)>,
     frame_rate: Option<String>,
     // Audio parameters.
     audio_sampling_rate: Option<u32>,
@@ -626,10 +643,24 @@ impl DashPackager {
             encryption_kid,
             width: None,
             height: None,
+            sar: None,
             frame_rate: None,
             audio_sampling_rate: None,
             audio_channels: None,
         };
+
+        // Sample (pixel) aspect ratio from the track's display geometry (Phase 4c).
+        // `DisplayGeometry::sample_aspect_ratio()` derives it from the avcC/hvcC
+        // SPS VUI (Phase 1a); unknown / unspecified stays `None` => no `@sar`.
+        info.sar = track
+            .spec
+            .display
+            .as_ref()
+            .and_then(|d| d.typed_sample_aspect_ratio())
+            .map(|s| {
+                let r = s.reduced();
+                (u32::from(r.width()), u32::from(r.height()))
+            });
 
         match config {
             CodecConfig::Avc {
@@ -863,6 +894,14 @@ impl DashPackager {
         if let Some(lang) = common_lang(set) {
             attrs.push(("lang", lang));
         }
+        // `@par` (picture aspect ratio) — DVB-DASH: ETSI TS 103 285 §4.4.
+        // Derived as `(width*sar_w):(height*sar_h)` reduced, only when every
+        // Representation in the set yields the same value; otherwise omitted.
+        if kind == MediaKind::Video
+            && let Some(par) = common_par(set)
+        {
+            attrs.push(("par", format!("{}:{}", par.0, par.1)));
+        }
         open(w, "AdaptationSet", &attrs);
 
         // Role (ISO/IEC 23009-1 §5.8.5.5, Table 24) — every rendition here is
@@ -926,6 +965,9 @@ impl DashPackager {
             }
             if let Some(fr) = &r.frame_rate {
                 rattrs.push(("frameRate", fr.clone()));
+            }
+            if let Some((sar_w, sar_h)) = r.sar {
+                rattrs.push(("sar", format!("{sar_w}:{sar_h}")));
             }
             if let Some(sr) = r.audio_sampling_rate {
                 rattrs.push(("audioSamplingRate", sr.to_string()));
@@ -1238,6 +1280,31 @@ fn common_lang(set: &[&ReprInfo]) -> Option<String> {
     }
 }
 
+/// Common picture aspect ratio across a set of Representations, or `None`
+/// when they disagree or any is missing the needed geometry/SAR.
+fn common_par(set: &[&ReprInfo]) -> Option<(u32, u32)> {
+    let pars: Vec<Option<(u32, u32)>> = set
+        .iter()
+        .map(|r| par_of(r.width?, r.height?, r.sar?))
+        .collect();
+    agreed(&pars)
+}
+
+/// The one value every entry holds, or `None` when the slice is empty, any
+/// entry is `None`, or two entries differ.
+fn agreed(values: &[Option<(u32, u32)>]) -> Option<(u32, u32)> {
+    let first = (*values.first()?)?;
+    values.iter().all(|v| *v == Some(first)).then_some(first)
+}
+
+/// Picture aspect ratio `(width*sar_w):(height*sar_h)`, gcd-reduced.
+fn par_of(width: u32, height: u32, sar: (u32, u32)) -> Option<(u32, u32)> {
+    let num = u64::from(width) * u64::from(sar.0);
+    let den = u64::from(height) * u64::from(sar.1);
+    let g = gcd(num, den);
+    Some((u32::try_from(num / g).ok()?, u32::try_from(den / g).ok()?))
+}
+
 /// Write one `ContentProtection` element (ISO/IEC 23009-1 §5.8.4.1),
 /// including its optional `cenc:pssh` child (ISO/IEC 23001-7 §12.1) when
 /// [`ContentProtectionSystem::pssh`] is set.
@@ -1400,5 +1467,32 @@ mod xs_duration_tests {
                 d
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod par_tests {
+    use super::{agreed, par_of};
+
+    #[test]
+    fn par_is_width_sar_over_height_sar_reduced() {
+        // 720x576 SAR 64:45 -> 46080:25920 -> 16:9.
+        assert_eq!(par_of(720, 576, (64, 45)), Some((16, 9)));
+        // 720x576 SAR 16:11 -> 11520:6336 -> 20:11.
+        assert_eq!(par_of(720, 576, (16, 11)), Some((20, 11)));
+    }
+
+    #[test]
+    fn swapped_inputs_give_a_different_result() {
+        assert_ne!(par_of(720, 576, (64, 45)), par_of(720, 576, (45, 64)));
+        assert_ne!(par_of(720, 576, (64, 45)), par_of(576, 720, (64, 45)));
+    }
+
+    #[test]
+    fn par_needs_every_representation_to_agree() {
+        assert_eq!(agreed(&[Some((16, 9)), Some((16, 9))]), Some((16, 9)));
+        assert_eq!(agreed(&[Some((16, 9)), Some((4, 3))]), None);
+        assert_eq!(agreed(&[Some((16, 9)), None]), None);
+        assert_eq!(agreed(&[]), None);
     }
 }

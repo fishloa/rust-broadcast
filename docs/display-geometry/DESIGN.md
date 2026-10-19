@@ -34,6 +34,8 @@ Status: **Phase 1 (static geometry) landed, split into 1a and 1b; Phase 2
   byte-identical. fMP4 in-band `avc3`/`hev1` tagging (2b) is not implemented;
   demux-side `pasp`/`colr` overlay through the IR is not implemented.
 - **4b landed**: HLS master playlist advertises `VIDEO-RANGE` (HLG/PQ only; SDR and unmapped/absent colour omitted) from the track VUI transfer characteristics (broadcast-hls `VideoRange`, hls-runtime `HlsOrigin`).
+  **Phase 4c landed**: `DashPackager`/`LlDashPackager` write `@sar` on video
+  Representations and `@par` on video AdaptationSets per ETSI TS 103 285 §4.4.
 
 Spec facts are transcribed and page-checked in
 [`SPEC-NOTES.md`](SPEC-NOTES.md) (and, for the colour tables, in
