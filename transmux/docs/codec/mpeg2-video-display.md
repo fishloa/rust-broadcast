@@ -82,7 +82,10 @@ coded size is `(extension << 12) | value`, already used by `mpeg2-video-h262.md`
 (Note the table lists DAR as height-over-width style fractions "3 ÷ 4", "9 ÷ 16": the printed form is the
 ratio as the spec writes it; the usual 4:3 / 16:9 / 2.21:1 reading is width:height. The SAR formula as printed
 multiplies DAR by size ratios; no source here resolves the notation beyond the printed text, so an implementation
-must test it against real MPEG-2 captures, not assume.)
+must test it against real MPEG-2 captures, not assume. A derived consistency check, not a quotation: with the printed
+DAR "3 ÷ 4" (= 0.75) and a 720x576 frame the printed formula gives SAR = 0.75 x 720 / 576 = 0.9375, i.e. the sample
+aspect ratio expressed as height÷width (the reciprocal of the usual 16:15 width:height pixel aspect), which is
+self-consistent only if DAR is read in the same height÷width sense.)
 
 ## Sequence display extension semantics (printed pp. 44-48)
 
