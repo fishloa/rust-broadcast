@@ -422,6 +422,20 @@ user_data_registered_itu_t_t35( payloadSize ) {
   So for AFD: country `0xB5`, provider `0x0031`, then the 32-bit `user_identifier` and `afd_data()` / the
   `DVB1_data()` wrapper.
 
+### 4.5b NAL unit type numbers the AFD parser keys on (rendered pages)
+
+- **H.264 Table 7-1** (H.264 (V15) printed p. 67): `nal_unit_type` 1 = coded slice of a non-IDR picture; **5 = coded
+  slice of an IDR picture**; **6 = Supplemental enhancement information (SEI), `sei_rbsp()`**; 7 = SPS; 8 = PPS;
+  9 = access unit delimiter; 10 end of sequence; 11 end of stream.
+- **H.265 Table 7-1** (H.265 (V11) printed p. 66): 0-9 trailing/TSA/STSA/RADL/RASL (N/R pairs); **16-18 BLA_W_LP,
+  BLA_W_RADL, BLA_N_LP; 19-20 IDR_W_RADL, IDR_N_LP; 21 CRA_NUT** (22-23 reserved IRAP); 32 VPS, 33 SPS, 34 PPS, 35 AUD,
+  36 EOS, 37 EOB, 38 FD; **39 PREFIX_SEI_NUT, 40 SUFFIX_SEI_NUT** (`sei_rbsp()`). An IRAP picture has `nal_unit_type`
+  16..23 (printed p. 67 notes: BLA, IDR, CRA are the IRAP types; CRA starts a new CVS only when it is the first picture,
+  follows an end of sequence, or is handled as BLA — the `NoRaslOutputFlag` rule in H.265 §8.1.3, not transcribed here).
+- `sei_payload( payloadType, payloadSize )` dispatch (H.264 D.1.1 printed p. 333; H.265 D.2.1 printed p. 290, prefix
+  SEI): `payloadType` 4 = `user_data_registered_itu_t_t35`, 5 = `user_data_unregistered`, 6 = `recovery_point` (H.264)
+  / 6 = `recovery_point` (H.265 prefix), as in §4.5.
+
 ### 4.6 HEVC interplay with the Default Display Window — TS 101 154 (not page-rendered here)
 
 Text-layer only (md lines ~5507-5569, v2.10.1): "HEVC IRDs shall support conformance cropping. Support of
