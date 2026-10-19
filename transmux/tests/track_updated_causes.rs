@@ -31,9 +31,13 @@ enum Ev {
     Added(Box<TrackSpec>),
     Updated(Box<TrackSpec>),
     /// A non-initial `DisplayChanged`; `arc` is the shared state's address.
-    Switch { arc: usize },
+    Switch {
+        arc: usize,
+    },
     /// A video sample and the address of the display state it carries.
-    Sample { arc: Option<usize> },
+    Sample {
+        arc: Option<usize>,
+    },
 }
 
 fn is_avc(spec: &TrackSpec) -> bool {
