@@ -67,7 +67,9 @@ Semantics:
   If `add` is received for an already existing programme its action is identical to
   `update`.
 - `update` — the CA PMT of a programme already in the list is sent again because
-  the version_number or current_next_indicator changed. List management commands act
+  the version_number or current_next_indicator changed. It is the responsibility of
+  the application to check whether the change of the version_number results in a
+  change of the CA operations or not. List management commands act
   only at programme level; ES-level changes within an existing programme must be
   signalled by an `update` with the complete ES list re-sent.
 
