@@ -6,8 +6,11 @@
 //! **video signal type / colour description** (video format, full range and
 //! the colour primaries / transfer characteristics / matrix coefficients),
 //! derived once per track into [`TrackSpec::display`](super::TrackSpec::display).
-//! Cropping, a change event and per-sample tags are later phases (every type
-//! here is `#[non_exhaustive]`, so they land additively).
+//! **Phase 2** adds the change model: [`DisplayInfo`] (the displayed state of
+//! one access unit), [`DisplayChangeSet`] (which parts of it changed) and
+//! [`DisplayInfo::changes_from`], which compares parsed geometry by value,
+//! never by the parameter-set bytes it arrived in. Cropping is a later phase
+//! (every type here is `#[non_exhaustive]`, so it lands additively).
 //!
 //! # Spec citations
 //!
@@ -926,6 +929,148 @@ impl DisplayGeometry {
                 transfer: TransferCharacteristics::inferred(),
                 matrix: MatrixCoefficients::inferred(),
             })
+    }
+}
+
+/// Everything that determines how one access unit is shown
+/// (`docs/display-geometry/DESIGN.md` §4, Phase 2).
+///
+/// Carried twice, always behind `alloc::sync::Arc` because it is shared by
+/// every picture of a configuration and never copied per sample:
+/// [`Sample::display`](super::Sample::display) for the state in force at one
+/// access unit, and [`DemuxEvent::DisplayChanged`](super::DemuxEvent::DisplayChanged)
+/// announcing a new state before the first access unit it applies to.
+///
+/// Phase 2 populates [`geometry`](Self::geometry) only; picture-level AFD and
+/// bar data are Phase 3 and land as additive fields.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayInfo {
+    /// The sequence-level geometry of the SPS active at this access unit.
+    /// `None` for a track with no parseable SPS.
+    pub geometry: Option<DisplayGeometry>,
+}
+
+impl DisplayInfo {
+    /// A state carrying only a sequence-level geometry.
+    pub fn new(geometry: Option<DisplayGeometry>) -> Self {
+        Self { geometry }
+    }
+
+    /// The state of a [`TrackSpec`](super::TrackSpec)'s static
+    /// [`display`](super::TrackSpec::display) geometry, or `None` when that
+    /// spec has none (nothing to announce, so no per-AU state either).
+    pub fn from_geometry(geometry: Option<DisplayGeometry>) -> Option<Self> {
+        geometry.map(|g| Self::new(Some(g)))
+    }
+
+    /// The sample aspect ratio in force, if any.
+    pub fn sample_aspect_ratio(&self) -> Option<SampleAspectRatio> {
+        self.geometry.as_ref()?.typed_sample_aspect_ratio()
+    }
+
+    /// Which parts of `self` differ from `previous`.
+    ///
+    /// Comparison is by **parsed value** ([`PartialEq`]), never by the bytes
+    /// a parameter set arrived in (design §6.1): an SPS re-sent with a level
+    /// or HRD edit but identical geometry yields an all-false set, while a
+    /// wire-form change of the SAR (e.g. idc 4 `16:11` to Extended_SAR
+    /// `64:45`) always sets [`DisplayChangeSet::aspect_ratio`] even when the
+    /// resulting display aspect ratio is unchanged.
+    pub fn changes_from(&self, previous: Option<&Self>) -> DisplayChangeSet {
+        let Some(previous) = previous else {
+            return DisplayChangeSet {
+                initial: true,
+                ..DisplayChangeSet::default()
+            };
+        };
+        if previous == self {
+            return DisplayChangeSet::default();
+        }
+        let (current, previous) = (self.geometry.as_ref(), previous.geometry.as_ref());
+        DisplayChangeSet {
+            initial: false,
+            aspect_ratio: aspect_ratio_of(current) != aspect_ratio_of(previous),
+            output_rect: output_rect_of(current) != output_rect_of(previous),
+            video_signal: current.and_then(|g| g.video_signal)
+                != previous.and_then(|g| g.video_signal),
+            overscan: current.and_then(|g| g.overscan_appropriate)
+                != previous.and_then(|g| g.overscan_appropriate),
+            default_display_rect: false,
+        }
+    }
+}
+
+/// The wire aspect ratio (idc and, for Extended_SAR, both terms) in force.
+fn aspect_ratio_of(g: Option<&DisplayGeometry>) -> Option<AspectRatioIdc> {
+    g.and_then(|g| g.aspect_ratio)
+}
+
+/// The displayed rectangle (coded size; cropping is a later phase, so the
+/// whole coded picture is what the decoder outputs today).
+fn output_rect_of(g: Option<&DisplayGeometry>) -> Option<(u32, u32)> {
+    g.map(|g| (g.coded_width, g.coded_height))
+}
+
+/// Which parts of a [`DisplayInfo`] differ from the previous state for a
+/// track (design §4, §6.1). Every field is an exact comparison of that part.
+///
+/// A field is set by any wire-form difference of the part, so a SAR change
+/// that leaves the display aspect ratio identical (16:11 -> 64:45) still sets
+/// [`aspect_ratio`](Self::aspect_ratio), and an SPS whose bytes changed but
+/// whose parsed geometry did not sets nothing.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DisplayChangeSet {
+    /// The first state for this track (level-triggered start, design §5.2).
+    pub initial: bool,
+    /// [`AspectRatioIdc`] changed (idc, or the Extended_SAR terms).
+    pub aspect_ratio: bool,
+    /// The output rectangle changed (Phase 2: the coded size; cropping is a
+    /// later phase).
+    pub output_rect: bool,
+    /// The (never-applied) H.265 default display window changed. Always
+    /// `false` in Phase 2.
+    pub default_display_rect: bool,
+    /// The [`VideoSignalType`] changed (video format, full range, colour).
+    pub video_signal: bool,
+    /// [`DisplayGeometry::overscan_appropriate`] changed.
+    pub overscan: bool,
+}
+
+impl DisplayChangeSet {
+    /// The change set of a track's first state.
+    pub fn initial() -> Self {
+        Self {
+            initial: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether any field changed at all.
+    pub fn any(&self) -> bool {
+        *self != Self::default()
+    }
+
+    /// A short, stable label of the changed parts, in field order
+    /// (`"initial aspect_ratio"`), used by tests and logs.
+    pub fn names(&self) -> alloc::string::String {
+        let mut out = alloc::string::String::new();
+        let mut push = |set: bool, name: &str| {
+            if set {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                let _ = out.push_str(name);
+            }
+        };
+        push(self.initial, "initial");
+        push(self.aspect_ratio, "aspect_ratio");
+        push(self.output_rect, "output_rect");
+        push(self.default_display_rect, "default_display_rect");
+        push(self.video_signal, "video_signal");
+        push(self.overscan, "overscan");
+        out
     }
 }
 

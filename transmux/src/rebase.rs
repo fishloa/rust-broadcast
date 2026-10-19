@@ -135,6 +135,7 @@ mod tests {
             duration: Some(duration),
             flags: SampleFlags::SYNC,
             provenance: None,
+            display: None,
         }
     }
 

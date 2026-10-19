@@ -221,9 +221,12 @@
 //! - **Byte-stream resynchronisation**: ISO/IEC 13818-1 §2.4.3.2, via
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
+use crate::display_track::{ActivationOutcome, SpsTracker, TrackCodec};
+use crate::ir::{DisplayChangeSet, DisplayInfo};
 use crate::{ProgramNumber, TrackId};
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 use mpeg_ts::pid::Pid;
@@ -1592,6 +1595,20 @@ struct PendingOneBehind {
     is_sync: bool,
     pts_uw: i128,
     dts_uw: i128,
+    /// The display geometry of the AU this slot was **filled** with, so its
+    /// `Sample` carries the state that was in force when it arrived (the
+    /// tracker may advance one access unit later).
+    display: Option<Arc<DisplayInfo>>,
+}
+
+/// The display events one access unit raises when its slot is released
+/// (`docs/display-geometry/DESIGN.md` §6.5): a `TrackUpdated` (the codec
+/// config bytes changed at this AU) and/or a `DisplayChanged` (the parsed
+/// geometry changed at this AU), pushed immediately before its `Sample`.
+#[derive(Default)]
+struct PendingDisplayEvents {
+    config: Option<TrackSpec>,
+    display: Option<(Arc<DisplayInfo>, DisplayChangeSet)>,
 }
 
 /// H.264 PAFF (field-coded) pairing state of one video track (issue #1161).
@@ -1642,6 +1659,9 @@ enum LiveKind {
     /// H.264/HEVC/MPEG-2 video: one `Sample` per access unit.
     Video {
         pending: Option<PendingOneBehind>,
+        /// The `TrackUpdated` / `DisplayChanged` belonging to `pending`'s
+        /// access unit, pushed just before its `Sample` (design §6.5).
+        pending_events: PendingDisplayEvents,
         last_duration: u32,
         codec: VideoCodec,
         /// H.264 PAFF field-pair state (issue #1161); inert for other codecs.
@@ -1658,6 +1678,7 @@ enum LiveKind {
     /// Opaque PES data (#557): one `Sample` per access unit.
     Data {
         pending: Option<PendingOneBehind>,
+        pending_events: PendingDisplayEvents,
         last_duration: u32,
     },
     /// MPEG-H 3D Audio (issue #579): one opaque `Sample` per MHAS access
@@ -1668,6 +1689,7 @@ enum LiveKind {
     /// ETSI TS 101 154 §6.8.4.1), not hardcoded `true`.
     MpegH {
         pending: Option<PendingOneBehind>,
+        pending_events: PendingDisplayEvents,
         last_duration: u32,
     },
     /// Opaque section data (#576): each reassembled PSI/private section is
@@ -1704,6 +1726,39 @@ struct LiveTrack {
     /// trigger a `TrackUpdated` (which tells a consumer to rebuild its init
     /// segment).
     config_header: Option<Vec<u8>>,
+    /// Which SPS this track's pictures activate, and the display geometry
+    /// that implies (`docs/display-geometry/DESIGN.md` §6.1/§6.2). `Some`
+    /// only for AVC/HEVC: those are the demuxers that track display state
+    /// (`Sample::display` is `None` elsewhere).
+    /// `Some` for AVC/HEVC only: MPEG-2 picture geometry is not an AVC/HEVC
+    /// parameter set, so that path stays untracked (`Sample::display` is
+    /// `None`).
+    sps_tracker: Option<SpsTracker>,
+    /// The change resolved for the access unit being applied, not yet
+    /// attached to its slot.
+    display: Option<(Arc<DisplayInfo>, DisplayChangeSet)>,
+}
+
+impl LiveTrack {
+    /// Fold one access unit through the display tracker, returning the state
+    /// its `Sample` carries and remembering a resolved change for
+    /// [`push_live_au`] to park on that sample's slot.
+    ///
+    /// Before the first resolved access unit the change is *seed-pending*:
+    /// it is released with the first sample (the level-triggered start of
+    /// design §5.2, Q2 = emit).
+    fn display(&mut self, au: &[u8], pts: Option<i64>) -> Option<Arc<DisplayInfo>> {
+        let Some(tracker) = self.sps_tracker.as_mut() else {
+            return None;
+        };
+        if let ActivationOutcome::Changed {
+            display, changed, ..
+        } = tracker.observe(au, pts)
+        {
+            self.display = Some((display, changed));
+        }
+        tracker.state().cloned()
+    }
 }
 
 /// A [`StreamState`]'s codec-config **and** PMT-declaration-order lifecycle.
@@ -2037,9 +2092,17 @@ struct StreamState {
 /// emitting the *previous* pending sample now that its duration is known
 /// (`duration_from_pts` selects the PTS delta for data tracks, DTS delta for
 /// video).
+///
+/// The display events that belong to an access unit travel **with** its
+/// slot (`pending_events`) and are pushed immediately before that slot's
+/// `Sample`, never at the moment they were decided: an event raised while
+/// filling AU N belongs to AU N and must follow AU N-1's sample, which this
+/// call releases first (`docs/display-geometry/DESIGN.md` §6.5; the Phase 1a
+/// `TrackUpdated` ordering fix extended to `DisplayChanged`).
 #[allow(clippy::too_many_arguments)]
 fn advance_one_behind(
     pending: &mut Option<PendingOneBehind>,
+    pending_events: &mut PendingDisplayEvents,
     last_duration: &mut u32,
     data: Vec<u8>,
     is_sync: bool,
@@ -2047,8 +2110,11 @@ fn advance_one_behind(
     dts_uw: i128,
     duration_from_pts: bool,
     track_id: TrackId,
+    provenance: EventProvenance,
+    display: Option<Arc<DisplayInfo>>,
     events: &mut VecDeque<DemuxEvent>,
 ) {
+    let out_events = core::mem::take(pending_events);
     if let Some(prev) = pending.take() {
         let duration = if duration_from_pts {
             (pts_uw - prev.pts_uw).max(0) as u32
@@ -2058,6 +2124,20 @@ fn advance_one_behind(
         *last_duration = duration;
         let dts = to_ticks(prev.dts_uw);
         let pts = to_ticks(prev.pts_uw);
+        if let Some(spec) = out_events.config {
+            events.push_back(DemuxEvent::TrackUpdated(spec));
+        }
+        if let Some((display, changed)) = out_events.display {
+            events.push_back(DemuxEvent::DisplayChanged {
+                track_id,
+                display,
+                changed,
+                dts: Some(dts),
+                pts: Some(pts),
+                random_access: prev.is_sync,
+                provenance,
+            });
+        }
         events.push_back(DemuxEvent::Sample {
             track_id,
             sample: Sample {
@@ -2067,29 +2147,54 @@ fn advance_one_behind(
                 duration: Some(duration),
                 flags: SampleFlags::new(prev.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
+                display: prev.display,
             },
         });
+    } else {
+        // Nothing to release yet (the track's first access unit): an event
+        // has no preceding sample to follow and no DTS/PTS of its own until
+        // its slot is released, so it stays pending with that slot.
+        *pending_events = out_events;
     }
     *pending = Some(PendingOneBehind {
         data,
         is_sync,
         pts_uw,
         dts_uw,
+        display,
     });
 }
 
 /// Flush a trailing one-behind pending sample at end of stream, reusing the
 /// last-known duration (mirrors the batch tail rule: the final sample repeats
-/// the previous sample's duration, or `0` if there was only ever one sample).
+/// the previous sample's duration, or `0` if there was only ever one sample),
+/// followed by any display events that arrived with it.
 fn flush_one_behind(
     pending: &mut Option<PendingOneBehind>,
+    pending_events: &mut PendingDisplayEvents,
     last_duration: u32,
     track_id: TrackId,
+    provenance: EventProvenance,
     events: &mut VecDeque<DemuxEvent>,
 ) {
+    let out_events = core::mem::take(pending_events);
     if let Some(p) = pending.take() {
         let dts = to_ticks(p.dts_uw);
         let pts = to_ticks(p.pts_uw);
+        if let Some(spec) = out_events.config {
+            events.push_back(DemuxEvent::TrackUpdated(spec));
+        }
+        if let Some((display, changed)) = out_events.display {
+            events.push_back(DemuxEvent::DisplayChanged {
+                track_id,
+                display,
+                changed,
+                dts: Some(dts),
+                pts: Some(pts),
+                random_access: p.is_sync,
+                provenance,
+            });
+        }
         events.push_back(DemuxEvent::Sample {
             track_id,
             sample: Sample {
@@ -2099,6 +2204,7 @@ fn flush_one_behind(
                 duration: Some(last_duration),
                 flags: SampleFlags::new(p.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
+                display: p.display,
             },
         });
     }
@@ -2619,44 +2725,61 @@ fn eac3_has_dependent_substreams(config: &CodecConfig) -> bool {
 
 /// Apply one access unit to an already-live track, emitting whatever
 /// [`DemuxEvent::Sample`]s it resolves.
+///
+/// `provenance` is the track's PID sidecar, stamped on any
+/// [`DemuxEvent::DisplayChanged`] raised for this access unit. `display` is
+/// the display state decided for it by [`LiveTrack::display`] (after that
+/// tracker has advanced), which its `Sample` carries.
 fn push_live_au(
     live: &mut LiveTrack,
     data: &[u8],
     pts_uw: i128,
     dts_uw: i128,
+    provenance: EventProvenance,
+    display: Option<Arc<DisplayInfo>>,
     events: &mut VecDeque<DemuxEvent>,
 ) {
     let track_id = live.track_id;
     match &mut live.kind {
         LiveKind::Video {
             pending,
+            pending_events,
             last_duration,
             codec,
             paff,
+            ..
         } => {
+            use crate::slice_header::AvcPicture;
             let (bytes, is_sync) = video_sample_bytes(*codec, data);
             let mut this_field = None;
-            if *codec == VideoCodec::H264 {
-                use crate::slice_header::AvcPicture;
-                let picture = paff.params.classify_au(data);
-                if let AvcPicture::Field(second) = picture {
-                    if let (Some(first), Some(p)) = (paff.first_field, pending.as_mut())
-                        && first.pairs_with(&second)
-                        && (0..=MAX_FIELD_PAIR_DTS_TICKS).contains(&(dts_uw - p.dts_uw))
-                    {
-                        // Second field of a complementary pair: one sample, the
-                        // first field's timestamps; drop its AUD (one AU = one AUD).
-                        p.data
-                            .extend_from_slice(&annexb_to_length_prefixed_no_aud(data));
-                        paff.first_field = None;
-                        return;
-                    }
-                    this_field = Some(second);
+            if *codec == VideoCodec::H264
+                && let AvcPicture::Field(second) = paff.params.classify_au(data)
+            {
+                if let (Some(first), Some(p)) = (paff.first_field, pending.as_mut())
+                    && first.pairs_with(&second)
+                    && (0..=MAX_FIELD_PAIR_DTS_TICKS).contains(&(dts_uw - p.dts_uw))
+                {
+                    // Second field of a complementary pair: one sample, the
+                    // first field's timestamps; drop its AUD (one AU = one AUD).
+                    // The pair carries the first field's display state (the
+                    // change, if any, was resolved on the first field's
+                    // slices, as design §13 E10 says).
+                    p.data
+                        .extend_from_slice(&annexb_to_length_prefixed_no_aud(data));
+                    paff.first_field = None;
+                    return;
                 }
+                this_field = Some(second);
             }
             paff.first_field = this_field;
+            // A change resolved while observing this access unit travels
+            // with its slot and is pushed just before its own Sample.
+            if let Some(change) = live.display.take() {
+                pending_events.display = Some(change);
+            }
             advance_one_behind(
                 pending,
+                pending_events,
                 last_duration,
                 bytes,
                 is_sync,
@@ -2664,15 +2787,23 @@ fn push_live_au(
                 dts_uw,
                 false,
                 track_id,
+                provenance,
+                display,
                 events,
             );
+            // The events that were pending before this call (raised for the
+            // access unit now being released) were pushed by it; anything
+            // raised for *this* access unit (`pending_events`) travels with
+            // its slot and is released by the next one.
         }
         LiveKind::Data {
             pending,
+            pending_events,
             last_duration,
         } => {
             advance_one_behind(
                 pending,
+                pending_events,
                 last_duration,
                 data.to_vec(),
                 true,
@@ -2680,6 +2811,8 @@ fn push_live_au(
                 dts_uw,
                 true,
                 track_id,
+                provenance,
+                display,
                 events,
             );
         }
@@ -2705,11 +2838,13 @@ fn push_live_au(
         }
         LiveKind::MpegH {
             pending,
+            pending_events,
             last_duration,
         } => {
             let is_sync = find_mpegh3da_config(data).is_some();
             advance_one_behind(
                 pending,
+                pending_events,
                 last_duration,
                 data.to_vec(),
                 is_sync,
@@ -2717,6 +2852,8 @@ fn push_live_au(
                 dts_uw,
                 true,
                 track_id,
+                provenance,
+                display,
                 events,
             );
         }
@@ -3044,6 +3181,7 @@ fn finalize_probe(
             let kind = match carriage {
                 DataCarriage::Pes => LiveKind::Data {
                     pending: None,
+                    pending_events: PendingDisplayEvents::default(),
                     last_duration: 0,
                 },
                 DataCarriage::Sections => LiveKind::Section,
@@ -3132,6 +3270,7 @@ fn finalize_probe(
                 VIDEO_TIMESCALE,
                 LiveKind::Video {
                     pending: None,
+                    pending_events: PendingDisplayEvents::default(),
                     last_duration: 0,
                     codec: VideoCodec::H264,
                     paff: PaffPairing::default(),
@@ -3226,6 +3365,7 @@ fn finalize_probe(
                 VIDEO_TIMESCALE,
                 LiveKind::Video {
                     pending: None,
+                    pending_events: PendingDisplayEvents::default(),
                     last_duration: 0,
                     codec: VideoCodec::Hevc,
                     paff: PaffPairing::default(),
@@ -3258,6 +3398,7 @@ fn finalize_probe(
                 VIDEO_TIMESCALE,
                 LiveKind::Video {
                     pending: None,
+                    pending_events: PendingDisplayEvents::default(),
                     last_duration: 0,
                     codec: VideoCodec::Mpeg2,
                     paff: PaffPairing::default(),
@@ -3428,6 +3569,7 @@ fn finalize_probe(
                 VIDEO_TIMESCALE,
                 LiveKind::MpegH {
                     pending: None,
+                    pending_events: PendingDisplayEvents::default(),
                     last_duration: 0,
                 },
             ))
@@ -3525,9 +3667,17 @@ fn advance_track(
             // `adts_buffer_fullness` routinely read as a 12-bit `0xFFF`
             // syncword) is not a header and would flap the config.
             let skip = carried_frame_remainder(&live, data);
-            if let Some((config, timescale)) =
-                reprobe_if_config_changed(stream, &mut live, &data[skip..])
-            {
+            let new_config = reprobe_if_config_changed(stream, &mut live, &data[skip..]);
+            // The display geometry the access unit activates (see
+            // [`LiveTrack::display`]); it must be decided before the access
+            // unit is applied, whether or not its codec config changed.
+            let display = live.display(data, Some(to_ticks(pts_uw)));
+            let provenance = EventProvenance {
+                pid: Some(pid),
+                packet_index: None,
+                program_number: None,
+            };
+            if let Some((config, timescale)) = new_config {
                 live.config = config;
                 live.timescale = timescale;
                 let updated = DemuxEvent::TrackUpdated(
@@ -3535,22 +3685,25 @@ fn advance_track(
                         .with_source(pid, stream.descriptors.clone()),
                 );
                 // Video is emitted one access unit behind ([`advance_one_behind`]):
-                // pushing this access unit *first* releases the previous (last
-                // old-config) sample, so the event lands after it and before
-                // this access unit's own sample, which is released by the
-                // next one. Pushing the event first labelled that last
-                // old-config picture with the new config. Audio emits an
-                // access unit's frames immediately, so the new config
-                // correctly precedes them.
-                if matches!(live.kind, LiveKind::Video { .. }) {
-                    push_live_au(&mut live, data, pts_uw, dts_uw, events);
-                    events.push_back(updated);
+                // an event raised while filling this access unit belongs to
+                // it and is released (after the previous access unit's
+                // sample) when this access unit's own slot is. So the event
+                // is parked on the slot the access unit goes into, never
+                // pushed immediately — pushing it first labelled the last
+                // old-config picture with the new config (Phase 1a fix).
+                // Audio emits an access unit's frames immediately, so the new
+                // config correctly precedes them.
+                if let LiveKind::Video { pending_events, .. } = &mut live.kind {
+                    if let DemuxEvent::TrackUpdated(spec) = updated.clone() {
+                        pending_events.config = Some(spec);
+                    }
+                    push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events);
                 } else {
                     events.push_back(updated);
-                    push_live_au(&mut live, data, pts_uw, dts_uw, events);
+                    push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events);
                 }
             } else {
-                push_live_au(&mut live, data, pts_uw, dts_uw, events);
+                push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events);
             }
             TrackState::Live(live)
         }
@@ -5550,7 +5703,36 @@ impl StreamingTsDemux {
                     } else {
                         spec
                     };
+                    // The level-triggered start (design §5.2, Q2 = emit): one
+                    // `DisplayChanged { changed.initial = true }` for a video
+                    // track that has any display state, right after its
+                    // `TrackAdded` and before its first `Sample`. It shares its
+                    // `Arc` with the first resolved sample added below.
+                    let initial_display = TrackSpec::new(track_id, timescale, config.clone())
+                        .display
+                        .and_then(|g| DisplayInfo::from_geometry(Some(g)))
+                        .map(Arc::new);
+                    if let Some(display) = &initial_display {
+                        self.events.push_back(DemuxEvent::DisplayChanged {
+                            track_id,
+                            display: display.clone(),
+                            changed: DisplayChangeSet::initial(),
+                            dts: None,
+                            pts: None,
+                            random_access: false,
+                            provenance: EventProvenance {
+                                pid: Some(next_pid),
+                                packet_index: None,
+                                program_number: None,
+                            },
+                        });
+                    }
                     self.events.push_back(DemuxEvent::TrackAdded(spec));
+                    let sps_tracker = match stream.codec {
+                        Codec::H264 => Some(SpsTracker::new(TrackCodec::Avc)),
+                        Codec::Hevc => Some(SpsTracker::new(TrackCodec::Hevc)),
+                        _ => None,
+                    };
                     let mut live = LiveTrack {
                         track_id,
                         kind,
@@ -5558,7 +5740,14 @@ impl StreamingTsDemux {
                         timescale,
                         parameter_sets: ParameterSets::default(),
                         config_header: None,
+                        sps_tracker,
+                        display: None,
                     };
+                    if let Some(display) = &initial_display
+                        && let Some(tracker) = live.sps_tracker.as_mut()
+                    {
+                        tracker.seed_state(display.geometry.clone());
+                    }
                     // Seed the changed-config comparison from the access units
                     // the config was actually recovered from, so the track's
                     // first header repeat after promotion is not mistaken for a
@@ -5581,8 +5770,22 @@ impl StreamingTsDemux {
                             .try_to_bytes()
                             .ok();
                     }
+                    let provenance = EventProvenance {
+                        pid: Some(next_pid),
+                        packet_index: None,
+                        program_number: None,
+                    };
                     for au in backlog {
-                        push_live_au(&mut live, &au.data, au.pts_uw, au.dts_uw, &mut self.events);
+                        let display = live.display(&au.data, Some(to_ticks(au.pts_uw)));
+                        push_live_au(
+                            &mut live,
+                            &au.data,
+                            au.pts_uw,
+                            au.dts_uw,
+                            provenance,
+                            display,
+                            &mut self.events,
+                        );
                     }
                     stream.track = Some(TrackState::Live(live));
                     stream.backlog_bytes = 0;
@@ -5793,25 +5996,47 @@ impl StreamingTsDemux {
             }
         }
 
-        for stream in self.streams.values_mut() {
+        for (&pid, stream) in self.streams.iter_mut() {
             if let Some(TrackState::Live(live)) = &mut stream.track {
+                let provenance = EventProvenance {
+                    pid: Some(pid),
+                    packet_index: None,
+                    program_number: None,
+                };
                 match &mut live.kind {
                     LiveKind::Video {
                         pending,
+                        pending_events,
                         last_duration,
                         ..
                     } => {
-                        flush_one_behind(pending, *last_duration, live.track_id, &mut self.events);
+                        flush_one_behind(
+                            pending,
+                            pending_events,
+                            *last_duration,
+                            live.track_id,
+                            provenance,
+                            &mut self.events,
+                        );
                     }
                     LiveKind::Data {
                         pending,
+                        pending_events,
                         last_duration,
                     }
                     | LiveKind::MpegH {
                         pending,
+                        pending_events,
                         last_duration,
                     } => {
-                        flush_one_behind(pending, *last_duration, live.track_id, &mut self.events);
+                        flush_one_behind(
+                            pending,
+                            pending_events,
+                            *last_duration,
+                            live.track_id,
+                            provenance,
+                            &mut self.events,
+                        );
                     }
                     LiveKind::Audio { kind, anchor, .. } => {
                         flush_audio_carry(kind, anchor, live.track_id, &mut self.events);
@@ -5987,6 +6212,11 @@ impl<'a> TsDemux<'a> {
                     degraded_at.push(DegradationRecord::new(kind, track, provenance));
                 }
                 DemuxEvent::TracksResolved { .. } => {}
+                // The per-AU tag is lossless in a `Media` (design §5.3): every
+                // video `Sample` already carries its own `display`, so the
+                // batch path needs no event list. The event itself is not
+                // kept — a `Media` has no react-to-a-change surface.
+                DemuxEvent::DisplayChanged { .. } => {}
             }
         }
         // The streaming core stamps `track: None` on damage seen before its PID
@@ -10933,6 +11163,7 @@ mod tests {
             timescale: VIDEO_TIMESCALE,
             kind: LiveKind::Data {
                 pending: None,
+                pending_events: PendingDisplayEvents::default(),
                 last_duration: 0,
             },
             backlog: Vec::new(),

@@ -346,6 +346,7 @@ fn absorb_traf(
                 // timestamps distinct from the fragment's own tfdt/trun
                 // timing (see `Sample::provenance`).
                 provenance: None,
+                display: None,
             });
             next_dts = crate::frag_offsets::add_duration(dts, r.duration)?;
         }
@@ -1407,6 +1408,7 @@ mod tests {
             duration: Some(1000),
             flags: SampleFlags::new(true),
             provenance: None,
+            display: None,
         };
         let init = build_init_segment(std::slice::from_ref(&spec), TIMESCALE).expect("init");
         // The init segment really declares the 2-byte size.

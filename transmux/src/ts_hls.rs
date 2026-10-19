@@ -1257,6 +1257,7 @@ mod tests {
             duration: Some(dur),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
+            display: None,
         }
     }
 
@@ -1335,6 +1336,7 @@ mod tests {
             duration: None,
             flags: crate::ir::SampleFlags::SYNC,
             provenance: None,
+            display: None,
         }
     }
 

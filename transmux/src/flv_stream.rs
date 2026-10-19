@@ -558,6 +558,7 @@ impl StreamingFlvDemux {
                     duration: None, // filled in by `TrackState::advance`/`flush`
                     flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
                     provenance: None,
+                    display: None,
                 };
                 video.advance(sample, timestamp, events);
             }
@@ -645,6 +646,7 @@ impl StreamingFlvDemux {
                     duration: None, // filled in by `TrackState::advance`/`flush`
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
+                    display: None,
                 };
                 audio.advance(sample, timestamp, events);
             }

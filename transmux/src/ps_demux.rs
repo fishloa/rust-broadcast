@@ -66,6 +66,7 @@ use crate::ac3::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
 use crate::au::AccessUnitSplitter;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
 use crate::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
@@ -845,7 +846,8 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     // `unwrap_ts`, and unstamped AUs are anchored off them), so MPEG Program
     // Stream genuinely recovers an absolute clock rather than leaving the
     // anchor at 0. `composition_offset` folds into the pts/dts pair.
-    let samples: Vec<Sample> = order
+    let mut display_tracker = SpsTracker::new(TrackCodec::Avc);
+    let mut samples: Vec<Sample> = order
         .iter()
         .enumerate()
         .map(|(pos, &i)| {
@@ -853,13 +855,22 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
             let (start, end) = ranges[i];
             let au = &es.es_bytes[start..end];
             let is_idr = au_is_idr(au);
-            Sample::from_annexb(
+            // The per-access-unit display tag (design §5.3): every picture of
+            // a PS video track carries the geometry of the SPS its slices use.
+            let display = display_tracker.state().cloned();
+            let _ = display_tracker.observe(au, Some(to_ticks(pts[i])));
+            let display = display_tracker.state().cloned().or(display);
+            let sample = Sample::from_annexb(
                 au,
                 Some(to_ticks(dts[i])),
                 Some(to_ticks(pts[i])),
                 Some(dur),
                 is_idr,
-            )
+            );
+            match display {
+                Some(display) => sample.with_display(display),
+                None => sample,
+            }
         })
         .collect();
 

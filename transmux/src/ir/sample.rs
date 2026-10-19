@@ -17,7 +17,10 @@
 //! [`Provenance`], which no mux/demux logic in this crate reads back.
 
 use crate::TrackId;
+use alloc::sync::Arc;
 use bytes::Bytes;
+
+use super::DisplayInfo;
 
 use crate::annexb::annexb_to_length_prefixed;
 
@@ -116,6 +119,18 @@ pub struct Sample {
     /// Debug-only original wire timestamps, when the source container
     /// carried an independently-observable raw stamp. See [`Provenance`].
     pub provenance: Option<Provenance>,
+    /// The display state in force for **this** access unit
+    /// (`docs/display-geometry/DESIGN.md` §5.3). `Some` for every sample of a
+    /// video track from a demuxer that tracks display state (today the TS
+    /// demuxer's AVC/HEVC paths); the first sample after a change shares the
+    /// exact `Arc` with the [`DemuxEvent::DisplayChanged`](super::DemuxEvent::DisplayChanged)
+    /// that preceded it. `None` means "this demuxer/sample does not track
+    /// display state" — never "unchanged": a consumer falls back to
+    /// [`TrackSpec::display`](super::TrackSpec::display) then.
+    ///
+    /// The tag travels with the sample, so it survives IR transforms and a
+    /// `media-plane` `Trunk` unchanged.
+    pub display: Option<Arc<DisplayInfo>>,
 }
 
 impl Sample {
@@ -143,6 +158,7 @@ impl Sample {
             duration,
             flags: SampleFlags::new(is_sync),
             provenance: None,
+            display: None,
         }
     }
 
@@ -163,6 +179,7 @@ impl Sample {
             duration,
             flags: SampleFlags::new(is_sync),
             provenance: None,
+            display: None,
         }
     }
 
@@ -182,6 +199,7 @@ impl Sample {
             duration,
             flags: SampleFlags::SYNC,
             provenance: None,
+            display: None,
         }
     }
 
@@ -189,6 +207,13 @@ impl Sample {
     /// pre-unwrap wire stamps), returning `self` (builder style).
     pub fn with_provenance(mut self, p: Provenance) -> Self {
         self.provenance = Some(p);
+        self
+    }
+
+    /// Attach the display state in force for this access unit, returning
+    /// `self` (builder style). See [`Sample::display`].
+    pub fn with_display(mut self, d: Arc<DisplayInfo>) -> Self {
+        self.display = Some(d);
         self
     }
 

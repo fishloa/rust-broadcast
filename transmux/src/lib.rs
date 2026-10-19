@@ -174,6 +174,7 @@ pub mod cli;
 pub mod dash;
 #[cfg(feature = "std")]
 pub mod dash_parse;
+pub(crate) mod display_track;
 pub mod drm;
 pub mod dts;
 pub mod error;
@@ -312,10 +313,10 @@ pub use interlace::{
 };
 pub use ir::{
     AspectRatioIdc, AudioLanguage, AudioMetadata, AudioRole, AudioType, ColourDescription,
-    ColourPrimaries, DisplayGeometry, EXTENDED_SAR_IDC, EditorialClassification,
-    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MatrixCoefficients, MixType,
-    ProgramNumber, SampleAspectRatio, SupplementaryAudio, TrackId, TransferCharacteristics,
-    VideoFormat, VideoSignalType,
+    ColourPrimaries, DisplayChangeSet, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC,
+    EditorialClassification, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT,
+    MatrixCoefficients, MixType, ProgramNumber, SampleAspectRatio, SupplementaryAudio, TrackId,
+    TransferCharacteristics, VideoFormat, VideoSignalType,
 };
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,

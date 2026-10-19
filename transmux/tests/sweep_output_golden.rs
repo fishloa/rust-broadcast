@@ -33,13 +33,15 @@ fn media_debug(media: &transmux::Media) -> String {
     }
 }
 
-/// `TrackSpec::display` (the display-geometry Phase 1a field) renders in
-/// `Debug` as `, display: <value>` (`None`, or `Some(DisplayGeometry { .. })`
-/// with nested commas); the goldens were captured before that field existed.
-/// Drop the field (the value runs to the next comma or closing brace at nesting
-/// depth 0) so every hash still proves the demux output itself is unchanged:
-/// no golden is re-captured for this field. The geometry is pinned by
-/// `display_geometry.rs`.
+/// `TrackSpec::display` (the display-geometry Phase 1a field) and
+/// `Sample::display` (Phase 2's per-access-unit tag) render in `Debug` as
+/// `, display: <value>` (`None` or `Some(..)` with nested commas); the goldens
+/// were captured before either field existed. Drop the field (the value runs
+/// to the next comma or closing brace at nesting depth 0) so every hash still
+/// proves the demux output itself is unchanged: no golden is re-captured for
+/// these fields. The geometry is pinned by `display_geometry.rs` and
+/// `display_change.rs`. A media sample's data prints as `Bytes { .. }`, so no
+/// other field value can contain the literal `, display: `.
 fn no_display_debug(s: &str) -> String {
     const FIELD: &str = ", display: ";
     let mut out = String::with_capacity(s.len());
@@ -297,7 +299,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
     check(
         &mut bad,
         "rtp-stream",
-        fnv1a(format!("{samples:?}").as_bytes()),
+        fnv1a(no_display_debug(&format!("{samples:?}")).as_bytes()),
         0x0dec_cfda_9ae3_7ce8,
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");
