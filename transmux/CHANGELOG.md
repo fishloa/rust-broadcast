@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.27.6] - 2026-10-19
 ### Added
 - **VUI colour signalling on every video `TrackSpec` (design `docs/display-geometry/DESIGN.md`, Phase 1b).** `DisplayGeometry` now carries `overscan_appropriate: Option<bool>` and `video_signal: Option<VideoSignalType>`, read from the H.264 / H.265 SPS VUI (`overscan_info_present_flag`/`overscan_appropriate_flag`, then `video_signal_type_present_flag`, `video_format`, `video_full_range_flag`, `colour_description_present_flag` and the `colour_primaries`/`transfer_characteristics`/`matrix_coefficients` triple). New typed enums, each with `name()` + `Display` and a lossless `Reserved(u8)` catch-all (`from_wire`/`code` round-trip every 0..=255): `VideoFormat` (H.264 Table E-2 / H.265 Table E.2), `ColourPrimaries` (Table E-3 / E.3), `TransferCharacteristics` (Table E-4 / E.4, incl. PQ 16 and HLG 18) and `MatrixCoefficients` (Table E-5 / E.5, BT.709 / BT.470 System B,G / System M / BT.2020), plus `ColourDescription { primaries, transfer, matrix }` and `VideoSignalType { video_format, full_range, colour }`. A player can now pick the Y'CbCr-to-RGB matrix instead of guessing from resolution. The struct records only what was **signalled**; the spec's inferred defaults are accessors: `DisplayGeometry::full_range() -> bool` (false when absent), `video_format()` (5), `colour_description()` (2/2/2). Tables are page-verified and transcribed in `transmux/docs/codec/vui-colour-tables.md`. Additive on `#[non_exhaustive]` types and derived by `TrackSpec::new` from `avcC`/`hvcC`, so TS batch, `StreamingTsDemux` and fMP4 demux all expose it.
 
