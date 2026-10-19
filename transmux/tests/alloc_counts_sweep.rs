@@ -56,7 +56,13 @@ mod ps_demux_copies {
         }
     }
 
-    const H264_BUDGET_X100: usize = 658; // 664 before r04-O6, 652 after (midway)
+    // 658 -> 659 for display-geometry Phase 2: `Sample` gained one pointer-sized
+    // field (`display: Option<Arc<DisplayInfo>>`, +8 bytes), and `PsDemux`
+    // (untouched, it never sets the tag) builds `Vec<Sample>` for its 75 video
+    // samples about twice: 404096 -> 405400 allocated bytes (+1304, ~2 x 8 x 75)
+    // on this fixture. The copy-count invariant this guards (one payload copy,
+    // not three) is unchanged: the payload bytes themselves are not copied more.
+    const H264_BUDGET_X100: usize = 659; // 664 before r04-O6, 652 after (midway)
     const MPEG2_BUDGET_X100: usize = 337; // 370 before r04-O6, 305 after (midway)
 }
 
