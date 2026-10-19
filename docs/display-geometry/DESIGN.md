@@ -444,6 +444,11 @@ cares about shape listens to `DisplayChanged` alone.
    it is not transcribed (gap G3). Until it is, the VUI SAR is what
    `aspect_ratio` reports and a `pasp` is not read into the model at all;
    Phase 4 settles precedence after the transcription (owner question Q7).
+   *Phase 4a-2 status:* `colr nclx` override of the VUI colour is implemented
+   (container wins). `pasp` is applied as fill-in only (unspecified VUI SAR);
+   on a specified-vs-specified conflict the VUI SAR is kept, because the
+   available ISO/IEC 14496-12 §12.1.4.1 text does not define precedence
+   (gap G3). See `transmux/CHANGELOG.md` [Unreleased].
 3. AFD never overrides geometry: it is interpreted *against* it (TS 101 154
    §B.3.0 "The AFD itself does not describe the aspect ratio of the coded
    frame"). `DisplayInfo` carries both; the player composes them.
