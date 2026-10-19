@@ -53,11 +53,10 @@ rendered pages**. Verbatim below (line breaks of the PDF removed).
    (`dash-23009-1-2022-ids.md`). Free-form values such as `main-0` reference nothing.
 3. IOP's clause is a *recommendation* ("it is recommended ... the following is recommended"); with an
    EssentialProperty the client "shall not select" the contained Representations for regular playout.
-4. `@maxPlayoutRate` is signalled "for each Representation" in IOP; ETSI TS 103 285 §10.6.2.1 (page-verified earlier,
-   `isobmff-tkhd.md` neighbours) says the Representations "will indicate @maxPlayoutRate, and the Adaptation Set
+4. `@maxPlayoutRate` is signalled "for each Representation" in IOP; ETSI TS 103 285 v1.4.1 §10.6.2.1 says the Representations "will indicate @maxPlayoutRate, and the Adaptation Set
    that contains them will include the attribute @codingDependency="false", and may contain an Essential
-   Descriptor"; a Role descriptor with value "alternative" "may be used". TS 103 285 text read from the md only
-   (not page-rendered in this pass).
+   Descriptor"; a Role descriptor with value "alternative" "may be used". (TS 103 285 §10.6.2 was read from the
+   md only; it was NOT page-rendered in this pass.)
 
 ## Not covered
 
