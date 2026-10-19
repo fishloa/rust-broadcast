@@ -361,8 +361,8 @@ reference picture resampling at the same SPS. An SPS-only crop parse is wrong fo
   box-level statements and the DVB rule "nominal display size in square pixels after decoding, H.264/AVC
   cropping, and rescaling", `isobmff-tkhd.md` §2).
 - H.264 has **no** default display window; the H.264 VUI carries no crop.
-- Pan-scan SEI rectangles are defined *relative to the cropping rectangle* (H.264 D.2.4 / H.265 D.3.4
-  equations on printed pp. 361-362 / 333-334 reference `frame_crop_*` / `conf_win_*`); not transcribed.
+- Pan-scan SEI rectangles are defined *relative to the cropping rectangle* (H.264 D.2.4, equation on
+  printed p. 362; H.265 D.3.4, printed p. 334: both reference `frame_crop_*` / `conf_win_*`); not transcribed.
 
 ## Not covered
 
