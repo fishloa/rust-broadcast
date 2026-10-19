@@ -26,8 +26,13 @@ Status: **Phase 1 (static geometry) landed, split into 1a and 1b; Phase 2
   batch tags. Decisions taken where the design left a choice are recorded in
   §16.
 - Still later phases: crop / conformance window (§3, out of 1b),
-  `default_display_rect`, the `colr nclx` overlay of §6.3, Phase 3 (AFD) and
-  Phase 4; fMP4 in-band `avc3`/`hev1` tagging (2b) is not implemented.
+  `default_display_rect`, Phase 3 (AFD) and Phase 4 (DASH `@sar`/`@par`,
+  HLS `VIDEO-RANGE`, tkhd anamorphic presentation size, clap). **Phase 4a-1
+  landed**: `build_trak` now writes `pasp` (non-1:1 SAR) and `colr nclx`
+  (signalled colour description) for AVC/HEVC init segments from
+  `TrackSpec::display`; square-pixel/colour-unsignalled input stays
+  byte-identical. fMP4 in-band `avc3`/`hev1` tagging (2b) is not implemented;
+  demux-side `pasp`/`colr` overlay through the IR is not implemented.
 
 Spec facts are transcribed and page-checked in
 [`SPEC-NOTES.md`](SPEC-NOTES.md) (and, for the colour tables, in
