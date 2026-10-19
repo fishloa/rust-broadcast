@@ -223,7 +223,6 @@ fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> 
     ))
 }
 
-/// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
 /// Build the `pasp`/`colr` child boxes (ISO/IEC 14496-12:2015 §12.1.4–5)
 /// that `build_trak` appends to an AVC/HEVC sample entry from the track's
 /// [`DisplayGeometry`] (Phase 4a-1). `pasp` is emitted only for a non-1:1
@@ -281,6 +280,7 @@ fn avc_hevc_display_extra_boxes(
     Ok(extra_boxes)
 }
 
+/// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
 fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let audio = t.config.is_audio();
 

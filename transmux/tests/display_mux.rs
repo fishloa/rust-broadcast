@@ -499,7 +499,12 @@ fn ffprobe_oracle_real_captures() {
         eprintln!("SKIP ffprobe_oracle_real_captures: ffprobe not installed");
         return;
     }
-    type Case = (&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>);
+    type Case = (
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<&'static str>,
+    );
     let cases: &[Case] = &[
         (
             "ts/melodie-anamorphic-sar-64-45-zenith-tv.ts",

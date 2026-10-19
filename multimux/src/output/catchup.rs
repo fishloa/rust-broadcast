@@ -556,6 +556,12 @@ mod tests {
         use media_plane::ingress::{HandshakePolicy, IngestDriver};
         use std::num::NonZeroUsize;
 
+        // The init prelude of this synthetic track: 652 bytes before the init
+        // segment wrote display geometry (Phase 4a-1) plus 19 for the `colr`
+        // nclx box its SPS now earns (the SPS signals BT.709 colour): box
+        // header 8 + colour_type 4 + three u16 code points 6 + full-range byte 1.
+        const INIT_LEN: usize = 652 + 19;
+
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -597,18 +603,22 @@ mod tests {
 
             crate::source::advance_route(&driver, &route, &mut progress).await;
 
-            // The drain persisted the segment: the init prelude is 652 bytes
+            // The drain persisted the segment: the init prelude is INIT_LEN bytes
             // (a real fMP4 init for the synthetic track), then SEG_LEN bytes
             // of 0x5A.
             let period = tmp.join("w3").join("p0.m4s");
             let bytes = std::fs::read(&period).expect("period file must exist");
             assert_eq!(
                 bytes.len(),
-                652 + SEG_LEN,
+                INIT_LEN + SEG_LEN,
                 "period file must hold init + the one segment"
             );
             assert!(
-                bytes[652..].iter().all(|&b| b == 0x5A),
+                bytes[..INIT_LEN].windows(4).any(|w| w == b"colr"),
+                "the extra 19 init bytes are the colr nclx box"
+            );
+            assert!(
+                bytes[INIT_LEN..].iter().all(|&b| b == 0x5A),
                 "the segment's bytes must be persisted byte-exact"
             );
 
@@ -617,7 +627,10 @@ mod tests {
             let entries: Vec<serde_json::Value> = serde_json::from_str(&idx).expect("index JSON");
             assert_eq!(entries.len(), 1, "one segment must be indexed");
             assert_eq!(entries[0]["seq"], serde_json::json!(1));
-            assert_eq!(entries[0]["byte_offset"], serde_json::json!(652));
+            assert_eq!(
+                entries[0]["byte_offset"],
+                serde_json::json!(INIT_LEN as u64)
+            );
             assert_eq!(entries[0]["byte_len"], serde_json::json!(SEG_LEN as u64));
 
             cleanup(&tmp);
