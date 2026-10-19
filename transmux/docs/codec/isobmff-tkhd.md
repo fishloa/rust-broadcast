@@ -34,8 +34,30 @@ markdown matches it):
 | **Width** | **UI16.16** | width as a fixed point 16.16 number |
 | **Height** | **UI16.16** | height as a fixed point 16.16 number |
 
-The F4V text gives no semantics for Width/Height beyond the 16.16 encoding
-(integer part in the high 16 bits, fraction in the low 16).
+The F4V text gives no semantics for Width/Height beyond "expressed as a fixed
+point 16.16 number". (By the usual meaning of that notation the integer part is
+the high 16 bits and the fraction the low 16; the F4V page does not spell this
+out.)
+
+## 1b. Apple QuickTime File Format Specification (2001-03-01), "Track Header Atoms"
+
+The ancestor of the ISO box. Source: `private/specs/apple_quicktime_file_format.pdf`
+printed pages 41-43 (field list p. 41 figure 2-7; element descriptions pp. 41-43;
+Track width/height on page 43, verified on the rendered page);
+markdown `private/specs-md/apple_quicktime_file_format.md` lines 1233-1316.
+Same field order as the F4V table (Version 1 byte, Flags 3 bytes, the 32-bit
+times/IDs/duration of version 0, 36-byte matrix). Differences worth knowing:
+QuickTime defines a fourth flag, `Track in poster` = `0x0008` (the F4V table
+lists three bits), and only the 32-bit (version 0) layout is drawn. The two
+fields that matter here, verbatim:
+
+> **Track width**: A 32-bit fixed-point number that specifies the width of this
+> track in pixels.
+> **Track height**: A 32-bit fixed-point number that indicates the height of
+> this track in pixels.
+
+"In pixels" is not qualified as coded or square pixels; the DVB rule below is
+what disambiguates it for DASH content.
 
 ## 2. Semantics for DVB-DASH — ETSI TS 103 285 V1.4.1 (2023-09), §5.1.2
 
@@ -57,6 +79,21 @@ rescale, per the ISO note quoted in `isobmff-visual-ext.md` that "normally,
 the horizontal dimension of the video is scaled"). The profile does not state
 a rounding rule for a non-integer product; that is a free implementation
 choice (16.16 can carry the fraction).
+
+## 3. Related DVB-DASH statement on `@width`/`@height` — ETSI TS 103 285 V1.4.1, §4.4
+
+Source: same PDF, page 23 (verified on the rendered page); markdown line ~1058.
+For video Adaptation Sets `@maxWidth`/`@maxHeight` (or `@width`/`@height` when
+all Representations agree) and `@par` "should be present"; and:
+
+> NOTE: The attributes @maxWidth and @maxHeight are expected to be used such
+> that they describe the target display size. This means that they may exceed
+> the actual largest size of any coded Representation in one Adaptation Set.
+
+Each Representation "shall" carry `@width`/`@height` unless the Adaptation Set
+does. Note the text does not say which size (coded or display) a Representation's
+`@width`/`@height` hold; only the `@max*` NOTE and the `tkhd` rule above speak of
+display size.
 
 ## Not verified (honest gaps)
 
