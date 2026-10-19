@@ -67,8 +67,8 @@ pub use codec::{CodecConfig, DataCarriage, SubtitleFormat, SubtitleSampleEntry};
 pub use display::{
     AspectRatioIdc, ColourDescription, ColourPrimaries, DisplayChangeSet, DisplayGeometry,
     DisplayInfo, EXTENDED_SAR_IDC, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE,
-    INFERRED_VIDEO_FORMAT, MatrixCoefficients, SampleAspectRatio, TransferCharacteristics,
-    VideoFormat, VideoSignalType,
+    INFERRED_VIDEO_FORMAT, MatrixCoefficients, PictureRect, SampleAspectRatio,
+    TransferCharacteristics, VideoFormat, VideoSignalType,
 };
 pub use event::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,

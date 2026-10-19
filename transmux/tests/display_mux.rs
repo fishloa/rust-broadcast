@@ -368,7 +368,8 @@ fn neither_is_byte_identical_to_display_none() {
             width: 720,
             height: 576,
         },
-    );
+    )
+    .with_display(None);
     let mut g = DisplayGeometry::new(720, 576, Some(AspectRatioIdc::Square));
     g.video_signal = Some(VideoSignalType::new(VideoFormat::Component, true, None));
     let spec_neither = TrackSpec::new(
