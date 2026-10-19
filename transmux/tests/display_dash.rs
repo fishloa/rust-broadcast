@@ -13,6 +13,7 @@
 
 use broadcast_common::{Package, Unpackage};
 use quick_xml::Reader;
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use transmux::DashPackager;
 use transmux::ts_demux::TsDemux;
@@ -24,8 +25,12 @@ fn video_geometry_attrs(mpd: &str) -> (Option<String>, Vec<Option<String>>) {
     fn attr(e: &BytesStart<'_>, key: &str) -> Option<String> {
         e.attributes()
             .filter_map(Result::ok)
-            .find(|a| a.key.as_ref() == key.as_bytes())
-            .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+            .find(|a| a.key.as_ref() == key)
+            .map(|a| {
+                a.normalized_value(XmlVersion::Implicit1_0)
+                    .expect("resolvable attribute value")
+                    .into_owned()
+            })
     }
     let mut reader = Reader::from_str(mpd);
     let mut in_video_set = false;
@@ -34,16 +39,16 @@ fn video_geometry_attrs(mpd: &str) -> (Option<String>, Vec<Option<String>>) {
     loop {
         match reader.read_event().expect("well-formed MPD") {
             Event::Start(e) | Event::Empty(e) => match e.name().as_ref() {
-                b"AdaptationSet" => {
+                "AdaptationSet" => {
                     in_video_set = attr(&e, "contentType").as_deref() == Some("video");
                     if in_video_set {
                         par = attr(&e, "par");
                     }
                 }
-                b"Representation" if in_video_set => sars.push(attr(&e, "sar")),
+                "Representation" if in_video_set => sars.push(attr(&e, "sar")),
                 _ => {}
             },
-            Event::End(e) if e.name().as_ref() == b"AdaptationSet" => in_video_set = false,
+            Event::End(e) if e.name().as_ref() == "AdaptationSet" => in_video_set = false,
             Event::Eof => break,
             _ => {}
         }
