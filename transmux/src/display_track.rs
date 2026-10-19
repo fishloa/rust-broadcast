@@ -461,9 +461,6 @@ impl SpsTracker {
     /// was reported, and a later picture on the same sets must not re-raise
     /// the change.
     fn forget_resolved(&mut self) {
-        if self.unresolved.is_empty() {
-            return;
-        }
         let unresolved = core::mem::take(&mut self.unresolved);
         self.unresolved = unresolved
             .into_iter()

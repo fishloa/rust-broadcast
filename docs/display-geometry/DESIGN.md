@@ -794,8 +794,20 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
   mid-file config re-probe sees the change on some captures (the probe is
   driven by the same access unit), so a switch can carry two
   `TrackUpdated`/`DisplayChanged` pairs where the old code emitted one
-  `TrackUpdated`. The track's `TrackAdded` is now emitted before its
+  `TrackUpdated`. On the three zenith-tv switch captures the probe resolves
+  the *second* config at the switch access unit itself and a second
+  re-probe raises the same config one unit later, hence two
+  `DisplayChanged` events for the one geometry switch; a consumer applying
+  the full state is unaffected (the second set is all-zeros). Collapsing
+  them needs a change of the r04-W51 re-probe timing, which is a separate
+  decision (owner question). The track's `TrackAdded` is now emitted before its
   `DisplayChanged { initial }` (the initial event used to be ordered first).
+- **Spec vectors live in `src/display_track.rs`.** The tracker (pure bit
+  logic) has unit tests for the by-id activation, the geometry-neutral
+  change, the SAR-only change, output order, the unseen PPS/SPS binding and
+  the H.265 ids. A synthetic *TS* did not reproduce the capture's per-AU
+  layout (`TsMux` rewrites the samples and drops an empty first half), so the
+  streaming delivery order is pinned on the real captures only.
 - **Scope.** `StreamingTsDemux`, batch `TsDemux` and `PsDemux` tag samples;
   fMP4 (2b), FLV/RTMP and RTP emit `Sample::display = None` (FLV's
   `TrackUpdated` was audited and is not one sample early; it re-probes the

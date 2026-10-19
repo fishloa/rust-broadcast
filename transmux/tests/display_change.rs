@@ -156,12 +156,16 @@ fn only_track(seen: &[Seen], track: TrackId) -> Vec<&Seen> {
 /// Assert the level-triggered start: one `DisplayChanged { initial }` for the
 /// track, after its `TrackAdded` and before its first `Sample`.
 fn assert_initial(video: &[&Seen], sar: AspectRatioIdc) {
-    // The level start is emitted right after the track's `TrackAdded` that
-    // carries the same geometry (the only spec of that track whose config
-    // names it).
+    // The level-triggered start is emitted right AFTER the track's
+    // `TrackAdded`, never before it (design §5.2).
     assert!(
-        video.iter().take(2).any(|s| matches!(s, Seen::Spec { .. })),
-        "TrackAdded near the start: {:?}",
+        matches!(video.first(), Some(Seen::Spec { .. })),
+        "TrackAdded precedes the initial event: {:?}",
+        &video[..2.min(video.len())]
+    );
+    assert!(
+        matches!(video.get(1), Some(Seen::Changed { changed, .. }) if changed.initial),
+        "the initial event follows TrackAdded immediately: {:?}",
         &video[..2.min(video.len())]
     );
     let changed: Vec<&&Seen> = video
