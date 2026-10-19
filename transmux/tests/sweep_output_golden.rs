@@ -40,8 +40,10 @@ fn media_debug(media: &transmux::Media) -> String {
 /// to the next comma or closing brace at nesting depth 0) so every hash still
 /// proves the demux output itself is unchanged: no golden is re-captured for
 /// these fields. The geometry is pinned by `display_geometry.rs` and
-/// `display_change.rs`. A media sample's data prints as `Bytes { .. }`, so no
-/// other field value can contain the literal `, display: `.
+/// `display_change.rs`. The pattern is removed from the *whole* rendering,
+/// Sample fields included, because `Sample::display` is a `DisplayInfo` that
+/// may itself hold a `Sample` (an encoder-config record); that is why the RTP
+/// golden renders its samples through this mask too.
 fn no_display_debug(s: &str) -> String {
     const FIELD: &str = ", display: ";
     let mut out = String::with_capacity(s.len());
