@@ -2171,8 +2171,22 @@ fn advance_one_behind(
         pts_uw,
         dts_uw,
         display,
-        pending_events,
+        pending_events: PendingDisplayEvents::default(),
     });
+    if let Some(spec) = pending_events.config {
+        events.push_back(DemuxEvent::TrackUpdated(spec));
+    }
+    if let Some((display, changed)) = pending_events.display {
+        events.push_back(DemuxEvent::DisplayChanged {
+            track_id,
+            display,
+            changed,
+            dts: Some(to_ticks(dts_uw)),
+            pts: Some(to_ticks(pts_uw)),
+            random_access: is_sync,
+            provenance,
+        });
+    }
 }
 
 /// Flush a trailing one-behind pending sample at end of stream, reusing the

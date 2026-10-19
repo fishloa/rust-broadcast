@@ -777,8 +777,8 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
   released (after that slot's `TrackUpdated`, before its `Sample`) with the
   slot's own `dts`/`pts`/sync flag, so it is immediately before the first
   sample carrying the new `Arc` and after the last one carrying the old.
-- **`random_access` is the first affected access unit's own IDR / BLA bit**,
-  from the slice headers that activated the change (an H.264 IDR, or an
+- **`random_access` is the released access unit's own IDR / BLA bit**, from
+  the slice headers that activated the change (an H.264 IDR, or an
   H.265 IDR/BLA). It is *not* the sample's `is_sync`, which is the segmenter's
   broader notion (a recovery-point SEI or an SPS in the AU also anchors a
   segment).
