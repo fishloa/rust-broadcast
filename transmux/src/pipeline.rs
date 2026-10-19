@@ -322,6 +322,19 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let audio = t.config.is_audio();
 
     let mut minf_header: Option<OpaqueBox> = None;
+    // Compute the tkhd presentation size once for the AVC/HEVC arms (Phase 5):
+    // cropped output size, rescaled for the sample aspect ratio. Audio and VVC
+    // arms do not use it.
+    let tkhd_video_dims = match &t.config {
+        CodecConfig::Avc { width, height, .. } => Some((*width, *height)),
+        CodecConfig::Hevc { width, height, .. } => Some((*width, *height)),
+        _ => None,
+    };
+    let (tkhd_w_pre, tkhd_h_pre) = match tkhd_video_dims {
+        Some((w, h)) => tkhd_presentation_size(t.display.as_ref(), w, h),
+        None => (0u32, 0u32),
+    };
+
     let (stsd_entry, vmhd, smhd, handler_type, handler_name, tkhd_w, tkhd_h) = match &t.config {
         CodecConfig::Avc {
             config,
@@ -351,8 +364,8 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 None,
                 *b"vide",
                 b"VideoHandler\0".to_vec(),
-                tkhd_presentation_size(t.display.as_ref(), *width, *height).0,
-                tkhd_presentation_size(t.display.as_ref(), *width, *height).1,
+                tkhd_w_pre,
+                tkhd_h_pre,
             )
         }
         CodecConfig::Hevc {
@@ -385,8 +398,8 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 None,
                 *b"vide",
                 b"VideoHandler\0".to_vec(),
-                tkhd_presentation_size(t.display.as_ref(), *width, *height).0,
-                tkhd_presentation_size(t.display.as_ref(), *width, *height).1,
+                tkhd_w_pre,
+                tkhd_h_pre,
             )
         }
         CodecConfig::Vvc {

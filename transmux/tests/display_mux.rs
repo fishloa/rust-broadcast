@@ -357,7 +357,13 @@ fn no_display_writes_neither() {
 
 #[test]
 fn neither_is_byte_identical_to_display_none() {
-    // display None vs display Some with no effective pasp/colr -> identical bytes.
+    // TrackSpec::new auto-derives `display` from the config's first SPS, so a
+    // spec without `.with_display(None)` would inherit that derived geometry
+    // (including its SAR). Phase 5's tkhd presentation size is derived from
+    // `display`, so an inherited non-Square SAR would change tkhd bytes versus
+    // the explicit Square geometry below and break this equality. Forcing
+    // `.with_display(None)` makes the tkhd fall back to the coded dimensions,
+    // matching the Square-SAR case's output (1:1).
     let spec_none = TrackSpec::new(
         TrackId::new(1),
         90000,
