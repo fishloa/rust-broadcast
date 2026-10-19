@@ -82,7 +82,7 @@ use transmux::TrackId;
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
     DecimalSeconds, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist, MediaSegment,
-    OpenSegment, PartSpec, Variant,
+    OpenSegment, PartSpec, Variant, VideoRange,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -866,6 +866,7 @@ impl HlsOriginBuilder {
             window: Mutex::new(Window::new(window_segments)),
             init: Mutex::new(InitStore::default()),
             codecs: Mutex::new(None),
+            video_range: Mutex::new(None),
             target_duration_secs,
             container: self.container,
             part_target_ms: self.part_target_ms,
@@ -900,6 +901,11 @@ pub struct HlsOrigin {
     /// known once track specs have been supplied; `None` = unknown, so the
     /// attribute is omitted rather than invented.
     codecs: Mutex<Option<String>>,
+    /// `VIDEO-RANGE` for the master playlist, derived from the first video
+    /// track (in track-id order) whose display carries a colour description;
+    /// `None` = unknown / SDR, so the attribute is omitted rather than
+    /// invented (RFC 8216bis §4.4.6.2).
+    video_range: Mutex<Option<VideoRange>>,
     target_duration_secs: f64,
     container: Container,
     /// `Some(part_target_ms)` enables LL-HLS; `None` renders classic HLS —
@@ -955,8 +961,9 @@ impl HlsOrigin {
                 .and_then(|specs| self.set_track_specs(&specs).ok());
             if derived.is_none() {
                 // A new init that cannot be read must not leave the previous
-                // init's codecs advertised.
+                // init's codecs (or VIDEO-RANGE) advertised.
                 *locked(&self.codecs) = None;
+                *locked(&self.video_range) = None;
             }
         }
         // The first segment not yet closed is the first one cut against
@@ -984,14 +991,29 @@ impl HlsOrigin {
         let mut ordered: Vec<&transmux::TrackSpec> = specs.iter().collect();
         ordered.sort_by_key(|spec| spec.track_id);
         let mut codecs: Vec<String> = Vec::new();
+        // VIDEO-RANGE is derived from the first video track (in track-id
+        // order) whose display carries a colour description (RFC 8216bis
+        // §4.4.6.2). `None` when no such track exists OR its transfer code
+        // has no defined mapping (attribute omitted).
+        let mut video_range: Option<VideoRange> = None;
+        let mut video_range_decided = false;
         for spec in ordered {
             match transmux::rfc6381_codec_string(&spec.config) {
                 Ok(codec) => codecs.push(codec),
                 Err(transmux::Error::UnsupportedCodec { .. }) => {}
                 Err(other) => return Err(other),
             }
+            if !video_range_decided
+                && let Some(display) = &spec.display
+                && let Some(signal) = &display.video_signal
+                && let Some(colour) = &signal.colour
+            {
+                video_range = VideoRange::from_transfer_characteristics(colour.transfer.code());
+                video_range_decided = true;
+            }
         }
         *locked(&self.codecs) = (!codecs.is_empty()).then(|| codecs.join(","));
+        *locked(&self.video_range) = video_range;
         Ok(())
     }
 
@@ -1019,11 +1041,18 @@ impl HlsOrigin {
         };
         let bandwidth = u32::try_from(bandwidth)
             .map_err(|_| HlsMasterError::BandwidthOverflow { bandwidth })?;
+        let mut extra_attrs: Vec<(String, broadcast_hls::AttrValue)> = Vec::new();
+        if let Some(range) = *locked(&self.video_range)
+            && matches!(range, VideoRange::Hlg | VideoRange::Pq)
+        {
+            extra_attrs.push(range.attr());
+        }
         let master = MasterPlaylist {
             variants: vec![Variant {
                 bandwidth,
                 codecs: locked(&self.codecs).clone(),
                 uri: media_playlist_name.to_string(),
+                extra_attrs,
                 ..Default::default()
             }],
             ..Default::default()

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `VideoRange` enum (`Sdr`/`Hlg`/`Pq`) with `name()`, `from_transfer_characteristics(u8)` and `attr()` for the `VIDEO-RANGE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2), derived from a track's VUI transfer characteristics.
 
 ## [0.4.0] - 2026-10-17
 ### Documentation
