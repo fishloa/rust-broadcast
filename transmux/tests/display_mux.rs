@@ -254,6 +254,67 @@ fn colour_bt709_full_range_writes_colr() {
     assert_eq!(colr_of(&e), Some((1, 1, 1, true)));
 }
 
+/// The three colour code points are written in the order the box defines
+/// (ISO/IEC 14496-12:2015 §12.1.5.2: colour_primaries, transfer_characteristics,
+/// matrix_coefficients), not merely "some" of the three. The real captures all
+/// signal symmetric triples (5/5/5, 1/1/1), which would hide a mix-up, so this
+/// uses three DISTINCT code points (BT.709 primaries 1, IEC 61966-2-1 transfer
+/// 13, SMPTE 170M matrix 6) and checks the exact `nclx` body bytes derived by
+/// hand from the syntax: 'nclx', 0x0001, 0x000D, 0x0006, then full_range_flag
+/// in the top bit of the last byte (here 0, 7 reserved zero bits).
+#[test]
+fn colr_writes_primaries_transfer_matrix_in_order() {
+    let mut g = DisplayGeometry::new(720, 576, None);
+    g.video_signal = Some(VideoSignalType::new(
+        VideoFormat::Component,
+        false,
+        Some(ColourDescription::from_wire(1, 13, 6)),
+    ));
+    let spec = TrackSpec::new(
+        TrackId::new(1),
+        90000,
+        CodecConfig::Avc {
+            config: transmux::AVCConfigurationBox {
+                config: avc_config(),
+            },
+            width: 720,
+            height: 576,
+        },
+    )
+    .with_display(Some(g));
+    let data = build(spec);
+    assert_eq!(
+        find_box_body(&data, b"colr"),
+        &[b'n', b'c', b'l', b'x', 0, 1, 0, 13, 0, 6, 0x00],
+        "primaries, transfer, matrix, then the full-range byte"
+    );
+    assert_eq!(colr_of(&avc_entry(&data)), Some((1, 13, 6, false)));
+    // The same triple with the full-range flag set sets only the top bit.
+    let mut g = DisplayGeometry::new(720, 576, None);
+    g.video_signal = Some(VideoSignalType::new(
+        VideoFormat::Component,
+        true,
+        Some(ColourDescription::from_wire(1, 13, 6)),
+    ));
+    let spec = TrackSpec::new(
+        TrackId::new(1),
+        90000,
+        CodecConfig::Avc {
+            config: transmux::AVCConfigurationBox {
+                config: avc_config(),
+            },
+            width: 720,
+            height: 576,
+        },
+    )
+    .with_display(Some(g));
+    let data = build(spec);
+    assert_eq!(
+        find_box_body(&data, b"colr"),
+        &[b'n', b'c', b'l', b'x', 0, 1, 0, 13, 0, 6, 0x80],
+    );
+}
+
 #[test]
 fn video_signal_present_colour_none_writes_no_colr() {
     let mut g = DisplayGeometry::new(720, 576, None);
