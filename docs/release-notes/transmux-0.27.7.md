@@ -38,7 +38,7 @@ _Released 2026-10-19._
 
 ## Limits
 
-- **`TrackUpdated` is still emitted twice per switch** on these captures: a pre-existing effect of the track re-probe, already present in 0.27.6 and tracked as issue #1380. `DisplayChanged` is emitted exactly once.
+- **Two `TrackUpdated` events at a programme/slate switch are not a duplicate.** On these captures the PMT also changes at the switch (the slate lists 3 `es_info` descriptors instead of 9), so one `TrackUpdated` carries the new descriptors with the codec config unchanged, and a second carries the new codec config immediately before `DisplayChanged` and the first new-geometry sample. Each carries the full current spec; replacing the stored spec by `track_id` handles both. (An earlier version of this note called it a pre-existing re-probe duplicate; that was wrong, see issue #1380.) `DisplayChanged` is emitted exactly once.
 - **The unseen-PPS path is covered by the real captures** but has no isolated test that kills its mutation.
 - **H.265 is synthetic-only:** no real HEVC capture exercises the change event.
 - **Not yet covered:** the Program Stream, FLV, RTP and fMP4 in-band (`avc3`/`hev1`) demuxers do not set `Sample::display`; crop and AFD (active format description) are later phases.
