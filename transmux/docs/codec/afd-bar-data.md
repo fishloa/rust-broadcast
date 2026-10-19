@@ -332,8 +332,7 @@ Carriage (§8.1.1, p. 17), verbatim: "Caption, AFD and bar data shall be carried
 payload (RBSP) syntax of the video Elementary Stream." Table 12 = `user_data_registered_itu_t_t35()` with
 `itu_t_t35_country_code` 8, `itu_t_t35_provider_code` 16, `user_identifier` 32, `user_structure()`; "Note that SEI
 payload is a SEI payloadType of 4 which contains the itu_t_t35_payload_byte for the terminal provider".
-"Receiving devices are expected to silently discard any unrecognized SEI payloads". §8.1.2 (p. 18, text layer;
-page rendered only for the persistence clauses below): country code `0xB5`, provider code `0x0031` (registered
+"Receiving devices are expected to silently discard any unrecognized SEI payloads". §8.1.2 (p. 18, rendered and checked): country code `0xB5`, provider code `0x0031` (registered
 by ATSC), Table 13 `user_identifier`: `0x47413934` ("GA94") -> `ATSC1_data()`; `0x44544731` ("DTG1") -> `afd_data()`.
 `ATSC1_data()` (Table 14) = `user_data_type_code` (8) + `user_data_type_structure()` + `marker_bits` (8, '11111111');
 Table 15: `0x03` cc_data(), `0x06` bar_data(), `0x07` CableLabs 3D extension, `0x08` SCTE DM App #1,
