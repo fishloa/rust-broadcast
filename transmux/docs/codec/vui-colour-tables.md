@@ -175,3 +175,26 @@ rendered page instead:
   E-55" in H.265 (H.265 numbering); neither affects the labels.
 - H.265 §E.2.1 spells the middle colour element `matrix_coeffs`; H.264 spells
   it `matrix_coefficients`. Same 8-bit field, same table.
+
+## Cross-check against ITU-T H.273 (V4, 07/2024)
+
+H.273 is the coding-independent code-point specification (twin of ISO/IEC 23091-2) that H.264 Annex E and
+H.265 Annex E reference for these tables. Fetched into `private/specs/itu_t_h273_202407_cicp_video.pdf`
+(`private/specs-md/` conversion flagged pages 7, 31, 32 unverifiable; the pages used here were checked on the
+render, printed pp. 6, 8, 14 = PDF 14, 16, 22). Result: **the defined code-point sets agree exactly with the
+tables above.**
+
+| Table | H.273 V4 defined values | Reserved | Rendered page |
+|---|---|---|---|
+| Table 2 colour primaries | 0 (Reserved row), 1-12, 22 | 13-21 and 23-255 "For future use by ITU-T \| ISO/IEC" | printed p. 6 |
+| Table 3 transfer characteristics | 0-18 | 19-255 | printed p. 8 |
+| Table 4 matrix coefficients | 0-17 | 18-255 | printed p. 14 |
+
+H.273 NOTEs worth knowing: NOTE 3 (Table 3, p. 8): for `TransferCharacteristics` 13 the equations are
+interpreted with `MatrixCoefficients` 0 where relevant, because IEC 61966-2-1 had a wider range of values for sYCC;
+NOTE 4 (Table 4, p. 14): "In a previous version of this Specification, the IEC 61966-2-1 sYCC representation was
+identified as corresponding to MatrixCoefficients equal to 1. Closer study later determined that this
+representation should correspond to MatrixCoefficients equal to 5 instead (which is functionally the same as the
+value 6). This Specification was therefore revised to correct the error." (so a stream signalling sYCC with
+matrix 1 predates that correction; the code point labels in this file follow H.264/H.265 and are not changed).
+The H.273 markdown conversion of Tables 3-4 is partly garbled (rows missing); do not use it without the page.
