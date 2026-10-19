@@ -25,19 +25,14 @@
 //!   active for the whole CVS; an IRAP access unit with `NoRaslOutputFlag`
 //!   equal to 1 begins a new CVS).
 //!
-//! # Output order, not decode order (§6.5)
+//! # Decode order (§6.2, §6.5)
 //!
-//! A changed geometry affects **pictures**, and a picture is displayed when
-//! its PTS says, not where its access unit sits in decode order. A conforming
-//! switch is an IDR, so the change is simply in force at the IDR's own output
-//! position. On the real slate captures, though, the keyframe just before the
-//! splice is decoded while the *following* codewords still describe the
-//! previous picture, so a change raised at its decode position would label
-//! one programme picture with the slate's shape. A resolved change is
-//! therefore held ([`PendingDisplayChange`]) until the access unit displayed
-//! at or after it is observed; then nothing still to come in decode order can
-//! be displayed after it with the old geometry (one unit of lookahead is all
-//! that is needed).
+//! A change is resolved at the access unit whose slices first activate the
+//! changed SPS and is reported for **that** access unit: the demuxer parks it
+//! on the access unit's own one-behind slot and releases it immediately
+//! before that access unit's `Sample`, with the sample's `dts`/`pts` and the
+//! access unit's own IDR / BLA bit. A consumer applying it on receipt labels
+//! exactly the first picture that carries the new geometry.
 //!
 //! # Real-data "unseen PPS"
 //!

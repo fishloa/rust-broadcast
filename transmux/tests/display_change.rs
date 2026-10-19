@@ -527,7 +527,7 @@ fn assert_switch_after(
     // The sample's sync flag is the segmenter's broader notion (a
     // recovery-point SEI or an SPS in the AU also anchors), so it may be true
     // where the AU is not an IDR.
-    let _ = sync;
+    assert!(*sync || !random_access, "an IDR AU is always a sync sample");
     // First with that Arc: every earlier video sample carries the old one.
     let old_arc = video[..at]
         .iter()

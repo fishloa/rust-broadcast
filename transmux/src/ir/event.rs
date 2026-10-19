@@ -454,8 +454,9 @@ pub enum DemuxEvent {
     /// consumer can match them by `Arc::ptr_eq`). When one access unit
     /// changes both its codec config bytes and its geometry, the order is
     /// `TrackUpdated`, then `DisplayChanged`, then that access unit's
-    /// `Sample`. `dts`/`pts` are exactly the following sample's (already
-    /// unwrapped absolute ticks in the track timescale).
+    /// `Sample`; `dts`/`pts` are exactly the following sample's (already
+    /// unwrapped absolute ticks in the track timescale) and `random_access`
+    /// is that access unit's own IDR / BLA bit.
     ///
     /// Sources (Phase 2, TS): the geometry of the SPS a slice first activates
     /// (by id: slice `pic_parameter_set_id` -> PPS `seq_parameter_set_id` ->
