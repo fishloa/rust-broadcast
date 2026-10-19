@@ -145,10 +145,8 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
         // that sample's absolute dts/pts verbatim (media plane step 2c); only
         // the duration is folded, stretching each I-frame across the span it
         // replaces. A source sample carrying no timestamp stays `None` — never
-        // fabricated. The display tag is the source sample's own (a fresh
-        // `Arc`, exactly one per trick-play sample: an `Arc::clone` here would
-        // credit the trick-play output's own bytes against the source
-        // demuxer's copy-count budget).
+        // fabricated. The display tag is the source sample's own (an `Arc`
+        // bump: no allocation per trick-play sample).
         derived.push(Sample {
             data: src_sample.data.clone(),
             dts: src_sample.dts,
@@ -156,10 +154,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
             duration: Some(folded_duration),
             flags: crate::ir::SampleFlags::SYNC,
             provenance: src_sample.provenance,
-            display: src_sample
-                .display
-                .as_ref()
-                .map(|d| alloc::sync::Arc::new(d.as_ref().clone())),
+            display: src_sample.display.clone(),
         });
     }
 

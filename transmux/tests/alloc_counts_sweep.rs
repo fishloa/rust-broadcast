@@ -56,12 +56,7 @@ mod ps_demux_copies {
         }
     }
 
-    // 658 until display-geometry Phase 2: every access unit of this
-    // open-GOP broadcast capture now runs through the SPS-activation tracker
-    // (one `Arc<DisplayInfo>` per picture plus the SPS/PPS map), +18 over the
-    // whole file. The copy-count invariant this guards (one payload copy, not
-    // three) is unchanged.
-    const H264_BUDGET_X100: usize = 676;
+    const H264_BUDGET_X100: usize = 658; // 664 before r04-O6, 652 after (midway)
     const MPEG2_BUDGET_X100: usize = 337; // 370 before r04-O6, 305 after (midway)
 }
 

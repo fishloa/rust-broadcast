@@ -45,6 +45,7 @@ enum Seen {
     Sample {
         track_id: TrackId,
         dts: Option<i64>,
+        pts: Option<i64>,
         sync: bool,
         sar: Option<AspectRatioIdc>,
         arc: Option<usize>,
@@ -99,6 +100,7 @@ fn stream(data: &[u8]) -> Vec<Seen> {
                     Seen::Sample {
                         track_id,
                         dts: sample.dts,
+                        pts: sample.pts,
                         sync: sample.flags.is_sync,
                         sar,
                         arc,
@@ -252,22 +254,21 @@ fn sar_16_11_to_1_1_switch_at_the_slate() {
     // audio), and the demuxer's wrap unroller lifts the last programme
     // picture's negative-PTS access units to continue the clock.
     let at = switch_index(&video);
-    assert_switch_after(&video, at, AspectRatioIdc::Sar16x11, AspectRatioIdc::Square);
-    let Seen::Changed {
-        random_access,
-        changed,
-        ..
-    } = video[at]
-    else {
+    // ffprobe: the first slate access unit is frame 241, an IDR; its
+    // `pkt_dts_time`/`pts_time` are 119792.083611 s (audio-anchored wrap
+    // unroller lifts the programme tail, so the absolute ticks are ~+25530 s).
+    assert_switch_after(
+        &video,
+        at,
+        AspectRatioIdc::Square,
+        (10_780_874_677, 10_780_874_677),
+        true,
+    );
+    let Seen::Changed { changed, .. } = video[at] else {
         unreachable!()
     };
-    // The switch is raised when the one-behind slot is released, for the
-    // access unit that was decoded *before* the first decodable slate
-    // picture (the TS slot carries its events with the next AU) — so
-    // `random_access` is that release unit's own bit (false for a B picture),
-    // never the slate picture's. What is checkable is the slate itself: all
-    // its pictures are IDRs (ffprobe) and the next tagged sample is an IDR.
-    let _ = random_access;
+    assert!(changed.video_signal, "a colour tuple changed: {changed:?}");
+    // All slate pictures are keyframes (ffprobe `key_frame` 1).
     let slate = video
         .iter()
         .skip(at)
@@ -303,19 +304,22 @@ fn sar_1_1_to_16_11_switch_mid_gop() {
     let track = video_track(&seen);
     let video = only_track(&seen, track);
     assert_initial(&video, AspectRatioIdc::Square);
-    // ffprobe: the first 16:11 picture is frame 4 (0-based), a B picture —
-    // no IDR at the switch, so this is the non-conforming mid-GOP case.
+    // ffprobe: the first 16:11 picture is frame 4 (0-based), flagged
+    // `key_frame` 1 (an IDR slice in the AU, not a recovery point): the
+    // switch is a random-access point, and the event must say so.
+    // `pkt_dts_time` 1831.863389 s, `pts_time` 1843.961389 s (audio-anchored
+    // unroller at 25 fps).
     let at = switch_index(&video);
-    assert_switch_after(&video, at, AspectRatioIdc::Square, AspectRatioIdc::Sar16x11);
-    let Seen::Changed {
-        random_access,
-        changed,
-        ..
-    } = video[at]
-    else {
+    assert_switch_after(
+        &video,
+        at,
+        AspectRatioIdc::Sar16x11,
+        (164_860_505, 164_885_705),
+        true,
+    );
+    let Seen::Changed { changed, .. } = video[at] else {
         unreachable!()
     };
-    let _ = random_access;
     assert!(changed.aspect_ratio, "{changed:?}");
     file_wide_check(&video, 2);
     assert_batch(
@@ -339,27 +343,21 @@ fn sar_16_11_to_64_45_keeps_the_dar() {
     // ffprobe: the first 64:45 picture is frame 258 (0-based), an IDR. Both
     // SARs give a 16:9 display (720*16/11 = 720*64/45 = 1024), so this is the
     // "wire form changed, DAR did not" case the event must still raise.
+    // ffprobe: the first 64:45 access unit is frame 258, an IDR at PTS = DTS
+    // 139427.1145 s; with the unroller's lift it lands at 3958262065 ticks.
     assert_switch_after(
         &video,
         at,
-        AspectRatioIdc::Sar16x11,
         AspectRatioIdc::ExtendedSar {
             sar_width: 64,
             sar_height: 45,
         },
+        (3_958_262_065, 3_958_262_065),
+        true,
     );
-    let Seen::Changed {
-        random_access,
-        changed,
-        ..
-    } = video[at]
-    else {
+    let Seen::Changed { changed, .. } = video[at] else {
         unreachable!()
     };
-    // The first slate access unit references the stale PPS id (the new
-    // SPS/PPS arrive with the second one), so the first decodable slate
-    // picture is the second IDR of the slate.
-    let _ = random_access;
     assert!(changed.aspect_ratio, "a SAR-only change: {changed:?}");
     assert!(!changed.output_rect, "same coded size: {changed:?}");
     file_wide_check(&video, 2);
@@ -466,66 +464,100 @@ fn switch_index(video: &[&Seen]) -> usize {
     at
 }
 
-/// The switch is raised for the access unit **after** the last picture of
-/// the old geometry in output order: every earlier-displayed picture keeps
-/// the old tag, the event's own DTS/PTS are that next access unit's, and it
-/// shares its `Arc`. `TrackUpdated` and `DisplayChanged` created at the same
-/// access unit are split (`TrackUpdated`, `DisplayChanged`, `Sample`), so
-/// they may be separated by each other and by clock/section samples only.
-fn assert_switch_after(video: &[&Seen], at: usize, from: AspectRatioIdc, to: AspectRatioIdc) {
+/// Strict placement (design §6.5): in the video-track subsequence the
+/// non-initial `DisplayChanged` is followed immediately by the **first**
+/// sample carrying its `Arc`, every earlier video sample carries a different
+/// `Arc`, no sample with the old `Arc` comes after it, and the event's
+/// `dts`/`pts`/`random_access` are that sample's own. `first_affected` is
+/// the switch access unit's `(dts, pts)` in the demuxer's absolute ticks:
+/// ffprobe's `pkt_dts_time`/`pts_time` of the first switched frame
+/// transparently rescaled to 90 kHz, plus the same Timeline unwrap an
+/// audio-anchored stream picks (the video PES carries PTS == DTS and the
+/// splice jump is in the audio).
+fn assert_switch_after(
+    video: &[&Seen],
+    at: usize,
+    to: AspectRatioIdc,
+    first_affected: (i64, i64),
+    random_access: bool,
+) {
     let Seen::Changed {
         sar,
         changed,
         dts: event_dts,
+        pts: event_pts,
+        random_access: ev_ra,
         arc: event_arc,
         ..
     } = video[at]
     else {
         unreachable!()
     };
-
     assert_eq!(*sar, Some(to), "the event carries the new geometry");
     assert!(changed.aspect_ratio, "the SAR changed: {changed:?}");
     assert!(!changed.initial);
-    // The event and the sample sharing its `Arc` are released together (the
-    // one-behind slot carries its own events), possibly after the spec and
-    // clock/section events of the same access unit.
-    let shared = at
-        + 1
-        + video[at + 1..]
-            .iter()
-            .position(|s| matches!(s, Seen::Sample { arc: Some(a), .. } if *a == *event_arc))
-            .expect("a sample shares the event's Arc");
-    // The TS one-behind slot releases the previous access unit's `Sample`
-    // together with the events raised for the arriving one, so the event's
-    // DTS is the released sample's (`prev_dts`), one decode step behind the
-    // sample physically carrying the new geometry. That released sample is
-    // the one decoded *before* the switch.
-    let released = video[at + 1];
-    let Seen::Sample {
-        dts: released_dts,
-        sar: released_sar,
+    let Some(Seen::Sample {
+        dts: next_dts,
+        pts: next_pts,
+        sync,
+        sar: next_sar,
+        arc: next_arc,
         ..
-    } = released
+    }) = video.get(at + 1)
     else {
-        panic!("the event is followed by the released sample: {released:?}");
+        panic!("the change is not followed by a video sample");
     };
-    assert_eq!(released_sar, &Some(from), "the released sample is old");
-    assert_eq!(event_dts, released_dts);
-    // Every sample between the event and that one keeps the old state.
-    for (i, s) in video[at + 1..shared].iter().enumerate() {
-        if let Seen::Sample { sar, .. } = s {
-            assert_eq!(*sar, Some(from), "sample {} before the change", at + 1 + i);
+    assert_eq!(
+        *next_arc,
+        Some(*event_arc),
+        "the sample right after the event is the first with its Arc"
+    );
+    assert_eq!(*next_sar, Some(to));
+    assert_eq!(event_dts, next_dts, "event.dts is the first affected AU's");
+    assert_eq!(event_pts, next_pts, "event.pts is the first affected AU's");
+    assert_eq!(
+        (*next_dts, *next_pts),
+        (Some(first_affected.0), Some(first_affected.1)),
+        "the first affected AU is the one ffprobe lists"
+    );
+    assert_eq!(
+        *ev_ra, random_access,
+        "event.random_access is the first affected AU's own IDR bit (ffprobe key_frame)"
+    );
+    // The sample's sync flag is the segmenter's broader notion (a
+    // recovery-point SEI or an SPS in the AU also anchors), so it may be true
+    // where the AU is not an IDR.
+    let _ = sync;
+    // First with that Arc: every earlier video sample carries the old one.
+    let old_arc = video[..at]
+        .iter()
+        .rev()
+        .find_map(|s| match s {
+            Seen::Sample { arc, .. } => Some(*arc),
+            _ => None,
+        })
+        .expect("a video sample precedes the change");
+    assert_ne!(old_arc, Some(*event_arc), "the old tag is a different Arc");
+    for (i, s) in video[..at].iter().enumerate() {
+        if let Seen::Sample { arc, .. } = s {
+            assert_eq!(
+                *arc, old_arc,
+                "sample {i} before the switch keeps the old Arc"
+            );
         }
     }
-    let Seen::Sample { sar: next_sar, .. } = video[shared] else {
-        unreachable!()
-    };
-    assert_eq!(next_sar, &Some(to));
-    assert_eq!(
-        event_dts, released_dts,
-        "the event carries the release unit's DTS"
-    );
+    // No old-tag sample after the event.
+    for (i, s) in video[at + 1..].iter().enumerate() {
+        if let Seen::Sample { arc, sar, .. } = s {
+            assert_ne!(
+                *arc,
+                old_arc,
+                "sample {} after the switch must not be old",
+                at + 1 + i
+            );
+            assert_eq!(*sar, Some(to), "sample {} after the switch", at + 1 + i);
+        }
+    }
 }
 
 /// A file with one geometry: one initial event and no further

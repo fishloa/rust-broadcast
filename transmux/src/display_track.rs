@@ -260,22 +260,6 @@ struct Unresolved {
     part: UnseenPart,
 }
 
-/// A geometry change resolved in decode order, waiting for its output-order
-/// position (module docs, "Output order").
-#[derive(Debug, Clone)]
-struct PendingDisplayChange {
-    /// The state that replaces [`Self::previous`].
-    new: Arc<DisplayInfo>,
-    /// The state before the change (for [`DisplayInfo::changes_from`]).
-    previous: Option<Arc<DisplayInfo>>,
-    /// The PTS of the access unit that resolved the change.
-    pts: Option<i64>,
-    /// The change is the track's first state.
-    initial: bool,
-    /// The resolving access unit is an IDR / BLA.
-    random_access: bool,
-}
-
 /// Per-track activation state: parameter sets **by id**, the state in force,
 /// the change waiting for its output position, and the dangling references.
 #[derive(Debug, Clone)]
@@ -285,7 +269,6 @@ pub struct SpsTracker {
     pps: BTreeMap<u8, PpsBinding>,
     /// The state every sample carries until a new change is raised.
     state: Option<Arc<DisplayInfo>>,
-    pending: Option<PendingDisplayChange>,
     unresolved: Vec<Unresolved>,
 }
 
@@ -297,7 +280,6 @@ impl SpsTracker {
             sps: BTreeMap::new(),
             pps: BTreeMap::new(),
             state: None,
-            pending: None,
             unresolved: Vec::new(),
         }
     }
@@ -321,9 +303,7 @@ impl SpsTracker {
     /// unit carries no AVC/HEVC parameter sets and resolves to
     /// [`ActivationOutcome::Unknown`]).
     ///
-    /// `pts` is the unit's presentation timestamp (track ticks), used to place
-    /// a resolved change in output order.
-    pub fn observe(&mut self, au: &[u8], pts: Option<i64>) -> ActivationOutcome {
+    pub fn observe(&mut self, au: &[u8]) -> ActivationOutcome {
         let mut activation = Activation::default();
         let mut slice_pps: Vec<Option<u8>> = Vec::new();
         for nal in iter_annexb_nals(au) {
@@ -333,16 +313,10 @@ impl SpsTracker {
             }
         }
         if slice_pps.is_empty() {
-            let _ = self.settle(pts);
             return ActivationOutcome::Unknown;
         }
         self.resolve_slices(&slice_pps, &mut activation);
-        match self.finish(activation, pts) {
-            // A resolved picture that changed nothing (the pending change
-            // already settled, or none) is an ordinary unchanged sample.
-            ActivationOutcome::Unknown => ActivationOutcome::Unchanged,
-            other => other,
-        }
+        self.finish(activation)
     }
 
     fn observe_avc_nal(
@@ -468,19 +442,18 @@ impl SpsTracker {
             .collect();
     }
 
-    fn finish(&mut self, activation: Activation, pts: Option<i64>) -> ActivationOutcome {
+    fn finish(&mut self, activation: Activation) -> ActivationOutcome {
         if activation.sps_ids.is_empty() {
-            let _ = self.settle(pts);
             return if activation.coverage == PpsCoverage::Known {
                 ActivationOutcome::Unknown
             } else {
+                // The dangling reference is remembered; the first access unit
+                // that resolves it (once its PPS and SPS have arrived)
+                // reports the change.
                 ActivationOutcome::Unseen
             };
         }
         self.forget_resolved();
-        if self.pending.is_some() {
-            return self.settle(pts);
-        }
         let geometry = self.activated_geometry(&activation.sps_ids);
         let display = Arc::new(DisplayInfo::new(geometry));
         let unchanged = self
@@ -492,47 +465,19 @@ impl SpsTracker {
         }
         let initial = self.state.is_none();
         let previous = self.state.replace(display.clone());
-        self.pending = Some(PendingDisplayChange {
-            new: display,
-            previous,
-            pts,
-            initial,
-            random_access: activation.random_access,
-        });
-        self.settle(pts)
-    }
-
-    /// Raise a pending change at its **output-order** position: once an
-    /// access unit with a PTS at or after the one that resolved the change is
-    /// observed, nothing earlier in decode order that is still to come can be
-    /// displayed after it with the old geometry.
-    fn settle(&mut self, pts: Option<i64>) -> ActivationOutcome {
-        if pts.is_none() {
-            // A unit with no clock cannot be placed: keep waiting for one.
-            return ActivationOutcome::Unknown;
-        }
-        let reached = match self.pending.as_ref() {
-            Some(pending) => match (pending.pts, pts) {
-                (Some(resolved), Some(current)) => current >= resolved,
-                _ => false,
-            },
-            None => false,
-        };
-        if !reached {
-            return ActivationOutcome::Unknown;
-        }
-        let Some(pending) = self.pending.take() else {
-            return ActivationOutcome::Unknown;
-        };
-        let changed = if pending.initial {
+        let changed = if initial {
             DisplayChangeSet::initial()
         } else {
-            DisplayInfo::changes_from(&pending.new, pending.previous.as_deref())
+            DisplayInfo::changes_from(&display, previous.as_deref())
         };
+        // `random_access` is this access unit's own IDR / BLA bit, not the
+        // sample's sync flag: an H.264 open-GOP recovery-point picture is a
+        // sync sample but not an IDR, and cannot carry a conforming SPS
+        // content change (design §6.2).
         ActivationOutcome::Changed {
-            display: pending.new,
-            initial: pending.initial,
-            random_access: pending.random_access,
+            display,
+            initial,
+            random_access: activation.random_access,
             changed,
         }
     }
@@ -709,7 +654,7 @@ mod tests {
     #[test]
     fn first_activation_is_the_initial_change() {
         let mut t = tracker();
-        let outcome = t.observe(&base_au(), Some(100));
+        let outcome = t.observe(&base_au());
         let ActivationOutcome::Changed {
             initial, display, ..
         } = &outcome
@@ -728,13 +673,13 @@ mod tests {
     #[test]
     fn an_identical_repeat_changes_nothing() {
         let mut t = tracker();
-        t.observe(&base_au(), Some(0));
+        t.observe(&base_au());
         assert!(matches!(
-            t.observe(&base_au(), Some(3600)),
+            t.observe(&base_au()),
             ActivationOutcome::Unchanged
         ));
         assert!(matches!(
-            t.observe(&annexb(&[p_slice_nal(0)]), Some(7200)),
+            t.observe(&annexb(&[p_slice_nal(0)])),
             ActivationOutcome::Unchanged
         ));
     }
@@ -742,26 +687,23 @@ mod tests {
     #[test]
     fn a_geometry_neutral_sps_change_is_not_a_change() {
         let mut t = tracker();
-        t.observe(&base_au(), Some(0));
+        t.observe(&base_au());
         // Same SAR and size, different level_idc.
         let b = annexb(&[sps_nal(0, 8, 4, None, 40), pps_nal(0, 0), idr_slice_nal(0)]);
-        assert!(matches!(
-            t.observe(&b, Some(3600)),
-            ActivationOutcome::Unchanged
-        ));
+        assert!(matches!(t.observe(&b), ActivationOutcome::Unchanged));
     }
 
     #[test]
     fn a_sar_only_change_with_the_same_dar_sets_aspect_ratio() {
         let mut t = tracker();
-        t.observe(&base_au(), Some(0));
+        t.observe(&base_au());
         // 16:11 (idc 4) -> 64:45 (Extended_SAR).
         let b = annexb(&[
             sps_nal(0, 8, 255, Some((64, 45)), 30),
             pps_nal(0, 0),
             idr_slice_nal(0),
         ]);
-        let outcome = t.observe(&b, Some(3600));
+        let outcome = t.observe(&b);
         let c = change(&outcome);
         assert!(c.aspect_ratio && !c.initial, "{c:?}");
         assert!(!c.output_rect && !c.video_signal && !c.overscan, "{c:?}");
@@ -777,19 +719,19 @@ mod tests {
     #[test]
     fn a_new_id_sent_ahead_of_use_fires_only_at_the_referencing_au() {
         let mut t = tracker();
-        t.observe(&base_au(), Some(0));
+        t.observe(&base_au());
         // SPS id 1 (new geometry) arrives with no slice referencing it.
         assert!(matches!(
-            t.observe(&annexb(&[sps_nal(1, 16, 1, None, 30)]), Some(3600)),
+            t.observe(&annexb(&[sps_nal(1, 16, 1, None, 30)])),
             ActivationOutcome::Unknown
         ));
         // A picture still on SPS 0.
         assert!(matches!(
-            t.observe(&annexb(&[p_slice_nal(0)]), Some(7200)),
+            t.observe(&annexb(&[p_slice_nal(0)])),
             ActivationOutcome::Unchanged
         ));
         // The first picture that references SPS 1, through a new PPS id.
-        let outcome = t.observe(&annexb(&[pps_nal(1, 1), idr_slice_nal(1)]), Some(10800));
+        let outcome = t.observe(&annexb(&[pps_nal(1, 1), idr_slice_nal(1)]));
         let ActivationOutcome::Changed {
             initial,
             random_access,
@@ -807,13 +749,10 @@ mod tests {
     #[test]
     fn a_mid_cvs_change_is_not_random_access() {
         let mut t = tracker();
-        t.observe(&base_au(), Some(0));
+        t.observe(&base_au());
         // Non-conforming: the active SPS's content changes and a P picture
         // (not an IDR) first uses it.
-        let outcome = t.observe(
-            &annexb(&[sps_nal(0, 8, 1, None, 30), p_slice_nal(0)]),
-            Some(3600),
-        );
+        let outcome = t.observe(&annexb(&[sps_nal(0, 8, 1, None, 30), p_slice_nal(0)]));
         assert!(matches!(
             outcome,
             ActivationOutcome::Changed {
@@ -824,27 +763,13 @@ mod tests {
     }
 
     #[test]
-    fn a_pts_earlier_than_the_resolving_au_settles_on_the_first_au_at_or_after_it() {
-        let mut t = tracker();
-        assert!(matches!(
-            t.observe(&base_au(), Some(360)),
-            ActivationOutcome::Changed { .. }
-        ));
-        // Decoded later, displayed before the keyframe: still the old state.
-        assert!(matches!(
-            t.observe(&annexb(&[p_slice_nal(0)]), Some(0)),
-            ActivationOutcome::Unchanged
-        ));
-    }
-
-    #[test]
     fn an_unseen_pps_holds_the_state_and_binds_on_a_later_au() {
         let mut t = tracker();
-        t.observe(&base_au(), Some(0));
+        t.observe(&base_au());
         // A slice referencing PPS 1 before PPS 1 arrived: nothing invented,
         // state held.
         assert!(matches!(
-            t.observe(&annexb(&[idr_slice_nal(1)]), Some(3600)),
+            t.observe(&annexb(&[idr_slice_nal(1)])),
             ActivationOutcome::Unseen
         ));
         assert_eq!(
@@ -855,10 +780,11 @@ mod tests {
         );
         // The new SPS and PPS arrive (carried with the next access unit): the
         // first picture that resolves them reports the change.
-        let outcome = t.observe(
-            &annexb(&[sps_nal(1, 8, 1, None, 30), pps_nal(1, 1), idr_slice_nal(1)]),
-            Some(7200),
-        );
+        let outcome = t.observe(&annexb(&[
+            sps_nal(1, 8, 1, None, 30),
+            pps_nal(1, 1),
+            idr_slice_nal(1),
+        ]));
         assert!(
             matches!(outcome, ActivationOutcome::Changed { .. }),
             "{outcome:?}"
@@ -866,7 +792,7 @@ mod tests {
         assert_eq!(sar(&outcome), Some(AspectRatioIdc::Square));
         // A later picture on the same sets does not report it again.
         assert!(matches!(
-            t.observe(&annexb(&[p_slice_nal(1)]), Some(10800)),
+            t.observe(&annexb(&[p_slice_nal(1)])),
             ActivationOutcome::Unchanged
         ));
     }
@@ -874,15 +800,12 @@ mod tests {
     #[test]
     fn a_pps_naming_an_unseen_sps_is_held_too() {
         let mut t = tracker();
-        t.observe(&base_au(), Some(0));
+        t.observe(&base_au());
         assert!(matches!(
-            t.observe(&annexb(&[pps_nal(2, 3), idr_slice_nal(2)]), Some(3600)),
+            t.observe(&annexb(&[pps_nal(2, 3), idr_slice_nal(2)])),
             ActivationOutcome::Unseen
         ));
-        let outcome = t.observe(
-            &annexb(&[sps_nal(3, 8, 1, None, 30), idr_slice_nal(2)]),
-            Some(7200),
-        );
+        let outcome = t.observe(&annexb(&[sps_nal(3, 8, 1, None, 30), idr_slice_nal(2)]));
         assert!(
             matches!(outcome, ActivationOutcome::Changed { .. }),
             "{outcome:?}"
@@ -893,7 +816,7 @@ mod tests {
     fn a_non_video_access_unit_resolves_nothing() {
         let mut t = tracker();
         assert!(matches!(
-            t.observe(&[0x00, 0x00, 0x01, 0xb3], Some(0)),
+            t.observe(&[0x00, 0x00, 0x01, 0xb3]),
             ActivationOutcome::Unknown
         ));
     }
