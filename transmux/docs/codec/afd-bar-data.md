@@ -279,7 +279,7 @@ bar_data() {
 }
 ```
 
-Both documents use the same flag rules as ST 2016-1 §6.1 and the same value definitions. A/53 names the
+Both documents use the same flag rules as ST 2016-1 §6.1 and the same value definitions (TS 101 154 p. 241 and A/53 pp. 14-15 rendered and compared). TS 101 154 also lists `additional_bar_data` — "Reserved for future DVB definition". A/53 names the
 2-bit field `one_bits` (value '11'), TS 101 154 `marker_bits`. Line numbering: TS 101 154 Table B.8 / A/53
 Table 6.12: 480 interlaced 4:3 SMPTE 125M; 480 interlaced 16:9 SMPTE 267M; 480 progressive SMPTE 293M; 720
 progressive SMPTE 296M; 1080 interlaced and progressive SMPTE 274M (the 576-line rows of ST 2016-1 Table 2 are
