@@ -365,8 +365,6 @@ pub struct TrickModeRepr {
     pub width: Option<u32>,
     /// Coded height in pixels (`None` to omit).
     pub height: Option<u32>,
-    /// Sample (pixel) aspect ratio `w:h` (`None` to omit).
-    pub sar: Option<(u32, u32)>,
     /// `SegmentTemplate@timescale`.
     pub timescale: u32,
     /// `SegmentTemplate@duration` (total sample-duration sum in timescale units).
@@ -658,7 +656,7 @@ impl DashPackager {
             .and_then(|d| d.typed_sample_aspect_ratio())
             .map(|s| {
                 let r = s.reduced();
-                (r.width() as u32, r.height() as u32)
+                (u32::from(r.width()), u32::from(r.height()))
             });
 
         match config {
@@ -1096,9 +1094,6 @@ impl DashPackager {
             rattrs.push(("width", w_px.to_string()));
             rattrs.push(("height", h_px.to_string()));
         }
-        if let Some((sar_w, sar_h)) = r.sar {
-            rattrs.push(("sar", format!("{sar_w}:{sar_h}")));
-        }
         open(w, "Representation", &rattrs);
         empty(
             w,
@@ -1285,23 +1280,26 @@ fn common_lang(set: &[&ReprInfo]) -> Option<String> {
 /// Common picture aspect ratio across a set of Representations, or `None`
 /// when they disagree or any is missing the needed geometry/SAR.
 fn common_par(set: &[&ReprInfo]) -> Option<(u32, u32)> {
-    let mut iter = set.iter();
-    let first = repr_par(iter.next()?)?;
-    if set.iter().all(|r| repr_par(r) == Some(first)) {
-        Some(first)
-    } else {
-        None
-    }
+    let pars: Vec<Option<(u32, u32)>> = set
+        .iter()
+        .map(|r| par_of(r.width?, r.height?, r.sar?))
+        .collect();
+    agreed(&pars)
 }
 
-/// Picture aspect ratio derived from one Representation's coded size and SAR.
-fn repr_par(r: &ReprInfo) -> Option<(u32, u32)> {
-    let (w, h) = (r.width?, r.height?);
-    let (sar_w, sar_h) = r.sar?;
-    let num = w.saturating_mul(sar_w);
-    let den = h.saturating_mul(sar_h);
-    let g = gcd(num as u64, den as u64) as u32;
-    Some((num / g, den / g))
+/// The one value every entry holds, or `None` when the slice is empty, any
+/// entry is `None`, or two entries differ.
+fn agreed(values: &[Option<(u32, u32)>]) -> Option<(u32, u32)> {
+    let first = (*values.first()?)?;
+    values.iter().all(|v| *v == Some(first)).then_some(first)
+}
+
+/// Picture aspect ratio `(width*sar_w):(height*sar_h)`, gcd-reduced.
+fn par_of(width: u32, height: u32, sar: (u32, u32)) -> Option<(u32, u32)> {
+    let num = u64::from(width) * u64::from(sar.0);
+    let den = u64::from(height) * u64::from(sar.1);
+    let g = gcd(num, den);
+    Some((u32::try_from(num / g).ok()?, u32::try_from(den / g).ok()?))
 }
 
 /// Write one `ContentProtection` element (ISO/IEC 23009-1 §5.8.4.1),
@@ -1466,5 +1464,32 @@ mod xs_duration_tests {
                 d
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod par_tests {
+    use super::{agreed, par_of};
+
+    #[test]
+    fn par_is_width_sar_over_height_sar_reduced() {
+        // 720x576 SAR 64:45 -> 46080:25920 -> 16:9.
+        assert_eq!(par_of(720, 576, (64, 45)), Some((16, 9)));
+        // 720x576 SAR 16:11 -> 11520:6336 -> 20:11.
+        assert_eq!(par_of(720, 576, (16, 11)), Some((20, 11)));
+    }
+
+    #[test]
+    fn swapped_inputs_give_a_different_result() {
+        assert_ne!(par_of(720, 576, (64, 45)), par_of(720, 576, (45, 64)));
+        assert_ne!(par_of(720, 576, (64, 45)), par_of(576, 720, (64, 45)));
+    }
+
+    #[test]
+    fn par_needs_every_representation_to_agree() {
+        assert_eq!(agreed(&[Some((16, 9)), Some((16, 9))]), Some((16, 9)));
+        assert_eq!(agreed(&[Some((16, 9)), Some((4, 3))]), None);
+        assert_eq!(agreed(&[Some((16, 9)), None]), None);
+        assert_eq!(agreed(&[]), None);
     }
 }

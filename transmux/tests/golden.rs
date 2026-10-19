@@ -119,7 +119,6 @@ fn dash_mpd_variants_match_golden() {
                         bandwidth: 150_000,
                         width: Some(320),
                         height: Some(180),
-                        sar: None,
                         timescale: 90000,
                         total_duration: 900000,
                     },

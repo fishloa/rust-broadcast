@@ -237,7 +237,6 @@ fn dash_trick_mode_adaptation_set() {
             bandwidth: 150_000,
             width: Some(320),
             height: Some(180),
-            sar: None,
             timescale: 90000,
             total_duration: 900000,
         },
@@ -394,7 +393,6 @@ fn ir_trick_track_wired_to_signalling() {
         bandwidth: 200_000,
         width: Some(src_w),
         height: Some(src_h),
-        sar: None,
         timescale: video.spec.timescale,
         total_duration: trick_track
             .samples
