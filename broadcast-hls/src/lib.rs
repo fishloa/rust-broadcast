@@ -3045,6 +3045,78 @@ fn require_attr(
     })
 }
 
+/// `VIDEO-RANGE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2,
+/// spec text at `specs/ietf_draft_pantos_hls_rfc8216bis.txt` lines 2786-2815):
+/// an enumerated bare token describing the dynamic range of the variant's video.
+///
+/// `SDR` for CICP transfer characteristics 1, 6, 13, 14, 15; `HLG` for 18;
+/// `PQ` for 16. Any other code point (including 2 "unspecified" and the
+/// reserved values) has no mapping and the attribute is omitted (absence
+/// implies SDR).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VideoRange {
+    /// Standard dynamic range (`VIDEO-RANGE=SDR`).
+    Sdr,
+    /// Hybrid Log-Gamma (`VIDEO-RANGE=HLG`).
+    Hlg,
+    /// Perceptual Quantizer (`VIDEO-RANGE=PQ`).
+    Pq,
+}
+
+impl VideoRange {
+    /// The spec token (`"SDR"` / `"HLG"` / `"PQ"`), rendered bare and
+    /// unquoted on the wire.
+    pub fn name(&self) -> &'static str {
+        match self {
+            VideoRange::Sdr => "SDR",
+            VideoRange::Hlg => "HLG",
+            VideoRange::Pq => "PQ",
+        }
+    }
+
+    /// Map a CICP transfer-characteristics code point (the value returned by
+    /// `transmux`'s `TransferCharacteristics::code()`) to a [`VideoRange`],
+    /// per RFC 8216bis §4.4.6.2. Returns `None` for any code point with no
+    /// defined mapping (including 2 "unspecified" and reserved values), so
+    /// the caller omits the attribute rather than inventing a value.
+    pub fn from_transfer_characteristics(code: u8) -> Option<Self> {
+        // Named CICP transfer-characteristics code points (H.264 Table E-4 /
+        // H.265 Table E.4), per RFC 8216bis §4.4.6.2.
+        const TRANSFER_BT709: u8 = 1;
+        const TRANSFER_BT601: u8 = 6;
+        const TRANSFER_IEC_61966_2_1: u8 = 13;
+        const TRANSFER_BT2020_10BIT: u8 = 14;
+        const TRANSFER_BT2020_12BIT: u8 = 15;
+        const TRANSFER_SMPTE_ST_2084: u8 = 16;
+        const TRANSFER_ARIB_STD_B67: u8 = 18;
+        match code {
+            TRANSFER_BT709
+            | TRANSFER_BT601
+            | TRANSFER_IEC_61966_2_1
+            | TRANSFER_BT2020_10BIT
+            | TRANSFER_BT2020_12BIT => Some(Self::Sdr),
+            TRANSFER_SMPTE_ST_2084 => Some(Self::Pq),
+            TRANSFER_ARIB_STD_B67 => Some(Self::Hlg),
+            _ => None,
+        }
+    }
+
+    /// Build the `("VIDEO-RANGE", AttrValue::bare(...))` extra attribute
+    /// for a [`Variant`]/[`IFrameVariant`] `extra_attrs` list (or any
+    /// attribute list assembled for `#EXT-X-STREAM-INF`), per RFC 8216bis
+    /// §4.4.6.2. The value is the bare enumerated token
+    /// (`"SDR"`/`"HLG"`/`"PQ"`).
+    pub fn attr(self) -> (String, AttrValue) {
+        (
+            String::from("VIDEO-RANGE"),
+            AttrValue::bare(self.name()).expect("VIDEO-RANGE token is a valid bare value"),
+        )
+    }
+}
+
+broadcast_common::impl_spec_display!(VideoRange);
+
 /// A variant stream entry in a master playlist.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Variant {

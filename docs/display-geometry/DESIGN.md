@@ -33,6 +33,7 @@ Status: **Phase 1 (static geometry) landed, split into 1a and 1b; Phase 2
   `TrackSpec::display`; square-pixel/colour-unsignalled input stays
   byte-identical. fMP4 in-band `avc3`/`hev1` tagging (2b) is not implemented;
   demux-side `pasp`/`colr` overlay through the IR is not implemented.
+- **4b landed**: HLS master playlist advertises `VIDEO-RANGE` (HLG/PQ only; SDR and unmapped/absent colour omitted) from the track VUI transfer characteristics (broadcast-hls `VideoRange`, hls-runtime `HlsOrigin`).
 
 Spec facts are transcribed and page-checked in
 [`SPEC-NOTES.md`](SPEC-NOTES.md) (and, for the colour tables, in

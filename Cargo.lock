@@ -1603,6 +1603,7 @@ dependencies = [
  "reqwest",
  "serde",
  "test-bounded",
+ "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
  "tokio",

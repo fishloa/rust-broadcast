@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `HlsOrigin` now derives and advertises `VIDEO-RANGE` (`HLG`/`PQ` only; SDR/unknown omitted) in the master playlist from the first video track's display colour description (RFC 8216bis §4.4.6.2).
 
 ## [0.9.0] - 2026-10-17
 ### Documentation
