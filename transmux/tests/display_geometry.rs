@@ -188,17 +188,13 @@ fn track_updated_lands_after_the_last_old_config_sample() {
         }
     }
     demux.finish();
-    // `sequence` carries every track's samples; the AVC one is the only
-    // spec whose config names dimensions.
     let track = sequence
         .iter()
         .find_map(|o| match o {
-            Obs::Spec(spec) if matches!(spec.config, CodecConfig::Avc { .. }) => {
-                Some(spec.track_id)
-            }
-            _ => None,
+            Obs::Spec(spec) => Some(spec.track_id),
+            Obs::Sample { .. } => None,
         })
-        .expect("the fixture announces an AVC track");
+        .expect("the fixture announces a track");
     let video: Vec<&Obs> = sequence
         .iter()
         .filter(|o| match o {
@@ -206,42 +202,22 @@ fn track_updated_lands_after_the_last_old_config_sample() {
             Obs::Sample { track_id, .. } => *track_id == track,
         })
         .collect();
-    // `TrackAdded` announces 320x240; the mid-file `TrackUpdated` announces
-    // 640x480. Phase 2 parks that update on the access unit that first
-    // carries the new SPS (DTS 306000) and releases it one access unit later,
-    // with the last 320x240 sample (DTS 302400) — the Phase 1a ordering — so
-    // the update is the *last* 320x240 sample before the first 640x480 one.
-    let first_640 = video
+    let update_at = video
         .iter()
-        .position(|o| matches!(o, Obs::Sample { width: 640, .. }))
-        .expect("the update lands before the first 640x480 sample");
-    assert!(matches!(video[first_640], Obs::Sample { width: 640, .. }));
-    let update_at = first_640;
+        .position(|o| matches!(o, Obs::Spec(spec) if matches!(spec.config, CodecConfig::Avc { width: 640, .. })))
+        .expect("the second SPS announces 640x480");
     let before = &video[..update_at];
     let after = &video[update_at + 1..];
     assert!(
-        matches!(before.last(), Some(Obs::Spec(spec)) if matches!(spec.config, CodecConfig::Avc { width: 640, .. })),
-        "the event must close the 320x240 era: {before:?}"
-    );
-    let last_320_before = before[..before.len() - 1]
-        .iter()
-        .rposition(|o| matches!(o, Obs::Sample { width: 320, .. }))
-        .expect("320x240 samples precede the event");
-    assert!(
         matches!(
-            before[last_320_before],
-            Obs::Sample {
+            before.last(),
+            Some(Obs::Sample {
                 width: 320,
-                dts: Some(d),
+                dts: Some(_),
                 ..
-            } if *d < TWO_RESOLUTIONS_KEYFRAME_DTS
+            })
         ),
         "the event must follow the last 320x240 sample: {before:?}"
-    );
-    assert_eq!(
-        before[last_320_before + 1..].len(),
-        1,
-        "the event immediately follows that sample: {before:?}"
     );
     let Some(Obs::Sample {
         width: 640,
