@@ -42,6 +42,7 @@ use crate::sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
 };
 use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
+use crate::visual_ext::{ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 
 use crate::timing::TimeToSampleBox;
 use crate::vp9::Vp9SampleEntry;
@@ -223,6 +224,63 @@ fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> 
 }
 
 /// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
+/// Build the `pasp`/`colr` child boxes (ISO/IEC 14496-12:2015 §12.1.4–5)
+/// that `build_trak` appends to an AVC/HEVC sample entry from the track's
+/// [`DisplayGeometry`] (Phase 4a-1). `pasp` is emitted only for a non-1:1
+/// sample aspect ratio; `colr` (`nclx`) only when a colour description was
+/// signalled. Order: `pasp` then `colr`, both after the codec config box.
+fn avc_hevc_display_extra_boxes(
+    display: Option<&crate::ir::DisplayGeometry>,
+) -> Result<Vec<crate::sample_entries::OpaqueBox>> {
+    let mut extra_boxes = Vec::new();
+    let Some(display) = display else {
+        return Ok(extra_boxes);
+    };
+
+    // pasp — only when the SAR is specified and not square (§12.1.4.1: an
+    // absent pasp means square pixels).
+    if let Some((w, h)) = display.sample_aspect_ratio()
+        && w != h
+    {
+        let pasp = PixelAspectRatioBox {
+            h_spacing: u32::from(w),
+            v_spacing: u32::from(h),
+        };
+        let mut body = alloc::vec![0u8; pasp.serialized_len()];
+        pasp.serialize_into(&mut body)?;
+        extra_boxes.push(crate::sample_entries::OpaqueBox {
+            box_type: *b"pasp",
+            data: body,
+        });
+    }
+
+    // colr (nclx) — only when a colour description was actually signalled.
+    if let Some(vs) = display.video_signal
+        && let Some(colour) = vs.colour
+    {
+        let nclx = NclxColourInfo {
+            colour_primaries: u16::from(colour.primaries.code()),
+            transfer_characteristics: u16::from(colour.transfer.code()),
+            matrix_coefficients: u16::from(colour.matrix.code()),
+            full_range_flag: vs.full_range,
+            reserved: 0,
+        };
+        let colr = ColourInformationBox {
+            colour_type: *b"nclx",
+            nclx: Some(nclx),
+            icc_profile: alloc::vec::Vec::new(),
+        };
+        let mut body = alloc::vec![0u8; colr.serialized_len()];
+        colr.serialize_into(&mut body)?;
+        extra_boxes.push(crate::sample_entries::OpaqueBox {
+            box_type: *b"colr",
+            data: body,
+        });
+    }
+
+    Ok(extra_boxes)
+}
+
 fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let audio = t.config.is_audio();
 
@@ -243,7 +301,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 codec_type: *b"avc1",
                 visual,
                 config: config.clone(),
-                extra_boxes: vec![],
+                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref())?,
             });
             (
                 entry,
@@ -277,7 +335,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 codec_type: *b"hvc1",
                 visual,
                 config: config.clone(),
-                extra_boxes: vec![],
+                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref())?,
             });
             (
                 entry,
@@ -896,6 +954,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         matrix: IDENTITY_MATRIX,
         width: tkhd_w,
         height: tkhd_h,
+        // Anamorphic tkhd presentation size (ISO/IEC 14496-12 §8.3.2) is a follow-up; coded size retained.
     };
 
     Ok(TrackBox::new(tkhd, None, Some(mdia), vec![]))
