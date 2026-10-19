@@ -2778,9 +2778,6 @@ fn push_live_au(
                 config: live.pending_config.take(),
                 display: live.display.take(),
             };
-            if let Some((_, c)) = &raised.display {
-                std::eprintln!("RAISED display {} dts_coming", c.names());
-            }
             let (bytes, is_sync) = video_sample_bytes(*codec, data);
             let mut this_field = None;
             if *codec == VideoCodec::H264
