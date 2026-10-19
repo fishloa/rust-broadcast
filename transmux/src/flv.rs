@@ -657,6 +657,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                                     frame_type == FRAME_TYPE_KEYFRAME,
                                 ),
                                 provenance: None,
+                                display: None,
                             });
                         }
                         avc_packet_type::END_OF_SEQUENCE => {}
@@ -704,6 +705,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                                 duration: Some(duration),
                                 flags: crate::ir::SampleFlags::SYNC,
                                 provenance: None,
+                                display: None,
                             });
                         }
                         _ => {}

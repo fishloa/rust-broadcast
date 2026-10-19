@@ -24,6 +24,14 @@ const SKIP: &[&str] = &[
     // `slice_header::AvcPicture` (issue #1161): a data-carrying classification
     // ADT (`Field(AvcFieldInfo)`), not a spec-token label.
     "AvcPicture",
+    // `display_track::ActivationOutcome` (display-geometry Phase 2): what one
+    // access unit did to the tracker (a data-carrying ADT, `Changed { .. }`);
+    // not a spec code and never rendered to a user.
+    "ActivationOutcome",
+    // `display_track::TrackCodec` (display-geometry Phase 2): which
+    // parameter-set syntax a demuxer's tracker follows (AVC / HEVC), a
+    // routing choice, not a wire label.
+    "TrackCodec",
     // `live_join::JoinDecision`/`JoinState` (issue #1162 R4): data-carrying
     // state ADTs (`Drop(DropReason)`, `JoinPoint(RapKind)`, `Joined { .. }`),
     // not spec-token labels; their leaf enums `DropReason`/`RapKind` carry

@@ -1,6 +1,7 @@
 # Display geometry metadata in transmux: design
 
-Status: **Phase 1 (static geometry) landed, split into 1a and 1b.**
+Status: **Phase 1 (static geometry) landed, split into 1a and 1b; Phase 2
+(change event + per-AU tag) landed on top (`[Unreleased]`).**
 
 - **1a (SAR + coded size)** shipped in `transmux` 0.27.5: `ir::display`
   with `DisplayGeometry` / `AspectRatioIdc` / `SampleAspectRatio`,
@@ -17,8 +18,16 @@ Status: **Phase 1 (static geometry) landed, split into 1a and 1b.**
   (1/1/1) and full-range `component` without a colour description. HEVC
   colour is spec-vector only: no HEVC capture in this worktree signals a
   colour description and `test-074.hevc.ts` is not mirrored.
+- **2 (change event + per-AU tag)** landed for the TS path (batch `TsDemux`
+  included; the Program Stream demuxer is unchanged): `DisplayInfo`,
+  `DisplayChangeSet`, `DemuxEvent::DisplayChanged`, `Sample::display`, SPS/PPS
+  tracking **by id** with activation from the slice headers, the level-triggered
+  start, the event placed immediately before its first affected sample, and the
+  batch tags. Decisions taken where the design left a choice are recorded in
+  §16.
 - Still later phases: crop / conformance window (§3, out of 1b),
-  `default_display_rect`, the `colr nclx` overlay of §6.3, then Phase 2-4.
+  `default_display_rect`, the `colr nclx` overlay of §6.3, Phase 3 (AFD) and
+  Phase 4; fMP4 in-band `avc3`/`hev1` tagging (2b) is not implemented.
 
 Spec facts are transcribed and page-checked in
 [`SPEC-NOTES.md`](SPEC-NOTES.md) (and, for the colour tables, in
@@ -756,3 +765,56 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
 | Q9 | Phase 4 changes init-segment/manifest bytes for anamorphic input: patch or minor? | minor-class note in CHANGELOG, still 0.27.x |
 | Q10 | Out-of-range crop: accept with full-picture `output_rect`, and raise `InputDegraded`? | accept, no event |
 | Q11 | Should `CodecConfig` variants become `#[non_exhaustive]` in the next planned breaking transmux release (separate from this work)? | yes, separately |
+
+## 16. Phase 2: decisions taken (where the design left a choice)
+
+- **Placement is decode order (design §6.2 stands).** An earlier attempt placed
+  the change in *output* order; on the real slate splice the demuxer's PTS
+  unwrap makes the last programme keyframe display after the first slate
+  pictures, and that rule put the event between two samples of the same
+  access unit - one picture early for a decode-submit stamping player. The
+  event now travels **inside the access unit's own one-behind slot** and is
+  released (after that slot's `TrackUpdated`, before its `Sample`) with the
+  slot's own `dts`/`pts`/sync flag, so it is immediately before the first
+  sample carrying the new `Arc` and after the last one carrying the old.
+- **`random_access` is the released access unit's own IDR / BLA bit**, from
+  the slice headers that activated the change (an H.264 IDR, or an
+  H.265 IDR/BLA). It is *not* the sample's `is_sync`, which is the segmenter's
+  broader notion (a recovery-point SEI or an SPS in the AU also anchors a
+  segment).
+
+- **`random_access` is the first affected access unit's own IDR / BLA bit**,
+  from the same slice headers that activated the change (an H.264 IDR, or an
+  H.265 IDR/BLA). It is *not* the sample's `is_sync`, which is the segmenter's
+  broader notion (recovery-point SEI or an SPS in the AU also anchor a segment;
+  the mid-GOP `stimmungsgarten` switch is an IDR inside an AU that also carries
+  its SPS, and its `is_sync` is true for that reason too).
+- **Unseen PPS/SPS.** A slice that references a PPS (or a PPS naming an SPS)
+  not yet received keeps the previous state and is remembered; the first unit
+  that resolves it reports the change. This is what the real slate captures
+  need (ffmpeg's "non-existing PPS 0 referenced").
+- **`TrackUpdated` is emitted twice per switch** on the zenith-tv captures
+  (the r04-W51 re-probe resolves the new config at the switch access unit and
+  again one unit later). That is pre-existing on 0.27.6 and tracked
+  separately; `DisplayChanged` is emitted exactly once per switch (pinned by
+  the real-capture tests).
+
+- **Where the spec vectors live.** The tracker (`src/display_track.rs`, pure
+  bit logic) has unit tests for the by-id activation, the geometry-neutral
+  change, the SAR-only change, the unseen PPS/SPS binding and the H.265 ids.
+  The streaming delivery order and the event's timing fields are pinned on
+  the real captures (`tests/display_change.rs`); a synthetic TS route was not
+  used because `TsMux` rewrites the access-unit layout.
+- **The unseen-parameter binding is exercised by the real captures**
+  (`stimmungsgarten` 16:11 -> 1:1: the first slate access unit references a
+  PPS that has not arrived, ffmpeg's "non-existing PPS 0 referenced", and the
+  change is reported on the first slate access unit whose slices resolve it).
+  A direct mutation of the remembered reference is therefore not killed by a
+  dedicated test; the real-capture assertion on *which* access unit is
+  reported (ffprobe's first switched frame) is what guards it.
+- **Scope.** `StreamingTsDemux`, batch `TsDemux` and `PsDemux` tag samples;
+  fMP4 (2b), FLV/RTMP and RTP emit `Sample::display = None` (FLV's
+  `TrackUpdated` was audited and is not one sample early; it re-probes the
+  sequence header in the same frame it applies). AFD/bar data stay Phase 3.
+- **No PS tagging.** `PsDemux` is unchanged from `origin/main` (`Sample::display`
+  stays `None` there), and no allocation budget or golden hash was touched.

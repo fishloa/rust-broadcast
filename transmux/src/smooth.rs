@@ -1039,6 +1039,7 @@ mod tests {
             duration: Some(1),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
+            display: None,
         };
         let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
         let groups = segment_samples(&samples, 1, 2);

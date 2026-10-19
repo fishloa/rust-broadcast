@@ -15,9 +15,11 @@
 //! which packet) moves into [`EventProvenance`] — `None`/absent for a
 //! container that has no such identity (FLV has no PID concept at all).
 
+use super::display::{DisplayChangeSet, DisplayInfo};
 use super::sample::Sample;
 use super::track::TrackSpec;
 use crate::TrackId;
+use alloc::sync::Arc;
 use mpeg_ts::pid::Pid;
 
 /// Container-native identity for a [`DemuxEvent`] that is not itself part of
@@ -441,6 +443,54 @@ pub enum DemuxEvent {
         /// The track-set generation this event confirms is fully resolved.
         generation: u32,
     },
+    /// A video track's display state changed, or was first known
+    /// (`docs/display-geometry/DESIGN.md` §5.2, §6.5).
+    ///
+    /// Carries the **full** new state, like [`DemuxEvent::TrackUpdated`]
+    /// carries the full spec, plus which parts differ from the previous state.
+    /// For every switch, in decode order: the last `Sample` of the previous
+    /// state, then this event, then the first `Sample` of the new state, whose
+    /// [`Sample::display`] is the **same** `Arc` as `display` here (so a
+    /// consumer can match them by `Arc::ptr_eq`). When one access unit
+    /// changes both its codec config bytes and its geometry, the order is
+    /// `TrackUpdated`, then `DisplayChanged`, then that access unit's
+    /// `Sample`; `dts`/`pts` are exactly the following sample's (already
+    /// unwrapped absolute ticks in the track timescale) and `random_access`
+    /// is that access unit's own IDR / BLA bit.
+    ///
+    /// Sources (Phase 2, TS): the geometry of the SPS a slice first activates
+    /// (by id: slice `pic_parameter_set_id` -> PPS `seq_parameter_set_id` ->
+    /// SPS, ITU-T H.264 §7.4.1.2.1 / ITU-T H.265 §7.4.3.2), compared by
+    /// parsed value, never by bytes. A re-sent identical SPS emits nothing; an
+    /// SPS whose bytes change with an identical geometry raises
+    /// `TrackUpdated` only. `random_access` is the access unit's own
+    /// IDR/IRAP(-with-NoRaslOutputFlag) bit: a conforming stream only changes
+    /// geometry there, a non-conforming one gets the event at the access unit
+    /// whose slices first use the new SPS with `random_access == false`.
+    ///
+    /// Every video track that tracks display state gets exactly one
+    /// `DisplayChanged` with `changed.initial == true` after its `TrackAdded`
+    /// and before its first `Sample` (owner question Q2: emit). This event
+    /// does **not** change the track set: [`DemuxEvent::TracksResolved`]'s
+    /// `generation` is unaffected.
+    #[non_exhaustive]
+    DisplayChanged {
+        /// The track whose display state changed (matches a prior
+        /// [`DemuxEvent::TrackAdded`]).
+        track_id: TrackId,
+        /// The full new state, shared with the access unit's `Sample::display`.
+        display: Arc<DisplayInfo>,
+        /// Which parts of the state differ from the previous one.
+        changed: DisplayChangeSet,
+        /// The affected access unit's absolute DTS (track timescale ticks).
+        dts: Option<i64>,
+        /// The affected access unit's absolute PTS.
+        pts: Option<i64>,
+        /// The affected access unit's sync-sample (IDR / IRAP) bit.
+        random_access: bool,
+        /// Container-native identity for this observation (e.g. the TS PID).
+        provenance: EventProvenance,
+    },
 }
 
 impl DemuxEvent {
@@ -523,5 +573,27 @@ impl DemuxEvent {
     /// [`Self::clock_reference`] for why this variant needs a constructor.
     pub fn tracks_resolved(generation: u32) -> Self {
         DemuxEvent::TracksResolved { generation }
+    }
+
+    /// Construct a [`DemuxEvent::DisplayChanged`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn display_changed(
+        track_id: TrackId,
+        display: Arc<DisplayInfo>,
+        changed: DisplayChangeSet,
+        dts: Option<i64>,
+        pts: Option<i64>,
+        random_access: bool,
+        provenance: EventProvenance,
+    ) -> Self {
+        DemuxEvent::DisplayChanged {
+            track_id,
+            display,
+            changed,
+            dts,
+            pts,
+            random_access,
+            provenance,
+        }
     }
 }

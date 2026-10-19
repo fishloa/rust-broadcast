@@ -861,6 +861,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
                     duration: None,
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
+                    display: None,
                 });
             }
             samples
@@ -1009,6 +1010,7 @@ fn absorb_protected_fragment(
             duration: Some(r.duration),
             flags: crate::ir::SampleFlags::new(is_sync),
             provenance: None,
+            display: None,
         });
         *next_dts = crate::frag_offsets::add_duration(dts, r.duration)?;
     }
@@ -1313,6 +1315,7 @@ mod tests {
                     duration: None,
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
+                    display: None,
                 }
             })
             .collect();

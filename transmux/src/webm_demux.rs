@@ -993,6 +993,7 @@ fn build_media(
                 duration: Some(duration),
                 flags: crate::ir::SampleFlags::new(sync[i]),
                 provenance: None,
+                display: None,
             });
         }
 
@@ -1890,6 +1891,7 @@ mod tests {
             duration: Some(1000),
             flags: SampleFlags::new(true),
             provenance: None,
+            display: None,
         };
         let media = Media::new(
             alloc::vec![Track::new_at(
@@ -1998,6 +2000,7 @@ mod tests {
             duration: Some(1000),
             flags: SampleFlags::new(true),
             provenance: None,
+            display: None,
         };
         let media = Media::new(
             alloc::vec![Track::new_at(
