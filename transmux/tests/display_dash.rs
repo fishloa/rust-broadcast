@@ -7,7 +7,7 @@
 //! |---|---|---|---|
 //! | melodie-anamorphic-sar-64-45 | 720x576 | 64:45 | 16:9 |
 //! | krone-anamorphic-sar-16-11 | 720x576 | 16:11 | 20:11 |
-//! | france-tnt-m6-eac3-zenith | 1920x1080 | 1:1 | 16:9 |
+//! | h264_aac | 320x240 | 1:1 | 4:3 |
 
 #![cfg(feature = "std")]
 
@@ -87,11 +87,11 @@ fn krone_anamorphic_16_11() {
 }
 
 #[test]
-fn square_pixel_1080p() {
-    let Some(mpd) = mpd_for("ts/france-tnt-m6-eac3-zenith.ts") else {
+fn square_pixel_320x240() {
+    let Some(mpd) = mpd_for("ts/h264_aac.ts") else {
         return;
     };
     let (par, sars) = video_geometry_attrs(&mpd);
     assert_eq!(sars, vec![Some("1:1".to_string())]);
-    assert_eq!(par.as_deref(), Some("16:9"));
+    assert_eq!(par.as_deref(), Some("4:3"));
 }
