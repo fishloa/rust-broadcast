@@ -58,9 +58,12 @@
 //! `Representation` carries `@sar="w:h"` (sample aspect ratio) whenever the
 //! track's `TrackSpec::display` supplies one (SPS VUI via the Phase 1a API).
 //! Unknown/unspecified SAR yields no attribute. `@par` is derived arithmetic
-//! (`(width*sar_w):(height*sar_h)`, gcd-reduced). ISO/IEC 23009-1 attribute
-//! semantics beyond the DVB profile rule above are unverified (that spec is
-//! not available here).
+//! (`(width*sar_w):(height*sar_h)`, gcd-reduced), exactly the relation
+//! ISO/IEC 23009-1:2022 Table 5 requires between `@par`, `@width`, `@height`
+//! and `@sar`; `@width`/`@height` remain the cropped sample counts (Table 14),
+//! the pixel shape being carried by `@sar`. The clauses are transcribed in
+//! `transmux/docs/codec/dash-23009-1-2022-aspect.md` (5th edition; the 2026
+//! 6th edition is paywalled and was not checked).
 //!
 //! # CENC/CBCS signalling (issue #564)
 //!
