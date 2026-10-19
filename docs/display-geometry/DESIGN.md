@@ -37,6 +37,15 @@ Status: **Phase 1 (static geometry) landed, split into 1a and 1b; Phase 2
   **Phase 4c landed**: `DashPackager`/`LlDashPackager` write `@sar` on video
   Representations and `@par` on video AdaptationSets per ETSI TS 103 285 §4.4.
 
+**Spec groundwork for the crop and AFD phases (page-verified transcriptions, written before any implementation):**
+[`crop-conformance-window.md`](../../transmux/docs/codec/crop-conformance-window.md) (H.264 frame cropping, H.265
+conformance window + default display window, H.266 SPS/PPS windows),
+[`afd-bar-data.md`](../../transmux/docs/codec/afd-bar-data.md) (ST 2016-1/-3, TS 101 154 Annex B, A/53 Part 4, T.35 SEI),
+[`isobmff-14496-12-2012-visual.md`](../../transmux/docs/codec/isobmff-14496-12-2012-visual.md) and
+[`dash-23009-1-2022-aspect.md`](../../transmux/docs/codec/dash-23009-1-2022-aspect.md). Known source gaps are listed at
+the end of each: AFD persistence for H.264/HEVC is unstated; the order of crop / SAR rescale / `clap` / `tkhd` is
+unspecified; CTA-CEB16 (receiver behaviour) is paywalled.
+
 Spec facts are transcribed and page-checked in
 [`SPEC-NOTES.md`](SPEC-NOTES.md) (and, for the colour tables, in
 `transmux/docs/codec/vui-colour-tables.md`); this document cites the former
