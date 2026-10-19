@@ -49,8 +49,9 @@ use crate::init_segment::{
     sampling_rate_override,
 };
 use crate::ir::{
-    CodecConfig, FragmentTrackData, InputDegradation, Sample, SubtitleFormat, SubtitleSampleEntry,
-    TrackSpec,
+    AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, FragmentTrackData,
+    InputDegradation, Sample, SubtitleFormat, SubtitleSampleEntry, TrackSpec, VideoFormat,
+    VideoSignalType,
 };
 use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use crate::mp4esds::EsdsBox;
@@ -58,6 +59,7 @@ use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{build_init_segment, build_media_segment};
+use crate::visual_ext::{ColourInformationBox, PixelAspectRatioBox};
 
 /// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
@@ -718,7 +720,128 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
     })?;
 
     let config = codec_config_from_entry(entry)?;
-    Ok(TrackSpec::new(track_id, timescale, config))
+    let spec = TrackSpec::new(track_id, timescale, config);
+    // Overlay container-level display geometry (pasp / colr nclx) from the
+    // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2015
+    // §12.1.4 (pasp) / §12.1.5 (colr). AVC/HEVC entries only; see
+    // `overlay_sample_entry_display`.
+    let spec = match entry {
+        SampleEntryVariant::Avc1(e) => overlay_sample_entry_display(spec, &e.extra_boxes),
+        SampleEntryVariant::Hevc1(e) => overlay_sample_entry_display(spec, &e.extra_boxes),
+        _ => spec,
+    };
+    Ok(spec)
+}
+
+/// Overlay container-level display geometry from a `pasp` / `colr nclx` box
+/// found in an AVC/HEVC sample entry onto the SPS-derived
+/// [`TrackSpec::display`].
+///
+/// ISO/IEC 14496-12:2015 §12.1.4 (`pasp`) / §12.1.5 (`colr`): `colr nclx`
+/// overrides the bitstream colour description (§12.1.5.1); `pasp` fills in an
+/// unspecified VUI sample aspect ratio. Which of two *specified* sample aspect
+/// ratios wins is not defined by the text available here (the §12.1.4.1
+/// definition is not transcribed), so on a disagreement the VUI SAR is kept.
+/// Returns the spec unchanged when neither box applies.
+fn overlay_sample_entry_display(
+    mut spec: TrackSpec,
+    extra_boxes: &[crate::sample_entries::OpaqueBox],
+) -> TrackSpec {
+    // First `pasp` in entry order.
+    let pasp = extra_boxes
+        .iter()
+        .filter(|b| b.box_type == *b"pasp")
+        .find_map(|b| PixelAspectRatioBox::parse(&b.data).ok());
+
+    // First `colr` whose colour_type is 'nclx' (§12.1.5.1: listed from most to
+    // least accurate, so the first nclx one wins). Its code points are u16 on
+    // the wire but the model's enums are built from the 8-bit code points of
+    // ITU-T H.273, so a box with a code point above 255 cannot be represented
+    // and is ignored (the bitstream colour is kept).
+    let colour = extra_boxes
+        .iter()
+        .filter(|b| b.box_type == *b"colr")
+        .find_map(|b| {
+            let c = ColourInformationBox::parse(&b.data).ok()?;
+            if c.colour_type != *b"nclx" {
+                return None;
+            }
+            let n = c.nclx?;
+            let colour = ColourDescription::from_wire(
+                u8::try_from(n.colour_primaries).ok()?,
+                u8::try_from(n.transfer_characteristics).ok()?,
+                u8::try_from(n.matrix_coefficients).ok()?,
+            );
+            Some((colour, n.full_range_flag))
+        });
+
+    // The pasp spacings reduced by their gcd to a u16 pair (both must be
+    // positive, §12.1.4); a ratio of 1 is the Square idc.
+    let pasp_ratio = pasp.and_then(|p| {
+        if p.h_spacing == 0 || p.v_spacing == 0 {
+            return None;
+        }
+        let g = gcd_u32(p.h_spacing, p.v_spacing);
+        let (rw, rh) = (
+            u16::try_from(p.h_spacing / g).ok()?,
+            u16::try_from(p.v_spacing / g).ok()?,
+        );
+        Some(if rw == rh {
+            AspectRatioIdc::from_wire(1, None)
+        } else {
+            AspectRatioIdc::from_wire(255, Some((rw, rh)))
+        })
+    });
+
+    if pasp_ratio.is_none() && colour.is_none() {
+        return spec;
+    }
+
+    // The display the SPS yielded, or (when it yielded none) one built from
+    // the sample entry's own visual size.
+    let (visual_w, visual_h) = match &spec.config {
+        CodecConfig::Avc { width, height, .. } | CodecConfig::Hevc { width, height, .. } => {
+            (u32::from(*width), u32::from(*height))
+        }
+        _ => (0, 0),
+    };
+    let signalled_format = spec
+        .display
+        .as_ref()
+        .and_then(|g| g.video_signal.map(|v| v.video_format));
+    let mut display = spec
+        .display
+        .take()
+        .unwrap_or_else(|| DisplayGeometry::new(visual_w, visual_h, None));
+
+    // pasp only fills in; two specified ratios that disagree keep the VUI one.
+    if let Some(ratio) = pasp_ratio
+        && display.sample_aspect_ratio().is_none()
+    {
+        display.aspect_ratio = Some(ratio);
+    }
+
+    // colr nclx overrides the bitstream colour; the VUI's video_format is kept
+    // when one was signalled (colr carries none), else Unspecified.
+    if let Some((colour, full_range)) = colour {
+        display.video_signal = Some(VideoSignalType::new(
+            signalled_format.unwrap_or(VideoFormat::Unspecified),
+            full_range,
+            Some(colour),
+        ));
+    }
+
+    spec.display = Some(display);
+    spec
+}
+
+fn gcd_u32(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a.max(1)
 }
 
 /// Build a [`SkippedTrack`] record for a `trak` [`track_spec_from_trak`]
