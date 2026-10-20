@@ -28,6 +28,9 @@ const SKIP: &[&str] = &[
     // access unit did to the tracker (a data-carrying ADT, `Changed { .. }`);
     // not a spec code and never rendered to a user.
     "ActivationOutcome",
+    // `mpeg2_display::Mpeg2Outcome` (display-geometry Phase 3b): the same
+    // shape for MPEG-2 (a data-carrying ADT), not a spec code.
+    "Mpeg2Outcome",
     // `display_track::TrackCodec` (display-geometry Phase 2): which
     // parameter-set syntax a demuxer's tracker follows (AVC / HEVC), a
     // routing choice, not a wire label.

@@ -33,8 +33,7 @@ use crate::ir::{
     UserDataCarriage,
 };
 use crate::user_data::{
-    BAR_DATA_USER_DATA_TYPE_CODE, DTG1_USER_IDENTIFIER, GA94_USER_IDENTIFIER,
-    USER_IDENTIFIER_LEN,
+    BAR_DATA_USER_DATA_TYPE_CODE, DTG1_USER_IDENTIFIER, GA94_USER_IDENTIFIER, USER_IDENTIFIER_LEN,
 };
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -97,33 +96,35 @@ impl Mpeg2DisplayTracker {
 
     /// The `DisplayInfo` formed by the parts currently in force.
     fn compose(&self) -> DisplayInfo {
-        let active_format = (self.active_seen
-            || self.afd.is_some()
-            || self.bar_data.is_some())
-        .then(|| {
-            ActiveFormat::new(
-                self.afd,
-                self.bar_data.clone(),
-                UserDataCarriage::Mpeg2PictureUserData,
-            )
-        });
+        let active_format = (self.active_seen || self.afd.is_some() || self.bar_data.is_some())
+            .then(|| {
+                ActiveFormat::new(
+                    self.afd,
+                    self.bar_data.clone(),
+                    UserDataCarriage::Mpeg2PictureUserData,
+                )
+            });
         DisplayInfo::new(self.geometry.clone()).with_active_format(active_format)
     }
 
     /// Fold one MPEG-2 video access unit (a `picture_header()` plus its
     /// `extension_and_user_data(2)`; a sequence header may precede it).
     pub fn observe(&mut self, au: &[u8]) -> Mpeg2Outcome {
+        let mut state = self.clone();
+        let outcome = state.step(au);
+        *self = state;
+        outcome
+    }
+
+    /// [`observe`](Self::observe) on `self` itself (the real step).
+    fn step(&mut self, au: &[u8]) -> Mpeg2Outcome {
         let random_access = crate::ts_demux::mpeg2_is_sync(au);
-        let mut geometry_changed = false;
-        // A sequence_header() resets the area of interest (A/53 §6.2.4).
-        if let Some(start) = find_sequence_header(au) {
-            let geometry = parse_sequence_at(au, start)
-                .ok()
-                .map(|s| s.to_display_geometry());
-            if geometry != self.geometry {
-                self.geometry = geometry;
-                geometry_changed = true;
-            }
+        // A sequence_header() resets the area of interest (A/53 §6.2.4) and
+        // re-defines the sequence geometry.
+        if let Some(start) = find_sequence_header(au)
+            && let Ok(parsed) = parse_sequence_at(au, start)
+        {
+            self.geometry = Some(parsed.to_display_geometry());
             self.afd = None;
             self.bar_data = None;
         }
@@ -143,12 +144,7 @@ impl Mpeg2DisplayTracker {
         if previous.as_ref() == &next {
             return Mpeg2Outcome::Unchanged;
         }
-        let mut changed = next.changes_from(Some(&previous));
-        // A sequence_header() that changed the sequence is reported as such,
-        // even when the comparison only surfaces its area-of-interest reset.
-        if geometry_changed {
-            changed.output_rect = true;
-        }
+        let changed = next.changes_from(Some(&previous));
         let display = Arc::new(next);
         self.state = Some(display.clone());
         Mpeg2Outcome::Changed {
@@ -173,8 +169,7 @@ impl Mpeg2DisplayTracker {
             if payload.len() < USER_IDENTIFIER_LEN {
                 continue;
             }
-            let identifier =
-                u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+            let identifier = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
             let body = &payload[USER_IDENTIFIER_LEN..];
             match identifier {
                 DTG1_USER_IDENTIFIER => {
@@ -210,21 +205,27 @@ impl Mpeg2DisplayTracker {
     }
 }
 
+/// Bytes before the first bar value: `user_data_type_code` + `bar_data()`
+/// flags (TS 101 154 Table B.4/B.7).
+const MIN_BAR_MESSAGE_LEN: usize = 2;
+
 /// Parse a `DVB1_data()` bar-data message: `user_data_type_code` then
 /// `bar_data()` (TS 101 154 Table B.3/B.4/B.7). `Some(Some(..))` for a bar
 /// message carrying a signal, `Some(None)` for one with no bar flag set,
 /// `None` for another `user_data_type_code` or a truncated payload.
 fn bar_data_from_dvb1(body: &[u8]) -> Option<Option<BarData>> {
-    let (&type_code, rest) = body.split_first()?;
+    let (&type_code, bar) = body.split_first()?;
     if type_code != BAR_DATA_USER_DATA_TYPE_CODE {
         return None;
     }
     // The shared decoder reads the T.35 metadata form (`GA94` + type code +
     // `bar_data()`); the `DVB1_data()` body is exactly that tail, so a
     // canonical T.35 prefix in front of it reuses one bar-data parser.
-    let mut t35 = Vec::with_capacity(USER_IDENTIFIER_LEN + rest.len());
-    t35.extend_from_slice(&GA94_USER_IDENTIFIER.to_be_bytes());
-    t35.push(BAR_DATA_USER_DATA_TYPE_CODE);
-    t35.extend_from_slice(rest);
-    crate::user_data::bar_data_from_ga94_payload(&t35).map(Some)
+    let mut tail = Vec::with_capacity(MIN_BAR_MESSAGE_LEN + bar.len());
+    tail.push(BAR_DATA_USER_DATA_TYPE_CODE);
+    tail.extend_from_slice(bar);
+    crate::user_data::bar_data_from_ga94_payload(&tail).map(Some)
 }
+
+#[cfg(test)]
+mod tests;

@@ -95,13 +95,31 @@ fn sar(g: &DisplayGeometry) -> Option<(u16, u16)> {
 
 #[test]
 fn aspect_codes_derive_the_table_6_3_ratios() {
-    assert_eq!(sar(&geometry(&[sequence_header(704, 480, 1)])), Some((1, 1)));
-    assert_eq!(sar(&geometry(&[sequence_header(704, 480, 2)])), Some((10, 11)));
-    assert_eq!(sar(&geometry(&[sequence_header(704, 576, 3)])), Some((16, 11)));
-    assert_eq!(sar(&geometry(&[sequence_header(720, 576, 3)])), Some((64, 45)));
-    assert_eq!(sar(&geometry(&[sequence_header(720, 576, 2)])), Some((16, 15)));
+    assert_eq!(
+        sar(&geometry(&[sequence_header(704, 480, 1)])),
+        Some((1, 1))
+    );
+    assert_eq!(
+        sar(&geometry(&[sequence_header(704, 480, 2)])),
+        Some((10, 11))
+    );
+    assert_eq!(
+        sar(&geometry(&[sequence_header(704, 576, 3)])),
+        Some((16, 11))
+    );
+    assert_eq!(
+        sar(&geometry(&[sequence_header(720, 576, 3)])),
+        Some((64, 45))
+    );
+    assert_eq!(
+        sar(&geometry(&[sequence_header(720, 576, 2)])),
+        Some((16, 15))
+    );
     // 2.21:1 on 720x576: (221/100) * 576 / 720 = 1768/1000 = 221/125.
-    assert_eq!(sar(&geometry(&[sequence_header(720, 576, 4)])), Some((221, 125)));
+    assert_eq!(
+        sar(&geometry(&[sequence_header(720, 576, 4)])),
+        Some((221, 125))
+    );
 }
 
 #[test]
@@ -116,7 +134,10 @@ fn forbidden_and_reserved_aspects_are_unspecified() {
 #[test]
 fn sequence_extension_extends_the_coded_size() {
     let g = geometry(&[sequence_header(111, 222, 1), sequence_extension(1, 2)]);
-    assert_eq!((g.coded_width, g.coded_height), (1 << 12 | 111, 2 << 12 | 222));
+    assert_eq!(
+        (g.coded_width, g.coded_height),
+        (1 << 12 | 111, 2 << 12 | 222)
+    );
     assert_eq!(g.output_rect.width, 1 << 12 | 111);
 }
 

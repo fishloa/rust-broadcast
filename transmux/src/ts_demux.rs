@@ -222,8 +222,8 @@
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
 use crate::display_track::{ActivationOutcome, SpsTracker, TrackCodec};
-use crate::mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 use crate::ir::{AfdPersistence, DisplayChangeSet, DisplayInfo};
+use crate::mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 use crate::{ProgramNumber, TrackId};
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -2188,9 +2188,18 @@ fn advance_one_behind(
         display,
         pending_events: PendingDisplayEvents::default(),
     });
-    // The pending access unit was already emitted as the previous sample, and
-    // a change raised by *this* access unit is released with *its* sample
-    // ([`advance_one_behind`]), never before the previous one.
+    if let Some(spec) = pending_events.config {
+        events.push_back(DemuxEvent::TrackUpdated(spec));
+    }
+    // `PendingOneBehind::pending_events`' doc claims a change parked here is
+    // released with this access unit's own sample; it was instead pushed
+    // before the *previous* sample (`docs/display-geometry/DESIGN.md` §6.5
+    // forbids that, and it labelled one picture early). The previous slot is
+    // already out, so the change belongs to the new `*pending` slot.
+    let pending_events = PendingDisplayEvents {
+        config: None,
+        display: pending_events.display,
+    };
     if let Some((display, changed)) = pending_events.display {
         events.push_back(DemuxEvent::DisplayChanged {
             track_id,
@@ -5745,8 +5754,8 @@ impl StreamingTsDemux {
                         ),
                         _ => None,
                     };
-                    let mpeg2_tracker = (stream.codec == Codec::Mpeg2Video)
-                        .then(Mpeg2DisplayTracker::new);
+                    let mpeg2_tracker =
+                        (stream.codec == Codec::Mpeg2Video).then(Mpeg2DisplayTracker::new);
                     let mut live = LiveTrack {
                         track_id,
                         kind,

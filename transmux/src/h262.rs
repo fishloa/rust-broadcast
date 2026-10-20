@@ -189,7 +189,8 @@ impl SequenceHeaderGeometry {
     /// `full_range` is always `false`.
     pub fn to_display_geometry(&self) -> DisplayGeometry {
         let video_signal = self.display.as_ref().map(|d| VideoSignalType {
-            video_format: VideoFormat::from_wire(d.video_format).unwrap_or(VideoFormat::Unspecified),
+            video_format: VideoFormat::from_wire(d.video_format)
+                .unwrap_or(VideoFormat::Unspecified),
             full_range: false,
             colour: d.colour_description.map(|(p, t, m)| ColourDescription {
                 primaries: ColourPrimaries::from_wire(p),
@@ -204,9 +205,10 @@ impl SequenceHeaderGeometry {
             default_display_rect: None,
             aspect_ratio: match (self.aspect_ratio_information, self.sample_aspect_ratio()) {
                 (ASPECT_SQUARE, _) => Some(AspectRatioIdc::Square),
-                (_, Some((sar_width, sar_height))) => {
-                    Some(AspectRatioIdc::ExtendedSar { sar_width, sar_height })
-                }
+                (_, Some((sar_width, sar_height))) => Some(AspectRatioIdc::ExtendedSar {
+                    sar_width,
+                    sar_height,
+                }),
                 _ => None,
             },
             overscan_appropriate: None,
@@ -307,7 +309,8 @@ fn parse_sequence_display_extension_body(body: &[u8]) -> Result<SequenceDisplayE
 pub(crate) fn parse_sequence_at(es: &[u8], start: usize) -> Result<SequenceHeaderGeometry> {
     let body_end = section_body(es, start).len();
     let header_end = start + SEQUENCE_HEADER_CODE.len() + body_end;
-    let (width, height, aspect) = parse_sequence_header_body(&es[start + SEQUENCE_HEADER_CODE.len()..header_end])?;
+    let (width, height, aspect) =
+        parse_sequence_header_body(&es[start + SEQUENCE_HEADER_CODE.len()..header_end])?;
     let mut geometry = SequenceHeaderGeometry {
         coded_width: width,
         coded_height: height,
