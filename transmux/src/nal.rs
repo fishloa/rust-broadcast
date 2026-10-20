@@ -427,11 +427,11 @@ fn avc_is_i_slice(nal: &[u8]) -> bool {
 /// SEI `payloadType` for `user_data_registered_itu_t_t35` — ITU-T H.264 Annex D
 /// Table D-1 (syntax D.1.6, semantics D.2.6) / ITU-T H.265 Annex D (same
 /// registry: the SEI `payloadType` namespace is shared across H.264/H.265/H.266).
-const SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35: u32 = 4;
+pub(crate) const SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35: u32 = 4;
 
 /// `itu_t_t35_country_code` for the United States (ITU-T T.35 country code
 /// table) — the fixed first byte of an ATSC caption SEI payload.
-const ITU_T_T35_COUNTRY_CODE_USA: u8 = 0xB5;
+pub(crate) const ITU_T_T35_COUNTRY_CODE_USA: u8 = 0xB5;
 
 /// `itu_t_t35_country_code` for China: GY/T 270-2013 clause 6.3.3 Table 6
 /// carries the same `GA94` `DVB1_data()` caption payload in an H.264 SEI whose
@@ -446,11 +446,11 @@ const ITU_T_T35_COUNTRY_CODE_CHINA: u8 = 0x26;
 /// (§6.2.2/§6.2.3, no ITU-T T.35 wrapper — MPEG-2 has no SEI mechanism), so
 /// this and the two constants below are the H.264/H.265 SEI-specific framing
 /// that carries the same `ATSC_user_data()` payload (Table 6.7/6.8) inside it.
-const ATSC_T35_PROVIDER_CODE: u16 = 0x0031;
+pub(crate) const ATSC_T35_PROVIDER_CODE: u16 = 0x0031;
 
 /// `user_identifier` selecting `ATSC_user_data()` — ATSC A/53 Part 4 §6.2.3
 /// Table 6.7, value `0x47413934` (`"GA94"`).
-const ATSC_USER_IDENTIFIER_GA94: u32 = 0x4741_3934;
+pub(crate) const ATSC_USER_IDENTIFIER_GA94: u32 = 0x4741_3934;
 
 /// `user_data_type_code` selecting `MPEG_cc_data()` (i.e. `cc_data()` plus a
 /// trailing `marker_bits` byte) — ATSC A/53 Part 4 §6.2.3 Table 6.9/6.10.
@@ -464,7 +464,7 @@ const ATSC_T35_HEADER_LEN: usize = 8;
 /// Whether `nal` is a SEI NAL unit for `codec` (AVC type 6; HEVC prefix/suffix
 /// types 39/40). VVC has no caption SEI convention defined here, so it never
 /// matches.
-fn is_sei_nal(codec: NalCodec, nal: &[u8]) -> bool {
+pub(crate) fn is_sei_nal(codec: NalCodec, nal: &[u8]) -> bool {
     match codec {
         NalCodec::Avc => nal_unit_type(codec, nal) == Some(AVC_NAL_SEI),
         NalCodec::Hevc => matches!(

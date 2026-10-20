@@ -1612,7 +1612,7 @@ fn write_decimal(s: &mut String, mut n: u8) {
 // profile_tier_level decode (H.265 §7.3.3)
 // ---------------------------------------------------------------------------
 
-fn decode_ptl(
+pub(crate) fn decode_ptl(
     r: &mut BitReader,
     profile_present_flag: bool,
     max_sub_layers_minus1: u8,

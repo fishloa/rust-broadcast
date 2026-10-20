@@ -65,10 +65,11 @@ pub use audio_meta::{
 };
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat, SubtitleSampleEntry};
 pub use display::{
-    AspectRatioIdc, ColourDescription, ColourPrimaries, DisplayChangeSet, DisplayGeometry,
-    DisplayInfo, EXTENDED_SAR_IDC, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE,
-    INFERRED_VIDEO_FORMAT, MatrixCoefficients, PictureRect, SampleAspectRatio,
-    TransferCharacteristics, VideoFormat, VideoSignalType,
+    ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, BarData,
+    ColourDescription, ColourPrimaries, DisplayChangeSet, DisplayGeometry, DisplayInfo,
+    EXTENDED_SAR_IDC, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT,
+    MatrixCoefficients, PictureRect, SampleAspectRatio, TransferCharacteristics, UserDataCarriage,
+    VideoFormat, VideoSignalType,
 };
 pub use event::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,

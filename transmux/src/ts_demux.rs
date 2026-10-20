@@ -222,7 +222,7 @@
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
 use crate::display_track::{ActivationOutcome, SpsTracker, TrackCodec};
-use crate::ir::{DisplayChangeSet, DisplayInfo};
+use crate::ir::{AfdPersistence, DisplayChangeSet, DisplayInfo};
 use crate::{ProgramNumber, TrackId};
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -4598,6 +4598,7 @@ pub struct StreamingTsDemux {
     /// not create entries or advance the counter. Null PID (0x1FFF) is always
     /// excluded.
     cc_states: BTreeMap<Pid, CcState>,
+    afd_persistence: AfdPersistence,
 }
 
 /// Per-PMT-PID reassembly + version-diffing state (issue #774): the
@@ -4654,6 +4655,7 @@ impl StreamingTsDemux {
             generation: 0,
             tracks_resolved_signalled_at: None,
             cc_states: BTreeMap::new(),
+            afd_persistence: AfdPersistence::UntilReplaced,
         }
     }
 
@@ -4673,9 +4675,11 @@ impl StreamingTsDemux {
         self
     }
 
-    /// How many [`DemuxEvent::InputDegraded`] events were dropped because the
-    /// cap set by [`with_max_degraded_events`](Self::with_max_degraded_events)
-    /// was reached. Always `0` with the default (uncapped) configuration.
+    #[must_use]
+    pub fn with_afd_persistence(mut self, policy: AfdPersistence) -> Self {
+        self.afd_persistence = policy;
+        self
+    }
     pub fn degraded_events_dropped(&self) -> u64 {
         self.degraded_dropped
     }
@@ -5715,15 +5719,62 @@ impl StreamingTsDemux {
                     } else {
                         spec
                     };
-                    // The level-triggered start (design §5.2, Q2 = emit): one
-                    // `DisplayChanged { changed.initial = true }` for a video
-                    // track that has any display state, right after its
-                    // `TrackAdded` and before its first `Sample`. It shares its
-                    // `Arc` with the first resolved sample added below.
-                    let initial_display = TrackSpec::new(track_id, timescale, config.clone())
+                    let sps_tracker = match stream.codec {
+                        Codec::H264 => Some(
+                            SpsTracker::new(TrackCodec::Avc)
+                                .with_afd_persistence(self.afd_persistence),
+                        ),
+                        Codec::Hevc => Some(
+                            SpsTracker::new(TrackCodec::Hevc)
+                                .with_afd_persistence(self.afd_persistence),
+                        ),
+                        _ => None,
+                    };
+                    let mut live = LiveTrack {
+                        track_id,
+                        kind,
+                        config,
+                        timescale,
+                        parameter_sets: ParameterSets::default(),
+                        config_header: None,
+                        sps_tracker,
+                        pending_config: None,
+                        display: None,
+                    };
+                    // Geometry-only seed state (active format filled in below from
+                    // the first access unit, if any).
+                    let geom_display = TrackSpec::new(track_id, timescale, live.config.clone())
                         .display
-                        .and_then(|g| DisplayInfo::from_geometry(Some(g)))
-                        .map(Arc::new);
+                        .and_then(|g| DisplayInfo::from_geometry(Some(g)));
+                    if let Some(display) = &geom_display
+                        && let Some(tracker) = live.sps_tracker.as_mut()
+                    {
+                        tracker.seed_state(display.geometry.clone());
+                    }
+                    // Process the whole backlog through the tracker (suppressing
+                    // events) so its parameter sets and AFD are folded into the
+                    // state before the initial event is emitted (one event, not
+                    // two).
+                    for au in &backlog {
+                        if let Some(tracker) = live.sps_tracker.as_mut() {
+                            let _ = tracker.observe(&au.data);
+                        }
+                    }
+                    // Restore the sequence geometry to the (authoritative)
+                    // TrackSpec value while keeping the backlog-derived active
+                    // format.
+                    if let Some(tracker) = live.sps_tracker.as_mut() {
+                        let af = tracker.state().and_then(|s| s.active_format.clone());
+                        let geom = geom_display.as_ref().and_then(|d| d.geometry.clone());
+                        tracker.set_state(Some(Arc::new(
+                            DisplayInfo::new(geom).with_active_format(af),
+                        )));
+                    }
+                    let initial_display = live
+                        .sps_tracker
+                        .as_ref()
+                        .and_then(|t| t.state().cloned())
+                        .or_else(|| geom_display.map(Arc::new));
                     self.events.push_back(DemuxEvent::TrackAdded(spec));
                     if let Some(display) = &initial_display {
                         self.events.push_back(DemuxEvent::DisplayChanged {
@@ -5740,26 +5791,12 @@ impl StreamingTsDemux {
                             },
                         });
                     }
-                    let sps_tracker = match stream.codec {
-                        Codec::H264 => Some(SpsTracker::new(TrackCodec::Avc)),
-                        Codec::Hevc => Some(SpsTracker::new(TrackCodec::Hevc)),
-                        _ => None,
-                    };
-                    let mut live = LiveTrack {
-                        track_id,
-                        kind,
-                        config,
-                        timescale,
-                        parameter_sets: ParameterSets::default(),
-                        config_header: None,
-                        sps_tracker,
-                        pending_config: None,
-                        display: None,
-                    };
+                    // seed_state already done; ensure state matches initial_display
                     if let Some(display) = &initial_display
                         && let Some(tracker) = live.sps_tracker.as_mut()
+                        && tracker.state().is_none()
                     {
-                        tracker.seed_state(display.geometry.clone());
+                        tracker.seed_full(Some(display.clone()));
                     }
                     // Seed the changed-config comparison from the access units
                     // the config was actually recovered from, so the track's
@@ -6133,6 +6170,7 @@ impl Stage for StreamingTsDemux {
 #[derive(Debug, Default, Clone)]
 pub struct TsDemux<'a> {
     _marker: PhantomData<&'a [u8]>,
+    afd_persistence: AfdPersistence,
 }
 
 impl<'a> TsDemux<'a> {
@@ -6140,7 +6178,14 @@ impl<'a> TsDemux<'a> {
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
+            afd_persistence: AfdPersistence::UntilReplaced,
         }
+    }
+
+    #[must_use]
+    pub fn with_afd_persistence(mut self, policy: AfdPersistence) -> Self {
+        self.afd_persistence = policy;
+        self
     }
 
     /// Demux `input` (a whole MPEG-2 TS byte stream) into a [`Media`].
@@ -6148,7 +6193,7 @@ impl<'a> TsDemux<'a> {
     /// This is the inherent form of [`Unpackage::unpackage`]; both produce the
     /// same result. See the type-level docs for the pipeline.
     pub fn demux(&mut self, input: &'a [u8]) -> Result<Media> {
-        let mut demux = StreamingTsDemux::new();
+        let mut demux = StreamingTsDemux::new().with_afd_persistence(self.afd_persistence);
         demux.feed(input);
         demux.finish();
 

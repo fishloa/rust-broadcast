@@ -49,10 +49,14 @@
 
 use crate::annexb::iter_annexb_nals;
 use crate::bitreader::BitReader;
-use crate::ir::{DisplayChangeSet, DisplayGeometry, DisplayInfo};
+use crate::ir::{
+    ActiveFormat, ActiveFormatDescription, AfdPersistence, BarData, DisplayChangeSet,
+    DisplayGeometry, DisplayInfo, UserDataCarriage,
+};
 use crate::nal::NalCodec;
 use crate::nalu_types::HEVC_SPS_NUT;
 use crate::sps::decode_avc_slice_sps;
+use crate::user_data;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -124,6 +128,14 @@ pub(crate) struct Activation {
     pub(crate) coverage: PpsCoverage,
     /// The access unit is an H.264 IDR, or an H.265 IDR / BLA.
     pub(crate) random_access: bool,
+    /// AFD message present in this AU.
+    pub(crate) afd_present: bool,
+    /// Parsed AFD (None if flag cleared).
+    pub(crate) afd: Option<ActiveFormatDescription>,
+    /// Bar data message present.
+    pub(crate) bar_present: bool,
+    /// Parsed bar data.
+    pub(crate) bar_data: Option<BarData>,
 }
 
 /// The outcome of [`SpsTracker::observe`] for one access unit.
@@ -170,8 +182,9 @@ fn avc_pps_ids(nal: &[u8]) -> Option<(u8, u8)> {
 fn hevc_sps_id(nal: &[u8]) -> Option<u8> {
     let mut r = BitReader::with_unescape(nal.get(2..)?, "H.265 SPS").ok()?;
     r.read_bits(4, "sps_video_parameter_set_id").ok()?;
-    r.read_bits(3, "sps_max_sub_layers_minus1").ok()?;
+    let max_sub = r.read_bits(3, "sps_max_sub_layers_minus1").ok()? as u8;
     r.read_flag("sps_temporal_id_nesting_flag").ok()?;
+    let _ = crate::sps::decode_ptl(&mut r, true, max_sub).ok()?;
     u8::try_from(r.read_ue("sps_seq_parameter_set_id").ok()?).ok()
 }
 
@@ -260,6 +273,7 @@ struct Unresolved {
 #[derive(Debug, Clone)]
 pub struct SpsTracker {
     codec: TrackCodec,
+    afd_persistence: AfdPersistence,
     sps: BTreeMap<u8, DisplayGeometry>,
     pps: BTreeMap<u8, PpsBinding>,
     /// The state every sample carries until a new change is raised.
@@ -272,11 +286,28 @@ impl SpsTracker {
     pub fn new(codec: TrackCodec) -> Self {
         Self {
             codec,
+            afd_persistence: AfdPersistence::UntilReplaced,
             sps: BTreeMap::new(),
             pps: BTreeMap::new(),
             state: None,
             unresolved: Vec::new(),
         }
+    }
+
+    pub fn with_afd_persistence(mut self, policy: AfdPersistence) -> Self {
+        self.afd_persistence = policy;
+        self
+    }
+
+    /// Seed the state with a full DisplayInfo (geometry + active format).
+    pub fn seed_full(&mut self, display: Option<Arc<DisplayInfo>>) {
+        if self.state.is_none() {
+            self.state = display;
+        }
+    }
+
+    pub fn set_state(&mut self, display: Option<Arc<DisplayInfo>>) {
+        self.state = display;
     }
 
     /// The display state in force, shared with every sample that is not the
@@ -338,6 +369,10 @@ impl SpsTracker {
                 activation.random_access |= header & AVC_NAL_TYPE_MASK == AVC_IDR;
                 slice_pps.push(avc_slice_pps_id(nal));
             }
+            // SEI: collect AFD / bar data (first wins).
+            6 => {
+                Self::parse_sei_afd(NalCodec::Avc, nal, activation);
+            }
             // A prefix NAL (§7.3.1.1) whose body is itself an SPS/PPS/slice.
             AVC_PREFIX_NAL => {
                 if let Some(inner) = nal.get(1..) {
@@ -370,6 +405,9 @@ impl SpsTracker {
                 if let Some((pps_id, sps_id)) = hevc_pps_ids(nal) {
                     self.pps.insert(pps_id, PpsBinding { sps_id });
                 }
+            }
+            39 => {
+                Self::parse_sei_afd(NalCodec::Hevc, nal, activation);
             }
             0..=HEVC_LAST_VCL => {
                 // IDR and BLA always begin a coded video sequence. A CRA does
@@ -437,6 +475,33 @@ impl SpsTracker {
             .collect();
     }
 
+    /// Parse AFD / bar data from a single SEI NAL into `activation` (first wins).
+    fn parse_sei_afd(codec: NalCodec, nal: &[u8], activation: &mut Activation) {
+        let body = match codec {
+            NalCodec::Avc => &nal[1..],
+            NalCodec::Hevc => &nal[2..],
+            _ => return,
+        };
+        let msgs = crate::nal::sei_messages(body);
+        for (payload_type, payload) in msgs {
+            if payload_type != user_data::SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35 {
+                continue;
+            }
+            if !activation.afd_present
+                && let Some(afd) = user_data::afd_from_t35_payload(&payload)
+            {
+                activation.afd_present = true;
+                activation.afd = afd;
+            }
+            if !activation.bar_present
+                && let Some(bd) = user_data::bar_data_from_t35_payload(&payload)
+            {
+                activation.bar_present = true;
+                activation.bar_data = Some(bd);
+            }
+        }
+    }
+
     fn finish(&mut self, activation: Activation) -> ActivationOutcome {
         if activation.sps_ids.is_empty() {
             return if activation.coverage == PpsCoverage::Known {
@@ -450,7 +515,47 @@ impl SpsTracker {
         }
         self.forget_resolved();
         let geometry = self.activated_geometry(&activation.sps_ids);
-        let display = Arc::new(DisplayInfo::new(geometry));
+        let carriage = match self.codec {
+            TrackCodec::Avc => UserDataCarriage::AvcSei,
+            TrackCodec::Hevc => UserDataCarriage::HevcPrefixSei,
+        };
+        // Compute active format applying persistence.
+        let previous_active = self.state.as_ref().and_then(|s| s.active_format.clone());
+        let mut new_active = previous_active.clone();
+        if activation.afd_present {
+            new_active = Some(ActiveFormat {
+                afd: activation.afd,
+                bar_data: if activation.bar_present {
+                    activation.bar_data.clone()
+                } else {
+                    None
+                },
+                carriage,
+            });
+        } else if activation.bar_present {
+            match &mut new_active {
+                Some(af) => af.bar_data = activation.bar_data.clone(),
+                None => {
+                    new_active = Some(ActiveFormat {
+                        afd: None,
+                        bar_data: activation.bar_data.clone(),
+                        carriage,
+                    })
+                }
+            }
+        }
+        // Reset at random access under policy.
+        if !activation.afd_present
+            && self.afd_persistence == AfdPersistence::ResetAtRandomAccess
+            && activation.random_access
+        {
+            new_active = Some(ActiveFormat {
+                afd: Some(ActiveFormatDescription::SameAsCodedFrame),
+                bar_data: None,
+                carriage,
+            });
+        }
+        let display = Arc::new(DisplayInfo::new(geometry).with_active_format(new_active));
         let unchanged = self
             .state
             .as_ref()

@@ -973,6 +973,172 @@ impl DisplayGeometry {
 /// Everything that determines how one access unit is shown
 /// (`docs/display-geometry/DESIGN.md` §4, Phase 2).
 ///
+/// ETSI TS 101 154 Table B.5 / SMPTE ST 2016-1 Table 1 (SN §5), wire form
+/// kept losslessly.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActiveFormatDescription {
+    /// 0000: AFD unknown.
+    Unknown,
+    /// 0010: box 16:9 (top).
+    Box16x9Top,
+    /// 0011: box 14:9 (top).
+    Box14x9Top,
+    /// 0100: box > 16:9 (centre).
+    BoxWiderThan16x9Centre,
+    /// 1000: active format is the same as the coded frame.
+    SameAsCodedFrame,
+    /// 1001: 4:3 (centre).
+    Centre4x3,
+    /// 1010: 16:9 (centre).
+    Centre16x9,
+    /// 1011: 14:9 (centre).
+    Centre14x9,
+    /// 1101: 4:3 (with shoot and protect 14:9 centre).
+    Centre4x3ShootProtect14x9,
+    /// 1110: 16:9 (with shoot and protect 14:9 centre).
+    Centre16x9ShootProtect14x9,
+    /// 1111: 16:9 (with shoot and protect 4:3 centre).
+    Centre16x9ShootProtect4x3,
+    /// 0001, 0101..0111, 1100: reserved (wire value kept).
+    Reserved(u8),
+}
+
+impl ActiveFormatDescription {
+    /// The 4-bit wire code (lossless).
+    pub fn code(&self) -> u8 {
+        match self {
+            Self::Unknown => 0b0000,
+            Self::Box16x9Top => 0b0010,
+            Self::Box14x9Top => 0b0011,
+            Self::BoxWiderThan16x9Centre => 0b0100,
+            Self::SameAsCodedFrame => 0b1000,
+            Self::Centre4x3 => 0b1001,
+            Self::Centre16x9 => 0b1010,
+            Self::Centre14x9 => 0b1011,
+            Self::Centre4x3ShootProtect14x9 => 0b1101,
+            Self::Centre16x9ShootProtect14x9 => 0b1110,
+            Self::Centre16x9ShootProtect4x3 => 0b1111,
+            Self::Reserved(v) => *v,
+        }
+    }
+
+    /// Build from the 4-bit wire code (lossless, every value maps).
+    pub fn from_code(code: u8) -> Self {
+        match code & 0x0F {
+            0b0000 => Self::Unknown,
+            0b0010 => Self::Box16x9Top,
+            0b0011 => Self::Box14x9Top,
+            0b0100 => Self::BoxWiderThan16x9Centre,
+            0b1000 => Self::SameAsCodedFrame,
+            0b1001 => Self::Centre4x3,
+            0b1010 => Self::Centre16x9,
+            0b1011 => Self::Centre14x9,
+            0b1101 => Self::Centre4x3ShootProtect14x9,
+            0b1110 => Self::Centre16x9ShootProtect14x9,
+            0b1111 => Self::Centre16x9ShootProtect4x3,
+            other => Self::Reserved(other),
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Unknown => "AFD unknown",
+            Self::Box16x9Top => "box 16:9 (top)",
+            Self::Box14x9Top => "box 14:9 (top)",
+            Self::BoxWiderThan16x9Centre => "box > 16:9 (centre)",
+            Self::SameAsCodedFrame => "same as coded frame",
+            Self::Centre4x3 => "4:3 (centre)",
+            Self::Centre16x9 => "16:9 (centre)",
+            Self::Centre14x9 => "14:9 (centre)",
+            Self::Centre4x3ShootProtect14x9 => "4:3 (with shoot and protect 14:9 centre)",
+            Self::Centre16x9ShootProtect14x9 => "16:9 (with shoot and protect 14:9 centre)",
+            Self::Centre16x9ShootProtect4x3 => "16:9 (with shoot and protect 4:3 centre)",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(ActiveFormatDescription, Reserved);
+
+/// TS 101 154 Table B.7. Only the signalled pair is `Some`; the 14-bit values
+/// are kept as wire values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BarData {
+    pub top_bar_end_line: Option<u16>,
+    pub bottom_bar_start_line: Option<u16>,
+    pub left_bar_end_pixel: Option<u16>,
+    pub right_bar_start_pixel: Option<u16>,
+}
+
+/// Which wrapper carried the AFD/bar data.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserDataCarriage {
+    AvcSei,
+    HevcPrefixSei,
+    Mpeg2PictureUserData,
+}
+
+impl UserDataCarriage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::AvcSei => "AVC SEI",
+            Self::HevcPrefixSei => "HEVC prefix SEI",
+            Self::Mpeg2PictureUserData => "MPEG-2 picture user data",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(UserDataCarriage);
+
+/// Picture-level "area of interest" state in force for an access unit.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveFormat {
+    /// `None` when the last afd_data() had active_format_flag == 0, or no AFD
+    /// has been seen.
+    pub afd: Option<ActiveFormatDescription>,
+    pub bar_data: Option<BarData>,
+    pub carriage: UserDataCarriage,
+}
+
+impl ActiveFormat {
+    /// Construct a picture-level state (additive Phase 3 constructor).
+    pub fn new(
+        afd: Option<ActiveFormatDescription>,
+        bar_data: Option<BarData>,
+        carriage: UserDataCarriage,
+    ) -> Self {
+        Self {
+            afd,
+            bar_data,
+            carriage,
+        }
+    }
+}
+
+/// Persistence policy for AFD / bar data in H.264/H.265 (design §6.4).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AfdPersistence {
+    /// Sticky until a new AFD message replaces it (default).
+    #[default]
+    UntilReplaced,
+    /// Reset at a random-access (IDR/IRAP) AU that carries no AFD: afd becomes
+    /// `Some(SameAsCodedFrame)` and bar data becomes `None` (ANSI/SCTE 128-1
+    /// §8.2.3-8.2.4).
+    ResetAtRandomAccess,
+}
+
+impl AfdPersistence {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::UntilReplaced => "until replaced",
+            Self::ResetAtRandomAccess => "reset at random access",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(AfdPersistence);
+
 /// Carried twice, always behind `alloc::sync::Arc` because it is shared by
 /// every picture of a configuration and never copied per sample:
 /// [`Sample::display`](super::Sample::display) for the state in force at one
@@ -987,12 +1153,24 @@ pub struct DisplayInfo {
     /// The sequence-level geometry of the SPS active at this access unit.
     /// `None` for a track with no parseable SPS.
     pub geometry: Option<DisplayGeometry>,
+    /// Picture-level active format (AFD) and bar data in force at this access
+    /// unit, or `None` when none has been signalled.
+    pub active_format: Option<ActiveFormat>,
 }
 
 impl DisplayInfo {
     /// A state carrying only a sequence-level geometry.
     pub fn new(geometry: Option<DisplayGeometry>) -> Self {
-        Self { geometry }
+        Self {
+            geometry,
+            active_format: None,
+        }
+    }
+
+    /// Attach an [`ActiveFormat`] to this state (additive Phase 3 constructor).
+    pub fn with_active_format(mut self, active_format: Option<ActiveFormat>) -> Self {
+        self.active_format = active_format;
+        self
     }
 
     /// The state of a [`TrackSpec`](super::TrackSpec)'s static
@@ -1025,7 +1203,8 @@ impl DisplayInfo {
         if previous == self {
             return DisplayChangeSet::default();
         }
-        let (current, previous) = (self.geometry.as_ref(), previous.geometry.as_ref());
+        let previous_display = previous;
+        let (current, previous) = (self.geometry.as_ref(), previous_display.geometry.as_ref());
         DisplayChangeSet {
             initial: false,
             aspect_ratio: aspect_ratio_of(current) != aspect_ratio_of(previous),
@@ -1036,6 +1215,13 @@ impl DisplayInfo {
                 != previous.and_then(|g| g.overscan_appropriate),
             default_display_rect: default_display_rect_of(current)
                 != default_display_rect_of(previous),
+            afd: self.active_format.as_ref().map(|a| a.afd)
+                != previous_display.active_format.as_ref().map(|a| a.afd),
+            bar_data: self.active_format.as_ref().and_then(|a| a.bar_data.clone())
+                != previous_display
+                    .active_format
+                    .as_ref()
+                    .and_then(|a| a.bar_data.clone()),
         }
     }
 }
@@ -1080,6 +1266,8 @@ pub struct DisplayChangeSet {
     pub video_signal: bool,
     /// [`DisplayGeometry::overscan_appropriate`] changed.
     pub overscan: bool,
+    pub afd: bool,
+    pub bar_data: bool,
 }
 
 impl DisplayChangeSet {
@@ -1114,6 +1302,8 @@ impl DisplayChangeSet {
         push(self.default_display_rect, "default_display_rect");
         push(self.video_signal, "video_signal");
         push(self.overscan, "overscan");
+        push(self.afd, "afd");
+        push(self.bar_data, "bar_data");
         out
     }
 }
