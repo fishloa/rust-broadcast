@@ -6,14 +6,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use broadcast_common::{Package, Unpackage};
+use transmux::TrackId;
 use transmux::dash::{
-    Addressing, ContentProtectionSystem, DashPackager, TrackSegments,
-    TrickModeAdaptationSet, TrickModeRepr,
+    Addressing, ContentProtectionSystem, DashPackager, TrackSegments, TrickModeAdaptationSet,
+    TrickModeRepr,
 };
 use transmux::ll_dash::{LlDashPackager, UTCTIMING_HTTP_HEAD_2014};
 use transmux::media::Media;
 use transmux::ts_demux::TsDemux;
-use transmux::TrackId;
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
