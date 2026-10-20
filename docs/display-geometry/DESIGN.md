@@ -492,13 +492,22 @@ cares about shape listens to `DisplayChanged` alone.
   MPEG-2 (spec, SN §5): in effect "until the next sequence_header() or until a
   new AFD is introduced"; after a sequence_header() with no AFD the area of
   interest reverts to the coded frame => `afd = None` from that picture.
-  H.264/H.265: **no rule in the available specs** (TS 101 154 §B.7/§B.8a define
-  carriage only; ATSC A/72 Part 1 and SMPTE ST 2016-1 are not transcribed, gap
-  G1/G2). Proposed default, explicitly marked implementation-defined pending
-  those documents: **sticky until a new AFD**, with no reset at an IDR. Rationale:
-  a reset-at-IDR guess would flap the player to "unknown" on every IDR of a
-  stream that sends AFD only on its first picture; a sticky value cannot flap.
-  The alternative (reset at a new CVS, the MPEG-2 analogue) is owner question Q5.
+  H.264/H.265 - **two systems, two answers (sources: `transmux/docs/codec/afd-bar-data.md` §4b and Gaps):**
+  *DVB* (ETSI TS 101 154 §B.7/§B.8a): carriage only, **no persistence rule**.
+  *ATSC / SCTE* (ANSI/SCTE 128-1 §8.2.4, which ATSC A/72 Part 1 §7.4.2 and A/341 §6.4.2 defer to, printed p. 21):
+  "After introduction, an AFD shall remain in effect until the next SRAP or until another AFD value is introduced.
+  Receivers should interpret the absence of AFD in a sequence start to mean the active format is the same as the coded
+  frame, corresponding to AFD value '1000'"; bar data likewise "At an SRAP, unless AFD data is present specifying
+  otherwise, the absence of bar data shall indicate that the rectangular picture area ... extends to the full height
+  and width of the coded frame" (§8.2.3). An SRAP picture is "an I- or IDR-picture that is part of an SRAP Access Unit"
+  (§5.2; SRAP composition is in SCTE 128 Part 2, not held).
+  **Resolution (supersedes the earlier "sticky, no reset at IDR" proposal and closes owner question Q5):** the demuxer
+  takes an `AfdPersistence` policy, because the two systems disagree and a stream does not say which one it is:
+  `UntilReplaced` (**default**; DVB, where nothing is specified; also what the consuming player asked for, so the
+  value cannot flap to "unknown" on every IDR of a stream that sends AFD once) and `ResetAtRandomAccess` (the SCTE
+  128-1 rule: at an IDR / random-access AU that carries no AFD, `afd = Some(SameAsCodedFrame)` and bar data is cleared).
+  MPEG-2 always follows its own spec rule (`sequence_header()`), whatever the policy. The state in force is carried
+  per sample either way, so a consumer is never told which policy produced it except by its own configuration.
 - **Bar data persistence.** MPEG-2: until next sequence_header(), new bar data,
   or a new AFD (§B.6.1). H.264/H.265: same gap; same sticky default, except that
   a new AFD without bar data clears bar data (mirrors §B.6.1 item 3).
@@ -782,7 +791,7 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
 | Q2 | Emit an initial level-triggered `DisplayChanged` per video track (one code path for consumers), or rely on `TrackAdded.display` only? | emit |
 | Q3 | Non-conforming mid-CVS SPS content change: event at the referencing AU only, or also an `InputDegraded` (new `InputDegradation` variant)? | event only |
 | Q4 | AFD persistence order for AVC/HEVC with B-pictures: decode order (what the player's DTS stamping implies) or output order? | decode order |
-| Q5 | AVC/HEVC AFD persistence policy pending A/72 / ST 2016-1: sticky-until-new-AFD (proposed) or reset at a new CVS (MPEG-2 analogue)? Also: transcribe A/72 Part 1 and ST 2016-1 into the private repo first? | sticky; transcribe |
+| Q5 | AVC/HEVC AFD persistence policy. **RESOLVED 2026-10-20:** A/72 -> ANSI/SCTE 128-1 §8.2.4 and ST 2016-1/-3 are now transcribed (`afd-bar-data.md`). ATSC/SCTE: sticky until the next SRAP or a new AFD, absence at an SRAP = `1000`; DVB: unspecified. Both are offered through an `AfdPersistence` policy (`UntilReplaced` default, `ResetAtRandomAccess`), see §6.4. | resolved: policy enum |
 | Q6 | Include MPEG-2 video sequence geometry (Phase 1b) given the player is H.264/H.265? | defer; MPEG-2 AFD still in Phase 3 |
 | Q7 | `pasp` vs VUI SAR precedence: blocked on transcribing ISO/IEC 14496-12 §12.1.4.1 into `private/specs-md`. Approve that transcription? | VUI wins until then |
 | Q8 | HLS `RESOLUTION` for anamorphic video: coded size, cropped size, or display size after SAR? (RFC 8216 says "optimal pixel resolution at which to display".) | needs Apple-side evidence; no change until decided |
