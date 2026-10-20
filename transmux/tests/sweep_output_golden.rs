@@ -447,6 +447,10 @@ const CODEC_MUX_GOLDEN: &[(&str, u64)] = &[
 /// Phase 4c, ETSI TS 103 285 §4.4) so the pre-existing MPD hashes keep
 /// guarding everything else about the output; the attributes themselves are
 /// pinned by `display_dash.rs` and the `golden/*.mpd` files.
+/// Drop the `@sar` / `@par` aspect-ratio attributes (display geometry
+/// Phase 4c, ETSI TS 103 285 §4.4) so the pre-existing MPD hashes keep
+/// guarding everything else about the output; the attributes themselves are
+/// pinned by `display_dash.rs` and the `golden/*.mpd` files.
 fn strip_aspect_attrs(mpd: &str) -> String {
     let mut out = mpd.to_string();
     for name in [" sar=\"", " par=\""] {
@@ -456,6 +460,34 @@ fn strip_aspect_attrs(mpd: &str) -> String {
             out.replace_range(start..end, "");
         }
     }
+    out
+}
+
+/// Map the new numeric `AdaptationSet@id` values back to the legacy `tN`
+/// spelling before hashing, so the pre-existing MPD hashes (which were
+/// captured when ids looked like `t0`, `t1`, …) keep guarding everything
+/// else about the output. `AdaptationSet@id` is now an unsigned integer
+/// (ISO/IEC 23009-1:2022 Table 5, printed p. 41); the sweep hashes are
+/// historical and must not be re-blessed, hence this compatibility shim.
+fn restore_legacy_adaptation_set_ids(mpd: &str) -> String {
+    let needle = "<AdaptationSet id=\"";
+    let mut out = String::with_capacity(mpd.len());
+    let mut rest = mpd;
+    while let Some(pos) = rest.find(needle) {
+        out.push_str(&rest[..pos]);
+        out.push_str(needle);
+        rest = &rest[pos + needle.len()..];
+        // copy the digits
+        let digits_end = rest.find('"').unwrap_or(rest.len());
+        let digits = &rest[..digits_end];
+        // emit legacy spelling only if purely numeric
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+            out.push('t');
+        }
+        out.push_str(digits);
+        rest = &rest[digits_end..];
+    }
+    out.push_str(rest);
     out
 }
 
@@ -474,7 +506,9 @@ fn dash_mpd_output_is_unchanged() {
         };
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
         let got = match DashPackager::default().package(&media) {
-            Ok(mpd) => fnv1a(strip_aspect_attrs(&mpd).as_bytes()),
+            Ok(mpd) => {
+                fnv1a(strip_aspect_attrs(&restore_legacy_adaptation_set_ids(&mpd)).as_bytes())
+            }
             Err(e) => fnv1a(format!("ERR:{e}").as_bytes()),
         };
         let want = DASH_GOLDEN.get(i).copied().unwrap_or(0);
@@ -511,7 +545,7 @@ fn dash_mpd_differs_from_pre_jiff_only_in_durations() {
         };
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
         let mpd = DashPackager::default().package(&media).unwrap();
-        let old = strip_aspect_attrs(&mpd)
+        let old = restore_legacy_adaptation_set_ids(&strip_aspect_attrs(&mpd))
             .replace("=\"PT2S\"", "=\"PT2.0S\"")
             .replace("=\"PT0S\"", "=\"PT0.0S\"")
             .replace("=\"PT3S\"", "=\"PT3.0S\"");

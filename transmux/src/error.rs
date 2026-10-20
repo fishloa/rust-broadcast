@@ -286,4 +286,19 @@ pub enum Error {
     /// attribute-list-injection vector.
     #[error(transparent)]
     HlsAttrValue(#[from] broadcast_hls::Error),
+
+    /// A trick-mode `AdaptationSet` (DASH-IF IOP §3.2.9) references a main
+    /// `AdaptationSet@id` that is not present in the rendered MPD Period
+    /// (ISO/IEC 23009-1:2022 Table 5, printed p. 41 — `@id` is an unsigned
+    /// integer unique within the Period).
+    #[error(
+        "trick-mode AdaptationSet {trick_adaptation_set_id} references \
+         unknown main AdaptationSet {main_adaptation_set_id}"
+    )]
+    TrickModeMainAdaptationSetNotFound {
+        /// The `@id` of the trick-mode `AdaptationSet`.
+        trick_adaptation_set_id: u32,
+        /// The `main_adaptation_set_id` supplied by the caller.
+        main_adaptation_set_id: u32,
+    },
 }

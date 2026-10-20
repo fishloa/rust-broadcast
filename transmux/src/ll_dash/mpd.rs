@@ -177,29 +177,36 @@ impl LlDashPackager {
         let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
         // Writing to an in-memory `Vec` cannot fail, so write results are
         // intentionally discarded.
+        let mut utc_written = false;
         loop {
             let event = reader
                 .read_event()
                 .map_err(|_| Error::InvalidInput(BASE_MPD_NOT_WELL_FORMED))?;
             match event {
                 Event::Eof => break,
-                // 1. `availabilityTimeComplete` + `availabilityTimeOffset` on
-                //    every `<SegmentTemplate>`: self-closing (`Addressing::
-                //    Number`) *and* the open tag (`Addressing::Timeline`,
-                //    which has a `<SegmentTimeline>` child and a separate
-                //    `</SegmentTemplate>`). Matching only the self-closing form
-                //    silently skipped every Timeline-addressed MPD (issue #994).
+                // 1. availabilityTimeComplete + availabilityTimeOffset on every SegmentTemplate
                 Event::Start(e) if e.name().as_ref() == SEGMENT_TEMPLATE => {
                     let _ = writer.write_event(Event::Start(self.ll_template(&e, &ato_str)));
                 }
                 Event::Empty(e) if e.name().as_ref() == SEGMENT_TEMPLATE => {
                     let _ = writer.write_event(Event::Empty(self.ll_template(&e, &ato_str)));
                 }
-                // 2. Insert `<ServiceDescription>` (+ `<UTCTiming>`)
-                //    immediately after the `<MPD ...>` open tag.
+                // 2. Insert <ServiceDescription> immediately after the <MPD ...> open tag.
                 Event::Start(e) if e.name().as_ref() == MPD_ELEMENT => {
                     let _ = writer.write_event(Event::Start(e));
                     self.write_service_description(&mut writer);
+                }
+                // 3. <UTCTiming> is a direct child of <MPD> but the schema places it
+                //    after <Period>, so emit it once the Period closes.
+                Event::End(e) if e.name().as_ref() == "Period" && !utc_written => {
+                    let _ = writer.write_event(Event::End(e));
+                    if let Some((scheme, value)) = &self.utc_timing {
+                        let mut timing = BytesStart::new("UTCTiming");
+                        timing.push_attribute(("schemeIdUri", scheme.as_str()));
+                        timing.push_attribute(("value", value.as_str()));
+                        let _ = writer.write_event(Event::Empty(timing));
+                    }
+                    utc_written = true;
                 }
                 other => {
                     let _ = writer.write_event(other);
@@ -234,15 +241,6 @@ impl LlDashPackager {
             let _ = w.write_event(Event::Empty(rate));
         }
         let _ = w.write_event(Event::End(BytesEnd::new("ServiceDescription")));
-        // UTCTiming is a direct child of MPD (ISO/IEC 23009-1 §5.8.4.11), not of
-        // ServiceDescription, so it follows the ServiceDescription block. The
-        // `@value` is caller-supplied (usually a URL) and escaped by quick-xml.
-        if let Some((scheme, value)) = &self.utc_timing {
-            let mut timing = BytesStart::new("UTCTiming");
-            timing.push_attribute(("schemeIdUri", scheme.as_str()));
-            timing.push_attribute(("value", value.as_str()));
-            let _ = w.write_event(Event::Empty(timing));
-        }
     }
 }
 
