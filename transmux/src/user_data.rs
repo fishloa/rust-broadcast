@@ -27,7 +27,7 @@ pub const T35_HEADER_LEN: usize = 7;
 pub const USER_IDENTIFIER_LEN: usize = 4;
 /// Shortest a `bar_data()` message tail can be: `user_data_type_code` (1) +
 /// the flags byte (1). Bar values follow when a flag is set.
-const MIN_BAR_DATA_LEN: usize = 2;
+pub const MIN_BAR_DATA_LEN: usize = 2;
 /// A bar value is a 14-bit line / pixel number (TS 101 154 Table B.7:
 /// `marker_bits` `'11'` then `u(14)`).
 const BAR_VALUE_MASK: u16 = 0x3FFF;
@@ -97,14 +97,19 @@ pub fn bar_data_from_t35_payload(payload: &[u8]) -> Option<BarData> {
 
 /// Parse a `bar_data()` structure from the bytes after the `user_identifier`:
 /// `user_data_type_code` (`0x06`) + `bar_data()` (TS 101 154 Table B.3/B.4/
-/// B.7). `Some` when a GA94 bar-data message is present and at least one bar
-/// flag is set (with enough bytes for the signalled fields); `None` otherwise.
+/// B.7), optionally preceded by the `GA94` `user_identifier`. `Some` when a
+/// GA94 bar-data message is present and at least one bar flag is set (with
+/// enough bytes for the signalled fields); `None` otherwise.
 pub fn bar_data_from_ga94_payload(payload: &[u8]) -> Option<BarData> {
-    let first = *payload.first()?;
-    let flags = *payload.get(1)?;
-    if first != BAR_DATA_USER_DATA_TYPE_CODE {
+    // Both the H.264/HEVC SEI metadata form (`user_identifier` +
+    // `user_data_type_code` + `bar_data()`) and the MPEG-2 `DVB1_data()`
+    // tail alone (`user_data_type_code` + `bar_data()`) decode here.
+    let tail = payload.strip_prefix(b"GA94").unwrap_or(payload);
+    let (&type_code, rest) = tail.split_first()?;
+    if type_code != BAR_DATA_USER_DATA_TYPE_CODE {
         return None;
     }
+    let (&flags, payload) = rest.split_first()?;
     let top = flags & 0x80 != 0;
     let bottom = flags & 0x40 != 0;
     let left = flags & 0x20 != 0;
@@ -117,7 +122,7 @@ pub fn bar_data_from_ga94_payload(payload: &[u8]) -> Option<BarData> {
             right_bar_start_pixel: None,
         });
     }
-    let mut pos = MIN_BAR_DATA_LEN;
+    let mut pos = 0usize;
     let mut bd = BarData {
         top_bar_end_line: None,
         bottom_bar_start_line: None,

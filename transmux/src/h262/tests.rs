@@ -227,3 +227,27 @@ fn codec_config_without_sequence_header_yields_none() {
     };
     assert_eq!(DisplayGeometry::from_codec_config(&config), None);
 }
+
+/// The FIRST sequence header a real capture carries still parses to the
+/// capture's own geometry (the first header of a stream is the one its
+/// opening pictures use). It is a weaker oracle than the demux-level tests:
+/// a capture may open with a sequence header that differs from the one a
+/// later picture uses.
+#[test]
+fn real_capture_sequence_header_matches_the_ffprobe_oracle() {
+    for (fixture, expect) in [
+        // ffprobe: 704x576 16:11 (SAR 16:11), display extension 704x576.
+        ("tsduck/input/test-205.ts", (704u32, 576u32, (16u16, 11u16))),
+        ("ts/legacy/mpeg2_mp2.ts", (320, 240, (1, 1))),
+    ] {
+        let Some(ts) = test_fixtures::require_bytes(fixture, "h262") else {
+            return;
+        };
+        let g = DisplayGeometry::from_mpeg2_es(&ts).expect("geometry");
+        assert_eq!(
+            (g.coded_width, g.coded_height, g.sample_aspect_ratio()),
+            (expect.0, expect.1, Some(expect.2)),
+            "{fixture}"
+        );
+    }
+}

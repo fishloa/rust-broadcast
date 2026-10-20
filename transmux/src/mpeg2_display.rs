@@ -36,7 +36,6 @@ use crate::user_data::{
     BAR_DATA_USER_DATA_TYPE_CODE, DTG1_USER_IDENTIFIER, GA94_USER_IDENTIFIER, USER_IDENTIFIER_LEN,
 };
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 
 /// The outcome of [`Mpeg2DisplayTracker::observe`] for one access unit.
 #[non_exhaustive]
@@ -91,6 +90,16 @@ impl Mpeg2DisplayTracker {
         if self.state.is_none() {
             self.geometry = geometry.clone();
             self.state = DisplayInfo::from_geometry(geometry).map(Arc::new);
+        }
+    }
+
+    /// Seed the full state in force (the level-triggered start).
+    pub fn seed_full(&mut self, display: Option<Arc<DisplayInfo>>) {
+        if self.state.is_none() {
+            if let Some(g) = display.as_ref().and_then(|d| d.geometry.clone()) {
+                self.geometry = Some(g);
+            }
+            self.state = display;
         }
     }
 
@@ -205,26 +214,19 @@ impl Mpeg2DisplayTracker {
     }
 }
 
-/// Bytes before the first bar value: `user_data_type_code` + `bar_data()`
-/// flags (TS 101 154 Table B.4/B.7).
-const MIN_BAR_MESSAGE_LEN: usize = 2;
-
 /// Parse a `DVB1_data()` bar-data message: `user_data_type_code` then
 /// `bar_data()` (TS 101 154 Table B.3/B.4/B.7). `Some(Some(..))` for a bar
 /// message carrying a signal, `Some(None)` for one with no bar flag set,
 /// `None` for another `user_data_type_code` or a truncated payload.
 fn bar_data_from_dvb1(body: &[u8]) -> Option<Option<BarData>> {
-    let (&type_code, bar) = body.split_first()?;
+    // The `DVB1_data()` body *is* the shared decoder's `user_data_type_code`
+    // + `bar_data()` tail (TS 101 154 Table B.3/B.4), so one parser serves
+    // both carriages.
+    let (&type_code, _) = body.split_first()?;
     if type_code != BAR_DATA_USER_DATA_TYPE_CODE {
         return None;
     }
-    // The shared decoder reads the T.35 metadata form (`GA94` + type code +
-    // `bar_data()`); the `DVB1_data()` body is exactly that tail, so a
-    // canonical T.35 prefix in front of it reuses one bar-data parser.
-    let mut tail = Vec::with_capacity(MIN_BAR_MESSAGE_LEN + bar.len());
-    tail.push(BAR_DATA_USER_DATA_TYPE_CODE);
-    tail.extend_from_slice(bar);
-    crate::user_data::bar_data_from_ga94_payload(&tail).map(Some)
+    crate::user_data::bar_data_from_ga94_payload(body).map(Some)
 }
 
 #[cfg(test)]

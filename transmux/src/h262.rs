@@ -41,6 +41,10 @@ use crate::mpeg_legacy::SEQUENCE_HEADER_CODE;
 pub const SEQUENCE_HEADER_CODE_BYTE: u8 = SEQUENCE_HEADER_CODE[3];
 /// `picture_start_code` `0x00000100` (H.262 §6.2.3.1, Table 6-1).
 pub const PICTURE_START_CODE_BYTE: u8 = 0x00;
+/// First slice start code `0x00000101` (H.262 §6.2.4).
+const SLICE_FIRST: u8 = 0x01;
+/// Last slice start code `0x000001AF` (H.262 §6.2.4).
+const SLICE_LAST: u8 = 0xAF;
 /// `extension_start_code` `0x000001B5` (H.262 Table 6-1).
 pub const EXTENSION_START_CODE_BYTE: u8 = 0xB5;
 /// `user_data_start_code` `0x000001B2` (H.262 §6.2.2.8, Table 6-1).
@@ -341,10 +345,8 @@ pub(crate) fn parse_sequence_at(es: &[u8], start: usize) -> Result<SequenceHeade
                     geometry.coded_height |= vx << SIZE_EXTENSION_SHIFT;
                 }
             }
-            SEQUENCE_DISPLAY_EXTENSION_ID => {
-                if geometry.display.is_none() {
-                    geometry.display = parse_sequence_display_extension_body(body).ok();
-                }
+            SEQUENCE_DISPLAY_EXTENSION_ID if geometry.display.is_none() => {
+                geometry.display = parse_sequence_display_extension_body(body).ok();
             }
             _ => {}
         }
@@ -395,16 +397,16 @@ pub(crate) fn afd_from_mpeg2_user_data(
 /// returned (ETSI TS 101 154 §B.6.1: AFD/bar data are picture-level).
 pub(crate) fn picture_user_data_payloads(au: &[u8]) -> (bool, alloc::vec::Vec<&[u8]>) {
     let mut has_sequence_header = false;
+    // AFD sits before the picture's slices: `extension_and_user_data(2)`.
+    // Before this access unit's first `picture_header()` any user data is
+    // `extension_and_user_data(0)` and belongs to the sequence.
     let mut picture_seen = false;
     let mut payloads = alloc::vec::Vec::new();
     let mut from = 0usize;
     while let Some((at, code)) = find_any_start_code(au, from) {
         match code {
-            SEQUENCE_HEADER_CODE_BYTE => {
-                has_sequence_header = true;
-                picture_seen = false;
-            }
-            PICTURE_START_CODE_BYTE => picture_seen = true,
+            SEQUENCE_HEADER_CODE_BYTE => has_sequence_header = true,
+            PICTURE_START_CODE_BYTE | SLICE_FIRST..=SLICE_LAST => picture_seen = true,
             USER_DATA_START_CODE_BYTE if picture_seen => {
                 payloads.push(section_body(au, at));
             }

@@ -3,6 +3,7 @@
 //! production code.
 
 use super::*;
+use crate::ir::TrackId;
 use alloc::vec::Vec;
 
 fn bits(value: u64, width: usize) -> Vec<bool> {
@@ -20,24 +21,6 @@ fn pack(bits: &[bool]) -> Vec<u8> {
         }
         out.push(b);
     }
-    out
-}
-
-/// `sequence_header()`: 720x576 (aspect 16:9 derives 64:45, aspect 4:3
-/// derives 16:15), no extensions (H.262 §6.3.3: the coded size is used).
-fn sequence(aspect: u64) -> Vec<u8> {
-    let mut b = bits(720, 12);
-    b.extend(bits(576, 12));
-    b.extend(bits(aspect, 4));
-    b.extend(bits(3, 4)); // frame_rate_code
-    b.extend(bits(0x3FFFF, 18)); // bit_rate_value
-    b.extend(bits(1, 1)); // marker_bit
-    b.extend(bits(112, 10)); // vbv_buffer_size_value
-    b.extend(bits(0, 1)); // constrained_parameters_flag
-    b.extend(bits(0, 1)); // load_intra_quantiser_matrix
-    b.extend(bits(0, 1)); // load_non_intra_quantiser_matrix
-    let mut out = vec![0x00, 0x00, 0x01, 0xB3];
-    out.extend_from_slice(&pack(&b));
     out
 }
 
@@ -85,6 +68,88 @@ fn bar_user_data(top: u16, bottom: u16) -> Vec<u8> {
 
 fn user_data_only(payload: &[u8]) -> Vec<u8> {
     payload.to_vec()
+}
+
+/// Pictures 0..=2 without AFD, 3..=5 with AFD 9, as a real MPEG-2 TS built
+/// with the crate's own unit-test packet builders (`crate::ts_demux::tests`
+/// helpers), then demuxed end to end.
+fn mid_gop_stream() -> (Vec<u8>, TrackId) {
+    use crate::ts_demux::tests::{
+        ES_PID_UNDER_TEST, ES_STREAM_ID_VIDEO, PAT_PID_UNDER_TEST, PMT_PID_UNDER_TEST, null_packet,
+        pat_body, pes_packet, pes_packets, pmt_body, psi_section_packets,
+    };
+    let coding = [1u64, 2, 2, 2, 2, 2];
+    let with_afd = [false, false, false, true, true, true];
+    let mut input = Vec::new();
+    for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+        input.extend_from_slice(&null_packet());
+    }
+    input.extend_from_slice(&psi_section_packets(
+        PAT_PID_UNDER_TEST,
+        0,
+        crate::ts_demux::TABLE_ID_PAT,
+        &pat_body(),
+    ));
+    input.extend_from_slice(&psi_section_packets(
+        PMT_PID_UNDER_TEST,
+        0,
+        crate::ts_demux::TABLE_ID_PMT,
+        &pmt_body(ES_PID_UNDER_TEST, crate::ts_demux::STREAM_TYPE_MPEG2_VIDEO),
+    ));
+    let mut cc = 0u8;
+    let sequence = sequence(3);
+    for (i, (&pct, &afd)) in coding.iter().zip(&with_afd).enumerate() {
+        let mut au = Vec::new();
+        if i == 0 {
+            au.extend_from_slice(&sequence);
+        }
+        au.extend_from_slice(&ts_picture(pct, afd.then_some(9)));
+        let pts = i as i64 * 3600;
+        let pes = pes_packet(ES_STREAM_ID_VIDEO, pts, Some(pts), &au);
+        let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+        cc = cc.wrapping_add((packets.len() / mpeg_ts::ts::TS_PACKET_SIZE) as u8);
+        input.extend_from_slice(&packets);
+    }
+    let media = crate::ts_demux::TsDemux::new()
+        .demux(&input)
+        .expect("hand-built TS demuxes");
+    let track_id = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.config(), crate::ir::CodecConfig::Mpeg2Video { .. }))
+        .expect("an MPEG-2 track")
+        .spec
+        .track_id;
+    (input, track_id)
+}
+
+/// Build `sequence_header()` at 720x576 with the given `aspect_ratio_information`.
+fn sequence(aspect: u64) -> Vec<u8> {
+    let mut b = bits(720, 12);
+    b.extend(bits(576, 12));
+    b.extend(bits(aspect, 4));
+    b.extend(bits(3, 4));
+    b.extend(bits(0x3FFFF, 18));
+    b.extend(bits(1, 1));
+    b.extend(bits(112, 10));
+    b.extend(bits(0, 3));
+    let mut out = vec![0x00, 0x00, 0x01, 0xB3];
+    out.extend_from_slice(&pack(&b));
+    out
+}
+
+/// `picture_header()` + slice, with an optional `DTG1` AFD after the header.
+fn ts_picture(pct: u64, afd: Option<u64>) -> Vec<u8> {
+    let mut b = bits(0, 10);
+    b.extend(bits(pct, 3));
+    b.extend(bits(0xFFFF, 16));
+    let mut out = vec![0x00, 0x00, 0x01, 0x00];
+    out.extend_from_slice(&pack(&b));
+    if let Some(code) = afd {
+        out.extend_from_slice(&afd_user_data(Some(code)));
+    }
+    out.extend_from_slice(&[0x00, 0x00, 0x01, 0x01, 0x00]);
+    out
 }
 
 #[test]
@@ -293,4 +358,105 @@ fn sequence_geometry_change_is_reported_at_that_access_unit() {
         display.sample_aspect_ratio().map(|s| s.as_pair()),
         Some((16, 15))
     );
+}
+
+#[test]
+fn mid_gop_afd_change_through_the_demuxer() {
+    use crate::ir::CodecConfig;
+    use crate::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
+
+    let (ts, track_id) = mid_gop_stream();
+    let media = TsDemux::new().demux(&ts).expect("batch");
+    let track = media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == track_id)
+        .expect("track");
+    assert_eq!(track.samples.len(), 6);
+    let batch: Vec<_> = track
+        .samples
+        .iter()
+        .map(|s| {
+            s.display
+                .as_deref()
+                .and_then(|d| d.active_format.as_ref().map(|a| a.afd))
+        })
+        .collect();
+    assert_eq!(
+        batch[..3],
+        [None, None, None],
+        "pictures before any AFD carry no area of interest (default)"
+    );
+    assert_eq!(
+        batch[3..],
+        [Some(Some(ActiveFormatDescription::Centre4x3)); 3],
+        "pictures 3.. carry AFD 9"
+    );
+    // The static geometry of the track came from the real access units.
+    assert!(matches!(track.config(), CodecConfig::Mpeg2Video { .. }));
+    if let Some(display) = track.spec.display.clone() {
+        assert_eq!((display.coded_width, display.coded_height), (720, 576));
+        assert_eq!(display.sample_aspect_ratio(), Some((64, 45)));
+    }
+
+    let mut demux = StreamingTsDemux::new();
+    demux.feed(&ts);
+    demux.finish();
+    let mut events = Vec::new();
+    while let Some(ev) = demux.poll_event() {
+        match ev {
+            DemuxEvent::Sample {
+                track_id: id,
+                sample,
+                ..
+            } if id == track_id => events.push((
+                "sample",
+                sample.dts,
+                sample
+                    .display
+                    .as_deref()
+                    .and_then(|d| d.active_format.as_ref().map(|a| a.afd)),
+                sample.flags.is_sync,
+            )),
+            DemuxEvent::DisplayChanged {
+                track_id: id,
+                display,
+                changed,
+                dts,
+                random_access,
+                ..
+            } if id == track_id => events.push((
+                if changed.initial {
+                    "initial"
+                } else {
+                    "changed"
+                },
+                dts,
+                display.active_format.as_ref().map(|a| a.afd),
+                random_access,
+            )),
+            _ => {}
+        }
+    }
+    let changes: Vec<_> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.0 == "changed")
+        .collect();
+    assert_eq!(changes.len(), 1, "exactly the AFD introduction raises");
+    let (at, event) = changes[0];
+    let (_kind, dts, afd, random_access) = event;
+    assert!(!random_access, "a P picture is not random access");
+    assert_eq!(*afd, Some(Some(ActiveFormatDescription::Centre4x3)));
+    let (prev_kind, prev_dts, prev_afd, _) = &events[at - 1];
+    assert_eq!(*prev_kind, "sample", "the change follows a sample");
+    assert_ne!(prev_dts, dts);
+    assert!(
+        matches!(prev_afd, None | Some(None)),
+        "the previous picture carries no AFD"
+    );
+    let (next_kind, sample_dts, sample_afd, _) = &events[at + 1];
+    assert_eq!(*next_kind, "sample", "the change precedes its sample");
+    assert_eq!(sample_dts, dts, "with that sample's own DTS");
+    assert_eq!(*sample_afd, *afd);
 }
