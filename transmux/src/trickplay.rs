@@ -21,7 +21,7 @@
 //!   separate I-frame media playlist whose segments each carry one keyframe.
 //!
 //! - **DASH**: The derived track would be placed in an `AdaptationSet` with a
-//!   `SupplementalProperty` of `urn:mpeg:dash:trickmode:2016` (DASH trick-mode
+//!   `SupplementalProperty` of `http://dashif.org/guidelines/trickmode` (DASH trick-mode
 //!   descriptor, ISO/IEC 23009-1 §5.8.5.8). Signalling is deferred to a
 //!   follow-up issue; only the IR-level track derivation is in scope here.
 //!

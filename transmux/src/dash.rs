@@ -113,13 +113,13 @@ pub const PROFILE_ISOFF_LIVE: &str = "urn:mpeg:dash:profile:isoff-live:2011";
 const AUDIO_CHANNEL_SCHEME: &str = "urn:mpeg:dash:23003:3:audio_channel_configuration:2011";
 
 /// `schemeIdUri` for the DASH trick-mode `SupplementalProperty`
-/// (ISO/IEC 23009-1 §5.8.5.8 / DASH-IF IOP §3.3.5).
+/// (DASH-IF IOP v4.3 §3.2.9).
 ///
 /// A trick-mode `AdaptationSet` carries
-/// `<SupplementalProperty schemeIdUri="urn:mpeg:dash:trickmode:2016" value="<id>"/>`
+/// `<SupplementalProperty schemeIdUri="http://dashif.org/guidelines/trickmode" value="<id>"/>`
 /// to declare that it is a trick-play rendition referencing the main video
 /// `AdaptationSet` identified by `value`.
-pub const TRICKMODE_SCHEME: &str = "urn:mpeg:dash:trickmode:2016";
+pub const TRICKMODE_SCHEME: &str = "http://dashif.org/guidelines/trickmode";
 
 /// MIME type carried on a video `AdaptationSet` (`video/mp4`).
 const MIME_VIDEO: &str = "video/mp4";
@@ -330,7 +330,7 @@ fn is_audio(config: &CodecConfig) -> bool {
 ///
 /// ```xml
 /// <SupplementalProperty
-///     schemeIdUri="urn:mpeg:dash:trickmode:2016"
+///     schemeIdUri="http://dashif.org/guidelines/trickmode"
 ///     value="<main_adaptation_set_id>"/>
 /// ```
 ///
@@ -343,10 +343,10 @@ fn is_audio(config: &CodecConfig) -> bool {
 pub struct TrickModeAdaptationSet {
     /// The `@id` attribute of this trick-mode `AdaptationSet` (must be unique
     /// in the Period).
-    pub id: String,
+    pub id: u32,
     /// The `@id` of the main video `AdaptationSet` this rendition references
     /// (the `value` attribute of `SupplementalProperty`).
-    pub main_adaptation_set_id: String,
+    pub main_adaptation_set_id: u32,
     /// The `maxPlayoutRate` attribute on the `AdaptationSet` (e.g. `8` for 8×
     /// fast-forward). Typically 2–16.
     pub max_playout_rate: u32,
@@ -392,7 +392,7 @@ pub struct TrickModeRepr {
 ///
 /// Set [`DashPackager::trick_mode`] to emit an additional trick-mode
 /// `AdaptationSet` alongside the regular video set. The trick-mode set carries
-/// `<SupplementalProperty schemeIdUri="urn:mpeg:dash:trickmode:2016"
+/// `<SupplementalProperty schemeIdUri="http://dashif.org/guidelines/trickmode"
 /// value="<id>"/>` (ISO/IEC 23009-1 §5.8.5.8) and `codingDependency="false"`.
 #[derive(Debug, Clone)]
 pub struct DashPackager {
@@ -769,7 +769,7 @@ impl DashPackager {
     }
 
     /// Render the MPD XML for the resolved representations.
-    fn render(&self, reprs: &[ReprInfo]) -> String {
+    fn render(&self, reprs: &[ReprInfo]) -> Result<String> {
         let mut writer = new_writer();
         let w = &mut writer;
         declaration(w);
@@ -846,33 +846,45 @@ impl DashPackager {
         // every language of a multi-language service and every audio codec into
         // one set, so an ABR client would switch between `eng` and `fra` (or AAC
         // and AC-3) mid-playback on a bandwidth change (audit r05-W28).
-        // `AdaptationSet@id` must be unique within the MPD
-        // (ISO/IEC 23009-1 §5.3.3.1). The trick-mode set's id is caller-supplied
-        // and referenced by its `SupplementalProperty`, so the regular sets take
-        // the next free ids around it (`t0`, `t1`, …).
+        // `AdaptationSet@id` must be an unsigned integer unique within the
+        // Period (ISO/IEC 23009-1:2022 Table 5, printed p. 41). The trick-mode
+        // set's id is caller-supplied and referenced by its
+        // `SupplementalProperty`, so the regular sets take the next free ids
+        // around it (`0`, `1`, …).
         let mut next_id = 0u32;
+        let mut regular_ids: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
         for kind in [MediaKind::Video, MediaKind::Audio, MediaKind::Text] {
             let groups = adaption_set_groups(reprs, kind);
             for group in groups {
                 let id = loop {
-                    let candidate = format!("t{next_id}");
+                    let candidate = next_id;
                     next_id += 1;
                     if self.trick_mode.as_ref().is_none_or(|tm| tm.id != candidate) {
                         break candidate;
                     }
                 };
-                self.write_adaptation_set(w, kind, &group, &id);
+                regular_ids.push(id);
+                self.write_adaptation_set(w, kind, &group, &id.to_string());
             }
         }
 
         // Trick-mode AdaptationSet — ISO/IEC 23009-1 §5.8.5.8 / DASH-IF IOP §3.3.5.
         if let Some(tm) = &self.trick_mode {
+            // Consistency guard: the SupplementalProperty@value names an
+            // AdaptationSet@id that must exist in this Period (ISO/IEC 23009-1
+            // Table 5, printed p. 41 — unique unsigned integer in scope).
+            if !regular_ids.contains(&tm.main_adaptation_set_id) {
+                return Err(Error::TrickModeMainAdaptationSetNotFound {
+                    main_adaptation_set_id: tm.main_adaptation_set_id,
+                    trick_adaptation_set_id: tm.id,
+                });
+            }
             self.write_trick_adaptation_set(w, tm);
         }
 
         close(w, "Period");
         close(w, "MPD");
-        finish(writer)
+        Ok(finish(writer))
     }
 
     fn write_adaptation_set(
@@ -904,17 +916,12 @@ impl DashPackager {
         }
         open(w, "AdaptationSet", &attrs);
 
-        // Role (ISO/IEC 23009-1 §5.8.5.5, Table 24) — every rendition here is
-        // "main" (no alternate/commentary modelling in the IR).
-        empty(
-            w,
-            "Role",
-            &[
-                ("schemeIdUri", ROLE_SCHEME.to_string()),
-                ("value", ROLE_MAIN.to_string()),
-            ],
-        );
-
+        // Base-type elements inherited from `RepresentationBaseType` (ISO/IEC
+        // 23009-1 6th-edition schema) must precede the AdaptationSet-specific
+        // (derived) elements such as `Role` / `Representation`: the schema
+        // extends `RepresentationBaseType` and appends the derived sequence, so
+        // `ContentProtection`, `InbandEventStream`, `EssentialProperty` and
+        // `SupplementalProperty` come first.
         // Auto-derived "common" ContentProtection (ISO/IEC 23001-7 generic
         // CENC signalling element) from the IR's `Track::encryption` — issue
         // #564. Uses the first encrypted Representation's scheme/KID in this
@@ -951,6 +958,17 @@ impl DashPackager {
                 empty(w, "InbandEventStream", &ies_attrs);
             }
         }
+
+        // Role (ISO/IEC 23009-1 §5.8.5.5, Table 24) — every rendition here is
+        // "main" (no alternate/commentary modelling in the IR).
+        empty(
+            w,
+            "Role",
+            &[
+                ("schemeIdUri", ROLE_SCHEME.to_string()),
+                ("value", ROLE_MAIN.to_string()),
+            ],
+        );
 
         for r in set {
             let mut rattrs = alloc::vec![
@@ -1056,7 +1074,7 @@ impl DashPackager {
     /// <AdaptationSet id="<id>" contentType="video" mimeType="video/mp4"
     ///                maxPlayoutRate="<n>" codingDependency="false">
     ///   <SupplementalProperty
-    ///       schemeIdUri="urn:mpeg:dash:trickmode:2016"
+    ///       schemeIdUri="http://dashif.org/guidelines/trickmode"
     ///       value="<main_id>"/>
     ///   <Representation …/>
     ///   <SegmentTemplate …/>
@@ -1064,7 +1082,7 @@ impl DashPackager {
     /// ```
     fn write_trick_adaptation_set(&self, w: &mut XmlWriter, tm: &TrickModeAdaptationSet) {
         let mut as_attrs = alloc::vec![
-            ("id", tm.id.clone()),
+            ("id", tm.id.to_string()),
             ("contentType", "video".to_string()),
             ("mimeType", MIME_VIDEO.to_string()),
             ("maxPlayoutRate", tm.max_playout_rate.to_string()),
@@ -1075,14 +1093,14 @@ impl DashPackager {
         open(w, "AdaptationSet", &as_attrs);
 
         // SupplementalProperty declaring the trick-mode relationship.
-        // schemeIdUri = TRICKMODE_SCHEME (urn:mpeg:dash:trickmode:2016),
+        // schemeIdUri = TRICKMODE_SCHEME (http://dashif.org/guidelines/trickmode),
         // value = the @id of the main video AdaptationSet.
         empty(
             w,
             "SupplementalProperty",
             &[
                 ("schemeIdUri", TRICKMODE_SCHEME.to_string()),
-                ("value", tm.main_adaptation_set_id.clone()),
+                ("value", tm.main_adaptation_set_id.to_string()),
             ],
         );
 
@@ -1141,7 +1159,7 @@ impl broadcast_common::Package for DashPackager {
                 }
             }
         }
-        Ok(self.render(&reprs))
+        self.render(&reprs)
     }
 }
 

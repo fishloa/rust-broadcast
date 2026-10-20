@@ -40,7 +40,7 @@
 /cam1/manifest.mpd	200	access-control-allow-origin: *
 /cam1/manifest.mpd	200	access-control-expose-headers: content-length, content-range, date, etag
 /cam1/manifest.mpd	200	cache-control: no-cache
-/cam1/manifest.mpd	200	content-length: 875
+/cam1/manifest.mpd	200	content-length: 874
 /cam1/manifest.mpd	200	content-type: application/dash+xml
 /cam1/manifest.mpd	200	vary: Origin
 /metrics	200

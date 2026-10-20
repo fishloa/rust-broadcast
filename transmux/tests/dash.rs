@@ -649,7 +649,7 @@ fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
         "AdaptationSet@id must be unique: {ids:?}"
     );
     ids.sort_unstable();
-    assert_eq!(ids, vec!["t0", "t1", "t2"], "deterministic ids");
+    assert_eq!(ids, vec!["0", "1", "2"], "deterministic ids");
 
     // Two audio sets, both `eng`, with different codec families.
     let audio: Vec<&&Element> = sets

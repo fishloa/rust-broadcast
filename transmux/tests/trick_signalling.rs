@@ -12,7 +12,7 @@
 //!    the header with version ≥ 4; without it the tag is absent.
 //!
 //! 3. **DASH trick-mode** — a [`DashPackager`] with [`TrickModeAdaptationSet`]
-//!    emits `<SupplementalProperty schemeIdUri="urn:mpeg:dash:trickmode:2016"
+//!    emits `<SupplementalProperty schemeIdUri="http://dashif.org/guidelines/trickmode"
 //!    value="…"/>` and `maxPlayoutRate=` inside the trick-mode
 //!    `AdaptationSet`; a plain packager emits neither.
 //!
@@ -228,8 +228,8 @@ fn iframes_only_opt_in() {
 #[test]
 fn dash_trick_mode_adaptation_set() {
     let trick = TrickModeAdaptationSet {
-        id: "trick-0".into(),
-        main_adaptation_set_id: "main-0".into(),
+        id: 7,
+        main_adaptation_set_id: 0,
         max_playout_rate: 8,
         repr: TrickModeRepr {
             id: "trick-repr-0".into(),
@@ -258,7 +258,7 @@ fn dash_trick_mode_adaptation_set() {
     );
     // The value attribute must reference the main AdaptationSet id.
     assert!(
-        mpd.contains("value=\"main-0\""),
+        mpd.contains("value=\"0\""),
         "SupplementalProperty value must be the main AdaptationSet id:\n{mpd}"
     );
     // maxPlayoutRate must be present on the trick AdaptationSet.
@@ -269,7 +269,7 @@ fn dash_trick_mode_adaptation_set() {
     // Structural: SupplementalProperty is INSIDE an AdaptationSet.
     // Find the trick AdaptationSet opening tag.
     let trick_as_start = mpd
-        .find("id=\"trick-0\"")
+        .find("id=\"7\"")
         .unwrap_or_else(|| panic!("trick AdaptationSet not found in MPD:\n{mpd}"));
     // The SupplementalProperty must appear after the AdaptationSet open.
     let sp_pos = mpd[trick_as_start..]

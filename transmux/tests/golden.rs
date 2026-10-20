@@ -110,8 +110,8 @@ fn dash_mpd_variants_match_golden() {
             "trick",
             DashPackager {
                 trick_mode: Some(TrickModeAdaptationSet {
-                    id: "trick-0".into(),
-                    main_adaptation_set_id: "main-0".into(),
+                    id: 7,
+                    main_adaptation_set_id: 0,
                     max_playout_rate: 8,
                     repr: TrickModeRepr {
                         id: "trick-repr-0".into(),
