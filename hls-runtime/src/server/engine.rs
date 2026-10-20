@@ -867,6 +867,7 @@ impl HlsOriginBuilder {
             init: Mutex::new(InitStore::default()),
             codecs: Mutex::new(None),
             video_range: Mutex::new(None),
+            resolution: Mutex::new(None),
             target_duration_secs,
             container: self.container,
             part_target_ms: self.part_target_ms,
@@ -906,6 +907,7 @@ pub struct HlsOrigin {
     /// `None` = unknown / SDR, so the attribute is omitted rather than
     /// invented (RFC 8216bis §4.4.6.2).
     video_range: Mutex<Option<VideoRange>>,
+    resolution: Mutex<Option<(u32, u32)>>,
     target_duration_secs: f64,
     container: Container,
     /// `Some(part_target_ms)` enables LL-HLS; `None` renders classic HLS —
@@ -964,6 +966,7 @@ impl HlsOrigin {
                 // init's codecs (or VIDEO-RANGE) advertised.
                 *locked(&self.codecs) = None;
                 *locked(&self.video_range) = None;
+                *locked(&self.resolution) = None;
             }
         }
         // The first segment not yet closed is the first one cut against
@@ -997,6 +1000,8 @@ impl HlsOrigin {
         // has no defined mapping (attribute omitted).
         let mut video_range: Option<VideoRange> = None;
         let mut video_range_decided = false;
+        let mut resolution: Option<(u32, u32)> = None;
+        let mut resolution_decided = false;
         for spec in ordered {
             match transmux::rfc6381_codec_string(&spec.config) {
                 Ok(codec) => codecs.push(codec),
@@ -1011,9 +1016,20 @@ impl HlsOrigin {
                 video_range = VideoRange::from_transfer_characteristics(colour.transfer.code());
                 video_range_decided = true;
             }
+            if !resolution_decided
+                && let Some((w, h)) = match &spec.config {
+                    transmux::CodecConfig::Avc { width, height, .. } => Some((*width, *height)),
+                    transmux::CodecConfig::Hevc { width, height, .. } => Some((*width, *height)),
+                    _ => None,
+                }
+            {
+                resolution = Some(transmux::presentation_size(spec.display.as_ref(), w, h));
+                resolution_decided = true;
+            }
         }
         *locked(&self.codecs) = (!codecs.is_empty()).then(|| codecs.join(","));
         *locked(&self.video_range) = video_range;
+        *locked(&self.resolution) = resolution;
         Ok(())
     }
 
@@ -1053,7 +1069,7 @@ impl HlsOrigin {
                 codecs: locked(&self.codecs).clone(),
                 uri: media_playlist_name.to_string(),
                 extra_attrs,
-                ..Default::default()
+                resolution: *locked(&self.resolution),
             }],
             ..Default::default()
         };

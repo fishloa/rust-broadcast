@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 ### Added
 - `HlsOrigin` now derives and advertises `VIDEO-RANGE` (`HLG`/`PQ` only; SDR/unknown omitted) in the master playlist from the first video track's display colour description (RFC 8216bis §4.4.6.2).
+- `HlsOrigin` now derives and advertises `RESOLUTION` in the master playlist from the first video track (AVC/HEVC) display geometry: square-pixel presentation size (cropped output, rescaled by SAR), via `transmux::presentation_size`. Audio-only origins omit it.
 
 ## [0.9.0] - 2026-10-17
 ### Documentation
