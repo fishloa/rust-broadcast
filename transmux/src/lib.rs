@@ -231,6 +231,7 @@ pub mod trickplay;
 pub mod ts_demux;
 pub mod ts_hls;
 pub mod ts_mux;
+pub mod user_data;
 pub mod validate;
 pub mod visual_ext;
 pub mod vp9;
@@ -314,11 +315,12 @@ pub use interlace::{
     PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,
 };
 pub use ir::{
-    AspectRatioIdc, AudioLanguage, AudioMetadata, AudioRole, AudioType, ColourDescription,
-    ColourPrimaries, DisplayChangeSet, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC,
-    EditorialClassification, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT,
-    MatrixCoefficients, MixType, PictureRect, ProgramNumber, SampleAspectRatio, SupplementaryAudio,
-    TrackId, TransferCharacteristics, VideoFormat, VideoSignalType,
+    ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, AudioLanguage,
+    AudioMetadata, AudioRole, AudioType, BarData, ColourDescription, ColourPrimaries,
+    DisplayChangeSet, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC, EditorialClassification,
+    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MatrixCoefficients, MixType,
+    PictureRect, ProgramNumber, SampleAspectRatio, SupplementaryAudio, TrackId,
+    TransferCharacteristics, UserDataCarriage, VideoFormat, VideoSignalType,
 };
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
