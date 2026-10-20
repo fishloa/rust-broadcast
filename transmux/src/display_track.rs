@@ -182,8 +182,9 @@ fn avc_pps_ids(nal: &[u8]) -> Option<(u8, u8)> {
 fn hevc_sps_id(nal: &[u8]) -> Option<u8> {
     let mut r = BitReader::with_unescape(nal.get(2..)?, "H.265 SPS").ok()?;
     r.read_bits(4, "sps_video_parameter_set_id").ok()?;
-    r.read_bits(3, "sps_max_sub_layers_minus1").ok()?;
+    let max_sub = r.read_bits(3, "sps_max_sub_layers_minus1").ok()? as u8;
     r.read_flag("sps_temporal_id_nesting_flag").ok()?;
+    let _ = crate::sps::decode_ptl(&mut r, true, max_sub).ok()?;
     u8::try_from(r.read_ue("sps_seq_parameter_set_id").ok()?).ok()
 }
 
