@@ -273,6 +273,33 @@ impl From<SampleAspectRatio> for (u16, u16) {
     }
 }
 
+/// A rectangle in luma samples of the decoded picture, top-left origin.
+/// `#[non_exhaustive]`: future fields may be added additively.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PictureRect {
+    /// Left offset in luma samples.
+    pub left: u32,
+    /// Top offset in luma samples.
+    pub top: u32,
+    /// Width in luma samples.
+    pub width: u32,
+    /// Height in luma samples.
+    pub height: u32,
+}
+
+impl PictureRect {
+    /// Build a rectangle from its four edges.
+    pub fn new(left: u32, top: u32, width: u32, height: u32) -> Self {
+        Self {
+            left,
+            top,
+            width,
+            height,
+        }
+    }
+}
+
 /// The spec's inferred `video_format` when `video_signal_type_present_flag`
 /// is 0 (H.264 §E.2.1: "shall be inferred to be equal to 5").
 pub const INFERRED_VIDEO_FORMAT: u8 = 5;
@@ -810,6 +837,13 @@ pub struct DisplayGeometry {
     /// Decoded picture height before cropping, in luma samples (H.264
     /// `16 * FrameHeightInMbs`; H.265 `pic_height_in_luma_samples`).
     pub coded_height: u32,
+    /// What the decoder outputs: H.264 frame-cropping rectangle / H.265
+    /// conformance window. Equals the full picture when there is no cropping.
+    pub output_rect: PictureRect,
+    /// H.265 default display window (absolute, i.e. conformance offsets
+    /// already added per E-78..E-81). Always `None` for H.264. A suggestion,
+    /// never applied to `output_rect`.
+    pub default_display_rect: Option<PictureRect>,
     /// The VUI `aspect_ratio_idc` as signalled. `None` when the SPS has no VUI,
     /// `aspect_ratio_info_present_flag` is 0, or the VUI was truncated before
     /// the field was complete (all inferred idc 0, "unspecified"). `Some` does
@@ -836,6 +870,8 @@ impl DisplayGeometry {
         Self {
             coded_width,
             coded_height,
+            output_rect: PictureRect::new(0, 0, coded_width, coded_height),
+            default_display_rect: None,
             aspect_ratio,
             overscan_appropriate: None,
             video_signal: None,
@@ -882,6 +918,8 @@ impl DisplayGeometry {
         Self {
             coded_width: f.coded_width,
             coded_height: f.coded_height,
+            output_rect: f.output_rect,
+            default_display_rect: f.default_display_rect,
             aspect_ratio: f.aspect_ratio,
             overscan_appropriate: f.overscan_appropriate,
             video_signal: f.video_signal,
@@ -996,7 +1034,8 @@ impl DisplayInfo {
                 != previous.and_then(|g| g.video_signal),
             overscan: current.and_then(|g| g.overscan_appropriate)
                 != previous.and_then(|g| g.overscan_appropriate),
-            default_display_rect: false,
+            default_display_rect: default_display_rect_of(current)
+                != default_display_rect_of(previous),
         }
     }
 }
@@ -1006,10 +1045,15 @@ fn aspect_ratio_of(g: Option<&DisplayGeometry>) -> Option<AspectRatioIdc> {
     g.and_then(|g| g.aspect_ratio)
 }
 
-/// The displayed rectangle (coded size; cropping is a later phase, so the
-/// whole coded picture is what the decoder outputs today).
-fn output_rect_of(g: Option<&DisplayGeometry>) -> Option<(u32, u32)> {
-    g.map(|g| (g.coded_width, g.coded_height))
+/// The displayed rectangle (output crop) of a geometry, or `None` when the
+/// geometry itself is absent.
+fn output_rect_of(g: Option<&DisplayGeometry>) -> Option<PictureRect> {
+    g.map(|g| g.output_rect)
+}
+
+/// The (never-applied) H.265 default display window of a geometry.
+fn default_display_rect_of(g: Option<&DisplayGeometry>) -> Option<Option<PictureRect>> {
+    g.map(|g| g.default_display_rect)
 }
 
 /// Which parts of a [`DisplayInfo`] differ from the previous state for a

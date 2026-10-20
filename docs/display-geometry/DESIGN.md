@@ -1,7 +1,8 @@
 # Display geometry metadata in transmux: design
 
 Status: **Phase 1 (static geometry) landed, split into 1a and 1b; Phase 2
-(change event + per-AU tag) landed on top (`[Unreleased]`).**
+(change event + per-AU tag) landed on top (`[Unreleased]`); Phase 5 (output crop +
+tkhd presentation size) landed (`[Unreleased]`).**
 
 - **1a (SAR + coded size)** shipped in `transmux` 0.27.5: `ir::display`
   with `DisplayGeometry` / `AspectRatioIdc` / `SampleAspectRatio`,

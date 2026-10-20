@@ -189,6 +189,8 @@ pub fn decode_avc_slice_sps(sps_bytes: &[u8]) -> Result<AvcSliceSps> {
 /// cannot carry (neither is `#[non_exhaustive]`, so a field added there would
 /// be a breaking change): consumed by
 /// [`DisplayGeometry`](crate::ir::DisplayGeometry).
+use crate::ir::PictureRect;
+
 pub(crate) struct DisplayFacts {
     /// Decoded picture width before cropping, luma samples (H.264
     /// `PicWidthInSamplesL`; H.265 `pic_width_in_luma_samples`).
@@ -196,6 +198,10 @@ pub(crate) struct DisplayFacts {
     /// Decoded picture height before cropping, luma samples (H.264
     /// `16 * FrameHeightInMbs`; H.265 `pic_height_in_luma_samples`).
     pub(crate) coded_height: u32,
+    /// Output (cropped) rectangle.
+    pub(crate) output_rect: PictureRect,
+    /// H.265 default display window, if signalled.
+    pub(crate) default_display_rect: Option<PictureRect>,
     /// VUI `aspect_ratio_idc` (+ `sar_width`/`sar_height`), `None` when the VUI
     /// or `aspect_ratio_info_present_flag` is absent or the VUI was truncated
     /// before the field was complete.
@@ -365,13 +371,43 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, Di
     let pic_height_in_map_units = pic_height_in_map_units_minus1 + 1;
     let frame_height_in_mbs = (2 - frame_mbs_only as u64) * pic_height_in_map_units;
 
-    let crop_unit_x = sub_width_c(chroma_format_idc) as u64;
-    let crop_unit_y = sub_height_c(chroma_format_idc) as u64 * (2 - frame_mbs_only as u64);
+    let chroma_array_type = if separate_colour_plane {
+        0u8
+    } else {
+        chroma_format_idc
+    };
+    let (crop_unit_x, crop_unit_y) = if chroma_array_type == 0 {
+        (1u64, 2u64 - frame_mbs_only as u64)
+    } else {
+        let sw = sub_width_c(chroma_format_idc) as u64;
+        let sh = sub_height_c(chroma_format_idc) as u64;
+        (sw, sh * (2u64 - frame_mbs_only as u64))
+    };
 
-    let width =
-        (pic_width_in_mbs * AVC_MB_SIZE).saturating_sub(crop_unit_x * (crop_left + crop_right));
-    let height =
-        (frame_height_in_mbs * AVC_MB_SIZE).saturating_sub(crop_unit_y * (crop_top + crop_bottom));
+    let coded_width = pic_width_in_mbs * AVC_MB_SIZE;
+    let coded_height = frame_height_in_mbs * AVC_MB_SIZE;
+
+    let total_h = crop_unit_x.saturating_mul(crop_left.saturating_add(crop_right));
+    let total_v = crop_unit_y.saturating_mul(crop_top.saturating_add(crop_bottom));
+
+    let width = coded_width.saturating_sub(total_h);
+    let height = coded_height.saturating_sub(total_v);
+
+    let output_rect = if total_h > coded_width || total_v > coded_height {
+        PictureRect::new(
+            0,
+            0,
+            u32::try_from(coded_width).unwrap_or(u32::MAX),
+            u32::try_from(coded_height).unwrap_or(u32::MAX),
+        )
+    } else {
+        PictureRect::new(
+            u32::try_from(crop_unit_x * crop_left).unwrap_or(0),
+            u32::try_from(crop_unit_y * crop_top).unwrap_or(0),
+            u32::try_from(coded_width - total_h).unwrap_or(0),
+            u32::try_from(coded_height - total_v).unwrap_or(0),
+        )
+    };
 
     // vui_parameters — ITU-T H.264 §E.1.1.  Walk in syntax order to reach
     // timing_info; stop reading after timing_info_present_flag.
@@ -380,8 +416,10 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, Di
 
     let clamp_u32 = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
     let display = DisplayFacts {
-        coded_width: clamp_u32(pic_width_in_mbs * AVC_MB_SIZE),
-        coded_height: clamp_u32(frame_height_in_mbs * AVC_MB_SIZE),
+        coded_width: clamp_u32(coded_width),
+        coded_height: clamp_u32(coded_height),
+        output_rect,
+        default_display_rect: None,
         aspect_ratio: vui.aspect_ratio,
         overscan_appropriate: vui.overscan_appropriate,
         video_signal: vui.video_signal,
@@ -793,20 +831,40 @@ fn decode_hevc_sps_inner(
 
     // Compute cropped dimensions.
     let sub_width_c = match chroma_format_idc {
-        1 | 2 => 2,
-        3 => 1,
-        _ => 1,
+        1 | 2 => 2u64,
+        3 => 1u64,
+        _ => 1u64,
     };
     let sub_height_c = match chroma_format_idc {
-        1 => 2,
-        2 | 3 => 1,
-        _ => 1,
+        1 => 2u64,
+        2 | 3 => 1u64,
+        _ => 1u64,
     };
 
-    let width = pic_width_in_luma_samples
-        .saturating_sub((sub_width_c as u64) * (conf_win_left + conf_win_right));
-    let height = pic_height_in_luma_samples
-        .saturating_sub((sub_height_c as u64) * (conf_win_top + conf_win_bottom));
+    let coded_width = pic_width_in_luma_samples;
+    let coded_height = pic_height_in_luma_samples;
+
+    let total_h = sub_width_c.saturating_mul(conf_win_left.saturating_add(conf_win_right));
+    let total_v = sub_height_c.saturating_mul(conf_win_top.saturating_add(conf_win_bottom));
+
+    let width = coded_width.saturating_sub(total_h);
+    let height = coded_height.saturating_sub(total_v);
+
+    let output_rect = if total_h > coded_width || total_v > coded_height {
+        PictureRect::new(
+            0,
+            0,
+            u32::try_from(coded_width).unwrap_or(u32::MAX),
+            u32::try_from(coded_height).unwrap_or(u32::MAX),
+        )
+    } else {
+        PictureRect::new(
+            u32::try_from(sub_width_c * conf_win_left).unwrap_or(0),
+            u32::try_from(sub_height_c * conf_win_top).unwrap_or(0),
+            u32::try_from(coded_width - total_h).unwrap_or(0),
+            u32::try_from(coded_height - total_v).unwrap_or(0),
+        )
+    };
 
     // Walk the remaining HEVC SPS syntax (§7.3.2.2.1) up to and including
     // vui_parameters() in order to reach vui_timing_info.
@@ -826,9 +884,35 @@ fn decode_hevc_sps_inner(
         &mut vui_colour,
     );
     let clamp_u32 = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+
+    // default display window: conformance offsets PLUS def_disp offsets (E-78..E-81)
+    let default_display_rect = match vui_colour.default_display_offsets {
+        Some((dl, dr, dt, db)) => {
+            let left_off = conf_win_left.saturating_add(dl);
+            let right_off = conf_win_right.saturating_add(dr);
+            let top_off = conf_win_top.saturating_add(dt);
+            let bottom_off = conf_win_bottom.saturating_add(db);
+            let total_h = sub_width_c.saturating_mul(left_off.saturating_add(right_off));
+            let total_v = sub_height_c.saturating_mul(top_off.saturating_add(bottom_off));
+            if total_h > coded_width || total_v > coded_height {
+                None
+            } else {
+                Some(PictureRect::new(
+                    u32::try_from(sub_width_c * left_off).unwrap_or(0),
+                    u32::try_from(sub_height_c * top_off).unwrap_or(0),
+                    u32::try_from(coded_width - total_h).unwrap_or(0),
+                    u32::try_from(coded_height - total_v).unwrap_or(0),
+                ))
+            }
+        }
+        None => None,
+    };
+
     let display = DisplayFacts {
-        coded_width: clamp_u32(pic_width_in_luma_samples),
-        coded_height: clamp_u32(pic_height_in_luma_samples),
+        coded_width: clamp_u32(coded_width),
+        coded_height: clamp_u32(coded_height),
+        output_rect,
+        default_display_rect,
         aspect_ratio: vui_colour.aspect_ratio,
         overscan_appropriate: vui_colour.overscan_appropriate,
         video_signal: vui_colour.video_signal,
@@ -885,6 +969,8 @@ struct HevcVuiColour {
     overscan_appropriate: Option<bool>,
     /// `video_signal_type()`, `None` when its flag is 0.
     video_signal: Option<VideoSignalType>,
+    /// Default display window offsets (left,right,top,bottom) when signalled.
+    default_display_offsets: Option<(u64, u64, u64, u64)>,
 }
 
 /// Largest `num_negative_pics`/`num_positive_pics` (H.265 §7.4.8: at most
@@ -1156,10 +1242,13 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // default_display_window_flag  u(1)
     let ddw_present = r.read_flag("default_display_window_flag")?;
     if ddw_present {
-        let _ = r.read_ue("def_disp_win_left_offset")?;
-        let _ = r.read_ue("def_disp_win_right_offset")?;
-        let _ = r.read_ue("def_disp_win_top_offset")?;
-        let _ = r.read_ue("def_disp_win_bottom_offset")?;
+        let l = r.read_ue("def_disp_win_left_offset")?;
+        let rr = r.read_ue("def_disp_win_right_offset")?;
+        let t = r.read_ue("def_disp_win_top_offset")?;
+        let b = r.read_ue("def_disp_win_bottom_offset")?;
+        colour.default_display_offsets = Some((l, rr, t, b));
+    } else {
+        colour.default_display_offsets = None;
     }
 
     // vui_timing_info_present_flag  u(1)

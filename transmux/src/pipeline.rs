@@ -280,11 +280,61 @@ fn avc_hevc_display_extra_boxes(
     Ok(extra_boxes)
 }
 
+/// tkhd presentation size for an AVC/HEVC video track per ISO/IEC 14496-12:2012
+/// §8.3.2 and ETSI TS 103 285 §5.1.2: cropped output size, then rescaled for
+/// the sample aspect ratio (horizontal only), as 16.16 fixed point.
+fn tkhd_presentation_size(
+    display: Option<&crate::ir::DisplayGeometry>,
+    coded_width: u16,
+    coded_height: u16,
+) -> (u32, u32) {
+    let Some(display) = display else {
+        return (
+            (u32::from(coded_width)) << 16,
+            (u32::from(coded_height)) << 16,
+        );
+    };
+    let out = display.output_rect;
+    let height = (u64::from(out.height)) << 16;
+    let width = match display.typed_sample_aspect_ratio() {
+        Some(sar) => {
+            let sar_w = u64::from(sar.width());
+            let sar_h = u64::from(sar.height());
+            if sar_h == 0 {
+                (u64::from(out.width)) << 16
+            } else {
+                let num = u64::from(out.width) * sar_w * 65536;
+                (num + sar_h / 2)
+                    .checked_div(sar_h)
+                    .unwrap_or((u64::from(out.width)) << 16)
+            }
+        }
+        None => (u64::from(out.width)) << 16,
+    };
+    (
+        u32::try_from(width).unwrap_or(u32::MAX),
+        u32::try_from(height).unwrap_or(u32::MAX),
+    )
+}
+
 /// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
 fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let audio = t.config.is_audio();
 
     let mut minf_header: Option<OpaqueBox> = None;
+    // Compute the tkhd presentation size once for the AVC/HEVC arms (Phase 5):
+    // cropped output size, rescaled for the sample aspect ratio. Audio and VVC
+    // arms do not use it.
+    let tkhd_video_dims = match &t.config {
+        CodecConfig::Avc { width, height, .. } => Some((*width, *height)),
+        CodecConfig::Hevc { width, height, .. } => Some((*width, *height)),
+        _ => None,
+    };
+    let (tkhd_w_pre, tkhd_h_pre) = match tkhd_video_dims {
+        Some((w, h)) => tkhd_presentation_size(t.display.as_ref(), w, h),
+        None => (0u32, 0u32),
+    };
+
     let (stsd_entry, vmhd, smhd, handler_type, handler_name, tkhd_w, tkhd_h) = match &t.config {
         CodecConfig::Avc {
             config,
@@ -314,8 +364,8 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 None,
                 *b"vide",
                 b"VideoHandler\0".to_vec(),
-                (*width as u32) << 16,
-                (*height as u32) << 16,
+                tkhd_w_pre,
+                tkhd_h_pre,
             )
         }
         CodecConfig::Hevc {
@@ -348,8 +398,8 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 None,
                 *b"vide",
                 b"VideoHandler\0".to_vec(),
-                (*width as u32) << 16,
-                (*height as u32) << 16,
+                tkhd_w_pre,
+                tkhd_h_pre,
             )
         }
         CodecConfig::Vvc {

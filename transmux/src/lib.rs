@@ -317,8 +317,8 @@ pub use ir::{
     AspectRatioIdc, AudioLanguage, AudioMetadata, AudioRole, AudioType, ColourDescription,
     ColourPrimaries, DisplayChangeSet, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC,
     EditorialClassification, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT,
-    MatrixCoefficients, MixType, ProgramNumber, SampleAspectRatio, SupplementaryAudio, TrackId,
-    TransferCharacteristics, VideoFormat, VideoSignalType,
+    MatrixCoefficients, MixType, PictureRect, ProgramNumber, SampleAspectRatio, SupplementaryAudio,
+    TrackId, TransferCharacteristics, VideoFormat, VideoSignalType,
 };
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
