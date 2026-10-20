@@ -251,3 +251,33 @@ fn real_capture_sequence_header_matches_the_ffprobe_oracle() {
         );
     }
 }
+
+#[test]
+fn codec_config_sequence_header_gives_geometry() {
+    use crate::mp4esds::{
+        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    };
+    let es = sequence_header(704, 576, 3);
+    let esds = EsdsBox::new(ESDescriptor::new(
+        0,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            crate::ts_demux::OTI_MPEG2_VIDEO_MAIN,
+            crate::ts_demux::STREAM_TYPE_VISUAL,
+            false,
+            0,
+            0,
+            0,
+            Some(DecoderSpecificInfo::new(es)),
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ));
+    let config = crate::ir::CodecConfig::Mpeg2Video {
+        esds,
+        width: 704,
+        height: 576,
+    };
+    let g = DisplayGeometry::from_codec_config(&config).expect("esds sequence header");
+    assert!(g.is_mpeg2());
+    assert_eq!(g.sample_aspect_ratio(), Some((16, 11)));
+}

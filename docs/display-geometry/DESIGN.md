@@ -851,3 +851,30 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
   sequence header in the same frame it applies). AFD/bar data stay Phase 3.
 - **No PS tagging.** `PsDemux` is unchanged from `origin/main` (`Sample::display`
   stays `None` there), and no allocation budget or golden hash was touched.
+
+## 17. Phase 3b (MPEG-2 geometry, AFD, bar data) — as built
+
+- `h262::DisplayGeometry::from_mpeg2_es(prefix)` reads the first `sequence_header()` plus its
+  `sequence_extension()` (size extension 2 + 2 bits, H.262 §6.2.2.3) and
+  `sequence_display_extension()` (§6.2.2.4), and derives the SAR from Table 6-3 / §6.3.3. The
+  §6.3.3 relation, validated against ffprobe on the captures, is `SAR = DAR_w * size_h : DAR_h *
+  size_w` in width:height terms (704x480 4:3 -> 10:11, 704x576 16:9 -> 16:11, 720x576 16:9 ->
+  64:45); with `sequence_display_extension()` present it uses `display_horizontal/vertical_size`
+  (the test-108 header, display size 704x576 on a 720x576 frame, yields 21:16 by that rule, while
+  ffprobe reports 64:45 by its own "ignore the spec" heuristic; the two sources disagree and the
+  spec text is followed).
+- `aspect_ratio` is `AspectRatioIdc::Square` or `ExtendedSar{reduced}`; aspect 0 and 5..=15 are
+  unspecified. `output_rect` is always the coded picture (H.262 has no crop syntax).
+- `DisplayGeometry` gains `mpeg2: bool` (`is_mpeg2()`): inferred colour is 1/1/1 for MPEG-2
+  (`MPEG2_INFERRED_COLOUR_CODE`, H.262 §6.3.6) and 2/2/2 otherwise.
+- `mpeg2_display::Mpeg2DisplayTracker` is the per-AU tracker (§6.4, always the H.262 rule):
+  `sequence_header()` resets AFD/bar data to `afd = None` and re-reads geometry; picture user
+  data in `extension_and_user_data(2)` (after the first picture header, before the slices) is
+  read, first AFD winning; a new AFD without bar data clears bar data. `random_access` is the AU's
+  own (`ts_demux::mpeg2_is_sync`). Wired in `ts_demux` beside the SPS tracker, so batch
+  `TsDemux`, `StreamingTsDemux` and the PS path (`ps_demux` reuses the same tracker kind through
+  the batch API) tag MPEG-2 samples.
+- The MPEG-2 static `TrackSpec::display` comes from the backlog's first `sequence_header()` (the
+  config probe carries only the sizes); when the probe's one-second sample held no sequence
+  header it is `None`, never fabricated (test-205's capture opens with pictures before its first
+  header).

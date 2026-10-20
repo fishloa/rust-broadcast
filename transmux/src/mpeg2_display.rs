@@ -19,8 +19,8 @@
 //!
 //! # Ordering (§6.5)
 //!
-//! `random_access` is the access unit's own random-access bit
-//! ([`crate::ts_demux::mpeg2_is_sync`]: a sequence header or an I picture).
+//! `random_access` is the access unit's own random-access bit (a sequence
+//! header or an I picture, ISO/IEC 13818-2 §6.2.2.1 / §6.3.9).
 //! AFD is not RAP-bound, so an AFD change on a mid-GOP picture raises
 //! `DisplayChanged` with `random_access = false`. The event and the
 //! [`Sample`](crate::Sample) tag share one `Arc<DisplayInfo>`.
