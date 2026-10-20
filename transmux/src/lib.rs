@@ -184,6 +184,7 @@ pub mod flac;
 pub mod flv;
 pub mod flv_stream;
 pub mod frag_offsets;
+pub mod h262;
 pub mod hevc_config;
 pub mod init_segment;
 pub mod interlace;
@@ -195,6 +196,7 @@ pub mod ll_hls;
 pub mod media;
 pub mod mkv_mux;
 pub mod movie_fragment;
+pub mod mpeg2_display;
 pub mod mp4esds;
 pub mod mpeg_legacy;
 pub mod mpegh;
@@ -318,7 +320,8 @@ pub use ir::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, AudioLanguage,
     AudioMetadata, AudioRole, AudioType, BarData, ColourDescription, ColourPrimaries,
     DisplayChangeSet, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC, EditorialClassification,
-    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MatrixCoefficients, MixType,
+    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MPEG2_INFERRED_COLOUR_CODE,
+    MatrixCoefficients, MixType,
     PictureRect, ProgramNumber, SampleAspectRatio, SupplementaryAudio, TrackId,
     TransferCharacteristics, UserDataCarriage, VideoFormat, VideoSignalType,
 };
@@ -344,6 +347,8 @@ pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
     SLConfigDescriptor, StreamType,
 };
+pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
+pub use mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
 };

@@ -311,6 +311,13 @@ pub const INFERRED_FULL_RANGE: bool = false;
 /// `matrix_coefficients` when absent (H.264 §E.2.1: "= 2", unspecified).
 pub const INFERRED_COLOUR_CODE: u8 = 2;
 
+/// The MPEG-2 inferred `colour_primaries` / `transfer_characteristics` /
+/// `matrix_coefficients` when `sequence_display_extension()` or its
+/// `colour_description` is absent: value 1 in all three, i.e. BT.709
+/// (ITU-T H.262 §6.3.6, printed pp. 44/47; `docs/codec/mpeg2-video-display.md`).
+/// Distinct from [`INFERRED_COLOUR_CODE`]: MPEG-2 never infers "unspecified".
+pub const MPEG2_INFERRED_COLOUR_CODE: u8 = 1;
+
 /// H.264 Table E-2 / H.265 Table E.2 `video_format`, the wire form kept
 /// losslessly ([`from_wire`](Self::from_wire) / [`code`](Self::code)).
 ///
@@ -861,6 +868,12 @@ pub struct DisplayGeometry {
     /// [`colour_description`](Self::colour_description); the struct itself
     /// records only what was signalled.
     pub video_signal: Option<VideoSignalType>,
+    /// This geometry came from MPEG-2 video (H.262) syntax, whose inferred
+    /// colour defaults differ from H.264/H.265: BT.709 (1/1/1) rather than
+    /// unspecified (2/2/2, H.262 §6.3.6 vs H.264 §E.2.1). `false` for every
+    /// other source; [`colour_description`](Self::colour_description) reads it
+    /// when nothing was signalled.
+    pub mpeg2: bool,
 }
 
 impl DisplayGeometry {
@@ -875,6 +888,7 @@ impl DisplayGeometry {
             aspect_ratio,
             overscan_appropriate: None,
             video_signal: None,
+            mpeg2: false,
         }
     }
 
@@ -891,9 +905,11 @@ impl DisplayGeometry {
         crate::sps::decode_hevc_display_facts(sps_nal).map(Self::from_facts)
     }
 
-    /// Geometry derived from the first SPS of an `avcC` / `hvcC` record.
-    /// `None` for other codecs, for a record with no SPS (a placeholder
-    /// config), or when that SPS does not decode; never a fabricated value.
+    /// Geometry derived from the first SPS of an `avcC` / `hvcC` record, or
+    /// from the `sequence_header()` an MPEG-2 video `esds`
+    /// DecoderSpecificInfo carries. `None` for other codecs, for a record with
+    /// no SPS / no sequence header (a placeholder config), or when that header
+    /// does not decode; never a fabricated value.
     pub fn from_codec_config(config: &CodecConfig) -> Option<Self> {
         match config {
             CodecConfig::Avc { config, .. } => {
@@ -910,6 +926,15 @@ impl DisplayGeometry {
                     .next()?;
                 Self::from_hevc_sps(&sps.0).ok()
             }
+            CodecConfig::Mpeg2Video { esds, .. } => {
+                let es = esds
+                    .es_descriptor
+                    .decoder_config
+                    .as_ref()?
+                    .decoder_specific_info
+                    .as_ref()?;
+                Self::from_mpeg2_es(&es.data).ok()
+            }
             _ => None,
         }
     }
@@ -923,7 +948,13 @@ impl DisplayGeometry {
             aspect_ratio: f.aspect_ratio,
             overscan_appropriate: f.overscan_appropriate,
             video_signal: f.video_signal,
+            mpeg2: false,
         }
+    }
+
+    /// Whether this geometry came from an MPEG-2 (H.262) sequence.
+    pub fn is_mpeg2(&self) -> bool {
+        self.mpeg2
     }
 
     /// The specified sample aspect ratio as `(width, height)`, or `None` when
@@ -956,16 +987,26 @@ impl DisplayGeometry {
 
     /// The colour description, the signalled triple or, when
     /// `colour_description_present_flag` is 0 (or the whole video signal type
-    /// is absent), the spec's inferred primaries / transfer / matrix 2/2/2.
-    /// A player wanting to know whether the stream really said BT.709 reads
+    /// is absent), the spec's inferred primaries / transfer / matrix: 2/2/2
+    /// (unspecified) for H.264/H.265, but 1/1/1 (BT.709) for MPEG-2
+    /// ([`MPEG2_INFERRED_COLOUR_CODE`], H.262 §6.3.6). A player wanting to
+    /// know whether the stream really said BT.709 reads
     /// [`video_signal`](Self::video_signal) instead.
     pub fn colour_description(&self) -> ColourDescription {
         self.video_signal
             .and_then(|vst| vst.colour)
-            .unwrap_or(ColourDescription {
-                primaries: ColourPrimaries::inferred(),
-                transfer: TransferCharacteristics::inferred(),
-                matrix: MatrixCoefficients::inferred(),
+            .unwrap_or(if self.mpeg2 {
+                ColourDescription::from_wire(
+                    MPEG2_INFERRED_COLOUR_CODE,
+                    MPEG2_INFERRED_COLOUR_CODE,
+                    MPEG2_INFERRED_COLOUR_CODE,
+                )
+            } else {
+                ColourDescription {
+                    primaries: ColourPrimaries::inferred(),
+                    transfer: TransferCharacteristics::inferred(),
+                    matrix: MatrixCoefficients::inferred(),
+                }
             })
     }
 }

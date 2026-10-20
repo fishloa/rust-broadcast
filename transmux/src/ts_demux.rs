@@ -222,6 +222,7 @@
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
 use crate::display_track::{ActivationOutcome, SpsTracker, TrackCodec};
+use crate::mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 use crate::ir::{AfdPersistence, DisplayChangeSet, DisplayInfo};
 use crate::{ProgramNumber, TrackId};
 use alloc::collections::btree_map::Entry;
@@ -1740,6 +1741,11 @@ struct LiveTrack {
     /// parameter set, so that path stays untracked (`Sample::display` is
     /// `None`).
     sps_tracker: Option<SpsTracker>,
+    /// MPEG-2 video's display tracker (`docs/display-geometry/DESIGN.md`
+    /// §6.4, Phase 3b): the sequence geometry in force plus the AFD / bar data
+    /// under the H.262 `sequence_header()` persistence rule. `Some` only for
+    /// `Codec::Mpeg2Video`.
+    mpeg2_tracker: Option<Mpeg2DisplayTracker>,
     /// The `TrackUpdated` raised by the access unit being applied, released
     /// with its slot.
     pending_config: Option<TrackSpec>,
@@ -1757,6 +1763,15 @@ impl LiveTrack {
     /// it is released with the first sample (the level-triggered start of
     /// design §5.2, Q2 = emit).
     fn display(&mut self, au: &[u8]) -> Option<Arc<DisplayInfo>> {
+        if let Some(tracker) = self.mpeg2_tracker.as_mut() {
+            if let Mpeg2Outcome::Changed {
+                display, changed, ..
+            } = tracker.observe(au)
+            {
+                self.display = Some((display, changed));
+            }
+            return tracker.state().cloned();
+        }
         let tracker = self.sps_tracker.as_mut()?;
         if let ActivationOutcome::Changed {
             display, changed, ..
@@ -2173,9 +2188,9 @@ fn advance_one_behind(
         display,
         pending_events: PendingDisplayEvents::default(),
     });
-    if let Some(spec) = pending_events.config {
-        events.push_back(DemuxEvent::TrackUpdated(spec));
-    }
+    // The pending access unit was already emitted as the previous sample, and
+    // a change raised by *this* access unit is released with *its* sample
+    // ([`advance_one_behind`]), never before the previous one.
     if let Some((display, changed)) = pending_events.display {
         events.push_back(DemuxEvent::DisplayChanged {
             track_id,
@@ -5730,6 +5745,8 @@ impl StreamingTsDemux {
                         ),
                         _ => None,
                     };
+                    let mpeg2_tracker = (stream.codec == Codec::Mpeg2Video)
+                        .then(Mpeg2DisplayTracker::new);
                     let mut live = LiveTrack {
                         track_id,
                         kind,
@@ -5738,6 +5755,7 @@ impl StreamingTsDemux {
                         parameter_sets: ParameterSets::default(),
                         config_header: None,
                         sps_tracker,
+                        mpeg2_tracker,
                         pending_config: None,
                         display: None,
                     };

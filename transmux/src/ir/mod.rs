@@ -68,6 +68,7 @@ pub use display::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, BarData,
     ColourDescription, ColourPrimaries, DisplayChangeSet, DisplayGeometry, DisplayInfo,
     EXTENDED_SAR_IDC, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT,
+    MPEG2_INFERRED_COLOUR_CODE,
     MatrixCoefficients, PictureRect, SampleAspectRatio, TransferCharacteristics, UserDataCarriage,
     VideoFormat, VideoSignalType,
 };
