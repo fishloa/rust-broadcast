@@ -367,6 +367,61 @@ fn afd_reset_at_random_access() {
 }
 
 #[test]
+fn afd_reset_at_random_access_also_clears_bar_data() {
+    // AU 0 carries AFD 9 and a top/bottom bar pair; the IDR at AU 25 carries
+    // nothing. ResetAtRandomAccess (ANSI/SCTE 128-1 §8.2.3-8.2.4): afd becomes
+    // SameAsCodedFrame AND the bar data is cleared, one event raising both bits.
+    let mut sei: Vec<Vec<Vec<u8>>> = vec![vec![]; 26];
+    sei[0] = vec![afd_nal(9, true), bar_nal(0xC0, &[70, 506])];
+    let ts = build_avc_from_n("ts/h264_aac.ts", &sei, Some(26));
+    let items = run_stream(&ts, AfdPersistence::ResetAtRandomAccess);
+    let first_state = items
+        .iter()
+        .find(|s| s.kind == "sample")
+        .expect("a sample")
+        .clone();
+    assert_eq!(first_state.afd, Some(ActiveFormatDescription::Centre4x3));
+    assert_eq!(
+        first_state.bar,
+        Some(BarData {
+            top_bar_end_line: Some(70),
+            bottom_bar_start_line: Some(506),
+            left_bar_end_pixel: None,
+            right_bar_start_pixel: None,
+        })
+    );
+    let changes: Vec<&Seen> = items
+        .iter()
+        .filter(|s| s.kind == "changed" && !s.initial)
+        .collect();
+    assert_eq!(changes.len(), 1);
+    let c = changes[0];
+    assert!(c.changed.unwrap().afd);
+    assert!(c.changed.unwrap().bar_data);
+    assert!(c.random_access);
+    assert_eq!(c.afd, Some(ActiveFormatDescription::SameAsCodedFrame));
+    assert_eq!(c.bar, None);
+    let samples: Vec<&Seen> = items.iter().filter(|s| s.kind == "sample").collect();
+    assert_eq!(samples[25].bar, None);
+    assert_eq!(
+        samples[25].afd,
+        Some(ActiveFormatDescription::SameAsCodedFrame)
+    );
+    // Under UntilReplaced the bar data survives the same IDR.
+    let kept = run_stream(&ts, AfdPersistence::UntilReplaced);
+    assert!(
+        kept.iter().all(|s| s.kind != "changed" || s.initial),
+        "UntilReplaced must raise no event at the IDR"
+    );
+    let kept_samples: Vec<&Seen> = kept.iter().filter(|s| s.kind == "sample").collect();
+    assert_eq!(
+        kept_samples[25].afd,
+        Some(ActiveFormatDescription::Centre4x3)
+    );
+    assert_eq!(kept_samples[25].bar, first_state.bar);
+}
+
+#[test]
 fn afd_reset_idr_with_own_afd_keeps_value() {
     let mut sei: Vec<Vec<Vec<u8>>> = vec![vec![]; 26];
     sei[0] = vec![afd_nal(9, true)];
