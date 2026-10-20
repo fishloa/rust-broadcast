@@ -24,16 +24,20 @@ use transmux::dash_parse::Mpd;
 const UNSUPPORTED_SIXTH_EDITION: &[&str] = &["example_G27.mpd"];
 
 fn schema_dir() -> Option<std::path::PathBuf> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../private/specs/iso_iec_23009-1_dash_2026_ed6_schema");
+    // `private_root()` honours SKIP_PRIVATE_FIXTURES=1 and the checkout rules of
+    // test_fixtures (it also resolves a linked worktree's main checkout).
+    let Some(root) = test_fixtures::private_root() else {
+        eprintln!("SKIPPED dash_iso_examples: private repo not available");
+        return None;
+    };
+    let dir = root.join("specs/iso_iec_23009-1_dash_2026_ed6_schema");
     if dir.join("DASH-MPD.xsd").is_file() {
         Some(dir)
     } else {
-        eprintln!(
-            "SKIPPED dash_iso_examples: private repo not checked out ({} missing)",
+        panic!(
+            "dash_iso_examples: private repo is checked out but {} is missing",
             dir.display()
         );
-        None
     }
 }
 
@@ -73,7 +77,11 @@ fn examples() -> Option<Vec<(String, String)>> {
 #[test]
 fn every_supported_iso_example_parses_with_the_independent_element_counts() {
     let Some(all) = examples() else { return };
-    assert!(all.len() >= 40, "expected the 41 ISO examples, found {}", all.len());
+    assert!(
+        all.len() >= 40,
+        "expected the 41 ISO examples, found {}",
+        all.len()
+    );
     let mut checked = 0;
     for (name, xml) in &all {
         if UNSUPPORTED_SIXTH_EDITION.contains(&name.as_str()) {
