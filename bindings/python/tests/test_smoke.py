@@ -9,18 +9,15 @@ import os
 import pytest
 import dvb_si_py as dvb
 
-# Repo-relative path to a real capture. The fixture lives in the private
-# `private/` submodule (public/CI clones skip it), so these fixture-backed
-# tests skip cleanly when it is absent rather than erroring — matching the
-# workspace convention that submodule-dependent tests degrade to a skip.
+# Repo-relative path to a real DVB capture, committed in the PUBLIC `fixtures/`
+# tree (it moved there from `dvb-si/tests/fixtures/`; the old path no longer
+# exists, and a `skipif` on it silently turned these tests into no-ops). The
+# file must exist: its absence is a failure, never a skip.
 FIXTURE = os.path.join(
     os.path.dirname(__file__),
-    "..", "..", "..", "dvb-si", "tests", "fixtures", "tnt-5w-12732v-isi6-10s.ts",
+    "..", "..", "..", "fixtures", "dvb-si", "tnt-5w-12732v-isi6-10s.ts",
 )
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(FIXTURE),
-    reason="real-capture fixture not present (private submodule not fetched)",
-)
+assert os.path.exists(FIXTURE), f"committed real capture missing: {FIXTURE}"
 PKT = 188
 
 

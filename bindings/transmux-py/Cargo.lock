@@ -626,9 +626,9 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.6.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dd5afd583a93854fd92cc2114a7d7af81d0c9da661029bc793c2f56eea4eff4"
+checksum = "58e29fe9663eaab1366e35fee07415500dca8fde1ba58df7cfa5a363920f0b97"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1027,9 +1027,9 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.27.0"
+version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "969260f048c97224ed73f05086cae3f0651d67cd6ebf47f7d811eb93a4fb56e5"
+checksum = "d534e078f11f3fe63661ea134c0cee82e518d1b3ac2c20e9a2fa5bfcbed12f67"
 dependencies = [
  "aes",
  "base64",
