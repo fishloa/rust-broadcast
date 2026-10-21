@@ -228,17 +228,22 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
     let ct = HeaderValue::from_str(content_type)
         .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
 
+    // Full-body (200) response carrying Content-Type + Accept-Ranges: bytes.
+    // Shared by every path that ignores the Range (If-Range, no Range,
+    // unparseable Range, multi-range).
+    let full_response = |bytes: Bytes| -> Response {
+        let mut r = Response::new(Body::from(bytes));
+        *r.status_mut() = StatusCode::OK;
+        r.headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, ct.clone());
+        headers::HeaderMapExt::typed_insert(r.headers_mut(), headers::AcceptRanges::bytes());
+        r
+    };
+
     // If-Range present: these resources carry no validator, so the safe,
     // spec-correct behaviour is to ignore the Range and answer 200 (§13.1.5).
     if headers.get(axum::http::header::IF_RANGE).is_some() {
-        let mut resp = Response::builder()
-            .status(StatusCode::OK)
-            .body(Body::from(bytes))
-            .unwrap();
-        resp.headers_mut()
-            .insert(axum::http::header::CONTENT_TYPE, ct);
-        headers::HeaderMapExt::typed_insert(resp.headers_mut(), headers::AcceptRanges::bytes());
-        return resp;
+        return full_response(bytes);
     }
 
     let total = bytes.len() as u64;
@@ -246,14 +251,7 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
     let range = headers.typed_get::<headers::Range>();
     let Some(range) = range else {
         // No (typed) Range header -> full body.
-        let mut resp = Response::builder()
-            .status(StatusCode::OK)
-            .body(Body::from(bytes))
-            .unwrap();
-        resp.headers_mut()
-            .insert(axum::http::header::CONTENT_TYPE, ct);
-        headers::HeaderMapExt::typed_insert(resp.headers_mut(), headers::AcceptRanges::bytes());
-        return resp;
+        return full_response(bytes);
     };
 
     let collected: Vec<(Bound<u64>, Bound<u64>)> = range.satisfiable_ranges(total).collect();
@@ -262,27 +260,13 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
     // an empty satisfiable set means the Range could not be parsed into a
     // byte spec at all -> ignore and answer 200 (§14.2).
     if collected.is_empty() {
-        let mut resp = Response::builder()
-            .status(StatusCode::OK)
-            .body(Body::from(bytes))
-            .unwrap();
-        resp.headers_mut()
-            .insert(axum::http::header::CONTENT_TYPE, ct);
-        headers::HeaderMapExt::typed_insert(resp.headers_mut(), headers::AcceptRanges::bytes());
-        return resp;
+        return full_response(bytes);
     }
 
     // Multiple ranges -> answer 200 with the full body (§14.2; multipart/
     // byteranges deliberately not implemented).
     if collected.len() >= 2 {
-        let mut resp = Response::builder()
-            .status(StatusCode::OK)
-            .body(Body::from(bytes))
-            .unwrap();
-        resp.headers_mut()
-            .insert(axum::http::header::CONTENT_TYPE, ct);
-        headers::HeaderMapExt::typed_insert(resp.headers_mut(), headers::AcceptRanges::bytes());
-        return resp;
+        return full_response(bytes);
     }
 
     let (start_bound, end_bound) = collected[0];
@@ -300,10 +284,8 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
 
     // Unsatisfiable: first byte position >= total (§14.1.2).
     if total == 0 || first >= total || first > last {
-        let mut resp = Response::builder()
-            .status(StatusCode::RANGE_NOT_SATISFIABLE)
-            .body(Body::empty())
-            .unwrap();
+        let mut resp = Response::new(Body::empty());
+        *resp.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
         resp.headers_mut()
             .insert(axum::http::header::CONTENT_TYPE, ct);
         headers::HeaderMapExt::typed_insert(
@@ -319,21 +301,20 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
         last = last.min(total - 1);
     }
 
-    let slice = bytes.slice(first as usize..(last as usize + 1));
+    let slice_len = (last - first + 1) as usize;
+    let slice = bytes.slice(first as usize..(first as usize + slice_len));
 
     let cr = headers::ContentRange::bytes(first..=last, total)
         .unwrap_or_else(|_| headers::ContentRange::unsatisfied_bytes(total));
 
-    let mut resp = Response::builder()
-        .status(StatusCode::PARTIAL_CONTENT)
-        .body(Body::from(slice.clone()))
-        .unwrap();
+    let mut resp = Response::new(Body::from(slice));
+    *resp.status_mut() = StatusCode::PARTIAL_CONTENT;
     resp.headers_mut()
         .insert(axum::http::header::CONTENT_TYPE, ct);
     headers::HeaderMapExt::typed_insert(resp.headers_mut(), cr);
     headers::HeaderMapExt::typed_insert(
         resp.headers_mut(),
-        headers::ContentLength(slice.len() as u64),
+        headers::ContentLength(slice_len as u64),
     );
     headers::HeaderMapExt::typed_insert(resp.headers_mut(), headers::AcceptRanges::bytes());
     resp

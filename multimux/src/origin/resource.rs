@@ -1490,4 +1490,50 @@ mod tests {
         // sanity: differs from the unspliced byte at offset 12 ('m' of moof)
         assert_ne!(spliced_bytes[12], b'm');
     }
+
+    #[tokio::test]
+    async fn range_last_less_than_first_is_416() {
+        // RFC 9110 §14.2 permits a server to either ignore an invalid
+        // range-spec (answer 200) or reject it (416); §14.1.1's
+        // byte-range-spec requires first-byte-pos <= last-byte-pos, so
+        // `bytes=5-3` is not a satisfiable range-spec. This implementation
+        // rejects it as unsatisfiable (416) rather than ignoring it.
+        let route = range_route();
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=5-3"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes */100"
+        );
+    }
+
+    #[tokio::test]
+    async fn range_open_ended_full_returns_206_whole() {
+        let route = range_route();
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=0-"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes 0-99/100"
+        );
+        assert_eq!(body_bytes(resp).await, (0..100u8).collect::<Vec<_>>());
+    }
 }
