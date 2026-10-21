@@ -1,7 +1,8 @@
 # Display geometry metadata in transmux: design
 
 Status: **Phase 1 (static geometry) landed, split into 1a and 1b; Phase 2
-(change event + per-AU tag) landed on top (`[Unreleased]`); Phase 5 (output crop +
+(change event + per-AU tag) landed on top (`[Unreleased]`); Phase 2b (fMP4
+in-band avc3/hev1 tagging) landed (`[Unreleased]`); Phase 5 (output crop +
 tkhd presentation size) landed (`[Unreleased]`).**
 
 - **1a (SAR + coded size)** shipped in `transmux` 0.27.5: `ir::display`
@@ -32,7 +33,7 @@ tkhd presentation size) landed (`[Unreleased]`).**
   landed**: `build_trak` now writes `pasp` (non-1:1 SAR) and `colr nclx`
   (signalled colour description) for AVC/HEVC init segments from
   `TrackSpec::display`; square-pixel/colour-unsignalled input stays
-  byte-identical. fMP4 in-band `avc3`/`hev1` tagging (2b) is not implemented;
+  byte-identical. fMP4 in-band `avc3`/`hev1` tagging (2b) is implemented;
   demux-side `pasp`/`colr` overlay through the IR is not implemented.
 - **4b landed**: HLS master playlist advertises `VIDEO-RANGE` (HLG/PQ only; SDR and unmapped/absent colour omitted) from the track VUI transfer characteristics (broadcast-hls `VideoRange`, hls-runtime `HlsOrigin`).
   **Phase 4c landed**: `DashPackager`/`LlDashPackager` write `@sar` on video
