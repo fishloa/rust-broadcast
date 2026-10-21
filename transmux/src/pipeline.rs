@@ -298,14 +298,38 @@ pub fn presentation_size(
     )
 }
 
-/// Exact integer frame rate in millihertz from VUI timing fields:
+/// Basis on which a nominal frame rate was derived (issue: HEVC VUI timing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FrameRateBasis {
+    /// Normative: derived from a fixed-rate signalling field
+    /// (`fixed_frame_rate_flag` for H.264, `fixed_pic_rate_within_cvs_flag`
+    /// for H.265).
+    Normative,
+    /// Convention (implementation-defined): no fixed-rate signalling; the
+    /// value is `time_scale / num_units_in_tick` (H.264) or
+    /// `vui_time_scale / vui_num_units_in_tick` (H.265). Owner-approved
+    /// 2026-10-21.
+    Convention,
+}
+
+impl FrameRateBasis {
+    pub fn name(&self) -> &'static str {
+        match self {
+            FrameRateBasis::Normative => "normative",
+            FrameRateBasis::Convention => "convention",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(FrameRateBasis);
+
+/// Exact integer frame rate in millihertz from VUI timing fields (H.264):
 /// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`.
 fn frame_rate_millihertz_from_timing(time_scale: u32, num_units_in_tick: u32) -> Option<u32> {
     if num_units_in_tick == 0 {
         return None;
     }
-    // The denominator (2 * num_units) is always even, so adding its half
-    // (num_units) before dividing implements half-up exactly.
     let denominator = u128::from(num_units_in_tick).saturating_mul(2);
     if denominator == 0 {
         return None;
@@ -317,28 +341,141 @@ fn frame_rate_millihertz_from_timing(time_scale: u32, num_units_in_tick: u32) ->
     u32::try_from(millihertz).ok()
 }
 
-/// Nominal frame rate of an AVC video track, in millihertz (1/1000 Hz), derived
-/// solely from the first SPS's VUI `timing_info` per ITU-T H.264 §E.2.1:
-/// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`.
+/// Exact integer frame rate in millihertz from VUI timing fields (H.265
+/// convention tier): `round_half_up(1000 * time_scale / num_units_in_tick)`.
+fn frame_rate_millihertz_hevc_convention(time_scale: u32, num_units_in_tick: u32) -> Option<u32> {
+    if num_units_in_tick == 0 {
+        return None;
+    }
+    let denominator = u128::from(num_units_in_tick);
+    let numerator = u128::from(time_scale).saturating_mul(1000);
+    // round half up: add denominator/2
+    let millihertz = numerator
+        .checked_add(denominator / 2)?
+        .checked_div(denominator)?;
+    u32::try_from(millihertz).ok()
+}
+
+/// Normative tier (H.265 §E.3.2, `transmux/docs/codec/vui-timing-frame-rate.md` §2.7): the
+/// picture interval is `ClockTick * elemental_duration`, `ClockTick = num_units / time_scale`,
+/// so the picture rate is `time_scale / (num_units * elemental_duration)` Hz and
+/// `millihertz = round_half_up(1000 * time_scale / (num_units * elemental_duration))`.
+/// With `field_seq` the pictures are fields; the frame rate is half the picture rate
+/// (assuming complementary field pairs), i.e. the denominator doubles.
+fn frame_rate_millihertz_hevc_normative(
+    time_scale: u32,
+    num_units_in_tick: u32,
+    elemental_duration: u32, // elemental_duration_in_tc_minus1 + 1
+    field_seq: bool,
+) -> Option<u32> {
+    if num_units_in_tick == 0 || elemental_duration == 0 {
+        return None;
+    }
+    // denominator ticks = num_units * elemental_duration, times 2 if field_seq
+    let ticks = u128::from(num_units_in_tick).checked_mul(u128::from(elemental_duration))?;
+    let ticks = if field_seq {
+        ticks.checked_mul(2)?
+    } else {
+        ticks
+    };
+    if ticks == 0 {
+        return None;
+    }
+    let numerator = u128::from(time_scale).saturating_mul(1000);
+    // round half up
+    let millihertz = numerator.checked_add(ticks / 2)?.checked_div(ticks)?;
+    u32::try_from(millihertz).ok()
+}
+
+/// H.265 frame-rate derivation from the parsed VUI timing facts, per
+/// `transmux/docs/codec/vui-timing-frame-rate.md` §2.7.
 ///
-/// Returns `None` for any codec other than AVC, when the SPS lacks VUI
-/// timing information, when `num_units_in_tick` is zero, or when the result
-/// does not fit in `u32`. No value is ever invented or guessed from sample
-/// durations.
-pub fn nominal_frame_rate_millihertz(config: &CodecConfig) -> Option<u32> {
+/// * Tier A (normative): HRD fixed picture rate present. `field_seq_flag = 1` halves the
+///   picture rate (assumes complementary field pairs); `frame_field_info_present_flag = 1`
+///   with `field_seq_flag = 0` leaves the cadence to the per-picture `pic_struct` SEI, so no
+///   value.
+/// * Tier B (convention, implementation-defined): no HRD fixed rate, `field_seq_flag = 0`
+///   and `frame_field_info_present_flag = 0`: `vui_time_scale / vui_num_units_in_tick`.
+/// * Otherwise `None`.
+fn hevc_frame_rate_from_timing(
+    timing: &crate::sps::HevcVuiTiming,
+) -> Option<(u32, FrameRateBasis)> {
+    let (num_units, time_scale) = (timing.num_units_in_tick, timing.time_scale);
+    if num_units == 0 {
+        return None;
+    }
+    match timing.hrd_fixed_pic_rate {
+        Some(ed) => {
+            if !timing.field_seq && timing.frame_field_info_present {
+                return None;
+            }
+            let value =
+                frame_rate_millihertz_hevc_normative(time_scale, num_units, ed, timing.field_seq)?;
+            Some((value, FrameRateBasis::Normative))
+        }
+        None => {
+            if timing.field_seq || timing.frame_field_info_present {
+                return None;
+            }
+            let value = frame_rate_millihertz_hevc_convention(time_scale, num_units)?;
+            Some((value, FrameRateBasis::Convention))
+        }
+    }
+}
+
+/// Nominal frame rate of a video track, in millihertz (1/1000 Hz), plus the
+/// basis (normative vs. convention) on which it was derived.
+///
+/// H.264 (ITU-T H.264 §E.2.1): when VUI `timing_info_present_flag` is 1,
+/// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`. Tier
+/// "normative" when `fixed_frame_rate_flag == 1`, "convention" otherwise
+/// (owner-approved: both emit the same value).
+///
+/// H.265 (ITU-T H.265 §E.2.1 + hrd_parameters): see
+/// `transmux/docs/codec/vui-timing-frame-rate.md` §2.7.
+pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)> {
     match config {
         CodecConfig::Avc { config, .. } => {
             let sps = config.config.sps.first()?;
-            let info = crate::sps::decode_avc_sps(&sps.0).ok()?;
-            let num_units = info.num_units_in_tick?;
-            let time_scale = info.time_scale?;
+            let timing = crate::sps::decode_avc_vui_timing(&sps.0).ok()??;
+            let num_units = timing.num_units_in_tick;
+            let time_scale = timing.time_scale;
             if num_units == 0 {
                 return None;
             }
-            frame_rate_millihertz_from_timing(time_scale, num_units)
+            let value = frame_rate_millihertz_from_timing(time_scale, num_units)?;
+            let basis = if timing.fixed_frame_rate {
+                FrameRateBasis::Normative
+            } else {
+                FrameRateBasis::Convention
+            };
+            Some((value, basis))
+        }
+        CodecConfig::Hevc { config, .. } => {
+            let sps_nal = config
+                .config
+                .arrays
+                .iter()
+                .find(|a| a.nal_unit_type == 33)?
+                .nalus
+                .first()?
+                .0
+                .as_slice();
+            let timing = crate::sps::decode_hevc_vui_timing(sps_nal).ok()??;
+            hevc_frame_rate_from_timing(&timing)
         }
         _ => None,
     }
+}
+
+/// Nominal frame rate of a video track, in millihertz (1/1000 Hz), derived
+/// solely from the SPS VUI timing information.
+///
+/// Thin wrapper around [`nominal_frame_rate`] that discards the basis; kept
+/// for `hls-runtime` and other callers. Returns `None` whenever
+/// [`nominal_frame_rate`] returns `None`.
+pub fn nominal_frame_rate_millihertz(config: &CodecConfig) -> Option<u32> {
+    nominal_frame_rate(config).map(|(v, _)| v)
 }
 
 /// 16.16 fixed-point presentation size (the value written into `tkhd`).
@@ -1203,5 +1340,70 @@ mod frame_rate_tests {
         assert_eq!(frame_rate_millihertz_from_timing(1, 0), None);
         // round half up
         assert_eq!(frame_rate_millihertz_from_timing(1, 3), Some(167));
+    }
+}
+
+#[cfg(test)]
+mod hevc_rate_rules_tests {
+    use super::{FrameRateBasis, hevc_frame_rate_from_timing};
+    use crate::sps::HevcVuiTiming;
+
+    fn t(
+        num: u32,
+        scale: u32,
+        field_seq: bool,
+        ffip: bool,
+        ed: Option<u32>,
+    ) -> Option<(u32, FrameRateBasis)> {
+        hevc_frame_rate_from_timing(&HevcVuiTiming {
+            num_units_in_tick: num,
+            time_scale: scale,
+            field_seq,
+            frame_field_info_present: ffip,
+            hrd_fixed_pic_rate: ed,
+        })
+    }
+
+    const N: FrameRateBasis = FrameRateBasis::Normative;
+    const C: FrameRateBasis = FrameRateBasis::Convention;
+
+    #[test]
+    fn tier_a_uses_the_elemental_duration() {
+        assert_eq!(t(1, 25, false, false, Some(1)), Some((25_000, N)));
+        // elemental_duration_in_tc_minus1 = 1 => interval doubles => half the rate
+        assert_eq!(t(1, 25, false, false, Some(2)), Some((12_500, N)));
+        // 1001/60000 tick, 2 ticks per picture => 29.970
+        assert_eq!(t(1001, 60_000, false, false, Some(2)), Some((29_970, N)));
+    }
+
+    #[test]
+    fn tier_a_field_sequence_halves_the_picture_rate() {
+        assert_eq!(t(1, 50, true, true, Some(1)), Some((25_000, N)));
+        assert_eq!(t(1, 50, true, true, Some(2)), Some((12_500, N)));
+    }
+
+    #[test]
+    fn frame_field_info_without_field_seq_is_not_derivable() {
+        // pic_struct (picture timing SEI) decides the cadence: no value, with or without HRD.
+        assert_eq!(t(1, 25, false, true, Some(1)), None);
+        assert_eq!(t(1, 25, false, true, None), None);
+    }
+
+    #[test]
+    fn tier_b_is_the_clock_tick_convention_only_for_plain_frames() {
+        assert_eq!(t(1, 25, false, false, None), Some((25_000, C)));
+        assert_eq!(t(1001, 30_000, false, false, None), Some((29_970, C)));
+        // field sequence without HRD fixed rate: not derivable
+        assert_eq!(t(1, 25, true, true, None), None);
+        assert_eq!(t(1, 25, true, false, None), None);
+    }
+
+    #[test]
+    fn degenerate_inputs_give_none() {
+        assert_eq!(t(0, 25, false, false, None), None);
+        assert_eq!(t(0, 25, false, false, Some(1)), None);
+        assert_eq!(t(1, 25, false, false, Some(0)), None);
+        // 1000 * u32::MAX millihertz does not fit u32: overflow => None.
+        assert_eq!(t(1, u32::MAX, false, false, None), None);
     }
 }

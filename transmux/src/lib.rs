@@ -362,9 +362,10 @@ pub use nal::{
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use pipeline::{
-    CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, PresentationTime, Provenance, Sample,
-    SampleFlags, TrackSpec, build_init_segment, build_media_segment,
-    build_media_segment_with_events, nominal_frame_rate_millihertz, presentation_size,
+    CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, FrameRateBasis, PresentationTime,
+    Provenance, Sample, SampleFlags, TrackSpec, build_init_segment, build_media_segment,
+    build_media_segment_with_events, nominal_frame_rate, nominal_frame_rate_millihertz,
+    presentation_size,
 };
 pub use progressive::ProgressiveMux;
 pub use progressive_demux::ProgressiveDemux;
@@ -427,8 +428,8 @@ pub use smooth_parse::{
 };
 pub use splice::{SplicePoint, SpliceResult, concat, snap_to_preceding_sync, splice_insert};
 pub use sps::{
-    AvcSpsInfo, HevcSpsInfo, decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1,
-    rfc6381_mp4a,
+    AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVuiTiming, decode_avc_sps, decode_avc_vui_timing,
+    decode_hevc_sps, decode_hevc_vui_timing, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a,
 };
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
