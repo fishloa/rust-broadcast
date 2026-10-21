@@ -423,6 +423,40 @@ fn hevc_frame_rate_from_timing(
     }
 }
 
+/// Combine an SPS VUI timing (if any) with a VPS timing fallback, per
+/// `transmux/docs/codec/hevc-vps-timing.md` §3-§4. The SPS timing wins when
+/// present (the spec requires the two to be equal when both are present; the
+/// VPS is then ignored). Otherwise the VPS timing is used together with the
+/// SPS interlace facts (`field_seq` / `frame_field_info_present` from
+/// `decode_hevc_interlace_sps`, which already applies the §E.3.1 inferences),
+/// with `hrd_fixed_pic_rate = None` (VPS HRD is not used, so the result is at
+/// most tier B). Returns `None` when neither carries timing, or when the VPS
+/// timing is unusable (either value 0).
+///
+/// Applying the inheritance when the SPS has no VUI at all is an inference of
+/// this derivation (doc §4), since §3 phrases the inference in terms of "when
+/// not present" inside the VUI.
+fn hevc_timing_with_vps_fallback(
+    sps: Option<crate::sps::HevcVuiTiming>,
+    interlace: crate::sps::HevcInterlaceSps,
+    vps: Option<crate::sps::HevcVpsTiming>,
+) -> Option<crate::sps::HevcVuiTiming> {
+    if let Some(t) = sps {
+        return Some(t);
+    }
+    let v = vps?;
+    if v.num_units_in_tick == 0 || v.time_scale == 0 {
+        return None;
+    }
+    Some(crate::sps::HevcVuiTiming {
+        num_units_in_tick: v.num_units_in_tick,
+        time_scale: v.time_scale,
+        field_seq: interlace.field_seq,
+        frame_field_info_present: interlace.frame_field_info_present,
+        hrd_fixed_pic_rate: None,
+    })
+}
+
 /// Nominal frame rate of a video track, in millihertz (1/1000 Hz), plus the
 /// basis (normative vs. convention) on which it was derived.
 ///
@@ -461,7 +495,24 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                 .first()?
                 .0
                 .as_slice();
-            let timing = crate::sps::decode_hevc_vui_timing(sps_nal).ok()??;
+            let sps_timing = crate::sps::decode_hevc_vui_timing(sps_nal).ok().flatten();
+            let interlace = crate::sps::decode_hevc_interlace_sps(sps_nal)
+                .ok()
+                .unwrap_or_default();
+            // VPS fallback: only when the SPS carries no VUI timing. A missing
+            // VPS array means no fallback (None as before).
+            let vps_timing = config
+                .config
+                .arrays
+                .iter()
+                .find(|a| a.nal_unit_type == 32)
+                .and_then(|a| a.nalus.first())
+                .and_then(|n| {
+                    crate::sps::decode_hevc_vps_timing(n.0.as_slice())
+                        .ok()
+                        .flatten()
+                });
+            let timing = hevc_timing_with_vps_fallback(sps_timing, interlace, vps_timing)?;
             hevc_frame_rate_from_timing(&timing)
         }
         _ => None,
@@ -1345,8 +1396,8 @@ mod frame_rate_tests {
 
 #[cfg(test)]
 mod hevc_rate_rules_tests {
-    use super::{FrameRateBasis, hevc_frame_rate_from_timing};
-    use crate::sps::HevcVuiTiming;
+    use super::{FrameRateBasis, hevc_frame_rate_from_timing, hevc_timing_with_vps_fallback};
+    use crate::sps::{HevcInterlaceSps, HevcVpsTiming, HevcVuiTiming};
 
     fn t(
         num: u32,
@@ -1405,5 +1456,80 @@ mod hevc_rate_rules_tests {
         assert_eq!(t(1, 25, false, false, Some(0)), None);
         // 1000 * u32::MAX millihertz does not fit u32: overflow => None.
         assert_eq!(t(1, u32::MAX, false, false, None), None);
+    }
+
+    fn vps(num: u32, scale: u32) -> Option<HevcVpsTiming> {
+        Some(HevcVpsTiming {
+            num_units_in_tick: num,
+            time_scale: scale,
+        })
+    }
+
+    #[test]
+    fn vps_fallback_sps_wins() {
+        let sps = Some(HevcVuiTiming {
+            num_units_in_tick: 1,
+            time_scale: 25,
+            field_seq: false,
+            frame_field_info_present: false,
+            hrd_fixed_pic_rate: None,
+        });
+        let inter = HevcInterlaceSps::default();
+        let vps = vps(1001, 30000);
+        let t = hevc_timing_with_vps_fallback(sps, inter, vps).unwrap();
+        let rate = hevc_frame_rate_from_timing(&t).unwrap();
+        assert_eq!(rate, (25_000, FrameRateBasis::Convention));
+    }
+
+    #[test]
+    fn vps_fallback_vps_only_convention() {
+        let inter = HevcInterlaceSps::default();
+        let vps = vps(1001, 30000);
+        let t = hevc_timing_with_vps_fallback(None, inter, vps).unwrap();
+        let rate = hevc_frame_rate_from_timing(&t).unwrap();
+        assert_eq!(rate, (29_970, FrameRateBasis::Convention));
+    }
+
+    #[test]
+    fn vps_fallback_none_none() {
+        let inter = HevcInterlaceSps::default();
+        assert!(hevc_timing_with_vps_fallback(None, inter, None).is_none());
+    }
+
+    #[test]
+    fn vps_fallback_field_seq_none_rate() {
+        let inter = HevcInterlaceSps {
+            field_seq: true,
+            frame_field_info_present: false,
+        };
+        let vps = vps(1001, 30000);
+        let t = hevc_timing_with_vps_fallback(None, inter, vps).unwrap();
+        assert!(hevc_frame_rate_from_timing(&t).is_none());
+    }
+
+    #[test]
+    fn vps_fallback_frame_field_info_none_rate() {
+        let inter = HevcInterlaceSps {
+            field_seq: false,
+            frame_field_info_present: true,
+        };
+        let vps = vps(1001, 30000);
+        let t = hevc_timing_with_vps_fallback(None, inter, vps).unwrap();
+        assert!(hevc_frame_rate_from_timing(&t).is_none());
+    }
+
+    #[test]
+    fn vps_fallback_zero_units_none() {
+        let inter = HevcInterlaceSps::default();
+        let v0 = Some(HevcVpsTiming {
+            num_units_in_tick: 0,
+            time_scale: 30000,
+        });
+        assert!(hevc_timing_with_vps_fallback(None, inter, v0).is_none());
+        let v1 = Some(HevcVpsTiming {
+            num_units_in_tick: 1001,
+            time_scale: 0,
+        });
+        assert!(hevc_timing_with_vps_fallback(None, inter, v1).is_none());
     }
 }

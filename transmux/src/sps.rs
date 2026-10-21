@@ -13,6 +13,9 @@
 //!   convention) and the HEVC HRD fixed-pic-rate / ClockTick derivation are
 //!   transcribed in `transmux/docs/codec/vui-timing-frame-rate.md`.
 //! - **H.265 SPS + PTL**: ITU-T H.265 §7.3.2.2 (SPS) + §7.3.3 (profile_tier_level).
+//! - **H.265 VPS timing**: ITU-T H.265 §7.3.2.1 (VPS) — `vps_timing_info_present_flag`,
+//!   `vps_num_units_in_tick`, `vps_time_scale`; inheritance into the SPS VUI per
+//!   `transmux/docs/codec/hevc-vps-timing.md` (§3-§4).
 //! - **Coded dimensions**: see `fixtures/ts/CODEC-ORACLE.md`.
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
 //!   §7.4.1 NAL semantics (emulation_prevention_three_byte); H.265 §7.4.2.1.
@@ -802,6 +805,21 @@ pub struct HevcInterlaceSps {
     pub frame_field_info_present: bool,
 }
 
+/// VPS timing facts for an H.265 VPS (ITU-T H.265 §7.3.2.1), carrying
+/// `vps_num_units_in_tick` / `vps_time_scale` when `vps_timing_info_present_flag`
+/// is 1. Per `transmux/docs/codec/hevc-vps-timing.md` §3-§4, these are
+/// inherited by an SPS VUI that lacks its own timing (or by an SPS with no VUI
+/// at all — an inference of this derivation, see doc §4). The VPS contributes
+/// only these two values; VPS HRD is not used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HevcVpsTiming {
+    /// `vps_num_units_in_tick` from VPS `vps_timing_info`.
+    pub num_units_in_tick: u32,
+    /// `vps_time_scale` from VPS `vps_timing_info`.
+    pub time_scale: u32,
+}
+
 /// Decode only the VUI timing facts ([`HevcVuiTiming`]) from an H.265 SPS NAL
 /// unit (2-byte NAL header included).
 pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>> {
@@ -816,6 +834,84 @@ pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>>
         })),
         _ => Ok(None),
     }
+}
+
+/// Decode only the VPS timing facts ([`HevcVpsTiming`]) from an H.265 VPS NAL
+/// unit (2-byte NAL header included). Returns `Ok(None)` when
+/// `vps_timing_info_present_flag` is 0 or either value is 0. Returns `Err` on
+/// truncated / hostile input (never panics).
+pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
+    if vps_nal.len() < 2 {
+        return Err(Error::BufferTooShort {
+            need: 2,
+            have: vps_nal.len(),
+            what: "HEVC VPS header",
+        });
+    }
+    let mut r = BitReader::with_unescape(&vps_nal[2..], "HEVC VPS")?;
+
+    // vps_video_parameter_set_id u(4)
+    let _ = r.read_bits(4, "vps_video_parameter_set_id")?;
+    // vps_base_layer_internal_flag u(1)
+    let _ = r.read_flag("vps_base_layer_internal_flag")?;
+    // vps_base_layer_available_flag u(1)
+    let _ = r.read_flag("vps_base_layer_available_flag")?;
+    // vps_max_layers_minus1 u(6)
+    let _ = r.read_bits(6, "vps_max_layers_minus1")?;
+    // vps_max_sub_layers_minus1 u(3)
+    let vps_max_sub_layers_minus1 = r.read_bits(3, "vps_max_sub_layers_minus1")? as u8;
+    // vps_temporal_id_nesting_flag u(1)
+    let _ = r.read_flag("vps_temporal_id_nesting_flag")?;
+    // vps_reserved_0xffff_16bits u(16)
+    let _ = r.read_bits(16, "vps_reserved_0xffff_16bits")?;
+
+    // profile_tier_level(1, vps_max_sub_layers_minus1)
+    let _ = decode_ptl(&mut r, true, vps_max_sub_layers_minus1)?;
+
+    // vps_sub_layer_ordering_info_present_flag u(1)
+    let ordering_present = r.read_flag("vps_sub_layer_ordering_info_present_flag")?;
+    let start = if ordering_present {
+        0u8
+    } else {
+        vps_max_sub_layers_minus1
+    };
+    for _ in start..=vps_max_sub_layers_minus1 {
+        let _ = r.read_ue("vps_max_dec_pic_buffering_minus1")?;
+        let _ = r.read_ue("vps_max_num_reorder_pics")?;
+        let _ = r.read_ue("vps_max_latency_increase_plus1")?;
+    }
+
+    // vps_max_layer_id u(6)
+    let vps_max_layer_id = r.read_bits(6, "vps_max_layer_id")? as u8;
+    // vps_num_layer_sets_minus1 ue(v)
+    let vps_num_layer_sets_minus1 = r.read_ue("vps_num_layer_sets_minus1")?;
+    if vps_num_layer_sets_minus1 > 1023 {
+        return Err(Error::InvalidValue {
+            field: "vps_num_layer_sets_minus1",
+            value: vps_num_layer_sets_minus1,
+            reason: "out of range (HEVC VPS)",
+        });
+    }
+    for _i in 1..=vps_num_layer_sets_minus1 {
+        for _j in 0..=vps_max_layer_id {
+            let _ = r.read_flag("layer_id_included_flag")?;
+        }
+    }
+
+    // vps_timing_info_present_flag u(1)
+    let timing_present = r.read_flag("vps_timing_info_present_flag")?;
+    if !timing_present {
+        return Ok(None);
+    }
+    let num_units = r.read_bits(32, "vps_num_units_in_tick")? as u32;
+    let ts = r.read_bits(32, "vps_time_scale")? as u32;
+    if num_units == 0 || ts == 0 {
+        return Ok(None);
+    }
+    Ok(Some(HevcVpsTiming {
+        num_units_in_tick: num_units,
+        time_scale: ts,
+    }))
 }
 /// NAL unit (2-byte NAL header included).
 pub fn decode_hevc_interlace_sps(sps_bytes: &[u8]) -> Result<HevcInterlaceSps> {
@@ -3845,5 +3941,195 @@ mod tests {
             height: 240,
         };
         assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
+    }
+
+    #[test]
+    fn hevc_vps_timing_synthetic_valid() {
+        let mut nal = vec![0x40u8, 0x01]; // NAL header (nal_unit_type=32)
+        let mut s = BitSink::new();
+        // vps_video_parameter_set_id u(4)
+        s.bits(0, 4);
+        // vps_base_layer_internal_flag u(1)
+        s.bit(true);
+        // vps_base_layer_available_flag u(1)
+        s.bit(true);
+        // vps_max_layers_minus1 u(6)
+        s.bits(0, 6);
+        // vps_max_sub_layers_minus1 u(3)
+        s.bits(0, 3);
+        // vps_temporal_id_nesting_flag u(1)
+        s.bit(true);
+        // vps_reserved_0xffff_16bits u(16)
+        s.bits(0xffff, 16);
+        // profile_tier_level(1, 0): general_profile_space 2, tier 1, profile_idc 5,
+        // compat 32, constraint 48, level 8; no sub-layers.
+        s.bits(0, 2); // general_profile_space
+        s.bit(false); // general_tier_flag
+        s.bits(1, 5); // general_profile_idc
+        s.bits(0, 32); // general_profile_compatibility_flags
+        s.bits(0, 48); // general_constraint_indicator_flags
+        s.bits(0x21, 8); // general_level_idc
+        // vps_sub_layer_ordering_info_present_flag u(1)
+        s.bit(true);
+        // one sub-layer (i=0): three ue(v)
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        // vps_max_layer_id u(6)
+        s.bits(0, 6);
+        // vps_num_layer_sets_minus1 ue(v) = 0
+        s.ue(0);
+        // vps_timing_info_present_flag u(1)
+        s.bit(true);
+        // vps_num_units_in_tick u(32) = 7
+        s.bits(7, 32);
+        // vps_time_scale u(32) = 9
+        s.bits(9, 32);
+        nal.extend(s.finish());
+        let t = decode_hevc_vps_timing(&nal)
+            .expect("parse")
+            .expect("timing");
+        assert_eq!(t.num_units_in_tick, 7);
+        assert_eq!(t.time_scale, 9);
+    }
+
+    #[test]
+    fn hevc_vps_timing_synthetic_with_layer_set() {
+        let mut nal = vec![0x40u8, 0x01];
+        let mut s = BitSink::new();
+        s.bits(0, 4); // vps_video_parameter_set_id
+        s.bit(true); // base_layer_internal
+        s.bit(true); // base_layer_available
+        s.bits(0, 6); // max_layers_minus1
+        s.bits(0, 3); // max_sub_layers_minus1
+        s.bit(true); // temporal_id_nesting
+        s.bits(0xffff, 16); // reserved
+        // profile_tier_level(1, 0)
+        s.bits(0, 2);
+        s.bit(false);
+        s.bits(1, 5);
+        s.bits(0, 32);
+        s.bits(0, 48);
+        s.bits(0x21, 8);
+        s.bit(true); // ordering present
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        s.bits(0, 6); // vps_max_layer_id
+        s.ue(1); // vps_num_layer_sets_minus1 = 1
+        // layer_id_included_flag[1][0] = 1
+        s.bit(true);
+        s.bit(true); // timing present
+        s.bits(7, 32);
+        s.bits(9, 32);
+        nal.extend(s.finish());
+        let t = decode_hevc_vps_timing(&nal)
+            .expect("parse")
+            .expect("timing");
+        assert_eq!(t.num_units_in_tick, 7);
+        assert_eq!(t.time_scale, 9);
+    }
+
+    #[test]
+    fn hevc_vps_timing_synthetic_boundary_rejected() {
+        let mut nal = vec![0x40u8, 0x01];
+        let mut s = BitSink::new();
+        s.bits(0, 4); // vps_video_parameter_set_id
+        s.bit(true); // base_layer_internal
+        s.bit(true); // base_layer_available
+        s.bits(0, 6); // max_layers_minus1
+        s.bits(0, 3); // max_sub_layers_minus1
+        s.bit(true); // temporal_id_nesting
+        s.bits(0xffff, 16); // reserved
+        // profile_tier_level(1, 0)
+        s.bits(0, 2);
+        s.bit(false);
+        s.bits(1, 5);
+        s.bits(0, 32);
+        s.bits(0, 48);
+        s.bits(0x21, 8);
+        s.bit(true); // ordering present
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        s.bits(0, 6); // vps_max_layer_id
+        // vps_num_layer_sets_minus1 = 1024 -> out of range
+        s.ue(1024);
+        // timing flag not reached but fill something
+        s.bit(true);
+        s.bits(1, 32);
+        s.bits(1, 32);
+        nal.extend(s.finish());
+        let r = decode_hevc_vps_timing(&nal);
+        assert!(r.is_err(), "expected Err, got {:?}", r);
+    }
+
+    /// A synthetic VPS (profile_tier_level for one sub-layer, `vps_max_layer_id = 0`) with
+    /// `layer_sets_minus1` layer sets (one `layer_id_included_flag` bit each) followed by
+    /// `vps_timing_info_present_flag = 1` and the given timing pair — enough data that only the
+    /// value being tested (not running out of bits) decides the outcome.
+    fn synth_vps(layer_sets_minus1: u32, num_units: u32, time_scale: u32) -> Vec<u8> {
+        let mut nal = vec![0x40u8, 0x01];
+        let mut s = BitSink::new();
+        s.bits(0, 4);
+        s.bit(true);
+        s.bit(true);
+        s.bits(0, 6);
+        s.bits(0, 3);
+        s.bit(true);
+        s.bits(0xffff, 16);
+        s.bits(0, 2);
+        s.bit(false);
+        s.bits(1, 5);
+        s.bits(0, 32);
+        s.bits(0, 48);
+        s.bits(0x21, 8);
+        s.bit(true);
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        s.bits(0, 6); // vps_max_layer_id
+        s.ue(u64::from(layer_sets_minus1));
+        for _ in 0..layer_sets_minus1 {
+            s.bit(false); // layer_id_included_flag[i][0]
+        }
+        s.bit(true); // vps_timing_info_present_flag
+        s.bits(u64::from(num_units), 32);
+        s.bits(u64::from(time_scale), 32);
+        nal.extend(s.finish());
+        nal
+    }
+
+    #[test]
+    fn hevc_vps_layer_set_bound_is_exactly_1023() {
+        // Semantics: "The value of vps_num_layer_sets_minus1 shall be in the range of 0 to 1 023,
+        // inclusive" (docs/codec/hevc-vps-timing.md §2): 1023 parses, 1024 is rejected, with full
+        // data present in both so only the bound decides.
+        let ok = decode_hevc_vps_timing(&synth_vps(1023, 7, 9)).expect("1023 is in range");
+        let t = ok.expect("timing present");
+        assert_eq!((t.num_units_in_tick, t.time_scale), (7, 9));
+        assert!(
+            decode_hevc_vps_timing(&synth_vps(1024, 7, 9)).is_err(),
+            "1024 layer sets is out of range"
+        );
+    }
+
+    #[test]
+    fn hevc_vps_zero_timing_values_are_not_timing() {
+        // vps_num_units_in_tick and vps_time_scale "shall be greater than 0": a VPS signalling 0 yields
+        // no usable timing rather than a zero-valued one.
+        assert_eq!(
+            decode_hevc_vps_timing(&synth_vps(0, 0, 9)).expect("parse"),
+            None
+        );
+        assert_eq!(
+            decode_hevc_vps_timing(&synth_vps(0, 7, 0)).expect("parse"),
+            None
+        );
+        assert!(
+            decode_hevc_vps_timing(&synth_vps(0, 7, 9))
+                .expect("parse")
+                .is_some()
+        );
     }
 }
