@@ -38,7 +38,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use bytes::Bytes;
@@ -126,6 +126,10 @@ impl Drop for BlockingRequestGuard {
 /// `add_response_headers` middleware (wrapping the *merged* per-stream
 /// router, not this one alone), so every output's responses get the same
 /// policy uniformly.
+/// HTTP range requests (RFC 9110 section 13.1.5, 14.1-14.4, 15.3.7,
+/// 15.5.17) are served through the shared helper in `crate::http`
+/// (`range_response`); the normative transcription is
+/// `docs/hls-iframe/http-range-requests.md`.
 pub(crate) fn router(route: Arc<RouteHandle>) -> Router {
     Router::new()
         .route("/{file}", get(dynamic_file).options(cors_preflight))
@@ -156,7 +160,11 @@ pub(crate) async fn cors_preflight() -> StatusCode {
 /// is [`hls_runtime::server::HlsOrigin::resolve`]'s job; this handler
 /// only drives the wait ([`http::resolve_blocking`]) and maps the outcome to
 /// an HTTP response ([`http::into_response`]).
-async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<String>) -> Response {
+async fn dynamic_file(
+    State(route): State<Arc<RouteHandle>>,
+    headers: HeaderMap,
+    Path(file): Path<String>,
+) -> Response {
     let serving = match http::resolve_route_program(&route) {
         Ok(serving) => serving,
         Err(resp) => return *resp,
@@ -173,7 +181,7 @@ async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<St
     .await;
     match http::into_response(resp, StatusCode::NOT_FOUND, |body| {
         let body = inject_segment_events(&trunk, &file, body);
-        resource_body_response(body, route.container())
+        resource_body_response(&headers, body, route.container())
     }) {
         // A resource that resolved NotFound might still be a whole-segment
         // filename the chunked-transfer path (issue #721) can serve while
@@ -191,15 +199,14 @@ async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<St
 }
 
 fn resource_body_response(
+    headers: &HeaderMap,
     body: hls_runtime::server::HlsBody,
     container: hls_runtime::server::Container,
 ) -> Response {
     match body {
-        hls_runtime::server::HlsBody::Resource(bytes) => (
-            [(header::CONTENT_TYPE, resource_content_type(container))],
-            bytes,
-        )
-            .into_response(),
+        hls_runtime::server::HlsBody::Resource(bytes) => {
+            http::range_response(headers, bytes, resource_content_type(container))
+        }
         // A resource request never resolves to a rendered playlist body --
         // defensive, not reachable via `dynamic_file`'s own `HlsRequest::Resource`.
         hls_runtime::server::HlsBody::Playlist(_) => StatusCode::NOT_FOUND.into_response(),
@@ -553,7 +560,12 @@ mod tests {
     #[tokio::test]
     async fn dynamic_file_init_present() {
         let route = make_route();
-        let resp = dynamic_file(State(route), Path("init-1.mp4".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("init-1.mp4".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_bytes(resp).await, vec![0xAA; 8]);
     }
@@ -561,12 +573,22 @@ mod tests {
     #[tokio::test]
     async fn dynamic_file_segment_present_and_absent() {
         let route = make_route();
-        let ok = dynamic_file(State(route.clone()), Path("seg-1-1.m4s".to_string())).await;
+        let ok = dynamic_file(
+            State(route.clone()),
+            HeaderMap::new(),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
         assert_eq!(ok.status(), StatusCode::OK);
         assert_eq!(content_type(&ok), "video/mp4");
         assert_eq!(body_bytes(ok).await, vec![0x21; 8]);
 
-        let missing = dynamic_file(State(route), Path("seg-1-99.m4s".to_string())).await;
+        let missing = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("seg-1-99.m4s".to_string()),
+        )
+        .await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
@@ -582,7 +604,12 @@ mod tests {
             .add_segment(crate::route::SPTS_PROGRAM_ID, ts_seg(1))
             .expect("add_segment");
 
-        let resp = dynamic_file(State(route), Path("seg-1-1.ts".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("seg-1-1.ts".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             content_type(&resp),
@@ -615,7 +642,12 @@ mod tests {
     #[tokio::test]
     async fn dynamic_file_part_present() {
         let route = make_route();
-        let resp = dynamic_file(State(route), Path("part-1-2.0.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("part-1-2.0.m4s".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         // W12: an fMP4 part is served as `video/mp4` (the fMP4 container),
         // not the TS type.
@@ -633,7 +665,12 @@ mod tests {
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
-        let resp = dynamic_file(State(route), Path("part-1-1.0.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("part-1-1.0.m4s".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             content_type(&resp),
@@ -654,7 +691,12 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             route_for_task.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 2));
         });
-        let resp = dynamic_file(State(route), Path("part-1-2.2.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("part-1-2.2.m4s".to_string()),
+        )
+        .await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,
@@ -677,7 +719,12 @@ mod tests {
                 .expect("add_segment"); // closes segment 2
         });
         let started = std::time::Instant::now();
-        let resp = dynamic_file(State(route), Path("part-1-2.9.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("part-1-2.9.m4s".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(
             started.elapsed() < BLOCKING_RELOAD_TIMEOUT,
@@ -699,7 +746,12 @@ mod tests {
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2))
             .expect("add_segment"); // close segment 2
-        let resp = dynamic_file(State(route), Path("part-1-2.1.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("part-1-2.1.m4s".to_string()),
+        )
+        .await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,
@@ -714,14 +766,24 @@ mod tests {
         // request for one of its parts 404s without blocking (it will never
         // be produced and isn't individually addressable anymore).
         let route = make_route();
-        let resp = dynamic_file(State(route), Path("part-1-1.0.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("part-1-1.0.m4s".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn dynamic_file_unmatched_filename_404() {
         let route = make_route();
-        let resp = dynamic_file(State(route), Path("not-a-thing.txt".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("not-a-thing.txt".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -751,7 +813,12 @@ mod tests {
                 .expect("add_segment");
         });
 
-        let resp = dynamic_file(State(route), Path("seg-1-2.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("seg-1-2.m4s".to_string()),
+        )
+        .await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,
@@ -788,7 +855,12 @@ mod tests {
         });
 
         let started = std::time::Instant::now();
-        let resp = dynamic_file(State(route.clone()), Path("seg-1-3.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route.clone()),
+            HeaderMap::new(),
+            Path("seg-1-3.m4s".to_string()),
+        )
+        .await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,
@@ -814,7 +886,12 @@ mod tests {
         // near-future segment.
         let route = make_route();
         let started = std::time::Instant::now();
-        let resp = dynamic_file(State(route), Path("seg-1-99.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("seg-1-99.m4s".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(
             started.elapsed() < std::time::Duration::from_millis(500),
@@ -831,7 +908,12 @@ mod tests {
         // ([0x21; 8] is `seg`'s literal whole-segment fixture bytes, not a
         // concatenation of any parts).
         let route = make_route();
-        let resp = dynamic_file(State(route), Path("seg-1-1.m4s".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_bytes(resp).await, vec![0x21; 8]);
     }
@@ -844,7 +926,12 @@ mod tests {
     #[tokio::test]
     async fn dynamic_file_not_yet_announced_is_503_not_404() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
-        let resp = dynamic_file(State(route), Path("init-1.mp4".to_string())).await;
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("init-1.mp4".to_string()),
+        )
+        .await;
         assert_eq!(
             resp.status(),
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1036,5 +1123,371 @@ mod tests {
             panic!("segment expected Resource body");
         };
         assert_eq!(seg_bytes.len(), 12);
+    }
+
+    fn range_route() -> Arc<RouteHandle> {
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
+        route
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                SegmentInfo {
+                    bytes: (0..100u8).collect(),
+                    duration: 4.0,
+                    segment_seq: 1,
+                    part_count: 0,
+                },
+            )
+            .expect("add_segment");
+        route
+    }
+
+    fn hdr(name: &str, val: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(
+            axum::http::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            axum::http::HeaderValue::from_str(val).unwrap(),
+        );
+        h
+    }
+
+    #[tokio::test]
+    async fn range_no_range_returns_200_full_with_accept_ranges() {
+        let route = range_route();
+        let resp = dynamic_file(
+            State(route),
+            HeaderMap::new(),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ar = resp
+            .headers()
+            .get(axum::http::header::ACCEPT_RANGES)
+            .unwrap();
+        assert_eq!(ar, "bytes");
+        let body = body_bytes(resp).await;
+        assert_eq!(body.len(), 100);
+        assert_eq!(body, (0..100u8).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn range_single_returns_206_exact() {
+        let route = range_route();
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=0-99"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        let cr = resp
+            .headers()
+            .get(axum::http::header::CONTENT_RANGE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(cr, "bytes 0-99/100");
+        let cl = resp
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(cl, "100");
+        let ar = resp
+            .headers()
+            .get(axum::http::header::ACCEPT_RANGES)
+            .unwrap();
+        assert_eq!(ar, "bytes");
+        let body = body_bytes(resp).await;
+        assert_eq!(body, (0..100u8).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn range_middle_suffix_openended() {
+        let route = range_route();
+        // middle
+        let resp = dynamic_file(
+            State(route.clone()),
+            hdr("range", "bytes=10-19"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes 10-19/100"
+        );
+        assert_eq!(body_bytes(resp).await, (10..20u8).collect::<Vec<_>>());
+
+        // suffix
+        let resp = dynamic_file(
+            State(route.clone()),
+            hdr("range", "bytes=-50"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes 50-99/100"
+        );
+        assert_eq!(body_bytes(resp).await, (50..100u8).collect::<Vec<_>>());
+
+        // open-ended
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=90-"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes 90-99/100"
+        );
+        assert_eq!(body_bytes(resp).await, (90..100u8).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn range_unsatisfiable_416() {
+        let route = range_route();
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=100-"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes */100"
+        );
+    }
+
+    #[tokio::test]
+    async fn range_one_byte_and_clamped() {
+        let route = range_route();
+        // one byte
+        let resp = dynamic_file(
+            State(route.clone()),
+            hdr("range", "bytes=0-0"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes 0-0/100"
+        );
+        assert_eq!(body_bytes(resp).await, vec![0u8]);
+
+        // clamped end
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=95-1000"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes 95-99/100"
+        );
+        assert_eq!(body_bytes(resp).await, (95..100u8).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn range_multi_returns_200_full() {
+        let route = range_route();
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=0-9,20-29"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_bytes(resp).await;
+        assert_eq!(body.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn range_invalid_unit_or_garbage_returns_200_full() {
+        let route = range_route();
+        // non-bytes unit
+        let resp = dynamic_file(
+            State(route.clone()),
+            hdr("range", "items=0-9"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_bytes(resp).await.len(), 100);
+
+        // garbage
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=abc"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_bytes(resp).await.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn range_if_range_returns_200_full() {
+        let route = range_route();
+        let mut h = hdr("range", "bytes=0-9");
+        h.insert(
+            axum::http::header::IF_RANGE,
+            axum::http::HeaderValue::from_static("\"x\""),
+        );
+        let resp = dynamic_file(State(route), h, Path("seg-1-1.m4s".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_bytes(resp).await.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn range_404_resource_with_range_still_404() {
+        let route = range_route();
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=0-9"),
+            Path("seg-1-99.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn range_applies_to_spliced_bytes() {
+        // Build a route whose segment has events so inject_segment_events changes bytes.
+        // We test the helper directly with spliced bytes.
+        let trunk = event_trunk();
+        let styp: [u8; 12] = [0, 0, 0, 12, b's', b't', b'y', b'p', b'm', b's', b'd', b'h'];
+        let mut seg_bytes = Vec::new();
+        seg_bytes.extend_from_slice(&styp);
+        seg_bytes.extend_from_slice(b"moof_placeholder");
+        let body = HlsBody::Resource(Bytes::from(seg_bytes.clone()));
+        let spliced = inject_segment_events(&trunk, "seg-1-1.m4s", body);
+        let HlsBody::Resource(spliced_bytes) = spliced else {
+            panic!("expected resource");
+        };
+        assert!(spliced_bytes.len() > seg_bytes.len());
+        // Range into spliced bytes
+        let h = hdr("range", "bytes=0-11");
+        let resp = http::range_response(&h, spliced_bytes.clone(), "video/mp4");
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        let cr = resp
+            .headers()
+            .get(axum::http::header::CONTENT_RANGE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(cr, format!("bytes 0-11/{}", spliced_bytes.len()));
+        assert_eq!(body_bytes(resp).await, spliced_bytes[..12].to_vec());
+    }
+
+    #[tokio::test]
+    async fn range_dynamic_file_applies_to_spliced_bytes() {
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let trunk = route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
+        let styp: [u8; 12] = [0, 0, 0, 12, b's', b't', b'y', b'p', b'm', b's', b'd', b'h'];
+        let mut seg_bytes = Vec::new();
+        seg_bytes.extend_from_slice(&styp);
+        seg_bytes.extend_from_slice(b"moof_placeholder");
+
+        // publish a SCTE-35 event into segment 1 so inject_segment_events changes bytes
+        let writer = trunk.writer().expect("writer");
+        let seg_writer = trunk.segment_writer().expect("segment writer");
+        seg_writer.set_time_anchor(TimeAnchor {
+            pts_90k: 0,
+            utc_epoch_ms: 1_000_000_000_000,
+        });
+        let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
+        let splice_bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let mut timeline = timed_metadata::Timeline::new();
+        let ev = timeline.push_scte35(&splice_bytes).unwrap();
+        writer.publish_event(
+            ev.clone(),
+            EventAnchor::Media(ev.at.unwrap_or(MediaTime(0))),
+        );
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(1), MediaTime(0));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(2), MediaTime(4_000_000));
+
+        let duration = std::time::Duration::from_secs(4);
+        seg_writer
+            .try_publish_segment(media_plane::trunk::SegmentEntry::new(
+                Bytes::from(seg_bytes.clone()),
+                media_plane::ids::SegmentSeq::new(1),
+                duration,
+                broadcast_common::Timestamp::from_nanos(0),
+                transmux::SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish segment");
+
+        // compute spliced bytes
+        let body = HlsBody::Resource(Bytes::from(seg_bytes.clone()));
+        let spliced = inject_segment_events(&trunk, "seg-1-1.m4s", body);
+        let HlsBody::Resource(spliced_bytes) = spliced else {
+            panic!("expected resource");
+        };
+
+        // Range into the emsg region (byte 12) must reflect spliced bytes, not original.
+        let resp = dynamic_file(
+            State(route),
+            hdr("range", "bytes=12-12"),
+            Path("seg-1-1.m4s".to_string()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        let cr = resp
+            .headers()
+            .get(axum::http::header::CONTENT_RANGE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(cr, format!("bytes 12-12/{}", spliced_bytes.len()));
+        let body = body_bytes(resp).await;
+        assert_eq!(body, vec![spliced_bytes[12]]);
+        // sanity: differs from the unspliced byte at offset 12 ('m' of moof)
+        assert_ne!(spliced_bytes[12], b'm');
     }
 }
