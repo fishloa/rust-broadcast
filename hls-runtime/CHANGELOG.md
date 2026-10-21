@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `HlsOrigin`'s master playlist now carries `FRAME-RATE` (Apple HLS Authoring Specification item 9.15; RFC 8216bis §4.4.6.2) as the maximum nominal frame rate across all video tracks, derived solely from an H.264 SPS's VUI `timing_info` via `transmux::nominal_frame_rate_millihertz`. HEVC and codecs without VUI timing omit it (never invented); audio-only origins omit it; a new init clears it.
+
 - `HlsOrigin` now derives and advertises `VIDEO-RANGE` (`HLG`/`PQ` only; SDR/unknown omitted) in the master playlist from the first video track's display colour description (RFC 8216bis §4.4.6.2).
 - `HlsOrigin` now derives and advertises `RESOLUTION` in the master playlist from the first video track (AVC/HEVC) display geometry: square-pixel presentation size (cropped output, rescaled by SAR), via `transmux::presentation_size`. Audio-only origins omit it.
 - `HlsOrigin`'s master playlist now carries `AVERAGE-BANDWIDTH` (Apple HLS Authoring Specification item 9.14; RFC 8216bis §4.4.6.2): the mean segment bitrate over every segment the origin has drained, `round(sum(bytes) * 8 / sum(seconds))`, surviving playlist-window eviction. It is clamped to `BANDWIDTH` (a mean can never exceed the peak) and omitted, never invented, until a segment with a measurable duration has closed. Requires `broadcast-hls`'s new typed `Variant::average_bandwidth`.

@@ -3117,6 +3117,47 @@ impl VideoRange {
 
 broadcast_common::impl_spec_display!(VideoRange);
 
+/// `FRAME-RATE` for an `#EXT-X-STREAM-INF` — Apple HLS authoring
+/// specification item 9.15 (MUST for every variant that includes video) and
+/// RFC 8216bis §4.4.6.2 (`decimal-floating-point`).
+///
+/// Stored as an exact integer number of millihertz (1/1000 Hz), so the wire
+/// form `FRAME-RATE=<int>.<3 digits>` (e.g. `25.000`, `29.970`,
+/// `59.940`) is rendered and parsed without any floating-point rounding.
+/// Construct with [`FrameRate::from_millihertz`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameRate(u32);
+
+impl FrameRate {
+    /// Build a [`FrameRate`] from an exact millihertz value.
+    #[must_use]
+    pub fn from_millihertz(millihertz: u32) -> Self {
+        Self(millihertz)
+    }
+
+    /// The frame rate in millihertz (1/1000 Hz).
+    #[must_use]
+    pub fn millihertz(self) -> u32 {
+        self.0
+    }
+}
+
+impl core::fmt::Display for FrameRate {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let whole = self.0 / 1000;
+        let frac = self.0 % 1000;
+        write!(f, "{whole}.{frac:03}")
+    }
+}
+
+impl core::str::FromStr for FrameRate {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        parse_frame_rate(s, 0, s)
+    }
+}
+
 /// A variant stream entry in a master playlist.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Variant {
@@ -3129,6 +3170,15 @@ pub struct Variant {
     /// attribute (parse and render) and leaves that obligation to the
     /// producer.
     pub average_bandwidth: Option<u32>,
+    /// `FRAME-RATE` as an exact millihertz value (Apple HLS authoring
+    /// specification item 9.15 — MUST for every variant that includes
+    /// video), or `None` when the `#EXT-X-STREAM-INF` carried no
+    /// `FRAME-RATE` attribute. This crate models the attribute (parse and
+    /// render) and leaves the obligation to the producer; it is emitted
+    /// only when the stream's H.264 SPS carries VUI `timing_info`
+    /// (HEVC and codecs without VUI timing omit it, never inventing a
+    /// value).
+    pub frame_rate: Option<FrameRate>,
     /// `CODECS` — the quoted-string value of the `CODECS` attribute (e.g.
     /// `"avc1.64001e,mp4a.40.2"`), or `None` when the `#EXT-X-STREAM-INF`
     /// carried no `CODECS` attribute at all (audit BH-W6, issue #1111: it
@@ -3220,13 +3270,15 @@ pub struct MasterPlaylist {
 }
 
 /// A parsed but not-yet-closed `#EXT-X-STREAM-INF` — `(bandwidth,
-/// average_bandwidth, codecs, resolution, extra attributes)` — awaiting the
-/// URI line that turns it into a [`Variant`]. `codecs` is `None` when the tag
-/// carried no `CODECS` attribute (audit BH-W6, issue #1111);
-/// `average_bandwidth` is `None` when it carried no `AVERAGE-BANDWIDTH`.
+/// average_bandwidth, frame_rate, codecs, resolution, extra attributes)` —
+/// awaiting the URI line that turns it into a [`Variant`]. `codecs` is `None`
+/// when the tag carried no `CODECS` attribute (audit BH-W6, issue #1111);
+/// `average_bandwidth` is `None` when it carried no `AVERAGE-BANDWIDTH`;
+/// `frame_rate` is `None` when it carried no `FRAME-RATE`.
 type PendingStreamInf = (
     u32,
     Option<u32>,
+    Option<FrameRate>,
     Option<String>,
     Option<(u32, u32)>,
     Vec<(String, AttrValue)>,
@@ -3310,6 +3362,12 @@ impl MasterPlaylist {
             }
             if let Some((w, h)) = var.resolution {
                 s.push_str(&format!(",RESOLUTION={w}x{h}"));
+            }
+            // Apple HLS authoring specification item 9.15 / RFC 8216bis
+            // §4.4.6.2: FRAME-RATE renders after RESOLUTION as an exact
+            // 3-decimal millihertz value.
+            if let Some(frame_rate) = var.frame_rate {
+                s.push_str(&format!(",FRAME-RATE={frame_rate}"));
             }
             render_attribute_list(&mut s, &var.extra_attrs);
             s.push('\n');
@@ -3435,6 +3493,12 @@ impl MasterPlaylist {
                     Some(v) => Some(parse_decimal_int(v, line_no, line, "AVERAGE-BANDWIDTH")?),
                     None => None,
                 };
+                // RFC 8216bis §4.4.6.2: FRAME-RATE is a decimal-floating-point
+                // value, rounded to millihertz (3 decimals) on parse.
+                let frame_rate = match attrs.get("FRAME-RATE") {
+                    Some(v) => Some(parse_frame_rate(v, line_no, line)?),
+                    None => None,
+                };
                 // Audit BH-W6 (issue #1111): `CODECS` is optional on the tag
                 // line, so an absent attribute stays `None` (rendering
                 // nothing) instead of becoming an empty, invalid `CODECS=""`.
@@ -3445,7 +3509,13 @@ impl MasterPlaylist {
                 };
                 let extra_attrs = filter_extra_attrs(
                     &attrs,
-                    &["BANDWIDTH", "AVERAGE-BANDWIDTH", "CODECS", "RESOLUTION"],
+                    &[
+                        "BANDWIDTH",
+                        "AVERAGE-BANDWIDTH",
+                        "CODECS",
+                        "RESOLUTION",
+                        "FRAME-RATE",
+                    ],
                     &quoted,
                 )?;
                 // Audit BH-W9 (issue #1111): `#EXT-X-STREAM-INF` MUST be
@@ -3468,6 +3538,7 @@ impl MasterPlaylist {
                 pending_stream_inf = Some((
                     bandwidth,
                     average_bandwidth,
+                    frame_rate,
                     codecs,
                     resolution,
                     extra_attrs,
@@ -3539,7 +3610,7 @@ impl MasterPlaylist {
             } else if line.starts_with('#') {
                 // RFC 8216 §4.1: a non-"#EXT" '#' line is a comment — ignore.
             } else {
-                let (bandwidth, average_bandwidth, codecs, resolution, extra_attrs) =
+                let (bandwidth, average_bandwidth, frame_rate, codecs, resolution, extra_attrs) =
                     pending_stream_inf.take().ok_or_else(|| Error::HlsParse {
                         line_no,
                         line: line.to_string(),
@@ -3548,6 +3619,7 @@ impl MasterPlaylist {
                 variants.push(Variant {
                     bandwidth,
                     average_bandwidth,
+                    frame_rate,
                     codecs,
                     resolution,
                     uri: line.to_string(),
@@ -3680,6 +3752,92 @@ impl MasterPlaylist {
     fn effective_version(&self) -> Option<u8> {
         effective_version(self.version, self.computed_version())
     }
+}
+
+/// Parse a `FRAME-RATE=<decimal-floating-point>` attribute value into an exact
+/// millihertz [`FrameRate`], rounding half-up to three decimal places without
+/// any floating-point arithmetic.
+fn parse_frame_rate(v: &str, line_no: usize, line: &str) -> Result<FrameRate> {
+    let t = v.trim();
+    if !is_valid_decimal_token(t, false) {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("FRAME-RATE value {v:?} is not a valid decimal number"),
+        });
+    }
+    let (int_part, frac_part) = match t.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (t, None),
+    };
+    let int_value: u128 = int_part.parse().map_err(|_| Error::HlsParse {
+        line_no,
+        line: line.to_string(),
+        reason: format!("FRAME-RATE value {v:?} is not a valid number"),
+    })?;
+    let (frac_value, frac_len): (u128, usize) = match frac_part {
+        Some(f) => (
+            f.parse().map_err(|_| Error::HlsParse {
+                line_no,
+                line: line.to_string(),
+                reason: format!("FRAME-RATE value {v:?} is not a valid number"),
+            })?,
+            f.len(),
+        ),
+        None => (0u128, 0usize),
+    };
+
+    // millihertz = round_half_up(1000 * (int + frac / 10^frac_len)).
+    // Computed entirely in integer arithmetic.
+    let scale: u128 = 10u128
+        .checked_pow(u32::try_from(frac_len).map_err(|_| Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("FRAME-RATE value {v:?} has too many fractional digits"),
+        })?)
+        .ok_or_else(|| Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("FRAME-RATE value {v:?} has too many fractional digits"),
+        })?;
+    // 1000 * int_part, checked.
+    let int_mh = int_value.checked_mul(1000).ok_or_else(|| Error::HlsParse {
+        line_no,
+        line: line.to_string(),
+        reason: format!("FRAME-RATE value {v:?} is out of range"),
+    })?;
+    // frac contribution: round_half_up(frac_value * 1000 / scale).
+    let frac_scaled = frac_value
+        .checked_mul(1000)
+        .ok_or_else(|| Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("FRAME-RATE value {v:?} is out of range"),
+        })?;
+    let frac_mh = frac_scaled
+        .checked_add(scale / 2)
+        .ok_or_else(|| Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("FRAME-RATE value {v:?} is out of range"),
+        })?
+        .checked_div(scale)
+        .ok_or_else(|| Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("FRAME-RATE value {v:?} is not a valid number"),
+        })?;
+    let total = int_mh.checked_add(frac_mh).ok_or_else(|| Error::HlsParse {
+        line_no,
+        line: line.to_string(),
+        reason: format!("FRAME-RATE value {v:?} is out of range"),
+    })?;
+    let millihertz = u32::try_from(total).map_err(|_| Error::HlsParse {
+        line_no,
+        line: line.to_string(),
+        reason: format!("FRAME-RATE value {v:?} does not fit in u32 millihertz"),
+    })?;
+    Ok(FrameRate::from_millihertz(millihertz))
 }
 
 /// Parse a `RESOLUTION=<w>x<h>` attribute value.
@@ -3842,6 +4000,7 @@ mod tests {
                 Variant {
                     bandwidth: 300_000,
                     average_bandwidth: None,
+                    frame_rate: None,
                     codecs: Some("avc1.64001e,mp4a.40.2".into()),
                     resolution: Some((640, 360)),
                     uri: "v300/index.m3u8".into(),
@@ -3850,6 +4009,7 @@ mod tests {
                 Variant {
                     bandwidth: 800_000,
                     average_bandwidth: None,
+                    frame_rate: None,
                     codecs: Some("avc1.640028,mp4a.40.2".into()),
                     resolution: Some((1280, 720)),
                     uri: "v800/index.m3u8".into(),
@@ -3875,6 +4035,7 @@ mod tests {
             variants: vec![Variant {
                 bandwidth: 1_000_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.640028".into()),
                 resolution: None,
                 uri: "v1k/index.m3u8".into(),
@@ -3897,6 +4058,7 @@ mod tests {
             variants: vec![Variant {
                 bandwidth: 2_523_597,
                 average_bandwidth: Some(2_190_673),
+                frame_rate: None,
                 codecs: Some("avc1.640020,mp4a.40.2".into()),
                 uri: "v540/index.m3u8".into(),
                 ..Default::default()
@@ -3924,6 +4086,7 @@ mod tests {
             variants: vec![Variant {
                 bandwidth: 800_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.640028,mp4a.40.2".into()),
                 uri: "v800/index.m3u8".into(),
                 ..Default::default()
@@ -3949,6 +4112,99 @@ mod tests {
                 assert!(reason.contains("AVERAGE-BANDWIDTH"), "reason: {reason}");
             }
             other => panic!("expected HlsParse, got {other:?}"),
+        }
+    }
+
+    /// RFC 8216bis §4.4.6.2 / Apple 9.15: `FRAME-RATE` renders after
+    /// `RESOLUTION` as an exact 3-decimal millihertz value and round-trips.
+    #[test]
+    fn master_playlist_renders_frame_rate_after_resolution() {
+        let pl = MasterPlaylist {
+            variants: vec![Variant {
+                bandwidth: 1_000_000,
+                average_bandwidth: None,
+                codecs: Some("avc1.640028".into()),
+                resolution: Some((1280, 720)),
+                frame_rate: Some(FrameRate::from_millihertz(29_970)),
+                uri: "v/index.m3u8".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let out = pl.to_m3u8().unwrap();
+        assert!(
+            out.contains("RESOLUTION=1280x720,FRAME-RATE=29.970"),
+            "out: {out}"
+        );
+        let reparsed = MasterPlaylist::parse(&out).unwrap();
+        assert_eq!(reparsed.variants, pl.variants);
+        assert_eq!(
+            reparsed.variants[0].frame_rate,
+            Some(FrameRate::from_millihertz(29_970))
+        );
+    }
+
+    /// A `Variant` with no `FRAME-RATE` renders no attribute and round-trips
+    /// as `None`.
+    #[test]
+    fn master_playlist_omits_absent_frame_rate_and_round_trips_none() {
+        let pl = MasterPlaylist {
+            variants: vec![Variant {
+                bandwidth: 800_000,
+                average_bandwidth: None,
+                codecs: Some("avc1.640028".into()),
+                resolution: None,
+                frame_rate: None,
+                uri: "v/index.m3u8".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let out = pl.to_m3u8().unwrap();
+        assert!(!out.contains("FRAME-RATE"), "out: {out}");
+        let reparsed = MasterPlaylist::parse(&out).unwrap();
+        assert_eq!(reparsed.variants[0].frame_rate, None);
+    }
+
+    /// Parse `FRAME-RATE` decimal-floating-point values, rounding half-up to
+    /// three decimals into millihertz.
+    #[test]
+    fn frame_rate_parses_various_forms() {
+        for (text, expected) in [
+            ("30", 30_000u32),
+            ("29.97", 29_970u32),
+            ("29.9704", 29_970u32),
+        ] {
+            let src = format!(
+                "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000,FRAME-RATE={text}\nv/index.m3u8\n"
+            );
+            let parsed = MasterPlaylist::parse(&src).unwrap();
+            assert_eq!(
+                parsed.variants[0].frame_rate,
+                Some(FrameRate::from_millihertz(expected)),
+                "text={text}"
+            );
+        }
+    }
+
+    /// `FRAME-RATE` parse rejects empty / negative / exponent / non-numeric
+    /// values with a structured `HlsParse` error naming the attribute.
+    #[test]
+    fn frame_rate_rejects_invalid_values() {
+        for value in ["", "-1", "1e3", "abc", "1.2.3"] {
+            let src = format!(
+                "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000,FRAME-RATE={value}\nv/index.m3u8\n"
+            );
+            let err = MasterPlaylist::parse(&src).unwrap_err();
+            match err {
+                Error::HlsParse { reason, .. } => {
+                    assert!(
+                        reason.contains("FRAME-RATE"),
+                        "value={value:?} reason={reason}"
+                    );
+                }
+                other => panic!("value={value:?} expected HlsParse, got {other:?}"),
+            }
         }
     }
 
@@ -4868,6 +5124,7 @@ s0.m4s\n";
                 Variant {
                     bandwidth: 300_000,
                     average_bandwidth: None,
+                    frame_rate: None,
                     codecs: Some("avc1.64001e,mp4a.40.2".into()),
                     resolution: Some((640, 360)),
                     uri: "v300/index.m3u8".into(),
@@ -4876,6 +5133,7 @@ s0.m4s\n";
                 Variant {
                     bandwidth: 800_000,
                     average_bandwidth: None,
+                    frame_rate: None,
                     codecs: Some("avc1.640028,mp4a.40.2".into()),
                     resolution: Some((1280, 720)),
                     uri: "v800/index.m3u8".into(),
@@ -4973,6 +5231,7 @@ s0.m4s\n";
             variants: vec![Variant {
                 bandwidth: 1_280_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.64001e,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "low/index.m3u8".into(),
@@ -5407,6 +5666,7 @@ v300/index.m3u8\n";
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
@@ -5440,6 +5700,7 @@ v300/index.m3u8\n";
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "{$base}/index.m3u8".into(),
@@ -5492,6 +5753,7 @@ v300/index.m3u8\n";
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
@@ -5556,6 +5818,7 @@ v300/index.m3u8\n";
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
@@ -5576,6 +5839,7 @@ v300/index.m3u8\n";
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
@@ -5598,6 +5862,7 @@ v300/index.m3u8\n";
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
+                frame_rate: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),

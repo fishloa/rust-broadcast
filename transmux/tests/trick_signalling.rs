@@ -71,6 +71,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
         variants: vec![Variant {
             bandwidth: 1_500_000,
             average_bandwidth: None,
+            frame_rate: None,
             codecs: Some("hvc1.1.6.L93.B0,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "main.m3u8".into(),
@@ -118,6 +119,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
         variants: vec![Variant {
             bandwidth: 1_500_000,
             average_bandwidth: None,
+            frame_rate: None,
             codecs: Some("hvc1.1.6.L93.B0,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "main.m3u8".into(),
@@ -361,6 +363,7 @@ fn ir_trick_track_wired_to_signalling() {
         variants: vec![Variant {
             bandwidth: 2_000_000,
             average_bandwidth: None,
+            frame_rate: None,
             codecs: Some("avc1.640028".into()),
             resolution: Some((src_w, src_h)),
             uri: "main.m3u8".into(),

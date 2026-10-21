@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `Variant::frame_rate: Option<FrameRate>` for the `FRAME-RATE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2; Apple HLS Authoring Specification item 9.15). `FrameRate` is a small `Copy` newtype over millihertz with `from_millihertz(u32)`/`millihertz()`; it parses as `decimal-floating-point` (rounded half-up to three decimals) and renders as `<int>.<3 digits>` after `RESOLUTION`. An absent attribute renders nothing and parses as `None`. It is no longer retained in `extra_attrs`.
+
 - `Variant::average_bandwidth: Option<u32>` for the `AVERAGE-BANDWIDTH` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2; Apple HLS Authoring Specification item 9.14). It parses as a `decimal-integer` (a non-integer is `Error::HlsParse`, like `BANDWIDTH`), is no longer retained in `extra_attrs`, and renders right after `BANDWIDTH`; an absent attribute renders nothing and parses as `None`.
 
 ### Changed (BREAKING)
 - `Variant` gained a public field, so every `Variant { .. }` struct literal outside this crate must add `average_bandwidth` (or use `..Default::default()`). The held `AVERAGE-BANDWIDTH` value that used to appear in `Variant::extra_attrs` for a parsed playlist is now the typed field.
+- `Variant` gained another public field `frame_rate`, so every `Variant { .. }` struct literal outside this crate must add `frame_rate` (or use `..Default::default()`). The held `FRAME-RATE` value that used to appear in `Variant::extra_attrs` for a parsed playlist is now the typed field.
 - `VideoRange` enum (`Sdr`/`Hlg`/`Pq`) with `name()`, `from_transfer_characteristics(u8)` and `attr()` for the `VIDEO-RANGE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2), derived from a track's VUI transfer characteristics.
 
 ## [0.4.0] - 2026-10-17

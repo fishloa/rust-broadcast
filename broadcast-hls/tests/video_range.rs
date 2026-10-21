@@ -36,6 +36,7 @@ fn video_range_round_trips_bare_unquoted() {
             variants: vec![Variant {
                 bandwidth: 1000,
                 average_bandwidth: None,
+                frame_rate: None,
                 uri: "v.m3u8".to_string(),
                 extra_attrs: vec![range.attr()],
                 ..Default::default()

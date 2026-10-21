@@ -298,6 +298,49 @@ pub fn presentation_size(
     )
 }
 
+/// Exact integer frame rate in millihertz from VUI timing fields:
+/// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`.
+fn frame_rate_millihertz_from_timing(time_scale: u32, num_units_in_tick: u32) -> Option<u32> {
+    if num_units_in_tick == 0 {
+        return None;
+    }
+    // The denominator (2 * num_units) is always even, so adding its half
+    // (num_units) before dividing implements half-up exactly.
+    let denominator = u128::from(num_units_in_tick).saturating_mul(2);
+    if denominator == 0 {
+        return None;
+    }
+    let numerator = u128::from(time_scale).saturating_mul(1000);
+    let millihertz = numerator
+        .checked_add(u128::from(num_units_in_tick))?
+        .checked_div(denominator)?;
+    u32::try_from(millihertz).ok()
+}
+
+/// Nominal frame rate of an AVC video track, in millihertz (1/1000 Hz), derived
+/// solely from the first SPS's VUI `timing_info` per ITU-T H.264 §E.2.1:
+/// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`.
+///
+/// Returns `None` for any codec other than AVC, when the SPS lacks VUI
+/// timing information, when `num_units_in_tick` is zero, or when the result
+/// does not fit in `u32`. No value is ever invented or guessed from sample
+/// durations.
+pub fn nominal_frame_rate_millihertz(config: &CodecConfig) -> Option<u32> {
+    match config {
+        CodecConfig::Avc { config, .. } => {
+            let sps = config.config.sps.first()?;
+            let info = crate::sps::decode_avc_sps(&sps.0).ok()?;
+            let num_units = info.num_units_in_tick?;
+            let time_scale = info.time_scale?;
+            if num_units == 0 {
+                return None;
+            }
+            frame_rate_millihertz_from_timing(time_scale, num_units)
+        }
+        _ => None,
+    }
+}
+
 /// 16.16 fixed-point presentation size (the value written into `tkhd`).
 fn presentation_size_fixed(
     display: Option<&crate::ir::DisplayGeometry>,
@@ -1146,4 +1189,19 @@ pub fn build_media_segment_with_events(
     c += mdat.serialize_into(&mut out[c..])?;
     out.truncate(c);
     Ok(out)
+}
+
+#[cfg(test)]
+mod frame_rate_tests {
+    use super::frame_rate_millihertz_from_timing;
+
+    #[test]
+    fn table() {
+        assert_eq!(frame_rate_millihertz_from_timing(60000, 1001), Some(29970));
+        assert_eq!(frame_rate_millihertz_from_timing(120000, 1001), Some(59940));
+        assert_eq!(frame_rate_millihertz_from_timing(50, 1), Some(25000));
+        assert_eq!(frame_rate_millihertz_from_timing(1, 0), None);
+        // round half up
+        assert_eq!(frame_rate_millihertz_from_timing(1, 3), Some(167));
+    }
 }

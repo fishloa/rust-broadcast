@@ -74,5 +74,5 @@ Sources (text, not PDF; verbatim):
 | 9.1 CODECS | emitted (hls-runtime `set_track_specs`) |
 | 9.2 RESOLUTION | emitted (Q8; square-pixel presentation size) |
 | 9.14 AVERAGE-BANDWIDTH | `Variant::average_bandwidth` parses/renders it; hls-runtime emits it (mean of drained segments, clamped to BANDWIDTH) |
-| 9.15 FRAME-RATE | NOT emitted - only source is optional H.264/HEVC VUI timing_info (field vs frame ambiguity); needs a design decision |
+| 9.15 FRAME-RATE | emitted - `Variant::frame_rate` (millihertz), H.264 SPS VUI `timing_info` only; HEVC and codecs without VUI timing omit it |
 | 9.16 VIDEO-RANGE | satisfied: emitted for HLG/PQ, omitted when all SDR |

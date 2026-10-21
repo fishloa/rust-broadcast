@@ -305,6 +305,7 @@ fn query_param_define_triggers_row_11_when_built_programmatically() {
         variants: vec![broadcast_hls::Variant {
             bandwidth: 300_000,
             average_bandwidth: None,
+            frame_rate: None,
             codecs: Some("avc1.64001e".into()),
             resolution: None,
             uri: "v300/index.m3u8".into(),

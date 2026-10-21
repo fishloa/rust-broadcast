@@ -62,9 +62,18 @@ fn real_stream_inf_quoted_attrs_round_trip_byte_exact() {
         "AVERAGE-BANDWIDTH must not also land in extra_attrs: {:?}",
         variant.extra_attrs
     );
-    // `FRAME-RATE` is still unmodeled (decimal, so quoting is not at issue
-    // here); the three quoted-string attributes this regression targets are
-    // asserted individually below.
+    // `FRAME-RATE` is now a typed `Variant` field (Apple 9.15 / RFC
+    // 8216bis §4.4.6.2), so it must be recovered there — never duplicated
+    // into `extra_attrs`.
+    assert_eq!(
+        variant.frame_rate,
+        Some(broadcast_hls::FrameRate::from_millihertz(60_000))
+    );
+    assert!(
+        variant.extra_attrs.iter().all(|(k, _)| k != "FRAME-RATE"),
+        "FRAME-RATE must not also land in extra_attrs: {:?}",
+        variant.extra_attrs
+    );
     assert_eq!(
         variant
             .extra_attrs
@@ -74,7 +83,6 @@ fn real_stream_inf_quoted_attrs_round_trip_byte_exact() {
         vec![
             ("AUDIO", "a1"),
             ("CLOSED-CAPTIONS", "cc"),
-            ("FRAME-RATE", "60.000"),
             ("SUBTITLES", "sub1"),
         ],
         "sorted-by-name extra_attrs recovered from the fixture line"
@@ -241,6 +249,7 @@ fn valid_constructed_value_round_trips() {
         variants: vec![Variant {
             bandwidth: 1000,
             average_bandwidth: None,
+            frame_rate: None,
             codecs: Some("avc1.640020".to_string()),
             uri: "v.m3u8".to_string(),
             extra_attrs: vec![
