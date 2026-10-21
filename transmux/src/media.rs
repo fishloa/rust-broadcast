@@ -253,7 +253,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             .into_iter()
             .map(|mut b| {
                 refine_legacy_config(&mut b.spec.config, &b.samples);
-                let _ = normalise_track_nal_lengths(&mut b.spec, &mut b.samples);
+                normalise_track_nal_lengths(&mut b.spec, &mut b.samples)?;
                 if b.in_band {
                     tag_fmp4_inband_display(&mut b);
                 }
