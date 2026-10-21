@@ -653,7 +653,7 @@ fn master_codecs_come_from_the_init_segment() {
     // 19_924 B in 1 s.
     assert_eq!(
         master(&o),
-        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=159392,CODECS=\"avc1.4D400D,mp4a.40.2\"\nmedia.m3u8\n"
+        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=159392,CODECS=\"avc1.4D400D,mp4a.40.2\",RESOLUTION=320x240\nmedia.m3u8\n"
     );
 }
 

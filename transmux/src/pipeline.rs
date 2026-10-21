@@ -280,18 +280,34 @@ fn avc_hevc_display_extra_boxes(
     Ok(extra_boxes)
 }
 
-/// tkhd presentation size for an AVC/HEVC video track per ISO/IEC 14496-12:2012
-/// §8.3.2 and ETSI TS 103 285 §5.1.2: cropped output size, then rescaled for
-/// the sample aspect ratio (horizontal only), as 16.16 fixed point.
-fn tkhd_presentation_size(
+/// Whole-pixel presentation size for an AVC/HEVC video track (square-pixel
+/// presentation size per display-geometry Q8): cropped output size, then
+/// rescaled for the sample aspect ratio (horizontal only), rounded to the
+/// nearest whole pixel. `display = None` (or an unspecified SAR) falls back to
+/// the coded size. Shared core with `tkhd_presentation_size` so the two
+/// cannot drift.
+pub fn presentation_size(
     display: Option<&crate::ir::DisplayGeometry>,
     coded_width: u16,
     coded_height: u16,
 ) -> (u32, u32) {
+    let (w, h) = presentation_size_fixed(display, coded_width, coded_height);
+    (
+        u32::try_from((w + (1 << 15)) >> 16).unwrap_or(u32::MAX),
+        u32::try_from((h + (1 << 15)) >> 16).unwrap_or(u32::MAX),
+    )
+}
+
+/// 16.16 fixed-point presentation size (the value written into `tkhd`).
+fn presentation_size_fixed(
+    display: Option<&crate::ir::DisplayGeometry>,
+    coded_width: u16,
+    coded_height: u16,
+) -> (u64, u64) {
     let Some(display) = display else {
         return (
-            (u32::from(coded_width)) << 16,
-            (u32::from(coded_height)) << 16,
+            (u64::from(coded_width)) << 16,
+            (u64::from(coded_height)) << 16,
         );
     };
     let out = display.output_rect;
@@ -311,6 +327,18 @@ fn tkhd_presentation_size(
         }
         None => (u64::from(out.width)) << 16,
     };
+    (width, height)
+}
+
+/// tkhd presentation size for an AVC/HEVC video track per ISO/IEC 14496-12:2012
+/// §8.3.2 and ETSI TS 103 285 §5.1.2: cropped output size, then rescaled for
+/// the sample aspect ratio (horizontal only), as 16.16 fixed point.
+fn tkhd_presentation_size(
+    display: Option<&crate::ir::DisplayGeometry>,
+    coded_width: u16,
+    coded_height: u16,
+) -> (u32, u32) {
+    let (width, height) = presentation_size_fixed(display, coded_width, coded_height);
     (
         u32::try_from(width).unwrap_or(u32::MAX),
         u32::try_from(height).unwrap_or(u32::MAX),
