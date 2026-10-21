@@ -612,7 +612,7 @@ fn master_bandwidth_is_the_measured_peak_rounded_up() {
     publish_seg_bytes(&w, 3, 3, false, vec![0; 1001]);
     assert_eq!(
         master(&o),
-        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=12000000\nmedia.m3u8\n"
+        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=12000000,AVERAGE-BANDWIDTH=2668001\nmedia.m3u8\n"
     );
 }
 
@@ -624,7 +624,7 @@ fn master_bandwidth_rounds_a_fractional_peak_up() {
     publish_seg_bytes(&w, 1, 3, false, vec![0; 1001]);
     assert_eq!(
         master(&o),
-        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2670\nmedia.m3u8\n"
+        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2670,AVERAGE-BANDWIDTH=2669\nmedia.m3u8\n"
     );
 }
 
@@ -639,7 +639,7 @@ fn master_bandwidth_survives_the_peak_segment_leaving_the_window() {
     assert!(!playlist(&o).contains("seg-1-7-1.m4s"));
     assert_eq!(
         master(&o),
-        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\nmedia.m3u8\n"
+        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000,AVERAGE-BANDWIDTH=1334000\nmedia.m3u8\n"
     );
 }
 
@@ -653,7 +653,10 @@ fn master_codecs_come_from_the_init_segment() {
     // 19_924 B in 1 s.
     assert_eq!(
         master(&o),
-        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=159392,CODECS=\"avc1.4D400D,mp4a.40.2\",RESOLUTION=320x240\nmedia.m3u8\n"
+        "#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=159392,AVERAGE-BANDWIDTH=159392,CODECS=\"avc1.4D400D,mp4a.40.2\",RESOLUTION=320x240
+media.m3u8
+"
     );
 }
 
