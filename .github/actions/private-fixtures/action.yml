@@ -99,7 +99,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: private-fixtures
-        key: private-fixtures-v1-${{ steps.pin.outputs.sha }}
+        key: private-fixtures-v2-${{ steps.pin.outputs.sha }}
         # Only `use` demands a hit; `prepare` treats a miss as "clone it".
         # A miss in `use` is a job-ordering bug, never a silent skip.
         fail-on-cache-miss: ${{ inputs.mode == 'use' }}
@@ -118,7 +118,9 @@ runs:
         ssh-key: ${{ inputs.deploy-key }}
         ref: ${{ steps.pin.outputs.sha }}
         path: private-fixtures
-        sparse-checkout: fixtures
+        sparse-checkout: |
+          fixtures
+          specs/iso_iec_23009-1_dash_2026_ed6_schema
         lfs: false
         persist-credentials: false
 
@@ -127,7 +129,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: private-fixtures
-        key: private-fixtures-v1-${{ steps.pin.outputs.sha }}
+        key: private-fixtures-v2-${{ steps.pin.outputs.sha }}
 
     # Runs in `checkout` and `use` only (the prep job restores nothing here).
     - name: Point tests at the private fixtures
