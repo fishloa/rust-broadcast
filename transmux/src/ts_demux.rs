@@ -223,6 +223,7 @@
 
 use crate::display_track::{ActivationOutcome, SpsTracker, TrackCodec};
 use crate::ir::{AfdPersistence, DisplayChangeSet, DisplayInfo};
+use crate::mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 use crate::{ProgramNumber, TrackId};
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -263,9 +264,9 @@ use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags
 /// PID carrying the Program Association Table (§2.4.4.3).
 const PAT_PID: Pid = Pid::new(0x0000);
 /// `table_id` of a PAT section (§2.4.4.3, Table 2-31).
-const TABLE_ID_PAT: u8 = 0x00;
+pub(crate) const TABLE_ID_PAT: u8 = 0x00;
 /// `table_id` of a PMT section (§2.4.4.8, Table 2-31).
-const TABLE_ID_PMT: u8 = 0x02;
+pub(crate) const TABLE_ID_PMT: u8 = 0x02;
 /// Long-form section header length before the table body: `table_id`(1) +
 /// flags/`section_length`(2) + `table_id_extension`(2) + version/cni(1) +
 /// `section_number`(1) + `last_section_number`(1) = 8 (§2.4.4.1).
@@ -356,7 +357,7 @@ const MAX_PROBE_BACKLOG_BYTES: usize = 4 * 1024 * 1024;
 // ── stream_type → codec (ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154) ──────
 
 /// MPEG-2 video (ITU-T H.262 / ISO/IEC 13818-2) — ISO/IEC 13818-1 Table 2-34.
-const STREAM_TYPE_MPEG2_VIDEO: u8 = 0x02;
+pub(crate) const STREAM_TYPE_MPEG2_VIDEO: u8 = 0x02;
 /// MPEG-1 audio (ISO/IEC 11172-3) — ISO/IEC 13818-1 Table 2-34.
 const STREAM_TYPE_MPEG1_AUDIO: u8 = 0x03;
 /// MPEG-2 audio (ISO/IEC 13818-3, LSF) — ISO/IEC 13818-1 Table 2-34.
@@ -1740,6 +1741,11 @@ struct LiveTrack {
     /// parameter set, so that path stays untracked (`Sample::display` is
     /// `None`).
     sps_tracker: Option<SpsTracker>,
+    /// MPEG-2 video's display tracker (`docs/display-geometry/DESIGN.md`
+    /// §6.4, Phase 3b): the sequence geometry in force plus the AFD / bar data
+    /// under the H.262 `sequence_header()` persistence rule. `Some` only for
+    /// `Codec::Mpeg2Video`.
+    mpeg2_tracker: Option<Mpeg2DisplayTracker>,
     /// The `TrackUpdated` raised by the access unit being applied, released
     /// with its slot.
     pending_config: Option<TrackSpec>,
@@ -1757,6 +1763,15 @@ impl LiveTrack {
     /// it is released with the first sample (the level-triggered start of
     /// design §5.2, Q2 = emit).
     fn display(&mut self, au: &[u8]) -> Option<Arc<DisplayInfo>> {
+        if let Some(tracker) = self.mpeg2_tracker.as_mut() {
+            if let Mpeg2Outcome::Changed {
+                display, changed, ..
+            } = tracker.observe(au)
+            {
+                self.display = Some((display, changed));
+            }
+            return tracker.state().cloned();
+        }
         let tracker = self.sps_tracker.as_mut()?;
         if let ActivationOutcome::Changed {
             display, changed, ..
@@ -2176,6 +2191,15 @@ fn advance_one_behind(
     if let Some(spec) = pending_events.config {
         events.push_back(DemuxEvent::TrackUpdated(spec));
     }
+    // `PendingOneBehind::pending_events`' doc claims a change parked here is
+    // released with this access unit's own sample; it was instead pushed
+    // before the *previous* sample (`docs/display-geometry/DESIGN.md` §6.5
+    // forbids that, and it labelled one picture early). The previous slot is
+    // already out, so the change belongs to the new `*pending` slot.
+    let pending_events = PendingDisplayEvents {
+        config: None,
+        display: pending_events.display,
+    };
     if let Some((display, changed)) = pending_events.display {
         events.push_back(DemuxEvent::DisplayChanged {
             track_id,
@@ -5730,6 +5754,9 @@ impl StreamingTsDemux {
                         ),
                         _ => None,
                     };
+                    let mpeg2_tracker =
+                        (stream.codec == Codec::Mpeg2Video).then(Mpeg2DisplayTracker::new);
+
                     let mut live = LiveTrack {
                         track_id,
                         kind,
@@ -5738,14 +5765,28 @@ impl StreamingTsDemux {
                         parameter_sets: ParameterSets::default(),
                         config_header: None,
                         sps_tracker,
+                        mpeg2_tracker,
                         pending_config: None,
                         display: None,
                     };
                     // Geometry-only seed state (active format filled in below from
                     // the first access unit, if any).
-                    let geom_display = TrackSpec::new(track_id, timescale, live.config.clone())
-                        .display
-                        .and_then(|g| DisplayInfo::from_geometry(Some(g)));
+                    // The config's own geometry, except for MPEG-2: its probe
+                    // carries only the two sizes (no sequence header in the
+                    // `esds`), so its geometry comes from the backlog's first
+                    // `sequence_header()` and is `None` until one was seen.
+                    let config_geometry =
+                        TrackSpec::new(track_id, timescale, live.config.clone()).display;
+                    let geom_display = if live.mpeg2_tracker.is_some() {
+                        let es: Vec<u8> = backlog
+                            .iter()
+                            .flat_map(|au| au.data.iter().copied())
+                            .collect();
+                        crate::ir::DisplayGeometry::from_mpeg2_es(&es).ok()
+                    } else {
+                        config_geometry
+                    }
+                    .and_then(|g| DisplayInfo::from_geometry(Some(g)));
                     if let Some(display) = &geom_display
                         && let Some(tracker) = live.sps_tracker.as_mut()
                     {
@@ -5759,6 +5800,9 @@ impl StreamingTsDemux {
                         if let Some(tracker) = live.sps_tracker.as_mut() {
                             let _ = tracker.observe(&au.data);
                         }
+                        if let Some(tracker) = live.mpeg2_tracker.as_mut() {
+                            let _ = tracker.observe(&au.data);
+                        }
                     }
                     // Restore the sequence geometry to the (authoritative)
                     // TrackSpec value while keeping the backlog-derived active
@@ -5770,11 +5814,16 @@ impl StreamingTsDemux {
                             DisplayInfo::new(geom).with_active_format(af),
                         )));
                     }
+                    // MPEG-2 keeps its own (backlog-derived) geometry: AFD
+                    // persistence is the H.262 rule, so the tracker's state is
+                    // authoritative, not the config's sizes.
+
                     let initial_display = live
                         .sps_tracker
                         .as_ref()
                         .and_then(|t| t.state().cloned())
-                        .or_else(|| geom_display.map(Arc::new));
+                        .or_else(|| live.mpeg2_tracker.as_ref().and_then(|t| t.state().cloned()))
+                        .or_else(|| geom_display.clone().map(Arc::new));
                     self.events.push_back(DemuxEvent::TrackAdded(spec));
                     if let Some(display) = &initial_display {
                         self.events.push_back(DemuxEvent::DisplayChanged {
@@ -5797,6 +5846,11 @@ impl StreamingTsDemux {
                         && tracker.state().is_none()
                     {
                         tracker.seed_full(Some(display.clone()));
+                    }
+                    if let Some(tracker) = live.mpeg2_tracker.as_mut()
+                        && tracker.state().is_none()
+                    {
+                        tracker.seed_full(initial_display.clone());
                     }
                     // Seed the changed-config comparison from the access units
                     // the config was actually recovered from, so the track's
@@ -6304,7 +6358,7 @@ impl<'a> Unpackage for TsDemux<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::ts_mux::TsMux;
     use broadcast_common::{Package, Parse};
@@ -6742,7 +6796,7 @@ mod tests {
 
     /// PES `stream_id` for an H.264 video elementary stream (ISO/IEC
     /// 13818-1 Table 2-22).
-    const ES_STREAM_ID_VIDEO: u8 = 0xE0;
+    pub(crate) const ES_STREAM_ID_VIDEO: u8 = 0xE0;
 
     /// Wrap `au` in a PES packet that carries **no** timing at all:
     /// `PTS_DTS_flags == '00'` and an empty `PES_header_data_length`
@@ -6811,7 +6865,7 @@ mod tests {
 
     /// Wrap `au` in a PES packet with a PTS, and a DTS too when `dts` is
     /// `Some` (`PTS_DTS_flags` `10` / `11` — ISO/IEC 13818-1 §2.4.3.7).
-    fn pes_packet(stream_id: u8, pts: i64, dts: Option<i64>, au: &[u8]) -> Vec<u8> {
+    pub(crate) fn pes_packet(stream_id: u8, pts: i64, dts: Option<i64>, au: &[u8]) -> Vec<u8> {
         let header_data_len = if dts.is_some() { 10 } else { 5 };
         let mut out = Vec::new();
         out.extend_from_slice(&[0x00, 0x00, 0x01, stream_id]);
@@ -6834,16 +6888,16 @@ mod tests {
     }
 
     /// PID/table constants for [`probe_sync_scan_work_is_linear_in_the_input_not_quadratic`].
-    const PAT_PID_UNDER_TEST: Pid = Pid::new(0x0000);
-    const PMT_PID_UNDER_TEST: Pid = Pid::new(0x1000);
-    const ES_PID_UNDER_TEST: Pid = Pid::new(0x1100);
+    pub(crate) const PAT_PID_UNDER_TEST: Pid = Pid::new(0x0000);
+    pub(crate) const PMT_PID_UNDER_TEST: Pid = Pid::new(0x1000);
+    pub(crate) const ES_PID_UNDER_TEST: Pid = Pid::new(0x1100);
     /// PMT `program_number` for the one-program PAT below.
     const PROGRAM_NUMBER_UNDER_TEST: u16 = 1;
 
     /// PAT section body (ISO/IEC 13818-1 Table 2-30): one program. Returned
     /// without the 8-byte section header and without the CRC, which
     /// [`psi_section_packets`] adds.
-    fn pat_body() -> Vec<u8> {
+    pub(crate) fn pat_body() -> Vec<u8> {
         let mut body = Vec::new();
         body.extend_from_slice(&PROGRAM_NUMBER_UNDER_TEST.to_be_bytes());
         body.extend_from_slice(&(0xE000 | PMT_PID_UNDER_TEST.value()).to_be_bytes());
@@ -6851,7 +6905,7 @@ mod tests {
     }
 
     /// PMT section body (ISO/IEC 13818-1 Table 2-33): one elementary stream.
-    fn pmt_body(es_pid: Pid, stream_type: u8) -> Vec<u8> {
+    pub(crate) fn pmt_body(es_pid: Pid, stream_type: u8) -> Vec<u8> {
         pmt_body_with_pcr_pid(es_pid, stream_type, Pid::new(0))
     }
 
@@ -6893,7 +6947,7 @@ mod tests {
     /// it onto `pid` with `pusi` set on the first packet. The CRC_32 is
     /// computed by the workspace's own `CRC-32/MPEG-2` so the section passes
     /// [`psi_section_crc_ok`].
-    fn psi_section_packets(pid: Pid, cc0: u8, table_id: u8, body: &[u8]) -> Vec<u8> {
+    pub(crate) fn psi_section_packets(pid: Pid, cc0: u8, table_id: u8, body: &[u8]) -> Vec<u8> {
         psi_section_packets_for(pid, cc0, table_id, PROGRAM_NUMBER_UNDER_TEST, body)
     }
 
@@ -6995,7 +7049,7 @@ mod tests {
 
     /// Packetise `payload` onto `pid`, `payload_unit_start` set on the first
     /// 188-byte packet only, CC incrementing from `cc0`, `0xFF` stuff.
-    fn pes_packets(pid: Pid, cc0: u8, payload: &[u8]) -> Vec<u8> {
+    pub(crate) fn pes_packets(pid: Pid, cc0: u8, payload: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut off = 0usize;
         let mut first = true;
@@ -11344,7 +11398,7 @@ mod tests {
     // ── InputDegradation tests (issue #778) ─────────────────────────────────
 
     /// A valid TS null packet (PID 0x1FFF, AFC=01, CC=0).
-    fn null_packet() -> [u8; TS_PACKET_SIZE] {
+    pub(crate) fn null_packet() -> [u8; TS_PACKET_SIZE] {
         let mut p = [0xFFu8; TS_PACKET_SIZE];
         p[0] = 0x47;
         p[1] = 0x1F;

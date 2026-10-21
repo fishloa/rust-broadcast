@@ -184,6 +184,7 @@ pub mod flac;
 pub mod flv;
 pub mod flv_stream;
 pub mod frag_offsets;
+pub mod h262;
 pub mod hevc_config;
 pub mod init_segment;
 pub mod interlace;
@@ -196,6 +197,7 @@ pub mod media;
 pub mod mkv_mux;
 pub mod movie_fragment;
 pub mod mp4esds;
+pub mod mpeg2_display;
 pub mod mpeg_legacy;
 pub mod mpegh;
 pub mod nal;
@@ -301,6 +303,7 @@ pub use flv::{
     flv_sequence_header_payloads,
 };
 pub use flv_stream::StreamingFlvDemux;
+pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntryUrlBox,
@@ -318,9 +321,9 @@ pub use ir::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, AudioLanguage,
     AudioMetadata, AudioRole, AudioType, BarData, ColourDescription, ColourPrimaries,
     DisplayChangeSet, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC, EditorialClassification,
-    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MatrixCoefficients, MixType,
-    PictureRect, ProgramNumber, SampleAspectRatio, SupplementaryAudio, TrackId,
-    TransferCharacteristics, UserDataCarriage, VideoFormat, VideoSignalType,
+    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MPEG2_INFERRED_COLOUR_CODE,
+    MatrixCoefficients, MixType, PictureRect, ProgramNumber, SampleAspectRatio, SupplementaryAudio,
+    TrackId, TransferCharacteristics, UserDataCarriage, VideoFormat, VideoSignalType,
 };
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
@@ -347,6 +350,7 @@ pub use mp4esds::{
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
 };
+pub use mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 pub use mpegh::{
     MHA1_FOURCC, MHA2_FOURCC, MHAC_CONFIGURATION_VERSION, MHAC_FOURCC, MHAC_RECORD_FIXED_LEN,
     MHADecoderConfigurationRecord, MHM1_FOURCC, MHM2_FOURCC,
