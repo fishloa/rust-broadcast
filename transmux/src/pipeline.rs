@@ -284,7 +284,7 @@ fn avc_hevc_display_extra_boxes(
 /// presentation size per display-geometry Q8): cropped output size, then
 /// rescaled for the sample aspect ratio (horizontal only), rounded to the
 /// nearest whole pixel. `display = None` (or an unspecified SAR) falls back to
-/// the coded size. Shared core with [`tkhd_presentation_size`] so the two
+/// the coded size. Shared core with `tkhd_presentation_size` so the two
 /// cannot drift.
 pub fn presentation_size(
     display: Option<&crate::ir::DisplayGeometry>,
