@@ -402,6 +402,16 @@ struct Window {
     /// §4.3.4.2: an upper bound of the peak segment bitrate) is built from.
     /// `0` until a segment with a measurable duration has been drained.
     peak_bandwidth_bps: u64,
+    /// Cumulative bytes of every segment ever drained, surviving window
+    /// eviction — the numerator of the master playlist's
+    /// `AVERAGE-BANDWIDTH` (RFC 8216bis §4.4.6.2, Apple authoring item 9.14:
+    /// the average segment bit rate over the whole stream, not just the
+    /// window).
+    total_bytes: u64,
+    /// Cumulative duration of every segment ever drained whose duration was
+    /// non-zero, in nanoseconds, surviving eviction — the denominator of
+    /// `AVERAGE-BANDWIDTH`. `0` until such a segment has been drained.
+    total_duration_nanos: u128,
     /// Cumulative count of discontinuities that have rolled off the front of
     /// the window — RFC 8216 §4.3.3.3's `#EXT-X-DISCONTINUITY-SEQUENCE`.
     /// Incremented exactly once per **evicted** entry whose
@@ -422,6 +432,8 @@ impl Window {
             capacity: capacity.get().max(MIN_WINDOW_SEGMENTS),
             max_segment_duration_secs: 0.0,
             peak_bandwidth_bps: 0,
+            total_bytes: 0,
+            total_duration_nanos: 0,
             discontinuity_sequence: 0,
             gap_pending: false,
         }
@@ -480,6 +492,18 @@ impl Window {
         self.max_segment_duration_secs = self.max_segment_duration_secs.max(duration_secs);
         if let Some(bps) = segment_bandwidth_bps(entry.bytes.len(), entry.duration) {
             self.peak_bandwidth_bps = self.peak_bandwidth_bps.max(bps);
+        }
+        // Totals are cumulative over every drained segment and are never
+        // reset on eviction (or on a discontinuity): `AVERAGE-BANDWIDTH`
+        // describes the whole stream. A zero-duration segment has no
+        // measurable bit rate, so it contributes to neither total.
+        if !entry.duration.is_zero() {
+            self.total_bytes = self
+                .total_bytes
+                .saturating_add(u64::try_from(entry.bytes.len()).unwrap_or(u64::MAX));
+            self.total_duration_nanos = self
+                .total_duration_nanos
+                .saturating_add(entry.duration.as_nanos());
         }
         if self.segments.len() >= self.capacity
             && let Some(evicted) = self.segments.pop_front()
@@ -579,6 +603,25 @@ impl InitStore {
             .find(|(g, _)| *g == generation)
             .map(|(_, b)| b.clone())
     }
+}
+
+/// The mean segment bitrate in bits/second over the whole stream — RFC
+/// 8216bis §4.4.6.2 `AVERAGE-BANDWIDTH` (Apple authoring item 9.14) — rounded
+/// to nearest, or `None` when no measurable segment has been drained
+/// (`total_duration_nanos == 0`) or the figure does not fit
+/// a `u32`.
+///
+/// Exact integer arithmetic: `bits * 1e9` is computed in `u128` (a `u64` byte
+/// total times 8e9 cannot overflow it) before the single division.
+fn average_bandwidth_bps(total_bytes: u64, total_duration_nanos: u128) -> Option<u32> {
+    if total_duration_nanos == 0 {
+        return None;
+    }
+    let bits_nanos = u128::from(total_bytes)
+        .checked_mul(8)?
+        .checked_mul(NANOS_PER_SEC)?;
+    let mean = bits_nanos.checked_add(total_duration_nanos / 2)? / total_duration_nanos;
+    u32::try_from(mean).ok()
 }
 
 /// A segment's bitrate in bits/second, rounded up (so a `BANDWIDTH` built
@@ -1049,7 +1092,14 @@ impl HlsOrigin {
     /// [`HlsMasterError::Render`] when the playlist cannot be rendered.
     pub fn master_playlist(&self, media_playlist_name: &str) -> Result<String, HlsMasterError> {
         self.drain();
-        let measured = locked(&self.window).peak_bandwidth_bps;
+        let (measured, total_bytes, total_duration_nanos) = {
+            let window = locked(&self.window);
+            (
+                window.peak_bandwidth_bps,
+                window.total_bytes,
+                window.total_duration_nanos,
+            )
+        };
         let bandwidth = if measured == 0 {
             PLACEHOLDER_BANDWIDTH_BPS
         } else {
@@ -1057,6 +1107,13 @@ impl HlsOrigin {
         };
         let bandwidth = u32::try_from(bandwidth)
             .map_err(|_| HlsMasterError::BandwidthOverflow { bandwidth })?;
+        // RFC 8216bis §4.4.6.2 / Apple authoring 9.14: AVERAGE-BANDWIDTH is
+        // the mean segment bitrate since the origin started, clamped to
+        // BANDWIDTH (the average can never exceed the peak; rounding must not
+        // produce that contradiction). Omitted, never invented, while nothing
+        // measurable has been drained.
+        let average_bandwidth =
+            average_bandwidth_bps(total_bytes, total_duration_nanos).map(|avg| avg.min(bandwidth));
         let mut extra_attrs: Vec<(String, broadcast_hls::AttrValue)> = Vec::new();
         if let Some(range) = *locked(&self.video_range)
             && matches!(range, VideoRange::Hlg | VideoRange::Pq)
@@ -1066,6 +1123,7 @@ impl HlsOrigin {
         let master = MasterPlaylist {
             variants: vec![Variant {
                 bandwidth,
+                average_bandwidth,
                 codecs: locked(&self.codecs).clone(),
                 uri: media_playlist_name.to_string(),
                 extra_attrs,

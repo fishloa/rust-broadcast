@@ -614,6 +614,7 @@ fn origin_multivariant_shape_validates_clean() {
         variants: vec![
             Variant {
                 bandwidth: 1_280_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001f,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "low.m3u8".into(),
@@ -621,6 +622,7 @@ fn origin_multivariant_shape_validates_clean() {
             },
             Variant {
                 bandwidth: 2_560_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001f,mp4a.40.2".into()),
                 resolution: Some((1280, 720)),
                 uri: "hi.m3u8".into(),
@@ -679,6 +681,7 @@ fn origin_variant_quoted_group_attrs_validates_clean() {
         ],
         variants: vec![Variant {
             bandwidth: 2_560_000,
+            average_bandwidth: None,
             codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
@@ -759,6 +762,7 @@ fn origin_variant_unknown_quoted_attr_round_trips_and_validates_clean() {
     let master = MasterPlaylist {
         variants: vec![Variant {
             bandwidth: 2_560_000,
+            average_bandwidth: None,
             codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
@@ -836,6 +840,7 @@ fn origin_iframe_variant_shape_validates_clean() {
     let master = MasterPlaylist {
         variants: vec![Variant {
             bandwidth: 2_560_000,
+            average_bandwidth: None,
             codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),

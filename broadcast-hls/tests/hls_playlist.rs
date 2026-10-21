@@ -74,6 +74,7 @@ fn master_playlist_structure() {
         variants: vec![
             Variant {
                 bandwidth: 300_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "v300/index.m3u8".into(),
@@ -81,6 +82,7 @@ fn master_playlist_structure() {
             },
             Variant {
                 bandwidth: 800_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.640028,mp4a.40.2".into()),
                 resolution: Some((1280, 720)),
                 uri: "v800/index.m3u8".into(),
@@ -444,6 +446,7 @@ fn render_rejects_injection_characters_in_uris_and_quoted_strings() {
         let mpl = MasterPlaylist {
             variants: vec![Variant {
                 bandwidth: 1,
+                average_bandwidth: None,
                 uri: bad.to_string(),
                 ..Default::default()
             }],
@@ -461,6 +464,7 @@ fn render_rejects_injection_characters_in_uris_and_quoted_strings() {
         let mpl = MasterPlaylist {
             variants: vec![Variant {
                 bandwidth: 1,
+                average_bandwidth: None,
                 codecs: Some(bad.to_string()),
                 uri: "v.m3u8".to_string(),
                 ..Default::default()
@@ -510,6 +514,7 @@ fn render_rejects_injection_characters_in_uris_and_quoted_strings() {
     let mpl = MasterPlaylist {
         variants: vec![Variant {
             bandwidth: 1,
+            average_bandwidth: None,
             codecs: Some("avc1.640020".to_string()),
             uri: "v.m3u8".to_string(),
             ..Default::default()

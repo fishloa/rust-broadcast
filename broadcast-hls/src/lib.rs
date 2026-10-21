@@ -3122,6 +3122,13 @@ broadcast_common::impl_spec_display!(VideoRange);
 pub struct Variant {
     /// `BANDWIDTH` in bits per second.
     pub bandwidth: u32,
+    /// `AVERAGE-BANDWIDTH` in bits per second (RFC 8216bis §4.4.6.2), or
+    /// `None` when the `#EXT-X-STREAM-INF` carried no `AVERAGE-BANDWIDTH`
+    /// attribute. Apple's HLS authoring specification item 9.14 requires an
+    /// authored multivariant playlist to carry it; this crate models the
+    /// attribute (parse and render) and leaves that obligation to the
+    /// producer.
+    pub average_bandwidth: Option<u32>,
     /// `CODECS` — the quoted-string value of the `CODECS` attribute (e.g.
     /// `"avc1.64001e,mp4a.40.2"`), or `None` when the `#EXT-X-STREAM-INF`
     /// carried no `CODECS` attribute at all (audit BH-W6, issue #1111: it
@@ -3212,12 +3219,14 @@ pub struct MasterPlaylist {
     pub content_steering: Option<ContentSteering>,
 }
 
-/// A parsed but not-yet-closed `#EXT-X-STREAM-INF` — `(bandwidth, codecs,
-/// resolution, extra attributes)` — awaiting the URI line that turns it into
-/// a [`Variant`]. `codecs` is `None` when the tag carried no `CODECS`
-/// attribute (audit BH-W6, issue #1111).
+/// A parsed but not-yet-closed `#EXT-X-STREAM-INF` — `(bandwidth,
+/// average_bandwidth, codecs, resolution, extra attributes)` — awaiting the
+/// URI line that turns it into a [`Variant`]. `codecs` is `None` when the tag
+/// carried no `CODECS` attribute (audit BH-W6, issue #1111);
+/// `average_bandwidth` is `None` when it carried no `AVERAGE-BANDWIDTH`.
 type PendingStreamInf = (
     u32,
+    Option<u32>,
     Option<String>,
     Option<(u32, u32)>,
     Vec<(String, AttrValue)>,
@@ -3287,6 +3296,11 @@ impl MasterPlaylist {
 
         for var in &self.variants {
             s.push_str(&format!("#EXT-X-STREAM-INF:BANDWIDTH={}", var.bandwidth));
+            // RFC 8216bis §4.4.6.2: AVERAGE-BANDWIDTH renders immediately
+            // after BANDWIDTH; an absent value renders nothing.
+            if let Some(avg) = var.average_bandwidth {
+                s.push_str(&format!(",AVERAGE-BANDWIDTH={avg}"));
+            }
             // Audit BH-W6 (issue #1111): CODECS is optional on the tag line,
             // so an absent attribute renders nothing rather than the invalid
             // empty `CODECS=""`.
@@ -3414,6 +3428,13 @@ impl MasterPlaylist {
                 let bandwidth_str =
                     require_attr(&attrs, "BANDWIDTH", line_no, line, "EXT-X-STREAM-INF")?;
                 let bandwidth = parse_decimal_int(&bandwidth_str, line_no, line, "BANDWIDTH")?;
+                // RFC 8216bis §4.4.6.2: AVERAGE-BANDWIDTH is a
+                // decimal-integer, optional on parse (Apple item 9.14 asks
+                // the producer to emit it).
+                let average_bandwidth = match attrs.get("AVERAGE-BANDWIDTH") {
+                    Some(v) => Some(parse_decimal_int(v, line_no, line, "AVERAGE-BANDWIDTH")?),
+                    None => None,
+                };
                 // Audit BH-W6 (issue #1111): `CODECS` is optional on the tag
                 // line, so an absent attribute stays `None` (rendering
                 // nothing) instead of becoming an empty, invalid `CODECS=""`.
@@ -3422,8 +3443,11 @@ impl MasterPlaylist {
                     Some(v) => Some(parse_resolution(v, line_no, line)?),
                     None => None,
                 };
-                let extra_attrs =
-                    filter_extra_attrs(&attrs, &["BANDWIDTH", "CODECS", "RESOLUTION"], &quoted)?;
+                let extra_attrs = filter_extra_attrs(
+                    &attrs,
+                    &["BANDWIDTH", "AVERAGE-BANDWIDTH", "CODECS", "RESOLUTION"],
+                    &quoted,
+                )?;
                 // Audit BH-W9 (issue #1111): `#EXT-X-STREAM-INF` MUST be
                 // followed by the URI line of the Variant it describes
                 // (RFC 8216bis §4.4.6.2). A second STREAM-INF before that
@@ -3441,7 +3465,13 @@ impl MasterPlaylist {
                             .to_string(),
                     });
                 }
-                pending_stream_inf = Some((bandwidth, codecs, resolution, extra_attrs));
+                pending_stream_inf = Some((
+                    bandwidth,
+                    average_bandwidth,
+                    codecs,
+                    resolution,
+                    extra_attrs,
+                ));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-I-FRAME-STREAM-INF:") {
                 let (attrs, quoted) = parse_attribute_list(rest);
                 let bandwidth_str = require_attr(
@@ -3509,7 +3539,7 @@ impl MasterPlaylist {
             } else if line.starts_with('#') {
                 // RFC 8216 §4.1: a non-"#EXT" '#' line is a comment — ignore.
             } else {
-                let (bandwidth, codecs, resolution, extra_attrs) =
+                let (bandwidth, average_bandwidth, codecs, resolution, extra_attrs) =
                     pending_stream_inf.take().ok_or_else(|| Error::HlsParse {
                         line_no,
                         line: line.to_string(),
@@ -3517,6 +3547,7 @@ impl MasterPlaylist {
                     })?;
                 variants.push(Variant {
                     bandwidth,
+                    average_bandwidth,
                     codecs,
                     resolution,
                     uri: line.to_string(),
@@ -3810,6 +3841,7 @@ mod tests {
             variants: vec![
                 Variant {
                     bandwidth: 300_000,
+                    average_bandwidth: None,
                     codecs: Some("avc1.64001e,mp4a.40.2".into()),
                     resolution: Some((640, 360)),
                     uri: "v300/index.m3u8".into(),
@@ -3817,6 +3849,7 @@ mod tests {
                 },
                 Variant {
                     bandwidth: 800_000,
+                    average_bandwidth: None,
                     codecs: Some("avc1.640028,mp4a.40.2".into()),
                     resolution: Some((1280, 720)),
                     uri: "v800/index.m3u8".into(),
@@ -3841,6 +3874,7 @@ mod tests {
             version: 6,
             variants: vec![Variant {
                 bandwidth: 1_000_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.640028".into()),
                 resolution: None,
                 uri: "v1k/index.m3u8".into(),
@@ -3852,6 +3886,70 @@ mod tests {
         let out = pl.to_m3u8().unwrap();
         assert!(!out.contains("RESOLUTION"));
         assert!(out.contains("#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028\""));
+    }
+
+    /// RFC 8216bis §4.4.6.2: `AVERAGE-BANDWIDTH` renders immediately after
+    /// `BANDWIDTH`, and a `Variant` built with the attribute round-trips
+    /// (render -> parse) with the same value.
+    #[test]
+    fn master_playlist_renders_average_bandwidth_after_bandwidth() {
+        let pl = MasterPlaylist {
+            variants: vec![Variant {
+                bandwidth: 2_523_597,
+                average_bandwidth: Some(2_190_673),
+                codecs: Some("avc1.640020,mp4a.40.2".into()),
+                uri: "v540/index.m3u8".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let out = pl.to_m3u8().unwrap();
+        assert!(
+            out.contains(
+                "#EXT-X-STREAM-INF:BANDWIDTH=2523597,AVERAGE-BANDWIDTH=2190673,\
+                 CODECS=\"avc1.640020,mp4a.40.2\""
+            ),
+            "out: {out}"
+        );
+        let reparsed = MasterPlaylist::parse(&out).unwrap();
+        assert_eq!(reparsed.variants, pl.variants, "render -> parse must equal");
+        assert_eq!(reparsed.variants[0].average_bandwidth, Some(2_190_673));
+    }
+
+    /// A `Variant` with no `AVERAGE-BANDWIDTH` renders no attribute and
+    /// round-trips as `None` (the attribute is optional on parse).
+    #[test]
+    fn master_playlist_omits_absent_average_bandwidth_and_round_trips_none() {
+        let pl = MasterPlaylist {
+            variants: vec![Variant {
+                bandwidth: 800_000,
+                average_bandwidth: None,
+                codecs: Some("avc1.640028,mp4a.40.2".into()),
+                uri: "v800/index.m3u8".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let out = pl.to_m3u8().unwrap();
+        assert!(!out.contains("AVERAGE-BANDWIDTH"), "out: {out}");
+        let reparsed = MasterPlaylist::parse(&out).unwrap();
+        assert_eq!(reparsed.variants, pl.variants, "render -> parse must equal");
+        assert_eq!(reparsed.variants[0].average_bandwidth, None);
+    }
+
+    /// A non-decimal `AVERAGE-BANDWIDTH` is a structured parse error, like
+    /// `BANDWIDTH` (RFC 8216bis §4.2 `decimal-integer`).
+    #[test]
+    fn average_bandwidth_must_be_a_decimal_integer() {
+        let text =
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000,AVERAGE-BANDWIDTH=12x\nv/index.m3u8\n";
+        let err = MasterPlaylist::parse(text).unwrap_err();
+        match err {
+            Error::HlsParse { reason, .. } => {
+                assert!(reason.contains("AVERAGE-BANDWIDTH"), "reason: {reason}");
+            }
+            other => panic!("expected HlsParse, got {other:?}"),
+        }
     }
 
     /// The 3-decimal `#EXTINF` form (`9.009` — what every RFC 8216 example
@@ -4769,6 +4867,7 @@ s0.m4s\n";
             variants: vec![
                 Variant {
                     bandwidth: 300_000,
+                    average_bandwidth: None,
                     codecs: Some("avc1.64001e,mp4a.40.2".into()),
                     resolution: Some((640, 360)),
                     uri: "v300/index.m3u8".into(),
@@ -4776,6 +4875,7 @@ s0.m4s\n";
                 },
                 Variant {
                     bandwidth: 800_000,
+                    average_bandwidth: None,
                     codecs: Some("avc1.640028,mp4a.40.2".into()),
                     resolution: Some((1280, 720)),
                     uri: "v800/index.m3u8".into(),
@@ -4872,6 +4972,7 @@ s0.m4s\n";
             }),
             variants: vec![Variant {
                 bandwidth: 1_280_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "low/index.m3u8".into(),
@@ -5305,6 +5406,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
@@ -5337,6 +5439,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "{$base}/index.m3u8".into(),
@@ -5388,6 +5491,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
@@ -5451,6 +5555,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
@@ -5470,6 +5575,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
@@ -5491,6 +5597,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),

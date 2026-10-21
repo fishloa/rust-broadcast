@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             body_string(resp).await,
-            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16\nmedia.m3u8\n"
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16,AVERAGE-BANDWIDTH=16\nmedia.m3u8\n"
         );
     }
 

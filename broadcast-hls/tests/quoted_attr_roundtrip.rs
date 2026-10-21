@@ -51,9 +51,20 @@ fn real_stream_inf_quoted_attrs_round_trip_byte_exact() {
     let parsed = MasterPlaylist::parse(&text).expect("bipbop-fmp4-hevc/master.m3u8 must parse");
 
     let variant = &parsed.variants[0];
-    // `AVERAGE-BANDWIDTH`/`FRAME-RATE` are also unmodeled (decimal, so their
-    // quoting is not at issue here); the three quoted-string attributes this
-    // regression targets are asserted individually below.
+    // `AVERAGE-BANDWIDTH` is a typed `Variant` field (RFC 8216bis §4.4.6.2),
+    // so it must be recovered there — never duplicated into `extra_attrs`.
+    assert_eq!(variant.average_bandwidth, Some(2_190_673));
+    assert!(
+        variant
+            .extra_attrs
+            .iter()
+            .all(|(k, _)| k != "AVERAGE-BANDWIDTH"),
+        "AVERAGE-BANDWIDTH must not also land in extra_attrs: {:?}",
+        variant.extra_attrs
+    );
+    // `FRAME-RATE` is still unmodeled (decimal, so quoting is not at issue
+    // here); the three quoted-string attributes this regression targets are
+    // asserted individually below.
     assert_eq!(
         variant
             .extra_attrs
@@ -62,7 +73,6 @@ fn real_stream_inf_quoted_attrs_round_trip_byte_exact() {
             .collect::<Vec<_>>(),
         vec![
             ("AUDIO", "a1"),
-            ("AVERAGE-BANDWIDTH", "2190673"),
             ("CLOSED-CAPTIONS", "cc"),
             ("FRAME-RATE", "60.000"),
             ("SUBTITLES", "sub1"),
@@ -230,6 +240,7 @@ fn valid_constructed_value_round_trips() {
     let master = MasterPlaylist {
         variants: vec![Variant {
             bandwidth: 1000,
+            average_bandwidth: None,
             codecs: Some("avc1.640020".to_string()),
             uri: "v.m3u8".to_string(),
             extra_attrs: vec![
