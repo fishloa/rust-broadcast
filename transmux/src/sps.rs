@@ -13,6 +13,9 @@
 //!   convention) and the HEVC HRD fixed-pic-rate / ClockTick derivation are
 //!   transcribed in `transmux/docs/codec/vui-timing-frame-rate.md`.
 //! - **H.265 SPS + PTL**: ITU-T H.265 §7.3.2.2 (SPS) + §7.3.3 (profile_tier_level).
+//! - **H.265 VPS timing**: ITU-T H.265 §7.3.2.1 (VPS) — `vps_timing_info_present_flag`,
+//!   `vps_num_units_in_tick`, `vps_time_scale`; inheritance into the SPS VUI per
+//!   `transmux/docs/codec/hevc-vps-timing.md` (§3-§4).
 //! - **Coded dimensions**: see `fixtures/ts/CODEC-ORACLE.md`.
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
 //!   §7.4.1 NAL semantics (emulation_prevention_three_byte); H.265 §7.4.2.1.
@@ -802,6 +805,21 @@ pub struct HevcInterlaceSps {
     pub frame_field_info_present: bool,
 }
 
+/// VPS timing facts for an H.265 VPS (ITU-T H.265 §7.3.2.1), carrying
+/// `vps_num_units_in_tick` / `vps_time_scale` when `vps_timing_info_present_flag`
+/// is 1. Per `transmux/docs/codec/hevc-vps-timing.md` §3-§4, these are
+/// inherited by an SPS VUI that lacks its own timing (or by an SPS with no VUI
+/// at all — an inference of this derivation, see doc §4). The VPS contributes
+/// only these two values; VPS HRD is not used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HevcVpsTiming {
+    /// `vps_num_units_in_tick` from VPS `vps_timing_info`.
+    pub num_units_in_tick: u32,
+    /// `vps_time_scale` from VPS `vps_timing_info`.
+    pub time_scale: u32,
+}
+
 /// Decode only the VUI timing facts ([`HevcVuiTiming`]) from an H.265 SPS NAL
 /// unit (2-byte NAL header included).
 pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>> {
@@ -816,6 +834,84 @@ pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>>
         })),
         _ => Ok(None),
     }
+}
+
+/// Decode only the VPS timing facts ([`HevcVpsTiming`]) from an H.265 VPS NAL
+/// unit (2-byte NAL header included). Returns `Ok(None)` when
+/// `vps_timing_info_present_flag` is 0 or either value is 0. Returns `Err` on
+/// truncated / hostile input (never panics).
+pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
+    if vps_nal.len() < 2 {
+        return Err(Error::BufferTooShort {
+            need: 2,
+            have: vps_nal.len(),
+            what: "HEVC VPS header",
+        });
+    }
+    let mut r = BitReader::with_unescape(&vps_nal[2..], "HEVC VPS")?;
+
+    // vps_video_parameter_set_id u(4)
+    let _ = r.read_bits(4, "vps_video_parameter_set_id")?;
+    // vps_base_layer_internal_flag u(1)
+    let _ = r.read_flag("vps_base_layer_internal_flag")?;
+    // vps_base_layer_available_flag u(1)
+    let _ = r.read_flag("vps_base_layer_available_flag")?;
+    // vps_max_layers_minus1 u(6)
+    let _ = r.read_bits(6, "vps_max_layers_minus1")?;
+    // vps_max_sub_layers_minus1 u(3)
+    let vps_max_sub_layers_minus1 = r.read_bits(3, "vps_max_sub_layers_minus1")? as u8;
+    // vps_temporal_id_nesting_flag u(1)
+    let _ = r.read_flag("vps_temporal_id_nesting_flag")?;
+    // vps_reserved_0xffff_16bits u(16)
+    let _ = r.read_bits(16, "vps_reserved_0xffff_16bits")?;
+
+    // profile_tier_level(1, vps_max_sub_layers_minus1)
+    let _ = decode_ptl(&mut r, true, vps_max_sub_layers_minus1)?;
+
+    // vps_sub_layer_ordering_info_present_flag u(1)
+    let ordering_present = r.read_flag("vps_sub_layer_ordering_info_present_flag")?;
+    let start = if ordering_present {
+        0u8
+    } else {
+        vps_max_sub_layers_minus1
+    };
+    for _ in start..=vps_max_sub_layers_minus1 {
+        let _ = r.read_ue("vps_max_dec_pic_buffering_minus1")?;
+        let _ = r.read_ue("vps_max_num_reorder_pics")?;
+        let _ = r.read_ue("vps_max_latency_increase_plus1")?;
+    }
+
+    // vps_max_layer_id u(6)
+    let vps_max_layer_id = r.read_bits(6, "vps_max_layer_id")? as u8;
+    // vps_num_layer_sets_minus1 ue(v)
+    let vps_num_layer_sets_minus1 = r.read_ue("vps_num_layer_sets_minus1")?;
+    if vps_num_layer_sets_minus1 > 1024 {
+        return Err(Error::InvalidValue {
+            field: "vps_num_layer_sets_minus1",
+            value: vps_num_layer_sets_minus1,
+            reason: "out of range (HEVC VPS)",
+        });
+    }
+    for _i in 1..=vps_num_layer_sets_minus1 {
+        for _j in 0..=vps_max_layer_id {
+            let _ = r.read_flag("layer_id_included_flag")?;
+        }
+    }
+
+    // vps_timing_info_present_flag u(1)
+    let timing_present = r.read_flag("vps_timing_info_present_flag")?;
+    if !timing_present {
+        return Ok(None);
+    }
+    let num_units = r.read_bits(32, "vps_num_units_in_tick")? as u32;
+    let ts = r.read_bits(32, "vps_time_scale")? as u32;
+    if num_units == 0 || ts == 0 {
+        return Ok(None);
+    }
+    Ok(Some(HevcVpsTiming {
+        num_units_in_tick: num_units,
+        time_scale: ts,
+    }))
 }
 /// NAL unit (2-byte NAL header included).
 pub fn decode_hevc_interlace_sps(sps_bytes: &[u8]) -> Result<HevcInterlaceSps> {

@@ -423,6 +423,40 @@ fn hevc_frame_rate_from_timing(
     }
 }
 
+/// Combine an SPS VUI timing (if any) with a VPS timing fallback, per
+/// `transmux/docs/codec/hevc-vps-timing.md` §3-§4. The SPS timing wins when
+/// present (the spec requires the two to be equal when both are present; the
+/// VPS is then ignored). Otherwise the VPS timing is used together with the
+/// SPS interlace facts (`field_seq` / `frame_field_info_present` from
+/// `decode_hevc_interlace_sps`, which already applies the §E.3.1 inferences),
+/// with `hrd_fixed_pic_rate = None` (VPS HRD is not used, so the result is at
+/// most tier B). Returns `None` when neither carries timing, or when the VPS
+/// timing is unusable (either value 0).
+///
+/// Applying the inheritance when the SPS has no VUI at all is an inference of
+/// this derivation (doc §4), since §3 phrases the inference in terms of "when
+/// not present" inside the VUI.
+fn hevc_timing_with_vps_fallback(
+    sps: Option<crate::sps::HevcVuiTiming>,
+    interlace: crate::sps::HevcInterlaceSps,
+    vps: Option<crate::sps::HevcVpsTiming>,
+) -> Option<crate::sps::HevcVuiTiming> {
+    if let Some(t) = sps {
+        return Some(t);
+    }
+    let v = vps?;
+    if v.num_units_in_tick == 0 || v.time_scale == 0 {
+        return None;
+    }
+    Some(crate::sps::HevcVuiTiming {
+        num_units_in_tick: v.num_units_in_tick,
+        time_scale: v.time_scale,
+        field_seq: interlace.field_seq,
+        frame_field_info_present: interlace.frame_field_info_present,
+        hrd_fixed_pic_rate: None,
+    })
+}
+
 /// Nominal frame rate of a video track, in millihertz (1/1000 Hz), plus the
 /// basis (normative vs. convention) on which it was derived.
 ///
@@ -461,7 +495,24 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                 .first()?
                 .0
                 .as_slice();
-            let timing = crate::sps::decode_hevc_vui_timing(sps_nal).ok()??;
+            let sps_timing = crate::sps::decode_hevc_vui_timing(sps_nal).ok().flatten();
+            let interlace = crate::sps::decode_hevc_interlace_sps(sps_nal)
+                .ok()
+                .unwrap_or_default();
+            // VPS fallback: only when the SPS carries no VUI timing. A missing
+            // VPS array means no fallback (None as before).
+            let vps_timing = config
+                .config
+                .arrays
+                .iter()
+                .find(|a| a.nal_unit_type == 32)
+                .and_then(|a| a.nalus.first())
+                .and_then(|n| {
+                    crate::sps::decode_hevc_vps_timing(n.0.as_slice())
+                        .ok()
+                        .flatten()
+                });
+            let timing = hevc_timing_with_vps_fallback(sps_timing, interlace, vps_timing)?;
             hevc_frame_rate_from_timing(&timing)
         }
         _ => None,
