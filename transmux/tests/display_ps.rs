@@ -171,10 +171,40 @@ fn ps_arc_sharing() {
     }
 }
 
+/// The SPS NAL payloads (nal_unit_type 7) found in one Annex B access unit,
+/// scanned from the raw bytes (independent of the display tracker).
+fn sps_nals(au: &[u8]) -> Vec<&[u8]> {
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while i + 3 <= au.len() {
+        if au[i] == 0 && au[i + 1] == 0 && au[i + 2] == 1 {
+            starts.push(i + 3);
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    let mut out = Vec::new();
+    for (k, &st) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).map_or(au.len(), |&n| n - 3);
+        if st < end && au[st] & 0x1F == 7 {
+            // Trailing zero bytes belong to the next start code.
+            let mut e = end;
+            while e > st && au[e - 1] == 0 {
+                e -= 1;
+            }
+            out.push(&au[st..e]);
+        }
+    }
+    out
+}
+
 #[test]
 fn sarswitch_h264_ps_tags_the_switch_with_the_sps_change() {
-    // ffprobe -show_entries frame=sample_aspect_ratio on the file: 78 frames
-    // SAR 64:45 followed by 80 frames SAR 16:11 (a real in-band SPS change).
+    // ffprobe on the file: 78 frames SAR 64:45 then 80 frames SAR 16:11 (a real
+    // in-band SPS change). PS demux emits one sample per coded picture (a
+    // field pair is two samples), so sample counts differ from ffprobe's frame
+    // counts; the switch position is instead derived from the raw SPS bytes.
     let Some(bytes) = test_fixtures::require_bytes("ps/sarswitch-h264.ps", "display_ps") else {
         return;
     };
@@ -194,11 +224,27 @@ fn sarswitch_h264_ps_tags_the_switch_with_the_sps_change() {
                 .expect("sar")
         })
         .collect();
-    let first = sars.iter().filter(|&&r| r == (64, 45)).count();
-    let second = sars.iter().filter(|&&r| r == (16, 11)).count();
-    assert_eq!((first, second), (78, 80));
-    assert_eq!(first + second, sars.len());
-    // One switch, in order: every 64:45 sample precedes every 16:11 sample.
-    assert!(sars[..first].iter().all(|&r| r == (64, 45)));
-    assert!(sars[first..].iter().all(|&r| r == (16, 11)));
+
+    // Oracle: the first sample carrying an SPS that differs from the first SPS.
+    let mut first_sps: Option<&[u8]> = None;
+    let mut expected_switch = None;
+    for (idx, s) in track.samples.iter().enumerate() {
+        for sps in sps_nals(&s.data) {
+            match first_sps {
+                None => first_sps = Some(sps),
+                Some(f) if f != sps && expected_switch.is_none() => expected_switch = Some(idx),
+                _ => {}
+            }
+        }
+    }
+    let switch = expected_switch.expect("the fixture has an in-band SPS change");
+    assert!(switch > 0 && switch < sars.len());
+    assert!(
+        sars[..switch].iter().all(|&r| r == (64, 45)),
+        "before the SPS change"
+    );
+    assert!(
+        sars[switch..].iter().all(|&r| r == (16, 11)),
+        "from the SPS change on"
+    );
 }
