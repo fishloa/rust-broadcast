@@ -2,7 +2,7 @@
 
 Verbatim text-layer transcriptions with PDF page numbers (1-based file pages of
 `private/specs/itu_t_h264_avc.pdf` V15 08/2024 and `itu_t_h265_hevc.pdf` V11 01/2026). The two
-syntax tables were additionally checked against rendered pages (`pdftoppm -r 85`): H.264 E.1.1
+syntax tables were additionally checked against rendered pages (`pdftoppm`, viewed): H.264 E.1.1
 (pdf 454, printed 430), H.265 vui_parameters tail (pdf 446, printed 428), hrd_parameters
 (pdf 447, printed 429), sub_layer_hrd_parameters (pdf 448, printed 430); Table E-6 (H.264 pdf 468, printed 444) and Table E.7 (H.265 pdf 468,
 printed 450) were checked row by row against the rendered pages. Written 2026-10-21;
@@ -33,6 +33,8 @@ vui_parameters( ) { ...
 
 ### 1.2 Semantics — E.2.1 (pdf 467-469, printed 443-444)
 
+The rendered pages show `Δt` (delta) where the text layer prints `t`: `Δt_fi,dpb(n)`, `Δt_o,dpb(n)` (restored below; subscripts are subscripts on the page).
+
 ```
 timing_info_present_flag equal to 1 specifies that num_units_in_tick, time_scale and fixed_frame_rate_flag are present
 in the bitstream. timing_info_present_flag equal to 0 specifies that num_units_in_tick, time_scale and
@@ -49,26 +51,26 @@ consecutive pictures in output order is constrained as follows. fixed_frame_rate
 constraints apply to the temporal distance between the HRD output times of any two consecutive pictures in output order.
 When fixed_frame_rate_flag is not present, it shall be inferred to be equal to 0.
 For each picture n where n indicates the n-th picture (in output order) that is output and picture n is not the last picture in
-the bitstream (in output order) that is output, the value of tfi,dpb( n ) is specified by
+the bitstream (in output order) that is output, the value of Δtfi,dpb( n ) is specified by
 
-                  tfi,dpb( n ) = to,dpb( n ) ÷ DeltaTfiDivisor                                                        (E-78)
+                  Δtfi,dpb( n ) = Δto,dpb( n ) ÷ DeltaTfiDivisor                                                        (E-78)
 
 
 
                                                                            Rec. ITU-T H.264 (V15) (08/2024)               443
 
-where to,dpb( n ) is specified in Equation C-13 and DeltaTfiDivisor is specified by Table E-6 based on the value of
+where Δto,dpb( n ) is specified in Equation C-13 and DeltaTfiDivisor is specified by Table E-6 based on the value of
 pic_struct_present_flag, field_pic_flag, and pic_struct for the coded video sequence containing picture n. Entries marked
 "-" in Table E-6 indicate a lack of dependence of DeltaTfiDivisor on the corresponding syntax element.
 When fixed_frame_rate_flag is equal to 1 for a coded video sequence containing picture n, the value computed for
-tfi,dpb( n ) shall be equal to tc as specified in Equation C-1 (using the value of tc for the coded video sequence containing
+Δtfi,dpb( n ) shall be equal to tc as specified in Equation C-1 (using the value of tc for the coded video sequence containing
 picture n) when either or both of the following conditions are true for the following picture n n that is specified for use in
 Equation C-13:
 –     picture nn is in the same coded video sequence as picture n.
 –     picture nn is in a different coded video sequence and fixed_frame_rate_flag is equal to 1 in the coded video sequence
       containing picture nn and the value of num_units_in_tick ÷ time_scale is the same for both coded video sequences.
 
-                                     Table E-6 – Divisor for computation of tfi,dpb( n )
+                                     Table E-6 – Divisor for computation of Δtfi,dpb( n )
 
                           pic_struct_present_flag field_pic_flag pic_struct DeltaTfiDivisor
                           0                             1                 -              1
@@ -89,17 +91,51 @@ Equation C-13:
 ### 1.3 Equation C-1 (pdf 341)
 
 ```
+The variable tc is derived as follows and is called a clock tick :
+
           tc = num_units_in_tick ÷ time_scale                                                                                   (C-1)
-
-The following is specified for expressing the constraints in this annex:
-–    Let access unit n be the n-th access unit in decoding order with the first access unit being access unit 0.
-–    Let picture n be the primary coded picture or the decoded primary picture of access unit n.
-
-
-
-
-                                                                              Rec. ITU-T H.264 (V15) (08/2024)                    317
 ```
+
+### 1.3a pic_struct — D.2.3 text (pdf 381, printed 357) and Table D-1 (pdf 382, printed 358; rows checked on the rendered page)
+
+```
+pic_struct indicates whether a picture should be displayed as a frame or one or more fields, according to Table D-1.
+Frame doubling (pic_struct equal to 7) indicates that the frame should be displayed two times consecutively, and frame
+tripling (pic_struct equal to 8) indicates that the frame should be displayed three times consecutively.
+   NOTE 5 – Frame doubling can facilitate the display, for example, of 25p video on a 50p display and 29.97p video on a 59.94p
+   display. Using frame doubling and frame tripling in combination on every other frame can facilitate the display of 23.98p video on
+   a 59.94p display.
+When pic_struct is present (pic_struct_present_flag is equal to 1), the constraints specified in the third column of
+Table D-1 shall be obeyed.
+   NOTE 6 – When pic_struct_present_flag is equal to 0, then in many cases default values may be inferred. In the absence of other
+   indications of the intended display type of a picture, the decoder should infer the value of pic_struct as follows:
+     – If field_pic_flag is equal to 1, pic_struct should be inferred to be equal to (1 + bottom_field_flag).
+     – Otherwise, if TopFieldOrderCnt is equal to BottomFieldOrderCnt, pic_struct should be inferred to be equal to 0.
+     – Otherwise, if TopFieldOrderCnt is less than BottomFieldOrderCnt, pic_struct should be inferred to be equal to 3.
+     – Otherwise (field_pic_flag is equal to 0 and TopFieldOrderCnt is greater than BottomFieldOrderCnt), pic_struct should be
+        inferred to be equal to 4.
+   pic_struct is only a hint as to how the decoded video should be displayed on an assumed display type (e.g., interlaced or progressive)
+   at an assumed display rate. When another display type or display rate is used by the decoder, then pic_struct does not indicate the
+   display method, but may aid in processing the decoded video for the alternative display. When it is desired for pic_struct to have
+   an effective value in the range of 5 to 8, inclusive, pic_struct_present_flag should be equal to 1, as the above inference rule will
+   not produce these values.
+                                                                               Rec. ITU-T H.264 (V15) (08/2024)                     357
+```
+
+Table D-1 – Interpretation of pic_struct
+
+| Value | Indicated display of picture | Restrictions | NumClockTS |
+|---|---|---|---|
+| 0 | (progressive) frame | field_pic_flag shall be 0, TopFieldOrderCnt shall be equal to BottomFieldOrderCnt | 1 |
+| 1 | top field | field_pic_flag shall be 1, bottom_field_flag shall be 0 | 1 |
+| 2 | bottom field | field_pic_flag shall be 1, bottom_field_flag shall be 1 | 1 |
+| 3 | top field, bottom field, in that order | field_pic_flag shall be 0, TopFieldOrderCnt shall be less than or equal to BottomFieldOrderCnt | 2 |
+| 4 | bottom field, top field, in that order | field_pic_flag shall be 0, BottomFieldOrderCnt shall be less than or equal to TopFieldOrderCnt | 2 |
+| 5 | top field, bottom field, top field repeated, in that order | field_pic_flag shall be 0, TopFieldOrderCnt shall be less than or equal to BottomFieldOrderCnt | 3 |
+| 6 | bottom field, top field, bottom field repeated, in that order | field_pic_flag shall be 0, BottomFieldOrderCnt shall be less than or equal to TopFieldOrderCnt | 3 |
+| 7 | frame doubling | field_pic_flag shall be 0, fixed_frame_rate_flag shall be 1, TopFieldOrderCnt shall be equal to BottomFieldOrderCnt | 2 |
+| 8 | frame tripling | field_pic_flag shall be 0, fixed_frame_rate_flag shall be 1, TopFieldOrderCnt shall be equal to BottomFieldOrderCnt | 3 |
+| 9..15 | reserved | | |
 
 ### 1.4 What follows (derived — not spec text)
 
@@ -109,11 +145,14 @@ The following is specified for expressing the constraints in this annex:
   (`field_pic_flag = 1`) divisor 1, so BOTH a frame and a field PAIR advance by `2 * tc`:
   nominal frame rate = `time_scale / (2 * num_units_in_tick)`. `pic_struct` (picture timing SEI,
   only when `pic_struct_present_flag = 1`) can change the divisor per picture (0:2, 1:1, 2:1,
-  3:2, 4:2, 5:3, 6:3, 7:4, 8:6); pic_struct 0/3/4 keep the nominal `2 * tc`, 5-8 repeat
-  fields (the nominal rate of the coded frames is unchanged, the display cadence differs).
+  3:2, 4:2, 5:3, 6:3, 7:4, 8:6). So per-picture output intervals are 2*tc (pic_struct 0, 3, 4),
+  3*tc (5, 6), 4*tc (7, frame doubling) or 6*tc (8, frame tripling); `2 * tc` is the NOMINAL frame
+  interval only (the cadence of repeated/doubled pictures differs). The SPS alone cannot say which
+  pic_struct a picture has (it is in the picture timing SEI), so the nominal `2 * tc` is what an
+  SPS-only derivation can report; Table D-1 / E-6 above are the supporting text.
 * With `fixed_frame_rate_flag = 0` (or absent) the spec states NO constraint on the output times,
   so the frame rate is **not normatively derivable**; `time_scale / (2 * num_units_in_tick)` is
-  then the widely used convention (FFmpeg, x264, GStreamer) and an implementation-defined tier.
+  then an implementation-defined convention (common practice, not part of the Recommendation).
 
 ## 2. H.265 (ITU-T H.265 V11)
 
@@ -203,6 +242,7 @@ general_frame_only_constraint_flag is equal to 1, the value of field_seq_flag sh
    NOTE 18 – The specified decoding process does not treat access units conveying pictures that represent fields or frames differently.
    A sequence of pictures that represent fields would therefore be coded with the picture dimensions of an individual field. For
    example, access units containing pictures that represent 1080i fields would commonly have cropped output dimensions of
+1 920x540, while the sequence picture rate would commonly express the rate of the source fields (typically between 50 Hz and 60 Hz), instead of the source frame rate (typically between 25 Hz and 30 Hz).
 ```
 
 ### 2.3 frame_field_info_present_flag (pdf 463, printed 445)
@@ -253,7 +293,7 @@ proportional to the output time of the picture relative to the output time of th
 When vps_poc_proportional_to_timing_flag is present in the VPS referred to by the SPS and the value is equal to 1,
 vui_poc_proportional_to_timing_flag, when present, shall be equal to 1.
 vui_num_ticks_poc_diff_one_minus1 plus 1 specifies the number of clock ticks corresponding to a difference of picture
-order count values equal to 1. The value of vui_num_ticks_poc_diff_one_minus1 shall be in the range of 0 to 232 − 2,
+order count values equal to 1. The value of vui_num_ticks_poc_diff_one_minus1 shall be in the range of 0 to 2^32 − 2 (superscript 32 on the page),
 inclusive.
 When vps_num_ticks_poc_diff_one_minus1 is present in the VPS referred to by the                                                 SPS,
 vui_num_ticks_poc_diff_one_minus1, when present, shall be equal to vps_num_ticks_poc_diff_one_minus1.
@@ -322,44 +362,9 @@ that is specified for use in Equation C-16:
 ### 2.6 Equation C-1 (pdf 297) and C-16 (pdf 303)
 
 ```
+The variable ClockTick is derived as follows and is called a clock tick:
+
           ClockTick = vui_num_units_in_tick ÷ vui_time_scale                                                                    (C-1)
-
-The variable ClockSubTick is derived as follows and is called a clock sub-tick:
-
-          ClockSubTick = ClockTick ÷ ( tick_divisor_minus2 + 2 )                                                                (C-2)
-
-C.2        Operation of coded picture buffer
-C.2.1      General
-The specifications in this clause apply independently to each set of coded picture buffer (CPB) parameters that is present
-and to both the Type I and Type II conformance points shown in Figure C.1 and the set of CPB parameters is selected as
-specified in clause C.1.
-
-C.2.2      Timing of decoding unit arrival
-If SubPicHrdFlag is equal to 0, the variable subPicParamsFlag is set equal to 0 and the process specified in the remainder
-of this clause is invoked with a decoding unit being considered as an access unit, for derivation of the initial and final
-CPB arrival times for access unit n.
-Otherwise (SubPicHrdFlag is equal to 1), the process specified in the remainder of this clause is first invoked with the
-variable subPicParamsFlag set equal to 0 and a decoding unit being considered as an access unit, for derivation of the
-initial and final CPB arrival times for access unit n, and then invoked with subPicParamsFlag set equal to 1 and a decoding
-unit being considered as a subset of an access unit, for derivation of the initial and final CPB arrival times for the decoding
-units in access unit n.
-The variables InitCpbRemovalDelay[ SchedSelIdx ] and InitCpbRemovalDelayOffset[ SchedSelIdx ] are derived as
-follows:
-–     If one or more of the following conditions are true, InitCpbRemovalDelay[ SchedSelIdx ] and
-      InitCpbRemovalDelayOffset[ SchedSelIdx ] are set equal to the values of the buffering period SEI message syntax
-      elements                             nal_initial_alt_cpb_removal_delay[ SchedSelIdx ]                          and
-      nal_initial_alt_cpb_removal_offset[ SchedSelIdx ], respectively, when NalHrdModeFlag is equal to 1 or
-      vcl_initial_alt_cpb_removal_delay[ SchedSelIdx ]         and     vcl_initial_alt_cpb_removal_offset[ SchedSelIdx ],
-      respectively, when NalHrdModeFlag is equal to 0, where the buffering period SEI message syntax elements are
-      selected as specified in clause C.1:
-      –    Access unit 0 is a BLA access unit for which the coded picture has nal_unit_type equal to BLA_W_RADL or
-           BLA_N_LP, and the value of irap_cpb_params_present_flag of the buffering period SEI message is equal to 1.
-      –    Access unit 0 is a BLA access unit for which the coded picture has nal_unit_type equal to BLA_W_LP or is a
-           CRA access unit, and the value of irap_cpb_params_present_flag of the buffering period SEI message is equal
-           to 1 and one or more of the following conditions are true:
-           –   UseAltCpbParamsFlag for access unit 0 is equal to 1.
-
-                                                                                  Rec. ITU-T H.265 (V11) (01/2026)                279
 ```
 
 ```
@@ -371,9 +376,39 @@ DpbOutputInterval[ n ] is derived as follows:
 where nextPicInOutputOrder is the picture that follows picture n in output order and has PicOutputFlag equal to 1.
 ```
 
+### 2.6a Table D.2 – Interpretation of pic_struct (pdf 348, printed 330; rows checked on the rendered page)
+
+| Value | Indicated display of picture | Restrictions |
+|---|---|---|
+| 0 | (progressive) Frame | field_seq_flag shall be equal to 0 |
+| 1 | Top field | field_seq_flag shall be equal to 1 |
+| 2 | Bottom field | field_seq_flag shall be equal to 1 |
+| 3 | Top field, bottom field, in that order | field_seq_flag shall be equal to 0 |
+| 4 | Bottom field, top field, in that order | field_seq_flag shall be equal to 0 |
+| 5 | Top field, bottom field, top field repeated, in that order | field_seq_flag shall be equal to 0 |
+| 6 | Bottom field, top field, bottom field repeated, in that order | field_seq_flag shall be equal to 0 |
+| 7 | Frame doubling | field_seq_flag shall be equal to 0; fixed_pic_rate_within_cvs_flag shall be equal to 1 |
+| 8 | Frame tripling | field_seq_flag shall be equal to 0; fixed_pic_rate_within_cvs_flag shall be equal to 1 |
+| 9 | Top field paired with previous bottom field in output order | field_seq_flag shall be equal to 1 |
+| 10 | Bottom field paired with previous top field in output order | field_seq_flag shall be equal to 1 |
+| 11 | Top field paired with next bottom field in output order | field_seq_flag shall be equal to 1 |
+| 12 | Bottom field paired with next top field in output order | field_seq_flag shall be equal to 1 |
+
+### 2.6b HighestTid (clause 8.1.2, pdf 135, printed 117; checked on the rendered page)
+
+```
+The variable HighestTid, which identifies the highest temporal sub-layer to be decoded, is specified as follows:
+– If some external means, not specified in this Specification, is available to set HighestTid, HighestTid is set by the
+  external means.
+– Otherwise, if the decoding process is invoked in a bitstream conformance test as specified in clause C.1, HighestTid
+  is set as specified in clause C.1.
+– Otherwise, HighestTid is set equal to sps_max_sub_layers_minus1 in the SPS referenced by the first coded picture
+  in decoding order in the CVSG.
+```
+
 ### 2.7 What follows (derived — not spec text)
 
-* `HighestTid = sps_max_sub_layers_minus1` covers every picture of the stream.
+* Without external means or a conformance test, `HighestTid = sps_max_sub_layers_minus1` (§2.6b), i.e. all temporal sub-layers are decoded, so index `i = sps_max_sub_layers_minus1` of the HRD arrays describes the full picture rate.
 * **Normative tier**: `fixed_pic_rate_within_cvs_flag[HighestTid] = 1` (so `elemental_duration_in_tc_minus1`
   present): `DpbOutputElementalInterval = ClockTick * (elemental_duration_in_tc_minus1 + 1)`,
   `ClockTick = vui_num_units_in_tick / vui_time_scale`. Per Table E.7 the divisor is 1 when
@@ -390,41 +425,43 @@ where nextPicInOutputOrder is the picture that follows picture n in output order
   (`vui_hrd_parameters_present_flag = 0`, or `fixed_pic_rate_within_cvs_flag = 0`), and
   `field_seq_flag = 0` and `frame_field_info_present_flag = 0`: frame rate =
   `vui_time_scale / vui_num_units_in_tick` — H.265's own informative example ("picture rate
-  25 Hz ... clock tick 0.04 s", E.3.1) and what FFmpeg/x265/GStreamer do. Omitted for
+  25 Hz ... clock tick 0.04 s", E.3.1) and common practice; it is NOT normative. Omitted for
   `field_seq_flag = 1` without HRD info and for `frame_field_info_present_flag = 1` (cadence
   unknown). VPS timing (`vps_timing_info`, inherited by the SPS VUI when absent there) is NOT
   parsed: absent in the SPS VUI → no value.
 
-## 3. HLS `RESOLUTION` (IETF draft-pantos-hls-rfc8216bis; `specs/ietf_draft_pantos_hls_rfc8216bis.txt`)
+## 3. HLS `RESOLUTION` (IETF draft-pantos-hls-rfc8216bis; `specs/ietf_draft_pantos_hls_rfc8216bis.txt`, line numbers by `\n`)
 
-§4.4.6.2 (lines 2707-2712):
+§4.4.6.2 RESOLUTION attribute (lines 2707-2714):
 
 ```
-      and H.264 Main Profile Level 3.0 video would have a CODECS value
-      of "mp4a.40.2,avc1.4d401e".
+      RESOLUTION
 
-      Note that if a Variant Stream specifies one or more Renditions
-      that include IMSC subtitles, the CODECS attribute MUST indicate
-      this with a format identifier such as "stpp.ttml.im1t".
+      The value is a decimal-resolution describing the optimal pixel
+      resolution at which to display all the video in the Variant
+      Stream.
+
+      The RESOLUTION attribute is OPTIONAL but is recommended if the
+      Variant Stream includes video.
 ```
 
 §4.4.6.2 alternative-rendition rule (lines 3001-3004):
 
 ```
-
-      CLOSED-CAPTIONS
-
-      The value can be either a quoted-string or an enumerated-string
+   *  If an EXT-X-STREAM-INF tag contains a RESOLUTION attribute and a
+      VIDEO attribute, then every alternative video Rendition MUST have
+      an optimal display resolution matching the value of the RESOLUTION
+      attribute.
 ```
 
 Client behaviour (lines 4019-4023):
 
 ```
+   resolution change.  If the Variant Stream includes a RESOLUTION
+   attribute, clients SHOULD display all video within a rectangle with
+   the same proportions as that resolution.
 
-6.3.2.  Loading the Media Playlist File
-
-   Every time a Media Playlist is loaded or reloaded from a Playlist
-   URI, the client MUST determine the next Media Segment to load, as
+   Clients SHOULD be prepared to handle multiple tracks of a particular
 ```
 
 Decision recorded in `docs/display-geometry/DESIGN.md` Q8: `RESOLUTION` = square-pixel
