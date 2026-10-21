@@ -158,7 +158,8 @@ fn display_geometry_to_py(py: Python<'_>, geom: &DisplayGeometry) -> PyResult<Py
     dict.set_item("coded_height", geom.coded_height)?;
     let sar = geom
         .sample_aspect_ratio()
-        .map(|(w, h)| PyTuple::new(py, [w as i64, h as i64]).unwrap());
+        .map(|(w, h)| PyTuple::new(py, [i64::from(w), i64::from(h)]))
+        .transpose()?;
     dict.set_item("sample_aspect_ratio", sar)?;
     dict.set_item("aspect_ratio_idc", geom.aspect_ratio.map(|a| a.idc()))?;
     dict.set_item("overscan_appropriate", geom.overscan_appropriate)?;
