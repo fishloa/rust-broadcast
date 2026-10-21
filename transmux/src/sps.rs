@@ -9,8 +9,9 @@
 //!
 //! - **H.264 SPS**: ITU-T H.264 §7.3.2.1.1 (sequence parameter set data).
 //! - **H.264 VUI**: ITU-T H.264 §E.1.1 (vui_parameters), §E.2.1 (timing_info
-//!   semantics): `num_units_in_tick` and `time_scale` yield frame rate as
-//!   `time_scale / (2 × num_units_in_tick)`.
+//!   `time_scale / (2 × num_units_in_tick)`. Tier rules (normative vs.
+//!   convention) and the HEVC HRD fixed-pic-rate / ClockTick derivation are
+//!   transcribed in `transmux/docs/codec/vui-timing-frame-rate.md`.
 //! - **H.265 SPS + PTL**: ITU-T H.265 §7.3.2.2 (SPS) + §7.3.3 (profile_tier_level).
 //! - **Coded dimensions**: see `fixtures/ts/CODEC-ORACLE.md`.
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
@@ -247,7 +248,9 @@ pub(crate) fn decode_hevc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts
     decode_hevc_sps_inner(sps_bytes).map(|(_, _, d, _)| d)
 }
 
-fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, DisplayFacts, Option<AvcVuiTiming>)> {
+fn decode_avc_sps_inner(
+    sps_bytes: &[u8],
+) -> Result<(AvcSpsInfo, AvcSliceSps, DisplayFacts, Option<AvcVuiTiming>)> {
     if sps_bytes.len() < 4 {
         return Err(Error::BufferTooShort {
             need: 4,
@@ -3537,7 +3540,6 @@ mod tests {
         assert_eq!(g.aspect_ratio, full);
     }
 
-
     fn hevc_sps_vui_hrd(
         field_seq: bool,
         ffi: bool,
@@ -3638,34 +3640,39 @@ mod tests {
         let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
         assert_eq!(t.hrd_fixed_pic_rate, Some(2));
         let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
-                configuration_version: 1,
-                general_profile_space: 0,
-                general_tier_flag: false,
-                general_profile_idc: 1,
-                general_profile_compatibility_flags: 0,
-                general_constraint_indicator_flags: 0,
-                general_level_idc: 93,
-                min_spatial_segmentation_idc: 0,
-                parallelism_type: 0,
-                chroma_format_idc: 1,
-                bit_depth_luma_minus8: 0,
-                bit_depth_chroma_minus8: 0,
-                avg_frame_rate: 0,
-                constant_frame_rate: 0,
-                num_temporal_layers: 1,
-                temporal_id_nested: true,
-                length_size_minus_one: 3,
-                arrays: vec![crate::nalu_types::HevcNalArray {
-                    array_completeness: true,
-                    nal_unit_type: 33,
-                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
-                }],
-            }),
+            config: crate::hevc_config::HEVCConfigurationBox::new(
+                crate::hevc_config::HEVCDecoderConfigurationRecord {
+                    configuration_version: 1,
+                    general_profile_space: 0,
+                    general_tier_flag: false,
+                    general_profile_idc: 1,
+                    general_profile_compatibility_flags: 0,
+                    general_constraint_indicator_flags: 0,
+                    general_level_idc: 93,
+                    min_spatial_segmentation_idc: 0,
+                    parallelism_type: 0,
+                    chroma_format_idc: 1,
+                    bit_depth_luma_minus8: 0,
+                    bit_depth_chroma_minus8: 0,
+                    avg_frame_rate: 0,
+                    constant_frame_rate: 0,
+                    num_temporal_layers: 1,
+                    temporal_id_nested: true,
+                    length_size_minus_one: 3,
+                    arrays: vec![crate::nalu_types::HevcNalArray {
+                        array_completeness: true,
+                        nal_unit_type: 33,
+                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                    }],
+                },
+            ),
             width: 320,
             height: 240,
         };
-        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), Some((12500, crate::pipeline::FrameRateBasis::Normative)));
+        assert_eq!(
+            crate::pipeline::nominal_frame_rate(&cfg),
+            Some((12500, crate::pipeline::FrameRateBasis::Normative))
+        );
     }
 
     #[test]
@@ -3682,30 +3689,32 @@ mod tests {
         // ffip=1, field_seq=0, HRD present -> None (cadence unknown).
         let sps = hevc_sps_vui_hrd(false, true, 1, 25, Some((true, true, 0)));
         let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
-                configuration_version: 1,
-                general_profile_space: 0,
-                general_tier_flag: false,
-                general_profile_idc: 1,
-                general_profile_compatibility_flags: 0,
-                general_constraint_indicator_flags: 0,
-                general_level_idc: 93,
-                min_spatial_segmentation_idc: 0,
-                parallelism_type: 0,
-                chroma_format_idc: 1,
-                bit_depth_luma_minus8: 0,
-                bit_depth_chroma_minus8: 0,
-                avg_frame_rate: 0,
-                constant_frame_rate: 0,
-                num_temporal_layers: 1,
-                temporal_id_nested: true,
-                length_size_minus_one: 3,
-                arrays: vec![crate::nalu_types::HevcNalArray {
-                    array_completeness: true,
-                    nal_unit_type: 33,
-                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
-                }],
-            }),
+            config: crate::hevc_config::HEVCConfigurationBox::new(
+                crate::hevc_config::HEVCDecoderConfigurationRecord {
+                    configuration_version: 1,
+                    general_profile_space: 0,
+                    general_tier_flag: false,
+                    general_profile_idc: 1,
+                    general_profile_compatibility_flags: 0,
+                    general_constraint_indicator_flags: 0,
+                    general_level_idc: 93,
+                    min_spatial_segmentation_idc: 0,
+                    parallelism_type: 0,
+                    chroma_format_idc: 1,
+                    bit_depth_luma_minus8: 0,
+                    bit_depth_chroma_minus8: 0,
+                    avg_frame_rate: 0,
+                    constant_frame_rate: 0,
+                    num_temporal_layers: 1,
+                    temporal_id_nested: true,
+                    length_size_minus_one: 3,
+                    arrays: vec![crate::nalu_types::HevcNalArray {
+                        array_completeness: true,
+                        nal_unit_type: 33,
+                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                    }],
+                },
+            ),
             width: 320,
             height: 240,
         };
@@ -3734,30 +3743,32 @@ mod tests {
         // field_seq=1, no HRD -> None (tier B not applied).
         let sps = hevc_sps_vui_hrd(true, true, 1, 25, None);
         let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
-                configuration_version: 1,
-                general_profile_space: 0,
-                general_tier_flag: false,
-                general_profile_idc: 1,
-                general_profile_compatibility_flags: 0,
-                general_constraint_indicator_flags: 0,
-                general_level_idc: 93,
-                min_spatial_segmentation_idc: 0,
-                parallelism_type: 0,
-                chroma_format_idc: 1,
-                bit_depth_luma_minus8: 0,
-                bit_depth_chroma_minus8: 0,
-                avg_frame_rate: 0,
-                constant_frame_rate: 0,
-                num_temporal_layers: 1,
-                temporal_id_nested: true,
-                length_size_minus_one: 3,
-                arrays: vec![crate::nalu_types::HevcNalArray {
-                    array_completeness: true,
-                    nal_unit_type: 33,
-                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
-                }],
-            }),
+            config: crate::hevc_config::HEVCConfigurationBox::new(
+                crate::hevc_config::HEVCDecoderConfigurationRecord {
+                    configuration_version: 1,
+                    general_profile_space: 0,
+                    general_tier_flag: false,
+                    general_profile_idc: 1,
+                    general_profile_compatibility_flags: 0,
+                    general_constraint_indicator_flags: 0,
+                    general_level_idc: 93,
+                    min_spatial_segmentation_idc: 0,
+                    parallelism_type: 0,
+                    chroma_format_idc: 1,
+                    bit_depth_luma_minus8: 0,
+                    bit_depth_chroma_minus8: 0,
+                    avg_frame_rate: 0,
+                    constant_frame_rate: 0,
+                    num_temporal_layers: 1,
+                    temporal_id_nested: true,
+                    length_size_minus_one: 3,
+                    arrays: vec![crate::nalu_types::HevcNalArray {
+                        array_completeness: true,
+                        nal_unit_type: 33,
+                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                    }],
+                },
+            ),
             width: 320,
             height: 240,
         };
@@ -3768,65 +3779,68 @@ mod tests {
     fn hevc_vui_hrd_zero_num_units_none() {
         let sps = hevc_sps_vui_hrd(false, false, 0, 25, Some((true, true, 0)));
         let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
-                configuration_version: 1,
-                general_profile_space: 0,
-                general_tier_flag: false,
-                general_profile_idc: 1,
-                general_profile_compatibility_flags: 0,
-                general_constraint_indicator_flags: 0,
-                general_level_idc: 93,
-                min_spatial_segmentation_idc: 0,
-                parallelism_type: 0,
-                chroma_format_idc: 1,
-                bit_depth_luma_minus8: 0,
-                bit_depth_chroma_minus8: 0,
-                avg_frame_rate: 0,
-                constant_frame_rate: 0,
-                num_temporal_layers: 1,
-                temporal_id_nested: true,
-                length_size_minus_one: 3,
-                arrays: vec![crate::nalu_types::HevcNalArray {
-                    array_completeness: true,
-                    nal_unit_type: 33,
-                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
-                }],
-            }),
+            config: crate::hevc_config::HEVCConfigurationBox::new(
+                crate::hevc_config::HEVCDecoderConfigurationRecord {
+                    configuration_version: 1,
+                    general_profile_space: 0,
+                    general_tier_flag: false,
+                    general_profile_idc: 1,
+                    general_profile_compatibility_flags: 0,
+                    general_constraint_indicator_flags: 0,
+                    general_level_idc: 93,
+                    min_spatial_segmentation_idc: 0,
+                    parallelism_type: 0,
+                    chroma_format_idc: 1,
+                    bit_depth_luma_minus8: 0,
+                    bit_depth_chroma_minus8: 0,
+                    avg_frame_rate: 0,
+                    constant_frame_rate: 0,
+                    num_temporal_layers: 1,
+                    temporal_id_nested: true,
+                    length_size_minus_one: 3,
+                    arrays: vec![crate::nalu_types::HevcNalArray {
+                        array_completeness: true,
+                        nal_unit_type: 33,
+                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                    }],
+                },
+            ),
             width: 320,
             height: 240,
         };
         assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
     }
 
-
     #[test]
     fn hevc_field_seq_one_ffip_zero_no_hrd_is_none() {
         let sps = hevc_sps_vui_hrd(true, false, 1, 25, None);
         let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
-                configuration_version: 1,
-                general_profile_space: 0,
-                general_tier_flag: false,
-                general_profile_idc: 1,
-                general_profile_compatibility_flags: 0,
-                general_constraint_indicator_flags: 0,
-                general_level_idc: 93,
-                min_spatial_segmentation_idc: 0,
-                parallelism_type: 0,
-                chroma_format_idc: 1,
-                bit_depth_luma_minus8: 0,
-                bit_depth_chroma_minus8: 0,
-                avg_frame_rate: 0,
-                constant_frame_rate: 0,
-                num_temporal_layers: 1,
-                temporal_id_nested: true,
-                length_size_minus_one: 3,
-                arrays: vec![crate::nalu_types::HevcNalArray {
-                    array_completeness: true,
-                    nal_unit_type: 33,
-                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
-                }],
-            }),
+            config: crate::hevc_config::HEVCConfigurationBox::new(
+                crate::hevc_config::HEVCDecoderConfigurationRecord {
+                    configuration_version: 1,
+                    general_profile_space: 0,
+                    general_tier_flag: false,
+                    general_profile_idc: 1,
+                    general_profile_compatibility_flags: 0,
+                    general_constraint_indicator_flags: 0,
+                    general_level_idc: 93,
+                    min_spatial_segmentation_idc: 0,
+                    parallelism_type: 0,
+                    chroma_format_idc: 1,
+                    bit_depth_luma_minus8: 0,
+                    bit_depth_chroma_minus8: 0,
+                    avg_frame_rate: 0,
+                    constant_frame_rate: 0,
+                    num_temporal_layers: 1,
+                    temporal_id_nested: true,
+                    length_size_minus_one: 3,
+                    arrays: vec![crate::nalu_types::HevcNalArray {
+                        array_completeness: true,
+                        nal_unit_type: 33,
+                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                    }],
+                },
+            ),
             width: 320,
             height: 240,
         };

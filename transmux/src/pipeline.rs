@@ -370,8 +370,7 @@ fn frame_rate_millihertz_hevc_normative(
         return None;
     }
     // denominator ticks = num_units * elemental_duration, times 2 if field_seq
-    let ticks = u128::from(num_units_in_tick)
-        .checked_mul(u128::from(elemental_duration))?;
+    let ticks = u128::from(num_units_in_tick).checked_mul(u128::from(elemental_duration))?;
     let ticks = if field_seq {
         ticks.checked_mul(2)?
     } else {
@@ -382,9 +381,7 @@ fn frame_rate_millihertz_hevc_normative(
     }
     let numerator = u128::from(time_scale).saturating_mul(1000);
     // round half up
-    let millihertz = numerator
-        .checked_add(ticks / 2)?
-        .checked_div(ticks)?;
+    let millihertz = numerator.checked_add(ticks / 2)?.checked_div(ticks)?;
     u32::try_from(millihertz).ok()
 }
 
@@ -437,12 +434,8 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                 // field_seq and frame_field_info_present
                 if timing.field_seq {
                     // frame rate = half picture rate
-                    let value = frame_rate_millihertz_hevc_normative(
-                        time_scale,
-                        num_units,
-                        ed,
-                        true,
-                    )?;
+                    let value =
+                        frame_rate_millihertz_hevc_normative(time_scale, num_units, ed, true)?;
                     return Some((value, FrameRateBasis::Normative));
                 }
                 if timing.frame_field_info_present {
@@ -450,12 +443,8 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                     // fall through to convention (which also requires both false)
                 } else {
                     // ffip==0, field_seq==0: frame rate = 1/T
-                    let value = frame_rate_millihertz_hevc_normative(
-                        time_scale,
-                        num_units,
-                        ed,
-                        false,
-                    )?;
+                    let value =
+                        frame_rate_millihertz_hevc_normative(time_scale, num_units, ed, false)?;
                     return Some((value, FrameRateBasis::Normative));
                 }
             }
