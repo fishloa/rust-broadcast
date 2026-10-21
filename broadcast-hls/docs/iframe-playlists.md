@@ -179,6 +179,42 @@ Rendition reports — the only mention of I-frames-only playlists is in Appendix
       Media Playlist MUST additionally contain one EXT-X-RENDITION-
       REPORT tag for each EXT-X-I-FRAMES-ONLY Media Playlist in the
       Multivariant Playlist, except for the Media Playlist to which the
+      EXT-X-RENDITION-REPORT tag is being added.
+```
+
+Target Duration across Playlists (§6.2.4 Providing Variant Streams and Renditions, lines 3644-3648):
+
+```
+
+      Each Media Playlist in each Variant Stream and Rendition MUST have
+      the same Target Duration.  The only exceptions are SUBTITLES
+      Renditions and Media Playlists containing an EXT-X-I-FRAMES-ONLY
+      tag, which MAY have different Target Durations if they have an
+```
+
+AES-128 and `EXT-X-I-FRAMES-ONLY` (§6.2.3 Encrypting Media Segments, lines 3589-3598):
+
+```
+   If the encryption METHOD is AES-128 and the Playlist contains an EXT-
+   X-I-FRAMES-ONLY tag, the entire resource MUST be encrypted using
+   AES-128 CBC with PKCS7 padding [RFC5652].  Encryption MAY be
+   restarted on 16-byte block boundaries, unless the first block
+   contains an I-frame.  The IV used for encryption MUST be either the
+   Media Sequence Number of the Media Segment or the value of the IV
+   attribute of the EXT-X-KEY tag, as described in Section 5.2.  These
+   constraints allow a client to load and decrypt individual I-frames
+   specified as sub-ranges of regular encrypted Media Segments, and
+   their Media Initialization Sections.
+```
+
+`CODECS` for Renditions of mixed sample formats (lines 2548-2552):
+
+```
+   5.1 while a Spanish Rendition is encoded with AAC stereo.  However,
+   any EXT-X-STREAM-INF tag (Section 4.4.6.2) or
+   EXT-X-I-FRAME-STREAM-INF tag (Section 4.4.6.3) that references such a
+   Group MUST have a CODECS attribute that lists every sample format
+   present in any Rendition in the Group, or client playback failures
 ```
 
 Example 9.5 (lines 4684-4700):
@@ -270,12 +306,17 @@ Platform amendments: tvOS (capture line 800-802), AirPlay 2-enabled TVs (capture
 6.13. If a normal video variant uses a video codec, one or more I-frame variants MUST exist with the same video codec or the `mjpg` codec.
 ```
 
-Multivariant items that bear on I-frame variants (items 9.3, 9.4; capture lines 533-534):
+Multivariant items that bear on I-frame variants (items 9.3, 9.4; capture lines 532-533):
 
 ```
+9.3. Your `EXT-X-I-FRAME-STREAM-INF` tag MUST always provide the `CODECS` attribute.
 9.4. Your `EXT-X-I-FRAME-STREAM-INF` tag MUST always provide the `RESOLUTION` attribute.
-9.5. You SHOULD deliver video and audio as separate streams.
 ```
+
+The Trick Play tables in item 6.7 are column-flattened in the capture (and so here): the column headers
+and the pairing of values into columns are not recoverable from the capture text; nothing below relies
+on them. The visionOS trick-play items (capture lines 775-779: 6.6, 6.18, 6.19) are not transcribed and
+not used.
 
 ## 6. Apple appendix — *I-frame bit rates versus normal bit rates* (explains item 6.5)
 
@@ -297,14 +338,19 @@ The I-frame rendition should have an effective bit rate similar to the normal co
   Media Initialization Section, which comes from `EXT-X-MAP` (§1, §3). `EXT-X-MAP` in an I-frames-only
   playlist needs version >= 5 (§4); `EXT-X-I-FRAMES-ONLY` needs >= 4 (§1).
 * The master tag `EXT-X-I-FRAME-STREAM-INF` needs `BANDWIDTH` and `URI`, takes every `EXT-X-STREAM-INF`
-  attribute EXCEPT `FRAME-RATE`, `AUDIO`, `SUBTITLES`, `CLOSED-CAPTIONS` (§2); Apple also requires
-  `CODECS` and `RESOLUTION` on it (9.3, 9.4). So `FRAME-RATE` must NOT be emitted on I-frame variants.
+  attribute EXCEPT `FRAME-RATE`, `AUDIO`, `SUBTITLES`, `CLOSED-CAPTIONS` (§2: "also defined ... except for");
+  Apple also requires `CODECS` and `RESOLUTION` on it (9.3, 9.4). `FRAME-RATE` is therefore NOT DEFINED for
+  I-frame variants; the text has no explicit MUST NOT, so the design simply does not emit it.
 * Using the I-frames of the normal content is allowed (Apple 6.3); dense dedicated renditions are
-  recommended (6.2) but need a separate encode.
+  recommended (6.2); that they require a separate encode is an inference (6.2 says only "dedicated
+  renditions that only contain I-frames").
 * fMP4 I-frame segments must include the `moof` header associated with the I-frame (Apple 6.10); an fMP4
   segment in an I-frames-only playlist MAY omit the `mdat` portion after the I-frame sample data (§4).
-* Live: the I-frame playlist's target duration must equal the other media's (Apple 6.11); I-frame
+* Live: the I-frame playlist's target duration must equal the other media's (Apple 6.11); the RFC allows a
+  different Target Duration for I-frames-only playlists only with `EXT-X-PLAYLIST-TYPE:VOD` (§6.2.4, lines
+  3644-3648; Apple 6.12); I-frame
   playlists SHOULD NOT use partial segments and SHOULD support blocking reload when other renditions do
-  (§4); rendition reports for I-frame playlists are optional (§4).
+  (§4); rendition reports for I-frames-only playlists are a SHOULD, and when provided each Media Playlist MUST
+  carry one for each I-frames-only playlist (§4, Appendix A wording).
 * `BANDWIDTH` of an I-frame variant = peak segment bit rate per the HLS spec (Apple 6.9); the 6.5 estimate
   (normal bit rate x I-frame fps / 8) is a SHOULD for authoring, explained in §6.
