@@ -131,3 +131,20 @@ g hevc_vui_ntsc.mp4       30000/1001 ""
 g hevc_vui_field.mp4      25        "field=1:interlace=tff:"
 g hevc_vui_field_hrd.mp4  25        "field=1:interlace=tff:hrd=1:vbv-maxrate=2000:vbv-bufsize=2000:"
 ```
+
+### `hevc_vps_timing.mp4` — real VPS timing (`vps_timing_info_present_flag = 1`)
+
+libx265 never writes VPS timing, so ffmpeg's `hevc_metadata` bitstream filter ("Set VPS and VUI tick
+rate") adds it to a real libx265 stream. Verified with `trace_headers` on the output file: VPS
+`vps_timing_info_present_flag=1`, `vps_num_units_in_tick=1001`, `vps_time_scale=30000`, `vps_num_hrd_parameters=0`;
+SPS VUI `vui_timing_info_present_flag=1` with the same pair (the spec requires them equal). The filter
+sets both, so **no real stream with timing in the VPS only exists here** (a VPS-only case is covered by
+pure-function tests, `transmux/docs/codec/hevc-vps-timing.md` §4). The mp4 timebase (`-r`) is irrelevant
+to the SPS/VPS content.
+
+```bash
+ffmpeg -y -f lavfi -i "testsrc2=size=320x240:rate=25" -frames:v 25 -c:v libx265 -profile:v main -pix_fmt yuv420p \
+  -x265-params "keyint=25:scenecut=0:log-level=error" -an -f hevc /tmp/src.hevc
+ffmpeg -y -i /tmp/src.hevc -c copy -bsf:v "hevc_metadata=tick_rate=30000/1001" -f hevc /tmp/vps.hevc
+ffmpeg -y -r 30000/1001 -i /tmp/vps.hevc -c copy -f mp4 fixtures/mp4/hevc_vps_timing.mp4
+```
