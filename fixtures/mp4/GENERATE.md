@@ -105,3 +105,29 @@ ffmpeg -y -v error -f lavfi -i "testsrc2=size=320x240:rate=25" -frames:v 15 \
   -c:v libx265 -profile:v main -pix_fmt yuv420p \
   -x265-params "keyint=15:scenecut=0:aud=0" -an -f mp4 fixtures/mp4/noaud/hevc_noaud.mp4
 ```
+
+## HEVC VUI timing / frame-rate fixtures (`hevc_vui_*.mp4`)
+
+Real `libx265` streams whose SPS VUI carries specific timing syntax, for the HLS
+`FRAME-RATE` derivation (`transmux/docs/codec/vui-timing-frame-rate.md`). 25 frames,
+320x240, source `lavfi testsrc2` (generated, no third-party content). The `field`
+files only set the SPS flags (`field_seq_flag`, `frame_field_info_present_flag`);
+their pictures are NOT really interlaced. SPS flags verified with
+`ffmpeg -v trace ... -bsf:v trace_headers`:
+
+| File | field_seq | frame_field_info | vui_num_units_in_tick / vui_time_scale | HRD | ffprobe avg_frame_rate |
+|---|---|---|---|---|---|
+| `hevc_vui_hrd.mp4` | 0 | 0 | 1 / 25 | present, `fixed_pic_rate_general_flag[0]=1`, `elemental_duration_in_tc_minus1[0]=0` | 25/1 |
+| `hevc_vui_ntsc.mp4` | 0 | 0 | 1001 / 30000 | absent | 30000/1001 |
+| `hevc_vui_field.mp4` | 1 | 1 | 1 / 25 | absent | 25/1 |
+| `hevc_vui_field_hrd.mp4` | 1 | 1 | 1 / 25 | present (as above) | 25/1 |
+
+```bash
+g() { ffmpeg -y -v error -f lavfi -i "testsrc2=size=320x240:rate=$2" -frames:v 25 \
+  -c:v libx265 -profile:v main -pix_fmt yuv420p \
+  -x265-params "keyint=25:scenecut=0:$3log-level=error" -an -f mp4 fixtures/mp4/$1; }
+g hevc_vui_hrd.mp4        25        "hrd=1:vbv-maxrate=2000:vbv-bufsize=2000:"
+g hevc_vui_ntsc.mp4       30000/1001 ""
+g hevc_vui_field.mp4      25        "field=1:interlace=tff:"
+g hevc_vui_field_hrd.mp4  25        "field=1:interlace=tff:hrd=1:vbv-maxrate=2000:vbv-bufsize=2000:"
+```
