@@ -39,6 +39,17 @@ tkhd presentation size) landed (`[Unreleased]`).**
 - **4b landed**: HLS master playlist advertises `VIDEO-RANGE` (HLG/PQ only; SDR and unmapped/absent colour omitted) from the track VUI transfer characteristics (broadcast-hls `VideoRange`, hls-runtime `HlsOrigin`).
   **Phase 4c landed**: `DashPackager`/`LlDashPackager` write `@sar` on video
   Representations and `@par` on video AdaptationSets per ETSI TS 103 285 §4.4.
+- **HLS master attributes landed (2026-10-21)**: `RESOLUTION` (square-pixel
+  presentation size, Q8), `AVERAGE-BANDWIDTH` (Apple 9.14) and `FRAME-RATE`
+  (Apple 9.15) on the `hls-runtime` origin master playlist, with typed
+  `broadcast_hls::Variant::{resolution, average_bandwidth, frame_rate}`.
+  `FRAME-RATE` comes only from H.264 VUI `timing_info` (exact integer maths);
+  HEVC is omitted: its frame rate is not derivable from `vui_time_scale` /
+  `vui_num_units_in_tick` alone (clock tick only; picture interval needs the
+  HRD `elemental_duration_in_tc` and `field_seq_flag` rules, H.265 E.3), so it
+  needs its own page-verified transcription before implementation. I-frame
+  playlists (`EXT-X-I-FRAME-STREAM-INF`, Apple 9.3/9.4) are not emitted by the
+  origin engine.
 
 **Spec groundwork for the crop and AFD phases (page-verified transcriptions, written before any implementation):**
 [`crop-conformance-window.md`](../../transmux/docs/codec/crop-conformance-window.md) (H.264 frame cropping, H.265
