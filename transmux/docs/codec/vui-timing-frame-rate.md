@@ -146,7 +146,7 @@ Table D-1 – Interpretation of pic_struct
   nominal frame rate = `time_scale / (2 * num_units_in_tick)`. `pic_struct` (picture timing SEI,
   only when `pic_struct_present_flag = 1`) can change the divisor per picture (0:2, 1:1, 2:1,
   3:2, 4:2, 5:3, 6:3, 7:4, 8:6). So per-picture output intervals are 2*tc (pic_struct 0, 3, 4),
-  3*tc (5, 6), 4*tc (7, frame doubling) or 6*tc (8, frame tripling); `2 * tc` is the NOMINAL frame
+  1*tc (a field picture: pic_struct 1, 2, or `field_pic_flag = 1` without pic_struct), 3*tc (5, 6), 4*tc (7, frame doubling) or 6*tc (8, frame tripling); `2 * tc` is the NOMINAL frame
   interval only (the cadence of repeated/doubled pictures differs). The SPS alone cannot say which
   pic_struct a picture has (it is in the picture timing SEI), so the nominal `2 * tc` is what an
   SPS-only derivation can report; Table D-1 / E-6 above are the supporting text.
@@ -227,11 +227,10 @@ sub_layer_hrd_parameters( subLayerId ) {
 }
 ```
 
-(`fixed_pic_rate_within_cvs_flag[i]` is inferred 1 when `fixed_pic_rate_general_flag[i]` is 1;
-`cpb_cnt_minus1[i]` inferred 0 when absent; `low_delay_hrd_flag[i]` inferred 0 when absent —
-semantics below.)
+(`fixed_pic_rate_within_cvs_flag[i]` inferred 1 when `fixed_pic_rate_general_flag[i]` is 1: §2.5;
+`cpb_cnt_minus1[i]` and `low_delay_hrd_flag[i]` inferred 0 when absent, `CpbCnt = cpb_cnt_minus1 + 1`: §2.5a.)
 
-### 2.2 field_seq_flag (pdf 462, printed 444)
+### 2.2 field_seq_flag (pdf 462-463, printed 444-445)
 
 ```
 field_seq_flag equal to 1 indicates that the CVS conveys pictures that represent fields, and specifies that a picture timing
@@ -242,7 +241,7 @@ general_frame_only_constraint_flag is equal to 1, the value of field_seq_flag sh
    NOTE 18 – The specified decoding process does not treat access units conveying pictures that represent fields or frames differently.
    A sequence of pictures that represent fields would therefore be coded with the picture dimensions of an individual field. For
    example, access units containing pictures that represent 1080i fields would commonly have cropped output dimensions of
-1 920x540, while the sequence picture rate would commonly express the rate of the source fields (typically between 50 Hz and 60 Hz), instead of the source frame rate (typically between 25 Hz and 30 Hz).
+   1 920x540, while the sequence picture rate would commonly express the rate of the source fields (typically between 50 Hz and 60 Hz), instead of the source frame rate (typically between 25 Hz and 30 Hz).
 ```
 
 ### 2.3 frame_field_info_present_flag (pdf 463, printed 445)
@@ -293,7 +292,7 @@ proportional to the output time of the picture relative to the output time of th
 When vps_poc_proportional_to_timing_flag is present in the VPS referred to by the SPS and the value is equal to 1,
 vui_poc_proportional_to_timing_flag, when present, shall be equal to 1.
 vui_num_ticks_poc_diff_one_minus1 plus 1 specifies the number of clock ticks corresponding to a difference of picture
-order count values equal to 1. The value of vui_num_ticks_poc_diff_one_minus1 shall be in the range of 0 to 2^32 − 2 (superscript 32 on the page),
+order count values equal to 1. The value of vui_num_ticks_poc_diff_one_minus1 shall be in the range of 0 to 2^32 − 2,
 inclusive.
 When vps_num_ticks_poc_diff_one_minus1 is present in the VPS referred to by the                                                 SPS,
 vui_num_ticks_poc_diff_one_minus1, when present, shall be equal to vps_num_ticks_poc_diff_one_minus1.
@@ -301,6 +300,8 @@ vui_hrd_parameters_present_flag equal to 1 specifies that the syntax structure h
 vui_parameters( ) syntax structure. vui_hrd_parameters_present_flag equal to 0 specifies that the syntax structure
 hrd_parameters( ) is not present in the vui_parameters( ) syntax structure.
 ```
+
+Note on §2.4: `2^32` is a superscript on the page (the text layer prints `232`); it is written `2^32` here.
 
 ### 2.5 HRD semantics incl. Table E.7 (pdf 467-468, printed 449-450)
 
@@ -359,6 +360,18 @@ that is specified for use in Equation C-16:
                                                1                            12                1
 ```
 
+### 2.5a Inferences and `CpbCnt` (pdf 468, printed 450; checked on the rendered page)
+
+```
+low_delay_hrd_flag[ i ] specifies the HRD operational mode, when HighestTid is equal to i, as specified in Annex C or
+clause F.13. When not present, the value of low_delay_hrd_flag[ i ] is inferred to be equal to 0.
+cpb_cnt_minus1[ i ] plus 1 specifies the number of alternative CPB specifications in the bitstream of the CVS when
+HighestTid is equal to i. The value of cpb_cnt_minus1[ i ] shall be in the range of 0 to 31, inclusive. When not present,
+the value of cpb_cnt_minus1[ i ] is inferred to be equal to 0.
+E.3.3 Sub-layer HRD parameters semantics
+The variable CpbCnt is set equal to cpb_cnt_minus1[ subLayerId ] + 1.
+```
+
 ### 2.6 Equation C-1 (pdf 297) and C-16 (pdf 303)
 
 ```
@@ -413,13 +426,18 @@ The variable HighestTid, which identifies the highest temporal sub-layer to be d
   present): `DpbOutputElementalInterval = ClockTick * (elemental_duration_in_tc_minus1 + 1)`,
   `ClockTick = vui_num_units_in_tick / vui_time_scale`. Per Table E.7 the divisor is 1 when
   `frame_field_info_present_flag = 0` (picture interval = elemental interval). When
-  `field_seq_flag = 1` the pictures are fields (NOTE 18: the picture rate is the FIELD rate),
-  every picture carries `pic_struct` in {1,2,9,10,11,12} whose divisor is 1, so the **frame**
-  rate is half the picture rate. When `field_seq_flag = 0` and `frame_field_info_present_flag = 1`
+  `field_seq_flag = 1` the pictures are fields (§2.2) and every picture carries `pic_struct` in
+  {1,2,9,10,11,12} (Table D.2: those are the values whose restriction is `field_seq_flag = 1`; Table E.7
+  divisor 1), so the **picture** interval is the elemental interval. NOTE 18 (informative) says the
+  sequence picture rate "would commonly express the rate of the source fields". Taking a frame as a
+  complementary field PAIR (pic_struct 9-12 say "paired"; 1/2 alone do not guarantee pairing), the
+  frame interval is twice the picture interval, i.e. frame rate = half the picture rate. That
+  pairing step is an ASSUMPTION of this derivation, not spec text.
+  When `field_seq_flag = 0` and `frame_field_info_present_flag = 1`
   the per-picture `pic_struct` (picture timing SEI, not in the SPS) can be 0 (divisor 1),
   3/4/7 (2) or 5/6/8 (3): the frame rate is not derivable from the SPS → no value.
 * `vui_poc_proportional_to_timing_flag` / `vui_num_ticks_poc_diff_one_minus1` give time per POC
-  unit, but consecutive output pictures need not differ by 1 in POC: **not used**.
+  unit, but nothing in the quoted text says consecutive output pictures differ by exactly 1 in POC, so a picture rate cannot be concluded from it: **not used**.
 * **Convention tier (implementation-defined, owner-approved 2026-10-21)**: when the normative
   tier yields nothing because no HRD fixed-rate information is present
   (`vui_hrd_parameters_present_flag = 0`, or `fixed_pic_rate_within_cvs_flag = 0`), and
@@ -445,7 +463,7 @@ The variable HighestTid, which identifies the highest temporal sub-layer to be d
       Variant Stream includes video.
 ```
 
-§4.4.6.2 alternative-rendition rule (lines 3001-3004):
+§4.4.6.2.1 Alternative Renditions, rule (lines 3001-3004):
 
 ```
    *  If an EXT-X-STREAM-INF tag contains a RESOLUTION attribute and a
@@ -454,7 +472,7 @@ The variable HighestTid, which identifies the highest temporal sub-layer to be d
       attribute.
 ```
 
-Client behaviour (lines 4019-4023):
+Client behaviour, §6.3.3 (lines 4019-4023):
 
 ```
    resolution change.  If the Variant Stream includes a RESOLUTION
