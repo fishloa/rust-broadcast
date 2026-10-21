@@ -4063,4 +4063,73 @@ mod tests {
         let r = decode_hevc_vps_timing(&nal);
         assert!(r.is_err(), "expected Err, got {:?}", r);
     }
+
+    /// A synthetic VPS (profile_tier_level for one sub-layer, `vps_max_layer_id = 0`) with
+    /// `layer_sets_minus1` layer sets (one `layer_id_included_flag` bit each) followed by
+    /// `vps_timing_info_present_flag = 1` and the given timing pair — enough data that only the
+    /// value being tested (not running out of bits) decides the outcome.
+    fn synth_vps(layer_sets_minus1: u32, num_units: u32, time_scale: u32) -> Vec<u8> {
+        let mut nal = vec![0x40u8, 0x01];
+        let mut s = BitSink::new();
+        s.bits(0, 4);
+        s.bit(true);
+        s.bit(true);
+        s.bits(0, 6);
+        s.bits(0, 3);
+        s.bit(true);
+        s.bits(0xffff, 16);
+        s.bits(0, 2);
+        s.bit(false);
+        s.bits(1, 5);
+        s.bits(0, 32);
+        s.bits(0, 48);
+        s.bits(0x21, 8);
+        s.bit(true);
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        s.bits(0, 6); // vps_max_layer_id
+        s.ue(u64::from(layer_sets_minus1));
+        for _ in 0..layer_sets_minus1 {
+            s.bit(false); // layer_id_included_flag[i][0]
+        }
+        s.bit(true); // vps_timing_info_present_flag
+        s.bits(u64::from(num_units), 32);
+        s.bits(u64::from(time_scale), 32);
+        nal.extend(s.finish());
+        nal
+    }
+
+    #[test]
+    fn hevc_vps_layer_set_bound_is_exactly_1023() {
+        // Semantics: "The value of vps_num_layer_sets_minus1 shall be in the range of 0 to 1 023,
+        // inclusive" (docs/codec/hevc-vps-timing.md §2): 1023 parses, 1024 is rejected, with full
+        // data present in both so only the bound decides.
+        let ok = decode_hevc_vps_timing(&synth_vps(1023, 7, 9)).expect("1023 is in range");
+        let t = ok.expect("timing present");
+        assert_eq!((t.num_units_in_tick, t.time_scale), (7, 9));
+        assert!(
+            decode_hevc_vps_timing(&synth_vps(1024, 7, 9)).is_err(),
+            "1024 layer sets is out of range"
+        );
+    }
+
+    #[test]
+    fn hevc_vps_zero_timing_values_are_not_timing() {
+        // vps_num_units_in_tick and vps_time_scale "shall be greater than 0": a VPS signalling 0 yields
+        // no usable timing rather than a zero-valued one.
+        assert_eq!(
+            decode_hevc_vps_timing(&synth_vps(0, 0, 9)).expect("parse"),
+            None
+        );
+        assert_eq!(
+            decode_hevc_vps_timing(&synth_vps(0, 7, 0)).expect("parse"),
+            None
+        );
+        assert!(
+            decode_hevc_vps_timing(&synth_vps(0, 7, 9))
+                .expect("parse")
+                .is_some()
+        );
+    }
 }
