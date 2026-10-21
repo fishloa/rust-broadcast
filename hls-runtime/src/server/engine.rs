@@ -81,8 +81,8 @@ use transmux::TrackId;
 
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
-    DecimalSeconds, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist, MediaSegment,
-    OpenSegment, PartSpec, Variant, VideoRange,
+    DecimalSeconds, FrameRate, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist,
+    MediaSegment, OpenSegment, PartSpec, Variant, VideoRange,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -911,6 +911,7 @@ impl HlsOriginBuilder {
             codecs: Mutex::new(None),
             video_range: Mutex::new(None),
             resolution: Mutex::new(None),
+            frame_rate: Mutex::new(None),
             target_duration_secs,
             container: self.container,
             part_target_ms: self.part_target_ms,
@@ -951,6 +952,10 @@ pub struct HlsOrigin {
     /// invented (RFC 8216bis §4.4.6.2).
     video_range: Mutex<Option<VideoRange>>,
     resolution: Mutex<Option<(u32, u32)>>,
+    /// `FRAME-RATE` for the master playlist, derived as the maximum across
+    /// all video tracks. Emitted only when an H.264 track's SPS carries VUI
+    /// `timing_info`; HEVC and codecs without VUI timing omit it.
+    frame_rate: Mutex<Option<FrameRate>>,
     target_duration_secs: f64,
     container: Container,
     /// `Some(part_target_ms)` enables LL-HLS; `None` renders classic HLS —
@@ -1010,6 +1015,7 @@ impl HlsOrigin {
                 *locked(&self.codecs) = None;
                 *locked(&self.video_range) = None;
                 *locked(&self.resolution) = None;
+                *locked(&self.frame_rate) = None;
             }
         }
         // The first segment not yet closed is the first one cut against
@@ -1045,6 +1051,7 @@ impl HlsOrigin {
         let mut video_range_decided = false;
         let mut resolution: Option<(u32, u32)> = None;
         let mut resolution_decided = false;
+        let mut frame_rate: Option<FrameRate> = None;
         for spec in ordered {
             match transmux::rfc6381_codec_string(&spec.config) {
                 Ok(codec) => codecs.push(codec),
@@ -1069,10 +1076,21 @@ impl HlsOrigin {
                 resolution = Some(transmux::presentation_size(spec.display.as_ref(), w, h));
                 resolution_decided = true;
             }
+            // FRAME-RATE is the maximum across all video tracks (RFC 8216bis
+            // §4.4.6.2). Source is H.264 SPS VUI timing only; HEVC and other
+            // codecs yield None and never contribute.
+            if let Some(mh) = transmux::nominal_frame_rate_millihertz(&spec.config) {
+                let candidate = FrameRate::from_millihertz(mh);
+                frame_rate = Some(match frame_rate {
+                    Some(existing) if existing.millihertz() >= mh => existing,
+                    _ => candidate,
+                });
+            }
         }
         *locked(&self.codecs) = (!codecs.is_empty()).then(|| codecs.join(","));
         *locked(&self.video_range) = video_range;
         *locked(&self.resolution) = resolution;
+        *locked(&self.frame_rate) = frame_rate;
         Ok(())
     }
 
@@ -1128,6 +1146,7 @@ impl HlsOrigin {
                 uri: media_playlist_name.to_string(),
                 extra_attrs,
                 resolution: *locked(&self.resolution),
+                frame_rate: *locked(&self.frame_rate),
             }],
             ..Default::default()
         };

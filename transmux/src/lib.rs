@@ -364,7 +364,7 @@ pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use pipeline::{
     CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, PresentationTime, Provenance, Sample,
     SampleFlags, TrackSpec, build_init_segment, build_media_segment,
-    build_media_segment_with_events, presentation_size,
+    build_media_segment_with_events, nominal_frame_rate_millihertz, presentation_size,
 };
 pub use progressive::ProgressiveMux;
 pub use progressive_demux::ProgressiveDemux;

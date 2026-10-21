@@ -246,7 +246,7 @@ mod tests {
         // Segment 1/2: 8 bytes in 4.2 s -> ceil(64 / 4.2) = 16 b/s.
         assert_eq!(
             body_string(resp).await,
-            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16,AVERAGE-BANDWIDTH=15,CODECS=\"avc1.4D400D,mp4a.40.2\",RESOLUTION=320x240\nmedia.m3u8\n"
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16,AVERAGE-BANDWIDTH=15,CODECS=\"avc1.4D400D,mp4a.40.2\",RESOLUTION=320x240,FRAME-RATE=25.000\nmedia.m3u8\n"
         );
     }
 
