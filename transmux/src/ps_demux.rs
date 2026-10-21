@@ -66,10 +66,13 @@ use crate::ac3::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
 use crate::au::AccessUnitSplitter;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
+use crate::ir::DisplayGeometry;
 use crate::media::{Media, Track};
 use crate::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
 use crate::mpeg_legacy::Mpeg2SeqHeader;
+use crate::mpeg2_display::Mpeg2DisplayTracker;
 use crate::nal::{NalCodec, ParamKind, parameter_set_is_valid};
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -835,6 +838,25 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     let dts = interpolate_dts(&units);
     let pts = interpolate_pts(&units, &dts);
 
+    // Display tracking: seed from the TrackSpec's auto-derived geometry, then
+    // fold each access unit through the tracker in decode order so every
+    // sample carries the state in force for it (Arc-shared across runs).
+    let mut sps_tracker = SpsTracker::new(TrackCodec::Avc);
+    sps_tracker.seed_state(DisplayGeometry::from_codec_config(&CodecConfig::Avc {
+        config: config.clone(),
+        width: 0,
+        height: 0,
+    }));
+    // Activation (SPS/PPS by id) follows the BITSTREAM order of the access
+    // units, not the DTS-sorted output order: observe in `ranges` order and
+    // keep the state per access unit, attached to the sample below.
+    let displays: Vec<_> = ranges
+        .iter()
+        .map(|&(start, end)| {
+            let _ = sps_tracker.observe(&es.es_bytes[start..end]);
+            sps_tracker.state().cloned()
+        })
+        .collect();
     // Decode order = ascending DTS (stable — preserves stream order for ties).
     let mut order: Vec<usize> = (0..units.len()).collect();
     order.sort_by_key(|&i| dts[i]);
@@ -853,13 +875,16 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
             let (start, end) = ranges[i];
             let au = &es.es_bytes[start..end];
             let is_idr = au_is_idr(au);
-            Sample::from_annexb(
+            let display = displays[i].clone();
+            let mut sample = Sample::from_annexb(
                 au,
                 Some(to_ticks(dts[i])),
                 Some(to_ticks(pts[i])),
                 Some(dur),
                 is_idr,
-            )
+            );
+            sample.display = display;
+            sample
         })
         .collect();
 
@@ -921,6 +946,24 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> 
     let mut order: Vec<usize> = (0..units.len()).collect();
     order.sort_by_key(|&i| dts[i]);
 
+    // Display tracking (MPEG-2): seed geometry from the elementary stream's
+    // first sequence header, then fold each picture through the tracker in
+    // decode order.
+    let mut mpeg2_tracker = Mpeg2DisplayTracker::new();
+    if let Ok(geom) = DisplayGeometry::from_mpeg2_es(&es.es_bytes) {
+        mpeg2_tracker.seed_state(Some(geom));
+    }
+
+    // Bitstream order (`ranges`), not DTS-sorted output order, drives the
+    // tracker (sequence headers / AFD persist along the stream).
+    let displays: Vec<_> = ranges
+        .iter()
+        .map(|&(start, end)| {
+            let _ = mpeg2_tracker.observe(&es.es_bytes[start..end]);
+            mpeg2_tracker.state().cloned()
+        })
+        .collect();
+
     let samples: Vec<Sample> = order
         .iter()
         .enumerate()
@@ -929,13 +972,16 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> 
             let (start, end) = ranges[i];
             let au = &es.es_bytes[start..end];
             let is_sync = mpeg2_is_sync(au);
-            Sample::new(
+            let display = displays[i].clone();
+            let mut sample = Sample::new(
                 au.to_vec(),
                 Some(to_ticks(dts[i])),
                 Some(to_ticks(pts[i])),
                 Some(dur),
                 is_sync,
-            )
+            );
+            sample.display = display;
+            sample
         })
         .collect();
 

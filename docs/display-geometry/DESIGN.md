@@ -21,7 +21,8 @@ tkhd presentation size) landed (`[Unreleased]`).**
   colour is spec-vector only: no HEVC capture in this worktree signals a
   colour description and `test-074.hevc.ts` is not mirrored.
 - **2 (change event + per-AU tag)** landed for the TS path (batch `TsDemux`
-  included; the Program Stream demuxer is unchanged): `DisplayInfo`,
+  included) and for the Program Stream demuxer (`ps_demux` now tags every video
+  sample with `Sample::display` via the same trackers): `DisplayInfo`,
   `DisplayChangeSet`, `DemuxEvent::DisplayChanged`, `Sample::display`, SPS/PPS
   tracking **by id** with activation from the slice headers, the level-triggered
   start, the event placed immediately before its first affected sample, and the
@@ -546,6 +547,7 @@ This is also the fix for the existing `TrackUpdated` ordering defect (§2).
 | `StreamingTsDemux` (AVC/HEVC) | Phase 1, from the recovered avcC/hvcC via `TrackSpec::new` | Phase 2 (SPS), Phase 3 (AFD) |
 | `StreamingTsDemux` (MPEG-2 video) | Phase 1b if approved (Q6) | Phase 3 AFD; Phase 1b sequence geometry |
 | Batch `TsDemux` -> `Media` | same (final spec, last wins) | per-AU tags only (no event list in `Media`) |
+| `PsDemux` -> `Media` | Phase 1 (H.264 from avcC; MPEG-2 from first sequence header) | per-AU tags only (no event list in `Media`): H.264 via `SpsTracker`, MPEG-2 via `Mpeg2DisplayTracker` |
 | `Fmp4Demux` (avc1/hvc1: params out of band) | Phase 1 from avcC/hvcC; `colr` overlay Phase 1, `pasp` Phase 4 (Q7) | a change needs a new sample entry = new init = new `Media`; no in-segment change possible |
 | `Fmp4Demux` (avc3/hev1: in-band params) | Phase 1 | Phase 2b: scan in-band SPS in samples, tag samples. `tfhd.sample_description_index` (multiple entries) stays unsupported (existing gap) |
 | `StreamingFlvDemux` (RTMP) | Phase 1 via `TrackSpec::new` on each sequence header | Phase 2 must verify FLV's `TrackUpdated` is not also one sample early (not checked here) |
