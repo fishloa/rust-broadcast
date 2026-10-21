@@ -1286,6 +1286,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn range_explicit_start_at_total_is_416_not_a_panic() {
+        // First byte position == total length (100): unsatisfiable (RFC 9110 §14.1.2) even with an
+        // explicit, larger last-pos — the case where clamping `last` to `total - 1` would put it
+        // BELOW `first`. Also 101-/200 start beyond the end.
+        for spec in ["bytes=100-105", "bytes=100-100", "bytes=101-200"] {
+            let route = range_route();
+            let resp = dynamic_file(
+                State(route),
+                hdr("range", spec),
+                Path("seg-1-1.m4s".to_string()),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE, "{spec}");
+            assert_eq!(
+                resp.headers()
+                    .get(axum::http::header::CONTENT_RANGE)
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "bytes */100",
+                "{spec}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn range_one_byte_and_clamped() {
         let route = range_route();
         // one byte
