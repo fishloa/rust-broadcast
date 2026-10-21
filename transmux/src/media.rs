@@ -41,6 +41,7 @@ use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegme
 
 use crate::ac4::Ac4SpecificBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
+use crate::display_track::{SpsTracker, TrackCodec};
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
@@ -49,9 +50,9 @@ use crate::init_segment::{
     sampling_rate_override,
 };
 use crate::ir::{
-    AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, FragmentTrackData,
-    InputDegradation, Sample, SubtitleFormat, SubtitleSampleEntry, TrackSpec, VideoFormat,
-    VideoSignalType,
+    AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, DisplayInfo,
+    FragmentTrackData, InputDegradation, Sample, SubtitleFormat, SubtitleSampleEntry, TrackSpec,
+    VideoFormat, VideoSignalType,
 };
 use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use crate::mp4esds::EsdsBox;
@@ -60,6 +61,7 @@ use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{build_init_segment, build_media_segment};
 use crate::visual_ext::{ColourInformationBox, PixelAspectRatioBox};
+use alloc::sync::Arc;
 
 /// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
@@ -121,6 +123,12 @@ struct TrackBuilder {
     /// to `0` if the stream never carries one), then advanced by each sample's
     /// duration in decode order — see `absorb_fragment`.
     next_dts: i64,
+    /// Whether this track's sample entry carries parameter sets in-band
+    /// (avc3/avc4/hev1), so per-AU display tagging applies.
+    in_band: bool,
+    /// Container-level boxes from the sample entry, used to overlay `pasp` /
+    /// `colr nclx` onto every tag the in-band tracker produces.
+    entry_extra_boxes: Vec<crate::sample_entries::OpaqueBox>,
 }
 
 impl<'a> Unpackage for Fmp4Demux<'a> {
@@ -149,12 +157,17 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         let mut skipped: Vec<SkippedTrack> = Vec::new();
         for trak in &moov.tracks {
             match track_spec_from_trak(trak) {
-                Ok(spec) => builders.push(TrackBuilder {
-                    spec,
-                    samples: Vec::new(),
-                    start_decode_time: None,
-                    next_dts: 0,
-                }),
+                Ok(spec) => {
+                    let (in_band, entry_extra_boxes) = track_entry_inband_and_extras(trak);
+                    builders.push(TrackBuilder {
+                        spec,
+                        samples: Vec::new(),
+                        start_decode_time: None,
+                        next_dts: 0,
+                        in_band,
+                        entry_extra_boxes,
+                    })
+                }
                 Err(err) => skipped.push(skipped_track(err)),
             }
         }
@@ -241,6 +254,9 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             .map(|mut b| {
                 refine_legacy_config(&mut b.spec.config, &b.samples);
                 normalise_track_nal_lengths(&mut b.spec, &mut b.samples)?;
+                if b.in_band {
+                    tag_fmp4_inband_display(&mut b);
+                }
                 Ok(Track {
                     spec: b.spec,
                     samples: b.samples,
@@ -733,20 +749,20 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
     Ok(spec)
 }
 
-/// Overlay container-level display geometry from a `pasp` / `colr nclx` box
-/// found in an AVC/HEVC sample entry onto the SPS-derived
-/// [`TrackSpec::display`].
+/// Overlay container-level display geometry (a `pasp` / `colr nclx` box found
+/// in an AVC/HEVC sample entry) onto an SPS-derived [`DisplayGeometry`].
 ///
 /// ISO/IEC 14496-12:2015 §12.1.4 (`pasp`) / §12.1.5 (`colr`): `colr nclx`
 /// overrides the bitstream colour description (§12.1.5.1); `pasp` fills in an
 /// unspecified VUI sample aspect ratio. Which of two *specified* sample aspect
 /// ratios wins is not defined by the text available here (the §12.1.4.1
 /// definition is not transcribed), so on a disagreement the VUI SAR is kept.
-/// Returns the spec unchanged when neither box applies.
-fn overlay_sample_entry_display(
-    mut spec: TrackSpec,
+/// Returns the input unchanged when neither box applies.
+pub(crate) fn overlay_sample_entry_geometry(
+    display: Option<DisplayGeometry>,
+    config: &CodecConfig,
     extra_boxes: &[crate::sample_entries::OpaqueBox],
-) -> TrackSpec {
+) -> Option<DisplayGeometry> {
     // First `pasp` in entry order.
     let pasp = extra_boxes
         .iter()
@@ -794,25 +810,21 @@ fn overlay_sample_entry_display(
     });
 
     if pasp_ratio.is_none() && colour.is_none() {
-        return spec;
+        return display;
     }
 
     // The display the SPS yielded, or (when it yielded none) one built from
     // the sample entry's own visual size.
-    let (visual_w, visual_h) = match &spec.config {
+    let (visual_w, visual_h) = match config {
         CodecConfig::Avc { width, height, .. } | CodecConfig::Hevc { width, height, .. } => {
             (u32::from(*width), u32::from(*height))
         }
         _ => (0, 0),
     };
-    let signalled_format = spec
-        .display
+    let signalled_format = display
         .as_ref()
         .and_then(|g| g.video_signal.map(|v| v.video_format));
-    let mut display = spec
-        .display
-        .take()
-        .unwrap_or_else(|| DisplayGeometry::new(visual_w, visual_h, None));
+    let mut display = display.unwrap_or_else(|| DisplayGeometry::new(visual_w, visual_h, None));
 
     // pasp only fills in; two specified ratios that disagree keep the VUI one.
     if let Some(ratio) = pasp_ratio
@@ -831,8 +843,122 @@ fn overlay_sample_entry_display(
         ));
     }
 
-    spec.display = Some(display);
+    Some(display)
+}
+
+/// Overlay container-level display geometry from a `pasp` / `colr nclx` box
+/// found in an AVC/HEVC sample entry onto the SPS-derived
+/// [`TrackSpec::display`].
+fn overlay_sample_entry_display(
+    mut spec: TrackSpec,
+    extra_boxes: &[crate::sample_entries::OpaqueBox],
+) -> TrackSpec {
+    let config = spec.config.clone();
+    spec.display = overlay_sample_entry_geometry(spec.display, &config, extra_boxes);
     spec
+}
+
+/// Whether a `trak`'s sample entry carries parameter sets in-band
+/// (avc3/avc4/hev1), plus its entry-level extra boxes for the display overlay.
+fn track_entry_inband_and_extras(trak: &TrackBox) -> (bool, Vec<crate::sample_entries::OpaqueBox>) {
+    let Some(mdia) = trak.mdia.as_ref() else {
+        return (false, Vec::new());
+    };
+    let Some(minf) = mdia.minf.as_ref() else {
+        return (false, Vec::new());
+    };
+    let Some(stbl) = minf.stbl.as_ref() else {
+        return (false, Vec::new());
+    };
+    let stsd: SampleDescriptionBox = match stbl.children.iter().find_map(|c| match c {
+        StblChild::Stsd(s) => Some(Ok(s.clone())),
+        StblChild::Opaque(bytes) if bytes.len() >= 8 && &bytes[4..8] == b"stsd" => {
+            Some(SampleDescriptionBox::parse(bytes.as_slice()))
+        }
+        _ => None,
+    }) {
+        Some(Ok(s)) => s,
+        _ => return (false, Vec::new()),
+    };
+    let Some(entry) = stsd.entries.first() else {
+        return (false, Vec::new());
+    };
+    match entry {
+        SampleEntryVariant::Avc1(e) => (
+            e.codec_type == *b"avc3" || e.codec_type == *b"avc4",
+            e.extra_boxes.clone(),
+        ),
+        SampleEntryVariant::Hevc1(e) => (e.codec_type == *b"hev1", e.extra_boxes.clone()),
+        _ => (false, Vec::new()),
+    }
+}
+
+/// Tag an in-band (avc3/avc4/hev1) track's samples with per-AU display state,
+/// mirroring the TS demux path (`SpsTracker`).
+fn tag_fmp4_inband_display(b: &mut TrackBuilder) {
+    let config = b.spec.config.clone();
+    let codec = match &config {
+        CodecConfig::Avc { .. } => TrackCodec::Avc,
+        CodecConfig::Hevc { .. } => TrackCodec::Hevc,
+        _ => return,
+    };
+    let mut tracker = SpsTracker::new(codec);
+    // Seed from the track's raw SPS geometry (before the container overlay).
+    let raw_seed = DisplayGeometry::from_codec_config(&config);
+    tracker.seed_state(raw_seed);
+
+    let extra = b.entry_extra_boxes.clone();
+    let mut cached_raw: Option<Arc<DisplayInfo>> = None;
+    let mut cached_overlaid: Option<Arc<DisplayInfo>> = None;
+
+    for sample in b.samples.iter_mut() {
+        // Convert length-prefixed -> Annex B for observation only; sample bytes
+        // stay unchanged. A malformed length prefix must not panic and leaves
+        // the previous tag in place.
+        let length_size = config_nal_length_size(&config).unwrap_or(crate::annexb::NAL_LENGTH_SIZE);
+        if let Ok(nals) = crate::annexb::iter_length_prefixed_nals_with(&sample.data, length_size) {
+            let mut annexb = Vec::with_capacity(sample.data.len());
+            for nal in nals {
+                annexb.extend_from_slice(&[0, 0, 0, 1]);
+                annexb.extend_from_slice(nal);
+            }
+            let _ = tracker.observe(&annexb);
+        }
+        let raw_state = tracker.state().cloned();
+        let display_arc = match raw_state {
+            None => None,
+            Some(raw) => {
+                let overlaid =
+                    if let (Some(prev_raw), Some(prev_ov)) = (&cached_raw, &cached_overlaid) {
+                        if Arc::ptr_eq(prev_raw, &raw) {
+                            prev_ov.clone()
+                        } else {
+                            let ov = overlay_display_info(&raw, &config, &extra);
+                            cached_raw = Some(raw.clone());
+                            cached_overlaid = Some(ov.clone());
+                            ov
+                        }
+                    } else {
+                        let ov = overlay_display_info(&raw, &config, &extra);
+                        cached_raw = Some(raw.clone());
+                        cached_overlaid = Some(ov.clone());
+                        ov
+                    };
+                Some(overlaid)
+            }
+        };
+        sample.display = display_arc;
+    }
+}
+
+fn overlay_display_info(
+    raw: &Arc<DisplayInfo>,
+    config: &CodecConfig,
+    extra: &[crate::sample_entries::OpaqueBox],
+) -> Arc<DisplayInfo> {
+    let mut info = (**raw).clone();
+    info.geometry = overlay_sample_entry_geometry(info.geometry, config, extra);
+    Arc::new(info)
 }
 
 fn gcd_u32(mut a: u32, mut b: u32) -> u32 {
