@@ -387,6 +387,42 @@ fn frame_rate_millihertz_hevc_normative(
     u32::try_from(millihertz).ok()
 }
 
+/// H.265 frame-rate derivation from the parsed VUI timing facts, per
+/// `transmux/docs/codec/vui-timing-frame-rate.md` §2.7.
+///
+/// * Tier A (normative): HRD fixed picture rate present. `field_seq_flag = 1` halves the
+///   picture rate (assumes complementary field pairs); `frame_field_info_present_flag = 1`
+///   with `field_seq_flag = 0` leaves the cadence to the per-picture `pic_struct` SEI, so no
+///   value.
+/// * Tier B (convention, implementation-defined): no HRD fixed rate, `field_seq_flag = 0`
+///   and `frame_field_info_present_flag = 0`: `vui_time_scale / vui_num_units_in_tick`.
+/// * Otherwise `None`.
+fn hevc_frame_rate_from_timing(
+    timing: &crate::sps::HevcVuiTiming,
+) -> Option<(u32, FrameRateBasis)> {
+    let (num_units, time_scale) = (timing.num_units_in_tick, timing.time_scale);
+    if num_units == 0 {
+        return None;
+    }
+    match timing.hrd_fixed_pic_rate {
+        Some(ed) => {
+            if !timing.field_seq && timing.frame_field_info_present {
+                return None;
+            }
+            let value =
+                frame_rate_millihertz_hevc_normative(time_scale, num_units, ed, timing.field_seq)?;
+            Some((value, FrameRateBasis::Normative))
+        }
+        None => {
+            if timing.field_seq || timing.frame_field_info_present {
+                return None;
+            }
+            let value = frame_rate_millihertz_hevc_convention(time_scale, num_units)?;
+            Some((value, FrameRateBasis::Convention))
+        }
+    }
+}
+
 /// Nominal frame rate of a video track, in millihertz (1/1000 Hz), plus the
 /// basis (normative vs. convention) on which it was derived.
 ///
@@ -426,39 +462,7 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                 .0
                 .as_slice();
             let timing = crate::sps::decode_hevc_vui_timing(sps_nal).ok()??;
-            let num_units = timing.num_units_in_tick;
-            let time_scale = timing.time_scale;
-            if num_units == 0 {
-                return None;
-            }
-            // Normative tier A
-            if let Some(ed) = timing.hrd_fixed_pic_rate {
-                // field_seq and frame_field_info_present
-                if timing.field_seq {
-                    // frame rate = half picture rate
-                    let value =
-                        frame_rate_millihertz_hevc_normative(time_scale, num_units, ed, true)?;
-                    return Some((value, FrameRateBasis::Normative));
-                }
-                if timing.frame_field_info_present {
-                    // cadence depends on per-picture pic_struct -> None
-                    // fall through to convention (which also requires both false)
-                } else {
-                    // ffip==0, field_seq==0: frame rate = 1/T
-                    let value =
-                        frame_rate_millihertz_hevc_normative(time_scale, num_units, ed, false)?;
-                    return Some((value, FrameRateBasis::Normative));
-                }
-            }
-            // Convention tier B: no fixed-rate info AND field_seq==0 AND ffip==0
-            if timing.hrd_fixed_pic_rate.is_none()
-                && !timing.field_seq
-                && !timing.frame_field_info_present
-            {
-                let value = frame_rate_millihertz_hevc_convention(time_scale, num_units)?;
-                return Some((value, FrameRateBasis::Convention));
-            }
-            None
+            hevc_frame_rate_from_timing(&timing)
         }
         _ => None,
     }
@@ -1336,5 +1340,70 @@ mod frame_rate_tests {
         assert_eq!(frame_rate_millihertz_from_timing(1, 0), None);
         // round half up
         assert_eq!(frame_rate_millihertz_from_timing(1, 3), Some(167));
+    }
+}
+
+#[cfg(test)]
+mod hevc_rate_rules_tests {
+    use super::{FrameRateBasis, hevc_frame_rate_from_timing};
+    use crate::sps::HevcVuiTiming;
+
+    fn t(
+        num: u32,
+        scale: u32,
+        field_seq: bool,
+        ffip: bool,
+        ed: Option<u32>,
+    ) -> Option<(u32, FrameRateBasis)> {
+        hevc_frame_rate_from_timing(&HevcVuiTiming {
+            num_units_in_tick: num,
+            time_scale: scale,
+            field_seq,
+            frame_field_info_present: ffip,
+            hrd_fixed_pic_rate: ed,
+        })
+    }
+
+    const N: FrameRateBasis = FrameRateBasis::Normative;
+    const C: FrameRateBasis = FrameRateBasis::Convention;
+
+    #[test]
+    fn tier_a_uses_the_elemental_duration() {
+        assert_eq!(t(1, 25, false, false, Some(1)), Some((25_000, N)));
+        // elemental_duration_in_tc_minus1 = 1 => interval doubles => half the rate
+        assert_eq!(t(1, 25, false, false, Some(2)), Some((12_500, N)));
+        // 1001/60000 tick, 2 ticks per picture => 29.970
+        assert_eq!(t(1001, 60_000, false, false, Some(2)), Some((29_970, N)));
+    }
+
+    #[test]
+    fn tier_a_field_sequence_halves_the_picture_rate() {
+        assert_eq!(t(1, 50, true, true, Some(1)), Some((25_000, N)));
+        assert_eq!(t(1, 50, true, true, Some(2)), Some((12_500, N)));
+    }
+
+    #[test]
+    fn frame_field_info_without_field_seq_is_not_derivable() {
+        // pic_struct (picture timing SEI) decides the cadence: no value, with or without HRD.
+        assert_eq!(t(1, 25, false, true, Some(1)), None);
+        assert_eq!(t(1, 25, false, true, None), None);
+    }
+
+    #[test]
+    fn tier_b_is_the_clock_tick_convention_only_for_plain_frames() {
+        assert_eq!(t(1, 25, false, false, None), Some((25_000, C)));
+        assert_eq!(t(1001, 30_000, false, false, None), Some((29_970, C)));
+        // field sequence without HRD fixed rate: not derivable
+        assert_eq!(t(1, 25, true, true, None), None);
+        assert_eq!(t(1, 25, true, false, None), None);
+    }
+
+    #[test]
+    fn degenerate_inputs_give_none() {
+        assert_eq!(t(0, 25, false, false, None), None);
+        assert_eq!(t(0, 25, false, false, Some(1)), None);
+        assert_eq!(t(1, 25, false, false, Some(0)), None);
+        // 1000 * u32::MAX millihertz does not fit u32: overflow => None.
+        assert_eq!(t(1, u32::MAX, false, false, None), None);
     }
 }
