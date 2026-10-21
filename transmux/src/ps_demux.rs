@@ -66,10 +66,13 @@ use crate::ac3::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
 use crate::au::AccessUnitSplitter;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
+use crate::ir::DisplayGeometry;
 use crate::media::{Media, Track};
 use crate::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
 use crate::mpeg_legacy::Mpeg2SeqHeader;
+use crate::mpeg2_display::Mpeg2DisplayTracker;
 use crate::nal::{NalCodec, ParamKind, parameter_set_is_valid};
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -77,6 +80,111 @@ use crate::ts_demux::{
     ESDS_VIDEO_ES_ID, MPEG2_PICTURE_START_CODE, OTI_MPEG2_VIDEO_MAIN, STREAM_TYPE_VISUAL,
     mpeg2_is_sync,
 };
+
+/// Scan an MPEG-1 Program Stream for its PES packets (ffmpeg `-f mpeg`),
+/// which the MPEG-2 pack layer in `mpeg_ps` does not support. Pack headers
+/// are 12 bytes; a system header, if present, is skipped via its own length
+/// field; PES packets are then parsed back-to-back within the pack.
+/// A container-independent view of one PES packet.
+struct PesInfo<'a> {
+    stream_id: u8,
+    payload: &'a [u8],
+    pts: Option<u64>,
+    dts: Option<u64>,
+}
+
+fn collect_mpeg1_pes_packets<'a>(input: &'a [u8]) -> Vec<PesInfo<'a>> {
+    let mut out = Vec::new();
+    // Find pack start codes.
+    let mut pack_positions: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i + 4 <= input.len() {
+        if input[i] == 0 && input[i + 1] == 0 && input[i + 2] == 1 && input[i + 3] == 0xBA {
+            pack_positions.push(i);
+            i += 4;
+        } else {
+            i += 1;
+        }
+    }
+    for (idx, &pack_start) in pack_positions.iter().enumerate() {
+        let pack_end = pack_positions.get(idx + 1).copied().unwrap_or(input.len());
+        let mut cursor = pack_start + 12; // MPEG-1 pack header
+        if cursor > pack_end {
+            continue;
+        }
+        // Optional system header.
+        if cursor + 6 <= pack_end
+            && input[cursor] == 0
+            && input[cursor + 1] == 0
+            && input[cursor + 2] == 1
+            && input[cursor + 3] == 0xBB
+        {
+            let hl = u16::from_be_bytes([input[cursor + 4], input[cursor + 5]]) as usize;
+            cursor += 6 + hl;
+        }
+        while cursor < pack_end {
+            if cursor + 6 > pack_end {
+                break;
+            }
+            if input[cursor] != 0 || input[cursor + 1] != 0 || input[cursor + 2] != 1 {
+                break;
+            }
+            let sid = input[cursor + 3];
+            // Skip pack/system/PSM start codes.
+            if sid == 0xBA || sid == 0xBB || sid == 0xBC || sid == 0xB9 {
+                cursor += 4;
+                continue;
+            }
+            let plen = u16::from_be_bytes([input[cursor + 4], input[cursor + 5]]) as usize;
+            let payload_start = cursor + 6;
+            let payload_end = if plen == 0 {
+                pack_end
+            } else {
+                (cursor + 6 + plen).min(pack_end)
+            };
+            if payload_start > payload_end {
+                break;
+            }
+            // MPEG-1 timestamp parse (ISO/IEC 11172-1 §2.4.3.6).
+            let mut pts = None;
+            let mut dts = None;
+            let mut payload = &input[payload_start..payload_end];
+            let is_av = (0xC0..=0xEF).contains(&sid) || sid == 0xBD;
+            if is_av && payload_start < payload_end {
+                let first = input[payload_start];
+                if first & 0xF0 == 0x20 && payload_start + 5 <= payload_end {
+                    pts = Some(parse_mpeg1_pts(&input[payload_start..payload_start + 5]));
+                    payload = &input[payload_start + 5..payload_end];
+                } else if first & 0xF0 == 0x30 && payload_start + 10 <= payload_end {
+                    pts = Some(parse_mpeg1_pts(&input[payload_start..payload_start + 5]));
+                    dts = Some(parse_mpeg1_pts(
+                        &input[payload_start + 5..payload_start + 10],
+                    ));
+                    payload = &input[payload_start + 10..payload_end];
+                }
+            }
+            out.push(PesInfo {
+                stream_id: sid,
+                payload,
+                pts,
+                dts,
+            });
+            cursor = payload_end;
+            if plen == 0 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn parse_mpeg1_pts(b: &[u8]) -> u64 {
+    (u64::from(b[0] & 0x0E) << 29)
+        | (u64::from(b[1]) << 22)
+        | (u64::from(b[2] & 0xFE) << 14)
+        | (u64::from(b[3]) << 7)
+        | (u64::from(b[4] & 0xFE) >> 1)
+}
 
 // ── stream_id → codec (ISO/IEC 13818-1 Table 2-22) ──────────────────────────
 
@@ -414,11 +522,31 @@ impl<'a> PsDemux<'a> {
         // `Media::degraded`, scanning resumes at the next pack_start_code.
         // Only input with *no* recoverable pack at all is an error.
         let scan = scan_packs(input);
-        if scan.packs.is_empty()
-            && let Some(first) = scan.skipped.first()
-        {
-            return Err(Error::Ps(first.error.clone()));
-        }
+        let packs = scan.packs;
+        // MPEG-1 Program Streams (ffmpeg `-f mpeg`) are not supported by the
+        // MPEG-2 pack layer, so `scan_packs` rejects every pack. Fall back to a
+        // direct PES scan in that case; only fail when neither path yields a
+        // packet.
+        let all_pes: Vec<PesInfo<'_>> = if !packs.is_empty() {
+            packs
+                .iter()
+                .flat_map(|p| p.pes_packets.iter())
+                .map(|pes| PesInfo {
+                    stream_id: pes.stream_id.0,
+                    payload: pes.payload,
+                    pts: pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0)),
+                    dts: pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0)),
+                })
+                .collect()
+        } else {
+            let fallback = collect_mpeg1_pes_packets(input);
+            if fallback.is_empty()
+                && let Some(first) = scan.skipped.first()
+            {
+                return Err(Error::Ps(first.error.clone()));
+            }
+            fallback
+        };
         let degraded: Vec<crate::ir::InputDegradation> = scan
             .skipped
             .iter()
@@ -426,7 +554,6 @@ impl<'a> PsDemux<'a> {
                 position: r.offset as u64,
             })
             .collect();
-        let packs = scan.packs;
 
         // ── Pass 1: per-elementary-stream PES reassembly ──────────────────
         // A stream is keyed by `(stream_id, substream_id)`: a
@@ -439,115 +566,108 @@ impl<'a> PsDemux<'a> {
         let mut order: Vec<StreamKey> = Vec::new();
         let mut streams: BTreeMap<StreamKey, ElementaryStream> = BTreeMap::new();
 
-        for pack in &packs {
-            for pes in &pack.pes_packets {
-                let sid = pes.stream_id.0;
-                let Some(codec) = Codec::from_stream_id(sid) else {
-                    continue;
-                };
-                // A video payload is the Annex B bytes verbatim; a
-                // private_stream_1 payload needs its substream header read and
-                // stripped before the substream's own bytes are known.
-                let (substream_id, header, payload): (u8, Option<Private1Header>, &[u8]) =
-                    match codec {
-                        Codec::Video => (PRIVATE1_SUBSTREAM_ID_NONE, None, pes.payload),
-                        Codec::Private => {
-                            let Some((header, body)) = Private1Header::parse(pes.payload) else {
-                                continue;
-                            };
-                            (header.substream_id, Some(header), body)
-                        }
-                        // `from_stream_id` never returns these: AC-3 is only
-                        // reached via `Codec::Private`, and `Skipped` is only
-                        // assigned inside the loop below.
-                        Codec::Ac3 | Codec::Skipped => continue,
+        for pes in &all_pes {
+            let sid = pes.stream_id;
+            let Some(codec) = Codec::from_stream_id(sid) else {
+                continue;
+            };
+            // A video payload is the Annex B bytes verbatim; a
+            // private_stream_1 payload needs its substream header read and
+            // stripped before the substream's own bytes are known.
+            let (substream_id, header, payload): (u8, Option<Private1Header>, &[u8]) = match codec {
+                Codec::Video => (PRIVATE1_SUBSTREAM_ID_NONE, None, pes.payload),
+                Codec::Private => {
+                    let Some((header, body)) = Private1Header::parse(pes.payload) else {
+                        continue;
                     };
-                if payload.is_empty() {
-                    continue;
+                    (header.substream_id, Some(header), body)
                 }
-                let (pts, dts) = pes
-                    .header
-                    .as_ref()
-                    .map(|h| (h.pts.map(|p| p.0), h.dts.map(|d| d.0)))
-                    .unwrap_or((None, None));
-
-                let key = StreamKey {
-                    stream_id: sid,
-                    substream_id,
-                };
-                let es = streams.entry(key).or_insert_with(|| {
-                    order.push(key);
-                    ElementaryStream {
-                        codec,
-                        es_bytes: Vec::new(),
-                        stamps: Vec::new(),
-                    }
-                });
-                if es.codec == Codec::Private {
-                    // Still undecided: decide it from this packet's substream
-                    // header. The classification probes the syncword at the
-                    // header's `first_access_unit_pointer`, so a packet that
-                    // merely continues a frame (`pointer == 0`, or a tail that
-                    // does not begin with a syncword) leaves the substream
-                    // undecided and the bytes are *not* accumulated — the
-                    // packets before the first real access-unit start carry no
-                    // frame this demuxer could emit anyway, and dropping them
-                    // keeps the ES starting on a syncframe.
-                    if let Some(c) =
-                        header.and_then(|h| Codec::classify_private1(substream_id, &h, payload))
-                    {
-                        es.codec = c;
-                    } else {
-                        // A header naming an access unit the payload does not
-                        // carry, or claiming frames while pointing nowhere, is
-                        // malformed *for classification purposes* — there is
-                        // nothing here to identify the substream by. Skipping
-                        // the packet keeps a partial frame tail from being
-                        // spliced onto an ES that has not started yet.
-                        //
-                        // This check applies only while the substream is
-                        // undecided. Once it is known to be AC-3, every byte it
-                        // carries is frame data and must be kept: the pointer
-                        // only says where the next access unit starts, and a
-                        // bogus or zero one on a mid-stream packet is no reason
-                        // to discard real audio (a muxer writing pointer 0
-                        // everywhere is a normal variant, not a corrupt file).
-                        if !header.is_some_and(|h| h.is_consistent(pes.payload.len())) {
-                            continue;
-                        }
-                    }
-                }
-                if es.codec == Codec::Private || es.codec == Codec::Skipped {
-                    continue;
-                }
-                // Drop the leading bytes that precede the first access unit in
-                // this packet: a packet may open mid-frame (its
-                // `first_access_unit_pointer` naming where the next frame
-                // starts), and those prefix bytes are the tail of a frame the
-                // demuxer never saw the start of. Accumulating them would leave
-                // the reassembled ES beginning mid-frame, which no syncword
-                // scan can recover from — the AC-3 splitter stops at the first
-                // non-syncword byte.
-                let payload = match header {
-                    Some(header)
-                        if es.es_bytes.is_empty() && header.is_consistent(pes.payload.len()) =>
-                    {
-                        let prefix = usize::from(header.first_access_unit_pointer)
-                            .saturating_sub(1)
-                            .min(payload.len());
-                        &payload[prefix..]
-                    }
-                    _ => payload,
-                };
-                if payload.is_empty() {
-                    continue;
-                }
-                let offset = es.es_bytes.len();
-                if pts.is_some() || dts.is_some() {
-                    es.stamps.push(Stamp { offset, pts, dts });
-                }
-                es.es_bytes.extend_from_slice(payload);
+                // `from_stream_id` never returns these: AC-3 is only
+                // reached via `Codec::Private`, and `Skipped` is only
+                // assigned inside the loop below.
+                Codec::Ac3 | Codec::Skipped => continue,
+            };
+            if payload.is_empty() {
+                continue;
             }
+            let (pts, dts) = (pes.pts, pes.dts);
+
+            let key = StreamKey {
+                stream_id: sid,
+                substream_id,
+            };
+            let es = streams.entry(key).or_insert_with(|| {
+                order.push(key);
+                ElementaryStream {
+                    codec,
+                    es_bytes: Vec::new(),
+                    stamps: Vec::new(),
+                }
+            });
+            if es.codec == Codec::Private {
+                // Still undecided: decide it from this packet's substream
+                // header. The classification probes the syncword at the
+                // header's `first_access_unit_pointer`, so a packet that
+                // merely continues a frame (`pointer == 0`, or a tail that
+                // does not begin with a syncword) leaves the substream
+                // undecided and the bytes are *not* accumulated — the
+                // packets before the first real access-unit start carry no
+                // frame this demuxer could emit anyway, and dropping them
+                // keeps the ES starting on a syncframe.
+                if let Some(c) =
+                    header.and_then(|h| Codec::classify_private1(substream_id, &h, payload))
+                {
+                    es.codec = c;
+                } else {
+                    // A header naming an access unit the payload does not
+                    // carry, or claiming frames while pointing nowhere, is
+                    // malformed *for classification purposes* — there is
+                    // nothing here to identify the substream by. Skipping
+                    // the packet keeps a partial frame tail from being
+                    // spliced onto an ES that has not started yet.
+                    //
+                    // This check applies only while the substream is
+                    // undecided. Once it is known to be AC-3, every byte it
+                    // carries is frame data and must be kept: the pointer
+                    // only says where the next access unit starts, and a
+                    // bogus or zero one on a mid-stream packet is no reason
+                    // to discard real audio (a muxer writing pointer 0
+                    // everywhere is a normal variant, not a corrupt file).
+                    if !header.is_some_and(|h| h.is_consistent(pes.payload.len())) {
+                        continue;
+                    }
+                }
+            }
+            if es.codec == Codec::Private || es.codec == Codec::Skipped {
+                continue;
+            }
+            // Drop the leading bytes that precede the first access unit in
+            // this packet: a packet may open mid-frame (its
+            // `first_access_unit_pointer` naming where the next frame
+            // starts), and those prefix bytes are the tail of a frame the
+            // demuxer never saw the start of. Accumulating them would leave
+            // the reassembled ES beginning mid-frame, which no syncword
+            // scan can recover from — the AC-3 splitter stops at the first
+            // non-syncword byte.
+            let payload = match header {
+                Some(header)
+                    if es.es_bytes.is_empty() && header.is_consistent(pes.payload.len()) =>
+                {
+                    let prefix = usize::from(header.first_access_unit_pointer)
+                        .saturating_sub(1)
+                        .min(payload.len());
+                    &payload[prefix..]
+                }
+                _ => payload,
+            };
+            if payload.is_empty() {
+                continue;
+            }
+            let offset = es.es_bytes.len();
+            if pts.is_some() || dts.is_some() {
+                es.stamps.push(Stamp { offset, pts, dts });
+            }
+            es.es_bytes.extend_from_slice(payload);
         }
 
         // ── Pass 2: build one track per elementary stream, in first-seen order ──
@@ -835,6 +955,16 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     let dts = interpolate_dts(&units);
     let pts = interpolate_pts(&units, &dts);
 
+    // Display tracking: seed from the TrackSpec's auto-derived geometry, then
+    // fold each access unit through the tracker in decode order so every
+    // sample carries the state in force for it (Arc-shared across runs).
+    let mut sps_tracker = SpsTracker::new(TrackCodec::Avc);
+    sps_tracker.seed_state(DisplayGeometry::from_codec_config(&CodecConfig::Avc {
+        config: config.clone(),
+        width: 0,
+        height: 0,
+    }));
+
     // Decode order = ascending DTS (stable — preserves stream order for ties).
     let mut order: Vec<usize> = (0..units.len()).collect();
     order.sort_by_key(|&i| dts[i]);
@@ -853,13 +983,17 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
             let (start, end) = ranges[i];
             let au = &es.es_bytes[start..end];
             let is_idr = au_is_idr(au);
-            Sample::from_annexb(
+            let _ = sps_tracker.observe(au);
+            let display = sps_tracker.state().cloned();
+            let mut sample = Sample::from_annexb(
                 au,
                 Some(to_ticks(dts[i])),
                 Some(to_ticks(pts[i])),
                 Some(dur),
                 is_idr,
-            )
+            );
+            sample.display = display;
+            sample
         })
         .collect();
 
@@ -921,6 +1055,14 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> 
     let mut order: Vec<usize> = (0..units.len()).collect();
     order.sort_by_key(|&i| dts[i]);
 
+    // Display tracking (MPEG-2): seed geometry from the elementary stream's
+    // first sequence header, then fold each picture through the tracker in
+    // decode order.
+    let mut mpeg2_tracker = Mpeg2DisplayTracker::new();
+    if let Ok(geom) = DisplayGeometry::from_mpeg2_es(&es.es_bytes) {
+        mpeg2_tracker.seed_state(Some(geom));
+    }
+
     let samples: Vec<Sample> = order
         .iter()
         .enumerate()
@@ -929,13 +1071,17 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> 
             let (start, end) = ranges[i];
             let au = &es.es_bytes[start..end];
             let is_sync = mpeg2_is_sync(au);
-            Sample::new(
+            let _ = mpeg2_tracker.observe(au);
+            let display = mpeg2_tracker.state().cloned();
+            let mut sample = Sample::new(
                 au.to_vec(),
                 Some(to_ticks(dts[i])),
                 Some(to_ticks(pts[i])),
                 Some(dur),
                 is_sync,
-            )
+            );
+            sample.display = display;
+            sample
         })
         .collect();
 
