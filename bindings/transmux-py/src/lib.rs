@@ -24,14 +24,18 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use broadcast_common::Parse;
+use std::collections::HashMap;
+use std::sync::Arc;
 use transmux::aac_asc::AudioSpecificConfig;
 use transmux::dts::DtsSpecificBox;
 use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample};
 use transmux::sps::rfc6381_avc1;
+use transmux::DisplayGeometry;
+use transmux::DisplayInfo;
 use transmux::{EsdsBox, TsDemux};
 
 /// Demux raw MPEG-2 TS bytes into a Python `dict` describing the transmux
@@ -107,14 +111,26 @@ fn track_to_py(py: Python<'_>, track: &Track) -> PyResult<PyObject> {
     dict.set_item("sample_rate", identity.sample_rate)?;
 
     let samples = PyList::empty(py);
+    // Cache of already-built display dicts keyed by the `Arc<DisplayInfo>` pointer,
+    // so consecutive samples sharing one `Arc` share one Python dict object
+    // (no per-sample allocation on a long track).
+    let mut display_cache: HashMap<usize, PyObject> = HashMap::new();
     for s in &track.samples {
-        samples.append(sample_to_py(py, s)?)?;
+        samples.append(sample_to_py(py, s, &mut display_cache)?)?;
     }
     dict.set_item("samples", samples)?;
+    dict.set_item(
+        "display",
+        display_geometry_to_py_opt(py, spec.display.as_ref())?,
+    )?;
     Ok(dict.into())
 }
 
-fn sample_to_py(py: Python<'_>, sample: &Sample) -> PyResult<PyObject> {
+fn sample_to_py(
+    py: Python<'_>,
+    sample: &Sample,
+    display_cache: &mut HashMap<usize, PyObject>,
+) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
     dict.set_item("data", PyBytes::new(py, &sample.data))?;
     dict.set_item("duration", sample.duration)?;
@@ -123,12 +139,79 @@ fn sample_to_py(py: Python<'_>, sample: &Sample) -> PyResult<PyObject> {
     // rather than stored), so both are read through the new shape.
     dict.set_item("is_sync", sample.flags.is_sync)?;
     dict.set_item("composition_offset", sample.composition_offset())?;
+    dict.set_item(
+        "display",
+        display_info_to_py(py, sample.display.as_ref(), display_cache)?,
+    )?;
     Ok(dict.into())
 }
 
 /// Codec family label + everything a Python-side consumer needs to feed
 /// `Sample::data` to an external decoder/model without understanding
 /// transmux's own `CodecConfig` enum.
+/// Convert a `DisplayGeometry` into the Python dict shape documented in the
+/// README. Returns a fresh `PyDict` (callers cache by `Arc` pointer for
+/// `DisplayInfo`).
+fn display_geometry_to_py(py: Python<'_>, geom: &DisplayGeometry) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("coded_width", geom.coded_width)?;
+    dict.set_item("coded_height", geom.coded_height)?;
+    let sar = geom
+        .sample_aspect_ratio()
+        .map(|(w, h)| PyTuple::new(py, [i64::from(w), i64::from(h)]))
+        .transpose()?;
+    dict.set_item("sample_aspect_ratio", sar)?;
+    dict.set_item("aspect_ratio_idc", geom.aspect_ratio.map(|a| a.idc()))?;
+    dict.set_item("overscan_appropriate", geom.overscan_appropriate)?;
+    let vs = match geom.video_signal {
+        None => py.None(),
+        Some(vst) => {
+            let vs = PyDict::new(py);
+            vs.set_item("video_format", vst.video_format.code())?;
+            vs.set_item("full_range", vst.full_range)?;
+            if let Some(cd) = vst.colour {
+                vs.set_item("colour_primaries", cd.primaries.code())?;
+                vs.set_item("transfer_characteristics", cd.transfer.code())?;
+                vs.set_item("matrix_coefficients", cd.matrix.code())?;
+            } else {
+                vs.set_item("colour_primaries", py.None())?;
+                vs.set_item("transfer_characteristics", py.None())?;
+                vs.set_item("matrix_coefficients", py.None())?;
+            }
+            vs.into()
+        }
+    };
+    dict.set_item("video_signal", vs)?;
+    Ok(dict.into())
+}
+
+fn display_geometry_to_py_opt(
+    py: Python<'_>,
+    geom: Option<&DisplayGeometry>,
+) -> PyResult<PyObject> {
+    match geom {
+        None => Ok(py.None()),
+        Some(g) => display_geometry_to_py(py, g),
+    }
+}
+
+fn display_info_to_py(
+    py: Python<'_>,
+    info: Option<&Arc<DisplayInfo>>,
+    cache: &mut HashMap<usize, PyObject>,
+) -> PyResult<PyObject> {
+    let Some(info) = info else {
+        return Ok(py.None());
+    };
+    let key = Arc::as_ptr(info) as usize;
+    if let Some(cached) = cache.get(&key) {
+        return Ok(cached.clone_ref(py));
+    }
+    let obj = display_geometry_to_py_opt(py, info.geometry.as_ref())?;
+    cache.insert(key, obj.clone_ref(py));
+    Ok(obj)
+}
+
 struct CodecIdentity {
     codec: &'static str,
     codec_string: Option<String>,

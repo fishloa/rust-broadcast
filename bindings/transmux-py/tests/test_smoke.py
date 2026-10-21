@@ -11,7 +11,80 @@ Rust-side oracle values. Run with `pytest` after `maturin develop`.
 
 import os
 
+import pytest
+
 import transmux_py as tm
+
+PRIVATE_FIXTURES = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "private", "fixtures"
+)
+
+
+def _private_path(rel):
+    # Skip is allowed ONLY when the private submodule is not checked out at
+    # all (i.e. private/fixtures does not exist). If the submodule IS checked
+    # out and the file is missing, that is a hard failure, not a skip.
+    if not os.path.isdir(PRIVATE_FIXTURES):
+        pytest.skip("private submodule not checked out (private/fixtures missing)")
+    path = os.path.join(PRIVATE_FIXTURES, rel)
+    assert os.path.isfile(path), f"private fixture missing: {path}"
+    return path
+
+
+def test_public_video_track_display_geometry():
+    assert os.path.isfile(FIXTURE), f"public fixture missing: {FIXTURE}"
+    media = _demux_fixture()
+    video = next(t for t in media["tracks"] if t["codec"] == "avc")
+    expected = {
+        "coded_width": 320,
+        "coded_height": 240,
+        "sample_aspect_ratio": (1, 1),
+        "aspect_ratio_idc": 1,
+        "overscan_appropriate": None,
+        "video_signal": None,
+    }
+    assert video["display"] == expected
+    for s in video["samples"]:
+        assert isinstance(s["display"], dict)
+        assert s["display"] == expected
+    audio = next(t for t in media["tracks"] if t["codec"] == "aac")
+    assert audio["display"] is None
+    for s in audio["samples"]:
+        assert s["display"] is None
+
+
+def test_public_display_dict_identity_shared():
+    assert os.path.isfile(FIXTURE), f"public fixture missing: {FIXTURE}"
+    media = _demux_fixture()
+    video = next(t for t in media["tracks"] if t["codec"] == "avc")
+    ids = {id(s["display"]) for s in video["samples"]}
+    assert len(ids) == 1
+
+
+def test_private_melodie_display_geometry():
+    path = _private_path("ts/melodie-anamorphic-sar-64-45-zenith-tv.ts")
+    with open(path, "rb") as f:
+        media = tm.demux_ts(f.read())
+    video = next(t for t in media["tracks"] if t["codec"] == "avc")
+    for s in video["samples"]:
+        d = s["display"]
+        assert isinstance(d, dict)
+        assert d["coded_width"] == 720
+        assert d["coded_height"] == 576
+        assert d["sample_aspect_ratio"] == (64, 45)
+
+
+def test_private_krone_display_geometry():
+    path = _private_path("ts/krone-anamorphic-sar-16-11-zenith-tv.ts")
+    with open(path, "rb") as f:
+        media = tm.demux_ts(f.read())
+    video = next(t for t in media["tracks"] if t["codec"] == "avc")
+    for s in video["samples"]:
+        d = s["display"]
+        assert isinstance(d, dict)
+        assert d["coded_width"] == 720
+        assert d["coded_height"] == 576
+        assert d["sample_aspect_ratio"] == (16, 11)
 
 # Repo-relative path to the committed real capture (shared across the
 # workspace's own transmux test suite, not fixture data private to this
