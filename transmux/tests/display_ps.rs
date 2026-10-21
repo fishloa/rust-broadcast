@@ -171,80 +171,85 @@ fn ps_arc_sharing() {
     }
 }
 
-/// The SPS NAL payloads (nal_unit_type 7) found in one Annex B access unit,
-/// scanned from the raw bytes (independent of the display tracker).
-fn sps_nals(au: &[u8]) -> Vec<&[u8]> {
-    let mut starts = Vec::new();
-    let mut i = 0;
-    while i + 3 <= au.len() {
-        if au[i] == 0 && au[i + 1] == 0 && au[i + 2] == 1 {
-            starts.push(i + 3);
-            i += 3;
-        } else {
-            i += 1;
-        }
-    }
+/// The SPS NAL payloads (nal_unit_type 7) of one sample, scanned from its raw
+/// bytes (4-byte length-prefixed NALs; independent of the display tracker).
+fn sps_nals(sample: &[u8]) -> Vec<&[u8]> {
     let mut out = Vec::new();
-    for (k, &st) in starts.iter().enumerate() {
-        let end = starts.get(k + 1).map_or(au.len(), |&n| n - 3);
-        if st < end && au[st] & 0x1F == 7 {
-            // Trailing zero bytes belong to the next start code.
-            let mut e = end;
-            while e > st && au[e - 1] == 0 {
-                e -= 1;
-            }
-            out.push(&au[st..e]);
+    let mut i = 0;
+    while i + 4 <= sample.len() {
+        let len =
+            u32::from_be_bytes([sample[i], sample[i + 1], sample[i + 2], sample[i + 3]]) as usize;
+        let start = i + 4;
+        let end = start.saturating_add(len).min(sample.len());
+        if start < end && sample[start] & 0x1F == 7 {
+            out.push(&sample[start..end]);
         }
+        i = end;
     }
     out
 }
 
 #[test]
-fn sarswitch_h264_ps_tags_the_switch_with_the_sps_change() {
+fn sarswitch_h264_ps_tags_follow_each_access_units_own_sps() {
     // ffprobe on the file: 78 frames SAR 64:45 then 80 frames SAR 16:11 (a real
-    // in-band SPS change). PS demux emits one sample per coded picture (a
-    // field pair is two samples), so sample counts differ from ffprobe's frame
-    // counts; the switch position is instead derived from the raw SPS bytes.
+    // in-band SPS change at the join of two different anamorphic clips). PS
+    // demux emits one sample per coded picture in DTS-sorted order, which
+    // interleaves pictures around the join, so the oracle is order-free: every
+    // sample that carries an SPS must be tagged with the SAR of THAT SPS
+    // (first SPS in the file = the 64:45 clip; the only other SPS = 16:11).
     let Some(bytes) = test_fixtures::require_bytes("ps/sarswitch-h264.ps", "display_ps") else {
         return;
     };
     let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
     let track = video_track(&media, false);
-    let sars: Vec<(u16, u16)> = track
-        .samples
-        .iter()
-        .map(|s| {
-            s.display
-                .as_ref()
-                .expect("display")
-                .geometry
-                .as_ref()
-                .expect("geom")
-                .sample_aspect_ratio()
-                .expect("sar")
-        })
-        .collect();
+    let sar_of = |s: &transmux::Sample| {
+        s.display
+            .as_ref()
+            .expect("display")
+            .geometry
+            .as_ref()
+            .expect("geom")
+            .sample_aspect_ratio()
+            .expect("sar")
+    };
 
-    // Oracle: the first sample carrying an SPS that differs from the first SPS.
-    let mut first_sps: Option<&[u8]> = None;
-    let mut expected_switch = None;
-    for (idx, s) in track.samples.iter().enumerate() {
+    let mut distinct: Vec<&[u8]> = Vec::new();
+    for s in &track.samples {
         for sps in sps_nals(&s.data) {
-            match first_sps {
-                None => first_sps = Some(sps),
-                Some(f) if f != sps && expected_switch.is_none() => expected_switch = Some(idx),
-                _ => {}
+            if !distinct.contains(&sps) {
+                distinct.push(sps);
             }
         }
     }
-    let switch = expected_switch.expect("the fixture has an in-band SPS change");
-    assert!(switch > 0 && switch < sars.len());
-    assert!(
-        sars[..switch].iter().all(|&r| r == (64, 45)),
-        "before the SPS change"
-    );
-    assert!(
-        sars[switch..].iter().all(|&r| r == (16, 11)),
-        "from the SPS change on"
-    );
+    assert_eq!(distinct.len(), 2, "the fixture carries exactly two SPS");
+    let expected = |sps: &[u8]| {
+        if sps == distinct[0] {
+            (64, 45)
+        } else {
+            (16, 11)
+        }
+    };
+    let mut checked = 0;
+    for s in &track.samples {
+        for sps in sps_nals(&s.data) {
+            assert_eq!(
+                sar_of(s),
+                expected(sps),
+                "tag disagrees with the sample's own SPS"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 6, "SPS-bearing samples checked: {checked}");
+    let n1 = track
+        .samples
+        .iter()
+        .filter(|s| sar_of(s) == (64, 45))
+        .count();
+    let n2 = track
+        .samples
+        .iter()
+        .filter(|s| sar_of(s) == (16, 11))
+        .count();
+    assert!(n1 > 0 && n2 > 0 && n1 + n2 == track.samples.len());
 }
