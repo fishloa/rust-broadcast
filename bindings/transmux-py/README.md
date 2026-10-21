@@ -31,12 +31,19 @@ print(media["movie_timescale"])
 
 for track in media["tracks"]:
     print(track["codec"], track["codec_string"], track["timescale"])
+    # Display geometry (coded size + sample aspect ratio + video signal) is
+    # exposed for video tracks; `None` for audio and tracks without video
+    # geometry.
+    print(track["display"])
     for sample in track["samples"]:
         # sample["data"] is the opaque coded access unit (bytes) —
         # length-prefixed NAL units for AVC/HEVC, raw frames for AAC/etc.
         # hand it straight to a decoder keyed off track["codec_string"].
         if sample["is_sync"]:
             ...  # a keyframe / random-access point
+        # Per-sample display state; shares one dict object across consecutive
+        # samples that share a state.
+        print(sample["display"])
 ```
 
 ### Returned shape
@@ -56,12 +63,14 @@ for track in media["tracks"]:
       "height": int | None,
       "channel_count": int | None,
       "sample_rate": int | None,      # Hz
+      "display": dict | None,         # coded size + SAR + video signal, or None
       "samples": [
         {
           "data": bytes,              # opaque coded access unit
           "duration": int,            # in `timescale` ticks
           "is_sync": bool,            # keyframe / random-access point
           "composition_offset": int,  # pts - dts, in `timescale` ticks
+          "display": dict | None,     # same shape as track["display"], or None
         },
         ...
       ],
@@ -71,7 +80,24 @@ for track in media["tracks"]:
 }
 ```
 
-Note on the read-only design: unlike `dvb-si-py`, which converts Rust →
+### Display geometry dict shape
+
+`track["display"]` and `sample["display"]` are either `None` or a dict with
+exactly these keys (transmux 0.27.7 exposes no other display fields):
+
+- `coded_width`: int — decoded picture width before cropping, in luma samples
+- `coded_height`: int — decoded picture height before cropping, in luma samples
+- `sample_aspect_ratio`: `(w, h)` tuple of ints, or `None` when unspecified
+- `aspect_ratio_idc`: int (the wire `aspect_ratio_idc`) or `None`
+- `overscan_appropriate`: bool or `None`
+- `video_signal`: `None`, or a dict with:
+  - `video_format`: int (H.264/H.265 Table E-2 code)
+  - `full_range`: bool
+  - `colour_primaries`, `transfer_characteristics`, `matrix_coefficients`:
+    int codes when a colour description is present, otherwise `None`
+
+Audio tracks and tracks without video geometry have `None`. Consecutive
+samples sharing one `Arc<DisplayInfo>` share one Python dict object.
 `serde_json::Value` → Python because `dvb-si`'s table types are fully
 `serde::Serialize`, transmux's pipeline IR (`Media`/`Track`/`TrackSpec`/
 `CodecConfig`/`Sample`) carries **no** serde derive at all — the crate's
@@ -86,6 +112,14 @@ understanding transmux's incremental/streaming APIs. `transmux::media::Fmp4Demux
 follow-up if fMP4-sourced ML pipelines need it.
 
 ## Changes
+
+### 0.4.0
+
+- Expose transmux's display geometry through `track["display"]` and
+  `sample["display"]` (coded size, sample aspect ratio, overscan flag, and video
+  signal type / colour description), or `None` for audio and tracks without
+  video geometry. Consecutive samples sharing one `Arc<DisplayInfo>` share one
+  Python dict object. Additive (Python output shape gains a `display` key).
 
 ### 0.3.0
 
