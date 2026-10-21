@@ -356,10 +356,12 @@ fn frame_rate_millihertz_hevc_convention(time_scale: u32, num_units_in_tick: u32
     u32::try_from(millihertz).ok()
 }
 
-/// Normative tier H.265: frame rate = 1 / (ClockTick * elemental_duration)
-/// where ClockTick = num_units/time_scale? Actually ClockTick = num_units / time_scale seconds.
-/// frame rate Hz = time_scale / (num_units * elemental_duration). millihertz = round_half_up(1000 * time_scale / (num_units * elemental_duration)).
-/// If field_seq: frame rate halved => denominator doubled.
+/// Normative tier (H.265 §E.3.2, `transmux/docs/codec/vui-timing-frame-rate.md` §2.7): the
+/// picture interval is `ClockTick * elemental_duration`, `ClockTick = num_units / time_scale`,
+/// so the picture rate is `time_scale / (num_units * elemental_duration)` Hz and
+/// `millihertz = round_half_up(1000 * time_scale / (num_units * elemental_duration))`.
+/// With `field_seq` the pictures are fields; the frame rate is half the picture rate
+/// (assuming complementary field pairs), i.e. the denominator doubles.
 fn frame_rate_millihertz_hevc_normative(
     time_scale: u32,
     num_units_in_tick: u32,
