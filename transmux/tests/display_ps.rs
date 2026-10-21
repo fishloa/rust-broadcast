@@ -170,3 +170,35 @@ fn ps_arc_sharing() {
         }
     }
 }
+
+#[test]
+fn sarswitch_h264_ps_tags_the_switch_with_the_sps_change() {
+    // ffprobe -show_entries frame=sample_aspect_ratio on the file: 78 frames
+    // SAR 64:45 followed by 80 frames SAR 16:11 (a real in-band SPS change).
+    let Some(bytes) = test_fixtures::require_bytes("ps/sarswitch-h264.ps", "display_ps") else {
+        return;
+    };
+    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let track = video_track(&media, false);
+    let sars: Vec<(u16, u16)> = track
+        .samples
+        .iter()
+        .map(|s| {
+            s.display
+                .as_ref()
+                .expect("display")
+                .geometry
+                .as_ref()
+                .expect("geom")
+                .sample_aspect_ratio()
+                .expect("sar")
+        })
+        .collect();
+    let first = sars.iter().filter(|&&r| r == (64, 45)).count();
+    let second = sars.iter().filter(|&&r| r == (16, 11)).count();
+    assert_eq!((first, second), (78, 80));
+    assert_eq!(first + second, sars.len());
+    // One switch, in order: every 64:45 sample precedes every 16:11 sample.
+    assert!(sars[..first].iter().all(|&r| r == (64, 45)));
+    assert!(sars[first..].iter().all(|&r| r == (16, 11)));
+}
