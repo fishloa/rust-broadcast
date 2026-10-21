@@ -608,23 +608,20 @@ impl InitStore {
 /// The mean segment bitrate in bits/second over the whole stream — RFC
 /// 8216bis §4.4.6.2 `AVERAGE-BANDWIDTH` (Apple authoring item 9.14) — rounded
 /// to nearest, or `None` when no measurable segment has been drained
-/// (`total_duration_nanos == 0`), the figure is not finite, or it does not fit
+/// (`total_duration_nanos == 0`) or the figure does not fit
 /// a `u32`.
 ///
-/// Computed in `f64` like `TARGETDURATION`'s own seconds, so a long stream's
-/// two `u64`/`u128` sums cannot overflow on the way to the quotient.
+/// Exact integer arithmetic: `bits * 1e9` is computed in `u128` (a `u64` byte
+/// total times 8e9 cannot overflow it) before the single division.
 fn average_bandwidth_bps(total_bytes: u64, total_duration_nanos: u128) -> Option<u32> {
     if total_duration_nanos == 0 {
         return None;
     }
-    let bits = total_bytes as f64 * 8.0;
-    let secs = total_duration_nanos as f64 / NANOS_PER_SEC as f64;
-    let mean = (bits / secs).round();
-    if !mean.is_finite() || mean < 0.0 || mean > f64::from(u32::MAX) {
-        return None;
-    }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Some(mean as u32)
+    let bits_nanos = u128::from(total_bytes)
+        .checked_mul(8)?
+        .checked_mul(NANOS_PER_SEC)?;
+    let mean = bits_nanos.checked_add(total_duration_nanos / 2)? / total_duration_nanos;
+    u32::try_from(mean).ok()
 }
 
 /// A segment's bitrate in bits/second, rounded up (so a `BANDWIDTH` built
