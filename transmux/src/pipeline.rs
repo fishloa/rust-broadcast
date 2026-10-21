@@ -1396,8 +1396,8 @@ mod frame_rate_tests {
 
 #[cfg(test)]
 mod hevc_rate_rules_tests {
-    use super::{FrameRateBasis, hevc_frame_rate_from_timing};
-    use crate::sps::HevcVuiTiming;
+    use super::{FrameRateBasis, hevc_frame_rate_from_timing, hevc_timing_with_vps_fallback};
+    use crate::sps::{HevcInterlaceSps, HevcVpsTiming, HevcVuiTiming};
 
     fn t(
         num: u32,
@@ -1456,5 +1456,80 @@ mod hevc_rate_rules_tests {
         assert_eq!(t(1, 25, false, false, Some(0)), None);
         // 1000 * u32::MAX millihertz does not fit u32: overflow => None.
         assert_eq!(t(1, u32::MAX, false, false, None), None);
+    }
+
+    fn vps(num: u32, scale: u32) -> Option<HevcVpsTiming> {
+        Some(HevcVpsTiming {
+            num_units_in_tick: num,
+            time_scale: scale,
+        })
+    }
+
+    #[test]
+    fn vps_fallback_sps_wins() {
+        let sps = Some(HevcVuiTiming {
+            num_units_in_tick: 1,
+            time_scale: 25,
+            field_seq: false,
+            frame_field_info_present: false,
+            hrd_fixed_pic_rate: None,
+        });
+        let inter = HevcInterlaceSps::default();
+        let vps = vps(1001, 30000);
+        let t = hevc_timing_with_vps_fallback(sps, inter, vps).unwrap();
+        let rate = hevc_frame_rate_from_timing(&t).unwrap();
+        assert_eq!(rate, (25_000, FrameRateBasis::Convention));
+    }
+
+    #[test]
+    fn vps_fallback_vps_only_convention() {
+        let inter = HevcInterlaceSps::default();
+        let vps = vps(1001, 30000);
+        let t = hevc_timing_with_vps_fallback(None, inter, vps).unwrap();
+        let rate = hevc_frame_rate_from_timing(&t).unwrap();
+        assert_eq!(rate, (29_970, FrameRateBasis::Convention));
+    }
+
+    #[test]
+    fn vps_fallback_none_none() {
+        let inter = HevcInterlaceSps::default();
+        assert!(hevc_timing_with_vps_fallback(None, inter, None).is_none());
+    }
+
+    #[test]
+    fn vps_fallback_field_seq_none_rate() {
+        let inter = HevcInterlaceSps {
+            field_seq: true,
+            frame_field_info_present: false,
+        };
+        let vps = vps(1001, 30000);
+        let t = hevc_timing_with_vps_fallback(None, inter, vps).unwrap();
+        assert!(hevc_frame_rate_from_timing(&t).is_none());
+    }
+
+    #[test]
+    fn vps_fallback_frame_field_info_none_rate() {
+        let inter = HevcInterlaceSps {
+            field_seq: false,
+            frame_field_info_present: true,
+        };
+        let vps = vps(1001, 30000);
+        let t = hevc_timing_with_vps_fallback(None, inter, vps).unwrap();
+        assert!(hevc_frame_rate_from_timing(&t).is_none());
+    }
+
+    #[test]
+    fn vps_fallback_zero_units_none() {
+        let inter = HevcInterlaceSps::default();
+        let v0 = Some(HevcVpsTiming {
+            num_units_in_tick: 0,
+            time_scale: 30000,
+        });
+        assert!(hevc_timing_with_vps_fallback(None, inter, v0).is_none());
+        let v1 = Some(HevcVpsTiming {
+            num_units_in_tick: 1001,
+            time_scale: 0,
+        });
+        assert!(hevc_timing_with_vps_fallback(None, inter, v1).is_none());
     }
 }

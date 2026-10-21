@@ -885,7 +885,7 @@ pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
     let vps_max_layer_id = r.read_bits(6, "vps_max_layer_id")? as u8;
     // vps_num_layer_sets_minus1 ue(v)
     let vps_num_layer_sets_minus1 = r.read_ue("vps_num_layer_sets_minus1")?;
-    if vps_num_layer_sets_minus1 > 1024 {
+    if vps_num_layer_sets_minus1 > 1023 {
         return Err(Error::InvalidValue {
             field: "vps_num_layer_sets_minus1",
             value: vps_num_layer_sets_minus1,
@@ -3941,5 +3941,126 @@ mod tests {
             height: 240,
         };
         assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
+    }
+
+    #[test]
+    fn hevc_vps_timing_synthetic_valid() {
+        let mut nal = vec![0x40u8, 0x01]; // NAL header (nal_unit_type=32)
+        let mut s = BitSink::new();
+        // vps_video_parameter_set_id u(4)
+        s.bits(0, 4);
+        // vps_base_layer_internal_flag u(1)
+        s.bit(true);
+        // vps_base_layer_available_flag u(1)
+        s.bit(true);
+        // vps_max_layers_minus1 u(6)
+        s.bits(0, 6);
+        // vps_max_sub_layers_minus1 u(3)
+        s.bits(0, 3);
+        // vps_temporal_id_nesting_flag u(1)
+        s.bit(true);
+        // vps_reserved_0xffff_16bits u(16)
+        s.bits(0xffff, 16);
+        // profile_tier_level(1, 0): general_profile_space 2, tier 1, profile_idc 5,
+        // compat 32, constraint 48, level 8; no sub-layers.
+        s.bits(0, 2); // general_profile_space
+        s.bit(false); // general_tier_flag
+        s.bits(1, 5); // general_profile_idc
+        s.bits(0, 32); // general_profile_compatibility_flags
+        s.bits(0, 48); // general_constraint_indicator_flags
+        s.bits(0x21, 8); // general_level_idc
+        // vps_sub_layer_ordering_info_present_flag u(1)
+        s.bit(true);
+        // one sub-layer (i=0): three ue(v)
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        // vps_max_layer_id u(6)
+        s.bits(0, 6);
+        // vps_num_layer_sets_minus1 ue(v) = 0
+        s.ue(0);
+        // vps_timing_info_present_flag u(1)
+        s.bit(true);
+        // vps_num_units_in_tick u(32) = 7
+        s.bits(7, 32);
+        // vps_time_scale u(32) = 9
+        s.bits(9, 32);
+        nal.extend(s.finish());
+        let t = decode_hevc_vps_timing(&nal)
+            .expect("parse")
+            .expect("timing");
+        assert_eq!(t.num_units_in_tick, 7);
+        assert_eq!(t.time_scale, 9);
+    }
+
+    #[test]
+    fn hevc_vps_timing_synthetic_with_layer_set() {
+        let mut nal = vec![0x40u8, 0x01];
+        let mut s = BitSink::new();
+        s.bits(0, 4); // vps_video_parameter_set_id
+        s.bit(true); // base_layer_internal
+        s.bit(true); // base_layer_available
+        s.bits(0, 6); // max_layers_minus1
+        s.bits(0, 3); // max_sub_layers_minus1
+        s.bit(true); // temporal_id_nesting
+        s.bits(0xffff, 16); // reserved
+        // profile_tier_level(1, 0)
+        s.bits(0, 2);
+        s.bit(false);
+        s.bits(1, 5);
+        s.bits(0, 32);
+        s.bits(0, 48);
+        s.bits(0x21, 8);
+        s.bit(true); // ordering present
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        s.bits(0, 6); // vps_max_layer_id
+        s.ue(1); // vps_num_layer_sets_minus1 = 1
+        // layer_id_included_flag[1][0] = 1
+        s.bit(true);
+        s.bit(true); // timing present
+        s.bits(7, 32);
+        s.bits(9, 32);
+        nal.extend(s.finish());
+        let t = decode_hevc_vps_timing(&nal)
+            .expect("parse")
+            .expect("timing");
+        assert_eq!(t.num_units_in_tick, 7);
+        assert_eq!(t.time_scale, 9);
+    }
+
+    #[test]
+    fn hevc_vps_timing_synthetic_boundary_rejected() {
+        let mut nal = vec![0x40u8, 0x01];
+        let mut s = BitSink::new();
+        s.bits(0, 4); // vps_video_parameter_set_id
+        s.bit(true); // base_layer_internal
+        s.bit(true); // base_layer_available
+        s.bits(0, 6); // max_layers_minus1
+        s.bits(0, 3); // max_sub_layers_minus1
+        s.bit(true); // temporal_id_nesting
+        s.bits(0xffff, 16); // reserved
+        // profile_tier_level(1, 0)
+        s.bits(0, 2);
+        s.bit(false);
+        s.bits(1, 5);
+        s.bits(0, 32);
+        s.bits(0, 48);
+        s.bits(0x21, 8);
+        s.bit(true); // ordering present
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        s.bits(0, 6); // vps_max_layer_id
+        // vps_num_layer_sets_minus1 = 1024 -> out of range
+        s.ue(1024);
+        // timing flag not reached but fill something
+        s.bit(true);
+        s.bits(1, 32);
+        s.bits(1, 32);
+        nal.extend(s.finish());
+        let r = decode_hevc_vps_timing(&nal);
+        assert!(r.is_err(), "expected Err, got {:?}", r);
     }
 }
