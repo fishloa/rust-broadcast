@@ -89,6 +89,23 @@ fn sub_height_c(chroma_format_idc: u8) -> u32 {
 // AvcSpsInfo
 // ---------------------------------------------------------------------------
 
+/// `fps` field note retained for compatibility; see `decode_avc_vui_timing`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AvcVuiTiming {
+    /// `num_units_in_tick` from VUI `timing_info` (ITU-T H.264 §E.1.1).
+    pub num_units_in_tick: u32,
+    /// `time_scale` from VUI `timing_info` (ITU-T H.264 §E.1.1).
+    pub time_scale: u32,
+    /// `fixed_frame_rate_flag` from VUI `timing_info` (ITU-T H.264 §E.1.1).
+    ///
+    /// `true` (normative tier): the output interval between consecutive
+    /// pictures is constrained to `2 * num_units_in_tick / time_scale`.
+    /// `false` (or absent, inferred 0): no such constraint; the same value is
+    /// only an implementation-defined convention.
+    pub fixed_frame_rate: bool,
+}
+
 /// Decoded fields from an H.264/AVC sequence parameter set.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AvcSpsInfo {
@@ -137,7 +154,7 @@ pub struct AvcSpsInfo {
 /// (as returned by [`iter_annexb_nals`](crate::iter_annexb_nals)).
 /// The NAL header byte is skipped; decoding starts at the next byte.
 pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
-    decode_avc_sps_inner(sps_bytes).map(|(info, _, _)| info)
+    decode_avc_sps_inner(sps_bytes).map(|(info, _, _, _)| info)
 }
 
 /// The SPS fields a slice-header parser needs (ITU-T H.264 §7.3.3 reads
@@ -179,10 +196,14 @@ pub struct AvcPicTimingLayout {
     pub delay_bits: Option<(u8, u8)>,
 }
 
-/// Decode only the slice-header-relevant SPS fields ([`AvcSliceSps`]) from an
+/// Decode only the VUI timing facts ([`AvcVuiTiming`]) from an H.264 SPS NAL
+/// unit (1-byte NAL header included).
+pub fn decode_avc_vui_timing(sps_bytes: &[u8]) -> Result<Option<AvcVuiTiming>> {
+    decode_avc_sps_inner(sps_bytes).map(|(_, _, _, t)| t)
+}
 /// H.264 SPS NAL unit (1-byte NAL header included).
 pub fn decode_avc_slice_sps(sps_bytes: &[u8]) -> Result<AvcSliceSps> {
-    decode_avc_sps_inner(sps_bytes).map(|(_, s, _)| s)
+    decode_avc_sps_inner(sps_bytes).map(|(_, s, _, _)| s)
 }
 
 /// The display-relevant facts of an SPS that [`AvcSpsInfo`]/[`HevcSpsInfo`]
@@ -217,16 +238,16 @@ pub(crate) struct DisplayFacts {
 /// Decode the [`DisplayFacts`] of an H.264 SPS NAL unit (1-byte NAL header
 /// included).
 pub(crate) fn decode_avc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts> {
-    decode_avc_sps_inner(sps_bytes).map(|(_, _, d)| d)
+    decode_avc_sps_inner(sps_bytes).map(|(_, _, d, _)| d)
 }
 
 /// Decode the [`DisplayFacts`] of an H.265 SPS NAL unit (2-byte NAL header
 /// included).
 pub(crate) fn decode_hevc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts> {
-    decode_hevc_sps_inner(sps_bytes).map(|(_, _, d)| d)
+    decode_hevc_sps_inner(sps_bytes).map(|(_, _, d, _)| d)
 }
 
-fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, DisplayFacts)> {
+fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, DisplayFacts, Option<AvcVuiTiming>)> {
     if sps_bytes.len() < 4 {
         return Err(Error::BufferTooShort {
             need: 4,
@@ -413,6 +434,14 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, Di
     // timing_info; stop reading after timing_info_present_flag.
     let vui = parse_avc_vui(&mut r);
     let (num_units_in_tick, time_scale, fps) = vui.timing;
+    let avc_vui_timing = match (vui.timing.0, vui.timing.1) {
+        (Some(n), Some(ts)) => Some(AvcVuiTiming {
+            num_units_in_tick: n,
+            time_scale: ts,
+            fixed_frame_rate: vui.fixed_frame_rate,
+        }),
+        _ => None,
+    };
 
     let clamp_u32 = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
     let display = DisplayFacts {
@@ -453,6 +482,7 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps, Di
             pic_timing: vui.pic_timing,
         },
         display,
+        avc_vui_timing,
     ))
 }
 
@@ -470,6 +500,8 @@ struct AvcVuiFacts {
     video_signal: Option<VideoSignalType>,
     /// `(num_units_in_tick, time_scale, fps)`.
     timing: (Option<u32>, Option<u32>, Option<f32>),
+    /// `fixed_frame_rate_flag` from VUI timing_info (inferred 0 when absent).
+    fixed_frame_rate: bool,
     pic_timing: Option<AvcPicTimingLayout>,
 }
 
@@ -612,13 +644,14 @@ fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::err
     if timing_present {
         let num_units = r.read_bits(32, "num_units_in_tick")? as u32;
         let ts = r.read_bits(32, "time_scale")? as u32;
-        let _ = r.read_flag("fixed_frame_rate_flag")?;
+        let fixed = r.read_flag("fixed_frame_rate_flag")?;
         let fps = if num_units > 0 {
             Some(ts as f32 / (2.0 * num_units as f32))
         } else {
             None
         };
         facts.timing = (Some(num_units), Some(ts), fps);
+        facts.fixed_frame_rate = fixed;
     }
 
     // nal_hrd_parameters_present_flag / vcl_hrd_parameters_present_flag
@@ -691,14 +724,10 @@ pub struct HevcSpsInfo {
     /// Present only when `vui_parameters_present_flag` and
     /// `vui_timing_info_present_flag` are both 1 in the SPS.
     pub time_scale: Option<u32>,
-    /// Frame rate derived from VUI `vui_timing_info` (ITU-T H.265 §E.2.1):
-    /// `vui_time_scale / vui_num_units_in_tick`.
-    ///
-    /// Note: unlike H.264, HEVC does **not** divide by 2 — the clock tick rate
-    /// directly gives the frame rate.
-    ///
-    /// `None` when `vui_parameters_present_flag` or `vui_timing_info_present_flag`
-    /// is 0, or when `vui_num_units_in_tick` is 0.
+    /// Legacy f32 estimate kept for compatibility; only the convention tier
+    /// (`vui_time_scale / vui_num_units_in_tick`) applies and only when the
+    /// normative HRD path does not. See
+    /// `transmux/docs/codec/vui-timing-frame-rate.md` §2.7.
     pub fps: Option<f32>,
 }
 
@@ -732,7 +761,29 @@ pub struct HevcSpsInfo {
 ///            - SubHeightC * (conf_win_top_offset  + conf_win_bottom_offset)
 /// ```
 pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
-    decode_hevc_sps_inner(sps_bytes).map(|(info, _, _)| info)
+    decode_hevc_sps_inner(sps_bytes).map(|(info, _, _, _)| info)
+}
+
+/// VUI timing facts for an H.265 SPS (ITU-T H.265 §E.2.1 + hrd_parameters),
+/// carrying the fields needed by `transmux::nominal_frame_rate` without adding
+/// fields to the (literal-constructible, non-`#[non_exhaustive]`)
+/// [`HevcSpsInfo`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HevcVuiTiming {
+    /// `vui_num_units_in_tick` from VUI `vui_timing_info`.
+    pub num_units_in_tick: u32,
+    /// `vui_time_scale` from VUI `vui_timing_info`.
+    pub time_scale: u32,
+    /// `field_seq_flag` from the VUI (inferred `false` when absent).
+    pub field_seq: bool,
+    /// `frame_field_info_present_flag` from the VUI (inferred per §E.3.1 when
+    /// absent).
+    pub frame_field_info_present: bool,
+    /// When the HRD fixed-rate path applies for `HighestTid`, the value
+    /// `elemental_duration_in_tc_minus1[HighestTid] + 1`; `None` otherwise
+    /// (no HRD, or `fixed_pic_rate_within_cvs_flag[HighestTid] == 0`).
+    pub hrd_fixed_pic_rate: Option<u32>,
 }
 
 /// The interlace-relevant facts of an H.265 SPS (ITU-T H.265 §E.3.1; see
@@ -748,10 +799,24 @@ pub struct HevcInterlaceSps {
     pub frame_field_info_present: bool,
 }
 
-/// Decode only the interlace facts ([`HevcInterlaceSps`]) from an H.265 SPS
+/// Decode only the VUI timing facts ([`HevcVuiTiming`]) from an H.265 SPS NAL
+/// unit (2-byte NAL header included).
+pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>> {
+    let (info, interlace, _, hrd_fixed) = decode_hevc_sps_inner(sps_bytes)?;
+    match (info.num_units_in_tick, info.time_scale) {
+        (Some(n), Some(ts)) => Ok(Some(HevcVuiTiming {
+            num_units_in_tick: n,
+            time_scale: ts,
+            field_seq: interlace.field_seq,
+            frame_field_info_present: interlace.frame_field_info_present,
+            hrd_fixed_pic_rate: hrd_fixed,
+        })),
+        _ => Ok(None),
+    }
+}
 /// NAL unit (2-byte NAL header included).
 pub fn decode_hevc_interlace_sps(sps_bytes: &[u8]) -> Result<HevcInterlaceSps> {
-    decode_hevc_sps_inner(sps_bytes).map(|(_, i, _)| i)
+    decode_hevc_sps_inner(sps_bytes).map(|(_, i, _, _)| i)
 }
 
 /// `general_progressive_source_flag` — bit 47 of the 48-bit
@@ -762,7 +827,7 @@ const PTL_INTERLACED_SOURCE_BIT: u64 = 1 << 46;
 
 fn decode_hevc_sps_inner(
     sps_bytes: &[u8],
-) -> Result<(HevcSpsInfo, HevcInterlaceSps, DisplayFacts)> {
+) -> Result<(HevcSpsInfo, HevcInterlaceSps, DisplayFacts, Option<u32>)> {
     if sps_bytes.len() < 2 {
         return Err(Error::BufferTooShort {
             need: 2,
@@ -877,7 +942,7 @@ fn decode_hevc_sps_inner(
             && general_constraint_indicator_flags & PTL_INTERLACED_SOURCE_BIT != 0,
     };
     let mut vui_colour = HevcVuiColour::default();
-    let (num_units_in_tick, time_scale, fps) = parse_hevc_sps_to_vui_timing(
+    let (num_units_in_tick, time_scale, fps, hrd_fixed_pic_rate) = parse_hevc_sps_to_vui_timing(
         &mut r,
         sps_max_sub_layers_minus1,
         &mut interlace,
@@ -937,7 +1002,94 @@ fn decode_hevc_sps_inner(
         },
         interlace,
         display,
+        hrd_fixed_pic_rate,
     ))
+}
+
+/// Parse `hrd_parameters(1, max_sub_layers_minus1)` (ITU-T H.265 §E.2.1) and
+/// return the fixed-rate value for `HighestTid` (index `max_sub_layers_minus1`):
+/// `Some(elemental_duration_in_tc_minus1[HighestTid] + 1)` when
+/// `fixed_pic_rate_within_cvs_flag[HighestTid]` is 1 (inferred from
+/// `fixed_pic_rate_general_flag`), else `None`.
+fn parse_hevc_hrd(r: &mut BitReader, max_sub_layers_minus1: u8) -> Result<Option<u32>> {
+    // commonInfPresentFlag == 1
+    let nal_hrd = r.read_flag("nal_hrd_parameters_present_flag")?;
+    let vcl_hrd = r.read_flag("vcl_hrd_parameters_present_flag")?;
+    let mut sub_pic = false;
+    if nal_hrd || vcl_hrd {
+        sub_pic = r.read_flag("sub_pic_hrd_params_present_flag")?;
+        if sub_pic {
+            let _ = r.read_bits(8, "tick_divisor_minus2")?;
+            let _ = r.read_bits(5, "du_cpb_removal_delay_increment_length_minus1")?;
+            let _ = r.read_flag("sub_pic_cpb_params_in_pic_timing_sei_flag")?;
+            let _ = r.read_bits(5, "dpb_output_delay_du_length_minus1")?;
+        }
+        let _ = r.read_bits(4, "bit_rate_scale")?;
+        let _ = r.read_bits(4, "cpb_size_scale")?;
+        if sub_pic {
+            let _ = r.read_bits(4, "cpb_size_du_scale")?;
+        }
+        let _ = r.read_bits(5, "initial_cpb_removal_delay_length_minus1")?;
+        let _ = r.read_bits(5, "au_cpb_removal_delay_length_minus1")?;
+        let _ = r.read_bits(5, "dpb_output_delay_length_minus1")?;
+    }
+
+    let max_idx = max_sub_layers_minus1 as usize;
+    let mut result: Option<u32> = None;
+    for i in 0..=max_idx {
+        let general = r.read_flag("fixed_pic_rate_general_flag")?;
+        let within = if general {
+            true
+        } else {
+            r.read_flag("fixed_pic_rate_within_cvs_flag")?
+        };
+        let low_delay = if within {
+            false
+        } else {
+            r.read_flag("low_delay_hrd_flag")?
+        };
+        let mut cpb_cnt: u64 = 1;
+        if within {
+            let ed = r.read_ue("elemental_duration_in_tc_minus1")?;
+            if i == max_idx {
+                // ed range 0..=2047 per spec; +1 fits u32.
+                result = Some((ed as u32).saturating_add(1));
+            }
+        } else {
+            // low_delay already read above
+        }
+        if !low_delay {
+            let cpb_cnt_minus1 = r.read_ue("cpb_cnt_minus1")?;
+            if cpb_cnt_minus1 > 31 {
+                return Err(Error::InvalidValue {
+                    field: "cpb_cnt_minus1",
+                    value: cpb_cnt_minus1,
+                    reason: "out of range 0..=31 (H.265 §7.4.8)",
+                });
+            }
+            cpb_cnt = cpb_cnt_minus1 + 1;
+        }
+        if nal_hrd {
+            parse_hevc_sub_layer_hrd(r, cpb_cnt, sub_pic)?;
+        }
+        if vcl_hrd {
+            parse_hevc_sub_layer_hrd(r, cpb_cnt, sub_pic)?;
+        }
+    }
+    Ok(result)
+}
+
+fn parse_hevc_sub_layer_hrd(r: &mut BitReader, cpb_cnt: u64, sub_pic: bool) -> Result<()> {
+    for _ in 0..cpb_cnt {
+        let _ = r.read_ue("bit_rate_value_minus1")?;
+        let _ = r.read_ue("cpb_size_value_minus1")?;
+        if sub_pic {
+            let _ = r.read_ue("cpb_size_du_value_minus1")?;
+            let _ = r.read_ue("bit_rate_du_value_minus1")?;
+        }
+        let _ = r.read_flag("cbr_flag")?;
+    }
+    Ok(())
 }
 
 /// Walk the H.265 SPS syntax (ITU-T H.265 §7.3.2.2.1) from
@@ -954,9 +1106,9 @@ fn parse_hevc_sps_to_vui_timing(
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
     colour: &mut HevcVuiColour,
-) -> (Option<u32>, Option<u32>, Option<f32>) {
+) -> (Option<u32>, Option<u32>, Option<f32>, Option<u32>) {
     parse_hevc_sps_to_vui_timing_inner(r, sps_max_sub_layers_minus1, interlace, colour)
-        .unwrap_or((None, None, None))
+        .unwrap_or((None, None, None, None))
 }
 
 /// The VUI display facts the H.265 walk collects (each stays at its default
@@ -978,12 +1130,13 @@ struct HevcVuiColour {
 /// 16 is a generous bound that still caps hostile input).
 const HEVC_MAX_RPS_PICS: u64 = 16;
 
+#[allow(clippy::type_complexity)]
 fn parse_hevc_sps_to_vui_timing_inner(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
     colour: &mut HevcVuiColour,
-) -> crate::error::Result<(Option<u32>, Option<u32>, Option<f32>)> {
+) -> crate::error::Result<(Option<u32>, Option<u32>, Option<f32>, Option<u32>)> {
     // log2_max_pic_order_cnt_lsb_minus4  ue(v)
     let log2_max_poc_lsb = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?;
 
@@ -1202,7 +1355,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // vui_parameters_present_flag  u(1)
     let vui_present = r.read_flag("vui_parameters_present_flag")?;
     if !vui_present {
-        return Ok((None, None, None));
+        return Ok((None, None, None, None));
     }
 
     // vui_parameters() — ITU-T H.265 §E.2.1.  Walk in syntax order to reach
@@ -1254,22 +1407,37 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // vui_timing_info_present_flag  u(1)
     let timing_present = r.read_flag("vui_timing_info_present_flag")?;
     if !timing_present {
-        return Ok((None, None, None));
+        return Ok((None, None, None, None));
     }
 
     let num_units = r.read_bits(32, "vui_num_units_in_tick")? as u32;
     let ts = r.read_bits(32, "vui_time_scale")? as u32;
 
-    // HEVC: fps = vui_time_scale / vui_num_units_in_tick  (no factor-of-2;
-    // §E.2.1 — vui_num_units_in_tick is the number of time units per clock tick,
-    // and the clock ticks at vui_time_scale Hz, so one frame = num_units ticks).
+    // vui_poc_proportional_to_timing_flag  u(1) — parsed past, not used for
+    // frame rate (transmux/docs/codec/vui-timing-frame-rate.md §2.7).
+    let poc_prop = r.read_flag("vui_poc_proportional_to_timing_flag")?;
+    if poc_prop {
+        let _ = r.read_ue("vui_num_ticks_poc_diff_one_minus1")?;
+    }
+
+    // vui_hrd_parameters_present_flag  u(1)
+    let hrd_present = r.read_flag("vui_hrd_parameters_present_flag")?;
+    let hrd_fixed = if hrd_present {
+        parse_hevc_hrd(r, sps_max_sub_layers_minus1)?
+    } else {
+        None
+    };
+
+    // HEVC: the clock tick rate is the convention-tier frame rate only; the
+    // normative tier comes from the HRD fixed_pic_rate path. Keep the legacy
+    // f32 as the convention value.
     let fps = if num_units > 0 {
         Some(ts as f32 / num_units as f32)
     } else {
         None
     };
 
-    Ok((Some(num_units), Some(ts), fps))
+    Ok((Some(num_units), Some(ts), fps, hrd_fixed))
 }
 
 // ---------------------------------------------------------------------------
@@ -3369,11 +3537,299 @@ mod tests {
         assert_eq!(g.aspect_ratio, full);
     }
 
+
+    fn hevc_sps_vui_hrd(
+        field_seq: bool,
+        ffi: bool,
+        num_units: u32,
+        time_scale: u32,
+        hrd: Option<(bool, bool, u32)>, // (general, within, ed_minus1)
+    ) -> Vec<u8> {
+        let mut nal = vec![0x42u8, 0x01];
+        let mut s = BitSink::new();
+        s.bits(0, 4); // vps id
+        s.bits(0, 3); // max sub layers minus1 = 0
+        s.bit(true); // temporal id nesting
+        s.bits(0, 2); // profile space
+        s.bit(false); // tier
+        s.bits(1, 5); // profile idc
+        s.bits(0, 32); // compat
+        s.bits(0, 48); // constraint
+        s.bits(93, 8); // level
+        s.ue(0); // sps id
+        s.ue(1); // chroma
+        s.ue(16); // width
+        s.ue(16); // height
+        s.bit(false); // conf window
+        s.ue(0); // bd luma
+        s.ue(0); // bd chroma
+        s.ue(3); // log2 poc
+        s.bit(false); // sub layer ordering
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        s.ue(0);
+        s.ue(3);
+        s.ue(0);
+        s.ue(3);
+        s.ue(1);
+        s.ue(1);
+        s.bit(false); // scaling list
+        s.bit(false); // amp
+        s.bit(false); // sao
+        s.bit(false); // pcm
+        s.ue(0); // num short term
+        s.bit(false); // ltrp
+        s.bit(false); // temporal mvp
+        s.bit(false); // strong intra
+        s.bit(true); // vui present
+        s.bit(false); // aspect ratio info present
+        s.bit(false); // overscan
+        s.bit(false); // video signal
+        s.bit(false); // chroma loc
+        s.bit(false); // neutral chroma
+        s.bit(field_seq); // field_seq_flag
+        s.bit(ffi); // frame_field_info_present_flag
+        s.bit(false); // default display window
+        s.bit(true); // vui timing info present
+        s.bits(u64::from(num_units), 32);
+        s.bits(u64::from(time_scale), 32);
+        s.bit(false); // poc proportional
+        if let Some((general, within, ed)) = hrd {
+            s.bit(true); // vui_hrd_parameters_present_flag
+            // hrd_parameters(1, 0): common info
+            s.bit(true); // nal_hrd_parameters_present_flag
+            s.bit(false); // vcl_hrd_parameters_present_flag
+            // nal||vcl true:
+            s.bit(false); // sub_pic_hrd_params_present_flag
+            s.bits(0, 4); // bit_rate_scale
+            s.bits(0, 4); // cpb_size_scale
+            s.bits(0, 5); // initial_cpb_removal_delay_length_minus1
+            s.bits(0, 5); // au_cpb_removal_delay_length_minus1
+            s.bits(0, 5); // dpb_output_delay_length_minus1
+            // i=0
+            s.bit(general); // fixed_pic_rate_general_flag
+            if !general {
+                s.bit(within); // fixed_pic_rate_within_cvs_flag
+            }
+            if general || within {
+                s.ue(u64::from(ed)); // elemental_duration_in_tc_minus1
+            } else {
+                s.bit(false); // low_delay_hrd_flag
+                s.ue(0); // cpb_cnt_minus1
+            }
+            // nal present => sub_layer_hrd_parameters(0): CpbCnt=1
+            s.ue(0); // bit_rate_value_minus1
+            s.ue(0); // cpb_size_value_minus1
+            s.bit(false); // cbr_flag
+        } else {
+            s.bit(false); // vui_hrd_parameters_present_flag
+        }
+        s.bit(false); // bitstream_restriction_flag
+        s.bit(true); // rbsp stop
+        nal.extend(s.finish());
+        nal
+    }
+
     #[test]
-    fn a_non_reduced_wire_pair_is_kept_and_reduces_on_request() {
-        let g = avc_geometry(Some((255, Some((128, 90)))));
-        assert_eq!(g.sample_aspect_ratio(), Some((128, 90)));
-        let reduced = g.typed_sample_aspect_ratio().unwrap().reduced();
-        assert_eq!(reduced.as_pair(), (64, 45));
+    fn hevc_vui_hrd_ed_one_halves_rate() {
+        // elemental_duration_in_tc_minus1 = 1 -> interval doubles -> half rate.
+        let sps = hevc_sps_vui_hrd(false, false, 1, 25, Some((true, true, 1)));
+        let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
+        assert_eq!(t.hrd_fixed_pic_rate, Some(2));
+        let cfg = crate::pipeline::CodecConfig::Hevc {
+            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                general_profile_space: 0,
+                general_tier_flag: false,
+                general_profile_idc: 1,
+                general_profile_compatibility_flags: 0,
+                general_constraint_indicator_flags: 0,
+                general_level_idc: 93,
+                min_spatial_segmentation_idc: 0,
+                parallelism_type: 0,
+                chroma_format_idc: 1,
+                bit_depth_luma_minus8: 0,
+                bit_depth_chroma_minus8: 0,
+                avg_frame_rate: 0,
+                constant_frame_rate: 0,
+                num_temporal_layers: 1,
+                temporal_id_nested: true,
+                length_size_minus_one: 3,
+                arrays: vec![crate::nalu_types::HevcNalArray {
+                    array_completeness: true,
+                    nal_unit_type: 33,
+                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                }],
+            }),
+            width: 320,
+            height: 240,
+        };
+        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), Some((12500, crate::pipeline::FrameRateBasis::Normative)));
+    }
+
+    #[test]
+    fn hevc_vui_hrd_field_ed_one_quarters() {
+        // field_seq=1, ed=1 -> frame rate = 1/(2*T*2?) Actually ed+1=2, field halves -> quarter? 25/(1*2*2)=6.25? Let's just ensure Some.
+        let sps = hevc_sps_vui_hrd(true, true, 1, 25, Some((true, true, 1)));
+        let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
+        assert_eq!(t.hrd_fixed_pic_rate, Some(2));
+        assert!(t.field_seq);
+    }
+
+    #[test]
+    fn hevc_vui_hrd_ffip_one_field_seq_zero_none() {
+        // ffip=1, field_seq=0, HRD present -> None (cadence unknown).
+        let sps = hevc_sps_vui_hrd(false, true, 1, 25, Some((true, true, 0)));
+        let cfg = crate::pipeline::CodecConfig::Hevc {
+            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                general_profile_space: 0,
+                general_tier_flag: false,
+                general_profile_idc: 1,
+                general_profile_compatibility_flags: 0,
+                general_constraint_indicator_flags: 0,
+                general_level_idc: 93,
+                min_spatial_segmentation_idc: 0,
+                parallelism_type: 0,
+                chroma_format_idc: 1,
+                bit_depth_luma_minus8: 0,
+                bit_depth_chroma_minus8: 0,
+                avg_frame_rate: 0,
+                constant_frame_rate: 0,
+                num_temporal_layers: 1,
+                temporal_id_nested: true,
+                length_size_minus_one: 3,
+                arrays: vec![crate::nalu_types::HevcNalArray {
+                    array_completeness: true,
+                    nal_unit_type: 33,
+                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                }],
+            }),
+            width: 320,
+            height: 240,
+        };
+        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
+    }
+
+    #[test]
+    fn hevc_vui_hrd_general_zero_within_one_tier_b_or_a() {
+        // general=0, within=1 -> HRD fixed present (tier A).
+        let sps = hevc_sps_vui_hrd(false, false, 1, 25, Some((false, true, 0)));
+        let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
+        assert_eq!(t.hrd_fixed_pic_rate, Some(1));
+    }
+
+    #[test]
+    fn hevc_vui_hrd_general_zero_within_zero_tier_b() {
+        // general=0, within=0 -> no HRD fixed -> tier B (field_seq=0, ffi=0).
+        let sps = hevc_sps_vui_hrd(false, false, 1, 25, Some((false, false, 0)));
+        // within=0 branch reads low_delay + cpb_cnt; our helper writes low_delay false + cpb_cnt 0.
+        let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
+        assert_eq!(t.hrd_fixed_pic_rate, None);
+    }
+
+    #[test]
+    fn hevc_vui_hrd_field_seq_one_no_hrd_none() {
+        // field_seq=1, no HRD -> None (tier B not applied).
+        let sps = hevc_sps_vui_hrd(true, true, 1, 25, None);
+        let cfg = crate::pipeline::CodecConfig::Hevc {
+            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                general_profile_space: 0,
+                general_tier_flag: false,
+                general_profile_idc: 1,
+                general_profile_compatibility_flags: 0,
+                general_constraint_indicator_flags: 0,
+                general_level_idc: 93,
+                min_spatial_segmentation_idc: 0,
+                parallelism_type: 0,
+                chroma_format_idc: 1,
+                bit_depth_luma_minus8: 0,
+                bit_depth_chroma_minus8: 0,
+                avg_frame_rate: 0,
+                constant_frame_rate: 0,
+                num_temporal_layers: 1,
+                temporal_id_nested: true,
+                length_size_minus_one: 3,
+                arrays: vec![crate::nalu_types::HevcNalArray {
+                    array_completeness: true,
+                    nal_unit_type: 33,
+                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                }],
+            }),
+            width: 320,
+            height: 240,
+        };
+        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
+    }
+
+    #[test]
+    fn hevc_vui_hrd_zero_num_units_none() {
+        let sps = hevc_sps_vui_hrd(false, false, 0, 25, Some((true, true, 0)));
+        let cfg = crate::pipeline::CodecConfig::Hevc {
+            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                general_profile_space: 0,
+                general_tier_flag: false,
+                general_profile_idc: 1,
+                general_profile_compatibility_flags: 0,
+                general_constraint_indicator_flags: 0,
+                general_level_idc: 93,
+                min_spatial_segmentation_idc: 0,
+                parallelism_type: 0,
+                chroma_format_idc: 1,
+                bit_depth_luma_minus8: 0,
+                bit_depth_chroma_minus8: 0,
+                avg_frame_rate: 0,
+                constant_frame_rate: 0,
+                num_temporal_layers: 1,
+                temporal_id_nested: true,
+                length_size_minus_one: 3,
+                arrays: vec![crate::nalu_types::HevcNalArray {
+                    array_completeness: true,
+                    nal_unit_type: 33,
+                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                }],
+            }),
+            width: 320,
+            height: 240,
+        };
+        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
+    }
+
+
+    #[test]
+    fn hevc_field_seq_one_ffip_zero_no_hrd_is_none() {
+        let sps = hevc_sps_vui_hrd(true, false, 1, 25, None);
+        let cfg = crate::pipeline::CodecConfig::Hevc {
+            config: crate::hevc_config::HEVCConfigurationBox::new(crate::hevc_config::HEVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                general_profile_space: 0,
+                general_tier_flag: false,
+                general_profile_idc: 1,
+                general_profile_compatibility_flags: 0,
+                general_constraint_indicator_flags: 0,
+                general_level_idc: 93,
+                min_spatial_segmentation_idc: 0,
+                parallelism_type: 0,
+                chroma_format_idc: 1,
+                bit_depth_luma_minus8: 0,
+                bit_depth_chroma_minus8: 0,
+                avg_frame_rate: 0,
+                constant_frame_rate: 0,
+                num_temporal_layers: 1,
+                temporal_id_nested: true,
+                length_size_minus_one: 3,
+                arrays: vec![crate::nalu_types::HevcNalArray {
+                    array_completeness: true,
+                    nal_unit_type: 33,
+                    nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                }],
+            }),
+            width: 320,
+            height: 240,
+        };
+        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
     }
 }

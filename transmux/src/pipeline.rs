@@ -298,14 +298,38 @@ pub fn presentation_size(
     )
 }
 
-/// Exact integer frame rate in millihertz from VUI timing fields:
+/// Basis on which a nominal frame rate was derived (issue: HEVC VUI timing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FrameRateBasis {
+    /// Normative: derived from a fixed-rate signalling field
+    /// (`fixed_frame_rate_flag` for H.264, `fixed_pic_rate_within_cvs_flag`
+    /// for H.265).
+    Normative,
+    /// Convention (implementation-defined): no fixed-rate signalling; the
+    /// value is `time_scale / num_units_in_tick` (H.264) or
+    /// `vui_time_scale / vui_num_units_in_tick` (H.265). Owner-approved
+    /// 2026-10-21.
+    Convention,
+}
+
+impl FrameRateBasis {
+    pub fn name(&self) -> &'static str {
+        match self {
+            FrameRateBasis::Normative => "normative",
+            FrameRateBasis::Convention => "convention",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(FrameRateBasis);
+
+/// Exact integer frame rate in millihertz from VUI timing fields (H.264):
 /// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`.
 fn frame_rate_millihertz_from_timing(time_scale: u32, num_units_in_tick: u32) -> Option<u32> {
     if num_units_in_tick == 0 {
         return None;
     }
-    // The denominator (2 * num_units) is always even, so adding its half
-    // (num_units) before dividing implements half-up exactly.
     let denominator = u128::from(num_units_in_tick).saturating_mul(2);
     if denominator == 0 {
         return None;
@@ -317,28 +341,146 @@ fn frame_rate_millihertz_from_timing(time_scale: u32, num_units_in_tick: u32) ->
     u32::try_from(millihertz).ok()
 }
 
-/// Nominal frame rate of an AVC video track, in millihertz (1/1000 Hz), derived
-/// solely from the first SPS's VUI `timing_info` per ITU-T H.264 §E.2.1:
-/// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`.
+/// Exact integer frame rate in millihertz from VUI timing fields (H.265
+/// convention tier): `round_half_up(1000 * time_scale / num_units_in_tick)`.
+fn frame_rate_millihertz_hevc_convention(time_scale: u32, num_units_in_tick: u32) -> Option<u32> {
+    if num_units_in_tick == 0 {
+        return None;
+    }
+    let denominator = u128::from(num_units_in_tick);
+    let numerator = u128::from(time_scale).saturating_mul(1000);
+    // round half up: add denominator/2
+    let millihertz = numerator
+        .checked_add(denominator / 2)?
+        .checked_div(denominator)?;
+    u32::try_from(millihertz).ok()
+}
+
+/// Normative tier H.265: frame rate = 1 / (ClockTick * elemental_duration)
+/// where ClockTick = num_units/time_scale? Actually ClockTick = num_units / time_scale seconds.
+/// frame rate Hz = time_scale / (num_units * elemental_duration). millihertz = round_half_up(1000 * time_scale / (num_units * elemental_duration)).
+/// If field_seq: frame rate halved => denominator doubled.
+fn frame_rate_millihertz_hevc_normative(
+    time_scale: u32,
+    num_units_in_tick: u32,
+    elemental_duration: u32, // elemental_duration_in_tc_minus1 + 1
+    field_seq: bool,
+) -> Option<u32> {
+    if num_units_in_tick == 0 || elemental_duration == 0 {
+        return None;
+    }
+    // denominator ticks = num_units * elemental_duration, times 2 if field_seq
+    let ticks = u128::from(num_units_in_tick)
+        .checked_mul(u128::from(elemental_duration))?;
+    let ticks = if field_seq {
+        ticks.checked_mul(2)?
+    } else {
+        ticks
+    };
+    if ticks == 0 {
+        return None;
+    }
+    let numerator = u128::from(time_scale).saturating_mul(1000);
+    // round half up
+    let millihertz = numerator
+        .checked_add(ticks / 2)?
+        .checked_div(ticks)?;
+    u32::try_from(millihertz).ok()
+}
+
+/// Nominal frame rate of a video track, in millihertz (1/1000 Hz), plus the
+/// basis (normative vs. convention) on which it was derived.
 ///
-/// Returns `None` for any codec other than AVC, when the SPS lacks VUI
-/// timing information, when `num_units_in_tick` is zero, or when the result
-/// does not fit in `u32`. No value is ever invented or guessed from sample
-/// durations.
-pub fn nominal_frame_rate_millihertz(config: &CodecConfig) -> Option<u32> {
+/// H.264 (ITU-T H.264 §E.2.1): when VUI `timing_info_present_flag` is 1,
+/// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`. Tier
+/// "normative" when `fixed_frame_rate_flag == 1`, "convention" otherwise
+/// (owner-approved: both emit the same value).
+///
+/// H.265 (ITU-T H.265 §E.2.1 + hrd_parameters): see
+/// `transmux/docs/codec/vui-timing-frame-rate.md` §2.7.
+pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)> {
     match config {
         CodecConfig::Avc { config, .. } => {
             let sps = config.config.sps.first()?;
-            let info = crate::sps::decode_avc_sps(&sps.0).ok()?;
-            let num_units = info.num_units_in_tick?;
-            let time_scale = info.time_scale?;
+            let timing = crate::sps::decode_avc_vui_timing(&sps.0).ok()??;
+            let num_units = timing.num_units_in_tick;
+            let time_scale = timing.time_scale;
             if num_units == 0 {
                 return None;
             }
-            frame_rate_millihertz_from_timing(time_scale, num_units)
+            let value = frame_rate_millihertz_from_timing(time_scale, num_units)?;
+            let basis = if timing.fixed_frame_rate {
+                FrameRateBasis::Normative
+            } else {
+                FrameRateBasis::Convention
+            };
+            Some((value, basis))
+        }
+        CodecConfig::Hevc { config, .. } => {
+            let sps_nal = config
+                .config
+                .arrays
+                .iter()
+                .find(|a| a.nal_unit_type == 33)?
+                .nalus
+                .first()?
+                .0
+                .as_slice();
+            let timing = crate::sps::decode_hevc_vui_timing(sps_nal).ok()??;
+            let num_units = timing.num_units_in_tick;
+            let time_scale = timing.time_scale;
+            if num_units == 0 {
+                return None;
+            }
+            // Normative tier A
+            if let Some(ed) = timing.hrd_fixed_pic_rate {
+                // field_seq and frame_field_info_present
+                if timing.field_seq {
+                    // frame rate = half picture rate
+                    let value = frame_rate_millihertz_hevc_normative(
+                        time_scale,
+                        num_units,
+                        ed,
+                        true,
+                    )?;
+                    return Some((value, FrameRateBasis::Normative));
+                }
+                if timing.frame_field_info_present {
+                    // cadence depends on per-picture pic_struct -> None
+                    // fall through to convention (which also requires both false)
+                } else {
+                    // ffip==0, field_seq==0: frame rate = 1/T
+                    let value = frame_rate_millihertz_hevc_normative(
+                        time_scale,
+                        num_units,
+                        ed,
+                        false,
+                    )?;
+                    return Some((value, FrameRateBasis::Normative));
+                }
+            }
+            // Convention tier B: no fixed-rate info AND field_seq==0 AND ffip==0
+            if timing.hrd_fixed_pic_rate.is_none()
+                && !timing.field_seq
+                && !timing.frame_field_info_present
+            {
+                let value = frame_rate_millihertz_hevc_convention(time_scale, num_units)?;
+                return Some((value, FrameRateBasis::Convention));
+            }
+            None
         }
         _ => None,
     }
+}
+
+/// Nominal frame rate of a video track, in millihertz (1/1000 Hz), derived
+/// solely from the SPS VUI timing information.
+///
+/// Thin wrapper around [`nominal_frame_rate`] that discards the basis; kept
+/// for `hls-runtime` and other callers. Returns `None` whenever
+/// [`nominal_frame_rate`] returns `None`.
+pub fn nominal_frame_rate_millihertz(config: &CodecConfig) -> Option<u32> {
+    nominal_frame_rate(config).map(|(v, _)| v)
 }
 
 /// 16.16 fixed-point presentation size (the value written into `tkhd`).
