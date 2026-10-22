@@ -397,6 +397,12 @@ struct MediaAnchor {
     last_timescale: u32,
 }
 
+/// Start-gate safety valve (issue #1425): the gate drops leading video samples
+/// until the first sync sample; if a video track flags no sync sample at all
+/// within this many video samples (about 30 s at 60 fps) the gate opens
+/// anyway (with a warning) instead of dropping the program forever.
+const START_GATE_MAX_VIDEO_DROPPED: u64 = 1800;
+
 /// A source-clock jump larger than this between consecutive samples is
 /// treated as a discontinuity and re-anchors the media mapping rather than
 /// being folded into the delta (issue #1083, E). Ten seconds is far beyond
@@ -708,7 +714,24 @@ impl ProgramSegmenter {
                         .find(|t| t.track_id == track_id)
                         .map(|t| crate::push::egress::is_video(&t.config))
                         .unwrap_or(false);
-                    if !(is_video_sample && sample.flags.is_sync) {
+                    // Safety valve: a video track that NEVER flags a sync
+                    // sample (a broken or non-keyframe-signalling source)
+                    // must not be dropped forever — after
+                    // `START_GATE_MAX_VIDEO_DROPPED` video samples (about 30 s
+                    // at 60 fps) open the gate anyway, loudly, and let the
+                    // segmenter's own cut rules apply as they did before the
+                    // gate existed.
+                    let valve = is_video_sample
+                        && self.start_gate_video_dropped >= START_GATE_MAX_VIDEO_DROPPED;
+                    if valve {
+                        tracing::warn!(
+                            program = program.0,
+                            dropped = self.start_gate_dropped,
+                            "start gate: no video sync sample after {} video samples; \
+                             opening the gate on a non-sync sample",
+                            START_GATE_MAX_VIDEO_DROPPED
+                        );
+                    } else if !(is_video_sample && sample.flags.is_sync) {
                         self.start_gate_dropped += 1;
                         if is_video_sample {
                             self.start_gate_video_dropped += 1;
@@ -3362,6 +3385,79 @@ mod tests {
         assert_eq!(segmenter.start_gate_dropped, 3);
         assert_eq!(segmenter.start_gate_video_dropped, 3);
         assert!(segmenter.start_gate_open);
+    }
+
+    /// The gate runs BEFORE the media-anchor block (issue #1425): the first
+    /// segment's reported start is the first KEPT (sync) sample's PTS on the
+    /// source 90 kHz clock, not a dropped leading sample's. Biting: with the
+    /// gate placed after the anchor block timeline 0 pins to sample 0 and the
+    /// start comes out `3 * FRAME_DUR` early.
+    #[test]
+    fn start_gate_anchor_pins_to_the_first_kept_sync_sample() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        // Source clock starts 10 s in; samples 0..3 are mid-GOP, 3 is the
+        // first sync, then a sync every 45 frames (1 s) so segment 1 closes
+        // when sample 48 arrives.
+        let offset = 10 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        let at = |i: u32, is_sync: bool| {
+            let mut s = sample_at(i, is_sync);
+            s.pts = Some(offset + i64::from(i) * i64::from(FRAME_DUR));
+            s.dts = s.pts;
+            s
+        };
+        for i in 0..100u32 {
+            let is_sync = i == 3 || (i > 3 && (i - 3).is_multiple_of(45));
+            writer.publish(TrackId::new(1), RetentionClass::Timed, at(i, is_sync));
+            // Pump as we go: the sample ring is bounded (64), so an unpumped
+            // burst of 100 would evict the leading samples before the gate
+            // ever saw them.
+            if i % 16 == 15 {
+                segmenter.pump(ProgramId(0), &trunk, &route);
+            }
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 3);
+        assert!(
+            trunk.last_closed_segment().is_some(),
+            "segment 1 must have closed"
+        );
+        let first_kept_pts_90k = u64::try_from(offset + 3 * i64::from(FRAME_DUR)).unwrap();
+        assert_eq!(
+            trunk.segment_start_time(SegmentSeq::new(1)),
+            Some(timed_metadata::MediaTime(first_kept_pts_90k)),
+            "first segment starts at the first kept sync sample's PTS"
+        );
+    }
+
+    /// Safety valve (issue #1425): a video track that never flags a sync
+    /// sample is not dropped forever — after `START_GATE_MAX_VIDEO_DROPPED`
+    /// video samples the gate opens (with a warning).
+    #[test]
+    fn start_gate_safety_valve_opens_without_any_sync_sample() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        let total = u32::try_from(START_GATE_MAX_VIDEO_DROPPED).unwrap() + 3;
+        for i in 0..total {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, false));
+            if i % 16 == 15 {
+                segmenter.pump(ProgramId(0), &trunk, &route);
+            }
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert!(segmenter.start_gate_open, "valve must open the gate");
+        assert_eq!(
+            segmenter.start_gate_video_dropped, START_GATE_MAX_VIDEO_DROPPED,
+            "exactly the valve's worth of video samples were dropped first"
+        );
     }
 
     #[test]
