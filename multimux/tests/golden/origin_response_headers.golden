@@ -13,7 +13,7 @@
 /cam1/media.m3u8	200	access-control-allow-origin: *
 /cam1/media.m3u8	200	access-control-expose-headers: content-length, content-range, date, etag
 /cam1/media.m3u8	200	cache-control: no-cache
-/cam1/media.m3u8	200	content-length: 248
+/cam1/media.m3u8	200	content-length: 261
 /cam1/media.m3u8	200	content-type: application/vnd.apple.mpegurl
 /cam1/media.m3u8	200	vary: Origin
 /cam1/init-1-{instance}-1.mp4	200

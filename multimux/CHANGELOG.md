@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- LL-HLS media playlists now carry `HOLD-BACK` (3 x Target Duration, RFC 8216bis §4.4.3.8) in `#EXT-X-SERVER-CONTROL`; Apple's `mediastreamvalidator` rejects a low-latency playlist without it. Wire-visible: `media.m3u8` grows by `,HOLD-BACK=<3 x target>` (golden `origin_response_headers` content-length 248 -> 261). Remaining validator findings on the live origin are tracked in #1429.
+
 ### Added
+- LL-HLS output now serves an I-frame (trick-play) playlist at the fixed path `/iframe.m3u8` and advertises it in `/master.m3u8` via `#EXT-X-I-FRAME-STREAM-INF` when available (issue #1413 P3); `_HLS_part` on `/iframe.m3u8` is rejected with `400`.
 - HTTP origin resource responses (`init-*.mp4` / `seg-*.m4s` / `part-*.m4s`) now honour `Range: bytes=...` (RFC 9110 §13.1.5, §14.1-14.4, §15.3.7, §15.5.17): a single satisfiable byte range returns `206 Partial Content` with a matching `Content-Range`/`Content-Length`, unsatisfiable ranges return `416` with `Content-Range: bytes */<total>`, suffix and open-ended ranges are supported, multiple ranges and non-`bytes`/invalid ranges (and any request carrying `If-Range`) are answered with `200` and the full body, and every response advertises `Accept-Ranges: bytes`. This is the P0 prerequisite for serving I-frame playlist `EXT-X-BYTERANGE` entries. Range is applied to the final (emsg-spliced) bytes.
 
 ## [0.13.0] - 2026-10-17

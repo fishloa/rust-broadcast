@@ -1070,7 +1070,10 @@ fn classify_path(state: &AppState, path: &str) -> (String, &'static str) {
     } else {
         "unknown".to_string()
     };
-    let kind = if rest.ends_with("master.m3u8") || rest.ends_with("media.m3u8") {
+    let kind = if rest.ends_with("master.m3u8")
+        || rest.ends_with("media.m3u8")
+        || rest.ends_with("iframe.m3u8")
+    {
         "playlist"
     } else if rest.starts_with("seg-") {
         "segment"
@@ -2287,6 +2290,21 @@ mod tests {
             ),
         );
         Arc::new(AppState::new(streams))
+    }
+
+    /// The I-frame playlist path is a `playlist` kind for the HTTP metrics,
+    /// not an unclassified `other` (the label set is the dashboards' contract).
+    #[test]
+    fn classify_path_labels_the_iframe_playlist_as_a_playlist() {
+        let state = make_state();
+        assert_eq!(
+            classify_path(&state, "/cam1/iframe.m3u8"),
+            ("cam1".to_string(), "playlist")
+        );
+        assert_eq!(
+            classify_path(&state, "/cam1/master.m3u8"),
+            ("cam1".to_string(), "playlist")
+        );
     }
 
     /// A body whose chunks the test releases one at a time.

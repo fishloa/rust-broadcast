@@ -474,7 +474,7 @@ fn media_sequence_offset_continues_the_numbering_everywhere() {
             "#EXTM3U",
             "#EXT-X-TARGETDURATION:4",
             "#EXT-X-MEDIA-SEQUENCE:1001",
-            "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5",
+            "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12",
             "#EXT-X-PART-INF:PART-TARGET=0.5",
             "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
             "#EXTINF:4,",

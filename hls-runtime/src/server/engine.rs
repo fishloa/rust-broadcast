@@ -249,6 +249,10 @@ const ABUSE_MSN_FUTURE_BOUND: u64 = 2;
 /// (`#EXT-X-PART-INF`'s `PART-TARGET`).
 const PART_HOLD_BACK_MULTIPLIER: f64 = 3.0;
 
+/// RFC 8216bis §4.4.3.8: `HOLD-BACK` MUST be at least three times the Target
+/// Duration.
+const HOLD_BACK_MULTIPLIER: f64 = 3.0;
+
 /// A minimal single-variant master playlist pointing at `media_playlist_name`
 /// (the caller's configured media-playlist filename — e.g. multimux's
 /// `Config::playlist_name`, defaulting to `"media.m3u8"`) — the same
@@ -1907,6 +1911,10 @@ impl HlsOrigin {
             LowLatencyConfig {
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),
+                // RFC 8216bis §4.4.3.8: HOLD-BACK MUST be >= 3x the Target
+                // Duration; Apple's validator also requires it in LL mode.
+                hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
+                    .ok(),
                 preload_hint_part: next_part_hint,
                 ..Default::default()
             }
@@ -2750,7 +2758,7 @@ mod tests {
         assert_eq!(
             body.lines().skip(4).collect::<Vec<_>>(),
             vec![
-                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5",
+                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12",
                 "#EXT-X-PART-INF:PART-TARGET=0.5",
                 "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
                 "#EXT-X-PART:DURATION=0.5,URI=\"part-1-7-1.0.m4s\",INDEPENDENT=YES",

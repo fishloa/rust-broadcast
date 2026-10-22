@@ -177,7 +177,7 @@ unaffected):
 
 | `outputs` token | Served as | Manifest |
 | --- | --- | --- |
-| `"llhls"` | Low-Latency HLS (RFC 8216bis), fMP4/CMAF | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
+| `"llhls"` | Low-Latency HLS (RFC 8216bis), fMP4/CMAF | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) + `iframe.m3u8` |
 | `"dash"` | MPEG-DASH, `$Number$`-addressed, fMP4/CMAF | `manifest.mpd` |
 | `"ll_dash"` | Low-latency DASH, true chunked-transfer CMAF (whole-segment `$Number$`, served over HTTP chunked transfer while in progress) | `manifest-ll.mpd` |
 | `"smooth"` | Microsoft Smooth Streaming (MS-SSTR), fMP4/CMAF | `Manifest` |
@@ -212,6 +212,7 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 | --- | --- |
 | `GET /{stream}/master.m3u8` | Master playlist (if `llhls` or `ts_hls` is enabled). |
 | `GET /{stream}/media.m3u8[?_HLS_msn=&_HLS_part=]` | Media playlist (or the configured `playlist_name`) — fMP4/CMAF with LL-HLS parts under `llhls`, whole `.ts` segments with no `#EXT-X-MAP` under `ts_hls`. Blocking Playlist Reload (RFC 8216bis §6.2.5.2) via `_HLS_msn`/`_HLS_part` applies to `llhls`; harmless no-ops (render immediately) under `ts_hls`, which has no low-latency parts to block on. |
+| `GET /{stream}/iframe.m3u8[?_HLS_msn=]` | I-frame (trick-play) playlist — LL-HLS only (`llhls`); `404` on `ts_hls` and audio-only origins. Blocking reload via `_HLS_msn` only; `_HLS_part` is rejected with `400`. |
 | `GET /{stream}/manifest.mpd` | DASH manifest (if `dash` is enabled). |
 | `GET /{stream}/manifest-ll.mpd` | Low-latency DASH manifest (if `ll_dash` is enabled). |
 | `GET /{stream}/Manifest` | Smooth Streaming client Manifest XML (if `smooth` is enabled). |
