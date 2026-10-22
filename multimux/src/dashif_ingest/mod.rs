@@ -515,4 +515,4 @@ mod tests {
 }
 
 pub mod session;
-pub use session::{DashifIngestSession, IngestObject, SessionError};
+pub use session::{DashifIngestSession, IngestObject, SegmentHandle, SessionError};
