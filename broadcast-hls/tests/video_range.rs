@@ -33,11 +33,16 @@ fn from_transfer_characteristics_mapping_table() {
 fn video_range_round_trips_bare_unquoted() {
     for range in [VideoRange::Hlg, VideoRange::Pq] {
         let master = MasterPlaylist {
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 1000,
                 average_bandwidth: None,
                 frame_rate: None,
                 uri: "v.m3u8".to_string(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: vec![range.attr()],
                 ..Default::default()
             }],

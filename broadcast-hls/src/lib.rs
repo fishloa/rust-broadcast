@@ -1074,12 +1074,14 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
 ///
 /// AttributeName contains only uppercase letters per §4.2, so the `REQ-`
 /// prefix match is case-sensitive.
+#[allow(clippy::too_many_arguments)]
 fn any_typed_req_attr(
     start: Option<&StartPoint>,
     defines: &[Define],
     sd: &[SessionData],
     sk: &[SessionKey],
     cs: Option<&ContentSteering>,
+    media: &[MediaRendition],
     variants: &[Variant],
     iframes: &[IFrameVariant],
 ) -> bool {
@@ -1106,6 +1108,9 @@ fn any_typed_req_attr(
         return true;
     }
     if cs.is_some_and(|c| extra_attr_is_req(&c.extra_attrs)) {
+        return true;
+    }
+    if media.iter().any(|m| extra_attr_is_req(&m.extra_attrs)) {
         return true;
     }
     if variants.iter().any(|v| extra_attr_is_req(&v.extra_attrs)) {
@@ -1298,8 +1303,16 @@ impl MediaPlaylist {
             &self.rendition_reports,
             self.skip.as_ref(),
             self.low_latency.as_ref(),
-        ) || any_typed_req_attr(self.start.as_ref(), &self.defines, &[], &[], None, &[], &[])
-        {
+        ) || any_typed_req_attr(
+            self.start.as_ref(),
+            &self.defines,
+            &[],
+            &[],
+            None,
+            &[],
+            &[],
+            &[],
+        ) {
             bump_version(&mut v, VERSION_REQ_ATTRIBUTE);
         }
 
@@ -3272,6 +3285,155 @@ impl core::str::FromStr for FrameRate {
     }
 }
 
+/// Media type of an `#EXT-X-MEDIA` rendition (RFC 8216bis §4.4.6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum MediaType {
+    /// Audio rendition.
+    #[default]
+    Audio,
+    /// Video rendition.
+    Video,
+    /// Subtitle rendition.
+    Subtitles,
+    /// Closed-caption rendition (carried in-band; no URI).
+    ClosedCaptions,
+}
+
+impl MediaType {
+    /// The spec token (`"AUDIO"` / `"VIDEO"` / `"SUBTITLES"` /
+    /// `"CLOSED-CAPTIONS"`).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            MediaType::Audio => "AUDIO",
+            MediaType::Video => "VIDEO",
+            MediaType::Subtitles => "SUBTITLES",
+            MediaType::ClosedCaptions => "CLOSED-CAPTIONS",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(MediaType);
+
+/// Typed `INSTREAM-ID` value for an `#EXT-X-MEDIA` rendition
+/// (RFC 8216bis §4.4.6.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InstreamId {
+    /// A Line 21 Data Services channel (`"CC1"`..`"CC4"`).
+    Cc(u8),
+    /// A Digital Television Closed Captioning service block
+    /// (`"SERVICE1"`..`"SERVICE63"`).
+    Service(u8),
+    /// Any other in-band rendition identifier (non-closed-caption types).
+    Other(String),
+}
+
+impl InstreamId {
+    /// Render the wire form.
+    #[must_use]
+    pub fn render(&self) -> String {
+        match self {
+            InstreamId::Cc(n) => format!("CC{n}"),
+            InstreamId::Service(n) => format!("SERVICE{n}"),
+            InstreamId::Other(s) => s.clone(),
+        }
+    }
+
+    /// Parse a closed-caption `INSTREAM-ID` value, rejecting `CC5+` and
+    /// `SERVICE0`/`SERVICE64+`.
+    pub fn parse_closed_captions(value: &str) -> Result<Self> {
+        if let Some(rest) = value.strip_prefix("CC") {
+            let n: u8 = rest.parse().map_err(|_| Error::HlsParse {
+                line_no: 0,
+                line: String::new(),
+                reason: format!("invalid CLOSED-CAPTIONS INSTREAM-ID {value:?}"),
+            })?;
+            if !(1..=4).contains(&n) {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("CLOSED-CAPTIONS INSTREAM-ID must be CC1..CC4, got {value:?}"),
+                });
+            }
+            return Ok(InstreamId::Cc(n));
+        }
+        if let Some(rest) = value.strip_prefix("SERVICE") {
+            let n: u8 = rest.parse().map_err(|_| Error::HlsParse {
+                line_no: 0,
+                line: String::new(),
+                reason: format!("invalid CLOSED-CAPTIONS INSTREAM-ID {value:?}"),
+            })?;
+            if !(1..=63).contains(&n) {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!(
+                        "CLOSED-CAPTIONS INSTREAM-ID must be SERVICE1..SERVICE63, got {value:?}"
+                    ),
+                });
+            }
+            return Ok(InstreamId::Service(n));
+        }
+        Err(Error::HlsParse {
+            line_no: 0,
+            line: String::new(),
+            reason: format!("invalid CLOSED-CAPTIONS INSTREAM-ID {value:?}"),
+        })
+    }
+}
+
+/// Typed reference to a closed-caption group on a `Variant`
+/// (RFC 8216bis §4.4.6.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ClosedCaptionsRef {
+    /// A quoted `GROUP-ID` value referencing an `#EXT-X-MEDIA` group.
+    Group(String),
+    /// The enumerated, unquoted token `NONE`.
+    None,
+}
+
+/// A single `#EXT-X-MEDIA` rendition entry in a multivariant playlist
+/// (RFC 8216bis §4.4.6.1).
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct MediaRendition {
+    /// `TYPE` attribute (REQUIRED).
+    pub media_type: MediaType,
+    /// `URI` attribute (optional; MUST NOT be present for closed captions).
+    pub uri: Option<String>,
+    /// `GROUP-ID` attribute (REQUIRED, non-empty).
+    pub group_id: String,
+    /// `LANGUAGE` attribute.
+    pub language: Option<String>,
+    /// `ASSOC-LANGUAGE` attribute.
+    pub assoc_language: Option<String>,
+    /// `NAME` attribute (REQUIRED, non-empty).
+    pub name: String,
+    /// `STABLE-RENDITION-ID` attribute.
+    pub stable_rendition_id: Option<String>,
+    /// `DEFAULT` attribute (absence implies NO).
+    pub default: bool,
+    /// `AUTOSELECT` attribute (absence implies NO).
+    pub autoselect: bool,
+    /// `FORCED` attribute (absence implies NO; only for subtitles).
+    pub forced: bool,
+    /// `INSTREAM-ID` attribute.
+    pub instream_id: Option<InstreamId>,
+    /// `BIT-DEPTH` attribute (audio only).
+    pub bit_depth: Option<u32>,
+    /// `SAMPLE-RATE` attribute (audio only).
+    pub sample_rate: Option<u32>,
+    /// `CHARACTERISTICS` attribute, split into individual MCTs.
+    pub characteristics: Vec<String>,
+    /// `CHANNELS` attribute (audio only).
+    pub channels: Option<String>,
+    /// Unmodeled attributes, retained for forward-compat / `REQ-` scanning.
+    pub extra_attrs: Vec<(String, AttrValue)>,
+}
+
 /// A variant stream entry in a master playlist.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Variant {
@@ -3303,6 +3465,14 @@ pub struct Variant {
     pub resolution: Option<(u32, u32)>,
     /// URI of the media playlist for this variant.
     pub uri: String,
+    /// `AUDIO` attribute: GROUP-ID of the audio rendition group, if any.
+    pub audio: Option<String>,
+    /// `VIDEO` attribute: GROUP-ID of the video rendition group, if any.
+    pub video: Option<String>,
+    /// `SUBTITLES` attribute: GROUP-ID of the subtitle rendition group, if any.
+    pub subtitles: Option<String>,
+    /// `CLOSED-CAPTIONS` attribute: a group reference or `NONE`.
+    pub closed_captions: Option<ClosedCaptionsRef>,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
     pub extra_attrs: Vec<(String, AttrValue)>,
@@ -3345,6 +3515,9 @@ pub struct MasterPlaylist {
     /// minimum. See the module's "Protocol version derivation" docs
     /// (issue #871).
     pub version: u8,
+    /// Ordered list of `#EXT-X-MEDIA` renditions (RFC 8216bis §4.4.6.1),
+    /// rendered before the variant streams.
+    pub media: Vec<MediaRendition>,
     /// Ordered list of variant streams.
     pub variants: Vec<Variant>,
     /// Ordered list of I-frame-only renditions (RFC 8216 §4.3.4.2).
@@ -3433,6 +3606,67 @@ impl MasterPlaylist {
             s.push('\n');
         }
 
+        // #EXT-X-MEDIA renditions (RFC 8216bis §4.4.6.1), before variants.
+        for m in &self.media {
+            s.push_str("#EXT-X-MEDIA:TYPE=");
+            s.push_str(m.media_type.name());
+            if let Some(uri) = &m.uri {
+                validate_uri(uri, "EXT-X-MEDIA URI")?;
+                s.push_str(&format!(",URI=\"{uri}\""));
+            }
+            s.push_str(&format!(",GROUP-ID=\"{}\"", m.group_id));
+            if let Some(l) = &m.language {
+                validate_quoted_string(l, "EXT-X-MEDIA LANGUAGE")?;
+                s.push_str(&format!(",LANGUAGE=\"{l}\""));
+            }
+            if let Some(l) = &m.assoc_language {
+                validate_quoted_string(l, "EXT-X-MEDIA ASSOC-LANGUAGE")?;
+                s.push_str(&format!(",ASSOC-LANGUAGE=\"{l}\""));
+            }
+            validate_quoted_string(&m.name, "EXT-X-MEDIA NAME")?;
+            s.push_str(&format!(",NAME=\"{}\"", m.name));
+            if let Some(sri) = &m.stable_rendition_id {
+                validate_quoted_string(sri, "EXT-X-MEDIA STABLE-RENDITION-ID")?;
+                s.push_str(&format!(",STABLE-RENDITION-ID=\"{sri}\""));
+            }
+            s.push_str(&format!(
+                ",DEFAULT={}",
+                if m.default { "YES" } else { "NO" }
+            ));
+            s.push_str(&format!(
+                ",AUTOSELECT={}",
+                if m.autoselect { "YES" } else { "NO" }
+            ));
+            if m.forced {
+                s.push_str(",FORCED=YES");
+            } else if m.media_type == MediaType::Subtitles {
+                // Preserve explicit NO for subtitles to mirror fixtures? Keep NO always for losslessness.
+                s.push_str(",FORCED=NO");
+            }
+            if let Some(ii) = &m.instream_id {
+                let v = ii.render();
+                validate_quoted_string(&v, "EXT-X-MEDIA INSTREAM-ID")?;
+                s.push_str(&format!(",INSTREAM-ID=\"{v}\""));
+            }
+            if let Some(bd) = m.bit_depth {
+                s.push_str(&format!(",BIT-DEPTH={bd}"));
+            }
+            if let Some(sr) = m.sample_rate {
+                s.push_str(&format!(",SAMPLE-RATE={sr}"));
+            }
+            if !m.characteristics.is_empty() {
+                let joined = m.characteristics.join(",");
+                validate_quoted_string(&joined, "EXT-X-MEDIA CHARACTERISTICS")?;
+                s.push_str(&format!(",CHARACTERISTICS=\"{joined}\""));
+            }
+            if let Some(ch) = &m.channels {
+                validate_quoted_string(ch, "EXT-X-MEDIA CHANNELS")?;
+                s.push_str(&format!(",CHANNELS=\"{ch}\""));
+            }
+            render_attribute_list(&mut s, &m.extra_attrs);
+            s.push('\n');
+        }
+
         // §4.4.2 tags (issue #872).
         if self.independent_segments {
             s.push_str("#EXT-X-INDEPENDENT-SEGMENTS\n");
@@ -3486,6 +3720,28 @@ impl MasterPlaylist {
             // 3-decimal millihertz value.
             if let Some(frame_rate) = var.frame_rate {
                 s.push_str(&format!(",FRAME-RATE={frame_rate}"));
+            }
+            if let Some(g) = &var.audio {
+                validate_quoted_string(g, "EXT-X-STREAM-INF AUDIO")?;
+                s.push_str(&format!(",AUDIO=\"{g}\""));
+            }
+            if let Some(g) = &var.video {
+                validate_quoted_string(g, "EXT-X-STREAM-INF VIDEO")?;
+                s.push_str(&format!(",VIDEO=\"{g}\""));
+            }
+            if let Some(g) = &var.subtitles {
+                validate_quoted_string(g, "EXT-X-STREAM-INF SUBTITLES")?;
+                s.push_str(&format!(",SUBTITLES=\"{g}\""));
+            }
+            match &var.closed_captions {
+                Some(ClosedCaptionsRef::Group(g)) => {
+                    validate_quoted_string(g, "EXT-X-STREAM-INF CLOSED-CAPTIONS")?;
+                    s.push_str(&format!(",CLOSED-CAPTIONS=\"{g}\""));
+                }
+                Some(ClosedCaptionsRef::None) => {
+                    s.push_str(",CLOSED-CAPTIONS=NONE");
+                }
+                None => {}
             }
             render_attribute_list(&mut s, &var.extra_attrs);
             s.push('\n');
@@ -3552,6 +3808,158 @@ impl MasterPlaylist {
                 validate_quoted_string(codecs, "EXT-X-I-FRAME-STREAM-INF CODECS")?;
             }
         }
+        // EXT-X-MEDIA rendition validation (RFC 8216bis §4.4.6.1).
+        for m in &self.media {
+            if m.group_id.is_empty() {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: "EXT-X-MEDIA GROUP-ID must be non-empty".to_string(),
+                });
+            }
+            validate_quoted_string(&m.group_id, "EXT-X-MEDIA GROUP-ID")?;
+            if m.name.is_empty() {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: "EXT-X-MEDIA NAME must be non-empty".to_string(),
+                });
+            }
+            validate_quoted_string(&m.name, "EXT-X-MEDIA NAME")?;
+            if m.media_type == MediaType::ClosedCaptions {
+                if m.uri.is_some() {
+                    return Err(Error::HlsParse {
+                        line_no: 0,
+                        line: String::new(),
+                        reason: "EXT-X-MEDIA URI MUST NOT be present when TYPE is CLOSED-CAPTIONS"
+                            .to_string(),
+                    });
+                }
+                if m.instream_id.is_none() {
+                    return Err(Error::HlsParse {
+                        line_no: 0,
+                        line: String::new(),
+                        reason: "EXT-X-MEDIA INSTREAM-ID REQUIRED when TYPE is CLOSED-CAPTIONS"
+                            .to_string(),
+                    });
+                }
+            } else {
+                // URI allowed; instream_id optional
+            }
+            if m.forced && m.media_type != MediaType::Subtitles {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: "EXT-X-MEDIA FORCED MUST NOT be present unless TYPE is SUBTITLES"
+                        .to_string(),
+                });
+            }
+            if m.bit_depth.is_some() && m.media_type != MediaType::Audio {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: "EXT-X-MEDIA BIT-DEPTH MUST NOT be present unless TYPE is AUDIO"
+                        .to_string(),
+                });
+            }
+            if m.sample_rate.is_some() && m.media_type != MediaType::Audio {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: "EXT-X-MEDIA SAMPLE-RATE MUST NOT be present unless TYPE is AUDIO"
+                        .to_string(),
+                });
+            }
+            if m.channels.is_some() && m.media_type != MediaType::Audio {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: "EXT-X-MEDIA CHANNELS MUST NOT be present unless TYPE is AUDIO"
+                        .to_string(),
+                });
+            }
+            if m.default && !m.autoselect {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: "EXT-X-MEDIA AUTOSELECT MUST be YES when DEFAULT is YES".to_string(),
+                });
+            }
+            if let Some(uri) = &m.uri {
+                validate_uri(uri, "EXT-X-MEDIA URI")?;
+            }
+            if let Some(sri) = &m.stable_rendition_id {
+                validate_quoted_string(sri, "EXT-X-MEDIA STABLE-RENDITION-ID")?;
+            }
+            if let Some(ii) = &m.instream_id {
+                let v = ii.render();
+                validate_quoted_string(&v, "EXT-X-MEDIA INSTREAM-ID")?;
+            }
+            if let Some(ch) = &m.channels {
+                validate_quoted_string(ch, "EXT-X-MEDIA CHANNELS")?;
+            }
+        }
+        // Group cross-check + NONE consistency.
+        let none_used = self
+            .variants
+            .iter()
+            .any(|v| matches!(v.closed_captions, Some(ClosedCaptionsRef::None)));
+        if none_used {
+            for v in &self.variants {
+                if !matches!(v.closed_captions, Some(ClosedCaptionsRef::None)) {
+                    return Err(Error::HlsParse {
+                        line_no: 0,
+                        line: String::new(),
+                        reason:
+                            "EXT-X-STREAM-INF CLOSED-CAPTIONS=NONE must be used on all variants"
+                                .to_string(),
+                    });
+                }
+            }
+        }
+        let group_exists = |gid: &str, mt: MediaType| -> bool {
+            self.media
+                .iter()
+                .any(|m| m.group_id == gid && m.media_type == mt)
+        };
+        for v in &self.variants {
+            if let Some(g) = &v.audio
+                && !group_exists(g, MediaType::Audio)
+            {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("EXT-X-STREAM-INF AUDIO group {g:?} not found"),
+                });
+            }
+            if let Some(g) = &v.video
+                && !group_exists(g, MediaType::Video)
+            {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("EXT-X-STREAM-INF VIDEO group {g:?} not found"),
+                });
+            }
+            if let Some(g) = &v.subtitles
+                && !group_exists(g, MediaType::Subtitles)
+            {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("EXT-X-STREAM-INF SUBTITLES group {g:?} not found"),
+                });
+            }
+            if let Some(ClosedCaptionsRef::Group(g)) = &v.closed_captions
+                && !group_exists(g, MediaType::ClosedCaptions)
+            {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("EXT-X-STREAM-INF CLOSED-CAPTIONS group {g:?} not found"),
+                });
+            }
+        }
         for sk in &self.session_keys {
             push_session_key_line(&mut String::new(), sk)?;
         }
@@ -3578,6 +3986,7 @@ impl MasterPlaylist {
         let mut version: u8 = 0;
         let mut variants: Vec<Variant> = Vec::new();
         let mut iframe_variants: Vec<IFrameVariant> = Vec::new();
+        let mut media: Vec<MediaRendition> = Vec::new();
         let mut extra_tags: Vec<String> = Vec::new();
         let mut saw_extm3u = false;
         let mut pending_stream_inf: Option<PendingStreamInf> = None;
@@ -3732,6 +4141,8 @@ impl MasterPlaylist {
                     pathway_id,
                     extra_attrs,
                 });
+            } else if let Some(rest) = line.strip_prefix("#EXT-X-MEDIA:") {
+                media.push(parse_media_rendition(rest, line_no, line)?);
             } else if let Some(rest) = line.strip_prefix("#EXT") {
                 let _ = rest;
                 // A well-formed but still-unmodeled tag (e.g. #EXT-X-MEDIA):
@@ -3750,6 +4161,29 @@ impl MasterPlaylist {
                         line: line.to_string(),
                         reason: "variant URI with no preceding #EXT-X-STREAM-INF".to_string(),
                     })?;
+                // Pull the typed rendition-group references out of the
+                // unmodeled attribute bag (issue #1428).
+                let mut audio = None;
+                let mut video = None;
+                let mut subtitles = None;
+                let mut closed_captions = None;
+                let mut extra_attrs_filtered = Vec::new();
+                for (k, v) in extra_attrs {
+                    match k.as_str() {
+                        "AUDIO" => audio = Some(v.as_str().to_string()),
+                        "VIDEO" => video = Some(v.as_str().to_string()),
+                        "SUBTITLES" => subtitles = Some(v.as_str().to_string()),
+                        "CLOSED-CAPTIONS" => {
+                            if v.as_str() == "NONE" {
+                                closed_captions = Some(ClosedCaptionsRef::None);
+                            } else {
+                                closed_captions =
+                                    Some(ClosedCaptionsRef::Group(v.as_str().to_string()));
+                            }
+                        }
+                        _ => extra_attrs_filtered.push((k, v)),
+                    }
+                }
                 variants.push(Variant {
                     bandwidth,
                     average_bandwidth,
@@ -3757,7 +4191,11 @@ impl MasterPlaylist {
                     codecs,
                     resolution,
                     uri: line.to_string(),
-                    extra_attrs,
+                    audio,
+                    video,
+                    subtitles,
+                    closed_captions,
+                    extra_attrs: extra_attrs_filtered,
                 });
             }
         }
@@ -3783,6 +4221,7 @@ impl MasterPlaylist {
 
         Ok(MasterPlaylist {
             version,
+            media,
             variants,
             iframe_variants,
             extra_tags,
@@ -3808,6 +4247,18 @@ impl MasterPlaylist {
         // tags is handled here; row 12 on modeled tags is checked below.
         let mut v = scan_tag_lines_for_version(&self.extra_tags);
 
+        // Typed EXT-X-MEDIA renditions (issue #1428): drive the same §8
+        // version floor the verbatim scanner did when these lines sat in
+        // `extra_tags`.
+        for m in &self.media {
+            if let Some(InstreamId::Service(_)) = m.instream_id {
+                bump_version(&mut v, VERSION_MEDIA_SERVICE_INSTREAM_ID);
+            }
+            if m.instream_id.is_some() && m.media_type != MediaType::ClosedCaptions {
+                bump_version(&mut v, VERSION_MEDIA_INSTREAM_ID_NON_CC);
+            }
+        }
+
         // Row 11: EXT-X-DEFINE with a QUERYPARAM attribute — typed since
         // issue #872 (see `MediaPlaylist::computed_version` for why the
         // string scan can no longer see this tag).
@@ -3827,6 +4278,28 @@ impl MasterPlaylist {
             .extra_tags
             .iter()
             .any(|t| contains_variable_substitution(t))
+            || self.media.iter().any(|m| {
+                m.uri
+                    .as_ref()
+                    .is_some_and(|u| contains_variable_substitution(u))
+                    || contains_variable_substitution(&m.group_id)
+                    || contains_variable_substitution(&m.name)
+                    || m.language
+                        .as_ref()
+                        .is_some_and(|x| contains_variable_substitution(x))
+                    || m.assoc_language
+                        .as_ref()
+                        .is_some_and(|x| contains_variable_substitution(x))
+                    || m.stable_rendition_id
+                        .as_ref()
+                        .is_some_and(|x| contains_variable_substitution(x))
+                    || m.channels
+                        .as_ref()
+                        .is_some_and(|x| contains_variable_substitution(x))
+                    || m.characteristics
+                        .iter()
+                        .any(|x| contains_variable_substitution(x))
+            })
             || self
                 .variants
                 .iter()
@@ -3848,6 +4321,7 @@ impl MasterPlaylist {
             &self.session_data,
             &self.session_keys,
             self.content_steering.as_ref(),
+            &self.media,
             &self.variants,
             &self.iframe_variants,
         ) {
@@ -3986,6 +4460,227 @@ fn parse_resolution(v: &str, line_no: usize, line: &str) -> Result<(u32, u32)> {
     let width = parse_decimal_int(w, line_no, line, "RESOLUTION width")?;
     let height = parse_decimal_int(h, line_no, line, "RESOLUTION height")?;
     Ok((width, height))
+}
+
+fn parse_media_rendition(rest: &str, line_no: usize, line: &str) -> Result<MediaRendition> {
+    let (attrs, quoted) = parse_attribute_list(rest);
+
+    // TYPE (REQUIRED)
+    let type_str = require_attr(&attrs, "TYPE", line_no, line, "EXT-X-MEDIA")?;
+    let media_type = match type_str.as_str() {
+        "AUDIO" => MediaType::Audio,
+        "VIDEO" => MediaType::Video,
+        "SUBTITLES" => MediaType::Subtitles,
+        "CLOSED-CAPTIONS" => MediaType::ClosedCaptions,
+        _ => {
+            return Err(Error::HlsParse {
+                line_no,
+                line: line.to_string(),
+                reason: format!("EXT-X-MEDIA invalid TYPE {type_str:?}"),
+            });
+        }
+    };
+
+    let group_id = require_attr(&attrs, "GROUP-ID", line_no, line, "EXT-X-MEDIA")?;
+    if group_id.is_empty() {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: "EXT-X-MEDIA GROUP-ID must be non-empty".to_string(),
+        });
+    }
+    validate_quoted_string(&group_id, "EXT-X-MEDIA GROUP-ID")?;
+
+    let name = require_attr(&attrs, "NAME", line_no, line, "EXT-X-MEDIA")?;
+    if name.is_empty() {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: "EXT-X-MEDIA NAME must be non-empty".to_string(),
+        });
+    }
+    validate_quoted_string(&name, "EXT-X-MEDIA NAME")?;
+
+    // URI
+    let uri = attrs.get("URI").cloned();
+    if media_type == MediaType::ClosedCaptions && uri.is_some() {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: "EXT-X-MEDIA URI MUST NOT be present when TYPE is CLOSED-CAPTIONS".to_string(),
+        });
+    }
+    if let Some(u) = &uri {
+        validate_uri(u, "EXT-X-MEDIA URI")?;
+    }
+
+    let language = attrs.get("LANGUAGE").cloned();
+    let assoc_language = attrs.get("ASSOC-LANGUAGE").cloned();
+    if let Some(l) = &language {
+        validate_quoted_string(l, "EXT-X-MEDIA LANGUAGE")?;
+    }
+    if let Some(l) = &assoc_language {
+        validate_quoted_string(l, "EXT-X-MEDIA ASSOC-LANGUAGE")?;
+    }
+
+    let stable_rendition_id = attrs.get("STABLE-RENDITION-ID").cloned();
+    if let Some(s) = &stable_rendition_id {
+        validate_quoted_string(s, "EXT-X-MEDIA STABLE-RENDITION-ID")?;
+    }
+
+    // DEFAULT / AUTOSELECT
+    let default = attrs
+        .get("DEFAULT")
+        .map(|v| v.eq_ignore_ascii_case("YES"))
+        .unwrap_or(false);
+    let autoselect_present = attrs.contains_key("AUTOSELECT");
+    let autoselect = attrs
+        .get("AUTOSELECT")
+        .map(|v| v.eq_ignore_ascii_case("YES"))
+        .unwrap_or(default);
+    if default && autoselect_present && !autoselect {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: "EXT-X-MEDIA AUTOSELECT MUST be YES when DEFAULT is YES".to_string(),
+        });
+    }
+
+    // FORCED
+    let forced = attrs
+        .get("FORCED")
+        .map(|v| v.eq_ignore_ascii_case("YES"))
+        .unwrap_or(false);
+    if forced && media_type != MediaType::Subtitles {
+        // FORCED MUST NOT be present unless TYPE is SUBTITLES; treat YES as violation
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: "EXT-X-MEDIA FORCED MUST NOT be present unless TYPE is SUBTITLES".to_string(),
+        });
+    }
+    // Also reject FORCED present for non-subtitles even if NO? Spec: MUST NOT be present.
+    if attrs.contains_key("FORCED") && media_type != MediaType::Subtitles {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: "EXT-X-MEDIA FORCED MUST NOT be present unless TYPE is SUBTITLES".to_string(),
+        });
+    }
+
+    // INSTREAM-ID
+    let instream_id = if let Some(v) = attrs.get("INSTREAM-ID") {
+        validate_quoted_string(v, "EXT-X-MEDIA INSTREAM-ID")?;
+        if media_type == MediaType::ClosedCaptions {
+            Some(InstreamId::parse_closed_captions(v)?)
+        } else {
+            Some(InstreamId::Other(v.clone()))
+        }
+    } else {
+        None
+    };
+    if media_type == MediaType::ClosedCaptions && instream_id.is_none() {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: "EXT-X-MEDIA INSTREAM-ID REQUIRED when TYPE is CLOSED-CAPTIONS".to_string(),
+        });
+    }
+
+    // BIT-DEPTH / SAMPLE-RATE / CHANNELS only for AUDIO
+    let bit_depth = if let Some(v) = attrs.get("BIT-DEPTH") {
+        if media_type != MediaType::Audio {
+            return Err(Error::HlsParse {
+                line_no,
+                line: line.to_string(),
+                reason: "EXT-X-MEDIA BIT-DEPTH MUST NOT be present unless TYPE is AUDIO"
+                    .to_string(),
+            });
+        }
+        Some(parse_decimal_int(v, line_no, line, "BIT-DEPTH")?)
+    } else {
+        None
+    };
+    let sample_rate = if let Some(v) = attrs.get("SAMPLE-RATE") {
+        if media_type != MediaType::Audio {
+            return Err(Error::HlsParse {
+                line_no,
+                line: line.to_string(),
+                reason: "EXT-X-MEDIA SAMPLE-RATE MUST NOT be present unless TYPE is AUDIO"
+                    .to_string(),
+            });
+        }
+        Some(parse_decimal_int(v, line_no, line, "SAMPLE-RATE")?)
+    } else {
+        None
+    };
+    let channels = if let Some(v) = attrs.get("CHANNELS") {
+        if media_type != MediaType::Audio {
+            return Err(Error::HlsParse {
+                line_no,
+                line: line.to_string(),
+                reason: "EXT-X-MEDIA CHANNELS MUST NOT be present unless TYPE is AUDIO".to_string(),
+            });
+        }
+        validate_quoted_string(v, "EXT-X-MEDIA CHANNELS")?;
+        Some(v.clone())
+    } else {
+        None
+    };
+
+    // CHARACTERISTICS
+    let characteristics = attrs
+        .get("CHARACTERISTICS")
+        .map(|v| {
+            validate_quoted_string(v, "EXT-X-MEDIA CHARACTERISTICS")?;
+            Ok(v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>())
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    // extra_attrs
+    const KNOWN: &[&str] = &[
+        "TYPE",
+        "URI",
+        "GROUP-ID",
+        "LANGUAGE",
+        "ASSOC-LANGUAGE",
+        "NAME",
+        "STABLE-RENDITION-ID",
+        "DEFAULT",
+        "AUTOSELECT",
+        "FORCED",
+        "INSTREAM-ID",
+        "BIT-DEPTH",
+        "SAMPLE-RATE",
+        "CHARACTERISTICS",
+        "CHANNELS",
+    ];
+    let extra_attrs = filter_extra_attrs(&attrs, KNOWN, &quoted)?;
+
+    // INSTREAM-ID version row 13 for non-CC is handled in version derivation.
+
+    Ok(MediaRendition {
+        media_type,
+        uri,
+        group_id,
+        language,
+        assoc_language,
+        name,
+        stable_rendition_id,
+        default,
+        autoselect,
+        forced,
+        instream_id,
+        bit_depth,
+        sample_rate,
+        characteristics,
+        channels,
+        extra_attrs,
+    })
 }
 
 /// Auto-detect init-segment changes across a sequence of segments and mark the
@@ -4130,6 +4825,7 @@ mod tests {
     fn master_playlist_basic() {
         let pl = MasterPlaylist {
             version: 6,
+            media: vec![],
             variants: vec![
                 Variant {
                     bandwidth: 300_000,
@@ -4166,6 +4862,7 @@ mod tests {
     fn master_playlist_no_resolution() {
         let pl = MasterPlaylist {
             version: 6,
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 1_000_000,
                 average_bandwidth: None,
@@ -4173,6 +4870,10 @@ mod tests {
                 codecs: Some("avc1.640028".into()),
                 resolution: None,
                 uri: "v1k/index.m3u8".into(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: Vec::new(),
             }],
             iframe_variants: vec![],
@@ -4189,6 +4890,7 @@ mod tests {
     #[test]
     fn master_playlist_renders_average_bandwidth_after_bandwidth() {
         let pl = MasterPlaylist {
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 2_523_597,
                 average_bandwidth: Some(2_190_673),
@@ -4217,6 +4919,7 @@ mod tests {
     #[test]
     fn master_playlist_omits_absent_average_bandwidth_and_round_trips_none() {
         let pl = MasterPlaylist {
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 800_000,
                 average_bandwidth: None,
@@ -4337,6 +5040,7 @@ mod tests {
     #[test]
     fn master_playlist_renders_frame_rate_after_resolution() {
         let pl = MasterPlaylist {
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 1_000_000,
                 average_bandwidth: None,
@@ -4366,6 +5070,7 @@ mod tests {
     #[test]
     fn master_playlist_omits_absent_frame_rate_and_round_trips_none() {
         let pl = MasterPlaylist {
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 800_000,
                 average_bandwidth: None,
@@ -5337,6 +6042,7 @@ s0.m4s\n";
     fn round_trip_multivariant_playlist() {
         let pl = MasterPlaylist {
             version: 7,
+            media: vec![],
             variants: vec![
                 Variant {
                     bandwidth: 300_000,
@@ -5446,6 +6152,7 @@ s0.m4s\n";
                 pathway_id: Some("CDN-A".into()),
                 extra_attrs: Vec::new(),
             }),
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 1_280_000,
                 average_bandwidth: None,
@@ -5453,6 +6160,10 @@ s0.m4s\n";
                 codecs: Some("avc1.64001e,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "low/index.m3u8".into(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: Vec::new(),
             }],
             iframe_variants: vec![],
@@ -5740,23 +6451,16 @@ seg.m4s\n";
     }
 
     #[test]
-    fn parse_master_playlist_preserves_ext_x_media_into_extra_tags() {
-        // #EXT-X-MEDIA is not modeled with typed fields, but must not cause
-        // a parse error, and must be preserved verbatim (not dropped) since
-        // `MasterPlaylist` now has its own `extra_tags`.
+    fn parse_master_playlist_models_ext_x_media() {
         let text = "#EXTM3U\n\
 #EXT-X-VERSION:7\n\
-#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"English\",DEFAULT=YES,URI=\"eng.m3u8\"\n\
-#EXT-X-STREAM-INF:BANDWIDTH=300000,CODECS=\"avc1.64001e,mp4a.40.2\"\n\
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"English\",DEFAULT=YES,AUTOSELECT=YES,URI=\"eng.m3u8\"\n\
+#EXT-X-STREAM-INF:BANDWIDTH=300000,CODECS=\"avc1.64001e,mp4a.40.2\",AUDIO=\"aac\"\n\
 v300/index.m3u8\n";
-        let pl = MasterPlaylist::parse(text).expect("EXT-X-MEDIA must be ignored, not error");
+        let pl = MasterPlaylist::parse(text).expect("EXT-X-MEDIA must parse");
         assert_eq!(pl.variants.len(), 1);
-        assert_eq!(pl.variants[0].uri, "v300/index.m3u8");
-        assert!(
-            pl.extra_tags.iter().any(|t| t.starts_with("#EXT-X-MEDIA:")),
-            "unrecognized tag must be preserved verbatim, not dropped: {:?}",
-            pl.extra_tags
-        );
+        assert_eq!(pl.media.len(), 1);
+        assert_eq!(pl.media[0].name, "English");
     }
 
     // -----------------------------------------------------------------------
@@ -5880,6 +6584,7 @@ v300/index.m3u8\n";
     fn version_row7_media_service_instream_id_triggers_v7_multivariant_only() {
         let mut pl = MasterPlaylist {
             version: 0,
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
@@ -5887,6 +6592,10 @@ v300/index.m3u8\n";
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: Vec::new(),
             }],
             iframe_variants: vec![],
@@ -5914,6 +6623,7 @@ v300/index.m3u8\n";
     fn version_row8_variable_substitution_triggers_v8_multivariant() {
         let pl = MasterPlaylist {
             version: 0,
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
@@ -5921,6 +6631,10 @@ v300/index.m3u8\n";
                 codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "{$base}/index.m3u8".into(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: Vec::new(),
             }],
             iframe_variants: vec![],
@@ -5967,6 +6681,7 @@ v300/index.m3u8\n";
     fn version_row11_define_queryparam_triggers_v11_multivariant() {
         let pl = MasterPlaylist {
             version: 0,
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
@@ -6032,6 +6747,7 @@ v300/index.m3u8\n";
     fn version_row12_req_attribute_triggers_v12_multivariant() {
         let pl = MasterPlaylist {
             version: 0,
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
@@ -6053,6 +6769,7 @@ v300/index.m3u8\n";
     fn version_row13_media_instream_id_non_cc_triggers_v13_multivariant_only() {
         let pl = MasterPlaylist {
             version: 0,
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,
@@ -6076,6 +6793,7 @@ v300/index.m3u8\n";
     fn version_multivariant_no_trigger_omits_the_tag() {
         let pl = MasterPlaylist {
             version: 0,
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 300_000,
                 average_bandwidth: None,

@@ -302,6 +302,7 @@ fn query_param_define_triggers_row_11_when_built_programmatically() {
     use broadcast_hls::Define;
 
     let pl = MasterPlaylist {
+        media: vec![],
         variants: vec![broadcast_hls::Variant {
             bandwidth: 300_000,
             average_bandwidth: None,
@@ -309,6 +310,10 @@ fn query_param_define_triggers_row_11_when_built_programmatically() {
             codecs: Some("avc1.64001e".into()),
             resolution: None,
             uri: "v300/index.m3u8".into(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: vec![],
         }],
         defines: vec![Define::QueryParam {

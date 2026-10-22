@@ -74,25 +74,18 @@ fn real_stream_inf_quoted_attrs_round_trip_byte_exact() {
         "FRAME-RATE must not also land in extra_attrs: {:?}",
         variant.extra_attrs
     );
+    assert_eq!(variant.audio.as_deref(), Some("a1"));
+    assert_eq!(variant.subtitles.as_deref(), Some("sub1"));
     assert_eq!(
-        variant
-            .extra_attrs
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect::<Vec<_>>(),
-        vec![
-            ("AUDIO", "a1"),
-            ("CLOSED-CAPTIONS", "cc"),
-            ("SUBTITLES", "sub1"),
-        ],
-        "sorted-by-name extra_attrs recovered from the fixture line"
+        variant.closed_captions,
+        Some(broadcast_hls::ClosedCaptionsRef::Group("cc".to_string()))
     );
-    // Recorded as quoted, not just content-sniffed correctly by accident.
-    for (k, v) in &variant.extra_attrs {
-        if k == "AUDIO" || k == "CLOSED-CAPTIONS" || k == "SUBTITLES" {
-            assert!(v.is_quoted(), "{k} must be recorded as quoted, got {v:?}");
-        }
-    }
+    // These typed fields are no longer in extra_attrs.
+    assert!(
+        variant.extra_attrs.is_empty(),
+        "extra_attrs: {:?}",
+        variant.extra_attrs
+    );
 
     let rendered = parsed.to_m3u8().unwrap();
     let rendered_stream_inf_line = rendered
@@ -132,11 +125,8 @@ fn closed_captions_none_is_never_quoted() {
                 v.m3u8\n";
     let parsed = MasterPlaylist::parse(text).expect("must parse");
     assert_eq!(
-        parsed.variants[0].extra_attrs,
-        vec![(
-            "CLOSED-CAPTIONS".to_string(),
-            AttrValue::bare("NONE").unwrap()
-        )]
+        parsed.variants[0].closed_captions,
+        Some(broadcast_hls::ClosedCaptionsRef::None)
     );
     let rendered = parsed.to_m3u8().unwrap();
     assert!(
@@ -246,12 +236,17 @@ fn valid_constructed_value_round_trips() {
     use broadcast_hls::Variant;
 
     let master = MasterPlaylist {
+        media: vec![],
         variants: vec![Variant {
             bandwidth: 1000,
             average_bandwidth: None,
             frame_rate: None,
             codecs: Some("avc1.640020".to_string()),
             uri: "v.m3u8".to_string(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: vec![
                 ("X-BARE".to_string(), AttrValue::bare("plain").unwrap()),
                 (

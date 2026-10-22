@@ -71,6 +71,7 @@ fn media_playlist_rfc_valid() {
 fn master_playlist_structure() {
     let pl = MasterPlaylist {
         version: 6,
+        media: vec![],
         variants: vec![
             Variant {
                 bandwidth: 300_000,
@@ -79,6 +80,10 @@ fn master_playlist_structure() {
                 codecs: Some("avc1.64001e,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "v300/index.m3u8".into(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: vec![],
             },
             Variant {
@@ -88,6 +93,10 @@ fn master_playlist_structure() {
                 codecs: Some("avc1.640028,mp4a.40.2".into()),
                 resolution: Some((1280, 720)),
                 uri: "v800/index.m3u8".into(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: vec![],
             },
         ],
@@ -458,6 +467,7 @@ fn render_rejects_injection_characters_in_uris_and_quoted_strings() {
         "v\rm.m3u8",
     ] {
         let mpl = MasterPlaylist {
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 1,
                 average_bandwidth: None,
@@ -477,6 +487,7 @@ fn render_rejects_injection_characters_in_uris_and_quoted_strings() {
     // list; a bare `"` would end the quoted-string early.
     for bad in ["avc1.640020\n#EXT-X-ENDLIST", "avc1.640020\",X=\"y"] {
         let mpl = MasterPlaylist {
+            media: vec![],
             variants: vec![Variant {
                 bandwidth: 1,
                 average_bandwidth: None,
@@ -528,6 +539,7 @@ fn render_rejects_injection_characters_in_uris_and_quoted_strings() {
     };
     assert!(pl.to_m3u8().unwrap().contains("seg.m4s\n"));
     let mpl = MasterPlaylist {
+        media: vec![],
         variants: vec![Variant {
             bandwidth: 1,
             average_bandwidth: None,

@@ -1405,6 +1405,10 @@ impl HlsOrigin {
             average_bandwidth,
             codecs: locked(&self.codecs).clone(),
             uri: media_playlist_name.to_string(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: extra_attrs.clone(),
             resolution: *locked(&self.resolution),
             frame_rate: *locked(&self.frame_rate),
@@ -1450,6 +1454,7 @@ impl HlsOrigin {
         }
 
         let master = MasterPlaylist {
+            media: vec![],
             variants: vec![variant],
             iframe_variants,
             ..Default::default()
