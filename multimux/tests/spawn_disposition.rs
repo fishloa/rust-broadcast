@@ -71,7 +71,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dashif_ingest.rs",
-        230,
+        262,
         "DASH-IF ingest pump task; owned by run_dashif_ingest (aborted on serve exit)",
     ),
     (
@@ -161,7 +161,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        2283,
+        2303,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
