@@ -1408,24 +1408,34 @@ impl HlsOrigin {
         if locked(&self.video_track_id).is_none() {
             return false;
         }
-        let window = locked(&self.window);
+        let window = self.window_view();
+        self.iframe_entries(&window).is_some()
+    }
+
+    /// Shared D3' rule: collect I-frame entries, allowing leading `None`s but
+    /// rejecting a `None` after the first entry. Returns `None` when there is
+    /// no usable entry (or a gap occurred).
+    fn iframe_entries(&self, window: &WindowView) -> Option<Vec<(WindowSegment, u64)>> {
+        let mut entries: Vec<(WindowSegment, u64)> = Vec::new();
         let mut seen_entry = false;
-        let mut has_entry = false;
         for s in window.segments.iter() {
             match s.iframe_len {
-                Some(_) => {
+                Some(len) => {
                     seen_entry = true;
-                    has_entry = true;
+                    entries.push((s.clone(), len));
                 }
                 None => {
                     if seen_entry {
-                        return false;
+                        return None;
                     }
                 }
             }
         }
-        let _ = seen_entry;
-        has_entry
+        if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        }
     }
 
     /// This origin's instance token: a number that differs for every origin
@@ -2044,30 +2054,14 @@ impl HlsOrigin {
         if self.container != Container::Fmp4 {
             return Err("not fmp4".to_string());
         }
-        let video_track_id = *locked(&self.video_track_id);
-        let Some(_) = video_track_id else {
+        if locked(&self.video_track_id).is_none() {
             return Err("no video track".to_string());
-        };
+        }
         let window = self.window_view();
         // D3': collect entries; a `None` is allowed only before the first entry.
-        let mut entries: Vec<(WindowSegment, u64)> = Vec::new();
-        let mut seen_entry = false;
-        for s in window.segments.iter() {
-            match s.iframe_len {
-                Some(len) => {
-                    seen_entry = true;
-                    entries.push((s.clone(), len));
-                }
-                None => {
-                    if seen_entry {
-                        return Err("iframe gap after entry".to_string());
-                    }
-                }
-            }
-        }
-        if entries.is_empty() {
+        let Some(entries) = self.iframe_entries(&window) else {
             return Err("no iframe entry".to_string());
-        }
+        };
 
         // Target duration uses the same rule as the media playlist.
         let target_duration = self
