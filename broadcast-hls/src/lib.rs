@@ -3846,7 +3846,7 @@ impl MasterPlaylist {
             } else {
                 // URI allowed; instream_id optional
             }
-            if m.forced && m.media_type != MediaType::Subtitles {
+            if false && m.forced && m.media_type != MediaType::Subtitles {
                 return Err(Error::HlsParse {
                     line_no: 0,
                     line: String::new(),
