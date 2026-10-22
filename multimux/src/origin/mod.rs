@@ -61,6 +61,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use broadcast_auth::{AuthResult, Verifier};
 use metrics_exporter_prometheus::PrometheusHandle;
+use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
@@ -301,6 +302,11 @@ pub fn router(state: Arc<AppState>) -> Router {
             state.clone(),
             output_auth_gate,
         ));
+        // gzip layer (inner) runs first and may add `Vary: Accept-Encoding`;
+        // `add_response_headers` (outer) appends `Vary: Origin` so neither
+        // clobbers the other (see `add_response_headers`).
+        stream_router =
+            stream_router.layer(CompressionLayer::new().compress_when(compress_playlist_response));
         stream_router = stream_router.layer(middleware::from_fn(add_response_headers));
         router = router.nest(&format!("/{name}"), stream_router);
     }
@@ -848,6 +854,26 @@ pub(crate) fn check_output_auth(verifier: &Verifier, req: &Request) -> Option<Re
         // outcome through.
         _ => Some(StatusCode::UNAUTHORIZED.into_response()),
     }
+}
+/// Predicate for [`CompressionLayer`]: compress only HLS playlists (and
+/// DASH MPDs), never media segments/init/parts or anything else.
+fn compress_playlist_response(
+    _status: axum::http::StatusCode,
+    _version: axum::http::Version,
+    headers: &axum::http::HeaderMap,
+    _extensions: &axum::http::Extensions,
+) -> bool {
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+    media_type == "application/vnd.apple.mpegurl" || media_type == "application/dash+xml"
 }
 
 /// Router-wide middleware (mounted via `.layer` on each stream's *merged*
@@ -3073,6 +3099,7 @@ mod tests {
                 .map(|n| n.as_str().to_string())
                 .collect();
             names.sort();
+            names.dedup();
             for name in names {
                 // `/metrics`' body (and therefore its `Content-Length`) is a
                 // process-global counter exposition that other tests in this
@@ -3081,12 +3108,12 @@ mod tests {
                 if uri == "/metrics" && name == "content-length" {
                     continue;
                 }
-                let value = resp
-                    .headers()
-                    .get(name.as_str())
-                    .map(|v| v.to_str().unwrap_or("<binary>"))
-                    .unwrap_or("");
-                actual.push_str(&format!("{uri}\t{status}\t{name}: {value}\n"));
+                // `get_all`, not `get`: a multi-valued header (`Vary`) must
+                // be pinned in full, or a dropped second value is invisible.
+                for value in resp.headers().get_all(name.as_str()) {
+                    let value = value.to_str().unwrap_or("<binary>");
+                    actual.push_str(&format!("{uri}\t{status}\t{name}: {value}\n"));
+                }
             }
         }
 
