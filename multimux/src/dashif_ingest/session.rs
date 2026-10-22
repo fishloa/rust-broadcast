@@ -134,7 +134,12 @@ impl DashifIngestSession {
         }
 
         // Different header for an already-live Representation is a new generation.
-        if self.new_program_emitted && self.reps.get(rep_id).unwrap().header_bytes.is_some() {
+        if self.new_program_emitted
+            && self
+                .reps
+                .get(rep_id)
+                .is_some_and(|r| r.header_bytes.is_some())
+        {
             return Err(SessionError::Ingest(IngestError::HeaderChanged));
         }
 
@@ -147,7 +152,10 @@ impl DashifIngestSession {
         }
         let local_tracks: Vec<TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
 
-        let rep = self.reps.get_mut(rep_id).unwrap();
+        let rep = self
+            .reps
+            .get_mut(rep_id)
+            .ok_or(SessionError::Ingest(IngestError::Internal))?;
         rep.header_bytes = Some(bytes.to_vec());
         rep.init_bytes = Some(bytes.to_vec());
         rep.local_tracks = Some(local_tracks);
@@ -174,7 +182,9 @@ impl DashifIngestSession {
         let mut next_track_id = TrackId::new(1);
         let mut specs = Vec::new();
         for rep_id in self.rep_order.clone() {
-            let rep = self.reps.get_mut(&rep_id).unwrap();
+            let Some(rep) = self.reps.get_mut(&rep_id) else {
+                continue;
+            };
             let local_tracks = rep.local_tracks.clone().unwrap_or_default();
             let mut l2g = HashMap::new();
             for spec in &local_tracks {
@@ -196,7 +206,9 @@ impl DashifIngestSession {
 
     fn flush_buffered(&mut self) {
         for rep_id in self.rep_order.clone() {
-            let rep = self.reps.get_mut(&rep_id).unwrap();
+            let Some(rep) = self.reps.get_mut(&rep_id) else {
+                continue;
+            };
             let l2g = match &rep.local_to_global {
                 Some(m) => m.clone(),
                 None => continue,
@@ -359,7 +371,10 @@ impl DashifIngestSession {
                 }
             } else {
                 let new_count: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
-                let rep = self.reps.get_mut(&handle.rep_id).unwrap();
+                let rep = self
+                    .reps
+                    .get_mut(&handle.rep_id)
+                    .ok_or(SessionError::Ingest(IngestError::Internal))?;
                 if rep.buffered.len() + new_count > 64 {
                     return Err(SessionError::Ingest(IngestError::Internal));
                 }
