@@ -1696,6 +1696,7 @@ pub enum ProgramDateTimeSource {
 }
 
 impl ProgramDateTimeSource {
+    /// The wire/label string for this source (`"arrival"` or `"off"`).
     pub fn name(&self) -> &'static str {
         match self {
             ProgramDateTimeSource::Arrival => "arrival",
@@ -1770,10 +1771,7 @@ pub struct Config {
     /// advance on the continuous segment timeline), **not** broadcast airtime;
     /// `Off` restores the previous output (no PDT unless an explicit trunk
     /// time anchor supplies one).
-    #[serde(
-        default = "default_program_date_time",
-        deserialize_with = "deserialize_program_date_time"
-    )]
+    #[serde(default = "default_program_date_time")]
     pub program_date_time: ProgramDateTimeSource,
     /// Server-side output auth (issue #663 "shared output auth") gating
     /// every media output route (`/{stream}/…`) across every configured
@@ -1887,22 +1885,6 @@ fn default_playlist_name() -> String {
 /// [`ProgramDateTimeSource::Arrival`] (Apple 8.4 makes PDT a MUST for live).
 fn default_program_date_time() -> ProgramDateTimeSource {
     ProgramDateTimeSource::Arrival
-}
-
-fn deserialize_program_date_time<'de, D>(
-    deserializer: D,
-) -> std::result::Result<ProgramDateTimeSource, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = String::deserialize(deserializer)?;
-    match value.as_str() {
-        "arrival" => Ok(ProgramDateTimeSource::Arrival),
-        "off" => Ok(ProgramDateTimeSource::Off),
-        other => Err(serde::de::Error::custom(format!(
-            "invalid value for `program_date_time`: unknown variant `{other}`,              expected `arrival` or `off`"
-        ))),
-    }
 }
 
 impl Default for Config {
@@ -4830,5 +4812,17 @@ mod tests {
             }
             other => panic!("expected ConfigInvalid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn program_date_time_rejects_unknown_variant() {
+        let err = serde_json::from_str::<Config>(r#"{"program_date_time":"bogus"}"#)
+            .expect_err("unknown variant must be rejected");
+        let msg = err.to_string();
+        // serde's derived error does not repeat the field name; it does
+        // name the bad value and the valid variants.
+        assert!(msg.contains("bogus"), "bad value missing: {msg}");
+        assert!(msg.contains("arrival"), "valid variant missing: {msg}");
+        assert!(msg.contains("off"), "valid variant missing: {msg}");
     }
 }
