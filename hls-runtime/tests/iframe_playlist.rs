@@ -351,6 +351,12 @@ fn iframe_audio_first_leading_skipped() {
     };
     let parsed = MediaPlaylist::parse(&text).expect("parse");
     assert_eq!(parsed.segments.len(), 1);
+    // EXT-X-MEDIA-SEQUENCE is the public MSN of the first ENTRY (sequence 2), not of the
+    // first window segment (sequence 1, skipped): the media playlist lists both, so the
+    // I-frame playlist's sequence is the media playlist's plus one.
+    let media = MediaPlaylist::parse(&playlist_text(&origin)).expect("media parse");
+    assert_eq!(media.segments.len(), 2);
+    assert_eq!(parsed.media_sequence, media.media_sequence + 1);
 }
 
 #[test]
