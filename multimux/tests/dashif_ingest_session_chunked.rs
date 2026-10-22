@@ -25,7 +25,7 @@ struct Fixture {
     audio_seg: Vec<u8>,
 }
 
-fn fixture() -> Fixture {
+fn presentation() -> Fixture {
     let ts = std::fs::read(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts"),
     )
@@ -149,7 +149,7 @@ fn whole_segment_samples(f: &Fixture) -> Vec<Sample> {
 
 #[test]
 fn chunks_are_emitted_as_soon_as_their_mdat_is_complete() {
-    let f = fixture();
+    let f = presentation();
     let mut s = live(&f);
     let mut h = s.begin_segment("1", Some(1), None).unwrap();
     let mut got = Vec::new();
@@ -175,7 +175,7 @@ fn chunks_are_emitted_as_soon_as_their_mdat_is_complete() {
 /// must equal the whole-segment reference no matter where the cut falls.
 #[test]
 fn result_is_independent_of_where_the_stream_is_split() {
-    let f = fixture();
+    let f = presentation();
     let want = whole_segment_samples(&f);
     let all: Vec<u8> = f.video_chunks.concat();
 
@@ -218,7 +218,7 @@ fn result_is_independent_of_where_the_stream_is_split() {
 
 #[test]
 fn a_partial_trailing_box_is_a_bad_request() {
-    let f = fixture();
+    let f = presentation();
     let mut s = live(&f);
     let mut h = s.begin_segment("1", Some(1), None).unwrap();
     s.push_segment_bytes(&mut h, &f.video_chunks[0]).unwrap();
@@ -238,7 +238,7 @@ fn a_partial_trailing_box_is_a_bad_request() {
 
 #[test]
 fn a_duplicate_segment_emits_nothing_even_when_streamed() {
-    let f = fixture();
+    let f = presentation();
     let mut s = live(&f);
     let all: Vec<u8> = f.video_chunks.concat();
     feed(
@@ -266,7 +266,7 @@ fn a_duplicate_segment_emits_nothing_even_when_streamed() {
 
 #[test]
 fn begin_runs_the_same_checks_as_the_whole_object_path() {
-    let f = fixture();
+    let f = presentation();
     let mut s = DashifIngestSession::new();
     let e = s.begin_segment("1", Some(1), None).unwrap_err();
     assert!(
