@@ -18,7 +18,10 @@ const TEMPLATES: &[&str] = &[
 
 const VALUES: &[u64] = &[0, 1, 7, 42, 99_999, 100_000, 123_456_789, u64::MAX];
 
-fn m(t: &str, c: &str, ids: &[&str]) -> Option<(String, Option<u64>, Option<u64>, Option<u64>)> {
+/// `(representation_id, number, time, bandwidth)` of a match.
+type Got = (String, Option<u64>, Option<u64>, Option<u64>);
+
+fn m(t: &str, c: &str, ids: &[&str]) -> Option<Got> {
     SegmentTemplate::match_url(t, c, ids)
         .map(|x| (x.representation_id, x.number, x.time, x.bandwidth))
 }
