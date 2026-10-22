@@ -82,7 +82,7 @@ use transmux::TrackId;
 use broadcast_common::{Parse, Timestamp, Unpackage};
 use broadcast_hls::{
     ByteRange, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist,
-    MediaSegment, OpenSegment, PartSpec, ProgramDateTime, Variant, VideoRange,
+    MediaSegment, OpenSegment, PartSpec, Variant, VideoRange,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -949,6 +949,7 @@ pub struct HlsOriginBuilder {
     part_target_ms: Option<u32>,
     media_sequence_offset: u64,
     instance: Option<u64>,
+    arrival_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
 }
 
 impl HlsOriginBuilder {
@@ -961,6 +962,7 @@ impl HlsOriginBuilder {
             part_target_ms: None,
             media_sequence_offset: 0,
             instance: None,
+            arrival_clock: None,
         }
     }
 
@@ -1028,6 +1030,25 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// Configure an **arrival** wall-clock source for `#EXT-X-PROGRAM-DATE-TIME`
+    /// (Apple authoring 8.4 MUST — PDT present in live playlists). `clock`
+    /// returns Unix epoch milliseconds; it is invoked **at most once** over the
+    /// origin's lifetime (to stamp the first drained segment), never per
+    /// request, so the caller supplies whatever wall clock it wants (e.g. a
+    /// closure over `std::time::SystemTime` or a test counter) without the
+    /// sans-IO engine touching a clock itself. When omitted (the default) no
+    /// arrival source is used and PDTs come only from an explicit trunk
+    /// `time_anchor` (B1); when both are absent no PDT is emitted.
+    ///
+    /// The arrival source anchors PDTs to the trunk's own continuous segment
+    /// timeline rather than to a (possibly jumping) source media clock, so a
+    /// source-clock discontinuity never makes the date↔segment mapping
+    /// ambiguous (server-requirements.md item 26).
+    pub fn program_date_time_arrival(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        self.arrival_clock = Some(clock);
+        self
+    }
+
     /// Build the [`HlsOrigin`], subscribing its one [`SegmentCursor`]
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
@@ -1081,6 +1102,8 @@ impl HlsOriginBuilder {
             part_target_ms: self.part_target_ms,
             media_sequence_offset: self.media_sequence_offset,
             instance: self.instance.unwrap_or_else(next_instance_token),
+            arrival_clock: self.arrival_clock,
+            arrival_origin: Mutex::new(None),
         })
     }
 }
@@ -1099,9 +1122,9 @@ pub struct HlsOrigin {
     /// drain; [`Self::drain`] returns at once while the `Trunk` still shows
     /// the same head. [`UNDRAINED`] before the first drain.
     drained_through: AtomicU64,
-    // Lock order (never the reverse): `cursor` -> `window` -> `init`;
-    // `codecs` is taken alone. No `Trunk` call is made while `window` is held
-    // except inside `drain` (the cursor poll).
+    // Lock order (never the reverse): `cursor` -> `window` -> `arrival_origin`
+    // -> `init`; `codecs` is taken alone. No `Trunk` call is made while
+    // `window` is held except inside `drain` (the cursor poll).
     window: Mutex<Window>,
     /// The fMP4 init segment — see this module's doc for why this, alone, is
     /// not answerable by any `Trunk` ring.
@@ -1141,6 +1164,16 @@ pub struct HlsOrigin {
     media_sequence_offset: u64,
     /// See [`Self::instance`].
     instance: u64,
+    /// Optional arrival wall-clock source (see
+    /// [`HlsOriginBuilder::program_date_time_arrival`]). `None` => no arrival
+    /// source.
+    arrival_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
+    /// Recorded origin: `(segment timeline start_ns, wall epoch ms)`. Set
+    /// once, the first time a segment drains into the window while an arrival
+    /// clock is configured; never reset for the life of the origin.
+    /// Lock order: `window` -> `arrival_origin` (arrival_origin is never
+    /// taken before window).
+    arrival_origin: Mutex<Option<(u64, i64)>>,
 }
 
 impl HlsOrigin {
@@ -1606,6 +1639,23 @@ impl HlsOrigin {
         for item in prepared {
             match item {
                 Prepared::Segment(entry, init_gen, iframe_len) => {
+                    // Record the arrival origin exactly once, the first time a
+                    // segment drains into the window while an arrival clock is
+                    // configured. "this segment ended about now, so it started
+                    // duration ago" (issue #1423 B2a).
+                    if self.arrival_clock.is_some() {
+                        let mut origin = locked(&self.arrival_origin);
+                        if origin.is_none()
+                            && let Some(clock) = &self.arrival_clock
+                        {
+                            let now_ms = clock();
+                            let dur_nanos = entry.duration.as_nanos();
+                            let dur_ms = (dur_nanos + 500_000) / 1_000_000;
+                            let dur_ms = i64::try_from(dur_ms).unwrap_or(i64::MAX);
+                            let epoch_ms = now_ms.saturating_sub(dur_ms);
+                            *origin = Some((entry.timeline_position.as_nanos(), epoch_ms));
+                        }
+                    }
                     window.push(entry, init_gen, iframe_len);
                 }
                 Prepared::Gap => window.note_gap(),
@@ -1624,6 +1674,38 @@ impl HlsOrigin {
             max_segment_duration_secs: w.max_segment_duration_secs,
             discontinuity_sequence: w.discontinuity_sequence,
         }
+    }
+
+    /// Private PDT helper shared by the media, open-segment and I-frame
+    /// renderers so the three can never disagree (issue #1423 B2a, Apple
+    /// 9.x/8.15). `seq` is the segment's sequence number (needed for the
+    /// explicit-anchor path); `start_ns` is the segment's position on the
+    /// trunk's continuous timeline (nanoseconds).
+    fn segment_pdt(
+        &self,
+        seq: SegmentSeq,
+        start_ns: u64,
+    ) -> Option<broadcast_hls::ProgramDateTime> {
+        // (1) Explicit trunk time anchor wins.
+        if let Some(anchor) = self.trunk.time_anchor()
+            && let Some(media_start) = self.trunk.segment_start_time(seq)
+            && let Ok(ts) = jiff::Timestamp::from_millisecond(anchor.media_to_epoch_ms(media_start))
+        {
+            return Some(broadcast_hls::ProgramDateTime::from_timestamp(ts));
+        }
+        // (2) Arrival origin.
+        let origin = *locked(&self.arrival_origin);
+        if let Some((origin_start_ns, origin_epoch_ms)) = origin {
+            let delta_ns = i128::from(start_ns) - i128::from(origin_start_ns);
+            let delta_ms = delta_ns / 1_000_000;
+            let epoch_ms = i128::from(origin_epoch_ms) + delta_ms;
+            let epoch_ms: i64 = epoch_ms.try_into().ok()?;
+            if let Ok(ts) = jiff::Timestamp::from_millisecond(epoch_ms) {
+                return Some(broadcast_hls::ProgramDateTime::from_timestamp(ts));
+            }
+        }
+        // (3) None.
+        None
     }
 
     /// A snapshot of this origin's currently-advertised closed segments
@@ -1808,20 +1890,15 @@ impl HlsOrigin {
                 extra_attrs: Vec::new(),
             })
         };
-        // Wall-clock anchor for PDT derivation (Apple authoring 8.4 / B1):
-        // `None` means "no PDT anywhere", never a fabricated value.
-        let anchor = self.trunk.time_anchor();
+        // PDT per segment: explicit trunk time anchor (B1) wins, else the
+        // arrival wall-clock source (B2a), else none. One private helper
+        // keeps the media, open-segment and I-frame renderers in agreement.
         let segments: Vec<MediaSegment> = window
             .segments
             .iter()
             .zip(closed_parts)
             .map(|(s, parts)| {
-                let program_date_time = anchor.and_then(|a| {
-                    let start = self.trunk.segment_start_time(s.sequence_number)?;
-                    jiff::Timestamp::from_millisecond(a.media_to_epoch_ms(start))
-                        .ok()
-                        .map(ProgramDateTime::from_timestamp)
-                });
+                let program_date_time = self.segment_pdt(s.sequence_number, s.start_ns);
                 MediaSegment {
                     map: map_for(s.init_gen),
                     uri: self.segment_name(track_id, s.sequence_number, ext),
@@ -1859,13 +1936,26 @@ impl HlsOrigin {
             if let Some(map) = map_for(open_gen) {
                 open = open.with_map(map);
             }
-            // Open (in-progress) segment PDT: its reported start, if any.
-            open.program_date_time = anchor.and_then(|a| {
-                let start = self.trunk.segment_start_time(open_seq)?;
-                jiff::Timestamp::from_millisecond(a.media_to_epoch_ms(start))
-                    .ok()
-                    .map(ProgramDateTime::from_timestamp)
+            // Open (in-progress) segment PDT. The arrival path uses the last
+            // closed segment's start + its duration (B2a); with no closed
+            // segment yet it is omitted. The explicit-anchor path is handled
+            // inside `segment_pdt` via `segment_start_time(open_seq)`.
+            let open_start_ns = window.segments.back().map(|s| {
+                s.start_ns.saturating_add(
+                    u64::try_from((s.duration_secs * 1_000_000_000.0).round() as i64).unwrap_or(0),
+                )
             });
+            open.program_date_time = match open_start_ns {
+                Some(sn) => self.segment_pdt(open_seq, sn),
+                None => {
+                    // No closed segment: explicit anchor only.
+                    if self.trunk.time_anchor().is_some() {
+                        self.segment_pdt(open_seq, 0)
+                    } else {
+                        None
+                    }
+                }
+            };
             open
         });
         let next_part_hint = has_open_parts.then(|| {
@@ -2124,6 +2214,7 @@ impl HlsOrigin {
                     offset: Some(0),
                 }),
                 parts: Vec::new(),
+                program_date_time: self.segment_pdt(s.sequence_number, s.start_ns),
                 ..Default::default()
             })
             .collect();

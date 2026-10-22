@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `HlsOriginBuilder::program_date_time_arrival(clock)` adds an arrival wall-clock source for `#EXT-X-PROGRAM-DATE-TIME` (Apple authoring 8.4 MUST): PDTs are anchored to the trunk's continuous segment timeline instead of a (possibly jumping) source media clock, so a source-clock discontinuity never makes the date↔segment mapping ambiguous. The clock is sampled at most once over the origin's lifetime (first drained segment); explicit trunk time anchors still take precedence; out-of-range values are omitted without panicking. I-frame playlists now carry the same PDTs as the media playlist.
 - `HlsOrigin::render_playlist` now derives `#EXT-X-PROGRAM-DATE-TIME` for closed and open segments from the trunk time anchor plus `Trunk::segment_start_time` (Apple authoring 8.4); emits nothing when the anchor or a segment start is unknown. Live and I-frame playlists now always emit `#EXT-X-DISCONTINUITY-SEQUENCE` (including `:0`) (Apple authoring 8.17).
 - `HlsOrigin` now computes, stores and renders an I-frame trick-play playlist: `HlsRequest::IFramePlaylist { track_id, query }`, `HlsOrigin::iframe_playlist_name(track_id)`, and `HlsOrigin::render_iframe_playlist` produce an `#EXT-X-I-FRAMES-ONLY` media playlist with `BYTERANGE=len@0` per entry, derived from the first video sample of each segment (sync sample starting at the mdat payload start).
 
