@@ -347,13 +347,25 @@ fn segment_defining_tags_render_in_place_not_hoisted() {
     );
 
     let pl = MediaPlaylist::parse(&text).expect("must parse");
+    assert_eq!(pl.segments[0].pre_tags, vec![key_a.to_string()]);
     assert_eq!(
-        pl.segments[0].pre_tags,
-        vec![key_a.to_string(), pdt0.to_string()]
+        pl.segments[0].program_date_time,
+        Some(
+            broadcast_hls::ProgramDateTime::parse(
+                pdt0.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:").unwrap()
+            )
+            .unwrap()
+        )
     );
+    assert_eq!(pl.segments[1].pre_tags, vec![key_b.to_string()]);
     assert_eq!(
-        pl.segments[1].pre_tags,
-        vec![key_b.to_string(), pdt1.to_string()]
+        pl.segments[1].program_date_time,
+        Some(
+            broadcast_hls::ProgramDateTime::parse(
+                pdt1.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:").unwrap()
+            )
+            .unwrap()
+        )
     );
     assert_eq!(pl.extra_tags, Vec::<String>::new(), "no hoisted block");
 

@@ -447,6 +447,7 @@ name = "broadcast-hls"
 version = "0.4.0"
 dependencies = [
  "broadcast-common",
+ "jiff",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

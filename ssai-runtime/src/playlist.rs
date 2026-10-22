@@ -237,10 +237,9 @@ const PDT_TAG: &str = "#EXT-X-PROGRAM-DATE-TIME:";
 /// playlist-level `extra_tags`).
 fn has_program_date_time(base: &MediaPlaylist) -> bool {
     base.extra_tags.iter().any(|t| t.starts_with(PDT_TAG))
-        || base
-            .segments
-            .iter()
-            .any(|s| s.pre_tags.iter().any(|t| t.starts_with(PDT_TAG)))
+        || base.segments.iter().any(|s| {
+            s.program_date_time.is_some() || s.pre_tags.iter().any(|t| t.starts_with(PDT_TAG))
+        })
 }
 
 /// Clone `base` and append `active`'s rendered tag line (if any) to
