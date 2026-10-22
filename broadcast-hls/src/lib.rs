@@ -3206,6 +3206,10 @@ pub struct Variant {
 pub struct IFrameVariant {
     /// `BANDWIDTH` in bits per second (required).
     pub bandwidth: u32,
+    /// `AVERAGE-BANDWIDTH` in bits per second (RFC 8216bis §4.4.6.2), or
+    /// `None` when the `#EXT-X-I-FRAME-STREAM-INF` carried no
+    /// `AVERAGE-BANDWIDTH` attribute.
+    pub average_bandwidth: Option<u32>,
     /// `CODECS` RFC 6381 string (e.g. `"hvc1.1.6.L93.B0"`).  `None` to omit.
     pub codecs: Option<String>,
     /// `RESOLUTION` as `(width, height)`.  `None` to omit.
@@ -3383,6 +3387,11 @@ impl MasterPlaylist {
                 "#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH={}",
                 iv.bandwidth
             ));
+            // RFC 8216bis §4.4.6.2: AVERAGE-BANDWIDTH renders immediately
+            // after BANDWIDTH; an absent value renders nothing.
+            if let Some(avg) = iv.average_bandwidth {
+                s.push_str(&format!(",AVERAGE-BANDWIDTH={avg}"));
+            }
             if let Some(c) = &iv.codecs {
                 s.push_str(&format!(",CODECS=\"{c}\""));
             }
@@ -3553,6 +3562,10 @@ impl MasterPlaylist {
                     "EXT-X-I-FRAME-STREAM-INF",
                 )?;
                 let bandwidth = parse_decimal_int(&bandwidth_str, line_no, line, "BANDWIDTH")?;
+                let average_bandwidth = match attrs.get("AVERAGE-BANDWIDTH") {
+                    Some(v) => Some(parse_decimal_int(v, line_no, line, "AVERAGE-BANDWIDTH")?),
+                    None => None,
+                };
                 let codecs = attrs.get("CODECS").cloned();
                 let resolution = match attrs.get("RESOLUTION") {
                     Some(v) => Some(parse_resolution(v, line_no, line)?),
@@ -3561,11 +3574,18 @@ impl MasterPlaylist {
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-I-FRAME-STREAM-INF")?;
                 let extra_attrs = filter_extra_attrs(
                     &attrs,
-                    &["BANDWIDTH", "CODECS", "RESOLUTION", "URI"],
+                    &[
+                        "BANDWIDTH",
+                        "AVERAGE-BANDWIDTH",
+                        "CODECS",
+                        "RESOLUTION",
+                        "URI",
+                    ],
                     &quoted,
                 )?;
                 iframe_variants.push(IFrameVariant {
                     bandwidth,
+                    average_bandwidth,
                     codecs,
                     resolution,
                     uri,
@@ -4106,6 +4126,89 @@ mod tests {
     fn average_bandwidth_must_be_a_decimal_integer() {
         let text =
             "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000,AVERAGE-BANDWIDTH=12x\nv/index.m3u8\n";
+        let err = MasterPlaylist::parse(text).unwrap_err();
+        match err {
+            Error::HlsParse { reason, .. } => {
+                assert!(reason.contains("AVERAGE-BANDWIDTH"), "reason: {reason}");
+            }
+            other => panic!("expected HlsParse, got {other:?}"),
+        }
+    }
+
+    /// RFC 8216bis §4.4.6.2: `AVERAGE-BANDWIDTH` on
+    /// `#EXT-X-I-FRAME-STREAM-INF` renders immediately after `BANDWIDTH` and
+    /// round-trips (render -> parse) with the same value.
+    #[test]
+    fn iframe_variant_renders_average_bandwidth_after_bandwidth() {
+        let pl = MasterPlaylist {
+            iframe_variants: vec![IFrameVariant {
+                bandwidth: 200_000,
+                average_bandwidth: Some(150_000),
+                codecs: Some("hvc1.1.6.L93.B0".into()),
+                resolution: Some((320, 240)),
+                uri: "iframe.m3u8".into(),
+                extra_attrs: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let out = pl.to_m3u8().unwrap();
+        assert!(
+            out.contains("#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=200000,AVERAGE-BANDWIDTH=150000,"),
+            "out: {out}"
+        );
+        let reparsed = MasterPlaylist::parse(&out).unwrap();
+        assert_eq!(reparsed.iframe_variants, pl.iframe_variants);
+        assert_eq!(reparsed.iframe_variants[0].average_bandwidth, Some(150_000));
+    }
+
+    /// An I-frame variant with no `AVERAGE-BANDWIDTH` renders no attribute
+    /// and round-trips as `None`.
+    #[test]
+    fn iframe_variant_omits_absent_average_bandwidth_and_round_trips_none() {
+        let pl = MasterPlaylist {
+            iframe_variants: vec![IFrameVariant {
+                bandwidth: 200_000,
+                average_bandwidth: None,
+                codecs: Some("hvc1.1.6.L93.B0".into()),
+                resolution: Some((320, 240)),
+                uri: "iframe.m3u8".into(),
+                extra_attrs: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let out = pl.to_m3u8().unwrap();
+        assert!(!out.contains("AVERAGE-BANDWIDTH"), "out: {out}");
+        let reparsed = MasterPlaylist::parse(&out).unwrap();
+        assert_eq!(reparsed.iframe_variants, pl.iframe_variants);
+        assert_eq!(reparsed.iframe_variants[0].average_bandwidth, None);
+    }
+
+    /// A parsed I-frame `#EXT-X-I-FRAME-STREAM-INF` line carrying
+    /// `AVERAGE-BANDWIDTH` exposes it on the typed field and NOT in
+    /// `extra_attrs`.
+    #[test]
+    fn iframe_variant_average_bandwidth_not_retained_in_extra_attrs() {
+        let text = "#EXTM3U\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1000,AVERAGE-BANDWIDTH=1200,URI=\"i.m3u8\"\n";
+        let pl = MasterPlaylist::parse(text).unwrap();
+        assert_eq!(pl.iframe_variants[0].average_bandwidth, Some(1200));
+        assert!(
+            pl.iframe_variants[0].extra_attrs.is_empty(),
+            "extra_attrs: {:?}",
+            pl.iframe_variants[0].extra_attrs
+        );
+        assert!(
+            !pl.iframe_variants[0]
+                .extra_attrs
+                .iter()
+                .any(|(k, _)| k == "AVERAGE-BANDWIDTH")
+        );
+    }
+
+    /// A non-decimal `AVERAGE-BANDWIDTH` on an I-frame variant is a
+    /// structured parse error, like `BANDWIDTH`.
+    #[test]
+    fn iframe_average_bandwidth_must_be_a_decimal_integer() {
+        let text = "#EXTM3U\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1000,AVERAGE-BANDWIDTH=12x,URI=\"i.m3u8\"\n";
         let err = MasterPlaylist::parse(text).unwrap_err();
         match err {
             Error::HlsParse { reason, .. } => {
@@ -5142,6 +5245,7 @@ s0.m4s\n";
             ],
             iframe_variants: vec![IFrameVariant {
                 bandwidth: 50_000,
+                average_bandwidth: None,
                 codecs: Some("avc1.64001e".into()),
                 resolution: Some((640, 360)),
                 uri: "v300/iframe.m3u8".into(),
