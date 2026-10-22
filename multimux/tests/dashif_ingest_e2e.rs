@@ -20,6 +20,10 @@ use listener::bind_tcp;
 struct Presentation {
     mpd: String,
     reps: Vec<(String, Vec<u8>, Vec<Vec<u8>>)>,
+    /// The VIDEO representation's segments, each as >= 2 CMAF chunks
+    /// (`styp+moof+mdat` each) whose concatenation is the same media as the
+    /// whole segment in `reps[0].2`.
+    video_chunks: Vec<Vec<Vec<u8>>>,
 }
 
 fn presentation() -> Presentation {
@@ -32,6 +36,7 @@ fn presentation() -> Presentation {
     let mut packager = DashPackager::default();
     let mpd = packager.package(&media).expect("mpd");
     let mut reps = Vec::new();
+    let mut video_chunks: Vec<Vec<Vec<u8>>> = Vec::new();
     for (i, t) in media.tracks.iter().enumerate() {
         let init =
             build_init_segment(std::slice::from_ref(&t.spec), media.movie_timescale).expect("init");
@@ -61,10 +66,35 @@ fn presentation() -> Presentation {
                 .sum();
             let ftd = FragmentTrackData::new(t.spec.track_id, t.start_decode_time + offset, chunk);
             segs.push(build_media_segment(u32::try_from(s + 1).unwrap(), &[ftd]).expect("seg"));
+            if i == 0 {
+                // Split this GOP into three CMAF chunks.
+                let len = w[1] - w[0];
+                let sub = [0, len / 3, 2 * len / 3, len];
+                let mut chunks = Vec::new();
+                for c in sub.windows(2) {
+                    let off: u64 = t.samples[..w[0] + c[0]]
+                        .iter()
+                        .map(|x| u64::from(x.duration.unwrap_or(0)))
+                        .sum();
+                    let ftd = FragmentTrackData::new(
+                        t.spec.track_id,
+                        t.start_decode_time + off,
+                        &t.samples[w[0] + c[0]..w[0] + c[1]],
+                    );
+                    chunks.push(
+                        build_media_segment(u32::try_from(s + 1).unwrap(), &[ftd]).expect("chunk"),
+                    );
+                }
+                video_chunks.push(chunks);
+            }
         }
         reps.push(((i + 1).to_string(), init, segs));
     }
-    Presentation { mpd, reps }
+    Presentation {
+        mpd,
+        reps,
+        video_chunks,
+    }
 }
 
 fn config_with(
@@ -701,4 +731,313 @@ async fn body_timeout_returns_408() {
         .await
         .unwrap();
     assert_eq!(r.status().as_u16(), 200);
+}
+
+// ---------------------------------------------------------------------------
+// P3b: streamed (HTTP chunked) segments. The requests are written by hand over
+// a raw TCP stream — allowed in tests — so a request can be left OPEN between
+// chunks, which no HTTP client library lets us do deterministically.
+// ---------------------------------------------------------------------------
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+
+/// An in-flight chunked `POST`.
+struct ChunkedPost {
+    stream: TcpStream,
+}
+
+impl ChunkedPost {
+    async fn open(rig: &Rig, path: &str) -> ChunkedPost {
+        let addr = rig.ingest.trim_start_matches("http://").to_string();
+        let mut stream = TcpStream::connect(&addr).await.expect("connect");
+        let head =
+            format!("POST {path} HTTP/1.1\r\nHost: {addr}\r\nTransfer-Encoding: chunked\r\n\r\n");
+        stream.write_all(head.as_bytes()).await.unwrap();
+        ChunkedPost { stream }
+    }
+
+    async fn chunk(&mut self, bytes: &[u8]) {
+        self.stream
+            .write_all(format!("{:X}\r\n", bytes.len()).as_bytes())
+            .await
+            .unwrap();
+        self.stream.write_all(bytes).await.unwrap();
+        self.stream.write_all(b"\r\n").await.unwrap();
+    }
+
+    /// Terminate the body and return the response status code.
+    async fn finish(mut self) -> u16 {
+        self.stream.write_all(b"0\r\n\r\n").await.unwrap();
+        self.status().await
+    }
+
+    /// Read the response status line (bounded; the server answers only after
+    /// the body ends or fails).
+    async fn status(&mut self) -> u16 {
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 512];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let n = tokio::time::timeout_at(deadline, self.stream.read(&mut tmp))
+                .await
+                .expect("response before the deadline")
+                .expect("read");
+            assert!(n > 0, "connection closed before a response: {buf:?}");
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(end) = buf.windows(2).position(|w| w == b"\r\n") {
+                let line = String::from_utf8_lossy(&buf[..end]).to_string();
+                return line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|c| c.parse().ok())
+                    .unwrap_or_else(|| panic!("bad status line {line:?}"));
+            }
+        }
+    }
+}
+
+/// MPD + both headers, no media yet.
+async fn manifest_and_headers(rig: &Rig, p: &Presentation) {
+    assert_eq!(
+        rig.post("/live.mpd", p.mpd.clone().into_bytes())
+            .await
+            .as_u16(),
+        200
+    );
+    for (id, init, _) in &p.reps {
+        assert_eq!(
+            rig.post(&format!("/init-stream{id}.m4s"), init.clone())
+                .await
+                .as_u16(),
+            200
+        );
+    }
+}
+
+/// Poll the media playlist until `pred` holds for its text (bounded).
+async fn playlist_until(rig: &Rig, what: &str, pred: impl Fn(&str) -> bool) -> String {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some((st, body)) = rig.get_text("/cam/media.m3u8").await
+            && st.is_success()
+            && pred(&body)
+        {
+            return body;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "timed out: {what}");
+        tokio::task::yield_now().await;
+    }
+}
+
+fn part_uris(playlist: &str) -> Vec<String> {
+    playlist
+        .lines()
+        .filter(|l| l.starts_with("#EXT-X-PART:"))
+        .filter_map(|l| l.split("URI=\"").nth(1))
+        .filter_map(|r| r.split('"').next())
+        .map(str::to_string)
+        .collect()
+}
+
+/// THE POINT of the increment: media from the first CMAF chunk is published
+/// (and served as an LL-HLS part) while the segment's request is still open.
+#[tokio::test]
+async fn first_chunk_is_published_while_the_request_is_still_open() {
+    let rig = Rig::start("/").await;
+    let p = presentation();
+    manifest_and_headers(&rig, &p).await;
+
+    let mut req = ChunkedPost::open(&rig, "/chunk-stream1-1.m4s").await;
+    req.chunk(&p.video_chunks[0][0]).await;
+    // NOT finished. A part must appear in the playlist anyway.
+    let playlist = playlist_until(&rig, "a part from the first chunk", |b| {
+        !part_uris(b).is_empty()
+    })
+    .await;
+    let uri = &part_uris(&playlist)[0];
+    let r = rig
+        .client
+        .get(format!("{}/cam/{uri}", rig.origin))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{uri}");
+    let bytes: Bytes = r.bytes().await.unwrap();
+    let errs: Vec<_> = validate_media_segment(&bytes)
+        .into_iter()
+        .filter(|i| i.severity == Severity::Error)
+        .collect();
+    assert!(errs.is_empty(), "{uri}: {errs:?}");
+
+    // Finish the segment; it completes normally.
+    for c in &p.video_chunks[0][1..] {
+        req.chunk(c).await;
+    }
+    assert_eq!(req.finish().await, 200);
+}
+
+/// A segment streamed as chunks and the same bytes sent with a
+/// Content-Length produce the same published media.
+#[tokio::test]
+async fn chunked_and_content_length_ingest_publish_the_same_segments() {
+    async fn run(chunked: bool) -> Vec<Bytes> {
+        let rig = Rig::start("/").await;
+        let p = presentation();
+        manifest_and_headers(&rig, &p).await;
+        for (i, chunks) in p.video_chunks.iter().enumerate() {
+            let path = format!("/chunk-stream1-{}.m4s", i + 1);
+            if chunked {
+                let mut req = ChunkedPost::open(&rig, &path).await;
+                for c in chunks {
+                    req.chunk(c).await;
+                }
+                assert_eq!(req.finish().await, 200);
+            } else {
+                assert_eq!(rig.post(&path, chunks.concat()).await.as_u16(), 200);
+            }
+            // Audio keeps pace (whole objects) so both tracks are present.
+            let seg = &p.reps[1].2[i];
+            assert_eq!(
+                rig.post(&format!("/chunk-stream2-{}.m4s", i + 1), seg.clone())
+                    .await
+                    .as_u16(),
+                200
+            );
+        }
+        let playlist = rig.playlist_with_segments().await;
+        let mut out = Vec::new();
+        for uri in segment_uris(&playlist) {
+            out.push(
+                rig.client
+                    .get(format!("{}/cam/{uri}", rig.origin))
+                    .send()
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap(),
+            );
+        }
+        out
+    }
+    let a = run(true).await;
+    let b = run(false).await;
+    assert!(!a.is_empty());
+    let n = a.len().min(b.len());
+    assert!(n >= 1);
+    assert_eq!(a[..n], b[..n], "published segments differ");
+}
+
+#[tokio::test]
+async fn a_partial_trailing_box_is_400_and_the_route_survives() {
+    let rig = Rig::start("/").await;
+    let p = presentation();
+    manifest_and_headers(&rig, &p).await;
+    let mut req = ChunkedPost::open(&rig, "/chunk-stream1-1.m4s").await;
+    req.chunk(&p.video_chunks[0][0]).await;
+    let half = &p.video_chunks[0][1][..p.video_chunks[0][1].len() / 2];
+    req.chunk(half).await;
+    assert_eq!(req.finish().await, 400);
+    // The route still ingests (next segment number, whole object).
+    assert_eq!(
+        rig.post("/chunk-stream1-2.m4s", p.reps[0].2[1].clone())
+            .await
+            .as_u16(),
+        200
+    );
+}
+
+/// A client that disconnects mid-body leaves no stuck handle: the same
+/// representation can immediately start another segment.
+#[tokio::test]
+async fn a_client_abort_mid_body_frees_the_representation() {
+    let rig = Rig::start("/").await;
+    let p = presentation();
+    manifest_and_headers(&rig, &p).await;
+    {
+        let mut req = ChunkedPost::open(&rig, "/chunk-stream1-1.m4s").await;
+        req.chunk(&p.video_chunks[0][0]).await;
+        // Drop without finishing: the TCP connection closes mid-body.
+    }
+    // The abort is processed asynchronously: retry a bounded number of times
+    // while the answer is the in-progress conflict.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let st = rig
+            .post("/chunk-stream1-2.m4s", p.reps[0].2[1].clone())
+            .await
+            .as_u16();
+        if st == 200 {
+            break;
+        }
+        assert_eq!(st, 409, "only the in-progress conflict may delay this");
+        assert!(tokio::time::Instant::now() < deadline, "handle never freed");
+        tokio::task::yield_now().await;
+    }
+}
+
+/// Two simultaneous segment requests for the SAME representation: the second
+/// gets 409 (a track is one ordered stream).
+#[tokio::test]
+async fn a_second_concurrent_segment_for_the_same_rep_is_409() {
+    let rig = Rig::start("/").await;
+    let p = presentation();
+    manifest_and_headers(&rig, &p).await;
+    let mut first = ChunkedPost::open(&rig, "/chunk-stream1-1.m4s").await;
+    first.chunk(&p.video_chunks[0][0]).await;
+    // Give the pump a chance to have processed the first Begin: a different
+    // representation's object round-trips through the same pump.
+    assert_eq!(
+        rig.post("/chunk-stream2-1.m4s", p.reps[1].2[0].clone())
+            .await
+            .as_u16(),
+        200
+    );
+    assert_eq!(
+        rig.post("/chunk-stream1-2.m4s", p.reps[0].2[1].clone())
+            .await
+            .as_u16(),
+        409
+    );
+    for c in &p.video_chunks[0][1..] {
+        first.chunk(c).await;
+    }
+    assert_eq!(first.finish().await, 200);
+}
+
+/// The per-object body deadline applies across a streamed request: stalling
+/// after the first chunk gets 408, the first chunk stays published, and the
+/// route keeps working.
+#[tokio::test]
+async fn a_stalled_chunked_body_times_out_with_408() {
+    let rig = Rig::start_with("/", |cfg| {
+        if let InputSpec::DashifIngest {
+            body_timeout_secs, ..
+        } = &mut cfg.routes[0].input
+        {
+            *body_timeout_secs = Some(0.3);
+        }
+    })
+    .await;
+    let p = presentation();
+    manifest_and_headers(&rig, &p).await;
+    let mut req = ChunkedPost::open(&rig, "/chunk-stream1-1.m4s").await;
+    req.chunk(&p.video_chunks[0][0]).await;
+    // ...and nothing more. The server must answer 408 on its own.
+    assert_eq!(req.status().await, 408);
+    // The route keeps working.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let st = rig
+            .post("/chunk-stream1-2.m4s", p.reps[0].2[1].clone())
+            .await
+            .as_u16();
+        if st == 200 {
+            break;
+        }
+        assert_eq!(st, 409, "only the in-progress conflict may delay this");
+        assert!(tokio::time::Instant::now() < deadline, "handle never freed");
+        tokio::task::yield_now().await;
+    }
 }
