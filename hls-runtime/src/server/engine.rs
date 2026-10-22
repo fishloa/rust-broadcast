@@ -82,7 +82,7 @@ use transmux::TrackId;
 use broadcast_common::{Parse, Timestamp, Unpackage};
 use broadcast_hls::{
     ByteRange, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist,
-    MediaSegment, OpenSegment, PartSpec, Variant, VideoRange,
+    MediaSegment, OpenSegment, PartSpec, ProgramDateTime, Variant, VideoRange,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -1808,21 +1808,33 @@ impl HlsOrigin {
                 extra_attrs: Vec::new(),
             })
         };
+        // Wall-clock anchor for PDT derivation (Apple authoring 8.4 / B1):
+        // `None` means "no PDT anywhere", never a fabricated value.
+        let anchor = self.trunk.time_anchor();
         let segments: Vec<MediaSegment> = window
             .segments
             .iter()
             .zip(closed_parts)
-            .map(|(s, parts)| MediaSegment {
-                map: map_for(s.init_gen),
-                uri: self.segment_name(track_id, s.sequence_number, ext),
-                // `duration_secs` is always `Duration::as_secs_f64()`
-                // (issue #1140): a `std::time::Duration` can never be
-                // negative or non-finite.
-                duration: DecimalSeconds::new(s.duration_secs)
-                    .expect("Duration::as_secs_f64 is finite, >= 0"),
-                discontinuous: s.discontinuous,
-                parts,
-                ..Default::default()
+            .map(|(s, parts)| {
+                let program_date_time = anchor.and_then(|a| {
+                    let start = self.trunk.segment_start_time(s.sequence_number)?;
+                    jiff::Timestamp::from_millisecond(a.media_to_epoch_ms(start))
+                        .ok()
+                        .map(ProgramDateTime::from_timestamp)
+                });
+                MediaSegment {
+                    map: map_for(s.init_gen),
+                    uri: self.segment_name(track_id, s.sequence_number, ext),
+                    // `duration_secs` is always `Duration::as_secs_f64()`
+                    // (issue #1140): a `std::time::Duration` can never be
+                    // negative or non-finite.
+                    duration: DecimalSeconds::new(s.duration_secs)
+                        .expect("Duration::as_secs_f64 is finite, >= 0"),
+                    discontinuous: s.discontinuous,
+                    parts,
+                    program_date_time,
+                    ..Default::default()
+                }
             })
             .collect();
         // The open segment is cut against the init generation that covers its
@@ -1830,7 +1842,7 @@ impl HlsOrigin {
         // last closed segment's unless the init changed in between).
         let open_gen = locked(&self.init).generation_for(open_seq);
         let open_segment = has_open_parts.then(|| {
-            let open = OpenSegment::new(
+            let mut open = OpenSegment::new(
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
@@ -1844,10 +1856,17 @@ impl HlsOrigin {
                     })
                     .collect(),
             );
-            match map_for(open_gen) {
-                Some(map) => open.with_map(map),
-                None => open,
+            if let Some(map) = map_for(open_gen) {
+                open = open.with_map(map);
             }
+            // Open (in-progress) segment PDT: its reported start, if any.
+            open.program_date_time = anchor.and_then(|a| {
+                let start = self.trunk.segment_start_time(open_seq)?;
+                jiff::Timestamp::from_millisecond(a.media_to_epoch_ms(start))
+                    .ok()
+                    .map(ProgramDateTime::from_timestamp)
+            });
+            open
         });
         let next_part_hint = has_open_parts.then(|| {
             let next_idx = open_parts
@@ -1929,6 +1948,7 @@ impl HlsOrigin {
             target_duration,
             media_sequence,
             discontinuity_sequence: window.discontinuity_sequence,
+            always_emit_discontinuity_sequence: true,
             segments,
             open_segment,
             endlist: false,
@@ -2121,6 +2141,7 @@ impl HlsOrigin {
             target_duration,
             media_sequence,
             discontinuity_sequence: window.discontinuity_sequence,
+            always_emit_discontinuity_sequence: true,
             segments,
             open_segment: None,
             endlist: false,
@@ -2756,7 +2777,7 @@ mod tests {
         // Durations. They are not an *open* segment: no preload hint, and
         // every part line precedes the segment's own EXTINF/URI.
         assert_eq!(
-            body.lines().skip(4).collect::<Vec<_>>(),
+            body.lines().skip(5).collect::<Vec<_>>(),
             vec![
                 "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12",
                 "#EXT-X-PART-INF:PART-TARGET=0.5",
@@ -2808,8 +2829,8 @@ mod tests {
         };
         assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:1"), "body: {body}");
         assert!(
-            !body.contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
-            "nothing has rolled off the window yet: {body}"
+            body.contains("#EXT-X-DISCONTINUITY-SEQUENCE:0"),
+            "fresh live playlist always carries DISCONTINUITY-SEQUENCE:0 (Apple 8.17): {body}"
         );
         assert!(body.contains("#EXT-X-DISCONTINUITY\n"), "body: {body}");
 
@@ -2832,7 +2853,7 @@ mod tests {
         };
         assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:2"), "body: {body}");
         assert!(
-            !body.contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
+            body.contains("#EXT-X-DISCONTINUITY-SEQUENCE:0"),
             "evicted segment 1 was not discontinuous: {body}"
         );
 

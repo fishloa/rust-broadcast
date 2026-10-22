@@ -1864,6 +1864,22 @@ impl Trunk {
         state.events.time_anchor
     }
 
+    /// The reported start time of segment `seq` on this trunk's 90 kHz
+    /// source clock (the same domain as [`TimeAnchor::pts_90k`]), if
+    /// [`SegmentWriter::note_segment_start`] has reported one and it has
+    /// not been evicted from the bounded `segment_starts` table. Returns
+    /// `None` when the segment was never reported or has rolled off the
+    /// front of the bounded table.
+    pub fn segment_start_time(&self, seq: SegmentSeq) -> Option<MediaTime> {
+        let state = self.lock_state();
+        let log = &state.events;
+        log.segment_starts
+            .iter()
+            .rev()
+            .find(|(n, _)| *n == seq)
+            .map(|(_, start)| *start)
+    }
+
     /// Every currently-resolved event whose media time falls within segment
     /// `segment_number`'s span: `[start_N, start_{N+1})` once
     /// [`SegmentWriter::note_segment_start`] has reported the *next*
@@ -6234,6 +6250,61 @@ mod tests {
             trunk.parts_in_segment(SegmentSeq::new(2)).len(),
             1,
             "segment 2's own opening part must resolve independently"
+        );
+    }
+
+    #[test]
+    fn segment_start_time_returns_reported_start() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4)));
+        let writer = trunk.segment_writer().unwrap();
+        writer.note_segment_start(SegmentSeq::new(7), MediaTime(12345));
+        assert_eq!(
+            trunk.segment_start_time(SegmentSeq::new(7)),
+            Some(MediaTime(12345))
+        );
+    }
+
+    #[test]
+    fn segment_start_time_unknown_seq_is_none() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4)));
+        let writer = trunk.segment_writer().unwrap();
+        writer.note_segment_start(SegmentSeq::new(7), MediaTime(12345));
+        assert_eq!(trunk.segment_start_time(SegmentSeq::new(8)), None);
+    }
+
+    #[test]
+    fn segment_start_time_evicted_returns_none() {
+        // event_capacity == 2 => segment_starts capacity == 2.
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(2), nz(4)));
+        let writer = trunk.segment_writer().unwrap();
+        writer.note_segment_start(SegmentSeq::new(1), MediaTime(100));
+        writer.note_segment_start(SegmentSeq::new(2), MediaTime(200));
+        writer.note_segment_start(SegmentSeq::new(3), MediaTime(300));
+        // seq 1 evicted from the bounded table.
+        assert_eq!(trunk.segment_start_time(SegmentSeq::new(1)), None);
+        assert_eq!(
+            trunk.segment_start_time(SegmentSeq::new(2)),
+            Some(MediaTime(200))
+        );
+        assert_eq!(
+            trunk.segment_start_time(SegmentSeq::new(3)),
+            Some(MediaTime(300))
+        );
+    }
+
+    #[test]
+    fn segment_start_time_two_segments_distinct() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4)));
+        let writer = trunk.segment_writer().unwrap();
+        writer.note_segment_start(SegmentSeq::new(1), MediaTime(1000));
+        writer.note_segment_start(SegmentSeq::new(2), MediaTime(2000));
+        assert_eq!(
+            trunk.segment_start_time(SegmentSeq::new(1)),
+            Some(MediaTime(1000))
+        );
+        assert_eq!(
+            trunk.segment_start_time(SegmentSeq::new(2)),
+            Some(MediaTime(2000))
         );
     }
 }
