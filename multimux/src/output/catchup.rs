@@ -1215,8 +1215,7 @@ mod tests {
             eprintln!("SKIP catch-up validator oracle: {why}; no-op result, not coverage.");
             return;
         }
-        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../hls-runtime/tests/fixtures/cmaf-fmp4");
+        let fixtures = test_fixtures::path("hls/cmaf-fmp4");
         let read = |name: &str| std::fs::read(fixtures.join(name)).expect("fixture");
         let init_a = read("init.mp4");
         // A different init for the second run: the same, plus a trailing `free`

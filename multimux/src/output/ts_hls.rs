@@ -228,7 +228,7 @@ mod tests {
     /// `CODECS` can only come from the track specs the TS demux recovered —
     /// the same sync `report_driver_progress` does. Real TS fixture; oracle:
     /// `MP4Box -info` on the same capture's fMP4 remux reads
-    /// `avc1.4D400D` / `mp4a.40.2` (`hls-runtime/tests/fixtures/cmaf-fmp4`).
+    /// `avc1.4D400D` / `mp4a.40.2` (`fixtures/hls/cmaf-fmp4`).
     #[tokio::test]
     async fn master_playlist_carries_codecs_from_the_ts_track_specs() {
         let ts = std::fs::read(concat!(

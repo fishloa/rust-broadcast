@@ -60,7 +60,7 @@ loop {
     while let Some(action) = client.poll() {
         if let Action::FetchResource { id, url, .. } = action {
             let file = url.rsplit('/').next().unwrap();
-            let bytes = std::fs::read(format!("tests/fixtures/cmaf-fmp4/{file}")).unwrap();
+            let bytes = test_fixtures::read(&format!("hls/cmaf-fmp4/{file}"));
             client.on_resource(id, &bytes).unwrap();
         }
     }

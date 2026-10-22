@@ -7,10 +7,7 @@ use transmux::pipeline::{build_init_segment, build_media_segment};
 use transmux::ts_demux::TsDemux;
 
 fn demux_media() -> transmux::media::Media {
-    let ts = std::fs::read(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts"),
-    )
-    .expect("fixture");
+    let ts = test_fixtures::read("ts/h264_aac.ts");
     let mut demux = TsDemux::new();
     demux.unpackage(&ts[..]).expect("demux")
 }

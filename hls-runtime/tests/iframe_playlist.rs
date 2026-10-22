@@ -40,13 +40,13 @@ fn origin_fmp4() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
         .instance(7)
         .build()
         .expect("origin");
-    let init = std::fs::read("tests/fixtures/cmaf-fmp4/init.mp4").expect("init");
+    let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
     origin.set_init(Bytes::from(init));
     (trunk, origin, writer)
 }
 
 fn fixture_bytes(name: &str) -> Vec<u8> {
-    std::fs::read(format!("tests/fixtures/cmaf-fmp4/{name}")).expect("fixture")
+    test_fixtures::read(&format!("hls/cmaf-fmp4/{name}"))
 }
 
 fn patient() -> (Timestamp, AwaitPolicy) {

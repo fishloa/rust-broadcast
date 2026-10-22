@@ -269,11 +269,10 @@ fn iframe_pdt_equals_media_pdt() {
         .program_date_time_arrival(clock)
         .build()
         .expect("origin");
-    let init = std::fs::read("tests/fixtures/cmaf-fmp4/init.mp4").expect("init");
+    let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
     origin.set_init(Bytes::from(init));
     for i in 0..3u32 {
-        let bytes =
-            std::fs::read(format!("tests/fixtures/cmaf-fmp4/index{}.m4s", i)).expect("fixture");
+        let bytes = test_fixtures::read(&format!("hls/cmaf-fmp4/index{}.m4s", i));
         writer
             .publish_segment(SegmentEntry::new(
                 Bytes::from(bytes),
