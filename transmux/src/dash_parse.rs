@@ -634,49 +634,347 @@ impl SegmentTemplate {
         time: Option<u64>,
         bandwidth: Option<u64>,
     ) -> String {
+        let (tokens, _) = tokenize_template(template);
         let mut out = String::with_capacity(template.len());
-        let mut rest = template;
-        while let Some(dollar) = rest.find('$') {
-            out.push_str(&rest[..dollar]);
-            let tail = &rest[dollar + 1..];
-            if let Some(after_escape) = tail.strip_prefix('$') {
-                out.push('$');
-                rest = after_escape;
-                continue;
-            }
-            match tail.find('$') {
-                Some(end) => {
-                    let ident = &tail[..end];
-                    let (name, width) = match ident.split_once('%') {
-                        Some((n, fmt)) => (
-                            n,
-                            fmt.strip_suffix('d').and_then(|w| w.parse::<usize>().ok()),
-                        ),
-                        None => (ident, None),
-                    };
-                    match name {
-                        "RepresentationID" => out.push_str(representation_id),
-                        "Number" => push_numeric(&mut out, number, width, ident),
-                        "Time" => push_numeric(&mut out, time, width, ident),
-                        "Bandwidth" => push_numeric(&mut out, bandwidth, width, ident),
-                        _ => {
-                            out.push('$');
-                            out.push_str(ident);
-                            out.push('$');
-                        }
-                    }
-                    rest = &tail[end + 1..];
-                }
-                None => {
-                    // Unterminated identifier: emit the '$' literally and keep
-                    // scanning the remainder as plain text.
-                    out.push('$');
-                    rest = tail;
-                }
+        for token in tokens {
+            match token {
+                TemplateToken::Literal(s) => out.push_str(&s),
+                TemplateToken::Escape => out.push('$'),
+                TemplateToken::Identifier { kind, width, raw } => match kind {
+                    TemplateIdentifier::RepresentationId => out.push_str(representation_id),
+                    TemplateIdentifier::Number => push_numeric(&mut out, number, width, &raw),
+                    TemplateIdentifier::Time => push_numeric(&mut out, time, width, &raw),
+                    TemplateIdentifier::Bandwidth => push_numeric(&mut out, bandwidth, width, &raw),
+                },
             }
         }
-        out.push_str(rest);
         out
+    }
+
+    /// Match a resolved segment URL `candidate` against `template`, extracting
+    /// the `$RepresentationID$`/`$Number$`/`$Time$`/`$Bandwidth$` values that
+    /// would have produced it (the exact inverse of [`Self::resolve`]).
+    ///
+    /// `known_representation_ids` supplies the set of Representation ids that
+    /// `$RepresentationID$` may take; the matcher tries them longest-first and
+    /// requires a unique full match of the whole `candidate`.
+    ///
+    /// Returns `None` for any template that is not a well-formed template (an
+    /// unescaped `$` that does not close a valid identifier) or that does not
+    /// match `candidate` uniquely.
+    pub fn match_url(
+        template: &str,
+        candidate: &str,
+        known_representation_ids: &[&str],
+    ) -> Option<TemplateMatch> {
+        let (tokens, valid) = tokenize_template(template);
+        if !valid {
+            return None;
+        }
+        // Deduplicate and prefer longer ids first (longest-first search order).
+        let mut ids: Vec<&str> = known_representation_ids.to_vec();
+        ids.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        ids.dedup();
+
+        let initial = TemplateMatch {
+            representation_id: String::new(),
+            number: None,
+            time: None,
+            bandwidth: None,
+        };
+
+        let mut solutions: Vec<TemplateMatch> = Vec::new();
+        match_template_tokens(&tokens, &ids, candidate, 0, 0, initial, &mut solutions);
+        if solutions.len() == 1 {
+            solutions.pop()
+        } else {
+            None
+        }
+    }
+}
+
+/// Result of [`SegmentTemplate::match_url`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TemplateMatch {
+    /// The matched `$RepresentationID$` value (empty if the template carried
+    /// none).
+    pub representation_id: String,
+    /// The matched `$Number$` value, if present.
+    pub number: Option<u64>,
+    /// The matched `$Time$` value, if present.
+    pub time: Option<u64>,
+    /// The matched `$Bandwidth$` value, if present.
+    pub bandwidth: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemplateIdentifier {
+    RepresentationId,
+    Number,
+    Time,
+    Bandwidth,
+}
+
+#[derive(Debug, Clone)]
+enum TemplateToken {
+    Literal(String),
+    Escape,
+    Identifier {
+        kind: TemplateIdentifier,
+        width: Option<usize>,
+        raw: String,
+    },
+}
+
+fn tokenize_template(template: &str) -> (Vec<TemplateToken>, bool) {
+    let mut tokens: Vec<TemplateToken> = Vec::new();
+    let mut rest = template;
+    let mut valid = true;
+    while let Some(dollar) = rest.find('$') {
+        if dollar > 0 {
+            tokens.push(TemplateToken::Literal(rest[..dollar].to_string()));
+        }
+        let tail = &rest[dollar + 1..];
+        if let Some(after_escape) = tail.strip_prefix('$') {
+            tokens.push(TemplateToken::Escape);
+            rest = after_escape;
+            continue;
+        }
+        match tail.find('$') {
+            Some(end) => {
+                let ident = &tail[..end];
+                let (name, width) = match ident.split_once('%') {
+                    Some((n, fmt)) => (
+                        n,
+                        fmt.strip_suffix('d').and_then(|w| w.parse::<usize>().ok()),
+                    ),
+                    None => (ident, None),
+                };
+                match name {
+                    "RepresentationID" => tokens.push(TemplateToken::Identifier {
+                        kind: TemplateIdentifier::RepresentationId,
+                        width,
+                        raw: ident.to_string(),
+                    }),
+                    "Number" => tokens.push(TemplateToken::Identifier {
+                        kind: TemplateIdentifier::Number,
+                        width,
+                        raw: ident.to_string(),
+                    }),
+                    "Time" => tokens.push(TemplateToken::Identifier {
+                        kind: TemplateIdentifier::Time,
+                        width,
+                        raw: ident.to_string(),
+                    }),
+                    "Bandwidth" => tokens.push(TemplateToken::Identifier {
+                        kind: TemplateIdentifier::Bandwidth,
+                        width,
+                        raw: ident.to_string(),
+                    }),
+                    _ => tokens.push(TemplateToken::Literal(format!("${}$", ident))),
+                }
+                rest = &tail[end + 1..];
+            }
+            None => {
+                tokens.push(TemplateToken::Literal("$".to_string()));
+                valid = false;
+                rest = tail;
+            }
+        }
+    }
+    if !rest.is_empty() {
+        tokens.push(TemplateToken::Literal(rest.to_string()));
+    }
+    (tokens, valid)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn match_template_tokens(
+    tokens: &[TemplateToken],
+    ids: &[&str],
+    candidate: &str,
+    ti: usize,
+    pos: usize,
+    current: TemplateMatch,
+    solutions: &mut Vec<TemplateMatch>,
+) {
+    if solutions.len() >= 2 {
+        return;
+    }
+    if ti == tokens.len() {
+        if pos == candidate.len() {
+            solutions.push(current);
+        }
+        return;
+    }
+    match &tokens[ti] {
+        TemplateToken::Literal(s) => {
+            if candidate[pos..].starts_with(s.as_str()) {
+                match_template_tokens(
+                    tokens,
+                    ids,
+                    candidate,
+                    ti + 1,
+                    pos + s.len(),
+                    current,
+                    solutions,
+                );
+            }
+        }
+        TemplateToken::Escape => {
+            if candidate[pos..].starts_with('$') {
+                match_template_tokens(tokens, ids, candidate, ti + 1, pos + 1, current, solutions);
+            }
+        }
+        TemplateToken::Identifier {
+            kind,
+            width,
+            raw: _,
+        } => match kind {
+            TemplateIdentifier::RepresentationId => {
+                for id in ids {
+                    if candidate[pos..].starts_with(id)
+                        && (current.representation_id.is_empty()
+                            || current.representation_id == *id)
+                    {
+                        let mut next = current.clone();
+                        if next.representation_id.is_empty() {
+                            next.representation_id = (*id).to_string();
+                        }
+                        match_template_tokens(
+                            tokens,
+                            ids,
+                            candidate,
+                            ti + 1,
+                            pos + id.len(),
+                            next,
+                            solutions,
+                        );
+                        if solutions.len() >= 2 {
+                            return;
+                        }
+                    }
+                }
+            }
+            TemplateIdentifier::Number => {
+                try_numeric_token(
+                    tokens,
+                    ids,
+                    candidate,
+                    ti,
+                    pos,
+                    width,
+                    current,
+                    solutions,
+                    |tm, v| {
+                        if tm.number.is_none() || tm.number == Some(v) {
+                            let mut n = tm.clone();
+                            if n.number.is_none() {
+                                n.number = Some(v);
+                            }
+                            Some(n)
+                        } else {
+                            None
+                        }
+                    },
+                );
+            }
+            TemplateIdentifier::Time => {
+                try_numeric_token(
+                    tokens,
+                    ids,
+                    candidate,
+                    ti,
+                    pos,
+                    width,
+                    current,
+                    solutions,
+                    |tm, v| {
+                        if tm.time.is_none() || tm.time == Some(v) {
+                            let mut n = tm.clone();
+                            if n.time.is_none() {
+                                n.time = Some(v);
+                            }
+                            Some(n)
+                        } else {
+                            None
+                        }
+                    },
+                );
+            }
+            TemplateIdentifier::Bandwidth => {
+                try_numeric_token(
+                    tokens,
+                    ids,
+                    candidate,
+                    ti,
+                    pos,
+                    width,
+                    current,
+                    solutions,
+                    |tm, v| {
+                        if tm.bandwidth.is_none() || tm.bandwidth == Some(v) {
+                            let mut n = tm.clone();
+                            if n.bandwidth.is_none() {
+                                n.bandwidth = Some(v);
+                            }
+                            Some(n)
+                        } else {
+                            None
+                        }
+                    },
+                );
+            }
+        },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_numeric_token<F>(
+    tokens: &[TemplateToken],
+    ids: &[&str],
+    candidate: &str,
+    ti: usize,
+    pos: usize,
+    width: &Option<usize>,
+    current: TemplateMatch,
+    solutions: &mut Vec<TemplateMatch>,
+    apply: F,
+) where
+    F: Fn(&TemplateMatch, u64) -> Option<TemplateMatch>,
+{
+    let rest = &candidate[pos..];
+    let digit_end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    let max_len = digit_end;
+    let w = width.unwrap_or(1).clamp(1, MAX_FORMAT_WIDTH);
+    // width zero renders at least one digit; clamp already.
+    let min_len = w.min(max_len);
+    // ensure at least one digit
+    let min_len = min_len.max(1).min(max_len);
+    if max_len == 0 {
+        return;
+    }
+    // Try all possible lengths.
+    for l in (min_len..=max_len).rev() {
+        let sub = &candidate[pos..pos + l];
+        // parse u64
+        let val: u64 = match sub.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let rendered = format_width(val, width.unwrap_or(1));
+        if rendered != sub {
+            continue;
+        }
+        if let Some(next) = apply(&current, val) {
+            match_template_tokens(tokens, ids, candidate, ti + 1, pos + l, next, solutions);
+            if solutions.len() >= 2 {
+                return;
+            }
+        }
     }
 }
 
