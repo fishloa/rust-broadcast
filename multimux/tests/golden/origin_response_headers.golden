@@ -36,7 +36,7 @@
 /cam1/seg-1-1.m4s	200	access-control-expose-headers: content-length, content-range, date, etag
 /cam1/seg-1-1.m4s	200	cache-control: max-age=10
 /cam1/seg-1-1.m4s	200	content-length: 16
-/cam1/seg-1-1.m4s	200	content-type: video/mp4
+/cam1/seg-1-1.m4s	200	content-type: video/iso.segment
 /cam1/seg-1-1.m4s	200	vary: Origin
 /cam1/manifest.mpd	200
 /cam1/manifest.mpd	200	access-control-allow-headers: authorization, range, content-type

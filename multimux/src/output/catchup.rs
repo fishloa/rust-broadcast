@@ -68,8 +68,6 @@ use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
 
 const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
-const TS_SEGMENT_CONTENT_TYPE: &str = "video/mp2t";
-const FMP4_SEGMENT_CONTENT_TYPE: &str = "video/mp4";
 
 /// The catch-up/VOD-from-live [`Output`] — see the module docs.
 #[derive(Debug, Default)]
@@ -107,14 +105,6 @@ fn container_ext(container: Container) -> &'static str {
         Container::MpegTs => "ts",
         Container::Fmp4 => "m4s",
         _ => "m4s",
-    }
-}
-
-fn segment_content_type(ext: &str) -> &'static str {
-    if ext == "ts" {
-        TS_SEGMENT_CONTENT_TYPE
-    } else {
-        FMP4_SEGMENT_CONTENT_TYPE
     }
 }
 
@@ -377,9 +367,14 @@ async fn catchup_resource(
         })
         .await;
         return match read {
-            Ok(Ok(bytes)) => {
-                ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response()
-            }
+            Ok(Ok(bytes)) => (
+                [(
+                    header::CONTENT_TYPE,
+                    crate::origin::resource::resource_content_type(route.container(), &file),
+                )],
+                bytes,
+            )
+                .into_response(),
             Ok(Err(catchup::ReadArchivedError::Gone)) => {
                 // The period was evicted between the index read and the
                 // open (a race with retention) — not found, not an error
@@ -415,7 +410,17 @@ async fn catchup_resource(
         EgressResponse::Ready {
             body: HlsBody::Resource(bytes),
             ..
-        } => ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response(),
+        } => (
+            [(
+                header::CONTENT_TYPE,
+                crate::origin::resource::resource_content_type(
+                    route.container(),
+                    &format!("seg-{DEFAULT_TRACK_ID}-{seq}.{ext}"),
+                ),
+            )],
+            bytes,
+        )
+            .into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -441,9 +446,17 @@ async fn catchup_init(route: &RouteHandle, ext: &'static str, period: u32) -> Re
     })
     .await;
     match read {
-        Ok(Some(Ok(bytes))) if !bytes.is_empty() => {
-            ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response()
-        }
+        Ok(Some(Ok(bytes))) if !bytes.is_empty() => (
+            [(
+                header::CONTENT_TYPE,
+                crate::origin::resource::resource_content_type(
+                    route.container(),
+                    &format!("init-p{period}.mp4"),
+                ),
+            )],
+            bytes,
+        )
+            .into_response(),
         Ok(None | Some(Ok(_)) | Some(Err(catchup::ReadArchivedError::Gone))) => {
             StatusCode::NOT_FOUND.into_response()
         }
@@ -763,12 +776,22 @@ mod tests {
         let archived_resp =
             catchup_resource(State(route.clone()), Path("seg-2.m4s".to_string())).await;
         assert_eq!(archived_resp.status(), StatusCode::OK);
+        // Apple HLS authoring spec 10.4: an fMP4 `.m4s` segment is
+        // `video/iso.segment`, from the archive AND from the live window.
+        assert_eq!(
+            archived_resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "video/iso.segment"
+        );
         assert_eq!(body_bytes(archived_resp).await, vec![0x22u8; 24]);
 
         // Live-only segment: served through the SAME endpoint, resolved
         // via the live HlsOrigin.
         let live_resp = catchup_resource(State(route), Path("seg-4.m4s".to_string())).await;
         assert_eq!(live_resp.status(), StatusCode::OK);
+        assert_eq!(
+            live_resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "video/iso.segment"
+        );
         assert_eq!(body_bytes(live_resp).await, vec![0x44u8; 24]);
 
         cleanup(&tmp);

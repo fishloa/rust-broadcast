@@ -8,6 +8,7 @@
 
 ### Changed
 - LL-HLS media playlists now carry `HOLD-BACK` (3 x Target Duration, RFC 8216bis §4.4.3.8) in `#EXT-X-SERVER-CONTROL`; Apple's `mediastreamvalidator` rejects a low-latency playlist without it. Wire-visible: `media.m3u8` grows by `,HOLD-BACK=<3 x target>` (golden `origin_response_headers` content-length 248 -> 261). Remaining validator findings on the live origin are tracked in #1429.
+- HTTP origin resource responses now serve fragmented-MP4 segments and parts (`.m4s`) as `video/iso.segment` instead of `video/mp4` (Apple HLS authoring spec 10.4); init segments (`init-*.mp4`) stay `video/mp4` and MPEG-TS segments stay `video/mp2t`. Wire-visible: DASH clients fetching `.m4s` from the shared resource route also see the new type — DASH players use the MPD `@mimeType`, not the response header.
 
 ### Added
 - DASH-IF Live Media Ingest listener now streams a `Segment` request body as CMAF chunks (P3b): `Begin`/`Chunk`/`Finish` jobs over the pump, with per-object byte cap and total body timeout preserved; `IngestError::SegmentInProgress` (409) on concurrent same-representation segments.
