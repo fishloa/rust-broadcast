@@ -853,6 +853,7 @@ fn origin_iframe_variant_shape_validates_clean() {
         }],
         iframe_variants: vec![IFrameVariant {
             bandwidth: 150_000,
+            average_bandwidth: None,
             codecs: Some("avc1.64001f".into()),
             resolution: Some((1280, 720)),
             uri: "iframe.m3u8".into(),

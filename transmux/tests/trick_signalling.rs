@@ -79,6 +79,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
         }],
         iframe_variants: vec![IFrameVariant {
             bandwidth: 200_000,
+            average_bandwidth: None,
             codecs: Some("hvc1.1.6.L93.B0".into()),
             resolution: Some((320, 240)),
             uri: "iframe.m3u8".into(),
@@ -352,7 +353,8 @@ fn ir_trick_track_wired_to_signalling() {
     // Build an IFrameVariant from the trick track's config.
     let iframe_variant = IFrameVariant {
         bandwidth: 200_000, // arbitrary for this test
-        codecs: None,       // omit codecs; test only checks resolution
+        average_bandwidth: None,
+        codecs: None, // omit codecs; test only checks resolution
         resolution: Some((src_w, src_h)),
         uri: "iframe.m3u8".into(),
         extra_attrs: vec![],
