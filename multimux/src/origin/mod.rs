@@ -1548,7 +1548,8 @@ async fn serve_with_registry_impl(
                 // `with_dvr`-calling unit tests. `with_dvr` is a no-op when
                 // `route.dvr.enabled` is `false` (the default), so wiring it
                 // unconditionally is safe for every existing config.
-                .with_dvr(route.dvr.clone()),
+                .with_dvr(route.dvr.clone())
+                .with_program_date_time(config.program_date_time),
         );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs

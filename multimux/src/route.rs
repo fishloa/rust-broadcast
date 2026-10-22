@@ -437,12 +437,17 @@ impl ProgramServing {
         dvr_config: Option<crate::dvr::DvrConfig>,
         route_name: &str,
         media_sequence_offset: u64,
+        program_date_time: crate::config::ProgramDateTimeSource,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
             .window_segments(window_segments)
             .container(container)
             .media_sequence_offset(media_sequence_offset);
+        if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
+            builder = builder
+                .program_date_time_arrival(Arc::new(|| jiff::Timestamp::now().as_millisecond()));
+        }
         if container == Container::Fmp4 {
             builder = builder.low_latency(part_target_ms);
         }
@@ -822,6 +827,13 @@ pub struct RouteHandle {
     /// start above it, so a process restart does not reuse numbers the
     /// archive and any CDN already know for other media.
     archive_floor: u32,
+    /// Where this route's live HLS playlists get their
+    /// `#EXT-X-PROGRAM-DATE-TIME` values from (see
+    /// [`Self::with_program_date_time`]). Defaults to
+    /// [`crate::config::ProgramDateTimeSource::Off`] for a bare
+    /// [`Self::new`] (tests), so existing test behaviour is unchanged;
+    /// production routes set it from [`crate::config::Config::program_date_time`].
+    program_date_time: crate::config::ProgramDateTimeSource,
     /// Notifies waiters when a new program is published via
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
@@ -856,6 +868,7 @@ impl RouteHandle {
             name: DEFAULT_ROUTE_NAME.to_string(),
             dvr_config: None,
             archive_floor: 0,
+            program_date_time: crate::config::ProgramDateTimeSource::Off,
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
         }
@@ -906,6 +919,20 @@ impl RouteHandle {
     #[must_use]
     pub fn with_archive_floor(mut self, floor: u32) -> Self {
         self.archive_floor = floor;
+        self
+    }
+
+    /// Where this route's live HLS playlists get their
+    /// `#EXT-X-PROGRAM-DATE-TIME` values from (issue #1423 part B2b) — a
+    /// consuming builder, chained onto [`Self::new`] the same way as
+    /// [`Self::with_archive_floor`]. Defaults to
+    /// [`crate::config::ProgramDateTimeSource::Off`] (no arrival source)
+    /// when never called, so a bare [`Self::new`] (tests) keeps the
+    /// previous output. Production routes set it from
+    /// [`crate::config::Config::program_date_time`].
+    #[must_use]
+    pub fn with_program_date_time(mut self, source: crate::config::ProgramDateTimeSource) -> Self {
+        self.program_date_time = source;
         self
     }
 
@@ -1029,6 +1056,7 @@ impl RouteHandle {
             self.dvr_config.clone(),
             &self.name,
             media_sequence_offset,
+            self.program_date_time,
         ) {
             Ok(serving) => serving,
             Err(e) => {
