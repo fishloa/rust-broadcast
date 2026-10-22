@@ -194,7 +194,6 @@ fn ts_display_changed_carries_same_arc_as_first_sample_display() {
             return;
         }
     }
-    // If no following sample display, skip rather than fail vacuously? Require at least one.
     panic!("no DisplayChanged followed by a sample with display: {outputs:?}");
 }
 
