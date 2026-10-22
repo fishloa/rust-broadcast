@@ -7,6 +7,7 @@
 /cam1/master.m3u8	200	content-length: 84
 /cam1/master.m3u8	200	content-type: application/vnd.apple.mpegurl
 /cam1/master.m3u8	200	vary: accept-encoding
+/cam1/master.m3u8	200	vary: Origin
 /cam1/media.m3u8	200
 /cam1/media.m3u8	200	access-control-allow-headers: authorization, range, content-type
 /cam1/media.m3u8	200	access-control-allow-methods: GET, HEAD, OPTIONS
@@ -16,6 +17,7 @@
 /cam1/media.m3u8	200	content-length: 261
 /cam1/media.m3u8	200	content-type: application/vnd.apple.mpegurl
 /cam1/media.m3u8	200	vary: accept-encoding
+/cam1/media.m3u8	200	vary: Origin
 /cam1/init-1-{instance}-1.mp4	200
 /cam1/init-1-{instance}-1.mp4	200	accept-ranges: bytes
 /cam1/init-1-{instance}-1.mp4	200	access-control-allow-headers: authorization, range, content-type
@@ -45,6 +47,7 @@
 /cam1/manifest.mpd	200	content-length: 874
 /cam1/manifest.mpd	200	content-type: application/dash+xml
 /cam1/manifest.mpd	200	vary: accept-encoding
+/cam1/manifest.mpd	200	vary: Origin
 /metrics	200
 /metrics	200	content-type: text/plain; version=0.0.4
 /healthz	200
