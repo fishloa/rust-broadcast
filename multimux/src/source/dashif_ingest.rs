@@ -527,18 +527,19 @@ async fn dashif_handler(
         body_empty: false,
     };
     let early_kind = classify(&early_meta, grouping_early.as_ref()).ok();
-    let is_segment = matches!(
-        early_kind,
-        Some(crate::dashif_ingest::ObjectKind::Segment { .. })
-    );
+    let segment = match early_kind {
+        Some(kind @ crate::dashif_ingest::ObjectKind::Segment { .. }) => Some(kind),
+        _ => None,
+    };
 
-    if is_segment {
-        let kind = early_kind.unwrap();
+    if let Some(kind) = segment {
         let rep_id = match &kind {
             crate::dashif_ingest::ObjectKind::Segment {
                 representation_id, ..
             } => representation_id.clone(),
-            _ => unreachable!(),
+            // Unreachable by construction (matched above); a typed refusal
+            // rather than a panic if that ever changes.
+            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
 
         // Begin (wait for its Result).

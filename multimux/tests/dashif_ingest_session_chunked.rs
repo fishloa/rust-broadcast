@@ -290,3 +290,27 @@ fn begin_runs_the_same_checks_as_the_whole_object_path() {
         "{e:?}"
     );
 }
+
+/// A track is one ordered stream: a second `begin_segment` for the same
+/// representation while one is open is refused (409 on the wire); finishing or
+/// aborting the first frees it.
+#[test]
+fn a_second_open_segment_for_the_same_representation_is_refused() {
+    let f = presentation();
+    let mut s = live(&f);
+    let h1 = s.begin_segment("1", Some(1), None).unwrap();
+    let e = s.begin_segment("1", Some(2), None).unwrap_err();
+    assert!(
+        matches!(e, SessionError::Ingest(IngestError::SegmentInProgress)),
+        "{e:?}"
+    );
+    // A different representation is independent.
+    let h2 = s.begin_segment("2", Some(2), None).unwrap();
+    s.finish_segment(h2).unwrap();
+    // Finishing the first frees the representation.
+    s.finish_segment(h1).unwrap();
+    let h3 = s.begin_segment("1", Some(2), None).unwrap();
+    // Aborting frees it too.
+    s.abort_segment(h3);
+    s.begin_segment("1", Some(3), None).unwrap();
+}
