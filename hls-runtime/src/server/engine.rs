@@ -82,7 +82,7 @@ use transmux::TrackId;
 use broadcast_common::{Parse, Timestamp, Unpackage};
 use broadcast_hls::{
     ByteRange, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist,
-    MediaSegment, OpenSegment, PartSpec, RenditionReport, Variant, VideoRange,
+    MediaSegment, OpenSegment, PartSpec, Variant, VideoRange,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -304,17 +304,8 @@ pub enum HlsRequest {
         track_id: TrackId,
         /// The blocking-reload query parameters, if any.
         query: BlockingQuery,
-        /// The wire name of the sibling media playlist, which the I-frame
-        /// playlist reports in its `#EXT-X-RENDITION-REPORT` (the caller
-        /// owns the name: multimux's `Config::playlist_name`).
-        media_playlist_name: String,
     },
 }
-
-/// Fixed wire name of the I-frame playlist: the master playlist's
-/// `#EXT-X-I-FRAME-STREAM-INF` `URI` and the media playlist's
-/// `#EXT-X-RENDITION-REPORT` `URI` both reference it verbatim.
-pub const IFRAME_PLAYLIST_NAME: &str = "iframe.m3u8";
 
 /// [`ServedEgress::Body`] for [`HlsOrigin`]: the resolved body, typed by
 /// which [`HlsRequest`] produced it. A data-carrying ADT — see
@@ -1414,51 +1405,6 @@ impl HlsOrigin {
         master.to_m3u8().map_err(HlsMasterError::Render)
     }
 
-    /// The media playlist's `#EXT-X-RENDITION-REPORT` for the I-frame
-    /// playlist (RFC 8216bis §4.4.5.4 + App. A: reports for I-frames-only
-    /// renditions are a SHOULD). `None` when no I-frame playlist is served.
-    fn iframe_rendition_report(&self) -> Option<RenditionReport> {
-        if !self.iframe_playlist_available() {
-            return None;
-        }
-        let window = self.window_view();
-        let entries = self.iframe_entries(&window)?;
-        let (last, _) = entries.last()?;
-        // An I-frame playlist has no partial segments: no `LAST-PART`.
-        Some(RenditionReport {
-            uri: IFRAME_PLAYLIST_NAME.to_string(),
-            last_msn: self.public_msn(last.sequence_number),
-            last_part: None,
-            extra_attrs: Vec::new(),
-        })
-    }
-
-    /// The I-frame playlist's `#EXT-X-RENDITION-REPORT` for the media
-    /// playlist: its live edge, counting the open segment's parts exactly as
-    /// the media playlist renders them.
-    fn media_rendition_report(
-        &self,
-        track_id: TrackId,
-        media_playlist_name: &str,
-    ) -> RenditionReport {
-        let (seq, open_parts) = self.live_edge();
-        let last_part = if open_parts.is_empty() {
-            let closed = self.resident_part_specs(track_id, seq, ".m4s").len();
-            closed.checked_sub(1).map(|i| i as u64)
-        } else {
-            open_parts
-                .iter()
-                .map(|p| u64::from(p.part_index.value()))
-                .max()
-        };
-        RenditionReport {
-            uri: media_playlist_name.to_string(),
-            last_msn: self.public_msn(seq),
-            last_part,
-            extra_attrs: Vec::new(),
-        }
-    }
-
     fn iframe_playlist_available(&self) -> bool {
         if self.container != Container::Fmp4 {
             return false;
@@ -1966,16 +1912,13 @@ impl HlsOrigin {
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),
                 // RFC 8216bis §4.4.3.8: HOLD-BACK MUST be >= 3x the Target
-                // Duration (also required by Apple's validator in LL mode).
+                // Duration; Apple's validator also requires it in LL mode.
                 hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
                     .ok(),
                 preload_hint_part: next_part_hint,
                 ..Default::default()
             }
         });
-        // §4.4.5.4 + App. A: a Media Playlist reports every OTHER rendition,
-        // and SHOULD report I-frames-only ones (the I-frame playlist).
-        let rendition_reports: Vec<RenditionReport> = Vec::new();
         let playlist = MediaPlaylist {
             // No explicit floor: `broadcast_hls::MediaPlaylist::to_m3u8`
             // computes `EXT-X-VERSION` from the content actually emitted
@@ -1991,7 +1934,6 @@ impl HlsOrigin {
             endlist: false,
             extra_tags,
             low_latency,
-            rendition_reports,
             iframes_only: false,
             ..Default::default()
         };
@@ -2077,7 +2019,6 @@ impl HlsOrigin {
         &self,
         track_id: TrackId,
         query: BlockingQuery,
-        media_playlist_name: &str,
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<HlsBody> {
@@ -2106,7 +2047,7 @@ impl HlsOrigin {
                 return EgressResponse::pending(await_policy, now, now);
             }
         }
-        match self.render_iframe_playlist(track_id, media_playlist_name) {
+        match self.render_iframe_playlist(track_id) {
             Ok(playlist) => EgressResponse::Ready {
                 body: HlsBody::Playlist(playlist),
                 cache: CachePolicy::NoCache,
@@ -2116,11 +2057,7 @@ impl HlsOrigin {
     }
 
     /// Render the I-frame trick-play playlist for `track_id`.
-    fn render_iframe_playlist(
-        &self,
-        track_id: TrackId,
-        media_playlist_name: &str,
-    ) -> core::result::Result<String, String> {
+    fn render_iframe_playlist(&self, track_id: TrackId) -> core::result::Result<String, String> {
         self.drain();
         if self.container != Container::Fmp4 {
             return Err("not fmp4".to_string());
@@ -2171,11 +2108,15 @@ impl HlsOrigin {
             })
             .collect();
 
-        let low_latency: Option<LowLatencyConfig> = None;
+        let low_latency = if self.part_target_ms.is_some() {
+            Some(broadcast_hls::LowLatencyConfig {
+                can_block_reload: true,
+                ..Default::default()
+            })
+        } else {
+            None
+        };
 
-        // The I-frame playlist reports the media playlist (App. A).
-        let rendition_reports: Vec<RenditionReport> = Vec::new();
-        let _ = media_playlist_name;
         let playlist = MediaPlaylist {
             target_duration,
             media_sequence,
@@ -2185,7 +2126,6 @@ impl HlsOrigin {
             endlist: false,
             extra_tags: Vec::new(),
             low_latency,
-            rendition_reports,
             iframes_only: true,
             ..Default::default()
         };
@@ -2323,17 +2263,9 @@ impl ServedEgress for HlsOrigin {
             HlsRequest::Playlist { track_id, query } => {
                 self.resolve_playlist(track_id, query, now, await_policy)
             }
-            HlsRequest::IFramePlaylist {
-                track_id,
-                query,
-                media_playlist_name,
-            } => self.resolve_iframe_playlist(
-                track_id,
-                query,
-                &media_playlist_name,
-                now,
-                await_policy,
-            ),
+            HlsRequest::IFramePlaylist { track_id, query } => {
+                self.resolve_iframe_playlist(track_id, query, now, await_policy)
+            }
             HlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
         }
     }
@@ -2826,7 +2758,7 @@ mod tests {
         assert_eq!(
             body.lines().skip(4).collect::<Vec<_>>(),
             vec![
-                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5",
+                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12",
                 "#EXT-X-PART-INF:PART-TARGET=0.5",
                 "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
                 "#EXT-X-PART:DURATION=0.5,URI=\"part-1-7-1.0.m4s\",INDEPENDENT=YES",

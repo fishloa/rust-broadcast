@@ -47,7 +47,7 @@ pub const DEFAULT_PLAYLIST_NAME: &str = "media.m3u8";
 /// Fixed filename for the I-frame (trick-play) playlist served by
 /// [`LlHlsOutput`] (issue #1413 P3). Not configurable: the master playlist's
 /// `#EXT-X-I-FRAME-STREAM-INF` `URI` references this name verbatim.
-pub use hls_runtime::server::IFRAME_PLAYLIST_NAME;
+pub const IFRAME_PLAYLIST_NAME: &str = "iframe.m3u8";
 
 /// The LL-HLS [`Output`]: master/media playlists over a shared
 /// [`RouteHandle`]. Init/segment/part byte ranges are the origin's shared
@@ -223,7 +223,6 @@ pub(crate) async fn iframe_playlist(
     let request = HlsRequest::IFramePlaylist {
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
-        media_playlist_name: state.playlist_name.clone(),
     };
     let resp = http::resolve_blocking(
         &trunk,

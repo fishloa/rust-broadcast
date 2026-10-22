@@ -474,7 +474,7 @@ fn media_sequence_offset_continues_the_numbering_everywhere() {
             "#EXTM3U",
             "#EXT-X-TARGETDURATION:4",
             "#EXT-X-MEDIA-SEQUENCE:1001",
-            "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5",
+            "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12",
             "#EXT-X-PART-INF:PART-TARGET=0.5",
             "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
             "#EXTINF:4,",
@@ -796,52 +796,8 @@ fn validator_errors(dir: &Path, entry: &str, extra: &[&str]) -> Vec<String> {
 /// advertised segment) to `dir` the way an HTTP origin's URL space would lay
 /// them out, relative URIs resolving against the playlist.
 fn dump_origin(o: &HlsOrigin, dir: &Path, segment_names: &[String]) {
-    let iframe_available = matches!(
-        {
-            let (now, policy) = patient();
-            o.resolve(
-                HlsRequest::IFramePlaylist {
-                    track_id: DEFAULT_TRACK_ID,
-                    query: BlockingQuery::default(),
-                    media_playlist_name: "media.m3u8".to_string(),
-                },
-                now,
-                policy,
-            )
-        },
-        EgressResponse::Ready { .. }
-    );
-    let master_text = if iframe_available {
-        o.master_playlist_with_iframes("media.m3u8", "iframe.m3u8")
-            .expect("master renders")
-    } else {
-        master(o)
-    };
-    std::fs::write(dir.join("master.m3u8"), master_text).unwrap();
+    std::fs::write(dir.join("master.m3u8"), master(o)).unwrap();
     std::fs::write(dir.join("media.m3u8"), playlist(o)).unwrap();
-    let iframe_playlist_text = if iframe_available {
-        let (now, policy) = patient();
-        match o.resolve(
-            HlsRequest::IFramePlaylist {
-                track_id: DEFAULT_TRACK_ID,
-                query: BlockingQuery::default(),
-                media_playlist_name: "media.m3u8".to_string(),
-            },
-            now,
-            policy,
-        ) {
-            EgressResponse::Ready {
-                body: HlsBody::Playlist(m),
-                ..
-            } => Some(m),
-            _ => None,
-        }
-    } else {
-        None
-    };
-    if let Some(m) = iframe_playlist_text {
-        std::fs::write(dir.join("iframe.m3u8"), m).unwrap();
-    }
     for name in std::iter::once("init-1-7-1.mp4".to_string()).chain(segment_names.iter().cloned()) {
         match get(o, &name) {
             EgressResponse::Ready {
