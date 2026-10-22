@@ -68,17 +68,27 @@ pub(crate) const MP4_CONTENT_TYPE: &str = "video/mp4";
 /// `mediastreamvalidator`) rejects (audit run 7, W12).
 pub(crate) const TS_CONTENT_TYPE: &str = "video/mp2t";
 
+/// `Content-Type` for a fragmented-MP4 segment or part served with the `.m4s`
+/// extension (Apple HLS authoring spec 10.4: `video/iso.segment`).
+pub(crate) const ISO_SEGMENT_CONTENT_TYPE: &str = "video/iso.segment";
+
 /// The `Content-Type` a resource body must be served with, chosen from the
-/// route's container — fMP4/CMAF segments (`.m4s`) are `video/mp4`, whole
-/// MPEG-2 TS segments (`.ts`) are `video/mp2t` (audit run 7, W12).
+/// route's container AND the requested resource name (Apple HLS authoring
+/// spec 10.4): MPEG-2 TS segments (`.ts`) are `video/mp2t`; fragmented-MP4
+/// segments and parts (`.m4s`) are `video/iso.segment`; init segments
+/// (`init-*.mp4`) and any other fMP4 resource are `video/mp4`.
 ///
 /// `HlsBody::Resource` covers init segments too (`init-{track}.mp4`), but
 /// a `MpegTs` container serves no init resource at all, so a resource on an
 /// `MpegTs` route is a `.ts` segment in practice. Anything else falls back
 /// to `video/mp4` for forward compatibility with a future container.
-fn resource_content_type(container: hls_runtime::server::Container) -> &'static str {
+pub(crate) fn resource_content_type(
+    container: hls_runtime::server::Container,
+    name: &str,
+) -> &'static str {
     match container {
         hls_runtime::server::Container::MpegTs => TS_CONTENT_TYPE,
+        _ if name.ends_with(".m4s") => ISO_SEGMENT_CONTENT_TYPE,
         _ => MP4_CONTENT_TYPE,
     }
 }
@@ -181,7 +191,7 @@ async fn dynamic_file(
     .await;
     match http::into_response(resp, StatusCode::NOT_FOUND, |body| {
         let body = inject_segment_events(&trunk, &file, body);
-        resource_body_response(&headers, body, route.container())
+        resource_body_response(&headers, body, route.container(), &file)
     }) {
         // A resource that resolved NotFound might still be a whole-segment
         // filename the chunked-transfer path (issue #721) can serve while
@@ -202,10 +212,11 @@ fn resource_body_response(
     headers: &HeaderMap,
     body: hls_runtime::server::HlsBody,
     container: hls_runtime::server::Container,
+    name: &str,
 ) -> Response {
     match body {
         hls_runtime::server::HlsBody::Resource(bytes) => {
-            http::range_response(headers, bytes, resource_content_type(container))
+            http::range_response(headers, bytes, resource_content_type(container, name))
         }
         // A resource request never resolves to a rendered playlist body --
         // defensive, not reachable via `dynamic_file`'s own `HlsRequest::Resource`.
@@ -625,7 +636,7 @@ mod tests {
         )
         .await;
         assert_eq!(ok.status(), StatusCode::OK);
-        assert_eq!(content_type(&ok), "video/mp4");
+        assert_eq!(content_type(&ok), "video/iso.segment");
         assert_eq!(body_bytes(ok).await, vec![0x21; 8]);
 
         let missing = dynamic_file(
@@ -694,18 +705,18 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
-        // W12: an fMP4 part is served as `video/mp4` (the fMP4 container),
-        // not the TS type.
-        assert_eq!(content_type(&resp), "video/mp4");
+        // Apple HLS authoring spec 10.4: an fMP4 part (`.m4s`) is served as
+        // `video/iso.segment`.
+        assert_eq!(content_type(&resp), "video/iso.segment");
         assert_eq!(body_bytes(resp).await, vec![0x10; 4]);
     }
 
-    /// W12: the resource content type follows the **container**, not the
-    /// track type — an audio-only fMP4 part is still `video/mp4` (CMAF), not
-    /// anything video-specific. Exercises the part path on a route with no
-    /// video track at all.
+    /// Apple HLS authoring spec 10.4: the resource content type follows the
+    /// **extension**, not the track type — an audio-only fMP4 part (`.m4s`)
+    /// is still `video/iso.segment`, same as a video segment. Exercises the
+    /// part path on a route with no video track at all.
     #[tokio::test]
-    async fn audio_only_fmp4_part_is_video_mp4() {
+    async fn audio_only_fmp4_part_is_video_iso_segment() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
@@ -719,8 +730,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             content_type(&resp),
-            "video/mp4",
-            "an fMP4 part is video/mp4 regardless of the track's media type"
+            "video/iso.segment",
+            "an fMP4 part is video/iso.segment regardless of the track's media type"
         );
     }
 

@@ -68,8 +68,6 @@ use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
 
 const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
-const TS_SEGMENT_CONTENT_TYPE: &str = "video/mp2t";
-const FMP4_SEGMENT_CONTENT_TYPE: &str = "video/mp4";
 
 /// The catch-up/VOD-from-live [`Output`] — see the module docs.
 #[derive(Debug, Default)]
@@ -107,14 +105,6 @@ fn container_ext(container: Container) -> &'static str {
         Container::MpegTs => "ts",
         Container::Fmp4 => "m4s",
         _ => "m4s",
-    }
-}
-
-fn segment_content_type(ext: &str) -> &'static str {
-    if ext == "ts" {
-        TS_SEGMENT_CONTENT_TYPE
-    } else {
-        FMP4_SEGMENT_CONTENT_TYPE
     }
 }
 
@@ -377,9 +367,14 @@ async fn catchup_resource(
         })
         .await;
         return match read {
-            Ok(Ok(bytes)) => {
-                ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response()
-            }
+            Ok(Ok(bytes)) => (
+                [(
+                    header::CONTENT_TYPE,
+                    crate::origin::resource::resource_content_type(route.container(), &file),
+                )],
+                bytes,
+            )
+                .into_response(),
             Ok(Err(catchup::ReadArchivedError::Gone)) => {
                 // The period was evicted between the index read and the
                 // open (a race with retention) — not found, not an error
@@ -415,7 +410,17 @@ async fn catchup_resource(
         EgressResponse::Ready {
             body: HlsBody::Resource(bytes),
             ..
-        } => ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response(),
+        } => (
+            [(
+                header::CONTENT_TYPE,
+                crate::origin::resource::resource_content_type(
+                    route.container(),
+                    &format!("seg-{DEFAULT_TRACK_ID}-{seq}.{ext}"),
+                ),
+            )],
+            bytes,
+        )
+            .into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -441,9 +446,17 @@ async fn catchup_init(route: &RouteHandle, ext: &'static str, period: u32) -> Re
     })
     .await;
     match read {
-        Ok(Some(Ok(bytes))) if !bytes.is_empty() => {
-            ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response()
-        }
+        Ok(Some(Ok(bytes))) if !bytes.is_empty() => (
+            [(
+                header::CONTENT_TYPE,
+                crate::origin::resource::resource_content_type(
+                    route.container(),
+                    &format!("init-p{period}.mp4"),
+                ),
+            )],
+            bytes,
+        )
+            .into_response(),
         Ok(None | Some(Ok(_)) | Some(Err(catchup::ReadArchivedError::Gone))) => {
             StatusCode::NOT_FOUND.into_response()
         }
