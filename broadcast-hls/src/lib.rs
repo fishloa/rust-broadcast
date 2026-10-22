@@ -704,6 +704,11 @@ pub struct MediaPlaylist {
     /// `#EXT-X-DISCONTINUITY-SEQUENCE:<n>` when `n > 0`; omitted when `0`
     /// (which is the implicit default per the spec).
     pub discontinuity_sequence: u64,
+    /// If `true`, force emission of `#EXT-X-DISCONTINUITY-SEQUENCE:<n>`
+    /// even when `discontinuity_sequence == 0` (Apple authoring 8.17).
+    /// Set `true` on parse whenever the tag is present, so a parsed
+    /// `#EXT-X-DISCONTINUITY-SEQUENCE:0` round-trips byte-stably.
+    pub always_emit_discontinuity_sequence: bool,
     /// Ordered list of segments.
     pub segments: Vec<MediaSegment>,
     /// The in-progress (open) segment, if any — rendered as trailing
@@ -1401,7 +1406,7 @@ impl MediaPlaylist {
         }
         s.push_str(&format!("#EXT-X-TARGETDURATION:{}\n", self.target_duration));
         s.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{}\n", self.media_sequence));
-        if self.discontinuity_sequence > 0 {
+        if self.discontinuity_sequence > 0 || self.always_emit_discontinuity_sequence {
             s.push_str(&format!(
                 "#EXT-X-DISCONTINUITY-SEQUENCE:{}\n",
                 self.discontinuity_sequence
@@ -1701,6 +1706,7 @@ impl MediaPlaylist {
         let mut target_duration: Option<u32> = None;
         let mut media_sequence: u64 = 0;
         let mut discontinuity_sequence: u64 = 0;
+        let mut saw_discontinuity_sequence = false;
         let mut iframes_only = false;
         let mut endlist = false;
         let mut pending_title: Option<String> = None;
@@ -1779,6 +1785,7 @@ impl MediaPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-DISCONTINUITY-SEQUENCE:") {
                 discontinuity_sequence =
                     parse_decimal_int(rest, line_no, line, "EXT-X-DISCONTINUITY-SEQUENCE")?;
+                saw_discontinuity_sequence = true;
             } else if line == "#EXT-X-I-FRAMES-ONLY" {
                 iframes_only = true;
             } else if line == "#EXT-X-INDEPENDENT-SEGMENTS" {
@@ -2099,6 +2106,7 @@ impl MediaPlaylist {
             target_duration,
             media_sequence,
             discontinuity_sequence,
+            always_emit_discontinuity_sequence: saw_discontinuity_sequence,
             segments,
             open_segment,
             endlist,

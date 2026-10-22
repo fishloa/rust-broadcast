@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `MediaPlaylist::always_emit_discontinuity_sequence: bool` (default `false`). Serializer emits `#EXT-X-DISCONTINUITY-SEQUENCE:<n>` when `discontinuity_sequence > 0 || always_emit_discontinuity_sequence`; parse sets it `true` when the tag is present, so `#EXT-X-DISCONTINUITY-SEQUENCE:0` round-trips byte-stably (Apple authoring 8.17).
 - `MediaSegment::program_date_time: Option<ProgramDateTime>` and `OpenSegment::program_date_time: Option<ProgramDateTime>` for `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.6). `ProgramDateTime` is a `Copy` newtype over a millisecond-precision UTC `jiff::Timestamp` with `parse(&str)` (ISO 8601 / RFC 3339, offsets and zone-less-as-UTC) and canonical render `YYYY-MM-DDThh:mm:ss.SSSZ`. The tag is no longer retained in `pre_tags`.
 
 - `Variant::frame_rate: Option<FrameRate>` for the `FRAME-RATE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2; Apple HLS Authoring Specification item 9.15). `FrameRate` is a small `Copy` newtype over millihertz with `from_millihertz(u32)`/`millihertz()`; it parses as `decimal-floating-point` (rounded half-up to three decimals) and renders as `<int>.<3 digits>` after `RESOLUTION`. An absent attribute renders nothing and parses as `None`. It is no longer retained in `extra_attrs`.
