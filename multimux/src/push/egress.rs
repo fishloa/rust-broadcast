@@ -220,7 +220,7 @@ impl<T: PushTransport> PushTransportEgress<T> {
 
 /// Whether `config` is a video codec (the track whose sync samples gate the
 /// first send).
-fn is_video(config: &CodecConfig) -> bool {
+pub(crate) fn is_video(config: &CodecConfig) -> bool {
     matches!(
         config,
         CodecConfig::Avc { .. }

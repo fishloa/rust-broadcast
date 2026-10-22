@@ -361,6 +361,17 @@ pub struct ProgramSegmenter {
     /// [`Self::queue_segment`] once that segment closes, so the following
     /// segment is anchored to the first post-jump sample.
     pending_anchor: Option<MediaAnchor>,
+    /// Start-gate (Apple authoring 7.4 MUST: segments start on a sync/IDR
+    /// picture, issue #1425): for a program whose track set contains a video
+    /// track, drop every timed sample until the first sync sample of a video
+    /// track has been seen. `true` once opened.
+    pub(crate) start_gate_open: bool,
+    /// Number of timed samples dropped by the start-gate so far.
+    pub(crate) start_gate_dropped: u64,
+    /// Of those, how many were on a video track.
+    pub(crate) start_gate_video_dropped: u64,
+    /// Whether the one-shot `tracing::info!` on gate open has fired.
+    pub(crate) start_gate_opened_logged: bool,
 }
 
 /// Maps this segmenter's internal per-segment timeline
@@ -385,6 +396,12 @@ struct MediaAnchor {
     last_pts: i64,
     last_timescale: u32,
 }
+
+/// Start-gate safety valve (issue #1425): the gate drops leading video samples
+/// until the first sync sample; if a video track flags no sync sample at all
+/// within this many video samples (about 30 s at 60 fps) the gate opens
+/// anyway (with a warning) instead of dropping the program forever.
+const START_GATE_MAX_VIDEO_DROPPED: u64 = 1800;
 
 /// A source-clock jump larger than this between consecutive samples is
 /// treated as a discontinuity and re-anchors the media mapping rather than
@@ -531,6 +548,10 @@ impl ProgramSegmenter {
             pending_since: None,
             anchor: None,
             pending_anchor: None,
+            start_gate_open: false,
+            start_gate_dropped: 0,
+            start_gate_video_dropped: 0,
+            start_gate_opened_logged: false,
         })
     }
 
@@ -676,6 +697,58 @@ impl ProgramSegmenter {
 
         while let Some(item) = self.cursor.poll() {
             if let SampleCursorItem::Timed { track_id, sample } = item {
+                // Start-gate (Apple authoring 7.4 MUST: segments start on a
+                // sync/IDR picture, issue #1425): for a program whose track set
+                // contains a video track, drop every timed sample until the
+                // first sync sample of a video track has been seen. Runs
+                // BEFORE the media-anchor block so dropped samples never pin
+                // timeline 0.
+                let has_video_track = trunk
+                    .tracks()
+                    .iter()
+                    .any(|t| crate::push::egress::is_video(&t.config));
+                if has_video_track && !self.start_gate_open {
+                    let is_video_sample = trunk
+                        .tracks()
+                        .iter()
+                        .find(|t| t.track_id == track_id)
+                        .map(|t| crate::push::egress::is_video(&t.config))
+                        .unwrap_or(false);
+                    // Safety valve: a video track that NEVER flags a sync
+                    // sample (a broken or non-keyframe-signalling source)
+                    // must not be dropped forever — after
+                    // `START_GATE_MAX_VIDEO_DROPPED` video samples (about 30 s
+                    // at 60 fps) open the gate anyway, loudly, and let the
+                    // segmenter's own cut rules apply as they did before the
+                    // gate existed.
+                    let valve = is_video_sample
+                        && self.start_gate_video_dropped >= START_GATE_MAX_VIDEO_DROPPED;
+                    if valve {
+                        tracing::warn!(
+                            program = program.0,
+                            dropped = self.start_gate_dropped,
+                            "start gate: no video sync sample after {} video samples; \
+                             opening the gate on a non-sync sample",
+                            START_GATE_MAX_VIDEO_DROPPED
+                        );
+                    } else if !(is_video_sample && sample.flags.is_sync) {
+                        self.start_gate_dropped += 1;
+                        if is_video_sample {
+                            self.start_gate_video_dropped += 1;
+                        }
+                        continue;
+                    }
+                    self.start_gate_open = true;
+                    if !self.start_gate_opened_logged {
+                        tracing::info!(
+                            program = program.0,
+                            dropped = self.start_gate_dropped,
+                            video_dropped = self.start_gate_video_dropped,
+                            "start gate opened on first video sync sample"
+                        );
+                        self.start_gate_opened_logged = true;
+                    }
+                }
                 // Keep the internal-timeline -> source-90kHz mapping anchored
                 // (issue #1083, E): anchor on the first timed sample, and
                 // re-anchor on a genuine source-clock discontinuity so a jump
@@ -860,6 +933,13 @@ impl ProgramSegmenter {
                                 route_handle.set_init(program, init);
                             }
                             self.seg = AnySegmenter::Fmp4(seg);
+                            // Re-arm the start-gate for the rebuilt track set
+                            // (issue #1425): a fresh segmenter must not emit a
+                            // segment until the first video sync sample again.
+                            self.start_gate_open = false;
+                            self.start_gate_dropped = 0;
+                            self.start_gate_video_dropped = 0;
+                            self.start_gate_opened_logged = false;
                             tracing::info!(
                                 "fMP4 segmenter rebuilt with updated track set for \
                                  mid-stream addition (resuming seq={next_seq} seg={current_seg})"
@@ -901,6 +981,12 @@ impl ProgramSegmenter {
                                     old.take_ready().into_iter().map(Into::into).collect();
                                 self.publish_in_stream_order(Vec::new(), segments);
                             }
+                            // Re-arm the start-gate for the rebuilt track set
+                            // (issue #1425).
+                            self.start_gate_open = false;
+                            self.start_gate_dropped = 0;
+                            self.start_gate_video_dropped = 0;
+                            self.start_gate_opened_logged = false;
                             tracing::info!(
                                 "TS segmenter rebuilt with updated track set for \
                                  mid-stream addition"
@@ -2627,6 +2713,10 @@ mod tests {
             pending_since: None,
             anchor: None,
             pending_anchor: None,
+            start_gate_open: false,
+            start_gate_dropped: 0,
+            start_gate_video_dropped: 0,
+            start_gate_opened_logged: false,
         }
     }
 
@@ -3278,5 +3368,159 @@ mod tests {
             "segment 2's opening part must not land in the Trunk ahead of the \
              still-stuck segment 1's own close"
         );
+    }
+
+    #[test]
+    fn start_gate_drops_leading_non_sync_video() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        for i in 0..4u32 {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, i == 3));
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 3);
+        assert_eq!(segmenter.start_gate_video_dropped, 3);
+        assert!(segmenter.start_gate_open);
+    }
+
+    /// The gate runs BEFORE the media-anchor block (issue #1425): the first
+    /// segment's reported start is the first KEPT (sync) sample's PTS on the
+    /// source 90 kHz clock, not a dropped leading sample's. Biting: with the
+    /// gate placed after the anchor block timeline 0 pins to sample 0 and the
+    /// start comes out `3 * FRAME_DUR` early.
+    #[test]
+    fn start_gate_anchor_pins_to_the_first_kept_sync_sample() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        // Source clock starts 10 s in; samples 0..3 are mid-GOP, 3 is the
+        // first sync, then a sync every 45 frames (1 s) so segment 1 closes
+        // when sample 48 arrives.
+        let offset = 10 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        let at = |i: u32, is_sync: bool| {
+            let mut s = sample_at(i, is_sync);
+            s.pts = Some(offset + i64::from(i) * i64::from(FRAME_DUR));
+            s.dts = s.pts;
+            s
+        };
+        for i in 0..100u32 {
+            let is_sync = i == 3 || (i > 3 && (i - 3).is_multiple_of(45));
+            writer.publish(TrackId::new(1), RetentionClass::Timed, at(i, is_sync));
+            // Pump as we go: the sample ring is bounded (64), so an unpumped
+            // burst of 100 would evict the leading samples before the gate
+            // ever saw them.
+            if i % 16 == 15 {
+                segmenter.pump(ProgramId(0), &trunk, &route);
+            }
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 3);
+        assert!(
+            trunk.last_closed_segment().is_some(),
+            "segment 1 must have closed"
+        );
+        let first_kept_pts_90k = u64::try_from(offset + 3 * i64::from(FRAME_DUR)).unwrap();
+        assert_eq!(
+            trunk.segment_start_time(SegmentSeq::new(1)),
+            Some(timed_metadata::MediaTime(first_kept_pts_90k)),
+            "first segment starts at the first kept sync sample's PTS"
+        );
+    }
+
+    /// Safety valve (issue #1425): a video track that never flags a sync
+    /// sample is not dropped forever — after `START_GATE_MAX_VIDEO_DROPPED`
+    /// video samples the gate opens (with a warning).
+    #[test]
+    fn start_gate_safety_valve_opens_without_any_sync_sample() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        let total = u32::try_from(START_GATE_MAX_VIDEO_DROPPED).unwrap() + 3;
+        for i in 0..total {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, false));
+            if i % 16 == 15 {
+                segmenter.pump(ProgramId(0), &trunk, &route);
+            }
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert!(segmenter.start_gate_open, "valve must open the gate");
+        assert_eq!(
+            segmenter.start_gate_video_dropped, START_GATE_MAX_VIDEO_DROPPED,
+            "exactly the valve's worth of video samples were dropped first"
+        );
+    }
+
+    #[test]
+    fn start_gate_no_drop_when_starts_on_sync() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        for i in 0..4u32 {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, true));
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 0);
+        assert!(segmenter.start_gate_open);
+    }
+
+    #[test]
+    fn start_gate_audio_only_drops_nothing() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![TrackSpec::new(
+            TrackId::new(2),
+            48000,
+            transmux::pipeline::CodecConfig::Vorbis {
+                codec_private: Vec::new(),
+                channels: 2,
+                sample_rate: 48000,
+            },
+        )]);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        for i in 0..4u32 {
+            writer.publish(TrackId::new(2), RetentionClass::Timed, sample_at(i, false));
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 0);
+    }
+
+    #[test]
+    fn start_gate_video_plus_audio_drops_audio_before_first_video_sync() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            data_track_spec(TrackId::new(2)),
+        ]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        for i in 0..3u32 {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, false));
+            let s = sample_at(i, false);
+            writer.publish(TrackId::new(2), RetentionClass::Timed, s);
+        }
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(3, true));
+        // audio after the sync is kept
+        writer.publish(TrackId::new(2), RetentionClass::Timed, sample_at(4, false));
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 6);
+        assert_eq!(segmenter.start_gate_video_dropped, 3);
+        assert!(segmenter.start_gate_open);
     }
 }

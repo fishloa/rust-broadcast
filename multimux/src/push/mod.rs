@@ -40,7 +40,7 @@
 //! (`src/origin/mod.rs`), and `crate::origin::admin` starts/stops those tasks
 //! as routes are added/removed at runtime.
 
-mod egress;
+pub(crate) mod egress;
 pub mod rtmp;
 pub mod rtsp;
 pub mod srt;
