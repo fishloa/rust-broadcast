@@ -1,19 +1,24 @@
 //! DASH-IF Live Media Ingest (Interface-1) HTTP listener (increment P2b-1).
 
-use std::sync::{Arc, Mutex};
+use std::convert::Infallible;
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use axum::Router;
 use axum::extract::State;
 use axum::http::{Method, Request, StatusCode};
 use axum::response::IntoResponse;
+use broadcast_common::{Demand, Stage, Timestamp};
 use bytes::Bytes;
-use media_plane::ingress::HandshakePolicy;
+use media_plane::ingress::{HandshakePolicy, IngestSession, SessionEvent};
 use media_plane::trunk::TrunkConfig;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::dashif_ingest::session::SessionError;
+use crate::dashif_ingest::{DashifIngestSession, IngestObject};
 use crate::dashif_ingest::{ManifestGrouping, RequestMeta, classify};
 use crate::error::MultimuxError;
 use crate::origin;
@@ -95,13 +100,102 @@ impl DashifIngestRoute {
     }
 
     fn take_listener(&self) -> std::io::Result<TcpListener> {
-        if let Some(l) = self.prebound.lock().unwrap().take() {
+        if let Some(l) = self.prebound.lock().take() {
             return Ok(l);
         }
         let std_listener = std::net::TcpListener::bind(&self.listen)?;
         std_listener.set_nonblocking(true)?;
         tokio::net::TcpListener::from_std(std_listener)
     }
+}
+
+/// Wraps [`DashifIngestSession`] so a per-request protocol error (a 400/412/…
+/// answer for ONE POST) is handed back to the HTTP handler instead of failing
+/// the `IngestDriver`: a driver treats any `Stage::feed` error as the end of
+/// the session, which would let one bad request from one sender poison the
+/// whole publishing point.
+struct TolerantSession {
+    inner: DashifIngestSession,
+    last_error: Option<SessionError>,
+}
+
+impl TolerantSession {
+    fn new() -> Self {
+        TolerantSession {
+            inner: DashifIngestSession::new(),
+            last_error: None,
+        }
+    }
+
+    /// The error of the most recent `feed`, if it failed (cleared by this call).
+    fn take_last_error(&mut self) -> Option<SessionError> {
+        self.last_error.take()
+    }
+}
+
+impl Stage for TolerantSession {
+    type In<'a> = IngestObject<'a>;
+    type Out = SessionEvent;
+    type Error = Infallible;
+
+    fn feed(&mut self, input: IngestObject<'_>, now: Timestamp) -> Result<(), Infallible> {
+        self.last_error = self.inner.feed(input, now).err();
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<SessionEvent> {
+        self.inner.poll()
+    }
+
+    fn finish(&mut self) -> Result<(), Infallible> {
+        // The inner `finish` is infallible in practice; a failure is not a
+        // per-request error and has no request to answer.
+        let _ = self.inner.finish();
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        self.inner.next_deadline()
+    }
+
+    fn on_deadline(&mut self, now: Timestamp) {
+        self.inner.on_deadline(now);
+    }
+
+    fn demand(&self) -> Demand {
+        self.inner.demand()
+    }
+}
+
+impl IngestSession for TolerantSession {
+    type Request = Infallible;
+}
+
+/// Why reading a request body stopped.
+enum ReadBodyError {
+    /// More than the cap.
+    TooLarge,
+    /// The client's body failed or was cut short.
+    Broken,
+}
+
+/// Collect `body` into one buffer, refusing more than `max` bytes — checked
+/// per frame, so an oversized chunked body is rejected without buffering it.
+async fn read_limited(body: axum::body::Body, max: usize) -> Result<Bytes, ReadBodyError> {
+    let mut body = std::pin::pin!(body);
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(frame) =
+        std::future::poll_fn(|cx| http_body::Body::poll_frame(body.as_mut(), cx)).await
+    {
+        let frame = frame.map_err(|_| ReadBodyError::Broken)?;
+        if let Ok(data) = frame.into_data() {
+            if buf.len().saturating_add(data.len()) > max {
+                return Err(ReadBodyError::TooLarge);
+            }
+            buf.extend_from_slice(&data);
+        }
+    }
+    Ok(Bytes::from(buf))
 }
 
 #[derive(Clone)]
@@ -130,15 +224,12 @@ pub async fn run_dashif_ingest(
     let grouping = Arc::new(Mutex::new(None::<ManifestGrouping>));
 
     let cancel = CancellationToken::new();
-    let pump_cancel = cancel.clone();
     let route_handle_pump = Arc::clone(route_handle);
     let grouping_pump = Arc::clone(&grouping);
-    let publishing_point_pump = route.publishing_point.clone();
-    let _ = publishing_point_pump;
 
     let pump_handle = tokio::spawn(async move {
         let mut driver = IngestDriver::new(
-            crate::dashif_ingest::DashifIngestSession::new(),
+            TolerantSession::new(),
             trunk_config,
             handshake,
             media_plane::DEFAULT_MAX_PROGRAMS,
@@ -146,30 +237,27 @@ pub async fn run_dashif_ingest(
         let mut progress = DriverProgress::new();
         let mut rx = rx;
         while let Some(job) = rx.recv().await {
-            let obj = crate::dashif_ingest::IngestObject {
+            let obj = IngestObject {
                 kind: job.kind,
                 bytes: &job.bytes,
             };
-            driver.feed(obj, broadcast_common::Timestamp::ZERO);
-            // Update shared grouping on successful manifest.
-            if let Some(g) = driver.session().grouping() {
-                *grouping_pump.lock().unwrap() = Some(g);
+            driver.feed(obj, Timestamp::ZERO);
+            // Publish the manifest grouping the handlers classify against.
+            if let Some(g) = driver.session().inner.grouping() {
+                *grouping_pump.lock() = Some(g);
             }
-            let result = if driver.health().is_running() {
-                Ok(())
-            } else {
-                match driver.health() {
-                    media_plane::ingress::HealthState::Failed(e) => Err(e.clone()),
-                    _ => Err(SessionError::Ingest(
-                        crate::dashif_ingest::IngestError::Internal,
-                    )),
-                }
+            let result = match driver.session_mut().take_last_error() {
+                Some(e) => Err(e),
+                None if driver.health().is_running() => Ok(()),
+                None => Err(SessionError::Ingest(
+                    crate::dashif_ingest::IngestError::Internal,
+                )),
             };
-            let _ = job.kind;
+            // Hand any events the object produced to the Trunk BEFORE the
+            // sender sees its 200: an acknowledged object is a published one.
             crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
             let _ = job.resp.send(result);
         }
-        let _ = pump_cancel;
     });
 
     let state = HandlerState {
@@ -233,6 +321,9 @@ async fn dashif_handler(
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
+    if content_length.is_some_and(|n| n > MAX_OBJECT_BYTES as u64) {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
     let chunked = content_length.is_none()
         && req
             .headers()
@@ -241,9 +332,10 @@ async fn dashif_handler(
             .map(|s| s.to_ascii_lowercase().contains("chunked"))
             .unwrap_or(false);
 
-    let body = match axum::body::to_bytes(req.into_body(), MAX_OBJECT_BYTES).await {
+    let body = match read_limited(req.into_body(), MAX_OBJECT_BYTES).await {
         Ok(b) => b,
-        Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        Err(ReadBodyError::TooLarge) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        Err(ReadBodyError::Broken) => return StatusCode::BAD_REQUEST.into_response(),
     };
     let body_empty = body.is_empty();
 
@@ -260,7 +352,7 @@ async fn dashif_handler(
         body_empty,
     };
 
-    let grouping = state.grouping.lock().unwrap().clone();
+    let grouping = state.grouping.lock().clone();
     let kind = match classify(&meta, grouping.as_ref()) {
         Ok(k) => k,
         Err(e) => return e.status().into_response(),

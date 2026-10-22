@@ -17,8 +17,6 @@ use transmux::validate::{Severity, validate_init_segment, validate_media_segment
 mod listener;
 use listener::bind_tcp;
 
-const SAMPLES_PER_SEGMENT: usize = 6;
-
 struct Presentation {
     mpd: String,
     reps: Vec<(String, Vec<u8>, Vec<Vec<u8>>)>,
@@ -37,16 +35,31 @@ fn presentation() -> Presentation {
     for (i, t) in media.tracks.iter().enumerate() {
         let init =
             build_init_segment(std::slice::from_ref(&t.spec), media.movie_timescale).expect("init");
+        // Cut at sync samples (video: three 1 s GOPs; audio: every sample is
+        // sync, so thirds). Every segment must be long enough for the
+        // segmenter (target 0.5 s) to close one on the next sync.
+        let n = t.samples.len();
+        let mut cuts: Vec<usize> = t
+            .samples
+            .iter()
+            .enumerate()
+            .filter(|(k, s)| *k > 0 && s.flags.is_sync)
+            .map(|(k, _)| k)
+            .collect();
+        if cuts.len() + 1 > 4 {
+            cuts = vec![n / 3, 2 * n / 3];
+        }
+        let mut bounds = vec![0];
+        bounds.extend(cuts);
+        bounds.push(n);
         let mut segs = Vec::new();
-        for s in 0..2 {
-            let chunk = &t.samples[s * SAMPLES_PER_SEGMENT..(s + 1) * SAMPLES_PER_SEGMENT];
-            let prefix = &t.samples[..s * SAMPLES_PER_SEGMENT];
-            let offset: u64 = prefix
+        for (s, w) in bounds.windows(2).enumerate() {
+            let chunk = &t.samples[w[0]..w[1]];
+            let offset: u64 = t.samples[..w[0]]
                 .iter()
                 .map(|x| u64::from(x.duration.unwrap_or(0)))
                 .sum();
-            let base = t.start_decode_time + offset;
-            let ftd = FragmentTrackData::new(t.spec.track_id, base, chunk);
+            let ftd = FragmentTrackData::new(t.spec.track_id, t.start_decode_time + offset, chunk);
             segs.push(build_media_segment(u32::try_from(s + 1).unwrap(), &[ftd]).expect("seg"));
         }
         reps.push(((i + 1).to_string(), init, segs));
@@ -58,6 +71,7 @@ fn config_with(
     bind: SocketAddr,
     ingest: SocketAddr,
     prebound: multimux::config::PreboundBinds,
+    publishing_point: &str,
 ) -> Config {
     Config {
         bind: bind.to_string(),
@@ -68,7 +82,7 @@ fn config_with(
             name: "cam".to_string(),
             input: InputSpec::DashifIngest {
                 listen: ingest.to_string(),
-                publishing_point: "/".to_string(),
+                publishing_point: publishing_point.to_string(),
             },
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
@@ -78,157 +92,306 @@ fn config_with(
     }
 }
 
-#[tokio::test]
-async fn dashif_ingest_e2e() {
-    let (bind_addr, bind_listener) = bind_tcp();
-    let (ingest_addr, ingest_listener) = bind_tcp();
-    let mut prebound = multimux::config::PreboundBinds::default();
-    prebound.with_tcp(ingest_addr.to_string(), ingest_listener);
-    let p = presentation();
-    let config = config_with(bind_addr, ingest_addr, prebound);
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        multimux::registry::SchemeRegistry::new(),
-    ));
+/// A running route: ingest endpoint + the LL-HLS origin it feeds.
+struct Rig {
+    ingest: String,
+    origin: String,
+    client: reqwest::Client,
+    server: tokio::task::JoinHandle<multimux::Result<()>>,
+}
 
-    let client = reqwest::Client::new();
-    let base = format!("http://{}", ingest_addr);
-
-    // (a) empty POST => 200
-    let resp = client.post(format!("{}/", base)).send().await.unwrap();
-    let st = resp.status();
-    let body = resp.text().await.unwrap();
-    println!("empty post status {} body {:?}", st, body);
-
-    let resp = client
-        .post(format!("{}/foo.mpd", base))
-        .body(p.mpd.clone())
-        .send()
-        .await
-        .unwrap();
-    let st = resp.status();
-    let body = resp.text().await.unwrap();
-    println!("mpd post status {} body {:?}", st, body);
-
-    // (b) POST MPD
-    let resp = client
-        .post(format!("{}/foo.mpd", base))
-        .body(p.mpd.clone())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200, "mpd");
-
-    for (id, init, segs) in &p.reps {
-        let r = client
-            .post(format!("{}/init-stream{}.m4s", base, id))
-            .body(init.clone())
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(r.status(), 200, "header {}", id);
-        for (i, seg) in segs.iter().enumerate() {
-            let r = client
-                .post(format!("{}/chunk-stream{}-{}.m4s", base, id, i + 1))
-                .body(seg.clone())
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200, "seg {} {}", id, i);
+impl Rig {
+    async fn start(publishing_point: &str) -> Rig {
+        let (bind_addr, bind_listener) = bind_tcp();
+        let (ingest_addr, ingest_listener) = bind_tcp();
+        let mut prebound = multimux::config::PreboundBinds::default();
+        prebound.with_tcp(ingest_addr.to_string(), ingest_listener);
+        let config = config_with(bind_addr, ingest_addr, prebound, publishing_point);
+        let server = tokio::spawn(serve_with_registry_on(
+            bind_listener,
+            config,
+            multimux::registry::SchemeRegistry::new(),
+        ));
+        Rig {
+            ingest: format!("http://{ingest_addr}"),
+            origin: format!("http://{bind_addr}"),
+            client: reqwest::Client::new(),
+            server,
         }
     }
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let media_base = format!("http://{}", bind_addr);
-    let r = client
-        .get(format!("{}/cam/media.m3u8", media_base))
+    async fn post(&self, path: &str, body: Vec<u8>) -> reqwest::StatusCode {
+        // The listener task may not be accepting yet: retry connection errors
+        // only, bounded, without sleeping.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match self
+                .client
+                .post(format!("{}{path}", self.ingest))
+                .body(body.clone())
+                .send()
+                .await
+            {
+                Ok(r) => return r.status(),
+                Err(e) if e.is_connect() && tokio::time::Instant::now() < deadline => {
+                    tokio::task::yield_now().await;
+                }
+                Err(e) => panic!("POST {path}: {e}"),
+            }
+        }
+    }
+
+    /// Run the whole presentation in the order §6.2.2 prescribes: the MPD, a
+    /// CMAF header for EACH track, then the segments (round-robin across
+    /// tracks, as parallel connections would deliver them). Returns every
+    /// status in order.
+    async fn push_all(&self, p: &Presentation) -> Vec<reqwest::StatusCode> {
+        let mut out = vec![self.post("/live.mpd", p.mpd.clone().into_bytes()).await];
+        for (id, init, _) in &p.reps {
+            out.push(
+                self.post(&format!("/init-stream{id}.m4s"), init.clone())
+                    .await,
+            );
+        }
+        let n = p.reps.iter().map(|(_, _, s)| s.len()).max().unwrap_or(0);
+        for i in 0..n {
+            for (id, _, segs) in &p.reps {
+                if let Some(seg) = segs.get(i) {
+                    out.push(
+                        self.post(&format!("/chunk-stream{id}-{}.m4s", i + 1), seg.clone())
+                            .await,
+                    );
+                }
+            }
+        }
+        out
+    }
+
+    async fn get_text(&self, path: &str) -> Option<(reqwest::StatusCode, String)> {
+        let r = self
+            .client
+            .get(format!("{}{path}", self.origin))
+            .send()
+            .await
+            .ok()?;
+        let st = r.status();
+        Some((st, r.text().await.ok()?))
+    }
+
+    /// Poll the media playlist until it lists at least one `#EXTINF` segment.
+    async fn playlist_with_segments(&self) -> String {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some((st, body)) = self.get_text("/cam/media.m3u8").await
+                && st.is_success()
+                && body.contains("#EXTINF")
+            {
+                return body;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no segment ever appeared in the media playlist"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+
+fn segment_uris(playlist: &str) -> Vec<String> {
+    playlist
+        .lines()
+        .filter(|l| !l.starts_with('#') && l.ends_with(".m4s"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[tokio::test]
+async fn ingested_presentation_is_served_as_valid_llhls() {
+    let rig = Rig::start("/").await;
+    let p = presentation();
+    let sts = rig.push_all(&p).await;
+    assert!(sts.iter().all(|s| s.as_u16() == 200), "{sts:?}");
+
+    let playlist = rig.playlist_with_segments().await;
+    let uris = segment_uris(&playlist);
+    assert!(!uris.is_empty(), "playlist:\n{playlist}");
+
+    // The advertised init and every advertised segment fetch and validate.
+    let map = playlist
+        .lines()
+        .find_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\""))
+        .and_then(|r| r.split('"').next())
+        .expect("EXT-X-MAP present")
+        .to_string();
+    let init = rig
+        .client
+        .get(format!("{}/cam/{map}", rig.origin))
         .send()
         .await
         .unwrap();
-    println!(
-        "playlist status {} body:\n{}",
-        r.status(),
-        r.text().await.unwrap()
+    assert_eq!(init.status(), 200);
+    let init: Bytes = init.bytes().await.unwrap();
+    let errs: Vec<_> = validate_init_segment(&init)
+        .into_iter()
+        .filter(|i| i.severity == Severity::Error)
+        .collect();
+    assert!(errs.is_empty(), "{errs:?}");
+    for uri in &uris {
+        let r = rig
+            .client
+            .get(format!("{}/cam/{uri}", rig.origin))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "{uri}");
+        let b: Bytes = r.bytes().await.unwrap();
+        let errs: Vec<_> = validate_media_segment(&b)
+            .into_iter()
+            .filter(|i| i.severity == Severity::Error)
+            .collect();
+        assert!(errs.is_empty(), "{uri}: {errs:?}");
+    }
+}
+
+#[tokio::test]
+async fn status_codes_follow_section_5_3() {
+    use multimux::dashif_ingest::IngestError;
+    let rig = Rig::start("/live").await;
+    let p = presentation();
+
+    // Empty body = probe (§6.2.1) at the publishing point itself.
+    assert_eq!(rig.post("/live/", Vec::new()).await.as_u16(), 200);
+    // Outside the publishing point: 404 (§5.3.5a).
+    assert_eq!(
+        rig.post("/other/x.mpd", p.mpd.clone().into_bytes())
+            .await
+            .as_u16(),
+        404
+    );
+    assert_eq!(rig.post("/", Vec::new()).await.as_u16(), 404);
+    // A media object before any manifest has no grouping to be placed by.
+    let no_manifest = IngestError::NoManifest.status().as_u16();
+    assert_eq!(
+        rig.post("/live/chunk-stream1-1.m4s", p.reps[0].2[0].clone())
+            .await
+            .as_u16(),
+        no_manifest
+    );
+    // Malformed MPD (not XML) => 400 (§5.3.5e).
+    assert_eq!(
+        rig.post("/live/x.mpd", b"not xml".to_vec()).await.as_u16(),
+        400
+    );
+    // Valid manifest, then a segment before its header => 412 (§5.3.5c).
+    assert_eq!(
+        rig.post("/live/x.mpd", p.mpd.clone().into_bytes())
+            .await
+            .as_u16(),
+        200
+    );
+    assert_eq!(
+        rig.post("/live/chunk-stream1-1.m4s", p.reps[0].2[0].clone())
+            .await
+            .as_u16(),
+        412
+    );
+    // A path that matches no template => 400.
+    assert_eq!(
+        rig.post("/live/nonsense.bin", vec![1, 2, 3]).await.as_u16(),
+        400
     );
 
-    // (c) GET playlist
-    let media_base = format!("http://{}", bind_addr);
-    let playlist_url = format!("{}/cam/media.m3u8", media_base);
-    let playlist = client
-        .get(&playlist_url)
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    println!("playlist:\n{}", playlist);
-
-    // validate init/segment
-    let init_url = format!("{}/cam/init-1.mp4", media_base);
-    let init_bytes: Bytes = client
-        .get(&init_url)
-        .send()
-        .await
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap();
-    let issues = validate_init_segment(&init_bytes);
-    let errs: Vec<_> = issues
-        .iter()
-        .filter(|i| i.severity == Severity::Error)
-        .collect();
-    assert!(errs.is_empty(), "{:?}", errs);
-
-    // find a part uri
-    let part_line = playlist.lines().find(|l| l.contains(".m4s")).unwrap();
-    let start = part_line.find("part-").unwrap();
-    let end = part_line[start..].find(".m4s").unwrap() + start + ".m4s".len();
-    let seg_uri = &part_line[start..end];
-    let seg_url = format!("{}/cam/{}", media_base, seg_uri);
-    let seg_bytes: Bytes = client
-        .get(&seg_url)
-        .send()
-        .await
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap();
-    let issues = validate_media_segment(&seg_bytes);
-    let errs: Vec<_> = issues
-        .iter()
-        .filter(|i| i.severity == Severity::Error)
-        .collect();
-    assert!(errs.is_empty(), "{:?}", errs);
-
-    // unknown path outside publishing point? publishing_point "/", so skip 404 test unless custom pp; not here
-
-    // GET => 405 + Allow
-    let resp = client
-        .get(format!("{}/init-stream1.m4s", base))
+    // GET => 405 + Allow; PUT behaves like POST.
+    let r = rig
+        .client
+        .get(format!("{}/live/x.mpd", rig.ingest))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 405);
-    assert_eq!(resp.headers().get("allow").unwrap(), "POST, PUT");
-
-    // PUT works like POST (probe)
-    let resp = client.put(format!("{}/", base)).send().await.unwrap();
-    assert_eq!(resp.status(), 200);
-
-    // body > MAX_OBJECT_BYTES => 413 (skip huge; unit not)
-
-    // (e) idempotent re-POST same segment => 200 and playlist no duplicate
-    let seg_bytes0 = p.reps[0].2[0].clone();
-    let r = client
-        .post(format!("{}/chunk-stream1-1.m4s", base))
-        .body(seg_bytes0)
+    assert_eq!(r.status(), 405);
+    assert_eq!(r.headers().get("allow").unwrap(), "POST, PUT");
+    let r = rig
+        .client
+        .put(format!("{}/live/", rig.ingest))
         .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
+}
 
-    server.abort();
+/// A rejected request must not poison the route: after a 400 and a 412 the
+/// normal flow still ingests and serves.
+#[tokio::test]
+async fn a_rejected_request_does_not_poison_the_route() {
+    let rig = Rig::start("/").await;
+    let p = presentation();
+    assert_eq!(
+        rig.post("/live.mpd", b"not xml".to_vec()).await.as_u16(),
+        400
+    );
+    assert_eq!(
+        rig.post("/live.mpd", p.mpd.clone().into_bytes())
+            .await
+            .as_u16(),
+        200
+    );
+    assert_eq!(
+        rig.post("/chunk-stream1-1.m4s", p.reps[0].2[0].clone())
+            .await
+            .as_u16(),
+        412
+    );
+    // Headers for every track first (§6.2.2), then the first TWO segments of
+    // each (a segment only closes when the next sync sample arrives).
+    for (id, init, _) in &p.reps {
+        assert_eq!(
+            rig.post(&format!("/init-stream{id}.m4s"), init.clone())
+                .await
+                .as_u16(),
+            200
+        );
+    }
+    for n in 0..2 {
+        for (id, _, segs) in &p.reps {
+            assert_eq!(
+                rig.post(&format!("/chunk-stream{id}-{}.m4s", n + 1), segs[n].clone())
+                    .await
+                    .as_u16(),
+                200
+            );
+        }
+    }
+    let playlist = rig.playlist_with_segments().await;
+    assert!(!segment_uris(&playlist).is_empty());
+}
+
+/// An identical re-POST (§5.3.2: resend after a dropped connection) is
+/// accepted and does not duplicate the segment.
+#[tokio::test]
+async fn idempotent_repost_does_not_duplicate_segments() {
+    let rig = Rig::start("/").await;
+    let p = presentation();
+    let sts = rig.push_all(&p).await;
+    assert!(sts.iter().all(|s| s.as_u16() == 200), "{sts:?}");
+    let before = segment_uris(&rig.playlist_with_segments().await);
+    let again = rig
+        .post("/chunk-stream1-1.m4s", p.reps[0].2[0].clone())
+        .await;
+    assert_eq!(again.as_u16(), 200);
+    let after = segment_uris(&rig.playlist_with_segments().await);
+    // The live playlist may legitimately have advanced (a later segment
+    // closed) between the two reads, but the re-POST must not have inserted,
+    // repeated or reordered anything: every name is unique, `before` is a
+    // prefix of `after`.
+    assert!(after.starts_with(&before), "{before:?} vs {after:?}");
+    let mut unique = after.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), after.len(), "duplicate segment in {after:?}");
 }

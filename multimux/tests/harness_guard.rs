@@ -62,7 +62,6 @@ const SLEEP_ALLOW: &[&str] = &[
     "dispatch_ingest.rs",
     "file_reader.rs",
     "file_route.rs",
-    "dashif_ingest_e2e.rs",
     "glass_to_glass.rs",
     "golden_gate.rs",
     "lldash_dashjs.rs",
