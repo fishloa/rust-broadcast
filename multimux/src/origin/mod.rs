@@ -1070,7 +1070,10 @@ fn classify_path(state: &AppState, path: &str) -> (String, &'static str) {
     } else {
         "unknown".to_string()
     };
-    let kind = if rest.ends_with("master.m3u8") || rest.ends_with("media.m3u8") {
+    let kind = if rest.ends_with("master.m3u8")
+        || rest.ends_with("media.m3u8")
+        || rest.ends_with("iframe.m3u8")
+    {
         "playlist"
     } else if rest.starts_with("seg-") {
         "segment"

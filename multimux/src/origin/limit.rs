@@ -276,6 +276,16 @@ mod tests {
         assert_eq!(classify(&uri("/cam1/healthz")), Budget::Ordinary);
     }
 
+    /// An I-frame playlist path is classified like the media playlist path.
+    #[test]
+    fn iframe_playlist_classifies_blocking_by_query_key() {
+        assert_eq!(
+            classify(&uri("/cam1/iframe.m3u8?_HLS_msn=5")),
+            Budget::BlockingReload
+        );
+        assert_eq!(classify(&uri("/cam1/iframe.m3u8")), Budget::Ordinary);
+    }
+
     /// A blocking-reload request is classified by its `_HLS_msn`/`_HLS_part`
     /// query KEY, not a substring anywhere in the query.
     #[test]

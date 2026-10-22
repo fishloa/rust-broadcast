@@ -44,6 +44,11 @@ const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 /// site keeps serving `/media.m3u8` unchanged.
 pub const DEFAULT_PLAYLIST_NAME: &str = "media.m3u8";
 
+/// Fixed filename for the I-frame (trick-play) playlist served by
+/// [`LlHlsOutput`] (issue #1413 P3). Not configurable: the master playlist's
+/// `#EXT-X-I-FRAME-STREAM-INF` `URI` references this name verbatim.
+pub const IFRAME_PLAYLIST_NAME: &str = "iframe.m3u8";
+
 /// The LL-HLS [`Output`]: master/media playlists over a shared
 /// [`RouteHandle`]. Init/segment/part byte ranges are the origin's shared
 /// resource route, not this one — see the module docs.
@@ -105,6 +110,10 @@ impl Output for LlHlsOutput {
                 &format!("/{}", self.playlist_name),
                 get(media_playlist).options(cors_preflight),
             )
+            .route(
+                &format!("/{}", IFRAME_PLAYLIST_NAME),
+                get(iframe_playlist).options(cors_preflight),
+            )
             .with_state(state)
     }
 }
@@ -116,7 +125,10 @@ pub(crate) async fn master_playlist(State(state): State<LlHlsState>) -> Response
     // measured peak `BANDWIDTH` and the `CODECS` of its init segment
     // (RFC 8216 §4.3.4.2); before that there is nothing to measure.
     let body = match http::resolve_route_program(&state.route) {
-        Ok(serving) => match serving.ll_hls().master_playlist(&state.playlist_name) {
+        Ok(serving) => match serving
+            .ll_hls()
+            .master_playlist_with_iframes(&state.playlist_name, IFRAME_PLAYLIST_NAME)
+        {
             Ok(master) => master,
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
@@ -190,6 +202,41 @@ pub(crate) async fn media_playlist(
         // `HlsBody` is `#[non_exhaustive]`; a future body variant this
         // playlist route doesn't understand is treated the same as a
         // resource body -- not found here.
+        _ => StatusCode::NOT_FOUND.into_response(),
+    })
+}
+
+/// `GET /iframe.m3u8` — the LL-HLS I-frame (trick-play) playlist for
+/// [`DEFAULT_TRACK_ID`], blocking on `_HLS_msn` when present (via
+/// [`crate::http::resolve_blocking`]). Carries no parts, so `_HLS_part` is
+/// rejected with `400 Bad Request` by the origin.
+pub(crate) async fn iframe_playlist(
+    State(state): State<LlHlsState>,
+    Query(q): Query<BlockingReloadQuery>,
+) -> Response {
+    let serving = match http::resolve_route_program(&state.route) {
+        Ok(serving) => serving,
+        Err(resp) => return *resp,
+    };
+    let trunk = serving.trunk();
+    let ll_hls = serving.ll_hls();
+    let request = HlsRequest::IFramePlaylist {
+        track_id: DEFAULT_TRACK_ID,
+        query: q.into(),
+    };
+    let resp = http::resolve_blocking(
+        &trunk,
+        ll_hls.as_ref(),
+        request,
+        BLOCKING_RELOAD_TIMEOUT,
+        BlockingRequestGuard::new,
+    )
+    .await;
+    http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
+        HlsBody::Playlist(m) => {
+            ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
+        }
+        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
     })
 }

@@ -1190,6 +1190,12 @@ fn validate_playlist_name(name: &str) -> Result<()> {
             reason: "must not be \"master.m3u8\" (that name is the master playlist route)".into(),
         });
     }
+    if name == "iframe.m3u8" {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "playlist_name",
+            reason: "must not be \"iframe.m3u8\" (that name is the I-frame playlist route)".into(),
+        });
+    }
     Ok(())
 }
 
@@ -1623,7 +1629,12 @@ impl Route {
         let mut paths = Vec::new();
         for kind in &self.outputs {
             match kind {
-                OutputKind::LlHls | OutputKind::TsHls => {
+                OutputKind::LlHls => {
+                    paths.push("/master.m3u8".to_string());
+                    paths.push(format!("/{playlist_name}"));
+                    paths.push("/iframe.m3u8".to_string());
+                }
+                OutputKind::TsHls => {
                     paths.push("/master.m3u8".to_string());
                     paths.push(format!("/{playlist_name}"));
                 }
@@ -3970,6 +3981,15 @@ mod tests {
     fn validate_rejects_playlist_name_master_m3u8_collision() {
         let cfg = Config {
             playlist_name: "master.m3u8".into(),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_playlist_name_iframe_m3u8_collision() {
+        let cfg = Config {
+            playlist_name: "iframe.m3u8".into(),
             ..cfg_with_one_route()
         };
         assert!(cfg.validate().is_err());
