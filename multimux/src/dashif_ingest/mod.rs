@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use http::StatusCode;
+use axum::http::StatusCode;
 use transmux::dash_parse::{Mpd, SegmentTemplate};
 
 /// HTTP method of an ingest request (§5.2.1).
@@ -465,5 +465,46 @@ impl IngestState {
 
     pub fn is_last(&self, id: &str) -> bool {
         self.last_segments.contains(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_mapping_exhaustive() {
+        // Exhaustive match (no wildcard): adding a variant breaks compile.
+        fn expected(e: &IngestError) -> u16 {
+            match e {
+                IngestError::Auth => 403,
+                IngestError::UnknownPublishingPoint => 404,
+                IngestError::SegmentWithoutHeader => 412,
+                IngestError::UnsupportedMedia => 415,
+                IngestError::Internal => 500,
+                IngestError::BadRequest => 400,
+                IngestError::NoManifest => 400,
+                IngestError::MpdMultiplePeriods => 400,
+                IngestError::MpdTemplateMismatch { .. } => 400,
+                IngestError::MpdBaseUrlPresent => 400,
+                IngestError::MpdMissingSegmentTemplate => 400,
+            }
+        }
+        let variants = [
+            IngestError::Auth,
+            IngestError::UnknownPublishingPoint,
+            IngestError::SegmentWithoutHeader,
+            IngestError::UnsupportedMedia,
+            IngestError::Internal,
+            IngestError::BadRequest,
+            IngestError::NoManifest,
+            IngestError::MpdMultiplePeriods,
+            IngestError::MpdTemplateMismatch { attr: "media" },
+            IngestError::MpdBaseUrlPresent,
+            IngestError::MpdMissingSegmentTemplate,
+        ];
+        for v in &variants {
+            assert_eq!(v.status().as_u16(), expected(v));
+        }
     }
 }
