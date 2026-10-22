@@ -3,6 +3,7 @@
 
 pub(crate) mod catchup;
 pub mod config;
+pub mod dashif_ingest;
 pub mod dvr;
 pub mod error;
 mod http;

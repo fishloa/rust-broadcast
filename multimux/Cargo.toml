@@ -93,6 +93,7 @@ tower             = { version = "0.5", default-features = false, features = ["li
 # body that owns a concurrency permit): `axum::body` re-exports only
 # `HttpBody`/`Body`/`Bytes`, not these. Already in the lock at 1.1.0.
 http-body        = "1"
+http             = "1"
 # Typed response headers (`CacheControl`, `AccessControlAllow*`, `Vary`) in
 # `origin::add_response_headers` (W2a Task 3) instead of hand-built constants.
 headers          = { workspace = true }
