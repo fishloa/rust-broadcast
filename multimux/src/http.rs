@@ -18,9 +18,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use broadcast_common::Timestamp;
+use bytes::Bytes;
 use media_plane::Trunk;
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 
@@ -196,4 +198,124 @@ pub(crate) fn into_response<B>(
         // `not_found_status` fallback, never a panic or a fabricated body.
         _ => not_found_status.into_response(),
     }
+}
+
+use std::ops::Bound;
+
+/// Serve a final resource body with HTTP Range support (RFC 9110 §14.2 /
+/// §14.4 / §15.3.7 / §15.5.17) — the single shared helper used by every
+/// handler that returns a sized resource body (init/segment/part). Given the
+/// request headers and the final bytes, produce:
+///
+/// - no `Range` (or a `Range` the helper must ignore) -> `200 OK` with the
+///   full body + `Accept-Ranges: bytes`;
+/// - a single satisfiable `bytes=` range -> `206 Partial Content` with
+///   `Content-Range: bytes first-last/total`, `Content-Length` of the slice,
+///   the same content type, and `Accept-Ranges: bytes`;
+/// - an unsatisfiable range (first byte position >= total) -> `416 Range Not
+///   Satisfiable` with `Content-Range: bytes */total`;
+/// - a suffix (`bytes=-N`) or open-ended (`bytes=a-`) range per §14.1.2;
+/// - multiple ranges -> `200 OK` with the full body (multipart/byteranges is
+///   deliberately not implemented, §14.2 permits answering `200`);
+/// - a non-`bytes` unit or a syntactically invalid `Range` -> ignored, `200`.
+///
+/// `If-Range` is honoured in the safe, spec-correct way for these
+/// immutable-by-name resources, which carry no validator: the `Range` is
+/// ignored and a `200` with the full body is returned (§13.1.5).
+pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &str) -> Response {
+    use headers::HeaderMapExt as _;
+
+    let ct = HeaderValue::from_str(content_type)
+        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+
+    // Full-body (200) response carrying Content-Type + Accept-Ranges: bytes.
+    // Shared by every path that ignores the Range (If-Range, no Range,
+    // unparseable Range, multi-range).
+    let full_response = |bytes: Bytes| -> Response {
+        let mut r = Response::new(Body::from(bytes));
+        *r.status_mut() = StatusCode::OK;
+        r.headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, ct.clone());
+        headers::HeaderMapExt::typed_insert(r.headers_mut(), headers::AcceptRanges::bytes());
+        r
+    };
+
+    // If-Range present: these resources carry no validator, so the safe,
+    // spec-correct behaviour is to ignore the Range and answer 200 (§13.1.5).
+    if headers.get(axum::http::header::IF_RANGE).is_some() {
+        return full_response(bytes);
+    }
+
+    let total = bytes.len() as u64;
+
+    let range = headers.typed_get::<headers::Range>();
+    let Some(range) = range else {
+        // No (typed) Range header -> full body.
+        return full_response(bytes);
+    };
+
+    let collected: Vec<(Bound<u64>, Bound<u64>)> = range.satisfiable_ranges(total).collect();
+
+    // Syntactically invalid / non-bytes unit already filtered by typed_get;
+    // an empty satisfiable set means the Range could not be parsed into a
+    // byte spec at all -> ignore and answer 200 (§14.2).
+    if collected.is_empty() {
+        return full_response(bytes);
+    }
+
+    // Multiple ranges -> answer 200 with the full body (§14.2; multipart/
+    // byteranges deliberately not implemented).
+    if collected.len() >= 2 {
+        return full_response(bytes);
+    }
+
+    let (start_bound, end_bound) = collected[0];
+
+    let first = match start_bound {
+        Bound::Included(x) => x,
+        Bound::Excluded(x) => x.saturating_add(1),
+        Bound::Unbounded => 0,
+    };
+    let mut last = match end_bound {
+        Bound::Included(x) => x,
+        Bound::Excluded(x) => x.saturating_sub(1),
+        Bound::Unbounded => total.saturating_sub(1),
+    };
+
+    // Unsatisfiable: first byte position >= total (§14.1.2).
+    if total == 0 || first >= total || first > last {
+        let mut resp = Response::new(Body::empty());
+        *resp.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+        resp.headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, ct);
+        headers::HeaderMapExt::typed_insert(
+            resp.headers_mut(),
+            headers::ContentRange::unsatisfied_bytes(total),
+        );
+        headers::HeaderMapExt::typed_insert(resp.headers_mut(), headers::AcceptRanges::bytes());
+        return resp;
+    }
+
+    // Clamp a last-pos beyond the length to the final byte (§14.1.2).
+    if total > 0 {
+        last = last.min(total - 1);
+    }
+
+    let slice_len = (last - first + 1) as usize;
+    let slice = bytes.slice(first as usize..(first as usize + slice_len));
+
+    let cr = headers::ContentRange::bytes(first..=last, total)
+        .unwrap_or_else(|_| headers::ContentRange::unsatisfied_bytes(total));
+
+    let mut resp = Response::new(Body::from(slice));
+    *resp.status_mut() = StatusCode::PARTIAL_CONTENT;
+    resp.headers_mut()
+        .insert(axum::http::header::CONTENT_TYPE, ct);
+    headers::HeaderMapExt::typed_insert(resp.headers_mut(), cr);
+    headers::HeaderMapExt::typed_insert(
+        resp.headers_mut(),
+        headers::ContentLength(slice_len as u64),
+    );
+    headers::HeaderMapExt::typed_insert(resp.headers_mut(), headers::AcceptRanges::bytes());
+    resp
 }

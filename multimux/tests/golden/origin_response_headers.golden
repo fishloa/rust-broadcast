@@ -17,6 +17,7 @@
 /cam1/media.m3u8	200	content-type: application/vnd.apple.mpegurl
 /cam1/media.m3u8	200	vary: Origin
 /cam1/init-1-{instance}-1.mp4	200
+/cam1/init-1-{instance}-1.mp4	200	accept-ranges: bytes
 /cam1/init-1-{instance}-1.mp4	200	access-control-allow-headers: authorization, range, content-type
 /cam1/init-1-{instance}-1.mp4	200	access-control-allow-methods: GET, HEAD, OPTIONS
 /cam1/init-1-{instance}-1.mp4	200	access-control-allow-origin: *
@@ -26,6 +27,7 @@
 /cam1/init-1-{instance}-1.mp4	200	content-type: video/mp4
 /cam1/init-1-{instance}-1.mp4	200	vary: Origin
 /cam1/seg-1-1.m4s	200
+/cam1/seg-1-1.m4s	200	accept-ranges: bytes
 /cam1/seg-1-1.m4s	200	access-control-allow-headers: authorization, range, content-type
 /cam1/seg-1-1.m4s	200	access-control-allow-methods: GET, HEAD, OPTIONS
 /cam1/seg-1-1.m4s	200	access-control-allow-origin: *
