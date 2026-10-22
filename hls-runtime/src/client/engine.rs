@@ -78,21 +78,20 @@ enum Continuity {
 }
 
 /// The `EXT-X-PROGRAM-DATE-TIME` value attached to `seg`, if any.
-fn program_date_time(seg: &MediaSegment) -> Option<&str> {
-    seg.pre_tags
-        .iter()
-        .find_map(|t| t.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:"))
+fn program_date_time(seg: &MediaSegment) -> Option<broadcast_hls::ProgramDateTime> {
+    seg.program_date_time
 }
 
 /// [`program_date_time`] as milliseconds since the Unix epoch.
 fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
-    parse_rfc3339_ms(program_date_time(seg)?)
+    program_date_time(seg).map(|pdt| pdt.timestamp().as_millisecond())
 }
 
 /// Parse an RFC 3339 / ISO 8601 date-time (`2024-05-01T12:00:00.250Z`,
 /// `...+02:00`, `...-0500`) into Unix milliseconds. `None` for anything that
 /// does not parse — never a guess. Delegates to [`jiff::Timestamp`] (an offset
 /// is required; a leap second is clamped to `:59`).
+#[cfg(test)]
 fn parse_rfc3339_ms(text: &str) -> Option<i64> {
     text.parse::<jiff::Timestamp>()
         .ok()

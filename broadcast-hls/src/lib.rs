@@ -282,6 +282,9 @@ pub struct OpenSegment {
     /// for the in-progress segment (audit BH-W5, issue #1111). Rendered
     /// after the open segment's map/parts, in order.
     pub pre_tags: Vec<String>,
+    /// `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.6) applying to this
+    /// open (in-progress) segment, if any.
+    pub program_date_time: Option<ProgramDateTime>,
 }
 
 impl OpenSegment {
@@ -292,6 +295,7 @@ impl OpenSegment {
             parts,
             map: None,
             pre_tags: Vec::new(),
+            program_date_time: None,
         }
     }
 
@@ -530,6 +534,82 @@ pub struct ContentSteering {
     pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
+/// `#EXT-X-PROGRAM-DATE-TIME` value (RFC 8216bis §4.4.4.6) — an absolute
+/// date/time associated with the first sample of a Media Segment. Stored as a
+/// millisecond-precision UTC [`jiff::Timestamp`] (the wire form is canonicalised
+/// to `YYYY-MM-DDThh:mm:ss.SSSZ` on render; sub-millisecond precision and any
+/// offset are normalised away on parse, so a round trip compares equal as a
+/// typed value even when the textual form changes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ProgramDateTime(jiff::Timestamp);
+
+impl ProgramDateTime {
+    /// Parse an ISO 8601 / RFC 3339 date-time (`2010-02-19T14:54:23.031+08:00`,
+    /// `2024-01-01T00:00:00.000Z`, or a zone-less value, which the spec says
+    /// the client SHOULD treat as UTC). Sub-millisecond precision is truncated to
+    /// milliseconds; offsets are converted to UTC. Returns an error if the value
+    /// is not a recognisable date/time.
+    pub fn parse(s: &str) -> crate::Result<Self> {
+        let trimmed = s.trim();
+        let ts = if let Ok(ts) = trimmed.parse::<jiff::Timestamp>() {
+            ts
+        } else if let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>() {
+            dt.to_zoned(jiff::tz::TimeZone::UTC)
+                .map_err(|_| crate::Error::HlsParse {
+                    line_no: 0,
+                    line: trimmed.to_string(),
+                    reason: "EXT-X-PROGRAM-DATE-TIME value is not a valid date/time".to_string(),
+                })?
+                .timestamp()
+        } else {
+            return Err(crate::Error::HlsParse {
+                line_no: 0,
+                line: trimmed.to_string(),
+                reason: "EXT-X-PROGRAM-DATE-TIME value is not a valid ISO 8601 date/time"
+                    .to_string(),
+            });
+        };
+        let ms = ts.as_millisecond();
+        let ts = jiff::Timestamp::from_millisecond(ms).map_err(|_| crate::Error::HlsParse {
+            line_no: 0,
+            line: trimmed.to_string(),
+            reason: "EXT-X-PROGRAM-DATE-TIME value is out of range".to_string(),
+        })?;
+        Ok(Self(ts))
+    }
+
+    /// Wrap a timestamp, truncating it to millisecond precision (the wire
+    /// precision, §4.4.4.6).
+    pub fn from_timestamp(ts: jiff::Timestamp) -> Self {
+        // `as_millisecond` of a valid timestamp is always representable.
+        Self(jiff::Timestamp::from_millisecond(ts.as_millisecond()).unwrap_or(ts))
+    }
+
+    /// The underlying millisecond-precision UTC timestamp.
+    pub fn timestamp(&self) -> jiff::Timestamp {
+        self.0
+    }
+
+    /// Render in canonical form `YYYY-MM-DDThh:mm:ss.SSSZ`.
+    pub fn render(&self) -> alloc::string::String {
+        self.0.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+    }
+}
+
+impl core::str::FromStr for ProgramDateTime {
+    type Err = crate::Error;
+    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl core::fmt::Display for ProgramDateTime {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.render())
+    }
+}
+
 /// A single media segment in a media playlist.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MediaSegment {
@@ -598,6 +678,9 @@ pub struct MediaSegment {
     /// (`#EXT-X-MEDIA`, `#EXT-X-DEFINE`, …) still go to
     /// [`MediaPlaylist::extra_tags`].
     pub pre_tags: Vec<String>,
+    /// `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.6) associated with
+    /// this segment, if any.
+    pub program_date_time: Option<ProgramDateTime>,
 }
 
 /// A media playlist (`#EXTM3U` / `#EXTINF` / ...).
@@ -1428,6 +1511,12 @@ impl MediaPlaylist {
             {
                 s.push_str(&format!("#EXT-X-BITRATE:{kbps}\n"));
             }
+            // #EXT-X-PROGRAM-DATE-TIME (§4.4.4.6) applies to this segment and
+            // MUST precede its first #EXT-X-PART (§4.4.4.9); it follows
+            // DISCONTINUITY/MAP/BITRATE, the conventional order.
+            if let Some(pdt) = &seg.program_date_time {
+                s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
+            }
             // LL-HLS partial segments precede the parent's #EXTINF
             // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
             if self.low_latency.is_some() {
@@ -1482,9 +1571,15 @@ impl MediaPlaylist {
                 {
                     push_map_line(&mut s, map)?;
                 }
+                // PDT precedes the open segment's first #EXT-X-PART (§4.4.4.9).
+                if let Some(pdt) = &open.program_date_time {
+                    s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
+                }
                 for part in &open.parts {
                     push_part_line(&mut s, part)?;
                 }
+            } else if let Some(pdt) = &open.program_date_time {
+                s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
             }
             for tag in &open.pre_tags {
                 s.push_str(tag);
@@ -1654,6 +1749,8 @@ impl MediaPlaylist {
         // Segment-scoped unmodeled tags accumulated for the next segment
         // (audit BH-W5, issue #1111).
         let mut pending_pre_tags: Vec<String> = Vec::new();
+        // Typed `#EXT-X-PROGRAM-DATE-TIME` for the next segment (issue #1423).
+        let mut pending_program_date_time: Option<ProgramDateTime> = None;
 
         for (idx, raw_line) in input.lines().enumerate() {
             let line_no = idx + 1;
@@ -1880,6 +1977,15 @@ impl MediaPlaylist {
                     recently_removed_daterange_ids,
                     extra_attrs,
                 });
+            } else if let Some(rest) = line.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:") {
+                let pdt =
+                    ProgramDateTime::parse(rest.trim()).map_err(|_| crate::Error::HlsParse {
+                        line_no,
+                        line: line.to_string(),
+                        reason: "EXT-X-PROGRAM-DATE-TIME value is not a valid ISO 8601 date/time"
+                            .to_string(),
+                    })?;
+                pending_program_date_time = Some(pdt);
             } else if let Some(rest) = line.strip_prefix("#EXT") {
                 let _ = rest;
                 // A well-formed but unrecognized tag: preserve verbatim
@@ -1915,6 +2021,7 @@ impl MediaPlaylist {
                     bitrate: current_bitrate,
                     title: pending_title.take(),
                     pre_tags: core::mem::take(&mut pending_pre_tags),
+                    program_date_time: pending_program_date_time.take(),
                 });
             }
         }
@@ -1935,7 +2042,10 @@ impl MediaPlaylist {
         // Any parts accumulated but never closed by a following #EXTINF/URI
         // are the in-progress (open) segment at the live edge
         // (RFC 8216bis §4.4.4.9).
-        let open_segment = if pending_parts.is_empty() && pending_pre_tags.is_empty() {
+        let open_segment = if pending_parts.is_empty()
+            && pending_pre_tags.is_empty()
+            && pending_program_date_time.is_none()
+        {
             None
         } else {
             let open = OpenSegment::new(core::mem::take(&mut pending_parts));
@@ -1945,6 +2055,7 @@ impl MediaPlaylist {
             };
             Some(OpenSegment {
                 pre_tags: core::mem::take(&mut pending_pre_tags),
+                program_date_time: pending_program_date_time.take(),
                 ..open
             })
         };
@@ -3019,12 +3130,7 @@ fn filter_extra_attrs(
 /// [`MediaSegment::pre_tags`] instead of hoisting them into the
 /// playlist-level `extra_tags` block (audit BH-W5, issue #1111).
 fn is_segment_defining_tag(line: &str) -> bool {
-    const SEGMENT_SCOPED: &[&str] = &[
-        "#EXT-X-KEY:",
-        "#EXT-X-PROGRAM-DATE-TIME:",
-        "#EXT-X-DATERANGE:",
-        "#EXT-X-CUE-",
-    ];
+    const SEGMENT_SCOPED: &[&str] = &["#EXT-X-KEY:", "#EXT-X-DATERANGE:", "#EXT-X-CUE-"];
     SEGMENT_SCOPED.iter().any(|prefix| line.starts_with(prefix))
 }
 
@@ -5586,12 +5692,11 @@ s0.m4s\n\
         // is preserved verbatim on the *following* segment's `pre_tags`
         // rather than the playlist-level block.
         assert!(
-            pl.segments.first().is_some_and(|s| s
-                .pre_tags
-                .iter()
-                .any(|t| t.starts_with("#EXT-X-PROGRAM-DATE-TIME:"))),
-            "unrecognized tag must be preserved verbatim, not dropped: {:?}",
-            pl.segments.first().map(|s| &s.pre_tags)
+            pl.segments
+                .first()
+                .is_some_and(|s| s.program_date_time.is_some()),
+            "EXT-X-PROGRAM-DATE-TIME must be preserved as a typed field, not dropped: {:?}",
+            pl.segments.first().map(|s| s.program_date_time)
         );
     }
 

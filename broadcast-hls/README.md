@@ -93,7 +93,7 @@ The workspace text-format rule is that a second parse of the rendered output equ
 - Blank lines, trailing whitespace and `#` comment lines are dropped. Line-continuation backslashes (used for wrapping in spec examples) are never emitted.
 - `to_m3u8()` is fallible: a quoted-string or URI field containing `"`, CR or LF (`Error::InvalidQuotedString`, `Error::InvalidUri`) is rejected instead of rendered, which prevents tag-line injection. The same applies to an `EXT-X-SKIP` removed-daterange id.
 - Not enforced: `EXT-X-BITRATE` not applying to a byte-ranged segment, `EXT-X-DEFINE` `IMPORT` and `QUERYPARAM` resolution, `EXT-X-SESSION-KEY` `METHOD` not being `NONE`, "must not appear more than once" rules. Those need cross-file context and belong to `media-doctor`.
-- A non-segment-defining unrecognised tag lands in `extra_tags` and loses its interleaved position (it renders as one block before the segments). Segment-defining tags (`EXT-X-KEY`, `EXT-X-PROGRAM-DATE-TIME`, `EXT-X-DATERANGE`, `EXT-X-CUE-*`) attach to the following segment's `pre_tags` and keep their place.
+- A non-segment-defining unrecognised tag lands in `extra_tags` and loses its interleaved position (it renders as one block before the segments). Segment-defining tags (`EXT-X-KEY`, `EXT-X-DATERANGE`, `EXT-X-CUE-*`) attach to the following segment's `pre_tags` and keep their place. `#EXT-X-PROGRAM-DATE-TIME` is now a typed field (`MediaSegment::program_date_time`) rather than an opaque pre-tag.
 - A hand-built playlist whose segments' `map` fields do not form a valid carry-forward sequence cannot round-trip, because the wire has no "stop applying the map" short of a discontinuity plus a new map.
 
 ## Design notes

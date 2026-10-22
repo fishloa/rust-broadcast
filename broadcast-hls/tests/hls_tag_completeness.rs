@@ -12,7 +12,7 @@
 //!    tag and asserts the concrete outcome: for a tag with a typed parse
 //!    handler, the corresponding struct field is actually populated (not
 //!    just "parse didn't error"); for a tag this crate deliberately does
-//!    not model with a struct field (`#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`,
+//!    not model with a struct field (`#EXT-X-KEY`,
 //!    `#EXT-X-DATERANGE`, `#EXT-X-MEDIA` — see the module doc's "Known,
 //!    documented gaps" list in `src/lib.rs`), it asserts the tag survives
 //!    verbatim in `extra_tags` rather than being silently dropped.
@@ -74,16 +74,11 @@ const ALL_32_TAGS: &[&str] = &[
     "EXT-X-CONTENT-STEERING", // issue #872
 ];
 
-/// The 4 of the 32 tags with **no typed struct field**: recognized (they
+/// The 3 of the 32 tags with **no typed struct field**: recognized (they
 /// don't error and aren't dropped) but carried opaquely in `extra_tags`.
 /// See the module doc's "Known, documented gaps" list in `src/lib.rs` and
 /// `README.md`'s "Round-trip fidelity" section.
-const OPAQUE_TAGS: &[&str] = &[
-    "EXT-X-KEY",
-    "EXT-X-PROGRAM-DATE-TIME",
-    "EXT-X-DATERANGE",
-    "EXT-X-MEDIA",
-];
+const OPAQUE_TAGS: &[&str] = &["EXT-X-KEY", "EXT-X-DATERANGE", "EXT-X-MEDIA"];
 
 fn read_src(dir: &Path, out: &mut String) {
     for entry in fs::read_dir(dir).expect("read src dir") {
@@ -288,8 +283,8 @@ fn typed_tags_populate_their_struct_field_on_parse() {
     );
 }
 
-/// A Media Playlist carrying the 3 opaque tags valid there
-/// (`EXT-X-KEY`/`EXT-X-PROGRAM-DATE-TIME`/`EXT-X-DATERANGE`), and a Master
+/// A Media Playlist carrying the 2 opaque tags valid there
+/// (`EXT-X-KEY`/`EXT-X-DATERANGE`), and a Master
 /// Playlist carrying the 1 opaque tag valid there (`EXT-X-MEDIA`). Asserts
 /// each survives **verbatim** — the documented behavior for a tag with no
 /// typed field (module doc "Known, documented gaps", `README.md`
@@ -300,7 +295,6 @@ fn typed_tags_populate_their_struct_field_on_parse() {
 #[test]
 fn opaque_tags_are_preserved_verbatim_not_dropped() {
     const KEY_LINE: &str = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://example.com/key\"";
-    const PDT_LINE: &str = "#EXT-X-PROGRAM-DATE-TIME:2024-01-01T00:00:00.000Z";
     const DATERANGE_LINE: &str =
         "#EXT-X-DATERANGE:ID=\"ad-1\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=15.0";
 
@@ -308,7 +302,6 @@ fn opaque_tags_are_preserved_verbatim_not_dropped() {
         "#EXTM3U\n\
 #EXT-X-TARGETDURATION:6\n\
 {KEY_LINE}\n\
-{PDT_LINE}\n\
 {DATERANGE_LINE}\n\
 #EXTINF:6.000,\n\
 seg0.m4s\n\
@@ -321,11 +314,7 @@ seg0.m4s\n\
         .flat_map(|s| &s.pre_tags)
         .chain(mp.open_segment.iter().flat_map(|o| &o.pre_tags))
         .collect();
-    for (name, line) in [
-        ("EXT-X-KEY", KEY_LINE),
-        ("EXT-X-PROGRAM-DATE-TIME", PDT_LINE),
-        ("EXT-X-DATERANGE", DATERANGE_LINE),
-    ] {
+    for (name, line) in [("EXT-X-KEY", KEY_LINE), ("EXT-X-DATERANGE", DATERANGE_LINE)] {
         assert!(
             pre_tags.iter().any(|t| *t == line),
             "{name} must be preserved verbatim in a segment's pre_tags, got {pre_tags:?} \
