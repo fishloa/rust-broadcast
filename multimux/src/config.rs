@@ -3992,7 +3992,13 @@ mod tests {
             playlist_name: "iframe.m3u8".into(),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        match cfg.validate() {
+            Err(MultimuxError::ConfigInvalid { field, reason }) => {
+                assert_eq!(field, "playlist_name");
+                assert!(reason.contains("iframe.m3u8"), "reason: {reason}");
+            }
+            other => panic!("expected the playlist_name collision error, got {other:?}"),
+        }
     }
 
     #[test]

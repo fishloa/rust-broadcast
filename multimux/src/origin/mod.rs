@@ -2292,6 +2292,21 @@ mod tests {
         Arc::new(AppState::new(streams))
     }
 
+    /// The I-frame playlist path is a `playlist` kind for the HTTP metrics,
+    /// not an unclassified `other` (the label set is the dashboards' contract).
+    #[test]
+    fn classify_path_labels_the_iframe_playlist_as_a_playlist() {
+        let state = make_state();
+        assert_eq!(
+            classify_path(&state, "/cam1/iframe.m3u8"),
+            ("cam1".to_string(), "playlist")
+        );
+        assert_eq!(
+            classify_path(&state, "/cam1/master.m3u8"),
+            ("cam1".to_string(), "playlist")
+        );
+    }
+
     /// A body whose chunks the test releases one at a time.
     fn channel_body() -> (tokio::sync::mpsc::Sender<axum::body::Bytes>, Body) {
         let (tx, rx) = tokio::sync::mpsc::channel::<axum::body::Bytes>(4);
