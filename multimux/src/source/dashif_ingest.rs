@@ -379,3 +379,39 @@ async fn dashif_handler(
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body_of(frames: Vec<&'static [u8]>) -> axum::body::Body {
+        axum::body::Body::from_stream(futures_util::stream::iter(
+            frames
+                .into_iter()
+                .map(|f| Ok::<Bytes, std::io::Error>(Bytes::from_static(f))),
+        ))
+    }
+
+    /// `read_limited` caps the body per frame: exactly the limit passes, one
+    /// byte more is `TooLarge` — including when the body is chunked into many
+    /// small frames (no `Content-Length` to pre-check).
+    #[tokio::test]
+    async fn read_limited_enforces_the_cap_across_frames() {
+        let ok = read_limited(body_of(vec![b"abc", b"de"]), 5).await;
+        assert!(matches!(ok, Ok(ref b) if b.as_ref() == b"abcde"));
+        let too_big = read_limited(body_of(vec![b"abc", b"def"]), 5).await;
+        assert!(matches!(too_big, Err(ReadBodyError::TooLarge)));
+        let empty = read_limited(body_of(vec![]), 5).await;
+        assert!(matches!(empty, Ok(ref b) if b.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn read_limited_reports_a_broken_body() {
+        let stream = futures_util::stream::iter(vec![
+            Ok::<Bytes, std::io::Error>(Bytes::from_static(b"ab")),
+            Err(std::io::Error::other("reset")),
+        ]);
+        let r = read_limited(axum::body::Body::from_stream(stream), 100).await;
+        assert!(matches!(r, Err(ReadBodyError::Broken)));
+    }
+}
