@@ -107,6 +107,8 @@ fn dollar_escape_and_malformed_templates() {
         Some((String::new(), Some(3), None, None))
     );
     assert_eq!(m("a$$b-$Number$", "ab-3", &[]), None);
+    // The escape consumes exactly a literal `$`, not any character.
+    assert_eq!(m("a$$b-$Number$", "axb-3", &[]), None);
     // An unescaped `$` that does not close an identifier: undefined => no match.
     assert_eq!(m("seg-$Number", "seg-3", &[]), None);
 }
