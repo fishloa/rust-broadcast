@@ -839,36 +839,6 @@ fn parse_epoch_seq(names: &str) -> Option<(Option<u64>, u64)> {
 /// `compute_iframe_len`) from drifting away from the served bytes.
 pub const IFRAME_SEGMENT_PREFIX: &str = "iframe-seg-";
 
-/// Parse a whole-segment dynamic filename (`seg-{track}-{seq}.{ext}` or the
-/// instance form `seg-{track}-{instance}-{seq}.{ext}`) into
-/// `(track, instance, seq)`, where `instance` is `None` for the legacy form.
-/// `ext` is taken from `container`. Returns `None` for any other shape,
-/// including `iframe-seg-…` (issue #1422: I-frame URIs are a distinct
-/// resource family and must never be treated as media-segment names here).
-///
-/// This is the single source of truth for the `seg-` grammar; `multimux`
-/// (and any other adapter) should call this rather than re-implementing the
-/// split.
-pub fn parse_segment_name(file: &str, container: Container) -> Option<(u32, Option<u64>, u64)> {
-    let suffix = format!(".{}", container.segment_extension());
-    let rest = file.strip_prefix("seg-")?.strip_suffix(suffix.as_str())?;
-    let mut fields = rest.split('-');
-    let track: u32 = fields.next()?.parse().ok()?;
-    let first = fields.next()?;
-    match fields.next() {
-        None => {
-            // legacy: {track}-{seq}
-            Some((track, None, first.parse().ok()?))
-        }
-        Some(seq) => {
-            if fields.next().is_some() {
-                return None;
-            }
-            Some((track, Some(first.parse().ok()?), seq.parse().ok()?))
-        }
-    }
-}
-
 /// What [`parse_immediate`] recognised.
 enum ImmediateResource {
     /// `init-{track}.mp4`: the current init (changes, never `immutable`).
