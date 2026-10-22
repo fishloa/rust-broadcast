@@ -2163,6 +2163,43 @@ fn spawn_ingest(
                 },
             )
         }
+        crate::config::InputSpec::DashifIngest {
+            listen,
+            publishing_point,
+        } => {
+            tracing::warn!(
+                route = %name,
+                "DASH-IF ingest listener is running with no authentication of any kind — \
+                 any publisher that can reach this endpoint may publish"
+            );
+            let route_cfg = match config.prebound_tcp(listen) {
+                Some(listener) => crate::source::dashif_ingest::DashifIngestRoute::with_listener(
+                    name,
+                    listener,
+                    publishing_point.clone(),
+                )
+                .with_timeouts(timeouts),
+                None => crate::source::dashif_ingest::DashifIngestRoute::new(
+                    name,
+                    listen.clone(),
+                    publishing_point.clone(),
+                )
+                .with_timeouts(timeouts),
+            };
+            spawn_supervised(
+                route_cfg,
+                ctx,
+                |cfg, trunk_config, handshake, handle, _cancel| async move {
+                    Err(crate::source::dashif_ingest::run_dashif_ingest(
+                        &cfg,
+                        trunk_config,
+                        handshake,
+                        &handle,
+                    )
+                    .await)
+                },
+            )
+        }
         crate::config::InputSpec::File { path, loop_file } => {
             let window_segments = ctx.window_segments;
             let loop_file = *loop_file;
@@ -4313,6 +4350,7 @@ mod tests {
             crate::config::InputSpec::Rtmp { .. } => true,
             #[cfg(feature = "whip")]
             crate::config::InputSpec::Whip { .. } => true,
+            crate::config::InputSpec::DashifIngest { .. } => true,
             crate::config::InputSpec::File { .. } => true,
             crate::config::InputSpec::Custom { .. } => true,
         }

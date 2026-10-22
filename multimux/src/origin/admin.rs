@@ -808,6 +808,7 @@ fn input_kind_name(input: &crate::config::InputSpec) -> &'static str {
         Rtmp { .. } => "rtmp",
         #[cfg(feature = "whip")]
         Whip { .. } => "whip",
+        DashifIngest { .. } => "dashif_ingest",
         Srt { .. } => "srt",
         Custom { .. } => "custom",
         File { .. } => "file",

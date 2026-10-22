@@ -25,6 +25,7 @@
 //! P3c).
 
 pub mod dash_pull;
+pub mod dashif_ingest;
 pub(crate) mod driver;
 pub mod file_reader;
 pub mod hls_pull;

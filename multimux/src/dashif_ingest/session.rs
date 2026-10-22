@@ -49,7 +49,7 @@ pub struct IngestObject<'a> {
 ///
 /// Exposes the underlying [`IngestError`] (with its §5.3 HTTP status) for the
 /// P2b listener, plus a stringly-typed demux failure for everything else.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum SessionError {
     /// An ingest-protocol error carrying its §5.3 status.
@@ -81,6 +81,11 @@ pub struct DashifIngestSession {
 }
 
 impl DashifIngestSession {
+    /// The manifest grouping learned from a successful Manifest, if any.
+    pub fn grouping(&self) -> Option<ManifestGrouping> {
+        self.grouping.clone()
+    }
+
     /// Construct an empty session. No manifest has been received yet.
     pub fn new() -> Self {
         Self {
