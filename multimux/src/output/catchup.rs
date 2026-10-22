@@ -776,12 +776,22 @@ mod tests {
         let archived_resp =
             catchup_resource(State(route.clone()), Path("seg-2.m4s".to_string())).await;
         assert_eq!(archived_resp.status(), StatusCode::OK);
+        // Apple HLS authoring spec 10.4: an fMP4 `.m4s` segment is
+        // `video/iso.segment`, from the archive AND from the live window.
+        assert_eq!(
+            archived_resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "video/iso.segment"
+        );
         assert_eq!(body_bytes(archived_resp).await, vec![0x22u8; 24]);
 
         // Live-only segment: served through the SAME endpoint, resolved
         // via the live HlsOrigin.
         let live_resp = catchup_resource(State(route), Path("seg-4.m4s".to_string())).await;
         assert_eq!(live_resp.status(), StatusCode::OK);
+        assert_eq!(
+            live_resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "video/iso.segment"
+        );
         assert_eq!(body_bytes(live_resp).await, vec![0x44u8; 24]);
 
         cleanup(&tmp);
