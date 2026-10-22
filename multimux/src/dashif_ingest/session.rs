@@ -69,6 +69,19 @@ struct RepData {
     buffered: Vec<(TrackId, transmux::ir::Sample)>,
 }
 
+/// Handle for a streaming (chunked) segment being fed via
+/// [`DashifIngestSession::begin_segment`] / `push_segment_bytes` /
+/// `finish_segment`.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct SegmentHandle {
+    rep_id: String,
+    number: Option<u64>,
+    time: Option<u64>,
+    skip: bool,
+    buf: Vec<u8>,
+}
+
 /// Sans-IO ingest session for one DASH-IF Interface-1 publishing point.
 pub struct DashifIngestSession {
     grouping: Option<ManifestGrouping>,
@@ -209,6 +222,18 @@ impl DashifIngestSession {
         time: Option<u64>,
         bytes: &[u8],
     ) -> Result<(), SessionError> {
+        let mut handle = self.begin_segment(rep_id, number, time)?;
+        self.push_segment_bytes(&mut handle, bytes)?;
+        self.finish_segment(handle)
+    }
+
+    pub fn begin_segment(
+        &mut self,
+        rep: impl AsRef<str>,
+        number: Option<u64>,
+        time: Option<u64>,
+    ) -> Result<SegmentHandle, SessionError> {
+        let rep_id = rep.as_ref();
         if self.grouping.is_none() {
             return Err(SessionError::Ingest(IngestError::NoManifest));
         }
@@ -219,7 +244,153 @@ impl DashifIngestSession {
             return Err(SessionError::Ingest(IngestError::SegmentWithoutHeader));
         }
 
-        // lmsg / slat detection on the leading styp box.
+        let disp = self
+            .ingest_state
+            .on_segment(rep_id, number, time)
+            .map_err(SessionError::Ingest)?;
+
+        if disp == crate::dashif_ingest::SegmentDisposition::Regression {
+            warn!("dashif-ingest: segment regression for {rep_id}");
+        }
+
+        Ok(SegmentHandle {
+            rep_id: rep_id.to_string(),
+            number,
+            time,
+            skip: disp == crate::dashif_ingest::SegmentDisposition::Duplicate,
+            buf: Vec::new(),
+        })
+    }
+
+    pub fn push_segment_bytes(
+        &mut self,
+        handle: &mut SegmentHandle,
+        bytes: &[u8],
+    ) -> Result<(), SessionError> {
+        handle.buf.extend_from_slice(bytes);
+
+        if handle.skip {
+            // Swallow complete box groups (detect lmsg on a leading styp) but
+            // emit nothing.
+            loop {
+                let mut i = 0usize;
+                let mut end = None;
+                while i < handle.buf.len() {
+                    match transmux::parse_box(&handle.buf[i..]) {
+                        Ok((bx, consumed)) => {
+                            i += consumed;
+                            if bx.header.box_type.is(b"mdat") {
+                                end = Some(i);
+                                break;
+                            }
+                            if consumed == 0 {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                match end {
+                    Some(e) => {
+                        self.detect_styp_lmsg(&handle.rep_id, &handle.buf[..e]);
+                        handle.buf.drain(..e);
+                    }
+                    None => break,
+                }
+            }
+            return Ok(());
+        }
+
+        loop {
+            let mut i = 0usize;
+            let mut end = None;
+            while i < handle.buf.len() {
+                match transmux::parse_box(&handle.buf[i..]) {
+                    Ok((bx, consumed)) => {
+                        i += consumed;
+                        if bx.header.box_type.is(b"mdat") {
+                            end = Some(i);
+                            break;
+                        }
+                        if consumed == 0 {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let Some(e) = end else {
+                break;
+            };
+
+            let group = handle.buf[..e].to_vec();
+            self.detect_styp_lmsg(&handle.rep_id, &group);
+
+            // Demux init ++ chunk.
+            let init = self
+                .reps
+                .get(&handle.rep_id)
+                .and_then(|r| r.init_bytes.clone())
+                .ok_or(SessionError::Ingest(IngestError::SegmentWithoutHeader))?;
+            let mut combined = Vec::with_capacity(init.len() + group.len());
+            combined.extend_from_slice(&init);
+            combined.extend_from_slice(&group);
+            let media = Fmp4Demux::new()
+                .unpackage(&combined)
+                .map_err(|e| SessionError::Demux(e.to_string()))?;
+
+            if self.new_program_emitted {
+                let l2g = self
+                    .reps
+                    .get(&handle.rep_id)
+                    .and_then(|r| r.local_to_global.clone())
+                    .unwrap_or_default();
+                for track in media.tracks {
+                    if let Some(&global_id) = l2g.get(&track.spec.track_id) {
+                        for sample in track.samples {
+                            self.pending_events.push_back(SessionEvent::Sample {
+                                program: ProgramId(0),
+                                track_id: global_id,
+                                retention: RetentionClass::Timed,
+                                sample,
+                            });
+                        }
+                    }
+                }
+            } else {
+                let new_count: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
+                let rep = self.reps.get_mut(&handle.rep_id).unwrap();
+                if rep.buffered.len() + new_count > 64 {
+                    return Err(SessionError::Ingest(IngestError::Internal));
+                }
+                for track in media.tracks {
+                    for sample in track.samples {
+                        rep.buffered.push((track.spec.track_id, sample));
+                    }
+                }
+            }
+
+            handle.buf.drain(..e);
+        }
+
+        Ok(())
+    }
+
+    pub fn finish_segment(&mut self, mut handle: SegmentHandle) -> Result<(), SessionError> {
+        // Process any remaining complete groups first.
+        self.push_segment_bytes(&mut handle, &[])?;
+
+        if handle.skip {
+            return Ok(());
+        }
+
+        if !handle.buf.is_empty() {
+            return Err(SessionError::Ingest(IngestError::BadRequest));
+        }
+        Ok(())
+    }
+
+    fn detect_styp_lmsg(&mut self, rep_id: &str, bytes: &[u8]) {
         if let Ok((boxref, _)) = transmux::parse_box(bytes)
             && boxref.header.box_type.is(b"styp")
         {
@@ -241,66 +412,6 @@ impl DashifIngestSession {
                 }
             }
         }
-
-        let disp = self
-            .ingest_state
-            .on_segment(rep_id, number, time)
-            .map_err(SessionError::Ingest)?;
-
-        if disp == crate::dashif_ingest::SegmentDisposition::Duplicate {
-            return Ok(());
-        }
-
-        if disp == crate::dashif_ingest::SegmentDisposition::Regression {
-            warn!("dashif-ingest: segment regression for {rep_id}");
-        }
-
-        // Demux init ++ segment.
-        let init = self
-            .reps
-            .get(rep_id)
-            .and_then(|r| r.init_bytes.clone())
-            .ok_or(SessionError::Ingest(IngestError::SegmentWithoutHeader))?;
-        let mut combined = Vec::with_capacity(init.len() + bytes.len());
-        combined.extend_from_slice(&init);
-        combined.extend_from_slice(bytes);
-        let media = Fmp4Demux::new()
-            .unpackage(&combined)
-            .map_err(|e| SessionError::Demux(e.to_string()))?;
-
-        if self.new_program_emitted {
-            let l2g = self
-                .reps
-                .get(rep_id)
-                .and_then(|r| r.local_to_global.clone())
-                .unwrap_or_default();
-            for track in media.tracks {
-                if let Some(&global_id) = l2g.get(&track.spec.track_id) {
-                    for sample in track.samples {
-                        self.pending_events.push_back(SessionEvent::Sample {
-                            program: ProgramId(0),
-                            track_id: global_id,
-                            retention: RetentionClass::Timed,
-                            sample,
-                        });
-                    }
-                }
-            }
-        } else {
-            // Buffer samples for this Representation until NewProgram.
-            let new_count: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
-            let rep = self.reps.get_mut(rep_id).unwrap();
-            if rep.buffered.len() + new_count > 64 {
-                return Err(SessionError::Ingest(IngestError::Internal));
-            }
-            for track in media.tracks {
-                for sample in track.samples {
-                    rep.buffered.push((track.spec.track_id, sample));
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 
