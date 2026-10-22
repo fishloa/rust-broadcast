@@ -80,6 +80,7 @@ fn iframe_playlist_text(origin: &HlsOrigin) -> EgressResponse<hls_runtime::serve
         HlsRequest::IFramePlaylist {
             track_id: DEFAULT_TRACK_ID,
             query: BlockingQuery::default(),
+            media_playlist_name: "media.m3u8".to_string(),
         },
         now,
         policy,
@@ -592,6 +593,7 @@ fn iframe_part_is_bad_request() {
                 hls_msn: Some(1),
                 hls_part: Some(0),
             },
+            media_playlist_name: "media.m3u8".to_string(),
         },
         now,
         policy,
