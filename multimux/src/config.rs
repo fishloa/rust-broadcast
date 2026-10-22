@@ -4093,6 +4093,73 @@ mod tests {
         }
     }
 
+    fn dashif_cfg(extra: &str) -> Result<Config> {
+        let json = format!(
+            r#"{{ "routes": [ {{ "name": "cam", "input": {{ "type": "dashif_ingest", "listen": "127.0.0.1:8081" {extra} }} }} ] }}"#
+        );
+        let cfg: Config = serde_json::from_str(&json).expect("parses");
+        cfg.validate().map(|()| cfg)
+    }
+
+    /// DASH-IF ingest limits: defaults when omitted, the explicit values are
+    /// kept, and each invalid value is rejected naming its field.
+    #[test]
+    fn dashif_ingest_limits_defaults_and_validation() {
+        let cfg = dashif_cfg("").expect("defaults valid");
+        let InputSpec::DashifIngest {
+            auth,
+            max_object_bytes,
+            body_timeout_secs,
+            publishing_point,
+            ..
+        } = &cfg.routes[0].input
+        else {
+            panic!("wrong input");
+        };
+        assert!(auth.is_none() && max_object_bytes.is_none() && body_timeout_secs.is_none());
+        assert_eq!(publishing_point, "/");
+
+        let cfg = dashif_cfg(r#", "max_object_bytes": 1024, "body_timeout_secs": 0.5"#)
+            .expect("explicit valid");
+        let InputSpec::DashifIngest {
+            max_object_bytes,
+            body_timeout_secs,
+            ..
+        } = &cfg.routes[0].input
+        else {
+            panic!("wrong input");
+        };
+        assert_eq!(*max_object_bytes, Some(1024));
+        assert_eq!(*body_timeout_secs, Some(0.5));
+
+        for (extra, field) in [
+            (r#", "max_object_bytes": 0"#, "max_object_bytes"),
+            (r#", "max_object_bytes": 1073741825"#, "max_object_bytes"),
+            (r#", "body_timeout_secs": 0"#, "body_timeout_secs"),
+            (r#", "body_timeout_secs": -1.0"#, "body_timeout_secs"),
+        ] {
+            match dashif_cfg(extra) {
+                Err(MultimuxError::ConfigInvalid { field: f, .. }) => {
+                    assert!(f.ends_with(field), "{extra}: field {f}");
+                }
+                other => panic!("{extra}: expected ConfigInvalid, got {other:?}"),
+            }
+        }
+        // The 1 GiB bound itself is allowed.
+        dashif_cfg(r#", "max_object_bytes": 1073741824"#).expect("1 GiB allowed");
+    }
+
+    /// The route's `Debug` never prints an ingest credential.
+    #[test]
+    fn dashif_ingest_debug_redacts_the_auth_secret() {
+        let cfg = dashif_cfg(
+            r#", "auth": { "scheme": "basic", "username": "alice", "password": "hunter2-secret" }"#,
+        )
+        .expect("valid");
+        let shown = format!("{:?}", cfg.routes[0].input);
+        assert!(!shown.contains("hunter2-secret"), "{shown}");
+    }
+
     #[test]
     fn playlist_name_defaults_to_media_m3u8_when_omitted() {
         let json = r#"{
