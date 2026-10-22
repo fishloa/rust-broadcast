@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `MasterPlaylist::media: Vec<MediaRendition>` for `#EXT-X-MEDIA` (RFC 8216bis §4.4.6.1), with typed `MediaType`, `InstreamId`, `ClosedCaptionsRef` and a validated `MediaRendition` struct (`media_type`, `uri`, `group_id`, `language`, `assoc_language`, `name`, `stable_rendition_id`, `default`, `autoselect`, `forced`, `instream_id`, `bit_depth`, `sample_rate`, `characteristics`, `channels`, `extra_attrs`). Rendered before variants; `#EXT-X-MEDIA` lines are no longer retained in `extra_tags`.
+- `Variant::audio`/`video`/`subtitles: Option<String>` (GROUP-ID) and `Variant::closed_captions: Option<ClosedCaptionsRef>` for the `AUDIO`/`VIDEO`/`SUBTITLES`/`CLOSED-CAPTIONS` attributes of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2); these are no longer retained in `extra_attrs`.
 - `MediaPlaylist::always_emit_discontinuity_sequence: bool` (default `false`). Serializer emits `#EXT-X-DISCONTINUITY-SEQUENCE:<n>` when `discontinuity_sequence > 0 || always_emit_discontinuity_sequence`; parse sets it `true` when the tag is present, so `#EXT-X-DISCONTINUITY-SEQUENCE:0` round-trips byte-stably (Apple authoring 8.17).
 - `MediaSegment::program_date_time: Option<ProgramDateTime>` and `OpenSegment::program_date_time: Option<ProgramDateTime>` for `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.6). `ProgramDateTime` is a `Copy` newtype over a millisecond-precision UTC `jiff::Timestamp` with `parse(&str)` (ISO 8601 / RFC 3339, offsets and zone-less-as-UTC) and canonical render `YYYY-MM-DDThh:mm:ss.SSSZ`. The tag is no longer retained in `pre_tags`.
 
@@ -21,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Variant` gained a public field, so every `Variant { .. }` struct literal outside this crate must add `average_bandwidth` (or use `..Default::default()`). The held `AVERAGE-BANDWIDTH` value that used to appear in `Variant::extra_attrs` for a parsed playlist is now the typed field.
 - `IFrameVariant` gained a public field `average_bandwidth`, so every `IFrameVariant { .. }` struct literal outside this crate must add `average_bandwidth` (or use `..Default::default()`). The held `AVERAGE-BANDWIDTH` value that used to appear in `IFrameVariant::extra_attrs` for a parsed playlist is now the typed field.
 - `Variant` gained another public field `frame_rate`, so every `Variant { .. }` struct literal outside this crate must add `frame_rate` (or use `..Default::default()`). The held `FRAME-RATE` value that used to appear in `Variant::extra_attrs` for a parsed playlist is now the typed field.
+- `MasterPlaylist` gained `media: Vec<MediaRendition>` and `Variant` gained `audio`/`video`/`subtitles`/`closed_captions`, so every struct literal outside this crate must add those fields (or use `..Default::default()`). `#EXT-X-MEDIA` lines and the `AUDIO`/`VIDEO`/`SUBTITLES`/`CLOSED-CAPTIONS` attributes are now typed fields rather than `extra_tags` entries.
 - `VideoRange` enum (`Sdr`/`Hlg`/`Pq`) with `name()`, `from_transfer_characteristics(u8)` and `attr()` for the `VIDEO-RANGE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2), derived from a track's VUI transfer characteristics.
 
 ## [0.4.0] - 2026-10-17

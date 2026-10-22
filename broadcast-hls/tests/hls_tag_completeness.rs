@@ -78,7 +78,7 @@ const ALL_32_TAGS: &[&str] = &[
 /// don't error and aren't dropped) but carried opaquely in `extra_tags`.
 /// See the module doc's "Known, documented gaps" list in `src/lib.rs` and
 /// `README.md`'s "Round-trip fidelity" section.
-const OPAQUE_TAGS: &[&str] = &["EXT-X-KEY", "EXT-X-DATERANGE", "EXT-X-MEDIA"];
+const OPAQUE_TAGS: &[&str] = &["EXT-X-KEY", "EXT-X-DATERANGE"];
 
 fn read_src(dir: &Path, out: &mut String) {
     for entry in fs::read_dir(dir).expect("read src dir") {
@@ -328,15 +328,11 @@ seg0.m4s\n\
     let master_text = format!(
         "#EXTM3U\n\
 {MEDIA_TAG_LINE}\n\
-#EXT-X-STREAM-INF:BANDWIDTH=300000,CODECS=\"avc1.64001e,mp4a.40.2\"\n\
+#EXT-X-STREAM-INF:BANDWIDTH=300000,CODECS=\"avc1.64001e,mp4a.40.2\",AUDIO=\"aac\"\n\
 v300/index.m3u8\n"
     );
-    let mst = MasterPlaylist::parse(&master_text).expect("opaque-tag master fixture must parse");
-    assert!(
-        mst.extra_tags.iter().any(|t| t == MEDIA_TAG_LINE),
-        "EXT-X-MEDIA must be preserved verbatim in extra_tags, got {:?}",
-        mst.extra_tags
-    );
+    let mst = MasterPlaylist::parse(&master_text).expect("master fixture must parse");
+    assert_eq!(mst.media.len(), 1, "EXT-X-MEDIA must be modeled");
 
     // Cross-check against the tag-name lists above so this test and
     // `ALL_32_TAGS`/`OPAQUE_TAGS` cannot silently drift apart.

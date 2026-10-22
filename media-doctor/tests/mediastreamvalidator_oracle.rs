@@ -611,6 +611,7 @@ fn origin_multivariant_shape_validates_clean() {
     fs::write(dir.join("hi.m3u8"), child.to_m3u8().unwrap()).expect("write hi.m3u8");
 
     let master = MasterPlaylist {
+        media: vec![],
         variants: vec![
             Variant {
                 bandwidth: 1_280_000,
@@ -619,6 +620,10 @@ fn origin_multivariant_shape_validates_clean() {
                 codecs: Some("avc1.64001f,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "low.m3u8".into(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: vec![],
             },
             Variant {
@@ -628,6 +633,10 @@ fn origin_multivariant_shape_validates_clean() {
                 codecs: Some("avc1.64001f,mp4a.40.2".into()),
                 resolution: Some((1280, 720)),
                 uri: "hi.m3u8".into(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions: None,
                 extra_attrs: vec![],
             },
         ],
@@ -681,6 +690,7 @@ fn origin_variant_quoted_group_attrs_validates_clean() {
              AUTOSELECT=YES,INSTREAM-ID=\"CC1\""
                 .to_string(),
         ],
+        media: vec![],
         variants: vec![Variant {
             bandwidth: 2_560_000,
             average_bandwidth: None,
@@ -688,6 +698,10 @@ fn origin_variant_quoted_group_attrs_validates_clean() {
             codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: vec![
                 (
                     "AUDIO".to_string(),
@@ -763,6 +777,7 @@ fn origin_variant_unknown_quoted_attr_round_trips_and_validates_clean() {
     fs::write(dir.join("hi.m3u8"), leaf.to_m3u8().unwrap()).expect("write hi.m3u8");
 
     let master = MasterPlaylist {
+        media: vec![],
         variants: vec![Variant {
             bandwidth: 2_560_000,
             average_bandwidth: None,
@@ -770,6 +785,10 @@ fn origin_variant_unknown_quoted_attr_round_trips_and_validates_clean() {
             codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: vec![(
                 "X-CUSTOM-LABEL".to_string(),
                 AttrValue::quoted("some value, with a comma").expect("known-good literal"),
@@ -842,6 +861,7 @@ fn origin_iframe_variant_shape_validates_clean() {
         .expect("write iframe.m3u8");
 
     let master = MasterPlaylist {
+        media: vec![],
         variants: vec![Variant {
             bandwidth: 2_560_000,
             average_bandwidth: None,
@@ -849,6 +869,10 @@ fn origin_iframe_variant_shape_validates_clean() {
             codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: vec![],
         }],
         iframe_variants: vec![IFrameVariant {

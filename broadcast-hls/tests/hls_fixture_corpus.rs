@@ -603,18 +603,9 @@ low.m3u8
 ";
     let parsed = MasterPlaylist::parse(input).expect("master with EXT-X-MEDIA must parse");
 
-    // EXT-X-MEDIA is an unmodeled tag on MasterPlaylist — it must land
-    // in extra_tags, not be silently dropped.
-    assert_eq!(
-        parsed.extra_tags.len(),
-        1,
-        "EXT-X-MEDIA must be preserved in extra_tags"
-    );
-    assert!(
-        parsed.extra_tags[0].starts_with("#EXT-X-MEDIA:"),
-        "extra_tags[0] must be the EXT-X-MEDIA line: {}",
-        parsed.extra_tags[0]
-    );
+    // EXT-X-MEDIA is now a modeled rendition on MasterPlaylist.
+    assert_eq!(parsed.media.len(), 1, "EXT-X-MEDIA must be modeled");
+    assert_eq!(parsed.extra_tags.len(), 0);
 
     // Round-trip: parse → serialize → re-parse must yield an equal document.
     let rendered = parsed.to_m3u8().unwrap();

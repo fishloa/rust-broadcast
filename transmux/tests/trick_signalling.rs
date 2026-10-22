@@ -68,6 +68,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
     // --- Positive case: one IFrameVariant ---
     let pl = MasterPlaylist {
         version: 6,
+        media: vec![],
         variants: vec![Variant {
             bandwidth: 1_500_000,
             average_bandwidth: None,
@@ -75,6 +76,10 @@ fn iframe_stream_inf_renders_and_opt_in() {
             codecs: Some("hvc1.1.6.L93.B0,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "main.m3u8".into(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: vec![],
         }],
         iframe_variants: vec![IFrameVariant {
@@ -117,6 +122,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
     // --- Negative case: zero iframe_variants → tag absent ---
     let plain = MasterPlaylist {
         version: 6,
+        media: vec![],
         variants: vec![Variant {
             bandwidth: 1_500_000,
             average_bandwidth: None,
@@ -124,6 +130,10 @@ fn iframe_stream_inf_renders_and_opt_in() {
             codecs: Some("hvc1.1.6.L93.B0,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "main.m3u8".into(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: vec![],
         }],
         iframe_variants: vec![],
@@ -362,6 +372,7 @@ fn ir_trick_track_wired_to_signalling() {
 
     let master = MasterPlaylist {
         version: 6,
+        media: vec![],
         variants: vec![Variant {
             bandwidth: 2_000_000,
             average_bandwidth: None,
@@ -369,6 +380,10 @@ fn ir_trick_track_wired_to_signalling() {
             codecs: Some("avc1.640028".into()),
             resolution: Some((src_w, src_h)),
             uri: "main.m3u8".into(),
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
             extra_attrs: vec![],
         }],
         iframe_variants: vec![iframe_variant],

@@ -17,7 +17,13 @@ use std::path::Path;
 // spec/field label enums — the documented SKIP category for such types
 // (issue #872). `AttrValue` (issue #1045) is a `pub struct`, not a `pub
 // enum`, so this scanner never sees it at all — no SKIP entry needed.
-const SKIP: &[&str] = &["Error", "Define", "SessionDataContent"];
+const SKIP: &[&str] = &[
+    "Error",
+    "Define",
+    "SessionDataContent",
+    "InstreamId",
+    "ClosedCaptionsRef",
+];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {
