@@ -618,20 +618,40 @@ async fn iframe_validator_clean() {
 }
 
 // (g) SCTE-35 case
-#[ignore = "issue #1422"]
 #[tokio::test]
 async fn iframe_scte35_emsg_shift() {
     use media_plane::trunk::EventAnchor;
-    use timed_metadata::{MediaTime, Timeline};
+    use timed_metadata::{MediaTime, TimeAnchor, Timeline};
+
+    fn parse_emsg_boxes(bytes: &[u8]) -> Vec<transmux::EmsgBox<'_>> {
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i + 8 <= bytes.len() {
+            let size =
+                u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]) as usize;
+            if size < 8 || i + size > bytes.len() {
+                break;
+            }
+            if &bytes[i + 4..i + 8] == b"emsg"
+                && let Ok(e) = transmux::EmsgBox::parse(&bytes[i..i + size])
+            {
+                out.push(e);
+            }
+            i += size;
+        }
+        out
+    }
 
     let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
     let program = media_plane::ProgramId(0);
     let trunk = store.publish_new_program(program);
 
-    // Note segment boundaries up front on a short-lived segment writer so the
-    // store's own lazy segment writer (acquired by add_part/add_segment below)
-    // is not starved (see RouteHandle::with_segment_writer).
+    // Note segment boundaries up front on a short-lived segment writer.
     let seg_writer = trunk.segment_writer().expect("seg writer");
+    seg_writer.set_time_anchor(TimeAnchor {
+        pts_90k: 0,
+        utc_epoch_ms: 1_000_000_000_000,
+    });
     seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(1), MediaTime(0));
     seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(2), MediaTime(90_000));
     drop(seg_writer);
@@ -689,9 +709,11 @@ async fn iframe_scte35_emsg_shift() {
     );
     let app = router(Arc::new(AppState::new(streams)));
 
-    // advertised len for first entry
+    // I-frame playlist URIs use the iframe-seg- prefix.
     let resp = app.clone().oneshot(get("/cam/iframe.m3u8")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
     let playlist = body_string(resp).await;
+
     let mut len: u64 = 0;
     let mut uri = String::new();
     let lines: Vec<&str> = playlist.lines().collect();
@@ -713,27 +735,66 @@ async fn iframe_scte35_emsg_shift() {
             i += 1;
         }
     }
+    assert!(!uri.is_empty(), "no uri found");
+    assert!(uri.starts_with("iframe-seg-"), "uri={uri}");
 
+    // stored bytes behind the I-frame URI (no emsg)
     let resp = app
         .clone()
         .oneshot(get(&format!("/cam/{uri}")))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let served = body_bytes(resp).await;
+    let stored = body_bytes(resp).await;
+    let computed = first_sample_end(&stored);
+    assert_eq!(len, computed, "advertised len must match stored geometry");
+    assert!(
+        parse_emsg_boxes(&stored).is_empty(),
+        "stored bytes must have no emsg"
+    );
 
-    let computed = first_sample_end(&served);
-    eprintln!(
-        "SCTE: advertised len={} computed_from_served={} served_len={} shift={}",
-        len,
-        computed,
-        served.len(),
-        computed.saturating_sub(len)
+    // Range request returns first len bytes of stored segment, no emsg in them.
+    let req = Request::builder()
+        .uri(format!("/cam/{uri}"))
+        .header("range", format!("bytes=0-{}", len - 1))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+    let range_body = body_bytes(resp).await;
+    assert_eq!(range_body, stored[..len as usize]);
+    assert!(parse_emsg_boxes(&range_body).is_empty());
+
+    // nonexistent iframe-seg seq => 404
+    let nonexistent = {
+        let (prefix, _) = uri.rsplit_once('-').unwrap();
+        format!("{prefix}-999.m4s")
+    };
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/cam/{nonexistent}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // media seg- fetch of same seq returns emsg-injected bytes
+    let media_uri = uri.replacen("iframe-seg-", "seg-", 1);
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/cam/{media_uri}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let media_served = body_bytes(resp).await;
+    assert!(
+        media_served.len() > stored.len(),
+        "emsg injection must grow length"
     );
-    assert_eq!(
-        len, computed,
-        "advertised I-frame BYTERANGE no longer matches served segment after emsg injection"
+    assert!(
+        !parse_emsg_boxes(&media_served).is_empty(),
+        "media segment must contain emsg"
     );
-    let _ = uri;
+    assert!(parse_emsg_boxes(&stored).is_empty());
+
     let _ = trunk;
 }

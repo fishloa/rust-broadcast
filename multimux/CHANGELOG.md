@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- `parse_segment_filename` now accepts the real instance form `seg-{track}-{instance}-{seq}.m4s` in addition to the legacy `seg-{track}-{seq}.m4s` (issue #1422). As a result `inject_segment_events` (DASH SCTE-35 `emsg` splice) and the in-progress chunked whole-segment fallback now actually run for real HLS/DASH filenames instead of only the unit tests' short names. `iframe-seg-…` URIs are deliberately excluded so I-frame byte ranges never drift. Box-scan assertions in `tests/origin_iframe.rs` cover the new behaviour.
+
+
 ### Changed
 - LL-HLS media playlists now carry `HOLD-BACK` (3 x Target Duration, RFC 8216bis §4.4.3.8) in `#EXT-X-SERVER-CONTROL`; Apple's `mediastreamvalidator` rejects a low-latency playlist without it. Wire-visible: `media.m3u8` grows by `,HOLD-BACK=<3 x target>` (golden `origin_response_headers` content-length 248 -> 261). Remaining validator findings on the live origin are tracked in #1429.
 

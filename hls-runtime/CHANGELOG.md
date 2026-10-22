@@ -6,6 +6,10 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+- I-frame (trick-play) playlist segment URIs now use the `iframe-seg-{track}-{instance}-{seq}.m4s` prefix instead of `seg-…` (issue #1422). The bytes behind an I-frame URI are always the stored segment bytes, so the advertised `#EXT-X-BYTERANGE` length (measured on the stored bytes) can never drift under DASH `emsg` splicing. `parse_immediate` resolves `iframe-seg-…` to the same `ImmediateResource::Segment` (immutable when instance-named). `seg-…` names are unchanged.
+
 ### Added
 - `HlsOriginBuilder::program_date_time_arrival(clock)` adds an arrival wall-clock source for `#EXT-X-PROGRAM-DATE-TIME` (Apple authoring 8.4 MUST): PDTs are anchored to the trunk's continuous segment timeline instead of a (possibly jumping) source media clock, so a source-clock discontinuity never makes the date↔segment mapping ambiguous. The clock is sampled at most once over the origin's lifetime (first drained segment); explicit trunk time anchors still take precedence; out-of-range values are omitted without panicking. I-frame playlists now carry the same PDTs as the media playlist.
 - `HlsOrigin::render_playlist` now derives `#EXT-X-PROGRAM-DATE-TIME` for closed and open segments from the trunk time anchor plus `Trunk::segment_start_time` (Apple authoring 8.4); emits nothing when the anchor or a segment start is unknown. Live and I-frame playlists now always emit `#EXT-X-DISCONTINUITY-SEQUENCE` (including `:0`) (Apple authoring 8.17).
