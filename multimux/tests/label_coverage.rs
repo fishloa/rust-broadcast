@@ -57,6 +57,7 @@ use std::path::Path;
 const SKIP: &[&str] = &[
     "MultimuxError",
     "IngestError",
+    "SessionError",
     "AddSegmentError",
     "FileReaderError",
     "RtmpPushError",

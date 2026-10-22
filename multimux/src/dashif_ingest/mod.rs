@@ -180,6 +180,9 @@ pub enum IngestError {
 
     #[error("MPD AdaptationSet/Representation lacks a SegmentTemplate (§6.2.16 intro)")]
     MpdMissingSegmentTemplate,
+
+    #[error("header changed mid-session (§6.2.19)")]
+    HeaderChanged,
 }
 
 impl IngestError {
@@ -488,6 +491,7 @@ mod tests {
                 IngestError::MpdTemplateMismatch { .. } => 400,
                 IngestError::MpdBaseUrlPresent => 400,
                 IngestError::MpdMissingSegmentTemplate => 400,
+                IngestError::HeaderChanged => 400,
             }
         }
         let variants = [
@@ -502,9 +506,13 @@ mod tests {
             IngestError::MpdTemplateMismatch { attr: "media" },
             IngestError::MpdBaseUrlPresent,
             IngestError::MpdMissingSegmentTemplate,
+            IngestError::HeaderChanged,
         ];
         for v in &variants {
             assert_eq!(v.status().as_u16(), expected(v));
         }
     }
 }
+
+pub mod session;
+pub use session::{DashifIngestSession, IngestObject, SessionError};
