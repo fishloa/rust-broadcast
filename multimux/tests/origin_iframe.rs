@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use transmux::TrackId;
 use broadcast_common::traits::Parse;
+use transmux::TrackId;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -174,7 +174,10 @@ async fn iframe_master_variant_gating() {
         1,
         "playlist: {playlist}"
     );
-    assert!(playlist.contains("URI=\"iframe.m3u8\""), "playlist: {playlist}");
+    assert!(
+        playlist.contains("URI=\"iframe.m3u8\""),
+        "playlist: {playlist}"
+    );
 
     // audio-only route: no I-frame variant
     use transmux::rtp_sdp::aac_config_from_asc_hex;
@@ -233,7 +236,10 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
     let resp = app.clone().oneshot(get("/cam/iframe.m3u8")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let playlist = body_string(resp).await;
-    assert!(playlist.contains("#EXT-X-I-FRAMES-ONLY"), "playlist: {playlist}");
+    assert!(
+        playlist.contains("#EXT-X-I-FRAMES-ONLY"),
+        "playlist: {playlist}"
+    );
 
     // parse entries
     let mut entries: Vec<(u64, String)> = Vec::new();
@@ -260,11 +266,18 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
 
     for (len, uri) in &entries {
         // independent calc from served segment bytes
-        let resp = app.clone().oneshot(get(&format!("/cam/{uri}"))).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/cam/{uri}")))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let seg = body_bytes(resp).await;
         let expected = first_sample_end(&seg);
-        assert_eq!(*len, expected, "uri {uri}: advertised {len} vs computed {expected}");
+        assert_eq!(
+            *len, expected,
+            "uri {uri}: advertised {len} vs computed {expected}"
+        );
     }
 }
 
@@ -305,14 +318,9 @@ fn first_sample_end(seg: &[u8]) -> u64 {
     let body = &seg[moof_off + moof_hdr..moof_off + moof_total];
     let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(body).expect("moof parse");
     let mdats = transmux::frag_offsets::mdat_ranges(seg);
-    let samples = transmux::frag_offsets::sample_ranges_in(
-        seg,
-        &mdats,
-        moof_off,
-        &moof,
-        TrackId::new(1),
-    )
-    .expect("sample ranges");
+    let samples =
+        transmux::frag_offsets::sample_ranges_in(seg, &mdats, moof_off, &moof, TrackId::new(1))
+            .expect("sample ranges");
     samples[0].end as u64
 }
 
@@ -357,7 +365,11 @@ async fn iframe_range_requests() {
     let (len, uri) = entries[0].clone();
 
     // full segment
-    let resp = app.clone().oneshot(get(&format!("/cam/{uri}"))).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/cam/{uri}")))
+        .await
+        .unwrap();
     let total_seg = body_bytes(resp).await;
 
     // range request
@@ -420,7 +432,10 @@ async fn ts_hls_no_iframe() {
     let resp = app.clone().oneshot(get("/cam/master.m3u8")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let playlist = body_string(resp).await;
-    assert!(!playlist.contains("EXT-X-I-FRAME-STREAM-INF"), "playlist: {playlist}");
+    assert!(
+        !playlist.contains("EXT-X-I-FRAME-STREAM-INF"),
+        "playlist: {playlist}"
+    );
 }
 
 // validator test (f)
@@ -438,9 +453,7 @@ async fn iframe_validator_clean() {
         .map(|o| o.status.success())
         .unwrap_or(false);
     if !available {
-        eprintln!(
-            "SKIP iframe_validator_clean: `mediastreamvalidator` not on PATH ..."
-        );
+        eprintln!("SKIP iframe_validator_clean: `mediastreamvalidator` not on PATH ...");
         return;
     }
 
@@ -478,14 +491,17 @@ async fn iframe_validator_clean() {
     );
     let app = router(Arc::new(AppState::new(streams)));
 
-    let scratch = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/iframe-validator-tmp");
+    let scratch = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/iframe-validator-tmp");
     let _ = fs::remove_dir_all(&scratch);
     fs::create_dir_all(&scratch).unwrap();
 
     // fetch playlists
     for name in ["master.m3u8", "media.m3u8", "iframe.m3u8"] {
-        let resp = app.clone().oneshot(get(&format!("/cam/{name}"))).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/cam/{name}")))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         fs::write(scratch.join(name), body_bytes(resp).await).unwrap();
     }
@@ -536,7 +552,10 @@ async fn iframe_validator_clean() {
     // collect findings
     fn collect(value: &serde_json::Value, path: &str, out: &mut Vec<(String, i64, String)>) {
         if let serde_json::Value::Object(map) = value {
-            let parse_failed = map.get("parseFailed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let parse_failed = map
+                .get("parseFailed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if let Some(serde_json::Value::Array(messages)) = map.get("messages") {
                 for m in messages {
                     let level = m
@@ -668,7 +687,11 @@ async fn iframe_scte35_emsg_shift() {
         }
     }
 
-    let resp = app.clone().oneshot(get(&format!("/cam/{uri}"))).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/cam/{uri}")))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let served = body_bytes(resp).await;
 

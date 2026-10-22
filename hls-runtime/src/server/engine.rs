@@ -82,7 +82,7 @@ use transmux::TrackId;
 use broadcast_common::{Parse, Timestamp, Unpackage};
 use broadcast_hls::{
     ByteRange, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist,
-    MediaSegment, OpenSegment, PartSpec, Variant, VideoRange,
+    MediaSegment, OpenSegment, PartSpec, RenditionReport, Variant, VideoRange,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -247,8 +247,6 @@ const ABUSE_MSN_FUTURE_BOUND: u64 = 2;
 /// RFC 8216bis / Apple LL-HLS §4.4.3.7: `#EXT-X-SERVER-CONTROL`'s
 /// `PART-HOLD-BACK` attribute MUST be at least 3x the part target duration
 /// (`#EXT-X-PART-INF`'s `PART-TARGET`).
-const PART_HOLD_BACK_MULTIPLIER: f64 = 3.0;
-
 /// A minimal single-variant master playlist pointing at `media_playlist_name`
 /// (the caller's configured media-playlist filename — e.g. multimux's
 /// `Config::playlist_name`, defaulting to `"media.m3u8"`) — the same
@@ -1894,23 +1892,36 @@ impl HlsOrigin {
             }
         }
         let low_latency = low_latency_enabled.then(|| {
-            let part_target_ms = self
-                .part_target_ms
-                .expect("low_latency_enabled implies Some");
+            let part_target_ms = self.part_target_ms.unwrap_or(0);
             // `part_target_ms: u32` / 1000.0 (issue #1140): always finite
             // and non-negative, as is the product with the positive
             // `PART_HOLD_BACK_MULTIPLIER` constant.
             let part_target = DecimalSeconds::new(f64::from(part_target_ms) / 1000.0)
-                .expect("u32 / 1000.0 is finite, >= 0");
-            let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
-                .expect("finite, >= 0 times a positive constant is finite, >= 0");
+                .unwrap_or(DecimalSeconds::ZERO);
             LowLatencyConfig {
+                can_block_reload: true,
                 part_target: Some(part_target),
-                part_hold_back: Some(part_hold_back),
+                part_hold_back: None,
                 preload_hint_part: next_part_hint,
                 ..Default::default()
             }
         });
+        // `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4): when this
+        // origin serves an I-frame playlist, the media playlist reports it.
+        let mut rendition_reports = Vec::new();
+        if low_latency_enabled && self.iframe_playlist_available() {
+            let window = &window;
+            if let Some(entries) = self.iframe_entries(window)
+                && let Some(last) = entries.last()
+            {
+                rendition_reports.push(RenditionReport {
+                    uri: "iframe.m3u8".to_string(),
+                    last_msn: self.public_msn(last.0.sequence_number),
+                    last_part: None,
+                    extra_attrs: Vec::new(),
+                });
+            }
+        }
         let playlist = MediaPlaylist {
             // No explicit floor: `broadcast_hls::MediaPlaylist::to_m3u8`
             // computes `EXT-X-VERSION` from the content actually emitted
@@ -1926,6 +1937,7 @@ impl HlsOrigin {
             endlist: false,
             extra_tags,
             low_latency,
+            rendition_reports,
             iframes_only: false,
             ..Default::default()
         };
@@ -2058,6 +2070,8 @@ impl HlsOrigin {
             return Err("no video track".to_string());
         }
         let window = self.window_view();
+        let (open_seq, open_parts) = self.live_edge();
+        let has_open_parts = self.part_target_ms.is_some() && !open_parts.is_empty();
         // D3': collect entries; a `None` is allowed only before the first entry.
         let Some(entries) = self.iframe_entries(&window) else {
             return Err("no iframe entry".to_string());
@@ -2101,24 +2115,49 @@ impl HlsOrigin {
             .collect();
 
         let low_latency = if self.part_target_ms.is_some() {
-            let part_target = broadcast_hls::DecimalSeconds::new(
-                f64::from(self.part_target_ms.unwrap()) / 1000.0,
-            )
-            .expect("finite");
-            let part_hold_back = broadcast_hls::DecimalSeconds::new(part_target.get() * 3.0)
-                .expect("finite");
-            let hold_back = broadcast_hls::DecimalSeconds::new(part_target.get() * 6.0)
-                .expect("finite");
+            let part_target_ms = self.part_target_ms.unwrap_or(0);
+            let part_target =
+                broadcast_hls::DecimalSeconds::new(f64::from(part_target_ms) / 1000.0)
+                    .unwrap_or(broadcast_hls::DecimalSeconds::ZERO);
             Some(broadcast_hls::LowLatencyConfig {
                 can_block_reload: true,
                 part_target: Some(part_target),
-                part_hold_back: Some(part_hold_back),
-                hold_back: Some(hold_back),
+                part_hold_back: None,
+                preload_hint_part: None,
                 ..Default::default()
             })
         } else {
             None
         };
+        // `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4): the I-frame
+        // playlist reports the media playlist's current live edge.
+        let mut rendition_reports = Vec::new();
+        if low_latency.is_some() {
+            let last_msn = if has_open_parts {
+                self.public_msn(open_seq)
+            } else {
+                window
+                    .segments
+                    .back()
+                    .map(|s| self.public_msn(s.sequence_number))
+                    .unwrap_or_else(|| self.public_msn(SegmentSeq::new(1)))
+            };
+            let last_part = if has_open_parts {
+                open_parts
+                    .iter()
+                    .map(|p| p.part_index)
+                    .max()
+                    .map(|p| u64::from(p.value()))
+            } else {
+                None
+            };
+            rendition_reports.push(RenditionReport {
+                uri: "media.m3u8".to_string(),
+                last_msn,
+                last_part,
+                extra_attrs: Vec::new(),
+            });
+        }
 
         let playlist = MediaPlaylist {
             target_duration,
@@ -2129,6 +2168,7 @@ impl HlsOrigin {
             endlist: false,
             extra_tags: Vec::new(),
             low_latency,
+            rendition_reports,
             iframes_only: true,
             ..Default::default()
         };
