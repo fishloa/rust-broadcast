@@ -828,6 +828,47 @@ fn parse_epoch_seq(names: &str) -> Option<(Option<u64>, u64)> {
     }
 }
 
+/// Wire prefix for an I-frame (trick-play) segment resource (issue #1422).
+///
+/// An I-frame playlist references its segment bytes under this prefix rather
+/// than the media playlist's `seg-` prefix, so the bytes behind an I-frame
+/// URI are *always* the stored segment bytes: `multimux`'s DASH `emsg`
+/// splice (and the in-progress chunked fallback) key off `seg-` only and
+/// never touch `iframe-seg-` URIs, which keeps the advertised
+/// `#EXT-X-BYTERANGE` length (measured on the stored bytes by
+/// `compute_iframe_len`) from drifting away from the served bytes.
+pub const IFRAME_SEGMENT_PREFIX: &str = "iframe-seg-";
+
+/// Parse a whole-segment dynamic filename (`seg-{track}-{seq}.{ext}` or the
+/// instance form `seg-{track}-{instance}-{seq}.{ext}`) into
+/// `(track, instance, seq)`, where `instance` is `None` for the legacy form.
+/// `ext` is taken from `container`. Returns `None` for any other shape,
+/// including `iframe-seg-…` (issue #1422: I-frame URIs are a distinct
+/// resource family and must never be treated as media-segment names here).
+///
+/// This is the single source of truth for the `seg-` grammar; `multimux`
+/// (and any other adapter) should call this rather than re-implementing the
+/// split.
+pub fn parse_segment_name(file: &str, container: Container) -> Option<(u32, Option<u64>, u64)> {
+    let suffix = format!(".{}", container.segment_extension());
+    let rest = file.strip_prefix("seg-")?.strip_suffix(suffix.as_str())?;
+    let mut fields = rest.split('-');
+    let track: u32 = fields.next()?.parse().ok()?;
+    let first = fields.next()?;
+    match fields.next() {
+        None => {
+            // legacy: {track}-{seq}
+            Some((track, None, first.parse().ok()?))
+        }
+        Some(seq) => {
+            if fields.next().is_some() {
+                return None;
+            }
+            Some((track, Some(first.parse().ok()?), seq.parse().ok()?))
+        }
+    }
+}
+
 /// What [`parse_immediate`] recognised.
 enum ImmediateResource {
     /// `init-{track}.mp4`: the current init (changes, never `immutable`).
@@ -864,7 +905,15 @@ fn parse_immediate(file: &str, container: Container) -> Option<ImmediateResource
             _ => None,
         };
     }
-    if let Some(rest) = file.strip_prefix("seg-") {
+    // `iframe-seg-…` resolves to the *same* stored segment bytes as
+    // `seg-…` (issue #1422): the I-frame playlist advertises a byte range
+    // measured on the stored bytes, so its URI must never be transformed by
+    // `multimux`'s emsg splice. Recognising the prefix here makes the
+    // origin serve the unmodified bytes for it.
+    let seg_rest = file
+        .strip_prefix("seg-")
+        .or_else(|| file.strip_prefix(IFRAME_SEGMENT_PREFIX));
+    if let Some(rest) = seg_rest {
         let suffix = format!(".{}", container.segment_extension());
         let (epoch, seq) = parse_epoch_seq(rest.strip_suffix(suffix.as_str())?)?;
         return Some(ImmediateResource::Segment { epoch, seq });
@@ -1508,6 +1557,19 @@ impl HlsOrigin {
     fn segment_name(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> String {
         format!(
             "seg-{track_id}-{}-{}.{ext}",
+            self.instance,
+            self.public_msn(seq)
+        )
+    }
+
+    /// The wire name of the I-frame (trick-play) resource for `track_id`'s
+    /// segment `seq` (issue #1422): `iframe-seg-{track}-{instance}-{seq}.{ext}`,
+    /// the same grammar as `segment_name` but under the
+    /// [`IFRAME_SEGMENT_PREFIX`] prefix, so the bytes it resolves to are
+    /// always the stored segment bytes and never the `emsg`-spliced ones.
+    pub fn iframe_segment_name(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> String {
+        format!(
+            "iframe-seg-{track_id}-{}-{}.{ext}",
             self.instance,
             self.public_msn(seq)
         )
@@ -2202,7 +2264,7 @@ impl HlsOrigin {
             .iter()
             .map(|(s, len)| MediaSegment {
                 map: map_for(s.init_gen),
-                uri: self.segment_name(
+                uri: self.iframe_segment_name(
                     track_id,
                     s.sequence_number,
                     self.container.segment_extension(),

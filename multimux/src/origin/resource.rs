@@ -225,10 +225,27 @@ fn resource_body_response(
 /// track's data regardless of the number a client's `$RepresentationID$`
 /// substitution produces, exactly like `HlsOrigin::resolve` itself).
 fn parse_segment_filename(file: &str) -> Option<(&str, u32)> {
+    // Accept both the legacy `seg-{track}-{seq}.m4s` and the instance form
+    // `seg-{track}-{instance}-{seq}.m4s` (issue #1422). `iframe-seg-…` is
+    // deliberately NOT accepted: I-frame URIs resolve to the unmodified
+    // stored bytes and must never be emsg-injected or chunked-served.
     let rest = file.strip_prefix("seg-")?.strip_suffix(".m4s")?;
-    let (track, seq) = rest.split_once('-')?;
+    let mut fields = rest.split('-');
+    let track = fields.next()?;
     track.parse::<u32>().ok()?;
-    Some((track, seq.parse().ok()?))
+    let first = fields.next()?;
+    let seq_str = match fields.next() {
+        None => first,
+        Some(seq) => {
+            if fields.next().is_some() {
+                return None;
+            }
+            // instance token must be numeric; otherwise reject.
+            first.parse::<u64>().ok()?;
+            seq
+        }
+    };
+    Some((track, seq_str.parse().ok()?))
 }
 
 /// A `(scheme, value, id)`-unique `emsg` id for one inband SCTE-35 event

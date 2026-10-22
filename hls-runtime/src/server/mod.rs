@@ -53,7 +53,8 @@ mod ids;
 
 pub use engine::{
     BlockingQuery, ClosedSegment, Container, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsOrigin,
-    HlsOriginBuildError, HlsOriginBuilder, HlsRequest, master_playlist_m3u8,
+    HlsOriginBuildError, HlsOriginBuilder, HlsRequest, IFRAME_SEGMENT_PREFIX, master_playlist_m3u8,
+    parse_segment_name,
 };
 pub use ids::Generation;
 pub use media_plane::ids::{PartIndex, SegmentSeq};
