@@ -425,6 +425,19 @@ struct Window {
     /// non-zero, in nanoseconds, surviving eviction — the denominator of
     /// `AVERAGE-BANDWIDTH`. `0` until such a segment has been drained.
     total_duration_nanos: u128,
+    /// Cumulative peak per-I-frame bitrate (bits/second, rounded up) over
+    /// every I-frame-playlist-usable segment ever drained, surviving window
+    /// eviction — `BANDWIDTH` of an `#EXT-X-I-FRAME-STREAM-INF`.
+    iframe_peak_bandwidth_bps: u64,
+    /// Cumulative byte length of every I-frame slice ever drained, surviving
+    /// window eviction — the numerator (in bytes, converted to bits) of an
+    /// I-frame variant's `AVERAGE-BANDWIDTH`.
+    iframe_total_bytes: u64,
+    /// Cumulative duration of every I-frame-playlist-usable segment ever
+    /// drained whose duration was non-zero, in nanoseconds, surviving
+    /// window eviction — the denominator of an I-frame variant's
+    /// `AVERAGE-BANDWIDTH`.
+    iframe_total_duration_nanos: u128,
     /// Cumulative count of discontinuities that have rolled off the front of
     /// the window — RFC 8216 §4.3.3.3's `#EXT-X-DISCONTINUITY-SEQUENCE`.
     /// Incremented exactly once per **evicted** entry whose
@@ -447,6 +460,9 @@ impl Window {
             peak_bandwidth_bps: 0,
             total_bytes: 0,
             total_duration_nanos: 0,
+            iframe_peak_bandwidth_bps: 0,
+            iframe_total_bytes: 0,
+            iframe_total_duration_nanos: 0,
             discontinuity_sequence: 0,
             gap_pending: false,
         }
@@ -517,6 +533,22 @@ impl Window {
             self.total_duration_nanos = self
                 .total_duration_nanos
                 .saturating_add(entry.duration.as_nanos());
+        }
+        // I-frame accounting: per usable entry, bits = iframe_len * 8 over the
+        // segment's EXTINF duration. Cumulative over every drained segment,
+        // surviving eviction (mirrors the media totals above).
+        if let Some(len) = iframe_len {
+            if let Some(bps) =
+                segment_bandwidth_bps(usize::try_from(len).unwrap_or(usize::MAX), entry.duration)
+            {
+                self.iframe_peak_bandwidth_bps = self.iframe_peak_bandwidth_bps.max(bps);
+            }
+            if !entry.duration.is_zero() {
+                self.iframe_total_bytes = self.iframe_total_bytes.saturating_add(len);
+                self.iframe_total_duration_nanos = self
+                    .iframe_total_duration_nanos
+                    .saturating_add(entry.duration.as_nanos());
+            }
         }
         if self.segments.len() >= self.capacity
             && let Some(evicted) = self.segments.pop_front()
@@ -1035,6 +1067,7 @@ impl HlsOriginBuilder {
             window: Mutex::new(Window::new(window_segments)),
             init: Mutex::new(InitStore::default()),
             codecs: Mutex::new(None),
+            video_codecs: Mutex::new(None),
             video_range: Mutex::new(None),
             resolution: Mutex::new(None),
             frame_rate: Mutex::new(None),
@@ -1073,6 +1106,9 @@ pub struct HlsOrigin {
     /// known once track specs have been supplied; `None` = unknown, so the
     /// attribute is omitted rather than invented.
     codecs: Mutex<Option<String>>,
+    /// `CODECS` value for the I-frame variant: the video-only codec string
+    /// (the first video track by track_id), or `None` when unknown.
+    video_codecs: Mutex<Option<String>>,
     /// `VIDEO-RANGE` for the master playlist, derived from the first video
     /// track (in track-id order) whose display carries a colour description;
     /// `None` = unknown / SDR, so the attribute is omitted rather than
@@ -1145,6 +1181,7 @@ impl HlsOrigin {
                 // A new init that cannot be read must not leave the previous
                 // init's codecs (or VIDEO-RANGE) advertised.
                 *locked(&self.codecs) = None;
+                *locked(&self.video_codecs) = None;
                 *locked(&self.video_range) = None;
                 *locked(&self.resolution) = None;
                 *locked(&self.frame_rate) = None;
@@ -1180,6 +1217,10 @@ impl HlsOrigin {
             .find(|spec| is_video_codec(&spec.config))
             .map(|spec| spec.track_id);
         let mut codecs: Vec<String> = Vec::new();
+        // Video-only codec string for the I-frame variant: the first video
+        // track by track_id (RFC 8216bis §4.4.6.3 / Apple 9.3).
+        let mut video_codecs: Option<String> = None;
+        let mut video_codecs_decided = false;
         // VIDEO-RANGE is derived from the first video track (in track-id
         // order) whose display carries a colour description (RFC 8216bis
         // §4.4.6.2). `None` when no such track exists OR its transfer code
@@ -1194,6 +1235,14 @@ impl HlsOrigin {
                 Ok(codec) => codecs.push(codec),
                 Err(transmux::Error::UnsupportedCodec { .. }) => {}
                 Err(other) => return Err(other),
+            }
+            if !video_codecs_decided && is_video_codec(&spec.config) {
+                match transmux::rfc6381_codec_string(&spec.config) {
+                    Ok(codec) => video_codecs = Some(codec),
+                    Err(transmux::Error::UnsupportedCodec { .. }) => {}
+                    Err(other) => return Err(other),
+                }
+                video_codecs_decided = true;
             }
             if !video_range_decided
                 && let Some(display) = &spec.display
@@ -1225,6 +1274,7 @@ impl HlsOrigin {
             }
         }
         *locked(&self.codecs) = (!codecs.is_empty()).then(|| codecs.join(","));
+        *locked(&self.video_codecs) = video_codecs;
         *locked(&self.video_range) = video_range;
         *locked(&self.resolution) = resolution;
         *locked(&self.frame_rate) = frame_rate;
@@ -1246,6 +1296,30 @@ impl HlsOrigin {
     /// does not fit the `u32` of a master playlist variant;
     /// [`HlsMasterError::Render`] when the playlist cannot be rendered.
     pub fn master_playlist(&self, media_playlist_name: &str) -> Result<String, HlsMasterError> {
+        self.master_playlist_inner(media_playlist_name, None)
+    }
+
+    /// Like [`Self::master_playlist`], but additionally advertises an
+    /// `#EXT-X-I-FRAME-STREAM-INF` variant pointing at
+    /// `iframe_playlist_name` when an I-frame playlist is currently
+    /// available for this origin (fMP4, a video track, and at least one
+    /// usable entry with no mid-stream gap). The plain variant is unchanged.
+    ///
+    /// # Errors
+    /// As for [`Self::master_playlist`].
+    pub fn master_playlist_with_iframes(
+        &self,
+        media_playlist_name: &str,
+        iframe_playlist_name: &str,
+    ) -> Result<String, HlsMasterError> {
+        self.master_playlist_inner(media_playlist_name, Some(iframe_playlist_name))
+    }
+
+    fn master_playlist_inner(
+        &self,
+        media_playlist_name: &str,
+        iframe_playlist_name: Option<&str>,
+    ) -> Result<String, HlsMasterError> {
         self.drain();
         let (measured, total_bytes, total_duration_nanos) = {
             let window = locked(&self.window);
@@ -1262,11 +1336,6 @@ impl HlsOrigin {
         };
         let bandwidth = u32::try_from(bandwidth)
             .map_err(|_| HlsMasterError::BandwidthOverflow { bandwidth })?;
-        // RFC 8216bis §4.4.6.2 / Apple authoring 9.14: AVERAGE-BANDWIDTH is
-        // the mean segment bitrate since the origin started, clamped to
-        // BANDWIDTH (the average can never exceed the peak; rounding must not
-        // produce that contradiction). Omitted, never invented, while nothing
-        // measurable has been drained.
         let average_bandwidth =
             average_bandwidth_bps(total_bytes, total_duration_nanos).map(|avg| avg.min(bandwidth));
         let mut extra_attrs: Vec<(String, broadcast_hls::AttrValue)> = Vec::new();
@@ -1275,19 +1344,98 @@ impl HlsOrigin {
         {
             extra_attrs.push(range.attr());
         }
+        let variant = Variant {
+            bandwidth,
+            average_bandwidth,
+            codecs: locked(&self.codecs).clone(),
+            uri: media_playlist_name.to_string(),
+            extra_attrs: extra_attrs.clone(),
+            resolution: *locked(&self.resolution),
+            frame_rate: *locked(&self.frame_rate),
+        };
+
+        // I-frame variant, only when the I-frame playlist is available.
+        let mut iframe_variants: Vec<broadcast_hls::IFrameVariant> = Vec::new();
+        if let Some(iframe_name) = iframe_playlist_name
+            && self.iframe_playlist_available()
+        {
+            let (iframe_measured, iframe_total_bytes, iframe_total_duration_nanos) = {
+                let window = locked(&self.window);
+                (
+                    window.iframe_peak_bandwidth_bps,
+                    window.iframe_total_bytes,
+                    window.iframe_total_duration_nanos,
+                )
+            };
+            if iframe_measured != 0 {
+                let iframe_bandwidth = u32::try_from(iframe_measured).map_err(|_| {
+                    HlsMasterError::BandwidthOverflow {
+                        bandwidth: iframe_measured,
+                    }
+                })?;
+                let iframe_average =
+                    average_bandwidth_bps(iframe_total_bytes, iframe_total_duration_nanos)
+                        .map(|avg| avg.min(iframe_bandwidth));
+                let mut iframe_extra: Vec<(String, broadcast_hls::AttrValue)> = Vec::new();
+                if let Some(range) = *locked(&self.video_range)
+                    && matches!(range, VideoRange::Hlg | VideoRange::Pq)
+                {
+                    iframe_extra.push(range.attr());
+                }
+                iframe_variants.push(broadcast_hls::IFrameVariant {
+                    bandwidth: iframe_bandwidth,
+                    average_bandwidth: iframe_average,
+                    codecs: locked(&self.video_codecs).clone(),
+                    resolution: *locked(&self.resolution),
+                    uri: iframe_name.to_string(),
+                    extra_attrs: iframe_extra,
+                });
+            }
+        }
+
         let master = MasterPlaylist {
-            variants: vec![Variant {
-                bandwidth,
-                average_bandwidth,
-                codecs: locked(&self.codecs).clone(),
-                uri: media_playlist_name.to_string(),
-                extra_attrs,
-                resolution: *locked(&self.resolution),
-                frame_rate: *locked(&self.frame_rate),
-            }],
+            variants: vec![variant],
+            iframe_variants,
             ..Default::default()
         };
         master.to_m3u8().map_err(HlsMasterError::Render)
+    }
+
+    fn iframe_playlist_available(&self) -> bool {
+        if self.container != Container::Fmp4 {
+            return false;
+        }
+        if locked(&self.video_track_id).is_none() {
+            return false;
+        }
+        let window = self.window_view();
+        self.iframe_entries(&window).is_some()
+    }
+
+    /// Shared D3' rule: collect I-frame entries, allowing leading `None`s but
+    /// rejecting a `None` after the first entry. Returns `None` when there is
+    /// no usable entry (or a gap occurred).
+    fn iframe_entries(&self, window: &WindowView) -> Option<Vec<(WindowSegment, u64)>> {
+        let mut entries: Vec<(WindowSegment, u64)> = Vec::new();
+        let mut seen_entry = false;
+        for s in window.segments.iter() {
+            match s.iframe_len {
+                Some(len) => {
+                    seen_entry = true;
+                    entries.push((s.clone(), len));
+                }
+                None => {
+                    if seen_entry {
+                        return None;
+                    }
+                }
+            }
+        }
+        if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        }
     }
 
     /// This origin's instance token: a number that differs for every origin
@@ -1906,31 +2054,14 @@ impl HlsOrigin {
         if self.container != Container::Fmp4 {
             return Err("not fmp4".to_string());
         }
-        let video_track_id = *locked(&self.video_track_id);
-        let Some(video_track_id) = video_track_id else {
+        if locked(&self.video_track_id).is_none() {
             return Err("no video track".to_string());
-        };
-        let _ = video_track_id;
+        }
         let window = self.window_view();
         // D3': collect entries; a `None` is allowed only before the first entry.
-        let mut entries: Vec<(WindowSegment, u64)> = Vec::new();
-        let mut seen_entry = false;
-        for s in window.segments.iter() {
-            match s.iframe_len {
-                Some(len) => {
-                    seen_entry = true;
-                    entries.push((s.clone(), len));
-                }
-                None => {
-                    if seen_entry {
-                        return Err("iframe gap after entry".to_string());
-                    }
-                }
-            }
-        }
-        if entries.is_empty() {
+        let Some(entries) = self.iframe_entries(&window) else {
             return Err("no iframe entry".to_string());
-        }
+        };
 
         // Target duration uses the same rule as the media playlist.
         let target_duration = self
