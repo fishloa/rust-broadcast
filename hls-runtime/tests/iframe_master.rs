@@ -369,3 +369,75 @@ fn iframe_master_plain_byte_identical() {
     assert_eq!(a, b);
     assert!(!a.contains("I-FRAME-STREAM-INF"));
 }
+
+// ----- VIDEO-RANGE on the I-frame variant (Apple 9.16 covers variants AND I-frame variants) -----
+
+fn hdr_spec(transfer_code: u8) -> TrackSpec {
+    use transmux::ir::{ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType};
+    use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+    let config = AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 66,
+        profile_compatibility: 0,
+        level_indication: 30,
+        length_size_minus_one: 3,
+        sps: vec![AvcSps(vec![0x67, 66, 0, 30, 0x00])],
+        pps: vec![AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+        sps_ext: vec![],
+    });
+    let spec = TrackSpec::new(
+        TrackId::new(1),
+        90_000,
+        CodecConfig::Avc {
+            config,
+            width: 320,
+            height: 240,
+        },
+    );
+    let mut g = DisplayGeometry::new(320, 240, None);
+    g.video_signal = Some(VideoSignalType::new(
+        VideoFormat::Component,
+        false,
+        Some(ColourDescription::from_wire(1, transfer_code, 1)),
+    ));
+    spec.with_display(Some(g))
+}
+
+fn iframe_variant_line(transfer_code: u8) -> String {
+    let (_trunk, origin, writer) = origin_fmp4(64);
+    origin
+        .set_track_specs(&[hdr_spec(transfer_code)])
+        .expect("specs");
+    for (i, name) in ["index0.m4s", "index1.m4s"].iter().enumerate() {
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(fixture_bytes(name)),
+                SegmentSeq::new(i as u32 + 1),
+                Duration::from_secs(1),
+                Timestamp::from_nanos(0),
+                SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish");
+    }
+    let text = origin
+        .master_playlist_with_iframes("media.m3u8", "iframe.m3u8")
+        .expect("master");
+    text.lines()
+        .find(|l| l.starts_with("#EXT-X-I-FRAME-STREAM-INF"))
+        .unwrap_or_else(|| panic!("no I-frame variant in:\n{text}"))
+        .to_string()
+}
+
+#[test]
+fn iframe_variant_carries_video_range_for_hdr() {
+    // transfer 16 = PQ (SMPTE ST 2084), 18 = HLG (ARIB STD-B67): HLS VIDEO-RANGE values.
+    assert!(iframe_variant_line(16).contains("VIDEO-RANGE=PQ"), "PQ");
+    assert!(iframe_variant_line(18).contains("VIDEO-RANGE=HLG"), "HLG");
+    // SDR (transfer 1): the attribute is omitted (Apple 9.16 requires it only for non-SDR).
+    assert!(!iframe_variant_line(1).contains("VIDEO-RANGE"), "SDR");
+}
