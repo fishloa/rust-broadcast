@@ -21,6 +21,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `HlsOrigin` now derives and advertises `RESOLUTION` in the master playlist from the first video track (AVC/HEVC) display geometry: square-pixel presentation size (cropped output, rescaled by SAR), via `transmux::presentation_size`. Audio-only origins omit it.
 - `HlsOrigin`'s master playlist now carries `AVERAGE-BANDWIDTH` (Apple HLS Authoring Specification item 9.14; RFC 8216bis §4.4.6.2): the mean segment bitrate over every segment the origin has drained, `round(sum(bytes) * 8 / sum(seconds))`, surviving playlist-window eviction. It is clamped to `BANDWIDTH` (a mean can never exceed the peak) and omitted, never invented, until a segment with a measurable duration has closed. Requires `broadcast-hls`'s new typed `Variant::average_bandwidth`.
 
+### Added (client)
+- `HlsClient` now emits `Output::Tracks(Vec<transmux::TrackSpec>)` (the full current track set) and `Output::DisplayChanged { track_id, pts, display }` (from `DemuxEvent::DisplayChanged`). TS path emits `Tracks` immediately before every re-synthesized `Init`; fMP4 path emits `Tracks` once after the first `Init` and again only when a new `Init` yields a different spec set. `DisplayChanged` flushes the affected track's pending samples first so output order matches sample order.
+
 ## [0.9.0] - 2026-10-17
 ### Documentation
 - README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it). The former published name `ll-hls-runtime` is noted.
