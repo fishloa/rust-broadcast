@@ -1,6 +1,7 @@
 //! [`HlsClient`] — the sans-IO caller-driven engine.
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use transmux::TrackId;
