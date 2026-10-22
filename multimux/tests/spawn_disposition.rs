@@ -70,6 +70,11 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         "WHIP accept pump; owned by the route supervisor handle",
     ),
     (
+        "source/dashif_ingest.rs",
+        139,
+        "DASH-IF ingest pump task; owned by run_dashif_ingest (aborted on serve exit)",
+    ),
+    (
         "output/whep.rs",
         1000,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
@@ -156,22 +161,22 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        2246,
+        2283,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
         "origin/admin.rs",
-        1094,
+        1095,
         "external shutdown-signal watcher; aborted by hand at admin teardown",
     ),
     (
         "origin/admin.rs",
-        1106,
+        1107,
         "shutdown-watch task translating the signal channel into the token; aborted by hand at teardown",
     ),
     (
         "origin/admin.rs",
-        1112,
+        1113,
         "admin listener server task; joined/aborted at admin teardown",
     ),
 ];

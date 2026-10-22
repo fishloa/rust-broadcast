@@ -220,6 +220,17 @@ pub enum InputSpec {
         /// single-route listener, not a multi-tenant path router.
         listen: String,
     },
+    /// Receive a DASH-IF Live Media Ingest (Interface-1) push (issue #dashif):
+    /// an HTTP listener accepting CMAF objects under `publishing_point`.
+    DashifIngest {
+        /// `host:port` to bind the ingest HTTP endpoint to (e.g.
+        /// `"0.0.0.0:8080"`).
+        listen: String,
+        /// Path prefix under which objects are POSTed (default `"/"`).
+        /// Validated: starts with `/`, no `?`, no `//`.
+        #[serde(default = "default_dashif_publishing_point")]
+        publishing_point: String,
+    },
     /// Receive an SRT-carried MPEG-2 Transport Stream (issue #739), in
     /// either listener mode (`listen` set — binds and accepts inbound
     /// Callers, a push input) or caller mode (`remote` set — dials out);
@@ -933,6 +944,14 @@ impl std::fmt::Debug for InputSpec {
                 .finish(),
             #[cfg(feature = "whip")]
             InputSpec::Whip { listen } => f.debug_struct("Whip").field("listen", listen).finish(),
+            InputSpec::DashifIngest {
+                listen,
+                publishing_point,
+            } => f
+                .debug_struct("DashifIngest")
+                .field("listen", listen)
+                .field("publishing_point", publishing_point)
+                .finish(),
             InputSpec::Srt {
                 listen,
                 remote,
@@ -1019,6 +1038,31 @@ impl InputSpec {
             InputSpec::Rtmp { listen, .. } => validate_listen_addr(listen),
             #[cfg(feature = "whip")]
             InputSpec::Whip { listen } => validate_listen_addr(listen),
+            InputSpec::DashifIngest {
+                listen,
+                publishing_point,
+            } => {
+                validate_listen_addr(listen)?;
+                if !publishing_point.starts_with('/') {
+                    return Err(MultimuxError::ConfigInvalid {
+                        field: "routes.input.publishing_point",
+                        reason: "must start with '/'".into(),
+                    });
+                }
+                if publishing_point.contains('?') {
+                    return Err(MultimuxError::ConfigInvalid {
+                        field: "routes.input.publishing_point",
+                        reason: "must not contain '?'".into(),
+                    });
+                }
+                if publishing_point.contains("//") {
+                    return Err(MultimuxError::ConfigInvalid {
+                        field: "routes.input.publishing_point",
+                        reason: "must not contain '//''".into(),
+                    });
+                }
+                Ok(())
+            }
             InputSpec::Srt { listen, remote, .. } => match (listen, remote) {
                 (Some(_), Some(_)) => Err(MultimuxError::ConfigInvalid {
                     field: "routes.input.listen",
@@ -1067,6 +1111,7 @@ impl InputSpec {
             } => Some(listen),
             #[cfg(feature = "whip")]
             InputSpec::Whip { listen } => Some(listen),
+            InputSpec::DashifIngest { listen, .. } => Some(listen),
             InputSpec::Srt {
                 listen: Some(listen),
                 ..
@@ -1211,6 +1256,10 @@ fn validate_udp_addr(addr: &str) -> Result<()> {
 
 /// An RTMP `listen` address must parse as a socket address (same shape as
 /// [`validate_udp_addr`], distinct field name for a clearer error message).
+fn default_dashif_publishing_point() -> String {
+    "/".to_string()
+}
+
 fn validate_listen_addr(addr: &str) -> Result<()> {
     addr.parse::<SocketAddr>()
         .map(|_| ())
