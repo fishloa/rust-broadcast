@@ -34,7 +34,6 @@ const ALLOWED: &[&str] = &[
     "dvb-tools/tests/services_shared_service_id.rs",
     "dvb-tools/tests/smoke.rs",
     "hls-runtime/tests/client_state.rs",
-    "hls-runtime/tests/origin_hardening.rs",
     "hls-runtime/tests/tokio_client_auth.rs",
     "mpeg-ts/tests/fixture_af_fields.rs",
     "multimux/tests/file_reader.rs",

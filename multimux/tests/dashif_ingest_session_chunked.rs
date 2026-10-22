@@ -26,10 +26,7 @@ struct Fixture {
 }
 
 fn presentation() -> Fixture {
-    let ts = std::fs::read(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts"),
-    )
-    .expect("fixture");
+    let ts = test_fixtures::read("ts/h264_aac.ts");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
     let mpd = DashPackager::default().package(&media).expect("mpd");
     let mut inits = Vec::new();

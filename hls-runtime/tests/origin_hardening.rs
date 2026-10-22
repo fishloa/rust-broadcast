@@ -9,7 +9,7 @@
 //!
 //! Independent oracles: Apple `mediastreamvalidator` over the playlists/files
 //! the origin renders, and `MP4Box`'s RFC 6381 reading of the fixture init
-//! segment (see `tests/fixtures/cmaf-fmp4/PROVENANCE.md`). A test that needs
+//! segment (see `fixtures/hls/cmaf-fmp4/PROVENANCE.md`). A test that needs
 //! the validator skips loudly when it is absent.
 
 use std::num::NonZeroUsize;
@@ -587,10 +587,7 @@ fn a_window_of_one_still_advertises_three_segments() {
 // ---------------------------------------------------------------------------
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/cmaf-fmp4")
-        .join(name);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    test_fixtures::read(&format!("hls/cmaf-fmp4/{name}"))
 }
 
 fn master(origin: &HlsOrigin) -> String {
