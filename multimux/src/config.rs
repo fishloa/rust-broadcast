@@ -230,6 +230,31 @@ pub enum InputSpec {
         /// Validated: starts with `/`, no `?`, no `//`.
         #[serde(default = "default_dashif_publishing_point")]
         publishing_point: String,
+        /// Optional server-side auth gating every ingest request. Reuses
+        /// [`OutputAuthSpec`] (Basic/Digest/Bearer/Forwarded/SignedUrl/Custom).
+        /// `None` (the default) leaves the listener open (subject to
+        /// `allow_open_ingest` on non-loopback binds).
+        ///
+        /// §5.3.4 of the DASH-IF spec names 403 for auth/permission problems,
+        /// but a Basic/Digest challenge must be 401 + `WWW-Authenticate`
+        /// (RFC 9110 §15.5.2), so the origin's existing
+        /// `crate::origin::check_output_auth` gate semantics are reused
+        /// verbatim: a request with NO credentials (or an expired/invalid
+        /// challenge answer) gets 401 with a `WWW-Authenticate` challenge, and
+        /// a request with WRONG credentials gets 401 as well (the verifier
+        /// cannot distinguish "no credential" from "bad credential" at the
+        /// status level — both are `Unauthorized`).
+        #[serde(default)]
+        auth: Option<OutputAuthSpec>,
+        /// Cap on a single ingested object's body, in bytes. `None` (the
+        /// default) keeps the 64 MiB built-in cap. Validated: non-zero and
+        /// at most 1 GiB.
+        #[serde(default)]
+        max_object_bytes: Option<u64>,
+        /// Total deadline, in seconds, to receive one object's body. `None`
+        /// (the default) keeps 30 s. Validated: finite and > 0.
+        #[serde(default)]
+        body_timeout_secs: Option<f64>,
     },
     /// Receive an SRT-carried MPEG-2 Transport Stream (issue #739), in
     /// either listener mode (`listen` set — binds and accepts inbound
@@ -543,7 +568,7 @@ impl ReconnectPolicy {
 /// `{ "scheme": "forwarded", "user_header": "...", "forwarded_for_header":
 /// "..." }` (see [`OutputAuthSpec::Forwarded`]).
 #[non_exhaustive]
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(tag = "scheme", rename_all = "snake_case")]
 pub enum OutputAuthSpec {
     /// HTTP Basic (RFC 7617) — credentials compared in constant time.
@@ -642,7 +667,7 @@ pub enum OutputAuthSpec {
 /// this string's raw UTF-8 bytes (the same convention `AuthSpec`/
 /// `OutputAuthSpec`'s other secret fields use — a plain config string, not a
 /// separately-encoded byte blob).
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct SignedUrlKeySpec {
     /// The key id a token's `kid` query parameter selects.
     pub kid: String,
@@ -947,10 +972,16 @@ impl std::fmt::Debug for InputSpec {
             InputSpec::DashifIngest {
                 listen,
                 publishing_point,
+                auth,
+                max_object_bytes,
+                body_timeout_secs,
             } => f
                 .debug_struct("DashifIngest")
                 .field("listen", listen)
                 .field("publishing_point", publishing_point)
+                .field("auth", auth)
+                .field("max_object_bytes", max_object_bytes)
+                .field("body_timeout_secs", body_timeout_secs)
                 .finish(),
             InputSpec::Srt {
                 listen,
@@ -1041,6 +1072,9 @@ impl InputSpec {
             InputSpec::DashifIngest {
                 listen,
                 publishing_point,
+                auth,
+                max_object_bytes,
+                body_timeout_secs,
             } => {
                 validate_listen_addr(listen)?;
                 if !publishing_point.starts_with('/') {
@@ -1059,6 +1093,31 @@ impl InputSpec {
                     return Err(MultimuxError::ConfigInvalid {
                         field: "routes.input.publishing_point",
                         reason: "must not contain '//''".into(),
+                    });
+                }
+                if let Some(spec) = auth {
+                    spec.validate()?;
+                }
+                if let Some(n) = max_object_bytes {
+                    if *n == 0 {
+                        return Err(MultimuxError::ConfigInvalid {
+                            field: "routes.input.max_object_bytes",
+                            reason: "must be greater than zero".into(),
+                        });
+                    }
+                    if *n > 1024 * 1024 * 1024 {
+                        return Err(MultimuxError::ConfigInvalid {
+                            field: "routes.input.max_object_bytes",
+                            reason: "must not exceed 1 GiB".into(),
+                        });
+                    }
+                }
+                if let Some(t) = body_timeout_secs
+                    && (!t.is_finite() || *t <= 0.0)
+                {
+                    return Err(MultimuxError::ConfigInvalid {
+                        field: "routes.input.body_timeout_secs",
+                        reason: "must be finite and greater than zero".into(),
                     });
                 }
                 Ok(())
@@ -1111,7 +1170,13 @@ impl InputSpec {
             } => Some(listen),
             #[cfg(feature = "whip")]
             InputSpec::Whip { listen } => Some(listen),
-            InputSpec::DashifIngest { listen, .. } => Some(listen),
+            InputSpec::DashifIngest { listen, auth, .. } => {
+                if auth.is_none() {
+                    Some(listen)
+                } else {
+                    None
+                }
+            }
             InputSpec::Srt {
                 listen: Some(listen),
                 ..

@@ -87,7 +87,7 @@ hyper-util        = { version = "0.1", features = ["server", "http1", "server-gr
 # (`tower::limit`) — see `origin::HttpLimits`/`origin::router`. `util` is
 # needed for `tower::ServiceExt::oneshot` in this crate's own axum-router
 # tests. `cors` is for the WHIP/WHEP signalling routers (W2a SP2.1).
-tower-http        = { version = "0.7", default-features = false, features = ["timeout", "limit", "cors", "compression-gzip"] }
+tower-http        = { version = "0.7", default-features = false, features = ["timeout", "limit", "cors", "compression-gzip", "decompression-gzip"] }
 tower             = { version = "0.5", default-features = false, features = ["limit", "util"] }
 # `http_body::{Frame, SizeHint}` for `origin::limit::PermitBody` (the response
 # body that owns a concurrency permit): `axum::body` re-exports only

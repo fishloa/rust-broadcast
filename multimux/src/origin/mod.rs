@@ -2166,25 +2166,45 @@ fn spawn_ingest(
         crate::config::InputSpec::DashifIngest {
             listen,
             publishing_point,
+            auth,
+            max_object_bytes,
+            body_timeout_secs,
         } => {
-            tracing::warn!(
-                route = %name,
-                "DASH-IF ingest listener is running with no authentication of any kind — \
-                 any publisher that can reach this endpoint may publish"
-            );
+            let ingest_auth = auth
+                .as_ref()
+                .map(|spec| resolve_verifier(spec, "multimux-ingest", registry).map(Arc::new))
+                .transpose()?;
+            if ingest_auth.is_none() {
+                tracing::warn!(
+                    route = %name,
+                    "DASH-IF ingest listener is running with no authentication of any kind — \
+                     any publisher that can reach this endpoint may publish"
+                );
+            } else {
+                tracing::info!(
+                    route = %name,
+                    "DASH-IF ingest listener is running with authentication enabled"
+                );
+            }
             let route_cfg = match config.prebound_tcp(listen) {
                 Some(listener) => crate::source::dashif_ingest::DashifIngestRoute::with_listener(
                     name,
                     listener,
                     publishing_point.clone(),
                 )
-                .with_timeouts(timeouts),
+                .with_timeouts(timeouts)
+                .with_auth(ingest_auth.clone())
+                .with_max_object_bytes(max_object_bytes.unwrap_or(64 * 1024 * 1024) as usize)
+                .with_body_timeout(body_timeout_secs.map(tokio::time::Duration::from_secs_f64)),
                 None => crate::source::dashif_ingest::DashifIngestRoute::new(
                     name,
                     listen.clone(),
                     publishing_point.clone(),
                 )
-                .with_timeouts(timeouts),
+                .with_timeouts(timeouts)
+                .with_auth(ingest_auth.clone())
+                .with_max_object_bytes(max_object_bytes.unwrap_or(64 * 1024 * 1024) as usize)
+                .with_body_timeout(body_timeout_secs.map(tokio::time::Duration::from_secs_f64)),
             };
             spawn_supervised(
                 route_cfg,

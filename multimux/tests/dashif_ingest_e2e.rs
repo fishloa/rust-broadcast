@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use broadcast_common::mux::{Package, Unpackage};
 use bytes::Bytes;
-use multimux::config::{Config, InputSpec, Route};
+use multimux::config::{Config, InputSpec, OutputAuthSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::serve_with_registry_on;
@@ -83,6 +83,9 @@ fn config_with(
             input: InputSpec::DashifIngest {
                 listen: ingest.to_string(),
                 publishing_point: publishing_point.to_string(),
+                auth: None,
+                max_object_bytes: None,
+                body_timeout_secs: None,
             },
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
@@ -107,6 +110,26 @@ impl Rig {
         let mut prebound = multimux::config::PreboundBinds::default();
         prebound.with_tcp(ingest_addr.to_string(), ingest_listener);
         let config = config_with(bind_addr, ingest_addr, prebound, publishing_point);
+        let server = tokio::spawn(serve_with_registry_on(
+            bind_listener,
+            config,
+            multimux::registry::SchemeRegistry::new(),
+        ));
+        Rig {
+            ingest: format!("http://{ingest_addr}"),
+            origin: format!("http://{bind_addr}"),
+            client: reqwest::Client::new(),
+            server,
+        }
+    }
+
+    async fn start_with(publishing_point: &str, tweak: impl FnOnce(&mut Config)) -> Rig {
+        let (bind_addr, bind_listener) = bind_tcp();
+        let (ingest_addr, ingest_listener) = bind_tcp();
+        let mut prebound = multimux::config::PreboundBinds::default();
+        prebound.with_tcp(ingest_addr.to_string(), ingest_listener);
+        let mut config = config_with(bind_addr, ingest_addr, prebound, publishing_point);
+        tweak(&mut config);
         let server = tokio::spawn(serve_with_registry_on(
             bind_listener,
             config,
@@ -394,4 +417,288 @@ async fn idempotent_repost_does_not_duplicate_segments() {
     unique.sort();
     unique.dedup();
     assert_eq!(unique.len(), after.len(), "duplicate segment in {after:?}");
+}
+
+#[tokio::test]
+async fn auth_basic_challenge_wrong_and_ingest() {
+    let spec = OutputAuthSpec::Basic {
+        username: "u".into(),
+        password: "p".into(),
+    };
+    let rig = Rig::start_with("/", |cfg| {
+        if let InputSpec::DashifIngest { auth, .. } = &mut cfg.routes[0].input {
+            *auth = Some(spec.clone());
+        }
+    })
+    .await;
+    // No credentials => 401 + WWW-Authenticate.
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .body(Vec::new())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    assert!(r.headers().contains_key("www-authenticate"));
+    // Wrong password => 401.
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .basic_auth("u", Some("wrong"))
+        .body(Vec::new())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    // Unauthenticated POST of a valid MPD must not leak.
+    let p = presentation();
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .body(p.mpd.clone().into_bytes())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    // Authenticated segment before any MPD still fails (no leak).
+    use multimux::dashif_ingest::IngestError;
+    let no_manifest = IngestError::NoManifest.status().as_u16();
+    let r = rig
+        .client
+        .post(format!("{}/chunk-stream1-1.m4s", rig.ingest))
+        .basic_auth("u", Some("p"))
+        .body(p.reps[0].2[0].clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), no_manifest);
+    // Right credentials: full ingest + serve.
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .basic_auth("u", Some("p"))
+        .body(p.mpd.clone().into_bytes())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    for (id, init, _) in &p.reps {
+        let r = rig
+            .client
+            .post(format!("{}/init-stream{id}.m4s", rig.ingest))
+            .basic_auth("u", Some("p"))
+            .body(init.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+    }
+    let n = p.reps.iter().map(|(_, _, s)| s.len()).max().unwrap_or(0);
+    for i in 0..n {
+        for (id, _, segs) in &p.reps {
+            if let Some(seg) = segs.get(i) {
+                let r = rig
+                    .client
+                    .post(format!("{}/chunk-stream{id}-{}.m4s", rig.ingest, i + 1))
+                    .basic_auth("u", Some("p"))
+                    .body(seg.clone())
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(r.status().as_u16(), 200);
+            }
+        }
+    }
+    let playlist = rig.playlist_with_segments().await;
+    assert!(playlist.contains("#EXTINF"));
+}
+
+#[tokio::test]
+async fn auth_bearer_variant() {
+    let spec = OutputAuthSpec::Bearer {
+        token: "tok".into(),
+    };
+    let rig = Rig::start_with("/", |cfg| {
+        if let InputSpec::DashifIngest { auth, .. } = &mut cfg.routes[0].input {
+            *auth = Some(spec.clone());
+        }
+    })
+    .await;
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .bearer_auth("wrong")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    let r = rig
+        .client
+        .post(format!("{}/", rig.ingest))
+        .bearer_auth("tok")
+        .body(Vec::new())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn gzip_ingest_and_serve() {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Write;
+    fn gz(data: &[u8]) -> Vec<u8> {
+        let mut e = GzEncoder::new(Vec::new(), Compression::default());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+    let rig = Rig::start("/").await;
+    let p = presentation();
+    // gzip'd MPD
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .header("content-encoding", "gzip")
+        .body(gz(p.mpd.as_bytes()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    for (id, init, _) in &p.reps {
+        let r = rig
+            .client
+            .post(format!("{}/init-stream{id}.m4s", rig.ingest))
+            .header("content-encoding", "gzip")
+            .body(gz(init))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+    }
+    let n = p.reps.iter().map(|(_, _, s)| s.len()).max().unwrap_or(0);
+    for i in 0..n {
+        for (id, _, segs) in &p.reps {
+            if let Some(seg) = segs.get(i) {
+                let r = rig
+                    .client
+                    .post(format!("{}/chunk-stream{id}-{}.m4s", rig.ingest, i + 1))
+                    .header("content-encoding", "gzip")
+                    .body(gz(seg))
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(r.status().as_u16(), 200);
+            }
+        }
+    }
+    let playlist = rig.playlist_with_segments().await;
+    assert!(playlist.contains("#EXTINF"));
+    // Unknown content-encoding => 415.
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .header("content-encoding", "br")
+        .body(b"hello".to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 415);
+}
+
+#[tokio::test]
+async fn gzip_bomb_rejected() {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Write;
+    let rig = Rig::start_with("/", |cfg| {
+        if let InputSpec::DashifIngest {
+            max_object_bytes, ..
+        } = &mut cfg.routes[0].input
+        {
+            *max_object_bytes = Some(64 * 1024);
+        }
+    })
+    .await;
+    let zeros = vec![0u8; 1024 * 1024];
+    let mut e = GzEncoder::new(Vec::new(), Compression::default());
+    e.write_all(&zeros).unwrap();
+    let gz = e.finish().unwrap();
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .header("content-encoding", "gzip")
+        .body(gz)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 413);
+}
+
+#[tokio::test]
+async fn max_object_bytes_limit() {
+    let rig = Rig::start_with("/", |cfg| {
+        if let InputSpec::DashifIngest {
+            max_object_bytes, ..
+        } = &mut cfg.routes[0].input
+        {
+            *max_object_bytes = Some(1024);
+        }
+    })
+    .await;
+    let r = rig
+        .client
+        .post(format!("{}/live.mpd", rig.ingest))
+        .body(vec![0u8; 2048])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 413);
+    // route not poisoned
+    let r = rig
+        .client
+        .post(format!("{}/", rig.ingest))
+        .body(Vec::new())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn body_timeout_returns_408() {
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+    let rig = Rig::start_with("/", |cfg| {
+        if let InputSpec::DashifIngest {
+            body_timeout_secs, ..
+        } = &mut cfg.routes[0].input
+        {
+            *body_timeout_secs = Some(0.3);
+        }
+    })
+    .await;
+    // raw tcp
+    let addr = rig.ingest.trim_start_matches("http://");
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req = "POST /live.mpd HTTP/1.1\r\nHost: x\r\nContent-Length: 100000\r\nConnection: close\r\n\r\nabcdefghij";
+    stream.write_all(req.as_bytes()).await.unwrap();
+    // read response with timeout
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf))
+        .await
+        .expect("response arrived")
+        .expect("read ok");
+    let resp = String::from_utf8_lossy(&buf[..n]);
+    assert!(resp.contains("408"), "resp: {resp}");
+    // following normal post works
+    let r = rig
+        .client
+        .post(format!("{}/", rig.ingest))
+        .body(Vec::new())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
 }

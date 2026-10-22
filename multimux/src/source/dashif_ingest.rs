@@ -48,6 +48,9 @@ pub struct DashifIngestRoute {
     prebound: Mutex<Option<TcpListener>>,
     publishing_point: String,
     timeouts: crate::source::IngestTimeouts,
+    auth: Option<Arc<broadcast_auth::Verifier>>,
+    max_object_bytes: usize,
+    body_timeout: Option<tokio::time::Duration>,
 }
 
 impl std::fmt::Debug for DashifIngestRoute {
@@ -56,6 +59,8 @@ impl std::fmt::Debug for DashifIngestRoute {
             .field("name", &self.name)
             .field("listen", &self.listen)
             .field("publishing_point", &self.publishing_point)
+            .field("max_object_bytes", &self.max_object_bytes)
+            .field("body_timeout", &self.body_timeout)
             .finish()
     }
 }
@@ -72,6 +77,9 @@ impl DashifIngestRoute {
             prebound: Mutex::new(None),
             publishing_point: publishing_point.into(),
             timeouts: crate::source::IngestTimeouts::default(),
+            auth: None,
+            max_object_bytes: MAX_OBJECT_BYTES,
+            body_timeout: Some(tokio::time::Duration::from_secs(30)),
         }
     }
 
@@ -90,12 +98,33 @@ impl DashifIngestRoute {
             prebound: Mutex::new(Some(listener)),
             publishing_point: publishing_point.into(),
             timeouts: crate::source::IngestTimeouts::default(),
+            auth: None,
+            max_object_bytes: MAX_OBJECT_BYTES,
+            body_timeout: Some(tokio::time::Duration::from_secs(30)),
         }
     }
 
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: crate::source::IngestTimeouts) -> Self {
         self.timeouts = timeouts;
+        self
+    }
+
+    #[must_use]
+    pub fn with_auth(mut self, auth: Option<Arc<broadcast_auth::Verifier>>) -> Self {
+        self.auth = auth;
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, n: usize) -> Self {
+        self.max_object_bytes = n;
+        self
+    }
+
+    #[must_use]
+    pub fn with_body_timeout(mut self, t: Option<tokio::time::Duration>) -> Self {
+        self.body_timeout = t;
         self
     }
 
@@ -203,6 +232,9 @@ struct HandlerState {
     tx: mpsc::Sender<Job>,
     publishing_point: String,
     grouping: Arc<Mutex<Option<ManifestGrouping>>>,
+    auth: Option<Arc<broadcast_auth::Verifier>>,
+    max_object_bytes: usize,
+    body_timeout: Option<tokio::time::Duration>,
 }
 
 pub async fn run_dashif_ingest(
@@ -264,9 +296,13 @@ pub async fn run_dashif_ingest(
         tx: tx.clone(),
         publishing_point: route.publishing_point.clone(),
         grouping: Arc::clone(&grouping),
+        auth: route.auth.clone(),
+        max_object_bytes: route.max_object_bytes,
+        body_timeout: route.body_timeout,
     };
 
     let app = Router::new().fallback(dashif_handler).with_state(state);
+    let app = app.layer(tower_http::decompression::RequestDecompressionLayer::new());
 
     let serve_res = origin::serve_hyper_util(listener, app, cancel.clone()).await;
     pump_handle.abort();
@@ -280,6 +316,14 @@ async fn dashif_handler(
     State(state): State<HandlerState>,
     req: Request<axum::body::Body>,
 ) -> impl IntoResponse {
+    // Authenticate FIRST — before method/path/body handling. No unauthenticated
+    // object may be read, classified or fed.
+    if let Some(verifier) = &state.auth
+        && let Some(resp) = crate::origin::check_output_auth(verifier, &req)
+    {
+        return resp;
+    }
+
     let method = req.method().clone();
     if method != Method::POST && method != Method::PUT {
         return (
@@ -321,7 +365,7 @@ async fn dashif_handler(
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
-    if content_length.is_some_and(|n| n > MAX_OBJECT_BYTES as u64) {
+    if content_length.is_some_and(|n| n > state.max_object_bytes as u64) {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     }
     let chunked = content_length.is_none()
@@ -332,10 +376,23 @@ async fn dashif_handler(
             .map(|s| s.to_ascii_lowercase().contains("chunked"))
             .unwrap_or(false);
 
-    let body = match read_limited(req.into_body(), MAX_OBJECT_BYTES).await {
-        Ok(b) => b,
-        Err(ReadBodyError::TooLarge) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-        Err(ReadBodyError::Broken) => return StatusCode::BAD_REQUEST.into_response(),
+    let body = {
+        let max = state.max_object_bytes;
+        let timeout = state.body_timeout;
+        let fut = read_limited(req.into_body(), max);
+        let res = if let Some(d) = timeout {
+            match tokio::time::timeout(d, fut).await {
+                Ok(r) => r,
+                Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
+            }
+        } else {
+            fut.await
+        };
+        match res {
+            Ok(b) => b,
+            Err(ReadBodyError::TooLarge) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+            Err(ReadBodyError::Broken) => return StatusCode::BAD_REQUEST.into_response(),
+        }
     };
     let body_empty = body.is_empty();
 
