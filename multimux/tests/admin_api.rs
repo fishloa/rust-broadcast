@@ -1606,3 +1606,44 @@ async fn reloading_a_route_drains_the_displaced_runtime() {
     server.abort();
     let _ = std::fs::remove_file(&config_path);
 }
+
+/// Admin-added routes inherit the origin's `program_date_time` default
+/// (arrival): a freshly added route's media playlist carries
+/// `#EXT-X-PROGRAM-DATE-TIME` without any per-route config knob.
+#[tokio::test]
+async fn admin_added_route_emits_pdt_by_default() {
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let config = admin_config(
+        media_addr,
+        admin_addr,
+        vec![unreachable_rtsp_route("seed", "seed")],
+    );
+    let server = tokio::spawn(serve_with_registry_on_admin(
+        media_listener,
+        admin_listener,
+        config,
+        instant_registry(),
+    ));
+    wait_for_port(admin_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = admin_json(
+        &client,
+        admin_addr,
+        reqwest::Method::POST,
+        "/admin/routes",
+        Some(ADMIN_TOKEN),
+        Some(route_json(&instant_route("newcam"))),
+    )
+    .await;
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+
+    let playlist = wait_until_live(&client, media_addr, "newcam").await;
+    assert!(
+        playlist.contains("EXT-X-PROGRAM-DATE-TIME"),
+        "admin-added route must emit PDT by default:\\n{playlist}"
+    );
+
+    server.abort();
+}

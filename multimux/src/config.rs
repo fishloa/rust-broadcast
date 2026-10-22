@@ -1670,6 +1670,43 @@ impl Route {
     }
 }
 
+/// Where a route's live HLS playlists get their
+/// `#EXT-X-PROGRAM-DATE-TIME` values from (issue #1423 part B2b; Apple
+/// authoring 8.4 makes PDT a MUST for live playlists).
+///
+/// - [`ProgramDateTimeSource::Arrival`] (the default): wall-clock at
+///   arrival. The origin stamps the first closed segment with
+///   `now - its duration` (sampled once, at origin construction) and
+///   advances later segments on the trunk's continuous segment timeline.
+///   This is **wall-clock-at-arrival accuracy, NOT broadcast airtime** —
+///   it tracks when media arrived at this origin, not when it was
+///   originally broadcast. Use it for live origin output where no
+///   authoritative broadcast clock is available.
+/// - [`ProgramDateTimeSource::Off`]: no arrival source; PDTs come only from
+///   an explicit trunk time anchor (if any), otherwise none are emitted.
+///   Restores the pre-#1423 output.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProgramDateTimeSource {
+    /// Wall-clock-at-arrival (default).
+    Arrival,
+    /// No arrival source; previous behaviour.
+    Off,
+}
+
+impl ProgramDateTimeSource {
+    /// The wire/label string for this source (`"arrival"` or `"off"`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            ProgramDateTimeSource::Arrival => "arrival",
+            ProgramDateTimeSource::Off => "off",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ProgramDateTimeSource);
+
 /// multimux runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -1726,6 +1763,16 @@ pub struct Config {
     /// [`Config::validate`].
     #[serde(default = "default_playlist_name")]
     pub playlist_name: String,
+    /// Where this route's live HLS playlists get their
+    /// `#EXT-X-PROGRAM-DATE-TIME` values from (issue #1423 part B2b; Apple
+    /// authoring 8.4 makes PDT a MUST for live playlists). Defaults to
+    /// [`ProgramDateTimeSource::Arrival`]. `Arrival` is wall-clock-at-arrival
+    /// accuracy (the first segment is stamped `now - its duration`, later ones
+    /// advance on the continuous segment timeline), **not** broadcast airtime;
+    /// `Off` restores the previous output (no PDT unless an explicit trunk
+    /// time anchor supplies one).
+    #[serde(default = "default_program_date_time")]
+    pub program_date_time: ProgramDateTimeSource,
     /// Server-side output auth (issue #663 "shared output auth") gating
     /// every media output route (`/{stream}/…`) across every configured
     /// route — see [`OutputAuthSpec`]. `None` (the default) leaves every
@@ -1834,6 +1881,12 @@ fn default_playlist_name() -> String {
     crate::output::llhls::DEFAULT_PLAYLIST_NAME.to_string()
 }
 
+/// Default [`Config::program_date_time`] when a config omits the field:
+/// [`ProgramDateTimeSource::Arrival`] (Apple 8.4 makes PDT a MUST for live).
+fn default_program_date_time() -> ProgramDateTimeSource {
+    ProgramDateTimeSource::Arrival
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -1849,6 +1902,7 @@ impl Default for Config {
             ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT.as_secs_f64(),
             ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT.as_secs_f64(),
             playlist_name: default_playlist_name(),
+            program_date_time: default_program_date_time(),
             output_auth: None,
             admin: None,
             allow_open_ingest: false,
@@ -4758,5 +4812,17 @@ mod tests {
             }
             other => panic!("expected ConfigInvalid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn program_date_time_rejects_unknown_variant() {
+        let err = serde_json::from_str::<Config>(r#"{"program_date_time":"bogus"}"#)
+            .expect_err("unknown variant must be rejected");
+        let msg = err.to_string();
+        // serde's derived error does not repeat the field name; it does
+        // name the bad value and the valid variants.
+        assert!(msg.contains("bogus"), "bad value missing: {msg}");
+        assert!(msg.contains("arrival"), "valid variant missing: {msg}");
+        assert!(msg.contains("off"), "valid variant missing: {msg}");
     }
 }

@@ -365,7 +365,8 @@ impl RouteRegistry {
             // Issue #900 — see the identical fix (and its own doc) in
             // `super::serve_with_registry_impl`'s per-route loop; this is
             // the admin-API (`POST /admin/routes`/reload) equivalent.
-            .with_dvr(route.dvr.clone()),
+            .with_dvr(route.dvr.clone())
+            .with_program_date_time(self.ctx.base_config.program_date_time),
         );
         let route_cancel = tokio_util::sync::CancellationToken::new();
         // Spawn the FALLIBLE ingest task first (audit run 7, A2): it is the
