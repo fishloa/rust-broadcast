@@ -523,6 +523,34 @@ struct PartCursor {
 
 #[cfg(test)]
 mod tests {
+    /// `parse_segment_filename` accepts the legacy and the instance-named
+    /// segment forms (issue #1422: before, only the legacy form parsed, so
+    /// SCTE-35 `emsg` injection never ran for the origin's real names) and
+    /// refuses everything else — in particular the I-frame family, whose
+    /// bytes must stay the unmodified stored bytes.
+    #[test]
+    fn parse_segment_filename_forms() {
+        assert_eq!(parse_segment_filename("seg-1-7.m4s"), Some(("1", 7)));
+        assert_eq!(
+            parse_segment_filename("seg-1-1792634126579-3.m4s"),
+            Some(("1", 3))
+        );
+        assert_eq!(parse_segment_filename("seg-2-9-12.m4s"), Some(("2", 12)));
+        // I-frame resources are a different family and never match.
+        assert_eq!(
+            parse_segment_filename("iframe-seg-1-1792634126579-3.m4s"),
+            None
+        );
+        // Wrong extension, extra field, non-numeric parts, parts, init.
+        assert_eq!(parse_segment_filename("seg-1-7.ts"), None);
+        assert_eq!(parse_segment_filename("seg-1-2-3-4.m4s"), None);
+        assert_eq!(parse_segment_filename("seg-1-x-3.m4s"), None);
+        assert_eq!(parse_segment_filename("seg-1-2-y.m4s"), None);
+        assert_eq!(parse_segment_filename("seg-x-2.m4s"), None);
+        assert_eq!(parse_segment_filename("part-1-2.0.m4s"), None);
+        assert_eq!(parse_segment_filename("init-1-2-1.mp4"), None);
+    }
+
     use super::*;
     use crate::route::RouteHandle;
     use hls_runtime::server::Container;
