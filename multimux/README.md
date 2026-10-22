@@ -44,6 +44,7 @@ Multi-input, multi-output just-in-time repackaging origin. It pulls or receives 
 | Adobe RTMP 1.0 | Vendored | RTMP publish ingest and RTMP push | Partial | Publish only; via `rtmp-runtime` |
 | SRT, `draft-sharabayko-srt-01` | -01 (vendored) | SRT caller and listener ingest, SRT push | Partial | No payload encryption in the adapter |
 | IETF RFC 9725 WHIP, `draft-ietf-wish-whep` | RFC 9725; WHEP draft -04 | Feature `whip` ingest (H.264 only), feature `whep` egress, session resources, Trickle ICE, ICE restart | Partial | RFC 8445/5764/3711 via `webrtc-runtime` |
+| DASH-IF Live Media Ingest 1.3 (Interface-1, CMAF ingest) | 1 Sep 2026 (transcribed) | `dashif_ingest` push input: HTTP/1.1 POST/PUT of MPD, CMAF headers and segments/chunks (incl. HTTP chunked, gzip request bodies, Basic/Digest/Bearer auth), §5.3 status codes | Partial | Receiver only: no TLS (terminate at a proxy), no Interface-2 (DASH/HLS ingest), no sender, no redundant-source failover; see [DASH-IF ingest](#dash-if-live-media-ingest) |
 | IETF RFC 3550 RTP, RFC 6184 | As numbered | Raw RTP/UDP ingest with SDP, low-delay H.264 and one-AAC-AU-per-packet depayload, in-order only | Partial | |
 | ISO/IEC 13818-1 MPEG-2 TS | 08/2023 (vendored) | TS over UDP, HTTP and SRT; TS output via `ts_hls` and push | Full for carriable codecs | |
 | IETF RFC 7617 / 7616 / 6750 / 7235 | Not vendored, unverified here | Pull-side client auth and output-side verify, via `broadcast-auth` | Full | Digest is MD5 `qop=auth` only |
@@ -59,6 +60,7 @@ Every input feeds one `Trunk` per program; every output reads from it, so any in
 | `hls_pull`, `dash_pull`, `smooth_pull` | yes | AVC + AAC | yes | with DVR | TS-carriable codecs | AVC + AAC | H.264 |
 | `rtmp` (FLV, AVC + AAC only) | yes | yes | yes | with DVR | yes | yes | H.264 |
 | `file` | yes | AVC + AAC | yes | with DVR | TS-carriable codecs | AVC + AAC | H.264 |
+| `dashif_ingest` | yes | AVC + AAC | yes | with DVR | TS-carriable codecs | AVC + AAC | H.264 |
 | `whip` (H.264 only) | yes | video only | yes | with DVR | yes | video only | H.264 |
 | `custom` | per factory | per factory | per factory | with DVR | per factory | per factory | per factory |
 
@@ -150,6 +152,7 @@ Each route names one ingest transport (`InputSpec`):
 | `smooth_pull` | Pull a remote Smooth Streaming manifest and its fragments | optional `auth` |
 | `rtmp` | **Push** ingest: binds a listen port and accepts RTMP publishers (FLV), via `rtmp-runtime` | `app`/`stream_key` filters; concurrent publishers |
 | `file` | A local media file on disk, identified with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); paced to wall clock, including across the loop point; a long asset holds its parsed samples in memory — see the crate CHANGELOG |
+| `dashif_ingest` | **Push** ingest: binds a `listen` address and accepts DASH-IF Live Media Ingest (Interface-1, CMAF) POST/PUT from an encoder/packager | optional `auth`, `publishing_point`, `max_object_bytes`, `body_timeout_secs` — see [DASH-IF ingest](#dash-if-live-media-ingest) |
 | `whip` | **Push** ingest: binds a `listen` address and accepts WHIP (RFC 9725) publishers; H.264 video only (feature `whip`, ICE + DTLS-SRTP via `webrtc-runtime`) | see [WHIP / WHEP](#whip--whep-session-resources) |
 
 `rtsp` accepts `rtsps://` for RTSP over TLS. `rtmp` is the only *push* input —
@@ -228,6 +231,43 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 An unknown stream name, or a filename `multimux` doesn't recognize, returns
 `404`.
 
+
+## DASH-IF Live Media Ingest
+
+`dashif_ingest` turns multimux into the *receiving entity* of the DASH-IF Live Media Ingest protocol (Interface-1, CMAF): an encoder or packager POSTs (or PUTs) the presentation's MPD, one CMAF header per track, then CMAF segments or chunks, and every output on the route serves it like any other input.
+
+```json
+{
+  "routes": [{
+    "name": "cam",
+    "input": {
+      "type": "dashif_ingest",
+      "listen": "0.0.0.0:8081",
+      "publishing_point": "/ingest",
+      "auth": { "scheme": "basic", "username": "encoder", "password": "..." },
+      "max_object_bytes": 67108864,
+      "body_timeout_secs": 30
+    },
+    "outputs": ["llhls"]
+  }]
+}
+```
+
+What an ingest source sends, and what it gets back (DASH-IF 1.3 §5.3):
+
+| Object | Recognised by | Answer |
+|---|---|---|
+| probe | empty body (§6.2.1) | `200` |
+| manifest | `.mpd` / `.m3u8` (HLS is accepted and ignored; a re-sent MPD is ignored) | `200`, or `400` when it breaks §6.2.16 (multiple Periods, a `BaseURL`, templates that differ between AdaptationSets, ...) |
+| CMAF header | the MPD's `SegmentTemplate@initialization` | `200`; an identical repeat is a no-op, a *changed* header is `400` |
+| segment / chunk | the MPD's `SegmentTemplate@media` (`$Number$` or `$Time$`) | `200`; `412` without a header yet; a re-POST of the same number is accepted and publishes nothing twice |
+
+- **Order**: the MPD first, then a header for **every** track (§6.2.2), then segments. The program is announced once all headers are in; segments that arrive earlier are held (bounded, then `500`).
+- **Low latency**: send a segment with `Transfer-Encoding: chunked` and every complete CMAF chunk (`moof`+`mdat`) is published — and served as an LL-HLS part — *while the request is still open*. A second concurrent segment for the same track is `409`; a stalled body is `408`, an oversized one `413` (chunks already published stay published).
+- **Auth** (`auth`): Basic, Digest, Bearer or any `OutputAuthSpec`; every request is authenticated before it is read. A challenge is `401` + `WWW-Authenticate` (RFC 9110), not the `403` §5.3.4 names. A non-loopback listener with no `auth` is refused unless `allow_open_ingest` is set.
+- **gzip**: request bodies with `Content-Encoding: gzip` are decompressed; the size cap applies to the decompressed bytes.
+- One bad request never affects the route: each error is answered to its own sender only.
+- **Not covered**: TLS (terminate at a reverse proxy), Interface-2 (DASH/HLS ingest), pushing *out* in this protocol, redundant ingest sources (§6.8/6.9), SCTE-35 splice conditioning checks (§6.7). The design and increment plan are in [`docs/dashif-ingest/DESIGN.md`](../docs/dashif-ingest/DESIGN.md).
 
 ## WHIP / WHEP session resources
 
