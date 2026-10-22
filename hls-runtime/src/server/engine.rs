@@ -2101,8 +2101,19 @@ impl HlsOrigin {
             .collect();
 
         let low_latency = if self.part_target_ms.is_some() {
+            let part_target = broadcast_hls::DecimalSeconds::new(
+                f64::from(self.part_target_ms.unwrap()) / 1000.0,
+            )
+            .expect("finite");
+            let part_hold_back = broadcast_hls::DecimalSeconds::new(part_target.get() * 3.0)
+                .expect("finite");
+            let hold_back = broadcast_hls::DecimalSeconds::new(part_target.get() * 6.0)
+                .expect("finite");
             Some(broadcast_hls::LowLatencyConfig {
                 can_block_reload: true,
+                part_target: Some(part_target),
+                part_hold_back: Some(part_hold_back),
+                hold_back: Some(hold_back),
                 ..Default::default()
             })
         } else {
