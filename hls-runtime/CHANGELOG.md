@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `HlsOrigin` now computes, stores and renders an I-frame trick-play playlist: `HlsRequest::IFramePlaylist { track_id, query }`, `HlsOrigin::iframe_playlist_name(track_id)`, and `HlsOrigin::render_iframe_playlist` produce an `#EXT-X-I-FRAMES-ONLY` media playlist with `BYTERANGE=len@0` per entry, derived from the first video sample of each segment (sync sample starting at the mdat payload start).
+
 - `HlsOrigin`'s master playlist now carries `FRAME-RATE` (Apple HLS Authoring Specification item 9.15; RFC 8216bis §4.4.6.2) as the maximum nominal frame rate across all video tracks, derived solely from an SPS's VUI timing via `transmux::nominal_frame_rate_millihertz` (H.264 and HEVC; HEVC uses the HRD fixed-pic-rate tier when present, else the ClockTick convention). Codecs without VUI timing omit it (never invented); audio-only origins omit it; a new init clears it.
 
 - `HlsOrigin` now derives and advertises `VIDEO-RANGE` (`HLG`/`PQ` only; SDR/unknown omitted) in the master playlist from the first video track's display colour description (RFC 8216bis §4.4.6.2).

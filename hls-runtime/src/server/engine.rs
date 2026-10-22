@@ -79,9 +79,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use transmux::TrackId;
 
-use broadcast_common::{Timestamp, Unpackage};
+use broadcast_common::{Parse, Timestamp, Unpackage};
 use broadcast_hls::{
-    DecimalSeconds, FrameRate, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist,
+    ByteRange, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist,
     MediaSegment, OpenSegment, PartSpec, Variant, VideoRange,
 };
 use bytes::Bytes;
@@ -293,6 +293,14 @@ pub enum HlsRequest {
         /// The requested filename, exactly as it appeared in the request path.
         name: String,
     },
+    /// `GET <iframe playlist>` for `track_id`, optionally carrying a
+    /// blocking-reload query.
+    IFramePlaylist {
+        /// The track id to render the I-frame playlist for.
+        track_id: TrackId,
+        /// The blocking-reload query parameters, if any.
+        query: BlockingQuery,
+    },
 }
 
 /// [`ServedEgress::Body`] for [`HlsOrigin`]: the resolved body, typed by
@@ -321,6 +329,11 @@ struct WindowSegment {
     bytes: Bytes,
     duration_secs: f64,
     discontinuous: bool,
+    /// Byte length of the leading I-frame slice of this segment's first
+    /// video sample, when the segment is usable in an I-frame playlist;
+    /// `None` otherwise (audio-first, non-sync first sample, parse failure,
+    /// or no video track).
+    iframe_len: Option<u64>,
     /// This segment's `SegmentEntry::timeline_position`, in nanoseconds —
     /// carried through so [`HlsOrigin::closed_segments`] can hand it to a
     /// caller doing time-based windowing over a *different* source of
@@ -466,7 +479,7 @@ impl Window {
     /// lost segments, starts a new run: the old entries are cleared and the
     /// entry is marked discontinuous (RFC 8216 §4.3.4.3) rather than being
     /// appended under a wrong implied number.
-    fn push(&mut self, entry: SegmentEntry, init_gen: Generation) {
+    fn push(&mut self, entry: SegmentEntry, init_gen: Generation, iframe_len: Option<u64>) {
         let follows = self
             .segments
             .back()
@@ -518,6 +531,7 @@ impl Window {
             duration_secs,
             discontinuous,
             start_ns: entry.timeline_position.as_nanos(),
+            iframe_len,
         });
     }
 
@@ -603,6 +617,118 @@ impl InitStore {
             .find(|(g, _)| *g == generation)
             .map(|(_, b)| b.clone())
     }
+}
+
+/// Whether a codec config is a video codec (mirrors
+/// `transmux::CodecConfig::is_video`, which is crate-private).
+fn is_video_codec(config: &transmux::CodecConfig) -> bool {
+    matches!(
+        config,
+        transmux::CodecConfig::Avc { .. }
+            | transmux::CodecConfig::Hevc { .. }
+            | transmux::CodecConfig::Vvc { .. }
+            | transmux::CodecConfig::Av1 { .. }
+            | transmux::CodecConfig::Vp9 { .. }
+            | transmux::CodecConfig::Vp8 { .. }
+            | transmux::CodecConfig::Mpeg2Video { .. }
+    )
+}
+
+/// Compute the byte length of the leading I-frame slice of `segment`'s first
+/// video sample, or `None` when the segment cannot back an I-frame playlist
+/// entry (audio-first layout, non-sync first sample, parse failure, or no
+/// usable mdat/moof).
+fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
+    // Locate the (single) top-level `moof` box. Its offset is measured from
+    // the start of `segment`, matching `frag_offsets::sample_ranges_in`.
+    let mut offset = 0usize;
+    let mut moof_off: Option<usize> = None;
+    let mut moof_total: usize = 0;
+    let mut moof_hdr: usize = 0;
+    while offset + transmux::box_types::BOX_HEADER_MIN_SIZE <= segment.len() {
+        let rest = &segment[offset..];
+        let header = transmux::box_types::BoxHeader::parse(rest).ok()?;
+        let hdr_sz = header.header_size();
+        if hdr_sz > rest.len() {
+            break;
+        }
+        let total = if header.size == u64::from(transmux::box_types::SIZE_TO_EOF) {
+            rest.len()
+        } else {
+            match usize::try_from(header.size) {
+                Ok(t) if t >= hdr_sz => t,
+                _ => break,
+            }
+        };
+        if header.box_type.is(b"moof") {
+            moof_off = Some(offset);
+            moof_total = total.min(rest.len());
+            moof_hdr = hdr_sz;
+            break;
+        }
+        let step = total.min(rest.len());
+        if step == 0 {
+            break;
+        }
+        offset += step;
+    }
+    let moof_off = moof_off?;
+    let body = &segment[moof_off + moof_hdr..moof_off + moof_total];
+    let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
+
+    let mdats = transmux::frag_offsets::mdat_ranges(segment);
+    let samples =
+        transmux::frag_offsets::sample_ranges_in(segment, &mdats, moof_off, &moof, video_track_id)
+            .ok()?;
+    if samples.is_empty() {
+        return None;
+    }
+    let first = samples[0];
+    // A sample is a sync sample when bit 16 of its flags is clear.
+    if first.flags & (1 << 16) != 0 {
+        return None;
+    }
+    // The first video sample must start exactly at an mdat payload start: no
+    // other track's bytes may precede it.
+    let mdat_payload_start = mdat_payload_start_for(segment, first.start)?;
+    if first.start != mdat_payload_start {
+        return None;
+    }
+    u64::try_from(first.end).ok()
+}
+
+/// Byte offset of the `mdat` payload that contains `sample_start`, if any.
+fn mdat_payload_start_for(segment: &[u8], sample_start: usize) -> Option<usize> {
+    let mut offset = 0usize;
+    while offset + transmux::box_types::BOX_HEADER_MIN_SIZE <= segment.len() {
+        let rest = &segment[offset..];
+        let header = transmux::box_types::BoxHeader::parse(rest).ok()?;
+        let hdr_sz = header.header_size();
+        if hdr_sz > rest.len() {
+            break;
+        }
+        let total = if header.size == u64::from(transmux::box_types::SIZE_TO_EOF) {
+            rest.len()
+        } else {
+            match usize::try_from(header.size) {
+                Ok(t) if t >= hdr_sz => t,
+                _ => break,
+            }
+        };
+        if header.box_type.is(b"mdat") {
+            let payload = offset + hdr_sz;
+            let end = offset + total;
+            if sample_start >= payload && sample_start < end {
+                return Some(payload);
+            }
+        }
+        let step = total.min(rest.len());
+        if step == 0 {
+            break;
+        }
+        offset += step;
+    }
+    None
 }
 
 /// The mean segment bitrate in bits/second over the whole stream — RFC
@@ -912,6 +1038,7 @@ impl HlsOriginBuilder {
             video_range: Mutex::new(None),
             resolution: Mutex::new(None),
             frame_rate: Mutex::new(None),
+            video_track_id: Mutex::new(None),
             target_duration_secs,
             container: self.container,
             part_target_ms: self.part_target_ms,
@@ -956,6 +1083,11 @@ pub struct HlsOrigin {
     /// all video tracks. Emitted only when an H.264 track's SPS carries VUI
     /// `timing_info`; HEVC and codecs without VUI timing omit it.
     frame_rate: Mutex<Option<FrameRate>>,
+    /// The first video track (in track-id order) supplied via
+    /// [`Self::set_track_specs`], used to locate the video traf when
+    /// computing an I-frame playlist's byte ranges. `None` until track specs
+    /// are known (or when there is no video track).
+    video_track_id: Mutex<Option<TrackId>>,
     target_duration_secs: f64,
     container: Container,
     /// `Some(part_target_ms)` enables LL-HLS; `None` renders classic HLS —
@@ -1016,6 +1148,7 @@ impl HlsOrigin {
                 *locked(&self.video_range) = None;
                 *locked(&self.resolution) = None;
                 *locked(&self.frame_rate) = None;
+                *locked(&self.video_track_id) = None;
             }
         }
         // The first segment not yet closed is the first one cut against
@@ -1042,6 +1175,10 @@ impl HlsOrigin {
     pub fn set_track_specs(&self, specs: &[transmux::TrackSpec]) -> Result<(), transmux::Error> {
         let mut ordered: Vec<&transmux::TrackSpec> = specs.iter().collect();
         ordered.sort_by_key(|spec| spec.track_id);
+        *locked(&self.video_track_id) = ordered
+            .iter()
+            .find(|spec| is_video_codec(&spec.config))
+            .map(|spec| spec.track_id);
         let mut codecs: Vec<String> = Vec::new();
         // VIDEO-RANGE is derived from the first video track (in track-id
         // order) whose display carries a colour description (RFC 8216bis
@@ -1173,6 +1310,11 @@ impl HlsOrigin {
         self.instance
     }
 
+    /// The wire name of this origin's I-frame playlist for `track_id`.
+    pub fn iframe_playlist_name(&self, track_id: TrackId) -> String {
+        format!("iframe-{}.m3u8", track_id)
+    }
+
     /// The wire name of init generation `generation` for `track_id`.
     pub fn init_name(&self, track_id: TrackId, generation: Generation) -> String {
         format!("init-{track_id}-{}-{generation}.mp4", self.instance)
@@ -1278,17 +1420,43 @@ impl HlsOrigin {
         if self.drained_through.load(Ordering::Acquire) == head {
             return;
         }
+        // Poll the cursor first, so the heavy I-frame byte scan below runs
+        // without holding the window lock (and without holding the cursor
+        // lock while the init store is consulted).
         let mut cursor = locked(&self.cursor);
-        let mut window = locked(&self.window);
+        let mut polled = Vec::new();
         while let Some(item) = cursor.poll() {
+            polled.push(item);
+        }
+        drop(cursor);
+
+        enum Prepared {
+            Segment(SegmentEntry, Generation, Option<u64>),
+            Gap,
+        }
+        let video_track_id = *locked(&self.video_track_id);
+        let mut prepared = Vec::with_capacity(polled.len());
+        for item in polled {
             match item {
                 SegmentCursorItem::Segment(entry) => {
+                    let iframe_len = video_track_id
+                        .and_then(|track_id| compute_iframe_len(&entry.bytes, track_id));
                     let init_gen = locked(&self.init).generation_for(entry.sequence_number);
-                    window.push(entry, init_gen);
+                    prepared.push(Prepared::Segment(entry, init_gen, iframe_len));
                 }
                 // `Lagged`/`Gap`/anything newer: segments were lost, so the
                 // next one does not follow the window's contents.
-                _ => window.note_gap(),
+                _ => prepared.push(Prepared::Gap),
+            }
+        }
+
+        let mut window = locked(&self.window);
+        for item in prepared {
+            match item {
+                Prepared::Segment(entry, init_gen, iframe_len) => {
+                    window.push(entry, init_gen, iframe_len);
+                }
+                Prepared::Gap => window.note_gap(),
             }
         }
         self.drained_through.store(head, Ordering::Release);
@@ -1691,6 +1859,140 @@ impl HlsOrigin {
         }
     }
 
+    fn resolve_iframe_playlist(
+        &self,
+        track_id: TrackId,
+        query: BlockingQuery,
+        now: Timestamp,
+        await_policy: AwaitPolicy,
+    ) -> EgressResponse<HlsBody> {
+        // An I-frame playlist has no parts, so any `_HLS_part` is meaningless.
+        if query.hls_part.is_some() {
+            return EgressResponse::BadRequest {
+                reason: "_HLS_part is not valid on an I-frame playlist",
+            };
+        }
+        if let Some(msn) = query.hls_msn {
+            let last_closed = self
+                .trunk
+                .last_closed_segment()
+                .unwrap_or(SegmentSeq::new(0));
+            if msn
+                > self
+                    .public_msn(last_closed.saturating_next())
+                    .saturating_add(ABUSE_MSN_FUTURE_BOUND)
+            {
+                return EgressResponse::BadRequest {
+                    reason: "_HLS_msn unreasonably far beyond the live edge",
+                };
+            }
+            let satisfied = self.public_msn(last_closed) >= msn;
+            if !satisfied {
+                return EgressResponse::pending(await_policy, now, now);
+            }
+        }
+        match self.render_iframe_playlist(track_id) {
+            Ok(playlist) => EgressResponse::Ready {
+                body: HlsBody::Playlist(playlist),
+                cache: CachePolicy::NoCache,
+            },
+            Err(_) => EgressResponse::NotFound,
+        }
+    }
+
+    /// Render the I-frame trick-play playlist for `track_id`.
+    fn render_iframe_playlist(&self, track_id: TrackId) -> core::result::Result<String, String> {
+        self.drain();
+        if self.container != Container::Fmp4 {
+            return Err("not fmp4".to_string());
+        }
+        let video_track_id = *locked(&self.video_track_id);
+        let Some(video_track_id) = video_track_id else {
+            return Err("no video track".to_string());
+        };
+        let _ = video_track_id;
+        let window = self.window_view();
+        // D3': collect entries; a `None` is allowed only before the first entry.
+        let mut entries: Vec<(WindowSegment, u64)> = Vec::new();
+        let mut seen_entry = false;
+        for s in window.segments.iter() {
+            match s.iframe_len {
+                Some(len) => {
+                    seen_entry = true;
+                    entries.push((s.clone(), len));
+                }
+                None => {
+                    if seen_entry {
+                        return Err("iframe gap after entry".to_string());
+                    }
+                }
+            }
+        }
+        if entries.is_empty() {
+            return Err("no iframe entry".to_string());
+        }
+
+        // Target duration uses the same rule as the media playlist.
+        let target_duration = self
+            .target_duration_secs
+            .max(window.max_segment_duration_secs);
+        let target_duration = target_duration.round().clamp(0.0, f64::from(u32::MAX)) as u32;
+
+        let fmp4 = self.container == Container::Fmp4;
+        let map_for = |generation: Generation| {
+            fmp4.then(|| MapTag {
+                uri: self.init_name(track_id, generation),
+                byte_range: None,
+                extra_attrs: Vec::new(),
+            })
+        };
+
+        let first_entry_seq = entries[0].0.sequence_number;
+        let media_sequence = self.public_msn(first_entry_seq);
+        let segments: Vec<MediaSegment> = entries
+            .iter()
+            .map(|(s, len)| MediaSegment {
+                map: map_for(s.init_gen),
+                uri: self.segment_name(
+                    track_id,
+                    s.sequence_number,
+                    self.container.segment_extension(),
+                ),
+                duration: DecimalSeconds::new(s.duration_secs).unwrap_or_default(),
+                discontinuous: s.discontinuous,
+                byte_range: Some(ByteRange {
+                    length: *len,
+                    offset: Some(0),
+                }),
+                parts: Vec::new(),
+                ..Default::default()
+            })
+            .collect();
+
+        let low_latency = if self.part_target_ms.is_some() {
+            Some(broadcast_hls::LowLatencyConfig {
+                can_block_reload: true,
+                ..Default::default()
+            })
+        } else {
+            None
+        };
+
+        let playlist = MediaPlaylist {
+            target_duration,
+            media_sequence,
+            discontinuity_sequence: window.discontinuity_sequence,
+            segments,
+            open_segment: None,
+            endlist: false,
+            extra_tags: Vec::new(),
+            low_latency,
+            iframes_only: true,
+            ..Default::default()
+        };
+        playlist.to_m3u8().map_err(|error| error.to_string())
+    }
+
     /// A part request is the preload-hinted Partial Segment a client fetches
     /// ahead of time (RFC 8216bis §6.2.2, §6.3.1). If the origin promised it
     /// via `#EXT-X-PRELOAD-HINT` but hasn't produced it yet,
@@ -1821,6 +2123,9 @@ impl ServedEgress for HlsOrigin {
         match request {
             HlsRequest::Playlist { track_id, query } => {
                 self.resolve_playlist(track_id, query, now, await_policy)
+            }
+            HlsRequest::IFramePlaylist { track_id, query } => {
+                self.resolve_iframe_playlist(track_id, query, now, await_policy)
             }
             HlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
         }
@@ -3124,12 +3429,12 @@ mod tests {
     #[test]
     fn window_restarts_on_a_repeated_or_decreasing_sequence_number() {
         let mut w = Window::new(nz(6));
-        w.push(window_entry(5, 0xA5, false), Generation::new(1));
-        w.push(window_entry(6, 0xA6, true), Generation::new(1));
+        w.push(window_entry(5, 0xA5, false), Generation::new(1), None);
+        w.push(window_entry(6, 0xA6, true), Generation::new(1), None);
         assert_eq!(window_seqs(&w), vec![(5, false), (6, true)]);
 
         // Decrease: 3 after 6.
-        w.push(window_entry(3, 0xB3, false), Generation::new(1));
+        w.push(window_entry(3, 0xB3, false), Generation::new(1), None);
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
@@ -3141,7 +3446,7 @@ mod tests {
         assert_eq!(w.bytes_of(SegmentSeq::new(6)), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
-        w.push(window_entry(3, 0xC3, false), Generation::new(1));
+        w.push(window_entry(3, 0xC3, false), Generation::new(1), None);
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         assert_eq!(
             w.bytes_of(SegmentSeq::new(3)),
@@ -3154,13 +3459,17 @@ mod tests {
     #[test]
     fn window_handles_u32_max_sequence_numbers() {
         let mut w = Window::new(nz(4));
-        w.push(window_entry(u32::MAX - 1, 1, false), Generation::new(1));
-        w.push(window_entry(u32::MAX, 2, false), Generation::new(1));
+        w.push(
+            window_entry(u32::MAX - 1, 1, false),
+            Generation::new(1),
+            None,
+        );
+        w.push(window_entry(u32::MAX, 2, false), Generation::new(1), None);
         assert_eq!(
             window_seqs(&w),
             vec![(u32::MAX - 1, false), (u32::MAX, false)]
         );
-        w.push(window_entry(u32::MAX, 3, false), Generation::new(1));
+        w.push(window_entry(u32::MAX, 3, false), Generation::new(1), None);
         assert_eq!(window_seqs(&w), vec![(u32::MAX, true)]);
         assert_eq!(
             w.bytes_of(SegmentSeq::new(u32::MAX)),
@@ -3172,7 +3481,7 @@ mod tests {
     fn window_capacity_is_never_below_three_segments() {
         let mut w = Window::new(nz(1));
         for seq in 1..=5 {
-            w.push(window_entry(seq, 0, false), Generation::new(1));
+            w.push(window_entry(seq, 0, false), Generation::new(1), None);
         }
         assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
     }
@@ -3227,7 +3536,7 @@ mod tests {
     fn bytes_of_addresses_exactly_the_matching_entry() {
         let mut w = Window::new(nz(6));
         for (seq, tag) in [(5u32, 0x15u8), (6, 0x16), (7, 0x17)] {
-            w.push(window_entry(seq, tag, false), Generation::new(1));
+            w.push(window_entry(seq, tag, false), Generation::new(1), None);
         }
         assert_eq!(
             w.bytes_of(SegmentSeq::new(5)),
