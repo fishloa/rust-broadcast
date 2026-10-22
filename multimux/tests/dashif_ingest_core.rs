@@ -370,10 +370,11 @@ fn status_mapping_table() {
             IngestError::MpdTemplateMismatch { .. } => 400,
             IngestError::MpdBaseUrlPresent => 400,
             IngestError::MpdMissingSegmentTemplate => 400,
+            IngestError::SegmentInProgress => 409,
             _ => 400,
         }
     }
-    let variants: [IngestError; 11] = [
+    let variants: [IngestError; 12] = [
         IngestError::Auth,
         IngestError::UnknownPublishingPoint,
         IngestError::SegmentWithoutHeader,
@@ -385,6 +386,7 @@ fn status_mapping_table() {
         IngestError::MpdTemplateMismatch { attr: "media" },
         IngestError::MpdBaseUrlPresent,
         IngestError::MpdMissingSegmentTemplate,
+        IngestError::SegmentInProgress,
     ];
     for v in &variants {
         assert_eq!(v.status().as_u16(), code(v));

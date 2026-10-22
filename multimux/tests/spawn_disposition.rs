@@ -71,7 +71,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dashif_ingest.rs",
-        262,
+        283,
         "DASH-IF ingest pump task; owned by run_dashif_ingest (aborted on serve exit)",
     ),
     (

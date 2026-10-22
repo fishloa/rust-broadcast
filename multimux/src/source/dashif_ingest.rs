@@ -35,10 +35,31 @@ pub const MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
 const CHANNEL_CAPACITY: usize = 64;
 
 /// A job handed from an HTTP handler to the pump task.
-struct Job {
-    kind: crate::dashif_ingest::ObjectKind,
-    bytes: Bytes,
-    resp: oneshot::Sender<Result<(), SessionError>>,
+enum Job {
+    /// Buffered (non-segment) object: whole body at once.
+    Whole {
+        kind: crate::dashif_ingest::ObjectKind,
+        bytes: Bytes,
+        resp: oneshot::Sender<Result<(), SessionError>>,
+    },
+    /// Start a streamed segment (P3b).
+    Begin {
+        kind: crate::dashif_ingest::ObjectKind,
+        resp: oneshot::Sender<Result<(), SessionError>>,
+    },
+    /// One body frame of an in-progress segment.
+    Chunk {
+        rep_id: String,
+        bytes: Bytes,
+        resp: oneshot::Sender<Result<(), SessionError>>,
+    },
+    /// Finalise an in-progress segment.
+    Finish {
+        rep_id: String,
+        resp: oneshot::Sender<Result<(), SessionError>>,
+    },
+    /// Discard the partial remainder of an in-progress segment (fire-and-forget).
+    Abort { rep_id: String },
 }
 
 /// One DASH-IF ingest route.
@@ -268,27 +289,140 @@ pub async fn run_dashif_ingest(
         );
         let mut progress = DriverProgress::new();
         let mut rx = rx;
+        // In-progress segment handles keyed by representation id (P3b).
+        let mut handles: std::collections::HashMap<String, crate::dashif_ingest::SegmentHandle> =
+            std::collections::HashMap::new();
         while let Some(job) = rx.recv().await {
-            let obj = IngestObject {
-                kind: job.kind,
-                bytes: &job.bytes,
-            };
-            driver.feed(obj, Timestamp::ZERO);
-            // Publish the manifest grouping the handlers classify against.
-            if let Some(g) = driver.session().inner.grouping() {
-                *grouping_pump.lock() = Some(g);
+            match job {
+                Job::Whole { kind, bytes, resp } => {
+                    let obj = IngestObject {
+                        kind,
+                        bytes: &bytes,
+                    };
+                    driver.feed(obj, Timestamp::ZERO);
+                    if let Some(g) = driver.session().inner.grouping() {
+                        *grouping_pump.lock() = Some(g);
+                    }
+                    let result = match driver.session_mut().take_last_error() {
+                        Some(e) => Err(e),
+                        None if driver.health().is_running() => Ok(()),
+                        None => Err(SessionError::Ingest(
+                            crate::dashif_ingest::IngestError::Internal,
+                        )),
+                    };
+                    crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
+                    let _ = resp.send(result);
+                }
+                Job::Begin { kind, resp } => {
+                    let rep_id = match &kind {
+                        crate::dashif_ingest::ObjectKind::Segment {
+                            representation_id, ..
+                        } => representation_id.clone(),
+                        _ => {
+                            let _ = resp.send(Err(SessionError::Ingest(
+                                crate::dashif_ingest::IngestError::BadRequest,
+                            )));
+                            continue;
+                        }
+                    };
+                    if handles.contains_key(&rep_id) {
+                        let _ = resp.send(Err(SessionError::Ingest(
+                            crate::dashif_ingest::IngestError::SegmentInProgress,
+                        )));
+                        continue;
+                    }
+                    let (number, time) = match &kind {
+                        crate::dashif_ingest::ObjectKind::Segment { number, time, .. } => {
+                            (*number, *time)
+                        }
+                        _ => (None, None),
+                    };
+                    let res = driver
+                        .session_mut()
+                        .inner
+                        .begin_segment(&rep_id, number, time);
+                    match res {
+                        Ok(h) => {
+                            handles.insert(rep_id, h);
+                            if let Some(g) = driver.session().inner.grouping() {
+                                *grouping_pump.lock() = Some(g);
+                            }
+                            // Drain events emitted by begin (none) / keep parity.
+                            driver.feed(
+                                IngestObject {
+                                    kind: crate::dashif_ingest::ObjectKind::Probe,
+                                    bytes: &[],
+                                },
+                                Timestamp::ZERO,
+                            );
+                            crate::source::advance_route(
+                                &driver,
+                                &route_handle_pump,
+                                &mut progress,
+                            )
+                            .await;
+                            let _ = resp.send(Ok(()));
+                        }
+                        Err(e) => {
+                            let _ = resp.send(Err(e));
+                        }
+                    }
+                }
+                Job::Chunk {
+                    rep_id,
+                    bytes,
+                    resp,
+                } => {
+                    let h = match handles.get_mut(&rep_id) {
+                        Some(h) => h,
+                        None => {
+                            let _ = resp.send(Err(SessionError::Ingest(
+                                crate::dashif_ingest::IngestError::Internal,
+                            )));
+                            continue;
+                        }
+                    };
+                    let res = driver.session_mut().inner.push_segment_bytes(h, &bytes);
+                    if let Some(g) = driver.session().inner.grouping() {
+                        *grouping_pump.lock() = Some(g);
+                    }
+                    driver.feed(
+                        IngestObject {
+                            kind: crate::dashif_ingest::ObjectKind::Probe,
+                            bytes: &[],
+                        },
+                        Timestamp::ZERO,
+                    );
+                    crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
+                    let _ = resp.send(res);
+                }
+                Job::Finish { rep_id, resp } => {
+                    let h = handles.remove(&rep_id);
+                    let res = match h {
+                        Some(h) => driver.session_mut().inner.finish_segment(h),
+                        None => Err(SessionError::Ingest(
+                            crate::dashif_ingest::IngestError::Internal,
+                        )),
+                    };
+                    if let Some(g) = driver.session().inner.grouping() {
+                        *grouping_pump.lock() = Some(g);
+                    }
+                    driver.feed(
+                        IngestObject {
+                            kind: crate::dashif_ingest::ObjectKind::Probe,
+                            bytes: &[],
+                        },
+                        Timestamp::ZERO,
+                    );
+                    crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
+                    let _ = resp.send(res);
+                }
+                Job::Abort { rep_id } => {
+                    if let Some(h) = handles.remove(&rep_id) {
+                        driver.session_mut().inner.abort_segment(h);
+                    }
+                }
             }
-            let result = match driver.session_mut().take_last_error() {
-                Some(e) => Err(e),
-                None if driver.health().is_running() => Ok(()),
-                None => Err(SessionError::Ingest(
-                    crate::dashif_ingest::IngestError::Internal,
-                )),
-            };
-            // Hand any events the object produced to the Trunk BEFORE the
-            // sender sees its 200: an acknowledged object is a published one.
-            crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
-            let _ = job.resp.send(result);
         }
     });
 
@@ -376,64 +510,216 @@ async fn dashif_handler(
             .map(|s| s.to_ascii_lowercase().contains("chunked"))
             .unwrap_or(false);
 
-    let body = {
-        let max = state.max_object_bytes;
-        let timeout = state.body_timeout;
-        let fut = read_limited(req.into_body(), max);
-        let res = if let Some(d) = timeout {
-            match tokio::time::timeout(d, fut).await {
-                Ok(r) => r,
-                Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
-            }
-        } else {
-            fut.await
-        };
-        match res {
-            Ok(b) => b,
-            Err(ReadBodyError::TooLarge) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-            Err(ReadBodyError::Broken) => return StatusCode::BAD_REQUEST.into_response(),
-        }
-    };
-    let body_empty = body.is_empty();
-
     let relative = if relative == "/" {
         relative
     } else {
         relative.trim_start_matches('/').to_string()
     };
-    let meta = RequestMeta {
+
+    // Early classification (body assumed non-empty) to decide whether this is
+    // a streamed Segment object (P3b). Non-segment objects keep the buffered path.
+    let grouping_early = state.grouping.lock().clone();
+    let early_meta = RequestMeta {
         method: ingest_method,
         path: &relative,
         content_length,
         chunked,
-        body_empty,
+        body_empty: false,
+    };
+    let early_kind = classify(&early_meta, grouping_early.as_ref()).ok();
+    let segment = match early_kind {
+        Some(kind @ crate::dashif_ingest::ObjectKind::Segment { .. }) => Some(kind),
+        _ => None,
     };
 
-    let grouping = state.grouping.lock().clone();
-    let kind = match classify(&meta, grouping.as_ref()) {
-        Ok(k) => k,
-        Err(e) => return e.status().into_response(),
-    };
+    if let Some(kind) = segment {
+        let rep_id = match &kind {
+            crate::dashif_ingest::ObjectKind::Segment {
+                representation_id, ..
+            } => representation_id.clone(),
+            // Unreachable by construction (matched above); a typed refusal
+            // rather than a panic if that ever changes.
+            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
 
-    let (tx, rx) = oneshot::channel();
-    let job = Job {
-        kind,
-        bytes: body.clone(),
-        resp: tx,
-    };
-    if state.tx.try_send(job).is_err() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            [("retry-after", "1")],
-            Bytes::new(),
-        )
-            .into_response();
-    }
-    match rx.await {
-        Ok(Ok(())) => StatusCode::OK.into_response(),
-        Ok(Err(SessionError::Ingest(e))) => e.status().into_response(),
-        Ok(Err(SessionError::Demux(_))) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        // Begin (wait for its Result).
+        let (btx, brx) = oneshot::channel();
+        let begin_job = Job::Begin {
+            kind: kind.clone(),
+            resp: btx,
+        };
+        if state.tx.try_send(begin_job).is_err() {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("retry-after", "1")],
+                Bytes::new(),
+            )
+                .into_response();
+        }
+        match brx.await {
+            Ok(Ok(())) => {}
+            Ok(Err(SessionError::Ingest(e))) => return e.status().into_response(),
+            Ok(Err(SessionError::Demux(_))) => {
+                return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+            }
+            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+
+        // Stream the body frame by frame.
+        let max = state.max_object_bytes;
+        let timeout = state.body_timeout;
+        let tx = state.tx.clone();
+        let mut body = std::pin::pin!(req.into_body());
+        let start = tokio::time::Instant::now();
+        let mut total: usize = 0;
+        let mut read_result: Result<(), StatusCode> = Ok(());
+        loop {
+            let frame_fut =
+                std::future::poll_fn(|cx| http_body::Body::poll_frame(body.as_mut(), cx));
+            let frame_opt = if let Some(d) = timeout {
+                let remaining = d.saturating_sub(start.elapsed());
+                match tokio::time::timeout(remaining, frame_fut).await {
+                    Ok(v) => v,
+                    Err(_) => {
+                        read_result = Err(StatusCode::REQUEST_TIMEOUT);
+                        break;
+                    }
+                }
+            } else {
+                frame_fut.await
+            };
+            let Some(frame) = frame_opt else {
+                break;
+            };
+            let frame = match frame {
+                Ok(f) => f,
+                Err(_) => {
+                    read_result = Err(StatusCode::BAD_REQUEST);
+                    break;
+                }
+            };
+            if let Ok(data) = frame.into_data() {
+                if total.saturating_add(data.len()) > max {
+                    read_result = Err(StatusCode::PAYLOAD_TOO_LARGE);
+                    break;
+                }
+                total += data.len();
+                let (ctx, crx) = oneshot::channel();
+                let chunk_job = Job::Chunk {
+                    rep_id: rep_id.clone(),
+                    bytes: data,
+                    resp: ctx,
+                };
+                if tx.try_send(chunk_job).is_err() {
+                    read_result = Err(StatusCode::SERVICE_UNAVAILABLE);
+                    break;
+                }
+                match crx.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(SessionError::Ingest(e))) => {
+                        read_result = Err(e.status());
+                        break;
+                    }
+                    Ok(Err(SessionError::Demux(_))) => {
+                        read_result = Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+                        break;
+                    }
+                    _ => {
+                        read_result = Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Err(status) = read_result {
+            let _ = tx.try_send(Job::Abort {
+                rep_id: rep_id.clone(),
+            });
+            return status.into_response();
+        }
+
+        // Finish.
+        let (ftx, frx) = oneshot::channel();
+        let finish_job = Job::Finish {
+            rep_id: rep_id.clone(),
+            resp: ftx,
+        };
+        if tx.try_send(finish_job).is_err() {
+            let _ = tx.try_send(Job::Abort {
+                rep_id: rep_id.clone(),
+            });
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("retry-after", "1")],
+                Bytes::new(),
+            )
+                .into_response();
+        }
+        match frx.await {
+            Ok(Ok(())) => StatusCode::OK.into_response(),
+            Ok(Err(SessionError::Ingest(e))) => e.status().into_response(),
+            Ok(Err(SessionError::Demux(_))) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
+            _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    } else {
+        // Buffered path (non-segment objects).
+        let body = {
+            let max = state.max_object_bytes;
+            let timeout = state.body_timeout;
+            let fut = read_limited(req.into_body(), max);
+            let res = if let Some(d) = timeout {
+                match tokio::time::timeout(d, fut).await {
+                    Ok(r) => r,
+                    Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
+                }
+            } else {
+                fut.await
+            };
+            match res {
+                Ok(b) => b,
+                Err(ReadBodyError::TooLarge) => {
+                    return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+                }
+                Err(ReadBodyError::Broken) => return StatusCode::BAD_REQUEST.into_response(),
+            }
+        };
+        let body_empty = body.is_empty();
+
+        let meta = RequestMeta {
+            method: ingest_method,
+            path: &relative,
+            content_length,
+            chunked,
+            body_empty,
+        };
+
+        let grouping = state.grouping.lock().clone();
+        let kind = match classify(&meta, grouping.as_ref()) {
+            Ok(k) => k,
+            Err(e) => return e.status().into_response(),
+        };
+
+        let (tx, rx) = oneshot::channel();
+        let job = Job::Whole {
+            kind,
+            bytes: body.clone(),
+            resp: tx,
+        };
+        if state.tx.try_send(job).is_err() {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("retry-after", "1")],
+                Bytes::new(),
+            )
+                .into_response();
+        }
+        match rx.await {
+            Ok(Ok(())) => StatusCode::OK.into_response(),
+            Ok(Err(SessionError::Ingest(e))) => e.status().into_response(),
+            Ok(Err(SessionError::Demux(_))) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
     }
 }
 

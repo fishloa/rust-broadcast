@@ -183,6 +183,9 @@ pub enum IngestError {
 
     #[error("header changed mid-session (§6.2.19)")]
     HeaderChanged,
+
+    #[error("segment already in progress for this representation (§5.3 catch-all)")]
+    SegmentInProgress,
 }
 
 impl IngestError {
@@ -193,6 +196,7 @@ impl IngestError {
             IngestError::SegmentWithoutHeader => StatusCode::PRECONDITION_FAILED,
             IngestError::UnsupportedMedia => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             IngestError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            IngestError::SegmentInProgress => StatusCode::CONFLICT,
             _ => StatusCode::BAD_REQUEST,
         }
     }
@@ -492,6 +496,7 @@ mod tests {
                 IngestError::MpdBaseUrlPresent => 400,
                 IngestError::MpdMissingSegmentTemplate => 400,
                 IngestError::HeaderChanged => 400,
+                IngestError::SegmentInProgress => 409,
             }
         }
         let variants = [
@@ -507,6 +512,7 @@ mod tests {
             IngestError::MpdBaseUrlPresent,
             IngestError::MpdMissingSegmentTemplate,
             IngestError::HeaderChanged,
+            IngestError::SegmentInProgress,
         ];
         for v in &variants {
             assert_eq!(v.status().as_u16(), expected(v));

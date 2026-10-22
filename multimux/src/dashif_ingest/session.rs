@@ -21,7 +21,7 @@
 //! presentation state. Nothing is buffered when the presentation is already
 //! live.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use media_plane::ingress::{IngestSession, ProgramId, SessionEvent};
@@ -91,6 +91,7 @@ pub struct DashifIngestSession {
     established_emitted: bool,
     new_program_emitted: bool,
     pending_events: VecDeque<SessionEvent>,
+    active_segments: HashSet<String>,
 }
 
 impl DashifIngestSession {
@@ -109,6 +110,7 @@ impl DashifIngestSession {
             established_emitted: false,
             new_program_emitted: false,
             pending_events: VecDeque::new(),
+            active_segments: HashSet::new(),
         }
     }
 
@@ -235,7 +237,12 @@ impl DashifIngestSession {
         bytes: &[u8],
     ) -> Result<(), SessionError> {
         let mut handle = self.begin_segment(rep_id, number, time)?;
-        self.push_segment_bytes(&mut handle, bytes)?;
+        if let Err(e) = self.push_segment_bytes(&mut handle, bytes) {
+            self.active_segments.remove(rep_id);
+            // drop handle
+            let _ = handle;
+            return Err(e);
+        }
         self.finish_segment(handle)
     }
 
@@ -255,7 +262,9 @@ impl DashifIngestSession {
         if !self.ingest_state.has_header(rep_id) {
             return Err(SessionError::Ingest(IngestError::SegmentWithoutHeader));
         }
-
+        if self.active_segments.contains(rep_id) {
+            return Err(SessionError::Ingest(IngestError::SegmentInProgress));
+        }
         let disp = self
             .ingest_state
             .on_segment(rep_id, number, time)
@@ -264,6 +273,8 @@ impl DashifIngestSession {
         if disp == crate::dashif_ingest::SegmentDisposition::Regression {
             warn!("dashif-ingest: segment regression for {rep_id}");
         }
+
+        self.active_segments.insert(rep_id.to_string());
 
         Ok(SegmentHandle {
             rep_id: rep_id.to_string(),
@@ -393,16 +404,31 @@ impl DashifIngestSession {
 
     pub fn finish_segment(&mut self, mut handle: SegmentHandle) -> Result<(), SessionError> {
         // Process any remaining complete groups first.
-        self.push_segment_bytes(&mut handle, &[])?;
+        let push_res = self.push_segment_bytes(&mut handle, &[]);
+        let rep_id = handle.rep_id.clone();
+        if let Err(e) = push_res {
+            self.active_segments.remove(&rep_id);
+            return Err(e);
+        }
 
         if handle.skip {
+            self.active_segments.remove(&rep_id);
             return Ok(());
         }
 
         if !handle.buf.is_empty() {
+            self.active_segments.remove(&rep_id);
             return Err(SessionError::Ingest(IngestError::BadRequest));
         }
+        self.active_segments.remove(&rep_id);
         Ok(())
+    }
+
+    /// Discard a partially-streamed segment (P3b): drop any buffered remainder
+    /// without emitting it. Chunks already published stay published.
+    pub fn abort_segment(&mut self, handle: SegmentHandle) {
+        self.active_segments.remove(&handle.rep_id);
+        // handle dropped here
     }
 
     fn detect_styp_lmsg(&mut self, rep_id: &str, bytes: &[u8]) {
