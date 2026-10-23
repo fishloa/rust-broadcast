@@ -356,7 +356,12 @@ impl HlsClient {
         if index >= variants_len {
             return Err(Error::NoSuchVariant { index });
         }
-        let url = self.master.as_ref().unwrap().variants[index].url.clone();
+        let url = self
+            .master
+            .as_ref()
+            .and_then(|m| m.variants.get(index))
+            .map(|v| v.url.clone())
+            .ok_or(Error::NoSuchVariant { index })?;
         self.restart_after_regression()?;
         self.pending_actions.clear();
         self.playlist_url = url.clone();
@@ -457,7 +462,14 @@ impl HlsClient {
             self.pending_outputs
                 .push_back(Output::Master(selection.clone()));
             self.master = Some(selection);
-            let chosen_url = self.master.as_ref().unwrap().variants[chosen].url.clone();
+            let Some(chosen_url) = self
+                .master
+                .as_ref()
+                .and_then(|m| m.variants.get(chosen))
+                .map(|v| v.url.clone())
+            else {
+                return Err(Error::NoSuchVariant { index: chosen });
+            };
             self.playlist_url = chosen_url.clone();
             self.pending_actions.clear();
             self.pending_actions.push_back(Action::FetchPlaylist {
