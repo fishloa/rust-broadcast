@@ -27,7 +27,10 @@ fn start_timer_restarts_on_every_open() {
     assert!(drain_actions(&mut c).contains(&Action::Abort));
     let _ = drain_events(&mut c);
     c.poll_timeout(17_000);
-    assert_eq!(drain_actions(&mut c), vec![Action::Open { url: "u".into() }]);
+    assert_eq!(
+        drain_actions(&mut c),
+        vec![Action::Open { url: "u".into() }]
+    );
     c.on_response(200, 17_050);
     c.poll_timeout(31_999);
     assert!(
