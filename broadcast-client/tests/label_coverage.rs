@@ -33,7 +33,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-const SKIP: &[&str] = &["Action", "Event", "Error"];
+const SKIP: &[&str] = &["Action", "Event", "Error", "AuthDecision"];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {

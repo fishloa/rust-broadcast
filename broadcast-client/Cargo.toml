@@ -27,6 +27,8 @@ serde              = { version = "1", default-features = false, optional = true,
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+broadcast-auth = { path = "../broadcast-auth", version = "0.5" }
+url = "2"
 
 [features]
 default = ["std"]

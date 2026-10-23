@@ -11,7 +11,6 @@ pub mod redirect;
 pub mod session;
 pub mod source;
 
-pub use auth::SessionOrigin;
 pub use broadcast_auth::Credentials;
 pub use error::{Error, TransportError};
 pub use events::{Action, Config, Event, SourceKind, Status};

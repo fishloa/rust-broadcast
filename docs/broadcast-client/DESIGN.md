@@ -17,22 +17,22 @@ this crate owns every protocol, auth, redirect, reconnect and buffering decision
 `broadcast-client`, `std` (broadcast-auth is std), deps: `tshttp-runtime`, `broadcast-auth`, `transmux`
 (TrackSpec/Sample/DisplayInfo types are re-exported), `url`, later `hls-runtime`, `buffering-runtime`.
 Must `cargo check` on aarch64-apple-tvos/-tvos-sim/-ios/-ios-sim/-darwin (#1454); no tokio, no reqwest, no
-threads, no wall clock. Time = caller monotonic `u64` milliseconds (`now_ms`).
+threads, no wall clock. Time = caller monotonic `u64` microseconds (`now_us`).
 
 ## API
 
 ```
-Session::open(url: &str, config: Config, now_ms: u64) -> Result<Session>     // no I/O
-Session::poll(&mut self, now_ms) -> Option<Action>       // advances timers, then pops
+Session::open(url: &str, config: Config, now_us: u64) -> Result<Session>     // no I/O
+Session::poll(&mut self, now_us) -> Option<Action>       // advances timers, then pops
 Session::next_event(&mut self) -> Option<Event>
 Session::on_response(conn: ConnId, status: u16, headers: &[(String,String)])
-Session::on_data(conn: ConnId, bytes: &[u8], now_ms)
-Session::on_closed(conn: ConnId, error: Option<TransportError>, now_ms)
+Session::on_data(conn: ConnId, bytes: &[u8], now_us)
+Session::on_closed(conn: ConnId, error: Option<TransportError>, now_us)
 Session::set_credentials(Credentials)                    // broadcast_auth::Credentials
-Session::reconnect(now_ms)                               // caller-initiated (decoder failure)
+Session::reconnect(now_us)                               // caller-initiated (decoder failure)
 Session::close()                                         // terminal; Close for open conns, no more events but Status(Ended)? no: Closed
 ```
-`ConnId` is `u32` allocated by the session. `now_ms` is also passed to `on_response`.
+`ConnId` is `u32` allocated by the session. `now_us` is caller monotonic microseconds.
 
 `Config { kind: SourceKind(Auto|TsHttp), ts_http: tshttp_runtime::Config, max_redirects: 5,
 extra_headers: vec![] (reserved for #1458) }`. `Auto` for an `http(s)` URL = TsHttp in BC-1 (HLS added in BC-3
@@ -41,7 +41,7 @@ by extension `.m3u8`). Other schemes: `Error::UnsupportedScheme`.
 ```
 Action (non_exhaustive): HttpRequest{conn, method: "GET", url, headers: Vec<(String,String)>, byte_range: Option<(u64,u64)>}
                        | Close{conn}            // drop connection, ignore later callbacks for it
-                       | WakeAt(u64)            // call poll again at/after this now_ms
+                       | WakeAt(u64)            // call poll again at/after this now_us
                        // reserved, never emitted in BC-1: TcpConnect, UdpBind, Send
 Event  (non_exhaustive): Tracks(Vec<TrackSpec>) | Sample{track: TrackId, sample: Sample}
                        | DisplayChanged{track, pts: Option<i64>, display: Arc<DisplayInfo>}
