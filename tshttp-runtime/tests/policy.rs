@@ -215,8 +215,3 @@ fn config_overrides_change_every_timeout() {
     // awaiting timeout abort
     assert_eq!(c.poll(), Some(Action::Abort));
 }
-
-#[test]
-fn stall_notice_repeats_once_per_second_after_first_exact() {
-    // placeholder
-}
