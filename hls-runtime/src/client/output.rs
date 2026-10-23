@@ -1,9 +1,12 @@
 //! Output events — [`Output`] out of [`crate::client::HlsClient::next_output`].
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use transmux::TrackId;
 
+use transmux::DisplayInfo;
 use transmux::Sample;
+use transmux::TrackSpec;
 
 /// One unit of decoded output, drained in order via
 /// [`crate::client::HlsClient::next_output`].
@@ -41,4 +44,16 @@ pub enum Output {
     /// further open segment or preload hint outstanding — playback is
     /// complete, no more output will ever be produced.
     EndOfStream,
+    /// The full current track set for the stream. Emitted before `Init` on the
+    /// classic TS-segment path and after the first `Init` on the fMP4 path.
+    Tracks(Vec<TrackSpec>),
+    /// A track's display state changed (SPS geometry etc.).
+    DisplayChanged {
+        /// Track ID.
+        track_id: TrackId,
+        /// PTS of the affected access unit, if known.
+        pts: Option<i64>,
+        /// The full new display state, shared with the following sample.
+        display: Arc<DisplayInfo>,
+    },
 }

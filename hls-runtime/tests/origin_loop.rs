@@ -449,6 +449,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
                 assert_eq!(track_id, TrackId::new(1));
                 got_samples.extend(samples);
             }
+            Output::Tracks(_) | Output::DisplayChanged { .. } => {}
             other => panic!("unexpected output: {other:?}"),
         }
     }
@@ -715,6 +716,7 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
             }
             Output::Samples { samples, .. } => got_samples.extend(samples),
             Output::EndOfStream => saw_end = true,
+            Output::Tracks(_) | Output::DisplayChanged { .. } => {}
             other => panic!("unexpected output: {other:?}"),
         }
     }

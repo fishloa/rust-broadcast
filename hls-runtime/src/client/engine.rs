@@ -1,6 +1,7 @@
 //! [`HlsClient`] — the sans-IO caller-driven engine.
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use transmux::TrackId;
@@ -185,6 +186,9 @@ pub struct HlsClient {
     init_uri: Option<String>,
     init_bytes: Option<Vec<u8>>,
     init_emitted: bool,
+    /// Last fMP4 track spec set for which [`Output::Tracks`] was emitted, so a
+    /// repeat is only emitted when a new init yields a different set.
+    last_fmp4_specs: Option<Vec<TrackSpec>>,
     /// Part/Segment resources delivered before the init segment arrived —
     /// buffered (in arrival order) and replayed once [`Self::init_bytes`] is
     /// set, so the caller's fetch/response IO can complete in any order
@@ -245,6 +249,7 @@ impl HlsClient {
             init_uri: None,
             init_bytes: None,
             init_emitted: false,
+            last_fmp4_specs: None,
             pending_demux: VecDeque::new(),
             requested: BTreeSet::new(),
             fulfilled: BTreeSet::new(),
@@ -754,6 +759,7 @@ impl HlsClient {
         self.init_uri = Some(url.clone());
         self.init_bytes = None;
         self.init_emitted = false;
+        self.last_fmp4_specs = None;
         let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
         self.pending_actions.push_back(Action::FetchResource {
             id: ResourceId::Init,
@@ -835,6 +841,17 @@ impl HlsClient {
         let media = demux
             .unpackage(combined.as_slice())
             .map_err(|source| Error::Demux { id, source })?;
+        let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+        let specs_changed = self
+            .last_fmp4_specs
+            .as_ref()
+            .map(|prev| format!("{:?}", prev) != format!("{:?}", specs))
+            .unwrap_or(true);
+        if specs_changed {
+            self.pending_outputs
+                .push_back(Output::Tracks(specs.clone()));
+            self.last_fmp4_specs = Some(specs);
+        }
         for track in media.tracks {
             if !track.samples.is_empty() {
                 self.pending_outputs.push_back(Output::Samples {
@@ -909,6 +926,7 @@ impl HlsClient {
             return Ok(());
         };
         let mut per_track: BTreeMap<TrackId, Vec<Sample>> = BTreeMap::new();
+        let mut events: Vec<DemuxEvent> = Vec::new();
         while let Some(event) = demux.poll_event() {
             match event {
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
@@ -917,10 +935,8 @@ impl HlsClient {
                 DemuxEvent::TrackRemoved { track_id, .. } => {
                     self.ts_specs.remove(&track_id);
                 }
-                DemuxEvent::Sample {
-                    track_id, sample, ..
-                } => {
-                    per_track.entry(track_id).or_default().push(sample);
+                DemuxEvent::Sample { .. } | DemuxEvent::DisplayChanged { .. } => {
+                    events.push(event);
                 }
                 _ => {}
             }
@@ -931,9 +947,39 @@ impl HlsClient {
                 .map_err(|source| Error::Demux { id, source })?;
             if self.last_ts_init.as_deref() != Some(init_bytes.as_slice()) {
                 self.pending_outputs
+                    .push_back(Output::Tracks(specs.clone()));
+                self.pending_outputs
                     .push_back(Output::Init(init_bytes.clone()));
                 self.last_ts_init = Some(init_bytes);
                 self.init_emitted = true;
+            }
+        }
+        for event in events {
+            match event {
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    per_track.entry(track_id).or_default().push(sample);
+                }
+                DemuxEvent::DisplayChanged {
+                    track_id,
+                    display,
+                    pts,
+                    ..
+                } => {
+                    if let Some(samples) = per_track.remove(&track_id)
+                        && !samples.is_empty()
+                    {
+                        self.pending_outputs
+                            .push_back(Output::Samples { track_id, samples });
+                    }
+                    self.pending_outputs.push_back(Output::DisplayChanged {
+                        track_id,
+                        pts,
+                        display,
+                    });
+                }
+                _ => {}
             }
         }
         for (track_id, samples) in per_track {
@@ -1251,6 +1297,7 @@ impl HlsClient {
         self.init_uri = None;
         self.init_bytes = None;
         self.init_emitted = false;
+        self.last_fmp4_specs = None;
         self.joined = false;
         self.pending_outputs.push_back(Output::Discontinuity);
         Ok(())
