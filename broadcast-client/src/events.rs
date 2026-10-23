@@ -130,6 +130,11 @@ pub enum Event {
     },
     /// Discontinuity.
     Discontinuity,
+    /// Finite resource expected byte count (VOD).
+    Finite {
+        /// Expected bytes.
+        expected_bytes: u64,
+    },
     /// Status.
     Status(Status),
     /// Starved.
@@ -184,6 +189,7 @@ impl PartialEq for Event {
                 },
             ) => *ta == *tb && *pa == *pb && *da == *db,
             (Self::Discontinuity, Self::Discontinuity) => true,
+            (Self::Finite { expected_bytes: a }, Self::Finite { expected_bytes: b }) => *a == *b,
             (Self::Status(a), Self::Status(b)) => *a == *b,
             (Self::Starved(a), Self::Starved(b)) => *a == *b,
             (

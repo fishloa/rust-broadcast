@@ -4,7 +4,7 @@ fn samples_for(chunk_size: usize) -> (usize, usize, usize) {
     let bytes = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream").unwrap();
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     let mut total_samples = 0;
     let mut tracks = std::collections::BTreeSet::new();
@@ -59,7 +59,7 @@ fn first_sample_moves_to_playing() {
     let bytes = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream").unwrap();
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(&bytes[..4096], 0);
     // after feed, if sample emitted, attempt reset (can't observe state; check reconnect 0 after eof)
@@ -85,7 +85,7 @@ fn missing_headers_404() {
     assert_eq!(status, 404);
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(status, 0);
+    c.on_response(status, &[], 0);
     assert_eq!(c.poll_event(), Some(Event::NotFound { status: 404 }));
 }
 
@@ -107,6 +107,6 @@ fn tf1_headers_200_connected() {
     assert_eq!(status, 200);
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(status, 0);
+    c.on_response(status, &[], 0);
     assert_eq!(c.poll_event(), Some(Event::Connected));
 }

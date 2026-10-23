@@ -174,7 +174,7 @@ impl Session {
             self.redirect_count = 0;
             self.live_conn = Some(conn);
         }
-        self.source.on_response(status, self.now_us);
+        self.source.on_response(status, headers, self.now_us);
         self.drain_source();
     }
 

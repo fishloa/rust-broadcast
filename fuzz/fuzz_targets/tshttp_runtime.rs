@@ -11,9 +11,17 @@ fuzz_target!(|data: &[u8]| {
         if chunk.first().copied().unwrap_or(0) & 1 == 0 {
             client.feed(chunk, now);
         } else {
-            match chunk.first().copied().unwrap_or(0) % 6 {
-                0 => client.on_response(200, now),
-                1 => client.on_response(404, now),
+            match chunk.first().copied().unwrap_or(0) % 7 {
+                0 => client.on_response(200, &[], now),
+                1 => client.on_response(404, &[], now),
+                6 => {
+                    let len = u64::from(chunk.get(1).copied().unwrap_or(0)) * 188;
+                    client.on_response(
+                        200,
+                        &[("Content-Length".to_string(), len.to_string())],
+                        now,
+                    )
+                }
                 2 => client.on_eof(now),
                 3 => client.on_error(now),
                 4 => client.reconnect(now),

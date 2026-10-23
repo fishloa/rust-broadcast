@@ -20,7 +20,7 @@ fn eof_flushes_held_back_samples() {
     // before eof
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(&bytes, 0);
     let mut before_events = Vec::new();
@@ -74,7 +74,7 @@ fn flush_events_precede_reconnect_action() {
     };
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(&bytes, 0);
     while c.poll_event().is_some() {}
@@ -143,7 +143,7 @@ fn eof_with_only_flushed_sample_counts_as_played() {
 
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(prefix, 0);
     while c.poll_event().is_some() {}

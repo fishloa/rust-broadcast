@@ -13,7 +13,7 @@ use tshttp_runtime::{Config, TsHttpClient};
 let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);
 // Drive I/O from the host:
 let _ = client.poll();                 // -> Open
-client.on_response(200, 0);            // -> Connected
+client.on_response(200, &[], 0);            // -> Connected
 client.feed(&[0u8; 188], 1);           // body bytes
 client.poll_timeout(5_000);            // timers
 while let Some(ev) = client.poll_event() {

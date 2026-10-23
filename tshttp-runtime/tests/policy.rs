@@ -40,7 +40,7 @@ fn played_then_ended_resets_attempt_counter() {
     let _ = c.poll();
     const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
     // play
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(D, 1);
     // EOF
@@ -66,7 +66,7 @@ fn server_closes_every_60s_no_stall_notice() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     for i in 0..10 {
-        c.on_response(200, i * 60000);
+        c.on_response(200, &[], i * 60000);
         let _ = c.poll_event();
         const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
         c.feed(D, i * 60000 + 1);
@@ -83,14 +83,14 @@ fn server_closes_every_60s_no_stall_notice() {
 fn not_found_then_ok() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(404, 0);
+    c.on_response(404, &[], 0);
     assert_eq!(c.poll_event(), Some(Event::NotFound { status: 404 }));
     let _ = c.poll_event(); // reconnecting
     let _ = c.poll(); // reconnect
     let dl = c.next_deadline().unwrap();
     c.poll_timeout(dl);
     let _ = c.poll(); // open
-    c.on_response(200, 100);
+    c.on_response(200, &[], 100);
     assert_eq!(c.poll_event(), Some(Event::Connected));
     c.feed(&[0u8; 4], 101);
     // maybe no sample; ok
@@ -100,7 +100,7 @@ fn not_found_then_ok() {
 fn gone_410_is_not_found_event() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(410, 0);
+    c.on_response(410, &[], 0);
     assert_eq!(c.poll_event(), Some(Event::NotFound { status: 410 }));
 }
 
@@ -109,7 +109,7 @@ fn stall_notice_repeats_once_per_second_after_first() {
     const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(D, 0);
     // no bytes afterwards; poll timeouts
@@ -136,7 +136,7 @@ fn stall_notice_repeats_once_per_second_after_first() {
 fn callbacks_after_abort_are_ignored() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.reconnect(5);
     let _ = c.poll();
@@ -154,7 +154,7 @@ fn caller_reconnect_in_every_connected_state() {
         let mut c = TsHttpClient::new("u", Config::default(), 0);
         let _ = c.poll();
         if phase >= 1 {
-            c.on_response(200, 0);
+            c.on_response(200, &[], 0);
             let _ = c.poll_event();
         }
         if phase >= 2 {
@@ -170,7 +170,7 @@ fn caller_reconnect_in_every_connected_state() {
 fn starved_data_vs_nodata_classified_separately() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     // data flowing but no sample for stall_notice
     c.feed(&[0u8; 4], 10000);
@@ -185,7 +185,7 @@ fn starved_data_vs_nodata_classified_separately() {
     const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
     let mut c2 = TsHttpClient::new("u", Config::default(), 0);
     let _ = c2.poll();
-    c2.on_response(200, 0);
+    c2.on_response(200, &[], 0);
     let _ = c2.poll_event();
     c2.feed(D, 0);
     c2.poll_timeout(5000);
@@ -209,7 +209,7 @@ fn config_overrides_change_every_timeout() {
     };
     let mut c = TsHttpClient::new("u", cfg, 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.poll_timeout(7);
     // awaiting timeout abort

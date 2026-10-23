@@ -76,8 +76,8 @@ impl TsHttpSource {
     }
 
     /// Response callback.
-    pub fn on_response(&mut self, status: u16, now_us: u64) {
-        self.ts.on_response(status, now_us / 1000);
+    pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now_us: u64) {
+        self.ts.on_response(status, headers, now_us / 1000);
         self.drain_ts_events();
     }
 
@@ -121,6 +121,12 @@ impl TsHttpSource {
 
     fn map_ts_event(&mut self, e: tshttp_runtime::Event) {
         match e {
+            tshttp_runtime::Event::Finite { expected_bytes } => {
+                self.events.push_back(Event::Finite { expected_bytes });
+            }
+            tshttp_runtime::Event::Ended => {
+                self.events.push_back(Event::Status(Status::Ended));
+            }
             tshttp_runtime::Event::Connected => {
                 if self.connection_count > 1 {
                     self.events.push_back(Event::Discontinuity);
