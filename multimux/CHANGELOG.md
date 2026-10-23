@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- `Route::declared_bandwidth_bps: Option<u64>` (serde, default `None`) and `RouteHandle::with_declared_bandwidth_bps(...)` — operator-declared peak bitrate wired into `HlsOriginBuilder::declared_bandwidth_bps`. Master playlist requests before the first measurable segment now return `503 Service Unavailable` with `Retry-After: 1` instead of a fabricated `BANDWIDTH`.
+
+
 ### Fixed
 - `parse_segment_filename` now accepts the real instance form `seg-{track}-{instance}-{seq}.m4s` in addition to the legacy `seg-{track}-{seq}.m4s` (issue #1422). As a result `inject_segment_events` (DASH SCTE-35 `emsg` splice) and the in-progress chunked whole-segment fallback now actually run for real HLS/DASH filenames instead of only the unit tests' short names. `iframe-seg-…` URIs are deliberately excluded so I-frame byte ranges never drift. Box-scan assertions in `tests/origin_iframe.rs` cover the new behaviour.
 

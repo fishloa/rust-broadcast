@@ -100,7 +100,7 @@ fn main() {
     ));
 
     println!("--- master.m3u8 ---");
-    println!("{}", master_playlist_m3u8("media.m3u8"));
+    println!("{}", master_playlist_m3u8("media.m3u8", 5_000_000));
 
     println!("--- media.m3u8 ---");
     match resolve(

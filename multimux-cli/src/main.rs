@@ -183,6 +183,7 @@ fn build_config(cli: Cli) -> Result<Config> {
             },
             outputs,
             dvr: Default::default(),
+            declared_bandwidth_bps: None,
         }],
         ..Config::default()
     };

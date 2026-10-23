@@ -1456,6 +1456,13 @@ pub struct Route {
     /// [`Config::validate`].
     #[serde(default = "default_outputs")]
     pub outputs: Vec<OutputKind>,
+    /// Operator-declared peak bitrate (bits/second) for this route's HLS
+    /// master playlist `BANDWIDTH`, used until a segment with a measurable
+    /// duration has been published (and as a floor afterwards). `None` (the
+    /// default) means "unknown": the master playlist returns 503 until a
+    /// measurable segment exists. Must be `> 0` and `<= u32::MAX` when set.
+    #[serde(default)]
+    pub declared_bandwidth_bps: Option<u64>,
     /// DVR durable segment archive (issue #746). Off by default — set
     /// `"enabled": true` and configure an `archive_root` and at least one
     /// retention limit to enable recording.
@@ -1579,6 +1586,14 @@ impl Route {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.outputs",
                 reason: format!("route {:?} has no outputs configured", self.name),
+            });
+        }
+        if let Some(declared) = self.declared_bandwidth_bps
+            && (declared == 0 || declared > u64::from(u32::MAX))
+        {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.declared_bandwidth_bps",
+                reason: "must be > 0 and <= u32::MAX".into(),
             });
         }
         // Issue #887: `ts_hls` is mutually exclusive with `llhls`/`dash`/
@@ -2843,6 +2858,7 @@ mod tests {
                     },
                     outputs: default_outputs(),
                     dvr: DvrConfig::default(),
+                    declared_bandwidth_bps: None,
                 }],
                 request_timeout_secs: bad,
                 ..Config::default()
@@ -2862,6 +2878,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             max_concurrent_requests: 0,
             ..Config::default()
@@ -2880,6 +2897,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             max_request_body_bytes: 0,
             ..Config::default()
@@ -2922,6 +2940,7 @@ mod tests {
                     reconnect: None,
                 }],
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -2952,6 +2971,7 @@ mod tests {
                     reconnect: None,
                 }],
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -2994,6 +3014,7 @@ mod tests {
                         reconnect: Some(reconnect),
                     }],
                     dvr: DvrConfig::default(),
+                    declared_bandwidth_bps: None,
                 }],
                 ..Config::default()
             }
@@ -3064,6 +3085,7 @@ mod tests {
                     },
                     outputs: vec![kind],
                     dvr: DvrConfig::default(),
+                    declared_bandwidth_bps: None,
                 }],
                 ..Config::default()
             };
@@ -3634,6 +3656,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3653,6 +3676,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3675,6 +3699,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3742,6 +3767,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3759,6 +3785,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3776,6 +3803,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3794,6 +3822,7 @@ mod tests {
             },
             outputs: default_outputs(),
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         };
         let debug = format!("{ts_http:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -3811,6 +3840,7 @@ mod tests {
             },
             outputs: default_outputs(),
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         };
         let debug = format!("{hls_pull:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -3832,6 +3862,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3850,6 +3881,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3869,6 +3901,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3888,6 +3921,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3907,6 +3941,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3928,6 +3963,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -3946,6 +3982,7 @@ mod tests {
                     },
                     outputs: default_outputs(),
                     dvr: DvrConfig::default(),
+                    declared_bandwidth_bps: None,
                 },
                 Route {
                     name: "x".into(),
@@ -3955,6 +3992,7 @@ mod tests {
                     },
                     outputs: default_outputs(),
                     dvr: DvrConfig::default(),
+                    declared_bandwidth_bps: None,
                 },
             ],
             ..Config::default()
@@ -4014,6 +4052,7 @@ mod tests {
             },
             outputs: default_outputs(),
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4038,6 +4077,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         };
@@ -4067,6 +4107,7 @@ mod tests {
             },
             outputs: default_outputs(),
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains(&long_sdp), "debug: {debug}");
@@ -4088,6 +4129,7 @@ mod tests {
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             ..Config::default()
         }

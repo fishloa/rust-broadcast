@@ -20,6 +20,7 @@ fn origin() -> HlsOrigin {
         .target_duration_secs(4.0)
         .window_segments(nz(4))
         .instance(7)
+        .declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build")
 }
@@ -154,6 +155,7 @@ fn set_init_reset_clears_resolution() {
         .window_segments(nz(4))
         .container(Container::Fmp4)
         .instance(7)
+        .declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build");
     let specs =

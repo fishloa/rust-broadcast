@@ -7,6 +7,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `HlsOriginBuilder::declared_bandwidth_bps(u64)` — operator-declared peak bitrate used as a floor for the master playlist `BANDWIDTH` before any segment with a measurable duration exists (and afterwards); validated `> 0` and `<= u32::MAX` at build (`HlsOriginBuildError::InvalidDeclaredBandwidth`). `HlsOrigin::master_playlist` now returns `HlsMasterError::BandwidthUnknown` when neither a measured segment nor a declared value is available instead of advertising a 5 Mb/s placeholder. `master_playlist_m3u8` now takes `bandwidth_bps: u32`.
+
+### Removed
+- `PLACEHOLDER_BANDWIDTH_BPS` constant.
+
+
 ### Changed
 - I-frame (trick-play) playlist segment URIs now use the `iframe-seg-{track}-{instance}-{seq}.m4s` prefix instead of `seg-…` (issue #1422). The bytes behind an I-frame URI are always the stored segment bytes, so the advertised `#EXT-X-BYTERANGE` length (measured on the stored bytes) can never drift under DASH `emsg` splicing. `parse_immediate` resolves `iframe-seg-…` to the same `ImmediateResource::Segment` (immutable when instance-named). `seg-…` names are unchanged.
 

@@ -202,6 +202,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
             },
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         }],
         prebound,
         ..Config::default()
@@ -282,6 +283,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
             },
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         }],
         prebound,
         ..Config::default()

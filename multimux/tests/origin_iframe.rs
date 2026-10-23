@@ -125,7 +125,10 @@ fn video_batches() -> Vec<Vec<(u32, Sample)>> {
 #[tokio::test]
 async fn iframe_master_variant_gating() {
     // before any segment: no I-frame variant
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
     let seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
         transmux::VIDEO_CLOCK_RATE,
@@ -220,7 +223,10 @@ async fn iframe_master_variant_gating() {
 
 #[tokio::test]
 async fn iframe_playlist_byterange_matches_independent_calc() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
     feed_via_segmenter(&store, vec![video_track_spec()], video_batches());
 
     let mut streams = HashMap::new();
@@ -326,7 +332,10 @@ fn first_sample_end(seg: &[u8]) -> u64 {
 
 #[tokio::test]
 async fn iframe_range_requests() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
     feed_via_segmenter(&store, vec![video_track_spec()], video_batches());
 
     let mut streams = HashMap::new();
@@ -394,7 +403,10 @@ async fn iframe_range_requests() {
 
 #[tokio::test]
 async fn iframe_part_query_rejected() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
     feed_via_segmenter(&store, vec![video_track_spec()], video_batches());
     let mut streams = HashMap::new();
     streams.insert(
@@ -414,7 +426,10 @@ async fn iframe_part_query_rejected() {
 
 #[tokio::test]
 async fn ts_hls_no_iframe() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);
 
@@ -457,7 +472,10 @@ async fn iframe_validator_clean() {
         return;
     }
 
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -642,7 +660,10 @@ async fn iframe_scte35_emsg_shift() {
         out
     }
 
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
     let program = media_plane::ProgramId(0);
     let trunk = store.publish_new_program(program);
 

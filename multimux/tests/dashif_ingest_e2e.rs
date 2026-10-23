@@ -116,6 +116,7 @@ fn config_with(
             },
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         }],
         prebound,
         ..Config::default()

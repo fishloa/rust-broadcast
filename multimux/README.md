@@ -452,7 +452,8 @@ remove/list still work normally.
     {
       "name": "cam1",
       "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
-      "outputs": ["llhls"]
+      "outputs": ["llhls"],
+      "declared_bandwidth_bps": null
     }
   ]
 }

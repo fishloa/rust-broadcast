@@ -36,6 +36,7 @@ fn origin_fmp4(cap: usize) -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
         .window_segments(nz(3))
         .low_latency(500)
         .instance(7)
+        .declared_bandwidth_bps(5_000_000)
         .build()
         .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
@@ -217,6 +218,7 @@ fn iframe_master_audio_only_omitted() {
         .target_duration_secs(4.0)
         .window_segments(nz(3))
         .instance(7)
+        .declared_bandwidth_bps(5_000_000)
         .build()
         .expect("origin");
     origin.set_track_specs(&[]).expect("specs");

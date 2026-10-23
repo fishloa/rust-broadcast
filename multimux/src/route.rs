@@ -438,6 +438,7 @@ impl ProgramServing {
         route_name: &str,
         media_sequence_offset: u64,
         program_date_time: crate::config::ProgramDateTimeSource,
+        declared_bandwidth_bps: Option<u64>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
@@ -450,6 +451,9 @@ impl ProgramServing {
         }
         if container == Container::Fmp4 {
             builder = builder.low_latency(part_target_ms);
+        }
+        if let Some(declared) = declared_bandwidth_bps {
+            builder = builder.declared_bandwidth_bps(declared);
         }
         // `build` rejects a non-finite/non-positive target duration, a zero
         // part target and an offset with no room for u32 — all reachable
@@ -834,6 +838,10 @@ pub struct RouteHandle {
     /// [`Self::new`] (tests), so existing test behaviour is unchanged;
     /// production routes set it from [`crate::config::Config::program_date_time`].
     program_date_time: crate::config::ProgramDateTimeSource,
+    /// Operator-declared peak bitrate (bits/second) for this route's HLS
+    /// master playlist (see [`HlsOriginBuilder::declared_bandwidth_bps`]).
+    /// `None` means none.
+    declared_bandwidth_bps: Option<u64>,
     /// Notifies waiters when a new program is published via
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
@@ -869,6 +877,7 @@ impl RouteHandle {
             dvr_config: None,
             archive_floor: 0,
             program_date_time: crate::config::ProgramDateTimeSource::Off,
+            declared_bandwidth_bps: None,
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
         }
@@ -933,6 +942,17 @@ impl RouteHandle {
     #[must_use]
     pub fn with_program_date_time(mut self, source: crate::config::ProgramDateTimeSource) -> Self {
         self.program_date_time = source;
+        self
+    }
+
+    /// Sets this route's operator-declared peak bitrate (bits/second) for its
+    /// HLS master playlist (see [`crate::config::Route::declared_bandwidth_bps`]).
+    /// Accepts either a `u64` or an `Option<u64>`.
+    pub fn with_declared_bandwidth_bps<V>(mut self, value: V) -> Self
+    where
+        V: IntoDeclaredBandwidth,
+    {
+        self.declared_bandwidth_bps = value.into_declared_bandwidth();
         self
     }
 
@@ -1057,6 +1077,7 @@ impl RouteHandle {
             &self.name,
             media_sequence_offset,
             self.program_date_time,
+            self.declared_bandwidth_bps,
         ) {
             Ok(serving) => serving,
             Err(e) => {
@@ -1385,6 +1406,24 @@ impl RouteHandle {
         for serving in programs.values() {
             serving.feed_si(ts_bytes);
         }
+    }
+}
+
+/// Conversion helper so [`RouteHandle::with_declared_bandwidth_bps`] accepts
+/// either a `u64` or an `Option<u64>`.
+pub trait IntoDeclaredBandwidth {
+    fn into_declared_bandwidth(self) -> Option<u64>;
+}
+
+impl IntoDeclaredBandwidth for u64 {
+    fn into_declared_bandwidth(self) -> Option<u64> {
+        Some(self)
+    }
+}
+
+impl IntoDeclaredBandwidth for Option<u64> {
+    fn into_declared_bandwidth(self) -> Option<u64> {
+        self
     }
 }
 

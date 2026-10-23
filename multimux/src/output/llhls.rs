@@ -27,9 +27,7 @@ use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use hls_runtime::server::{
-    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsRequest, master_playlist_m3u8,
-};
+use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsRequest};
 use serde::Deserialize;
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
@@ -130,9 +128,31 @@ pub(crate) async fn master_playlist(State(state): State<LlHlsState>) -> Response
             .master_playlist_with_iframes(&state.playlist_name, IFRAME_PLAYLIST_NAME)
         {
             Ok(master) => master,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(HlsMasterError::BandwidthUnknown) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [(header::RETRY_AFTER, "1")],
+                    "bandwidth unknown\n",
+                )
+                    .into_response();
+            }
+            Err(_) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [(header::RETRY_AFTER, "1")],
+                    "master playlist unavailable\n",
+                )
+                    .into_response();
+            }
         },
-        Err(_) => master_playlist_m3u8(&state.playlist_name),
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "1")],
+                "not serving yet\n",
+            )
+                .into_response();
+        }
     };
     ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
 }

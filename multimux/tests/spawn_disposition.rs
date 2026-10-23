@@ -29,7 +29,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        664,
+        668,
         "spawn_blocking DVR persist; awaited inline",
     ),
     ("dvr.rs", 597, "spawn_blocking DVR write; awaited inline"),
@@ -151,32 +151,32 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        1610,
+        1611,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",
     ),
     (
         "origin/mod.rs",
-        1786,
+        1787,
         "spawn_following -> follow_trunk; the returned JoinHandle is owned by the caller and dropped on route teardown (async drop cancels)",
     ),
     (
         "origin/mod.rs",
-        2303,
+        2304,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
         "origin/admin.rs",
-        1095,
+        1096,
         "external shutdown-signal watcher; aborted by hand at admin teardown",
     ),
     (
         "origin/admin.rs",
-        1107,
+        1108,
         "shutdown-watch task translating the signal channel into the token; aborted by hand at teardown",
     ),
     (
         "origin/admin.rs",
-        1113,
+        1114,
         "admin listener server task; joined/aborted at admin teardown",
     ),
 ];
