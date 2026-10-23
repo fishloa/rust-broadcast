@@ -110,4 +110,12 @@ pub enum Error {
         /// The number of closed segments the playlist lists.
         segments: usize,
     },
+
+    /// [`crate::client::HlsClient::select_variant`] named a variant index that
+    /// does not exist, or was called before any master playlist had been seen.
+    #[error("no such variant: {index}")]
+    NoSuchVariant {
+        /// The requested index.
+        index: usize,
+    },
 }

@@ -1,12 +1,78 @@
 //! Output events — [`Output`] out of [`crate::client::HlsClient::next_output`].
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use broadcast_hls::MediaType;
 use transmux::TrackId;
 
 use transmux::DisplayInfo;
 use transmux::Sample;
 use transmux::TrackSpec;
+
+/// Policy for choosing a variant from a multivariant (master) playlist.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct VariantPolicy {
+    /// Maximum allowed `BANDWIDTH` in bits per second.
+    pub max_bandwidth: Option<u32>,
+    /// Maximum allowed resolution height in pixels.
+    pub max_height: Option<u32>,
+    /// Allowed codec prefixes (e.g. `avc1`, `mp4a`): every comma-separated
+    /// `CODECS` entry must have one of these as a prefix.
+    pub supported_codecs: Option<Vec<String>>,
+}
+
+/// Information about one variant stream in a master playlist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariantInfo {
+    /// Resolved absolute URL of the variant's media playlist.
+    pub url: String,
+    /// `BANDWIDTH` in bits per second.
+    pub bandwidth: u32,
+    /// `AVERAGE-BANDWIDTH`, if present.
+    pub average_bandwidth: Option<u32>,
+    /// `RESOLUTION` as `(width, height)`, if present.
+    pub resolution: Option<(u32, u32)>,
+    /// `CODECS` attribute, if present.
+    pub codecs: Option<String>,
+    /// `AUDIO` group id, if any.
+    pub audio_group: Option<String>,
+    /// `SUBTITLES` group id, if any.
+    pub subtitles_group: Option<String>,
+}
+
+/// Information about one `#EXT-X-MEDIA` rendition in a master playlist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenditionInfo {
+    /// Rendition type.
+    pub media_type: MediaType,
+    /// `GROUP-ID`.
+    pub group_id: String,
+    /// `NAME`.
+    pub name: String,
+    /// `LANGUAGE`, if present.
+    pub language: Option<String>,
+    /// `DEFAULT` flag.
+    pub default: bool,
+    /// `AUTOSELECT` flag.
+    pub autoselect: bool,
+    /// Resolved absolute URI, or `None` when the rendition is carried inside
+    /// the variant's own segments (e.g. closed captions).
+    pub url: Option<String>,
+}
+
+/// The result of selecting a variant from a master playlist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MasterSelection {
+    /// Variants in playlist order.
+    pub variants: Vec<VariantInfo>,
+    /// Index of the chosen variant in [`Self::variants`].
+    pub chosen: usize,
+    /// Renditions exposed by the master playlist. Renditions with a `url` are
+    /// not fetched by this client; create a second `HlsClient::new(rendition.url)`
+    /// to play one.
+    pub renditions: Vec<RenditionInfo>,
+}
 
 /// One unit of decoded output, drained in order via
 /// [`crate::client::HlsClient::next_output`].
@@ -56,4 +122,8 @@ pub enum Output {
         /// The full new display state, shared with the following sample.
         display: Arc<DisplayInfo>,
     },
+    /// A master (multivariant) playlist was parsed and a variant selected.
+    /// The caller may inspect [`MasterSelection`] and, for renditions with a
+    /// `url`, create a second client via `HlsClient::new(rendition.url)`.
+    Master(MasterSelection),
 }
