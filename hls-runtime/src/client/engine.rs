@@ -1457,8 +1457,23 @@ impl HlsClient {
         Ok(())
     }
 
+    fn all_playlist_segments_delivered(&self) -> bool {
+        let Some(playlist) = &self.last_full_playlist else {
+            return true;
+        };
+        (0..playlist.segments.len() as u64).all(|i| {
+            let msn = playlist.media_sequence.saturating_add(i);
+            self.delivered_segments.contains(&msn)
+                || self.fulfilled.contains(&ResourceId::Segment { msn })
+        })
+    }
+
     fn maybe_emit_end_of_stream(&mut self) -> Result<()> {
-        if self.saw_endlist && !self.end_emitted && self.outstanding_fetches == 0 {
+        if self.saw_endlist
+            && !self.end_emitted
+            && self.outstanding_fetches == 0
+            && self.all_playlist_segments_delivered()
+        {
             // The TS demuxer holds back each stream's last access unit until
             // the next one shows its real duration; nothing follows now.
             self.flush_ts_demux(ResourceId::Init)?;

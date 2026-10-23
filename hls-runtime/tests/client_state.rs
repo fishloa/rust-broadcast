@@ -849,3 +849,37 @@ fn regression_after_delivery_neither_refetches_nor_duplicates() {
     assert!(ended);
     assert_eq!(samples, 134 + 72);
 }
+
+#[test]
+fn a_failed_segment_under_endlist_defers_end_of_stream_until_it_is_delivered() {
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(0, 2, "2.0", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids([0, 1]));
+
+    client
+        .on_resource(ResourceId::Segment { msn: 0 }, OPAQUE)
+        .unwrap();
+    client.on_error(Some(ResourceId::Segment { msn: 1 }));
+    assert!(
+        !drain_outputs(&mut client)
+            .iter()
+            .any(|o| matches!(o, Output::EndOfStream)),
+        "EndOfStream fired while Segment 1 failed and was never delivered"
+    );
+
+    client
+        .on_playlist(playlist(0, 2, "2.0", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids([1]));
+    client
+        .on_resource(ResourceId::Segment { msn: 1 }, OPAQUE)
+        .unwrap();
+    let outputs = drain_outputs(&mut client);
+    assert!(
+        matches!(outputs.as_slice(), [Output::EndOfStream]),
+        "{outputs:?}"
+    );
+}

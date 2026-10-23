@@ -783,6 +783,43 @@ fn cross_origin_segment_carries_no_authorization() {
 }
 
 #[test]
+fn cross_origin_401_is_ordinary_failure_not_auth_prompt() {
+    let playlist = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:2.0,\nindex0.ts\n#EXTINF:1.0,\n{CDN_SEG_URL}\n\
+         #EXT-X-ENDLIST\n"
+    );
+    let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+    h.session.set_credentials(Credentials::bearer(BEARER_TOKEN));
+    h.ok(TS_PLAYLIST_URL, playlist.into_bytes());
+    h.ok(TS_SEG0_URL, ts_segment(0));
+    h.route(
+        CDN_SEG_URL,
+        vec![Reply::Status(401), Reply::Ok(ts_segment(1))],
+    );
+    h.run_to_end();
+    assert_eq!(
+        count(&h.events, |e| matches!(e, Event::AuthRequired { .. })),
+        0
+    );
+    assert_eq!(
+        count(&h.events, |e| matches!(
+            e,
+            Event::Status(Status::WaitingForCredentials)
+        )),
+        0
+    );
+    let cdn = h.requests_to(CDN_SEG_URL);
+    assert_eq!(
+        cdn.len(),
+        2,
+        "401 from another origin is retried like any failure"
+    );
+    assert!(cdn.iter().all(|r| r.authorization().is_none()));
+    assert_eq!(count(&h.events, is_ended), 1);
+}
+
+#[test]
 fn per_request_redirect_followed_and_counted_separately() {
     let hop = |seg: usize, n: usize| format!("http://origin.test/hls/r{seg}h{n}");
     let build = |chain: [usize; 2]| {
