@@ -168,7 +168,7 @@ One credentials model and one challenge-response helper for clients, plus one se
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
 - **Used by (workspace):** [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
-- **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
+- **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [spec transcriptions](../broadcast-auth/docs/) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
 
 #### broadcast-common
 
