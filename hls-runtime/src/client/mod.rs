@@ -72,6 +72,6 @@ mod url;
 pub use action::{Action, BlockingReload, ResourceId};
 pub use engine::HlsClient;
 pub use error::{Error, Result};
-pub use output::Output;
+pub use output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 #[cfg(feature = "tokio")]
 pub use tokio_client::{TokioClient, TokioClientConfig, TokioClientStats, TokioError};

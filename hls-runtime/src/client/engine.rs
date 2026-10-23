@@ -7,12 +7,14 @@ use alloc::vec::Vec;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
-use broadcast_hls::{ByteRange, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PreloadHintType};
+use broadcast_hls::{
+    ByteRange, MapTag, MasterPlaylist, MediaPlaylist, MediaSegment, OpenSegment, PreloadHintType,
+};
 use transmux::{DemuxEvent, Fmp4Demux, Sample, StreamingTsDemux, TrackSpec};
 
 use super::action::{Action, BlockingReload, ResourceId};
 use super::error::{Error, Result};
-use super::output::Output;
+use super::output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 use super::url;
 
 /// First byte of every MPEG-2 TS packet (ITU-T H.222.0 / ISO/IEC 13818-1
@@ -173,6 +175,8 @@ fn parse_rfc3339_ms(text: &str) -> Option<i64> {
 #[derive(Debug)]
 pub struct HlsClient {
     playlist_url: String,
+    variant_policy: VariantPolicy,
+    master: Option<MasterSelection>,
 
     pending_actions: VecDeque<Action>,
     /// The caller-clock instant at which the `WaitMs` now at the front of
@@ -228,6 +232,64 @@ pub struct HlsClient {
     last_media_sequence: Option<u64>,
 }
 
+/// Choose a variant index according to the policy.
+fn choose_variant(variants: &[VariantInfo], policy: &VariantPolicy) -> usize {
+    if variants.is_empty() {
+        return 0;
+    }
+    let mut candidates: Vec<usize> = Vec::new();
+    for (i, v) in variants.iter().enumerate() {
+        let mut ok = true;
+        if let Some(max_bw) = policy.max_bandwidth
+            && v.bandwidth > max_bw
+        {
+            ok = false;
+        }
+        if ok
+            && let Some(max_h) = policy.max_height
+            && let Some(res) = v.resolution
+            && res.1 > max_h
+        {
+            ok = false;
+        }
+        if ok
+            && let Some(supported) = &policy.supported_codecs
+            && let Some(codecs) = &v.codecs
+        {
+            for entry in codecs.split(',') {
+                let entry = entry.trim();
+                if entry.is_empty() {
+                    continue;
+                }
+                if !supported.iter().any(|s| entry.starts_with(s)) {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok {
+            candidates.push(i);
+        }
+    }
+    if !candidates.is_empty() {
+        let mut best = candidates[0];
+        for &i in &candidates[1..] {
+            if variants[i].bandwidth > variants[best].bandwidth {
+                best = i;
+            }
+        }
+        best
+    } else {
+        let mut best = 0usize;
+        for i in 1..variants.len() {
+            if variants[i].bandwidth < variants[best].bandwidth {
+                best = i;
+            }
+        }
+        best
+    }
+}
+
 impl HlsClient {
     /// Create a new client for the Media Playlist at `playlist_url`, seeding
     /// the first [`Action::FetchPlaylist`] (a plain, non-blocking GET — the
@@ -242,6 +304,8 @@ impl HlsClient {
         });
         Self {
             playlist_url,
+            variant_policy: VariantPolicy::default(),
+            master: None,
             pending_actions,
             #[cfg(feature = "std")]
             wait_anchor: None,
@@ -273,6 +337,38 @@ impl HlsClient {
     /// The Media Playlist URL this client is following.
     pub fn playlist_url(&self) -> &str {
         &self.playlist_url
+    }
+
+    /// Set the variant selection policy. Must be callable before the first
+    /// `on_playlist`.
+    pub fn set_variant_policy(&mut self, policy: VariantPolicy) {
+        self.variant_policy = policy;
+    }
+
+    /// Switch to a different variant by index (stall switching).
+    pub fn select_variant(&mut self, index: usize) -> Result<()> {
+        let variants_len = self
+            .master
+            .as_ref()
+            .ok_or(Error::NoSuchVariant { index })?
+            .variants
+            .len();
+        if index >= variants_len {
+            return Err(Error::NoSuchVariant { index });
+        }
+        let url = self.master.as_ref().unwrap().variants[index].url.clone();
+        self.restart_after_regression()?;
+        self.pending_actions.clear();
+        self.playlist_url = url.clone();
+        self.pending_actions.push_back(Action::FetchPlaylist {
+            url,
+            blocking: None,
+            skip: false,
+        });
+        if let Some(m) = &mut self.master {
+            m.chosen = index;
+        }
+        Ok(())
     }
 
     /// Drain the next IO [`Action`] the caller must perform, if any.
@@ -325,6 +421,52 @@ impl HlsClient {
     /// input.
     pub fn on_playlist(&mut self, bytes: &[u8]) -> Result<()> {
         let text = core::str::from_utf8(bytes)?;
+        if text.contains("#EXT-X-STREAM-INF") {
+            let master = MasterPlaylist::parse(text)?;
+            let base = self.playlist_url.clone();
+            let mut variants: Vec<VariantInfo> = Vec::new();
+            for v in &master.variants {
+                variants.push(VariantInfo {
+                    url: url::resolve(&base, &v.uri),
+                    bandwidth: v.bandwidth,
+                    average_bandwidth: v.average_bandwidth,
+                    resolution: v.resolution,
+                    codecs: v.codecs.clone(),
+                    audio_group: v.audio.clone(),
+                    subtitles_group: v.subtitles.clone(),
+                });
+            }
+            let mut renditions: Vec<RenditionInfo> = Vec::new();
+            for m in &master.media {
+                renditions.push(RenditionInfo {
+                    media_type: m.media_type,
+                    group_id: m.group_id.clone(),
+                    name: m.name.clone(),
+                    language: m.language.clone(),
+                    default: m.default,
+                    autoselect: m.autoselect,
+                    url: m.uri.as_ref().map(|u| url::resolve(&base, u)),
+                });
+            }
+            let chosen = choose_variant(&variants, &self.variant_policy);
+            let selection = MasterSelection {
+                variants,
+                chosen,
+                renditions,
+            };
+            self.pending_outputs
+                .push_back(Output::Master(selection.clone()));
+            self.master = Some(selection);
+            let chosen_url = self.master.as_ref().unwrap().variants[chosen].url.clone();
+            self.playlist_url = chosen_url.clone();
+            self.pending_actions.clear();
+            self.pending_actions.push_back(Action::FetchPlaylist {
+                url: chosen_url,
+                blocking: None,
+                skip: false,
+            });
+            return Ok(());
+        }
         let playlist = MediaPlaylist::parse(text)?;
         let playlist = self.merge_delta(playlist);
         // An older view of the same stream must never make the client deliver
