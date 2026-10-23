@@ -136,14 +136,7 @@ pub(crate) async fn master_playlist(State(state): State<LlHlsState>) -> Response
                 )
                     .into_response();
             }
-            Err(_) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    [(header::RETRY_AFTER, "1")],
-                    "master playlist unavailable\n",
-                )
-                    .into_response();
-            }
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
         Err(_) => {
             return (

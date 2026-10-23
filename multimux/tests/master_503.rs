@@ -132,3 +132,40 @@ async fn master_200_after_first_segment_uses_measured() {
     // 8 bytes over 4 s = 16 b/s.
     assert!(text.contains("BANDWIDTH=16"));
 }
+
+fn published_without_segment(output: &Arc<dyn Output>) -> Arc<RouteHandle> {
+    use hls_runtime::server::Container;
+    let mut route = RouteHandle::new(4.0, 500, 4);
+    if output.kind() == multimux::output::OutputKind::TsHls {
+        route = route.with_container(Container::MpegTs);
+    }
+    let route = Arc::new(route);
+    route.publish_new_program(media_plane::ProgramId(0));
+    route
+}
+
+#[tokio::test]
+async fn master_503_when_published_but_no_segment_and_no_declared_bandwidth() {
+    for output in [
+        Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+        Arc::new(TsHlsOutput::new("media.m3u8")) as Arc<dyn Output>,
+    ] {
+        let route = published_without_segment(&output);
+        let app = app_for(route, output);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/cam/master.m3u8")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(resp.headers().get(header::RETRY_AFTER).unwrap(), "1");
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"bandwidth unknown\n");
+    }
+}
