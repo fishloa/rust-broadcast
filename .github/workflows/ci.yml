@@ -464,3 +464,8 @@ jobs:
         run: rustup target add ${{ matrix.target }}
       - name: Check transmux (std, default features)
         run: cargo check -p transmux --target ${{ matrix.target }} --locked
+      - name: Check the client stack (sans-IO crates, no tokio/reqwest; issue #1454)
+        run: |
+          for c in broadcast-auth buffering-runtime broadcast-hls media-plane hls-runtime; do
+            cargo check -p "$c" --target ${{ matrix.target }} --locked
+          done
