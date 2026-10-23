@@ -32,7 +32,6 @@ pub struct Session {
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
     buffer: crate::buffer::Feeder,
-    reconnected_hint_pending: bool,
 }
 
 impl Session {
@@ -73,7 +72,6 @@ impl Session {
             actions: VecDeque::new(),
             events: VecDeque::new(),
             buffer: crate::buffer::Feeder::new(buffer_cfg, seed),
-            reconnected_hint_pending: false,
         })
     }
 
@@ -207,14 +205,7 @@ impl Session {
             return;
         }
         self.now_us = now_us;
-        if self.reconnected_hint_pending {
-            self.reconnected_hint_pending = false;
-            self.buffer.hint(now_us, Hint::Reconnected);
-        }
         self.source.on_data(bytes, now_us);
-        if self.source.take_demux_discontinuity() {
-            self.buffer.on_demux_discontinuity(now_us);
-        }
         self.drain_source();
         if !bytes.is_empty() {
             let pcr = self.source.take_last_pcr();
@@ -240,9 +231,12 @@ impl Session {
             self.live_conn = None;
         }
         self.now_us = now_us;
-        if error.is_some() {
-            self.buffer.hint(now_us, Hint::SourceError);
-        }
+        let hint = if error.is_some() {
+            Hint::SourceError
+        } else {
+            Hint::SourceEnded
+        };
+        self.buffer.hint(now_us, hint);
         self.source.on_closed(error, now_us);
         self.drain_source();
         let evs = self.buffer.drain();
@@ -306,6 +300,21 @@ impl Session {
         }
     }
 
+    /// Re-arm join state without PcrDiscontinuity hint or controller reset.
+    pub fn rejoin(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.buffer.rejoin();
+    }
+
+    /// Inputs fed to the buffering controller so far.
+    #[cfg(feature = "test-seams")]
+    #[doc(hidden)]
+    pub fn buffer_input_log(&self) -> &[crate::BufferInput] {
+        &self.buffer.log
+    }
+
     /// Stall memory snapshot.
     pub fn stall_memory(&self) -> buffering_runtime::StallMemorySnapshot {
         self.buffer.stall_memory()
@@ -353,7 +362,11 @@ impl Session {
     }
 
     fn drain_source(&mut self) {
-        while let Some(e) = self.source.poll_event() {
+        while let Some(item) = self.source.poll_item() {
+            let Some(e) = item else {
+                self.buffer.on_demux_discontinuity(self.now_us);
+                continue;
+            };
             match e {
                 Event::Finite { .. } => {
                     self.buffer.set_finite();
@@ -376,10 +389,6 @@ impl Session {
                 }
                 Event::Discontinuity => {
                     self.buffer.hint(self.now_us, Hint::Reconnected);
-                    self.events.push_back(e);
-                }
-                Event::Status(crate::events::Status::Ended) => {
-                    self.buffer.hint(self.now_us, Hint::SourceEnded);
                     self.events.push_back(e);
                 }
                 other => {

@@ -10,6 +10,78 @@ use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
 
 use crate::events::{BufferEvent, Event};
 
+/// One input the session fed to the buffering controller.
+#[cfg(feature = "test-seams")]
+#[doc(hidden)]
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BufferInput {
+    /// `on_chunk`.
+    Chunk {
+        /// Arrival time.
+        now_us: u64,
+        /// Chunk length.
+        bytes: u32,
+        /// Last PCR of the chunk.
+        pcr: Option<u64>,
+    },
+    /// `on_track_media`.
+    TrackMedia {
+        /// Report time.
+        now_us: u64,
+        /// Controller track key.
+        track: u32,
+        /// Media end, 27 MHz.
+        end: u64,
+    },
+    /// `on_tick`.
+    Tick {
+        /// Tick time.
+        now_us: u64,
+        /// Playback position, 27 MHz.
+        pts: Option<u64>,
+    },
+    /// `on_hint`.
+    Hint {
+        /// Hint time.
+        now_us: u64,
+        /// The hint.
+        hint: Hint,
+    },
+    /// `register_track`.
+    Register(u32),
+    /// `unregister_track`.
+    Unregister(u32),
+}
+
+#[cfg(feature = "test-seams")]
+impl BufferInput {
+    /// Spec label.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Chunk { .. } => "chunk",
+            Self::TrackMedia { .. } => "track media",
+            Self::Tick { .. } => "tick",
+            Self::Hint { .. } => "hint",
+            Self::Register(_) => "register",
+            Self::Unregister(_) => "unregister",
+        }
+    }
+}
+
+#[cfg(feature = "test-seams")]
+broadcast_common::impl_spec_display!(BufferInput);
+
+macro_rules! rec {
+    ($s:expr, $e:expr) => {
+        #[cfg(feature = "test-seams")]
+        {
+            $s.log.push($e);
+        }
+    };
+}
+
 fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
     if timescale == 0 {
         return 0;
@@ -30,6 +102,11 @@ pub(crate) struct Feeder {
     pending_ends: BTreeMap<TrackId, u64>,
     pending_zero: BTreeMap<TrackId, (i64, u32)>,
     video_joined: BTreeSet<TrackId>,
+    video_max_pts: BTreeMap<TrackId, i64>,
+    audio_max_end: BTreeMap<TrackId, u64>,
+    video_join_pts_27: Option<u64>,
+    #[cfg(feature = "test-seams")]
+    pub(crate) log: Vec<BufferInput>,
 }
 
 impl Feeder {
@@ -46,6 +123,11 @@ impl Feeder {
             pending_ends: BTreeMap::new(),
             pending_zero: BTreeMap::new(),
             video_joined: BTreeSet::new(),
+            video_max_pts: BTreeMap::new(),
+            audio_max_end: BTreeMap::new(),
+            video_join_pts_27: None,
+            #[cfg(feature = "test-seams")]
+            log: Vec::new(),
         }
     }
 
@@ -57,20 +139,28 @@ impl Feeder {
     pub(crate) fn on_track_added(&mut self, spec: &TrackSpec) {
         self.track_specs.insert(spec.track_id, spec.clone());
         if let Some(join) = LiveJoin::for_config(&spec.config) {
-            self.live_joins.insert(spec.track_id, join);
+            self.live_joins.entry(spec.track_id).or_insert(join);
         }
-        if !self.rendered_explicit {
-            let is_video = self.live_joins.contains_key(&spec.track_id);
-            let has_video = self
-                .rendered
-                .iter()
-                .any(|t| self.live_joins.contains_key(t));
-            let has_audio = self
-                .rendered
-                .iter()
-                .any(|t| !self.live_joins.contains_key(t));
-            if (is_video && !has_video) || (!is_video && !has_audio) {
-                self.rendered.insert(spec.track_id);
+        if self.rendered_explicit || self.rendered.contains(&spec.track_id) {
+            return;
+        }
+        let is_video = self.live_joins.contains_key(&spec.track_id);
+        let is_audio = spec.config.audio_sample_rate().is_some();
+        let has_kind = |is_v: bool| {
+            self.rendered.iter().any(|t| {
+                self.live_joins.contains_key(t) == is_v
+                    && (is_v
+                        || self
+                            .track_specs
+                            .get(t)
+                            .is_some_and(|s| s.config.audio_sample_rate().is_some()))
+            })
+        };
+        if (is_video && !has_kind(true)) || (is_audio && !has_kind(false)) {
+            self.rendered.insert(spec.track_id);
+            if let Some(c) = &mut self.controller {
+                c.register_track(spec.track_id.value());
+                rec!(self, BufferInput::Register(spec.track_id.value()));
             }
         }
     }
@@ -81,8 +171,14 @@ impl Feeder {
         let removed: Vec<TrackId> = self.rendered.difference(&new_set).copied().collect();
         for t in removed {
             self.rendered.remove(&t);
+            self.pending_ends.remove(&t);
+            self.pending_zero.remove(&t);
+            self.video_max_pts.remove(&t);
+            self.audio_max_end.remove(&t);
+            self.video_joined.remove(&t);
             if let Some(c) = &mut self.controller {
                 c.unregister_track(t.value());
+                rec!(self, BufferInput::Unregister(t.value()));
             }
         }
         let added: Vec<TrackId> = new_set.difference(&self.rendered).copied().collect();
@@ -90,9 +186,9 @@ impl Feeder {
             self.rendered.insert(t);
             if let Some(c) = &mut self.controller {
                 c.register_track(t.value());
+                rec!(self, BufferInput::Register(t.value()));
             }
         }
-        self.rendered = new_set;
     }
 
     pub(crate) fn join_sample(&mut self, track: TrackId, sample: &Sample) -> Option<JoinDecision> {
@@ -108,49 +204,74 @@ impl Feeder {
         if !self.rendered.contains(&track) {
             return;
         }
-        let is_video = self.live_joins.contains_key(&track);
-        let has_rendered_video = self
-            .rendered
-            .iter()
-            .any(|t| self.live_joins.contains_key(t));
-        let video_joined_exists = self.video_joined.iter().any(|t| self.rendered.contains(t));
-
-        if !is_video && has_rendered_video && !video_joined_exists {
+        let Some(spec) = self.track_specs.get(&track) else {
             return;
-        }
-
-        let spec = match self.track_specs.get(&track) {
-            Some(s) => s,
-            None => return,
         };
         let timescale = spec.timescale;
         let Some(pts) = sample.pts else { return };
+        let dur = i64::from(sample.duration.unwrap_or(0));
 
-        if is_video {
+        if self.live_joins.contains_key(&track) {
             match join {
                 Some(JoinDecision::JoinPoint(_)) if !self.video_joined.contains(&track) => {
                     self.video_joined.insert(track);
                     self.pending_zero.insert(track, (pts, timescale));
-                }
-                Some(JoinDecision::JoinPoint(_)) => {}
-                Some(JoinDecision::Drop(_)) => {}
-                Some(JoinDecision::Keep) if self.video_joined.contains(&track) => {
-                    let dur = i64::from(sample.duration.unwrap_or(0));
+                    self.video_max_pts.insert(track, pts);
+                    if self.video_join_pts_27.is_none() {
+                        self.video_join_pts_27 = Some(pts_to_27mhz(pts, timescale));
+                    }
                     self.pending_ends
                         .insert(track, pts_to_27mhz(pts + dur, timescale));
                 }
-                Some(JoinDecision::Keep) => {}
-                None => {}
-                Some(_) => {}
+                Some(JoinDecision::Keep) if self.video_joined.contains(&track) => {
+                    let max_pts = self
+                        .video_max_pts
+                        .get(&track)
+                        .copied()
+                        .map_or(pts, |m| m.max(pts));
+                    self.video_max_pts.insert(track, max_pts);
+                    self.pending_ends
+                        .insert(track, pts_to_27mhz(max_pts + dur, timescale));
+                }
+                _ => {}
             }
-        } else {
-            let dur = i64::from(sample.duration.unwrap_or(0));
-            self.pending_ends
-                .insert(track, pts_to_27mhz(pts + dur, timescale));
+            return;
+        }
+
+        let has_rendered_video = self
+            .rendered
+            .iter()
+            .any(|t| self.live_joins.contains_key(t));
+        let join_pts = match (has_rendered_video, self.video_join_pts_27) {
+            (false, _) => None,
+            (true, None) => return,
+            (true, Some(j)) => Some(j),
+        };
+        let end = pts_to_27mhz(pts + dur, timescale);
+        let max_end = self
+            .audio_max_end
+            .get(&track)
+            .copied()
+            .map_or(end, |m| m.max(end));
+        self.audio_max_end.insert(track, max_end);
+        if join_pts.is_none_or(|j| max_end > j) {
+            self.pending_ends.insert(track, max_end);
         }
     }
 
-    pub(crate) fn ensure_controller(&mut self) {
+    pub(crate) fn rejoin(&mut self) {
+        self.video_joined.clear();
+        self.pending_ends.clear();
+        self.pending_zero.clear();
+        self.video_max_pts.clear();
+        self.audio_max_end.clear();
+        self.video_join_pts_27 = None;
+        for j in self.live_joins.values_mut() {
+            j.rejoin();
+        }
+    }
+
+    fn ensure_controller(&mut self) {
         if self.finite {
             return;
         }
@@ -159,6 +280,7 @@ impl Feeder {
         {
             for t in &self.rendered {
                 c.register_track(t.value());
+                rec!(self, BufferInput::Register(t.value()));
             }
             self.controller = Some(c);
         }
@@ -174,42 +296,51 @@ impl Feeder {
         let Some(c) = &mut self.controller else {
             return;
         };
-        c.on_chunk(now_us, bytes as u32, pcr);
-
-        // zero reports first
-        let zero_keys: Vec<TrackId> = self.pending_zero.keys().copied().collect();
-        for t in zero_keys {
-            if let Some((pts, ts)) = self.pending_zero.remove(&t)
-                && let Some(c) = &mut self.controller
-            {
-                c.on_track_media(now_us, t.value(), pts_to_27mhz(pts, ts));
+        let len = u32::try_from(bytes).unwrap_or(u32::MAX);
+        c.on_chunk(now_us, len, pcr);
+        rec!(
+            self,
+            BufferInput::Chunk {
+                now_us,
+                bytes: len,
+                pcr
             }
-        }
-        // pending ends
-        let pending: Vec<(TrackId, u64)> =
-            self.pending_ends.iter().map(|(k, v)| (*k, *v)).collect();
-        self.pending_ends.clear();
-        for (t, end) in pending {
+        );
+
+        let zeros = core::mem::take(&mut self.pending_zero);
+        for (t, (pts, ts)) in zeros {
+            let end = pts_to_27mhz(pts, ts);
             if let Some(c) = &mut self.controller {
                 c.on_track_media(now_us, t.value(), end);
+                rec!(
+                    self,
+                    BufferInput::TrackMedia {
+                        now_us,
+                        track: t.value(),
+                        end
+                    }
+                );
+            }
+        }
+        let ends = core::mem::take(&mut self.pending_ends);
+        for (t, end) in ends {
+            if let Some(c) = &mut self.controller {
+                c.on_track_media(now_us, t.value(), end);
+                rec!(
+                    self,
+                    BufferInput::TrackMedia {
+                        now_us,
+                        track: t.value(),
+                        end
+                    }
+                );
             }
         }
     }
 
     pub(crate) fn on_demux_discontinuity(&mut self, now_us: u64) {
-        self.video_joined.clear();
-        self.pending_ends.clear();
-        self.pending_zero.clear();
-        for j in self.live_joins.values_mut() {
-            j.rejoin();
-        }
-        if self.finite {
-            return;
-        }
-        self.ensure_controller();
-        if let Some(c) = &mut self.controller {
-            c.on_hint(now_us, Hint::PcrDiscontinuity);
-        }
+        self.rejoin();
+        self.hint(now_us, Hint::PcrDiscontinuity);
     }
 
     pub(crate) fn hint(&mut self, now_us: u64, h: Hint) {
@@ -219,6 +350,7 @@ impl Feeder {
         self.ensure_controller();
         if let Some(c) = &mut self.controller {
             c.on_hint(now_us, h);
+            rec!(self, BufferInput::Hint { now_us, hint: h });
         }
     }
 
@@ -228,6 +360,7 @@ impl Feeder {
         }
         if let Some(c) = &mut self.controller {
             c.on_tick(now_us, pts);
+            rec!(self, BufferInput::Tick { now_us, pts });
         }
     }
 

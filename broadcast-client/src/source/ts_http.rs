@@ -5,16 +5,26 @@ use alloc::vec::Vec;
 
 use url::Url;
 
+use broadcast_common::clock33::PCR_HZ;
 use transmux::{DemuxEvent, TrackId, TrackSpec};
 use tshttp_runtime::{Config as TsConfig, TsHttpClient};
 
 use crate::{Event, Status};
 
+pub(crate) type Item = Option<Event>;
+
+fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
+    if clock_hz == 0 {
+        return ticks;
+    }
+    u64::try_from(u128::from(ticks) * u128::from(PCR_HZ) / u128::from(clock_hz)).unwrap_or(u64::MAX)
+}
+
 /// Adapter around the TS-over-HTTP client.
 pub struct TsHttpSource {
     ts: TsHttpClient,
     url: Url,
-    events: VecDeque<Event>,
+    events: VecDeque<Item>,
     tracks: BTreeMap<TrackId, TrackSpec>,
     tracks_dirty: bool,
     conn_connected: bool,
@@ -22,7 +32,6 @@ pub struct TsHttpSource {
     connection_count: u32,
     stalled: bool,
     last_pcr_27mhz: Option<u64>,
-    demux_discontinuity: bool,
 }
 
 impl TsHttpSource {
@@ -39,7 +48,6 @@ impl TsHttpSource {
             connection_count: 0,
             stalled: false,
             last_pcr_27mhz: None,
-            demux_discontinuity: false,
         }
     }
 
@@ -56,13 +64,6 @@ impl TsHttpSource {
     /// Last PCR (27 MHz) observed during the current chunk's demux.
     pub fn take_last_pcr(&mut self) -> Option<u64> {
         self.last_pcr_27mhz.take()
-    }
-
-    /// Whether a demux-level discontinuity occurred since last take.
-    pub fn take_demux_discontinuity(&mut self) -> bool {
-        let v = self.demux_discontinuity;
-        self.demux_discontinuity = false;
-        v
     }
 
     /// Connection count.
@@ -87,8 +88,20 @@ impl TsHttpSource {
 
     /// Poll next mapped event.
     pub fn poll_event(&mut self) -> Option<Event> {
+        loop {
+            if let Some(e) = self.poll_item()? {
+                return Some(e);
+            }
+        }
+    }
+
+    pub(crate) fn poll_item(&mut self) -> Option<Item> {
         self.drain_ts_events();
         self.events.pop_front()
+    }
+
+    fn push(&mut self, e: Event) {
+        self.events.push_back(Some(e));
     }
 
     /// Response callback.
@@ -100,9 +113,8 @@ impl TsHttpSource {
     /// Data callback.
     pub fn on_data(&mut self, bytes: &[u8], now_us: u64) {
         self.last_pcr_27mhz = None;
-        self.demux_discontinuity = false;
         if self.stalled && !bytes.is_empty() {
-            self.events.push_back(Event::Status(Status::Live));
+            self.push(Event::Status(Status::Live));
             self.stalled = false;
         }
         self.ts.feed(bytes, now_us / 1000);
@@ -140,18 +152,26 @@ impl TsHttpSource {
     fn map_ts_event(&mut self, e: tshttp_runtime::Event) {
         match e {
             tshttp_runtime::Event::Finite { expected_bytes } => {
-                self.events.push_back(Event::Finite { expected_bytes });
+                self.push(Event::Finite { expected_bytes });
             }
             tshttp_runtime::Event::Ended => {
-                self.events.push_back(Event::Status(Status::Ended));
+                self.push(Event::Status(Status::Ended));
             }
             tshttp_runtime::Event::Connected => {
                 if self.connection_count > 1 {
-                    self.events.push_back(Event::Discontinuity);
+                    self.push(Event::Discontinuity);
                 }
-                self.events.push_back(Event::Status(Status::Establishing));
+                self.push(Event::Status(Status::Establishing));
                 self.conn_connected = true;
                 self.conn_seen_first_sample = false;
+            }
+            tshttp_runtime::Event::Demux(DemuxEvent::ClockReference {
+                ticks, clock_hz, ..
+            }) => {
+                self.last_pcr_27mhz = Some(to_27mhz(ticks, clock_hz));
+            }
+            tshttp_runtime::Event::Demux(DemuxEvent::Discontinuity { .. }) => {
+                self.events.push_back(None);
             }
             tshttp_runtime::Event::Demux(DemuxEvent::TrackAdded(spec)) => {
                 self.tracks.insert(spec.track_id, spec);
@@ -171,19 +191,19 @@ impl TsHttpSource {
                 if !self.conn_seen_first_sample {
                     if self.tracks_dirty {
                         let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
-                        self.events.push_back(Event::Tracks(vals));
+                        self.push(Event::Tracks(vals));
                         self.tracks_dirty = false;
                     }
                     if self.conn_connected {
-                        self.events.push_back(Event::Status(Status::Live));
+                        self.push(Event::Status(Status::Live));
                     }
                     self.conn_seen_first_sample = true;
                 } else if self.tracks_dirty {
                     let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
-                    self.events.push_back(Event::Tracks(vals));
+                    self.push(Event::Tracks(vals));
                     self.tracks_dirty = false;
                 }
-                self.events.push_back(Event::Sample {
+                self.push(Event::Sample {
                     track: track_id,
                     sample,
                     join: None,
@@ -197,29 +217,27 @@ impl TsHttpSource {
             }) => {
                 if self.tracks_dirty {
                     let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
-                    self.events.push_back(Event::Tracks(vals));
+                    self.push(Event::Tracks(vals));
                     self.tracks_dirty = false;
                 }
-                self.events.push_back(Event::DisplayChanged {
+                self.push(Event::DisplayChanged {
                     track: track_id,
                     pts,
                     display,
                 });
             }
             tshttp_runtime::Event::StallNotice { secs } => {
-                self.events
-                    .push_back(Event::Status(Status::Stalled { secs }));
+                self.push(Event::Status(Status::Stalled { secs }));
                 self.stalled = true;
             }
             tshttp_runtime::Event::Reconnecting { attempt } => {
-                self.events
-                    .push_back(Event::Status(Status::Reconnecting { attempt }));
+                self.push(Event::Status(Status::Reconnecting { attempt }));
             }
             tshttp_runtime::Event::NotFound { status: _ } => {
-                self.events.push_back(Event::Status(Status::NotFound));
+                self.push(Event::Status(Status::NotFound));
             }
             tshttp_runtime::Event::Starved(k) => {
-                self.events.push_back(Event::Starved(k));
+                self.push(Event::Starved(k));
             }
             _ => {}
         }

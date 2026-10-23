@@ -28,6 +28,8 @@ serde              = { version = "1", default-features = false, optional = true,
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+buffering-runtime = { path = "../buffering-runtime", version = "0.1" }
+transmux = { path = "../transmux", version = "0.27" }
 broadcast-auth = { path = "../broadcast-auth", version = "0.5" }
 url = "2"
 
@@ -35,6 +37,12 @@ url = "2"
 default = ["std"]
 std = ["broadcast-common/std", "transmux/std", "tshttp-runtime/std", "buffering-runtime/std", "serde?/std"]
 serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
+
+test-seams = []
+
+[[test]]
+name = "buffer"
+required-features = ["test-seams"]
 
 [[example]]
 name = "live_loop"

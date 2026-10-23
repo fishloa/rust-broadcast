@@ -13,6 +13,9 @@ pub mod session;
 pub mod source;
 
 pub use broadcast_auth::Credentials;
+#[cfg(feature = "test-seams")]
+#[doc(hidden)]
+pub use buffer::BufferInput;
 pub use buffering_runtime::Hint;
 pub use buffering_runtime::Hint as BufferHint;
 pub use error::{Error, TransportError};
