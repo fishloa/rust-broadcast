@@ -89,7 +89,7 @@ change, so the old versions stay live.
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**60 workspace members.** 55 are on crates.io; 48 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**61 workspace members.** 55 are on crates.io; 48 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -132,6 +132,7 @@ change, so the old versions stay live.
 | [`rist-runtime`](#rist-runtime) | Live transport protocols | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/rist-runtime.svg)](https://crates.io/crates/rist-runtime) | yes | 2 | on crates.io |
 | [`webrtc-runtime`](#webrtc-runtime) | Live transport protocols | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) | no | 2 | on crates.io |
 | [`tshttp-runtime`](#tshttp-runtime) | Live transport protocols | 0.1.0 | — | yes | 4 | not on crates.io |
+| [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.1.0 | — | no | 5 | not on crates.io |
 | [`hls-runtime`](#hls-runtime) | Live transport protocols | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) | yes | 5 | on crates.io |
 | [`ssai-runtime`](#ssai-runtime) | Servers, runtimes and tools | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/ssai-runtime.svg)](https://crates.io/crates/ssai-runtime) | yes | 2 | on crates.io |
 | [`dvb-tools`](#dvb-tools) | Servers, runtimes and tools | 12.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | no | 3 | on crates.io |
@@ -168,7 +169,7 @@ One credentials model and one challenge-response helper for clients, plus one se
 - **Cargo description:** Shared multi-scheme HTTP/RTSP auth: Basic/Digest (RFC 7235, RFC 2326 §14) via http-auth, Bearer (RFC 6750); one Credentials model + challenge->response helper for rtsp-runtime and multimux's HTTP clients.
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
 - **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [spec transcriptions](../broadcast-auth/docs/) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
 
 #### broadcast-common
@@ -179,7 +180,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 10.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 52 workspace crates
+- **Used by (workspace):** 53 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 ### MPEG-2 TS / PES / PS framing
@@ -478,7 +479,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.27.7 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
-- **Used by (workspace):** [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`tshttp-runtime`](#tshttp-runtime)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`tshttp-runtime`](#tshttp-runtime)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [spec transcriptions](../transmux/docs/) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
 ### Live transport protocols
@@ -592,8 +593,19 @@ Bytes-in/actions-out client session for a live MPEG-TS HTTP stream: Open/Reconne
 - **Cargo description:** Sans-IO TS-over-HTTP pull session client: bytes-in, actions-out state machine over a StreamingTsDemux.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** yes · **Layer:** 4
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`transmux`](#transmux)
-- **Used by (workspace):** none
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client)
 - **Links:** [README](../tshttp-runtime/README.md) · [CHANGELOG](../tshttp-runtime/CHANGELOG.md)
+
+#### broadcast-client
+
+Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP source on tshttp-runtime. Caller-supplied monotonic milliseconds, no I/O, std.
+
+- **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
+- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP source on tshttp-runtime.
+- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 5
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
+- **Used by (workspace):** none
+- **Links:** [README](../broadcast-client/README.md)
 
 #### hls-runtime
 
@@ -875,7 +887,7 @@ layer 1: atsc3, broadcast-hls, broadcast-loudness, buffering-runtime, cc-data, c
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, ssai-runtime, st291, timed-metadata, webrtc-runtime
 layer 3: caption-convert, dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, transmux
 layer 4: dvb-ci-runtime, media-doctor, media-plane, ts-fix, tshttp-runtime
-layer 5: compliance-probe, hls-runtime
+layer 5: broadcast-client, compliance-probe, hls-runtime
 layer 6: multimux
 layer 7: multimux-cli
 ```
@@ -948,6 +960,7 @@ flowchart BT
     tshttp_runtime["tshttp-runtime"]
   end
   subgraph L5["layer 5"]
+    broadcast_client["broadcast-client"]
     compliance_probe["compliance-probe"]
     hls_runtime["hls-runtime"]
   end
@@ -959,6 +972,8 @@ flowchart BT
   end
   atsc3 --> broadcast_common
   atsc3_route --> rmt_flute
+  broadcast_client --> broadcast_auth
+  broadcast_client --> tshttp_runtime
   broadcast_hls --> broadcast_common
   broadcast_loudness --> broadcast_common
   buffering_runtime --> broadcast_common

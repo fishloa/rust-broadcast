@@ -567,6 +567,15 @@ what = "Bytes-in/actions-out client session for a live MPEG-TS HTTP stream: Open
 crates_io = false
 lifecycle = "active"
 
+
+
+[crate.broadcast-client]
+domain = "live"
+summary = "Generic sans-IO client session: auth, redirects, TS-over-HTTP source."
+standards = "none (implementation-defined policy; requirements from zenith-tv player)"
+what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP source on tshttp-runtime. Caller-supplied monotonic milliseconds, no I/O, std."
+crates_io = false
+lifecycle = "active"
 # ------------------------------------------------------------------ internal
 
 [crate.test-alloc]

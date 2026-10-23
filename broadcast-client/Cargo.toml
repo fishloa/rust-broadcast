@@ -1,0 +1,45 @@
+[package]
+name    = "broadcast-client"
+version = "0.1.0"
+edition = "2024"
+description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP source on tshttp-runtime."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["broadcast", "client", "http", "live", "streaming"]
+categories = ["multimedia", "network-programming"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+exclude = ["fuzz/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common  = { path = "../broadcast-common", version = "10.0", default-features = false }
+broadcast-auth     = { path = "../broadcast-auth", version = "0.5" }
+transmux           = { path = "../transmux", version = "0.27", default-features = false }
+tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
+url                = "2"
+thiserror          = "2"
+serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+broadcast-auth = { path = "../broadcast-auth", version = "0.5" }
+url = "2"
+
+[features]
+default = ["std"]
+std = ["broadcast-common/std", "transmux/std", "tshttp-runtime/std", "serde?/std"]
+serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde"]
+
+[[example]]
+name = "live_loop"
+
+[[example]]
+name = "auth_wait"
+
+[lints]
+workspace = true

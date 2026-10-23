@@ -49,6 +49,7 @@ ttml-subtitle = { path = "../ttml-subtitle" }
 broadcast-loudness = { path = "../broadcast-loudness" }
 buffering-runtime    = { path = "../buffering-runtime" }
 tshttp-runtime       = { path = "../tshttp-runtime" }
+broadcast-client     = { path = "../broadcast-client" }
 dvb-csa        = { path = "../dvb-csa" }
 dvb-mabr       = { path = "../dvb-mabr" }
 atsc3          = { path = "../atsc3" }
@@ -353,6 +354,12 @@ doc  = false
 [[bin]]
 name = "tshttp_runtime"
 path = "fuzz_targets/tshttp_runtime.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_client"
+path = "fuzz_targets/broadcast_client.rs"
 test = false
 doc  = false
 
