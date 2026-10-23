@@ -20,6 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common  = { path = "../broadcast-common", version = "10.0", default-features = false }
 broadcast-auth     = { path = "../broadcast-auth", version = "0.5" }
 transmux           = { path = "../transmux", version = "0.27", default-features = false }
+buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-features = false }
 tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
 url                = "2"
 thiserror          = "2"
@@ -32,8 +33,8 @@ url = "2"
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "transmux/std", "tshttp-runtime/std", "serde?/std"]
-serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde"]
+std = ["broadcast-common/std", "transmux/std", "tshttp-runtime/std", "buffering-runtime/std", "serde?/std"]
+serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
 
 [[example]]
 name = "live_loop"

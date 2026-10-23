@@ -7,7 +7,7 @@ use url::Url;
 
 use broadcast_auth::Scheme as AuthScheme;
 
-use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};
+use transmux::{DisplayInfo, JoinDecision, Sample, TrackId, TrackSpec};
 
 use alloc::sync::Arc;
 
@@ -80,6 +80,43 @@ impl Status {
 
 broadcast_common::impl_spec_display!(Status);
 
+/// Buffer event mapped from `buffering_runtime::Event`.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BufferEvent {
+    /// Start playback.
+    Start {
+        /// Media position 27 MHz.
+        at_27mhz: u64,
+    },
+    /// Pause playback.
+    Pause {
+        /// Hold position 27 MHz.
+        hold_at_27mhz: u64,
+        /// Starving track.
+        starving_track: Option<u32>,
+    },
+    /// Resume playback.
+    Resume {
+        /// Media position 27 MHz.
+        at_27mhz: u64,
+    },
+}
+
+impl BufferEvent {
+    /// Spec label.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Start { .. } => "start",
+            Self::Pause { .. } => "pause",
+            Self::Resume { .. } => "resume",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(BufferEvent);
+
 /// Host action produced by [`crate::Session`].
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +155,8 @@ pub enum Event {
         track: TrackId,
         /// Sample.
         sample: Sample,
+        /// Join decision.
+        join: Option<JoinDecision>,
     },
     /// Display changed.
     DisplayChanged {
@@ -139,6 +178,8 @@ pub enum Event {
     Status(Status),
     /// Starved.
     Starved(tshttp_runtime::StarveKind),
+    /// Buffer event.
+    Buffer(BufferEvent),
     /// Auth required.
     AuthRequired {
         /// Scheme.
@@ -170,12 +211,14 @@ impl PartialEq for Event {
                 Self::Sample {
                     track: ta,
                     sample: sa,
+                    join: ja,
                 },
                 Self::Sample {
                     track: tb,
                     sample: sb,
+                    join: jb,
                 },
-            ) => *ta == *tb && format!("{sa:?}") == format!("{sb:?}"),
+            ) => *ta == *tb && format!("{sa:?}") == format!("{sb:?}") && *ja == *jb,
             (
                 Self::DisplayChanged {
                     track: ta,
@@ -208,6 +251,7 @@ impl PartialEq for Event {
             ) => *sa == *sb && *ra == *rb && *oa == *ob && *ma == *mb,
             (Self::AuthRejected { status: a }, Self::AuthRejected { status: b }) => *a == *b,
             (Self::Forbidden { status: a }, Self::Forbidden { status: b }) => *a == *b,
+            (Self::Buffer(a), Self::Buffer(b)) => *a == *b,
             _ => false,
         }
     }
@@ -224,6 +268,8 @@ pub struct Config {
     pub max_redirects: u32,
     /// Extra headers (reserved).
     pub extra_headers: Vec<(String, String)>,
+    /// Buffer controller config.
+    pub buffer: buffering_runtime::ControllerConfig,
 }
 
 impl Default for Config {
@@ -233,6 +279,7 @@ impl Default for Config {
             ts_http: tshttp_runtime::Config::default(),
             max_redirects: 5,
             extra_headers: Vec::new(),
+            buffer: buffering_runtime::ControllerConfig::default(),
         }
     }
 }

@@ -21,6 +21,8 @@ pub struct TsHttpSource {
     conn_seen_first_sample: bool,
     connection_count: u32,
     stalled: bool,
+    last_pcr_27mhz: Option<u64>,
+    demux_discontinuity: bool,
 }
 
 impl TsHttpSource {
@@ -36,6 +38,8 @@ impl TsHttpSource {
             conn_seen_first_sample: false,
             connection_count: 0,
             stalled: false,
+            last_pcr_27mhz: None,
+            demux_discontinuity: false,
         }
     }
 
@@ -47,6 +51,18 @@ impl TsHttpSource {
     /// Set request URL.
     pub fn set_url(&mut self, url: Url) {
         self.url = url;
+    }
+
+    /// Last PCR (27 MHz) observed during the current chunk's demux.
+    pub fn take_last_pcr(&mut self) -> Option<u64> {
+        self.last_pcr_27mhz.take()
+    }
+
+    /// Whether a demux-level discontinuity occurred since last take.
+    pub fn take_demux_discontinuity(&mut self) -> bool {
+        let v = self.demux_discontinuity;
+        self.demux_discontinuity = false;
+        v
     }
 
     /// Connection count.
@@ -83,6 +99,8 @@ impl TsHttpSource {
 
     /// Data callback.
     pub fn on_data(&mut self, bytes: &[u8], now_us: u64) {
+        self.last_pcr_27mhz = None;
+        self.demux_discontinuity = false;
         if self.stalled && !bytes.is_empty() {
             self.events.push_back(Event::Status(Status::Live));
             self.stalled = false;
@@ -168,6 +186,7 @@ impl TsHttpSource {
                 self.events.push_back(Event::Sample {
                     track: track_id,
                     sample,
+                    join: None,
                 });
             }
             tshttp_runtime::Event::Demux(DemuxEvent::DisplayChanged {

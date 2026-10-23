@@ -7,11 +7,13 @@ use std::collections::HashMap;
 
 use url::Url;
 
+use crate::Hint;
 use crate::auth::AuthState;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, Event, SourceKind};
 use crate::redirect;
 use crate::source::ts_http::TsHttpSource;
+use transmux::TrackId;
 
 use tshttp_runtime::Action as TsAction;
 
@@ -29,11 +31,23 @@ pub struct Session {
     conn_auth: HashMap<u32, bool>,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
+    buffer: crate::buffer::Feeder,
+    reconnected_hint_pending: bool,
 }
 
 impl Session {
     /// Open a session.
     pub fn open(url: &str, config: Config, now_us: u64) -> Result<Self, Error> {
+        Self::open_with_memory(url, config, now_us, None)
+    }
+
+    /// Open a session seeded with stall memory.
+    pub fn open_with_memory(
+        url: &str,
+        config: Config,
+        now_us: u64,
+        seed: Option<buffering_runtime::StallMemorySnapshot>,
+    ) -> Result<Self, Error> {
         let parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
         let scheme = parsed.scheme();
         if scheme != "http" && scheme != "https" {
@@ -42,6 +56,7 @@ impl Session {
         if config.kind == SourceKind::TsHttp || config.kind == SourceKind::Auto {
             // accepted
         }
+        let buffer_cfg = config.buffer;
         let auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
         Ok(Self {
@@ -57,6 +72,8 @@ impl Session {
             conn_auth: HashMap::new(),
             actions: VecDeque::new(),
             events: VecDeque::new(),
+            buffer: crate::buffer::Feeder::new(buffer_cfg, seed),
+            reconnected_hint_pending: false,
         })
     }
 
@@ -190,8 +207,23 @@ impl Session {
             return;
         }
         self.now_us = now_us;
+        if self.reconnected_hint_pending {
+            self.reconnected_hint_pending = false;
+            self.buffer.hint(now_us, Hint::Reconnected);
+        }
         self.source.on_data(bytes, now_us);
+        if self.source.take_demux_discontinuity() {
+            self.buffer.on_demux_discontinuity(now_us);
+        }
         self.drain_source();
+        if !bytes.is_empty() {
+            let pcr = self.source.take_last_pcr();
+            self.buffer.on_chunk(now_us, bytes.len(), pcr);
+            let evs = self.buffer.drain();
+            for e in evs {
+                self.events.push_back(e);
+            }
+        }
     }
 
     /// Closed callback.
@@ -208,8 +240,15 @@ impl Session {
             self.live_conn = None;
         }
         self.now_us = now_us;
+        if error.is_some() {
+            self.buffer.hint(now_us, Hint::SourceError);
+        }
         self.source.on_closed(error, now_us);
         self.drain_source();
+        let evs = self.buffer.drain();
+        for e in evs {
+            self.events.push_back(e);
+        }
     }
 
     /// Set credentials.
@@ -232,6 +271,44 @@ impl Session {
         self.now_us = now_us;
         self.source.reconnect(now_us);
         self.drain_source();
+    }
+
+    /// Playback position update.
+    pub fn on_playback_position(&mut self, now_us: u64, pts_27mhz: Option<u64>) {
+        if self.closed {
+            return;
+        }
+        self.now_us = now_us;
+        self.buffer.on_playback_position(now_us, pts_27mhz);
+        let evs = self.buffer.drain();
+        for e in evs {
+            self.events.push_back(e);
+        }
+    }
+
+    /// Set rendered tracks.
+    pub fn set_rendered_tracks(&mut self, tracks: &[TrackId]) {
+        if self.closed {
+            return;
+        }
+        self.buffer.set_rendered_tracks(tracks);
+    }
+
+    /// Hint passthrough.
+    pub fn hint(&mut self, h: Hint) {
+        if self.closed {
+            return;
+        }
+        self.buffer.hint(self.now_us, h);
+        let evs = self.buffer.drain();
+        for e in evs {
+            self.events.push_back(e);
+        }
+    }
+
+    /// Stall memory snapshot.
+    pub fn stall_memory(&self) -> buffering_runtime::StallMemorySnapshot {
+        self.buffer.stall_memory()
     }
 
     /// Terminal close.
@@ -267,11 +344,51 @@ impl Session {
             self.live_conn = None;
         }
         self.source.on_error(self.now_us);
+        self.buffer.hint(self.now_us, Hint::SourceError);
         self.drain_source();
+        let evs = self.buffer.drain();
+        for e in evs {
+            self.events.push_back(e);
+        }
     }
 
     fn drain_source(&mut self) {
         while let Some(e) = self.source.poll_event() {
+            match e {
+                Event::Finite { .. } => {
+                    self.buffer.set_finite();
+                    self.events.push_back(e);
+                }
+                Event::Tracks(specs) => {
+                    for spec in &specs {
+                        self.buffer.on_track_added(spec);
+                    }
+                    self.events.push_back(Event::Tracks(specs));
+                }
+                Event::Sample { track, sample, .. } => {
+                    let join = self.buffer.join_sample(track, &sample);
+                    self.buffer.on_sample(track, &sample, join);
+                    self.events.push_back(Event::Sample {
+                        track,
+                        sample,
+                        join,
+                    });
+                }
+                Event::Discontinuity => {
+                    self.buffer.hint(self.now_us, Hint::Reconnected);
+                    self.events.push_back(e);
+                }
+                Event::Status(crate::events::Status::Ended) => {
+                    self.buffer.hint(self.now_us, Hint::SourceEnded);
+                    self.events.push_back(e);
+                }
+                other => {
+                    self.events.push_back(other);
+                }
+            }
+        }
+        let evs = self.buffer.drain();
+        for e in evs {
             self.events.push_back(e);
         }
         while let Some(ta) = self.source.poll_action() {
