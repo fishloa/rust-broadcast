@@ -66,19 +66,19 @@ impl AuthState {
             && let Some(creds) = &self.credentials
         {
             match creds {
-                    Credentials::Bearer { token } => {
-                        headers.push(("Authorization".to_string(), format!("Bearer {token}")));
-                    }
-                    Credentials::Basic { .. } | Credentials::Digest { .. } => {
-                        if let Some(auth) = &mut self.authenticator {
-                            let ctx = broadcast_auth::RequestContext::new("GET", url.as_str());
-                            if let Ok(val) = auth.authorization(&ctx) {
-                                headers.push(("Authorization".to_string(), val));
-                            }
+                Credentials::Bearer { token } => {
+                    headers.push(("Authorization".to_string(), format!("Bearer {token}")));
+                }
+                Credentials::Basic { .. } | Credentials::Digest { .. } => {
+                    if let Some(auth) = &mut self.authenticator {
+                        let ctx = broadcast_auth::RequestContext::new("GET", url.as_str());
+                        if let Ok(val) = auth.authorization(&ctx) {
+                            headers.push(("Authorization".to_string(), val));
                         }
                     }
-                    _ => {}
                 }
+                _ => {}
+            }
         }
         headers
     }
