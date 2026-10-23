@@ -14,6 +14,7 @@ enum Phase {
     Backoff { due: u64 },
 }
 
+/// TS-over-HTTP pull session client (DESIGN.md).
 pub struct TsHttpClient {
     url: String,
     config: Config,
@@ -32,6 +33,7 @@ pub struct TsHttpClient {
 }
 
 impl TsHttpClient {
+    /// Create a new client (T1).
     pub fn new(url: impl Into<String>, config: Config, now_ms: u64) -> Self {
         let mut c = Self {
             url: url.into(),
@@ -53,14 +55,17 @@ impl TsHttpClient {
         c
     }
 
+    /// Poll next action.
     pub fn poll(&mut self) -> Option<Action> {
         self.actions.pop_front()
     }
 
+    /// Poll next event.
     pub fn poll_event(&mut self) -> Option<Event> {
         self.events.pop_front()
     }
 
+    /// Response headers received (T2-T4).
     pub fn on_response(&mut self, status: u16, now_ms: u64) {
         if !matches!(self.phase, Phase::Opening { .. }) {
             return;
@@ -86,6 +91,7 @@ impl TsHttpClient {
         }
     }
 
+    /// Feed body bytes (T5, T14).
     pub fn feed(&mut self, chunk: &[u8], now_ms: u64) {
         if chunk.is_empty() {
             return;
@@ -122,7 +128,9 @@ impl TsHttpClient {
         }
     }
 
+    /// Body ended (T7, T8).
     pub fn on_eof(&mut self, now_ms: u64) {
+        self.flush_demux(now_ms);
         match self.phase {
             Phase::Opening { .. } => self.fail_before_playing(now_ms),
             Phase::Awaiting { .. } => self.fail_before_playing(now_ms),
@@ -131,7 +139,9 @@ impl TsHttpClient {
         }
     }
 
+    /// Connect/read failure (T4, T7, T8).
     pub fn on_error(&mut self, now_ms: u64) {
+        self.flush_demux(now_ms);
         match self.phase {
             Phase::Opening { .. } => self.fail_before_playing(now_ms),
             Phase::Awaiting { .. } => self.fail_before_playing(now_ms),
@@ -140,9 +150,11 @@ impl TsHttpClient {
         }
     }
 
+    /// Caller-initiated reconnect (T13).
     pub fn reconnect(&mut self, now_ms: u64) {
         match self.phase {
             Phase::Opening { .. } | Phase::Awaiting { .. } | Phase::Playing => {
+                self.flush_demux(now_ms);
                 self.attempt = 0;
                 self.actions.push_back(Action::Abort);
                 self.actions.push_back(Action::Reconnect { after_ms: 0 });
@@ -152,6 +164,7 @@ impl TsHttpClient {
         }
     }
 
+    /// Advance timers (T6, T10-T12, T15).
     pub fn poll_timeout(&mut self, now_ms: u64) {
         // Backoff due -> Open
         if let Phase::Backoff { due } = self.phase
@@ -164,8 +177,16 @@ impl TsHttpClient {
         if let Phase::Awaiting { open_at } = self.phase
             && now_ms.saturating_sub(open_at) >= self.config.start_timeout_ms
         {
-            self.actions.push_back(Action::Abort);
-            self.fail_before_playing(now_ms);
+            self.flush_demux(now_ms);
+            if matches!(self.phase, Phase::Playing) {
+                self.attempt = 0;
+                self.actions.push_back(Action::Abort);
+                self.actions.push_back(Action::Reconnect { after_ms: 0 });
+                self.phase = Phase::Backoff { due: now_ms };
+            } else {
+                self.actions.push_back(Action::Abort);
+                self.fail_before_playing(now_ms);
+            }
             return;
         }
         // Playing stall timers
@@ -200,6 +221,7 @@ impl TsHttpClient {
                 }
                 // stall_reconnect
                 if idle >= self.config.stall_reconnect_ms {
+                    self.flush_demux(now_ms);
                     self.actions.push_back(Action::Abort);
                     self.played_ended(now_ms);
                 }
@@ -207,6 +229,7 @@ impl TsHttpClient {
         }
     }
 
+    /// Earliest deadline for poll_timeout.
     pub fn next_deadline(&self) -> Option<u64> {
         match self.phase {
             Phase::Backoff { due } => Some(due),
@@ -224,6 +247,28 @@ impl TsHttpClient {
                 Some(next_notice.min(reconnect).min(notice))
             }
             Phase::Opening { .. } => None,
+        }
+    }
+
+    fn flush_demux(&mut self, now_ms: u64) {
+        self.demux.finish();
+        let mut first_sample = false;
+        while let Some(ev) = self.demux.poll_event() {
+            if matches!(ev, DemuxEvent::Sample { .. }) {
+                first_sample = true;
+            }
+            self.events.push_back(Event::Demux(ev));
+        }
+        if first_sample {
+            if matches!(self.phase, Phase::Awaiting { .. }) {
+                self.phase = Phase::Playing;
+                self.attempt = 0;
+            }
+            self.last_sample_at = now_ms;
+            self.starved_data_fired = false;
+            self.starved_nodata_fired = false;
+            self.first_notice_at = None;
+            self.next_notice_at = None;
         }
     }
 

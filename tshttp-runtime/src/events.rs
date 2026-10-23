@@ -1,25 +1,40 @@
 use alloc::format;
 use alloc::string::String;
+
 use transmux::DemuxEvent;
 
+/// Host action produced by the session (T1, T6, T8, T9, T12, T13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Action {
-    Open { url: String },
-    Reconnect { after_ms: u64 },
+    /// Open (or reopen) the configured URL.
+    Open {
+        /// URL to open.
+        url: String,
+    },
+    /// Wait then reopen after `after_ms`.
+    Reconnect {
+        /// Delay before reopen.
+        after_ms: u64,
+    },
+    /// Drop the current connection.
     Abort,
 }
 
+/// Starvation classification (T14, T15).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum StarveKind {
+    /// Bytes flowing but no sample.
     Data,
+    /// No bytes.
     NoData,
 }
 
 impl StarveKind {
+    /// Spec label for this kind.
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
@@ -31,16 +46,32 @@ impl StarveKind {
 
 broadcast_common::impl_spec_display!(StarveKind);
 
+/// Session event (T2-T15).
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 pub enum Event {
+    /// Demuxer event (T5, T14).
     Demux(DemuxEvent),
-    StallNotice { secs: u64 },
+    /// Stall notice (T11).
+    StallNotice {
+        /// Stalled seconds.
+        secs: u64,
+    },
+    /// Starvation (T14, T15).
     Starved(StarveKind),
-    NotFound { status: u16 },
+    /// Not found response (T3).
+    NotFound {
+        /// HTTP status.
+        status: u16,
+    },
+    /// Connected (T2).
     Connected,
-    Reconnecting { attempt: u64 },
+    /// Reconnecting (T9).
+    Reconnecting {
+        /// Attempt number.
+        attempt: u64,
+    },
 }
 
 impl PartialEq for Event {
@@ -58,8 +89,6 @@ impl PartialEq for Event {
 }
 
 impl Eq for Event {}
-
-// Action and Event are data-carrying dispatch ADTs: skipped in label_coverage.
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]

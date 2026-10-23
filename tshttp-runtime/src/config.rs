@@ -1,10 +1,16 @@
+/// Session configuration (defaults per DESIGN.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Config {
+    /// Start timeout in milliseconds (T6).
     pub start_timeout_ms: u64,
+    /// Stall notice threshold in milliseconds (T11, T14, T15).
     pub stall_notice_ms: u64,
+    /// Stall reconnect threshold in milliseconds (T12).
     pub stall_reconnect_ms: u64,
+    /// Backoff schedule in milliseconds (T9).
     pub backoff_ms: alloc::vec::Vec<u64>,
+    /// Backoff cap in milliseconds (T9).
     pub backoff_cap_ms: u64,
 }
 
