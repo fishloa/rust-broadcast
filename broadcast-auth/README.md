@@ -7,7 +7,7 @@ Shared multi-scheme HTTP and RTSP authentication: a client that answers `WWW-Aut
 
 ## What it does / what it does not
 
-**Does:** one `Credentials` model (`Basic`/`Digest` user and password, or a `Bearer` token); a client side (`Authenticator`, `respond`) that turns a server challenge into an `Authorization` value and keeps Digest's nonce count advancing across a session; and a server side (`server::Verifier`) that renders the `WWW-Authenticate` challenge for a `401` and verifies an incoming `RequestContext` (method, URI, body, headers, peer address). Secrets are wiped on drop and compared in constant time.
+**Does:** one `Credentials` model (`Basic`/`Digest` user and password, or a `Bearer` token); a client side (`Authenticator`, `respond`) that turns a server challenge into an `Authorization` value and keeps Digest's nonce count advancing across a session; a server side (`server::Verifier`) that renders the `WWW-Authenticate` challenge for a `401` and verifies an incoming `RequestContext` (method, URI, body, headers, peer address); and typed `WWW-Authenticate` challenge parsing (`challenge::parse_challenges`) including RFC 9728 `resource_metadata`. Secrets are wiped on drop and compared in constant time.
 
 **Does not:** do any IO (sockets, header framing, TLS), store credentials or parse config, or implement OAuth flows. Digest offers `qop=auth` with MD5 only (the shape every camera and player in the workspace uses); `auth-int` and SHA-256 Digest are not offered by the verifier. Each client or server owns its transport: `rtsp-runtime`, `hls-runtime` and `multimux` call into this crate.
 

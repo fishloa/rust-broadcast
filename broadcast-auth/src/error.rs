@@ -41,6 +41,18 @@ pub enum Error {
     #[error("signed-url keyset has no key with kid {0:?}")]
     UnknownSignedUrlKeyId(String),
 
+    /// A parameter that RFC 6750 (or `resource_metadata`) says MUST NOT repeat
+    /// appeared twice in one challenge.
+    #[error("duplicate parameter {name:?}")]
+    DuplicateParameter {
+        /// The offending parameter name (canonical, lower-cased).
+        name: String,
+    },
+
+    /// `resource_metadata` was not an absolute URL.
+    #[error("invalid resource_metadata URL")]
+    InvalidResourceMetadata,
+
     /// A Bearer token cannot be carried in an `Authorization` header value —
     /// it contains a byte outside visible ASCII (control character, CR/LF, or
     /// non-ASCII) — so no header was produced rather than a corrupt or

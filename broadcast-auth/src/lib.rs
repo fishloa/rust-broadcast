@@ -3,6 +3,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod authenticator;
+pub mod challenge;
 mod credentials;
 mod error;
 mod request;
@@ -10,6 +11,7 @@ mod server;
 pub mod signed_url;
 
 pub use authenticator::{Authenticator, respond};
+pub use challenge::{BearerError, Challenge, Scheme, parse_challenges};
 pub use credentials::Credentials;
 pub use error::{Error, Result};
 pub use request::RequestContext;
