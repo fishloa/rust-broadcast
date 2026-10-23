@@ -96,6 +96,7 @@ impl core::fmt::Display for BearerError {
 }
 
 /// One parsed `WWW-Authenticate` challenge.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Challenge {
     /// Auth scheme.
