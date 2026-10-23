@@ -67,6 +67,13 @@ pub enum Event {
     },
     /// Connected (T2).
     Connected,
+    /// Finite resource: expected body byte count (VOD).
+    Finite {
+        /// Expected body bytes.
+        expected_bytes: u64,
+    },
+    /// Stream ended cleanly (VOD).
+    Ended,
     /// Reconnecting (T9).
     Reconnecting {
         /// Attempt number.
@@ -82,6 +89,8 @@ impl PartialEq for Event {
             (Self::Starved(a), Self::Starved(b)) => a == b,
             (Self::NotFound { status: a }, Self::NotFound { status: b }) => a == b,
             (Self::Connected, Self::Connected) => true,
+            (Self::Finite { expected_bytes: a }, Self::Finite { expected_bytes: b }) => a == b,
+            (Self::Ended, Self::Ended) => true,
             (Self::Reconnecting { attempt: a }, Self::Reconnecting { attempt: b }) => a == b,
             _ => false,
         }
@@ -97,6 +106,8 @@ enum EventSerde {
     Starved(StarveKind),
     NotFound { status: u16 },
     Connected,
+    Finite { expected_bytes: u64 },
+    Ended,
     Reconnecting { attempt: u64 },
 }
 
@@ -116,6 +127,11 @@ impl serde::Serialize for Event {
                 EventSerde::NotFound { status: *status }.serialize(serializer)
             }
             Self::Connected => EventSerde::Connected.serialize(serializer),
+            Self::Finite { expected_bytes } => EventSerde::Finite {
+                expected_bytes: *expected_bytes,
+            }
+            .serialize(serializer),
+            Self::Ended => EventSerde::Ended.serialize(serializer),
             Self::Reconnecting { attempt } => {
                 EventSerde::Reconnecting { attempt: *attempt }.serialize(serializer)
             }
@@ -135,6 +151,8 @@ impl<'de> serde::Deserialize<'de> for Event {
             EventSerde::Starved(k) => Self::Starved(k),
             EventSerde::NotFound { status } => Self::NotFound { status },
             EventSerde::Connected => Self::Connected,
+            EventSerde::Finite { expected_bytes } => Self::Finite { expected_bytes },
+            EventSerde::Ended => Self::Ended,
             EventSerde::Reconnecting { attempt } => Self::Reconnecting { attempt },
         })
     }

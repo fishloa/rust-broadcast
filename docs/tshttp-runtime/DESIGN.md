@@ -16,7 +16,7 @@ Config { start_timeout_ms: 15_000, stall_notice_ms: 5_000, stall_reconnect_ms: 3
 
 TsHttpClient::new(url, Config, now_ms)
   poll() -> Option<Action>            Action::{ Open{url}, Reconnect{after_ms}, Abort }
-  on_response(status: u16, now_ms)    response headers received
+  on_response(status: u16, headers: &[(String,String)], now_ms)    response headers received
   feed(chunk: &[u8], now_ms)          body bytes
   on_eof(now_ms)                      body ended / connection closed cleanly
   on_error(now_ms)                    connect/read failure
@@ -25,7 +25,7 @@ TsHttpClient::new(url, Config, now_ms)
   next_deadline() -> Option<u64>      earliest now_ms at which poll_timeout does something
   poll_event() -> Option<Event>
 Event::{ Demux(DemuxEvent), StallNotice{secs}, Starved(StarveKind::{Data,NoData}),
-         NotFound{status}, Connected, Reconnecting{attempt} }
+         NotFound{status}, Connected, Finite{expected_bytes}, Ended, Reconnecting{attempt} }
 ```
 
 `Reconnect{after_ms}` tells the host a wait is scheduled; the client queues the following
@@ -50,6 +50,10 @@ ignore any later callbacks for it (callbacks while not Connected are ignored).
 | T11 | Playing | no bytes for stall_notice | Event StallNotice{secs} (repeats once per second after the first notice) | Playing |
 | T12 | Playing | no bytes for stall_reconnect | Abort, Reconnect{after_ms:0} (counts as played-then-ended: attempt = 0) | Backoff(0 ms) |
 | T13 | any connected | reconnect() | Abort, Reconnect{after_ms:0}, attempt = 0 | Backoff(0 ms) |
+| T16 | Opening | on_response 2xx with finite body (Content-Length / 206 Content-Range) | Event Connected, Event Finite{expected_bytes} | Awaiting (finite) |
+| T17 | finite Awaiting/Playing | received bytes >= expected | timers stopped | same (no events) |
+| T18 | finite connection | on_eof / on_error after all expected bytes | Event Ended | Ended (terminal) |
+| T19 | finite connection | on_eof / on_error before all expected bytes | as T9 (truncated transfer) | Backoff |
 | T14 | Playing/Awaiting | bytes arrive, no sample for stall_notice | Event Starved(Data) once per episode | same |
 | T15 | Playing | no bytes for stall_notice | Event Starved(NoData) once per episode | same |
 
@@ -75,3 +79,20 @@ Real: `private/fixtures/zenith-http/tf1-live.ts` (TF1 off-air, broadcaster copyr
 PROVENANCE.md carries the capture text), `tf1.headers.txt`, `missing.headers.txt`,
 `missing.body.txt` (zenith's own output, 404 `text/plain`). Public CC BY alternative:
 zenith-player-demo TS files. Tests load them only through `test_fixtures`.
+
+## Finite resources (VOD)
+
+A response is finite when its length is known from headers: status 200 with a valid decimal
+`Content-Length`, or status 206 with a `Content-Range: bytes a-b/total` whose `total` is numeric
+(expected body length = `b - a + 1`). Duplicate/conflicting `Content-Length`, non-numeric or
+negative values, and `Transfer-Encoding: chunked` without `Content-Length` (HTTP/2 live streams)
+make the response live. Header names are matched case-insensitively.
+
+On a finite response, `Event::Finite{expected_bytes}` is emitted immediately after
+`Event::Connected`, and received body bytes are tracked. Once received >= expected, all
+stall/starved/start-timeout timers stop. EOF/close after all expected bytes (with a demux flush
+first) emits `Event::Ended` once and enters the terminal `Ended` phase: no `Reconnect`, no timers,
+later inputs ignored. EOF before all bytes is a truncated transfer and follows the normal failure
+path (backoff/reconnect from the start). `reconnect()` from `Ended` restarts with attempt = 0.
+
+Live behaviour (no `Content-Length`) is unchanged.

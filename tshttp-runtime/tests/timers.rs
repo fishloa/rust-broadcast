@@ -22,7 +22,7 @@ fn drain_events(c: &mut TsHttpClient) -> Vec<Event> {
 fn start_timer_restarts_on_every_open() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = drain_actions(&mut c);
-    c.on_response(200, 100);
+    c.on_response(200, &[], 100);
     c.poll_timeout(15_000);
     assert!(drain_actions(&mut c).contains(&Action::Abort));
     let _ = drain_events(&mut c);
@@ -31,7 +31,7 @@ fn start_timer_restarts_on_every_open() {
         drain_actions(&mut c),
         vec![Action::Open { url: "u".into() }]
     );
-    c.on_response(200, 17_050);
+    c.on_response(200, &[], 17_050);
     c.poll_timeout(31_999);
     assert!(
         !drain_actions(&mut c).contains(&Action::Abort),
@@ -45,7 +45,7 @@ fn start_timer_restarts_on_every_open() {
 fn stall_is_measured_from_the_last_received_byte() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = drain_actions(&mut c);
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     c.feed(D, 0);
     c.poll_timeout(1_000);
     c.feed(&[0u8; 188], 10_000);
@@ -73,7 +73,7 @@ fn stall_is_measured_from_the_last_received_byte() {
 fn stall_reconnect_emits_abort_then_zero_delay_reconnect() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = drain_actions(&mut c);
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     c.feed(D, 0);
     c.poll_timeout(30_000);
     assert_eq!(

@@ -16,7 +16,7 @@ fn t01_idle_new_opens() {
 fn t02_opening_response_2xx_connected_awaiting() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 10);
+    c.on_response(200, &[], 10);
     assert_eq!(c.poll_event(), Some(Event::Connected));
     assert_eq!(c.poll(), None);
 }
@@ -25,7 +25,7 @@ fn t02_opening_response_2xx_connected_awaiting() {
 fn t03_opening_404_notfound_then_backoff() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(404, 10);
+    c.on_response(404, &[], 10);
     assert_eq!(c.poll_event(), Some(Event::NotFound { status: 404 }));
     assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
@@ -36,7 +36,7 @@ fn t04_opening_other_status_or_error_backoff() {
     // other non-2xx status
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(500, 10);
+    c.on_response(500, &[], 10);
     assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
 
@@ -57,7 +57,7 @@ fn t05_awaiting_first_sample_moves_to_playing_and_resets_attempts() {
     let dl = c.next_deadline().unwrap();
     c.poll_timeout(dl);
     let _ = c.poll(); // Open
-    c.on_response(200, 5);
+    c.on_response(200, &[], 5);
     let _ = c.poll_event();
     // first sample -> Playing, attempt reset
     c.feed(D, 6);
@@ -83,7 +83,7 @@ fn t05_awaiting_first_sample_moves_to_playing_and_resets_attempts() {
 fn t06_awaiting_start_timeout() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.poll_timeout(14999);
     assert_eq!(c.poll(), None);
@@ -97,7 +97,7 @@ fn t07_awaiting_eof_or_error_before_sample_backoff() {
     // eof
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.on_eof(1);
     assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
@@ -106,7 +106,7 @@ fn t07_awaiting_eof_or_error_before_sample_backoff() {
     // error
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.on_error(1);
     assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
@@ -117,7 +117,7 @@ fn t07_awaiting_eof_or_error_before_sample_backoff() {
 fn t08_playing_eof_reconnect_zero() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(D, 1);
     c.on_eof(2);
@@ -150,7 +150,7 @@ fn t09_failure_before_playing_attempt_increments_and_emits_reconnecting() {
 fn t10_backoff_due_opens() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(404, 0);
+    c.on_response(404, &[], 0);
     let _ = c.poll_event();
     let _ = c.poll_event();
     let _ = c.poll();
@@ -164,7 +164,7 @@ fn t10_backoff_due_opens() {
 fn t11_playing_no_bytes_stall_notice() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(D, 0);
     while c.poll_event().is_some() {}
@@ -190,7 +190,7 @@ fn t11_playing_no_bytes_stall_notice() {
 fn t12_playing_no_bytes_stall_reconnect_aborts_and_resets_attempts() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(D, 0);
     c.poll_timeout(29999);
@@ -232,7 +232,7 @@ fn t13_any_connected_reconnect_aborts() {
     {
         let mut c = TsHttpClient::new("u", cfg(), 0);
         let _ = c.poll();
-        c.on_response(200, 0);
+        c.on_response(200, &[], 0);
         let _ = c.poll_event();
         c.reconnect(5);
         assert_eq!(c.poll(), Some(Action::Abort));
@@ -242,7 +242,7 @@ fn t13_any_connected_reconnect_aborts() {
     {
         let mut c = TsHttpClient::new("u", cfg(), 0);
         let _ = c.poll();
-        c.on_response(200, 0);
+        c.on_response(200, &[], 0);
         let _ = c.poll_event();
         c.feed(D, 1);
         c.reconnect(5);
@@ -255,7 +255,7 @@ fn t13_any_connected_reconnect_aborts() {
 fn t14_bytes_no_samples_starved_data_once_per_episode() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(D, 0); // playing
     // bytes flowing but no sample for stall_notice (4 bytes at now=10000)
@@ -282,7 +282,7 @@ fn t14_bytes_no_samples_starved_data_once_per_episode() {
 fn t15_playing_no_bytes_starved_nodata_once_per_episode() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
-    c.on_response(200, 0);
+    c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(D, 0); // playing
     c.poll_timeout(5000);

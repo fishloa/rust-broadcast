@@ -3,7 +3,7 @@ use tshttp_runtime::{Config, TsHttpClient};
 fn main() {
     let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);
     let _ = client.poll();
-    client.on_response(200, 0);
+    client.on_response(200, &[], 0);
     let _ = client.poll_event();
     const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
     client.feed(D, 0);

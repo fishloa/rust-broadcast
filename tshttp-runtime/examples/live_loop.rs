@@ -13,7 +13,7 @@ fn main() {
     if let Some(tshttp_runtime::Action::Open { .. }) = client.poll() {
         opens += 1;
     }
-    client.on_response(200, 0);
+    client.on_response(200, &[], 0);
     while let Some(e) = client.poll_event() {
         if matches!(e, tshttp_runtime::Event::Connected) {
             connected = true;

@@ -45,7 +45,7 @@ Action (non_exhaustive): HttpRequest{conn, method: "GET", url, headers: Vec<(Str
                        // reserved, never emitted in BC-1: TcpConnect, UdpBind, Send
 Event  (non_exhaustive): Tracks(Vec<TrackSpec>) | Sample{track: TrackId, sample: Sample}
                        | DisplayChanged{track, pts: Option<i64>, display: Arc<DisplayInfo>}
-                       | Discontinuity | Status(Status) | Starved(StarveKind)
+                       | Discontinuity | Finite{expected_bytes} | Status(Status) | Starved(StarveKind)
                        | AuthRequired{scheme, realm, origin, resource_metadata: Option<Url>}
                        | AuthRejected{status} | Forbidden{status}
 Status: Establishing | Live | Stalled{secs} | Reconnecting{attempt} | NotFound | WaitingForCredentials | Ended
@@ -64,6 +64,9 @@ Status: Establishing | Live | Stalled{secs} | Reconnecting{attempt} | NotFound |
   `Status(Reconnecting{attempt:0})`. A new connection starts a fresh demuxer: `Discontinuity` is emitted
   before the first Sample of every connection after the first.
 - `NotFound{..}` -> `Status(NotFound)` (re-emitted per 404/410, retries continue at the cap).
+- tshttp `Event::Finite{expected_bytes}` -> `Event::Finite{expected_bytes}`.
+- tshttp `Event::Ended` -> `Status(Ended)`; the session does not reconnect after Ended; `Session::reconnect()`
+  restarts (attempt 0).
 - `Starved(kind)` -> `Event::Starved(kind)`.
 - `StreamingTsDemux` events other than Track*/Sample/DisplayChanged are dropped.
 - tshttp `Action::Open` -> `HttpRequest`; `Abort` -> `Close{conn}` of the live conn; `Reconnect{after_ms}` ->
@@ -116,3 +119,10 @@ ignored; close terminal; Debug does not contain the secret; Apple-target `cargo 
 `DemuxEvent::ClockReference`), `on_track_media` from Samples (withheld before the first video random-access
 point, per its caller contract), `on_tick(now, playback)` from a new player input
 `Session::on_playback_position(now_ms, pts_27mhz)`; its `StartPlaying/Pause/Resume` become `Event::Buffer`.
+
+## Finite resources (VOD)
+
+A 206 response to our own plain GET is finite too. Redirect/auth layers are unchanged; headers are
+forwarded to tshttp-runtime for finite detection. `Event::Finite` is mapped from tshttp, and
+`Event::Ended` becomes `Status(Ended)`. The session does not reconnect after Ended; `Session::reconnect()`
+restarts the session (attempt 0). Truncated transfers (EOF before all expected bytes) reconnect.
