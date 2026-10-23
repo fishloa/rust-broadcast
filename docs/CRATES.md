@@ -132,8 +132,8 @@ change, so the old versions stay live.
 | [`rist-runtime`](#rist-runtime) | Live transport protocols | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/rist-runtime.svg)](https://crates.io/crates/rist-runtime) | yes | 2 | on crates.io |
 | [`webrtc-runtime`](#webrtc-runtime) | Live transport protocols | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) | no | 2 | on crates.io |
 | [`tshttp-runtime`](#tshttp-runtime) | Live transport protocols | 0.1.0 | — | yes | 4 | not on crates.io |
-| [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.1.0 | — | no | 5 | not on crates.io |
 | [`hls-runtime`](#hls-runtime) | Live transport protocols | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) | yes | 5 | on crates.io |
+| [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.1.0 | — | no | 6 | not on crates.io |
 | [`ssai-runtime`](#ssai-runtime) | Servers, runtimes and tools | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/ssai-runtime.svg)](https://crates.io/crates/ssai-runtime) | yes | 2 | on crates.io |
 | [`dvb-tools`](#dvb-tools) | Servers, runtimes and tools | 12.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | no | 3 | on crates.io |
 | [`playout-runtime`](#playout-runtime) | Servers, runtimes and tools | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/playout-runtime.svg)](https://crates.io/crates/playout-runtime) | yes | 3 | on crates.io |
@@ -596,17 +596,6 @@ Bytes-in/actions-out client session for a live MPEG-TS HTTP stream: Open/Reconne
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client)
 - **Links:** [README](../tshttp-runtime/README.md) · [CHANGELOG](../tshttp-runtime/CHANGELOG.md)
 
-#### broadcast-client
-
-Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP source on tshttp-runtime. Caller-supplied monotonic milliseconds, no I/O, std.
-
-- **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
-- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP source on tshttp-runtime.
-- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 5
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`buffering-runtime`](#buffering-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
-- **Used by (workspace):** none
-- **Links:** [README](../broadcast-client/README.md)
-
 #### hls-runtime
 
 A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 demux output) and a sans-IO origin (`server`, feature `std`) that renders playlists and serves init/segment/part bytes straight from a `media-plane` `Trunk`. Earlier releases were published as `ll-hls-runtime` (those versions are still live on crates.io).
@@ -615,8 +604,19 @@ A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 dem
 - **Cargo description:** Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter.
 - **Version (in-tree):** 0.9.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 5
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`media-plane`](#media-plane), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
-- **Used by (workspace):** [`multimux`](#multimux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../hls-runtime/README.md) · [CHANGELOG](../hls-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/hls-runtime) · [docs.rs](https://docs.rs/hls-runtime)
+
+#### broadcast-client
+
+Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP source on tshttp-runtime. Caller-supplied monotonic milliseconds, no I/O, std.
+
+- **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
+- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP and HLS sources.
+- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`buffering-runtime`](#buffering-runtime), [`hls-runtime`](#hls-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
+- **Used by (workspace):** none
+- **Links:** [README](../broadcast-client/README.md)
 
 ### Servers, runtimes and tools
 
@@ -887,8 +887,8 @@ layer 1: atsc3, broadcast-hls, broadcast-loudness, buffering-runtime, cc-data, c
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, ssai-runtime, st291, timed-metadata, webrtc-runtime
 layer 3: caption-convert, dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, transmux
 layer 4: dvb-ci-runtime, media-doctor, media-plane, ts-fix, tshttp-runtime
-layer 5: broadcast-client, compliance-probe, hls-runtime
-layer 6: multimux
+layer 5: compliance-probe, hls-runtime
+layer 6: broadcast-client, multimux
 layer 7: multimux-cli
 ```
 
@@ -960,11 +960,11 @@ flowchart BT
     tshttp_runtime["tshttp-runtime"]
   end
   subgraph L5["layer 5"]
-    broadcast_client["broadcast-client"]
     compliance_probe["compliance-probe"]
     hls_runtime["hls-runtime"]
   end
   subgraph L6["layer 6"]
+    broadcast_client["broadcast-client"]
     multimux["multimux"]
   end
   subgraph L7["layer 7"]
@@ -972,8 +972,8 @@ flowchart BT
   end
   atsc3 --> broadcast_common
   atsc3_route --> rmt_flute
-  broadcast_client --> broadcast_auth
   broadcast_client --> buffering_runtime
+  broadcast_client --> hls_runtime
   broadcast_client --> tshttp_runtime
   broadcast_hls --> broadcast_common
   broadcast_loudness --> broadcast_common

@@ -439,6 +439,7 @@ dependencies = [
  "broadcast-auth",
  "broadcast-common",
  "buffering-runtime",
+ "hls-runtime",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",

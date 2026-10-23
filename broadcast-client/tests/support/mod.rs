@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+pub mod hls_host;
+
 use broadcast_client::{Action, Event, Session};
 
 pub fn read_tf1_headers() -> (u16, Vec<(String, String)>) {
