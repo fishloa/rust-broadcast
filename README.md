@@ -119,6 +119,7 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 | [`rtsp-runtime`](rtsp-runtime/) | Sans-IO RTSP 1.0 client + server session engine, interleaved RTP/RTCP, Basic/Digest/Bearer auth. | RFC 2326 (RTSP 1.0) incl. Appendix A state machines, §10.12 interleaving, §12.39 Transport, §14 auth | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) |
 | [`srt-runtime`](srt-runtime/) | SRT packet codecs, HSv5 handshake (caller/listener/rendezvous), ARQ, TSBPD, LiveCC/FileCC, optional crypto. | draft-sharabayko-srt-01 | [![crates.io](https://img.shields.io/crates/v/srt-runtime.svg)](https://crates.io/crates/srt-runtime) |
 | [`st2022`](st2022/) | SMPTE ST 2022-6 HBRMT (SDI over IP) RTP payload header. | SMPTE ST 2022-6:2012 | [![crates.io](https://img.shields.io/crates/v/st2022.svg)](https://crates.io/crates/st2022) |
+| [`tshttp-runtime`](tshttp-runtime/) | Sans-IO TS-over-HTTP pull session: reconnect/backoff, start and stall timers, demuxed events. | none (implementation-defined policy; requirements from the zenith-tv player) | not on crates.io |
 | [`webrtc-runtime`](webrtc-runtime/) | Sans-IO WHIP + WHEP HTTP signalling: SDP offer/answer, Trickle ICE, ICE restart, session lifecycle. | RFC 9725 (WHIP); draft-ietf-wish-whep-04; optional ICE/DTLS-SRTP transport (`media`) | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) |
 
 **Servers, runtimes and tools**

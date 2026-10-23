@@ -559,6 +559,14 @@ what = "Turns chunk arrivals, PCR and the PTS-domain media position into a targe
 crates_io = true
 lifecycle = "active"
 
+[crate.tshttp-runtime]
+domain = "live"
+summary = "Sans-IO TS-over-HTTP pull session: reconnect/backoff, start and stall timers, demuxed events."
+standards = "none (implementation-defined policy; requirements from the zenith-tv player)"
+what = "Bytes-in/actions-out client session for a live MPEG-TS HTTP stream: Open/Reconnect/Abort actions, start timeout, stall notice and reconnect, 2/4/8 s then 10 s backoff, 404/410 events, demuxing through transmux StreamingTsDemux. Caller-supplied monotonic milliseconds, no I/O, no_std."
+crates_io = false
+lifecycle = "active"
+
 # ------------------------------------------------------------------ internal
 
 [crate.test-alloc]
