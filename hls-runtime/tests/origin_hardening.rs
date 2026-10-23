@@ -21,7 +21,8 @@ use std::time::Duration;
 use broadcast_common::Timestamp;
 use bytes::Bytes;
 use hls_runtime::server::{
-    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginBuildError, HlsRequest,
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsOrigin, HlsOriginBuildError,
+    HlsRequest,
 };
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::ids::{PartIndex, SegmentSeq};
@@ -600,10 +601,10 @@ fn master(origin: &HlsOrigin) -> String {
 fn master_bandwidth_is_the_measured_peak_rounded_up() {
     let (trunk, w) = trunk_with(8, 64);
     let o = origin(&trunk, 4, false);
-    // Before any segment: the documented 5 Mb/s estimate.
+    // Before any segment: no declared bandwidth, so BANDWIDTH is unknown.
     assert_eq!(
-        master(&o),
-        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nmedia.m3u8\n"
+        o.master_playlist("media.m3u8"),
+        Err(HlsMasterError::BandwidthUnknown)
     );
     // 1_500_000 B in 1 s = 12_000_000 b/s; 500_000 B in 2 s = 2_000_000 b/s;
     // 1001 B in 3 s = 8008 / 3 = 2669.33.. b/s (never reached by the peak).
@@ -663,7 +664,13 @@ media.m3u8
 #[test]
 fn a_new_unparseable_init_drops_the_previous_codecs() {
     let (trunk, _w) = trunk_with(8, 64);
-    let o = origin(&trunk, 4, false);
+    let o = HlsOrigin::builder(Arc::clone(&trunk))
+        .target_duration_secs(4.0)
+        .window_segments(nz(4))
+        .declared_bandwidth_bps(5_000_000)
+        .instance(7)
+        .build()
+        .expect("origin builds");
     o.set_init(fixture("init.mp4"));
     assert!(master(&o).contains("CODECS=\"avc1.4D400D,mp4a.40.2\""));
     o.set_init(vec![0xAA; 16]);
@@ -712,8 +719,8 @@ fn unparseable_init_leaves_codecs_out_rather_than_guessing() {
     let o = origin(&trunk, 4, false);
     o.set_init(vec![0xAA; 16]);
     assert_eq!(
-        master(&o),
-        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nmedia.m3u8\n"
+        o.master_playlist("media.m3u8"),
+        Err(HlsMasterError::BandwidthUnknown)
     );
 }
 

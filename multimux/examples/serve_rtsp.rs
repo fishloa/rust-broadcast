@@ -68,6 +68,7 @@ async fn main() {
             },
             outputs,
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         }],
         ..Config::default()
     };

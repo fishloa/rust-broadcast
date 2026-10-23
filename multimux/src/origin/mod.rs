@@ -1549,7 +1549,8 @@ async fn serve_with_registry_impl(
                 // `route.dvr.enabled` is `false` (the default), so wiring it
                 // unconditionally is safe for every existing config.
                 .with_dvr(route.dvr.clone())
-                .with_program_date_time(config.program_date_time),
+                .with_program_date_time(config.program_date_time)
+                .with_declared_bandwidth_bps(route.declared_bandwidth_bps),
         );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
@@ -2355,7 +2356,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn make_state() -> Arc<AppState> {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
         // Issue #805 tasks 3/6: the migrated egress call sites (`dynamic_file`
         // et al.) now resolve through the registry, not a `RouteHandle`-owned
         // `Trunk` directly -- publish this bare-constructed test route's own
@@ -2418,10 +2419,16 @@ mod tests {
     }
 
     fn state_with_stream(name: &str) -> Arc<AppState> {
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             name.to_string(),
-            (Arc::new(RouteHandle::new(4.0, 500, 4)), Vec::new()),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
         );
         Arc::new(AppState::new(streams))
     }
@@ -2553,7 +2560,8 @@ mod tests {
     /// `HealthState` rather than being hardcoded to one status.
     #[tokio::test]
     async fn readyz_200_when_a_route_is_live() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_health(HealthState::Live);
         let mut streams = HashMap::new();
@@ -2593,7 +2601,8 @@ mod tests {
     /// this assertion.
     #[tokio::test]
     async fn http_requests_total_counter_increases_on_requests() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
@@ -3553,7 +3562,8 @@ mod tests {
     /// [`HttpLimits`] via [`AppState::with_limits`], which [`make_state`]
     /// itself doesn't expose).
     fn make_state_streams() -> HashMap<String, StreamRoute> {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
@@ -4099,6 +4109,7 @@ mod tests {
                 },
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -4130,6 +4141,7 @@ mod tests {
                     params: serde_json::Value::Null,
                 }],
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -4158,6 +4170,7 @@ mod tests {
                 },
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             bind: "127.0.0.1:0".into(),
             output_auth: Some(crate::config::OutputAuthSpec::Custom {
@@ -4269,6 +4282,7 @@ mod tests {
                 },
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -4516,6 +4530,7 @@ mod tests {
                 input: spec.clone(),
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
+                declared_bandwidth_bps: None,
             };
             let store = Arc::new(RouteHandle::new(
                 config.target_duration_secs,

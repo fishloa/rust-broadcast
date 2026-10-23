@@ -366,7 +366,8 @@ impl RouteRegistry {
             // `super::serve_with_registry_impl`'s per-route loop; this is
             // the admin-API (`POST /admin/routes`/reload) equivalent.
             .with_dvr(route.dvr.clone())
-            .with_program_date_time(self.ctx.base_config.program_date_time),
+            .with_program_date_time(self.ctx.base_config.program_date_time)
+            .with_declared_bandwidth_bps(route.declared_bandwidth_bps),
         );
         let route_cancel = tokio_util::sync::CancellationToken::new();
         // Spawn the FALLIBLE ingest task first (audit run 7, A2): it is the
@@ -1220,6 +1221,7 @@ mod tests {
             },
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         }
     }
 
@@ -1281,6 +1283,7 @@ mod tests {
             },
             outputs: Vec::new(),
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         };
         let err = registry
             .add_route(bad)

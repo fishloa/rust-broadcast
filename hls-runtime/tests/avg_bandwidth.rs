@@ -136,7 +136,13 @@ fn average_bandwidth_survives_window_eviction() {
 #[test]
 fn average_bandwidth_is_omitted_when_nothing_is_measurable() {
     let (trunk, w) = trunk_with(8);
-    let o = origin(&trunk, 4);
+    let o = HlsOrigin::builder(Arc::clone(&trunk))
+        .target_duration_secs(4.0)
+        .window_segments(nz(4))
+        .instance(7)
+        .declared_bandwidth_bps(5_000_000)
+        .build()
+        .expect("origin builds");
 
     let before = master(&o);
     assert_eq!(

@@ -76,6 +76,7 @@ fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
             input,
             outputs: vec![OutputKind::Smooth],
             dvr: DvrConfig::default(),
+            declared_bandwidth_bps: None,
         }],
         ..Config::default()
     }

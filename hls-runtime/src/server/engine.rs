@@ -197,11 +197,6 @@ impl Default for Container {
     }
 }
 
-/// Placeholder `BANDWIDTH` (bits/second) advertised in a master playlist's
-/// `#EXT-X-STREAM-INF` only while no closed segment exists to measure a real
-/// peak from (and by the context-free [`master_playlist_m3u8`]).
-const PLACEHOLDER_BANDWIDTH_BPS: u64 = 5_000_000;
-
 /// How many superseded init segments stay resolvable by their versioned name
 /// (`init-{track}-{instance}-{generation}.mp4`): segments and playlists that name an
 /// older generation are still cached by players and CDNs for a while after a
@@ -258,10 +253,8 @@ const HOLD_BACK_MULTIPLIER: f64 = 3.0;
 /// `Config::playlist_name`, defaulting to `"media.m3u8"`) — the same
 /// regardless of any stream state (no multi-rendition support yet), so this
 /// takes no `Trunk`/origin argument.
-pub fn master_playlist_m3u8(media_playlist_name: &str) -> String {
-    format!(
-        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={PLACEHOLDER_BANDWIDTH_BPS}\n{media_playlist_name}\n"
-    )
+pub fn master_playlist_m3u8(media_playlist_name: &str, bandwidth_bps: u32) -> String {
+    format!("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth_bps}\n{media_playlist_name}\n")
 }
 
 /// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2) — the
@@ -919,12 +912,21 @@ pub enum HlsOriginBuildError {
         "HlsOrigin::builder(...).media_sequence_offset(...) leaves no room for u32 sequence numbers"
     )]
     MediaSequenceOffsetTooLarge,
+    /// [`HlsOriginBuilder::declared_bandwidth_bps`] was given `0` or a value
+    /// greater than `u32::MAX`.
+    #[error("HlsOrigin::builder(...).declared_bandwidth_bps(...) must be > 0 and <= u32::MAX")]
+    InvalidDeclaredBandwidth,
 }
 
 /// Error returned by [`HlsOrigin::master_playlist`].
 #[derive(Debug, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum HlsMasterError {
+    /// No segment with a measurable duration has been published yet and no
+    /// declared bandwidth was configured, so `BANDWIDTH` cannot be
+    /// determined.
+    #[error("BANDWIDTH unknown: no measured segment and no declared bandwidth")]
+    BandwidthUnknown,
     /// The measured peak segment bitrate does not fit the `u32` `BANDWIDTH`
     /// of a master playlist variant.
     #[error("measured BANDWIDTH {bandwidth} exceeds u32")]
@@ -969,6 +971,7 @@ pub struct HlsOriginBuilder {
     media_sequence_offset: u64,
     instance: Option<u64>,
     arrival_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
+    declared_bandwidth_bps: Option<u64>,
 }
 
 impl HlsOriginBuilder {
@@ -982,6 +985,7 @@ impl HlsOriginBuilder {
             media_sequence_offset: 0,
             instance: None,
             arrival_clock: None,
+            declared_bandwidth_bps: None,
         }
     }
 
@@ -1068,6 +1072,16 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// Operator-declared peak bitrate (bits/second) for this origin's
+    /// variant stream, used as a floor for `BANDWIDTH` in the master
+    /// playlist before any segment with a measurable duration has been
+    /// published (and as a lower bound afterwards). Validated at
+    /// [`Self::build`] (`> 0` and `<= u32::MAX`).
+    pub fn declared_bandwidth_bps(mut self, declared_bandwidth_bps: u64) -> Self {
+        self.declared_bandwidth_bps = Some(declared_bandwidth_bps);
+        self
+    }
+
     /// Build the [`HlsOrigin`], subscribing its one [`SegmentCursor`]
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
@@ -1103,6 +1117,11 @@ impl HlsOriginBuilder {
         {
             return Err(HlsOriginBuildError::MediaSequenceOffsetTooLarge);
         }
+        if let Some(declared) = self.declared_bandwidth_bps
+            && (declared == 0 || declared > u64::from(u32::MAX))
+        {
+            return Err(HlsOriginBuildError::InvalidDeclaredBandwidth);
+        }
         let cursor = self.trunk.subscribe_segments();
         Ok(HlsOrigin {
             trunk: self.trunk,
@@ -1123,6 +1142,7 @@ impl HlsOriginBuilder {
             instance: self.instance.unwrap_or_else(next_instance_token),
             arrival_clock: self.arrival_clock,
             arrival_origin: Mutex::new(None),
+            declared_bandwidth_bps: self.declared_bandwidth_bps,
         })
     }
 }
@@ -1193,6 +1213,9 @@ pub struct HlsOrigin {
     /// Lock order: `window` -> `arrival_origin` (arrival_origin is never
     /// taken before window).
     arrival_origin: Mutex<Option<(u64, i64)>>,
+    /// Operator-declared peak bitrate (see
+    /// [`HlsOriginBuilder::declared_bandwidth_bps`]) — `None` means none.
+    declared_bandwidth_bps: Option<u64>,
 }
 
 impl HlsOrigin {
@@ -1341,13 +1364,14 @@ impl HlsOrigin {
     /// one `#EXT-X-STREAM-INF` whose `BANDWIDTH` is the highest segment
     /// bitrate this origin has published (RFC 8216 §4.3.4.2: an upper bound
     /// of the peak segment bitrate, measured as segment bytes over its
-    /// duration, rounded up) and whose `CODECS` comes from
-    /// [`Self::set_init`]/[`Self::set_track_specs`] (omitted while unknown).
-    /// Until a segment with a measurable duration has closed there is
-    /// nothing to measure and `BANDWIDTH` is the fixed 5 Mb/s estimate
-    /// [`master_playlist_m3u8`] uses.
+    /// duration, rounded up) or the operator-declared bandwidth, whichever is
+    /// larger. Returns [`HlsMasterError::BandwidthUnknown`] until a segment
+    /// with a measurable duration has closed and no declared bandwidth was
+    /// configured.
     ///
     /// # Errors
+    /// [`HlsMasterError::BandwidthUnknown`] when no measurable segment has
+    /// been published and no declared bandwidth was configured;
     /// [`HlsMasterError::BandwidthOverflow`] when the measured `BANDWIDTH`
     /// does not fit the `u32` of a master playlist variant;
     /// [`HlsMasterError::Render`] when the playlist cannot be rendered.
@@ -1385,11 +1409,11 @@ impl HlsOrigin {
                 window.total_duration_nanos,
             )
         };
-        let bandwidth = if measured == 0 {
-            PLACEHOLDER_BANDWIDTH_BPS
-        } else {
-            measured
-        };
+        let declared = self.declared_bandwidth_bps.unwrap_or(0);
+        let bandwidth = measured.max(declared);
+        if bandwidth == 0 {
+            return Err(HlsMasterError::BandwidthUnknown);
+        }
         let bandwidth = u32::try_from(bandwidth)
             .map_err(|_| HlsMasterError::BandwidthOverflow { bandwidth })?;
         let average_bandwidth =
@@ -2638,7 +2662,7 @@ mod tests {
 
     #[test]
     fn master_playlist_has_stream_inf() {
-        let m = master_playlist_m3u8("media.m3u8");
+        let m = master_playlist_m3u8("media.m3u8", 5_000_000);
         assert!(m.contains("#EXTM3U"));
         assert!(m.contains("#EXT-X-STREAM-INF"));
         assert!(m.contains("media.m3u8"));
@@ -2646,7 +2670,7 @@ mod tests {
 
     #[test]
     fn master_playlist_points_at_configured_playlist_name() {
-        let m = master_playlist_m3u8("index.m3u8");
+        let m = master_playlist_m3u8("index.m3u8", 5_000_000);
         assert!(m.contains("index.m3u8"));
         assert!(!m.contains("media.m3u8"));
     }
