@@ -48,6 +48,7 @@ media-plane   = { path = "../media-plane" }
 ttml-subtitle = { path = "../ttml-subtitle" }
 broadcast-loudness = { path = "../broadcast-loudness" }
 buffering-runtime    = { path = "../buffering-runtime" }
+tshttp-runtime       = { path = "../tshttp-runtime" }
 dvb-csa        = { path = "../dvb-csa" }
 dvb-mabr       = { path = "../dvb-mabr" }
 atsc3          = { path = "../atsc3" }
@@ -346,6 +347,12 @@ doc  = false
 [[bin]]
 name = "buffering_runtime"
 path = "fuzz_targets/buffering_runtime.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "tshttp_runtime"
+path = "fuzz_targets/tshttp_runtime.rs"
 test = false
 doc  = false
 
