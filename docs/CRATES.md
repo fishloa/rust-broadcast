@@ -494,7 +494,7 @@ Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer
 - **Cargo description:** Sans-IO live-TS playout buffer controller: measures delivery jitter (RFC 5481 PDV), keeps a stall memory, and decides when a player should start, pause and resume and how deep its buffer must be. Integer-only, no_std + alloc.
 - **Version (in-tree):** 0.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** none
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client)
 - **Links:** [README](../buffering-runtime/README.md) · [CHANGELOG](../buffering-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/buffering-runtime) · [docs.rs](https://docs.rs/buffering-runtime)
 
 #### rtcp-packet
@@ -603,7 +603,7 @@ Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP sou
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
 - **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP source on tshttp-runtime.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 5
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`buffering-runtime`](#buffering-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
 - **Used by (workspace):** none
 - **Links:** [README](../broadcast-client/README.md)
 
@@ -973,6 +973,7 @@ flowchart BT
   atsc3 --> broadcast_common
   atsc3_route --> rmt_flute
   broadcast_client --> broadcast_auth
+  broadcast_client --> buffering_runtime
   broadcast_client --> tshttp_runtime
   broadcast_hls --> broadcast_common
   broadcast_loudness --> broadcast_common

@@ -438,6 +438,7 @@ version = "0.1.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
+ "buffering-runtime",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",

@@ -113,19 +113,31 @@ Basic and Digest; Bearer preemptive; 401 with no credentials waits (no actions f
 AuthRejected; set_credentials resumes; cross-origin redirect drops Authorization; redirect limit; unknown conn
 ignored; close terminal; Debug does not contain the secret; Apple-target `cargo check` in CI.
 
-## BC-2 sketch (not for BC-1)
+## BC-2: Buffer events (buffering-runtime inside the session)
 
-`buffering-runtime::BufferController`: `on_chunk(arrival_us, bytes, pcr)` from `on_data` (+ PCR from
-`DemuxEvent::ClockReference`), `on_track_media` from Samples (withheld before the first video random-access
-point, per its caller contract), `on_tick(now, playback)` from a new player input
-`Session::on_playback_position(now_ms, pts_27mhz)`; its `StartPlaying/Pause/Resume` become `Event::Buffer`.
+Reference for the feeding rules (read-only, authoritative for "match what ships today"):
+`/Volumes/External/Projects/zenith-tv/ZenithMedia/Sources/ZenithMedia/PlayerController.swift`
+(`reportMediaEnds` ~l.955, `videoSample` join handling ~l.735-762, `pump` ~l.960, chunk feed ~l.551,
+`restart` ~l.715) and `LiveBuffer.swift`. The soak baseline was tuned with these rules.
 
-## Finite resources (VOD)
+New API on `Session`:
+- `Event::Buffer(BufferEvent)`, `BufferEvent::{Start{at_27mhz}, Pause{hold_at_27mhz, starving_track: Option<u32>}, Resume{at_27mhz}}`
+  mapped 1:1 from `buffering_runtime::Event::{StartPlaying,Pause,Resume}` (media_27mhz/hold_at_27mhz/track kept; TargetChanged/OverMax/Rebaselined/EventsDropped are not surfaced).
+- `Session::on_playback_position(now_us, Option<u64 /*pts 27 MHz*/>)` -> `BufferController::on_tick`.
+- `Session::set_rendered_tracks(&[TrackId])` (player input: which tracks it renders; default = the first video and the first audio track announced). Registered with the controller via `register_track` (video track key = its TrackId.0, one controller track per rendered TrackId). Changing the set calls `register_track`/`unregister_track` for the difference.
+- `Session::hint(Hint)` passthrough for the player-owned hints: InputDegraded, InputRecovered, SyncLoss, PcrDiscontinuity.
+- `Config::buffer: buffering_runtime::ControllerConfig` (default = the crate default) and `Session::open_with_memory(.., Option<StallMemorySnapshot>)`/`Session::stall_memory() -> StallMemorySnapshot` so memory survives sessions (zenith seeds it today).
 
 A 206 response to our own plain GET is finite too. Redirect/auth layers are unchanged; headers are
 forwarded to tshttp-runtime for finite detection. `Event::Finite` is mapped from tshttp, and
 `Event::Ended` becomes `Status(Ended)`. The session does not reconnect after Ended; `Session::reconnect()`
 restarts the session (attempt 0). Truncated transfers (EOF before all expected bytes) reconnect.
+
+### BC-2 corrections from the player's baseline (zenith-tv review; binding)
+
+- (a) Video media end is NOT the last sample's pts+duration: it is `maxPTS + duration of the current (latest kept) sample`, where `maxPTS` = the max PTS (presentation order) over KEPT video samples seen so far since the join point (B-frames: the last sample in decode order can have a lower PTS). Reference: PlayerController.swift l.759-762 (`lastVideoPTS = max(lastVideoPTS, s.pts)`; `pendingVideoEnd = videoTime(lastVideoPTS + s.duration)`). Only samples from the join point on count; `Drop(_)` and pre-join samples never move it. Reported once per chunk (the latest pending value).
+- (b) Audio media end = max over the RENDERED audio track of (pts + duration), reported only once it is past the video join point's PTS (`end > join_pts`, l.916). When the rendered audio track changes (set_rendered_tracks with a different audio), forget the old track's end and (re)register the new one. Audio samples of non-rendered tracks never count.
+- (c) `Session::rejoin()`: decoder reset / player restart WITHOUT a new timeline: re-arms every video track's `LiveJoin` (`rejoin()`), clears pending ends and maxPTS/join state, does NOT hint `PcrDiscontinuity` and does NOT reset the controller. On a new timeline the player calls `rejoin()` AND `hint(PcrDiscontinuity)`. The session's own automatic PcrDiscontinuity (demuxer `Discontinuity`) does both.
 
 ## BC-3: HLS source (hls-runtime::HlsClient inside the session)
 
@@ -144,3 +156,14 @@ Scope split: **BC-3a** single media playlist and master playlist with the policy
 - Stall handling: no bytes for `Config::ts_http.stall_*` does NOT apply; a request in flight longer than `Config::hls_request_timeout_us` (default 20 s, playlists) / `hls_segment_timeout_us` (default 60 s) is aborted (`Close`) and counts as a failure.
 
 Tests (BC-3a): named test per bullet, using the real fixtures (fixtures/hls/real/bipbop-ts master + `hls-runtime/tests/fixtures/ts-hls` classic TS segments; cmaf-fmp4 fixture for fMP4; master with the policy; VOD ENDLIST => Ended once; backoff table; 404 main playlist vs segment; auth scoping on a cross-origin segment; per-request redirect; bounded body; request timeout; blocking-reload query in the HttpRequest URL; prefetch concurrency table), plus a chunking-invariance test (1-byte, 1316, 64 KiB body chunks give the identical Event sequence) and an oracle test (the session's Sample sequence equals driving a bare HlsClient with the same bodies).
+
+Automatic feeding inside the session (the host does nothing):
+- `on_chunk(arrival_us, bytes, pcr_27mhz)` once per `on_data` call, arrival = the `now_us` passed to `on_data`, pcr = the LAST `DemuxEvent::ClockReference` ticks (27 MHz) observed during that chunk's demux, `None` if none (taken once: cleared after use).
+- `on_track_media(now_us, track, media_end_27mhz)`: once per delivered chunk and rendered track, using the LAST sample of that track demuxed from the chunk: end = (pts + duration) converted to 27 MHz (`pts * 27_000_000 / timescale`). Video samples count only from the JOIN POINT: the first video sample for which the session's per-video-track `transmux::LiveJoin` (`LiveJoin::for_config(&spec.config)`, `push(&sample) -> JoinDecision`, `rejoin()` on timeline restart; `Sample` itself carries no join) returns `JoinDecision::JoinPoint(_)`; video samples before it (`Drop(_)`) are not reported; at the join point report ONE zero-length media end (end = that sample's pts) for the video track BEFORE any other report (the controller takes the first reported position as its start origin). Audio ends are withheld until the video join point exists (when a video track is rendered); a stream with no rendered video reports audio immediately.
+- Hints: `Reconnected` BEFORE feeding the first chunk of every connection after the first; `SourceEnded` on EOF; `SourceError` on a transport error; `PcrDiscontinuity` when the demuxer emits `DemuxEvent::Discontinuity` (timeline restart) AND the join-point/withholding state resets (new timeline = wait for a new join point). The controller is NOT reset on a plain reconnect (it keeps its stall memory).
+- Time unit: the controller takes microseconds; the session clock is already `now_us`.
+- VOD (a `Finite` resource): the controller is not created (no live-edge decisions); `Event::Buffer` is never emitted; pacing is the player's media-clock business.
+
+Tests (BC-2) compare the session against a bare `BufferController` oracle fed the same inputs by the test, and use the real TF1 capture (`zenith-http/tf1-live.ts`, 1316-byte chunks, synthetic arrival schedule steady 100 ms/chunk, then a 3 s gap, then steady).
+
+`Event::Sample` gains `join: Option<transmux::JoinDecision>` (Some for video samples of a track that has a `LiveJoin`, None otherwise), so the player drops `Drop(_)` samples itself exactly as it does today; the session still emits them (it never drops samples). Reported as a breaking field addition to `Event::Sample` (BC-1 is not yet consumed by any player).

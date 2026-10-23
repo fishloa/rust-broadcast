@@ -20,6 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common  = { path = "../broadcast-common", version = "10.0", default-features = false }
 broadcast-auth     = { path = "../broadcast-auth", version = "0.5" }
 transmux           = { path = "../transmux", version = "0.27", default-features = false }
+buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-features = false }
 tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
 url                = "2"
 thiserror          = "2"
@@ -27,13 +28,21 @@ serde              = { version = "1", default-features = false, optional = true,
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+buffering-runtime = { path = "../buffering-runtime", version = "0.1" }
+transmux = { path = "../transmux", version = "0.27" }
 broadcast-auth = { path = "../broadcast-auth", version = "0.5" }
 url = "2"
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "transmux/std", "tshttp-runtime/std", "serde?/std"]
-serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde"]
+std = ["broadcast-common/std", "transmux/std", "tshttp-runtime/std", "buffering-runtime/std", "serde?/std"]
+serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
+
+test-seams = []
+
+[[test]]
+name = "buffer"
+required-features = ["test-seams"]
 
 [[example]]
 name = "live_loop"
