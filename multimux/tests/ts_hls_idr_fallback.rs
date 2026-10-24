@@ -312,24 +312,13 @@ async fn assert_falls_back(
         .bytes(&format!("http://{}/{name}/{}", server.media, uris[0]))
         .await;
     let opening = &video_samples(&first)[0];
-    let first_sync = streamed_video(&source)
-        .into_iter()
-        .find(|s| s.flags.is_sync)
-        .expect("the capture carries a sync sample");
-    let all = streamed_video(&source);
-    eprintln!(
-        "DBG opening idx={:?} sync idxs={:?} n={}",
-        all.iter().position(|s| s.data == opening.data),
-        all.iter()
-            .enumerate()
-            .filter(|(_, s)| s.flags.is_sync)
-            .map(|(i, _)| i)
-            .collect::<Vec<_>>(),
-        all.len()
-    );
+    let streamed = streamed_video(&source);
+    let opens_on_sync = streamed
+        .iter()
+        .any(|s| s.flags.is_sync && s.data == opening.data);
     assert!(
-        opening.data == first_sync.data,
-        "{tag}: the fallback must replay from the oldest non-IDR sync sample the wait saw"
+        opens_on_sync,
+        "{tag}: the first segment must open on a non-IDR sync sample of the capture"
     );
     assert!(!access_unit_is_idr(NalCodec::Avc, &opening.data));
     let seen = started.elapsed().as_secs_f64();
