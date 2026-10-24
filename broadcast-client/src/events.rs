@@ -492,6 +492,18 @@ pub const DEFAULT_HLS_BACKOFF_CAP_MS: u64 = 10_000;
 /// Default cap on simultaneously outstanding HLS segment and part requests, see
 /// [`Config::hls_max_inflight_segments`].
 pub const DEFAULT_HLS_MAX_INFLIGHT_SEGMENTS: usize = 4;
+/// Default cap on input bytes the initial-tracks hold may buffer, see
+/// [`Config::tracks_hold_max_input_bytes`].
+pub const DEFAULT_TRACKS_HOLD_MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
+/// Default cap on media time the initial-tracks hold may buffer, microseconds, see
+/// [`Config::tracks_hold_max_media_us`].
+pub const DEFAULT_TRACKS_HOLD_MAX_MEDIA_US: u64 = 3_000_000;
+/// Default cap on session-clock time the initial-tracks hold may last, microseconds, see
+/// [`Config::tracks_hold_max_wall_us`].
+pub const DEFAULT_TRACKS_HOLD_MAX_WALL_US: u64 = 3_000_000;
+/// Default input bytes without a stream resolving after which the initial-tracks hold gives up,
+/// see [`Config::tracks_hold_quiet_input_bytes`].
+pub const DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES: usize = 512 * 1024;
 /// Default cap on events queued for the host, see [`Config::max_queued_events`].
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 
@@ -560,11 +572,41 @@ pub struct Config {
     /// sample of the new timeline and re-arms the join, buffering and playout state as a
     /// demuxer discontinuity does (see [`crate::TimelineJumpConfig`]). Applies to every source.
     pub timeline_jump: Option<crate::timeline::TimelineJumpConfig>,
+    /// Live TS-over-HTTP: the first media of each connection is held behind one
+    /// [`Event::Tracks`] listing every PMT-declared stream until all have resolved or a hold
+    /// limit is reached. This is the most input bytes held; must be at least
+    /// [`Config::tracks_hold_quiet_input_bytes`].
+    pub tracks_hold_max_input_bytes: usize,
+    /// Live TS-over-HTTP hold: input bytes without any further stream resolving after which the
+    /// hold gives up on the streams still unresolved. Must be non-zero.
+    pub tracks_hold_quiet_input_bytes: usize,
+    /// Live TS-over-HTTP hold: most media time held (the largest per-track pts span),
+    /// microseconds. `0` disables the hold: tracks are announced as each stream resolves.
+    pub tracks_hold_max_media_us: u64,
+    /// Live TS-over-HTTP hold: longest the hold may last on the caller's microsecond clock.
+    /// `0` disables the hold: tracks are announced as each stream resolves. A low-latency
+    /// host whose first frame must land early lowers this (a stream whose declared PID never
+    /// sends is released after this long at most).
+    pub tracks_hold_max_wall_us: u64,
 }
 
 const MIN_BACKOFF_MS: u64 = 1;
 
 impl Config {
+    pub(crate) fn validate_tracks_hold(&self) -> Result<(), crate::Error> {
+        if self.tracks_hold_quiet_input_bytes == 0 {
+            return Err(crate::Error::InvalidConfig {
+                field: "tracks_hold_quiet_input_bytes",
+            });
+        }
+        if self.tracks_hold_max_input_bytes < self.tracks_hold_quiet_input_bytes {
+            return Err(crate::Error::InvalidConfig {
+                field: "tracks_hold_max_input_bytes",
+            });
+        }
+        Ok(())
+    }
+
     /// The HLS retry schedule with every entry and the cap raised to at least one millisecond,
     /// so a zero never produces an unbounded burst of retries at one instant.
     pub(crate) fn hls_backoff(&self) -> (Vec<u64>, u64) {
@@ -603,6 +645,10 @@ impl Default for Config {
             auto_select_audio: true,
             max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
             timeline_jump: Some(crate::timeline::TimelineJumpConfig::default()),
+            tracks_hold_max_input_bytes: DEFAULT_TRACKS_HOLD_MAX_INPUT_BYTES,
+            tracks_hold_quiet_input_bytes: DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES,
+            tracks_hold_max_media_us: DEFAULT_TRACKS_HOLD_MAX_MEDIA_US,
+            tracks_hold_max_wall_us: DEFAULT_TRACKS_HOLD_MAX_WALL_US,
         }
     }
 }
@@ -633,6 +679,16 @@ impl core::fmt::Debug for Config {
             .field("auto_select_audio", &self.auto_select_audio)
             .field("max_queued_events", &self.max_queued_events)
             .field("timeline_jump", &self.timeline_jump)
+            .field(
+                "tracks_hold_max_input_bytes",
+                &self.tracks_hold_max_input_bytes,
+            )
+            .field(
+                "tracks_hold_quiet_input_bytes",
+                &self.tracks_hold_quiet_input_bytes,
+            )
+            .field("tracks_hold_max_media_us", &self.tracks_hold_max_media_us)
+            .field("tracks_hold_max_wall_us", &self.tracks_hold_max_wall_us)
             .finish()
     }
 }

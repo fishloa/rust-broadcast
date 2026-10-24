@@ -11,7 +11,7 @@ use tshttp_runtime::{Config as TsConfig, TsHttpClient};
 
 use mpeg_ts::pid::Pid;
 
-use crate::source::ts_http_hold::{DeclaredStreams, HOLD_MAX_WALL_US, limit_reached};
+use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits};
 use crate::{Event, Status};
 
 pub(crate) type Item = Option<Event>;
@@ -53,6 +53,7 @@ pub struct TsHttpSource {
     resolved: BTreeSet<Pid>,
     hold: Option<HoldState>,
     held: VecDeque<Item>,
+    hold_limits: HoldLimits,
 }
 
 impl TsHttpSource {
@@ -76,7 +77,13 @@ impl TsHttpSource {
             resolved: BTreeSet::new(),
             hold: None,
             held: VecDeque::new(),
+            hold_limits: HoldLimits::from_config(&crate::events::Config::default()),
         }
+    }
+
+    pub(crate) fn with_hold_limits(mut self, limits: HoldLimits) -> Self {
+        self.hold_limits = limits;
+        self
     }
 
     /// Request URL.
@@ -113,7 +120,7 @@ impl TsHttpSource {
         let hold = self
             .hold
             .as_ref()
-            .map(|h| h.started_us.saturating_add(HOLD_MAX_WALL_US));
+            .map(|h| h.started_us.saturating_add(self.hold_limits.max_wall_us));
         match (ts, hold) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -194,7 +201,7 @@ impl TsHttpSource {
     }
 
     fn start_hold_if_unresolved(&mut self) {
-        if self.hold.is_some() || self.conn_seen_first_sample {
+        if self.hold.is_some() || self.conn_seen_first_sample || self.hold_limits.disabled() {
             return;
         }
         if self
@@ -216,7 +223,7 @@ impl TsHttpSource {
         let Some(h) = self.hold.as_ref() else {
             return;
         };
-        let due = limit_reached(
+        let due = self.hold_limits.reached(
             h.bytes,
             h.quiet_bytes,
             h.span_us,

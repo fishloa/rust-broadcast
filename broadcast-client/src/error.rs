@@ -38,6 +38,12 @@ pub enum Error {
         /// The offending header (or cookie) name.
         name: String,
     },
+    /// A [`crate::Config`] field holds a value no session can run with.
+    #[error("invalid config: {field}")]
+    InvalidConfig {
+        /// The offending field name.
+        field: &'static str,
+    },
 }
 
 /// Transport error passed to [`crate::Session::on_closed`].
