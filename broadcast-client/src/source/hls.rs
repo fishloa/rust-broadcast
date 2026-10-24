@@ -36,6 +36,10 @@ const METHOD_GET: &str = "GET";
 const FIRST_CONN_ID: u32 = 1;
 const ENCRYPTED_SAMPLE_ENTRIES: [&str; 2] = ["encv", "enca"];
 const UNNAMED_TRACK_ID: u32 = 0;
+const FIELD_MAX_PLAYLIST_BYTES: &str = "max_playlist_bytes";
+const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
+const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
+const REASON_DAMAGED_FRAGMENT: &str = "damaged_fragment";
 const DEADLINE_SLACK_FACTOR: usize = 4;
 const DEADLINE_SLACK_FLOOR: usize = 64;
 
@@ -170,6 +174,8 @@ pub(crate) struct HlsSource {
     dropped_reported: BTreeSet<TrackId>,
     skipped_reported: BTreeSet<(Option<u32>, String)>,
     skipped_kind: Option<ErrorKind>,
+    damaged_reported: bool,
+    oversize_reported: BTreeSet<&'static str>,
     playlist_timeout_us: u64,
     segment_timeout_us: u64,
     backoff_ms: Vec<u64>,
@@ -216,6 +222,8 @@ impl HlsSource {
             dropped_reported: BTreeSet::new(),
             skipped_reported: BTreeSet::new(),
             skipped_kind: None,
+            damaged_reported: false,
+            oversize_reported: BTreeSet::new(),
             playlist_timeout_us: config.hls_request_timeout_us,
             segment_timeout_us: config.hls_segment_timeout_us,
             backoff_ms,
@@ -426,12 +434,20 @@ impl HlsSource {
         if !req.responded_ok || bytes.is_empty() {
             return;
         }
-        let limit = match req.purpose {
-            Purpose::Playlist => self.max_playlist_bytes,
-            Purpose::Resource(_) => self.max_segment_bytes,
-            Purpose::Key(_) => self.max_key_bytes,
+        let (limit, field) = match req.purpose {
+            Purpose::Playlist => (self.max_playlist_bytes, Some(FIELD_MAX_PLAYLIST_BYTES)),
+            Purpose::Resource(_) => (self.max_segment_bytes, Some(FIELD_MAX_SEGMENT_BYTES)),
+            Purpose::Key(_) => (self.max_key_bytes, None),
         };
         if req.body.len().saturating_add(bytes.len()) > limit {
+            if let Some(field) = field
+                && self.oversize_reported.insert(field)
+            {
+                self.events.push_back(Event::Error {
+                    kind: ErrorKind::BodyTooLarge { field },
+                    fatal: false,
+                });
+            }
             if let Some(req) = self.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
                 self.fail(req, now);
@@ -1026,6 +1042,17 @@ impl HlsSource {
                         self.events.push_back(Event::Error { kind, fatal: false });
                     }
                 }
+                Output::FragmentDamaged { .. } => {
+                    if !self.damaged_reported {
+                        self.damaged_reported = true;
+                        self.events.push_back(Event::Error {
+                            kind: ErrorKind::UnsupportedContainer {
+                                reason: REASON_DAMAGED_FRAGMENT,
+                            },
+                            fatal: false,
+                        });
+                    }
+                }
                 Output::Discontinuity => self.events.push_back(Event::Discontinuity),
                 Output::EndOfStream => self.events.push_back(Event::Status(Status::Ended)),
                 _ => {}
@@ -1064,6 +1091,12 @@ fn content_range_is(headers: &[(String, String)], start: u64, len: u64) -> bool 
 
 fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
     match error {
+        CoreError::NotFragmented { .. } => Some((
+            ErrorKind::UnsupportedContainer {
+                reason: REASON_NON_FRAGMENTED_MP4,
+            },
+            true,
+        )),
         CoreError::DecryptFailed { .. } => Some((ErrorKind::DecryptFailed, false)),
         CoreError::BadKeyLength { .. } => Some((ErrorKind::BadKey, false)),
         CoreError::UnsupportedEncryption { method, .. } => Some((

@@ -12,7 +12,7 @@ use broadcast_hls::{
     OpenSegment, PreloadHintType,
 };
 use transmux::sample_aes::{BLOCK_LEN, KEY_LEN, aes128_decrypt_segment};
-use transmux::{DemuxEvent, Fmp4Demux, Sample, StreamingTsDemux, TrackSpec};
+use transmux::{DemuxEvent, Fmp4Demux, InputDegradation, Sample, StreamingTsDemux, TrackSpec};
 
 use super::action::{Action, BlockingReload, KeyId, ResourceId};
 use super::error::{Error, Result};
@@ -52,6 +52,10 @@ const MILLIS_PER_SECOND: u64 = 1000;
 /// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
 /// parsed in: the lowest version that allows `EXT-X-MAP` without
 /// `EXT-X-I-FRAMES-ONLY` (RFC 8216 §4.4.4.5).
+/// `moov`, `moof` (ISO/IEC 14496-12 §8.2.1, §8.8.4).
+const MOVIE_BOX: [u8; 4] = *b"moov";
+const MOVIE_FRAGMENT_BOX: [u8; 4] = *b"moof";
+
 const MAP_PROBE_VERSION: u32 = 6;
 
 /// [`StreamingTsDemux`] with a `Debug` impl (the transmux type has none), so
@@ -112,6 +116,21 @@ fn keys_at_maps(text: &str) -> Vec<(MapTag, Option<MediaKey>)> {
         }
     }
     out
+}
+
+/// `true` when `bytes` holds a `moov` but no `moof`: a progressive MP4, not a
+/// media segment of fragmented MP4.
+fn is_progressive_movie(bytes: &[u8]) -> bool {
+    let mut movie = false;
+    for step in transmux::box_iter(bytes) {
+        let Ok((boxed, _)) = step else { break };
+        match boxed.header.box_type.0 {
+            MOVIE_FRAGMENT_BOX => return false,
+            MOVIE_BOX => movie = true,
+            _ => {}
+        }
+    }
+    movie
 }
 
 /// `uri` up to its query string: a CDN that re-signs a segment URL on every
@@ -1808,6 +1827,9 @@ impl HlsClient {
             .get(&slot)
             .and_then(|s| s.bytes.as_ref())
             .ok_or(Error::InitNotYetAvailable { id })?;
+        if is_progressive_movie(bytes) {
+            return Err(Error::NotFragmented { id });
+        }
         let mut combined = Vec::with_capacity(init.len() + bytes.len());
         combined.extend_from_slice(init);
         combined.extend_from_slice(bytes);
@@ -1815,6 +1837,17 @@ impl HlsClient {
         let media = demux
             .unpackage(combined.as_slice())
             .map_err(|source| Error::Demux { id, source })?;
+        let damaged = media
+            .degraded
+            .iter()
+            .filter(|d| matches!(d, InputDegradation::MalformedUnit { .. }))
+            .count();
+        if damaged > 0 {
+            self.pending_outputs.push_back(Output::FragmentDamaged {
+                id,
+                skipped: damaged,
+            });
+        }
         for skipped in &media.skipped {
             let key = (skipped.track_id.map(TrackId::value), skipped.fourcc.clone());
             let first = self

@@ -150,6 +150,18 @@ pub enum Output {
         /// The demuxer's reason.
         reason: String,
     },
+    /// The demuxer skipped one or more `moof` fragments of a Part/Segment
+    /// resource — unparsable, or addressing sample data outside the resource
+    /// (an absolute `tfhd` base-data-offset, which only holds when the
+    /// segment sits at that offset of the whole file; CMAF uses
+    /// default-base-is-moof). The samples of the other fragments are still
+    /// emitted; those of the skipped ones are lost.
+    FragmentDamaged {
+        /// The resource that held the skipped fragments.
+        id: crate::client::ResourceId,
+        /// How many fragments (or per-track fragment runs) were skipped.
+        skipped: usize,
+    },
     /// A master (multivariant) playlist was parsed and a variant selected.
     /// The caller may inspect [`MasterSelection`] and, for renditions with a
     /// `url`, create a second client via `HlsClient::new(rendition.url)`.

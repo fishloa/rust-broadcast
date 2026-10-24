@@ -52,6 +52,15 @@ pub enum Error {
         source: transmux::Error,
     },
 
+    /// A segment of an fMP4 playlist is a progressive movie (`moov`, no
+    /// `moof`): HLS fMP4 segments carry movie fragments (RFC 8216 §3.3), so no
+    /// sample can be taken from it.
+    #[error("resource {id:?} is a non-fragmented MP4: HLS fMP4 segments carry movie fragments")]
+    NotFragmented {
+        /// The id whose bytes are a progressive MP4.
+        id: super::action::ResourceId,
+    },
+
     /// A playlist URI (segment/part/map/rendition-report) could not be
     /// resolved against the playlist's own URL.
     #[error("could not resolve URI {uri:?} against base {base:?}: {reason}")]
