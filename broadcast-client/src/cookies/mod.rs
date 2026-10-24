@@ -225,6 +225,8 @@ fn has_prefix(name: &str, prefix: &str) -> bool {
 }
 
 #[cfg(test)]
+mod clock;
+#[cfg(test)]
 mod differential;
 #[cfg(test)]
 mod legacy;
