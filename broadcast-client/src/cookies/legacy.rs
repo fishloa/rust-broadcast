@@ -49,26 +49,6 @@ impl CookieJar {
         }
     }
 
-    pub(super) fn seed(&mut self, pairs: &[(String, String)]) {
-        let https = matches!(&self.origin, Origin::Tuple(scheme, _, _) if scheme == HTTPS);
-        for (name, value) in pairs {
-            if name.len().saturating_add(value.len()) > MAX_COOKIE_BYTES {
-                continue;
-            }
-            let prefixed = has_prefix(name, SECURE_PREFIX) || has_prefix(name, HOST_PREFIX);
-            if prefixed && !https {
-                continue;
-            }
-            self.insert(Stored {
-                name: name.clone(),
-                value: value.clone(),
-                path: ROOT_PATH.to_string(),
-                secure: prefixed,
-                expires_us: None,
-            });
-        }
-    }
-
     pub(super) fn receive(&mut self, url: &Url, headers: &[(String, String)], now_us: u64) {
         if url.origin() != self.origin {
             return;
@@ -187,14 +167,6 @@ impl CookieJar {
             header.push_str(&pair);
         }
         (!header.is_empty()).then_some(header)
-    }
-
-    pub(super) fn export(&self, now_us: u64) -> Vec<(String, String)> {
-        self.cookies
-            .iter()
-            .filter(|c| !c.is_expired(now_us))
-            .map(|c| (c.name.clone(), c.value.clone()))
-            .collect()
     }
 }
 

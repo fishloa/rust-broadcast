@@ -1,5 +1,4 @@
 use alloc::string::ToString;
-use alloc::vec;
 
 use url::Url;
 
@@ -14,11 +13,7 @@ const FUTURE_EXPIRES: &str = "Expires=Fri, 01 Jan 2100 00:00:00 GMT";
 fn jar_with(line: &str, base: u64) -> (CookieJar, Url) {
     let url = Url::parse("http://example.com/").unwrap();
     let mut jar = CookieJar::new(&url);
-    jar.receive(
-        &url,
-        &vec![("Set-Cookie".to_string(), line.to_string())],
-        base,
-    );
+    jar.receive(&url, &[("Set-Cookie".to_string(), line.to_string())], base);
     (jar, url)
 }
 
@@ -67,7 +62,7 @@ fn max_age_zero_deletes_at_any_base() {
         let (mut jar, url) = jar_with("a=1", base);
         jar.receive(
             &url,
-            &vec![("Set-Cookie".to_string(), "a=1; Max-Age=0".to_string())],
+            &[("Set-Cookie".to_string(), "a=1; Max-Age=0".to_string())],
             base,
         );
         assert_eq!(jar.header_for(&url, base), None, "base {base}");
