@@ -939,6 +939,28 @@ mod tests {
     }
 
     #[test]
+    fn av1_and_vp9_tracks_are_default_rendered_video() {
+        use transmux::Fmp4Demux;
+        for fixture in ["mp4/frag/av1.frag.mp4", "mp4/frag/vp9.frag.mp4"] {
+            let data = test_fixtures::read(fixture);
+            let media = Fmp4Demux::new().unpackage(&data[..]).unwrap();
+            let video = media
+                .tracks
+                .iter()
+                .find(|t| t.spec.config.is_video())
+                .unwrap();
+            let mut f = feeder();
+            f.on_track_added(&video.spec);
+            assert_eq!(
+                f.default_rendered(),
+                (Some(video.spec.track_id), None),
+                "{fixture}"
+            );
+            assert!(f.rendered.contains(&video.spec.track_id));
+        }
+    }
+
+    #[test]
     fn a_new_connection_clears_the_finite_flag() {
         let mut f = feeder();
         f.set_finite();

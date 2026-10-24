@@ -65,3 +65,89 @@ impl VideoJoin {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::Unpackage;
+    use transmux::{Fmp4Demux, Track};
+
+    fn video_track(fixture: &str) -> Track {
+        let data = test_fixtures::read(fixture);
+        let media = Fmp4Demux::new().unpackage(&data[..]).unwrap();
+        media
+            .tracks
+            .into_iter()
+            .find(|t| t.spec.config.is_video())
+            .unwrap()
+    }
+
+    fn assert_syncs_join(fixture: &str) {
+        let track = video_track(fixture);
+        let mut join = VideoJoin::for_config(&track.spec.config).expect("a video join");
+        assert!(matches!(join, VideoJoin::Sync(_)));
+        assert!(
+            track.samples.iter().filter(|s| s.flags.is_sync).count() >= 1,
+            "fixture has no sync sample"
+        );
+        let decisions: Vec<JoinDecision> = track.samples.iter().map(|s| join.push(s)).collect();
+        let first_kept = decisions.iter().position(JoinDecision::is_keep).unwrap();
+        assert!(track.samples[first_kept].flags.is_sync);
+        assert!(matches!(decisions[first_kept], JoinDecision::JoinPoint(_)));
+        assert!(
+            decisions[..first_kept]
+                .iter()
+                .all(|d| matches!(d, JoinDecision::Drop(DropReason::BeforeRandomAccessPoint)))
+        );
+        let joins = decisions
+            .iter()
+            .filter(|d| matches!(d, JoinDecision::JoinPoint(_)))
+            .count();
+        assert_eq!(joins, 1);
+        assert!(
+            decisions[first_kept + 1..]
+                .iter()
+                .all(|d| matches!(d, JoinDecision::Keep | JoinDecision::Drop(DropReason::LeadingPicture)))
+        );
+    }
+
+    #[test]
+    fn av1_joins_at_its_first_sync_sample() {
+        assert_syncs_join("mp4/frag/av1.frag.mp4");
+    }
+
+    #[test]
+    fn vp9_joins_at_its_first_sync_sample() {
+        assert_syncs_join("mp4/frag/vp9.frag.mp4");
+    }
+
+    #[test]
+    fn a_sync_join_waits_for_the_next_sync_sample_after_rejoin() {
+        let track = video_track("mp4/frag/vp9.frag.mp4");
+        let mut join = VideoJoin::for_config(&track.spec.config).unwrap();
+        let sync = track.samples.iter().find(|s| s.flags.is_sync).unwrap();
+        let plain = track.samples.iter().find(|s| !s.flags.is_sync).unwrap();
+        assert!(matches!(join.push(sync), JoinDecision::JoinPoint(_)));
+        join.rejoin();
+        assert_eq!(
+            join.push(plain),
+            JoinDecision::Drop(DropReason::BeforeRandomAccessPoint)
+        );
+        assert!(matches!(join.push(sync), JoinDecision::JoinPoint(_)));
+    }
+
+    #[test]
+    fn avc_keeps_the_nal_aware_join() {
+        let data = test_fixtures::read("ts/h264_aac.ts");
+        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let video = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.config.is_video())
+            .unwrap();
+        assert!(matches!(
+            VideoJoin::for_config(&video.spec.config),
+            Some(VideoJoin::Nal(_))
+        ));
+    }
+}
