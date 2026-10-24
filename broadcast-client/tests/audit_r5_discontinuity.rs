@@ -42,10 +42,10 @@ fn split_at_pat(b: &[u8], n: usize) -> Vec<Vec<u8>> {
     let mut cuts = vec![0usize];
     for k in 1..n {
         let target = pk * k / n;
-        if let Some(&c) = pats.iter().min_by_key(|&&c| c.abs_diff(target)) {
-            if c > *cuts.last().unwrap() {
-                cuts.push(c);
-            }
+        if let Some(&c) = pats.iter().min_by_key(|&&c| c.abs_diff(target))
+            && c > *cuts.last().unwrap()
+        {
+            cuts.push(c);
         }
     }
     cuts.push(pk);
