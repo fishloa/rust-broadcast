@@ -1261,7 +1261,10 @@ pub async fn run_dash_pull(
             if driver.session().ended() {
                 driver.finish();
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
-                return terminal_result(driver, "dash-pull");
+                return crate::source::finish_vod(
+                    route_handle,
+                    terminal_result(driver, "dash-pull"),
+                );
             }
             // A session deadline (a live MPD refresh, a segment's planned
             // window) is the source's own, not a fetch wait, so it stays
@@ -1349,13 +1352,13 @@ pub async fn run_dash_pull(
             // already terminal here, so this call's internal terminal-health
             // check flushes every program's trailing partial segment.
             crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return terminal_result(driver, "dash-pull");
+            return crate::source::finish_vod(route_handle, terminal_result(driver, "dash-pull"));
         }
 
         if driver.session().ended() {
             driver.finish();
             crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return terminal_result(driver, "dash-pull");
+            return crate::source::finish_vod(route_handle, terminal_result(driver, "dash-pull"));
         }
     }
 }

@@ -67,7 +67,7 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::output::Output;
 use crate::registry::{AuthCtx, InputCtx, OutputCtx, SchemeRegistry};
-use crate::route::{HealthState, RouteHandle};
+use crate::route::RouteHandle;
 use supervisor::Backoff;
 
 /// Realm advertised by the shared output-auth `Verifier`'s Basic/Digest
@@ -1057,7 +1057,7 @@ async fn healthz() -> StatusCode {
 }
 
 /// `GET /readyz` — readiness: `200 OK` once **at least one** configured
-/// route's [`HealthState`] is `Live`, `503 Service Unavailable` otherwise
+/// route's [`HealthState`](crate::route::HealthState) is serving (`Live`, or `Ended` with its media retained), `503 Service Unavailable` otherwise
 /// (including before any route has ever connected, and if every route is
 /// currently down). Chosen policy: an origin serving several streams has
 /// *something* playable to offer as soon as any one of them is live, so a
@@ -1069,7 +1069,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> Response {
     let any_live = state
         .streams
         .values()
-        .any(|(store, _)| store.health() == HealthState::Live);
+        .any(|(store, _)| store.health().is_serving());
     if any_live {
         StatusCode::OK.into_response()
     } else {
@@ -2072,7 +2072,7 @@ fn spawn_ingest(
             let route_cfg = crate::source::hls_pull::HlsPullRoute::new(name, url.clone())
                 .with_timeouts(timeouts)
                 .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised(
+            spawn_supervised_pull(
                 route_cfg,
                 ctx,
                 |cfg, trunk_config, handshake, handle, _cancel| async move {
@@ -2085,7 +2085,7 @@ fn spawn_ingest(
             let route_cfg = crate::source::dash_pull::DashPullRoute::new(name, url.clone())
                 .with_timeouts(timeouts)
                 .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised(
+            spawn_supervised_pull(
                 route_cfg,
                 ctx,
                 |cfg, trunk_config, handshake, handle, _cancel| async move {
@@ -2098,7 +2098,7 @@ fn spawn_ingest(
             let route_cfg = crate::source::smooth_pull::SmoothPullRoute::new(name, url.clone())
                 .with_timeouts(timeouts)
                 .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised(
+            spawn_supervised_pull(
                 route_cfg,
                 ctx,
                 |cfg, trunk_config, handshake, handle, _cancel| async move {
@@ -2293,6 +2293,51 @@ where
         + 'static,
     Fut: std::future::Future<Output = crate::Result<()>> + Send + 'static,
 {
+    spawn_supervised_with(crate::source::driver_trunk_config, route_cfg, ctx, run)
+}
+
+/// [`spawn_supervised`] for a segment-pulling input, whose `Trunk` needs a
+/// timed ring deep enough for one fetched segment.
+fn spawn_supervised_pull<R, F, Fut>(
+    route_cfg: R,
+    ctx: IngestSpawn,
+    run: F,
+) -> tokio::task::JoinHandle<()>
+where
+    R: Send + Sync + 'static,
+    F: Fn(
+            Arc<R>,
+            media_plane::trunk::TrunkConfig,
+            media_plane::ingress::HandshakePolicy,
+            Arc<RouteHandle>,
+            tokio_util::sync::CancellationToken,
+        ) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<Output = crate::Result<()>> + Send + 'static,
+{
+    spawn_supervised_with(crate::source::pull_trunk_config, route_cfg, ctx, run)
+}
+
+fn spawn_supervised_with<R, F, Fut>(
+    trunk_config_for: fn(usize) -> media_plane::trunk::TrunkConfig,
+    route_cfg: R,
+    ctx: IngestSpawn,
+    run: F,
+) -> tokio::task::JoinHandle<()>
+where
+    R: Send + Sync + 'static,
+    F: Fn(
+            Arc<R>,
+            media_plane::trunk::TrunkConfig,
+            media_plane::ingress::HandshakePolicy,
+            Arc<RouteHandle>,
+            tokio_util::sync::CancellationToken,
+        ) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<Output = crate::Result<()>> + Send + 'static,
+{
     let IngestSpawn {
         name,
         store,
@@ -2305,7 +2350,7 @@ where
     tokio::spawn(supervisor::supervise_driver(
         move |route_handle| {
             let cancel_for_run = cancel_for_run.clone();
-            let trunk_config = crate::source::driver_trunk_config(window_segments);
+            let trunk_config = trunk_config_for(window_segments);
             let handshake = crate::source::handshake_policy(timeouts.connect);
             run(
                 Arc::clone(&route_cfg),
@@ -2353,6 +2398,7 @@ mod tests {
     use super::*;
     use crate::dvr::DvrConfig;
     use crate::output::llhls::LlHlsOutput;
+    use crate::route::HealthState;
     use crate::route::RouteHandle;
     use tower::ServiceExt;
 
@@ -2568,6 +2614,28 @@ mod tests {
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
+        );
+        let app = router(Arc::new(AppState::new(streams)));
+        let resp = app.oneshot(get("/readyz")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// A finished (`Ended`) route still serves its retained media, so
+    /// `/readyz` reports it ready.
+    ///
+    /// Revert-check: comparing `health() == Live` in `readyz` fails this.
+    #[tokio::test]
+    async fn readyz_200_when_a_route_has_ended_but_is_still_served() {
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_health(HealthState::Ended);
+        let mut streams = HashMap::new();
+        streams.insert(
+            "vod".to_string(),
             (
                 store,
                 vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],

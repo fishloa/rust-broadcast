@@ -1231,7 +1231,10 @@ pub async fn run_smooth_pull(
             if driver.session().ended() {
                 driver.finish();
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
-                return terminal_result(driver, "smooth-pull");
+                return crate::source::finish_vod(
+                    route_handle,
+                    terminal_result(driver, "smooth-pull"),
+                );
             }
             // A session deadline is the source's own (see `dash_pull`'s
             // identical arm); with none, park briefly via the scheduler.
@@ -1317,13 +1320,13 @@ pub async fn run_smooth_pull(
             // already terminal here, so this call's internal terminal-health
             // check flushes every program's trailing partial segment.
             crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return terminal_result(driver, "smooth-pull");
+            return crate::source::finish_vod(route_handle, terminal_result(driver, "smooth-pull"));
         }
 
         if driver.session().ended() {
             driver.finish();
             crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return terminal_result(driver, "smooth-pull");
+            return crate::source::finish_vod(route_handle, terminal_result(driver, "smooth-pull"));
         }
     }
 }

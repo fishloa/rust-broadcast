@@ -29,7 +29,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        668,
+        680,
         "spawn_blocking DVR persist; awaited inline",
     ),
     ("dvr.rs", 597, "spawn_blocking DVR write; awaited inline"),
@@ -161,7 +161,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        2305,
+        2350,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
