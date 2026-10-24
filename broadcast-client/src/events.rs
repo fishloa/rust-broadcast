@@ -98,8 +98,9 @@ broadcast_common::impl_spec_display!(Status);
 /// player must set before it plays (its position in `Session::on_playback_position` uses the
 /// same domain). A timeline whose first kept sample has a negative time stamp (a jump whose
 /// unrolled timestamps go below zero) cannot be expressed in `u64`: its positions are measured from
-/// that first kept sample, so `0` is that sample. Live TS-over-HTTP produces no buffer event
-/// unless the host calls `Session::on_playback_position` every display tick; a demuxer-level
+/// that first kept sample, so `0` is that sample. Live TS-over-HTTP decides `Start` inside
+/// `Session::on_playback_position`: a host that never calls it gets no buffer event, and one that
+/// calls it less often than every display tick gets `Start` later, not never; a demuxer-level
 /// discontinuity (PCR discontinuity flag, re-anchor) is invisible to the host except through
 /// these events, whose `at_27mhz` may then jump.
 #[non_exhaustive]

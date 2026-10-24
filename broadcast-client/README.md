@@ -146,8 +146,10 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
 - `on_response(conn, status, headers, now_us)` takes the host clock at which the response head
   arrived, so a redirect or 401 replay after a long blocking reload gets a fresh deadline and cookie
   `Max-Age` counts from the response.
-- Live TS gets `Event::Buffer` only if the host calls `on_playback_position(now, pos)` every display
-  tick (`pos` is `None` before `Start`). `Start.at_27mhz` / `Resume.at_27mhz` are the 27 MHz position the
+- Live TS decides `Event::Buffer` inside `on_playback_position(now, pos)`: a host that never calls it
+  gets no `Start` at all, and calling it less often than every display tick only delays `Start` (a
+  captured stream missing a declared audio started at 5.3 s with ticks only after the data, 1.6 s with
+  a tick per chunk); call it every display tick (`pos` is `None` before `Start`). `Start.at_27mhz` / `Resume.at_27mhz` are the 27 MHz position the
   player must set (the sample-time domain of the samples); a demuxer-level discontinuity (PCR
   discontinuity flag, re-anchor) is invisible to the host except through these events, so `Resume.at`
   can jump.

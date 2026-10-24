@@ -452,8 +452,9 @@ Tests: `broadcast-client/tests/timeline_jump.rs` (TS via PES-PTS rewriting of th
   (a caller `reconnect()` does not); HLS has no such reconnect (its reload chain continues).
 - **Playout gate.** The position reported before `Start` is discarded at `Start`, so a host that keeps
   reporting the position of the previous pass cannot pause the new pass at once.
-- **Host contract.** poll until `None` and drain after every callback; live TS needs
-  `on_playback_position` every display tick; `Start.at`/`Resume.at` are the 27 MHz clock the player
+- **Host contract.** poll until `None` and drain after every callback; live TS decides `Buffer`
+  events inside `on_playback_position` (never called: no `Start`; called less than every display tick:
+  `Start` later, not never; pinned by `tests/audit_r7_buffer.rs`); `Start.at`/`Resume.at` are the 27 MHz clock the player
   sets; demuxer-level discontinuities are visible only through buffer events; `byte_range` is
   `(offset, length)`; `WakeAt` is "at or after" and past values are dropped.
 
