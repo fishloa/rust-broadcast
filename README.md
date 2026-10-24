@@ -110,7 +110,7 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 
 | Crate | What it does | Headline standards | Status |
 |---|---|---|---|
-| [`broadcast-client`](broadcast-client/) | Generic sans-IO client session: auth, redirects, TS-over-HTTP source. | none (implementation-defined policy; requirements from zenith-tv player) | not on crates.io |
+| [`broadcast-client`](broadcast-client/) | Generic sans-IO client session: auth, redirects, TS-over-HTTP, HLS and RTSP sources. | none (implementation-defined policy; requirements from zenith-tv player) | not on crates.io |
 | [`buffering-runtime`](buffering-runtime/) | Sans-IO live-TS playout buffer controller: jitter measurement, stall memory, start/pause/resume decisions. | RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) |
 | [`hls-runtime`](hls-runtime/) | Sans-IO Low-Latency HLS client and origin engines; optional tokio+reqwest client adapter. | RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS) | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) |
 | [`rist-runtime`](rist-runtime/) | RIST Simple Profile RTCP messages (Generic/Range NACK, RTT Echo, compounds) and a sans-IO ARQ engine. | VSF TR-06-1:2020 (RIST Simple Profile); RFC 4585 §6.2.1 | [![crates.io](https://img.shields.io/crates/v/rist-runtime.svg)](https://crates.io/crates/rist-runtime) |

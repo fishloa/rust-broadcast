@@ -69,6 +69,11 @@ impl AuthState {
         &self.origin
     }
 
+    /// The configured credentials.
+    pub(crate) fn credentials(&self) -> Option<&Credentials> {
+        self.credentials.as_ref()
+    }
+
     /// Waiting flag.
     pub fn is_waiting(&self) -> bool {
         self.waiting

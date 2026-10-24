@@ -2,10 +2,10 @@
 name    = "broadcast-client"
 version = "0.1.0"
 edition = "2024"
-description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP and HLS sources."
+description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS and RTSP sources."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
-keywords = ["broadcast", "client", "http", "live", "streaming"]
+keywords = ["broadcast", "client", "rtsp", "live", "streaming"]
 categories = ["multimedia", "network-programming"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
@@ -24,6 +24,8 @@ buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-f
 tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
 hls-runtime        = { path = "../hls-runtime", version = "0.9" }
 broadcast-hls      = { path = "../broadcast-hls", version = "0.4" }
+rtsp-runtime       = { path = "../rtsp-runtime", version = "0.8", default-features = false }
+sdp-types          = { workspace = true }
 url                = "2"
 http               = "1"
 cookie             = { version = "0.18", default-features = false }
@@ -35,6 +37,9 @@ test-fixtures = { path = "../test-fixtures" }
 buffering-runtime = { path = "../buffering-runtime", version = "0.1" }
 transmux = { path = "../transmux", version = "0.27" }
 broadcast-auth = { path = "../broadcast-auth", version = "0.5" }
+rtsp-runtime = { path = "../rtsp-runtime", version = "0.8", default-features = false }
+sdp-types = { workspace = true }
+rtsp-types = "0.1"
 url = "2"
 
 [features]

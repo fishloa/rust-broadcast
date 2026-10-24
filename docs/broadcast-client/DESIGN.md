@@ -217,6 +217,76 @@ Binding spec: `broadcast-hls/docs/ext-x-key.md`. The core (`hls-runtime`) emits 
 - Resources still reach the core in issue order; a segment that arrives before its key is held by the core and decrypted when the key lands.
 - Known core limitation: a key rejected by decryption stays cached in the core, so after `DecryptFailed` the retries re-fetch the segment but never replace the key; the session therefore ends in the fatal `DecryptFailed` after `max_key_failures`.
 
+## BC-4 RTSP (#1460)
+
+RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s sans-IO `ClientSession`
+(request builders, CSeq/Session bookkeeping, `$`-frame decoding, transparent 401 retry) and
+`transmux`'s `RtpStreamDepacketiser`. The logic is ported from `multimux`'s `RtspIngestSession`
+(phases, keepalive rule) without depending on `multimux`.
+
+- `SourceKind::Rtsp`; `Auto` picks it for `rtsp://` and `rtsps://`. A mismatching scheme/kind pair is
+  `Error::UnsupportedScheme`; an RTSP URL without host is `Error::InvalidUrl`.
+- Transport: RTP over the RTSP TCP connection only (`RTP/AVP/TCP;interleaved`). UDP RTP is out of scope;
+  a SETUP reply that is not TCP-interleaved is a failure. The ports 554 (`rtsp`) and 322 (`rtsps`) are
+  the IANA defaults, defined in the adapter because `rtsp_runtime`'s constants sit behind its `tokio`
+  feature.
+- New actions: `Action::TcpConnect { conn, host, port, tls }` (IPv6 hosts without brackets; `tls` is true
+  for `rtsps`: the HOST performs TLS and certificate validation, the session only sees plaintext) and
+  `Action::Send { conn, bytes }`; `Close { conn }` is unchanged. New host input `Session::on_connected(conn)`;
+  a failed connect is the existing `on_closed(conn, Some(error), now)` before connected. `on_response` is
+  not used for RTSP. Unknown or closed `conn` callbacks are ignored.
+- Handshake: on connect DESCRIBE, then SETUP per SDP media (interleaved `0-1`, `2-3`, ...; the channel the
+  server negotiates is the one used for routing), then PLAY. Track ids are the 1-based SDP media order; SDP
+  parsing is `sdp-types`, fmtp/rtpmap decoding is `transmux::rtp_sdp`. Per-track SETUP URIs are
+  `Url::join(a=control)` against the request URI (aggregate/absent control = the request URI). Media other
+  than H.264 video and AAC audio, a missing fmtp, an SDP without media or unparsable SDP are a failure.
+- Media: interleaved frames are routed by channel: the track's RTP channel to `push`, RTP channel + 1 to the
+  depayloader's `push_rtcp` (sender reports; no receiver reports are sent). `Event::Tracks` before the first
+  `Sample` after PLAY of every connection, `Event::Sample { join: None }` per sample, `Status::Establishing`
+  on connect, `Status::Live` once at the first sample. A malformed RTP frame is counted
+  (`Session::rtp_malformed_count`) and skipped; `RtpLossEvent::SequenceGap`/`DamagedAccessUnit` are counted
+  (`Session::rtp_loss_count`) and the stream continues (`NonMonotonicTimestamp` is B-frame reordering, not
+  loss, and is not counted). When a connection ends after PLAY the depayloader is flushed so the last access
+  units are delivered.
+- Keepalive: `OPTIONS` on the request URI at half the `Session` header's `timeout` clamped to 5 s..3600 s,
+  default 30 s, armed at the PLAY reply and re-armed at each send, driven by `poll(now_us)`. Any reply to it
+  is ignored (405/501 are common). `close()` sends `TEARDOWN` (only when a session id exists) and then
+  `Close { conn }`; the same TEARDOWN-then-Close is used when the session aborts a connection itself (stall
+  reconnect, start timeout, handshake failure after SETUP, `reconnect()`).
+- Auth: credentials live in the session's `AuthState` (origin = the RTSP URL) and are given to
+  `ClientSession` (`authenticate_with`, an additive `rtsp-runtime` API that also exposes `last_challenge()`;
+  `ClientEvent::Response` carries no headers, so the challenge could not be read otherwise). A 401/407 with
+  no credentials: `Event::AuthRequired { scheme, realm, origin, resource_metadata: None }` +
+  `Status::WaitingForCredentials`; the connection stays open and every timer is suspended (no wake, no
+  request) until `set_credentials` or `close`; `set_credentials` re-sends the challenged request (already
+  carrying `Authorization` built from the recorded challenge) and restarts the start timeout. Credentials
+  that `ClientSession` already retried and the server still refuses: `Event::AuthRejected { status }` + the
+  same wait. 403: `Event::Forbidden { status }` then the failed-connect policy. 404 on DESCRIBE:
+  `Status::NotFound` then the same backoff. A new connection starts a new `ClientSession` seeded with the
+  stored credentials and the last challenge.
+- Reconnect/stall policy is the TS-over-HTTP table, applied from `Config::ts_http` (the same `Config` governs
+  both): start timeout 15 s counted from connect to the first sample (restarted per connection, suspended
+  while waiting for credentials); after the first sample, no interleaved RTP bytes for `stall_notice_ms` (5 s)
+  gives `Starved(NoData)` once and `Status::Stalled { secs }` per second, the next RTP byte gives
+  `Status::Live`, and `stall_reconnect_ms` (30 s) aborts and reconnects at once with the attempt counter reset;
+  bytes without a sample for 5 s give `Starved(Data)` once; a connection that ends after it played reconnects at
+  once (attempt reset, `Event::Discontinuity` when the next connection is established); a failure before the
+  first sample (connect error, bad reply, start timeout, garbage, bad SDP) gives `Status::Reconnecting
+  { attempt }` and the backoff `backoff_ms` (2, 4, 8 s) then `backoff_cap_ms` (10 s) forever. `tshttp_runtime`'s
+  client demuxes MPEG-TS inside `feed`, so its timer code cannot be driven from RTP; the same transitions are
+  implemented in `source/rtsp.rs` and pinned by `tests/rtsp.rs`. As for TS-HTTP, a played-then-ended reconnect
+  emits no `Reconnecting` status.
+- Deadlines: the adapter emits `WakeAt(deadline)` for the earliest of backoff due, start timeout, stall
+  notice/reconnect and keepalive, only when no earlier wake is outstanding.
+- Not in this slice: `Event::Buffer` for RTSP, cookies/`extra_headers`, userinfo credentials in the URL, RTCP
+  receiver reports, UDP RTP, `Content-Base` handling, server-initiated requests, video other than H.264, audio
+  other than AAC.
+
+Tests: `broadcast-client/tests/rtsp.rs` with a fake RTSP server in `tests/support/rtsp_host.rs` (parses the
+session's `Send` bytes with `rtsp-types`, answers with SDP built by `sdp-types`, pushes `$`-framed RTP made by
+`transmux`'s packetiser from the real `fixtures/ts/h264_aac.ts` samples; the oracle is the original samples,
+payload bytes and timestamps). Digest responses are verified by `broadcast-auth`'s own `Verifier`.
+
 ## BC-5 playout gate
 
 `Event::Buffer(Start|Pause|Resume)` for the sources the PDV controller does not serve: HLS live, HLS VOD (`EXT-X-ENDLIST` seen) and finite TS (`Event::Finite`). Module `src/playout.rs`; live TS-over-HTTP keeps the BC-2 `buffering-runtime` path unchanged (`Config::buffer`). The gate is deterministic and lead-based: it does not measure jitter, so its events depend only on the delivered samples, the end of stream and the reported playback position, never on chunking or wall-clock time.

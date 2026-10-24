@@ -5,6 +5,9 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `ClientSession::last_challenge()`: the most recent `WWW-Authenticate` (else `Proxy-Authenticate`) value seen on any response, recorded even when no credentials are configured, so a caller can learn the scheme and realm to ask for (`ClientEvent::Response` carries no headers).
+- `ClientSession::authenticate_with(credentials, challenge)`: attaches credentials to a live session and builds the authenticator from the given (else the last recorded) challenge, so the next request already carries `Authorization`. Used by `broadcast-client`'s RTSP source to resume after a `401`.
 
 ## [0.8.0] - 2026-10-17
 ### Documentation

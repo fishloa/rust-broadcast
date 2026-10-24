@@ -571,9 +571,9 @@ lifecycle = "active"
 
 [crate.broadcast-client]
 domain = "live"
-summary = "Generic sans-IO client session: auth, redirects, TS-over-HTTP source."
+summary = "Generic sans-IO client session: auth, redirects, TS-over-HTTP, HLS and RTSP sources."
 standards = "none (implementation-defined policy; requirements from zenith-tv player)"
-what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP source on tshttp-runtime. Caller-supplied monotonic milliseconds, no I/O, std."
+what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds, no I/O, std."
 crates_io = false
 lifecycle = "active"
 # ------------------------------------------------------------------ internal

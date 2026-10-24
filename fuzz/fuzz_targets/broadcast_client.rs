@@ -12,6 +12,12 @@ const HLS_MASTER_SEED: &[u8] = b"#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\"
 const HLS_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
 const HLS_ENC_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x000102030405060708090A0B0C0D0E0F\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
 const STEP_US: u64 = 700_000;
+const RTSP_URLS: [&str; 2] = ["rtsp://example/live/", "rtsps://example:8322/live/"];
+const RTSP_SDP: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\na=control:trackID=1\r\n";
+const RTSP_REPLY_STATUSES: [u16; 6] = [200, 200, 200, 401, 404, 461];
+const INTERLEAVED_MAGIC: u8 = 0x24;
+const RTSP_CHANNELS: u8 = 4;
+const TIMER_JUMP_US: u64 = 20_000_000;
 const COOKIE_NAMES: [&str; 3] = ["sid", "a", "t"];
 const STATUS_CODES: [u16; 6] = [200, 200, 404, 302, 401, 500];
 
@@ -120,8 +126,117 @@ fn drive(url: &str, data: &[u8]) {
     }
 }
 
+fn rtsp_cseq(request: &[u8]) -> u32 {
+    String::from_utf8_lossy(request)
+        .lines()
+        .find_map(|l| l.strip_prefix("CSeq:").and_then(|v| v.trim().parse().ok()))
+        .unwrap_or(0)
+}
+
+fn rtsp_reply(request: &[u8], status: u16) -> Vec<u8> {
+    let cseq = rtsp_cseq(request);
+    let text = String::from_utf8_lossy(request);
+    let is_describe = text.starts_with("DESCRIBE");
+    let is_setup = text.starts_with("SETUP");
+    let transport = text
+        .lines()
+        .find_map(|l| l.strip_prefix("Transport:"))
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default();
+    let mut head = format!("RTSP/1.0 {status} X\r\nCSeq: {cseq}\r\n");
+    if status == 401 {
+        head.push_str("WWW-Authenticate: Basic realm=\"f\"\r\n");
+    }
+    if is_setup {
+        head.push_str(&format!("Session: 1;timeout=10\r\nTransport: {transport}\r\n"));
+    }
+    if is_describe && status == 200 {
+        head.push_str(&format!(
+            "Content-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{RTSP_SDP}",
+            RTSP_SDP.len()
+        ));
+    } else {
+        head.push_str("\r\n");
+    }
+    head.into_bytes()
+}
+
+fn rtsp_pump(session: &mut Session, now: u64, conns: &mut Vec<u32>, status: u16, tail: &[u8]) {
+    while let Some(action) = session.poll(now) {
+        match action {
+            Action::TcpConnect { conn, .. } => {
+                conns.push(conn);
+                session.on_connected(conn);
+            }
+            Action::Send { conn, bytes } => {
+                let reply = rtsp_reply(&bytes, status);
+                session.on_data(conn, &reply, now);
+                if !tail.is_empty() {
+                    session.on_data(conn, tail, now);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn drive_rtsp(url: &str, data: &[u8]) {
+    let mut session = match Session::open(url, Config::default(), 0) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let mut now = 0u64;
+    let mut conns: Vec<u32> = Vec::new();
+    for chunk in data.chunks(32) {
+        now = now.saturating_add(STEP_US);
+        let pick = chunk.first().copied().unwrap_or(0);
+        let second = usize::from(chunk.get(1).copied().unwrap_or(0));
+        let status = RTSP_REPLY_STATUSES[second % RTSP_REPLY_STATUSES.len()];
+        let conn = conns.get(second % conns.len().max(1)).copied();
+        match pick % 8 {
+            0 | 1 => rtsp_pump(&mut session, now, &mut conns, status, &[]),
+            2 => {
+                if let Some(conn) = conn {
+                    let mut frame = vec![INTERLEAVED_MAGIC, chunk.get(1).copied().unwrap_or(0) % RTSP_CHANNELS];
+                    let payload = chunk.get(2..).unwrap_or(&[]);
+                    frame.extend_from_slice(&u16::try_from(payload.len()).unwrap_or(0).to_be_bytes());
+                    frame.extend_from_slice(payload);
+                    session.on_data(conn, &frame, now);
+                }
+            }
+            3 => {
+                if let Some(conn) = conn {
+                    session.on_data(conn, chunk, now);
+                }
+            }
+            4 => {
+                if let Some(conn) = conn {
+                    let error = (second % 2 == 0).then(|| "reset".to_string());
+                    session.on_closed(conn, error, now);
+                }
+            }
+            5 => session.set_credentials(Credentials::new("u", "p")),
+            6 => session.reconnect(now),
+            _ => {
+                now = now.saturating_add(TIMER_JUMP_US);
+                let _ = session.poll(now);
+            }
+        }
+        if pick == u8::MAX {
+            session.close();
+        }
+        rtsp_pump(&mut session, now, &mut conns, 200, chunk);
+        let _ = session.rtp_loss_count();
+        let _ = session.rtp_malformed_count();
+        while session.next_event().is_some() {}
+    }
+}
+
 fuzz_target!(|data: &[u8]| {
     for url in URLS {
         drive(url, data);
+    }
+    for url in RTSP_URLS {
+        drive_rtsp(url, data);
     }
 });

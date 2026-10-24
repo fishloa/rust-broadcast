@@ -17,12 +17,15 @@ use crate::ConnId;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
-    /// Auto-detect from the URL: a `.m3u8`/`.m3u` path is HLS, anything else TS-over-HTTP.
+    /// Auto-detect from the URL: an `rtsp://` or `rtsps://` URL is RTSP, a `.m3u8`/`.m3u` path
+    /// is HLS, anything else TS-over-HTTP.
     Auto,
     /// TS-over-HTTP.
     TsHttp,
     /// HLS (M3U8) on `hls-runtime`.
     Hls,
+    /// RTSP 1.0 with RTP interleaved over the RTSP TCP connection (`rtsp://` and `rtsps://`).
+    Rtsp,
 }
 
 impl SourceKind {
@@ -33,6 +36,7 @@ impl SourceKind {
             Self::Auto => "auto",
             Self::TsHttp => "ts-http",
             Self::Hls => "hls",
+            Self::Rtsp => "rtsp",
         }
     }
 }
@@ -183,6 +187,26 @@ pub enum Action {
         headers: Vec<(String, String)>,
         /// Optional byte range.
         byte_range: Option<(u64, u64)>,
+    },
+    /// Open a TCP connection (RTSP). The host reports the outcome with
+    /// [`crate::Session::on_connected`], or [`crate::Session::on_closed`] with an error.
+    TcpConnect {
+        /// Connection id.
+        conn: ConnId,
+        /// Host name or IP literal (IPv6 without brackets).
+        host: String,
+        /// TCP port.
+        port: u16,
+        /// The host performs TLS and certificate validation before reporting the connection
+        /// established; the session only ever exchanges plaintext bytes.
+        tls: bool,
+    },
+    /// Write bytes to an open TCP connection (RTSP).
+    Send {
+        /// Connection id.
+        conn: ConnId,
+        /// Bytes to write, in order.
+        bytes: Vec<u8>,
     },
     /// Drop a connection.
     Close {
