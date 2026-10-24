@@ -194,6 +194,7 @@ pub(crate) struct HlsSource {
     failed: BTreeSet<ResourceId>,
     gate_until: Option<u64>,
     retry_refetch: Option<(u64, String)>,
+    init_retry: bool,
     attempt: u64,
     established: bool,
     live: bool,
@@ -242,6 +243,7 @@ impl HlsSource {
             failed: BTreeSet::new(),
             gate_until: None,
             retry_refetch: None,
+            init_retry: false,
             attempt: 0,
             established: false,
             live: false,
@@ -323,6 +325,7 @@ impl HlsSource {
         }
         let in_flight: Vec<Purpose> = self.reqs.values().map(|r| r.purpose).collect();
         for purpose in in_flight {
+            self.init_retry |= purpose == Purpose::Resource(ResourceId::Init);
             self.client_failed(purpose);
         }
         self.reset_in_flight();
@@ -637,6 +640,14 @@ impl HlsSource {
                 self.release_ready(now);
             }
         } else {
+            if purpose == Purpose::Resource(ResourceId::Init)
+                && matches!(&result, Err(CoreError::InitUndecodable))
+            {
+                if !self.report(ErrorKind::InitDecodeFailed) {
+                    self.retry_init_later(now);
+                }
+                return;
+            }
             if let Err(e) = &result
                 && self.core_error(e)
             {
@@ -688,12 +699,30 @@ impl HlsSource {
         {
             return;
         }
-        if let Purpose::Resource(id) = req.purpose
-            && id != ResourceId::Init
-        {
+        if req.purpose == Purpose::Resource(ResourceId::Init) {
+            if !self.report(ErrorKind::InitFetchFailed { status }) {
+                self.fail_init_fetch(now);
+            }
+            return;
+        }
+        if let Purpose::Resource(id) = req.purpose {
             self.failed.insert(id);
         }
         self.fail_purpose(req.purpose, Some(req.original_url), now);
+    }
+
+    fn fail_init_fetch(&mut self, now: u64) {
+        self.client_failed(Purpose::Resource(ResourceId::Init));
+        self.pump_core();
+        self.drain_outputs();
+        self.retry_init_later(now);
+    }
+
+    fn retry_init_later(&mut self, now: u64) {
+        self.init_retry = true;
+        let refetch = (!self.chain_alive() && !self.client.endlist_seen())
+            .then(|| self.client.playlist_url().to_string());
+        self.schedule_retry(now, refetch);
     }
 
     fn fail_purpose(&mut self, purpose: Purpose, retry_url: Option<String>, now: u64) {
@@ -809,6 +838,9 @@ impl HlsSource {
                     return;
                 }
                 self.gate_until = None;
+            }
+            if core::mem::take(&mut self.init_retry) && self.client.retry_init() {
+                self.pump_core();
             }
             let Some(action) = self.next_action() else {
                 return;

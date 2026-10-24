@@ -452,8 +452,9 @@ Tests: `broadcast-client/tests/timeline_jump.rs` (TS via PES-PTS rewriting of th
   (a caller `reconnect()` does not); HLS has no such reconnect (its reload chain continues).
 - **Playout gate.** The position reported before `Start` is discarded at `Start`, so a host that keeps
   reporting the position of the previous pass cannot pause the new pass at once.
-- **Host contract.** poll until `None` and drain after every callback; live TS needs
-  `on_playback_position` every display tick; `Start.at`/`Resume.at` are the 27 MHz clock the player
+- **Host contract.** poll until `None` and drain after every callback; live TS decides `Buffer`
+  events inside `on_playback_position` (never called: no `Start`; called less than every display tick:
+  `Start` later, not never; pinned by `tests/audit_r7_buffer.rs`); `Start.at`/`Resume.at` are the 27 MHz clock the player
   sets; demuxer-level discontinuities are visible only through buffer events; `byte_range` is
   `(offset, length)`; `WakeAt` is "at or after" and past values are dropped.
 
@@ -777,3 +778,23 @@ RFC 8216 §4.4.4.5 (`broadcast-hls/docs/playlist-tags.md`): a map applies to eve
 - A fragment the demuxer skipped (`Media::degraded` `MalformedUnit`): notably an absolute `tfhd` base-data-offset whose target lies outside the segment's own bytes (`mp4/prft.mp4`, `mp4/frag/mpeg2video.frag.mp4`, `mp4/cmaf/av_frag.mp4`, `mp4/llcmaf/ll_chunked.mp4` split into segments; CMAF uses default-base-is-moof). The good fragments' samples are emitted, the loss is reported ONCE per session as non-fatal `UnsupportedContainer { reason: "damaged_fragment" }`. Documented limitation, not a fix: such a layout only resolves when the segment sits at its original file offset.
 - A playlist or segment body over its cap closes the request (as before) and now reports ONE non-fatal `ErrorKind::BodyTooLarge { field: "max_playlist_bytes" | "max_segment_bytes" }` per field and session; the retry meets the same cap, so the host should raise it. (A key body over `max_key_bytes` already reported `KeyFetchFailed`.)
 - A `SUBTITLES` rendition in a master is never fetched or played; it is listed in `Event::Variants`' renditions and playing it is the host's job (README host contract). No per-track event: there is no track.
+
+## Audit round 7 (r7fix)
+
+### F1: a failed `EXT-X-MAP` init fetch is retried and bounded
+A VOD playlist whose init fetch failed once stalled forever: `fail_purpose` retried a failed init by refetching the playlist, but a VOD reparse does not requeue a `Failed` init slot (`hls-runtime`'s `retry_init()` exists for exactly that and the source never called it), so the session sat in `Reconnecting { attempt: 1 }` with no error. The source now remembers the failure (`init_retry`), and when the shared backoff gate lifts it calls `HlsClient::retry_init()`; the playlist refetch is skipped once `EXT-X-ENDLIST` is seen (it cannot help) and kept for live (it recovers there too). Each failed init fetch (any status including 403, transport error, timeout, oversized body) is counted by the same counter as key failures: one non-fatal `ErrorKind::InitFetchFailed { status }` while retrying, ONE fatal of the same kind after `Config::max_key_failures` consecutive failures with no decoded samples in between (the init analogue of `KeyFetchFailed`; there is no separate cap and segment fetches stay unbounded by design). `tests/audit_r7_init.rs` covers transient/permanent 404/503, a transport error, live recovery, a failing second init of a multi-MAP VOD and the cap following `max_key_failures`. An init that arrives with a success status but holds no complete `moov` box (`Error::InitUndecodable` from hls-runtime, which also marks the slot `Failed`) takes the same path with `ErrorKind::InitDecodeFailed`: retried, counted with the same cap, one fatal. It used to surface as endless segment-demux failures. The r7 scratch test `r7_never_sent_audio_no_ticks` (F3) did tick during its idle phase; the pinned contract is in `tests/audit_r7_buffer.rs`.
+
+### F2: `EXT-X-MAP` identity ignores the query
+`HlsClient::init_for_map` matched on the full resolved URL, so a re-signed map URI created a new init slot per reload (a refetch and a repeated `Tracks`). It now matches on the URL without its query plus the byte range (the rule segment continuity already uses, `without_query`) and keeps the newest URL for later fetches and retries. A different path or byte range is a new init that is fetched and announced.
+
+### F3: Start needs `on_playback_position`, but not every tick
+The README said live TS gets `Event::Buffer` only if the host ticks every display tick. Measured: with no tick at all there is no `Start`; with ticks only after the data (a captured stream missing a declared audio) `Start` fires at 5.3 s against 1.6 s with a tick per chunk. The contract is now stated that way and pinned by `tests/audit_r7_buffer.rs`.
+
+### F4: a PMT that changes a PID's kind replaces the expected kind
+`DeclaredStreams` only inserted into its kind map and the source refreshed `expected` only when the map length changed, so a PMT that turned an audio PID into data, video or nothing left the start gate waiting for audio that was no longer declared. The map now follows the latest PMT of each program (a PID that left the PMT or lost its audio/video kind is removed) and `expected` is refreshed on any change. `tests/audit_r7_ts.rs` drives audio to data, video and removal plus the unchanged-kind (AC-3 to AAC) and data-to-audio cases, with the flip landing in a later chunk than the first PMT.
+
+### F5: RTSP dropped-media report follows each DESCRIBE
+`reported_drops` was keyed by media position and never reset, so a re-DESCRIBE with a different SDP did not report a media dropped at an already-reported position. It is now keyed by (position, codec) and replaced by the set of the current DESCRIBE: the same SDP reports nothing again, a different media at the same position is reported, and a media that returns and is dropped again is reported again. `TrackDropped.track_id` for RTSP is the 1-based position of the `m=` line (stable whatever else the SDP holds; it is not the id of an announced track).
+
+### F6: scenarios the audit could not drive
+`tests/audit_r7_coverage.rs`: byte-range `EXT-X-MAP` (whole-file `200` sliced, `206` with matching and wrong `Content-Range`, live repeated in every window, vanishing from later windows, VOD discontinuity without a new map); CENC/CBCS fMP4 without `EXT-X-KEY` (per-track non-fatal, clear audio plays) and with a `SAMPLE-AES-CTR`/`SAMPLE-AES` key tag (fatal at once); a TS-HLS `EXT-X-DISCONTINUITY` arriving while the buffer holds (`Pause`, then `Resume` at the held position, one `Discontinuity`, `Start` on the new timeline, no sample lost); a 40-stream PMT with a `stream_type` 0x06 audio declared by descriptor that never sends (`Start` is delayed by at most `start_pending_track_wait_us`). Nothing broke; the large PMT needed `tests/support/ts_pmt.rs` to span packets.

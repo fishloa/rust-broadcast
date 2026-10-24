@@ -80,6 +80,9 @@ fn skip_requested(actions: &[Action]) -> bool {
         .any(|a| matches!(a, Action::FetchPlaylist { skip: true, .. }))
 }
 
+/// The smallest init the client accepts: an empty `moov` box.
+const EMPTY_MOOV: &[u8] = b"\x00\x00\x00\x08moov";
+
 #[test]
 fn consecutive_delta_reloads_keep_numbering_and_the_aes_iv_after_the_window_slides() {
     let mut client = HlsClient::new(URL);
@@ -356,7 +359,7 @@ fn a_changed_map_byte_range_on_the_same_uri_requests_the_new_init() {
         )),
         "{first:?}"
     );
-    client.on_resource(ResourceId::Init, b"first init").unwrap();
+    client.on_resource(ResourceId::Init, EMPTY_MOOV).unwrap();
     client
         .on_playlist(format!("{head}{first_run}{second_run}").as_bytes())
         .unwrap();
@@ -436,7 +439,7 @@ fn an_aes_128_encrypted_map_is_decrypted_with_the_key_that_precedes_it() {
         resource_ids(&actions).contains(&ResourceId::Init),
         "{actions:?}"
     );
-    let plain_init = b"PLAIN-INIT-SEGMENT-BYTES".to_vec();
+    let plain_init = EMPTY_MOOV.to_vec();
     let cipher = aes128_encrypt_segment(&KEY, &iv, &plain_init);
     client.on_resource(ResourceId::Init, &cipher).unwrap();
     assert!(

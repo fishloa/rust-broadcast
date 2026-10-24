@@ -118,6 +118,18 @@ fn keys_at_maps(text: &str) -> Vec<(MapTag, Option<MediaKey>)> {
     out
 }
 
+/// `true` when `bytes` holds a complete `moov` box: what every Media
+/// Initialization Section of fragmented MP4 carries.
+fn has_movie_box(bytes: &[u8]) -> bool {
+    for step in transmux::box_iter(bytes) {
+        let Ok((boxed, _)) = step else { return false };
+        if boxed.header.box_type.0 == MOVIE_BOX {
+            return true;
+        }
+    }
+    false
+}
+
 /// `true` when `bytes` holds a `moov` but no `moof`: a progressive MP4, not a
 /// media segment of fragmented MP4.
 fn is_progressive_movie(bytes: &[u8]) -> bool {
@@ -1030,9 +1042,8 @@ impl HlsClient {
             let key = match keyed.iter().rev().find(|(m, _)| m == map) {
                 Some((_, key)) => key.clone(),
                 None => self
-                    .inits
-                    .values()
-                    .find(|slot| slot.map == *map)
+                    .init_slot_for(&url::resolve(self.base(), &map.uri), &map.byte_range)
+                    .and_then(|id| self.inits.get(&id))
                     .and_then(|slot| slot.encryption.clone()),
             };
             entries.push(MapEntry {
@@ -1051,20 +1062,35 @@ impl HlsClient {
             .and_then(MapEntry::unusable)
     }
 
+    /// The init slot holding the resource at `url` (resolved) with `byte_range`.
+    /// The query is not part of the identity: a CDN that re-signs the map URI
+    /// on every reload (as it does segment URIs, see [`without_query`]) still
+    /// names the same init.
+    fn init_slot_for(&self, url: &str, byte_range: &Option<ByteRange>) -> Option<InitId> {
+        self.inits
+            .iter()
+            .find(|(_, slot)| {
+                without_query(&slot.url) == without_query(url) && slot.map.byte_range == *byte_range
+            })
+            .map(|(id, _)| *id)
+    }
+
     /// The init slot for `map`, created (and queued for fetching) when the
     /// client has none for that resource yet; a slot whose fetch failed is
     /// queued again.
     fn init_for_map(&mut self, map: &MapTag) -> Result<InitId> {
         let url = url::resolve(self.base(), &map.uri);
-        if let Some((id, slot)) = self
-            .inits
-            .iter_mut()
-            .find(|(_, slot)| slot.url == url && slot.map.byte_range == map.byte_range)
+        if let Some(id) = self.init_slot_for(&url, &map.byte_range)
+            && let Some(slot) = self.inits.get_mut(&id)
         {
+            if slot.url != url {
+                slot.url = url;
+                slot.map = map.clone();
+            }
             if slot.fetch == InitFetch::Failed {
                 slot.fetch = InitFetch::Wanted;
             }
-            return Ok(*id);
+            return Ok(id);
         }
         let (key, first_msn) = self
             .playlist_maps
@@ -1212,6 +1238,10 @@ impl HlsClient {
         let Some(slot) = self.inits.get_mut(&target) else {
             return Ok(());
         };
+        if slot.crypto.is_none() && !has_movie_box(bytes) {
+            slot.fetch = InitFetch::Failed;
+            return Err(Error::InitUndecodable);
+        }
         match slot.crypto {
             Some(crypto) => match self.key_material.get(&crypto.key_id).copied() {
                 Some(KeyBytes(key)) => self.complete_encrypted_init(target, crypto, &key, bytes),
@@ -1281,6 +1311,12 @@ impl HlsClient {
         cipher: &[u8],
     ) -> Result<()> {
         match decrypt_segment(ResourceId::Init, crypto, key, cipher) {
+            Ok(plain) if !has_movie_box(&plain) => {
+                if let Some(slot) = self.inits.get_mut(&target) {
+                    slot.fetch = InitFetch::Failed;
+                }
+                Err(Error::InitUndecodable)
+            }
             Ok(plain) => self.complete_init(target, &plain),
             Err(e) => {
                 if let Some(slot) = self.inits.get_mut(&target) {

@@ -90,7 +90,7 @@ pub(crate) struct RtspSource {
     stale_replayed: bool,
     auth_replays: u32,
     tracks: Vec<TrackInit>,
-    reported_drops: BTreeSet<usize>,
+    reported_drops: BTreeSet<(usize, Option<String>)>,
     aggregate: Option<String>,
     depa: Option<RtpStreamDepacketiser>,
     tracks_dirty: bool,
@@ -712,7 +712,7 @@ impl RtspSource {
             Ok(parsed) => parsed,
             Err(SdpError::Unparsable) => return false,
             Err(SdpError::NothingPlayable { skipped }) => {
-                self.report_dropped(&skipped, 0);
+                self.report_dropped(&skipped);
                 let codec = skipped
                     .iter()
                     .find(|m| m.codec_unsupported)
@@ -728,27 +728,35 @@ impl RtspSource {
                 return true;
             }
         };
-        self.report_dropped(&skipped, tracks.len());
+        self.report_dropped(&skipped);
         self.aggregate = aggregate;
         self.tracks = tracks;
         self.send(Req::Setup(0))
     }
 
-    fn report_dropped(&mut self, skipped: &[SkippedMedia], playable: usize) {
-        for (offset, media) in skipped.iter().enumerate() {
-            if !self.reported_drops.insert(media.media_index) {
+    fn report_dropped(&mut self, skipped: &[SkippedMedia]) {
+        let current: BTreeSet<(usize, Option<String>)> = skipped
+            .iter()
+            .map(|media| (media.media_index, media.codec.clone()))
+            .collect();
+        for media in skipped {
+            if self
+                .reported_drops
+                .contains(&(media.media_index, media.codec.clone()))
+            {
                 continue;
             }
-            let ordinal = playable.saturating_add(offset).saturating_add(1);
+            let position = media.media_index.saturating_add(1);
             self.events.push_back(Event::Error {
                 kind: ErrorKind::TrackDropped {
-                    track_id: u32::try_from(ordinal).unwrap_or(u32::MAX),
+                    track_id: u32::try_from(position).unwrap_or(u32::MAX),
                     stream_type: None,
                     fourcc: None,
                 },
                 fatal: false,
             });
         }
+        self.reported_drops = current;
     }
 
     fn on_setup_ok(&mut self, index: usize) -> bool {

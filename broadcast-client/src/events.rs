@@ -98,8 +98,9 @@ broadcast_common::impl_spec_display!(Status);
 /// player must set before it plays (its position in `Session::on_playback_position` uses the
 /// same domain). A timeline whose first kept sample has a negative time stamp (a jump whose
 /// unrolled timestamps go below zero) cannot be expressed in `u64`: its positions are measured from
-/// that first kept sample, so `0` is that sample. Live TS-over-HTTP produces no buffer event
-/// unless the host calls `Session::on_playback_position` every display tick; a demuxer-level
+/// that first kept sample, so `0` is that sample. Live TS-over-HTTP decides `Start` inside
+/// `Session::on_playback_position`: a host that never calls it gets no buffer event, and one that
+/// calls it less often than every display tick gets `Start` later, not never; a demuxer-level
 /// discontinuity (PCR discontinuity flag, re-anchor) is invisible to the host except through
 /// these events, whose `at_27mhz` may then jump.
 #[non_exhaustive]
@@ -160,6 +161,20 @@ pub enum ErrorKind {
         /// The HTTP status, `None` for a transport error, timeout or oversized body.
         status: Option<u16>,
     },
+    /// A Media Initialization Section (`EXT-X-MAP`) fetch failed with a non-authentication
+    /// status, a transport error, a timeout, or an oversized body. The fetch is
+    /// retried with backoff; [`Config::max_key_failures`] consecutive failures (no decoded
+    /// samples in between) make one fatal error of this kind. Unlike a key request, a `403`
+    /// counts too (it is also reported as [`Event::Forbidden`]).
+    InitFetchFailed {
+        /// The HTTP status, `None` for a transport error, timeout or oversized body.
+        status: Option<u16>,
+    },
+    /// A Media Initialization Section (`EXT-X-MAP`) arrived with a success status but holds no
+    /// complete `moov` box. Retried and counted exactly like [`ErrorKind::InitFetchFailed`]:
+    /// [`Config::max_key_failures`] consecutive failures (no decoded samples in between) make one
+    /// fatal error of this kind.
+    InitDecodeFailed,
     /// The key response was not a valid 16-byte AES-128 key.
     BadKey,
     /// A segment did not decrypt (bad padding or length), typically because the key is wrong.
@@ -185,7 +200,9 @@ pub enum ErrorKind {
     /// tracks play, and a stream with no playable track ends fatally after these reports.
     TrackDropped {
         /// The dropped track's id (remapped for an audio rendition); `0` for a track the fMP4
-        /// demuxer could not name.
+        /// demuxer could not name. For RTSP it is not the id of an announced track: it is the
+        /// 1-based position of the dropped `m=` line among all media lines of the DESCRIBE SDP,
+        /// whatever the other lines are.
         track_id: u32,
         /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque TS data.
         stream_type: Option<u8>,
@@ -228,6 +245,8 @@ impl ErrorKind {
         match self {
             Self::UnsupportedEncryption { .. } => "unsupported_encryption",
             Self::KeyFetchFailed { .. } => "key_fetch_failed",
+            Self::InitFetchFailed { .. } => "init_fetch_failed",
+            Self::InitDecodeFailed => "init_decode_failed",
             Self::BadKey => "bad_key",
             Self::DecryptFailed => "decrypt_failed",
             Self::UnsupportedCodec { .. } => "unsupported_codec",
@@ -418,8 +437,8 @@ pub enum Event {
     /// recover by itself: it has closed its connections and goes silent, so the player shows a
     /// message and does not retry. Non-fatal errors are emitted once per kind until a success
     /// (decoded samples) resets them, while the session keeps retrying with backoff; after
-    /// [`Config::max_key_failures`] consecutive key or decrypt failures one fatal error of the
-    /// same kind follows.
+    /// [`Config::max_key_failures`] consecutive key, decrypt or init-fetch failures one fatal
+    /// error of the same kind follows.
     Error {
         /// What went wrong.
         kind: ErrorKind,
@@ -601,7 +620,7 @@ pub struct Config {
     pub hls_key_timeout_us: u64,
     /// HLS: maximum key response body bytes; must be non-zero.
     pub max_key_bytes: usize,
-    /// HLS: consecutive key/decrypt failures (no decoded samples in between) after which the
+    /// HLS: consecutive key/decrypt/init-fetch failures (no decoded samples in between) after which the
     /// session emits a fatal [`Event::Error`] and stops; `0` behaves as `1` (the first failure is
     /// fatal).
     pub max_key_failures: u32,

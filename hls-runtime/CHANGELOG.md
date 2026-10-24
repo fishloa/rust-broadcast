@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (round-7 audit)
+- `Error::InitUndecodable` (additive; `Error` is `#[non_exhaustive]`): a fetched Media Initialization Section with no complete `moov` box was accepted and only failed later as an endless series of segment demux errors. It is now rejected at once, the slot is marked failed, and `retry_init()` fetches it again.
+
+### Fixed (round-7 audit F2)
+- **An `EXT-X-MAP` whose URI query changes on every reload is the same init.** The init identity was the full resolved URL, so a CDN that re-signs the map URI (as it re-signs segment URIs, whose continuity already ignores the query) made the client refetch the init on every playlist reload and re-announce `Output::Tracks` each time. The identity is now the resolved URL without its query plus the `BYTERANGE`; a different path or byte range is still a new init. The slot keeps the newest URI (and its fresh token) for any later fetch or `retry_init()`.
+
 ### Fixed (round-6 audit F3)
 - **Every segment is demuxed with the init of its own `EXT-X-MAP` run** (RFC 8216 §4.4.4.5: a map applies to every following segment until the next map). The client used to plan one init from the playlist's *last* map, so a VOD (or a join window) with a mid-roll init change never fetched the first init and decoded the earlier segments with the wrong one (50 H.264 samples read as HEVC, the audio lost). It now keeps one init per map-run, binds each Media Sequence Number to the init that precedes it, fetches each init once, and replays segments that arrive before their init once it is in. Behaviour changes: inits are fetched **one at a time**, in playlist order (`ResourceId::Init` names the one in flight, so a second concurrent fetch could not be told apart); the first init is announced as `Output::Init` as soon as it arrives, every later init (and a return to an earlier one) is announced lazily, immediately before the first resource demuxed with it and after that resource's `Output::Discontinuity`, followed by the matching `Output::Tracks`; `retry_init()` retries every failed init; the map key of each run is the `EXT-X-KEY` preceding that `EXT-X-MAP` line (an unusable encrypted map skips only the segments of its run). Held inits no segment still being fetched refers to are pruned, the newest is kept.
 
