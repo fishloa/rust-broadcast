@@ -30,7 +30,9 @@ channels 0-1, 2-3, ...), then PLAY. Track ids are the 1-based order of the playe
 `a=control` resolves against the DESCRIBE `Content-Base` (else `Content-Location`, else the request URL
 with a trailing `/`); an absolute control for another scheme, host or port skips that section, as does any
 media the client cannot play (PCMU audio, H.265, application data); each skipped section is reported once
-per source as a non-fatal `ErrorKind::TrackDropped` (numbered after the played tracks, in media order). An SDP
+per DESCRIBE as a non-fatal `ErrorKind::TrackDropped` (`track_id` is the 1-based position of the `m=` line, not
+the id of an announced track; the same media is not reported again on a reconnect to the same SDP, a different
+SDP reports its own drops). An SDP
 with nothing playable left fails: when a skipped section names an unsupported codec by `a=rtpmap` (H.265,
 PCMU, ...) the failure is ONE fatal `ErrorKind::UnsupportedCodec { fourcc }` (the `rtpmap` encoding name) and
 the session goes silent instead of reconnecting; a section that names no codec, or a played codec with an
@@ -135,7 +137,10 @@ kept sample and positions never clamp to a flat zero.
 fatal }` reports why playback cannot proceed: `ErrorKind::UnsupportedEncryption` (SAMPLE-AES,
 FairPlay/Widevine key formats, ...) is fatal immediately; `KeyFetchFailed`, `BadKey` and
 `DecryptFailed` are reported once while the session retries and become fatal after
-`Config::max_key_failures` consecutive failures. A fatal error closes all connections and the session
+`Config::max_key_failures` consecutive failures. A failed `EXT-X-MAP` initialization-section fetch (any
+status, a transport error, a timeout) is retried the same way, VOD and live alike, and reported as
+`ErrorKind::InitFetchFailed { status }`: once while retrying, fatal after `max_key_failures` consecutive
+failures with no decoded samples in between. A fatal error closes all connections and the session
 goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbidden`.
 
 ## Host contract
