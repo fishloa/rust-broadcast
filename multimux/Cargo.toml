@@ -302,6 +302,7 @@ required-features = ["test-seams"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+transmux = { path = "../transmux", version = "0.27", features = ["sample-aes"] }
 # `test-support`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).
 webrtc-runtime   = { path = "../webrtc-runtime", version = "0.4", default-features = false, features = ["test-support"] }

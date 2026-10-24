@@ -36,7 +36,7 @@ Multi-input, multi-output just-in-time repackaging origin. It pulls or receives 
 
 | Standard | Edition | Scope here | Status | Notes |
 |---|---|---|---|---|
-| IETF HLS 2nd edition `draft-pantos-hls-rfc8216bis` | `-22`, 1 May 2026 (vendored) | LL-HLS output: parts, preload hint, blocking reload (§6.2.5.2), server control; HLS pull input | Partial | No delta updates or rendition reports on output (see `hls-runtime`) |
+| IETF HLS 2nd edition `draft-pantos-hls-rfc8216bis` | `-22`, 1 May 2026 (vendored) | LL-HLS output: parts, preload hint, blocking reload (§6.2.5.2), server control; HLS pull input (incl. `METHOD=AES-128` segment decryption; other methods fail with a typed error) | Partial | No delta updates or rendition reports on output (see `hls-runtime`) |
 | IETF RFC 8216 HLS | RFC 8216 (vendored) | Classic TS-segment HLS output (`ts_hls`), catch-up playlists | Full for the served shape | |
 | ISO/IEC 23009-1 MPEG-DASH, ETSI TS 103 285 | 23009-1 not vendored (edition unverified); TS 103 285 v1.4.1 vendored | `dash` and `ll_dash` output (live MPD, `availabilityStartTime`, `SegmentTemplate`), DASH pull incl. `SegmentTimeline` | Partial | Chunked-transfer LL-DASH |
 | Microsoft MS-SSTR Smooth Streaming | Vendored | Smooth output and pull | Partial | H.264 and AAC only |

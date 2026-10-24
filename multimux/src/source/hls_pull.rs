@@ -68,7 +68,7 @@ use transmux::TrackId;
 
 use broadcast_auth::Credentials;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
-use hls_runtime::client::{Action, HlsClient, Output as HlsOutput, ResourceId};
+use hls_runtime::client::{Action, HlsClient, KeyId, Output as HlsOutput, ResourceId};
 use media_plane::ingress::{
     Dialer, HandshakePolicy, IngestSession, ProgramId, SessionEvent, run_dial,
 };
@@ -100,6 +100,14 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// Bounded so a permanently missing resource still fails the session rather
 /// than retrying forever.
 const MAX_RESOURCE_RETRY_ATTEMPTS: u32 = 8;
+
+/// Cap on a `#EXT-X-KEY` key-file body. A key file is exactly
+/// [`AES128_KEY_LEN`] octets (RFC 8216 §5.1); the slack only lets a short
+/// error page through to be rejected by length instead of by the cap.
+const MAX_KEY_BODY_BYTES: usize = 4096;
+
+/// Length of an AES-128 key file (RFC 8216 §5.1).
+const AES128_KEY_LEN: usize = 16;
 
 /// Base delay for the **exponential** resource-fetch retry backoff (audit
 /// W14d): the delay for attempt N is `base * 2^(N-1)`, capped at
@@ -142,19 +150,35 @@ fn resource_fetch(
     read_timeout: Duration,
     delay: Duration,
 ) -> crate::source::pull::PendingFetch<HlsFetchId> {
+    let cap = match fetch_id {
+        HlsFetchId::Key(_) => MAX_KEY_BODY_BYTES,
+        _ => crate::source::MAX_HTTP_BODY_BYTES,
+    };
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
-            let result =
-                tokio::time::timeout(read_timeout, fetch_bytes(&http, &url, creds.as_ref()))
-                    .await
-                    .unwrap_or_else(|_| {
-                        Err(MultimuxError::Connect {
-                            reason: format!(
-                                "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
-                            ),
-                        })
-                    });
+            let result = tokio::time::timeout(
+                read_timeout,
+                fetch_bytes_capped(&http, &url, creds.as_ref(), cap),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(MultimuxError::Connect {
+                    reason: format!(
+                        "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
+                    ),
+                })
+            })
+            .and_then(|bytes| match fetch_id {
+                HlsFetchId::Key(id) if bytes.len() != AES128_KEY_LEN => {
+                    Err(hls_runtime::client::Error::BadKeyLength {
+                        id,
+                        len: bytes.len(),
+                    }
+                    .into())
+                }
+                _ => Ok(bytes),
+            });
             (
                 fetch_id,
                 crate::source::pull::FetchResult::from_result(result),
@@ -258,6 +282,8 @@ pub enum HlsFetchId {
     Playlist,
     /// An init/part/segment fetch — routes to `HlsClient::on_resource`.
     Resource(ResourceId),
+    /// An `#EXT-X-KEY` key-file fetch — routes to `HlsClient::on_key`.
+    Key(KeyId),
 }
 
 /// The sans-IO HLS-pull [`IngestSession`]: a driven [`HlsClient`], no
@@ -292,6 +318,12 @@ impl HlsIngestSession {
     /// See [`Self::ended`]'s field doc.
     pub fn ended(&self) -> bool {
         self.ended
+    }
+
+    /// Reports that fetching key `id` failed, so the client forgets it is in
+    /// flight and will request it again.
+    pub fn key_fetch_failed(&mut self, id: KeyId) {
+        self.client.on_key_error(id);
     }
 
     fn drain_outputs(&mut self) -> Result<()> {
@@ -342,6 +374,7 @@ impl Stage for HlsIngestSession {
         match id {
             HlsFetchId::Playlist => self.client.on_playlist(bytes)?,
             HlsFetchId::Resource(rid) => self.client.on_resource(rid, bytes)?,
+            HlsFetchId::Key(kid) => self.client.on_key(kid, bytes)?,
         }
         self.drain_outputs()
     }
@@ -395,6 +428,16 @@ async fn fetch_bytes(
     url: &str,
     creds: Option<&ScopedCredentials>,
 ) -> Result<Vec<u8>> {
+    fetch_bytes_capped(client, url, creds, crate::source::MAX_HTTP_BODY_BYTES).await
+}
+
+/// [`fetch_bytes`] with an explicit body cap.
+async fn fetch_bytes_capped(
+    client: &HttpClient,
+    url: &str,
+    creds: Option<&ScopedCredentials>,
+    cap: usize,
+) -> Result<Vec<u8>> {
     let response = authenticated_get(client, url, creds).await?;
     let status = response.status();
     if !status.is_success() {
@@ -414,7 +457,7 @@ async fn fetch_bytes(
             },
         );
     }
-    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, "hls-pull").await
+    crate::source::read_body_capped(response, cap, "hls-pull").await
 }
 
 /// Opens `route`'s connect-time HTTP client and userinfo-stripped URL —
@@ -599,6 +642,21 @@ pub async fn run_hls_pull(
                         Duration::ZERO,
                     ));
                 }
+                Action::FetchKey { id, url } => {
+                    let fetch_id = HlsFetchId::Key(id);
+                    if resource_retries.contains_key(&fetch_id) {
+                        continue;
+                    }
+                    resource_retries.insert(fetch_id, (url.clone(), 1));
+                    scheduler.push(resource_fetch(
+                        http.clone(),
+                        credentials.clone(),
+                        fetch_id,
+                        url,
+                        read_timeout,
+                        Duration::ZERO,
+                    ));
+                }
                 // `Action` is `#[non_exhaustive]`: a future variant is simply
                 // dropped from the backlog rather than failing the whole
                 // route, matching this driver's general "unrecognised ==
@@ -639,13 +697,13 @@ pub async fn run_hls_pull(
                 // viewer). A failed **playlist** fetch is still terminal — a
                 // broken manifest is not a transient error.
                 match fetch_id {
-                    HlsFetchId::Resource(id) => {
+                    HlsFetchId::Resource(_) | HlsFetchId::Key(_) => {
                         // A permanent auth/permission failure is not retried —
                         // retrying 8 times over ~2 min would only delay the
                         // reconnect for a credential that will never work.
                         if matches!(e, MultimuxError::Auth { .. }) {
                             tracing::error!(
-                                resource = ?id,
+                                resource = ?fetch_id,
                                 error = %e,
                                 "hls-pull: resource fetch failed permanently (auth); failing the session"
                             );
@@ -663,13 +721,16 @@ pub async fn run_hls_pull(
                                 .expect("resource_retries entry exists for a spawned resource");
                             let next_attempt = attempts.saturating_add(1);
                             tracing::warn!(
-                                resource = ?id,
+                                resource = ?fetch_id,
                                 attempt = next_attempt,
                                 error = %e,
                                 "hls-pull: resource fetch failed; queuing a retry"
                             );
                             if let Some(entry) = resource_retries.get_mut(&fetch_id) {
                                 entry.1 = next_attempt;
+                            }
+                            if let HlsFetchId::Key(key_id) = fetch_id {
+                                driver.session_mut().key_fetch_failed(key_id);
                             }
                             // Queued, not spawned: the spawn loop applies
                             // the in-flight bound and the backoff delay.
@@ -683,7 +744,7 @@ pub async fn run_hls_pull(
                             ));
                         } else {
                             tracing::error!(
-                                resource = ?id,
+                                resource = ?fetch_id,
                                 attempts,
                                 error = %e,
                                 "hls-pull: resource fetch failed after the retry bound; \
@@ -933,6 +994,63 @@ Content-Length: {over}
         assert!(
             started.elapsed() < Duration::from_secs(20),
             "fail-fast must return well under the full retry budget"
+        );
+    }
+
+    const KEYED_PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
+#EXT-X-MEDIA-SEQUENCE:0\n\
+#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x00000000000000000000000000000001\n\
+#EXTINF:2.0,\nindex0.ts\n#EXT-X-ENDLIST\n";
+
+    fn key_requests(session: &mut HlsIngestSession) -> Vec<KeyId> {
+        let mut ids = Vec::new();
+        while let Some(action) = session.poll_transmit() {
+            if let Action::FetchKey { id, .. } = action {
+                ids.push(id);
+            }
+        }
+        ids
+    }
+
+    /// `key_fetch_failed` is what hands a failed key fetch back to the
+    /// client: until it is called the client still considers the key in
+    /// flight and never asks for it again; afterwards the next playlist
+    /// reload re-requests it.
+    #[test]
+    fn key_fetch_failed_lets_the_client_request_the_key_again() {
+        let mut session = HlsIngestSession::new("http://origin.test/index.m3u8");
+        while session.poll_transmit().is_some() {}
+        session
+            .feed(
+                (HlsFetchId::Playlist, KEYED_PLAYLIST.as_bytes()),
+                Timestamp::from_nanos(0),
+            )
+            .expect("keyed playlist is accepted");
+        let first = key_requests(&mut session);
+        assert_eq!(first.len(), 1, "one key requested");
+
+        session
+            .feed(
+                (HlsFetchId::Playlist, KEYED_PLAYLIST.as_bytes()),
+                Timestamp::from_nanos(1),
+            )
+            .expect("reload is accepted");
+        assert!(
+            key_requests(&mut session).is_empty(),
+            "an in-flight key is not requested twice"
+        );
+
+        session.key_fetch_failed(first[0]);
+        session
+            .feed(
+                (HlsFetchId::Playlist, KEYED_PLAYLIST.as_bytes()),
+                Timestamp::from_nanos(2),
+            )
+            .expect("reload is accepted");
+        assert_eq!(
+            key_requests(&mut session),
+            first,
+            "re-requested after failure"
         );
     }
 
