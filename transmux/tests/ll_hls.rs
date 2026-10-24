@@ -894,6 +894,45 @@ fn long_segment_parts_stay_within_part_target() {
     );
 }
 
+/// A segment that has passed its target duration but is still waiting for the
+/// next keyframe must keep cutting parts: the tail is not allowed to pile up
+/// into one final part longer than PART-TARGET (RFC 8216bis §4.4.4.9; round-9
+/// F7 measured 0.48-1.6 s final parts against a 0.2 s target).
+///
+/// Revert-check: restoring the `anchor_seg_dur < target_ticks` guard on the
+/// part boundary in `push` makes the final part of each segment span the whole
+/// post-target tail and this fails on the part-duration ceiling.
+#[test]
+fn a_segment_waiting_for_its_keyframe_keeps_cutting_parts() {
+    const GOP_FRAMES: usize = 62;
+    const GOPS: usize = 3;
+    const PART_TARGET_MS: u32 = 200;
+    let mut seg =
+        LlHlsSegmenter::with_part_target(vec![video_track()], 90_000, 1.0, PART_TARGET_MS).unwrap();
+
+    for i in 0..GOP_FRAMES * GOPS {
+        seg.push(
+            TrackId::new(1),
+            vsample(i % GOP_FRAMES == 0, (i % 251) as u8),
+        )
+        .unwrap();
+    }
+    seg.flush().unwrap();
+
+    let parts = seg.take_ready_parts();
+    assert!(!parts.is_empty());
+    let ceiling = f64::from(PART_TARGET_MS) / 1000.0 + 1e-9;
+    for (i, p) in parts.iter().enumerate() {
+        assert!(
+            p.duration <= ceiling,
+            "part {i} duration {} exceeds the {PART_TARGET_MS} ms part target",
+            p.duration
+        );
+    }
+    let video_samples: usize = parts.iter().map(|p| part_sample_count(&p.bytes, 1)).sum();
+    assert_eq!(video_samples, GOP_FRAMES * GOPS);
+}
+
 /// The sample count of `track_id`'s `trun`s in a part (`moof` walk).
 fn part_sample_count(part: &[u8], want_track: u32) -> usize {
     let moof = find_box_body(part, b"moof").expect("moof in part");

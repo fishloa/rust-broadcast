@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed (round-9 audit F6)
 - **Box walkers no longer panic on an untrusted `largesize` that overflows `usize` arithmetic.** `find_config_box` (`off += size`, libFuzzer `transmux_sample_entries` crash), the `stsd`/`dref` entry walks, and the `stsd`/`dref`/`cenc`/subtitle/`webm` child walkers now clamp every extent to the bytes present (`box_types::child_extent_in`) and use checked/saturating advances; `parse_box` no longer truncates a `u64` size on 32-bit targets; the progressive chunk cursor saturates. Reachable through hls-runtime init validation (so `broadcast-client`).
 
+### Fixed (round-9 audit F7)
+- `LlHlsSegmenter` keeps cutting parts after a segment passes its target duration while it waits for the next keyframe. The part boundary used to be suppressed past the target, so every sample until the next IDR piled into the segment's final part (0.28-6.04 s against a 0.2 s `PART-TARGET` on real TS captures), breaking RFC 8216bis §4.4.4.9. The final part is now the short remainder. A single source sample longer than the part target still cannot be split.
+
 ### Added (round-6 audit F7)
 - `CodecConfig::is_video()` is public: true for every video codec the IR carries (AVC, HEVC, VVC, AV1, VP9, VP8, MPEG-2 video), the counterpart of `audio_sample_rate().is_some()`. A consumer no longer has to infer "video" from `LiveJoin::for_config`, which is `None` for AV1, VP9, VP8 and MPEG-2.
 

@@ -671,7 +671,10 @@ pub async fn run_hls_pull(
             if driver.session().ended() {
                 driver.finish();
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
-                return terminal_result(driver, "hls-pull");
+                return crate::source::finish_vod(
+                    route_handle,
+                    terminal_result(driver, "hls-pull"),
+                );
             }
             // Nothing running, queued or awaiting a retry: the client has
             // genuinely nothing to do right now. Park briefly rather than
@@ -776,13 +779,13 @@ pub async fn run_hls_pull(
             // already terminal here, so this call's internal terminal-health
             // check flushes every program's trailing partial segment.
             crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return terminal_result(driver, "hls-pull");
+            return crate::source::finish_vod(route_handle, terminal_result(driver, "hls-pull"));
         }
 
         if driver.session().ended() {
             driver.finish();
             crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return terminal_result(driver, "hls-pull");
+            return crate::source::finish_vod(route_handle, terminal_result(driver, "hls-pull"));
         }
     }
 }
@@ -854,6 +857,8 @@ mod tests {
     use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
     use std::collections::HashMap;
     use std::num::NonZeroUsize;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use transmux::ll_hls::LlHlsSegmenter;
     use transmux::pipeline::Sample;
     use transmux::{
@@ -1267,6 +1272,14 @@ Content-Length: {over}
     async fn start_cmaf_fixture_server(
         auth: Option<MockAuthScheme>,
     ) -> (String, tokio::task::JoinHandle<()>) {
+        start_counting_cmaf_fixture_server(auth, Arc::new(AtomicUsize::new(0))).await
+    }
+
+    /// [`start_cmaf_fixture_server`], counting every `segN.m4s` GET in `hits`.
+    async fn start_counting_cmaf_fixture_server(
+        auth: Option<MockAuthScheme>,
+        hits: Arc<AtomicUsize>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         use axum::Router;
         use axum::extract::{Path as AxumPath, State};
         use axum::response::{IntoResponse, Response as AxumResponse};
@@ -1279,6 +1292,7 @@ Content-Length: {over}
             playlist: String,
             init: Vec<u8>,
             segments: std::sync::Arc<Vec<Vec<u8>>>,
+            hits: Arc<AtomicUsize>,
         }
 
         async fn handler(
@@ -1297,6 +1311,7 @@ Content-Length: {over}
                 .and_then(|s| s.parse::<usize>().ok())
                 && let Some(bytes) = state.segments.get(idx)
             {
+                state.hits.fetch_add(1, Ordering::SeqCst);
                 return bytes.clone().into_response();
             }
             axum::http::StatusCode::NOT_FOUND.into_response()
@@ -1306,6 +1321,7 @@ Content-Length: {over}
             playlist: playlist_text,
             init,
             segments: std::sync::Arc::new(segments),
+            hits,
         };
         let mut app = Router::new()
             .route("/{name}", get(handler))
@@ -1569,6 +1585,64 @@ Content-Length: {over}
             result.is_ok(),
             "a static playlist must end cleanly: {result:?}"
         );
+        server.abort();
+    }
+
+    /// Round-9 F4: a finite (`#EXT-X-ENDLIST`) playlist pulled under the
+    /// route supervisor is fetched once and then served — not re-pulled in a
+    /// reconnect loop that hammers the origin and rejects every re-publish.
+    ///
+    /// Revert-check: without `finish_vod` the supervisor reconnects every
+    /// backoff and the segment GET count climbs past the segment count.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_finite_playlist_is_fetched_once_and_then_served() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, server) = start_counting_cmaf_fixture_server(None, hits.clone()).await;
+        let segment_count = build_cmaf_fixture().2.len();
+        let route = Arc::new(HlsPullRoute::new("vod", url));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let attempt_route = route.clone();
+        let supervisor = tokio::spawn(crate::origin::supervisor::supervise_driver(
+            move |handle| {
+                let route = attempt_route.clone();
+                async move { run_hls_pull(&route, trunk_config(), handshake(), &handle).await }
+            },
+            route_handle.clone(),
+            crate::origin::supervisor::Backoff::new(
+                Duration::from_millis(20),
+                Duration::from_millis(40),
+                2.0,
+            ),
+            "vod".to_string(),
+            cancel.clone(),
+        ));
+
+        let settle = tokio::time::Instant::now() + Duration::from_secs(3);
+        while tokio::time::Instant::now() < settle {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(
+            route_handle.health(),
+            crate::route::HealthState::Ended,
+            "a finished playlist is Ended"
+        );
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            segment_count,
+            "every segment is fetched exactly once"
+        );
+        let crate::route::ProgramResolution::Found(serving) =
+            route_handle.resolve_program(crate::route::SPTS_PROGRAM_ID)
+        else {
+            panic!("the finished VOD must still be served");
+        };
+        assert!(
+            serving.trunk().last_closed_segment().is_some(),
+            "the VOD's segments stay available"
+        );
+        cancel.cancel();
+        supervisor.await.expect("supervisor did not panic");
         server.abort();
     }
 

@@ -880,12 +880,18 @@ impl ProgramSegmenter {
                     }
                 }
                 self.ingest_sample(trunk, track_id, sample);
+            } else if let SampleCursorItem::Lagged { skipped } = item {
+                tracing::warn!(
+                    program = program.0,
+                    skipped,
+                    "segmenter fell behind the trunk's timed ring; those samples are lost"
+                );
             }
-            // `Sparse`/`Lagged`/`Degraded` items: a section-carried (sparse)
-            // track has no place in either segmenter's media segment (fMP4 or
-            // classic TS) and `Lagged`/`Degraded` are cursor bookkeeping, not
-            // media — nothing to feed the segmenter with either way, mirroring
-            // `ts_program`'s own reference test, which only ever matches
+            // `Sparse`/`Degraded` items: a section-carried (sparse) track has
+            // no place in either segmenter's media segment (fMP4 or classic
+            // TS) and `Degraded` is cursor bookkeeping, not media — nothing
+            // to feed the segmenter with either way, mirroring `ts_program`'s
+            // own reference test, which only ever matches
             // `SampleCursorItem::Timed`.
         }
         self.publish_ready()

@@ -454,6 +454,30 @@ pub(crate) fn driver_trunk_config(window_segments: usize) -> media_plane::trunk:
     )
 }
 
+/// Timed-ring depth for a pull source's `Trunk`. A pull source delivers a
+/// whole segment's samples in one fetch (every frame of a 2-10 s CMAF/TS
+/// segment, video plus audio), all written before the segmenter's cursor is
+/// next polled, so the ring must hold a full segment: at the 64-entry
+/// [`DRIVER_TIMED_CAPACITY`] a typical segment overran it, the cursor
+/// reported `Lagged`, and the dropped samples meant no segment ever closed
+/// (round-9 F5). 2048 entries cover about 19 s of 60 fps video plus AAC.
+const PULL_TIMED_CAPACITY: usize = 2048;
+
+/// [`driver_trunk_config`] for the segment-pulling inputs
+/// (`hls_pull`/`dash_pull`/`smooth_pull`), with a timed ring sized for one
+/// fetched segment ([`PULL_TIMED_CAPACITY`]).
+pub(crate) fn pull_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig {
+    let window_segments =
+        std::num::NonZeroUsize::new(window_segments).unwrap_or(std::num::NonZeroUsize::MIN);
+    media_plane::trunk::TrunkConfig::new(
+        source_nz(PULL_TIMED_CAPACITY),
+        source_nz(DRIVER_SPARSE_CAPACITY),
+        window_segments,
+        source_nz(DRIVER_EVENT_CAPACITY),
+        source_nz(DRIVER_PART_CAPACITY),
+    )
+}
+
 /// Builds a production [`media_plane::ingress::HandshakePolicy`] bounding a
 /// fresh session's handshake by `timeout`, expressed as nanoseconds-since-zero
 /// rather than a real wall-clock [`broadcast_common::Timestamp`].
@@ -654,6 +678,20 @@ pub async fn advance_route<S: media_plane::ingress::IngestSession>(
     // Drain DVR cursors for every published program — recording happens
     // after segmenters have published new segments to the Trunk.
     route_handle.drain_dvr().await;
+}
+
+/// Passes a pull drive loop's terminal result through, first marking the route
+/// [`HealthState::Ended`](crate::route::HealthState::Ended) when the source
+/// finished cleanly: a finite playlist/manifest has nothing more to pull, so
+/// the supervisor serves what was published rather than re-pulling it.
+pub(crate) fn finish_vod(
+    route_handle: &crate::route::RouteHandle,
+    result: crate::Result<()>,
+) -> crate::Result<()> {
+    if result.is_ok() {
+        route_handle.set_health(crate::route::HealthState::Ended);
+    }
+    result
 }
 
 /// Release every program `driver` published from `route_handle`'s registry —

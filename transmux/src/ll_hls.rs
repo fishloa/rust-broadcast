@@ -410,16 +410,13 @@ impl LlHlsSegmenter {
         self.tracks[idx].pending.push(sample);
 
         // Part boundary: the anchor's buffered-since-last-part span has reached
-        // the part target and the segment is not yet due to close. `emit_part`
-        // then drains only the samples that fit *within* the part target
-        // (RFC 8216bis §4.4.4.9: "The duration of a Partial Segment MUST be less
-        // than or equal to the Part Target Duration"), leaving the crossing
-        // sample for the next part. The segment's final part is held for the
-        // boundary / flush so trailing samples ride it.
-        if idx == self.anchor
-            && self.anchor_part_dur >= self.part_target_ticks
-            && self.anchor_seg_dur < self.target_ticks
-        {
+        // the part target. `emit_part` then drains only the samples that fit
+        // *within* the part target (RFC 8216bis §4.4.4.9: "The duration of a
+        // Partial Segment MUST be less than or equal to the Part Target
+        // Duration"), leaving the crossing sample for the next part. This holds
+        // past the segment target too: a segment waiting for its next keyframe
+        // keeps cutting parts, so its final part is only the short remainder.
+        if idx == self.anchor && self.anchor_part_dur >= self.part_target_ticks {
             self.emit_part(false)?;
         }
         Ok(())

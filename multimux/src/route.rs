@@ -201,9 +201,20 @@ pub enum HealthState {
     /// Surfaced through the admin API's route status, so it is diagnosable
     /// without reading logs.
     Failed,
+    /// The source finished cleanly and will not produce more media (an HLS
+    /// playlist that reached `#EXT-X-ENDLIST`, a static DASH/Smooth manifest).
+    /// The route keeps serving what it published and is not reconnected —
+    /// re-pulling a finite source only repeats the same content.
+    Ended,
 }
 
 impl HealthState {
+    /// Whether the route has media to serve: still being produced
+    /// ([`HealthState::Live`]) or finished and retained ([`HealthState::Ended`]).
+    pub fn is_serving(&self) -> bool {
+        matches!(self, HealthState::Live | HealthState::Ended)
+    }
+
     /// The spec/field-enum label (workspace #204 convention).
     pub fn name(&self) -> &'static str {
         match self {
@@ -211,6 +222,7 @@ impl HealthState {
             HealthState::Live => "live",
             HealthState::Reconnecting => "reconnecting",
             HealthState::Failed => "failed",
+            HealthState::Ended => "ended",
         }
     }
 }
@@ -1246,6 +1258,14 @@ impl RouteHandle {
         }
     }
 
+    /// Free every program's `active_publisher` slot, leaving `programs`
+    /// serving what was last published. For a supervisor whose attempt has
+    /// ended: no publisher of this route is alive any more, so the next
+    /// attempt's `publish_program` is a legitimate reconnect, not a rival.
+    pub(crate) fn release_all_publishers(&self) {
+        self.active_publisher.write().clear();
+    }
+
     /// The `Trunk` of this route's lowest-numbered published program — the
     /// one push and WHEP egress follow — or `None` while nothing is published.
     fn first_trunk(&self) -> Option<Arc<Trunk>> {
@@ -1470,11 +1490,7 @@ impl RouteHandle {
     /// transition and the gauge never read `1` (issue #1083).
     pub fn set_health(&self, state: HealthState) {
         *self.health.lock() = state;
-        let up = if matches!(state, HealthState::Live) {
-            1.0
-        } else {
-            0.0
-        };
+        let up = if state.is_serving() { 1.0 } else { 0.0 };
         metrics::gauge!(crate::prometheus::ROUTE_UP, "route" => self.name.clone()).set(up);
     }
 

@@ -59,6 +59,12 @@ const DEFAULT_BACKOFF_MIN: Duration = Duration::from_millis(500);
 const DEFAULT_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const DEFAULT_BACKOFF_FACTOR: f64 = 2.0;
 
+/// How long an attempt must stay [`HealthState::Live`] before its end counts
+/// as a healthy session. A source that goes live and drops within seconds,
+/// repeatedly, is a failing source, so the backoff only restarts from the
+/// floor after a life at least this long.
+const HEALTHY_LIFE: Duration = Duration::from_secs(30);
+
 /// How many *consecutive* auth-rejected attempts [`supervise_driver`]
 /// tolerates before declaring the failure permanent (issue #957).
 ///
@@ -203,11 +209,7 @@ impl Backoff {
 /// every health transition, since [`RouteHandle`] itself doesn't carry its
 /// own route name.
 fn record_route_up(name: &str, state: HealthState) {
-    let up = if matches!(state, HealthState::Live) {
-        1.0
-    } else {
-        0.0
-    };
+    let up = if state.is_serving() { 1.0 } else { 0.0 };
     metrics::gauge!(crate::prometheus::ROUTE_UP, "route" => name.to_string()).set(up);
 }
 
@@ -300,11 +302,20 @@ pub async fn supervise_driver<F, Fut>(
         // attempt (an established ingest session) must be abandoned when the
         // route is cancelled rather than awaited to its own end. The attempt
         // future is dropped here, which tears its driver down.
+        let attempt_started = tokio::time::Instant::now();
         let result = tokio::select! {
             biased;
             () = cancel.cancelled() => break,
             r = attempt(route_handle.clone()) => r,
         };
+        route_handle.release_all_publishers();
+
+        if result.is_ok() && route_handle.health() == HealthState::Ended {
+            tracing::info!("source finished; serving what it published, not reconnecting");
+            record_route_up(&name, HealthState::Ended);
+            cancel.cancelled().await;
+            break;
+        }
         let reached_live = route_handle.health() == HealthState::Live;
 
         match &result {
@@ -357,8 +368,12 @@ pub async fn supervise_driver<F, Fut>(
         }
 
         if reached_live {
-            attempt_no = 0;
-            backoff.reset();
+            if attempt_started.elapsed() >= HEALTHY_LIFE {
+                attempt_no = 0;
+                backoff.reset();
+            } else {
+                attempt_no += 1;
+            }
         }
         route_handle.set_health(HealthState::Reconnecting);
         record_route_up(&name, HealthState::Reconnecting);
@@ -997,5 +1012,186 @@ mod tests {
             .await
             .expect("supervise_driver must abandon an in-flight attempt on cancel")
             .expect("supervise_driver task did not panic");
+    }
+
+    type BoxedAttempt = std::pin::Pin<Box<dyn Future<Output = crate::Result<()>> + Send>>;
+
+    const SHORT_LIFE: Duration = Duration::from_secs(1);
+    const LONG_LIFE: Duration = Duration::from_secs(31);
+
+    /// An attempt that reaches `Live`, lives for the next scripted span of
+    /// simulated time, then ends cleanly. Records each attempt's start time.
+    fn scripted_lives(
+        lives: Vec<Duration>,
+        starts: Arc<parking_lot::Mutex<Vec<tokio::time::Instant>>>,
+    ) -> impl FnMut(Arc<RouteHandle>) -> BoxedAttempt + Send + 'static {
+        move |route_handle: Arc<RouteHandle>| {
+            let mut starts = starts.lock();
+            let life = lives[starts.len().min(lives.len() - 1)];
+            starts.push(tokio::time::Instant::now());
+            Box::pin(async move {
+                route_handle.set_health(HealthState::Live);
+                tokio::time::sleep(life).await;
+                Ok(())
+            })
+        }
+    }
+
+    async fn run_scripted(lives: Vec<Duration>, observe: Duration) -> Vec<(Duration, Duration)> {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let starts = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(supervise_driver(
+            scripted_lives(lives.clone(), starts.clone()),
+            route,
+            Backoff::new(Duration::from_secs(1), Duration::from_secs(8), 2.0),
+            "test-route".to_string(),
+            cancel.clone(),
+        ));
+        tokio::time::sleep(observe).await;
+        cancel.cancel();
+        handle.await.expect("supervisor did not panic");
+        let starts = starts.lock().clone();
+        starts
+            .windows(2)
+            .enumerate()
+            .map(|(i, w)| {
+                let life = lives[i.min(lives.len() - 1)];
+                (life, (w[1] - w[0]).saturating_sub(life))
+            })
+            .collect()
+    }
+
+    fn assert_in_band(delay: Duration, raw: Duration, what: &str) {
+        assert!(
+            delay >= raw / 2 && delay < raw,
+            "{what}: delay {delay:?} outside [{:?}, {raw:?})",
+            raw / 2
+        );
+    }
+
+    /// F4(c): a source that goes live and ends within seconds, over and over,
+    /// must back off 1, 2, 4, 8 s (then hold the cap), not restart the series
+    /// at the floor on every short life.
+    ///
+    /// Revert-check: calling `backoff.reset()` on every `reached_live` makes
+    /// the second delay land in [0.5 s, 1 s) and this fails.
+    #[tokio::test(start_paused = true)]
+    async fn short_lives_back_off_up_to_the_cap() {
+        let delays = run_scripted(vec![SHORT_LIFE], Duration::from_secs(200)).await;
+        let raws = [1, 2, 4, 8, 8, 8];
+        assert!(delays.len() > raws.len(), "observed {delays:?}");
+        for (k, raw) in raws.iter().enumerate() {
+            assert_in_band(
+                delays[k].1,
+                Duration::from_secs(*raw),
+                &format!("retry {k}"),
+            );
+        }
+    }
+
+    /// F4(c): only a life of at least `HEALTHY_LIFE` earns a backoff reset.
+    ///
+    /// Revert-check: never resetting makes the third delay land in [2 s, 4 s)
+    /// and this fails; resetting on any life fails `short_lives_back_off_up_to_the_cap`.
+    #[tokio::test(start_paused = true)]
+    async fn a_long_life_resets_the_backoff() {
+        let delays = run_scripted(
+            vec![SHORT_LIFE, SHORT_LIFE, LONG_LIFE, SHORT_LIFE, SHORT_LIFE],
+            Duration::from_secs(200),
+        )
+        .await;
+        let raws = [1, 2, 1, 2];
+        assert!(delays.len() >= raws.len(), "observed {delays:?}");
+        for (k, raw) in raws.iter().enumerate() {
+            assert_in_band(
+                delays[k].1,
+                Duration::from_secs(*raw),
+                &format!("retry {k}"),
+            );
+        }
+    }
+
+    /// F4(a): a finite source that ends cleanly is served, not re-pulled.
+    ///
+    /// Revert-check: dropping the `HealthState::Ended` early-park in
+    /// `supervise_driver` makes the attempt count climb past 1.
+    #[tokio::test(start_paused = true)]
+    async fn a_finite_source_that_ended_is_not_reconnected() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let counter = call_count.clone();
+        let attempt = move |route_handle: Arc<RouteHandle>| -> BoxedAttempt {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                route_handle.set_health(HealthState::Live);
+                route_handle.set_health(HealthState::Ended);
+                Ok(())
+            })
+        };
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            tiny_backoff(),
+            "test-route".to_string(),
+            cancel.clone(),
+        ));
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "re-pulled a finite source"
+        );
+        assert_eq!(route.health(), HealthState::Ended);
+        assert!(
+            !handle.is_finished(),
+            "the supervisor must stay parked, holding the route"
+        );
+        cancel.cancel();
+        handle.await.expect("supervisor did not panic");
+    }
+
+    /// F4(b): a reconnect after the previous publisher's attempt ended must
+    /// bind its fresh trunk, not be rejected as a second concurrent publisher.
+    ///
+    /// Revert-check: removing `release_all_publishers` from `supervise_driver`
+    /// leaves the first trunk bound and this fails.
+    #[tokio::test(start_paused = true)]
+    async fn a_reconnect_after_a_publisher_ended_is_not_rejected_as_concurrent() {
+        use media_plane::ingress::ProgramId;
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let trunks = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let recorded = trunks.clone();
+        let attempt = move |route_handle: Arc<RouteHandle>| -> BoxedAttempt {
+            let trunk = route_handle.publish_new_program(ProgramId(0));
+            recorded.lock().push(trunk);
+            Box::pin(async move {
+                route_handle.set_health(HealthState::Live);
+                tokio::time::sleep(SHORT_LIFE).await;
+                Ok(())
+            })
+        };
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            Backoff::new(Duration::from_secs(1), Duration::from_secs(8), 2.0),
+            "test-route".to_string(),
+            cancel.clone(),
+        ));
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        cancel.cancel();
+        handle.await.expect("supervisor did not panic");
+        let trunks = trunks.lock();
+        assert!(trunks.len() >= 3, "expected several reconnects");
+        let crate::route::ProgramResolution::Found(serving) = route.resolve_program(ProgramId(0))
+        else {
+            panic!("program must be served");
+        };
+        assert!(
+            Arc::ptr_eq(&serving.trunk(), trunks.last().unwrap()),
+            "the latest attempt's trunk must be the one served"
+        );
     }
 }
