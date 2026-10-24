@@ -11,7 +11,7 @@ use tshttp_runtime::{Config as TsConfig, TsHttpClient};
 
 use mpeg_ts::pid::Pid;
 
-use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US};
+use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US, StreamKind};
 use crate::{Event, Status};
 
 pub(crate) type Item = Option<Event>;
@@ -52,6 +52,7 @@ pub struct TsHttpSource {
     last_pcr_27mhz: Option<u64>,
     now_us: u64,
     declared: Option<DeclaredStreams>,
+    expected: BTreeMap<Pid, StreamKind>,
     resolved: BTreeSet<Pid>,
     hold: Option<HoldState>,
     held: VecDeque<Item>,
@@ -76,6 +77,7 @@ impl TsHttpSource {
             last_pcr_27mhz: None,
             now_us,
             declared: Some(DeclaredStreams::new()),
+            expected: BTreeMap::new(),
             resolved: BTreeSet::new(),
             hold: None,
             held: VecDeque::new(),
@@ -182,6 +184,15 @@ impl TsHttpSource {
         }
     }
 
+    /// The kinds of audio/video stream the PMT declares that have not resolved to a track yet.
+    pub(crate) fn unresolved_kinds(&self) -> BTreeSet<StreamKind> {
+        self.expected
+            .iter()
+            .filter(|(pid, _)| !self.resolved.contains(*pid))
+            .map(|(_, kind)| *kind)
+            .collect()
+    }
+
     fn active_resolved(&self) -> bool {
         self.declared
             .as_ref()
@@ -284,6 +295,9 @@ impl TsHttpSource {
         self.last_pcr_27mhz = None;
         if let Some(d) = self.declared.as_mut() {
             d.feed(bytes);
+            if d.kinds().len() != self.expected.len() {
+                self.expected.clone_from(d.kinds());
+            }
         }
         if let Some(h) = self.hold.as_mut() {
             h.bytes = h.bytes.saturating_add(bytes.len());
@@ -345,6 +359,7 @@ impl TsHttpSource {
             tshttp_runtime::Event::Connected => {
                 self.release_hold();
                 self.declared = Some(DeclaredStreams::new());
+                self.expected.clear();
                 self.resolved.clear();
                 self.tracks.clear();
                 self.tracks_dirty = true;

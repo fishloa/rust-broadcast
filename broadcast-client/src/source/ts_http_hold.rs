@@ -2,10 +2,12 @@
 //! that bound how long the first `Event::Tracks` waits for them to resolve (DESIGN.md, Audit
 //! round 5 F1).
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use dvb_si::demux::SiDemux;
+use dvb_si::descriptors::{aac, ac3, dts, enhanced_ac3};
 use dvb_si::tables::AnyTableSection;
+use dvb_si::tables::pmt::{PmtStream, StreamType};
 use mpeg_ts::pid::{Pid, well_known};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::TsHeader;
@@ -68,6 +70,32 @@ impl HoldLimits {
 
 const NETWORK_PROGRAM_NUMBER: u16 = 0;
 
+/// The kind of a PMT-declared elementary stream a start gate waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum StreamKind {
+    Video,
+    Audio,
+}
+
+/// Audio carried as `PesPrivateData` (stream_type 0x06) is identified by its ES_info descriptor
+/// (ETSI TS 101 154 §4.1.6, EN 300 468 Annex D).
+const PRIVATE_AUDIO_DESCRIPTORS: [u8; 4] = [ac3::TAG, enhanced_ac3::TAG, aac::TAG, dts::TAG];
+
+fn kind_of(stream: &PmtStream<'_>) -> Option<StreamKind> {
+    if stream.stream_type.is_video() {
+        Some(StreamKind::Video)
+    } else if stream.stream_type.is_audio()
+        || (stream.stream_type == StreamType::PesPrivateData
+            && PRIVATE_AUDIO_DESCRIPTORS
+                .iter()
+                .any(|t| stream.es_info.contains_tag(*t)))
+    {
+        Some(StreamKind::Audio)
+    } else {
+        None
+    }
+}
+
 pub(crate) struct DeclaredStreams {
     resync: TsResync,
     si: SiDemux,
@@ -75,6 +103,7 @@ pub(crate) struct DeclaredStreams {
     seen_pmts: BTreeSet<u16>,
     declared: BTreeSet<Pid>,
     sent: BTreeSet<Pid>,
+    kinds: BTreeMap<Pid, StreamKind>,
 }
 
 impl DeclaredStreams {
@@ -89,6 +118,7 @@ impl DeclaredStreams {
             seen_pmts: BTreeSet::new(),
             declared: BTreeSet::new(),
             sent: BTreeSet::new(),
+            kinds: BTreeMap::new(),
         }
     }
 
@@ -114,11 +144,21 @@ impl DeclaredStreams {
                         self.seen_pmts.insert(pmt.program_number);
                         self.declared
                             .extend(pmt.streams.iter().map(|s| s.elementary_pid));
+                        self.kinds.extend(
+                            pmt.streams
+                                .iter()
+                                .filter_map(|s| kind_of(s).map(|k| (s.elementary_pid, k))),
+                        );
                     }
                     _ => {}
                 }
             }
         }
+    }
+
+    /// The audio/video streams the PMTs declare, by PID.
+    pub(crate) fn kinds(&self) -> &BTreeMap<Pid, StreamKind> {
+        &self.kinds
     }
 
     fn pmts_complete(&self) -> bool {

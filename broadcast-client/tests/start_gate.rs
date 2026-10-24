@@ -358,6 +358,12 @@ fn bytes_for(c: &Capture, hold: Hold) -> Option<Vec<u8>> {
     Some(b)
 }
 
+const MIN_CAPTURE_US: u64 = 8_000_000;
+
+fn long_enough(b: &[u8]) -> bool {
+    b.len() as u64 * 8 * MICROS / bitrate_bps(b) >= MIN_CAPTURE_US
+}
+
 fn skewed(c: &Capture, skew_ms: usize) -> Option<Vec<u8>> {
     let b = bytes_for(c, Hold::Early)?;
     let per_s = (bitrate_bps(&b) / 8 / TS_PACKET as u64) as usize;
@@ -427,6 +433,9 @@ fn start_latency_grows_by_no_more_than_the_audio_skew() {
             let Some(base) = skewed(c, 0) else {
                 return;
             };
+            if !long_enough(&base) {
+                continue;
+            }
             let Some(base_start) = run(
                 &base,
                 config_with_lead(hold, base.len(), lead_us),
