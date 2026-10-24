@@ -139,7 +139,9 @@ fn drain(s: &mut Session, out: &mut Outcome) {
     }
 }
 
-fn measure(bytes: &[u8], what: &str) {
+const SEAM_TAIL_FRAMES: usize = 8;
+
+fn assert_seam_costs_only_the_tail(bytes: &[u8], what: &str) {
     let b = &bytes[..bytes.len() / TS_PACKET * TS_PACKET];
     let segs = split_at_pat(b, SEGMENTS);
     assert!(
@@ -149,28 +151,52 @@ fn measure(bytes: &[u8], what: &str) {
     );
     let plain = run(&segs, None);
     let cut = run(&segs, Some(DISCONTINUITY_AT));
-    eprintln!(
-        "{what}: plain pids={} samples={} | disc pids={} samples={} disc={} err={:?}\n  plain {:x?}\n  disc  {:x?}",
-        plain.announced_pids.len(),
-        plain.samples,
-        cut.announced_pids.len(),
-        cut.samples,
-        cut.discontinuities,
-        cut.errors,
-        plain.per_track,
-        cut.per_track
+    assert!(cut.errors.is_empty(), "{what}: {:?}", cut.errors);
+    assert_eq!(cut.discontinuities, 1, "{what}");
+    assert!(
+        !plain.announced_pids.is_empty(),
+        "{what}: nothing announced"
     );
+    assert_eq!(
+        cut.announced_pids, plain.announced_pids,
+        "{what}: the discontinuity changed the announced track set"
+    );
+    assert_eq!(
+        cut.last_track_set.len(),
+        plain.last_track_set.len(),
+        "{what}: the final track set shrank"
+    );
+    for (pid, &want) in &plain.per_track {
+        let got = cut.per_track.get(pid).copied().unwrap_or(0);
+        assert!(
+            want.abs_diff(got) <= SEAM_TAIL_FRAMES,
+            "{what}: pid {pid:#x} delivered {got} samples across the seam, {want} without"
+        );
+    }
 }
 
 #[test]
-fn measure_f6() {
-    for rel in ["ts/france-tnt-uhf32-video-head-6MB.ts", "csa/csa2-plain.ts"] {
-        let Some(b) = test_fixtures::require_bytes(rel, "measure_f6") else {
-            continue;
-        };
-        measure(&b, rel);
-    }
-    if let Some(p) = test_fixtures::tsduck("input/test-092.ts", "measure_f6") {
-        measure(&std::fs::read(p).unwrap(), "test-092");
-    }
+fn a_discontinuity_costs_one_pes_tail_not_a_track_france_tnt() {
+    let Some(b) = test_fixtures::require_bytes(
+        "ts/france-tnt-uhf32-video-head-6MB.ts",
+        "discontinuity_france_tnt",
+    ) else {
+        return;
+    };
+    assert_seam_costs_only_the_tail(&b, "france-tnt-uhf32-video-head-6MB");
+}
+
+#[test]
+fn a_discontinuity_costs_one_pes_tail_not_a_track_france2() {
+    assert_seam_costs_only_the_tail(&test_fixtures::read("ts/france2.ts"), "france2");
+}
+
+#[test]
+fn a_discontinuity_in_a_two_pid_stream_loses_nothing() {
+    let b = test_fixtures::read("ts/h264_aac_40s.ts");
+    let segs = split_at_pat(&b[..b.len() / TS_PACKET * TS_PACKET], SEGMENTS);
+    let plain = run(&segs, None);
+    let cut = run(&segs, Some(DISCONTINUITY_AT));
+    assert_eq!(cut.per_track, plain.per_track);
+    assert_eq!(cut.announced_pids, plain.announced_pids);
 }
