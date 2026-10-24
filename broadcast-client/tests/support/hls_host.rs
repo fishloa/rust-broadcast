@@ -314,16 +314,25 @@ pub fn oracle_events(playlist_url: &str, bodies: &HashMap<String, Vec<u8>>) -> V
     use hls_runtime::client::{Action as HlsAction, HlsClient, Output};
     let mut client = HlsClient::new(playlist_url);
     let mut out = Vec::new();
+    let mut joins: HashMap<transmux::TrackId, transmux::LiveJoin> = HashMap::new();
     for _ in 0..10_000 {
         while let Some(o) = client.next_output() {
             match o {
-                Output::Tracks(t) => out.push(Event::Tracks(t)),
+                Output::Tracks(t) => {
+                    for spec in &t {
+                        if let Some(j) = transmux::LiveJoin::for_config(&spec.config) {
+                            joins.entry(spec.track_id).or_insert(j);
+                        }
+                    }
+                    out.push(Event::Tracks(t));
+                }
                 Output::Samples { track_id, samples } => {
                     for sample in samples {
+                        let join = joins.get_mut(&track_id).map(|j| j.push(&sample));
                         out.push(Event::Sample {
                             track: track_id,
                             sample,
-                            join: None,
+                            join,
                         });
                     }
                 }
@@ -336,7 +345,10 @@ pub fn oracle_events(playlist_url: &str, bodies: &HashMap<String, Vec<u8>>) -> V
                     pts,
                     display,
                 }),
-                Output::Discontinuity => out.push(Event::Discontinuity),
+                Output::Discontinuity => {
+                    joins.values_mut().for_each(transmux::LiveJoin::rejoin);
+                    out.push(Event::Discontinuity);
+                }
                 Output::EndOfStream => return out,
                 _ => {}
             }

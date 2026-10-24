@@ -72,6 +72,7 @@ pub struct Session {
     playout: Playout,
     jump: JumpDetector,
     stale_dropped: u64,
+    hls_joins: crate::source::hls_join::HlsJoins,
 }
 
 impl Session {
@@ -155,6 +156,7 @@ impl Session {
             playout,
             jump,
             stale_dropped: 0,
+            hls_joins: crate::source::hls_join::HlsJoins::default(),
         })
     }
 
@@ -585,6 +587,7 @@ impl Session {
             return;
         }
         self.buffer.rejoin();
+        self.hls_joins.rejoin();
         self.playout.rejoin();
         self.jump.clear();
     }
@@ -681,22 +684,29 @@ impl Session {
         self.actions.extend(h.take_actions());
         self.playout.set_source(h.playout_source());
         let events = h.take_events();
-        for e in events {
-            if let Event::Sample {
-                track,
-                sample,
-                join,
-            } = &e
-            {
-                if !self.jump.screen(*track, sample) {
-                    self.stale_dropped = self.stale_dropped.saturating_add(1);
-                    continue;
+        for mut e in events {
+            match &mut e {
+                Event::Tracks(specs) => self.hls_joins.on_tracks(specs),
+                Event::Discontinuity => self.hls_joins.rejoin(),
+                Event::Sample {
+                    track,
+                    sample,
+                    join,
+                } => {
+                    if !self.jump.screen(*track, sample) {
+                        self.stale_dropped = self.stale_dropped.saturating_add(1);
+                        continue;
+                    }
+                    *join = self.hls_joins.push(*track, sample);
+                    if self.jump.is_jump(*track, sample, *join, self.now_us) {
+                        self.emit(Event::Discontinuity);
+                        self.jump.begin_epoch(*track, sample);
+                        self.hls_joins.rejoin();
+                        *join = self.hls_joins.push(*track, sample);
+                    }
+                    self.jump.record(*track, sample, *join, self.now_us);
                 }
-                if self.jump.is_jump(*track, sample, *join, self.now_us) {
-                    self.emit(Event::Discontinuity);
-                    self.jump.begin_epoch(*track, sample);
-                }
-                self.jump.record(*track, sample, *join, self.now_us);
+                _ => {}
             }
             self.emit(e);
         }

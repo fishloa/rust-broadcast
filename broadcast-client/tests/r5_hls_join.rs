@@ -56,7 +56,10 @@ fn tf1_segments() -> Option<Vec<Vec<u8>>> {
         .find(|&o| (0..5).all(|k| prefix.get(o + k * 188) == Some(&0x47)))
         .unwrap();
     let usable = (prefix.len() - first_sync) / 188 * 188;
-    Some(split_at_pat(&prefix[first_sync..first_sync + usable], SEGMENTS))
+    Some(split_at_pat(
+        &prefix[first_sync..first_sync + usable],
+        SEGMENTS,
+    ))
 }
 
 #[test]
@@ -96,7 +99,9 @@ fn a_mid_gop_hls_join_flags_the_leading_non_random_access_video_as_dropped() {
             .iter()
             .filter_map(|e| match e {
                 Event::Sample {
-                    track, sample, join,
+                    track,
+                    sample,
+                    join,
                 } if *track == v => Some((sample.flags.is_sync, *join)),
                 _ => None,
             })
@@ -119,8 +124,8 @@ fn a_mid_gop_hls_join_flags_the_leading_non_random_access_video_as_dropped() {
         assert!(
             joins[first_kept + 1..]
                 .iter()
-                .all(|(_, j)| *j == Some(JoinDecision::Keep)
-                    || matches!(j, Some(JoinDecision::JoinPoint(_))))
+                .all(|(_, j)| *j != Some(JoinDecision::Drop(DropReason::BeforeRandomAccessPoint))),
+            "no pre-RAP drops after the join point"
         );
     }
 }
