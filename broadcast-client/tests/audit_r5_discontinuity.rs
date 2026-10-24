@@ -25,6 +25,7 @@ struct Outcome {
     announced_pids: std::collections::BTreeSet<u16>,
     samples: usize,
     per_track: BTreeMap<u16, usize>,
+    data: BTreeMap<u16, Vec<Vec<u8>>>,
     discontinuities: usize,
     errors: Vec<String>,
 }
@@ -127,10 +128,11 @@ fn drain(s: &mut Session, out: &mut Outcome) {
                     .collect();
                 out.announced_pids.extend(out.pid_of.values());
             }
-            Event::Sample { track, .. } => {
+            Event::Sample { track, sample, .. } => {
                 out.samples += 1;
                 let pid = out.pid_of.get(&track.value()).copied().unwrap_or(0);
                 *out.per_track.entry(pid).or_default() += 1;
+                out.data.entry(pid).or_default().push(sample.data.to_vec());
             }
             Event::Discontinuity => out.discontinuities += 1,
             Event::Error { .. } => out.errors.push(format!("{e:?}")),
@@ -199,4 +201,32 @@ fn a_discontinuity_in_a_two_pid_stream_loses_nothing() {
     let cut = run(&segs, Some(DISCONTINUITY_AT));
     assert_eq!(cut.per_track, plain.per_track);
     assert_eq!(cut.announced_pids, plain.announced_pids);
+}
+
+#[test]
+fn pat_aligned_segments_deliver_the_whole_file_demux_byte_for_byte() {
+    use broadcast_common::Unpackage;
+    let Some(b) = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "pat_aligned_segments")
+    else {
+        return;
+    };
+    let b = &b[..b.len() / TS_PACKET * TS_PACKET];
+    let segs = split_at_pat(b, SEGMENTS + 1);
+    let live = run(&segs, None);
+    let media = transmux::TsDemux::new().unpackage(b).unwrap();
+    let mut whole: BTreeMap<u16, Vec<Vec<u8>>> = BTreeMap::new();
+    for t in &media.tracks {
+        let pid = t.spec.source_pid.unwrap().value();
+        whole
+            .entry(pid)
+            .or_default()
+            .extend(t.samples.iter().map(|s| s.data.to_vec()));
+    }
+    assert!(live.data.len() >= 2, "{:?}", live.announced_pids);
+    for (pid, got) in &live.data {
+        assert_eq!(
+            got, &whole[pid],
+            "pid {pid:#x}: segmenting changed the sample sequence"
+        );
+    }
 }
