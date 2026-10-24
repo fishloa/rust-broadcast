@@ -419,15 +419,24 @@ fn vod_garbage_init_then_good_recovers_and_plays_everything() {
 
 #[test]
 fn vod_garbage_init_forever_is_one_typed_fatal_after_the_cap() {
-    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Ok(GARBAGE.to_vec())])]);
+    let mut h = vod_host(
+        &["i1.mp4"],
+        &[("i1.mp4", vec![Reply::Ok(GARBAGE.to_vec())])],
+    );
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
     assert!(!t.ended, "{t:?}");
     assert_eq!(t.fatals, vec![ErrorKind::InitDecodeFailed], "{t:?}");
-    assert_eq!(h.hits(&format!("{BASE}/i1.mp4")), DEFAULT_MAX_KEY_FAILURES as usize);
+    assert_eq!(
+        h.hits(&format!("{BASE}/i1.mp4")),
+        DEFAULT_MAX_KEY_FAILURES as usize
+    );
     h.run_until(|_| false, STEPS);
     assert_eq!(tally(&h).fatals.len(), 1);
-    assert_eq!(h.hits(&format!("{BASE}/i1.mp4")), DEFAULT_MAX_KEY_FAILURES as usize);
+    assert_eq!(
+        h.hits(&format!("{BASE}/i1.mp4")),
+        DEFAULT_MAX_KEY_FAILURES as usize
+    );
 }
 
 fn live_host(init_replies: Vec<Reply>) -> Host {

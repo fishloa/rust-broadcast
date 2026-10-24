@@ -612,3 +612,25 @@ fn a_zero_wait_removes_the_delay_from_the_never_sent_private_audio() {
     );
     assert!(zero_start < default_start);
 }
+
+#[test]
+fn an_identity_sample_aes_key_on_plain_fmp4_is_fatal_at_once_via_the_core_error() {
+    let (init, segs) = parts();
+    let p = format!(
+        "{VOD_HEAD}#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"{KEY_URI}\"\n#EXT-X-MAP:URI=\"m.mp4\"\n#EXTINF:1.0,\ns0.m4s\n#EXT-X-ENDLIST\n"
+    );
+    let mut h = Host::new(PL, hls_config());
+    h.ok(PL, p.into_bytes());
+    h.ok(&format!("{BASE}/m.mp4"), init);
+    h.ok(&format!("{BASE}/s0.m4s"), segs[0].clone());
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    let t = tally(&h.events);
+    assert_eq!(t.samples, 0, "{t:?}");
+    assert!(t.non_fatals.is_empty(), "fatal at once: {t:?}");
+    assert_eq!(
+        t.fatals,
+        vec![ErrorKind::UnsupportedEncryption {
+            method: "SAMPLE-AES".to_string()
+        }]
+    );
+}

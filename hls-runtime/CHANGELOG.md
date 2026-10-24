@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (round-7 audit)
+- `Error::InitUndecodable` (additive; `Error` is `#[non_exhaustive]`): a fetched Media Initialization Section with no complete `moov` box was accepted and only failed later as an endless series of segment demux errors. It is now rejected at once, the slot is marked failed, and `retry_init()` fetches it again.
+
 ### Fixed (round-7 audit F2)
 - **An `EXT-X-MAP` whose URI query changes on every reload is the same init.** The init identity was the full resolved URL, so a CDN that re-signs the map URI (as it re-signs segment URIs, whose continuity already ignores the query) made the client refetch the init on every playlist reload and re-announce `Output::Tracks` each time. The identity is now the resolved URL without its query plus the `BYTERANGE`; a different path or byte range is still a new init. The slot keeps the newest URI (and its fresh token) for any later fetch or `retry_init()`.
 

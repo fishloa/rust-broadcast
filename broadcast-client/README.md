@@ -139,8 +139,9 @@ FairPlay/Widevine key formats, ...) is fatal immediately; `KeyFetchFailed`, `Bad
 `DecryptFailed` are reported once while the session retries and become fatal after
 `Config::max_key_failures` consecutive failures. A failed `EXT-X-MAP` initialization-section fetch (any
 status, a transport error, a timeout) is retried the same way, VOD and live alike, and reported as
-`ErrorKind::InitFetchFailed { status }`: once while retrying, fatal after `max_key_failures` consecutive
-failures with no decoded samples in between. A fatal error closes all connections and the session
+`ErrorKind::InitFetchFailed { status }`, and an init that arrives but holds no `moov` box as
+`ErrorKind::InitDecodeFailed`: once while retrying, fatal after `max_key_failures` consecutive failures
+with no decoded samples in between. A fatal error closes all connections and the session
 goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbidden`.
 
 ## Host contract
