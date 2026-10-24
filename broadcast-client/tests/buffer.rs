@@ -1015,12 +1015,13 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
 
     h.session
         .set_rendered_tracks(&[ids[&VIDEO], ids[&OTHER_AUDIO]]);
-    assert_eq!(
-        h.log()[base..],
-        [
-            BufferInput::Unregister(AUDIO),
-            BufferInput::Register(OTHER_AUDIO)
-        ]
+    let after = &h.log()[base..];
+    assert_eq!(after.len(), 3, "{after:?}");
+    assert_eq!(after[0], BufferInput::Unregister(AUDIO));
+    assert_eq!(after[1], BufferInput::Register(OTHER_AUDIO));
+    assert!(
+        matches!(after[2], BufferInput::TrackMedia { track, .. } if track == OTHER_AUDIO),
+        "{after:?}"
     );
     let base = h.log().len();
     h.session
@@ -1029,7 +1030,13 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
 
     h.session
         .set_rendered_tracks(&[ids[&VIDEO], ids[&AUDIO], ids[&OTHER_AUDIO]]);
-    assert_eq!(h.log()[base..], [BufferInput::Register(AUDIO)]);
+    let after = &h.log()[base..];
+    assert_eq!(after.len(), 2, "{after:?}");
+    assert_eq!(after[0], BufferInput::Register(AUDIO));
+    assert!(
+        matches!(after[1], BufferInput::TrackMedia { track, .. } if track == AUDIO),
+        "{after:?}"
+    );
 }
 
 #[test]
