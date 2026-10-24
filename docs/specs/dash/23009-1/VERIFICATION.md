@@ -22,8 +22,8 @@ digits only; the OCR cross-check is what covers punctuation and wording.
 ## 2. Pages rendered and compared
 
 PDF pages 10-101, all of them: 10-18 (clause 3), 18-29 (clause 4, incl. Tables 1-2 on 26-29), 30-34 (5.1-5.2), 34-41 (5.3.1, Table 3 on
-35-40), 41-47 (5.3.2, Table 4 on 43-45), 47-58 (5.3.3, Tables 5-7 on 49-57), 58-59 (5.3.4, Table 8), 59-70 (5.3.5, Tables 9-12 on 61-68),
-70-71 (5.3.6, Table 13), 71-78 (5.3.7, Table 14 on 72-77), 78-79 (5.3.8, Table 15), 79-100 (5.3.9, Tables 16-23 on 81-100). Page 101 holds
+35-40), 41-47 (5.3.2, Table 4 on 43-45), 47-58 (5.3.3, Tables 5-7 on 49-56), 58-59 (5.3.4, Table 8), 59-70 (5.3.5, Tables 9-12 on 61-69),
+70-71 (5.3.6, Table 13), 71-78 (5.3.7, Table 14 on 72-77), 78-79 (5.3.8, Table 15), 79-101 (5.3.9, Tables 16-23 on 81-101). Page 101 holds
 the end of 5.3.9.7 and the start of 5.3.10; only the part up to the 5.3.10 heading is transcribed.
 
 ## 3. Mismatches found between the text-layer conversion and the rendered page, and how each was resolved
@@ -36,7 +36,7 @@ the end of 5.3.9.7 and the start of 5.3.10; only the part up to the 5.3.10 headi
 2. **Punctuation displaced or lost by the text layer.** Examples (all fixed to the render): clause 4.3 "live content, where ... end-to-end latency"
    (comma had moved to "end-to-end, latency"); Table 5 `@segmentAlignment` "Representations, X and Y, within" and `@subsegmentAlignment`
    "set to 'true', all following" (commas had migrated into the "default :,," cell); Table 21 `$Number$` "Segment, if $SubNumber$"; Table 3
-   `@type` "(@type="static"), all Segments" (and the stray words "static available"); Table 12 `@bufferTime` row; "Period′s" and similar.
+   `@type` "(@type="static"), all Segments" (and the stray words "static available"); and similar.
 3. **Sub/superscripts flattened:** I<sub>SAP</sub>, T<sub>SAP</sub>, T<sub>DEC</sub>, T<sub>EPT</sub>, T<sub>PTF</sub>, I<sub>SAU</sub>, T<sub>E</sub>/T<sub>L</sub>,
    k<sub>start</sub>, Number<sub>Start</sub>, S<sub>i,j</sub>, B<sub>i(k)</sub>, footnote references `[3] [8] [9] [10] [21]-[25]` restored from the render.
 4. **40 U+FFFE (soft-hyphen) artefacts** in the text layer ("On-Demand", "end-to-end") replaced by `-` after checking each against the render.
