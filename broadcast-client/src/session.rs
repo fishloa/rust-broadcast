@@ -572,6 +572,15 @@ impl Session {
         self.drain_playout();
     }
 
+    /// The default rendered set: the lowest [`TrackId`] of each kind among the tracks announced so
+    /// far, `(video, audio)`. It is what the buffer controller judges until
+    /// [`set_rendered_tracks`](Self::set_rendered_tracks) is called, and it can change when a
+    /// track with a lower id is announced later.
+    #[must_use]
+    pub fn default_rendered_tracks(&self) -> (Option<TrackId>, Option<TrackId>) {
+        self.buffer.default_rendered()
+    }
+
     /// Hint passthrough.
     pub fn hint(&mut self, h: Hint) {
         if self.closed {
@@ -1019,6 +1028,56 @@ mod tests {
         session.drain_source();
         assert!(!session.buffer.has_track(specs[0].track_id));
         assert!(session.buffer.has_track(specs[1].track_id));
+    }
+
+    #[test]
+    fn default_rendered_tracks_is_the_lowest_id_whatever_the_resolution_order() {
+        use broadcast_common::Unpackage;
+        const LOW_AUDIO: u32 = 20;
+        const HIGH_AUDIO: u32 = 30;
+        let data = test_fixtures::read("ts/h264_aac.ts");
+        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let video = media
+            .tracks
+            .iter()
+            .find(|t| transmux::LiveJoin::for_config(&t.spec.config).is_some())
+            .unwrap()
+            .spec
+            .clone();
+        let audio = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.config.audio_sample_rate().is_some())
+            .unwrap()
+            .spec
+            .clone();
+        let with_id = |spec: &transmux::TrackSpec, id: u32| {
+            let mut s = spec.clone();
+            s.track_id = TrackId::new(id);
+            s
+        };
+        let low = with_id(&audio, LOW_AUDIO);
+        let high = with_id(&audio, HIGH_AUDIO);
+        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        assert_eq!(session.default_rendered_tracks(), (None, None));
+        session
+            .source
+            .inject(Some(Event::Tracks(vec![high.clone()])));
+        session.drain_source();
+        assert_eq!(
+            session.default_rendered_tracks(),
+            (None, Some(high.track_id))
+        );
+        session.source.inject(Some(Event::Tracks(vec![
+            high.clone(),
+            video.clone(),
+            low.clone(),
+        ])));
+        session.drain_source();
+        assert_eq!(
+            session.default_rendered_tracks(),
+            (Some(video.track_id), Some(low.track_id))
+        );
     }
 
     #[cfg(feature = "test-seams")]
