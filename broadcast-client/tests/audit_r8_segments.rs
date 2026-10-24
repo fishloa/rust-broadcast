@@ -615,3 +615,71 @@ fn a_delivery_clears_the_segments_failure_count_for_a_reused_media_sequence_numb
         "a fresh count, not the old one's fourth step"
     );
 }
+
+fn segment_faults() -> Vec<(&'static str, Reply, Option<u16>)> {
+    let whole = ts_segment(0);
+    let half = whole[..whole.len() / 2].to_vec();
+    let short_headers = vec![("Content-Length".to_string(), whole.len().to_string())];
+    vec![
+        ("500", Reply::Status(500), Some(500)),
+        ("503", Reply::Status(503), Some(503)),
+        ("429", after(429, "3"), Some(429)),
+        ("404", Reply::Status(404), Some(404)),
+        ("403", Reply::Status(403), Some(403)),
+        ("transport", Reply::TransportError, None),
+        ("reset mid body", Reply::ResetMid(half.clone()), None),
+        ("short body", Reply::OkHeaders(half, short_headers), None),
+        ("no response", Reply::Hang, None),
+        ("garbage", Reply::Ok(random_bytes()), None),
+        ("html", Reply::Ok(HTML_ERROR_PAGE.to_vec()), None),
+        ("empty", Reply::Ok(Vec::new()), None),
+    ]
+}
+
+#[test]
+fn every_permanent_segment_fault_ends_fatal_in_vod_and_skips_with_a_discontinuity_live() {
+    for (name, reply, status) in segment_faults() {
+        let mut vod = ts_vod(vec![reply.clone()], hls_config());
+        vod.run_until(stop_on_end_or_fatal, STEPS);
+        let t = tally(&vod);
+        assert!(!t.ended, "vod {name}: {t:?}");
+        assert_eq!(
+            t.fatals,
+            vec![ErrorKind::SegmentFetchFailed { status }],
+            "vod {name}"
+        );
+        assert_eq!(
+            vod.hits(TS_SEG0_URL),
+            DEFAULT_SCHEDULE_SECS.len() + 1,
+            "vod {name}"
+        );
+
+        let mut live = live_host(vec![reply], hls_config());
+        live.run_until(played_past_the_gap, STEPS);
+        let t = tally(&live);
+        assert!(t.fatals.is_empty(), "live {name}: {t:?}");
+        assert_eq!(
+            t.non_fatals
+                .iter()
+                .filter(|k| matches!(k, ErrorKind::SegmentFetchFailed { .. }))
+                .count(),
+            1,
+            "live {name}: {t:?}"
+        );
+        assert_eq!(t.discontinuities, 1, "live {name}");
+        assert!(played_past_the_gap(&live.events), "live {name}");
+    }
+}
+
+#[test]
+fn every_transient_segment_fault_recovers_with_every_sample_and_no_error() {
+    let want = ts_clean_samples();
+    for (name, reply, _) in segment_faults() {
+        let mut h = ts_vod(vec![reply, Reply::Ok(ts_segment(0))], hls_config());
+        h.run_until(stop_on_end_or_fatal, STEPS);
+        let t = tally(&h);
+        assert!(t.ended && t.fatals.is_empty(), "{name}: {t:?}");
+        assert_eq!(t.samples, want, "{name}");
+        assert_eq!(h.hits(TS_SEG0_URL), 2, "{name}");
+    }
+}
