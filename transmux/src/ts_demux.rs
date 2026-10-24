@@ -2115,6 +2115,9 @@ struct StreamState {
     /// those replayed from `unattributed`. Zero means the PID has been
     /// completely silent since it was declared ([`SILENT_HEAD_PARKED_BYTES`]).
     payload_packets: u32,
+    /// [`StreamingTsDemux::packet_index`] when this PID was declared, the age
+    /// base for [`STUCK_HEAD_INPUT_PACKETS`].
+    declared_at_packet: u64,
 }
 
 /// Advance a one-behind (video/data) pending slot with a newly-built sample,
@@ -3970,6 +3973,29 @@ const PROBE_HEAD_BLOCK_AUS: u32 = 512;
 /// later id and its backlog, and re-arms [`DemuxEvent::TracksResolved`].
 const SILENT_HEAD_PARKED_BYTES: usize = MAX_PROBE_BACKLOG_BYTES / 2;
 
+/// Bytes of its own payload-bearing TS packets after which a `Probing` head
+/// that has not produced a single access unit stops holding back the PIDs
+/// behind it, whatever its codec (video included). A clear PID completes an
+/// access unit within a few packets, so this many bytes with none means the
+/// payload cannot be framed (scrambled, mis-framed): [`MAX_PROBE_BACKLOG_BYTES`]
+/// never trips for it because no access unit ever enters the backlog, so the
+/// PIDs behind it, already resolved, waited until `finish()`. Half the byte
+/// cap. A head that does produce access units and still cannot resolve (video
+/// waiting for parameter sets) is untouched: its backlog reaches the byte cap
+/// and abandons it. The head is stepped over, not abandoned: it keeps probing
+/// and is announced by a later [`DemuxEvent::TrackAdded`] if it ever resolves,
+/// re-arming [`DemuxEvent::TracksResolved`].
+const STUCK_HEAD_OWN_BYTES: usize = MAX_PROBE_BACKLOG_BYTES / 2;
+
+/// Packets of input (4 MiB) after a PID was declared past which a still
+/// `Probing` *non-video* head (audio, data) stops holding back its program.
+/// The backstop for a head too sparse for [`STUCK_HEAD_OWN_BYTES`] (a data PID
+/// with ten packets in 20 MB, an audio PID whose PES trickle). 4 MiB of input
+/// is about 1.6 seconds of a 20 Mbit/s multiplex. Never applied to video: its
+/// legitimate wait for an IDR scales with the video bitrate, and a video that
+/// delivers access units is bounded by the byte cap instead.
+const STUCK_HEAD_INPUT_PACKETS: u64 = 4 * 1024 * 1024 / TS_PACKET_SIZE as u64;
+
 /// Payloads an E-AC-3 probe gets a full window re-walk for before the walk is
 /// gated. Each unresolved payload re-joins the held tail (up to
 /// [`EAC3_PROBE_TAIL_MAX`], ~64 KiB) to itself and re-walks it, so a stream of
@@ -4623,6 +4649,7 @@ pub struct StreamingTsDemux {
     /// excluded.
     cc_states: BTreeMap<Pid, CcState>,
     afd_persistence: AfdPersistence,
+    strict_pmt_order: bool,
 }
 
 /// Per-PMT-PID reassembly + version-diffing state (issue #774): the
@@ -4680,7 +4707,26 @@ impl StreamingTsDemux {
             tracks_resolved_signalled_at: None,
             cc_states: BTreeMap::new(),
             afd_persistence: AfdPersistence::UntilReplaced,
+            strict_pmt_order: false,
         }
+    }
+
+    /// Promote tracks strictly in PMT-declaration order across *all*
+    /// programs, with only the pre-existing step-over bounds
+    /// ([`PROBE_HEAD_BLOCK_AUS`], [`SILENT_HEAD_PARKED_BYTES`]).
+    ///
+    /// The default is the live policy: an unresolved head holds back only the
+    /// PIDs of its own program, and a head that cannot be a legitimate wait is
+    /// stepped over after [`STUCK_HEAD_OWN_BYTES`] / [`STUCK_HEAD_INPUT_PACKETS`],
+    /// so a stuck PID never keeps a multi-program capture from delivering
+    /// until `finish()`. The cost is that track ids follow resolution order,
+    /// not PMT order. A caller that holds the whole input and calls `finish()`
+    /// has no liveness to protect and wants stable PMT-order ids; this keeps
+    /// them (it is what [`TsDemux`] uses).
+    #[must_use]
+    pub fn with_strict_pmt_order(mut self) -> Self {
+        self.strict_pmt_order = true;
+        self
     }
 
     /// Cap the number of [`DemuxEvent::InputDegraded`] events that may sit
@@ -5425,6 +5471,7 @@ impl StreamingTsDemux {
             probe_walks: 0,
             probe_walked_len: 0,
             payload_packets: 0,
+            declared_at_packet: self.packet_index,
         };
         // Replay any payloads that arrived on this PID before its PMT
         // registration completed (see `unattributed`'s doc).
@@ -5688,8 +5735,10 @@ impl StreamingTsDemux {
     /// turn to `Live`: assign the next sequential track ID, emit
     /// `DemuxEvent::TrackAdded`, and replay its accumulated backlog as a
     /// burst of `DemuxEvent::Sample`s — repeating while the *next*-ranked PID
-    /// is also already `Parked`. Stops at the first PID that is still
-    /// `Probing` (blocked) or not yet known at all — except that a `Probing`
+    /// is also already `Parked`. A PID that is still `Probing` blocks the PIDs
+    /// after it *of its own program* only (other programs' PIDs are promoted
+    /// past it unless [`with_strict_pmt_order`](Self::with_strict_pmt_order));
+    /// a PID not yet known at all stops the scan — except that a `Probing`
     /// PID that has seen [`PROBE_HEAD_BLOCK_AUS`] access units without
     /// resolving is stepped over rather than stopped at, so one probe that
     /// cannot resolve never holds back every track behind it.
@@ -5703,7 +5752,16 @@ impl StreamingTsDemux {
             .copied()
             .filter(|p| !self.resolved.contains(p))
             .collect();
+        let mut held_programs: BTreeSet<Option<Pid>> = BTreeSet::new();
         for next_pid in pending {
+            let program = self
+                .es_declarers
+                .get(&next_pid)
+                .and_then(|pmt_pids| pmt_pids.iter().next())
+                .copied();
+            if held_programs.contains(&program) {
+                continue;
+            }
             let Some(stream) = self.streams.get_mut(&next_pid) else {
                 break;
             };
@@ -5908,9 +5966,21 @@ impl StreamingTsDemux {
                     let never_sent = stream.payload_packets == 0;
                     let aus_stalled = stream.probe_aus >= PROBE_HEAD_BLOCK_AUS
                         && !matches!(stream.codec, Codec::H264 | Codec::Hevc | Codec::Mpeg2Video);
+                    let is_video =
+                        matches!(stream.codec, Codec::H264 | Codec::Hevc | Codec::Mpeg2Video);
+                    let no_access_unit = stream.probe_aus == 0
+                        && usize::try_from(stream.payload_packets)
+                            .map_or(usize::MAX, |n| n.saturating_mul(TS_PACKET_SIZE))
+                            >= STUCK_HEAD_OWN_BYTES;
+                    let declared_at = stream.declared_at_packet;
                     let silent =
                         never_sent && self.parked_behind(next_pid) >= SILENT_HEAD_PARKED_BYTES;
-                    if silent || aus_stalled {
+                    let stuck = !self.strict_pmt_order
+                        && (no_access_unit
+                            || (!is_video
+                                && self.packet_index.saturating_sub(declared_at)
+                                    >= STUCK_HEAD_INPUT_PACKETS));
+                    if silent || aus_stalled || stuck {
                         // Stalled: it no longer holds back the PIDs after it
                         // (see `PROBE_HEAD_BLOCK_AUS`); it stays unresolved and
                         // is promoted whenever it does resolve. Never applied
@@ -5927,7 +5997,11 @@ impl StreamingTsDemux {
                         self.skipped.insert(next_pid);
                         continue;
                     }
-                    break; // blocked — an earlier-ranked PID isn't ready yet
+                    if self.strict_pmt_order {
+                        break;
+                    }
+                    held_programs.insert(program);
+                    continue;
                 }
                 other @ TrackState::Live(_) => {
                     // Already resolved; `resolved` should already contain it,
@@ -6247,7 +6321,9 @@ impl<'a> TsDemux<'a> {
     /// This is the inherent form of [`Unpackage::unpackage`]; both produce the
     /// same result. See the type-level docs for the pipeline.
     pub fn demux(&mut self, input: &'a [u8]) -> Result<Media> {
-        let mut demux = StreamingTsDemux::new().with_afd_persistence(self.afd_persistence);
+        let mut demux = StreamingTsDemux::new()
+            .with_afd_persistence(self.afd_persistence)
+            .with_strict_pmt_order();
         demux.feed(input);
         demux.finish();
 
