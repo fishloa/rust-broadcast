@@ -518,7 +518,8 @@ impl CodecConfig {
     /// True if `self` is a video codec (issue #628) — codec-family-complete
     /// regardless of which output container actually carries it (e.g. the TS
     /// mux path does not carry every variant matched here; see
-    /// `ts_mux::EsKind::from_config`). Mirrors [`CodecConfig::is_audio`]. Used
+    /// `ts_mux::EsKind::from_config`). The counterpart of
+    /// [`CodecConfig::audio_sample_rate`]`.is_some()`. Used
     /// to pick the anchor/segmentation track (`ts_hls::choose_anchor`,
     /// `Segmenter::new`).
     pub fn is_video(&self) -> bool {
