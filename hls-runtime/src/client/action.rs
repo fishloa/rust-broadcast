@@ -34,6 +34,20 @@ pub enum ResourceId {
     },
 }
 
+/// Identifies one decryption key resource, assigned by the client per distinct
+/// absolute key URI (RFC 8216 §4.3.2.4). Correlates an [`Action::FetchKey`]
+/// with the matching [`crate::client::HlsClient::on_key`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct KeyId(pub(crate) u32);
+
+impl KeyId {
+    /// The numeric value of this id, unique within one client.
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
 /// A pending blocking Playlist Reload request (RFC 8216bis §6.2.5.2): the
 /// client has consumed the playlist up to (and possibly including) a given
 /// Partial Segment and wants the server to hold the response until something
@@ -85,6 +99,16 @@ pub enum Action {
         /// `None` fetches the entire resource.
         byte_range: Option<(u64, u64)>,
     },
+    /// Fetch one AES-128 key file (RFC 8216 §5.1: 16 raw octets). Issued once
+    /// per distinct key URI for the life of the client; the response goes to
+    /// [`crate::client::HlsClient::on_key`], a failure to
+    /// [`crate::client::HlsClient::on_key_error`].
+    FetchKey {
+        /// Correlates the eventual [`crate::client::HlsClient::on_key`] call.
+        id: KeyId,
+        /// The key URL (already resolved against the playlist URL).
+        url: String,
+    },
     /// A non-blocking-reload timing hint: wait about this many milliseconds
     /// before issuing the next `FetchPlaylist`, derived from
     /// `#EXT-X-TARGETDURATION` (RFC 8216 §4.3.3.1's "SHOULD NOT ... more
@@ -123,7 +147,7 @@ impl Action {
                 }
                 Some(u)
             }
-            Action::FetchResource { .. } | Action::WaitMs(_) => None,
+            Action::FetchResource { .. } | Action::FetchKey { .. } | Action::WaitMs(_) => None,
         }
     }
 }

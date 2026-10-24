@@ -14,7 +14,7 @@ broadcast-hls = "0.4"
 
 **Does:** parse a playlist into `MediaPlaylist` or `MasterPlaylist` structs and render it back with `to_m3u8()`, covering every one of the 32 tags in RFC 8216bis §4.4 (28 as typed struct fields, 4 preserved verbatim), the Low-Latency additions (partial segments, blocking reload, delta updates, preload hints, rendition reports), I-frame trick-play, discontinuity signalling, and the `EXT-X-KEY` line for CENC/CBCS protected CMAF. `EXT-X-VERSION` is computed from the content, never trusted from a caller. It was extracted from `transmux` (issue #878) so a crate that only needs playlist syntax (`media-doctor`, an HLS-pull client, a fuzz target) does not pull in a container-muxing hub.
 
-**Does not:** fetch anything or run a client (that is `hls-runtime`), produce segments (`transmux`'s `ts_hls` and `ll_hls` segmenters stay there because they emit container bytes), validate cross-file semantic rules (`media-doctor`), or give typed access to `EXT-X-KEY`, `EXT-X-PROGRAM-DATE-TIME` and `EXT-X-DATERANGE` (they round-trip losslessly as tag lines, but you cannot read or build them through a field). `EXT-X-MEDIA` is now typed (`MasterPlaylist::media`). HLS Interstitials (`CLASS="com.apple.hls.interstitial"` date ranges) are therefore built by the caller (`ssai-runtime` renders them) as `EXT-X-DATERANGE` lines, and the interstitial spec (`docs/interstitials.md`) is transcribed but not typed here.
+**Does not:** fetch anything or run a client (that is `hls-runtime`), produce segments (`transmux`'s `ts_hls` and `ll_hls` segmenters stay there because they emit container bytes), validate cross-file semantic rules (`media-doctor`), or give typed field access to `EXT-X-KEY` and `EXT-X-DATERANGE` (they round-trip losslessly as tag lines; read the key in effect with `MediaPlaylist::segment_keys`). `EXT-X-MEDIA` is now typed (`MasterPlaylist::media`). HLS Interstitials (`CLASS="com.apple.hls.interstitial"` date ranges) are therefore built by the caller (`ssai-runtime` renders them) as `EXT-X-DATERANGE` lines, and the interstitial spec (`docs/interstitials.md`) is transcribed but not typed here.
 
 ## Standards supported
 
@@ -84,6 +84,7 @@ Runnable programs: `cargo run -p broadcast-hls --example build_playlist` and `--
 - **Attribute lists:** `parse_attribute_list`, `render_attribute_list`, `AttrValue` (validated quoted or bare value), and unknown attributes on every modelled tag kept in `extra_attrs` and re-emitted after the known ones.
 - **Durations:** `DecimalSeconds` and `SignedDecimalSeconds` round-trip bit-exactly (including `9.9766` and `2.00004`). Round your own durations before building if you want compact playlists, since an unrounded division renders every digit.
 - **CENC:** `cenc_ext_x_key`, `CENC_KEYFORMAT`, `CENC_KEYFORMATVERSIONS`.
+- **Segment keys (RFC 8216 §4.3.2.4):** `MediaPlaylist::segment_keys` resolves the `#EXT-X-KEY` in effect for each closed segment (carry-forward until the next key of the same `KEYFORMAT`, `METHOD=NONE` resets, only the `identity` format participates) as `MediaKey` (an alias of `SessionKey`), and `open_segment_key` does the same for the open segment. A key with no `URI` is `Error::KeyWithoutUri`; a segment covered only by a non-identity `KEYFORMAT` is `Error::UnsupportedKeyFormat`.
 
 ## Round-trip fidelity
 

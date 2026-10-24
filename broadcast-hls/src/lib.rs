@@ -1368,6 +1368,103 @@ impl MediaPlaylist {
     }
 }
 
+/// The `KEYFORMAT` an `#EXT-X-KEY` with no `KEYFORMAT` attribute implies
+/// (RFC 8216 §4.3.2.4).
+pub const KEYFORMAT_IDENTITY: &str = "identity";
+
+/// An `#EXT-X-KEY` tag (RFC 8216 §4.3.2.4): the same attribute set as
+/// [`SessionKey`], with `METHOD=NONE` allowed.
+pub type MediaKey = SessionKey;
+
+const EXT_X_KEY_PREFIX: &str = "#EXT-X-KEY:";
+
+fn key_format_of(key: &MediaKey) -> &str {
+    key.keyformat.as_deref().unwrap_or(KEYFORMAT_IDENTITY)
+}
+
+#[derive(Default)]
+struct KeyState {
+    identity: Option<MediaKey>,
+    others: BTreeMap<String, MediaKey>,
+}
+
+impl KeyState {
+    fn apply_tags(&mut self, tags: &[String]) -> Result<()> {
+        for tag in tags {
+            let Some(rest) = tag.strip_prefix(EXT_X_KEY_PREFIX) else {
+                continue;
+            };
+            let key = parse_media_key(rest, 0, tag)?;
+            if key.method != EncryptionMethod::None && key.uri.is_none() {
+                return Err(Error::KeyWithoutUri { method: key.method });
+            }
+            let applies = key.method != EncryptionMethod::None;
+            if key_format_of(&key) == KEYFORMAT_IDENTITY {
+                self.identity = applies.then_some(key);
+            } else {
+                let format = key_format_of(&key).to_string();
+                if applies {
+                    self.others.insert(format, key);
+                } else {
+                    self.others.remove(&format);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn effective(&self) -> Result<Option<MediaKey>> {
+        if let Some(key) = &self.identity {
+            return Ok(Some(key.clone()));
+        }
+        match self.others.keys().next() {
+            Some(keyformat) => Err(Error::UnsupportedKeyFormat {
+                keyformat: keyformat.clone(),
+            }),
+            None => Ok(None),
+        }
+    }
+}
+
+impl MediaPlaylist {
+    /// The `#EXT-X-KEY` in effect for each closed segment (RFC 8216
+    /// §4.3.2.4): a tag applies to the segment it precedes and every later
+    /// segment until the next `#EXT-X-KEY` with the same `KEYFORMAT`. Only
+    /// the `identity` `KEYFORMAT` (absent means identity) participates;
+    /// `METHOD=NONE` yields `None`.
+    ///
+    /// # Errors
+    /// [`Error::KeyWithoutUri`] for a non-`NONE` key with no `URI`;
+    /// [`Error::UnsupportedKeyFormat`] for a segment to which only
+    /// non-identity key formats apply; [`Error::HlsParse`] for a malformed
+    /// `#EXT-X-KEY`.
+    pub fn segment_keys(&self) -> Result<Vec<Option<MediaKey>>> {
+        let mut state = KeyState::default();
+        let mut keys = Vec::with_capacity(self.segments.len());
+        for seg in &self.segments {
+            state.apply_tags(&seg.pre_tags)?;
+            keys.push(state.effective()?);
+        }
+        Ok(keys)
+    }
+
+    /// The key in effect for the open (in-progress) segment, if any, under
+    /// the same rules as [`Self::segment_keys`].
+    ///
+    /// # Errors
+    /// As [`Self::segment_keys`].
+    pub fn open_segment_key(&self) -> Result<Option<MediaKey>> {
+        let mut state = KeyState::default();
+        for seg in &self.segments {
+            state.apply_tags(&seg.pre_tags)?;
+        }
+        if let Some(open) = &self.open_segment {
+            state.apply_tags(&open.pre_tags)?;
+        }
+        state.effective()
+    }
+}
+
 impl MediaPlaylist {
     /// Render this media playlist as an RFC 8216 `#EXTM3U` string.
     ///
@@ -2658,9 +2755,25 @@ fn push_session_key_line(s: &mut String, sk: &SessionKey) -> Result<()> {
 /// Parse an `#EXT-X-SESSION-KEY:<attribute-list>` value (same attribute set
 /// as `#EXT-X-KEY`, RFC 8216bis §4.4.4.4, except METHOD MUST NOT be NONE).
 fn parse_session_key(rest: &str, line_no: usize, line: &str) -> Result<SessionKey> {
+    parse_key_attributes(rest, line_no, line, "EXT-X-SESSION-KEY", false)
+}
+
+/// Parse an `#EXT-X-KEY:<attribute-list>` value (RFC 8216 §4.3.2.4).
+fn parse_media_key(rest: &str, line_no: usize, line: &str) -> Result<SessionKey> {
+    parse_key_attributes(rest, line_no, line, "EXT-X-KEY", true)
+}
+
+fn parse_key_attributes(
+    rest: &str,
+    line_no: usize,
+    line: &str,
+    tag: &str,
+    allow_none: bool,
+) -> Result<SessionKey> {
     let (attrs, quoted) = parse_attribute_list(rest);
-    let method_str = require_attr(&attrs, "METHOD", line_no, line, "EXT-X-SESSION-KEY")?;
+    let method_str = require_attr(&attrs, "METHOD", line_no, line, tag)?;
     let method = match method_str.as_str() {
+        "NONE" if allow_none => EncryptionMethod::None,
         "NONE" => {
             return Err(Error::HlsParse {
                 line_no,
@@ -2677,7 +2790,7 @@ fn parse_session_key(rest: &str, line_no: usize, line: &str) -> Result<SessionKe
             return Err(Error::HlsParse {
                 line_no,
                 line: line.to_string(),
-                reason: format!("EXT-X-SESSION-KEY METHOD value {other:?} is not recognized"),
+                reason: format!("{tag} METHOD value {other:?} is not recognized"),
             });
         }
     };

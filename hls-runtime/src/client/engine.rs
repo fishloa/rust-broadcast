@@ -8,11 +8,13 @@ use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use broadcast_hls::{
-    ByteRange, MapTag, MasterPlaylist, MediaPlaylist, MediaSegment, OpenSegment, PreloadHintType,
+    ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,
+    OpenSegment, PreloadHintType,
 };
+use transmux::sample_aes::{BLOCK_LEN, KEY_LEN, aes128_decrypt_segment};
 use transmux::{DemuxEvent, Fmp4Demux, Sample, StreamingTsDemux, TrackSpec};
 
-use super::action::{Action, BlockingReload, ResourceId};
+use super::action::{Action, BlockingReload, KeyId, ResourceId};
 use super::error::{Error, Result};
 use super::output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 use super::url;
@@ -54,6 +56,18 @@ fn index_u64(i: usize) -> u64 {
     u64::try_from(i).unwrap_or(u64::MAX)
 }
 
+fn decrypt_segment(
+    id: ResourceId,
+    crypto: SegmentCrypto,
+    key: &[u8; KEY_LEN],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>> {
+    aes128_decrypt_segment(key, &crypto.iv, ciphertext).map_err(|_| Error::DecryptFailed {
+        id,
+        key_id: crypto.key_id,
+    })
+}
+
 /// The Media Sequence Number a tracked resource belongs to, `None` for the
 /// MSN-less init segment.
 fn resource_msn(id: &ResourceId) -> Option<u64> {
@@ -61,6 +75,33 @@ fn resource_msn(id: &ResourceId) -> Option<u64> {
         ResourceId::Part { msn, .. } | ResourceId::Segment { msn } => Some(*msn),
         _ => None,
     }
+}
+
+/// An AES-128 key whose `Debug` never prints the key octets.
+#[derive(Clone, Copy)]
+struct KeyBytes([u8; KEY_LEN]);
+
+impl core::fmt::Debug for KeyBytes {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("KeyBytes(<redacted>)")
+    }
+}
+
+/// The decryption parameters of one AES-128 segment (RFC 8216 §5.2).
+#[derive(Debug, Clone, Copy)]
+struct SegmentCrypto {
+    key_id: KeyId,
+    iv: [u8; BLOCK_LEN],
+}
+
+/// RFC 8216 §5.2: the Media Sequence Number as a big-endian 128-bit number,
+/// zero-padded on the left.
+fn media_sequence_iv(msn: u64) -> [u8; BLOCK_LEN] {
+    let mut iv = [0u8; BLOCK_LEN];
+    let msn_bytes = msn.to_be_bytes();
+    let start = BLOCK_LEN - msn_bytes.len();
+    iv[start..].copy_from_slice(&msn_bytes);
+    iv
 }
 
 /// How a new playlist relates to the previous one (see
@@ -199,6 +240,19 @@ pub struct HlsClient {
     /// (a real HTTP client has no reason to serialize on init-first).
     pending_demux: VecDeque<(ResourceId, Vec<u8>)>,
 
+    /// Key id per distinct absolute key URI.
+    key_ids: BTreeMap<String, KeyId>,
+    /// The URI each assigned id was issued for.
+    key_urls: BTreeMap<KeyId, String>,
+    /// Keys fetched so far, cached for the life of the client.
+    key_material: BTreeMap<KeyId, KeyBytes>,
+    /// Keys whose fetch is outstanding.
+    keys_in_flight: BTreeSet<KeyId>,
+    /// Decryption parameters of every encrypted segment requested, by MSN.
+    segment_crypto: BTreeMap<u64, SegmentCrypto>,
+    /// Encrypted segments delivered before their key arrived (ciphertext).
+    pending_keyed: Vec<(ResourceId, Vec<u8>)>,
+
     requested: BTreeSet<ResourceId>,
     /// Ids whose bytes `on_resource` has accepted (delivered *or* buffered in
     /// [`Self::pending_demux`]) — the exactly-once guard against a second
@@ -315,6 +369,12 @@ impl HlsClient {
             init_emitted: false,
             last_fmp4_specs: None,
             pending_demux: VecDeque::new(),
+            key_ids: BTreeMap::new(),
+            key_urls: BTreeMap::new(),
+            key_material: BTreeMap::new(),
+            keys_in_flight: BTreeSet::new(),
+            segment_crypto: BTreeMap::new(),
+            pending_keyed: Vec::new(),
             requested: BTreeSet::new(),
             fulfilled: BTreeSet::new(),
             joined: false,
@@ -481,6 +541,12 @@ impl HlsClient {
         }
         let playlist = MediaPlaylist::parse(text)?;
         let playlist = self.merge_delta(playlist);
+        let segment_keys = playlist.segment_keys()?;
+        let open_key = if playlist.open_segment.is_some() {
+            playlist.open_segment_key()?
+        } else {
+            None
+        };
         // An older view of the same stream must never make the client deliver
         // backwards: its segments below the previous window are skipped.
         let mut lag_floor: Option<u64> = None;
@@ -521,10 +587,17 @@ impl HlsClient {
                 self.skip_segment(msn, seg)?;
                 continue;
             }
-            self.process_closed_segment(msn, seg)?;
+            let key = segment_keys.get(i).and_then(Option::as_ref);
+            self.process_closed_segment(msn, seg, key, playlist.iframes_only)?;
         }
 
         if let Some(open) = &playlist.open_segment {
+            if let Some(key) = &open_key {
+                return Err(Error::UnsupportedEncryption {
+                    method: key.method,
+                    what: "encrypted partial segments",
+                });
+            }
             self.process_open_segment(next_msn, open)?;
         }
 
@@ -683,18 +756,7 @@ impl HlsClient {
                 }
             }
             ResourceId::Part { .. } | ResourceId::Segment { .. } => {
-                let processed = if self.is_ts_segment(bytes) {
-                    // Classic MPEG-TS-segment HLS (issue #760): no init
-                    // resource will ever arrive for this playlist, so demux
-                    // this self-contained TS segment straight away rather
-                    // than buffering it forever waiting for one.
-                    self.finish_ts_resource(id, bytes)
-                } else if self.init_bytes.is_none() {
-                    self.pending_demux.push_back((id, bytes.to_vec()));
-                    Ok(())
-                } else {
-                    self.finish_media_resource(id, bytes)
-                };
+                let processed = self.accept_media_resource(id, bytes);
                 if let Err(e) = processed {
                     // Nothing was delivered: leave the id free for a retry.
                     self.fulfilled.remove(&id);
@@ -703,6 +765,151 @@ impl HlsClient {
             }
         }
         self.maybe_emit_end_of_stream()?;
+        Ok(())
+    }
+
+    /// Route a delivered Part/Segment: decrypt it first when its segment is
+    /// AES-128 encrypted (holding the ciphertext until the key arrives).
+    fn accept_media_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        if let ResourceId::Segment { msn } = id
+            && let Some(crypto) = self.segment_crypto.get(&msn).copied()
+        {
+            return match self.key_material.get(&crypto.key_id).copied() {
+                Some(KeyBytes(key)) => {
+                    let plain = decrypt_segment(id, crypto, &key, bytes)?;
+                    self.route_media_resource(id, &plain)
+                }
+                None => {
+                    self.pending_keyed.push((id, bytes.to_vec()));
+                    Ok(())
+                }
+            };
+        }
+        self.route_media_resource(id, bytes)
+    }
+
+    fn route_media_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        if self.is_ts_segment(bytes) {
+            // Classic MPEG-TS-segment HLS (issue #760): no init
+            // resource will ever arrive for this playlist, so demux
+            // this self-contained TS segment straight away rather
+            // than buffering it forever waiting for one.
+            self.finish_ts_resource(id, bytes)
+        } else if self.init_bytes.is_none() {
+            self.pending_demux.push_back((id, bytes.to_vec()));
+            Ok(())
+        } else {
+            self.finish_media_resource(id, bytes)
+        }
+    }
+
+    /// Feed the key file fetched for an [`Action::FetchKey`]. Encrypted
+    /// segments that arrived earlier are decrypted and demuxed in Media
+    /// Sequence Number order.
+    ///
+    /// # Errors
+    /// [`Error::UnrequestedKey`] for an unknown id or a key already held;
+    /// [`Error::BadKeyLength`] unless `bytes` is exactly 16 octets;
+    /// [`Error::DecryptFailed`] if a waiting segment does not decrypt.
+    pub fn on_key(&mut self, id: KeyId, bytes: &[u8]) -> Result<()> {
+        if !self.key_urls.contains_key(&id) || self.key_material.contains_key(&id) {
+            return Err(Error::UnrequestedKey { id });
+        }
+        let key: [u8; KEY_LEN] = bytes.try_into().map_err(|_| Error::BadKeyLength {
+            id,
+            len: bytes.len(),
+        })?;
+        if self.keys_in_flight.remove(&id) {
+            self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
+        }
+        self.key_material.insert(id, KeyBytes(key));
+        let (mut ready, rest): (Vec<_>, Vec<_>) = core::mem::take(&mut self.pending_keyed)
+            .into_iter()
+            .partition(|(rid, _)| {
+                resource_msn(rid)
+                    .and_then(|msn| self.segment_crypto.get(&msn))
+                    .is_some_and(|c| c.key_id == id)
+            });
+        self.pending_keyed = rest;
+        ready.sort_by_key(|(rid, _)| resource_msn(rid));
+        let mut ready = ready.into_iter();
+        while let Some((rid, cipher)) = ready.next() {
+            let crypto = resource_msn(&rid).and_then(|msn| self.segment_crypto.get(&msn).copied());
+            let result = match crypto {
+                Some(crypto) => decrypt_segment(rid, crypto, &key, &cipher)
+                    .and_then(|plain| self.route_media_resource(rid, &plain)),
+                None => Ok(()),
+            };
+            if let Err(e) = result {
+                self.fulfilled.remove(&rid);
+                self.pending_keyed.extend(ready);
+                return Err(e);
+            }
+        }
+        self.maybe_emit_end_of_stream()?;
+        Ok(())
+    }
+
+    /// Report that fetching key `id` failed. The next [`Self::on_playlist`]
+    /// requests it again; segments already waiting on it keep waiting.
+    pub fn on_key_error(&mut self, id: KeyId) {
+        if self.keys_in_flight.remove(&id) {
+            self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
+        }
+    }
+
+    /// Request key `uri` once per distinct URI; the id is stable for the life
+    /// of the client.
+    fn ensure_key_requested(&mut self, uri: &str) -> KeyId {
+        let url = url::resolve(&self.playlist_url, uri);
+        let id = match self.key_ids.get(&url) {
+            Some(id) => *id,
+            None => {
+                let id = KeyId(u32::try_from(self.key_ids.len()).unwrap_or(u32::MAX));
+                self.key_ids.insert(url.clone(), id);
+                self.key_urls.insert(id, url.clone());
+                id
+            }
+        };
+        if !self.key_material.contains_key(&id) && self.keys_in_flight.insert(id) {
+            self.outstanding_fetches += 1;
+            self.pending_actions.push_back(Action::FetchKey { id, url });
+        }
+        id
+    }
+
+    /// Record the decryption parameters of encrypted segment `msn` and make
+    /// sure its key is requested.
+    fn prepare_encrypted_segment(
+        &mut self,
+        msn: u64,
+        seg: &MediaSegment,
+        key: &MediaKey,
+        iframes_only: bool,
+    ) -> Result<()> {
+        let unsupported = |what| Error::UnsupportedEncryption {
+            method: key.method,
+            what,
+        };
+        if key.method != EncryptionMethod::Aes128 {
+            return Err(unsupported("only METHOD=AES-128 is decrypted"));
+        }
+        if iframes_only {
+            return Err(unsupported("EXT-X-I-FRAMES-ONLY with encryption"));
+        }
+        if seg.map.is_some() {
+            return Err(unsupported("encrypted EXT-X-MAP"));
+        }
+        if !seg.parts.is_empty() {
+            return Err(unsupported("encrypted partial segments"));
+        }
+        let Some(uri) = key.uri.as_deref() else {
+            return Err(unsupported("key without URI"));
+        };
+        let id = self.ensure_key_requested(uri);
+        let iv = key.iv.unwrap_or_else(|| media_sequence_iv(msn));
+        self.segment_crypto
+            .insert(msn, SegmentCrypto { key_id: id, iv });
         Ok(())
     }
 
@@ -827,12 +1034,24 @@ impl HlsClient {
         merged
     }
 
-    fn process_closed_segment(&mut self, msn: u64, seg: &MediaSegment) -> Result<()> {
+    fn process_closed_segment(
+        &mut self,
+        msn: u64,
+        seg: &MediaSegment,
+        key: Option<&MediaKey>,
+        iframes_only: bool,
+    ) -> Result<()> {
         if seg.discontinuous {
             self.discontinuous_msns.insert(msn);
         }
         if self.delivered_segments.contains(&msn) {
             return Ok(());
+        }
+        match key {
+            Some(key) => self.prepare_encrypted_segment(msn, seg, key, iframes_only)?,
+            None => {
+                self.segment_crypto.remove(&msn);
+            }
         }
         if seg.parts.is_empty() {
             // Either a genuinely non-LL segment (never had parts), OR an LL
@@ -1279,6 +1498,7 @@ impl HlsClient {
         self.requested
             .retain(|id| !(below(id) && fulfilled.contains(id)));
         self.fulfilled.retain(|id| !below(id));
+        self.segment_crypto.retain(|&m, _| m >= first);
         self.delivered_parts.retain(|&(m, _)| m >= first);
         self.delivered_segments.retain(|&m| m >= first);
         self.discontinuous_msns.retain(|&m| m >= first);
@@ -1439,6 +1659,11 @@ impl HlsClient {
         self.pending_actions
             .retain(|a| !matches!(a, Action::FetchResource { .. }));
         self.pending_demux.clear();
+        self.pending_actions
+            .retain(|a| !matches!(a, Action::FetchKey { .. }));
+        self.keys_in_flight.clear();
+        self.segment_crypto.clear();
+        self.pending_keyed.clear();
         self.requested.clear();
         self.fulfilled.clear();
         self.delivered_parts.clear();
@@ -1472,6 +1697,7 @@ impl HlsClient {
         if self.saw_endlist
             && !self.end_emitted
             && self.outstanding_fetches == 0
+            && self.pending_keyed.is_empty()
             && self.all_playlist_segments_delivered()
         {
             // The TS demuxer holds back each stream's last access unit until
@@ -1487,6 +1713,32 @@ impl HlsClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use transmux::sample_aes::aes128_encrypt_segment;
+
+    #[test]
+    fn decrypt_segment_strips_pkcs7_padding_to_the_exact_plaintext() {
+        let key = [0x5Au8; KEY_LEN];
+        let iv = [0xC3u8; BLOCK_LEN];
+        let id = ResourceId::Segment { msn: 9 };
+        let crypto = SegmentCrypto {
+            key_id: KeyId(0),
+            iv,
+        };
+        for len in [1usize, 15, 16, 17, 37, 188] {
+            let plain: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            let cipher = aes128_encrypt_segment(&key, &iv, &plain);
+            assert_eq!(decrypt_segment(id, crypto, &key, &cipher).unwrap(), plain);
+        }
+    }
+
+    #[test]
+    fn media_sequence_iv_is_big_endian_left_padded() {
+        let iv = media_sequence_iv(0x0102_0304_0506_0708);
+        assert_eq!(iv[..8], [0u8; 8]);
+        assert_eq!(iv[8..], [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(media_sequence_iv(0)[..], [0u8; 16]);
+        assert_eq!(media_sequence_iv(0x1FF)[14..], [1, 0xFF]);
+    }
 
     // Regression: `on_resource` documents (see `Error::UnrequestedResource`)
     // that it rejects a `ResourceId` the client never requested, but

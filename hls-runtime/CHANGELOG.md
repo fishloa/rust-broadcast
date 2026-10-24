@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- HLS `METHOD=AES-128` decryption in `HlsClient` (issue #1459, slice S1): new `Action::FetchKey { id, url }`, `KeyId`, `HlsClient::on_key` / `on_key_error`. Keys are fetched once per URI, segments are held until the key arrives, then decrypted (IV attribute or big-endian Media Sequence Number) before demuxing. New errors `BadKeyLength`, `UnrequestedKey`, `DecryptFailed` and `UnsupportedEncryption` (SAMPLE-AES and other methods, encrypted `EXT-X-MAP`, I-frames-only, partial segments). The `tokio` adapter fetches keys itself. Depends on `transmux` with the `sample-aes` feature.
 - `HlsOriginBuilder::declared_bandwidth_bps(u64)` — operator-declared peak bitrate used as a floor for the master playlist `BANDWIDTH` before any segment with a measurable duration exists (and afterwards); validated `> 0` and `<= u32::MAX` at build (`HlsOriginBuildError::InvalidDeclaredBandwidth`). `HlsOrigin::master_playlist` now returns `HlsMasterError::BandwidthUnknown` when neither a measured segment nor a declared value is available instead of advertising a 5 Mb/s placeholder. `master_playlist_m3u8` now takes `bandwidth_bps: u32`.
 
 ### Removed

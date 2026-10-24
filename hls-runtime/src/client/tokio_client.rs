@@ -409,6 +409,13 @@ impl TokioClient {
                         self.core.on_error(Some(id));
                     }
                 },
+                Some(Action::FetchKey { id, url }) => {
+                    match self.fetch_resource_bounded(&url, None).await {
+                        Ok(bytes) => self.core.on_key(id, &bytes)?,
+                        Err(TokioError::Cancelled) => return Ok(None),
+                        Err(_source) => self.core.on_key_error(id),
+                    }
+                }
                 Some(Action::WaitMs(ms)) => {
                     if self.sleep_or_cancelled(Duration::from_millis(ms)).await {
                         return Ok(None);

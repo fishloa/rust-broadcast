@@ -468,6 +468,8 @@ impl HlsSource {
                     self.gate_until = Some(at);
                     self.actions.push_back(Action::WakeAt(at));
                 }
+                // Key fetches ride the session HTTP layer in slice S2 (#1459).
+                HlsAction::FetchKey { .. } => {}
                 _ => {}
             }
         }
