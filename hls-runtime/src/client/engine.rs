@@ -339,9 +339,10 @@ fn parse_rfc3339_ms(text: &str) -> Option<i64> {
 ///   ahead of its own appearance as a numbered `EXT-X-PART`; `BYTERANGE`
 ///   parts are supported, including the RFC 8216bis §4.4.4.9 "omitted offset
 ///   means immediately after the previous sub-range of the same resource"
-///   rule (tracked per resource URL). The Media Initialization Section
-///   (`EXT-X-MAP`) is fetched once and reused for every following resource
-///   until the map changes.
+///   rule (tracked per resource URL). Each Media Initialization Section
+///   (`EXT-X-MAP`) is fetched once, one at a time, and used for exactly the
+///   segments of its own map-run (RFC 8216 §4.4.4.5: a map applies to every
+///   following segment until the next map).
 /// - **Dedup / coalescing**: once *any* of a segment's parts have been
 ///   individually fetched, that segment is never re-fetched whole — when it
 ///   later closes (`#EXTINF`+URI), the client only fetches whichever of its
