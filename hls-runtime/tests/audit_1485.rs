@@ -338,13 +338,12 @@ fn a_hostile_target_duration_cannot_park_the_reload_for_days() {
 fn a_changed_map_byte_range_on_the_same_uri_requests_the_new_init() {
     let mut client = HlsClient::new(URL);
     drain(&mut client);
-    let pl = |range: &str| {
-        format!(
-            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
-             #EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"{range}\"\n#EXTINF:2.0,\nseg0.m4s\n"
-        )
-    };
-    client.on_playlist(pl("100@0").as_bytes()).unwrap();
+    let head = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n";
+    let first_run = "#EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"100@0\"\n#EXTINF:2.0,\nseg0.m4s\n";
+    let second_run = "#EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"100@100\"\n#EXTINF:2.0,\nseg1.m4s\n";
+    client
+        .on_playlist(format!("{head}{first_run}").as_bytes())
+        .unwrap();
     let first = drain(&mut client);
     assert!(
         first.iter().any(|a| matches!(
@@ -357,7 +356,10 @@ fn a_changed_map_byte_range_on_the_same_uri_requests_the_new_init() {
         )),
         "{first:?}"
     );
-    client.on_playlist(pl("100@100").as_bytes()).unwrap();
+    client.on_resource(ResourceId::Init, b"first init").unwrap();
+    client
+        .on_playlist(format!("{head}{first_run}{second_run}").as_bytes())
+        .unwrap();
     let second = drain(&mut client);
     assert!(
         second.iter().any(|a| matches!(

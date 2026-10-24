@@ -7,7 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use super::{DegradationRecord, InputDegradation, Track};
+use super::{DegradationRecord, InputDegradation, Track, TrackId};
 
 /// One PCR observation from a TS adaptation field (ISO/IEC 13818-1 §2.4.3.4).
 ///
@@ -61,13 +61,28 @@ pub struct SkippedTrack {
     pub fourcc: String,
     /// Human-readable reason (the underlying `Error`'s `Display` text).
     pub reason: String,
+    /// The skipped `trak`'s `tkhd.track_ID` (ISO/IEC 14496-12 §8.3.2) when the
+    /// demuxer reached the track header; `None` for a record that has no
+    /// track header to name.
+    pub track_id: Option<TrackId>,
 }
 
 impl SkippedTrack {
     /// Record a skipped track from its sample-entry FourCC and a
     /// human-readable reason.
     pub fn new(fourcc: String, reason: String) -> Self {
-        Self { fourcc, reason }
+        Self {
+            fourcc,
+            reason,
+            track_id: None,
+        }
+    }
+
+    /// Name the skipped `trak` by its `tkhd.track_ID`.
+    #[must_use]
+    pub fn with_track_id(mut self, track_id: TrackId) -> Self {
+        self.track_id = Some(track_id);
+        self
     }
 }
 

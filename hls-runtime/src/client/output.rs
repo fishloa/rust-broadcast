@@ -134,6 +134,34 @@ pub enum Output {
         /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque data.
         stream_type: Option<u8>,
     },
+    /// A track of an fMP4 Media Initialization Section was left out of the
+    /// track set and the samples because the demuxer could not model it: an
+    /// encrypted sample entry (`encv`, `enca`, ... — this client decrypts only
+    /// AES-128 segments, never CENC/CBCS sample encryption) or an unrecognised
+    /// codec. Emitted once per track and init, so a consumer that reports it
+    /// deduplicates by `track_id` across inits. A stream whose every track is
+    /// skipped produces only these, followed by an empty [`Output::Tracks`].
+    TrackSkipped {
+        /// The skipped `trak`'s `tkhd.track_ID`, `None` when the demuxer could
+        /// not name it.
+        track_id: Option<TrackId>,
+        /// The track's sample-entry four-character code (`encv`, `enca`, ...).
+        fourcc: String,
+        /// The demuxer's reason.
+        reason: String,
+    },
+    /// The demuxer skipped one or more `moof` fragments of a Part/Segment
+    /// resource — unparsable, or addressing sample data outside the resource
+    /// (an absolute `tfhd` base-data-offset, which only holds when the
+    /// segment sits at that offset of the whole file; CMAF uses
+    /// default-base-is-moof). The samples of the other fragments are still
+    /// emitted; those of the skipped ones are lost.
+    FragmentDamaged {
+        /// The resource that held the skipped fragments.
+        id: crate::client::ResourceId,
+        /// How many fragments (or per-track fragment runs) were skipped.
+        skipped: usize,
+    },
     /// A master (multivariant) playlist was parsed and a variant selected.
     /// The caller may inspect [`MasterSelection`] and, for renditions with a
     /// `url`, create a second client via `HlsClient::new(rendition.url)`.

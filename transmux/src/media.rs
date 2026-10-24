@@ -168,7 +168,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                         entry_extra_boxes,
                     })
                 }
-                Err(err) => skipped.push(skipped_track(err)),
+                Err(err) => skipped.push(skipped_track(err, trak.tkhd.track_id)),
             }
         }
 
@@ -983,7 +983,7 @@ fn gcd_u32(mut a: u32, mut b: u32) -> u32 {
 /// reach an entry (missing `mdia`/`mdhd`/`minf`/`stbl`/`stsd`), so there is no
 /// FourCC to recover; `"unknown"` names that case honestly rather than
 /// guessing.
-pub(crate) fn skipped_track(err: Error) -> SkippedTrack {
+pub(crate) fn skipped_track(err: Error, track_id: crate::TrackId) -> SkippedTrack {
     let fourcc = match &err {
         Error::UnsupportedSampleEntry { fourcc } => fourcc.clone(),
         _ => String::from("unknown"),
@@ -991,6 +991,7 @@ pub(crate) fn skipped_track(err: Error) -> SkippedTrack {
     SkippedTrack {
         fourcc,
         reason: err.to_string(),
+        track_id: Some(track_id),
     }
 }
 

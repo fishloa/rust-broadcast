@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod fmp4_split;
 pub mod hls_host;
 pub mod renditions;
 pub mod replay;

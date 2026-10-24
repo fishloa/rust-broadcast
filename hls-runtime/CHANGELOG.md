@@ -7,6 +7,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (round-6 audit F3)
+- **Every segment is demuxed with the init of its own `EXT-X-MAP` run** (RFC 8216 §4.4.4.5: a map applies to every following segment until the next map). The client used to plan one init from the playlist's *last* map, so a VOD (or a join window) with a mid-roll init change never fetched the first init and decoded the earlier segments with the wrong one (50 H.264 samples read as HEVC, the audio lost). It now keeps one init per map-run, binds each Media Sequence Number to the init that precedes it, fetches each init once, and replays segments that arrive before their init once it is in. Behaviour changes: inits are fetched **one at a time**, in playlist order (`ResourceId::Init` names the one in flight, so a second concurrent fetch could not be told apart); the first init is announced as `Output::Init` as soon as it arrives, every later init (and a return to an earlier one) is announced lazily, immediately before the first resource demuxed with it and after that resource's `Output::Discontinuity`, followed by the matching `Output::Tracks`; `retry_init()` retries every failed init; the map key of each run is the `EXT-X-KEY` preceding that `EXT-X-MAP` line (an unusable encrypted map skips only the segments of its run). Held inits no segment still being fetched refers to are pruned, the newest is kept.
+
+### Added (round-6 audit F1, F9a)
+- `Output::TrackSkipped { track_id, fourcc, reason }` (additive; `Output` is `#[non_exhaustive]`): a track of an fMP4 init the demuxer could not model (an encrypted `encv`/`enca` sample entry, an unrecognised codec) was dropped silently although `Media::skipped` named it. Emitted once per track and init; a stream whose every track is skipped still produces an empty `Output::Tracks`.
+- `Output::FragmentDamaged { id, skipped }`: `moof` fragments of a Part/Segment the demuxer had to skip (`Media::degraded`), notably those whose sample data offset points outside the resource (absolute `tfhd` base-data-offset). The samples of the intact fragments are still emitted.
+- `Error::NotFragmented { id }`: a segment of an fMP4 playlist that is a progressive movie (`moov`, no `moof`) used to demux to zero samples without an error.
+
 ### Added (round-5 audit)
 - `Output::TrackDropped { track_id, stream_type }` (additive; `Output` is `#[non_exhaustive]`): a TS-segment elementary stream that cannot be carried in fragmented MP4 (`!is_muxable_in_bmff`, e.g. SCTE-35/ID3/private data) is no longer dropped silently. Emitted each time the demuxer announces the track; a consumer reporting it deduplicates by `track_id`.
 

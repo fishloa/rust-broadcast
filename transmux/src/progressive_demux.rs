@@ -184,7 +184,7 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
         let mut spec = match track_spec_from_trak(trak) {
             Ok(spec) => spec,
             Err(err) => {
-                skipped.push(skipped_track(err));
+                skipped.push(skipped_track(err, trak.tkhd.track_id));
                 continue;
             }
         };
@@ -194,6 +194,7 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
                 skipped.push(SkippedTrack {
                     fourcc: String::from("unknown"),
                     reason: err.to_string(),
+                    track_id: Some(trak.tkhd.track_id),
                 });
                 continue;
             }
@@ -203,6 +204,7 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
             skipped.push(SkippedTrack {
                 fourcc: String::from("unknown"),
                 reason: err.to_string(),
+                track_id: Some(trak.tkhd.track_id),
             });
             continue;
         }
