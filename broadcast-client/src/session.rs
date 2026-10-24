@@ -1030,6 +1030,56 @@ mod tests {
         assert!(session.buffer.has_track(specs[1].track_id));
     }
 
+    #[test]
+    fn default_rendered_tracks_is_the_lowest_id_whatever_the_resolution_order() {
+        use broadcast_common::Unpackage;
+        const LOW_AUDIO: u32 = 20;
+        const HIGH_AUDIO: u32 = 30;
+        let data = test_fixtures::read("ts/h264_aac.ts");
+        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let video = media
+            .tracks
+            .iter()
+            .find(|t| transmux::LiveJoin::for_config(&t.spec.config).is_some())
+            .unwrap()
+            .spec
+            .clone();
+        let audio = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.config.audio_sample_rate().is_some())
+            .unwrap()
+            .spec
+            .clone();
+        let with_id = |spec: &transmux::TrackSpec, id: u32| {
+            let mut s = spec.clone();
+            s.track_id = TrackId::new(id);
+            s
+        };
+        let low = with_id(&audio, LOW_AUDIO);
+        let high = with_id(&audio, HIGH_AUDIO);
+        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        assert_eq!(session.default_rendered_tracks(), (None, None));
+        session
+            .source
+            .inject(Some(Event::Tracks(vec![high.clone()])));
+        session.drain_source();
+        assert_eq!(
+            session.default_rendered_tracks(),
+            (None, Some(high.track_id))
+        );
+        session.source.inject(Some(Event::Tracks(vec![
+            high.clone(),
+            video.clone(),
+            low.clone(),
+        ])));
+        session.drain_source();
+        assert_eq!(
+            session.default_rendered_tracks(),
+            (Some(video.track_id), Some(low.track_id))
+        );
+    }
+
     #[cfg(feature = "test-seams")]
     fn pcr_hints(session: &Session) -> usize {
         session

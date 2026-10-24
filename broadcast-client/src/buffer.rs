@@ -906,6 +906,21 @@ mod tests {
     }
 
     #[test]
+    fn declaring_a_track_that_never_emitted_leaves_it_without_an_end() {
+        let mut r = Rig::new();
+        r.f.on_track_added(&r.specs[&VIDEO_ID]);
+        r.f.on_track_added(&r.specs[&AUDIO_A_ID]);
+        r.f.on_track_added(&r.specs[&AUDIO_B_ID]);
+        r.emitting = vec![VIDEO_ID, AUDIO_A_ID];
+        r.prefill();
+        let b = TrackId::new(AUDIO_B_ID);
+        r.f.set_rendered_tracks(&[TrackId::new(VIDEO_ID), b]);
+        assert!(r.f.rendered.contains(&b));
+        assert!(!r.f.pending_ends.contains_key(&b));
+        assert!(!r.f.audio_max_end.contains_key(&b));
+    }
+
+    #[test]
     fn a_new_connection_clears_the_finite_flag() {
         let mut f = feeder();
         f.set_finite();
