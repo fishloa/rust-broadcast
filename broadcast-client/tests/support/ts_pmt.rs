@@ -17,6 +17,7 @@ const VERSION_MASK: u8 = 0x1f;
 const ES_PID_RESERVED: u8 = 0xE0;
 const ES_INFO_RESERVED: u8 = 0xF0;
 const FILL: u8 = 0xff;
+const PAYLOAD: usize = PACKET - 4;
 
 #[derive(Debug, Clone)]
 pub struct Es {
@@ -109,28 +110,41 @@ fn build(pmt: &Pmt, es: &[Es], version: u8, cc: u8) -> Vec<u8> {
     sec[2] = len as u8;
     let crc = crc32_mpeg2::compute(&sec);
     sec.extend_from_slice(&crc.to_be_bytes());
-    let mut p = vec![
-        0x47,
-        PUSI | (pmt.pid >> 8) as u8,
-        pmt.pid as u8,
-        PAYLOAD_ONLY | (cc & 0xf),
-        0,
-    ];
-    p.extend_from_slice(&sec);
-    p.resize(PACKET, FILL);
-    p
+    let mut payload = vec![0u8];
+    payload.extend_from_slice(&sec);
+    payload
+        .chunks(PAYLOAD)
+        .enumerate()
+        .flat_map(|(n, chunk)| {
+            let mut p = vec![
+                0x47,
+                (if n == 0 { PUSI } else { 0 }) | (pmt.pid >> 8) as u8,
+                pmt.pid as u8,
+                PAYLOAD_ONLY | (cc.wrapping_add(n as u8) & 0xf),
+            ];
+            p.extend_from_slice(chunk);
+            p.resize(PACKET, FILL);
+            p
+        })
+        .collect()
 }
 
 pub fn rewrite(bytes: &[u8], pmt: &Pmt, plan: &dyn Fn(f64) -> Option<(Vec<Es>, u8)>) -> Vec<u8> {
     let n = bytes.len() / PACKET;
     let mut out = Vec::with_capacity(bytes.len());
+    let mut cc: Option<u8> = None;
     for (i, p) in bytes.chunks_exact(PACKET).enumerate() {
-        if pid_of(p) == pmt.pid
-            && p[1] & PUSI != 0
-            && let Some((es, version)) = plan(i as f64 / n as f64)
-        {
-            out.extend(build(pmt, &es, version, p[3]));
-            continue;
+        if pid_of(p) == pmt.pid {
+            let next = cc.unwrap_or(p[3] & 0xf);
+            if p[1] & PUSI != 0
+                && let Some((es, version)) = plan(i as f64 / n as f64)
+            {
+                let built = build(pmt, &es, version, next);
+                cc = Some(next.wrapping_add((built.len() / PACKET) as u8) & 0xf);
+                out.extend(built);
+                continue;
+            }
+            cc = None;
         }
         out.extend_from_slice(p);
     }
