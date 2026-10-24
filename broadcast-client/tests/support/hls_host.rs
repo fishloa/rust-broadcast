@@ -71,6 +71,7 @@ pub enum Reply {
     Ok(Vec<u8>),
     OkHeaders(Vec<u8>, Vec<(String, String)>),
     Status(u16),
+    StatusHeaders(u16, Vec<(String, String)>),
     Redirect(String),
     TransportError,
     Hang,
@@ -209,6 +210,10 @@ impl Host {
             }
             Reply::Status(code) => {
                 self.session.on_response(conn, code, &[]);
+                self.session.on_closed(conn, None, self.now);
+            }
+            Reply::StatusHeaders(code, headers) => {
+                self.session.on_response(conn, code, &headers);
                 self.session.on_closed(conn, None, self.now);
             }
             Reply::Redirect(loc) => {

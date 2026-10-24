@@ -120,6 +120,53 @@ impl BufferEvent {
 
 broadcast_common::impl_spec_display!(BufferEvent);
 
+/// Why a session reported [`Event::Error`].
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// The stream is encrypted in a way this client does not decrypt: SAMPLE-AES, another
+    /// non-AES-128 method, a non-`identity` `KEYFORMAT` (FairPlay, Widevine, ...), an encrypted
+    /// `EXT-X-MAP`, encrypted I-frames-only segments, or an `EXT-X-KEY` without a `URI`. `method`
+    /// is the `METHOD` value, or the `KEYFORMAT` value for an unsupported key format.
+    UnsupportedEncryption {
+        /// The `METHOD` (or unsupported `KEYFORMAT`) value.
+        method: String,
+    },
+    /// A key request failed with a non-authentication status, a transport error, a timeout, or
+    /// an oversized body. 401/407/403 on a key request surface as `AuthRequired`/`AuthRejected`/
+    /// `Forbidden` instead.
+    KeyFetchFailed {
+        /// The HTTP status, `None` for a transport error, timeout or oversized body.
+        status: Option<u16>,
+    },
+    /// The key response was not a valid 16-byte AES-128 key.
+    BadKey,
+    /// A segment did not decrypt (bad padding or length), typically because the key is wrong.
+    DecryptFailed,
+    /// The stream uses a codec the client cannot handle. Defined for players; not emitted by the
+    /// BC-3 sources yet.
+    UnsupportedCodec {
+        /// The codec's four-character code.
+        fourcc: String,
+    },
+}
+
+impl ErrorKind {
+    /// Stable snake_case label.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::UnsupportedEncryption { .. } => "unsupported_encryption",
+            Self::KeyFetchFailed { .. } => "key_fetch_failed",
+            Self::BadKey => "bad_key",
+            Self::DecryptFailed => "decrypt_failed",
+            Self::UnsupportedCodec { .. } => "unsupported_codec",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ErrorKind);
+
 /// Host action produced by [`crate::Session`].
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +253,18 @@ pub enum Event {
     },
     /// A master playlist was parsed and a variant chosen.
     Variants(hls_runtime::client::MasterSelection),
+    /// A condition the player should tell the user about. `fatal` means the session will not
+    /// recover by itself: it has closed its connections and goes silent, so the player shows a
+    /// message and does not retry. Non-fatal errors are emitted once per kind until a success
+    /// (decoded samples) resets them, while the session keeps retrying with backoff; after
+    /// [`Config::max_key_failures`] consecutive key or decrypt failures one fatal error of the
+    /// same kind follows.
+    Error {
+        /// What went wrong.
+        kind: ErrorKind,
+        /// Whether the session gave up.
+        fatal: bool,
+    },
 }
 
 impl PartialEq for Event {
@@ -258,6 +317,16 @@ impl PartialEq for Event {
             (Self::Forbidden { status: a }, Self::Forbidden { status: b }) => *a == *b,
             (Self::Buffer(a), Self::Buffer(b)) => *a == *b,
             (Self::Variants(a), Self::Variants(b)) => *a == *b,
+            (
+                Self::Error {
+                    kind: ka,
+                    fatal: fa,
+                },
+                Self::Error {
+                    kind: kb,
+                    fatal: fb,
+                },
+            ) => *ka == *kb && *fa == *fb,
             _ => false,
         }
     }
@@ -271,6 +340,12 @@ pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_HLS_REQUEST_TIMEOUT_US: u64 = 20_000_000;
 /// Default per-request timeout for HLS media resources, microseconds.
 pub const DEFAULT_HLS_SEGMENT_TIMEOUT_US: u64 = 60_000_000;
+/// Default per-request timeout for HLS key requests, microseconds.
+pub const DEFAULT_HLS_KEY_TIMEOUT_US: u64 = 20_000_000;
+/// Default maximum accepted HLS key response body size.
+pub const DEFAULT_MAX_KEY_BYTES: usize = 4096;
+/// Default number of consecutive key/decrypt failures before the session gives up.
+pub const DEFAULT_MAX_KEY_FAILURES: u32 = 8;
 /// Default HLS retry backoff schedule, milliseconds per attempt.
 pub const DEFAULT_HLS_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
 /// Default HLS retry backoff once the schedule is exhausted, milliseconds.
@@ -307,6 +382,13 @@ pub struct Config {
     pub hls_backoff_ms: Vec<u64>,
     /// HLS: retry backoff after `hls_backoff_ms` is exhausted, milliseconds.
     pub hls_backoff_cap_ms: u64,
+    /// HLS: key request timeout, microseconds.
+    pub hls_key_timeout_us: u64,
+    /// HLS: maximum key response body bytes.
+    pub max_key_bytes: usize,
+    /// HLS: consecutive key/decrypt failures (no decoded samples in between) after which the
+    /// session emits a fatal [`Event::Error`] and stops.
+    pub max_key_failures: u32,
 }
 
 impl Default for Config {
@@ -325,6 +407,9 @@ impl Default for Config {
             hls_segment_timeout_us: DEFAULT_HLS_SEGMENT_TIMEOUT_US,
             hls_backoff_ms: DEFAULT_HLS_BACKOFF_MS.to_vec(),
             hls_backoff_cap_ms: DEFAULT_HLS_BACKOFF_CAP_MS,
+            hls_key_timeout_us: DEFAULT_HLS_KEY_TIMEOUT_US,
+            max_key_bytes: DEFAULT_MAX_KEY_BYTES,
+            max_key_failures: DEFAULT_MAX_KEY_FAILURES,
         }
     }
 }
@@ -346,6 +431,9 @@ impl core::fmt::Debug for Config {
             .field("hls_segment_timeout_us", &self.hls_segment_timeout_us)
             .field("hls_backoff_ms", &self.hls_backoff_ms)
             .field("hls_backoff_cap_ms", &self.hls_backoff_cap_ms)
+            .field("hls_key_timeout_us", &self.hls_key_timeout_us)
+            .field("max_key_bytes", &self.max_key_bytes)
+            .field("max_key_failures", &self.max_key_failures)
             .finish()
     }
 }

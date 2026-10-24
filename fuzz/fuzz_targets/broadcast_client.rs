@@ -5,6 +5,7 @@ use libfuzzer_sys::fuzz_target;
 
 const URLS: [&str; 2] = ["http://example/live.ts", "http://example/live.m3u8"];
 const HLS_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
+const HLS_ENC_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x000102030405060708090A0B0C0D0E0F\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
 const STEP_US: u64 = 700_000;
 const COOKIE_NAMES: [&str; 3] = ["sid", "a", "t"];
 const STATUS_CODES: [u16; 6] = [200, 200, 404, 302, 401, 500];
@@ -25,7 +26,7 @@ fn drive(url: &str, data: &[u8]) {
         now = now.saturating_add(STEP_US);
         let pick = chunk.first().copied().unwrap_or(0);
         let conn = conn_ids.get(usize::from(pick) % conn_ids.len().max(1)).copied();
-        match pick % 9 {
+        match pick % 10 {
             0 => {
                 while let Some(action) = session.poll(now) {
                     if let Action::HttpRequest { conn, .. } = action {
@@ -70,6 +71,22 @@ fn drive(url: &str, data: &[u8]) {
             }
             7 => {
                 let _ = session.select_variant(usize::from(chunk.get(1).copied().unwrap_or(0)));
+            }
+            8 => {
+                while let Some(action) = session.poll(now) {
+                    if let Action::HttpRequest { conn, url, .. } = action {
+                        conn_ids.push(conn);
+                        session.on_response(conn, 200, &[]);
+                        if url.contains("key") {
+                            let len = usize::from(chunk.get(1).copied().unwrap_or(0)) % (chunk.len() + 1);
+                            session.on_data(conn, &chunk[..len.min(chunk.len())], now);
+                        } else {
+                            session.on_data(conn, HLS_ENC_SEED, now);
+                            session.on_data(conn, chunk, now);
+                        }
+                        session.on_closed(conn, None, now);
+                    }
+                }
             }
             _ => {
                 let _ = session.poll(now);

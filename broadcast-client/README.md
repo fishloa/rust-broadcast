@@ -19,6 +19,17 @@ Failed requests retry with the `Config::hls_backoff_ms` schedule (2, 4, 8 s, the
 time out (`hls_request_timeout_us`, `hls_segment_timeout_us`). Separate audio/subtitle renditions
 and `Event::Buffer` for HLS are not implemented.
 
+## Encrypted HLS
+
+`METHOD=AES-128` playlists are decrypted inside the session: the key request is a normal request
+(origin-scoped credentials, cookies and `extra_headers`, own redirect budget, `hls_key_timeout_us`,
+`max_key_bytes`, shared retry/backoff) and the key is cached for the session. `Event::Error { kind,
+fatal }` reports why playback cannot proceed: `ErrorKind::UnsupportedEncryption` (SAMPLE-AES,
+FairPlay/Widevine key formats, ...) is fatal immediately; `KeyFetchFailed`, `BadKey` and
+`DecryptFailed` are reported once while the session retries and become fatal after
+`Config::max_key_failures` consecutive failures. A fatal error closes all connections and the session
+goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbidden`.
+
 ## Cookies and custom headers
 
 Responses of the session origin may set cookies (`Set-Cookie`, any status including 401 and 3xx);

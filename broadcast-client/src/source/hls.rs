@@ -6,12 +6,14 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use std::collections::HashMap;
 
-use hls_runtime::client::{Action as HlsAction, HlsClient, Output, ResourceId};
+use hls_runtime::client::{
+    Action as HlsAction, Error as CoreError, HlsClient, KeyId, Output, ResourceId,
+};
 use url::Url;
 
 use crate::auth::{AuthDecision, AuthState};
 use crate::error::Error;
-use crate::events::{Action, Config, Event, Status};
+use crate::events::{Action, Config, ErrorKind, Event, Status};
 use crate::redirect;
 
 const MICROS_PER_MILLI: u64 = 1_000;
@@ -21,12 +23,18 @@ const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_GONE: u16 = 410;
+const AUTH_STATUSES: [u16; 3] = [
+    STATUS_UNAUTHORIZED,
+    STATUS_PROXY_AUTH_REQUIRED,
+    STATUS_FORBIDDEN,
+];
 const METHOD_GET: &str = "GET";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Purpose {
     Playlist,
     Resource(ResourceId),
+    Key(KeyId),
 }
 
 struct Req {
@@ -63,6 +71,12 @@ pub(crate) struct HlsSource {
     client: HlsClient,
     max_playlist_bytes: usize,
     max_segment_bytes: usize,
+    max_key_bytes: usize,
+    key_timeout_us: u64,
+    max_key_failures: u32,
+    key_failures: u32,
+    reported: BTreeSet<&'static str>,
+    fatal: bool,
     playlist_timeout_us: u64,
     segment_timeout_us: u64,
     backoff_ms: Vec<u64>,
@@ -92,6 +106,12 @@ impl HlsSource {
             client,
             max_playlist_bytes: config.max_playlist_bytes,
             max_segment_bytes: config.max_segment_bytes,
+            max_key_bytes: config.max_key_bytes,
+            key_timeout_us: config.hls_key_timeout_us,
+            max_key_failures: config.max_key_failures,
+            key_failures: 0,
+            reported: BTreeSet::new(),
+            fatal: false,
             playlist_timeout_us: config.hls_request_timeout_us,
             segment_timeout_us: config.hls_segment_timeout_us,
             backoff_ms: config.hls_backoff_ms.clone(),
@@ -129,7 +149,7 @@ impl HlsSource {
     }
 
     pub(crate) fn poll(&mut self, now: u64, auth: &mut AuthState) {
-        if auth.is_waiting() {
+        if self.fatal || auth.is_waiting() {
             return;
         }
         self.expire(now);
@@ -145,6 +165,9 @@ impl HlsSource {
         self.client
             .select_variant(index)
             .map_err(|_| Error::NoSuchVariant(index))?;
+        if self.fatal {
+            return Ok(());
+        }
         self.reset_in_flight();
         self.attempt = 0;
         self.pump_core();
@@ -156,6 +179,9 @@ impl HlsSource {
     }
 
     pub(crate) fn reconnect(&mut self, now: u64, auth: &mut AuthState) {
+        if self.fatal {
+            return;
+        }
         let in_flight: Vec<Purpose> = self.reqs.values().map(|r| r.purpose).collect();
         for purpose in in_flight {
             self.client_failed(purpose);
@@ -171,6 +197,9 @@ impl HlsSource {
     }
 
     pub(crate) fn resume(&mut self, now: u64, auth: &mut AuthState) {
+        if self.fatal {
+            return;
+        }
         self.attempt = 0;
         let parked: Vec<Req> = core::mem::take(&mut self.parked);
         for req in parked {
@@ -187,6 +216,9 @@ impl HlsSource {
         now: u64,
         auth: &mut AuthState,
     ) {
+        if self.fatal {
+            return;
+        }
         let Some(mut req) = self.reqs.remove(&conn) else {
             return;
         };
@@ -233,7 +265,7 @@ impl HlsSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            self.fail(req, now);
+            self.fail_status(req, now, Some(status));
         }
         if !auth.is_waiting() {
             self.advance(now, auth);
@@ -241,6 +273,9 @@ impl HlsSource {
     }
 
     pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
+        if self.fatal {
+            return;
+        }
         let Some(req) = self.reqs.get_mut(&conn) else {
             return;
         };
@@ -250,6 +285,7 @@ impl HlsSource {
         let limit = match req.purpose {
             Purpose::Playlist => self.max_playlist_bytes,
             Purpose::Resource(_) => self.max_segment_bytes,
+            Purpose::Key(_) => self.max_key_bytes,
         };
         if req.body.len().saturating_add(bytes.len()) > limit {
             if let Some(req) = self.reqs.remove(&conn) {
@@ -271,6 +307,9 @@ impl HlsSource {
         now: u64,
         auth: &mut AuthState,
     ) {
+        if self.fatal {
+            return;
+        }
         let Some(req) = self.reqs.remove(&conn) else {
             return;
         };
@@ -293,8 +332,68 @@ impl HlsSource {
                 self.held.insert(id, req.body);
                 self.release_ready(now);
             }
+            Purpose::Key(id) => self.deliver_key(id, &req.body, now),
             purpose => self.deliver_now(purpose, &req.body, Some(req.original_url), now),
         }
+    }
+
+    fn deliver_key(&mut self, id: KeyId, body: &[u8], now: u64) {
+        match self.client.on_key(id, body) {
+            Ok(()) => {
+                self.attempt = 0;
+                self.pump_core();
+                self.drain_outputs();
+            }
+            Err(CoreError::UnrequestedKey { .. }) => {}
+            Err(e) => {
+                self.pump_core();
+                self.drain_outputs();
+                if let CoreError::DecryptFailed { id: rid, .. } = &e
+                    && !matches!(rid, ResourceId::Init)
+                {
+                    self.order.push_front(*rid);
+                    self.failed.insert(*rid);
+                    if self.core_error(&e) {
+                        return;
+                    }
+                    self.fail_purpose(Purpose::Resource(*rid), None, now);
+                    return;
+                }
+                if self.core_error(&e) {
+                    return;
+                }
+                self.fail_purpose(Purpose::Key(id), None, now);
+            }
+        }
+    }
+
+    fn core_error(&mut self, error: &CoreError) -> bool {
+        match classify(error) {
+            Some((kind, true)) => {
+                self.go_fatal(kind);
+                true
+            }
+            Some((kind, false)) => self.report(kind),
+            None => false,
+        }
+    }
+
+    fn report(&mut self, kind: ErrorKind) -> bool {
+        self.key_failures = self.key_failures.saturating_add(1);
+        if self.key_failures >= self.max_key_failures {
+            self.go_fatal(kind);
+            return true;
+        }
+        if self.reported.insert(kind.name()) {
+            self.events.push_back(Event::Error { kind, fatal: false });
+        }
+        false
+    }
+
+    fn go_fatal(&mut self, kind: ErrorKind) {
+        self.events.push_back(Event::Error { kind, fatal: true });
+        self.fatal = true;
+        self.reset_in_flight();
     }
 
     fn release_ready(&mut self, now: u64) {
@@ -314,10 +413,13 @@ impl HlsSource {
         let result = match purpose {
             Purpose::Playlist => self.client.on_playlist(body),
             Purpose::Resource(id) => self.client.on_resource(id, body),
+            Purpose::Key(_) => Ok(()),
         };
         let delivered = result.is_ok();
         if delivered {
-            self.attempt = 0;
+            if self.key_failures == 0 {
+                self.attempt = 0;
+            }
         } else if let Purpose::Resource(id) = purpose
             && id != ResourceId::Init
         {
@@ -332,6 +434,11 @@ impl HlsSource {
                 self.release_ready(now);
             }
         } else {
+            if let Err(e) = &result
+                && self.core_error(e)
+            {
+                return;
+            }
             self.fail_purpose(purpose, retry_url, now);
         }
     }
@@ -355,10 +462,21 @@ impl HlsSource {
         match purpose {
             Purpose::Playlist => self.client.on_error(None),
             Purpose::Resource(id) => self.client.on_error(Some(id)),
+            Purpose::Key(id) => self.client.on_key_error(id),
         }
     }
 
     fn fail(&mut self, req: Req, now: u64) {
+        self.fail_status(req, now, None);
+    }
+
+    fn fail_status(&mut self, req: Req, now: u64, status: Option<u16>) {
+        if let Purpose::Key(_) = req.purpose
+            && !status.is_some_and(|s| AUTH_STATUSES.contains(&s))
+            && self.report(ErrorKind::KeyFetchFailed { status })
+        {
+            return;
+        }
         if let Purpose::Resource(id) = req.purpose
             && id != ResourceId::Init
         {
@@ -373,8 +491,8 @@ impl HlsSource {
         self.drain_outputs();
         let refetch = match purpose {
             Purpose::Playlist => retry_url,
-            Purpose::Resource(_) if self.chain_alive() => None,
-            Purpose::Resource(_) => Some(self.client.playlist_url().to_string()),
+            Purpose::Resource(_) | Purpose::Key(_) if self.chain_alive() => None,
+            Purpose::Resource(_) | Purpose::Key(_) => Some(self.client.playlist_url().to_string()),
         };
         self.schedule_retry(now, refetch);
     }
@@ -415,6 +533,7 @@ impl HlsSource {
     fn expire(&mut self, now: u64) {
         let playlist_timeout = self.playlist_timeout_us;
         let segment_timeout = self.segment_timeout_us;
+        let key_timeout = self.key_timeout_us;
         let mut expired: Vec<u32> = self
             .reqs
             .iter()
@@ -422,6 +541,7 @@ impl HlsSource {
                 let limit = match r.purpose {
                     Purpose::Playlist => playlist_timeout,
                     Purpose::Resource(_) => segment_timeout,
+                    Purpose::Key(_) => key_timeout,
                 };
                 now.saturating_sub(r.started_us) >= limit
             })
@@ -437,6 +557,9 @@ impl HlsSource {
     }
 
     fn advance(&mut self, now: u64, auth: &mut AuthState) {
+        if self.fatal {
+            return;
+        }
         if let Some((at, _)) = &self.retry_refetch
             && now >= *at
             && let Some((_, url)) = self.retry_refetch.take()
@@ -464,13 +587,14 @@ impl HlsSource {
                     url,
                     byte_range,
                 } => self.issue(Purpose::Resource(id), &url, byte_range, now, auth),
+                HlsAction::FetchKey { id, url } => {
+                    self.issue(Purpose::Key(id), &url, None, now, auth);
+                }
                 HlsAction::WaitMs(ms) => {
                     let at = now.saturating_add(ms.saturating_mul(MICROS_PER_MILLI));
                     self.gate_until = Some(at);
                     self.actions.push_back(Action::WakeAt(at));
                 }
-                // Key fetches ride the session HTTP layer in slice S2 (#1459).
-                HlsAction::FetchKey { .. } => {}
                 _ => {}
             }
         }
@@ -517,6 +641,7 @@ impl HlsSource {
         let timeout = match req.purpose {
             Purpose::Playlist => self.playlist_timeout_us,
             Purpose::Resource(_) => self.segment_timeout_us,
+            Purpose::Key(_) => self.key_timeout_us,
         };
         self.actions.push_back(Action::HttpRequest {
             conn,
@@ -558,6 +683,10 @@ impl HlsSource {
                 Output::Master(selection) => self.events.push_back(Event::Variants(selection)),
                 Output::Tracks(specs) => self.events.push_back(Event::Tracks(specs)),
                 Output::Samples { track_id, samples } => {
+                    if !samples.is_empty() {
+                        self.key_failures = 0;
+                        self.reported.clear();
+                    }
                     if !self.live && !samples.is_empty() {
                         self.live = true;
                         self.events.push_back(Event::Status(Status::Live));
@@ -584,5 +713,33 @@ impl HlsSource {
                 _ => {}
             }
         }
+    }
+}
+
+fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
+    match error {
+        CoreError::DecryptFailed { .. } => Some((ErrorKind::DecryptFailed, false)),
+        CoreError::BadKeyLength { .. } => Some((ErrorKind::BadKey, false)),
+        CoreError::UnsupportedEncryption { method, .. } => Some((
+            ErrorKind::UnsupportedEncryption {
+                method: method.to_string(),
+            },
+            true,
+        )),
+        CoreError::PlaylistParse(broadcast_hls::Error::UnsupportedKeyFormat { keyformat }) => {
+            Some((
+                ErrorKind::UnsupportedEncryption {
+                    method: keyformat.clone(),
+                },
+                true,
+            ))
+        }
+        CoreError::PlaylistParse(broadcast_hls::Error::KeyWithoutUri { method }) => Some((
+            ErrorKind::UnsupportedEncryption {
+                method: method.to_string(),
+            },
+            true,
+        )),
+        _ => None,
     }
 }
