@@ -157,11 +157,7 @@ impl Session {
             ts_wake: None,
             actions: VecDeque::new(),
             events: EventQueue::new(event_cap),
-            buffer: crate::buffer::Feeder::new(
-                buffer_cfg,
-                seed,
-                start_pending_wait_us,
-            ),
+            buffer: crate::buffer::Feeder::new(buffer_cfg, seed, start_pending_wait_us),
             playout,
             jump,
             declaration: crate::rendered::Declaration::default(),
