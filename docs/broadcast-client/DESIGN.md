@@ -30,7 +30,7 @@ Session::on_data(conn: ConnId, bytes: &[u8], now_us)
 Session::on_closed(conn: ConnId, error: Option<TransportError>, now_us)
 Session::set_credentials(Credentials)                    // broadcast_auth::Credentials
 Session::reconnect(now_us)                               // caller-initiated (decoder failure)
-Session::close()                                         // terminal; Close for open conns, no more events but Status(Ended)? no: Closed
+Session::close()                                         // terminal; one Close per live conn (RTSP: a Send carrying TEARDOWN first when a session was set up), no more events
 ```
 `ConnId` is `u32` allocated by the session. `now_us` is caller monotonic microseconds.
 
@@ -86,7 +86,16 @@ Status: Establishing | Live | Stalled{secs} | Reconnecting{attempt} | NotFound |
   at most ONCE per request lineage (TS, HLS and RTSP): a second stale answer is `AuthRejected` and the wait.
 - 401/407 with no credentials set: `Event::AuthRequired{scheme (first challenge, preferring Bearer when the
   challenge carries resource_metadata), realm, origin, resource_metadata}`, `Status(WaitingForCredentials)`,
-  `Action::Close`, NO retry and NO timers until `set_credentials` or `close`.
+  `Action::Close`, NO retry and NO timers until `set_credentials` or `close`. `resource_metadata` is
+  attacker-controlled: the server that answered the challenge chose that URL (any `https` origin). A host that
+  fetches it (RFC 9728) MUST validate it first (scheme `https`, an expected or allow-listed host, no private,
+  loopback or link-local address) or it is an SSRF vector; the session itself never fetches it.
+- A 407 is answered with `Proxy-Authorization` (from the same credentials) and its challenge is read from
+  `Proxy-Authenticate`; a 401 is answered with `Authorization` from `WWW-Authenticate`. Once a 407 was seen
+  the preemptive header on later requests to the origin is `Proxy-Authorization` until a 401 is seen.
+- When several challenges are offered (several header lines or several challenges in one line) the
+  authenticator is built from all of them and the strongest wins, Digest over Basic (RFC 9110 11.6.1);
+  Bearer credentials answer with `Bearer` whatever was offered.
 - 401 after credentials were sent: `Event::AuthRejected{status}`, `Status(WaitingForCredentials)`, same wait.
 - `set_credentials` while waiting: reopens immediately (attempt counter reset). While streaming: stored and used
   for the next request; an in-flight stream is not interrupted (Bearer refresh without restart).
@@ -110,7 +119,8 @@ non-2xx -> `on_response(status)` (the layer handles 401/407/3xx itself).
 **Errors/robustness:** unknown ConnId callbacks are ignored (late callbacks after Close). `on_closed(error)` maps
 to tshttp `on_error`, `None` to `on_eof`. `close()` is terminal: it drops every queued action except
 `Close`, adds one `Close` per live conn (never twice for the same conn), then `poll`/`next_event` return
-None.
+None. For RTSP `close()` first queues one `Send` carrying `TEARDOWN` (only when a session id exists), then the
+`Close`; every other source emits `Close` only.
 
 ## Tests required (BC-1)
 
@@ -142,7 +152,10 @@ New API on `Session`:
 A 206 response to our own plain GET is finite too. Redirect/auth layers are unchanged; headers are
 forwarded to tshttp-runtime for finite detection. `Event::Finite` is mapped from tshttp, and
 `Event::Ended` becomes `Status(Ended)`. The session does not reconnect after Ended; `Session::reconnect()`
-restarts the session (attempt 0). Truncated transfers (EOF before all expected bytes) reconnect.
+restarts the session (attempt 0) - this is how a host loops a finite TS file. `Status::Ended` of an HLS session
+(ENDLIST reached) is terminal instead: afterwards `reconnect()`, `select_variant()` (a known index is accepted,
+an unknown one is `Error::NoSuchVariant`) and `select_audio_rendition()` are no-ops that queue no action and emit
+no event; a live HLS session never ended is unaffected. Truncated transfers (EOF before all expected bytes) reconnect.
 
 ### BC-2 corrections from the player's baseline (zenith-tv review; binding)
 
@@ -156,13 +169,13 @@ Scope split: **BC-3a** single media playlist and master playlist with the policy
 
 - `SourceKind::Hls`; `Auto` picks Hls when the URL path ends with `.m3u8`/`.m3u` (ASCII case-insensitive), else TsHttp.
 - Adapter `source/hls.rs` over `hls_runtime::client::HlsClient` (default features, no tokio):
-  - `Action::FetchPlaylist{..}` -> `HttpRequest` GET to `action.playlist_request_url()` (blocking-reload query appended by hls-runtime), conn tagged `Playlist`. `Action::FetchResource{id,url,byte_range}` -> `HttpRequest{.., byte_range}` tagged `Resource(id)`. Up to the number of actions hls-runtime emits may be in flight at once (prefetch): the session keeps a conn table `ConnId -> purpose`.
+  - `Action::FetchPlaylist{..}` -> `HttpRequest` GET to `action.playlist_request_url()` (blocking-reload query appended by hls-runtime), conn tagged `Playlist`. `Action::FetchResource{id,url,byte_range}` -> `HttpRequest{.., byte_range}` tagged `Resource(id)`. The session keeps a conn table `ConnId -> purpose`. In-flight segment and part requests are capped at `Config::hls_max_inflight_segments` (default 4, `0` means 1) per playlist adapter: the cap counts every segment/part that was issued and not yet delivered to the core (in flight, or completed and held for in-order delivery, or failed and awaiting retry), so held bodies are bounded by `cap * max_segment_bytes`; the rest of hls-runtime's actions stay queued and are released as responses complete, delivery to the core stays in order. A retry of a segment already inside the window is never blocked by the cap (a failed segment cannot deadlock the window); playlist, key and init requests are not counted and never wait behind segments (queued actions leave in the order the core emitted them among those allowed to go). Request timeouts are tracked in a deadline heap with lazy deletion, so `poll` is O(log n) per expiry, not a scan of every request.
   - Bodies accumulate per conn across `on_data` (bounded: `Config::max_playlist_bytes` 4 MiB, `max_segment_bytes` 64 MiB; exceeding = Close + failure) and are delivered on `on_closed(None)`: `on_playlist(bytes)` / `on_resource(id, bytes)`. A `HlsClient` parse error is a failure of that request.
   - `Action::WaitMs(ms)` -> `WakeAt(now_us + ms*1000)`; `HlsClient::next_wait()` converts the same way (the core takes `std::time::Instant` only in `poll_timeout`; the session never calls that, it computes deadlines from `now_us`).
   - Output mapping: `Master(sel)` -> `Event::Variants(MasterSelection)` (new event, variants+chosen+renditions as in hls-runtime); `Tracks` -> `Event::Tracks`; `Init` dropped (not surfaced); `Samples{track_id, samples}` -> one `Event::Sample{track, sample, join: None}` per sample, in order; `DisplayChanged` -> `Event::DisplayChanged`; `Discontinuity` -> `Event::Discontinuity`; `EndOfStream` -> `Status::Ended`.
   - Status: `Establishing` until the first Sample, then `Live` once; `Status::Ended` for ENDLIST VOD at end of stream.
 - New inputs: `Config::variant_policy: hls_runtime::client::VariantPolicy`; `Session::select_variant(index)`; both delegate to HlsClient.
-- Retry policy (the core has none, "the caller drives retry cadence"): a failed request (transport error, non-2xx other than 401/407/3xx handled by the auth/redirect layers, truncated or oversized body, parse error) calls `HlsClient::on_error(id)` and schedules the next `poll` retry with the same table as TS-HTTP: backoff 2, 4, 8 s then 10 s forever (`Config::hls_backoff_ms`, `hls_backoff_cap_ms`), attempt counter resets on any successful playlist or resource. 404/410 on the MAIN (first) playlist: `Status::NotFound` per occurrence + same backoff; 404/410 on a segment: counted as a failure for that resource only (no NotFound status). While in backoff `Status::Reconnecting{attempt}` is emitted on each scheduled retry. Never gives up on live; the only terminal states are `Ended` (ENDLIST) and `close()`.
+- Retry policy (the core has none, "the caller drives retry cadence"): a failed request (transport error, non-2xx other than 401/407/3xx handled by the auth/redirect layers, truncated or oversized body, parse error) calls `HlsClient::on_error(id)` and schedules the next `poll` retry with the same table as TS-HTTP: backoff 2, 4, 8 s then 10 s forever (`Config::hls_backoff_ms`, `hls_backoff_cap_ms`), attempt counter resets on any successful playlist or resource. 404/410 on the MAIN (first) playlist: `Status::NotFound` per occurrence + same backoff; 404/410 on a segment: counted as a failure for that resource only (no NotFound status). While in backoff `Status::Reconnecting{attempt}` is emitted on each scheduled retry. Never gives up on live; the only terminal states are `Ended` (ENDLIST) and `close()`. Every `hls_backoff_ms` entry and `hls_backoff_cap_ms` is raised to at least 1 ms, so a zero never produces a burst of retries at one instant.
 - Auth/redirect layers apply to EVERY request exactly as for TS-HTTP: credentials scoped to the session origin (playlist origin) only; segments on other origins (CDN) carry no Authorization; per-request redirects (each request has its own redirect counter).
 - Stall handling: no bytes for `Config::ts_http.stall_*` does NOT apply; a request in flight longer than `Config::hls_request_timeout_us` (default 20 s, playlists) / `hls_segment_timeout_us` (default 60 s) is aborted (`Close`) and counts as a failure.
 
@@ -252,7 +265,11 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
   `a=control` against the base of RFC 2326 Appendix C.1.1: the DESCRIBE response's `Content-Base`, else its
   `Content-Location` (both through the additive `ClientSession::content_base()`), else the request URL with a
   trailing `/` guaranteed (`rtsp://cam/axis-media/media.amp` + `trackID=1` is `.../media.amp/trackID=1`);
-  `a=control:*` is the base itself and an absent control is the request URL. An absolute control whose
+  `a=control:*` is the base itself and an absent control is the request URL. A session-level `a=control` is the
+  aggregate control URL (RFC 2326 C.1.1), resolved the same way against the base (a foreign-authority one is
+  ignored): PLAY, the keepalive OPTIONS and TEARDOWN use it instead of the request URL when present. Of the
+  payload types a media line lists, the first whose own `a=rtpmap` and `a=fmtp` (matched by payload type)
+  describe H.264 or AAC is the one played, so a `rtx` payload type listed first does not hide the real one. An absolute control whose
   scheme, host or port differs from the connection's skips that section. A media section the client cannot
   play (other than H.264 video and AAC audio, a missing or unusable fmtp) is skipped; an SDP with no playable
   section left, or unparsable SDP, is a failure. At most 16 sections are played (later ones are ignored).
@@ -267,7 +284,7 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
   (`Session::rtp_loss_count`) and the stream continues (`NonMonotonicTimestamp` is B-frame reordering, not
   loss, and is not counted). When a connection ends after PLAY the depayloader is flushed so the last access
   units are delivered.
-- Keepalive: `OPTIONS` on the request URI at half the `Session` header's `timeout` clamped to 5 s..3600 s,
+- Keepalive: `OPTIONS` on the aggregate control URL (else the request URI) at half the `Session` header's `timeout` clamped to 5 s..3600 s,
   default 30 s, armed at the PLAY reply and re-armed at each send, driven by `poll(now_us)`. Any reply to it
   is ignored (405/501 are common); a reply while playing resets the auth replay budget, so keepalive
   challenges with rotating Digest nonces never exhaust it. `close()` sends `TEARDOWN` (only when a session id exists) and then
@@ -359,8 +376,10 @@ Behaviour pinned by `tests/audit_1484.rs`, `tests/audit_1484_sources.rs` and the
   `Event::Discontinuity` in their place so the player re-syncs. Tracks, errors, buffer events and terminal
   statuses are never dropped (the queue is bounded by the cap plus the undroppable events a stalled host leaves
   unread). It is a `VecDeque` of slots with per-kind lanes of sequence numbers: O(1) amortised, no scans. The action
-  queue is not capped: dropping a `Send`, `HttpRequest` or `Close` would corrupt the protocol state, and every
-  callback adds a bounded number of actions.
+  queue is not capped: dropping a `Send`, `HttpRequest` or `Close` would corrupt the protocol state. Every
+  callback adds a bounded number of actions except the HLS fan-out, which is bounded explicitly: at most
+  `Config::hls_max_inflight_segments` segment/part `HttpRequest`s are outstanding per adapter (plus the
+  playlist, key and init requests), however many segments the playlist lists.
 - Cookies (RFC 6265bis): a `Secure` cookie from an `http` origin is rejected, `__Secure-` needs `Secure`,
   `__Host-` needs `Secure`, `Path=/` and no `Domain` (prefixes match ASCII case-insensitively), a `Path` over
   1024 bytes is rejected. Seeded cookies obey the same rules: a name over 4096 bytes (name plus value) is

@@ -29,7 +29,8 @@ interleaved channels, or carries no `Transport`, fails the connection. `Event::T
 emitted before the first sample of every connection, `Event::Sample { join: None }` per access
 unit, `Status::Establishing` on connect and `Status::Live` at the first sample. An `OPTIONS`
 keepalive is sent at half the server's `Session` `timeout` (clamped to 5 s..3600 s, 30 s when none
-is declared); a non-success reply to it is ignored. `close()` sends `TEARDOWN` before `Close`.
+is declared); a non-success reply to it is ignored. A session-level `a=control` is the URL of PLAY, the
+keepalive and TEARDOWN. `close()` sends `TEARDOWN` before `Close`.
 RTCP sender reports are forwarded to the depayloader; no receiver reports are sent. Sequence gaps
 drop the damaged access unit and the stream continues (`Session::rtp_loss_count`); a malformed RTP
 frame costs only itself (`Session::rtp_malformed_count`).
@@ -52,7 +53,10 @@ and emits `Event::Discontinuity`). TS and fMP4 segments, VOD (`Status::Ended` on
 (blocking reload). Every request gets the origin-scoped auth layer and its own redirect budget.
 Failed requests retry with the `Config::hls_backoff_ms` schedule (2, 4, 8 s, then
 `hls_backoff_cap_ms`, 10 s) and report `Status::Reconnecting`; a 404/410 playlist also reports
-`Status::NotFound`. Bodies are bounded (`max_playlist_bytes`, `max_segment_bytes`) and requests
+`Status::NotFound`; schedule entries below 1 ms are raised to 1 ms. At most
+`Config::hls_max_inflight_segments` (4) segment/part requests are outstanding at once, however long the
+playlist; after `Status::Ended` of an HLS session `reconnect()`, `select_variant()` and
+`select_audio_rendition()` do nothing. Bodies are bounded (`max_playlist_bytes`, `max_segment_bytes`) and requests
 time out (`hls_request_timeout_us`, `hls_segment_timeout_us`). A byte-ranged segment must come back as
 `206` with a matching `Content-Range`, or as a `200` the range is sliced out of; anything else fails. Separate audio renditions are played by a second adapter
 (`Config::auto_select_audio`, `Config::preferred_audio_language`, `Session::select_audio_rendition`);
@@ -91,7 +95,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
 ## Host contract
 
 - `Session::close()` is terminal: queued actions other than `Close` are dropped, every live connection gets
-  exactly one `Close` (RTSP also a `TEARDOWN` when a session was set up), then `poll` and `next_event` return
+  exactly one `Close` (RTSP first queues a `Send` carrying `TEARDOWN` when a session was set up), then `poll` and `next_event` return
   nothing. A response, data or close callback for a connection the session already closed is ignored.
 - `Action::WakeAt(t)`: poll again at or after `t`. A host that polls only at `WakeAt` times sees every timer
   (start timeout, stall notices, stall reconnect, backoff, keepalive, HLS retries) of all three sources.
@@ -105,7 +109,10 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
 - Redirects are followed only to `http`/`https` targets and never from `https` to `http`. A 401/407 from an
   origin other than the session origin is a connect failure (backoff), never a credential prompt.
 - `Action` implements `Debug` without header values or `Send` payloads.
-- `select_audio_rendition` after `Status::Ended` is accepted and ignored.
+- `select_audio_rendition` after `Status::Ended` is accepted and ignored; so are `select_variant` and
+  `reconnect` for HLS (a finite TS source restarts on `reconnect`).
+- `Event::AuthRequired::resource_metadata` is chosen by the server that sent the challenge: validate it
+  (https, expected host, no private/loopback address) before fetching it.
 - After a fatal `Event::Error` the session emits nothing further.
 
 ## Cookies and custom headers

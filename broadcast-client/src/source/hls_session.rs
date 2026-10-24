@@ -164,7 +164,14 @@ impl HlsSession {
         self.collect(now, auth);
     }
 
+    pub(crate) fn is_ended(&self) -> bool {
+        self.ended_sent
+    }
+
     pub(crate) fn reconnect(&mut self, now: u64, auth: &mut AuthState) {
+        if self.ended_sent {
+            return;
+        }
         self.main.reconnect(now, auth);
         if let Some(a) = self.audio.as_mut() {
             a.source.reconnect(now, auth);
@@ -178,6 +185,17 @@ impl HlsSession {
         now: u64,
         auth: &mut AuthState,
     ) -> Result<(), Error> {
+        if self.ended_sent {
+            let known = self
+                .master
+                .as_ref()
+                .is_some_and(|m| index < m.variants.len());
+            return if known {
+                Ok(())
+            } else {
+                Err(Error::NoSuchVariant(index))
+            };
+        }
         self.main.select_variant(index, now, auth)?;
         if let Some(m) = self.master.as_mut() {
             m.chosen = index;

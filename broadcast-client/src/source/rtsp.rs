@@ -18,7 +18,7 @@ use url::{Host, Url};
 
 use crate::auth::{AuthDecision, AuthState};
 use crate::events::{Action, Event, Status};
-use crate::source::rtsp_sdp::{TrackInit, parse_tracks};
+use crate::source::rtsp_sdp::{ParsedSdp, TrackInit, parse_tracks};
 
 const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
@@ -83,6 +83,7 @@ pub(crate) struct RtspSource {
     stale_replayed: bool,
     auth_replays: u32,
     tracks: Vec<TrackInit>,
+    aggregate: Option<String>,
     depa: Option<RtpStreamDepacketiser>,
     tracks_dirty: bool,
     seen_first_sample: bool,
@@ -102,6 +103,10 @@ pub(crate) struct RtspSource {
     rtcp_frames: u64,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
+}
+
+fn control_uri<'a>(aggregate: Option<&'a str>, request_uri: &'a str) -> &'a str {
+    aggregate.unwrap_or(request_uri)
 }
 
 fn keepalive_interval_for(declared_secs: Option<u64>) -> u64 {
@@ -145,6 +150,7 @@ impl RtspSource {
             stale_replayed: false,
             auth_replays: 0,
             tracks: Vec::new(),
+            aggregate: None,
             depa: None,
             tracks_dirty: false,
             seen_first_sample: false,
@@ -403,6 +409,7 @@ impl RtspSource {
 
     fn forget_connection_state(&mut self) {
         self.tracks.clear();
+        self.aggregate = None;
         self.depa = None;
         self.tracks_dirty = false;
         self.stalled = false;
@@ -416,7 +423,9 @@ impl RtspSource {
         if let Some(conn) = self.conn.take() {
             if teardown
                 && self.client.session_id().is_some()
-                && let Ok(bytes) = self.client.teardown(&self.uri)
+                && let Ok(bytes) = self
+                    .client
+                    .teardown(control_uri(self.aggregate.as_deref(), &self.uri))
             {
                 self.actions.push_back(Action::Send { conn, bytes });
             }
@@ -443,7 +452,9 @@ impl RtspSource {
                 let _ = self.client.take_negotiated_transport();
                 self.client.setup(&uri, &transport)
             }
-            Req::Play => self.client.play(&self.uri),
+            Req::Play => self
+                .client
+                .play(control_uri(self.aggregate.as_deref(), &self.uri)),
         };
         match built {
             Ok(bytes) => {
@@ -620,9 +631,12 @@ impl RtspSource {
 
     fn on_describe_ok(&mut self, body: &[u8]) -> bool {
         let base = self.base_url();
-        let Ok(tracks) = parse_tracks(body, |control| self.resolve_control(control, &base)) else {
+        let Ok(ParsedSdp { aggregate, tracks }) =
+            parse_tracks(body, |control| self.resolve_control(control, &base))
+        else {
             return false;
         };
+        self.aggregate = aggregate;
         self.tracks = tracks;
         self.send(Req::Setup(0))
     }
@@ -853,7 +867,10 @@ impl RtspSource {
         let Some(conn) = self.conn else {
             return;
         };
-        if let Ok(bytes) = self.client.options(&self.uri) {
+        if let Ok(bytes) = self
+            .client
+            .options(control_uri(self.aggregate.as_deref(), &self.uri))
+        {
             self.actions.push_back(Action::Send { conn, bytes });
         }
     }

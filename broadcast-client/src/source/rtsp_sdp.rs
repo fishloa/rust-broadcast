@@ -20,6 +20,11 @@ const ENCODING_AAC: &str = "MPEG4-GENERIC";
 /// Most media sections a session plays; further supported sections are ignored.
 pub(crate) const MAX_TRACKS: usize = 16;
 
+pub(crate) struct ParsedSdp {
+    pub(crate) aggregate: Option<String>,
+    pub(crate) tracks: Vec<TrackInit>,
+}
+
 pub(crate) struct TrackInit {
     pub(crate) track_id: TrackId,
     pub(crate) kind: RtpMediaKind,
@@ -34,12 +39,19 @@ pub(crate) struct TrackInit {
 /// [`MAX_TRACKS`], assigning interleaved RTP channels 0, 2, 4, ... (RTCP is the RTP channel plus
 /// one). A media section the client cannot play (another codec or media type, a missing or
 /// unusable fmtp) or whose `a=control` `resolve` rejects is skipped; no playable section left,
-/// or an SDP that does not parse, is an error.
+/// or an SDP that does not parse, is an error. Of the payload types a media line lists, the first
+/// one whose own `a=rtpmap` and `a=fmtp` describe a supported codec is the one played. A
+/// session-level `a=control` that `resolve` accepts is the aggregate control URL (RFC 2326
+/// C.1.1).
 pub(crate) fn parse_tracks(
     sdp: &[u8],
     mut resolve: impl FnMut(Option<&str>) -> Option<String>,
-) -> Result<Vec<TrackInit>, String> {
+) -> Result<ParsedSdp, String> {
     let session = Session::parse(sdp).map_err(|e| e.to_string())?;
+    let aggregate = session
+        .get_first_attribute_value("control")
+        .flatten()
+        .and_then(|control| resolve(Some(control)));
     let mut tracks: Vec<TrackInit> = Vec::new();
     for media in &session.medias {
         if tracks.len() >= MAX_TRACKS {
@@ -76,7 +88,7 @@ pub(crate) fn parse_tracks(
     if tracks.is_empty() {
         return Err("SDP without supported media".to_string());
     }
-    Ok(tracks)
+    Ok(ParsedSdp { aggregate, tracks })
 }
 
 fn encoding_name(rtpmap: &str) -> Option<&str> {
@@ -86,9 +98,28 @@ fn encoding_name(rtpmap: &str) -> Option<&str> {
         .and_then(|encoding| encoding.split('/').next())
 }
 
+fn attribute_of_payload<'a>(media: &'a Media, name: &str, payload_type: &str) -> Option<&'a str> {
+    media
+        .attributes
+        .iter()
+        .filter(|a| a.attribute == name)
+        .filter_map(|a| a.value.as_deref())
+        .find(|value| value.split_whitespace().next() == Some(payload_type))
+}
+
 fn supported(media: &Media) -> Option<(RtpMediaKind, CodecConfig, u32)> {
-    let fmtp = media.get_first_attribute_value("fmtp").flatten()?;
-    let rtpmap = media.get_first_attribute_value("rtpmap").flatten();
+    media
+        .fmt
+        .split_whitespace()
+        .find_map(|payload_type| supported_payload(media, payload_type))
+}
+
+fn supported_payload(
+    media: &Media,
+    payload_type: &str,
+) -> Option<(RtpMediaKind, CodecConfig, u32)> {
+    let fmtp = attribute_of_payload(media, "fmtp", payload_type)?;
+    let rtpmap = attribute_of_payload(media, "rtpmap", payload_type);
     let clock_rate = rtpmap
         .and_then(rtpmap_clock_rate)
         .unwrap_or(DEFAULT_CLOCK_RATE_HZ);

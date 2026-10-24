@@ -1,10 +1,11 @@
 //! Adapter over [`hls_runtime::client::HlsClient`]: per-request connection table, bounded body
 //! accumulation, timeouts, retry backoff, and Output-to-Event mapping.
 
-use alloc::collections::{BTreeSet, VecDeque};
+use alloc::collections::{BTreeSet, BinaryHeap, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cmp::Reverse;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
@@ -33,8 +34,18 @@ const STATUS_GONE: u16 = 410;
 const METHOD_GET: &str = "GET";
 
 const FIRST_CONN_ID: u32 = 1;
+const DEADLINE_SLACK_FACTOR: usize = 4;
+const DEADLINE_SLACK_FLOOR: usize = 64;
 
 type LiveIds = Arc<Mutex<BTreeSet<u32>>>;
+type Queued = (u64, HlsAction);
+
+#[derive(Debug, Clone, Copy)]
+enum Lane {
+    Other,
+    Retry,
+    Fresh,
+}
 
 /// Connection-id allocator shared by every adapter of one session. An id stays reserved while its
 /// [`ConnLease`] lives, so a counter that wraps never hands out an id still in use.
@@ -159,9 +170,14 @@ pub(crate) struct HlsSource {
     backoff_ms: Vec<u64>,
     backoff_cap_ms: u64,
     max_redirects: u32,
+    max_inflight_segments: usize,
     reqs: HashMap<u32, Req>,
+    deadlines: BinaryHeap<Reverse<(u64, u32)>>,
     parked: Vec<Req>,
-    pending: VecDeque<HlsAction>,
+    queue_seq: u64,
+    pending: VecDeque<Queued>,
+    retries: VecDeque<Queued>,
+    fresh: VecDeque<Queued>,
     order: VecDeque<ResourceId>,
     held: HashMap<ResourceId, Vec<u8>>,
     failed: BTreeSet<ResourceId>,
@@ -180,6 +196,7 @@ impl HlsSource {
     pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, role: Role) -> Self {
         let mut client = HlsClient::new(url.as_str());
         client.set_variant_policy(config.variant_policy.clone());
+        let (backoff_ms, backoff_cap_ms) = config.hls_backoff();
         let mut source = Self {
             client,
             max_playlist_bytes: config.max_playlist_bytes,
@@ -193,12 +210,17 @@ impl HlsSource {
             reserved_id_reported: false,
             playlist_timeout_us: config.hls_request_timeout_us,
             segment_timeout_us: config.hls_segment_timeout_us,
-            backoff_ms: config.hls_backoff_ms.clone(),
-            backoff_cap_ms: config.hls_backoff_cap_ms,
+            backoff_ms,
+            backoff_cap_ms,
             max_redirects: config.max_redirects,
+            max_inflight_segments: config.hls_max_inflight_segments.max(1),
             reqs: HashMap::new(),
+            deadlines: BinaryHeap::new(),
             parked: Vec::new(),
+            queue_seq: 0,
             pending: VecDeque::new(),
+            retries: VecDeque::new(),
+            fresh: VecDeque::new(),
             order: VecDeque::new(),
             held: HashMap::new(),
             failed: BTreeSet::new(),
@@ -597,13 +619,21 @@ impl HlsSource {
     }
 
     fn purge_unrequested(&mut self) {
+        if self.failed.is_empty() {
+            return;
+        }
+        let requested: BTreeSet<ResourceId> = self
+            .retries
+            .iter()
+            .chain(self.fresh.iter())
+            .filter_map(|(_, action)| match action {
+                HlsAction::FetchResource { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
         let failed: Vec<ResourceId> = self.failed.iter().copied().collect();
         for id in failed {
-            let requested = self
-                .pending
-                .iter()
-                .any(|a| matches!(a, HlsAction::FetchResource { id: pid, .. } if *pid == id));
-            if !requested {
+            if !requested.contains(&id) {
                 self.failed.remove(&id);
                 self.order.retain(|o| *o != id);
                 self.held.remove(&id);
@@ -655,7 +685,7 @@ impl HlsSource {
             || self
                 .pending
                 .iter()
-                .any(|a| matches!(a, HlsAction::FetchPlaylist { .. }))
+                .any(|(_, a)| matches!(a, HlsAction::FetchPlaylist { .. }))
             || self.reqs.values().any(|r| r.purpose == Purpose::Playlist)
     }
 
@@ -683,30 +713,51 @@ impl HlsSource {
         self.actions.push_back(Action::WakeAt(at));
     }
 
+    fn timeout_us(&self, purpose: Purpose) -> u64 {
+        match purpose {
+            Purpose::Playlist => self.playlist_timeout_us,
+            Purpose::Resource(_) => self.segment_timeout_us,
+            Purpose::Key(_) => self.key_timeout_us,
+        }
+    }
+
     fn expire(&mut self, now: u64) {
-        let playlist_timeout = self.playlist_timeout_us;
-        let segment_timeout = self.segment_timeout_us;
-        let key_timeout = self.key_timeout_us;
-        let mut expired: Vec<u32> = self
-            .reqs
-            .iter()
-            .filter(|(_, r)| {
-                let limit = match r.purpose {
-                    Purpose::Playlist => playlist_timeout,
-                    Purpose::Resource(_) => segment_timeout,
-                    Purpose::Key(_) => key_timeout,
-                };
-                now.saturating_sub(r.started_us) >= limit
-            })
-            .map(|(c, _)| *c)
-            .collect();
-        expired.sort_unstable();
-        for conn in expired {
+        while let Some(Reverse((deadline, conn))) = self.deadlines.peek().copied() {
+            if deadline > now {
+                break;
+            }
+            self.deadlines.pop();
+            let live = self.reqs.get(&conn).is_some_and(|r| {
+                r.started_us.saturating_add(self.timeout_us(r.purpose)) == deadline
+            });
+            if !live {
+                continue;
+            }
             if let Some(req) = self.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
                 self.fail(req, now);
             }
         }
+    }
+
+    fn next_action(&mut self) -> Option<HlsAction> {
+        let window_open = self.order.len() < self.max_inflight_segments;
+        let head = |queue: &VecDeque<Queued>| queue.front().map(|(seq, _)| *seq);
+        let lane = [
+            (head(&self.pending), Lane::Other),
+            (head(&self.retries), Lane::Retry),
+            (head(&self.fresh).filter(|_| window_open), Lane::Fresh),
+        ]
+        .into_iter()
+        .filter_map(|(seq, lane)| seq.map(|seq| (seq, lane)))
+        .min_by_key(|(seq, _)| *seq)
+        .map(|(_, lane)| lane)?;
+        let queue = match lane {
+            Lane::Other => &mut self.pending,
+            Lane::Retry => &mut self.retries,
+            Lane::Fresh => &mut self.fresh,
+        };
+        queue.pop_front().map(|(_, action)| action)
     }
 
     fn advance(&mut self, now: u64, auth: &mut AuthState) {
@@ -726,7 +777,7 @@ impl HlsSource {
                 }
                 self.gate_until = None;
             }
-            let Some(action) = self.pending.pop_front() else {
+            let Some(action) = self.next_action() else {
                 return;
             };
             match action {
@@ -782,9 +833,7 @@ impl HlsSource {
 
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         let headers = auth.request_headers(&req.url, now);
-        req.authed = headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+        req.authed = crate::auth::carries_credentials(&headers);
         req.started_us = now;
         req.responded_ok = false;
         req.expected_len = None;
@@ -793,11 +842,7 @@ impl HlsSource {
         let lease = self.conn_alloc.lease();
         let conn = lease.id();
         req.lease = Some(lease);
-        let timeout = match req.purpose {
-            Purpose::Playlist => self.playlist_timeout_us,
-            Purpose::Resource(_) => self.segment_timeout_us,
-            Purpose::Key(_) => self.key_timeout_us,
-        };
+        let timeout = self.timeout_us(req.purpose);
         self.actions.push_back(Action::HttpRequest {
             conn,
             method: METHOD_GET.to_string(),
@@ -805,9 +850,32 @@ impl HlsSource {
             headers,
             byte_range: req.byte_range,
         });
-        self.actions
-            .push_back(Action::WakeAt(now.saturating_add(timeout)));
+        let deadline = now.saturating_add(timeout);
+        self.actions.push_back(Action::WakeAt(deadline));
         self.reqs.insert(conn, req);
+        self.deadlines.push(Reverse((deadline, conn)));
+        self.compact_deadlines();
+    }
+
+    fn compact_deadlines(&mut self) {
+        let limit = self
+            .reqs
+            .len()
+            .saturating_mul(DEADLINE_SLACK_FACTOR)
+            .saturating_add(DEADLINE_SLACK_FLOOR);
+        if self.deadlines.len() <= limit {
+            return;
+        }
+        self.deadlines = self
+            .reqs
+            .iter()
+            .map(|(conn, r)| {
+                Reverse((
+                    r.started_us.saturating_add(self.timeout_us(r.purpose)),
+                    *conn,
+                ))
+            })
+            .collect();
     }
 
     fn reset_in_flight(&mut self) {
@@ -817,8 +885,11 @@ impl HlsSource {
             self.actions.push_back(Action::Close { conn });
         }
         self.reqs.clear();
+        self.deadlines.clear();
         self.parked.clear();
         self.pending.clear();
+        self.retries.clear();
+        self.fresh.clear();
         self.order.clear();
         self.held.clear();
         self.failed.clear();
@@ -839,7 +910,19 @@ impl HlsSource {
 
     fn pump_core(&mut self) {
         while let Some(action) = self.client.poll() {
-            self.pending.push_back(action);
+            let seq = self.queue_seq;
+            self.queue_seq = self.queue_seq.wrapping_add(1);
+            let queue = match &action {
+                HlsAction::FetchResource { id, .. } if *id != ResourceId::Init => {
+                    if self.order.contains(id) {
+                        &mut self.retries
+                    } else {
+                        &mut self.fresh
+                    }
+                }
+                _ => &mut self.pending,
+            };
+            queue.push_back((seq, action));
         }
     }
 
@@ -984,5 +1067,91 @@ mod tests {
             u32::MAX - 1,
             "a released id is reusable"
         );
+    }
+    fn source_with_auth() -> (HlsSource, AuthState, Url) {
+        let url = Url::parse("http://o.test/p.m3u8").unwrap();
+        let auth = AuthState::new(url.clone(), Vec::new());
+        let source = HlsSource::new(&url, &Config::default(), ConnAlloc::new(), Role::Main);
+        (source, auth, url)
+    }
+
+    #[test]
+    fn the_deadline_heap_stays_proportional_to_live_requests() {
+        let (mut source, mut auth, url) = source_with_auth();
+        for now in 0..10_000u64 {
+            source.send(
+                Req::new(Purpose::Playlist, url.clone(), None),
+                &mut auth,
+                now,
+            );
+            let conn = source.reqs.keys().next().copied().unwrap();
+            source.reqs.remove(&conn);
+        }
+        assert!(
+            source.deadlines.len() <= DEADLINE_SLACK_FLOOR + DEADLINE_SLACK_FACTOR,
+            "{} stale deadlines kept",
+            source.deadlines.len()
+        );
+    }
+
+    #[test]
+    fn expire_fails_only_the_overdue_live_request() {
+        let (mut source, mut auth, url) = source_with_auth();
+        let timeout = source.playlist_timeout_us;
+        source.send(Req::new(Purpose::Playlist, url.clone(), None), &mut auth, 0);
+        let overdue = source.reqs.keys().next().copied().unwrap();
+        source.send(
+            Req::new(Purpose::Playlist, url.clone(), None),
+            &mut auth,
+            10,
+        );
+        let completed = source
+            .reqs
+            .keys()
+            .find(|c| **c != overdue)
+            .copied()
+            .unwrap();
+        source.reqs.remove(&completed);
+        source.take_actions();
+
+        source.expire(timeout - 1);
+        assert!(source.take_actions().is_empty());
+        assert!(source.reqs.contains_key(&overdue));
+
+        source.expire(timeout);
+        let closes: Vec<u32> = source
+            .take_actions()
+            .into_iter()
+            .filter_map(|a| match a {
+                Action::Close { conn } => Some(conn),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(closes, vec![overdue]);
+
+        source.expire(timeout * 2);
+        assert!(
+            !source
+                .take_actions()
+                .iter()
+                .any(|a| matches!(a, Action::Close { .. })),
+            "a request that completed before its deadline is never expired"
+        );
+    }
+    #[test]
+    fn a_stale_deadline_never_expires_a_newer_request_on_a_reused_id() {
+        let (mut source, mut auth, url) = source_with_auth();
+        let timeout = source.playlist_timeout_us;
+        source.send(Req::new(Purpose::Playlist, url.clone(), None), &mut auth, 0);
+        let conn = source.reqs.keys().next().copied().unwrap();
+        source.reqs.remove(&conn);
+        let mut newer = Req::new(Purpose::Playlist, url, None);
+        newer.started_us = timeout / 2;
+        source.reqs.insert(conn, newer);
+        source.take_actions();
+
+        source.expire(timeout);
+        assert!(source.take_actions().is_empty());
+        assert!(source.reqs.contains_key(&conn));
     }
 }

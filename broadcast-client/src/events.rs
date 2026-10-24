@@ -307,7 +307,10 @@ pub enum Event {
     Starved(tshttp_runtime::StarveKind),
     /// Buffer event.
     Buffer(BufferEvent),
-    /// Auth required.
+    /// Auth required. `resource_metadata` is chosen by the server that sent the challenge and can
+    /// be any `https` origin: a host that fetches it must validate it first (expected host, no
+    /// private, loopback or link-local address), or the fetch is a server-side request forgery
+    /// vector. The session never fetches it.
     AuthRequired {
         /// Scheme.
         scheme: AuthScheme,
@@ -455,6 +458,9 @@ pub const DEFAULT_MAX_KEY_FAILURES: u32 = 8;
 pub const DEFAULT_HLS_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
 /// Default HLS retry backoff once the schedule is exhausted, milliseconds.
 pub const DEFAULT_HLS_BACKOFF_CAP_MS: u64 = 10_000;
+/// Default cap on simultaneously outstanding HLS segment and part requests, see
+/// [`Config::hls_max_inflight_segments`].
+pub const DEFAULT_HLS_MAX_INFLIGHT_SEGMENTS: usize = 4;
 /// Default cap on events queued for the host, see [`Config::max_queued_events`].
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 
@@ -487,10 +493,16 @@ pub struct Config {
     pub hls_request_timeout_us: u64,
     /// HLS: media resource request timeout, microseconds.
     pub hls_segment_timeout_us: u64,
-    /// HLS: retry backoff per attempt, milliseconds.
+    /// HLS: retry backoff per attempt, milliseconds; an entry of `0` is treated as `1`.
     pub hls_backoff_ms: Vec<u64>,
-    /// HLS: retry backoff after `hls_backoff_ms` is exhausted, milliseconds.
+    /// HLS: retry backoff after `hls_backoff_ms` is exhausted, milliseconds; `0` is treated as `1`.
     pub hls_backoff_cap_ms: u64,
+    /// HLS: segment and part requests kept outstanding at once, per playlist adapter. The rest
+    /// stay queued and are released as responses complete, in order; playlist, key and
+    /// initialization-section requests are not counted and never wait behind them. Held bodies
+    /// of completed-but-undelivered segments count against the same cap, so memory is bounded
+    /// by this value times [`Config::max_segment_bytes`]. `0` is treated as `1`.
+    pub hls_max_inflight_segments: usize,
     /// HLS: key request timeout, microseconds.
     pub hls_key_timeout_us: u64,
     /// HLS: maximum key response body bytes.
@@ -514,6 +526,22 @@ pub struct Config {
     pub max_queued_events: usize,
 }
 
+const MIN_BACKOFF_MS: u64 = 1;
+
+impl Config {
+    /// The HLS retry schedule with every entry and the cap raised to at least one millisecond,
+    /// so a zero never produces an unbounded burst of retries at one instant.
+    pub(crate) fn hls_backoff(&self) -> (Vec<u64>, u64) {
+        (
+            self.hls_backoff_ms
+                .iter()
+                .map(|ms| (*ms).max(MIN_BACKOFF_MS))
+                .collect(),
+            self.hls_backoff_cap_ms.max(MIN_BACKOFF_MS),
+        )
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -531,6 +559,7 @@ impl Default for Config {
             hls_segment_timeout_us: DEFAULT_HLS_SEGMENT_TIMEOUT_US,
             hls_backoff_ms: DEFAULT_HLS_BACKOFF_MS.to_vec(),
             hls_backoff_cap_ms: DEFAULT_HLS_BACKOFF_CAP_MS,
+            hls_max_inflight_segments: DEFAULT_HLS_MAX_INFLIGHT_SEGMENTS,
             hls_key_timeout_us: DEFAULT_HLS_KEY_TIMEOUT_US,
             max_key_bytes: DEFAULT_MAX_KEY_BYTES,
             max_key_failures: DEFAULT_MAX_KEY_FAILURES,
@@ -559,6 +588,7 @@ impl core::fmt::Debug for Config {
             .field("hls_segment_timeout_us", &self.hls_segment_timeout_us)
             .field("hls_backoff_ms", &self.hls_backoff_ms)
             .field("hls_backoff_cap_ms", &self.hls_backoff_cap_ms)
+            .field("hls_max_inflight_segments", &self.hls_max_inflight_segments)
             .field("hls_key_timeout_us", &self.hls_key_timeout_us)
             .field("max_key_bytes", &self.max_key_bytes)
             .field("max_key_failures", &self.max_key_failures)

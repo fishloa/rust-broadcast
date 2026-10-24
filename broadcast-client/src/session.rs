@@ -451,6 +451,9 @@ impl Session {
     }
 
     /// Caller-initiated reconnect.
+    ///
+    /// A finite TS source restarts even after [`Status::Ended`]; an HLS session that has reported
+    /// `Ended` ignores the call.
     pub fn reconnect(&mut self, now_us: u64) {
         if self.closed {
             return;
@@ -470,7 +473,8 @@ impl Session {
         self.drain_source();
     }
 
-    /// Switch to another HLS variant of the last master playlist.
+    /// Switch to another HLS variant of the last master playlist. After [`Status::Ended`] a known
+    /// index is accepted and ignored: nothing is started and nothing is emitted.
     ///
     /// # Errors
     /// [`Error::NotHls`] for a non-HLS session, [`Error::NoSuchVariant`] for an unknown index.
@@ -481,8 +485,11 @@ impl Session {
         if self.closed {
             return Ok(());
         }
+        let ended = h.is_ended();
         h.select_variant(index, self.now_us, &mut self.auth)?;
-        self.playout.reset();
+        if !ended {
+            self.playout.reset();
+        }
         self.flush_hls();
         Ok(())
     }
@@ -569,6 +576,10 @@ impl Session {
     }
 
     /// Terminal close.
+    ///
+    /// Queued actions other than [`Action::Close`] are dropped and every live connection gets
+    /// exactly one `Close`; an RTSP session with a server-side session id first queues one
+    /// [`Action::Send`] carrying `TEARDOWN`. Afterwards `poll` and `next_event` return `None`.
     pub fn close(&mut self) {
         if self.closed {
             return;
@@ -826,9 +837,7 @@ fn take_userinfo(url: &mut Url) -> Result<Option<Credentials>, Error> {
 }
 
 fn has_authorization(headers: &[(String, String)]) -> bool {
-    headers
-        .iter()
-        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+    crate::auth::carries_credentials(headers)
 }
 
 fn has_playlist_extension(url: &Url) -> bool {
