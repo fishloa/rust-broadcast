@@ -542,6 +542,15 @@ pub const DEFAULT_TRACKS_HOLD_MAX_WALL_US: u64 = 1_000_000;
 /// Default input bytes without a stream resolving after which the initial-tracks hold gives up,
 /// see [`Config::tracks_hold_quiet_input_bytes`].
 pub const DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES: usize = 512 * 1024;
+/// Default longest a live TS `Start` waits, after the first media, for a PMT-declared audio or
+/// video stream that has no track yet, microseconds, see [`Config::start_pending_track_wait_us`].
+/// A live mux sends audio up to about a second behind video and the audio codec config resolves
+/// only with its first frame: the zenith-tv trace (hold released on the wall backstop, audio
+/// announced about 1.3 s after the first media) started on video alone and paused 100 ms later.
+/// Measured resolution gaps on the committed captures are 0.16 s to 0.48 s of media, so 1.5 s
+/// covers a skew three times the worst measured and is shorter than the 1.8 s default start
+/// lead, which a declared but never delivering audio PID waits out anyway.
+pub const DEFAULT_START_PENDING_TRACK_WAIT_US: u64 = 1_500_000;
 /// Default cap on events queued for the host, see [`Config::max_queued_events`].
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 
@@ -634,6 +643,14 @@ pub struct Config {
     /// host whose first frame must land early lowers this (a stream whose declared PID never
     /// sends is released after this long at most).
     pub tracks_hold_max_wall_us: u64,
+    /// Live TS-over-HTTP: how long the first `Start` waits, counted from the first media, for an
+    /// audio or video stream the PMT declares but that has no announced track yet (a live mux
+    /// sends audio up to about a second behind video). `0` does not wait: `Start` goes ahead on
+    /// the tracks announced so far, which can be followed by a `Pause` when the late track
+    /// arrives behind the playback position. A host with a short start lead and a tight
+    /// first-frame budget lowers this; any value is accepted and `u64::MAX` waits until the
+    /// first `Start`.
+    pub start_pending_track_wait_us: u64,
 }
 
 const MIN_BACKOFF_MS: u64 = 1;
@@ -732,6 +749,7 @@ impl Default for Config {
             tracks_hold_quiet_input_bytes: DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES,
             tracks_hold_max_media_us: DEFAULT_TRACKS_HOLD_MAX_MEDIA_US,
             tracks_hold_max_wall_us: DEFAULT_TRACKS_HOLD_MAX_WALL_US,
+            start_pending_track_wait_us: DEFAULT_START_PENDING_TRACK_WAIT_US,
         }
     }
 }
@@ -772,6 +790,10 @@ impl core::fmt::Debug for Config {
             )
             .field("tracks_hold_max_media_us", &self.tracks_hold_max_media_us)
             .field("tracks_hold_max_wall_us", &self.tracks_hold_max_wall_us)
+            .field(
+                "start_pending_track_wait_us",
+                &self.start_pending_track_wait_us,
+            )
             .finish()
     }
 }

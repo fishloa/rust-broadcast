@@ -676,7 +676,7 @@ announced (and, for an explicit declaration, a declared id is still pending), th
 (`Feeder::set_expecting`) and the feeder registers a placeholder controller track (`PENDING_TRACK_KEY`) with the
 first media report. The controller then does what it already does for any registered track that has not
 delivered: no effective end, so no `Start`, until the real track is registered and delivers, which brings the
-unchanged min-lead rule. The wait is bounded by `START_PENDING_TRACK_WAIT_US` (1.5 s after the first media report,
+unchanged min-lead rule. The wait is bounded by `Config::start_pending_track_wait_us` (default 1.5 s after the first media report; `0` does not wait, which restores the Start-then-Pause flap for a late audio track, and `u64::MAX` waits until the first `Start`; a host with a short start lead and a tight first-frame budget sets 0.5 s to 1 s, the default is
 about three times the worst measured resolution gap and below the 1.8 s default start lead, so a declared stream
 that never delivers adds nothing at the default and at most 1.5 s of waiting otherwise) and ends at the first
 `Start`; after it `Start` goes ahead with the tracks that exist. Default and explicit declarations behave the same

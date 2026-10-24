@@ -524,3 +524,76 @@ fn start_waits_for_audio_when_an_unresolvable_pid_is_in_the_mux() {
         }
     }
 }
+
+const NO_WAIT_US: u64 = 0;
+const SHORT_WAIT_US: u64 = 500_000;
+const FLAP_LEAD_US: u64 = 1_100_000;
+const FLAP_SKEW_MS: usize = 500;
+const LONG_SKEW_MS: usize = 1_000;
+const SHORT_WAIT_SLACK_US: u64 = 500_000;
+
+fn cfg_wait(len: usize, lead_us: u64, wait_us: u64) -> Config {
+    let mut cfg = config_with_lead(Hold::Early, len, lead_us);
+    cfg.tracks_hold_quiet_input_bytes = len / 2;
+    cfg.tracks_hold_max_input_bytes = len;
+    cfg.start_pending_track_wait_us = wait_us;
+    cfg
+}
+
+fn gulp_with_unresolvable_pid(skew_ms: usize) -> Option<Vec<u8>> {
+    let c = &CAPTURES[0];
+    let b = bytes_for(c, Hold::Early)?;
+    let per_s = (bitrate_bps(&b) / 8 / TS_PACKET as u64) as usize;
+    Some(garbage(
+        &delay_audio(&b, c.audio_pid, per_s * skew_ms / 1000),
+        c.garbage_pid.unwrap(),
+    ))
+}
+
+#[test]
+fn the_default_wait_is_the_documented_one() {
+    assert_eq!(Config::default().start_pending_track_wait_us, 1_500_000);
+}
+
+#[test]
+fn no_wait_starts_on_video_alone_and_brings_back_the_flap() {
+    let Some(b) = gulp_with_unresolvable_pid(FLAP_SKEW_MS) else {
+        return;
+    };
+    for declare in BOTH {
+        let o = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, NO_WAIT_US), declare);
+        let why = describe(&CAPTURES[0], Hold::Early, declare, FLAP_SKEW_MS, &o);
+        let start = o.marks.iter().find(|m| m.what == Transition::Start);
+        assert_eq!(start.map(|m| m.leads_ms.len()), Some(1), "{why}");
+        assert!(o.flap_within(FLAP_WINDOW_US).is_some(), "{why}");
+        let waiting = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, 1_500_000), declare);
+        assert!(waiting.start_us() > o.start_us(), "{why}");
+        assert!(waiting.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
+    }
+}
+
+#[test]
+fn a_short_wait_delays_start_by_at_most_the_wait() {
+    let Some(b) = gulp_with_unresolvable_pid(LONG_SKEW_MS) else {
+        return;
+    };
+    for declare in BOTH {
+        let none = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, NO_WAIT_US), declare);
+        let short = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, SHORT_WAIT_US), declare);
+        let why = describe(&CAPTURES[0], Hold::Early, declare, LONG_SKEW_MS, &short);
+        let (none, short) = (none.start_us().expect(&why), short.start_us().expect(&why));
+        assert!(none <= short, "{why}");
+        assert!(short <= none + SHORT_WAIT_SLACK_US, "{why}: {none} {short}");
+    }
+}
+
+#[test]
+fn the_extreme_waits_validate_and_run() {
+    let Some(b) = gulp_with_unresolvable_pid(FLAP_SKEW_MS) else {
+        return;
+    };
+    for wait in [NO_WAIT_US, u64::MAX] {
+        let o = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, wait), Declare::Default);
+        assert!(o.start_us().is_some(), "wait {wait}");
+    }
+}
