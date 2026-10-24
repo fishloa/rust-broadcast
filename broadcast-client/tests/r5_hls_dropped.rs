@@ -45,6 +45,7 @@ fn dropped(events: &[Event]) -> Vec<(u32, Option<u8>)> {
                     ErrorKind::TrackDropped {
                         track_id,
                         stream_type,
+                        ..
                     },
                 fatal: false,
             } => Some((*track_id, *stream_type)),

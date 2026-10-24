@@ -34,6 +34,8 @@ const STATUS_GONE: u16 = 410;
 const METHOD_GET: &str = "GET";
 
 const FIRST_CONN_ID: u32 = 1;
+const ENCRYPTED_SAMPLE_ENTRIES: [&str; 2] = ["encv", "enca"];
+const UNNAMED_TRACK_ID: u32 = 0;
 const DEADLINE_SLACK_FACTOR: usize = 4;
 const DEADLINE_SLACK_FLOOR: usize = 64;
 
@@ -166,6 +168,8 @@ pub(crate) struct HlsSource {
     fatal: bool,
     reserved_id_reported: bool,
     dropped_reported: BTreeSet<TrackId>,
+    skipped_reported: BTreeSet<(Option<u32>, String)>,
+    skipped_kind: Option<ErrorKind>,
     playlist_timeout_us: u64,
     segment_timeout_us: u64,
     backoff_ms: Vec<u64>,
@@ -210,6 +214,8 @@ impl HlsSource {
             fatal: false,
             reserved_id_reported: false,
             dropped_reported: BTreeSet::new(),
+            skipped_reported: BTreeSet::new(),
+            skipped_kind: None,
             playlist_timeout_us: config.hls_request_timeout_us,
             segment_timeout_us: config.hls_segment_timeout_us,
             backoff_ms,
@@ -958,6 +964,12 @@ impl HlsSource {
                     for spec in &mut specs {
                         spec.track_id = self.remap(spec.track_id);
                     }
+                    if specs.is_empty()
+                        && let Some(kind) = self.skipped_kind.clone()
+                    {
+                        self.go_fatal(kind);
+                        return;
+                    }
                     self.events.push_back(Event::Tracks(specs));
                 }
                 Output::Samples { track_id, .. } | Output::DisplayChanged { track_id, .. }
@@ -998,15 +1010,38 @@ impl HlsSource {
                             kind: ErrorKind::TrackDropped {
                                 track_id: track_id.value(),
                                 stream_type,
+                                fourcc: None,
                             },
                             fatal: false,
                         });
+                    }
+                }
+                Output::TrackSkipped {
+                    track_id, fourcc, ..
+                } => {
+                    let track_id = track_id.map(|id| self.remap(id).value());
+                    if self.skipped_reported.insert((track_id, fourcc.clone())) {
+                        let kind = skipped_kind(track_id, fourcc);
+                        self.skipped_kind.get_or_insert_with(|| kind.clone());
+                        self.events.push_back(Event::Error { kind, fatal: false });
                     }
                 }
                 Output::Discontinuity => self.events.push_back(Event::Discontinuity),
                 Output::EndOfStream => self.events.push_back(Event::Status(Status::Ended)),
                 _ => {}
             }
+        }
+    }
+}
+
+fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
+    if ENCRYPTED_SAMPLE_ENTRIES.contains(&fourcc.as_str()) {
+        ErrorKind::UnsupportedEncryption { method: fourcc }
+    } else {
+        ErrorKind::TrackDropped {
+            track_id: track_id.unwrap_or(UNNAMED_TRACK_ID),
+            stream_type: None,
+            fourcc: Some(fourcc),
         }
     }
 }

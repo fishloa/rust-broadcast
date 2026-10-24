@@ -811,8 +811,15 @@ fn error_kind_names_are_stable() {
             ErrorKind::TrackDropped {
                 track_id: 0,
                 stream_type: None,
+                fourcc: None,
             },
             "track_dropped",
+        ),
+        (
+            ErrorKind::UnsupportedContainer {
+                reason: "non_fragmented_mp4",
+            },
+            "unsupported_container",
         ),
     ];
     for (kind, name) in cases {

@@ -49,6 +49,11 @@ const MAX_RELOAD_WAIT_MS: u64 = 60_000;
 
 const MILLIS_PER_SECOND: u64 = 1000;
 
+/// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
+/// parsed in: the lowest version that allows `EXT-X-MAP` without
+/// `EXT-X-I-FRAMES-ONLY` (RFC 8216 §4.4.4.5).
+const MAP_PROBE_VERSION: u32 = 6;
+
 /// [`StreamingTsDemux`] with a `Debug` impl (the transmux type has none), so
 /// [`HlsClient`] can keep deriving it.
 struct TsDemuxState(StreamingTsDemux);
@@ -73,39 +78,40 @@ fn reload_wait_ms(target_duration: u32) -> u64 {
         .min(MAX_RELOAD_WAIT_MS)
 }
 
-/// The identity-`KEYFORMAT` key in effect at the last `EXT-X-MAP` line of
-/// `text` (RFC 8216 §4.3.2.5: a key tag applies to a Media Initialization
-/// Section only when it precedes the `EXT-X-MAP` tag). `None` when `text` has
-/// no `EXT-X-MAP` line; `Some(None)` when the map is not encrypted.
-fn key_in_effect_at_last_map(text: &str) -> Option<Option<MediaKey>> {
+/// Every `EXT-X-MAP` line of `text` with the identity-`KEYFORMAT` key in effect
+/// at it (RFC 8216 §4.3.2.5: a key tag applies to a Media Initialization
+/// Section only when it precedes the `EXT-X-MAP` tag), in playlist order. The
+/// key is `None` when that map is not encrypted.
+fn keys_at_maps(text: &str) -> Vec<(MapTag, Option<MediaKey>)> {
     const MAP_PREFIX: &str = "#EXT-X-MAP:";
     const KEY_PREFIX: &str = "#EXT-X-KEY:";
-    let mut last_map = None;
-    for (i, line) in text.lines().enumerate() {
-        if line.starts_with(MAP_PREFIX) {
-            last_map = Some(i);
-        }
-    }
-    let last_map = last_map?;
     let mut current: Option<MediaKey> = None;
-    for line in text.lines().take(last_map) {
-        if !line.starts_with(KEY_PREFIX) {
-            continue;
-        }
-        let probe = format!(
-            "#EXTM3U\n#EXT-X-TARGETDURATION:1\n{}\n#EXTINF:1,\nx\n",
-            line.trim_end()
-        );
-        let Ok(parsed) = MediaPlaylist::parse(&probe) else {
-            continue;
-        };
-        if let Ok(mut keys) = parsed.segment_keys()
-            && let Some(key) = keys.pop()
-        {
-            current = key;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if line.starts_with(KEY_PREFIX) {
+            let probe = format!(
+                "#EXTM3U\n#EXT-X-TARGETDURATION:1\n{}\n#EXTINF:1,\nx\n",
+                line.trim_end()
+            );
+            if let Ok(parsed) = MediaPlaylist::parse(&probe)
+                && let Ok(mut keys) = parsed.segment_keys()
+                && let Some(key) = keys.pop()
+            {
+                current = key;
+            }
+        } else if line.starts_with(MAP_PREFIX) {
+            let probe = format!(
+                "#EXTM3U\n#EXT-X-VERSION:{MAP_PROBE_VERSION}\n#EXT-X-TARGETDURATION:1\n{}\n#EXTINF:1,\nx\n",
+                line.trim_end()
+            );
+            if let Ok(parsed) = MediaPlaylist::parse(&probe)
+                && let Some(map) = parsed.segments.first().and_then(|seg| seg.map.clone())
+            {
+                out.push((map, current.clone()));
+            }
         }
     }
-    Some(current)
+    out
 }
 
 /// `uri` up to its query string: a CDN that re-signs a segment URL on every
@@ -156,18 +162,65 @@ fn resource_msn(id: &ResourceId) -> Option<u64> {
     }
 }
 
-/// What is needed to request (or re-request) the Media Initialization Section.
-#[derive(Debug, Clone)]
-struct InitSource {
+/// Identifies one Media Initialization Section the client holds or wants. Ids
+/// are never reused, so a stale id can not alias a later init.
+type InitId = u32;
+
+/// Where a Media Initialization Section is in its fetch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitFetch {
+    /// Known and needed, waiting for the one init fetch in flight to finish.
+    Wanted,
+    /// Requested ([`ResourceId::Init`] refers to it).
+    InFlight,
+    /// Its fetch failed; the next playlist (or [`HlsClient::retry_init`]) asks again.
+    Failed,
+    /// Arrived encrypted, waiting for its key.
+    Arrived,
+    /// Held in plain.
+    Ready,
+}
+
+/// One Media Initialization Section: the `EXT-X-MAP` of one map-run
+/// (RFC 8216 §4.4.4.5 — a map applies to every following segment until the
+/// next map).
+#[derive(Debug)]
+struct InitSlot {
     map: MapTag,
+    url: String,
+    byte_range: Option<(u64, u64)>,
     encryption: Option<MediaKey>,
+    crypto: Option<SegmentCrypto>,
+    fetch: InitFetch,
+    cipher: Option<Vec<u8>>,
+    bytes: Option<Vec<u8>>,
+    skipped_reported: BTreeSet<(Option<u32>, String)>,
+}
+
+/// An `EXT-X-MAP` of the playlist being processed, with the key that encrypts
+/// it and the Media Sequence Number of the first segment it applies to.
+#[derive(Debug)]
+struct MapEntry {
+    map: MapTag,
+    key: Option<MediaKey>,
     first_msn: u64,
 }
 
-/// The init the playlist asks for, or why it can not be fetched.
-struct InitPlan {
-    source: InitSource,
-    error: Option<Error>,
+impl MapEntry {
+    fn unusable(&self) -> Option<Error> {
+        let key = self.key.as_ref()?;
+        let what = if key.method != EncryptionMethod::Aes128 {
+            "encrypted EXT-X-MAP: only METHOD=AES-128 is decrypted"
+        } else if key.uri.is_none() {
+            "encrypted EXT-X-MAP: key without URI"
+        } else {
+            return None;
+        };
+        Some(Error::UnsupportedEncryption {
+            method: key.method,
+            what,
+        })
+    }
 }
 
 /// An AES-128 key whose `Debug` never prints the key octets.
@@ -322,16 +375,26 @@ pub struct HlsClient {
     wait_anchor: Option<std::time::Instant>,
     pending_outputs: VecDeque<Output>,
 
-    init_uri: Option<String>,
-    init_bytes: Option<Vec<u8>>,
-    init_emitted: bool,
+    /// Every Media Initialization Section the client holds or wants, by id.
+    inits: BTreeMap<InitId, InitSlot>,
+    next_init_id: InitId,
+    /// The init [`ResourceId::Init`] currently refers to: the one in flight, or
+    /// the last one that was.
+    init_target: Option<InitId>,
+    /// The init whose [`Output::Init`] the consumer saw last.
+    announced_init: Option<InitId>,
+    /// The init that applies to each Media Sequence Number being fetched (RFC
+    /// 8216 §4.4.4.5: the map preceding the segment).
+    msn_init: BTreeMap<u64, InitId>,
+    /// The maps of the playlist being processed.
+    playlist_maps: Vec<MapEntry>,
     /// Last fMP4 track spec set for which [`Output::Tracks`] was emitted, so a
     /// repeat is only emitted when a new init yields a different set.
     last_fmp4_specs: Option<Vec<TrackSpec>>,
     /// Part/Segment resources delivered before the init segment arrived —
-    /// buffered (in arrival order) and replayed once [`Self::init_bytes`] is
-    /// set, so the caller's fetch/response IO can complete in any order
-    /// (a real HTTP client has no reason to serialize on init-first).
+    /// buffered (in arrival order) and replayed once their init is ready, so
+    /// the caller's fetch/response IO can complete in any order (a real HTTP
+    /// client has no reason to serialize on init-first).
     pending_demux: VecDeque<(ResourceId, Vec<u8>)>,
 
     /// Key id per distinct absolute key URI.
@@ -349,15 +412,6 @@ pub struct HlsClient {
     /// Next [`KeyId`] to hand out; never reused, so evicting a key can not
     /// make a stale id alias a live one.
     next_key_id: u32,
-    /// How the Media Initialization Section is encrypted, when it is.
-    init_crypto: Option<SegmentCrypto>,
-    /// Encrypted init bytes waiting for their key.
-    pending_init_cipher: Option<Vec<u8>>,
-    /// The `BYTERANGE` of the init currently requested (a changed range on
-    /// the same URI is a different init).
-    init_range: Option<ByteRange>,
-    /// The init last requested, kept so a failed one can be retried.
-    init_source: Option<InitSource>,
     /// A full playlist was asked for after an unmergeable delta; a repeat
     /// is paced by a wait instead of hot-looping.
     full_reload_requested: bool,
@@ -474,9 +528,12 @@ impl HlsClient {
             #[cfg(feature = "std")]
             wait_anchor: None,
             pending_outputs: VecDeque::new(),
-            init_uri: None,
-            init_bytes: None,
-            init_emitted: false,
+            inits: BTreeMap::new(),
+            next_init_id: 0,
+            init_target: None,
+            announced_init: None,
+            msn_init: BTreeMap::new(),
+            playlist_maps: Vec::new(),
             last_fmp4_specs: None,
             pending_demux: VecDeque::new(),
             key_ids: BTreeMap::new(),
@@ -486,10 +543,6 @@ impl HlsClient {
             segment_crypto: BTreeMap::new(),
             pending_keyed: Vec::new(),
             next_key_id: 0,
-            init_crypto: None,
-            pending_init_cipher: None,
-            init_range: None,
-            init_source: None,
             full_reload_requested: false,
             requested: BTreeSet::new(),
             fulfilled: BTreeSet::new(),
@@ -729,11 +782,7 @@ impl HlsClient {
             self.join_start(&playlist)?;
         }
 
-        let mut init_plan = self.plan_init(&playlist, text, next_msn);
-        let map_unusable = init_plan.as_mut().is_some_and(|plan| plan.error.is_some());
-        if let Some(e) = init_plan.as_mut().and_then(|plan| plan.error.take()) {
-            first_error.get_or_insert(e);
-        }
+        self.playlist_maps = self.map_entries(&playlist, text, next_msn);
 
         for (i, seg) in playlist.segments.iter().enumerate() {
             let msn = playlist.media_sequence.saturating_add(index_u64(i));
@@ -741,8 +790,9 @@ impl HlsClient {
                 self.skip_segment(msn, seg)?;
                 continue;
             }
-            if map_unusable && seg.map.is_some() {
+            if let Some(e) = seg.map.as_ref().and_then(|m| self.unusable_map(m)) {
                 self.skip_segment(msn, seg)?;
+                first_error.get_or_insert(e);
                 continue;
             }
             let key = segment_keys.get(i).and_then(Option::as_ref);
@@ -757,23 +807,19 @@ impl HlsClient {
         }
 
         if let Some(open) = &playlist.open_segment {
-            match &open_key {
-                Some(key) => {
-                    first_error.get_or_insert(Error::UnsupportedEncryption {
-                        method: key.method,
-                        what: "encrypted partial segments",
-                    });
+            if let Some(e) = open.map.as_ref().and_then(|m| self.unusable_map(m)) {
+                first_error.get_or_insert(e);
+            } else {
+                match &open_key {
+                    Some(key) => {
+                        first_error.get_or_insert(Error::UnsupportedEncryption {
+                            method: key.method,
+                            what: "encrypted partial segments",
+                        });
+                    }
+                    None => self.process_open_segment(next_msn, open)?,
                 }
-                None => self.process_open_segment(next_msn, open)?,
             }
-        }
-
-        if let Some(plan) = init_plan.filter(|_| !map_unusable) {
-            self.request_init(
-                &plan.source.map,
-                plan.source.encryption.as_ref(),
-                plan.source.first_msn,
-            )?;
         }
 
         if let Some(ll) = &playlist.low_latency
@@ -906,67 +952,185 @@ impl HlsClient {
         true
     }
 
-    /// Request the Media Initialization Section again after a failed fetch
+    /// Request a Media Initialization Section again after a failed fetch
     /// ([`Self::on_error`] with [`ResourceId::Init`]). A live playlist's next
     /// reload does this by itself; a VOD playlist (`EXT-X-ENDLIST`) has no
     /// further reload, so its driver calls this. `false` when there is
-    /// nothing to retry (the init is in flight or already held).
+    /// nothing to retry (an init is in flight, or none failed).
     pub fn retry_init(&mut self) -> bool {
-        if self.init_uri.is_some() {
+        if self
+            .inits
+            .values()
+            .any(|slot| slot.fetch == InitFetch::InFlight)
+        {
             return false;
         }
-        let Some(source) = self.init_source.clone() else {
-            return false;
-        };
-        self.request_init(&source.map, source.encryption.as_ref(), source.first_msn)
-            .is_ok()
+        let failed: Vec<InitId> = self
+            .inits
+            .iter()
+            .filter(|(_, slot)| slot.fetch == InitFetch::Failed)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &failed {
+            if let Some(slot) = self.inits.get_mut(id) {
+                slot.fetch = InitFetch::Wanted;
+            }
+        }
+        self.pump_init_fetch();
+        !failed.is_empty()
     }
 
-    /// The init the playlist's most recent `EXT-X-MAP` asks for (the open
-    /// segment's, else the last closed segment's) with the key that encrypts
-    /// it, if any.
-    fn plan_init(&self, playlist: &MediaPlaylist, text: &str, next_msn: u64) -> Option<InitPlan> {
-        let map = playlist
-            .open_segment
-            .as_ref()
-            .and_then(|o| o.map.as_ref())
-            .or_else(|| playlist.segments.last().and_then(|s| s.map.as_ref()))?;
-        let first_msn = playlist
+    /// The `EXT-X-MAP`s of `playlist`, in playlist order, each with the key
+    /// that encrypts it and the Media Sequence Number it first applies to.
+    fn map_entries(&self, playlist: &MediaPlaylist, text: &str, next_msn: u64) -> Vec<MapEntry> {
+        let keyed = keys_at_maps(text);
+        let mut entries: Vec<MapEntry> = Vec::new();
+        let listed = playlist
             .segments
             .iter()
-            .position(|s| s.map.as_ref() == Some(map))
-            .map_or(next_msn, |i| {
-                playlist.media_sequence.saturating_add(index_u64(i))
-            });
-        let key = match key_in_effect_at_last_map(text) {
-            Some(key) => key,
-            None => self
-                .init_source
-                .as_ref()
-                .filter(|s| s.map == *map)
-                .and_then(|s| s.encryption.clone()),
-        };
-        let error = key.as_ref().and_then(|key| {
-            let what = if key.method != EncryptionMethod::Aes128 {
-                "encrypted EXT-X-MAP: only METHOD=AES-128 is decrypted"
-            } else if key.uri.is_none() {
-                "encrypted EXT-X-MAP: key without URI"
-            } else {
-                return None;
-            };
-            Some(Error::UnsupportedEncryption {
-                method: key.method,
-                what,
+            .enumerate()
+            .filter_map(|(i, s)| {
+                s.map
+                    .as_ref()
+                    .map(|m| (m, playlist.media_sequence.saturating_add(index_u64(i))))
             })
-        });
-        Some(InitPlan {
-            source: InitSource {
+            .chain(
+                playlist
+                    .open_segment
+                    .as_ref()
+                    .and_then(|o| o.map.as_ref())
+                    .map(|m| (m, next_msn)),
+            );
+        for (map, msn) in listed {
+            if entries.iter().any(|e| e.map == *map) {
+                continue;
+            }
+            let key = match keyed.iter().rev().find(|(m, _)| m == map) {
+                Some((_, key)) => key.clone(),
+                None => self
+                    .inits
+                    .values()
+                    .find(|slot| slot.map == *map)
+                    .and_then(|slot| slot.encryption.clone()),
+            };
+            entries.push(MapEntry {
                 map: map.clone(),
+                key,
+                first_msn: msn,
+            });
+        }
+        entries
+    }
+
+    fn unusable_map(&self, map: &MapTag) -> Option<Error> {
+        self.playlist_maps
+            .iter()
+            .find(|e| e.map == *map)
+            .and_then(MapEntry::unusable)
+    }
+
+    /// The init slot for `map`, created (and queued for fetching) when the
+    /// client has none for that resource yet; a slot whose fetch failed is
+    /// queued again.
+    fn init_for_map(&mut self, map: &MapTag) -> Result<InitId> {
+        let url = url::resolve(self.base(), &map.uri);
+        if let Some((id, slot)) = self
+            .inits
+            .iter_mut()
+            .find(|(_, slot)| slot.url == url && slot.map.byte_range == map.byte_range)
+        {
+            if slot.fetch == InitFetch::Failed {
+                slot.fetch = InitFetch::Wanted;
+            }
+            let id = *id;
+            self.pump_init_fetch();
+            return Ok(id);
+        }
+        let (key, first_msn) = self
+            .playlist_maps
+            .iter()
+            .find(|e| e.map == *map)
+            .map_or((None, 0), |e| (e.key.clone(), e.first_msn));
+        let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
+        let crypto = match key.as_ref().and_then(|k| k.uri.as_deref().map(|u| (k, u))) {
+            Some((key, uri)) => {
+                let key_id = self.ensure_key_requested(uri);
+                let iv = key.iv.unwrap_or_else(|| media_sequence_iv(first_msn));
+                Some(SegmentCrypto { key_id, iv })
+            }
+            None => None,
+        };
+        let id = self.next_init_id;
+        self.next_init_id = self.next_init_id.saturating_add(1);
+        self.inits.insert(
+            id,
+            InitSlot {
+                map: map.clone(),
+                url,
+                byte_range,
                 encryption: key,
-                first_msn,
+                crypto,
+                fetch: InitFetch::Wanted,
+                cipher: None,
+                bytes: None,
+                skipped_reported: BTreeSet::new(),
             },
-            error,
-        })
+        );
+        self.pump_init_fetch();
+        Ok(id)
+    }
+
+    /// Start the next wanted init fetch unless one is already in flight:
+    /// [`ResourceId::Init`] names the one in flight, so inits go one at a time,
+    /// in the order the playlist needs them.
+    fn pump_init_fetch(&mut self) {
+        if self
+            .inits
+            .values()
+            .any(|slot| slot.fetch == InitFetch::InFlight)
+        {
+            return;
+        }
+        let Some((id, slot)) = self
+            .inits
+            .iter_mut()
+            .find(|(_, slot)| slot.fetch == InitFetch::Wanted)
+        else {
+            return;
+        };
+        slot.fetch = InitFetch::InFlight;
+        let id = *id;
+        let fetch = Action::FetchResource {
+            id: ResourceId::Init,
+            url: slot.url.clone(),
+            byte_range: slot.byte_range,
+        };
+        self.init_target = Some(id);
+        self.pending_actions.push_back(fetch);
+        self.outstanding_fetches += 1;
+    }
+
+    /// Bind Media Sequence Number `msn` to the init of `map`, the one that
+    /// applies to it (RFC 8216 §4.4.4.5), creating that init on first use.
+    fn bind_init(&mut self, msn: u64, map: Option<&MapTag>) -> Result<()> {
+        if let Some(map) = map {
+            let id = self.init_for_map(map)?;
+            self.msn_init.insert(msn, id);
+        }
+        Ok(())
+    }
+
+    /// The init slot a Part/Segment resource is demuxed with: the one its
+    /// Media Sequence Number is bound to, else the newest.
+    fn init_of(&self, id: &ResourceId) -> Option<InitId> {
+        resource_msn(id)
+            .and_then(|msn| self.msn_init.get(&msn).copied())
+            .or_else(|| self.inits.keys().next_back().copied())
+    }
+
+    fn init_ready(&self, slot: Option<InitId>) -> bool {
+        slot.and_then(|id| self.inits.get(&id))
+            .is_some_and(|slot| slot.bytes.is_some())
     }
 
     /// Feed the bytes fetched for a previously requested [`ResourceId`]
@@ -983,14 +1147,17 @@ impl HlsClient {
     /// the cached init + `bytes`.
     pub fn on_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
         let was_requested = match id {
-            ResourceId::Init => self.init_uri.is_some(),
+            ResourceId::Init => self.init_target.is_some(),
             ResourceId::Part { .. } | ResourceId::Segment { .. } => self.requested.contains(&id),
         };
         if !was_requested {
             return Err(Error::UnrequestedResource { id });
         }
         let duplicate = match id {
-            ResourceId::Init => self.init_bytes.is_some() || self.pending_init_cipher.is_some(),
+            ResourceId::Init => !self
+                .init_target
+                .and_then(|t| self.inits.get(&t))
+                .is_some_and(|slot| slot.fetch == InitFetch::InFlight),
             ResourceId::Part { .. } | ResourceId::Segment { .. } => self.fulfilled.contains(&id),
         };
         if duplicate {
@@ -1001,13 +1168,7 @@ impl HlsClient {
             self.fulfilled.insert(id);
         }
         match id {
-            ResourceId::Init => match self.init_crypto {
-                Some(crypto) => match self.key_material.get(&crypto.key_id).copied() {
-                    Some(KeyBytes(key)) => self.complete_encrypted_init(crypto, &key, bytes)?,
-                    None => self.pending_init_cipher = Some(bytes.to_vec()),
-                },
-                None => self.complete_init(bytes)?,
-            },
+            ResourceId::Init => self.accept_init(bytes)?,
             ResourceId::Part { .. } | ResourceId::Segment { .. } => {
                 let processed = self.accept_media_resource(id, bytes);
                 match processed {
@@ -1025,36 +1186,87 @@ impl HlsClient {
         Ok(())
     }
 
-    /// Take `plain` as the Media Initialization Section: emit it and replay
-    /// the media that arrived before it.
-    fn complete_init(&mut self, plain: &[u8]) -> Result<()> {
-        self.init_bytes = Some(plain.to_vec());
-        if !self.init_emitted {
-            self.pending_outputs.push_back(Output::Init(plain.to_vec()));
-            self.init_emitted = true;
+    fn accept_init(&mut self, bytes: &[u8]) -> Result<()> {
+        let Some(target) = self.init_target else {
+            return Ok(());
+        };
+        let Some(slot) = self.inits.get_mut(&target) else {
+            return Ok(());
+        };
+        match slot.crypto {
+            Some(crypto) => match self.key_material.get(&crypto.key_id).copied() {
+                Some(KeyBytes(key)) => self.complete_encrypted_init(target, crypto, &key, bytes),
+                None => {
+                    slot.cipher = Some(bytes.to_vec());
+                    slot.fetch = InitFetch::Arrived;
+                    Ok(())
+                }
+            },
+            None => self.complete_init(target, bytes),
         }
+    }
+
+    /// Take `plain` as the Media Initialization Section of `target`: emit it
+    /// when it is the first the consumer sees, and replay the media that
+    /// arrived before it.
+    fn complete_init(&mut self, target: InitId, plain: &[u8]) -> Result<()> {
+        if let Some(slot) = self.inits.get_mut(&target) {
+            slot.bytes = Some(plain.to_vec());
+            slot.cipher = None;
+            slot.fetch = InitFetch::Ready;
+        }
+        if self.announced_init.is_none() {
+            self.announce_init(target);
+        }
+        self.pump_init_fetch();
         let buffered: Vec<_> = self.pending_demux.drain(..).collect();
+        let mut waiting = VecDeque::new();
+        let mut failure = None;
         for (bid, bbytes) in buffered {
+            if failure.is_some() || !self.init_ready(self.init_of(&bid)) {
+                waiting.push_back((bid, bbytes));
+                continue;
+            }
             if let Err(e) = self.finish_media_resource(bid, &bbytes) {
                 self.fulfilled.remove(&bid);
                 self.requested.remove(&bid);
-                return Err(e);
+                failure = Some(e);
             }
         }
-        Ok(())
+        self.pending_demux = waiting;
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// Make `slot` the init the consumer sees: its [`Output::Init`] goes out
+    /// unless it was the last one announced.
+    fn announce_init(&mut self, slot: InitId) {
+        if self.announced_init == Some(slot) {
+            return;
+        }
+        let Some(bytes) = self.inits.get(&slot).and_then(|s| s.bytes.clone()) else {
+            return;
+        };
+        self.pending_outputs.push_back(Output::Init(bytes));
+        self.announced_init = Some(slot);
+        self.last_fmp4_specs = None;
     }
 
     fn complete_encrypted_init(
         &mut self,
+        target: InitId,
         crypto: SegmentCrypto,
         key: &[u8; KEY_LEN],
         cipher: &[u8],
     ) -> Result<()> {
         match decrypt_segment(ResourceId::Init, crypto, key, cipher) {
-            Ok(plain) => self.complete_init(&plain),
+            Ok(plain) => self.complete_init(target, &plain),
             Err(e) => {
-                self.init_uri = None;
-                self.init_range = None;
+                if let Some(slot) = self.inits.get_mut(&target) {
+                    slot.fetch = InitFetch::Failed;
+                }
                 Err(e)
             }
         }
@@ -1112,7 +1324,7 @@ impl HlsClient {
             // this self-contained TS segment straight away rather
             // than buffering it forever waiting for one.
             self.finish_ts_resource(id, bytes)
-        } else if self.init_bytes.is_none() {
+        } else if !self.init_ready(self.init_of(&id)) {
             self.pending_demux.push_back((id, bytes.to_vec()));
             Ok(())
         } else {
@@ -1140,10 +1352,20 @@ impl HlsClient {
             len: bytes.len(),
         })?;
         self.key_material.insert(id, KeyBytes(key));
-        if let Some(crypto) = self.init_crypto.filter(|c| c.key_id == id)
-            && let Some(cipher) = self.pending_init_cipher.take()
-        {
-            self.complete_encrypted_init(crypto, &key, &cipher)?;
+        let waiting_inits: Vec<(InitId, SegmentCrypto)> = self
+            .inits
+            .iter()
+            .filter(|(_, slot)| slot.fetch == InitFetch::Arrived)
+            .filter_map(|(init, slot)| slot.crypto.filter(|c| c.key_id == id).map(|c| (*init, c)))
+            .collect();
+        for (init, crypto) in waiting_inits {
+            let cipher = self
+                .inits
+                .get_mut(&init)
+                .and_then(|slot| slot.cipher.take());
+            if let Some(cipher) = cipher {
+                self.complete_encrypted_init(init, crypto, &key, &cipher)?;
+            }
         }
         let (mut ready, rest): (Vec<_>, Vec<_>) = core::mem::take(&mut self.pending_keyed)
             .into_iter()
@@ -1217,7 +1439,11 @@ impl HlsClient {
     fn forget_keys_below(&mut self, first_msn: u64) {
         self.segment_crypto.retain(|&m, _| m >= first_msn);
         let mut live: BTreeSet<KeyId> = self.segment_crypto.values().map(|c| c.key_id).collect();
-        live.extend(self.init_crypto.map(|c| c.key_id));
+        live.extend(
+            self.inits
+                .values()
+                .filter_map(|slot| slot.crypto.map(|c| c.key_id)),
+        );
         let abandoned: Vec<KeyId> = self
             .keys_in_flight
             .iter()
@@ -1316,7 +1542,7 @@ impl HlsClient {
     /// `true` when `bytes` should be routed to [`Self::finish_ts_resource`]
     /// (classic MPEG-TS-segment HLS, issue #760) rather than the fMP4/CMAF
     /// path: this playlist has never advertised an `EXT-X-MAP` (no init
-    /// fetch is outstanding or cached — [`Self::init_uri`] is `None`; by the
+    /// fetch is outstanding or cached — [`Self::inits`] is empty; by the
     /// time any Part/Segment fetch response reaches [`Self::on_resource`],
     /// [`Self::on_playlist`] has already fully processed the playlist that
     /// requested it, including any map it carries, so this check is never
@@ -1324,7 +1550,7 @@ impl HlsClient {
     /// fMP4/CMAF resource always starts with an ISOBMFF box
     /// (`ftyp`/`styp`/`moof`), never [`TS_SYNC_BYTE`].
     fn is_ts_segment(&self, bytes: &[u8]) -> bool {
-        self.init_uri.is_none() && bytes.first() == Some(&TS_SYNC_BYTE)
+        self.inits.is_empty() && bytes.first() == Some(&TS_SYNC_BYTE)
     }
 
     /// Report that a previously requested [`ResourceId`] (or the playlist
@@ -1336,9 +1562,14 @@ impl HlsClient {
             self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
             match id {
                 ResourceId::Init => {
-                    self.init_uri = None;
-                    self.init_range = None;
-                    self.pending_init_cipher = None;
+                    if let Some(slot) = self
+                        .init_target
+                        .and_then(|target| self.inits.get_mut(&target))
+                        .filter(|slot| slot.fetch == InitFetch::InFlight)
+                    {
+                        slot.fetch = InitFetch::Failed;
+                    }
+                    self.pump_init_fetch();
                 }
                 other => {
                     self.requested.remove(&other);
@@ -1456,6 +1687,7 @@ impl HlsClient {
             }
             let id = ResourceId::Segment { msn };
             if !self.requested.contains(&id) {
+                self.bind_init(msn, seg.map.as_ref())?;
                 let url = url::resolve(self.base(), &seg.uri);
                 let byte_range = self.resolve_byte_range(&url, &seg.byte_range)?;
                 self.request_resource(id, url, byte_range);
@@ -1472,6 +1704,7 @@ impl HlsClient {
             fully_accounted = false;
             let id = ResourceId::Part { msn, part: i };
             if !self.requested.contains(&id) {
+                self.bind_init(msn, seg.map.as_ref())?;
                 let url = url::resolve(self.base(), &part.uri);
                 let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
@@ -1491,6 +1724,7 @@ impl HlsClient {
             }
             let id = ResourceId::Part { msn, part: i };
             if !self.requested.contains(&id) {
+                self.bind_init(msn, open.map.as_ref())?;
                 let url = url::resolve(self.base(), &part.uri);
                 let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
@@ -1500,45 +1734,7 @@ impl HlsClient {
     }
 
     fn ensure_init_requested(&mut self, map: &MapTag) -> Result<()> {
-        self.request_init(map, None, 0)
-    }
-
-    /// Request the init `map` names (encrypted with `key` when given; its IV
-    /// defaults to the Media Sequence Number `first_msn` of the first segment
-    /// that uses the map) unless that same init — URI *and* `BYTERANGE` — is
-    /// already requested or held.
-    fn request_init(&mut self, map: &MapTag, key: Option<&MediaKey>, first_msn: u64) -> Result<()> {
-        let url = url::resolve(self.base(), &map.uri);
-        if self.init_uri.as_deref() == Some(url.as_str()) && self.init_range == map.byte_range {
-            return Ok(());
-        }
-        let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
-        self.init_crypto = match key.and_then(|k| k.uri.as_deref().map(|uri| (k, uri))) {
-            Some((key, uri)) => {
-                let id = self.ensure_key_requested(uri);
-                let iv = key.iv.unwrap_or_else(|| media_sequence_iv(first_msn));
-                Some(SegmentCrypto { key_id: id, iv })
-            }
-            None => None,
-        };
-        self.pending_init_cipher = None;
-        self.init_uri = Some(url.clone());
-        self.init_range = map.byte_range;
-        self.init_bytes = None;
-        self.init_emitted = false;
-        self.last_fmp4_specs = None;
-        self.init_source = Some(InitSource {
-            map: map.clone(),
-            encryption: key.cloned(),
-            first_msn,
-        });
-        self.pending_actions.push_back(Action::FetchResource {
-            id: ResourceId::Init,
-            url,
-            byte_range,
-        });
-        self.outstanding_fetches += 1;
-        Ok(())
+        self.init_for_map(map).map(|_| ())
     }
 
     fn request_resource(&mut self, id: ResourceId, url: String, byte_range: Option<(u64, u64)>) {
@@ -1601,9 +1797,15 @@ impl HlsClient {
     }
 
     fn demux_and_emit(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let slot = self.init_of(&id).filter(|s| self.init_ready(Some(*s)));
+        let Some(slot) = slot else {
+            return Err(Error::InitNotYetAvailable { id });
+        };
+        self.announce_init(slot);
         let init = self
-            .init_bytes
-            .as_ref()
+            .inits
+            .get(&slot)
+            .and_then(|s| s.bytes.as_ref())
             .ok_or(Error::InitNotYetAvailable { id })?;
         let mut combined = Vec::with_capacity(init.len() + bytes.len());
         combined.extend_from_slice(init);
@@ -1612,6 +1814,20 @@ impl HlsClient {
         let media = demux
             .unpackage(combined.as_slice())
             .map_err(|source| Error::Demux { id, source })?;
+        for skipped in &media.skipped {
+            let key = (skipped.track_id.map(TrackId::value), skipped.fourcc.clone());
+            let first = self
+                .inits
+                .get_mut(&slot)
+                .is_some_and(|s| s.skipped_reported.insert(key));
+            if first {
+                self.pending_outputs.push_back(Output::TrackSkipped {
+                    track_id: skipped.track_id,
+                    fourcc: skipped.fourcc.clone(),
+                    reason: skipped.reason.clone(),
+                });
+            }
+        }
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let specs_changed = self
             .last_fmp4_specs
@@ -1758,7 +1974,6 @@ impl HlsClient {
                 self.pending_outputs
                     .push_back(Output::Init(init_bytes.clone()));
                 self.last_ts_init = Some(init_bytes);
-                self.init_emitted = true;
             }
         }
         for event in events {
@@ -1938,6 +2153,8 @@ impl HlsClient {
         self.delivered_segments.retain(|&m| m >= first);
         self.discontinuous_msns.retain(|&m| m >= first);
         self.discontinuity_emitted.retain(|&m| m >= first);
+        self.msn_init.retain(|&m, _| m >= first);
+        self.prune_inits();
 
         if playlist.skip.is_none() {
             let base = self.base();
@@ -1968,6 +2185,16 @@ impl HlsClient {
             }
             self.byte_range_cursor.retain(|u, _| live.contains(u));
         }
+    }
+
+    /// Drop every held init no segment still being fetched refers to, keeping
+    /// the newest.
+    fn prune_inits(&mut self) {
+        let newest = self.inits.keys().next_back().copied();
+        let bound: BTreeSet<InitId> = self.msn_init.values().copied().collect();
+        self.inits.retain(|id, slot| {
+            Some(*id) == newest || bound.contains(id) || slot.fetch != InitFetch::Ready
+        });
     }
 
     /// Decide whether `new` continues the stream the previous full playlist
@@ -2122,13 +2349,10 @@ impl HlsClient {
         self.byte_range_cursor.clear();
         self.outstanding_fetches = 0;
         self.last_full_playlist = None;
-        self.init_uri = None;
-        self.init_range = None;
-        self.init_source = None;
-        self.init_crypto = None;
-        self.pending_init_cipher = None;
-        self.init_bytes = None;
-        self.init_emitted = false;
+        self.inits.clear();
+        self.init_target = None;
+        self.announced_init = None;
+        self.msn_init.clear();
         self.last_fmp4_specs = None;
         self.full_reload_requested = false;
         self.joined = false;
@@ -2152,7 +2376,7 @@ impl HlsClient {
             && !self.end_emitted
             && self.outstanding_fetches == 0
             && self.pending_keyed.is_empty()
-            && !(self.init_source.is_some() && self.init_bytes.is_none())
+            && self.inits.values().all(|slot| slot.bytes.is_some())
             && self.all_playlist_segments_delivered()
         {
             // The TS demuxer holds back each stream's last access unit until

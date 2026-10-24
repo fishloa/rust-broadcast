@@ -145,7 +145,10 @@ pub enum ErrorKind {
     /// The stream is encrypted in a way this client does not decrypt: SAMPLE-AES, another
     /// non-AES-128 method, a non-`identity` `KEYFORMAT` (FairPlay, Widevine, ...), an encrypted
     /// `EXT-X-MAP`, encrypted I-frames-only segments, or an `EXT-X-KEY` without a `URI`. `method`
-    /// is the `METHOD` value, or the `KEYFORMAT` value for an unsupported key format.
+    /// is the `METHOD` value, or the `KEYFORMAT` value for an unsupported key format; for a
+    /// CENC/CBCS-protected track inside fragmented MP4 (this client decrypts AES-128 segments
+    /// only, never sample encryption) it is the track's encrypted sample entry (`encv`, `enca`),
+    /// reported once per track id as a non-fatal error, and fatal once no track is left to play.
     UnsupportedEncryption {
         /// The `METHOD` (or unsupported `KEYFORMAT`) value.
         method: String,
@@ -174,15 +177,30 @@ pub enum ErrorKind {
         /// The first offending track id.
         track_id: u32,
     },
-    /// An HLS TS-segment elementary stream was left out because it cannot be carried in the
-    /// fragmented MP4 the HLS source produces (opaque data such as SCTE-35, ID3 or private PES,
-    /// or a subtitle without a sample entry). Reported once per track per source; the other
-    /// tracks play, and a stream with no playable track ends after these reports.
+    /// An HLS track was left out. For a TS segment: an elementary stream that cannot be carried
+    /// in the fragmented MP4 the HLS source produces (opaque data such as SCTE-35, ID3 or
+    /// private PES, or a subtitle without a sample entry). For an fMP4 init: a track whose
+    /// sample entry the demuxer cannot model (an unrecognised codec; an encrypted one is
+    /// [`ErrorKind::UnsupportedEncryption`]). Reported once per track per source; the other
+    /// tracks play, and a stream with no playable track ends fatally after these reports.
     TrackDropped {
-        /// The dropped track's id (remapped for an audio rendition).
+        /// The dropped track's id (remapped for an audio rendition); `0` for a track the fMP4
+        /// demuxer could not name.
         track_id: u32,
-        /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque data.
+        /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque TS data.
         stream_type: Option<u8>,
+        /// The fMP4 sample entry's four-character code (`None` for a TS stream).
+        fourcc: Option<String>,
+    },
+    /// The HLS media is in a container this client does not play, detected at its first
+    /// segment: `reason` is `non_fragmented_mp4` (a progressive MP4 served as init + segment —
+    /// HLS fMP4 carries `moof`/`mdat` fragments) or `fragment_outside_segment` (a `moof` whose
+    /// sample data offset points outside its own segment, the absolute `tfhd` base-data-offset
+    /// layout; CMAF uses default-base-is-moof). The first is fatal, the second is reported
+    /// non-fatally once per session and the fragment's samples are lost.
+    UnsupportedContainer {
+        /// The stable reason token.
+        reason: &'static str,
     },
 }
 
@@ -198,6 +216,7 @@ impl ErrorKind {
             Self::UnsupportedCodec { .. } => "unsupported_codec",
             Self::TrackIdReserved { .. } => "track_id_reserved",
             Self::TrackDropped { .. } => "track_dropped",
+            Self::UnsupportedContainer { .. } => "unsupported_container",
         }
     }
 }
