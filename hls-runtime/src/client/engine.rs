@@ -165,17 +165,31 @@ fn has_media_fragment(bytes: &[u8]) -> bool {
     false
 }
 
-/// `true` when `bytes` is MPEG-TS: at least half of its 188-byte lanes start
-/// with `sync_byte`, so an HTML error page, random bytes and an empty body all
-/// fail while a segment of nothing but null packets does not (ISO/IEC 13818-1
-/// §2.4.3.2).
+/// Lanes below which a TS body must be synced on every one of them.
+const TS_TRUSTED_LANES: usize = 3;
+
+/// `true` when `bytes` is MPEG-TS at some packet phase (ISO/IEC 13818-1
+/// §2.4.3.2, 188-byte packets, `sync_byte` first): a body cut mid-packet or
+/// led by junk is still media, the demuxer resynchronises. At the best phase,
+/// a body of at least [`TS_TRUSTED_LANES`] lanes needs half of them synced; a
+/// shorter one needs every lane synced, and a single lane is trusted only at
+/// phase 0 (a one-packet body has up to 188 phases, so noise would match one).
+/// An HTML error page, random bytes and an empty body all fail; a segment of
+/// nothing but null packets passes. 192-byte M2TS packets are not accepted:
+/// the demuxer behind this check does not read them.
 fn has_ts_structure(bytes: &[u8]) -> bool {
-    let lanes = bytes.len() / TS_PACKET_LEN;
-    let synced = bytes
-        .chunks_exact(TS_PACKET_LEN)
-        .filter(|packet| packet[0] == TS_SYNC_BYTE)
-        .count();
-    lanes > 0 && synced.saturating_mul(2) >= lanes
+    (0..TS_PACKET_LEN).any(|phase| {
+        let lanes = bytes.len().saturating_sub(phase) / TS_PACKET_LEN;
+        let lanes_synced = (0..lanes)
+            .filter(|lane| bytes[phase + lane * TS_PACKET_LEN] == TS_SYNC_BYTE)
+            .count();
+        match lanes {
+            0 => false,
+            1 => phase == 0 && lanes_synced == 1,
+            n if n < TS_TRUSTED_LANES => lanes_synced == n,
+            n => lanes_synced.saturating_mul(2) >= n,
+        }
+    })
 }
 
 /// `uri` up to its query string: a CDN that re-signs a segment URL on every
@@ -1689,7 +1703,7 @@ impl HlsClient {
     /// fMP4/CMAF resource always starts with an ISOBMFF box
     /// (`ftyp`/`styp`/`moof`), never [`TS_SYNC_BYTE`].
     fn is_ts_segment(&self, bytes: &[u8]) -> bool {
-        self.inits.is_empty() && bytes.first() == Some(&TS_SYNC_BYTE)
+        self.inits.is_empty() && (bytes.first() == Some(&TS_SYNC_BYTE) || has_ts_structure(bytes))
     }
 
     /// Report that a previously requested [`ResourceId`] (or the playlist

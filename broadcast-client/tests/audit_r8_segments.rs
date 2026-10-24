@@ -683,3 +683,46 @@ fn every_transient_segment_fault_recovers_with_every_sample_and_no_error() {
         assert_eq!(h.hits(TS_SEG0_URL), 2, "{name}");
     }
 }
+
+const MID_PACKET_CUT: usize = 100;
+const PARTIAL_LOSS_SAMPLES: usize = 2;
+
+#[test]
+fn a_mid_packet_cut_or_junk_led_ts_segment_still_plays() {
+    let want = ts_clean_samples();
+    let whole = ts_segment(0);
+    let mut junk = vec![0xA5; 187];
+    junk.extend_from_slice(&whole);
+    for (name, body) in [("cut", whole[MID_PACKET_CUT..].to_vec()), ("junk", junk)] {
+        let mut h = ts_vod(vec![Reply::Ok(body.clone())], hls_config());
+        h.run_until(stop_on_end_or_fatal, STEPS);
+        let t = tally(&h);
+        assert!(
+            t.ended && t.fatals.is_empty() && t.non_fatals.is_empty(),
+            "{name}: {t:?}"
+        );
+        assert_eq!(h.hits(TS_SEG0_URL), 1, "{name}: no retry");
+        assert!(
+            want - t.samples <= PARTIAL_LOSS_SAMPLES,
+            "{name}: {} of {want}",
+            t.samples
+        );
+
+        let mut live = live_host(vec![Reply::Ok(body)], hls_config());
+        live.run_until(
+            |e| {
+                e.iter()
+                    .filter(|x| matches!(x, Event::Sample { .. }))
+                    .count()
+                    > want
+            },
+            STEPS,
+        );
+        let t = tally(&live);
+        assert!(
+            t.fatals.is_empty() && t.non_fatals.is_empty(),
+            "live {name}: {t:?}"
+        );
+        assert_eq!(live.hits(LIVE_BAD_URL), 1, "live {name}: no retry");
+    }
+}
