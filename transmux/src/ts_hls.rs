@@ -591,6 +591,32 @@ struct WindowEntry {
 }
 
 /// Per-track accumulation state for [`StreamingTsHlsSegmenter`].
+/// A cut the anchor triggered whose non-anchor audio has not yet caught up.
+///
+/// A live multiplex delivers a track's PES later than the video it
+/// accompanies, by a jitter that varies per segment. Cutting the instant the
+/// anchor reaches its next sync sample therefore closes each segment with
+/// however much audio had arrived (zenith captures: 1.15 s to 1.34 s of audio
+/// against 1.28 s of video), and Apple's `mediastreamvalidator` rejects the
+/// playlist-vs-segment duration mismatch. The cut is held until every audio
+/// track holds a sample at or past the boundary, bounded by
+/// [`CATCH_UP_MAX_SECS`] of further anchor media.
+#[derive(Debug, Clone, Copy)]
+struct DeferredCut {
+    /// Anchor samples (from the front of `pending`) that close the segment.
+    anchor_split: usize,
+    /// Anchor ticks those samples span: the segment's `EXTINF`.
+    closed_anchor_dur: u64,
+    /// The boundary: where the next segment starts, in seconds from the
+    /// anchor's first sample.
+    next_start_secs: f64,
+}
+
+/// Longest the streaming segmenter holds a cut for lagging audio, in seconds
+/// of further anchor media. Beyond it the segment is cut with whatever audio
+/// arrived, so a silent or stalled audio track cannot stop segments.
+const CATCH_UP_MAX_SECS: u64 = 1;
+
 struct StreamTrackState {
     spec: TrackSpec,
     /// Samples buffered so far that have not yet been flushed into a
@@ -673,6 +699,9 @@ pub struct StreamingTsHlsSegmenter {
     target_ticks: u64,
     /// Buffered duration of the anchor's `pending` samples (media-timescale ticks).
     anchor_pending_dur: u64,
+    /// A segment boundary the anchor reached while an audio track had not yet
+    /// delivered the media up to it; see [`DeferredCut`].
+    deferred_cut: Option<DeferredCut>,
     /// Anchor-progress clock: advances `anchor_pending_dur` from each anchor
     /// sample's `duration`, or from its `dts` delta when `duration` is absent
     /// or zero (see [`MediaClock`]).
@@ -815,6 +844,7 @@ impl StreamingTsHlsSegmenter {
             target_secs,
             target_ticks,
             anchor_pending_dur: 0,
+            deferred_cut: None,
             anchor_clock: MediaClock::new(),
             origin_secs: None,
             pending_discontinuity: false,
@@ -996,6 +1026,7 @@ impl StreamingTsHlsSegmenter {
                 return Ok(());
             }
             self.awaiting_idr = false;
+            self.complete_deferred()?;
             if !self.tracks[self.anchor].pending.is_empty() {
                 self.cut_segment(false)?;
             }
@@ -1013,7 +1044,7 @@ impl StreamingTsHlsSegmenter {
                 self.target_ticks,
             )
         {
-            self.cut_segment(false)?;
+            self.cut_or_defer()?;
         }
 
         if self.tracks[idx].pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK {
@@ -1030,7 +1061,70 @@ impl StreamingTsHlsSegmenter {
             self.anchor_pending_dur += self.anchor_clock.tick(&sample);
         }
         self.tracks[idx].pending.push(sample);
+        self.try_complete_deferred()
+    }
+
+    /// Cut now, or hold the cut while an audio track still lags the boundary
+    /// ([`DeferredCut`]).
+    fn cut_or_defer(&mut self) -> Result<()> {
+        self.complete_deferred()?;
+        let anchor = self.anchor;
+        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let next_start_ticks = self.tracks[anchor].base_decode + self.anchor_pending_dur;
+        let next_start_secs = next_start_ticks as f64 / anchor_scale as f64;
+        if !self.audio_lags(next_start_secs) {
+            return self.cut_segment(false);
+        }
+        self.deferred_cut = Some(DeferredCut {
+            anchor_split: self.tracks[anchor].pending.len(),
+            closed_anchor_dur: self.anchor_pending_dur,
+            next_start_secs,
+        });
+        self.anchor_pending_dur = 0;
         Ok(())
+    }
+
+    fn complete_deferred(&mut self) -> Result<()> {
+        match self.deferred_cut.take() {
+            Some(cut) => self.cut_segment_with(false, Some(cut)),
+            None => Ok(()),
+        }
+    }
+
+    fn try_complete_deferred(&mut self) -> Result<()> {
+        let Some(cut) = self.deferred_cut else {
+            return Ok(());
+        };
+        let scale = self.tracks[self.anchor].spec.timescale.max(1) as u64;
+        let waited_out = self.anchor_pending_dur >= CATCH_UP_MAX_SECS.saturating_mul(scale);
+        if waited_out || !self.audio_lags(cut.next_start_secs) {
+            self.complete_deferred()?;
+        }
+        Ok(())
+    }
+
+    /// Whether some audio track that has delivered media holds none at or
+    /// past `next_start_secs`, so cutting there would close its segment short.
+    fn audio_lags(&self, next_start_secs: f64) -> bool {
+        let origin_secs = self.origin_secs.unwrap_or(0.0);
+        self.tracks.iter().enumerate().any(|(i, t)| {
+            if i == self.anchor
+                || t.spec.config.audio_sample_rate().is_none()
+                || (t.base_decode == 0 && t.pending.is_empty())
+            {
+                return false;
+            }
+            let scale = t.spec.timescale.max(1) as u64;
+            let mut acc = t.base_decode;
+            let mut clock = MediaClock::resumed_at(t.flush_clock.last_dts());
+            for s in &t.pending {
+                if placement_secs(s, acc, scale, origin_secs) >= next_start_secs {
+                    return false;
+                }
+                acc += clock.tick(s);
+            }
+            true
+        })
     }
 
     /// Finalize the trailing partial segment (call once at end-of-stream).
@@ -1068,6 +1162,7 @@ impl StreamingTsHlsSegmenter {
     /// [`Stage::finish`] for the same reason as [`push_inner`](Self::push_inner).
     fn finish_inner(&mut self) -> Result<()> {
         self.finished = true;
+        self.complete_deferred()?;
         if self.tracks.iter().any(|t| !t.pending.is_empty()) {
             self.cut_segment(true)?;
         }
@@ -1215,13 +1310,18 @@ impl StreamingTsHlsSegmenter {
     /// The cut segment is pushed onto [`ready`](Self::ready), the single queue
     /// both the inherent API and [`Stage::poll`] drain.
     fn cut_segment(&mut self, final_cut: bool) -> Result<()> {
+        self.cut_segment_with(final_cut, None)
+    }
+
+    fn cut_segment_with(&mut self, final_cut: bool, deferred: Option<DeferredCut>) -> Result<()> {
+        let closed_anchor_dur = deferred.map_or(self.anchor_pending_dur, |d| d.closed_anchor_dur);
         let anchor = self.anchor;
         let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
         let origin_secs = self.origin_secs.unwrap_or(0.0);
         // The new segment's start time = this track's cumulative decode time
         // so far (already-flushed ticks + the pending anchor buffer) — the
         // streaming equivalent of `partition_tracks`'s `start_times[seg + 1]`.
-        let next_start_ticks = self.tracks[anchor].base_decode + self.anchor_pending_dur;
+        let next_start_ticks = self.tracks[anchor].base_decode + closed_anchor_dur;
         let next_start_secs = next_start_ticks as f64 / anchor_scale as f64;
 
         // Per-track split point: everything pending for the anchor (and for
@@ -1232,8 +1332,11 @@ impl StreamingTsHlsSegmenter {
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                if final_cut || i == anchor {
+                if final_cut {
                     return t.pending.len();
+                }
+                if i == anchor {
+                    return deferred.map_or(t.pending.len(), |d| d.anchor_split);
                 }
                 let scale = t.spec.timescale.max(1) as u64;
                 let mut acc = t.base_decode;
@@ -1271,7 +1374,7 @@ impl StreamingTsHlsSegmenter {
         let bytes =
             mux_tracks_at_continuing(&mux_tracks, &sample_slices, &base_dts, &mut self.continuity)?;
 
-        let (duration, ceil_secs) = segment_duration_secs(self.anchor_pending_dur, anchor_scale);
+        let (duration, ceil_secs) = segment_duration_secs(closed_anchor_dur, anchor_scale);
         if ceil_secs > self.target_duration {
             self.target_duration = ceil_secs;
         }
@@ -1287,7 +1390,9 @@ impl StreamingTsHlsSegmenter {
             t.base_decode += dur;
             t.pending.drain(..n);
         }
-        self.anchor_pending_dur = 0;
+        if deferred.is_none() {
+            self.anchor_pending_dur = 0;
+        }
 
         let sequence = self.total_segments;
         let uri = format!("{}{}.ts", self.uri_prefix, sequence);
