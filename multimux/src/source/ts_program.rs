@@ -358,7 +358,20 @@ impl ProgramTracker {
 pub struct TsIngestSession {
     demux: StreamingTsDemux,
     tracker: ProgramTracker,
+    first_fed_at: Option<Timestamp>,
+    silent_heads_released: bool,
 }
+
+/// Arrival time after the first byte of input past which a PID the PMT
+/// declares but that has sent no payload packet is treated as absent rather
+/// than late ([`StreamingTsDemux::release_silent_heads`]). Without this bound
+/// such a PID holds every track, and with them `NewProgram`, back until
+/// 4 MiB of input has arrived (`STUCK_HEAD_INPUT_PACKETS`): never, on a
+/// low-bitrate SPTS. Bounded by time, not bytes, so the wait does not scale
+/// with the bitrate. A silent PID that does send later is announced by a
+/// later `TrackAdded`, so nothing is lost; one second is the same order as
+/// the settle `broadcast-client` allows a freshly joined stream.
+pub const SILENT_PID_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl TsIngestSession {
     /// Construct a fresh session — performs no I/O.
@@ -366,6 +379,14 @@ impl TsIngestSession {
         TsIngestSession {
             demux: StreamingTsDemux::new(),
             tracker: ProgramTracker::new(),
+            first_fed_at: None,
+            silent_heads_released: false,
+        }
+    }
+
+    fn drain_demux(&mut self) {
+        while let Some(event) = self.demux.poll_event() {
+            self.tracker.handle(event);
         }
     }
 }
@@ -386,10 +407,14 @@ impl Stage for TsIngestSession {
     /// module, outside this sans-IO session entirely.
     type Error = Infallible;
 
-    fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+    fn feed(&mut self, input: &[u8], now: Timestamp) -> Result<(), Infallible> {
         self.demux.feed(input);
-        while let Some(event) = self.demux.poll_event() {
-            self.tracker.handle(event);
+        self.drain_demux();
+        let first = *self.first_fed_at.get_or_insert(now);
+        if !self.silent_heads_released && now.saturating_sub(first) >= SILENT_PID_SETTLE {
+            self.silent_heads_released = true;
+            self.demux.release_silent_heads();
+            self.drain_demux();
         }
         Ok(())
     }
