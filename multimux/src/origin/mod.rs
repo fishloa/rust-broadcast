@@ -1069,7 +1069,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> Response {
     let any_live = state
         .streams
         .values()
-        .any(|(store, _)| store.health() == HealthState::Live);
+        .any(|(store, _)| store.health().is_serving());
     if any_live {
         StatusCode::OK.into_response()
     } else {
