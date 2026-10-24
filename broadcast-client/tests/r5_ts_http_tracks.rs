@@ -290,3 +290,53 @@ fn a_connection_that_ends_while_holding_delivers_everything_in_order() {
         .unwrap();
     assert!(tracks < first_sample && last_sample < ended);
 }
+
+#[test]
+fn a_track_that_resolves_after_the_hold_is_announced_as_an_update() {
+    let original = test_fixtures::read("ts/france2.ts");
+    let cut = HOLD_START_CHUNKS * CHUNK / TS_PACKET * TS_PACKET;
+    let mut combined = without_pid(&original[..cut], LAST_FRANCE2_PID);
+    let prefix_len = combined.len();
+    combined.extend_from_slice(&original[cut..]);
+    let (mut s, c) = open_live(0);
+    let mut now = 0u64;
+    let mut events = Vec::new();
+    for chunk in combined[..prefix_len].chunks(CHUNK) {
+        now += STEP_US;
+        s.on_data(c, chunk, now);
+        while s.poll(now).is_some() {}
+        events.extend(drain(&mut s));
+    }
+    now += WALL_LIMIT_US;
+    while s.poll(now).is_some() {}
+    events.extend(drain(&mut s));
+    let released = events
+        .iter()
+        .filter(|e| matches!(e, Event::Tracks(_)))
+        .count();
+    assert_eq!(released, 1, "the hold released at its deadline");
+    for chunk in combined[prefix_len..].chunks(CHUNK) {
+        now += STEP_US;
+        s.on_data(c, chunk, now);
+        while s.poll(now).is_some() {}
+        events.extend(drain(&mut s));
+    }
+    let sets: Vec<Vec<TrackId>> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Tracks(v) => Some(sorted(v.iter().map(|t| t.track_id).collect())),
+            _ => None,
+        })
+        .collect();
+    assert!(sets.len() >= 2, "{sets:?}");
+    assert!(sets[0].len() < sets.last().unwrap().len());
+    assert_eq!(sets.last().unwrap(), &final_track_set(&combined));
+    let delivered: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Sample { track, sample, .. } => Some((*track, sample.pts, sample.data.len())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(delivered, reference_samples(&combined));
+}

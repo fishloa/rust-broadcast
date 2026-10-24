@@ -529,3 +529,42 @@ to correlate. `ErrorKind` is `#[non_exhaustive]`; the new kind has `name()` `"tr
 via `impl_spec_display!`. Media of the muxable tracks flows unchanged. Audio renditions report the remapped id
 (`id + AUDIO_TRACK_ID_OFFSET`). Evidence: `fixtures/ts/scte35-other-pid.ts` (data-only) reports its data tracks
 and ends; the TF1 capture's two `stream_type` 0x06 tracks yield two reports while video and audio play.
+
+### F1: the initial TS-over-HTTP track set is announced once
+
+A live TS announces its tracks as each stream's codec config resolves (the first SPS, the first ADTS header), so a
+host that builds its pipeline from the first `Event::Tracks` started video-only (`ts/france2.ts` in 64 KB chunks:
+`[1]`, then `[1,2]` after 7 samples, the full six after 73; the 30-stream France TNT multiplex produced ~30
+announcements). The source now HOLDS the first media of every connection: from the first `Sample` or
+`DisplayChanged` it queues every item in order (`Sample`, `DisplayChanged`, discontinuity markers, `Status`
+events) without delivering them, and releases them behind ONE `Event::Tracks` carrying every track resolved so
+far. Release happens when the first of these holds:
+
+1. every PMT-declared elementary stream has resolved: a shadow PAT/PMT reader (`source/ts_http_hold.rs`:
+   `mpeg_ts::resync::TsResync` + `dvb_si::demux::SiDemux`, fed only until release) learns the programmes the PAT
+   lists, the elementary PIDs their PMTs declare (all programmes: the demuxer demuxes all of them), and a stream
+   counts as resolved when the demuxer reports `TrackAdded`/`TrackUpdated` with that `source_pid` or a
+   `TrackAbandoned` with that PID; the PAT must also have had every listed PMT seen;
+2. a limit, counted from the first media of the connection: `HOLD_MAX_INPUT_BYTES` (4 MiB of input),
+   `HOLD_MAX_MEDIA_US` (3 s of media, the largest per-track pts span among held samples), or `HOLD_MAX_WALL_US`
+   (3 s of caller clock, armed through `next_deadline_us`/`WakeAt`, so a source that goes quiet mid-hold still
+   releases);
+3. anything that must not overtake the held media: end of stream, a stall notice, a reconnect, a new connection,
+   a 404, a starved report.
+
+Evidence for the numbers (release point per capture): single programme `ts/france2.ts` 0.76 s of media / 0.85 MB,
+the TF1 capture 0.74 s / 0.26 MB, `ts/h264_aac.ts` within the first chunk, the 30-stream
+`france-tnt-uhf32-video-head-6MB.ts` 1.76 s / 1.5 MB. The limits leave ~1.7x headroom over the worst case and
+stay under the 5 s stall notice. A stream that declares a PID it never sends (modelled by dropping `PID 142` from
+`france2.ts`) is released at the limit with the streams that did resolve. Tracks that resolve after the release
+announce as updates exactly as before (`Event::Tracks` with the full merged set). Samples are never lost or
+reordered: the held items are appended behind the `Tracks` event in arrival order (tests compare the session's
+sample sequence with a bare `StreamingTsDemux` over the same bytes). `Status::Live` keeps its place in the
+stream (after the first `DisplayChanged`, before the first `Sample`), so it is now delivered at release rather
+than at the first sample. A reconnect starts a fresh hold for the new connection.
+
+Consequence for BC-2: the buffering controller learns the tracks and the media ends from the release on (the
+held samples replay in order within one drain), so its first `TrackMedia` and the zero-length join report can
+arrive up to the hold later than before; chunk arrival pacing (`on_chunk`, PCR) is unaffected. The oracle in
+`tests/buffer.rs` models the same hold. RTSP announces all tracks from the SDP before the first sample, so it
+needs no coalescing.

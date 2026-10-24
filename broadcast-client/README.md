@@ -10,6 +10,12 @@ connection for RTSP); time is a caller-supplied monotonic `now_us`.
 `Config::kind` selects the source; `SourceKind::Auto` picks RTSP for an `rtsp://` or `rtsps://` URL,
 HLS for a `.m3u8`/`.m3u` URL path (ASCII case-insensitive) and TS-over-HTTP otherwise.
 
+TS-over-HTTP announces its tracks once: the first media of a connection is held until every elementary stream
+the PAT/PMT declares has resolved, or 4 MiB of input, 3 s of media or 3 s of wall clock (whichever is first)
+has passed, then released behind ONE `Event::Tracks` with the whole resolved set, so a host can build its
+pipeline from the first `Tracks`. A stream that resolves later is announced by a further `Event::Tracks` with the
+merged set. Samples keep their order; `Status::Live` is delivered with the release.
+
 ## RTSP
 
 Sources for SAT>IP tuners and IP cameras. RTP/RTCP travel interleaved over the RTSP TCP connection
