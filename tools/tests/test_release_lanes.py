@@ -1,4 +1,4 @@
-"""Structural pins on the 51 release lanes, the lockstep lane, the pair list and the
+"""Structural pins on the 53 release lanes, the lockstep lane, the pair list and the
 plan document: the audit found every one of these unpinned, and a drift in any of
 them only shows up LIVE, mid-wave, on an immutable crates.io publish."""
 
@@ -18,7 +18,7 @@ PAIRS_FILE = REPO / "docs" / "release-plan-2026-10.pairs"
 LANES = sorted(WF.glob("release-*.yml"))
 LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 ABANDONED = {"atsc3"}  # lane fails safe by design; never in the pair list
-UNRELEASED: set[str] = set()  # no staged-but-unplanned lane: buffering-runtime ships via docs/release-plan-2026-10-patch4.pairs
+UNRELEASED: set[str] = {"tshttp-runtime", "broadcast-client"}  # lanes staged ahead of owner sign-off; leaves this set when a pairs file plans them
 
 
 def _pr():
@@ -48,7 +48,7 @@ def _planned():
 
 
 def test_lane_set_is_not_vacuous():
-    assert len(LANES) == 51, [p.name for p in LANES]
+    assert len(LANES) == 53, [p.name for p in LANES]
 
 
 @pytest.mark.parametrize("path", LANES, ids=lambda p: p.name)
