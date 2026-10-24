@@ -29,7 +29,7 @@ fn live_run(bytes: &[u8]) -> Run {
         tracks: Vec::new(),
         samples: Vec::new(),
     };
-    let mut drain = |s: &mut Session, run: &mut Run| {
+    let drain = |s: &mut Session, run: &mut Run| {
         while let Some(e) = s.next_event() {
             match e {
                 Event::Tracks(v) => run.tracks.push(v.iter().map(|t| t.track_id).collect()),
@@ -116,10 +116,9 @@ fn a_two_track_live_ts_announces_both_tracks_in_the_first_tracks_event() {
 
 #[test]
 fn a_live_multiplex_announces_a_bounded_initial_set_then_updates() {
-    let Some(bytes) = test_fixtures::require_bytes(
-        "ts/france-tnt-uhf32-video-head-6MB.ts",
-        "r5_ts_http_tracks",
-    ) else {
+    let Some(bytes) =
+        test_fixtures::require_bytes("ts/france-tnt-uhf32-video-head-6MB.ts", "r5_ts_http_tracks")
+    else {
         return;
     };
     let run = live_run(&bytes);
@@ -139,4 +138,155 @@ fn a_live_multiplex_announces_a_bounded_initial_set_then_updates() {
         expected.len()
     );
     assert_eq!(run.samples, reference_samples(&bytes));
+}
+
+const TS_PACKET: usize = 188;
+const PID_MASK: u16 = 0x1fff;
+const WALL_LIMIT_US: u64 = 3_000_000;
+const LAST_FRANCE2_PID: u16 = 142;
+const HOLD_START_CHUNKS: usize = 8;
+
+fn without_pid(bytes: &[u8], pid: u16) -> Vec<u8> {
+    bytes
+        .chunks(TS_PACKET)
+        .filter(|p| (u16::from(p[1]) << 8 | u16::from(p[2])) & PID_MASK != pid)
+        .flatten()
+        .copied()
+        .collect()
+}
+
+fn open_live(now: u64) -> (Session, u32) {
+    let mut s = Session::open("http://h/live.ts", Config::default(), now).unwrap();
+    let mut conn = None;
+    while let Some(a) = s.poll(now) {
+        if let Action::HttpRequest { conn: c, .. } = a {
+            conn = Some(c);
+        }
+    }
+    let c = conn.expect("request");
+    s.on_response(
+        c,
+        200,
+        &[("Content-Type".to_string(), "video/MP2T".to_string())],
+        now,
+    );
+    (s, c)
+}
+
+fn drain(s: &mut Session) -> Vec<Event> {
+    let mut out = Vec::new();
+    while let Some(e) = s.next_event() {
+        out.push(e);
+    }
+    out
+}
+
+#[test]
+fn an_undeclared_gap_releases_the_hold_at_the_wall_limit_without_losing_samples() {
+    let bytes = without_pid(&test_fixtures::read("ts/france2.ts"), LAST_FRANCE2_PID);
+    let fed = bytes[..HOLD_START_CHUNKS * CHUNK].to_vec();
+    let expected = final_track_set(&fed);
+    let (mut s, c) = open_live(0);
+    let mut now = 0u64;
+    let mut wake = None;
+    let mut events = Vec::new();
+    for chunk in bytes.chunks(CHUNK).take(HOLD_START_CHUNKS) {
+        now += STEP_US;
+        s.on_data(c, chunk, now);
+        while let Some(a) = s.poll(now) {
+            if let Action::WakeAt(t) = a {
+                wake = wake.max(Some(t));
+            }
+        }
+        events.extend(drain(&mut s));
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::Tracks(_) | Event::Sample { .. })),
+        "media must be held while a declared stream is unresolved"
+    );
+    assert!(
+        wake.is_some_and(|t| t <= HOLD_START_CHUNKS as u64 * STEP_US + WALL_LIMIT_US),
+        "a wake-up at the hold deadline: {wake:?}"
+    );
+    let due = HOLD_START_CHUNKS as u64 * STEP_US + WALL_LIMIT_US;
+    while s.poll(due).is_some() {}
+    events.extend(drain(&mut s));
+    let first = events
+        .iter()
+        .position(|e| matches!(e, Event::Tracks(_)))
+        .expect("Tracks released at the deadline");
+    let Event::Tracks(set) = &events[first] else {
+        unreachable!()
+    };
+    assert_eq!(
+        sorted(set.iter().map(|t| t.track_id).collect()),
+        expected,
+        "the resolved subset is announced"
+    );
+    assert!(
+        events[..first]
+            .iter()
+            .all(|e| !matches!(e, Event::Sample { .. }))
+    );
+    let held: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Sample { track, sample, .. } => Some((*track, sample.pts, sample.data.len())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(held, reference_samples(&fed));
+    assert!(!held.is_empty());
+}
+
+#[test]
+fn an_undeclared_gap_releases_the_hold_at_the_media_limit() {
+    let bytes = without_pid(&test_fixtures::read("ts/france2.ts"), LAST_FRANCE2_PID);
+    let run = live_run(&bytes);
+    assert_eq!(
+        sorted(run.tracks[0].clone()),
+        final_track_set(&bytes),
+        "{:?}",
+        run.tracks
+    );
+    assert_eq!(run.samples, reference_samples(&bytes));
+}
+
+#[test]
+fn a_connection_that_ends_while_holding_delivers_everything_in_order() {
+    let bytes = without_pid(&test_fixtures::read("ts/h264_aac.ts"), 0x101);
+    let (mut s, c) = open_live(0);
+    s.on_data(c, &bytes, STEP_US);
+    while s.poll(STEP_US).is_some() {}
+    let before = drain(&mut s);
+    assert!(!before.iter().any(|e| matches!(e, Event::Sample { .. })));
+    s.on_closed(c, None, 2 * STEP_US);
+    while s.poll(2 * STEP_US).is_some() {}
+    let events = drain(&mut s);
+    let tracks = events
+        .iter()
+        .position(|e| matches!(e, Event::Tracks(_)))
+        .expect("Tracks at EOF");
+    let ended = events
+        .iter()
+        .position(|e| {
+            matches!(
+                e,
+                Event::Status(
+                    broadcast_client::Status::Ended | broadcast_client::Status::Reconnecting { .. }
+                )
+            )
+        })
+        .unwrap_or_else(|| panic!("a terminal status: {events:?}"));
+    let first_sample = events
+        .iter()
+        .position(|e| matches!(e, Event::Sample { .. }))
+        .expect("samples");
+    let last_sample = events
+        .iter()
+        .rposition(|e| matches!(e, Event::Sample { .. }))
+        .unwrap();
+    assert!(tracks < first_sample && last_sample < ended);
 }

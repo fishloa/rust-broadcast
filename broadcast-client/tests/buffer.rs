@@ -320,6 +320,18 @@ fn run_gap(bytes: &[u8]) -> Host {
     h
 }
 
+fn declared_track_count(bytes: &[u8]) -> usize {
+    let mut demux = StreamingTsDemux::new();
+    demux.feed(bytes);
+    let mut n = 0;
+    while let Some(ev) = demux.poll_event() {
+        if matches!(ev, DemuxEvent::TrackAdded(_)) {
+            n += 1;
+        }
+    }
+    n
+}
+
 struct Oracle {
     demux: StreamingTsDemux,
     ctl: BufferController,
@@ -333,13 +345,16 @@ struct Oracle {
     join_27: u64,
     max_pts: i64,
     audio_max_end: u64,
+    declared_tracks: usize,
+    released: bool,
+    held: Vec<(TrackId, transmux::Sample)>,
     clock: PlayClock,
     inputs: Vec<BufferInput>,
     events: Vec<BufferEvent>,
 }
 
 impl Oracle {
-    fn new() -> Self {
+    fn new(declared_tracks: usize) -> Self {
         Self {
             demux: StreamingTsDemux::new(),
             ctl: BufferController::new(ControllerConfig::default(), None).unwrap(),
@@ -353,6 +368,9 @@ impl Oracle {
             join_27: 0,
             max_pts: 0,
             audio_max_end: 0,
+            declared_tracks,
+            released: false,
+            held: Vec::new(),
             clock: PlayClock::new(),
             inputs: Vec::new(),
             events: Vec::new(),
@@ -403,6 +421,41 @@ impl Oracle {
         }
     }
 
+    fn on_sample(
+        &mut self,
+        track_id: TrackId,
+        sample: transmux::Sample,
+        zero: &mut Option<(TrackId, u64)>,
+        ends: &mut BTreeMap<TrackId, u64>,
+    ) {
+        self.announce();
+        let ts = self.specs[&track_id].timescale;
+        let dur = i64::from(sample.duration.unwrap_or(0));
+        let pts = sample.pts.unwrap();
+        let decision = self.joins.get_mut(&track_id).map(|j| j.push(&sample));
+        if Some(track_id) == self.video {
+            match decision {
+                Some(JoinDecision::JoinPoint(_)) if !self.joined => {
+                    self.joined = true;
+                    self.join_27 = pts27(pts, ts);
+                    self.max_pts = pts;
+                    *zero = Some((track_id, pts27(pts, ts)));
+                    ends.insert(track_id, pts27(pts + dur, ts));
+                }
+                Some(JoinDecision::Keep) if self.joined => {
+                    self.max_pts = self.max_pts.max(pts);
+                    ends.insert(track_id, pts27(self.max_pts + dur, ts));
+                }
+                _ => {}
+            }
+        } else if Some(track_id) == self.audio && self.joined {
+            self.audio_max_end = self.audio_max_end.max(pts27(pts + dur, ts));
+            if self.audio_max_end > self.join_27 {
+                ends.insert(track_id, self.audio_max_end);
+            }
+        }
+    }
+
     fn chunk(&mut self, bytes: &[u8], now: u64) {
         self.demux.feed(bytes);
         let mut pcr = None;
@@ -423,34 +476,19 @@ impl Oracle {
                 DemuxEvent::Sample {
                     track_id, sample, ..
                 } => {
-                    self.announce();
-                    let ts = self.specs[&track_id].timescale;
-                    let dur = i64::from(sample.duration.unwrap_or(0));
-                    let pts = sample.pts.unwrap();
-                    let decision = self.joins.get_mut(&track_id).map(|j| j.push(&sample));
-                    if Some(track_id) == self.video {
-                        match decision {
-                            Some(JoinDecision::JoinPoint(_)) if !self.joined => {
-                                self.joined = true;
-                                self.join_27 = pts27(pts, ts);
-                                self.max_pts = pts;
-                                zero = Some((track_id, pts27(pts, ts)));
-                                ends.insert(track_id, pts27(pts + dur, ts));
-                            }
-                            Some(JoinDecision::Keep) if self.joined => {
-                                self.max_pts = self.max_pts.max(pts);
-                                ends.insert(track_id, pts27(self.max_pts + dur, ts));
-                            }
-                            _ => {}
-                        }
-                    } else if Some(track_id) == self.audio && self.joined {
-                        self.audio_max_end = self.audio_max_end.max(pts27(pts + dur, ts));
-                        if self.audio_max_end > self.join_27 {
-                            ends.insert(track_id, self.audio_max_end);
-                        }
+                    if self.released {
+                        self.on_sample(track_id, sample, &mut zero, &mut ends);
+                    } else {
+                        self.held.push((track_id, sample));
                     }
                 }
                 _ => {}
+            }
+        }
+        if !self.released && self.specs.len() >= self.declared_tracks {
+            self.released = true;
+            for (track_id, sample) in std::mem::take(&mut self.held) {
+                self.on_sample(track_id, sample, &mut zero, &mut ends);
             }
         }
         self.ctl.on_chunk(now, bytes.len() as u32, pcr);
@@ -499,7 +537,7 @@ fn buffer_events_match_bare_controller_oracle() {
     let arrivals = with_gap(n, GAP_AFTER_CHUNK);
     let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
 
-    let mut oracle = Oracle::new();
+    let mut oracle = Oracle::new(declared_track_count(&bytes));
     for step in timeline(&arrivals, TAIL_US) {
         match step {
             Step::Tick(t) => oracle.tick(t),

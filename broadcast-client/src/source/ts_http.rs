@@ -1,6 +1,6 @@
 //! Adapter over [`tshttp_runtime::TsHttpClient`].
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
 use url::Url;
@@ -9,11 +9,22 @@ use broadcast_common::clock33::PCR_HZ;
 use transmux::{DemuxEvent, TrackId, TrackSpec};
 use tshttp_runtime::{Config as TsConfig, TsHttpClient};
 
+use mpeg_ts::pid::Pid;
+
+use crate::source::ts_http_hold::{DeclaredStreams, HOLD_MAX_WALL_US, limit_reached};
 use crate::{Event, Status};
 
 pub(crate) type Item = Option<Event>;
 
 const MICROS_PER_MILLI: u64 = 1_000;
+const MICROS_PER_SEC: i128 = 1_000_000;
+
+struct HoldState {
+    started_us: u64,
+    bytes: usize,
+    first_pts: BTreeMap<TrackId, i64>,
+    span_us: u64,
+}
 
 fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
     if clock_hz == 0 {
@@ -36,6 +47,11 @@ pub struct TsHttpSource {
     failure_announced: bool,
     caller_actions: VecDeque<tshttp_runtime::Action>,
     last_pcr_27mhz: Option<u64>,
+    now_us: u64,
+    declared: Option<DeclaredStreams>,
+    resolved: BTreeSet<Pid>,
+    hold: Option<HoldState>,
+    held: VecDeque<Item>,
 }
 
 impl TsHttpSource {
@@ -54,6 +70,11 @@ impl TsHttpSource {
             failure_announced: false,
             caller_actions: VecDeque::new(),
             last_pcr_27mhz: None,
+            now_us,
+            declared: Some(DeclaredStreams::new()),
+            resolved: BTreeSet::new(),
+            hold: None,
+            held: VecDeque::new(),
         }
     }
 
@@ -84,13 +105,23 @@ impl TsHttpSource {
     }
 
     pub(crate) fn next_deadline_us(&self) -> Option<u64> {
-        self.ts
+        let ts = self
+            .ts
             .next_deadline()
-            .map(|ms| ms.saturating_mul(MICROS_PER_MILLI))
+            .map(|ms| ms.saturating_mul(MICROS_PER_MILLI));
+        let hold = self
+            .hold
+            .as_ref()
+            .map(|h| h.started_us.saturating_add(HOLD_MAX_WALL_US));
+        match (ts, hold) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// Advance timers.
     pub fn poll_timeout(&mut self, now_us: u64) {
+        self.now_us = now_us;
         self.ts.poll_timeout(now_us / MICROS_PER_MILLI);
         self.drain_ts_events();
     }
@@ -126,18 +157,94 @@ impl TsHttpSource {
     }
 
     fn push(&mut self, e: Event) {
-        self.events.push_back(Some(e));
+        self.push_item(Some(e));
+    }
+
+    fn push_item(&mut self, item: Item) {
+        if self.hold.is_some() {
+            self.held.push_back(item);
+        } else {
+            self.events.push_back(item);
+        }
+    }
+
+    fn release_hold(&mut self) {
+        if self.hold.take().is_none() {
+            return;
+        }
+        self.declared = None;
+        if self.tracks_dirty {
+            let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
+            self.events.push_back(Some(Event::Tracks(vals)));
+            self.tracks_dirty = false;
+        }
+        self.events.append(&mut self.held);
+    }
+
+    fn start_hold_if_unresolved(&mut self) {
+        if self.hold.is_some() || self.conn_seen_first_sample {
+            return;
+        }
+        if self
+            .declared
+            .as_ref()
+            .is_some_and(|d| !d.all_resolved(&self.resolved))
+        {
+            self.hold = Some(HoldState {
+                started_us: self.now_us,
+                bytes: 0,
+                first_pts: BTreeMap::new(),
+                span_us: 0,
+            });
+        }
+    }
+
+    fn release_hold_if_due(&mut self) {
+        let Some(h) = self.hold.as_ref() else {
+            return;
+        };
+        let due = limit_reached(h.bytes, h.span_us, self.now_us.saturating_sub(h.started_us))
+            || self
+                .declared
+                .as_ref()
+                .is_none_or(|d| d.all_resolved(&self.resolved));
+        if due {
+            self.release_hold();
+        }
+    }
+
+    fn note_held_sample(&mut self, track: TrackId, pts: Option<i64>) {
+        let (Some(pts), Some(spec)) = (pts, self.tracks.get(&track)) else {
+            return;
+        };
+        let timescale = i128::from(spec.timescale.max(1));
+        let Some(h) = self.hold.as_mut() else {
+            return;
+        };
+        let first = *h.first_pts.entry(track).or_insert(pts);
+        let span = i128::from(pts.saturating_sub(first)) * MICROS_PER_SEC / timescale;
+        h.span_us = h
+            .span_us
+            .max(u64::try_from(span.max(0)).unwrap_or(u64::MAX));
     }
 
     /// Response callback.
     pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now_us: u64) {
+        self.now_us = now_us;
         self.ts.on_response(status, headers, now_us / 1000);
         self.drain_ts_events();
     }
 
     /// Data callback.
     pub fn on_data(&mut self, bytes: &[u8], now_us: u64) {
+        self.now_us = now_us;
         self.last_pcr_27mhz = None;
+        if let Some(d) = self.declared.as_mut() {
+            d.feed(bytes);
+        }
+        if let Some(h) = self.hold.as_mut() {
+            h.bytes = h.bytes.saturating_add(bytes.len());
+        }
         if self.stalled && !bytes.is_empty() {
             self.push(Event::Status(Status::Live));
             self.stalled = false;
@@ -148,6 +255,7 @@ impl TsHttpSource {
 
     /// Closed callback at transport level.
     pub fn on_closed(&mut self, error: Option<String>, now_us: u64) {
+        self.now_us = now_us;
         if error.is_some() {
             self.ts.on_error(now_us / 1000);
         } else {
@@ -158,12 +266,14 @@ impl TsHttpSource {
 
     /// Error callback.
     pub fn on_error(&mut self, now_us: u64) {
+        self.now_us = now_us;
         self.ts.on_error(now_us / 1000);
         self.drain_ts_events();
     }
 
     /// Reconnect.
     pub fn reconnect(&mut self, now_us: u64) {
+        self.now_us = now_us;
         self.ts.reconnect(now_us / 1000);
         while let Some(action) = self.ts.poll() {
             self.caller_actions.push_back(action);
@@ -175,17 +285,23 @@ impl TsHttpSource {
         while let Some(ev) = self.ts.poll_event() {
             self.map_ts_event(ev);
         }
+        self.release_hold_if_due();
     }
 
     fn map_ts_event(&mut self, e: tshttp_runtime::Event) {
         match e {
             tshttp_runtime::Event::Finite { expected_bytes } => {
+                self.release_hold();
                 self.push(Event::Finite { expected_bytes });
             }
             tshttp_runtime::Event::Ended => {
+                self.release_hold();
                 self.push(Event::Status(Status::Ended));
             }
             tshttp_runtime::Event::Connected => {
+                self.release_hold();
+                self.declared = Some(DeclaredStreams::new());
+                self.resolved.clear();
                 self.connection_count = self.connection_count.saturating_add(1);
                 if self.connection_count > 1 {
                     self.push(Event::Discontinuity);
@@ -200,15 +316,17 @@ impl TsHttpSource {
                 self.last_pcr_27mhz = Some(to_27mhz(ticks, clock_hz));
             }
             tshttp_runtime::Event::Demux(DemuxEvent::Discontinuity { .. }) => {
-                self.events.push_back(None);
+                self.push_item(None);
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::TrackAdded(spec)) => {
+            tshttp_runtime::Event::Demux(
+                DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec),
+            ) => {
+                self.resolved.extend(spec.source_pid);
                 self.tracks.insert(spec.track_id, spec);
                 self.tracks_dirty = true;
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::TrackUpdated(spec)) => {
-                self.tracks.insert(spec.track_id, spec);
-                self.tracks_dirty = true;
+            tshttp_runtime::Event::Demux(DemuxEvent::TrackAbandoned { provenance, .. }) => {
+                self.resolved.extend(provenance.pid);
             }
             tshttp_runtime::Event::Demux(DemuxEvent::TrackRemoved { track_id, .. }) => {
                 self.tracks.remove(&track_id);
@@ -217,17 +335,22 @@ impl TsHttpSource {
             tshttp_runtime::Event::Demux(DemuxEvent::Sample {
                 track_id, sample, ..
             }) => {
+                let pts = sample.pts;
                 if !self.conn_seen_first_sample {
-                    if self.tracks_dirty {
-                        let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
-                        self.push(Event::Tracks(vals));
-                        self.tracks_dirty = false;
+                    self.start_hold_if_unresolved();
+                    self.conn_seen_first_sample = true;
+                    if self.hold.is_none() {
+                        self.declared = None;
+                        if self.tracks_dirty {
+                            let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
+                            self.push(Event::Tracks(vals));
+                            self.tracks_dirty = false;
+                        }
                     }
                     if self.conn_connected {
                         self.push(Event::Status(Status::Live));
                     }
-                    self.conn_seen_first_sample = true;
-                } else if self.tracks_dirty {
+                } else if self.tracks_dirty && self.hold.is_none() {
                     let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
                     self.push(Event::Tracks(vals));
                     self.tracks_dirty = false;
@@ -237,6 +360,7 @@ impl TsHttpSource {
                     sample,
                     join: None,
                 });
+                self.note_held_sample(track_id, pts);
             }
             tshttp_runtime::Event::Demux(DemuxEvent::DisplayChanged {
                 track_id,
@@ -244,7 +368,8 @@ impl TsHttpSource {
                 pts,
                 ..
             }) => {
-                if self.tracks_dirty {
+                self.start_hold_if_unresolved();
+                if self.tracks_dirty && self.hold.is_none() {
                     let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
                     self.push(Event::Tracks(vals));
                     self.tracks_dirty = false;
@@ -256,17 +381,21 @@ impl TsHttpSource {
                 });
             }
             tshttp_runtime::Event::StallNotice { secs } => {
+                self.release_hold();
                 self.push(Event::Status(Status::Stalled { secs }));
                 self.stalled = true;
             }
             tshttp_runtime::Event::Reconnecting { attempt } => {
+                self.release_hold();
                 self.failure_announced = true;
                 self.push(Event::Status(Status::Reconnecting { attempt }));
             }
             tshttp_runtime::Event::NotFound { status: _ } => {
+                self.release_hold();
                 self.push(Event::Status(Status::NotFound));
             }
             tshttp_runtime::Event::Starved(k) => {
+                self.release_hold();
                 self.push(Event::Starved(k));
             }
             _ => {}
