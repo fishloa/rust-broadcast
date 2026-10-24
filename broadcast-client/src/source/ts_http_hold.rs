@@ -104,6 +104,7 @@ pub(crate) struct DeclaredStreams {
     declared: BTreeSet<Pid>,
     sent: BTreeSet<Pid>,
     kinds: BTreeMap<Pid, StreamKind>,
+    pmt_pids: BTreeMap<u16, BTreeSet<Pid>>,
 }
 
 impl DeclaredStreams {
@@ -119,6 +120,7 @@ impl DeclaredStreams {
             declared: BTreeSet::new(),
             sent: BTreeSet::new(),
             kinds: BTreeMap::new(),
+            pmt_pids: BTreeMap::new(),
         }
     }
 
@@ -144,6 +146,16 @@ impl DeclaredStreams {
                         self.seen_pmts.insert(pmt.program_number);
                         self.declared
                             .extend(pmt.streams.iter().map(|s| s.elementary_pid));
+                        let previous = self
+                            .pmt_pids
+                            .insert(
+                                pmt.program_number,
+                                pmt.streams.iter().map(|s| s.elementary_pid).collect(),
+                            )
+                            .unwrap_or_default();
+                        for pid in previous {
+                            self.kinds.remove(&pid);
+                        }
                         self.kinds.extend(
                             pmt.streams
                                 .iter()

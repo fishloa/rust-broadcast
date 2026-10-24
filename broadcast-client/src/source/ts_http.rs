@@ -295,7 +295,7 @@ impl TsHttpSource {
         self.last_pcr_27mhz = None;
         if let Some(d) = self.declared.as_mut() {
             d.feed(bytes);
-            if d.kinds().len() != self.expected.len() {
+            if d.kinds() != &self.expected {
                 self.expected.clone_from(d.kinds());
             }
         }

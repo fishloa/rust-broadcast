@@ -12,7 +12,8 @@ const PL: &str = "http://origin.test/v/index.m3u8";
 const FRAGMENT_FIXTURE: &str = "transmux/h264_aac_frag.mp4";
 const SEGMENT_GROUP: usize = 3;
 const STEPS: usize = 20_000;
-const VOD_HEAD: &str = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:10\n#EXT-X-PLAYLIST-TYPE:VOD\n";
+const VOD_HEAD: &str =
+    "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:10\n#EXT-X-PLAYLIST-TYPE:VOD\n";
 
 fn parts() -> (Vec<u8>, Vec<Vec<u8>>) {
     let b = test_fixtures::read(FRAGMENT_FIXTURE);
@@ -85,7 +86,10 @@ fn stop_on_end_or_fatal(e: &[Event]) -> bool {
 #[test]
 fn vod_init_transient_503_recovers_and_plays_everything() {
     let want = clean_samples(&["i1.mp4"]);
-    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])]);
+    let mut h = vod_host(
+        &["i1.mp4"],
+        &[("i1.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])],
+    );
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
     assert!(t.ended, "{t:?}");
@@ -101,7 +105,10 @@ fn vod_init_permanent_404_is_one_typed_fatal_after_the_cap() {
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
     assert!(!t.ended, "{t:?}");
-    assert_eq!(t.fatals, vec![ErrorKind::InitFetchFailed { status: Some(404) }]);
+    assert_eq!(
+        t.fatals,
+        vec![ErrorKind::InitFetchFailed { status: Some(404) }]
+    );
     assert_eq!(
         h.hits(&format!("{BASE}/i1.mp4")),
         DEFAULT_MAX_KEY_FAILURES as usize
@@ -120,7 +127,11 @@ fn vod_init_permanent_503_is_one_typed_fatal() {
     let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Status(503)])]);
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
-    assert_eq!(t.fatals, vec![ErrorKind::InitFetchFailed { status: Some(503) }], "{t:?}");
+    assert_eq!(
+        t.fatals,
+        vec![ErrorKind::InitFetchFailed { status: Some(503) }],
+        "{t:?}"
+    );
 }
 
 #[test]
@@ -128,7 +139,11 @@ fn vod_init_transport_error_reports_no_status() {
     let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::TransportError])]);
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
-    assert_eq!(t.fatals, vec![ErrorKind::InitFetchFailed { status: None }], "{t:?}");
+    assert_eq!(
+        t.fatals,
+        vec![ErrorKind::InitFetchFailed { status: None }],
+        "{t:?}"
+    );
 }
 
 #[test]
@@ -146,7 +161,10 @@ fn live_init_transient_503_still_recovers() {
     }
     let mut h = Host::new(PL, hls_config());
     h.route(PL, pl);
-    h.route(&format!("{BASE}/i1.mp4"), vec![Reply::Status(503), Reply::Ok(init)]);
+    h.route(
+        &format!("{BASE}/i1.mp4"),
+        vec![Reply::Status(503), Reply::Ok(init)],
+    );
     for (i, seg) in segs.iter().enumerate().take(3) {
         h.ok(&format!("{BASE}/s{i}.m4s"), seg.clone());
     }
@@ -176,14 +194,21 @@ fn live_init_permanent_failure_is_one_typed_fatal() {
     h.ok(&format!("{BASE}/s0.m4s"), segs[0].clone());
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
-    assert_eq!(t.fatals, vec![ErrorKind::InitFetchFailed { status: Some(404) }], "{t:?}");
+    assert_eq!(
+        t.fatals,
+        vec![ErrorKind::InitFetchFailed { status: Some(404) }],
+        "{t:?}"
+    );
 }
 
 #[test]
 fn vod_second_map_init_transient_failure_recovers() {
     let maps = ["i1.mp4", "i2.mp4"];
     let want = clean_samples(&maps);
-    let mut h = vod_host(&maps, &[("i2.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])]);
+    let mut h = vod_host(
+        &maps,
+        &[("i2.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])],
+    );
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
     assert!(t.ended && t.fatals.is_empty(), "{t:?}");
@@ -192,16 +217,26 @@ fn vod_second_map_init_transient_failure_recovers() {
 
 #[test]
 fn vod_second_map_init_permanent_failure_is_one_typed_fatal() {
-    let mut h = vod_host(&["i1.mp4", "i2.mp4"], &[("i2.mp4", vec![Reply::Status(404)])]);
+    let mut h = vod_host(
+        &["i1.mp4", "i2.mp4"],
+        &[("i2.mp4", vec![Reply::Status(404)])],
+    );
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
     assert!(!t.ended, "{t:?}");
-    assert_eq!(t.fatals, vec![ErrorKind::InitFetchFailed { status: Some(404) }], "{t:?}");
+    assert_eq!(
+        t.fatals,
+        vec![ErrorKind::InitFetchFailed { status: Some(404) }],
+        "{t:?}"
+    );
 }
 
 #[test]
 fn init_failure_cap_follows_max_key_failures() {
-    let cfg = Config { max_key_failures: 2, ..hls_config() };
+    let cfg = Config {
+        max_key_failures: 2,
+        ..hls_config()
+    };
     let (init, segs) = parts();
     let mut h = Host::new(PL, cfg);
     h.ok(PL, vod_playlist(&["i1.mp4"]));
@@ -215,7 +250,10 @@ fn init_failure_cap_follows_max_key_failures() {
 
 #[test]
 fn vod_init_retry_does_not_refetch_the_ended_playlist() {
-    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])]);
+    let mut h = vod_host(
+        &["i1.mp4"],
+        &[("i1.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])],
+    );
     h.run_until(stop_on_end_or_fatal, STEPS);
     assert!(tally(&h).ended);
     assert_eq!(h.hits(PL), 1);
@@ -232,8 +270,20 @@ fn resign(map_resign: bool, seg_resign: bool) -> Resign {
     let (init, segs) = parts();
     let n = segs.len().min(RESIGN_WINDOWS);
     let mut h = Host::new(PL, hls_config());
-    let mq = |r: usize| if map_resign { format!("?sig={r}") } else { String::new() };
-    let sq = |r: usize| if seg_resign { format!("?sig={r}") } else { String::new() };
+    let mq = |r: usize| {
+        if map_resign {
+            format!("?sig={r}")
+        } else {
+            String::new()
+        }
+    };
+    let sq = |r: usize| {
+        if seg_resign {
+            format!("?sig={r}")
+        } else {
+            String::new()
+        }
+    };
     let mut replies = vec![];
     for r in 0..n {
         let mut p = format!(
@@ -254,10 +304,14 @@ fn resign(map_resign: bool, seg_resign: bool) -> Resign {
         }
     }
     h.run_until(|_| false, 400);
-    let init_urls: std::collections::BTreeSet<String> =
-        (0..n).map(|r| format!("{BASE}/init.mp4{}", mq(r))).collect();
+    let init_urls: std::collections::BTreeSet<String> = (0..n)
+        .map(|r| format!("{BASE}/init.mp4{}", mq(r)))
+        .collect();
     let init_fetches = init_urls.iter().map(|u| h.hits(u)).sum();
-    Resign { init_fetches, t: tally(&h) }
+    Resign {
+        init_fetches,
+        t: tally(&h),
+    }
 }
 
 #[test]
@@ -267,7 +321,10 @@ fn resigned_map_uri_is_one_init_one_tracks_event() {
         let r = resign(m, s);
         assert_eq!(r.init_fetches, 1, "map_resign={m} seg_resign={s}");
         assert_eq!(r.t.tracks, 1, "map_resign={m} seg_resign={s}: {:?}", r.t);
-        assert_eq!(r.t.samples, stable.t.samples, "map_resign={m} seg_resign={s}");
+        assert_eq!(
+            r.t.samples, stable.t.samples,
+            "map_resign={m} seg_resign={s}"
+        );
         assert!(r.t.fatals.is_empty());
     }
     assert_eq!(stable.init_fetches, 1);
@@ -297,7 +354,9 @@ fn changed_map_byte_range_is_a_new_init() {
     let len = init.len();
     let mut file = init.clone();
     file.extend_from_slice(&init);
-    let mut p = format!("{VOD_HEAD}#EXT-X-MAP:URI=\"m.mp4?sig=1\",BYTERANGE=\"{len}@0\"\n#EXTINF:1.0,\ns0.m4s\n");
+    let mut p = format!(
+        "{VOD_HEAD}#EXT-X-MAP:URI=\"m.mp4?sig=1\",BYTERANGE=\"{len}@0\"\n#EXTINF:1.0,\ns0.m4s\n"
+    );
     p.push_str(&format!(
         "#EXT-X-MAP:URI=\"m.mp4?sig=2\",BYTERANGE=\"{len}@{len}\"\n#EXTINF:1.0,\ns1.m4s\n#EXT-X-ENDLIST\n"
     ));
