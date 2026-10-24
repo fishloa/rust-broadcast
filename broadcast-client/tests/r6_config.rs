@@ -49,29 +49,36 @@ fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
 
 #[test]
 fn the_smallest_valid_values_open() {
-    let mut config = Config::default();
-    config.max_queued_events = 1;
-    config.max_playlist_bytes = 1;
-    config.max_segment_bytes = 1;
-    config.max_key_bytes = 1;
-    config.hls_request_timeout_us = 1;
-    config.hls_segment_timeout_us = 1;
-    config.hls_key_timeout_us = 1;
-    config.timeline_jump = Some(TimelineJumpConfig {
-        backward_us: 1,
-        forward_slack_us: 1,
-    });
+    let config = Config {
+        max_queued_events: 1,
+        max_playlist_bytes: 1,
+        max_segment_bytes: 1,
+        max_key_bytes: 1,
+        hls_request_timeout_us: 1,
+        hls_segment_timeout_us: 1,
+        hls_key_timeout_us: 1,
+        timeline_jump: Some(TimelineJumpConfig {
+            backward_us: 1,
+            forward_slack_us: 1,
+        }),
+        ..Config::default()
+    };
     assert_eq!(field_of(config), None);
 }
 
 #[test]
 fn a_disabled_detector_and_unbounded_thresholds_open() {
-    let mut config = Config::default();
-    config.timeline_jump = None;
-    assert_eq!(field_of(config.clone()), None);
-    config.timeline_jump = Some(TimelineJumpConfig {
-        backward_us: u64::MAX,
-        forward_slack_us: u64::MAX,
-    });
-    assert_eq!(field_of(config), None);
+    let disabled = Config {
+        timeline_jump: None,
+        ..Config::default()
+    };
+    assert_eq!(field_of(disabled), None);
+    let unbounded = Config {
+        timeline_jump: Some(TimelineJumpConfig {
+            backward_us: u64::MAX,
+            forward_slack_us: u64::MAX,
+        }),
+        ..Config::default()
+    };
+    assert_eq!(field_of(unbounded), None);
 }

@@ -29,8 +29,13 @@ The handshake is DESCRIBE, one SETUP per SDP media (H.264 video and AAC audio; i
 channels 0-1, 2-3, ...), then PLAY. Track ids are the 1-based order of the played media. A relative
 `a=control` resolves against the DESCRIBE `Content-Base` (else `Content-Location`, else the request URL
 with a trailing `/`); an absolute control for another scheme, host or port skips that section, as does any
-media the client cannot play (PCMU audio, H.265, application data) - only an SDP with nothing playable
-left fails. At most 16 sections are played; a SETUP reply that repeats or overlaps an earlier track's
+media the client cannot play (PCMU audio, H.265, application data); each skipped section is reported once
+per source as a non-fatal `ErrorKind::TrackDropped` (numbered after the played tracks, in media order). An SDP
+with nothing playable left fails: when a skipped section names an unsupported codec by `a=rtpmap` (H.265,
+PCMU, ...) the failure is ONE fatal `ErrorKind::UnsupportedCodec { fourcc }` (the `rtpmap` encoding name) and
+the session goes silent instead of reconnecting; a section that names no codec, or a played codec with an
+unusable `a=fmtp`, or an SDP that does not parse, is an ordinary failed attempt (backoff and retry). At most
+16 sections are played; a SETUP reply that repeats or overlaps an earlier track's
 interleaved channels, or carries no `Transport`, fails the connection. `Event::Tracks` is
 emitted before the first sample of every connection, `Event::Sample { join: None }` per access
 unit, `Status::Establishing` on connect and `Status::Live` at the first sample. An `OPTIONS`
@@ -153,7 +158,29 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   controller is seeded from the progress the session kept for it (media end from the join point, audio
   past the join PTS), so a late declaration neither pauses nor blinds the controller. A track that never
   emitted is waited for as before. `rejoin()` and a timeline discontinuity discard that progress. The
-  HLS/finite playout gate uses the same default rule.
+  HLS/finite playout gate uses the same default rule. The default treats every video codec as video
+  (AVC, HEVC, VVC, AV1, VP9, VP8, MPEG-2) and gives each video sample a join decision: the NAL-aware
+  `LiveJoin` for AVC/HEVC/VVC, and for the others the first sync sample is the join point (`JoinPoint`,
+  earlier samples `Drop`, leading pictures before the join point in presentation order `Drop`).
+- Live TS declaration semantics (`set_rendered_tracks`): an id no `Event::Tracks` has announced is ignored,
+  remembered, applied when a later announcement names it, and reported once per declaration as a non-fatal
+  `ErrorKind::UnknownRenderedTrack { track_id }` (nothing is reported before the first announcement; a
+  declaration made earlier simply waits for it). A non-empty declaration none of whose ids is announced
+  renders the default set meanwhile (a typo never freezes `Start`); an empty declaration renders nothing. A
+  declared track that vanishes (PMT drop, reconnect to another stream) and comes back under a new id (the
+  demuxer never reuses an id) is replaced by the lowest announced track of its kind (video or audio) that the
+  host did not declare itself, so an explicit video+audio declaration keeps playing across a PMT flip; if the
+  original id returns it wins again. HLS and RTSP sessions pass the declaration through unchanged (the HLS
+  playout gate waits for a declared separate audio rendition until it is announced).
+- Every new TS-over-HTTP connection announces its own track set: `Event::Tracks` is the full set, so a track the
+  new connection does not carry is absent from the first `Tracks` after the reconnect (and from
+  `default_rendered_tracks()`), never a union with the old connection's.
+- Output is independent of how the host chunks the bytes: the `Sample` sequence (track, pts, dts, join, data) and
+  the position of every `Discontinuity` among the samples are identical for every read size at a given
+  arrival-clock policy. What depends on arrival time, by nature, is: `Buffer` events, `Status`/`Starved`, the
+  grouping and timing of `Tracks`/`DisplayChanged` (the hold releases at the first read boundary at which its
+  condition holds), and timers (a connection with no sample within `start_timeout_ms` reconnects at a
+  read-quantised byte offset).
 - `Action::HttpRequest::byte_range` is `(offset, length)`, not `(start, end)`; the host builds
   the `Range: bytes=offset-(offset+length-1)` header itself.
 - `Action::WakeAt(t)` means "poll at or after `t`"; the session drops one that is not after the `now` of
@@ -184,6 +211,12 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   A host with a tighter first-frame budget lowers `tracks_hold_max_wall_us`, or sets `0` (also for
   `tracks_hold_max_media_us`) to disable the hold and take tracks as each stream resolves.
   `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds the input limit.
+  It also rejects every other value that silently disables output: `max_queued_events`, `max_playlist_bytes`,
+  `max_segment_bytes`, `max_key_bytes`, `hls_request_timeout_us`, `hls_segment_timeout_us`,
+  `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, and a
+  `buffer` that `buffering_runtime::ControllerConfig::validate` rejects. `ts_http` values are clamped to the
+  nearest valid ones (`tshttp_runtime::Config::clamped`), `max_key_failures: 0` behaves as `1`, and a
+  playout lead that the stream cannot reach (`u64::MAX`) keeps the gate closed.
   The hold never changes the sample sequence (track, pts, dts, sync flag, join decision, bytes): it is
   identical to the disabled hold. Host contract: the held samples are delivered as one burst behind the
   `Tracks`, up to the hold long; `Buffer::Start` follows within a few hundred ms. A host must accept that
