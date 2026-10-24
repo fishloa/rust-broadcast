@@ -6,9 +6,10 @@ use alloc::vec::Vec;
 use buffering_runtime::{
     BufferController, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
 };
-use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
+use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::events::{BufferEvent, Event};
+use crate::join::VideoJoin;
 
 /// One input the session fed to the buffering controller.
 #[cfg(feature = "test-seams")]
@@ -132,7 +133,7 @@ pub(crate) struct Feeder {
     finite: bool,
     rendered: BTreeSet<TrackId>,
     rendered_explicit: bool,
-    live_joins: BTreeMap<TrackId, LiveJoin>,
+    live_joins: BTreeMap<TrackId, VideoJoin>,
     track_specs: BTreeMap<TrackId, TrackSpec>,
     pending_ends: BTreeMap<TrackId, u64>,
     pending_zero: BTreeMap<TrackId, (i64, u32)>,
@@ -238,7 +239,7 @@ impl Feeder {
 
     pub(crate) fn on_track_added(&mut self, spec: &TrackSpec) {
         self.track_specs.insert(spec.track_id, spec.clone());
-        if let Some(join) = LiveJoin::for_config(&spec.config) {
+        if let Some(join) = VideoJoin::for_config(&spec.config) {
             self.live_joins.entry(spec.track_id).or_insert(join);
         }
         self.retarget_default();
@@ -253,9 +254,12 @@ impl Feeder {
         self.apply_rendered(wanted);
     }
 
-    pub(crate) fn set_rendered_tracks(&mut self, tracks: &[TrackId]) {
-        self.rendered_explicit = true;
-        self.apply_rendered(tracks.iter().copied().collect());
+    pub(crate) fn set_rendered(&mut self, tracks: Option<&[TrackId]>) {
+        self.rendered_explicit = tracks.is_some();
+        match tracks {
+            Some(t) => self.apply_rendered(t.iter().copied().collect()),
+            None => self.retarget_default(),
+        }
     }
 
     fn apply_rendered(&mut self, wanted: BTreeSet<TrackId>) {
@@ -570,7 +574,7 @@ impl Feeder {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
-    use transmux::TsDemux;
+    use transmux::{LiveJoin, TsDemux};
 
     const FIXTURE: &str = "ts/h264_aac.ts";
     const FAR_PTS_DURATION: u32 = 3_000;
@@ -874,7 +878,7 @@ mod tests {
             r.events
         );
         let declared_at = r.now;
-        r.f.set_rendered_tracks(&[TrackId::new(VIDEO_ID), TrackId::new(AUDIO_B_ID)]);
+        r.f.set_rendered(Some(&[TrackId::new(VIDEO_ID), TrackId::new(AUDIO_B_ID)]));
         r.tick();
         let emitted_end = r.emitted_end_27mhz();
         r.tick_for(8_000_000);
@@ -931,10 +935,32 @@ mod tests {
         r.emitting = vec![VIDEO_ID, AUDIO_A_ID];
         r.prefill();
         let b = TrackId::new(AUDIO_B_ID);
-        r.f.set_rendered_tracks(&[TrackId::new(VIDEO_ID), b]);
+        r.f.set_rendered(Some(&[TrackId::new(VIDEO_ID), b]));
         assert!(r.f.rendered.contains(&b));
         assert!(!r.f.pending_ends.contains_key(&b));
         assert!(!r.f.audio_max_end.contains_key(&b));
+    }
+
+    #[test]
+    fn av1_and_vp9_tracks_are_default_rendered_video() {
+        use transmux::Fmp4Demux;
+        for fixture in ["mp4/frag/av1.frag.mp4", "mp4/frag/vp9.frag.mp4"] {
+            let data = test_fixtures::read(fixture);
+            let media = Fmp4Demux::new().unpackage(&data[..]).unwrap();
+            let video = media
+                .tracks
+                .iter()
+                .find(|t| t.spec.config.is_video())
+                .unwrap();
+            let mut f = feeder();
+            f.on_track_added(&video.spec);
+            assert_eq!(
+                f.default_rendered(),
+                (Some(video.spec.track_id), None),
+                "{fixture}"
+            );
+            assert!(f.rendered.contains(&video.spec.track_id));
+        }
     }
 
     #[test]

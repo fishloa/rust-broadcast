@@ -23,7 +23,30 @@ const KEY: [u8; 16] = [0x42; 16];
 const IV: [u8; 16] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
 ];
-const TS_FIXTURE: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
+const TS_SOURCES: [&[u8]; 4] = [
+    include_bytes!("../../fixtures/ts/h264_aac.ts"),
+    include_bytes!("../../fixtures/ts/legacy/mpeg2_mp2.ts"),
+    include_bytes!("../../fixtures/ts/hevc/main.ts"),
+    include_bytes!("../../fixtures/ts/aac-5_1-640k.ts"),
+];
+const PMT_FLIP_SOURCE: usize = TS_SOURCES.len();
+const TS_SOURCE_COUNT: usize = TS_SOURCES.len() + 1;
+const PAT_PID: u16 = 0;
+const PUSI: u8 = 0x40;
+const PID_HIGH_MASK: u8 = 0x1f;
+const SECTION_HEADER: usize = 3;
+const CRC_LEN: usize = 4;
+const PAT_PROGRAM_OFFSET: usize = 8;
+const PAT_ENTRY: usize = 4;
+const PMT_FIXED: usize = 12;
+const PMT_ES_FIXED: usize = 5;
+const PMT_VERSION_BYTE: usize = 5;
+const PMT_VERSION_BASE: u8 = 0xC1;
+const PMT_VERSION_MASK: u8 = 0x1f;
+const PMT_DROP_FROM: usize = 3;
+const PMT_DROP_UNTIL: usize = 6;
+const PMT_DIVISIONS: usize = 9;
+const CONFIG_HEADER: usize = 8;
 const MAX_PUMP_ACTIONS: usize = 4096;
 const TS_PACKET: usize = 188;
 const TS_SEED_PACKETS: usize = 160;
@@ -44,7 +67,19 @@ const STORM_FIRST_STATUSES: [u16; 5] = [302, 401, 404, 307, 301];
 const STORM_THEN_STATUSES: [u16; 8] = [401, 401, 404, 500, 407, 403, 410, 302];
 const BASIC_CHALLENGE: &str = "Basic realm=\"f\"";
 const PLAYER_HINTS: [Hint; 3] = [Hint::SourceEnded, Hint::SourceError, Hint::PcrDiscontinuity];
-const RENDERED_IDS: [u32; 5] = [1, 2, 3, 1_001, 1_002];
+const RENDERED_IDS: [u32; 7] = [1, 2, 3, 1_001, 1_002, 999, u32::MAX];
+const HOLD_WALL_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
+const HOLD_MEDIA_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
+const HOLD_QUIET_BYTES: [usize; 4] = [1, TS_PACKET, 512 * 1024, 1 << 30];
+const HOLD_MAX_BYTES: [usize; 4] = [0, TS_PACKET, 4 * 1024 * 1024, usize::MAX];
+const QUEUE_CAPS: [usize; 4] = [1, 16, 100_000, usize::MAX];
+const JUMP_US: [u64; 4] = [1, 1_000_000, 5_000_000, u64::MAX];
+const LEAD_US: [u64; 4] = [0, 1_000_000, 6_000_000, u64::MAX];
+const KEY_FAILURES: [u32; 4] = [0, 1, 3, u32::MAX];
+const REDIRECTS: [u32; 4] = [0, 1, 5, u32::MAX];
+const INFLIGHT: [usize; 4] = [0, 1, 4, usize::MAX];
+const BYTE_LIMITS: [usize; 4] = [1, 4096, 4 * 1024 * 1024, usize::MAX];
+const TIMEOUTS_US: [u64; 4] = [1, 1_000, 20_000_000, u64::MAX];
 const COOKIE_NAMES: [&str; 6] = ["sid", "a", "t", "__Host-h", "__Secure-s", "p"];
 const COOKIE_PREFIXES: [&str; 5] = ["", "Secure; ", "Path=/; ", "Secure; Path=/; ", "Path=/x; "];
 const STATUS_CODES: [u16; 7] = [200, 200, 404, 302, 401, 500, 307];
@@ -57,11 +92,114 @@ const LOCATIONS: [&str; 4] = [
 const STALE_CHALLENGE: &str = "Digest realm=\"f\", nonce=\"n\", qop=\"auth\", stale=true";
 const AUDIT_HEADERS: [&str; 3] = ["authorization", "cookie", "x-fuzz"];
 
-fn ts_seed(offset: usize, packets: usize) -> &'static [u8] {
-    let total = TS_FIXTURE.len() / TS_PACKET;
+fn pid_of(p: &[u8]) -> u16 {
+    (u16::from(p[1] & PID_HIGH_MASK) << 8) | u16::from(p[2])
+}
+
+fn section_of(p: &[u8]) -> &[u8] {
+    &p[5 + usize::from(p[4])..]
+}
+
+fn section_len(s: &[u8]) -> usize {
+    SECTION_HEADER + ((usize::from(s[1] & 0xf) << 8) | usize::from(s[2]))
+}
+
+fn pmt_pid_of(ts: &[u8]) -> Option<u16> {
+    let pat = ts
+        .chunks_exact(TS_PACKET)
+        .find(|p| pid_of(p) == PAT_PID && p[1] & PUSI != 0)?;
+    let s = section_of(pat);
+    let end = section_len(s).checked_sub(CRC_LEN)?;
+    let mut i = PAT_PROGRAM_OFFSET;
+    while i + PAT_ENTRY <= end {
+        if u16::from_be_bytes([s[i], s[i + 1]]) != 0 {
+            return Some((u16::from(s[i + 2] & PID_HIGH_MASK) << 8) | u16::from(s[i + 3]));
+        }
+        i += PAT_ENTRY;
+    }
+    None
+}
+
+fn rebuilt_pmt(packet: &[u8], keep_every_es: bool, version: u8) -> Option<Vec<u8>> {
+    let s = section_of(packet);
+    let len = section_len(s);
+    if 5 + usize::from(packet[4]) + len > TS_PACKET || len < PMT_FIXED + CRC_LEN {
+        return None;
+    }
+    let section = &s[..len];
+    let info_len = (usize::from(section[10] & 0xf) << 8) | usize::from(section[11]);
+    let mut out = section[..PMT_FIXED + info_len].to_vec();
+    out[PMT_VERSION_BYTE] = PMT_VERSION_BASE | ((version & PMT_VERSION_MASK) << 1);
+    let mut j = PMT_FIXED + info_len;
+    let mut entries: Vec<&[u8]> = Vec::new();
+    while j + PMT_ES_FIXED <= len - CRC_LEN {
+        let il = (usize::from(section[j + 3] & 0xf) << 8) | usize::from(section[j + 4]);
+        entries.push(&section[j..(j + PMT_ES_FIXED + il).min(len - CRC_LEN)]);
+        j += PMT_ES_FIXED + il;
+    }
+    if !keep_every_es {
+        entries.pop();
+    }
+    for e in entries {
+        out.extend_from_slice(e);
+    }
+    let new_len = out.len() - SECTION_HEADER + CRC_LEN;
+    out[1] = (out[1] & 0xf0) | (new_len >> 8) as u8;
+    out[2] = new_len as u8;
+    let crc = broadcast_common::crc32_mpeg2::compute(&out);
+    out.extend_from_slice(&crc.to_be_bytes());
+    let mut p = vec![
+        0x47,
+        PUSI | (packet[1] & PID_HIGH_MASK),
+        packet[2],
+        packet[3],
+        0,
+    ];
+    p.extend_from_slice(&out);
+    p.resize(TS_PACKET, 0xff);
+    Some(p)
+}
+
+fn pmt_flipped(ts: &[u8]) -> Vec<u8> {
+    let Some(pmt_pid) = pmt_pid_of(ts) else {
+        return ts.to_vec();
+    };
+    let total = ts.len() / TS_PACKET;
+    let mut out = Vec::with_capacity(ts.len());
+    for (i, p) in ts.chunks_exact(TS_PACKET).enumerate() {
+        if pid_of(p) == pmt_pid && p[1] & PUSI != 0 {
+            let phase = i * PMT_DIVISIONS / total.max(1);
+            let rebuilt = if (PMT_DROP_FROM..PMT_DROP_UNTIL).contains(&phase) {
+                rebuilt_pmt(p, false, 1)
+            } else if phase >= PMT_DROP_UNTIL {
+                rebuilt_pmt(p, true, 2)
+            } else {
+                None
+            };
+            if let Some(r) = rebuilt {
+                out.extend_from_slice(&r);
+                continue;
+            }
+        }
+        out.extend_from_slice(p);
+    }
+    out
+}
+
+fn ts_source(index: usize) -> &'static [u8] {
+    static FLIPPED: OnceLock<Vec<u8>> = OnceLock::new();
+    match index % TS_SOURCE_COUNT {
+        PMT_FLIP_SOURCE => FLIPPED.get_or_init(|| pmt_flipped(TS_SOURCES[0])),
+        n => TS_SOURCES[n],
+    }
+}
+
+fn ts_seed(source: usize, offset: usize, packets: usize) -> &'static [u8] {
+    let ts = ts_source(source);
+    let total = (ts.len() / TS_PACKET).max(1);
     let first = offset % total;
     let last = (first + packets).min(total);
-    &TS_FIXTURE[first * TS_PACKET..last * TS_PACKET]
+    &ts[first * TS_PACKET..last * TS_PACKET]
 }
 
 struct RtpSeed {
@@ -73,7 +211,7 @@ fn rtp_seed() -> &'static RtpSeed {
     static SEED: OnceLock<RtpSeed> = OnceLock::new();
     SEED.get_or_init(|| {
         let media = transmux::TsDemux::new()
-            .unpackage(TS_FIXTURE)
+            .unpackage(TS_SOURCES[0])
             .expect("demux fixture");
         let mut packetiser = transmux::RtpPacketiser {
             mtu: MTU,
@@ -221,7 +359,7 @@ fn finish(session: &mut Session, watch: &mut Watch, now: u64) {
 fn encrypted_segment() -> &'static [u8] {
     static SEGMENT: OnceLock<Vec<u8>> = OnceLock::new();
     SEGMENT.get_or_init(|| {
-        transmux::sample_aes::aes128_encrypt_segment(&KEY, &IV, ts_seed(0, TS_SEED_PACKETS))
+        transmux::sample_aes::aes128_encrypt_segment(&KEY, &IV, ts_seed(0, 0, TS_SEED_PACKETS))
     })
 }
 
@@ -321,6 +459,7 @@ fn body_for(url: &str, encrypted: bool, chunk: &[u8]) -> Vec<u8> {
         encrypted_segment().to_vec()
     } else {
         ts_seed(
+            usize::from(chunk.get(6).copied().unwrap_or(0)),
             usize::from(chunk.get(1).copied().unwrap_or(0)),
             TS_SEED_PACKETS,
         )
@@ -339,14 +478,56 @@ fn serve(session: &mut Session, watch: &mut Watch, now: u64, encrypted: bool, ch
     }
 }
 
-fn drive(url: &str, data: &[u8]) {
-    let config = Config {
+const KNOB_BITS: usize = 2;
+const KNOB_MASK: u8 = 3;
+const KNOBS_PER_BYTE: usize = 8 / KNOB_BITS;
+
+fn knob<T: Copy>(header: &[u8], field: usize, table: &[T; 4]) -> T {
+    let byte = header.get(field / KNOBS_PER_BYTE).copied().unwrap_or(0);
+    let index = (byte >> ((field % KNOBS_PER_BYTE) * KNOB_BITS)) & KNOB_MASK;
+    table[usize::from(index)]
+}
+
+fn config_from(header: &[u8]) -> Config {
+    let mut config = Config {
         preferred_audio_language: Some("de".to_string()),
         initial_cookies: vec![("seed".to_string(), "1".to_string())],
         extra_headers: vec![("X-Fuzz".to_string(), "1".to_string())],
-        max_key_failures: 3,
+        max_key_failures: knob(header, 0, &KEY_FAILURES),
+        max_redirects: knob(header, 1, &REDIRECTS),
+        hls_max_inflight_segments: knob(header, 2, &INFLIGHT),
+        max_queued_events: knob(header, 3, &QUEUE_CAPS),
+        max_playlist_bytes: knob(header, 4, &BYTE_LIMITS),
+        max_segment_bytes: knob(header, 5, &BYTE_LIMITS),
+        hls_request_timeout_us: knob(header, 6, &TIMEOUTS_US),
+        hls_segment_timeout_us: knob(header, 7, &TIMEOUTS_US),
+        tracks_hold_max_wall_us: knob(header, 8, &HOLD_WALL_US),
+        tracks_hold_max_media_us: knob(header, 9, &HOLD_MEDIA_US),
         ..Config::default()
     };
+    let quiet = knob(header, 10, &HOLD_QUIET_BYTES);
+    config.tracks_hold_quiet_input_bytes = quiet;
+    config.tracks_hold_max_input_bytes = knob(header, 11, &HOLD_MAX_BYTES).max(quiet);
+    config.timeline_jump = match knob(header, 12, &[0u8, 1, 2, 3]) {
+        0 => None,
+        _ => Some(broadcast_client::TimelineJumpConfig {
+            backward_us: knob(header, 13, &JUMP_US),
+            forward_slack_us: knob(header, 14, &JUMP_US),
+        }),
+    };
+    config.playout.vod_start_lead_us = knob(header, 15, &LEAD_US);
+    config.playout.live_start_lead_us = knob(header, 16, &LEAD_US);
+    config.playout.pause_lead_us = knob(header, 17, &LEAD_US);
+    config
+}
+
+fn split_header(data: &[u8]) -> (&[u8], &[u8]) {
+    data.split_at(CONFIG_HEADER.min(data.len()))
+}
+
+fn drive(url: &str, data: &[u8]) {
+    let (header, data) = split_header(data);
+    let config = config_from(header);
     let mut session = match Session::open(url, config, 0) {
         Ok(s) => s,
         Err(_) => return,
@@ -364,7 +545,7 @@ fn drive(url: &str, data: &[u8]) {
             1 => {
                 if let Some(conn) = conn {
                     let slice = if second % 2 == 0 {
-                        ts_seed(second, 1 + second % 8)
+                        ts_seed(second, second, 1 + second % 8)
                     } else {
                         chunk
                     };
@@ -520,7 +701,8 @@ fn rtsp_pump(
 }
 
 fn drive_rtsp(url: &str, data: &[u8]) {
-    let mut session = match Session::open(url, Config::default(), 0) {
+    let (header, data) = split_header(data);
+    let mut session = match Session::open(url, config_from(header), 0) {
         Ok(s) => s,
         Err(_) => return,
     };

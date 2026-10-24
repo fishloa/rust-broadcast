@@ -5,7 +5,7 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
-use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
+use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event};
@@ -24,6 +24,10 @@ const MICROS_PER_SEC: u64 = 1_000_000;
 /// [`crate::Config::buffer`].
 ///
 /// For live HLS the start lead is `min(3 x EXT-X-TARGETDURATION, live_start_lead_us)`.
+///
+/// A lead the stream cannot reach keeps the gate closed: a start lead of `u64::MAX` never emits
+/// `Start` before the source ends, and a `pause_lead_us` at or above the lead the source
+/// sustains pauses on every update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayoutConfig {
     /// Media that must be buffered past the origin before `Start`, VOD sources.
@@ -138,7 +142,7 @@ impl Playout {
         self.infos.retain(|t, _| ids.contains(t));
         self.obs.retain(|t, _| ids.contains(t));
         for spec in specs {
-            let kind = if LiveJoin::for_config(&spec.config).is_some() {
+            let kind = if spec.config.is_video() {
                 Kind::Video
             } else if spec.config.audio_sample_rate().is_some() {
                 Kind::Audio
@@ -153,20 +157,28 @@ impl Playout {
                 },
             );
         }
-        if !self.rendered_explicit {
-            let (video, audio) = lowest_id_per_kind(
-                self.infos
-                    .iter()
-                    .map(|(id, i)| (*id, i.kind == Kind::Video, i.kind == Kind::Audio)),
-            );
-            self.rendered = video.into_iter().chain(audio).collect();
-        }
+        self.retarget_default();
         self.step();
     }
 
-    pub(crate) fn set_rendered(&mut self, tracks: &[TrackId]) {
-        self.rendered_explicit = true;
-        self.rendered = tracks.iter().copied().collect();
+    fn retarget_default(&mut self) {
+        if self.rendered_explicit {
+            return;
+        }
+        let (video, audio) = lowest_id_per_kind(
+            self.infos
+                .iter()
+                .map(|(id, i)| (*id, i.kind == Kind::Video, i.kind == Kind::Audio)),
+        );
+        self.rendered = video.into_iter().chain(audio).collect();
+    }
+
+    pub(crate) fn set_rendered(&mut self, tracks: Option<&[TrackId]>) {
+        self.rendered_explicit = tracks.is_some();
+        match tracks {
+            Some(t) => self.rendered = t.iter().copied().collect(),
+            None => self.retarget_default(),
+        }
         self.step();
     }
 
@@ -362,7 +374,7 @@ impl Playout {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
-    use transmux::TsDemux;
+    use transmux::{LiveJoin, TsDemux};
 
     const FIXTURE: &str = "ts/h264_aac.ts";
 
@@ -470,7 +482,7 @@ mod tests {
         let (audio, _) = audio_track();
         let video = video_spec();
         let mut p = Playout::new(PlayoutConfig::default());
-        p.set_rendered(&[audio.track_id]);
+        p.set_rendered(Some(&[audio.track_id]));
         p.engage(Source::Vod);
         p.on_tracks(&[video, audio.clone()]);
         assert_eq!(p.rendered, BTreeSet::from([audio.track_id]));
@@ -588,7 +600,7 @@ mod tests {
                     );
                 }
             }
-            p.set_rendered(&[video.track_id, high.track_id]);
+            p.set_rendered(Some(&[video.track_id, high.track_id]));
             assert_eq!(p.rendered, BTreeSet::from([video.track_id, high.track_id]));
             assert_eq!(
                 p.limiting().map(|(_, end)| end),

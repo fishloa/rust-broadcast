@@ -62,6 +62,96 @@ CORPORA: dict[str, tuple[str, ...]] = {
 }
 
 
+# `broadcast_client` takes no file bytes: its input is an 8-byte Config header (two bits per knob
+# selecting a row of each knob table, 0xAA = the documented defaults) followed by 32-byte steering
+# chunks. The TS payloads are compiled into the target (four real fixtures plus a PMT-flipped
+# copy, source index 4), so the seeds are scripted scenarios over those, not fixture heads.
+CHUNK = 32
+DEFAULT_HEADER = bytes([0xAA] * 8)
+EXTREME_HEADER = bytes(8)
+# b2 doubles as the clock selector (b2 % 24: 0 jumps 20 s, 4..23 advance one step) and, for the
+# player arm, as its action selector (b2 % 5).
+CLOCK_JUMP = 0
+CLOCK_STEP = 4
+PLAYER_POSITION = 5
+PLAYER_RENDERED = 7
+SERVE = 0
+RECONNECT = 4
+PLAYER = 10
+IDLE = 9
+RTSP_PUMP = 0
+RTSP_FRAMES = 2
+RTSP_RUN = 8
+IDS_REAL = 0b0000011
+IDS_WITH_UNKNOWN = 0b1100011
+IDS_ONLY_UNKNOWN = 0b1100000
+SOURCES = 5
+PMT_FLIP_SOURCE = 4
+
+
+def step(pick: int, b1: int = 0, b2: int = CLOCK_STEP, b3: int = 0, b4: int = 0, b6: int = 0) -> bytes:
+    chunk = bytearray(CHUNK)
+    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[6] = pick, b1, b2, b3, b4, b6
+    return bytes(chunk)
+
+
+def script(header: bytes, *steps: bytes) -> bytes:
+    return header + b"".join(steps)
+
+
+def scenarios() -> dict[str, bytes]:
+    serve_each = [
+        piece
+        for src in range(SOURCES)
+        for piece in (step(IDLE, b2=CLOCK_JUMP), step(SERVE, b6=src))
+    ]
+    reconnect_other = [
+        piece
+        for src in range(SOURCES)
+        for piece in (step(SERVE, b6=src), step(RECONNECT), step(IDLE, b2=CLOCK_JUMP))
+    ]
+    pmt_flip = [
+        step(SERVE, b6=PMT_FLIP_SOURCE),
+        step(PLAYER, b2=PLAYER_RENDERED, b3=IDS_REAL),
+        step(PLAYER, b2=PLAYER_POSITION, b3=1, b4=8),
+        step(PLAYER, b2=PLAYER_POSITION, b3=1, b4=64),
+    ]
+    unknown_ids = [
+        step(SERVE, b6=0),
+        step(PLAYER, b2=PLAYER_RENDERED, b3=IDS_ONLY_UNKNOWN),
+        step(PLAYER, b2=PLAYER_RENDERED, b3=IDS_WITH_UNKNOWN),
+        step(PLAYER, b2=PLAYER_POSITION, b3=1, b4=32),
+        step(IDLE, b2=CLOCK_JUMP),
+        step(SERVE, b6=1),
+    ]
+    rtsp = [
+        step(RTSP_PUMP),
+        step(RTSP_PUMP),
+        *[step(RTSP_FRAMES, b1=n) for n in range(24)],
+        step(RTSP_RUN, b1=16),
+        step(PLAYER, b2=PLAYER_RENDERED, b3=IDS_WITH_UNKNOWN),
+    ]
+    return {
+        "serve_each_fixture": script(DEFAULT_HEADER, *serve_each),
+        "serve_each_fixture_extreme_config": script(EXTREME_HEADER, *serve_each),
+        "reconnect_to_other_stream": script(DEFAULT_HEADER, *reconnect_other),
+        "pmt_flip_explicit_declaration": script(DEFAULT_HEADER, *pmt_flip),
+        "unknown_rendered_ids": script(DEFAULT_HEADER, *unknown_ids),
+        "rtsp_play_and_packet_runs": script(DEFAULT_HEADER, *rtsp),
+    }
+
+
+def seed_scripts(target: str, check_only: bool) -> int:
+    if check_only:
+        return 0
+    out = REPO / "fuzz" / "corpus" / target
+    out.mkdir(parents=True, exist_ok=True)
+    blobs = scenarios()
+    for name, blob in blobs.items():
+        (out / f"scenario_{name}").write_bytes(blob)
+    return len(blobs)
+
+
 def seed(target: str, sources: tuple[str, ...], check_only: bool) -> tuple[int, list[str]]:
     out = REPO / "fuzz" / "corpus" / target
     if not check_only:
@@ -99,6 +189,9 @@ def main() -> int:
     args = ap.parse_args()
 
     all_missing: list[str] = []
+    scripted = seed_scripts("broadcast_client", args.check)
+    if not args.check:
+        print(f"broadcast_client: {scripted} scripted scenario seeds")
     for target, sources in CORPORA.items():
         written, missing = seed(target, sources, args.check)
         all_missing += missing

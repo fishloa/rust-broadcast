@@ -4,6 +4,8 @@ pub mod hls_host;
 pub mod renditions;
 pub mod replay;
 pub mod rtsp_host;
+pub mod ts_host;
+pub mod ts_pmt;
 pub mod ts_probe;
 pub mod ts_shift;
 pub mod ts_split;

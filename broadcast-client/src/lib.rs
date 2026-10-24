@@ -11,10 +11,12 @@ mod cookies;
 pub mod error;
 pub mod events;
 mod headers;
+mod join;
 pub mod playout;
 mod queue;
 #[doc(hidden)]
 pub mod redirect;
+mod rendered;
 pub mod session;
 pub mod source;
 pub mod timeline;

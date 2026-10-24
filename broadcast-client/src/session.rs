@@ -12,7 +12,7 @@ use crate::Credentials;
 use crate::Hint;
 use crate::auth::AuthState;
 use crate::error::{Error, TransportError};
-use crate::events::{Action, Config, Event, SourceKind, Status};
+use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
 use crate::headers;
 use crate::playout::{Playout, Source};
 use crate::queue::EventQueue;
@@ -72,6 +72,7 @@ pub struct Session {
     buffer: crate::buffer::Feeder,
     playout: Playout,
     jump: JumpDetector,
+    declaration: crate::rendered::Declaration,
     stale_dropped: u64,
     hls_joins: crate::source::hls_join::HlsJoins,
 }
@@ -110,7 +111,7 @@ impl Session {
             };
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
-        config.validate_tracks_hold()?;
+        config.validate()?;
         let buffer_cfg = config.buffer;
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
@@ -158,6 +159,7 @@ impl Session {
             buffer: crate::buffer::Feeder::new(buffer_cfg, seed),
             playout,
             jump,
+            declaration: crate::rendered::Declaration::default(),
             stale_dropped: 0,
             hls_joins: crate::source::hls_join::HlsJoins::default(),
         })
@@ -566,9 +568,32 @@ impl Session {
         if self.closed {
             return;
         }
-        self.buffer.set_rendered_tracks(tracks);
-        self.jump.set_rendered(tracks);
-        self.playout.set_rendered(tracks);
+        if self.hls.is_some() || self.rtsp.is_some() {
+            self.buffer.set_rendered(Some(tracks));
+            self.jump.set_rendered(Some(tracks));
+            self.playout.set_rendered(Some(tracks));
+            self.drain_playout();
+            return;
+        }
+        let resolution = self.declaration.declare(tracks);
+        self.apply_rendered(resolution);
+    }
+
+    fn apply_rendered(&mut self, resolution: crate::rendered::Resolution) {
+        if resolution.changed {
+            let rendered = resolution.rendered.as_deref();
+            self.buffer.set_rendered(rendered);
+            self.jump.set_rendered(rendered);
+            self.playout.set_rendered(rendered);
+        }
+        for track in resolution.unknown {
+            self.events.push_back(Event::Error {
+                kind: ErrorKind::UnknownRenderedTrack {
+                    track_id: track.value(),
+                },
+                fatal: false,
+            });
+        }
         self.drain_playout();
     }
 
@@ -747,7 +772,15 @@ impl Session {
             }
             _ => {}
         }
+        let announced = match &e {
+            Event::Tracks(specs) if self.hls.is_none() => Some(specs.clone()),
+            _ => None,
+        };
         self.events.push_back(e);
+        if let Some(specs) = announced {
+            let resolution = self.declaration.on_tracks(&specs);
+            self.apply_rendered(resolution);
+        }
         self.drain_playout();
     }
 

@@ -68,6 +68,10 @@ required-features = ["test-seams"]
 name = "audit_1498_live"
 required-features = ["test-seams"]
 
+[[test]]
+name = "r6_ts_tracks"
+required-features = ["test-seams"]
+
 [[example]]
 name = "live_loop"
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (round-6 audit F7)
+- `CodecConfig::is_video()` is public: true for every video codec the IR carries (AVC, HEVC, VVC, AV1, VP9, VP8, MPEG-2 video), the counterpart of `audio_sample_rate().is_some()`. A consumer no longer has to infer "video" from `LiveJoin::for_config`, which is `None` for AV1, VP9, VP8 and MPEG-2.
+
 ### Added (round-6 audit F1)
 - `SkippedTrack::track_id: Option<TrackId>` (+ `SkippedTrack::with_track_id`): the skipped `trak`'s `tkhd.track_ID`, set by `Fmp4Demux` and `ProgressiveDemux`, so a consumer can report one drop per track id. `None` for a record with no track header to name (the `CencDecryptor::demux` skip records).
 

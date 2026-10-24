@@ -2,11 +2,13 @@
 
 use alloc::collections::BTreeMap;
 
-use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
+use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
+
+use crate::join::VideoJoin;
 
 #[derive(Default)]
 pub(crate) struct HlsJoins {
-    joins: BTreeMap<TrackId, LiveJoin>,
+    joins: BTreeMap<TrackId, VideoJoin>,
 }
 
 impl HlsJoins {
@@ -14,7 +16,7 @@ impl HlsJoins {
         self.joins
             .retain(|id, _| specs.iter().any(|s| s.track_id == *id));
         for spec in specs {
-            if let Some(join) = LiveJoin::for_config(&spec.config) {
+            if let Some(join) = VideoJoin::for_config(&spec.config) {
                 self.joins.entry(spec.track_id).or_insert(join);
             }
         }

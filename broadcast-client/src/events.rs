@@ -211,6 +211,14 @@ pub enum ErrorKind {
         /// The [`Config`] field whose cap was exceeded.
         field: &'static str,
     },
+    /// [`crate::Session::set_rendered_tracks`] named a track id that no [`Event::Tracks`] has
+    /// announced. The id is ignored until an announcement names it (then it takes effect), and
+    /// reported once per declaration. A declaration none of whose ids is announced renders the
+    /// default set meanwhile.
+    UnknownRenderedTrack {
+        /// The declared id.
+        track_id: u32,
+    },
 }
 
 impl ErrorKind {
@@ -225,6 +233,7 @@ impl ErrorKind {
             Self::UnsupportedCodec { .. } => "unsupported_codec",
             Self::TrackIdReserved { .. } => "track_id_reserved",
             Self::TrackDropped { .. } => "track_dropped",
+            Self::UnknownRenderedTrack { .. } => "unknown_rendered_track",
             Self::UnsupportedContainer { .. } => "unsupported_container",
             Self::BodyTooLarge { .. } => "body_too_large",
         }
@@ -541,9 +550,12 @@ pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 pub struct Config {
     /// Source kind.
     pub kind: SourceKind,
-    /// TS-over-HTTP config.
+    /// TS-over-HTTP config (also the RTSP timers). An inconsistent value (a zero timeout, an
+    /// empty or zero-entry backoff, a stall reconnect not after the notice) is replaced by the
+    /// nearest valid one, see `tshttp_runtime::Config::clamped`; it is not rejected.
     pub ts_http: tshttp_runtime::Config,
-    /// Maximum redirects per open (per request for HLS).
+    /// Maximum redirects per open (per request for HLS). `0` follows none: a redirect response
+    /// fails the connection.
     pub max_redirects: u32,
     /// Custom request headers, sent only to the session origin. `Authorization`, `Cookie`, `Host`,
     /// `Content-Length`, `Transfer-Encoding`, `Connection` and `Range` are reserved and rejected
@@ -551,19 +563,20 @@ pub struct Config {
     pub extra_headers: Vec<(String, String)>,
     /// Cookies sent to the session origin on path `/` (see [`crate::Session::cookies`]).
     pub initial_cookies: Vec<(String, String)>,
-    /// Buffer controller config.
+    /// Buffer controller config; a value `buffering_runtime::ControllerConfig::validate`
+    /// rejects fails [`crate::Session::open`] with [`crate::Error::InvalidConfig`].
     pub buffer: buffering_runtime::ControllerConfig,
     /// Playout gate leads for HLS and finite TS (live TS-over-HTTP uses [`Config::buffer`]).
     pub playout: crate::playout::PlayoutConfig,
     /// HLS variant selection policy.
     pub variant_policy: hls_runtime::client::VariantPolicy,
-    /// HLS: maximum playlist body bytes.
+    /// HLS: maximum playlist body bytes; must be non-zero.
     pub max_playlist_bytes: usize,
-    /// HLS: maximum media resource body bytes.
+    /// HLS: maximum media resource body bytes; must be non-zero.
     pub max_segment_bytes: usize,
-    /// HLS: playlist request timeout, microseconds.
+    /// HLS: playlist request timeout, microseconds; must be non-zero.
     pub hls_request_timeout_us: u64,
-    /// HLS: media resource request timeout, microseconds.
+    /// HLS: media resource request timeout, microseconds; must be non-zero.
     pub hls_segment_timeout_us: u64,
     /// HLS: retry backoff per attempt, milliseconds; an entry of `0` is treated as `1`.
     pub hls_backoff_ms: Vec<u64>,
@@ -575,12 +588,13 @@ pub struct Config {
     /// of completed-but-undelivered segments count against the same cap, so memory is bounded
     /// by this value times [`Config::max_segment_bytes`]. `0` is treated as `1`.
     pub hls_max_inflight_segments: usize,
-    /// HLS: key request timeout, microseconds.
+    /// HLS: key request timeout, microseconds; must be non-zero.
     pub hls_key_timeout_us: u64,
-    /// HLS: maximum key response body bytes.
+    /// HLS: maximum key response body bytes; must be non-zero.
     pub max_key_bytes: usize,
     /// HLS: consecutive key/decrypt failures (no decoded samples in between) after which the
-    /// session emits a fatal [`Event::Error`] and stops.
+    /// session emits a fatal [`Event::Error`] and stops; `0` behaves as `1` (the first failure is
+    /// fatal).
     pub max_key_failures: u32,
     /// HLS: BCP 47 language (prefix match, ASCII case-insensitive) preferred for the separate
     /// audio rendition.
@@ -594,12 +608,15 @@ pub struct Config {
     /// always survives). One [`Event::Discontinuity`] takes the place of each burst of dropped samples
     /// so the player re-syncs. Every other event (tracks, errors, buffer events, terminal
     /// statuses) is kept, so the queue is bounded by this cap plus the undroppable events a
-    /// stalled host leaves unread.
+    /// stalled host leaves unread. Must be non-zero (a zero cap would drop every sample).
     pub max_queued_events: usize,
     /// Timeline-jump detector thresholds; `None` disables the detector. A jump of the media
     /// timeline without a TS discontinuity flag emits [`Event::Discontinuity`] before the first
     /// sample of the new timeline and re-arms the join, buffering and playout state as a
     /// demuxer discontinuity does (see [`crate::TimelineJumpConfig`]). Applies to every source.
+    /// Both thresholds must be non-zero; a threshold of `u64::MAX` never fires in that direction.
+    /// A threshold below the stream's frame spacing or reordering depth fires on ordinary
+    /// samples and drops the other tracks' samples as stale.
     pub timeline_jump: Option<crate::timeline::TimelineJumpConfig>,
     /// Live TS-over-HTTP: the first media of each connection is held behind one
     /// [`Event::Tracks`] listing every PMT-declared stream until all have resolved or a hold
@@ -622,7 +639,44 @@ pub struct Config {
 const MIN_BACKOFF_MS: u64 = 1;
 
 impl Config {
-    pub(crate) fn validate_tracks_hold(&self) -> Result<(), crate::Error> {
+    pub(crate) fn validate(&self) -> Result<(), crate::Error> {
+        let invalid = |field| Err(crate::Error::InvalidConfig { field });
+        if self.max_queued_events == 0 {
+            return invalid("max_queued_events");
+        }
+        if self.max_playlist_bytes == 0 {
+            return invalid("max_playlist_bytes");
+        }
+        if self.max_segment_bytes == 0 {
+            return invalid("max_segment_bytes");
+        }
+        if self.max_key_bytes == 0 {
+            return invalid("max_key_bytes");
+        }
+        if self.hls_request_timeout_us == 0 {
+            return invalid("hls_request_timeout_us");
+        }
+        if self.hls_segment_timeout_us == 0 {
+            return invalid("hls_segment_timeout_us");
+        }
+        if self.hls_key_timeout_us == 0 {
+            return invalid("hls_key_timeout_us");
+        }
+        if self.buffer.validate().is_err() {
+            return invalid("buffer");
+        }
+        if let Some(jump) = &self.timeline_jump {
+            if jump.backward_us == 0 {
+                return invalid("timeline_jump.backward_us");
+            }
+            if jump.forward_slack_us == 0 {
+                return invalid("timeline_jump.forward_slack_us");
+            }
+        }
+        self.validate_tracks_hold()
+    }
+
+    fn validate_tracks_hold(&self) -> Result<(), crate::Error> {
         if self.tracks_hold_quiet_input_bytes == 0 {
             return Err(crate::Error::InvalidConfig {
                 field: "tracks_hold_quiet_input_bytes",

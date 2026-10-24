@@ -346,6 +346,8 @@ impl TsHttpSource {
                 self.release_hold();
                 self.declared = Some(DeclaredStreams::new());
                 self.resolved.clear();
+                self.tracks.clear();
+                self.tracks_dirty = true;
                 self.connection_count = self.connection_count.saturating_add(1);
                 if self.connection_count > 1 {
                     self.push(Event::Discontinuity);

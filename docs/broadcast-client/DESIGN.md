@@ -650,6 +650,74 @@ Start 2.68 s, 224 samples). So the 1439 decode failures the Apple TV reported fo
 the released samples (identical bytes, order and flags to the no-hold run, which plays clean); the host must
 tolerate a burst of up to the hold length, and the early release removes that burst for these channels.
 
+## Audit round 6 (session, TS-HTTP, buffer, RTSP)
+
+### F2: a new TS-HTTP connection rebuilds the track set
+
+`StreamingTsDemux` is replaced on every connection and restarts its ids at 1, but `TsHttpSource` kept its
+`tracks` map across connections, so the first `Tracks` after `reconnect()` was the union of both connections
+(tf1-live then h264_aac announced `[1..6]`; h264_aac_40s then a video-only stream kept audio `2` as a phantom in
+`default_rendered_tracks()`). `Connected` now clears the map and marks it dirty, so the first sample of the new
+connection announces its own tracks only; the session's `retain_tracks`, jump detector and playout drop what
+vanished. RTSP does not share the flaw (the track set is rebuilt from each DESCRIBE); a test pins it.
+
+### F4: chunk invariance (no defect found in the session)
+
+The reported 479/477/478/467 sample counts came from replaying `tf-1-8MB.ts` at the PCR-estimated bitrate (1.87
+Mbps, wrong for a capture with a PCR jump): the first sample of that capture is 3.9 MB in, so the 15 s start
+timeout expired at a read-quantised byte offset, reconnected, and the demuxer restarted at a different place per
+read size. With clocks that do not trip a timer, `tests/r6_chunk_invariance.rs` replays tf-1, arte, rai-gulp and
+five public fixtures at reads of 188, 1316, 4096, 16 KiB, 64 KiB, 256 KiB and three random sequences, under a fixed
+clock, a 40 Mbps clock and a 6 Mbps clock, and asserts the `Sample` sequence and the `Discontinuity` positions
+identical (and the final track set, and that every sample follows an announcement naming its track). The raw
+`StreamingTsDemux` is chunk-invariant on the same inputs. Not asserted, because arrival time decides them:
+`Buffer` events, `Status`/`Starved`, and the grouping of `Tracks` (the hold releases at the first read
+boundary at which its condition holds). A mutation that drops tail packets of large reads fails the test.
+
+### F5/F6: the explicit rendered declaration
+
+`src/rendered.rs` resolves the host's declaration against the announced set (live TS-over-HTTP only; HLS and
+RTSP pass it through, because the HLS gate legitimately waits for a separate audio rendition that is announced
+late). Unknown ids are ignored, remembered, applied when announced and reported once per declaration as
+`ErrorKind::UnknownRenderedTrack`; a wholly pending non-empty declaration renders the default set. For a PMT
+drop and restore transmux returns the stream under a NEW `TrackId`. Reusing the id inside `StreamingTsDemux` was
+rejected: ids come from one monotonic counter that every consumer (`media-plane` trunks, the HLS/TS segmenters)
+keys state by, and `remove_track` documents the churn as intended (#774); reusing an id would silently splice a
+returning stream onto a removed track's state. The least invasive fix keeps the id contract and makes the
+declaration kind-aware: a declared video or audio id that vanished is replaced by the lowest announced track of
+its kind that the host did not declare. `pmt_flip` on `h264_aac_40s.ts` (audio dropped at 40 %, restored at 70 %)
+announces `[1,2]`, `[1]`, `[1,3]` and the controller registers 1, 2, unregisters 2, registers 3.
+
+### F7: every video codec
+
+`transmux::CodecConfig::is_video()` is now public. The client keys "video" off it (default rendered set, jump
+detector roles, playout kinds) instead of `LiveJoin::for_config`, which is `None` for MPEG-2, AV1, VP9 and VP8.
+`join.rs` wraps `LiveJoin` for AVC/HEVC/VVC and adds a sync-sample join for the rest: the first sync sample is the
+join point, earlier samples are `Drop(BeforeRandomAccessPoint)`, samples before the join point in presentation order
+are `Drop(LeadingPicture)`. TS and HLS use the same wrapper. `legacy/mpeg2_mp2.ts` plays with a join point and
+the video is the default rendered video; the AV1 and VP9 fragmented MP4 fixtures join at their first sync sample.
+
+### F8: RTSP codecs
+
+A section that is not played is reported once per source as a non-fatal `TrackDropped` (id after the played tracks,
+`stream_type: None`). An SDP with no playable section whose skipped section names an unsupported `rtpmap` codec
+ends with ONE fatal `UnsupportedCodec { fourcc: <encoding name> }`; the source closes its connection and
+`reconnect()` is ignored afterwards. Other nothing-playable SDPs (no codec named, a played codec with an unusable
+`fmtp`, unparsable) stay ordinary failed attempts. The old audit test that required a reconnect loop for
+PCMU+application media now asserts the fatal error. H.265 over RTP is NOT cheap: `transmux::RtpMediaKind` has
+only H.264 and AAC, so an RFC 7798 depayloader is a follow-up in transmux.
+
+### F9b: Config validation
+
+`Config::validate` (run by `Session::open`) rejects `max_queued_events` 0 (every sample would be dropped),
+zero HLS size limits and timeouts, a `buffer` the controller refuses (the feeder used to swallow that error and
+never create a controller, so no `Buffer` event ever came), and zero timeline-jump thresholds (every reordered
+frame would be a jump and the other tracks' samples dropped as stale). Documented, not rejected: `max_redirects` 0
+follows none, `max_key_failures` 0 behaves as 1, `u64::MAX` jump thresholds never fire, a playout lead the stream
+cannot reach keeps the gate closed, `ts_http` values are clamped (`tshttp_runtime::Config::clamped`). The fuzz
+target now randomizes the Config knobs (header of 8 bytes), declares unknown ids and `u32::MAX`, reads from four
+real TS fixtures plus a PMT-flipped copy, and `fuzz/seed-corpus.py` generates six scripted scenario seeds.
+
 ## Audit round 6 (r6hls): HLS/fMP4 path
 
 ### F1: skipped fMP4 tracks are reported, an all-skipped stream is fatal
