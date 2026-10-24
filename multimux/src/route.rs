@@ -217,6 +217,33 @@ impl HealthState {
 
 broadcast_common::impl_spec_display!(HealthState);
 
+/// Why a classic-TS output is not IDR-aligned: the stream carried no IDR
+/// picture within the route's wait bound
+/// ([`crate::config::TsHlsIdrFallback::bound`]). Open-GOP H.264 (recovery-point
+/// SEI, no type-5 NAL) is the usual cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TsHlsIdrStatus {
+    /// The output fell back to cutting on non-IDR random-access points;
+    /// segments do not all start on an IDR (Apple HLS Authoring Spec 7.4).
+    FellBack,
+    /// Fallback is off (`"never"`): the output serves no segment until an IDR
+    /// arrives.
+    Awaiting,
+}
+
+impl TsHlsIdrStatus {
+    /// The admin-status and metric-label token.
+    pub fn name(&self) -> &'static str {
+        match self {
+            TsHlsIdrStatus::FellBack => "fell_back",
+            TsHlsIdrStatus::Awaiting => "awaiting",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(TsHlsIdrStatus);
+
 /// The outcome of resolving one [`ProgramId`] against a route's
 /// [`RouteHandle::resolve_program`] registry.
 ///
@@ -784,6 +811,12 @@ pub struct RouteHandle {
     /// Segment cut rule of this route's classic-TS segmenter, set via
     /// [`Self::with_ts_cut_policy`]; unused by the fMP4 container.
     ts_cut_policy: transmux::SegmentCutPolicy,
+    /// What an `idr_only` classic-TS output does when no IDR arrives
+    /// ([`crate::config::TsHlsIdrFallback`]).
+    ts_idr_fallback: crate::config::TsHlsIdrFallback,
+    /// Set once an `idr_only` classic-TS output has passed its IDR-wait bound
+    /// without an IDR ([`TsHlsIdrStatus`]); `None` while IDR-aligned.
+    ts_idr_status: Mutex<Option<TsHlsIdrStatus>>,
     /// Display text of the typed error that failed this route's output (see
     /// [`Self::fail_output`]); `None` while the output is healthy.
     output_error: Mutex<Option<String>>,
@@ -878,6 +911,8 @@ impl RouteHandle {
             window_segments_cap: window_segments,
             container: Container::default(),
             ts_cut_policy: transmux::SegmentCutPolicy::default(),
+            ts_idr_fallback: crate::config::TsHlsIdrFallback::default(),
+            ts_idr_status: Mutex::new(None),
             output_error: Mutex::new(None),
             created_at: SystemTime::now(),
             programs: RwLock::new(BTreeMap::new()),
@@ -931,6 +966,36 @@ impl RouteHandle {
     /// The configured classic-TS cut rule (see [`Self::with_ts_cut_policy`]).
     pub fn ts_cut_policy(&self) -> transmux::SegmentCutPolicy {
         self.ts_cut_policy
+    }
+
+    /// Select the `idr_only` no-IDR behaviour (see
+    /// [`crate::config::Route::ts_hls_idr_fallback`]).
+    #[must_use]
+    pub fn with_ts_idr_fallback(mut self, fallback: crate::config::TsHlsIdrFallback) -> Self {
+        self.ts_idr_fallback = fallback;
+        self
+    }
+
+    /// The configured no-IDR behaviour.
+    pub fn ts_idr_fallback(&self) -> crate::config::TsHlsIdrFallback {
+        self.ts_idr_fallback
+    }
+
+    /// Record that the classic-TS output passed its IDR-wait bound without an
+    /// IDR. Returns `true` only the first time, so the caller logs once.
+    pub(crate) fn note_ts_idr_missing(&self, status: TsHlsIdrStatus) -> bool {
+        let mut slot = self.ts_idr_status.lock();
+        if slot.is_some() {
+            return false;
+        }
+        *slot = Some(status);
+        true
+    }
+
+    /// Whether the classic-TS output is not IDR-aligned, and how it copes
+    /// (`None` while it is, or when there is nothing to report).
+    pub fn ts_idr_status(&self) -> Option<TsHlsIdrStatus> {
+        *self.ts_idr_status.lock()
     }
 
     /// Record that this route's output cannot serve what the program

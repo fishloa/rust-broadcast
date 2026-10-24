@@ -93,7 +93,7 @@ use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
-use crate::route::RouteHandle;
+use crate::route::{RouteHandle, TsHlsIdrStatus};
 
 /// One closed segment, normalised across the two segmenter kinds
 /// [`AnySegmenter`] wraps — [`transmux::ll_hls::SegmentInfo`] (fMP4) and
@@ -372,6 +372,12 @@ pub struct ProgramSegmenter {
     pub(crate) start_gate_video_dropped: u64,
     /// Whether the one-shot `tracing::info!` on gate open has fired.
     pub(crate) start_gate_opened_logged: bool,
+    /// How long the start gate has dropped IDR-less video while an `idr_only`
+    /// classic-TS route waits for its first IDR.
+    idr_wait: transmux::IdrWait,
+    /// The wait ran out and the route cuts on non-IDR sync samples
+    /// (`ts_hls_idr_fallback` permitting).
+    idr_fallback_active: bool,
 }
 
 /// Maps this segmenter's internal per-segment timeline
@@ -467,9 +473,11 @@ fn gate_opens_on(
     route_handle: &RouteHandle,
     config: Option<&CodecConfig>,
     sample: &Sample,
+    idr_fallback_active: bool,
 ) -> bool {
     let idr_only = matches!(route_handle.container(), Container::MpegTs)
-        && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly;
+        && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly
+        && !idr_fallback_active;
     let codec = match config {
         Some(CodecConfig::Avc { .. }) => Some(transmux::NalCodec::Avc),
         Some(CodecConfig::Hevc { .. }) => Some(transmux::NalCodec::Hevc),
@@ -612,6 +620,10 @@ impl ProgramSegmenter {
             start_gate_dropped: 0,
             start_gate_video_dropped: 0,
             start_gate_opened_logged: false,
+            idr_wait: transmux::IdrWait::new(
+                route_handle.ts_idr_fallback().bound(target_duration_secs),
+            ),
+            idr_fallback_active: false,
         })
     }
 
@@ -783,6 +795,7 @@ impl ProgramSegmenter {
                                 .find(|t| t.track_id == track_id)
                                 .map(|t| &t.config),
                             &sample,
+                            self.idr_fallback_active,
                         );
                     // Safety valve: a video track that NEVER flags a sync
                     // sample (a broken or non-keyframe-signalling source)
@@ -805,6 +818,16 @@ impl ProgramSegmenter {
                         self.start_gate_dropped += 1;
                         if is_video_sample {
                             self.start_gate_video_dropped += 1;
+                            let timescale = trunk
+                                .tracks()
+                                .iter()
+                                .find(|t| t.track_id == track_id)
+                                .map_or(0, |t| t.timescale);
+                            if self.idr_wait_applies(route_handle)
+                                && self.idr_wait.observe_dropped(&sample, timescale)
+                            {
+                                self.idr_wait_ran_out(program, route_handle);
+                            }
                         }
                         continue;
                     }
@@ -887,6 +910,52 @@ impl ProgramSegmenter {
             // `SampleCursorItem::Timed`.
         }
         self.publish_ready()
+    }
+
+    /// Whether this route is a classic-TS output cutting on IDR only, so a
+    /// stream without IDR pictures is a stall rather than normal operation.
+    fn idr_wait_applies(&self, route_handle: &RouteHandle) -> bool {
+        matches!(route_handle.container(), Container::MpegTs)
+            && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly
+            && !self.idr_fallback_active
+    }
+
+    /// The IDR wait passed its bound: fall back to non-IDR sync samples when
+    /// the route allows it, and tell the operator either way (once per route:
+    /// log, `multimux_ts_hls_non_idr_total`, admin `ts_hls_idr`).
+    fn idr_wait_ran_out(&mut self, program: ProgramId, route_handle: &RouteHandle) {
+        let falls_back = route_handle.ts_idr_fallback().falls_back();
+        let status = if falls_back {
+            TsHlsIdrStatus::FellBack
+        } else {
+            TsHlsIdrStatus::Awaiting
+        };
+        if falls_back {
+            self.idr_fallback_active = true;
+            if let AnySegmenter::Ts(seg) = &mut self.seg {
+                seg.fall_back_to_any_rap();
+            }
+        }
+        metrics::counter!(
+            crate::prometheus::TS_HLS_NON_IDR_TOTAL,
+            "route" => route_handle.name().to_string(),
+            "mode" => status.name()
+        )
+        .increment(1);
+        if route_handle.note_ts_idr_missing(status) {
+            tracing::warn!(
+                program = program.0,
+                route = route_handle.name(),
+                waited = ?self.idr_wait.bound(),
+                mode = status.name(),
+                "ts_hls: no IDR picture in the stream within the wait bound; {}",
+                if falls_back {
+                    "cutting segments on non-IDR random-access points instead (not Apple 7.4 IDR-aligned)"
+                } else {
+                    "ts_hls_idr_fallback is \"never\": serving no segments until an IDR arrives"
+                }
+            );
+        }
     }
 
     /// Apply a mid-stream track-set change detected via
@@ -1046,7 +1115,10 @@ impl ProgramSegmenter {
                         u64::from(next_seq.value().saturating_sub(1)),
                     ) {
                         Ok(seg) => {
-                            let seg = seg.with_cut_policy(route_handle.ts_cut_policy());
+                            let mut seg = seg.with_cut_policy(route_handle.ts_cut_policy());
+                            if self.idr_fallback_active {
+                                seg.fall_back_to_any_rap();
+                            }
                             let replaced = std::mem::replace(&mut self.seg, AnySegmenter::Ts(seg));
                             if let AnySegmenter::Ts(mut old) = replaced {
                                 if let Err(e) = old.finish() {
@@ -1062,6 +1134,7 @@ impl ProgramSegmenter {
                             self.start_gate_dropped = 0;
                             self.start_gate_video_dropped = 0;
                             self.start_gate_opened_logged = false;
+                            self.idr_wait = transmux::IdrWait::new(self.idr_wait.bound());
                             tracing::info!(
                                 "TS segmenter rebuilt with updated track set for \
                                  mid-stream addition"
@@ -2792,6 +2865,8 @@ mod tests {
             start_gate_dropped: 0,
             start_gate_video_dropped: 0,
             start_gate_opened_logged: false,
+            idr_wait: transmux::IdrWait::new(std::time::Duration::from_secs(6)),
+            idr_fallback_active: false,
         }
     }
 

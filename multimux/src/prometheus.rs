@@ -41,6 +41,10 @@
 //!   stopping for good (only a `Terminate`-policy pin's own intended stop
 //!   does that).
 //!
+//! - `multimux_ts_hls_non_idr_total` (`TS_HLS_NON_IDR_TOTAL`) — counter, labels
+//!   `route`, `mode`: a `ts_hls` output waited past its bound for an IDR picture
+//!   that never came (see `Route::ts_hls_idr_fallback`).
+//!
 //! Cardinality is bounded on purpose: `route` is either a configured stream
 //! name or the fixed token `"unknown"`, and `path` is one of a small fixed
 //! set of kinds (`playlist`/`segment`/`part`/`init`/`metrics`/`health`/
@@ -135,6 +139,12 @@ pub(crate) const PULL_STREAM_REFRESH_MISS_TOTAL: &str = "multimux_pull_stream_re
 /// bounded hold (`MAX_HELD_SAMPLES` / `MAX_HELD_BYTES`) allows - a head
 /// track that never resolves while others flow. Labels: none.
 pub(crate) const TS_BACKLOG_DROPPED_TOTAL: &str = "multimux_ts_backlog_dropped_total";
+
+/// Counter: a classic-TS (`ts_hls`) output passed its IDR-wait bound without an
+/// IDR picture, once per program. Labels: `route`, `mode` (`fell_back` = now
+/// cutting on non-IDR random-access points, `awaiting` = fallback disabled,
+/// serving nothing).
+pub(crate) const TS_HLS_NON_IDR_TOTAL: &str = "multimux_ts_hls_non_idr_total";
 
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 

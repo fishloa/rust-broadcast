@@ -62,5 +62,5 @@ pub use output::Output;
 pub use registry::{
     AuthCtx, AuthFactory, InputCtx, InputFactory, OutputCtx, OutputFactory, SchemeRegistry,
 };
-pub use route::{AddSegmentError, HealthState, RouteHandle};
+pub use route::{AddSegmentError, HealthState, RouteHandle, TsHlsIdrStatus};
 pub use source::Source;

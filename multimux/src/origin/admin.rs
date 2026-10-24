@@ -363,6 +363,7 @@ impl RouteRegistry {
             .with_name(route.name.clone())
             .with_container(super::route_container(route))
             .with_ts_cut_policy(route.ts_hls_cut.into())
+            .with_ts_idr_fallback(route.ts_hls_idr_fallback)
             // Issue #900 — see the identical fix (and its own doc) in
             // `super::serve_with_registry_impl`'s per-route loop; this is
             // the admin-API (`POST /admin/routes`/reload) equivalent.
@@ -772,6 +773,11 @@ pub struct RouteStatus {
     /// ([`crate::route::RouteHandle::output_error`]), e.g. HEVC delivered to
     /// a `ts_hls` output; `null` while the output is healthy.
     pub output_error: Option<String>,
+    /// `"fell_back"` or `"awaiting"` once a `ts_hls` output passed its IDR-wait
+    /// bound without an IDR picture
+    /// ([`crate::route::RouteHandle::ts_idr_status`]); `null` while the output
+    /// is IDR-aligned.
+    pub ts_hls_idr: Option<&'static str>,
     /// Unix timestamp (**nanoseconds**) this route's [`RouteHandle`] was
     /// constructed — [`crate::route::RouteHandle::created_at`]. The proof
     /// that `RouteRegistry::reload` left an *unchanged* route's serving
@@ -792,6 +798,7 @@ impl RouteStatus {
             outputs: rt.route.outputs.clone(),
             health: rt.store.health().name().to_string(),
             output_error: rt.store.output_error(),
+            ts_hls_idr: rt.store.ts_idr_status().map(|status| status.name()),
             created_at_unix_nanos: rt
                 .store
                 .created_at()
@@ -1228,6 +1235,7 @@ mod tests {
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
             ts_hls_cut: Default::default(),
+            ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
         }
     }
@@ -1291,6 +1299,7 @@ mod tests {
             outputs: Vec::new(),
             dvr: DvrConfig::default(),
             ts_hls_cut: Default::default(),
+            ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
         };
         let err = registry
