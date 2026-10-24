@@ -25,6 +25,16 @@ if let Some(a) = client.poll() {
 client.on_eof(2);
 ```
 
+## Policy core
+
+`TsHttpClient` is `TsHttpPolicy` plus a `StreamingTsDemux`. `TsHttpPolicy` is the
+demux-free core: it sees response headers, chunk lengths, a "sample produced"
+flag and timestamps (never TS bytes) and implements the start/stall timers,
+finite/VOD detection and backoff. A host that demuxes elsewhere (multimux uses
+its own `ts_program`) drives the policy alone with `on_response`, `on_bytes`,
+`on_sample`, `on_eof`, `on_error`, `poll_timeout` and reads the same
+`Action`/`Event` stream (it never emits `Event::Demux`).
+
 ## Defaults
 
 `Config::default()`: start_timeout_ms 15000, stall_notice_ms 5000,

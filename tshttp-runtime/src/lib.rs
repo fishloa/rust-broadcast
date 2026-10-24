@@ -11,6 +11,8 @@ pub mod client;
 pub mod config;
 /// Action, event and starve-kind types.
 pub mod events;
+/// Demux-free policy core of the session.
+pub mod policy;
 
 /// TS-over-HTTP pull session client (see DESIGN.md).
 pub use client::TsHttpClient;
@@ -18,5 +20,7 @@ pub use client::TsHttpClient;
 pub use config::{Config, ConfigError};
 /// Action, event and starve-kind types (see DESIGN.md).
 pub use events::{Action, Event, StarveKind};
+/// Demux-free policy core (see DESIGN.md).
+pub use policy::TsHttpPolicy;
 /// Re-exported demux event type from transmux.
 pub use transmux::DemuxEvent;

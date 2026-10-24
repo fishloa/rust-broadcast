@@ -97,3 +97,7 @@ later inputs ignored. EOF before all bytes is a truncated transfer and follows t
 path (backoff/reconnect from the start). `reconnect()` from `Ended` restarts with attempt = 0.
 
 Live behaviour (no `Content-Length`) is unchanged.
+
+## Policy core
+
+`TsHttpPolicy` (module `policy`) holds every transition above except the demux plumbing; `TsHttpClient` is the policy plus a `StreamingTsDemux`. The split, and multimux's use of the core alone, are specified in `docs/broadcast-client/DESIGN.md` ("Policy core split").

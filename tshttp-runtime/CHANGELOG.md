@@ -4,6 +4,7 @@
 
 ### Added
 
+- `TsHttpPolicy` (`policy` module): the demux-free policy core of the session (every transition of `docs/tshttp-runtime/DESIGN.md`), driven by `on_response`/`on_bytes(len, now, sampled)`/`on_sample`/`on_eof`/`on_error`/`reconnect`/`poll_timeout[_with]`, plus `accepts_bytes`, `is_ended`, `is_finite`, `open_count` and `push_event`. `TsHttpClient` is now this core plus a `StreamingTsDemux`; its public API and behaviour are unchanged. Covered by `tests/policy_core.rs`, which drives both over a real fixture and requires identical decisions.
 - `tshttp-runtime` 0.1.0: sans-IO TS-over-HTTP pull session client.
   - `TsHttpClient` with `poll`/`on_response`/`feed`/`on_eof`/`on_error`/
     `reconnect`/`poll_timeout`/`next_deadline`/`poll_event`.
