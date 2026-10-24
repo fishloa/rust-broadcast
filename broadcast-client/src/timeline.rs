@@ -4,7 +4,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
-use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
+use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 /// Default backward step that marks a new timeline, microseconds.
 pub const DEFAULT_JUMP_BACKWARD_US: u64 = 1_000_000;
@@ -95,7 +95,7 @@ impl JumpDetector {
         self.tracks.clear();
         self.audio_order.clear();
         for spec in specs {
-            let role = if LiveJoin::for_config(&spec.config).is_some() {
+            let role = if spec.config.is_video() {
                 Role::Video
             } else if spec.config.audio_sample_rate().is_some() {
                 self.audio_order.push(spec.track_id);
@@ -259,7 +259,7 @@ impl JumpDetector {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
-    use transmux::{DropReason, TsDemux};
+    use transmux::{DropReason, LiveJoin, TsDemux};
 
     const VIDEO_TS: i64 = 90_000;
     const T0: u64 = 7_000_000;

@@ -521,7 +521,7 @@ impl CodecConfig {
     /// `ts_mux::EsKind::from_config`). Mirrors [`CodecConfig::is_audio`]. Used
     /// to pick the anchor/segmentation track (`ts_hls::choose_anchor`,
     /// `Segmenter::new`).
-    pub(crate) fn is_video(&self) -> bool {
+    pub fn is_video(&self) -> bool {
         matches!(
             self,
             CodecConfig::Avc { .. }

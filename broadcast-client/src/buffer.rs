@@ -6,9 +6,10 @@ use alloc::vec::Vec;
 use buffering_runtime::{
     BufferController, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
 };
-use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
+use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::events::{BufferEvent, Event};
+use crate::join::VideoJoin;
 
 /// One input the session fed to the buffering controller.
 #[cfg(feature = "test-seams")]
@@ -132,7 +133,7 @@ pub(crate) struct Feeder {
     finite: bool,
     rendered: BTreeSet<TrackId>,
     rendered_explicit: bool,
-    live_joins: BTreeMap<TrackId, LiveJoin>,
+    live_joins: BTreeMap<TrackId, VideoJoin>,
     track_specs: BTreeMap<TrackId, TrackSpec>,
     pending_ends: BTreeMap<TrackId, u64>,
     pending_zero: BTreeMap<TrackId, (i64, u32)>,
@@ -238,7 +239,7 @@ impl Feeder {
 
     pub(crate) fn on_track_added(&mut self, spec: &TrackSpec) {
         self.track_specs.insert(spec.track_id, spec.clone());
-        if let Some(join) = LiveJoin::for_config(&spec.config) {
+        if let Some(join) = VideoJoin::for_config(&spec.config) {
             self.live_joins.entry(spec.track_id).or_insert(join);
         }
         self.retarget_default();
@@ -570,7 +571,7 @@ impl Feeder {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
-    use transmux::TsDemux;
+    use transmux::{LiveJoin, TsDemux};
 
     const FIXTURE: &str = "ts/h264_aac.ts";
     const FAR_PTS_DURATION: u32 = 3_000;

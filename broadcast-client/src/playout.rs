@@ -5,7 +5,7 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
-use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
+use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event};
@@ -138,7 +138,7 @@ impl Playout {
         self.infos.retain(|t, _| ids.contains(t));
         self.obs.retain(|t, _| ids.contains(t));
         for spec in specs {
-            let kind = if LiveJoin::for_config(&spec.config).is_some() {
+            let kind = if spec.config.is_video() {
                 Kind::Video
             } else if spec.config.audio_sample_rate().is_some() {
                 Kind::Audio
@@ -362,7 +362,7 @@ impl Playout {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
-    use transmux::TsDemux;
+    use transmux::{LiveJoin, TsDemux};
 
     const FIXTURE: &str = "ts/h264_aac.ts";
 

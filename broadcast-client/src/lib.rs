@@ -11,6 +11,7 @@ mod cookies;
 pub mod error;
 pub mod events;
 mod headers;
+mod join;
 pub mod playout;
 mod queue;
 #[doc(hidden)]
