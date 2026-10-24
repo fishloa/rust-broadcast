@@ -457,7 +457,7 @@ Parses and serializes HLS playlists, including Low-Latency HLS (parts, preload h
 - **Cargo description:** HLS (M3U8) playlist syntax (RFC 8216 / RFC 8216bis) — Media/Master Playlist parse + serialize, no_std.
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`ssai-runtime`](#ssai-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`ssai-runtime`](#ssai-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../broadcast-hls/README.md) · [CHANGELOG](../broadcast-hls/CHANGELOG.md) · [spec transcriptions](../broadcast-hls/docs/) · [crates.io](https://crates.io/crates/broadcast-hls) · [docs.rs](https://docs.rs/broadcast-hls)
 
 #### container-probe
@@ -614,7 +614,7 @@ Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP sou
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
 - **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP and HLS sources.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`buffering-runtime`](#buffering-runtime), [`hls-runtime`](#hls-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`hls-runtime`](#hls-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
 - **Used by (workspace):** none
 - **Links:** [README](../broadcast-client/README.md) · [spec transcriptions](../broadcast-client/docs/)
 

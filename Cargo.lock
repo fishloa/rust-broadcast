@@ -438,6 +438,7 @@ version = "0.1.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-hls",
  "buffering-runtime",
  "cookie",
  "hls-runtime",

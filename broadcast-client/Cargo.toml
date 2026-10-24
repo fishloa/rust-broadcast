@@ -23,6 +23,7 @@ transmux           = { path = "../transmux", version = "0.27", default-features 
 buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-features = false }
 tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
 hls-runtime        = { path = "../hls-runtime", version = "0.9" }
+broadcast-hls      = { path = "../broadcast-hls", version = "0.4" }
 url                = "2"
 http               = "1"
 cookie             = { version = "0.18", default-features = false }
