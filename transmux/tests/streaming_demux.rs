@@ -112,7 +112,7 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
 }
 
 fn feed_in_chunks(data: &[u8], chunk_size: usize) -> Media {
-    let mut demux = StreamingTsDemux::new();
+    let mut demux = StreamingTsDemux::new().with_strict_pmt_order();
     for chunk in data.chunks(chunk_size.max(1)) {
         demux.feed(chunk);
     }
