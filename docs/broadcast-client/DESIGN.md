@@ -167,3 +167,13 @@ Automatic feeding inside the session (the host does nothing):
 Tests (BC-2) compare the session against a bare `BufferController` oracle fed the same inputs by the test, and use the real TF1 capture (`zenith-http/tf1-live.ts`, 1316-byte chunks, synthetic arrival schedule steady 100 ms/chunk, then a 3 s gap, then steady).
 
 `Event::Sample` gains `join: Option<transmux::JoinDecision>` (Some for video samples of a track that has a `LiveJoin`, None otherwise), so the player drops `Drop(_)` samples itself exactly as it does today; the session still emits them (it never drops samples). Reported as a breaking field addition to `Event::Sample` (BC-1 is not yet consumed by any player).
+
+### BC-3a implementation notes (as built)
+
+- Core actions are drained into a session-side queue immediately after every `HlsClient` call. A `WaitMs` gates every action behind it until `now_us` reaches the deadline (`WakeAt`); `HlsClient::next_wait` is not needed because the queue is inspected directly.
+- Resources are fetched concurrently but delivered to `HlsClient::on_resource` in issue order (`Init` immediately): a later segment that completes first is held until every earlier one is delivered, so `Sample` order is independent of completion order. A failed resource blocks later ones until it is re-requested (or the playlist reload no longer asks for it).
+- Retry: every failure bumps one attempt counter, emits `Status::Reconnecting{attempt}`, emits `WakeAt(now + backoff)` and gates the core queue until then. A failed playlist is refetched (same URL) at the wake time; a failed resource relies on the next playlist reload (the live reload chain, or a refetch scheduled when the chain is dead, e.g. VOD) to be re-requested after `HlsClient::on_error`. The counter resets when a playlist or resource is accepted by the core.
+- Every HTTP request also emits `WakeAt(now + timeout)` so a host that only wakes on `WakeAt` still fires the timeout.
+- A 401/407 from a host other than the session origin is an ordinary failed request (never answered with credentials).
+- hls-runtime accepts unrecognised segment bytes without error (no samples, stream still ends); only playlist parse/UTF-8 errors, demux errors on corrupt init-bound data, and duplicate/unrequested deliveries surface as `Err` and become failures.
+- hls-runtime fix made with BC-3a: `EndOfStream` now also waits until every segment of the last playlist is delivered (a failed segment under ENDLIST no longer ends the stream early). Known remaining limitation: after an `on_resource` error, `on_error(Some(id))` decrements the outstanding-fetch counter a second time.

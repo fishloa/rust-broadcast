@@ -12,6 +12,7 @@ use crate::auth::AuthState;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, Event, SourceKind};
 use crate::redirect;
+use crate::source::hls::HlsSource;
 use crate::source::ts_http::TsHttpSource;
 use transmux::TrackId;
 
@@ -24,6 +25,7 @@ pub struct Session {
     config: Config,
     auth: AuthState,
     source: TsHttpSource,
+    hls: Option<Box<HlsSource>>,
     redirect_count: u32,
     next_conn: u32,
     live_conn: Option<u32>,
@@ -52,18 +54,22 @@ impl Session {
         if scheme != "http" && scheme != "https" {
             return Err(Error::UnsupportedScheme(scheme.to_string()));
         }
-        if config.kind == SourceKind::TsHttp || config.kind == SourceKind::Auto {
-            // accepted
-        }
+        let use_hls = match config.kind {
+            SourceKind::Hls => true,
+            SourceKind::Auto => has_playlist_extension(&parsed),
+            _ => false,
+        };
         let buffer_cfg = config.buffer;
         let auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
+        let hls = use_hls.then(|| Box::new(HlsSource::new(&parsed, &config)));
         Ok(Self {
             closed: false,
             now_us,
             config,
             auth,
             source,
+            hls,
             redirect_count: 0,
             next_conn: 1,
             live_conn: None,
@@ -82,10 +88,15 @@ impl Session {
         }
         if !self.closed {
             self.now_us = now_us;
-            if !self.auth.is_waiting() {
-                self.source.poll_timeout(now_us);
+            if let Some(h) = self.hls.as_mut() {
+                h.poll(now_us, &mut self.auth);
+                self.flush_hls();
+            } else {
+                if !self.auth.is_waiting() {
+                    self.source.poll_timeout(now_us);
+                }
+                self.drain_source();
             }
-            self.drain_source();
         }
         self.actions.pop_front()
     }
@@ -95,7 +106,7 @@ impl Session {
         if self.closed && self.events.is_empty() {
             return None;
         }
-        if !self.closed {
+        if !self.closed && self.hls.is_none() {
             self.drain_source();
         }
         self.events.pop_front()
@@ -104,6 +115,11 @@ impl Session {
     /// Response callback.
     pub fn on_response(&mut self, conn: u32, status: u16, headers: &[(String, String)]) {
         if self.closed {
+            return;
+        }
+        if let Some(h) = self.hls.as_mut() {
+            h.on_response(conn, status, headers, self.now_us, &mut self.auth);
+            self.flush_hls();
             return;
         }
         let Some(req_url) = self.known_conns.get(&conn).cloned() else {
@@ -198,6 +214,12 @@ impl Session {
         if self.closed {
             return;
         }
+        if let Some(h) = self.hls.as_mut() {
+            self.now_us = now_us;
+            h.on_data(conn, bytes, now_us, &mut self.auth);
+            self.flush_hls();
+            return;
+        }
         if !self.known_conns.contains_key(&conn) {
             return;
         }
@@ -220,6 +242,12 @@ impl Session {
     /// Closed callback.
     pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now_us: u64) {
         if self.closed {
+            return;
+        }
+        if let Some(h) = self.hls.as_mut() {
+            self.now_us = now_us;
+            h.on_closed(conn, error.as_deref(), now_us, &mut self.auth);
+            self.flush_hls();
             return;
         }
         if !self.known_conns.contains_key(&conn) {
@@ -252,8 +280,13 @@ impl Session {
         }
         let was_waiting = self.auth.set_credentials(creds);
         if was_waiting {
-            self.source.reconnect(self.now_us);
-            self.drain_source();
+            if let Some(h) = self.hls.as_mut() {
+                h.resume(self.now_us, &mut self.auth);
+                self.flush_hls();
+            } else {
+                self.source.reconnect(self.now_us);
+                self.drain_source();
+            }
         }
     }
 
@@ -263,8 +296,29 @@ impl Session {
             return;
         }
         self.now_us = now_us;
+        if let Some(h) = self.hls.as_mut() {
+            h.reconnect(now_us, &mut self.auth);
+            self.flush_hls();
+            return;
+        }
         self.source.reconnect(now_us);
         self.drain_source();
+    }
+
+    /// Switch to another HLS variant of the last master playlist.
+    ///
+    /// # Errors
+    /// [`Error::NotHls`] for a non-HLS session, [`Error::NoSuchVariant`] for an unknown index.
+    pub fn select_variant(&mut self, index: usize) -> Result<(), Error> {
+        let Some(h) = self.hls.as_mut() else {
+            return Err(Error::NotHls);
+        };
+        if self.closed {
+            return Ok(());
+        }
+        h.select_variant(index, self.now_us, &mut self.auth)?;
+        self.flush_hls();
+        Ok(())
     }
 
     /// Playback position update.
@@ -326,7 +380,11 @@ impl Session {
             return;
         }
         self.closed = true;
-        let conns: Vec<u32> = self.known_conns.keys().copied().collect();
+        let mut conns: Vec<u32> = self.known_conns.keys().copied().collect();
+        if let Some(h) = self.hls.as_ref() {
+            conns.extend(h.conns());
+            conns.sort_unstable();
+        }
         for c in conns {
             self.actions.push_back(Action::Close { conn: c });
         }
@@ -334,6 +392,13 @@ impl Session {
         self.conn_auth.clear();
         self.live_conn = None;
         self.events.clear();
+    }
+
+    fn flush_hls(&mut self) {
+        if let Some(h) = self.hls.as_mut() {
+            self.actions.extend(h.take_actions());
+            self.events.extend(h.take_events());
+        }
     }
 
     fn alloc_conn(&mut self, url: Url) -> u32 {
@@ -439,6 +504,12 @@ impl Session {
             _ => {}
         }
     }
+}
+
+fn has_playlist_extension(url: &Url) -> bool {
+    std::path::Path::new(url.path())
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("m3u"))
 }
 
 impl core::fmt::Debug for Session {

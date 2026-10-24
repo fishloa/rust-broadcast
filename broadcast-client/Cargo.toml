@@ -2,7 +2,7 @@
 name    = "broadcast-client"
 version = "0.1.0"
 edition = "2024"
-description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP source on tshttp-runtime."
+description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP and HLS sources."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["broadcast", "client", "http", "live", "streaming"]
@@ -22,6 +22,7 @@ broadcast-auth     = { path = "../broadcast-auth", version = "0.5" }
 transmux           = { path = "../transmux", version = "0.27", default-features = false }
 buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-features = false }
 tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
+hls-runtime        = { path = "../hls-runtime", version = "0.9" }
 url                = "2"
 thiserror          = "2"
 serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }

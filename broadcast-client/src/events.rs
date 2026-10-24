@@ -17,10 +17,12 @@ use crate::ConnId;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
-    /// Auto-detect from the URL (BC-1: `http(s)` -> TS-over-HTTP).
+    /// Auto-detect from the URL: a `.m3u8`/`.m3u` path is HLS, anything else TS-over-HTTP.
     Auto,
     /// TS-over-HTTP.
     TsHttp,
+    /// HLS (M3U8) on `hls-runtime`.
+    Hls,
 }
 
 impl SourceKind {
@@ -30,6 +32,7 @@ impl SourceKind {
         match self {
             Self::Auto => "auto",
             Self::TsHttp => "ts-http",
+            Self::Hls => "hls",
         }
     }
 }
@@ -201,6 +204,8 @@ pub enum Event {
         /// HTTP status.
         status: u16,
     },
+    /// A master playlist was parsed and a variant chosen.
+    Variants(hls_runtime::client::MasterSelection),
 }
 
 impl PartialEq for Event {
@@ -252,24 +257,52 @@ impl PartialEq for Event {
             (Self::AuthRejected { status: a }, Self::AuthRejected { status: b }) => *a == *b,
             (Self::Forbidden { status: a }, Self::Forbidden { status: b }) => *a == *b,
             (Self::Buffer(a), Self::Buffer(b)) => *a == *b,
+            (Self::Variants(a), Self::Variants(b)) => *a == *b,
             _ => false,
         }
     }
 }
 
+/// Default maximum accepted HLS playlist body size.
+pub const DEFAULT_MAX_PLAYLIST_BYTES: usize = 4 * 1024 * 1024;
+/// Default maximum accepted HLS media resource body size.
+pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
+/// Default per-request timeout for HLS playlists, microseconds.
+pub const DEFAULT_HLS_REQUEST_TIMEOUT_US: u64 = 20_000_000;
+/// Default per-request timeout for HLS media resources, microseconds.
+pub const DEFAULT_HLS_SEGMENT_TIMEOUT_US: u64 = 60_000_000;
+/// Default HLS retry backoff schedule, milliseconds per attempt.
+pub const DEFAULT_HLS_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
+/// Default HLS retry backoff once the schedule is exhausted, milliseconds.
+pub const DEFAULT_HLS_BACKOFF_CAP_MS: u64 = 10_000;
+
 /// Session configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     /// Source kind.
     pub kind: SourceKind,
     /// TS-over-HTTP config.
     pub ts_http: tshttp_runtime::Config,
-    /// Maximum redirects per open.
+    /// Maximum redirects per open (per request for HLS).
     pub max_redirects: u32,
     /// Extra headers (reserved).
     pub extra_headers: Vec<(String, String)>,
     /// Buffer controller config.
     pub buffer: buffering_runtime::ControllerConfig,
+    /// HLS variant selection policy.
+    pub variant_policy: hls_runtime::client::VariantPolicy,
+    /// HLS: maximum playlist body bytes.
+    pub max_playlist_bytes: usize,
+    /// HLS: maximum media resource body bytes.
+    pub max_segment_bytes: usize,
+    /// HLS: playlist request timeout, microseconds.
+    pub hls_request_timeout_us: u64,
+    /// HLS: media resource request timeout, microseconds.
+    pub hls_segment_timeout_us: u64,
+    /// HLS: retry backoff per attempt, milliseconds.
+    pub hls_backoff_ms: Vec<u64>,
+    /// HLS: retry backoff after `hls_backoff_ms` is exhausted, milliseconds.
+    pub hls_backoff_cap_ms: u64,
 }
 
 impl Default for Config {
@@ -280,6 +313,13 @@ impl Default for Config {
             max_redirects: 5,
             extra_headers: Vec::new(),
             buffer: buffering_runtime::ControllerConfig::default(),
+            variant_policy: hls_runtime::client::VariantPolicy::default(),
+            max_playlist_bytes: DEFAULT_MAX_PLAYLIST_BYTES,
+            max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
+            hls_request_timeout_us: DEFAULT_HLS_REQUEST_TIMEOUT_US,
+            hls_segment_timeout_us: DEFAULT_HLS_SEGMENT_TIMEOUT_US,
+            hls_backoff_ms: DEFAULT_HLS_BACKOFF_MS.to_vec(),
+            hls_backoff_cap_ms: DEFAULT_HLS_BACKOFF_CAP_MS,
         }
     }
 }

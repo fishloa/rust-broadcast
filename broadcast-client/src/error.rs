@@ -12,6 +12,12 @@ pub enum Error {
     /// The session URL could not be parsed.
     #[error("invalid url: {0}")]
     InvalidUrl(String),
+    /// The operation needs an HLS session.
+    #[error("operation requires an HLS session")]
+    NotHls,
+    /// The variant index does not exist (or no master playlist was seen yet).
+    #[error("no such variant: {0}")]
+    NoSuchVariant(usize),
 }
 
 /// Transport error passed to [`crate::Session::on_closed`].
