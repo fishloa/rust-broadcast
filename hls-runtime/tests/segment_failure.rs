@@ -269,7 +269,7 @@ fn tiny_ts_segments_need_every_lane_synced() {
     assert!(accepted(&whole[..TS_PACKET_LEN]), "one packet");
     assert!(accepted(&whole[..2 * TS_PACKET_LEN]), "two packets");
     let nulls = {
-        let mut packet = vec![0xFF; TS_PACKET_LEN];
+        let mut packet = [0xFF; TS_PACKET_LEN];
         packet[..4].copy_from_slice(&[TS_SYNC_BYTE, 0x1F, 0xFF, 0x10]);
         packet.repeat(3)
     };
