@@ -158,6 +158,19 @@ impl Feeder {
         self.track_specs.contains_key(&t)
     }
 
+    pub(crate) fn default_rendered(&self) -> (Option<TrackId>, Option<TrackId>) {
+        let mut video = None;
+        let mut audio = None;
+        for (id, spec) in &self.track_specs {
+            if self.live_joins.contains_key(id) {
+                video.get_or_insert(*id);
+            } else if spec.config.audio_sample_rate().is_some() {
+                audio.get_or_insert(*id);
+            }
+        }
+        (video, audio)
+    }
+
     pub(crate) fn new_connection(&mut self) {
         self.finite = false;
     }
@@ -588,6 +601,244 @@ mod tests {
         assert!(f.track_specs.contains_key(&aid));
         assert!(f.rendered.contains(&aid));
         assert!(f.pending_ends.contains_key(&aid));
+    }
+
+    const SLICE_US: u64 = 100_000;
+    const SLICE_CHUNK_BYTES: usize = 1316;
+    const PREFILL_SLICES: u64 = 50;
+    const PREFILL_STEP_US: u64 = 20_000;
+    const VIDEO_ID: u32 = 1;
+    const AUDIO_A_ID: u32 = 2;
+    const AUDIO_B_ID: u32 = 3;
+    const SLICES_PER_SEC: i64 = 10;
+    const TICK_STEP_US: u64 = 50_000;
+    const STARVE_MARGIN_27MHZ: u64 = TICKS_PER_SEC_27MHZ;
+
+    struct Rig {
+        f: Feeder,
+        key: Sample,
+        plain: Sample,
+        audio: Sample,
+        specs: BTreeMap<u32, TrackSpec>,
+        emitting: Vec<u32>,
+        now: u64,
+        next_slice: i64,
+        playing: Option<(u64, u64)>,
+        held: Option<u64>,
+        events: Vec<(u64, BufferEvent)>,
+    }
+
+    fn respec(spec: &TrackSpec, id: u32) -> TrackSpec {
+        let mut s = spec.clone();
+        s.track_id = TrackId::new(id);
+        s
+    }
+
+    impl Rig {
+        fn new() -> Self {
+            let st = streams();
+            let mut key = None;
+            let mut plain = None;
+            let mut probe = LiveJoin::for_config(&st.video.0.config).unwrap();
+            for s in &st.video.1 {
+                match probe.push(s) {
+                    JoinDecision::JoinPoint(_) if key.is_none() => key = Some(s.clone()),
+                    JoinDecision::Keep if plain.is_none() => plain = Some(s.clone()),
+                    _ => {}
+                }
+            }
+            let specs = BTreeMap::from([
+                (VIDEO_ID, respec(&st.video.0, VIDEO_ID)),
+                (AUDIO_A_ID, respec(&st.audio.0, AUDIO_A_ID)),
+                (AUDIO_B_ID, respec(&st.audio.0, AUDIO_B_ID)),
+            ]);
+            Self {
+                f: feeder(),
+                key: key.unwrap(),
+                plain: plain.unwrap(),
+                audio: st.audio.1[0].clone(),
+                specs,
+                emitting: Vec::new(),
+                now: 0,
+                next_slice: 0,
+                playing: None,
+                held: None,
+                events: Vec::new(),
+            }
+        }
+
+        fn announce(&mut self, ids: &[u32]) {
+            for id in ids {
+                self.f.on_track_added(&self.specs[id]);
+                self.emitting.push(*id);
+            }
+        }
+
+        fn collect(&mut self) {
+            for e in self.f.drain() {
+                let Event::Buffer(b) = e else { continue };
+                match &b {
+                    BufferEvent::Start { at_27mhz } | BufferEvent::Resume { at_27mhz } => {
+                        self.playing = Some((*at_27mhz, self.now));
+                        self.held = None;
+                    }
+                    BufferEvent::Pause { hold_at_27mhz, .. } => {
+                        self.playing = None;
+                        self.held = Some(*hold_at_27mhz);
+                    }
+                }
+                self.events.push((self.now, b));
+            }
+        }
+
+        fn position(&self) -> Option<u64> {
+            match (self.playing, self.held) {
+                (Some((base, since)), _) => {
+                    Some(base + (self.now - since) * (TICKS_PER_SEC_27MHZ / 1_000_000))
+                }
+                (None, held) => held,
+            }
+        }
+
+        fn tick(&mut self) {
+            let pos = self.position();
+            self.f.on_playback_position(self.now, pos);
+            self.collect();
+        }
+
+        fn slice(&mut self) {
+            let k = self.next_slice;
+            self.next_slice += 1;
+            for id in self.emitting.clone() {
+                let spec = &self.specs[&id];
+                let ts = i64::from(spec.timescale);
+                let dur = u32::try_from(ts / SLICES_PER_SEC).unwrap();
+                let pts = ts + k * i64::from(dur);
+                let track = TrackId::new(id);
+                let mut s = if id == VIDEO_ID {
+                    if k == 0 {
+                        self.key.clone()
+                    } else {
+                        self.plain.clone()
+                    }
+                } else {
+                    self.audio.clone()
+                };
+                s.pts = Some(pts);
+                s.dts = Some(pts);
+                s.duration = Some(dur);
+                let join = if id == VIDEO_ID && k == 0 {
+                    self.f.join_sample(track, &s)
+                } else if id == VIDEO_ID {
+                    Some(JoinDecision::Keep)
+                } else {
+                    None
+                };
+                self.f.on_sample(track, &s, join);
+            }
+            self.f.on_chunk(self.now, SLICE_CHUNK_BYTES, None);
+            self.collect();
+        }
+
+        fn prefill(&mut self) {
+            for _ in 0..PREFILL_SLICES {
+                self.now += PREFILL_STEP_US;
+                self.slice();
+                self.tick();
+            }
+        }
+
+        fn run_for(&mut self, us: u64) {
+            let end = self.now + us;
+            while self.now < end {
+                self.now += SLICE_US;
+                self.slice();
+                self.tick();
+            }
+        }
+
+        fn tick_for(&mut self, us: u64) {
+            let end = self.now + us;
+            while self.now < end {
+                self.now += TICK_STEP_US;
+                self.tick();
+            }
+        }
+
+        fn emitted_end_27mhz(&self) -> u64 {
+            let secs = 1 + self.next_slice / SLICES_PER_SEC;
+            u64::try_from(secs).unwrap() * TICKS_PER_SEC_27MHZ
+        }
+
+        fn pauses_after(&self, t: u64) -> Vec<(u64, BufferEvent)> {
+            self.events
+                .iter()
+                .filter(|(at, e)| *at > t && matches!(e, BufferEvent::Pause { .. }))
+                .cloned()
+                .collect()
+        }
+    }
+
+    #[test]
+    fn declaring_an_already_emitting_audio_track_late_is_transparent() {
+        let mut r = Rig::new();
+        r.announce(&[VIDEO_ID, AUDIO_A_ID, AUDIO_B_ID]);
+        r.prefill();
+        r.tick_for(2_000_000);
+        assert!(
+            r.events
+                .iter()
+                .any(|(_, e)| matches!(e, BufferEvent::Start { .. })),
+            "{:?}",
+            r.events
+        );
+        let declared_at = r.now;
+        r.f.set_rendered_tracks(&[TrackId::new(VIDEO_ID), TrackId::new(AUDIO_B_ID)]);
+        r.tick();
+        let emitted_end = r.emitted_end_27mhz();
+        r.tick_for(8_000_000);
+        let pauses = r.pauses_after(declared_at);
+        let [(_, BufferEvent::Pause { hold_at_27mhz, .. })] = pauses.as_slice() else {
+            panic!("the controller must see the declared track run dry: {pauses:?}");
+        };
+        assert!(
+            *hold_at_27mhz + STARVE_MARGIN_27MHZ >= emitted_end,
+            "{hold_at_27mhz} {emitted_end}"
+        );
+    }
+
+    #[test]
+    fn default_rendered_is_the_lowest_id_of_each_kind_whatever_the_announce_order() {
+        let mut r = Rig::new();
+        r.announce(&[AUDIO_B_ID, VIDEO_ID, AUDIO_A_ID]);
+        let want = (Some(TrackId::new(VIDEO_ID)), Some(TrackId::new(AUDIO_A_ID)));
+        assert_eq!(r.f.default_rendered(), want);
+        assert_eq!(
+            r.f.rendered,
+            BTreeSet::from([TrackId::new(VIDEO_ID), TrackId::new(AUDIO_A_ID)])
+        );
+    }
+
+    #[test]
+    fn a_lower_id_track_announced_later_takes_over_the_default_without_pausing() {
+        let mut r = Rig::new();
+        r.announce(&[VIDEO_ID, AUDIO_B_ID]);
+        r.prefill();
+        r.run_for(2_000_000);
+        assert!(
+            r.events
+                .iter()
+                .any(|(_, e)| matches!(e, BufferEvent::Start { .. }))
+        );
+        let at = r.now;
+        r.announce(&[AUDIO_A_ID]);
+        r.tick();
+        assert_eq!(r.f.default_rendered().1, Some(TrackId::new(AUDIO_A_ID)));
+        assert!(r.f.rendered.contains(&TrackId::new(AUDIO_A_ID)));
+        assert!(!r.f.rendered.contains(&TrackId::new(AUDIO_B_ID)));
+        r.run_for(3_000_000);
+        let pauses = r.pauses_after(at);
+        assert!(pauses.is_empty(), "{pauses:?}");
     }
 
     #[test]

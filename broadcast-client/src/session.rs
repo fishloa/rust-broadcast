@@ -572,6 +572,15 @@ impl Session {
         self.drain_playout();
     }
 
+    /// The default rendered set: the lowest [`TrackId`] of each kind among the tracks announced so
+    /// far, `(video, audio)`. It is what the buffer controller judges until
+    /// [`set_rendered_tracks`](Self::set_rendered_tracks) is called, and it can change when a
+    /// track with a lower id is announced later.
+    #[must_use]
+    pub fn default_rendered_tracks(&self) -> (Option<TrackId>, Option<TrackId>) {
+        self.buffer.default_rendered()
+    }
+
     /// Hint passthrough.
     pub fn hint(&mut self, h: Hint) {
         if self.closed {

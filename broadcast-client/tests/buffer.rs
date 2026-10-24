@@ -1410,3 +1410,87 @@ fn rejoin_clears_pending_ends() {
         .count();
     assert_eq!(tail, 0, "stale ends leaked into the next connection");
 }
+
+const LATE_DECLARATION_DELAYS_US: [u64; 5] = [0, 1_000_000, 2_000_000, 5_000_000, 8_000_000];
+
+struct RenderedPick {
+    video: TrackId,
+    audio: TrackId,
+}
+
+fn pick_rendered(h: &Host) -> Option<RenderedPick> {
+    let mut video = None;
+    let mut audios = Vec::new();
+    for e in &h.events {
+        let Event::Tracks(specs) = e else { continue };
+        for s in specs {
+            if LiveJoin::for_config(&s.config).is_some() {
+                video = video.or(Some(s.track_id));
+            } else if s.config.audio_sample_rate().is_some() {
+                audios.push(s.track_id);
+            }
+        }
+    }
+    audios.sort();
+    audios.dedup();
+    Some(RenderedPick {
+        video: video?,
+        audio: *audios.get(1)?,
+    })
+}
+
+fn run_declaring(bytes: &[u8], delay_us: Option<u64>) -> Host {
+    let mut h = Host::open(None);
+    let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
+    let arrivals = realtime(chunks.len());
+    let mut tracks_at = None;
+    let mut declared = false;
+    for step in timeline(&arrivals, TAIL_US) {
+        let now = match step {
+            Step::Tick(t) => {
+                h.tick(t);
+                t
+            }
+            Step::Data(i, t) => {
+                h.data(chunks[i], t);
+                t
+            }
+        };
+        let (Some(delay), false) = (delay_us, declared) else {
+            continue;
+        };
+        if tracks_at.is_none() && h.events.iter().any(|e| matches!(e, Event::Tracks(_))) {
+            tracks_at = Some(now);
+        }
+        if tracks_at.is_some_and(|at| now >= at + delay)
+            && let Some(p) = pick_rendered(&h)
+        {
+            h.session.set_rendered_tracks(&[p.video, p.audio]);
+            h.tick(now);
+            declared = true;
+        }
+    }
+    h
+}
+
+fn hold_sequence(h: &Host) -> Vec<(&'static str, Option<u64>)> {
+    h.buffer_events()
+        .iter()
+        .map(|e| match e {
+            BufferEvent::Pause { hold_at_27mhz, .. } => (e.name(), Some(*hold_at_27mhz)),
+            _ => (e.name(), None),
+        })
+        .collect()
+}
+
+#[test]
+fn late_explicit_declaration_is_transparent_on_the_real_capture() {
+    let bytes = read_tf1_bytes();
+    let baseline = hold_sequence(&run_declaring(&bytes, None));
+    assert!(baseline.len() >= 2, "{baseline:?}");
+    for delay in LATE_DECLARATION_DELAYS_US {
+        let declared = run_declaring(&bytes, Some(delay));
+        assert!(pick_rendered(&declared).is_some());
+        assert_eq!(hold_sequence(&declared), baseline, "delay {delay} us");
+    }
+}
