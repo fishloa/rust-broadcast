@@ -7,6 +7,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (client, pre-release audit #1485)
+- `EXT-X-SKIP` delta reloads: the merged playlist (skip cleared) is now the baseline for the next delta, and the key tags dropped with the skipped prefix are restated on the merged first segment, so media sequence numbers, AES IVs and keys stay right after the window slides past the first full playlist. A delta that cannot be merged is answered with `Error::DeltaNotMergeable` and a plain (non-delta) playlist request instead of mis-numbered segments.
+- The `EXT-X-PRELOAD-HINT` part is requested once, not on every reload (it produced `DuplicateResource` and advanced the byte-range cursor each time).
+- `on_key` with a wrong-length body now clears the in-flight key so the next reload requests it again.
+- A failed init no longer lets a VOD stream end with `EndOfStream`; new `HlsClient::retry_init()` re-requests it (a live playlist's next reload already did), and `ensure_playlist_reload()` queues a plain reload when the core rejected a playlist before scheduling one.
+- Encrypted segments waiting for a key are pruned with the window and capped at 64 MiB (oldest dropped, `Error::PendingKeyedOverflow`). Key maps are pruned with the window (a per-reload tokenised key URL no longer leaks), key ids are never reused, and a key whose segments left the window is fetched afresh when its URI returns.
+- The non-blocking reload wait is capped at 60 s whatever `EXT-X-TARGETDURATION` claims.
+- An init is requested again when only its `BYTERANGE` changes on the same URI. (An origin offering several different `EXT-X-MAP`s within one window is still served by the latest one only.)
+- A segment URL re-signed on every reload (same path, different query) is no longer an origin restart.
+- One unsupported or undecryptable segment (SAMPLE-AES, encrypted parts, ...) fails only that segment: it is skipped, the error is returned after the rest of the playlist was processed, and the reload is still queued. AES-128 with `EXT-X-MAP` is accepted: a map declared before the key is plain, a map after an AES-128 key is decrypted with it (explicit IV, else the Media Sequence Number of the first segment using it).
+- Behaviour change: a segment whose `on_resource` failed (demux, decrypt) is requested again by the next reload instead of staying marked requested.
+
+### Changed (tokio adapter)
+- A response the core rejects no longer ends the session: it is counted in `TokioClientStats::rejected_responses`, exposed as `TokioClient::last_rejection()` and retried with backoff; sixteen rounds in a row without output end it. New `TokioClientConfig::max_body_bytes` (default 256 MiB, `with_max_body_bytes`) bounds every body; `TokioError::BodyTooLarge` (not retried). **Breaking for struct-literal construction:** `TokioClientConfig` and `TokioClientStats` gained a field.
+
 ### Added
 - `HlsClient::endlist_seen()` and `HlsClient::target_duration_secs()`: read-only accessors for the playlist's VOD/live state and `EXT-X-TARGETDURATION` (broadcast-client playout gate, issue #1455).
 - HLS `METHOD=AES-128` decryption in `HlsClient` (issue #1459, slice S1): new `Action::FetchKey { id, url }`, `KeyId`, `HlsClient::on_key` / `on_key_error`. Keys are fetched once per URI, segments are held until the key arrives, then decrypted (IV attribute or big-endian Media Sequence Number) before demuxing. New errors `BadKeyLength`, `UnrequestedKey`, `DecryptFailed` and `UnsupportedEncryption` (SAMPLE-AES and other methods, encrypted `EXT-X-MAP`, I-frames-only, partial segments). The `tokio` adapter fetches keys itself. Depends on `transmux` with the `sample-aes` feature.

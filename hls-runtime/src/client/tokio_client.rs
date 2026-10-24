@@ -58,6 +58,21 @@
 //!   [`TokioClient::next_output`] may block should wrap it in
 //!   `tokio::time::timeout` itself.
 //!
+//! - A response the sans-IO core **rejects** (a key of the wrong length such as
+//!   an HTML error page served with `200`, a segment that does not decrypt or
+//!   demux, a delta playlist that cannot be merged, an unsupported
+//!   encryption, a duplicate delivery) is a per-request failure, not a fatal
+//!   one: it is counted in [`TokioClientStats::rejected_responses`], kept in
+//!   [`TokioClient::last_rejection`], and retried after a capped backoff — the
+//!   core makes the next reload re-request what was lost, and a VOD playlist
+//!   (which has no further reload) gets a plain playlist reload or an init
+//!   retry from the adapter. Only sixteen such rounds in a row with no
+//!   [`Output`] between them end the session
+//!   ([`TokioError::Client`] / [`TokioError::Stalled`]).
+//! - Every response body is read incrementally and abandoned with
+//!   [`TokioError::BodyTooLarge`] (never retried) once it exceeds
+//!   [`TokioClientConfig::max_body_bytes`].
+//!
 //! # Cancellation
 //!
 //! [`TokioClientConfig::cancel`] is a `CancellationToken`: once cancelled,
@@ -75,6 +90,14 @@ use reqwest::{Client, StatusCode};
 use tokio_util::sync::CancellationToken;
 
 use super::{Action, HlsClient, Output, ResourceId};
+
+/// Default [`TokioClientConfig::max_body_bytes`].
+pub const DEFAULT_MAX_BODY_BYTES: usize = 256 * 1024 * 1024;
+
+/// How many rounds in a row may pass without yielding an [`Output`] — each a
+/// rejected response, or the core having nothing queued — before
+/// [`TokioClient::next_output`] gives up with an error.
+const MAX_ROUNDS_WITHOUT_OUTPUT: u32 = 16;
 
 /// Errors from the tokio IO adapter itself — distinct from
 /// [`crate::client::Error`], the sans-IO core's own parse/demux error type
@@ -133,6 +156,15 @@ pub enum TokioError {
     /// condition; it replaces a 10 ms defensive sleep that used to hide it.
     #[error("the HLS core queued no action and the stream has not ended")]
     Stalled,
+    /// A response body exceeded [`TokioClientConfig::max_body_bytes`]; the
+    /// read was abandoned.
+    #[error("response body of {url} exceeds {limit} bytes")]
+    BodyTooLarge {
+        /// The request URL.
+        url: String,
+        /// The configured limit.
+        limit: usize,
+    },
     /// [`TokioClientConfig::cancel`] fired while a request was in flight.
     /// Internal: [`TokioClient::next_output`] converts it to `Ok(None)`.
     #[doc(hidden)]
@@ -175,6 +207,10 @@ pub struct TokioClientConfig {
     /// Cancelling this token makes [`TokioClient::next_output`] abandon its
     /// in-flight request or backoff sleep and return `Ok(None)`.
     pub cancel: CancellationToken,
+    /// Largest response body (playlist, key, init, part or segment) the
+    /// adapter will read; a larger one is abandoned mid-read with
+    /// [`TokioError::BodyTooLarge`]. Default [`DEFAULT_MAX_BODY_BYTES`].
+    pub max_body_bytes: usize,
 }
 
 impl TokioClientConfig {
@@ -199,6 +235,13 @@ impl TokioClientConfig {
         self
     }
 
+    /// Set [`Self::max_body_bytes`].
+    #[must_use]
+    pub fn with_max_body_bytes(mut self, limit: usize) -> Self {
+        self.max_body_bytes = limit;
+        self
+    }
+
     /// Set [`Self::jitter`].
     #[must_use]
     pub fn with_jitter(mut self, on: bool) -> Self {
@@ -219,6 +262,7 @@ impl Default for TokioClientConfig {
             connect_timeout: Duration::from_secs(10),
             jitter: true,
             cancel: CancellationToken::new(),
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
         }
     }
 }
@@ -242,6 +286,10 @@ pub struct TokioClientStats {
     /// fetched ahead of that resource's own numbered (`#EXT-X-PART`)
     /// appearance, not merely alongside it.
     pub preload_hint_resource_fetches: u64,
+    /// Responses the sans-IO core rejected (wrong key length, undecryptable
+    /// or undemuxable segment, unmergeable delta, unsupported encryption, ...);
+    /// each is a per-request failure that is retried, not a fatal error.
+    pub rejected_responses: u64,
 }
 
 /// An async shell driving [`crate::client::HlsClient`] over real HTTP.
@@ -275,6 +323,8 @@ pub struct TokioClient {
     /// [`Credentials::Digest`]. Applied preemptively to every subsequent
     /// request once set, advancing `nc` (RFC 7616 §3.3) each time.
     digest_authenticator: Option<Authenticator>,
+    last_rejection: Option<super::Error>,
+    rounds_without_output: u32,
 }
 
 impl TokioClient {
@@ -315,6 +365,8 @@ impl TokioClient {
             last_preload_hint_url: None,
             ended: false,
             digest_authenticator: None,
+            last_rejection: None,
+            rounds_without_output: 0,
         })
     }
 
@@ -322,6 +374,13 @@ impl TokioClient {
     /// [`TokioClientStats`].
     pub fn stats(&self) -> TokioClientStats {
         self.stats
+    }
+
+    /// The most recent response the sans-IO core rejected, which the adapter
+    /// retried instead of failing the session — see
+    /// [`TokioClientStats::rejected_responses`].
+    pub fn last_rejection(&self) -> Option<&super::Error> {
+        self.last_rejection.as_ref()
     }
 
     /// Drive the sans-IO core — performing whatever HTTP its next
@@ -336,12 +395,14 @@ impl TokioClient {
     /// wants to keep playing.
     ///
     /// # Errors
-    /// [`TokioError::Client`] if the sans-IO core rejects a fetched
-    /// playlist/resource (malformed playlist, demux failure). Resource fetch
-    /// failures are retried/recovered internally (see the module docs) and
-    /// never surface here; a playlist fetch failure retries indefinitely
-    /// rather than ever returning an [`TokioError::Http`]/[`TokioError::Status`]
-    /// — see the module docs' "Error recovery" section.
+    /// [`TokioError::Client`] only when the sans-IO core has rejected
+    /// responses for sixteen rounds in a row without any [`Output`] in
+    /// between; a single rejected response is retried (see the module docs).
+    /// [`TokioError::Stalled`] on the same bound when the core has nothing to
+    /// do. Resource fetch failures are retried/recovered internally and never
+    /// surface here; a playlist fetch failure retries indefinitely rather than
+    /// ever returning an [`TokioError::Http`]/[`TokioError::Status`] — see the
+    /// module docs' "Error recovery" section.
     pub async fn next_output(&mut self) -> Result<Option<Output>, TokioError> {
         loop {
             if self.config.cancel.is_cancelled() {
@@ -351,6 +412,7 @@ impl TokioClient {
                 if matches!(out, Output::EndOfStream) {
                     self.ended = true;
                 }
+                self.rounds_without_output = 0;
                 return Ok(Some(out));
             }
             if self.ended {
@@ -384,7 +446,12 @@ impl TokioClient {
                         self.stats.blocking_reloads += 1;
                     }
                     self.note_preload_hint(&bytes);
-                    self.core.on_playlist(&bytes)?;
+                    if let Err(rejected) = self.core.on_playlist(&bytes) {
+                        self.core.ensure_playlist_reload();
+                        if self.reject(rejected).await? {
+                            return Ok(None);
+                        }
+                    }
                 }
                 Some(Action::FetchResource {
                     id,
@@ -398,7 +465,11 @@ impl TokioClient {
                         {
                             self.stats.preload_hint_resource_fetches += 1;
                         }
-                        self.core.on_resource(id, &bytes)?;
+                        if let Err(rejected) = self.core.on_resource(id, &bytes)
+                            && self.reject(rejected).await?
+                        {
+                            return Ok(None);
+                        }
                     }
                     Err(TokioError::Cancelled) => return Ok(None),
                     Err(_source) => {
@@ -411,7 +482,13 @@ impl TokioClient {
                 },
                 Some(Action::FetchKey { id, url }) => {
                     match self.fetch_resource_bounded(&url, None).await {
-                        Ok(bytes) => self.core.on_key(id, &bytes)?,
+                        Ok(bytes) => {
+                            if let Err(rejected) = self.core.on_key(id, &bytes)
+                                && self.reject(rejected).await?
+                            {
+                                return Ok(None);
+                            }
+                        }
                         Err(TokioError::Cancelled) => return Ok(None),
                         Err(_source) => self.core.on_key_error(id),
                     }
@@ -421,12 +498,50 @@ impl TokioClient {
                         return Ok(None);
                     }
                 }
-                // In normal operation `on_playlist` always re-queues a reload
-                // (or `WaitMs`) before returning for as long as the stream has
-                // not ended, so this is a core bug, not something to sleep on.
-                None => return Err(TokioError::Stalled),
+                // `on_playlist` re-queues a reload (or `WaitMs`) for a live
+                // stream; an empty queue here is a VOD whose init or media was
+                // lost, which a retry of the init / a plain playlist reload
+                // recovers, within a bound.
+                None => {
+                    if self.core.retry_init() || self.core.ensure_playlist_reload() {
+                        if self.idle_round().await? {
+                            return Ok(None);
+                        }
+                    } else {
+                        return Err(TokioError::Stalled);
+                    }
+                }
             }
         }
+    }
+
+    /// Count a response the core rejected and back off before the next
+    /// request. `Ok(true)` means cancelled; `Err` once rejections have
+    /// repeated [`MAX_ROUNDS_WITHOUT_OUTPUT`] times with no output.
+    async fn reject(&mut self, rejected: super::Error) -> Result<bool, TokioError> {
+        self.stats.rejected_responses += 1;
+        if self.rounds_without_output >= MAX_ROUNDS_WITHOUT_OUTPUT {
+            return Err(TokioError::Client(rejected));
+        }
+        self.last_rejection = Some(rejected);
+        self.back_off().await
+    }
+
+    /// Count a round in which the core had nothing queued and back off.
+    async fn idle_round(&mut self) -> Result<bool, TokioError> {
+        if self.rounds_without_output >= MAX_ROUNDS_WITHOUT_OUTPUT {
+            return Err(TokioError::Stalled);
+        }
+        self.back_off().await
+    }
+
+    async fn back_off(&mut self) -> Result<bool, TokioError> {
+        let round = usize::try_from(self.rounds_without_output).unwrap_or(usize::MAX);
+        self.rounds_without_output = self.rounds_without_output.saturating_add(1);
+        let delay = schedule(&self.config, None)
+            .nth(round)
+            .unwrap_or(self.config.max_retry_backoff);
+        Ok(self.sleep_or_cancelled(delay).await)
     }
 
     /// Sleeps `d` or until [`TokioClientConfig::cancel`] fires; `true` means
@@ -582,11 +697,29 @@ impl TokioClient {
                 status,
             });
         }
-        let bytes = resp.bytes().await.map_err(|source| TokioError::Http {
+        let limit = self.config.max_body_bytes;
+        let too_large = || TokioError::BodyTooLarge {
+            url: url.to_string(),
+            limit,
+        };
+        if resp
+            .content_length()
+            .is_some_and(|len| len > u64::try_from(limit).unwrap_or(u64::MAX))
+        {
+            return Err(too_large());
+        }
+        let mut resp = resp;
+        let mut body = Vec::new();
+        while let Some(chunk) = resp.chunk().await.map_err(|source| TokioError::Http {
             url: url.to_string(),
             source,
-        })?;
-        Ok(bytes.to_vec())
+        })? {
+            if body.len().saturating_add(chunk.len()) > limit {
+                return Err(too_large());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
     }
 
     /// Retry a playlist fetch indefinitely (capped exponential backoff) —
@@ -688,6 +821,7 @@ fn schedule(
 /// and `429 Too Many Requests` are transient, RFC 9110 §15.5.9 / RFC 6585 §4).
 fn is_retryable(err: &TokioError) -> bool {
     match err {
+        TokioError::BodyTooLarge { .. } => false,
         TokioError::Status { status, .. } => {
             !status.is_client_error()
                 || *status == StatusCode::REQUEST_TIMEOUT

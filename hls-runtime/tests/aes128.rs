@@ -394,7 +394,7 @@ fn sample_aes_is_unsupported_not_plaintext() {
 #[test]
 fn encrypted_map_is_unsupported() {
     let iv0 = iv_seq(0x02);
-    let header = "#EXT-X-MAP:URI=\"init.mp4\"\n";
+    let header = "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key.bin\"\n#EXT-X-MAP:URI=\"init.mp4\"\n";
     let text = playlist(0, header, &[(key_tag("key.bin", Some(&iv0)), "index0.ts")]);
     let mut client = HlsClient::new(URL);
     drain(&mut client);

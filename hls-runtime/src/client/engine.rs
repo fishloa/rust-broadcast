@@ -40,6 +40,15 @@ const TS_MOVIE_TIMESCALE: u32 = 90_000;
 /// durations from the end of the Playlist file").
 const LIVE_EDGE_TARGET_DURATIONS: f64 = 3.0;
 
+/// Ceiling on ciphertext held while its key is still missing (total bytes).
+const MAX_PENDING_KEYED_BYTES: usize = 64 * 1024 * 1024;
+
+/// Longest the non-blocking reload cadence may wait, however large the
+/// untrusted `EXT-X-TARGETDURATION` says the target duration is.
+const MAX_RELOAD_WAIT_MS: u64 = 60_000;
+
+const MILLIS_PER_SECOND: u64 = 1000;
+
 /// [`StreamingTsDemux`] with a `Debug` impl (the transmux type has none), so
 /// [`HlsClient`] can keep deriving it.
 struct TsDemuxState(StreamingTsDemux);
@@ -54,6 +63,76 @@ impl core::fmt::Debug for TsDemuxState {
 /// rather than casting if a target ever had a wider `usize`).
 fn index_u64(i: usize) -> u64 {
     u64::try_from(i).unwrap_or(u64::MAX)
+}
+
+/// Half the Target Duration, the non-blocking reload cadence (RFC 8216
+/// §4.3.3.1: no more often than once per Target Duration), clamped because
+/// the Target Duration is untrusted.
+fn reload_wait_ms(target_duration: u32) -> u64 {
+    (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SECOND) / 2)
+        .min(MAX_RELOAD_WAIT_MS)
+}
+
+/// The identity-`KEYFORMAT` key in effect at the last `EXT-X-MAP` line of
+/// `text` (RFC 8216 §4.3.2.5: a key tag applies to a Media Initialization
+/// Section only when it precedes the `EXT-X-MAP` tag). `None` when `text` has
+/// no `EXT-X-MAP` line; `Some(None)` when the map is not encrypted.
+fn key_in_effect_at_last_map(text: &str) -> Option<Option<MediaKey>> {
+    const MAP_PREFIX: &str = "#EXT-X-MAP:";
+    const KEY_PREFIX: &str = "#EXT-X-KEY:";
+    let mut last_map = None;
+    for (i, line) in text.lines().enumerate() {
+        if line.starts_with(MAP_PREFIX) {
+            last_map = Some(i);
+        }
+    }
+    let last_map = last_map?;
+    let mut current: Option<MediaKey> = None;
+    for line in text.lines().take(last_map) {
+        if !line.starts_with(KEY_PREFIX) {
+            continue;
+        }
+        let probe = format!(
+            "#EXTM3U\n#EXT-X-TARGETDURATION:1\n{}\n#EXTINF:1,\nx\n",
+            line.trim_end()
+        );
+        let Ok(parsed) = MediaPlaylist::parse(&probe) else {
+            continue;
+        };
+        if let Ok(mut keys) = parsed.segment_keys()
+            && let Some(key) = keys.pop()
+        {
+            current = key;
+        }
+    }
+    Some(current)
+}
+
+/// `uri` up to its query string: a CDN that re-signs a segment URL on every
+/// reload changes only the query.
+fn without_query(uri: &str) -> &str {
+    uri.split_once('?').map_or(uri, |(path, _)| path)
+}
+
+/// The `EXT-X-KEY` tags in effect after `dropped` segments, one per
+/// `KEYFORMAT`: when a playlist's window slides past the segment carrying a
+/// key tag, a merged view must state that key again on its new first segment.
+fn carried_key_tags(dropped: &[MediaSegment]) -> Vec<String> {
+    const KEY_PREFIX: &str = "#EXT-X-KEY:";
+    const KEYFORMAT_ATTR: &str = "KEYFORMAT=\"";
+    const IDENTITY: &str = "identity";
+    let mut latest: BTreeMap<&str, &String> = BTreeMap::new();
+    for tag in dropped.iter().flat_map(|seg| &seg.pre_tags) {
+        if !tag.starts_with(KEY_PREFIX) {
+            continue;
+        }
+        let format = tag
+            .split_once(KEYFORMAT_ATTR)
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map_or(IDENTITY, |(format, _)| format);
+        latest.insert(format, tag);
+    }
+    latest.into_values().cloned().collect()
 }
 
 fn decrypt_segment(
@@ -75,6 +154,20 @@ fn resource_msn(id: &ResourceId) -> Option<u64> {
         ResourceId::Part { msn, .. } | ResourceId::Segment { msn } => Some(*msn),
         _ => None,
     }
+}
+
+/// What is needed to request (or re-request) the Media Initialization Section.
+#[derive(Debug, Clone)]
+struct InitSource {
+    map: MapTag,
+    encryption: Option<MediaKey>,
+    first_msn: u64,
+}
+
+/// The init the playlist asks for, or why it can not be fetched.
+struct InitPlan {
+    source: InitSource,
+    error: Option<Error>,
 }
 
 /// An AES-128 key whose `Debug` never prints the key octets.
@@ -252,6 +345,21 @@ pub struct HlsClient {
     segment_crypto: BTreeMap<u64, SegmentCrypto>,
     /// Encrypted segments delivered before their key arrived (ciphertext).
     pending_keyed: Vec<(ResourceId, Vec<u8>)>,
+    /// Next [`KeyId`] to hand out; never reused, so evicting a key can not
+    /// make a stale id alias a live one.
+    next_key_id: u32,
+    /// How the Media Initialization Section is encrypted, when it is.
+    init_crypto: Option<SegmentCrypto>,
+    /// Encrypted init bytes waiting for their key.
+    pending_init_cipher: Option<Vec<u8>>,
+    /// The `BYTERANGE` of the init currently requested (a changed range on
+    /// the same URI is a different init).
+    init_range: Option<ByteRange>,
+    /// The init last requested, kept so a failed one can be retried.
+    init_source: Option<InitSource>,
+    /// A full playlist was asked for after an unmergeable delta; a repeat
+    /// is paced by a wait instead of hot-looping.
+    full_reload_requested: bool,
 
     requested: BTreeSet<ResourceId>,
     /// Ids whose bytes `on_resource` has accepted (delivered *or* buffered in
@@ -375,6 +483,12 @@ impl HlsClient {
             keys_in_flight: BTreeSet::new(),
             segment_crypto: BTreeMap::new(),
             pending_keyed: Vec::new(),
+            next_key_id: 0,
+            init_crypto: None,
+            pending_init_cipher: None,
+            init_range: None,
+            init_source: None,
+            full_reload_requested: false,
             requested: BTreeSet::new(),
             fulfilled: BTreeSet::new(),
             joined: false,
@@ -553,12 +667,17 @@ impl HlsClient {
         }
         let playlist = MediaPlaylist::parse(text)?;
         let playlist = self.merge_delta(playlist);
+        if playlist.skip.is_some() {
+            return Err(self.request_full_playlist(&playlist));
+        }
+        self.full_reload_requested = false;
         let segment_keys = playlist.segment_keys()?;
         let open_key = if playlist.open_segment.is_some() {
             playlist.open_segment_key()?
         } else {
             None
         };
+        let mut first_error: Option<Error> = None;
         // An older view of the same stream must never make the client deliver
         // backwards: its segments below the previous window are skipped.
         let mut lag_floor: Option<u64> = None;
@@ -576,6 +695,7 @@ impl HlsClient {
             self.last_media_sequence
                 .map_or(playlist.media_sequence, |p| p.max(playlist.media_sequence)),
         );
+        self.forget_keys_below(playlist.media_sequence);
 
         // `EXT-X-MEDIA-SEQUENCE` is an unbounded remote `u64`: every MSN
         // derived below is `media_sequence + index` with `index <
@@ -593,43 +713,51 @@ impl HlsClient {
             self.join_start(&playlist)?;
         }
 
+        let mut init_plan = self.plan_init(&playlist, text, next_msn);
+        let map_unusable = init_plan.as_mut().is_some_and(|plan| plan.error.is_some());
+        if let Some(e) = init_plan.as_mut().and_then(|plan| plan.error.take()) {
+            first_error.get_or_insert(e);
+        }
+
         for (i, seg) in playlist.segments.iter().enumerate() {
             let msn = playlist.media_sequence.saturating_add(index_u64(i));
             if lag_floor.is_some_and(|floor| msn < floor) {
                 self.skip_segment(msn, seg)?;
                 continue;
             }
+            if map_unusable && seg.map.is_some() {
+                self.skip_segment(msn, seg)?;
+                continue;
+            }
             let key = segment_keys.get(i).and_then(Option::as_ref);
-            self.process_closed_segment(msn, seg, key, playlist.iframes_only)?;
+            match self.process_closed_segment(msn, seg, key, playlist.iframes_only) {
+                Ok(()) => {}
+                Err(e @ Error::UnsupportedEncryption { .. }) => {
+                    self.skip_segment(msn, seg)?;
+                    first_error.get_or_insert(e);
+                }
+                Err(e) => return Err(e),
+            }
         }
 
         if let Some(open) = &playlist.open_segment {
-            if let Some(key) = &open_key {
-                return Err(Error::UnsupportedEncryption {
-                    method: key.method,
-                    what: "encrypted partial segments",
-                });
+            match &open_key {
+                Some(key) => {
+                    first_error.get_or_insert(Error::UnsupportedEncryption {
+                        method: key.method,
+                        what: "encrypted partial segments",
+                    });
+                }
+                None => self.process_open_segment(next_msn, open)?,
             }
-            self.process_open_segment(next_msn, open)?;
         }
 
-        // Prefer the *open* segment's map when present: it's the most
-        // recent (`#EXT-X-MAP` carries forward, so the open segment's view
-        // is never older than the last closed segment's) and, crucially, is
-        // the only way to learn the init segment's URI at all when NO
-        // segment has closed yet (issue #717 slice 5 fix — previously this
-        // only ever looked at the last *closed* segment's map, so a client
-        // tuning into a stream mid-segment couldn't fetch the init segment,
-        // and therefore couldn't demux any of that segment's parts, until
-        // it closed — needlessly inflating glass-to-glass latency by up to
-        // a full segment duration on every fresh connection).
-        let map = playlist
-            .open_segment
-            .as_ref()
-            .and_then(|o| o.map.as_ref())
-            .or_else(|| playlist.segments.last().and_then(|s| s.map.as_ref()));
-        if let Some(map) = map {
-            self.ensure_init_requested(map)?;
+        if let Some(plan) = init_plan.filter(|_| !map_unusable) {
+            self.request_init(
+                &plan.source.map,
+                plan.source.encryption.as_ref(),
+                plan.source.first_msn,
+            )?;
         }
 
         if let Some(ll) = &playlist.low_latency
@@ -646,9 +774,13 @@ impl HlsClient {
                         msn: next_msn,
                         part: part_idx,
                     };
-                    let url = url::resolve(&self.playlist_url, hint_uri);
-                    let byte_range = self.resolve_hint_byte_range(&url, ll)?;
-                    self.request_resource(id, url, byte_range);
+                    if !self.requested.contains(&id)
+                        && !self.delivered_parts.contains(&(next_msn, part_idx))
+                    {
+                        let url = url::resolve(&self.playlist_url, hint_uri);
+                        let byte_range = self.resolve_hint_byte_range(&url, ll)?;
+                        self.request_resource(id, url, byte_range);
+                    }
                 }
                 PreloadHintType::Map => {
                     let map = MapTag {
@@ -704,21 +836,121 @@ impl HlsClient {
                 skip,
             });
             if blocking.is_none() {
-                // RFC 8216 §4.3.3.1: a client SHOULD NOT reload more
-                // frequently than once per Target Duration; half that as a
-                // reasonable non-blocking poll cadence.
-                let wait_ms = (u64::from(playlist.target_duration.max(1)) * 1000) / 2;
-                self.pending_actions.push_back(Action::WaitMs(wait_ms));
+                self.pending_actions
+                    .push_back(Action::WaitMs(reload_wait_ms(playlist.target_duration)));
             }
         }
 
         self.prune(&playlist);
-        if playlist.skip.is_none() {
-            self.last_full_playlist = Some(playlist);
-        }
+        self.last_full_playlist = Some(playlist);
 
         self.maybe_emit_end_of_stream()?;
-        Ok(())
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// Queue a reload that does not ask for a delta, because the delta just
+    /// received cannot be merged into a full view (no baseline, or it no
+    /// longer covers the skipped range). Returns the error to report.
+    fn request_full_playlist(&mut self, delta: &MediaPlaylist) -> Error {
+        if self.full_reload_requested {
+            self.pending_actions
+                .push_back(Action::WaitMs(reload_wait_ms(delta.target_duration)));
+        }
+        self.full_reload_requested = true;
+        self.pending_actions.push_back(Action::FetchPlaylist {
+            url: self.playlist_url.clone(),
+            blocking: None,
+            skip: false,
+        });
+        Error::DeltaNotMergeable {
+            media_sequence: delta.media_sequence,
+            skipped_segments: delta.skip.as_ref().map_or(0, |s| s.skipped_segments),
+        }
+    }
+
+    /// Queue a plain playlist reload unless one is already queued. For a
+    /// driver that has just dropped a response the core rejected before it
+    /// could schedule the next reload itself.
+    pub fn ensure_playlist_reload(&mut self) -> bool {
+        if self
+            .pending_actions
+            .iter()
+            .any(|a| matches!(a, Action::FetchPlaylist { .. }))
+        {
+            return false;
+        }
+        self.pending_actions.push_back(Action::FetchPlaylist {
+            url: self.playlist_url.clone(),
+            blocking: None,
+            skip: false,
+        });
+        true
+    }
+
+    /// Request the Media Initialization Section again after a failed fetch
+    /// ([`Self::on_error`] with [`ResourceId::Init`]). A live playlist's next
+    /// reload does this by itself; a VOD playlist (`EXT-X-ENDLIST`) has no
+    /// further reload, so its driver calls this. `false` when there is
+    /// nothing to retry (the init is in flight or already held).
+    pub fn retry_init(&mut self) -> bool {
+        if self.init_uri.is_some() {
+            return false;
+        }
+        let Some(source) = self.init_source.clone() else {
+            return false;
+        };
+        self.request_init(&source.map, source.encryption.as_ref(), source.first_msn)
+            .is_ok()
+    }
+
+    /// The init the playlist's most recent `EXT-X-MAP` asks for (the open
+    /// segment's, else the last closed segment's) with the key that encrypts
+    /// it, if any.
+    fn plan_init(&self, playlist: &MediaPlaylist, text: &str, next_msn: u64) -> Option<InitPlan> {
+        let map = playlist
+            .open_segment
+            .as_ref()
+            .and_then(|o| o.map.as_ref())
+            .or_else(|| playlist.segments.last().and_then(|s| s.map.as_ref()))?;
+        let first_msn = playlist
+            .segments
+            .iter()
+            .position(|s| s.map.as_ref() == Some(map))
+            .map_or(next_msn, |i| {
+                playlist.media_sequence.saturating_add(index_u64(i))
+            });
+        let key = match key_in_effect_at_last_map(text) {
+            Some(key) => key,
+            None => self
+                .init_source
+                .as_ref()
+                .filter(|s| s.map == *map)
+                .and_then(|s| s.encryption.clone()),
+        };
+        let error = key.as_ref().and_then(|key| {
+            let what = if key.method != EncryptionMethod::Aes128 {
+                "encrypted EXT-X-MAP: only METHOD=AES-128 is decrypted"
+            } else if key.uri.is_none() {
+                "encrypted EXT-X-MAP: key without URI"
+            } else {
+                return None;
+            };
+            Some(Error::UnsupportedEncryption {
+                method: key.method,
+                what,
+            })
+        });
+        Some(InitPlan {
+            source: InitSource {
+                map: map.clone(),
+                encryption: key,
+                first_msn,
+            },
+            error,
+        })
     }
 
     /// Feed the bytes fetched for a previously requested [`ResourceId`]
@@ -742,7 +974,7 @@ impl HlsClient {
             return Err(Error::UnrequestedResource { id });
         }
         let duplicate = match id {
-            ResourceId::Init => self.init_bytes.is_some(),
+            ResourceId::Init => self.init_bytes.is_some() || self.pending_init_cipher.is_some(),
             ResourceId::Part { .. } | ResourceId::Segment { .. } => self.fulfilled.contains(&id),
         };
         if duplicate {
@@ -753,31 +985,63 @@ impl HlsClient {
             self.fulfilled.insert(id);
         }
         match id {
-            ResourceId::Init => {
-                self.init_bytes = Some(bytes.to_vec());
-                if !self.init_emitted {
-                    self.pending_outputs.push_back(Output::Init(bytes.to_vec()));
-                    self.init_emitted = true;
-                }
-                let buffered: Vec<_> = self.pending_demux.drain(..).collect();
-                for (bid, bbytes) in buffered {
-                    if let Err(e) = self.finish_media_resource(bid, &bbytes) {
-                        self.fulfilled.remove(&bid);
-                        return Err(e);
-                    }
-                }
-            }
+            ResourceId::Init => match self.init_crypto {
+                Some(crypto) => match self.key_material.get(&crypto.key_id).copied() {
+                    Some(KeyBytes(key)) => self.complete_encrypted_init(crypto, &key, bytes)?,
+                    None => self.pending_init_cipher = Some(bytes.to_vec()),
+                },
+                None => self.complete_init(bytes)?,
+            },
             ResourceId::Part { .. } | ResourceId::Segment { .. } => {
                 let processed = self.accept_media_resource(id, bytes);
-                if let Err(e) = processed {
-                    // Nothing was delivered: leave the id free for a retry.
-                    self.fulfilled.remove(&id);
-                    return Err(e);
+                match processed {
+                    Ok(()) => {}
+                    Err(e @ Error::PendingKeyedOverflow { .. }) => return Err(e),
+                    Err(e) => {
+                        self.fulfilled.remove(&id);
+                        self.requested.remove(&id);
+                        return Err(e);
+                    }
                 }
             }
         }
         self.maybe_emit_end_of_stream()?;
         Ok(())
+    }
+
+    /// Take `plain` as the Media Initialization Section: emit it and replay
+    /// the media that arrived before it.
+    fn complete_init(&mut self, plain: &[u8]) -> Result<()> {
+        self.init_bytes = Some(plain.to_vec());
+        if !self.init_emitted {
+            self.pending_outputs.push_back(Output::Init(plain.to_vec()));
+            self.init_emitted = true;
+        }
+        let buffered: Vec<_> = self.pending_demux.drain(..).collect();
+        for (bid, bbytes) in buffered {
+            if let Err(e) = self.finish_media_resource(bid, &bbytes) {
+                self.fulfilled.remove(&bid);
+                self.requested.remove(&bid);
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
+    fn complete_encrypted_init(
+        &mut self,
+        crypto: SegmentCrypto,
+        key: &[u8; KEY_LEN],
+        cipher: &[u8],
+    ) -> Result<()> {
+        match decrypt_segment(ResourceId::Init, crypto, key, cipher) {
+            Ok(plain) => self.complete_init(&plain),
+            Err(e) => {
+                self.init_uri = None;
+                self.init_range = None;
+                Err(e)
+            }
+        }
     }
 
     /// Route a delivered Part/Segment: decrypt it first when its segment is
@@ -791,13 +1055,38 @@ impl HlsClient {
                     let plain = decrypt_segment(id, crypto, &key, bytes)?;
                     self.route_media_resource(id, &plain)
                 }
-                None => {
-                    self.pending_keyed.push((id, bytes.to_vec()));
-                    Ok(())
-                }
+                None => self.buffer_until_keyed(id, bytes),
             };
         }
         self.route_media_resource(id, bytes)
+    }
+
+    /// Hold ciphertext until its key arrives, within
+    /// [`MAX_PENDING_KEYED_BYTES`]: the oldest waiting segments are dropped
+    /// (and become requestable again) to make room, reported as
+    /// [`Error::PendingKeyedOverflow`].
+    fn buffer_until_keyed(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        if bytes.len() > MAX_PENDING_KEYED_BYTES {
+            self.fulfilled.remove(&id);
+            self.requested.remove(&id);
+            return Err(Error::PendingKeyedOverflow { dropped: id });
+        }
+        let mut held: usize = self.pending_keyed.iter().map(|(_, b)| b.len()).sum();
+        let mut dropped: Option<ResourceId> = None;
+        while held.saturating_add(bytes.len()) > MAX_PENDING_KEYED_BYTES
+            && !self.pending_keyed.is_empty()
+        {
+            let (old_id, old) = self.pending_keyed.remove(0);
+            held = held.saturating_sub(old.len());
+            self.fulfilled.remove(&old_id);
+            self.requested.remove(&old_id);
+            dropped.get_or_insert(old_id);
+        }
+        self.pending_keyed.push((id, bytes.to_vec()));
+        match dropped {
+            Some(dropped) => Err(Error::PendingKeyedOverflow { dropped }),
+            None => Ok(()),
+        }
     }
 
     fn route_media_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
@@ -827,14 +1116,19 @@ impl HlsClient {
         if !self.key_urls.contains_key(&id) || self.key_material.contains_key(&id) {
             return Err(Error::UnrequestedKey { id });
         }
+        if self.keys_in_flight.remove(&id) {
+            self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
+        }
         let key: [u8; KEY_LEN] = bytes.try_into().map_err(|_| Error::BadKeyLength {
             id,
             len: bytes.len(),
         })?;
-        if self.keys_in_flight.remove(&id) {
-            self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
-        }
         self.key_material.insert(id, KeyBytes(key));
+        if let Some(crypto) = self.init_crypto.filter(|c| c.key_id == id)
+            && let Some(cipher) = self.pending_init_cipher.take()
+        {
+            self.complete_encrypted_init(crypto, &key, &cipher)?;
+        }
         let (mut ready, rest): (Vec<_>, Vec<_>) = core::mem::take(&mut self.pending_keyed)
             .into_iter()
             .partition(|(rid, _)| {
@@ -854,6 +1148,7 @@ impl HlsClient {
             };
             if let Err(e) = result {
                 self.fulfilled.remove(&rid);
+                self.requested.remove(&rid);
                 self.pending_keyed.extend(ready);
                 return Err(e);
             }
@@ -877,17 +1172,51 @@ impl HlsClient {
         let id = match self.key_ids.get(&url) {
             Some(id) => *id,
             None => {
-                let id = KeyId(u32::try_from(self.key_ids.len()).unwrap_or(u32::MAX));
+                let id = KeyId(self.next_key_id);
+                self.next_key_id = self.next_key_id.saturating_add(1);
                 self.key_ids.insert(url.clone(), id);
-                self.key_urls.insert(id, url.clone());
+                self.key_urls.insert(id, url);
                 id
             }
+        };
+        self.request_key(id);
+        id
+    }
+
+    /// Queue the fetch of key `id` unless it is held or already in flight.
+    fn request_key(&mut self, id: KeyId) {
+        let Some(url) = self.key_urls.get(&id).cloned() else {
+            return;
         };
         if !self.key_material.contains_key(&id) && self.keys_in_flight.insert(id) {
             self.outstanding_fetches += 1;
             self.pending_actions.push_back(Action::FetchKey { id, url });
         }
-        id
+    }
+
+    /// Drop every key no segment of the window (nor the init) refers to, its
+    /// in-flight fetch included: the per-URL maps would otherwise grow
+    /// with every tokenised key URL, and a key behind a URI that returns
+    /// after its segments left the window is fetched afresh.
+    fn forget_keys_below(&mut self, first_msn: u64) {
+        self.segment_crypto.retain(|&m, _| m >= first_msn);
+        let mut live: BTreeSet<KeyId> = self.segment_crypto.values().map(|c| c.key_id).collect();
+        live.extend(self.init_crypto.map(|c| c.key_id));
+        let abandoned: Vec<KeyId> = self
+            .keys_in_flight
+            .iter()
+            .copied()
+            .filter(|id| !live.contains(id))
+            .collect();
+        for id in abandoned {
+            self.keys_in_flight.remove(&id);
+            self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
+            self.pending_actions
+                .retain(|a| !matches!(a, Action::FetchKey { id: queued, .. } if *queued == id));
+        }
+        self.key_ids.retain(|_, id| live.contains(id));
+        self.key_urls.retain(|id, _| live.contains(id));
+        self.key_material.retain(|id, _| live.contains(id));
     }
 
     /// Record the decryption parameters of encrypted segment `msn` and make
@@ -909,15 +1238,16 @@ impl HlsClient {
         if iframes_only {
             return Err(unsupported("EXT-X-I-FRAMES-ONLY with encryption"));
         }
-        if seg.map.is_some() {
-            return Err(unsupported("encrypted EXT-X-MAP"));
-        }
         if !seg.parts.is_empty() {
             return Err(unsupported("encrypted partial segments"));
         }
         let Some(uri) = key.uri.as_deref() else {
             return Err(unsupported("key without URI"));
         };
+        if let Some(existing) = self.segment_crypto.get(&msn).copied() {
+            self.request_key(existing.key_id);
+            return Ok(());
+        }
         let id = self.ensure_key_requested(uri);
         let iv = key.iv.unwrap_or_else(|| media_sequence_iv(msn));
         self.segment_crypto
@@ -988,7 +1318,11 @@ impl HlsClient {
         if let Some(id) = id {
             self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
             match id {
-                ResourceId::Init => self.init_uri = None,
+                ResourceId::Init => {
+                    self.init_uri = None;
+                    self.init_range = None;
+                    self.pending_init_cipher = None;
+                }
                 other => {
                     self.requested.remove(&other);
                 }
@@ -1004,15 +1338,19 @@ impl HlsClient {
 
     /// Reconstruct a full playlist view from an `EXT-X-SKIP` delta update
     /// (RFC 8216bis §4.4.5.2), by splicing the skipped prefix back in from
-    /// the last full playlist this client observed. Best-effort: if there is
-    /// no cached baseline, or it doesn't cover the skipped range, the delta
-    /// is returned as-is (never an error — "at least don't break").
+    /// the last playlist this client processed (itself a full view, merged or
+    /// not). A merged playlist has `skip` cleared; if there is no baseline,
+    /// or it doesn't cover the skipped range, the delta is returned as-is
+    /// with `skip` still set, which [`Self::on_playlist`] answers by
+    /// requesting a full playlist.
     fn merge_delta(&self, playlist: MediaPlaylist) -> MediaPlaylist {
         let Some(skip) = &playlist.skip else {
             return playlist;
         };
         if skip.skipped_segments == 0 {
-            return playlist;
+            let mut merged = playlist;
+            merged.skip = None;
+            return merged;
         }
         let Some(prev) = &self.last_full_playlist else {
             return playlist;
@@ -1041,8 +1379,16 @@ impl HlsClient {
         };
         let mut merged = playlist;
         let mut segments = prefix.to_vec();
+        if let (Some(first), Some(dropped)) =
+            (segments.first_mut(), prev.segments.get(..prefix_start))
+        {
+            let mut carried = carried_key_tags(dropped);
+            carried.append(&mut first.pre_tags);
+            first.pre_tags = carried;
+        }
         segments.extend(merged.segments);
         merged.segments = segments;
+        merged.skip = None;
         merged
     }
 
@@ -1137,15 +1483,38 @@ impl HlsClient {
     }
 
     fn ensure_init_requested(&mut self, map: &MapTag) -> Result<()> {
+        self.request_init(map, None, 0)
+    }
+
+    /// Request the init `map` names (encrypted with `key` when given; its IV
+    /// defaults to the Media Sequence Number `first_msn` of the first segment
+    /// that uses the map) unless that same init — URI *and* `BYTERANGE` — is
+    /// already requested or held.
+    fn request_init(&mut self, map: &MapTag, key: Option<&MediaKey>, first_msn: u64) -> Result<()> {
         let url = url::resolve(&self.playlist_url, &map.uri);
-        if self.init_uri.as_deref() == Some(url.as_str()) {
+        if self.init_uri.as_deref() == Some(url.as_str()) && self.init_range == map.byte_range {
             return Ok(());
         }
+        let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
+        self.init_crypto = match key.and_then(|k| k.uri.as_deref().map(|uri| (k, uri))) {
+            Some((key, uri)) => {
+                let id = self.ensure_key_requested(uri);
+                let iv = key.iv.unwrap_or_else(|| media_sequence_iv(first_msn));
+                Some(SegmentCrypto { key_id: id, iv })
+            }
+            None => None,
+        };
+        self.pending_init_cipher = None;
         self.init_uri = Some(url.clone());
+        self.init_range = map.byte_range;
         self.init_bytes = None;
         self.init_emitted = false;
         self.last_fmp4_specs = None;
-        let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
+        self.init_source = Some(InitSource {
+            map: map.clone(),
+            encryption: key.cloned(),
+            first_msn,
+        });
         self.pending_actions.push_back(Action::FetchResource {
             id: ResourceId::Init,
             url,
@@ -1510,6 +1879,7 @@ impl HlsClient {
         self.requested
             .retain(|id| !(below(id) && fulfilled.contains(id)));
         self.fulfilled.retain(|id| !below(id));
+        self.pending_keyed.retain(|(id, _)| !below(id));
         self.segment_crypto.retain(|&m, _| m >= first);
         self.delivered_parts.retain(|&(m, _)| m >= first);
         self.delivered_segments.retain(|&m| m >= first);
@@ -1606,7 +1976,7 @@ impl HlsClient {
             else {
                 continue;
             };
-            if old.uri != seg.uri
+            if without_query(&old.uri) != without_query(&seg.uri)
                 || old.duration != seg.duration
                 || old.byte_range != seg.byte_range
             {
@@ -1686,9 +2056,14 @@ impl HlsClient {
         self.outstanding_fetches = 0;
         self.last_full_playlist = None;
         self.init_uri = None;
+        self.init_range = None;
+        self.init_source = None;
+        self.init_crypto = None;
+        self.pending_init_cipher = None;
         self.init_bytes = None;
         self.init_emitted = false;
         self.last_fmp4_specs = None;
+        self.full_reload_requested = false;
         self.joined = false;
         self.pending_outputs.push_back(Output::Discontinuity);
         Ok(())
@@ -1710,6 +2085,7 @@ impl HlsClient {
             && !self.end_emitted
             && self.outstanding_fetches == 0
             && self.pending_keyed.is_empty()
+            && !(self.init_source.is_some() && self.init_bytes.is_none())
             && self.all_playlist_segments_delivered()
         {
             // The TS demuxer holds back each stream's last access unit until
@@ -2056,6 +2432,94 @@ mod tests {
         );
         assert!(client.discontinuity_emitted.is_empty());
         assert!(client.delivered_segments.is_empty());
+    }
+
+    fn keyed_playlist(first_msn: u64, count: u64, key_uri: &str) -> String {
+        let mut text = format!(
+            "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
+             #EXT-X-MEDIA-SEQUENCE:{first_msn}\n\
+             #EXT-X-KEY:METHOD=AES-128,URI=\"{key_uri}\"\n"
+        );
+        for msn in first_msn..first_msn + count {
+            text.push_str(&format!("#EXTINF:2.0,\nseg{msn}.ts\n"));
+        }
+        text
+    }
+
+    fn pending_keyed_bytes(client: &HlsClient) -> usize {
+        client.pending_keyed.iter().map(|(_, b)| b.len()).sum()
+    }
+
+    #[test]
+    fn pending_keyed_is_pruned_with_the_window() {
+        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        client
+            .on_playlist(keyed_playlist(0, 1, "key.bin").as_bytes())
+            .unwrap();
+        client
+            .on_resource(ResourceId::Segment { msn: 0 }, &[0u8; 32])
+            .unwrap();
+        assert_eq!(client.pending_keyed.len(), 1);
+        client
+            .on_playlist(keyed_playlist(5, 1, "key.bin").as_bytes())
+            .unwrap();
+        assert!(
+            client.pending_keyed.is_empty(),
+            "ciphertext below the window can never be played: {:?}",
+            client
+                .pending_keyed
+                .iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn pending_keyed_is_capped_and_drops_the_oldest_with_a_typed_error() {
+        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        client
+            .on_playlist(keyed_playlist(0, 2, "key.bin").as_bytes())
+            .unwrap();
+        let big = vec![0u8; 40 * 1024 * 1024];
+        client
+            .on_resource(ResourceId::Segment { msn: 0 }, &big)
+            .unwrap();
+        let err = client
+            .on_resource(ResourceId::Segment { msn: 1 }, &big)
+            .expect_err("the second 40 MiB segment exceeds the 64 MiB cap");
+        assert!(
+            matches!(err, Error::PendingKeyedOverflow { dropped } if dropped == ResourceId::Segment { msn: 0 }),
+            "{err:?}"
+        );
+        assert!(
+            pending_keyed_bytes(&client) <= MAX_PENDING_KEYED_BYTES,
+            "{} bytes buffered",
+            pending_keyed_bytes(&client)
+        );
+        assert_eq!(
+            client
+                .pending_keyed
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            vec![ResourceId::Segment { msn: 1 }]
+        );
+    }
+
+    #[test]
+    fn key_maps_do_not_grow_with_per_reload_tokenised_key_urls() {
+        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        for n in 0..8u64 {
+            client
+                .on_playlist(keyed_playlist(n, 2, &format!("key.bin?t={n}")).as_bytes())
+                .unwrap();
+        }
+        assert!(
+            client.key_ids.len() <= 3 && client.key_urls.len() <= 3,
+            "{:?} {:?}",
+            client.key_ids,
+            client.key_urls
+        );
     }
 
     #[test]
