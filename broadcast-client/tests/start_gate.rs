@@ -530,7 +530,7 @@ const SHORT_WAIT_US: u64 = 500_000;
 const FLAP_LEAD_US: u64 = 1_100_000;
 const FLAP_SKEW_MS: usize = 500;
 const LONG_SKEW_MS: usize = 1_000;
-const SHORT_WAIT_SLACK_US: u64 = 500_000;
+const DEFAULT_WAIT_US: u64 = 1_500_000;
 
 fn cfg_wait(len: usize, lead_us: u64, wait_us: u64) -> Config {
     let mut cfg = config_with_lead(Hold::Early, len, lead_us);
@@ -573,17 +573,42 @@ fn no_wait_starts_on_video_alone_and_brings_back_the_flap() {
 }
 
 #[test]
-fn a_short_wait_delays_start_by_at_most_the_wait() {
+fn an_intermediate_wait_changes_start_between_the_extremes() {
     let Some(b) = gulp_with_unresolvable_pid(LONG_SKEW_MS) else {
         return;
     };
     for declare in BOTH {
-        let none = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, NO_WAIT_US), declare);
-        let short = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, SHORT_WAIT_US), declare);
+        let at = |wait| run(&b, cfg_wait(b.len(), FLAP_LEAD_US, wait), declare);
+        let (none, short, full) = (at(NO_WAIT_US), at(SHORT_WAIT_US), at(DEFAULT_WAIT_US));
         let why = describe(&CAPTURES[0], Hold::Early, declare, LONG_SKEW_MS, &short);
-        let (none, short) = (none.start_us().expect(&why), short.start_us().expect(&why));
-        assert!(none <= short, "{why}");
-        assert!(short <= none + SHORT_WAIT_SLACK_US, "{why}: {none} {short}");
+        let (n, s, f) = (
+            none.start_us().expect(&why),
+            short.start_us().expect(&why),
+            full.start_us().expect(&why),
+        );
+        assert!(n < s && s < f, "{why}: {n} {s} {f}");
+        assert!(s - n <= SHORT_WAIT_US + TICK_US, "{why}: {n} {s}");
+        assert!(none.flap_within(FLAP_WINDOW_US).is_some(), "{why}");
+        assert!(
+            short.flap_within(FLAP_WINDOW_US).is_some(),
+            "a 500 ms cap is too short for 1000 ms of skew: {why}"
+        );
+        assert!(full.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
+    }
+}
+
+#[test]
+fn a_short_wait_avoids_the_flap_when_the_skew_is_small() {
+    let Some(b) = gulp_with_unresolvable_pid(FLAP_SKEW_MS) else {
+        return;
+    };
+    for declare in BOTH {
+        let at = |wait| run(&b, cfg_wait(b.len(), FLAP_LEAD_US, wait), declare);
+        let (none, short, full) = (at(NO_WAIT_US), at(SHORT_WAIT_US), at(DEFAULT_WAIT_US));
+        let why = describe(&CAPTURES[0], Hold::Early, declare, FLAP_SKEW_MS, &short);
+        assert!(none.flap_within(FLAP_WINDOW_US).is_some(), "{why}");
+        assert!(short.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
+        assert_eq!(short.start_us(), full.start_us(), "{why}");
     }
 }
 
