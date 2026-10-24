@@ -1709,7 +1709,8 @@ impl HlsClient {
                 DemuxEvent::TrackRemoved { track_id, .. } => {
                     self.ts_specs.remove(&track_id);
                 }
-                DemuxEvent::Sample { track_id, .. } | DemuxEvent::DisplayChanged { track_id, .. }
+                DemuxEvent::Sample { track_id, .. }
+                | DemuxEvent::DisplayChanged { track_id, .. }
                     if self.ts_specs.contains_key(&track_id) =>
                 {
                     events.push(event);
