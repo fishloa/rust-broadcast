@@ -115,7 +115,7 @@ fn a_two_track_live_ts_announces_both_tracks_in_the_first_tracks_event() {
 }
 
 #[test]
-fn a_live_multiplex_announces_a_bounded_initial_set_then_updates() {
+fn a_live_multiplex_announces_a_coalesced_initial_set_then_every_later_track() {
     let Some(bytes) =
         test_fixtures::require_bytes("ts/france-tnt-uhf32-video-head-6MB.ts", "r5_ts_http_tracks")
     else {
@@ -130,12 +130,6 @@ fn a_live_multiplex_announces_a_bounded_initial_set_then_updates() {
         run.tracks[0].len() > 1,
         "initial set coalesced: {:?}",
         run.tracks[0]
-    );
-    assert!(
-        run.tracks.len() < expected.len() / 2,
-        "{} Tracks events for {} tracks",
-        run.tracks.len(),
-        expected.len()
     );
     assert_eq!(run.samples, reference_samples(&bytes));
 }

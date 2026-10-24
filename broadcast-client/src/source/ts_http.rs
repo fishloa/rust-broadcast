@@ -22,6 +22,7 @@ const MICROS_PER_SEC: i128 = 1_000_000;
 struct HoldState {
     started_us: u64,
     bytes: usize,
+    quiet_bytes: usize,
     first_pts: BTreeMap<TrackId, i64>,
     span_us: u64,
 }
@@ -168,6 +169,17 @@ impl TsHttpSource {
         }
     }
 
+    fn note_resolved(&mut self, pid: Option<Pid>) {
+        let Some(pid) = pid else {
+            return;
+        };
+        if self.resolved.insert(pid)
+            && let Some(h) = self.hold.as_mut()
+        {
+            h.quiet_bytes = 0;
+        }
+    }
+
     fn release_hold(&mut self) {
         if self.hold.take().is_none() {
             return;
@@ -193,6 +205,7 @@ impl TsHttpSource {
             self.hold = Some(HoldState {
                 started_us: self.now_us,
                 bytes: 0,
+                quiet_bytes: 0,
                 first_pts: BTreeMap::new(),
                 span_us: 0,
             });
@@ -203,11 +216,15 @@ impl TsHttpSource {
         let Some(h) = self.hold.as_ref() else {
             return;
         };
-        let due = limit_reached(h.bytes, h.span_us, self.now_us.saturating_sub(h.started_us))
-            || self
-                .declared
-                .as_ref()
-                .is_none_or(|d| d.all_resolved(&self.resolved));
+        let due = limit_reached(
+            h.bytes,
+            h.quiet_bytes,
+            h.span_us,
+            self.now_us.saturating_sub(h.started_us),
+        ) || self
+            .declared
+            .as_ref()
+            .is_none_or(|d| d.all_resolved(&self.resolved));
         if due {
             self.release_hold();
         }
@@ -244,6 +261,7 @@ impl TsHttpSource {
         }
         if let Some(h) = self.hold.as_mut() {
             h.bytes = h.bytes.saturating_add(bytes.len());
+            h.quiet_bytes = h.quiet_bytes.saturating_add(bytes.len());
         }
         if self.stalled && !bytes.is_empty() {
             self.push(Event::Status(Status::Live));
@@ -321,12 +339,12 @@ impl TsHttpSource {
             tshttp_runtime::Event::Demux(
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec),
             ) => {
-                self.resolved.extend(spec.source_pid);
+                self.note_resolved(spec.source_pid);
                 self.tracks.insert(spec.track_id, spec);
                 self.tracks_dirty = true;
             }
             tshttp_runtime::Event::Demux(DemuxEvent::TrackAbandoned { provenance, .. }) => {
-                self.resolved.extend(provenance.pid);
+                self.note_resolved(provenance.pid);
             }
             tshttp_runtime::Event::Demux(DemuxEvent::TrackRemoved { track_id, .. }) => {
                 self.tracks.remove(&track_id);

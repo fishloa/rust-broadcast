@@ -545,7 +545,9 @@ far. Release happens when the first of these holds:
    lists, the elementary PIDs their PMTs declare (all programmes: the demuxer demuxes all of them), and a stream
    counts as resolved when the demuxer reports `TrackAdded`/`TrackUpdated` with that `source_pid` or a
    `TrackAbandoned` with that PID; the PAT must also have had every listed PMT seen;
-2. a limit, counted from the first media of the connection: `HOLD_MAX_INPUT_BYTES` (4 MiB of input),
+2. a limit, counted from the first media of the connection: `HOLD_QUIET_INPUT_BYTES` (512 KiB of input with no
+   further stream resolving: the scrambled `csa/csa2-plain.ts` leaves declared streams unresolved forever and
+   round-5 F2's liveness test needs media within 0.56 MB of it), `HOLD_MAX_INPUT_BYTES` (4 MiB of input),
    `HOLD_MAX_MEDIA_US` (3 s of media, the largest per-track pts span among held samples), or `HOLD_MAX_WALL_US`
    (3 s of caller clock, armed through `next_deadline_us`/`WakeAt`, so a source that goes quiet mid-hold still
    releases);
@@ -554,7 +556,9 @@ far. Release happens when the first of these holds:
 
 Evidence for the numbers (release point per capture): single programme `ts/france2.ts` 0.76 s of media / 0.85 MB,
 the TF1 capture 0.74 s / 0.26 MB, `ts/h264_aac.ts` within the first chunk, the 30-stream
-`france-tnt-uhf32-video-head-6MB.ts` 1.76 s / 1.5 MB. The limits leave ~1.7x headroom over the worst case and
+`france-tnt-uhf32-video-head-6MB.ts` 1.76 s / 1.5 MB when allowed to run to resolution; its 0.92 MB gap between
+two resolution bursts exceeds the quiet bound, so that multiplex is announced in several steps (first set, then one
+`Tracks` update per later track, the pre-F1 behaviour) rather than once. The limits leave ~1.7x headroom over the worst case and
 stay under the 5 s stall notice. A stream that declares a PID it never sends (modelled by dropping `PID 142` from
 `france2.ts`) is released at the limit with the streams that did resolve. Tracks that resolve after the release
 announce as updates exactly as before (`Event::Tracks` with the full merged set). Samples are never lost or
@@ -591,3 +595,12 @@ Decisions that change public behaviour (transmux `StreamingTsDemux`, hls-runtime
 - **F3, head-of-line blocking.** A `Probing` PID blocks only the PIDs of its own program (the declaring PMT). Across programs, promotion is by resolution order, so a live TS-HTTP source delivers as soon as any program resolves; track ids are therefore not in PMT order across programs. Inside a program PMT order is kept, with the existing step-over bounds plus two new ones: a head with 2 MiB of its own payload and no access unit (`STUCK_HEAD_OWN_BYTES`), and a non-video head 4 MiB of input after its declaration (`STUCK_HEAD_INPUT_PACKETS`). Video that yields access units stays bounded by the 4 MiB backlog cap. The stepped-over PID keeps probing and is announced later with a later id. Whole-buffer `TsDemux` keeps strict PMT order (`with_strict_pmt_order`), which is what `track_id_baseline` pins.
 - **F2, live HLS.** Evidence: `m6-single.ts` and `tnt-5w-12732v-isi6-10s.ts` declare video PIDs that never send a packet, so no byte bound can fire on a segment-sized input and the 9000-packet late-video regression forbids a small one. A whole segment is the one place absence is a fact, so after each `Segment` (not each LL-HLS `Part`) the client calls `release_silent_heads`. A PES that spans a segment boundary is untouched: nothing is flushed, so the sample sequence of PAT-aligned `tf1-live.ts` segments equals the whole-file demux byte for byte (`pat_aligned_segments_deliver_the_whole_file_demux_byte_for_byte`).
 - **F6, discontinuity.** The fresh demuxer after `EXT-X-DISCONTINUITY` re-probed from the new timeline alone; a segment that opens mid-GOP carries no SPS for some PIDs, so those tracks vanished (france-tnt video head 17 to 15 tracks). The client now calls `restart_timeline`: tracks, ids and parameter sets are kept, timing is reset. Measured cost against a no-discontinuity run on PAT-aligned cuts: at most one audio PES per PID (6 to 7 frames). Not recovered, by design: a PID that was still unresolved at the seam loses its old-timeline backlog (those access units precede the PID's first parameter set, so they are undecodable anyway: in `test-092.ts` PID 0x26C the first sync sample is the 147th of 149), and a PID whose config only exists across the seam stays unannounced (`csa2-plain.ts` PIDs 0x276 to 0x278). A changed PMT after the seam is diffed as usual (tracks added, removed or updated).
+
+### Interaction with the round-5 liveness fixes (#1502)
+
+`tests/audit_r5_liveness.rs` and `tests/audit_r5_discontinuity.rs` assert "no `Event::Error`". F4 deliberately
+reports each non-muxable HLS-TS track (SCTE-35, ID3, private data present in those captures) as a non-fatal
+`ErrorKind::TrackDropped`, so both files now ignore that one kind when collecting errors (nothing else in them
+changed). The F1 hold interacted with the TS-HTTP liveness test on `csa/csa2-plain.ts` (declared streams that never
+resolve): the hold had no input-driven bound below 4 MiB / 3 s, so nothing was released inside the test's 0.56 MB;
+`HOLD_QUIET_INPUT_BYTES` fixes that.

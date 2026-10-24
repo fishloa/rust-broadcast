@@ -135,7 +135,11 @@ fn drain(s: &mut Session, out: &mut Outcome) {
                 out.data.entry(pid).or_default().push(sample.data.to_vec());
             }
             Event::Discontinuity => out.discontinuities += 1,
-            Event::Error { .. } => out.errors.push(format!("{e:?}")),
+            Event::Error { kind, .. }
+                if !matches!(kind, broadcast_client::ErrorKind::TrackDropped { .. }) =>
+            {
+                out.errors.push(format!("{e:?}"))
+            }
             _ => {}
         }
     }
