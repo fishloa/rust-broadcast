@@ -202,13 +202,13 @@ struct InitSlot {
 #[derive(Debug)]
 struct MapEntry {
     map: MapTag,
-    key: Option<MediaKey>,
+    encryption: Option<MediaKey>,
     first_msn: u64,
 }
 
 impl MapEntry {
     fn unusable(&self) -> Option<Error> {
-        let key = self.key.as_ref()?;
+        let key = self.encryption.as_ref()?;
         let what = if key.method != EncryptionMethod::Aes128 {
             "encrypted EXT-X-MAP: only METHOD=AES-128 is decrypted"
         } else if key.uri.is_none() {
@@ -822,6 +822,8 @@ impl HlsClient {
             }
         }
 
+        self.pump_init_fetch();
+
         if let Some(ll) = &playlist.low_latency
             && let Some(hint_uri) = &ll.preload_hint_part
         {
@@ -1015,7 +1017,7 @@ impl HlsClient {
             };
             entries.push(MapEntry {
                 map: map.clone(),
-                key,
+                encryption: key,
                 first_msn: msn,
             });
         }
@@ -1042,15 +1044,13 @@ impl HlsClient {
             if slot.fetch == InitFetch::Failed {
                 slot.fetch = InitFetch::Wanted;
             }
-            let id = *id;
-            self.pump_init_fetch();
-            return Ok(id);
+            return Ok(*id);
         }
         let (key, first_msn) = self
             .playlist_maps
             .iter()
             .find(|e| e.map == *map)
-            .map_or((None, 0), |e| (e.key.clone(), e.first_msn));
+            .map_or((None, 0), |e| (e.encryption.clone(), e.first_msn));
         let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
         let crypto = match key.as_ref().and_then(|k| k.uri.as_deref().map(|u| (k, u))) {
             Some((key, uri)) => {
@@ -1076,7 +1076,6 @@ impl HlsClient {
                 skipped_reported: BTreeSet::new(),
             },
         );
-        self.pump_init_fetch();
         Ok(id)
     }
 
@@ -1734,7 +1733,9 @@ impl HlsClient {
     }
 
     fn ensure_init_requested(&mut self, map: &MapTag) -> Result<()> {
-        self.init_for_map(map).map(|_| ())
+        self.init_for_map(map)?;
+        self.pump_init_fetch();
+        Ok(())
     }
 
     fn request_resource(&mut self, id: ResourceId, url: String, byte_range: Option<(u64, u64)>) {
