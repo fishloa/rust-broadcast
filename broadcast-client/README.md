@@ -167,6 +167,14 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   tracks, errors, buffer events and terminal statuses are never dropped.
 - Redirects are followed only to `http`/`https` targets and never from `https` to `http`. A 401/407 from an
   origin other than the session origin is a connect failure (backoff), never a credential prompt.
+- Live TS-over-HTTP holds the first media of each connection behind ONE `Event::Tracks` until every
+  PMT-declared stream has resolved or a limit is hit: `Config::tracks_hold_max_wall_us` (3 s),
+  `tracks_hold_max_media_us` (3 s), `tracks_hold_max_input_bytes` (4 MiB), `tracks_hold_quiet_input_bytes`
+  (512 KiB). A stream whose declared PID never sends therefore delays the first frame by up to the wall
+  limit. A low-latency host sets `tracks_hold_max_wall_us` to its first-frame budget (for example
+  `500_000`), or `0` (also for `tracks_hold_max_media_us`) to disable the hold and take tracks as each
+  stream resolves. `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds
+  the input limit.
 - `Action` implements `Debug` without header values or `Send` payloads.
 - `select_audio_rendition` after `Status::Ended` is accepted and ignored; so are `select_variant` and
   `reconnect` for HLS (a finite TS source restarts on `reconnect`).

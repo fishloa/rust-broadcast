@@ -551,6 +551,13 @@ far. Release happens when the first of these holds:
    `HOLD_MAX_MEDIA_US` (3 s of media, the largest per-track pts span among held samples), or `HOLD_MAX_WALL_US`
    (3 s of caller clock, armed through `next_deadline_us`/`WakeAt`, so a source that goes quiet mid-hold still
    releases);
+   The limits are `Config::tracks_hold_quiet_input_bytes`, `tracks_hold_max_input_bytes`,
+   `tracks_hold_max_media_us` and `tracks_hold_max_wall_us`; the values above are their defaults.
+   A zero wall or media limit disables the hold (tracks are announced as each stream resolves, the
+   pre-round-5 behaviour). A latency-sensitive host (first frame within 2.5 s) should lower the wall
+   limit, for example to 500 ms, since a declared stream that never sends costs the full wall limit.
+   `Session::open` rejects a zero quiet limit and a max-input below the quiet limit with
+   `Error::InvalidConfig`;
 3. anything that must not overtake the held media: end of stream, a stall notice, a reconnect, a new connection,
    a 404, a starved report.
 
