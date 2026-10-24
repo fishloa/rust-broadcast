@@ -194,6 +194,7 @@ pub(crate) struct HlsSource {
     failed: BTreeSet<ResourceId>,
     gate_until: Option<u64>,
     retry_refetch: Option<(u64, String)>,
+    init_retry: bool,
     attempt: u64,
     established: bool,
     live: bool,
@@ -242,6 +243,7 @@ impl HlsSource {
             failed: BTreeSet::new(),
             gate_until: None,
             retry_refetch: None,
+            init_retry: false,
             attempt: 0,
             established: false,
             live: false,
@@ -323,6 +325,7 @@ impl HlsSource {
         }
         let in_flight: Vec<Purpose> = self.reqs.values().map(|r| r.purpose).collect();
         for purpose in in_flight {
+            self.init_retry |= purpose == Purpose::Resource(ResourceId::Init);
             self.client_failed(purpose);
         }
         self.reset_in_flight();
@@ -642,6 +645,12 @@ impl HlsSource {
             {
                 return;
             }
+            if purpose == Purpose::Resource(ResourceId::Init)
+                && matches!(&result, Err(e) if classify(e).is_none())
+                && self.report(ErrorKind::InitFetchFailed { status: None })
+            {
+                return;
+            }
             self.fail_purpose(purpose, retry_url, now);
         }
     }
@@ -688,6 +697,11 @@ impl HlsSource {
         {
             return;
         }
+        if req.purpose == Purpose::Resource(ResourceId::Init)
+            && self.report(ErrorKind::InitFetchFailed { status })
+        {
+            return;
+        }
         if let Purpose::Resource(id) = req.purpose
             && id != ResourceId::Init
         {
@@ -700,9 +714,12 @@ impl HlsSource {
         self.client_failed(purpose);
         self.pump_core();
         self.drain_outputs();
+        let init = purpose == Purpose::Resource(ResourceId::Init);
+        self.init_retry |= init;
         let refetch = match purpose {
             _ if self.chain_alive() => None,
             Purpose::Playlist => retry_url,
+            Purpose::Resource(_) if init && self.client.endlist_seen() => None,
             Purpose::Resource(_) | Purpose::Key(_) => Some(self.client.playlist_url().to_string()),
         };
         self.schedule_retry(now, refetch);
@@ -809,6 +826,9 @@ impl HlsSource {
                     return;
                 }
                 self.gate_until = None;
+            }
+            if core::mem::take(&mut self.init_retry) && self.client.retry_init() {
+                self.pump_core();
             }
             let Some(action) = self.next_action() else {
                 return;
