@@ -578,3 +578,40 @@ fn a_segment_that_never_answers_keeps_the_segment_timeout() {
         SEGMENT_TIMEOUT_SECS + FIRST_BACKOFF_SECS
     );
 }
+
+#[test]
+fn a_delivery_clears_the_segments_failure_count_for_a_reused_media_sequence_number() {
+    const RELOADS_BEFORE_RESTART: usize = 10;
+    let window = |names: [&str; 3]| support::hls_host::live_playlist_text(0, &names).into_bytes();
+    let mut playlists =
+        vec![Reply::Ok(window(["a0.ts", "a1.ts", "a2.ts"])); RELOADS_BEFORE_RESTART];
+    playlists.push(Reply::Ok(window(["b0.ts", "b1.ts", "b2.ts"])));
+    let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+    h.route(TS_PLAYLIST_URL, playlists);
+    for name in ["a0", "a2", "b0", "b2"] {
+        h.ok(&format!("{LIVE_BASE}/{name}.ts"), ts_segment(0));
+    }
+    h.route(
+        &format!("{LIVE_BASE}/a1.ts"),
+        vec![
+            Reply::Status(500),
+            Reply::Status(500),
+            Reply::Status(500),
+            Reply::Ok(ts_segment(1)),
+        ],
+    );
+    let b1 = format!("{LIVE_BASE}/b1.ts");
+    h.route(&b1, vec![Reply::Status(500), Reply::Ok(ts_segment(1))]);
+    h.run_until(|_| false, 600);
+    assert_eq!(gaps_secs(&h, &format!("{LIVE_BASE}/a1.ts")), vec![2, 4, 8]);
+    assert_eq!(
+        h.hits(&b1),
+        2,
+        "the restarted stream fetched its own segment 1"
+    );
+    assert_eq!(
+        gaps_secs(&h, &b1),
+        vec![2],
+        "a fresh count, not the old one's fourth step"
+    );
+}

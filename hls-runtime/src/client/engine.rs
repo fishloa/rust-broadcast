@@ -482,8 +482,7 @@ pub struct HlsClient {
     full_reload_requested: bool,
 
     requested: BTreeSet<ResourceId>,
-    /// URL and byte range of every Part/Segment fetch issued and not yet
-    /// accepted, so [`Self::retry_resource`] can re-request a failed one
+    /// URL and byte range of every Part/Segment fetch issued, so [`Self::retry_resource`] can re-request a failed one
     /// without a playlist reload. Pruned with the other MSN-keyed records.
     resource_requests: BTreeMap<ResourceId, (String, Option<(u64, u64)>)>,
     /// Ids whose bytes `on_resource` has accepted (delivered *or* buffered in
@@ -1058,7 +1057,7 @@ impl HlsClient {
     /// when there is nothing to retry (the fetch is in flight, the resource
     /// was accepted, or it left the window).
     pub fn retry_resource(&mut self, id: ResourceId) -> bool {
-        if self.requested.contains(&id) || self.fulfilled.contains(&id) {
+        if self.requested.contains(&id) {
             return false;
         }
         let Some((url, byte_range)) = self.resource_requests.get(&id).cloned() else {
@@ -1294,9 +1293,7 @@ impl HlsClient {
             ResourceId::Part { .. } | ResourceId::Segment { .. } => {
                 let processed = self.accept_media_resource(id, bytes);
                 match processed {
-                    Ok(()) => {
-                        self.resource_requests.remove(&id);
-                    }
+                    Ok(()) => {}
                     Err(e @ Error::PendingKeyedOverflow { .. }) => return Err(e),
                     Err(e) => {
                         self.fulfilled.remove(&id);
