@@ -62,7 +62,7 @@
 //! ISO/IEC 23009-1:2022 Table 5 requires between `@par`, `@width`, `@height`
 //! and `@sar`; `@width`/`@height` remain the cropped sample counts (Table 14),
 //! the pixel shape being carried by `@sar`. The clauses are transcribed in
-//! `transmux/docs/codec/dash-23009-1-2022-aspect.md` (5th edition; the 2026
+//! `transmux/docs/dash/23009-1/dash-23009-1-2022-aspect.md` (5th edition; the 2026
 //! 6th edition is paywalled and was not checked).
 //!
 //! # CENC/CBCS signalling (issue #564)
