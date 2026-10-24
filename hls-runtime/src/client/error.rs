@@ -61,6 +61,12 @@ pub enum Error {
         id: super::action::ResourceId,
     },
 
+    /// A fetched Media Initialization Section holds no `moov` box (it is not an
+    /// ISO BMFF init at all, or it is truncated). The init is marked failed, so
+    /// [`crate::client::HlsClient::retry_init`] fetches it again.
+    #[error("media initialization section holds no complete moov box")]
+    InitUndecodable,
+
     /// A playlist URI (segment/part/map/rendition-report) could not be
     /// resolved against the playlist's own URL.
     #[error("could not resolve URI {uri:?} against base {base:?}: {reason}")]

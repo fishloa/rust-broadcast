@@ -170,6 +170,11 @@ pub enum ErrorKind {
         /// The HTTP status, `None` for a transport error, timeout or oversized body.
         status: Option<u16>,
     },
+    /// A Media Initialization Section (`EXT-X-MAP`) arrived with a success status but holds no
+    /// complete `moov` box. Retried and counted exactly like [`ErrorKind::InitFetchFailed`]:
+    /// [`Config::max_key_failures`] consecutive failures (no decoded samples in between) make one
+    /// fatal error of this kind.
+    InitDecodeFailed,
     /// The key response was not a valid 16-byte AES-128 key.
     BadKey,
     /// A segment did not decrypt (bad padding or length), typically because the key is wrong.
@@ -241,6 +246,7 @@ impl ErrorKind {
             Self::UnsupportedEncryption { .. } => "unsupported_encryption",
             Self::KeyFetchFailed { .. } => "key_fetch_failed",
             Self::InitFetchFailed { .. } => "init_fetch_failed",
+            Self::InitDecodeFailed => "init_decode_failed",
             Self::BadKey => "bad_key",
             Self::DecryptFailed => "decrypt_failed",
             Self::UnsupportedCodec { .. } => "unsupported_codec",

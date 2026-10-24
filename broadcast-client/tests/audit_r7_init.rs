@@ -398,3 +398,73 @@ fn failed_resigned_init_is_retried_with_the_newest_url() {
     assert!(t.samples > 0, "{t:?}");
     assert_eq!(t.tracks, 1);
 }
+
+const GARBAGE: &[u8] = b"not an iso bmff init, no moov box in here";
+
+fn garbage_then_good() -> Vec<Reply> {
+    vec![Reply::Ok(GARBAGE.to_vec()), Reply::Ok(parts().0)]
+}
+
+#[test]
+fn vod_garbage_init_then_good_recovers_and_plays_everything() {
+    let want = clean_samples(&["i1.mp4"]);
+    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", garbage_then_good())]);
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    let t = tally(&h);
+    assert!(t.ended && t.fatals.is_empty(), "{t:?}");
+    assert_eq!(t.samples, want);
+    assert_eq!(t.tracks, 1);
+    assert_eq!(h.hits(&format!("{BASE}/i1.mp4")), 2);
+}
+
+#[test]
+fn vod_garbage_init_forever_is_one_typed_fatal_after_the_cap() {
+    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Ok(GARBAGE.to_vec())])]);
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    let t = tally(&h);
+    assert!(!t.ended, "{t:?}");
+    assert_eq!(t.fatals, vec![ErrorKind::InitDecodeFailed], "{t:?}");
+    assert_eq!(h.hits(&format!("{BASE}/i1.mp4")), DEFAULT_MAX_KEY_FAILURES as usize);
+    h.run_until(|_| false, STEPS);
+    assert_eq!(tally(&h).fatals.len(), 1);
+    assert_eq!(h.hits(&format!("{BASE}/i1.mp4")), DEFAULT_MAX_KEY_FAILURES as usize);
+}
+
+fn live_host(init_replies: Vec<Reply>) -> Host {
+    let (_, segs) = parts();
+    let pl: Vec<Reply> = (0..60usize)
+        .map(|r| {
+            Reply::Ok(
+                format!(
+                    "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{r}\n#EXT-X-MAP:URI=\"i1.mp4\"\n#EXTINF:1.0,\ns{}.m4s\n",
+                    r.min(2)
+                )
+                .into_bytes(),
+            )
+        })
+        .collect();
+    let mut h = Host::new(PL, hls_config());
+    h.route(PL, pl);
+    h.route(&format!("{BASE}/i1.mp4"), init_replies);
+    for (i, seg) in segs.iter().enumerate().take(3) {
+        h.ok(&format!("{BASE}/s{i}.m4s"), seg.clone());
+    }
+    h
+}
+
+#[test]
+fn live_garbage_init_then_good_recovers() {
+    let mut h = live_host(garbage_then_good());
+    h.run_until(|_| false, 3_000);
+    let t = tally(&h);
+    assert!(t.fatals.is_empty(), "{t:?}");
+    assert!(t.samples > 0 && t.tracks == 1, "{t:?}");
+}
+
+#[test]
+fn live_garbage_init_forever_is_one_typed_fatal() {
+    let mut h = live_host(vec![Reply::Ok(GARBAGE.to_vec())]);
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    let t = tally(&h);
+    assert_eq!(t.fatals, vec![ErrorKind::InitDecodeFailed], "{t:?}");
+}
