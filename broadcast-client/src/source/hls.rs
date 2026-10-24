@@ -181,6 +181,7 @@ pub(crate) struct HlsSource {
     max_segment_failures: u32,
     seg_failures: HashMap<ResourceId, SegmentFailures>,
     seg_retry: BTreeSet<ResourceId>,
+    skip_error: Option<ErrorKind>,
     retry_after_us: u64,
     reported: BTreeSet<&'static str>,
     fatal: bool,
@@ -234,6 +235,7 @@ impl HlsSource {
             max_segment_failures: config.hls_max_segment_failures,
             seg_failures: HashMap::new(),
             seg_retry: BTreeSet::new(),
+            skip_error: None,
             retry_after_us: 0,
             reported: BTreeSet::new(),
             fatal: false,
@@ -804,7 +806,7 @@ impl HlsSource {
             self.go_fatal(kind);
             return;
         }
-        self.events.push_back(Event::Error { kind, fatal: false });
+        self.skip_error = Some(kind);
         self.failed.remove(&id);
         self.order.retain(|o| *o != id);
         self.held.remove(&id);
@@ -1174,7 +1176,12 @@ impl HlsSource {
                         fatal: false,
                     });
                 }
-                Output::Discontinuity => self.events.push_back(Event::Discontinuity),
+                Output::Discontinuity => {
+                    if let Some(kind) = self.skip_error.take() {
+                        self.events.push_back(Event::Error { kind, fatal: false });
+                    }
+                    self.events.push_back(Event::Discontinuity);
+                }
                 Output::EndOfStream => self.events.push_back(Event::Status(Status::Ended)),
                 _ => {}
             }

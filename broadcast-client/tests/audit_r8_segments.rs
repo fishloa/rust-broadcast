@@ -1,6 +1,7 @@
-//! Round-8 findings F1 + F2: a 200 answer that is not media for its container is a failed fetch
-//! (never a silently consumed segment), and a segment that keeps failing walks the retry schedule
-//! and ends fatal (VOD) or is skipped with a discontinuity (live).
+//! Round-8 findings F1 to F4: a 200 answer that is not media for its container is a failed fetch
+//! (never a silently consumed segment); a segment that keeps failing walks the retry schedule and
+//! ends fatal (VOD) or is skipped with a discontinuity (live); `Retry-After` on 429/503 stretches
+//! the wait, clamped; an init that never answers times out on the playlist-class timeout.
 
 mod support;
 use broadcast_client::{Config, ErrorKind, Event};
@@ -102,13 +103,17 @@ fn fmp4_parts() -> (Vec<u8>, Vec<Vec<u8>>) {
 }
 
 fn fmp4_vod(seg0: Vec<Reply>, config: Config) -> Host {
-    let (init, segs) = fmp4_parts();
+    fmp4_host(vec![Reply::Ok(fmp4_parts().0)], seg0, config)
+}
+
+fn fmp4_host(init_replies: Vec<Reply>, seg0: Vec<Reply>, config: Config) -> Host {
+    let segs = fmp4_parts().1;
     let playlist = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:10\n#EXT-X-PLAYLIST-TYPE:VOD\n\
                     #EXT-X-MAP:URI=\"i.mp4\"\n#EXTINF:1.0,\ns0.m4s\n#EXTINF:1.0,\ns1.m4s\n\
                     #EXT-X-ENDLIST\n";
     let mut h = Host::new(FMP4_PLAYLIST_URL, config);
     h.ok(FMP4_PLAYLIST_URL, playlist.as_bytes().to_vec());
-    h.ok(FMP4_INIT_URL, init);
+    h.route(FMP4_INIT_URL, init_replies);
     h.route(&format!("{FMP4_BASE}/s0.m4s"), seg0);
     h.ok(&format!("{FMP4_BASE}/s1.m4s"), segs[1].clone());
     h
@@ -215,4 +220,361 @@ fn a_structurally_valid_ts_segment_with_no_samples_is_not_a_failure() {
     assert!(t.fatals.is_empty(), "{t:?}");
     assert!(t.ended, "{t:?}");
     assert_eq!(h.hits(TS_SEG0_URL), 1, "no retry for valid media");
+}
+
+const LIVE_BASE: &str = "http://origin.test/hls";
+const LIVE_BAD_URL: &str = "http://origin.test/hls/bad.ts";
+const DEFAULT_SCHEDULE_SECS: [u64; 7] = [2, 4, 8, 10, 10, 10, 10];
+
+fn live_host(bad: Vec<Reply>, config: Config) -> Host {
+    let mut h = Host::new(TS_PLAYLIST_URL, config);
+    h.ok(
+        TS_PLAYLIST_URL,
+        support::hls_host::live_playlist_text(0, &["index0.ts", "bad.ts", "index1.ts"])
+            .into_bytes(),
+    );
+    h.ok(TS_SEG0_URL, ts_segment(0));
+    h.route(LIVE_BAD_URL, bad);
+    h.ok(TS_SEG1_URL, ts_segment(1));
+    assert!(TS_SEG0_URL.starts_with(LIVE_BASE));
+    h
+}
+
+fn played_past_the_gap(e: &[Event]) -> bool {
+    let Some(gap) = e.iter().position(|x| matches!(x, Event::Discontinuity)) else {
+        return false;
+    };
+    e[gap..].iter().any(|x| matches!(x, Event::Sample { .. }))
+}
+
+#[test]
+fn live_permanent_segment_failure_is_skipped_with_one_error_then_a_discontinuity() {
+    let cases: Vec<(&str, Reply, Option<u16>)> = vec![
+        ("404", Reply::Status(404), Some(404)),
+        ("503", Reply::Status(503), Some(503)),
+        ("transport", Reply::TransportError, None),
+        ("garbage", Reply::Ok(random_bytes()), None),
+    ];
+    for (name, reply, status) in cases {
+        let mut h = live_host(vec![reply], hls_config());
+        h.run_until(played_past_the_gap, STEPS);
+        let t = tally(&h);
+        assert!(t.fatals.is_empty(), "{name}: {t:?}");
+        let kind = ErrorKind::SegmentFetchFailed { status };
+        assert_eq!(t.non_fatals, vec![kind.clone()], "{name}: {t:?}");
+        assert_eq!(t.discontinuities, 1, "{name}: {t:?}");
+        let marks: Vec<&Event> = h
+            .events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::Error { .. } | Event::Discontinuity | Event::Sample { .. }
+                )
+            })
+            .collect();
+        let err_at = marks
+            .iter()
+            .position(|e| matches!(e, Event::Error { .. }))
+            .unwrap();
+        assert!(
+            matches!(marks[err_at + 1], Event::Discontinuity),
+            "{name}: the discontinuity follows the error directly"
+        );
+        assert!(
+            marks[err_at + 2..]
+                .iter()
+                .any(|e| matches!(e, Event::Sample { .. })),
+            "{name}: the next segment plays"
+        );
+        assert!(
+            marks[..err_at]
+                .iter()
+                .any(|e| matches!(e, Event::Sample { .. })),
+            "{name}: the segment before the gap played"
+        );
+        assert_eq!(
+            h.hits(LIVE_BAD_URL),
+            DEFAULT_SCHEDULE_SECS.len() + 1,
+            "{name}: exactly the cap"
+        );
+    }
+}
+
+#[test]
+fn live_failing_segment_walks_the_whole_schedule_across_playlist_reloads() {
+    let mut h = live_host(vec![Reply::Status(404)], hls_config());
+    h.run_until(played_past_the_gap, STEPS);
+    assert!(h.hits(TS_PLAYLIST_URL) > 2, "the playlist kept reloading");
+    assert_eq!(gaps_secs(&h, LIVE_BAD_URL), DEFAULT_SCHEDULE_SECS.to_vec());
+}
+
+fn with_cap(cap: u32) -> Config {
+    Config {
+        hls_max_segment_failures: cap,
+        ..hls_config()
+    }
+}
+
+#[test]
+fn vod_failing_segment_walks_the_schedule_without_reloading_the_playlist() {
+    let mut h = ts_vod(vec![Reply::Status(500)], hls_config());
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    let t = tally(&h);
+    assert_eq!(
+        t.fatals,
+        vec![ErrorKind::SegmentFetchFailed { status: Some(500) }]
+    );
+    assert_eq!(gaps_secs(&h, TS_SEG0_URL), DEFAULT_SCHEDULE_SECS.to_vec());
+    assert_eq!(
+        h.hits(TS_PLAYLIST_URL),
+        1,
+        "VOD never refetches its playlist"
+    );
+}
+
+#[test]
+fn the_failure_count_is_per_segment_and_resets_only_on_a_delivery() {
+    let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+    h.ok(TS_PLAYLIST_URL, ts_playlist());
+    h.route(
+        TS_SEG0_URL,
+        vec![
+            Reply::Status(500),
+            Reply::Status(500),
+            Reply::Status(500),
+            Reply::Ok(ts_segment(0)),
+        ],
+    );
+    h.route(
+        TS_SEG1_URL,
+        vec![Reply::Status(500), Reply::Ok(ts_segment(1))],
+    );
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    let t = tally(&h);
+    assert!(t.ended && t.fatals.is_empty(), "{t:?}");
+    assert_eq!(gaps_secs(&h, TS_SEG0_URL), vec![2, 4, 8]);
+    let second_gap = gaps_secs(&h, TS_SEG1_URL);
+    assert_eq!(
+        second_gap.first(),
+        Some(&2),
+        "{second_gap:?}: its own first step"
+    );
+}
+
+#[test]
+fn the_cap_is_configurable_zero_is_first_failure_and_max_retries_on() {
+    for (cap, requests) in [(0u32, 1usize), (1, 1), (3, 3)] {
+        let mut h = ts_vod(vec![Reply::Status(500)], with_cap(cap));
+        h.run_until(stop_on_end_or_fatal, STEPS);
+        let t = tally(&h);
+        assert_eq!(
+            t.fatals,
+            vec![ErrorKind::SegmentFetchFailed { status: Some(500) }],
+            "cap {cap}"
+        );
+        assert_eq!(h.hits(TS_SEG0_URL), requests, "cap {cap}");
+    }
+    let mut h = ts_vod(vec![Reply::Status(500)], with_cap(u32::MAX));
+    h.run_until(|_| false, 400);
+    let t = tally(&h);
+    assert!(t.fatals.is_empty() && !t.ended, "{t:?}");
+    assert!(h.hits(TS_SEG0_URL) > DEFAULT_SCHEDULE_SECS.len() + 1);
+}
+
+#[test]
+fn live_with_the_cap_at_zero_skips_on_the_first_failure() {
+    let mut h = live_host(vec![Reply::Status(404)], with_cap(0));
+    h.run_until(played_past_the_gap, STEPS);
+    let t = tally(&h);
+    assert_eq!(
+        t.non_fatals,
+        vec![ErrorKind::SegmentFetchFailed { status: Some(404) }]
+    );
+    assert_eq!(h.hits(LIVE_BAD_URL), 1);
+}
+
+#[test]
+fn live_skipped_segment_is_never_requested_again() {
+    let mut h = live_host(vec![Reply::Status(404)], hls_config());
+    h.run_until(played_past_the_gap, STEPS);
+    h.run_until(|_| false, 200);
+    let t = tally(&h);
+    assert_eq!(t.discontinuities, 1, "{t:?}");
+    assert_eq!(
+        t.non_fatals.len(),
+        1,
+        "one error per skipped segment: {t:?}"
+    );
+    assert_eq!(
+        h.hits(LIVE_BAD_URL),
+        DEFAULT_SCHEDULE_SECS.len() + 1,
+        "never re-requested"
+    );
+}
+
+const RETRY_AFTER: &str = "Retry-After";
+const FIRST_BACKOFF_SECS: u64 = 2;
+const MAX_RETRY_AFTER_SECS: u64 = 60;
+const KEY_URL: &str = "http://origin.test/hls/key.bin";
+const KEY: [u8; 16] = [0x11; 16];
+const IV: [u8; 16] = [0x22; 16];
+const INIT_TIMEOUT_SECS: u64 = 20;
+const SEGMENT_TIMEOUT_SECS: u64 = 60;
+
+fn after(status: u16, value: &str) -> Reply {
+    Reply::StatusHeaders(status, vec![(RETRY_AFTER.to_string(), value.to_string())])
+}
+
+fn first_gap(h: &Host, url: &str) -> u64 {
+    *gaps_secs(h, url)
+        .first()
+        .unwrap_or_else(|| panic!("{url} requested once: {:?}", h.requests_to(url)))
+}
+
+fn waits() -> Vec<(String, Reply, u64)> {
+    let huge = u64::MAX.to_string();
+    vec![
+        ("429 30s".into(), after(429, "30"), 30),
+        ("503 7s".into(), after(503, "7"), 7),
+        ("padded".into(), after(429, " 9 "), 9),
+        (
+            "below the backoff step".into(),
+            after(429, "1"),
+            FIRST_BACKOFF_SECS,
+        ),
+        ("zero".into(), after(503, "0"), FIRST_BACKOFF_SECS),
+        (
+            "u64::MAX is clamped".into(),
+            after(429, &huge),
+            MAX_RETRY_AFTER_SECS,
+        ),
+        (
+            "just over the clamp".into(),
+            after(503, "61"),
+            MAX_RETRY_AFTER_SECS,
+        ),
+        (
+            "HTTP-date has no wall clock to count from".into(),
+            after(429, "Wed, 21 Oct 2026 07:28:00 GMT"),
+            FIRST_BACKOFF_SECS,
+        ),
+        ("negative".into(), after(429, "-5"), FIRST_BACKOFF_SECS),
+        ("garbage".into(), after(503, "soon"), FIRST_BACKOFF_SECS),
+        (
+            "500 ignores it".into(),
+            after(500, "30"),
+            FIRST_BACKOFF_SECS,
+        ),
+        (
+            "404 ignores it".into(),
+            after(404, "30"),
+            FIRST_BACKOFF_SECS,
+        ),
+    ]
+}
+
+#[test]
+fn playlist_retry_waits_for_retry_after() {
+    for (name, reply, want) in waits() {
+        let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+        h.route(TS_PLAYLIST_URL, vec![reply, Reply::Ok(ts_playlist())]);
+        h.ok(TS_SEG0_URL, ts_segment(0));
+        h.ok(TS_SEG1_URL, ts_segment(1));
+        h.run_until(stop_on_end_or_fatal, STEPS);
+        assert!(tally(&h).ended, "{name}");
+        assert_eq!(first_gap(&h, TS_PLAYLIST_URL), want, "{name}");
+    }
+}
+
+#[test]
+fn segment_retry_waits_for_retry_after() {
+    for (name, reply, want) in waits() {
+        let mut h = ts_vod(vec![reply, Reply::Ok(ts_segment(0))], hls_config());
+        h.run_until(stop_on_end_or_fatal, STEPS);
+        assert!(tally(&h).ended, "{name}");
+        assert_eq!(first_gap(&h, TS_SEG0_URL), want, "{name}");
+    }
+}
+
+#[test]
+fn init_retry_waits_for_retry_after() {
+    let init = fmp4_parts().0;
+    for (name, reply, want) in waits() {
+        let mut h = fmp4_host(
+            vec![reply, Reply::Ok(init.clone())],
+            vec![Reply::Ok(fmp4_parts().1[0].clone())],
+            hls_config(),
+        );
+        h.run_until(stop_on_end_or_fatal, STEPS);
+        assert!(tally(&h).ended, "{name}");
+        assert_eq!(first_gap(&h, FMP4_INIT_URL), want, "{name}");
+    }
+}
+
+fn keyed_playlist() -> Vec<u8> {
+    let mut hex = String::new();
+    for b in IV {
+        hex.push_str(&format!("{b:02X}"));
+    }
+    format!(
+        "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x{hex}\n\
+         #EXTINF:2.0,\nindex0.ts\n#EXTINF:1.0,\nindex1.ts\n#EXT-X-ENDLIST\n"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn key_retry_waits_for_retry_after() {
+    use transmux::sample_aes::aes128_encrypt_segment;
+    for (name, reply, want) in waits() {
+        let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+        h.ok(TS_PLAYLIST_URL, keyed_playlist());
+        h.route(KEY_URL, vec![reply, Reply::Ok(KEY.to_vec())]);
+        h.ok(
+            TS_SEG0_URL,
+            aes128_encrypt_segment(&KEY, &IV, &ts_segment(0)),
+        );
+        h.ok(
+            TS_SEG1_URL,
+            aes128_encrypt_segment(&KEY, &IV, &ts_segment(1)),
+        );
+        h.run_until(stop_on_end_or_fatal, STEPS);
+        assert!(tally(&h).ended, "{name}: {:?}", tally(&h));
+        assert_eq!(first_gap(&h, KEY_URL), want, "{name}");
+    }
+}
+
+#[test]
+fn an_init_that_never_answers_times_out_on_the_playlist_class_timeout() {
+    let mut h = fmp4_host(vec![Reply::Hang], vec![Reply::Hang], hls_config());
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    assert_eq!(
+        first_gap(&h, FMP4_INIT_URL),
+        INIT_TIMEOUT_SECS + FIRST_BACKOFF_SECS
+    );
+    let t = tally(&h);
+    assert_eq!(
+        t.fatals,
+        vec![ErrorKind::InitFetchFailed { status: None }],
+        "{t:?}"
+    );
+    let cap = u64::from(broadcast_client::events::DEFAULT_MAX_KEY_FAILURES);
+    assert!(
+        h.now <= cap * (INIT_TIMEOUT_SECS + 10) * SEC,
+        "fatal after {} s",
+        h.now / SEC
+    );
+}
+
+#[test]
+fn a_segment_that_never_answers_keeps_the_segment_timeout() {
+    let mut h = ts_vod(vec![Reply::Hang, Reply::Ok(ts_segment(0))], hls_config());
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    assert!(tally(&h).ended);
+    assert_eq!(
+        first_gap(&h, TS_SEG0_URL),
+        SEGMENT_TIMEOUT_SECS + FIRST_BACKOFF_SECS
+    );
 }
