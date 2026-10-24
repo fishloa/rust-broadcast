@@ -1054,6 +1054,81 @@ Content-Length: {over}
         );
     }
 
+    fn first_key_id() -> KeyId {
+        let mut session = HlsIngestSession::new("http://origin.test/index.m3u8");
+        while session.poll_transmit().is_some() {}
+        session
+            .feed(
+                (HlsFetchId::Playlist, KEYED_PLAYLIST.as_bytes()),
+                Timestamp::from_nanos(0),
+            )
+            .expect("keyed playlist is accepted");
+        key_requests(&mut session)[0]
+    }
+
+    async fn serve_key_body(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+        use axum::Router;
+        use axum::routing::get;
+        let app = Router::new().route("/key.bin", get(move || async move { body }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}/key.bin"), task)
+    }
+
+    async fn run_key_fetch(url: String) -> crate::source::pull::FetchResult {
+        let pending = resource_fetch(
+            HttpClient::new(),
+            None,
+            HlsFetchId::Key(first_key_id()),
+            url,
+            Duration::from_secs(10),
+            Duration::ZERO,
+        );
+        pending.fut.await.1
+    }
+
+    #[tokio::test]
+    async fn a_key_body_that_is_not_16_bytes_fails_as_bad_key_length() {
+        let (url, server) = serve_key_body(vec![0x44; AES128_KEY_LEN - 1]).await;
+        let result = run_key_fetch(url).await;
+        server.abort();
+        match result {
+            crate::source::pull::FetchResult::Failed(MultimuxError::LlHls(
+                hls_runtime::client::Error::BadKeyLength { len, .. },
+            )) => assert_eq!(len, AES128_KEY_LEN - 1),
+            _ => panic!("expected a typed BadKeyLength failure"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_key_body_over_the_cap_fails_on_the_cap_not_on_its_length() {
+        let (url, server) = serve_key_body(vec![0x55; MAX_KEY_BODY_BYTES + 1]).await;
+        let result = run_key_fetch(url).await;
+        server.abort();
+        match result {
+            crate::source::pull::FetchResult::Failed(MultimuxError::Connect { reason }) => {
+                assert!(reason.contains("exceeds"), "{reason}");
+            }
+            _ => panic!("expected the body cap to reject the key"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_16_byte_key_body_is_delivered() {
+        let (url, server) = serve_key_body(vec![0x66; AES128_KEY_LEN]).await;
+        let result = run_key_fetch(url).await;
+        server.abort();
+        match result {
+            crate::source::pull::FetchResult::Ready(bytes) => {
+                assert_eq!(bytes, vec![0x66; AES128_KEY_LEN]);
+            }
+            _ => panic!("expected the key bytes"),
+        }
+    }
+
     fn trunk_config() -> TrunkConfig {
         TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
     }

@@ -45,6 +45,9 @@ const RING: usize = 16;
 const SEGMENTS: usize = 2;
 const OVERSIZED_KEY_LEN: usize = 5000;
 const SHORT_KEY_LEN: usize = 15;
+const OBSERVE_CEILING: Duration = Duration::from_secs(15);
+const ABSENT_TRUNK_WAIT: Duration = Duration::from_millis(100);
+const KEY_ATTEMPTS_OBSERVED: usize = 3;
 const RUN_CEILING: Duration = Duration::from_secs(150);
 
 type Fingerprint = Vec<(String, Vec<u8>, Option<i64>, Option<i64>)>;
@@ -117,6 +120,39 @@ impl Resource {
     }
 }
 
+struct Counter {
+    n: AtomicUsize,
+    changed: tokio::sync::Notify,
+}
+
+impl Counter {
+    fn new() -> Arc<Self> {
+        Arc::new(Counter {
+            n: AtomicUsize::new(0),
+            changed: tokio::sync::Notify::new(),
+        })
+    }
+
+    fn bump(&self) {
+        self.n.fetch_add(1, Ordering::SeqCst);
+        self.changed.notify_waiters();
+    }
+
+    async fn wait_at_least(&self, want: usize) {
+        tokio::time::timeout(OBSERVE_CEILING, async {
+            loop {
+                let changed = self.changed.notified();
+                if self.n.load(Ordering::SeqCst) >= want {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .expect("the key was not requested often enough");
+    }
+}
+
 struct Logged {
     path: String,
     authorization: Option<String>,
@@ -124,6 +160,7 @@ struct Logged {
 
 struct Shared {
     resources: HashMap<String, Resource>,
+    key_hits: Arc<Counter>,
     segments_sent: AtomicUsize,
     segments_sent_changed: tokio::sync::Notify,
     log: Mutex<Vec<Logged>>,
@@ -167,6 +204,9 @@ async fn handler(State(shared): State<Arc<Shared>>, uri: Uri, headers: HeaderMap
         path: uri.path().to_string(),
         authorization: authorization.clone(),
     });
+    if uri.path() == KEY_PATH {
+        shared.key_hits.bump();
+    }
     let Some(res) = shared.resources.get(uri.path()) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -219,6 +259,7 @@ fn serve(resources: Vec<(&str, Resource)>) -> Origin {
             .map(|(p, r)| (p.to_string(), r))
             .collect(),
         log: Mutex::new(Vec::new()),
+        key_hits: Counter::new(),
         segments_sent: AtomicUsize::new(0),
         segments_sent_changed: tokio::sync::Notify::new(),
     });
@@ -235,10 +276,40 @@ fn serve(resources: Vec<(&str, Resource)>) -> Origin {
     }
 }
 
-fn closed_port_base() -> String {
+fn resetting_key_server() -> (String, Arc<Counter>) {
     let (addr, tcp) = listener::bind_tcp();
-    drop(tcp);
-    format!("http://{addr}")
+    let hits = Counter::new();
+    let counted = Arc::clone(&hits);
+    tokio::spawn(async move {
+        while let Ok((conn, _)) = tcp.accept().await {
+            counted.bump();
+            drop(conn);
+        }
+    });
+    (format!("http://{addr}"), hits)
+}
+
+async fn assert_key_is_retried_not_stalled_not_ingested(playlist_url: &str, key_hits: &Counter) {
+    let route = HlsPullRoute::new("keys", playlist_url);
+    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let config = TrunkConfig::new(nz(TIMED_RING), nz(RING), nz(RING), nz(RING), nz(RING));
+    let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+    let task = {
+        let route_handle = Arc::clone(&route_handle);
+        tokio::spawn(async move { run_hls_pull(&route, config, handshake, &route_handle).await })
+    };
+    key_hits.wait_at_least(KEY_ATTEMPTS_OBSERVED).await;
+    assert!(
+        !task.is_finished(),
+        "a failing key is retried, not a terminal error at the first attempt"
+    );
+    task.abort();
+    assert!(
+        tokio::time::timeout(ABSENT_TRUNK_WAIT, route_handle.await_first_trunk())
+            .await
+            .is_err(),
+        "no samples may be published while the key is unavailable"
+    );
 }
 
 fn two_segment_files(
@@ -466,29 +537,22 @@ async fn key_http_error_retries_then_succeeds() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn wrong_length_key_is_failure_not_stall() {
     let short = encrypted_origin(Resource::bytes(vec![0x44; SHORT_KEY_LEN]));
-    let (result, samples) = ingest(&format!("{}/index.m3u8", short.base), None).await;
-    match result {
-        Err(MultimuxError::LlHls(ClientError::BadKeyLength { len, .. })) => {
-            assert_eq!(len, SHORT_KEY_LEN);
-        }
-        other => panic!("expected BadKeyLength, got {other:?}"),
-    }
-    assert!(samples.is_empty());
-    assert!(short.requests(KEY_PATH).len() >= 2, "a bad key is retried");
+    assert_key_is_retried_not_stalled_not_ingested(
+        &format!("{}/index.m3u8", short.base),
+        &short.shared.key_hits,
+    )
+    .await;
     assert_eq!(short.requests("/index0.ts").len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn oversized_key_body_is_failure() {
     let origin = encrypted_origin(Resource::bytes(vec![0x55; OVERSIZED_KEY_LEN]));
-    let (result, samples) = ingest(&format!("{}/index.m3u8", origin.base), None).await;
-    match result {
-        Err(MultimuxError::Connect { reason }) => {
-            assert!(reason.contains("exceeds"), "{reason}");
-        }
-        other => panic!("expected the body cap to reject the key, got {other:?}"),
-    }
-    assert!(samples.is_empty());
+    assert_key_is_retried_not_stalled_not_ingested(
+        &format!("{}/index.m3u8", origin.base),
+        &origin.shared.key_hits,
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -553,7 +617,8 @@ async fn plaintext_playlist_never_requests_key() {
 async fn ingest_does_not_hang_when_key_server_is_down() {
     let iv0 = iv_seq(0x90);
     let iv1 = iv_seq(0xB0);
-    let key_url = format!("{}{KEY_PATH}", closed_port_base());
+    let (key_base, key_hits) = resetting_key_server();
+    let key_url = format!("{key_base}{KEY_PATH}");
     let text = playlist(&[
         (key_tag(&key_url, &iv0), "index0.ts"),
         (key_tag(&key_url, &iv1), "index1.ts"),
@@ -561,12 +626,9 @@ async fn ingest_does_not_hang_when_key_server_is_down() {
     let mut resources = two_segment_files(&KEY_A, &iv0, &KEY_A, &iv1);
     resources.push(("/index.m3u8", Resource::bytes(text.into_bytes())));
     let origin = serve(resources);
-    let (result, samples) = ingest(&format!("{}/index.m3u8", origin.base), None).await;
-    match result {
-        Err(MultimuxError::Connect { reason }) => {
-            assert!(reason.contains(KEY_PATH), "{reason}");
-        }
-        other => panic!("expected a key connect failure, got {other:?}"),
-    }
-    assert!(samples.is_empty());
+    assert_key_is_retried_not_stalled_not_ingested(
+        &format!("{}/index.m3u8", origin.base),
+        &key_hits,
+    )
+    .await;
 }
