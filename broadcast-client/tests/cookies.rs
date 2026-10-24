@@ -227,23 +227,25 @@ fn expires_attribute_ignored() {
 }
 
 #[test]
-fn domain_attribute_ignored_host_only() {
+fn domain_attribute_reaches_domain_matching_hosts() {
     let line = "d=1; Domain=.example.com; Path=/";
     assert_eq!(
         cookie_of(
             "http://example.com/live.ts",
             &[line],
             "http://sub.example.com/live.ts"
-        ),
-        None
+        )
+        .as_deref(),
+        Some("d=1")
     );
     assert_eq!(
         cookie_of(
             "http://www.example.com/live.ts",
             &[line],
             "http://example.com/live.ts"
-        ),
-        None
+        )
+        .as_deref(),
+        Some("d=1")
     );
     assert_eq!(
         cookie_of(
@@ -253,7 +255,7 @@ fn domain_attribute_ignored_host_only() {
         )
         .as_deref(),
         Some("d=1"),
-        "the cookie is still a host-only cookie of the origin"
+        "the cookie is still sent to the origin itself"
     );
 }
 
