@@ -85,17 +85,6 @@ macro_rules! rec {
 
 const TICKS_PER_SEC_27MHZ: u64 = 27_000_000;
 
-/// How long after its first media a live TS waits for an audio/video stream its PMT declares but
-/// that has not resolved to a track yet, before the first `Start` goes ahead with the tracks it
-/// has. A live mux sends audio up to about a second behind video and the audio codec config
-/// resolves only with its first frame: the zenith-tv trace (hold released on the wall backstop,
-/// audio announced about 1.3 s after the first media) started on video alone and paused 100 ms
-/// later with the audio 8 ms ahead of the playback position. Measured resolution gaps on the
-/// committed captures are 0.16 s to 0.48 s of media (`SETTLE_US` in the TS hold), so 1.5 s covers
-/// a skew three times the worst measured and is shorter than the 1.8 s default start lead, which a
-/// stream with no such stream (a declared but never delivering audio PID) waits out anyway.
-pub(crate) const START_PENDING_TRACK_WAIT_US: u64 = 1_500_000;
-
 /// Controller key of the placeholder for a declared stream that has not resolved yet; a real
 /// `TrackId` never takes it.
 const PENDING_TRACK_KEY: u32 = u32::MAX;
@@ -165,12 +154,17 @@ pub(crate) struct Feeder {
     pending_registered: bool,
     started: bool,
     first_media_us: Option<u64>,
+    start_pending_track_wait_us: u64,
     #[cfg(feature = "test-seams")]
     pub(crate) log: Vec<BufferInput>,
 }
 
 impl Feeder {
-    pub(crate) fn new(config: ControllerConfig, seed: Option<StallMemorySnapshot>) -> Self {
+    pub(crate) fn new(
+        config: ControllerConfig,
+        seed: Option<StallMemorySnapshot>,
+        start_pending_track_wait_us: u64,
+    ) -> Self {
         Self {
             config,
             seed,
@@ -195,6 +189,7 @@ impl Feeder {
             pending_registered: false,
             started: false,
             first_media_us: None,
+            start_pending_track_wait_us,
             #[cfg(feature = "test-seams")]
             log: Vec::new(),
         }
@@ -223,7 +218,7 @@ impl Feeder {
     }
 
     /// A stream the source knows exists (PMT-declared) has no track yet: until one appears, or
-    /// [`START_PENDING_TRACK_WAIT_US`] after the first media, or the first `Start`, the
+    /// [`Config::start_pending_track_wait_us`] after the first media, or the first `Start`, the
     /// controller waits for it like for any registered track that has not delivered. The
     /// placeholder is registered with the first media report, so a stream whose tracks all resolve
     /// before any media never shows it to the controller.
@@ -237,7 +232,7 @@ impl Feeder {
             && !self.started
             && self
                 .first_media_us
-                .is_some_and(|f| now_us.saturating_sub(f) < START_PENDING_TRACK_WAIT_US);
+                .is_some_and(|f| now_us.saturating_sub(f) < self.start_pending_track_wait_us);
         let Some(c) = &mut self.controller else {
             return;
         };
@@ -678,7 +673,11 @@ mod tests {
     }
 
     fn feeder() -> Feeder {
-        Feeder::new(ControllerConfig::default(), None)
+        Feeder::new(
+            ControllerConfig::default(),
+            None,
+            crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
+        )
     }
 
     fn far(sample: &Sample) -> Sample {

@@ -210,6 +210,11 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   (512 KiB); a stream that sends but does not resolve (scrambled, sparse data) costs up to the wall limit.
   A host with a tighter first-frame budget lowers `tracks_hold_max_wall_us`, or sets `0` (also for
   `tracks_hold_max_media_us`) to disable the hold and take tracks as each stream resolves.
+  After the first media, `Start` also waits for a PMT-declared audio/video stream that has no track yet, at most
+  `Config::start_pending_track_wait_us` (default 1.5 s; `0` starts on the tracks announced so far, which can
+  flap `Start` then `Pause` when audio arrives late; `u64::MAX` waits until the first `Start`). With a start lead
+  below the default 1.8 s (zenith-tv: 0.5 s) and a first-frame budget to protect, 0.5 s to 1 s covers the measured
+  audio resolution gaps (0.16 s to 0.48 s of media) at a bounded cost; `0` gives the earliest `Start`.
   `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds the input limit.
   It also rejects every other value that silently disables output: `max_queued_events`, `max_playlist_bytes`,
   `max_segment_bytes`, `max_key_bytes`, `hls_request_timeout_us`, `hls_segment_timeout_us`,

@@ -69,6 +69,7 @@ const BASIC_CHALLENGE: &str = "Basic realm=\"f\"";
 const PLAYER_HINTS: [Hint; 3] = [Hint::SourceEnded, Hint::SourceError, Hint::PcrDiscontinuity];
 const RENDERED_IDS: [u32; 7] = [1, 2, 3, 1_001, 1_002, 999, u32::MAX];
 const HOLD_WALL_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
+const START_WAIT_US: [u64; 4] = [0, 500_000, 1_500_000, u64::MAX];
 const HOLD_MEDIA_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
 const HOLD_QUIET_BYTES: [usize; 4] = [1, TS_PACKET, 512 * 1024, 1 << 30];
 const HOLD_MAX_BYTES: [usize; 4] = [0, TS_PACKET, 4 * 1024 * 1024, usize::MAX];
@@ -518,6 +519,7 @@ fn config_from(header: &[u8]) -> Config {
     config.playout.vod_start_lead_us = knob(header, 15, &LEAD_US);
     config.playout.live_start_lead_us = knob(header, 16, &LEAD_US);
     config.playout.pause_lead_us = knob(header, 17, &LEAD_US);
+    config.start_pending_track_wait_us = knob(header, 18, &START_WAIT_US);
     config
 }
 
