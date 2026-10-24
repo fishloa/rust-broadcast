@@ -68,6 +68,6 @@ Sub-second clock sync (4.7.3) is needed to avoid drift eroding the buffer. Low-l
 
 ## Notes on the source
 
-- EXAMPLE 2 in 10.20.3 computes "5 000 + 2 057 - 1 400" (= 5 657 ms) yet says the player targets 5,08 s; the other examples recompute correctly (p.104, p.112).
+- EXAMPLE 2 in 10.20.3 computes 5 000 + 2 057 - 1 400 ms (= 5 657 ms) yet says the player targets 5,08 s; the other examples recompute correctly (p.104, p.112).
 - Examples use "TargetLatency"/"MaximumLatency" for what the rules call `Latency@target`/`@max`; `Latency@ReferenceId` vs `@referenceId` for the same attribute (p.104-105).
 - Typos in 10.20.1, 10.20.2, 10.20.3, 10.20.4 NOTE 1/6, 10.20.7.4 ("the the", "playerusing", "AdapationSets", "An DASH").

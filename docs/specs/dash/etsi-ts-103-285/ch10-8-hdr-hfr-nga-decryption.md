@@ -19,7 +19,7 @@ Related: colour descriptors of 5.2.5 ([ch05](ch05-video.md)), Preselection signa
 ## 10.14 HEVC colour description (p.101) - applies to all HEVC players
 
 - Players shall process the 5.2.5 EssentialProperty/SupplementalProperty descriptors (the text states this once for 2017-profile players and once generally) and shall ignore any video AdaptationSet whose EssentialProperty names colour primaries, matrix coefficients or transfer characteristics the player does not support. Examples: no BT.2020 support -> ignore sets with `urn:mpeg:mpegB:cicp:ColourPrimaries` value 9; no BT.2100 PQ support -> ignore sets with `urn:mpeg:mpegB:cicp:TransferCharacteristics` value 16.
-- A player "supports BT.2020" if any holds: integrated display shows a different picture for BT.2020 than for BT.709 signalling; BT.2020 is sent over HDMI in BT.2020 mode to a sink declaring support; or the picture is converted before HDMI to another colorimetry. Players without a display consider the connected display's capabilities.
+- A player counts as supporting BT.2020 if any holds: integrated display shows a different picture for BT.2020 than for BT.709 signalling; BT.2020 is sent over HDMI in BT.2020 mode to a sink declaring support; or the picture is converted before HDMI to another colorimetry. Players without a display consider the connected display's capabilities.
 - VUI/SEI colour data in the bitstream overrides MPD signalling; MPD signalling only helps choose sets.
 
 ## 10.15 Display composition (p.101)

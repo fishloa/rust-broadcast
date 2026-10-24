@@ -25,7 +25,7 @@ Table 16 inventory (item | status): `MPD@type` dynamic (mandatory); `MPD@publish
 `MPD@minimumUpdatePeriod` mandatory, 0 recommended; `Period@start` mandatory; `AdaptationSet.InbandEventStream` mandatory; `SegmentTemplate@media` mandatory; `@startNumber` optional/defaulted; `@duration` or `SegmentTimeline`.
 
 > **Notes (pp. 93-95):** (1) Table 16's gloss of `InbandEventStream` cites scheme `urn:mpeg:dash:event:2014` with values 1, 2 or 3, while the bullets above it, Table 17 and 4.5.2.2 (except its first bullet, which repeats `2014`) use `...:2012` with 1 or 3;
-> 23009-1:2022 defines only `...:2012` (md l. 765, 5326). Match `...:2012`; `...:2014` looks like an IOP typo. (2) Cross-references to "Table 9" and "Table 6" are stale. (3) "all Representations of audio sets" vs "only on Adaptation Set level" in the same list are both printed.
+> 23009-1:2022 defines only `...:2012` (md l. 765, 5326). Match `...:2012`; `...:2014` looks like an IOP typo. (2) Cross-references to "Table 9" and "Table 6" are stale. (3) one list says all Representations of audio sets and another says Adaptation Set level only (paraphrased) in the same list are both printed.
 > (4) The scheme attribute is spelt `@scheme_id_uri` here (the `emsg` field name) rather than MPD `@schemeIdUri`.
 
 ### 4.5.2 Service offering
@@ -63,7 +63,7 @@ Advanced client (Figure 7: simple chain plus a segment parser attached to the do
 - No expiry `emsg`: the current MPD is usable at least up to `ept + dur`.
 - With expiry `emsg`: the MPD whose publish time equals `emsg.publish_time` is usable only up to `ept + ptd` (if `dur > ptd` the Period ends at `ept + ptd`); any MPD with a later publish time is usable at least to `ept + ptd`; before requesting a segment whose
   earliest presentation time exceeds `ept + ptd` the MPD **shall** be refetched and updated, or (value 3) the MPD carried in the message may be used.
-> **Notes (p. 100):** DVB-DASH (TS 103 285 9.1.6) forbids downloading a Representation solely for its inband events, which sits against the "shall download a Representation that carries the event stream" rule above; both are printed. The unit conversion of `ptd` from the box timescale is not stated.
+> **Notes (p. 100):** DVB-DASH (TS 103 285 9.1.6) forbids downloading a Representation solely for its inband events, which sits against the rule above that a client shall download a Representation carrying the event stream (paraphrased); both are printed. The unit conversion of `ptd` from the box timescale is not stated.
 
 **Extended segment information (4.5.3.3).** Parse to the first `moof`; `ept` = from the segment index if present, else `baseMediaDecodeTime` of the first `tfdt`; `dur` = segment index, else the summed sample durations of the first movie fragment. The client **should** use these to extend its segment
 info (and a present timeline) and derive the next URL without refetching the MPD; refetch in doubt (new Adaptation Set selected, lost segments, other operational issues).

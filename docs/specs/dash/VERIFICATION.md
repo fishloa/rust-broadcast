@@ -49,9 +49,13 @@ Period id vs Adaptation Set id; `urn:mpeg:dash:event:2014` vs `2012`; Table 15 `
 10.20.3 example arithmetic; Part 10 §6.1 "may be ignored" wording and the `InbandEventStream@presentationTimeOffset`
 disagreement with `specs/rules/emsg-rules.md`.
 
+## Corrections after independent verification (2026-10-25)
+
+An independent verifier text/OCR-checked all pages and viewed about 25 renders. Findings fixed: TS 103 285 reference [40] (p. 14) wrongly had a closing quotation mark added (now as printed); IOP 3.2.11 timing tables had an invented row label (now an empty cell with a note); one Spec note presented a paraphrase as a quotation (reworded); TS 103 285 header page range corrected to 11-19. Public notes were additionally screened for paraphrases inside quotation marks and unquoted. The table pages of IOP PDF 143-235 (Tables 19-32 and Figure 22) were re-viewed cell by cell against the transcription with no value mismatch; Annex C (PDF 236-240) was transcribed (pdf2md hybrid exit 0, five pages render-compared).
+
 ## Gaps
 
-- IOP Annexes C, E, F not transcribed (ISOBMFF/SEI payload syntax, not client-visible); TS clauses 11.2-11.3 tables
+- IOP Annexes E, F not transcribed (DM_data/CM_data SEI payload syntax, decoder side). Annex C (Dolby Vision ISOBMFF boxes) was added after independent verification; TS clauses 11.2-11.3 tables
   (PDF 114-117) and the document history not transcribed.
 - Not in the repository: SCTE 214-1, the TS 103 285 DVB extension XSD, TS 101 154, RFC 7231/7232/7164 text,
   Amendment 3 of the 2014 23009-1 edition (the `posix:` MPD anchor wording comes from the IOP alone).

@@ -104,7 +104,7 @@ absent. `timeShiftBufferDepth` and `suggestedPresentationDelay` recommended.
   Period `PEwc[i] = PSwc[i+1]`.
 - An MPD update may extend the end of the last Period (see 4.4).
 
-> **Note (p. 68):** the "previous Period start" in the `@start`-absent rule is written `PSwc[i]` (not `i-1`) in the PDF.
+> **Note (p. 68):** the previous-Period start in the `@start`-absent rule is written `PSwc[i]` (not `i-1`) in the PDF.
 
 **Segment timeline entries (4.3.2.2.5, pp. 68-69).** Notation: `ts` = `@timescale`; `ato` = sum of all `@availabilityTimeOffset` values on the levels
 involved in forming the segment URL (0 if none); `t[s]`, `d[s]` = `@t`, `@d` of the s-th `S`; `r[s]` = number of segments of that entry.

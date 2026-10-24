@@ -83,4 +83,4 @@ Extends 4.3.4.1/4.3.4.3 for an MPD with `minimumUpdatePeriod` (Table 14 style, n
 2. **Segment list:** build as before, with the end of the last Period = `FetchTime + MUP`.
 3. **Refresh:** when requesting segments whose availability start is close to the validity time `FetchTime + MUP`, fetch the MPD again (same location rule; conditional GET), build a new list from the new `FetchTime` and MUP, find the currently used Adaptation Sets/Representations in it and carry on.
 
-> **Notes (p. 93):** 4.4.2.2 says "end = NOW + MUP" while 4.4.4 anchors validity at `FetchTime + MUP`; the latter is the client procedure. A stray "them," appears in the printed 4.4.4 refresh sentence.
+> **Notes (p. 93):** 4.4.2.2 sets the end of the last Period to NOW + MUP while 4.4.4 anchors validity at `FetchTime + MUP`; the latter is the client procedure. A stray "them," appears in the printed 4.4.4 refresh sentence.
