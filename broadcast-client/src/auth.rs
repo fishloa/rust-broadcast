@@ -146,7 +146,7 @@ impl AuthState {
 
         let challenges: Vec<broadcast_auth::Challenge> = challenge_lines
             .iter()
-            .flat_map(|l| parse_challenges(&[l.as_str()]).unwrap_or_default())
+            .flat_map(|l| parse_challenges(&[l.as_str()]).challenges)
             .collect();
 
         if let Some(line) = challenge_lines.first() {

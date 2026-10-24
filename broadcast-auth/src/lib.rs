@@ -11,7 +11,7 @@ mod server;
 pub mod signed_url;
 
 pub use authenticator::{Authenticator, respond};
-pub use challenge::{BearerError, Challenge, Scheme, parse_challenges};
+pub use challenge::{BearerError, Challenge, ParsedChallenges, Scheme, parse_challenges};
 pub use credentials::Credentials;
 pub use error::{Error, Result};
 pub use request::RequestContext;

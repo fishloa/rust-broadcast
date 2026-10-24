@@ -49,9 +49,16 @@ pub enum Error {
         name: String,
     },
 
-    /// `resource_metadata` was not an absolute URL.
+    /// `resource_metadata` was not an absolute `https` URL (RFC 9728 §3).
     #[error("invalid resource_metadata URL")]
     InvalidResourceMetadata,
+
+    /// More challenges than [`crate::challenge::MAX_CHALLENGES`] were supplied.
+    #[error("more than {max} challenges")]
+    TooManyChallenges {
+        /// The cap.
+        max: usize,
+    },
 
     /// A Bearer token cannot be carried in an `Authorization` header value —
     /// it contains a byte outside visible ASCII (control character, CR/LF, or
