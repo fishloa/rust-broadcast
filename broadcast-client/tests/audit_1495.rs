@@ -538,3 +538,38 @@ fn bearer_credentials_answer_with_bearer_whatever_the_challenge_lines() {
         assert_eq!(seen.authorization(), Some("Bearer tok"));
     }
 }
+
+const RUNAWAY_PROBE: usize = 200;
+
+fn bounded_drain(session: &mut Session, now: u64) -> Vec<Action> {
+    let mut out = Vec::new();
+    while let Some(action) = session.poll(now) {
+        out.push(action);
+        assert!(
+            out.len() < RUNAWAY_PROBE,
+            "runaway: the session keeps producing actions at {now}"
+        );
+    }
+    out
+}
+
+#[test]
+fn a_request_issued_at_the_end_of_time_is_not_expired_by_the_next_poll() {
+    let mut session = vod_session(hls_config());
+    bounded_drain(&mut session, 0);
+    bounded_drain(&mut session, u64::MAX);
+    let again = bounded_drain(&mut session, u64::MAX);
+    assert!(
+        again.is_empty(),
+        "a poll at the same instant churned the request: {again:?}"
+    );
+    session.close();
+    let tail = bounded_drain(&mut session, u64::MAX);
+    assert!(tail.len() <= 2, "{tail:?}");
+    assert!(
+        tail.iter().all(|a| matches!(a, Action::Close { .. })),
+        "{tail:?}"
+    );
+    assert!(session.poll(u64::MAX).is_none());
+    assert!(session.poll(0).is_none());
+}

@@ -721,15 +721,20 @@ impl HlsSource {
         }
     }
 
+    fn deadline_of(&self, req: &Req) -> Option<u64> {
+        req.started_us.checked_add(self.timeout_us(req.purpose))
+    }
+
     fn expire(&mut self, now: u64) {
         while let Some(Reverse((deadline, conn))) = self.deadlines.peek().copied() {
             if deadline > now {
                 break;
             }
             self.deadlines.pop();
-            let live = self.reqs.get(&conn).is_some_and(|r| {
-                r.started_us.saturating_add(self.timeout_us(r.purpose)) == deadline
-            });
+            let live = self
+                .reqs
+                .get(&conn)
+                .is_some_and(|r| self.deadline_of(r) == Some(deadline));
             if !live {
                 continue;
             }
@@ -850,10 +855,13 @@ impl HlsSource {
             headers,
             byte_range: req.byte_range,
         });
-        let deadline = now.saturating_add(timeout);
-        self.actions.push_back(Action::WakeAt(deadline));
+        self.actions
+            .push_back(Action::WakeAt(now.saturating_add(timeout)));
+        let deadline = now.checked_add(timeout);
         self.reqs.insert(conn, req);
-        self.deadlines.push(Reverse((deadline, conn)));
+        if let Some(deadline) = deadline {
+            self.deadlines.push(Reverse((deadline, conn)));
+        }
         self.compact_deadlines();
     }
 
@@ -869,12 +877,7 @@ impl HlsSource {
         self.deadlines = self
             .reqs
             .iter()
-            .map(|(conn, r)| {
-                Reverse((
-                    r.started_us.saturating_add(self.timeout_us(r.purpose)),
-                    *conn,
-                ))
-            })
+            .filter_map(|(conn, r)| self.deadline_of(r).map(|d| Reverse((d, *conn))))
             .collect();
     }
 
