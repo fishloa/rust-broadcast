@@ -1,11 +1,14 @@
-//! Host-only cookie jar scoped to the session origin (RFC 6265 sections 5.1.4, 5.2, 5.3, 5.4).
+//! Cookie jar scoped to the session origin (RFC 6265 sections 5.1.3, 5.1.4, 5.2, 5.3, 5.4).
 //!
-//! `Domain` and `Expires` are ignored; see `docs/cookies.md` for the documented deviations.
+//! `Set-Cookie` parsing is the `cookie` crate's; domain-match and path-match are
+//! `cookie_store`'s pure `CookieDomain`/`CookiePath`; expiry runs on the session's injected
+//! microsecond clock. `Expires` is ignored; see `docs/cookies.md` for the documented deviations.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use cookie::Cookie;
+use cookie_store::{CookieDomain, CookiePath};
 use url::{Origin, Url};
 
 const MAX_COOKIE_BYTES: usize = 4096;
@@ -17,7 +20,6 @@ const HOST_PREFIX: &str = "__host-";
 const MICROS_PER_SEC: u64 = 1_000_000;
 const SET_COOKIE: &str = "set-cookie";
 const ROOT_PATH: &str = "/";
-const PATH_SEPARATOR: char = '/';
 const HTTPS: &str = "https";
 const PAIR_SEPARATOR: &str = "; ";
 
@@ -25,26 +27,31 @@ const PAIR_SEPARATOR: &str = "; ";
 struct Stored {
     name: String,
     value: String,
-    path: String,
+    domain: CookieDomain,
+    path: CookiePath,
     secure: bool,
     expires_us: Option<u64>,
 }
 
 impl Stored {
-    fn is_expired(&self, now_us: u64) -> bool {
+    fn expired_at(&self, now_us: u64) -> bool {
         self.expires_us.is_some_and(|at| now_us >= at)
     }
 }
 
 pub(crate) struct CookieJar {
     origin: Origin,
+    host_only: CookieDomain,
+    root: CookiePath,
     cookies: Vec<Stored>,
 }
 
 impl CookieJar {
-    pub(crate) fn new(origin: Origin) -> Self {
+    pub(crate) fn new(origin: &Url) -> Self {
         Self {
-            origin,
+            origin: origin.origin(),
+            host_only: CookieDomain::host_only(origin).unwrap_or(CookieDomain::NotPresent),
+            root: CookiePath::new(ROOT_PATH, origin),
             cookies: Vec::new(),
         }
     }
@@ -62,7 +69,8 @@ impl CookieJar {
             self.insert(Stored {
                 name: name.clone(),
                 value: value.clone(),
-                path: ROOT_PATH.to_string(),
+                domain: self.host_only.clone(),
+                path: self.root.clone(),
                 secure: prefixed,
                 expires_us: None,
             });
@@ -101,10 +109,12 @@ impl CookieJar {
         {
             return;
         }
-        let path = match parsed.path() {
-            Some(p) if p.starts_with(PATH_SEPARATOR) => p.to_string(),
-            _ => default_path(url.path()),
+        let domain = match CookieDomain::try_from(&parsed) {
+            Ok(domain @ CookieDomain::Suffix(_)) if domain.matches(url) => domain,
+            Ok(CookieDomain::NotPresent | CookieDomain::Empty) => self.host_only.clone(),
+            _ => return,
         };
+        let path = CookiePath::new(parsed.path().unwrap_or_default(), url);
         if path.len() > MAX_PATH_BYTES {
             return;
         }
@@ -125,14 +135,16 @@ impl CookieJar {
         self.insert(Stored {
             name: name.to_string(),
             value: value.to_string(),
+            domain,
             path,
             secure,
             expires_us,
         });
     }
 
-    fn remove(&mut self, name: &str, path: &str) {
-        self.cookies.retain(|c| !(c.name == name && c.path == path));
+    fn remove(&mut self, name: &str, path: &CookiePath) {
+        self.cookies
+            .retain(|c| !(c.name == name && c.path == *path));
     }
 
     fn insert(&mut self, cookie: Stored) {
@@ -154,12 +166,12 @@ impl CookieJar {
         if url.origin() != self.origin {
             return None;
         }
-        self.cookies.retain(|c| !c.is_expired(now_us));
+        self.cookies.retain(|c| !c.expired_at(now_us));
         let secure = url.scheme() == HTTPS;
         let mut matching: Vec<&Stored> = self
             .cookies
             .iter()
-            .filter(|c| (secure || !c.secure) && path_match(url.path(), &c.path))
+            .filter(|c| (secure || !c.secure) && c.domain.matches(url) && c.path.matches(url))
             .collect();
         if matching.is_empty() {
             return None;
@@ -192,7 +204,7 @@ impl CookieJar {
     pub(crate) fn export(&self, now_us: u64) -> Vec<(String, String)> {
         self.cookies
             .iter()
-            .filter(|c| !c.is_expired(now_us))
+            .filter(|c| !c.expired_at(now_us))
             .map(|c| (c.name.clone(), c.value.clone()))
             .collect()
     }
@@ -212,21 +224,11 @@ fn has_prefix(name: &str, prefix: &str) -> bool {
         .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
 }
 
-fn default_path(uri_path: &str) -> String {
-    if !uri_path.starts_with(PATH_SEPARATOR) {
-        return ROOT_PATH.to_string();
-    }
-    match uri_path.rfind(PATH_SEPARATOR) {
-        Some(0) | None => ROOT_PATH.to_string(),
-        Some(i) => uri_path[..i].to_string(),
-    }
-}
-
-fn path_match(request_path: &str, cookie_path: &str) -> bool {
-    if request_path == cookie_path {
-        return true;
-    }
-    request_path.starts_with(cookie_path)
-        && (cookie_path.ends_with(PATH_SEPARATOR)
-            || request_path[cookie_path.len()..].starts_with(PATH_SEPARATOR))
-}
+#[cfg(test)]
+mod clock;
+#[cfg(test)]
+mod differential;
+#[cfg(test)]
+mod legacy;
+#[cfg(test)]
+mod sibling;

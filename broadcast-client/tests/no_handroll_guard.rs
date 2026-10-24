@@ -3,7 +3,9 @@
 //! Scans `src/**/*.rs` outside `#[cfg(test)] mod` bodies for: HTTP status-line literals, a CRLFCRLF
 //! header terminator, `find("://")`, `strip_prefix("<scheme>://")`, SDP line building (`"a=`, `"m=`,
 //! `"v=0`), civil-date helpers, a base64 alphabet literal, and `thread::sleep` / `sleep(` in
-//! non-test async code.
+//! non-test async code, and wall-clock reads (`now_utc`, `SystemTime::now`, `Instant::now`) plus
+//! `cookie_store`'s clock-reading `is_expired(` / `CookieStore` (cookie expiry runs on the session's
+//! injected `now_us` only).
 //!
 //! **This is a lexical tripwire, not a proof.** A renamed helper or a string assembled from pieces
 //! evades it. Code review is the real control.
@@ -37,6 +39,11 @@ const NEEDLES: &[&str] = &[
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
     "thread::sleep",
     "tokio::time::sleep(",
+    "now_utc",
+    "SystemTime::now",
+    "Instant::now",
+    "is_expired(",
+    "CookieStore",
 ];
 
 fn rs_files(dir: &Path, out: &mut Vec<(String, String)>) {
@@ -51,6 +58,33 @@ fn rs_files(dir: &Path, out: &mut Vec<(String, String)>) {
             ));
         }
     }
+}
+
+fn out_of_line_test_modules(files: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (path, src) in files {
+        let p = Path::new(path);
+        let dir = if p.file_name().is_some_and(|n| n == "mod.rs") {
+            p.parent().map(Path::to_path_buf)
+        } else {
+            p.parent().zip(p.file_stem()).map(|(d, s)| d.join(s))
+        };
+        let Some(dir) = dir else { continue };
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim_start().starts_with("#[cfg(test)]")
+                && let Some(m) = next_item_is_mod(&lines, i)
+                && let Some(name) = lines[m]
+                    .trim()
+                    .trim_start_matches("pub ")
+                    .strip_prefix("mod ")
+                    .and_then(|r| r.strip_suffix(';'))
+            {
+                out.push(dir.join(format!("{name}.rs")).display().to_string());
+            }
+        }
+    }
+    out
 }
 
 fn non_test_source(src: &str) -> String {
@@ -144,8 +178,12 @@ fn no_hand_rolled_protocol_code_in_src() {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
         &mut files,
     );
+    let test_only = out_of_line_test_modules(&files);
     let mut hits = Vec::new();
     for (path, src) in &files {
+        if test_only.contains(path) {
+            continue;
+        }
         for (n, line) in non_test_source(src).lines().enumerate() {
             if line.trim_start().starts_with("//") {
                 continue;

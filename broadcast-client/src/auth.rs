@@ -65,7 +65,7 @@ pub struct AuthState {
 impl AuthState {
     /// Create auth state.
     pub fn new(origin: Url, extra_headers: Vec<(String, String)>) -> Self {
-        let jar = CookieJar::new(origin.origin());
+        let jar = CookieJar::new(&origin);
         Self {
             origin,
             extra_headers,
