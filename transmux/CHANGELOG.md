@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (round-9 audit F7)
+- `LlHlsSegmenter` keeps cutting parts after a segment passes its target duration while it waits for the next keyframe. The part boundary used to be suppressed past the target, so every sample until the next IDR piled into the segment's final part (0.28-6.04 s against a 0.2 s `PART-TARGET` on real TS captures), breaking RFC 8216bis §4.4.4.9. The final part is now the short remainder. A single source sample longer than the part target still cannot be split.
+
 ### Added (round-6 audit F7)
 - `CodecConfig::is_video()` is public: true for every video codec the IR carries (AVC, HEVC, VVC, AV1, VP9, VP8, MPEG-2 video), the counterpart of `audio_sample_rate().is_some()`. A consumer no longer has to infer "video" from `LiveJoin::for_config`, which is `None` for AV1, VP9, VP8 and MPEG-2.
 
