@@ -6,7 +6,7 @@
 //! [`Action::TcpConnect`] / [`Action::Send`] and reacts to the host's `on_connected` / `on_data` /
 //! `on_closed`. The reconnect and stall policy is the TS-over-HTTP one (same [`TsConfig`]).
 
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -17,9 +17,9 @@ use tshttp_runtime::{Config as TsConfig, StarveKind};
 use url::{Host, Url};
 
 use crate::auth::{AuthDecision, AuthState};
-use crate::events::{Action, Event, Status};
+use crate::events::{Action, ErrorKind, Event, Status};
 use crate::redirect;
-use crate::source::rtsp_sdp::{ParsedSdp, TrackInit, parse_tracks};
+use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, parse_tracks};
 
 const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
@@ -90,6 +90,7 @@ pub(crate) struct RtspSource {
     stale_replayed: bool,
     auth_replays: u32,
     tracks: Vec<TrackInit>,
+    reported_drops: BTreeSet<usize>,
     aggregate: Option<String>,
     depa: Option<RtpStreamDepacketiser>,
     tracks_dirty: bool,
@@ -162,6 +163,7 @@ impl RtspSource {
             stale_replayed: false,
             auth_replays: 0,
             tracks: Vec::new(),
+            reported_drops: BTreeSet::new(),
             aggregate: None,
             depa: None,
             tracks_dirty: false,
@@ -701,14 +703,51 @@ impl RtspSource {
 
     fn on_describe_ok(&mut self, body: &[u8]) -> bool {
         let base = self.base_url();
-        let Ok(ParsedSdp { aggregate, tracks }) =
-            parse_tracks(body, |control| self.resolve_control(control, &base))
-        else {
-            return false;
+        let parsed = parse_tracks(body, |control| self.resolve_control(control, &base));
+        let ParsedSdp {
+            aggregate,
+            tracks,
+            skipped,
+        } = match parsed {
+            Ok(parsed) => parsed,
+            Err(SdpError::Unparsable) => return false,
+            Err(SdpError::NothingPlayable { skipped }) => {
+                self.report_dropped(&skipped, 0);
+                let codec = skipped
+                    .iter()
+                    .find(|m| m.codec_unsupported)
+                    .and_then(|m| m.codec.clone());
+                let Some(fourcc) = codec else {
+                    return false;
+                };
+                self.events.push_back(Event::Error {
+                    kind: ErrorKind::UnsupportedCodec { fourcc },
+                    fatal: true,
+                });
+                self.close();
+                return true;
+            }
         };
+        self.report_dropped(&skipped, tracks.len());
         self.aggregate = aggregate;
         self.tracks = tracks;
         self.send(Req::Setup(0))
+    }
+
+    fn report_dropped(&mut self, skipped: &[SkippedMedia], playable: usize) {
+        for (offset, media) in skipped.iter().enumerate() {
+            if !self.reported_drops.insert(media.media_index) {
+                continue;
+            }
+            let ordinal = playable.saturating_add(offset).saturating_add(1);
+            self.events.push_back(Event::Error {
+                kind: ErrorKind::TrackDropped {
+                    track_id: u32::try_from(ordinal).unwrap_or(u32::MAX),
+                    stream_type: None,
+                },
+                fatal: false,
+            });
+        }
     }
 
     fn on_setup_ok(&mut self, index: usize) -> bool {

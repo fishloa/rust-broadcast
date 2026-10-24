@@ -190,7 +190,7 @@ fn unsupported_media_sections_are_skipped_and_the_rest_plays() {
 }
 
 #[test]
-fn only_unsupported_media_is_a_failure() {
+fn only_unsupported_codecs_are_fatal_not_a_retry_loop() {
     let mut session = fixture_session();
     let mut pcmu = Media::new(MediaType::Audio, 0, TransportProto::RtpAvp, 0);
     pcmu.add_attribute_with_value("rtpmap", "0 PCMU/8000".to_string());
@@ -198,7 +198,15 @@ fn only_unsupported_media_is_a_failure() {
     session.medias = vec![pcmu, app];
     let sdp = write_sdp(&session);
     let mut host = connected(BASE_URL, Config::default(), Server::new(&sdp));
-    assert_eq!(reconnecting_attempts(&host.events()), [1]);
+    let events = host.events();
+    assert!(reconnecting_attempts(&events).is_empty());
+    assert!(events.iter().any(|e| matches!(
+        e,
+        Event::Error {
+            kind: broadcast_client::ErrorKind::UnsupportedCodec { fourcc },
+            fatal: true,
+        } if fourcc == "PCMU"
+    )));
     assert_eq!(host.server.count(SETUP), 0);
 }
 
