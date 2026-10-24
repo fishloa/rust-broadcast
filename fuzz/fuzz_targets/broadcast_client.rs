@@ -83,7 +83,16 @@ const INFLIGHT: [usize; 4] = [0, 1, 4, usize::MAX];
 const BYTE_LIMITS: [usize; 4] = [1, 4096, 4 * 1024 * 1024, usize::MAX];
 const TIMEOUTS_US: [u64; 4] = [1, 1_000, 20_000_000, u64::MAX];
 const COOKIE_NAMES: [&str; 6] = ["sid", "a", "t", "__Host-h", "__Secure-s", "p"];
-const COOKIE_PREFIXES: [&str; 5] = ["", "Secure; ", "Path=/; ", "Secure; Path=/; ", "Path=/x; "];
+const COOKIE_PREFIXES: [&str; 8] = [
+    "",
+    "Secure; ",
+    "Path=/; ",
+    "Secure; Path=/; ",
+    "Path=/x; ",
+    "Domain=example; ",
+    "Domain=.EXAMPLE; Path=/; ",
+    "Domain=other.example; ",
+];
 const STATUS_CODES: [u16; 7] = [200, 200, 404, 302, 401, 500, 307];
 const LOCATIONS: [&str; 4] = [
     "http://example/next.ts",
