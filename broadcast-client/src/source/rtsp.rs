@@ -94,6 +94,7 @@ pub(crate) struct RtspSource {
     wake_pending: Option<u64>,
     loss_events: u64,
     malformed_frames: u64,
+    rtcp_frames: u64,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
 }
@@ -153,6 +154,7 @@ impl RtspSource {
             wake_pending: None,
             loss_events: 0,
             malformed_frames: 0,
+            rtcp_frames: 0,
             actions: VecDeque::new(),
             events: VecDeque::new(),
         };
@@ -174,6 +176,10 @@ impl RtspSource {
 
     pub(crate) fn malformed_frames(&self) -> u64 {
         self.malformed_frames
+    }
+
+    pub(crate) fn rtcp_frames(&self) -> u64 {
+        self.rtcp_frames
     }
 
     pub(crate) fn poll(&mut self, now: u64, auth: &AuthState) {
@@ -582,6 +588,7 @@ impl RtspSource {
             return;
         };
         if is_rtcp {
+            self.rtcp_frames = self.rtcp_frames.saturating_add(1);
             depa.push_rtcp(track, data);
             return;
         }

@@ -367,6 +367,12 @@ fn rtcp_sender_report_forwarded_without_error() {
         events == baseline,
         "RTCP traffic must not change the media events"
     );
+    let sent_rtcp = (fixture().frames().len().div_ceil(10) * 3) as u64;
+    assert_eq!(
+        host.session.rtcp_packet_count(),
+        sent_rtcp,
+        "every RTCP frame on the RTCP channels is routed to the depayloader"
+    );
     assert_eq!(host.session.rtp_loss_count(), 0);
     assert_eq!(
         host.session.rtp_malformed_count(),

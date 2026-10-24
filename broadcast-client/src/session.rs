@@ -336,6 +336,11 @@ impl Session {
         self.rtsp.as_ref().map_or(0, |r| r.malformed_frames())
     }
 
+    /// Interleaved RTCP frames routed to the RTSP depayloader so far (sender reports etc.).
+    pub fn rtcp_packet_count(&self) -> u64 {
+        self.rtsp.as_ref().map_or(0, |r| r.rtcp_frames())
+    }
+
     /// Set credentials.
     pub fn set_credentials(&mut self, creds: crate::Credentials) {
         if self.closed {
