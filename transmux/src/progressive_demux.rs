@@ -567,7 +567,7 @@ pub(crate) fn sample_layout(
             let start = usize::try_from(cursor)
                 .map_err(|_| Error::InvalidInput("chunk offset exceeds addressable range"))?;
             layout.push((start, size));
-            cursor += size as u64;
+            cursor = cursor.saturating_add(size as u64);
         }
     }
     if layout.len() < declared {

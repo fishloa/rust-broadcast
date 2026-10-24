@@ -218,13 +218,12 @@ pub(crate) fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; 4]) -> Option<
         // §4.2: `size`, the 64-bit `largesize` when `size == 1`, or to the end
         // of the region when `size == 0`; shorter than its own header ends
         // the walk.
-        let Some(size) = crate::box_types::child_extent(&region[off..]) else {
+        let Some(size) = crate::box_types::child_extent_in(&region[off..]) else {
             break;
         };
         let ty = &region[off + 4..off + 8];
-        let clamped = size.min(region.len() - off);
         if ty == fourcc {
-            return Some(&region[off..off + clamped]);
+            return Some(&region[off..off + size]);
         }
         off += size;
     }

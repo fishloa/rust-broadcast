@@ -1124,7 +1124,7 @@ impl<'a> Parse<'a> for SchemeInformationBox {
             if sz < 8 {
                 break;
             }
-            let end = (off + sz).min(body.len());
+            let end = off.saturating_add(sz).min(body.len());
             let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
             if &boxtype == b"tenc" {
                 tenc = Some(TrackEncryptionBox::parse_box(&body[off..end])?);
@@ -1136,7 +1136,7 @@ impl<'a> Parse<'a> for SchemeInformationBox {
                     largesize: false,
                 });
             }
-            off += sz;
+            off = off.saturating_add(sz);
         }
         Ok(Self { tenc, extra_boxes })
     }

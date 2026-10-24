@@ -445,6 +445,13 @@ pub(crate) fn child_extent(region: &[u8]) -> Option<usize> {
     (total >= hdr).then_some(total)
 }
 
+/// [`child_extent`] bounded by what `region` actually holds, so the walker's
+/// `off += extent` can neither overflow on a hostile `largesize` nor step past
+/// the end of the region.
+pub(crate) fn child_extent_in(region: &[u8]) -> Option<usize> {
+    child_extent(region).map(|total| total.min(region.len()))
+}
+
 /// Length of the `size`+`type` (+ `largesize`) header at the front of the
 /// whole box `bytes`: 8, or 16 when `size == 1` announces the 64-bit
 /// `largesize` (ISO/IEC 14496-12:2015 §4.2). Typed box readers slice their
@@ -740,7 +747,11 @@ pub fn parse_box<'a>(bytes: &'a [u8]) -> Result<(BoxRef<'a>, usize)> {
         // To end of buffer.
         &bytes[hdr_sz..]
     } else {
-        let total = header.size as usize;
+        let total = usize::try_from(header.size).map_err(|_| Error::BufferTooShort {
+            need: usize::MAX,
+            have: bytes.len(),
+            what: "BoxRef body",
+        })?;
         if total < hdr_sz {
             return Err(Error::BoxSizeUnderflow {
                 size: header.size,
@@ -760,7 +771,7 @@ pub fn parse_box<'a>(bytes: &'a [u8]) -> Result<(BoxRef<'a>, usize)> {
     let consumed = if header.size == 0 {
         bytes.len()
     } else {
-        header.size as usize
+        hdr_sz + body.len()
     };
 
     Ok((BoxRef { header, body }, consumed))

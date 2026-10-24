@@ -122,11 +122,11 @@ impl XmlSubtitleSampleEntry {
             if sz < BOX_HDR {
                 break;
             }
-            let end = (pos + sz).min(body.len());
+            let end = pos.saturating_add(sz).min(body.len());
             let bt = [body[pos + 4], body[pos + 5], body[pos + 6], body[pos + 7]];
             let data = body[pos + BOX_HDR..end].to_vec();
             extra_boxes.push(crate::init_segment::OpaqueBox::new(bt, data));
-            pos += sz;
+            pos = pos.saturating_add(sz);
         }
 
         Ok(Self {
@@ -414,7 +414,7 @@ impl VttCueBox {
             if sz < BOX_HDR {
                 break;
             }
-            let end = (pos + sz).min(body.len());
+            let end = pos.saturating_add(sz).min(body.len());
             let child = &body[pos..end];
             let fourcc = &child[4..8];
             // ISO/IEC 14496-30 `VTTCueBox` lists each of `iden`/`sttg`/`payl`
@@ -454,7 +454,7 @@ impl VttCueBox {
                     ));
                 }
             }
-            pos += sz;
+            pos = pos.saturating_add(sz);
         }
         let payload = payload.ok_or(Error::BufferTooShort {
             need: 0,
@@ -674,7 +674,7 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
                 ))
             }
         });
-        pos += size;
+        pos = pos.saturating_add(size);
     }
     Ok(out)
 }
@@ -776,7 +776,7 @@ impl WvttSampleEntry {
             if sz < BOX_HDR {
                 break;
             }
-            let end = (pos + sz).min(body.len());
+            let end = pos.saturating_add(sz).min(body.len());
             let child = &body[pos..end];
             let fourcc = &child[4..8];
             match fourcc {
@@ -790,7 +790,7 @@ impl WvttSampleEntry {
                     ));
                 }
             }
-            pos += sz;
+            pos = pos.saturating_add(sz);
         }
 
         let config = config.ok_or(Error::BufferTooShort {
