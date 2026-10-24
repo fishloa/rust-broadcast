@@ -145,7 +145,10 @@ pub enum ErrorKind {
     /// The stream is encrypted in a way this client does not decrypt: SAMPLE-AES, another
     /// non-AES-128 method, a non-`identity` `KEYFORMAT` (FairPlay, Widevine, ...), an encrypted
     /// `EXT-X-MAP`, encrypted I-frames-only segments, or an `EXT-X-KEY` without a `URI`. `method`
-    /// is the `METHOD` value, or the `KEYFORMAT` value for an unsupported key format.
+    /// is the `METHOD` value, or the `KEYFORMAT` value for an unsupported key format; for a
+    /// CENC/CBCS-protected track inside fragmented MP4 (this client decrypts AES-128 segments
+    /// only, never sample encryption) it is the track's encrypted sample entry (`encv`, `enca`),
+    /// reported once per track id as a non-fatal error, and fatal once no track is left to play.
     UnsupportedEncryption {
         /// The `METHOD` (or unsupported `KEYFORMAT`) value.
         method: String,
@@ -174,15 +177,39 @@ pub enum ErrorKind {
         /// The first offending track id.
         track_id: u32,
     },
-    /// An HLS TS-segment elementary stream was left out because it cannot be carried in the
-    /// fragmented MP4 the HLS source produces (opaque data such as SCTE-35, ID3 or private PES,
-    /// or a subtitle without a sample entry). Reported once per track per source; the other
-    /// tracks play, and a stream with no playable track ends after these reports.
+    /// An HLS track was left out. For a TS segment: an elementary stream that cannot be carried
+    /// in the fragmented MP4 the HLS source produces (opaque data such as SCTE-35, ID3 or
+    /// private PES, or a subtitle without a sample entry). For an fMP4 init: a track whose
+    /// sample entry the demuxer cannot model (an unrecognised codec; an encrypted one is
+    /// [`ErrorKind::UnsupportedEncryption`]). Reported once per track per source; the other
+    /// tracks play, and a stream with no playable track ends fatally after these reports.
     TrackDropped {
-        /// The dropped track's id (remapped for an audio rendition).
+        /// The dropped track's id (remapped for an audio rendition); `0` for a track the fMP4
+        /// demuxer could not name.
         track_id: u32,
-        /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque data.
+        /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque TS data.
         stream_type: Option<u8>,
+        /// The fMP4 sample entry's four-character code (`None` for a TS stream).
+        fourcc: Option<String>,
+    },
+    /// The HLS media is not in the container layout this client plays. `reason` is
+    /// `non_fragmented_mp4` (a progressive MP4 served as init and segment — HLS fMP4 carries
+    /// `moof`/`mdat` fragments; fatal, reported at the first segment) or `damaged_fragment` (a
+    /// `moof` the demuxer had to skip: unparsable, or its sample data offset points outside its
+    /// own segment, as with an absolute `tfhd` base-data-offset — CMAF uses
+    /// default-base-is-moof — so that fragment's samples are lost; non-fatal, reported once per
+    /// session).
+    UnsupportedContainer {
+        /// The stable reason token.
+        reason: &'static str,
+    },
+    /// A response body outgrew the cap `field` names (`max_playlist_bytes` or
+    /// `max_segment_bytes`), so the request was closed and retried. Reported once per field and
+    /// session, non-fatal: the retry meets the same cap unless the origin's response shrinks, so
+    /// a host that sees this should raise the cap.
+    BodyTooLarge {
+        /// The [`Config`] field whose cap was exceeded.
+        field: &'static str,
     },
     /// [`crate::Session::set_rendered_tracks`] named a track id that no [`Event::Tracks`] has
     /// announced. The id is ignored until an announcement names it (then it takes effect), and
@@ -207,6 +234,9 @@ impl ErrorKind {
             Self::TrackIdReserved { .. } => "track_id_reserved",
             Self::TrackDropped { .. } => "track_dropped",
             Self::UnknownRenderedTrack { .. } => "unknown_rendered_track",
+
+            Self::UnsupportedContainer { .. } => "unsupported_container",
+            Self::BodyTooLarge { .. } => "body_too_large",
         }
     }
 }
