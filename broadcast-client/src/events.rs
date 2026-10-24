@@ -175,6 +175,19 @@ pub enum ErrorKind {
     /// [`Config::max_key_failures`] consecutive failures (no decoded samples in between) make one
     /// fatal error of this kind.
     InitDecodeFailed,
+    /// An HLS media segment (or part) could not be obtained: the origin answered with a non-success
+    /// status, a transport error or a timeout, an oversized body, or a `200` whose body is not
+    /// media for its container (an HTML error page, random bytes, an empty body, a fragment
+    /// without its `mdat`). Each failure is retried on the backoff schedule;
+    /// [`Config::hls_max_segment_failures`] consecutive failures of the same segment end it: a
+    /// VOD playlist (`EXT-X-ENDLIST`) with one fatal error of this kind, a live one with one
+    /// non-fatal error of this kind followed by [`Event::Discontinuity`] and playback continuing
+    /// with the next segment.
+    SegmentFetchFailed {
+        /// The HTTP status of the last failure, `None` for a transport error, timeout, oversized
+        /// body or a `2xx` body that is not media.
+        status: Option<u16>,
+    },
     /// The key response was not a valid 16-byte AES-128 key.
     BadKey,
     /// A segment did not decrypt (bad padding or length), typically because the key is wrong.
@@ -246,6 +259,7 @@ impl ErrorKind {
             Self::UnsupportedEncryption { .. } => "unsupported_encryption",
             Self::KeyFetchFailed { .. } => "key_fetch_failed",
             Self::InitFetchFailed { .. } => "init_fetch_failed",
+            Self::SegmentFetchFailed { .. } => "segment_fetch_failed",
             Self::InitDecodeFailed => "init_decode_failed",
             Self::BadKey => "bad_key",
             Self::DecryptFailed => "decrypt_failed",
@@ -542,6 +556,9 @@ pub const DEFAULT_HLS_KEY_TIMEOUT_US: u64 = 20_000_000;
 pub const DEFAULT_MAX_KEY_BYTES: usize = 4096;
 /// Default number of consecutive key/decrypt failures before the session gives up.
 pub const DEFAULT_MAX_KEY_FAILURES: u32 = 8;
+/// Default number of consecutive failures of one HLS segment before it is given up on, see
+/// [`Config::hls_max_segment_failures`].
+pub const DEFAULT_HLS_MAX_SEGMENT_FAILURES: u32 = 8;
 /// Default HLS retry backoff schedule, milliseconds per attempt.
 pub const DEFAULT_HLS_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
 /// Default HLS retry backoff once the schedule is exhausted, milliseconds.
@@ -624,6 +641,15 @@ pub struct Config {
     /// session emits a fatal [`Event::Error`] and stops; `0` behaves as `1` (the first failure is
     /// fatal).
     pub max_key_failures: u32,
+    /// HLS: consecutive failures of one media segment (or part) after which it is given up on: a
+    /// VOD playlist (`EXT-X-ENDLIST`) ends with one fatal [`ErrorKind::SegmentFetchFailed`], a
+    /// live one skips the segment with one non-fatal [`ErrorKind::SegmentFetchFailed`] followed by
+    /// [`Event::Discontinuity`]. The count is per segment, grows the backoff schedule
+    /// ([`Config::hls_backoff_ms`]) and resets only when that segment is delivered as media,
+    /// never on a playlist delivery. `0` makes the first failure final; `u32::MAX` retries
+    /// forever. Playlist reload failures are not counted: a playlist cannot be skipped, so they
+    /// retry forever.
+    pub hls_max_segment_failures: u32,
     /// HLS: BCP 47 language (prefix match, ASCII case-insensitive) preferred for the separate
     /// audio rendition.
     pub preferred_audio_language: Option<String>,
@@ -760,6 +786,7 @@ impl Default for Config {
             hls_key_timeout_us: DEFAULT_HLS_KEY_TIMEOUT_US,
             max_key_bytes: DEFAULT_MAX_KEY_BYTES,
             max_key_failures: DEFAULT_MAX_KEY_FAILURES,
+            hls_max_segment_failures: DEFAULT_HLS_MAX_SEGMENT_FAILURES,
             preferred_audio_language: None,
             auto_select_audio: true,
             max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
@@ -795,6 +822,7 @@ impl core::fmt::Debug for Config {
             .field("hls_key_timeout_us", &self.hls_key_timeout_us)
             .field("max_key_bytes", &self.max_key_bytes)
             .field("max_key_failures", &self.max_key_failures)
+            .field("hls_max_segment_failures", &self.hls_max_segment_failures)
             .field("preferred_audio_language", &self.preferred_audio_language)
             .field("auto_select_audio", &self.auto_select_audio)
             .field("max_queued_events", &self.max_queued_events)

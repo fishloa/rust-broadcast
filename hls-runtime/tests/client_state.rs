@@ -53,9 +53,12 @@ fn drain_outputs(client: &mut HlsClient) -> Vec<Output> {
     std::iter::from_fn(|| client.next_output()).collect()
 }
 
-/// Bytes that are neither TS (`0x47`) nor ISOBMFF: with no init segment the
-/// client just buffers them, which is all these state tests need.
-const OPAQUE: &[u8] = b"opaque-bytes";
+/// An empty `moof` then an empty `mdat` (ISO/IEC 14496-12 §8.8.4, §8.1.1), each just a box
+/// header: a media fragment with no init segment to demux against, which the client just
+/// buffers, all these state tests need.
+const OPAQUE: &[u8] = &[
+    0, 0, 0, 8, b'm', b'o', b'o', b'f', 0, 0, 0, 8, b'm', b'd', b'a', b't',
+];
 
 #[test]
 fn live_join_starts_three_target_durations_from_the_end() {

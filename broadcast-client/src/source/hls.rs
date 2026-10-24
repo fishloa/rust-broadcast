@@ -22,6 +22,7 @@ use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Sta
 use crate::redirect;
 
 const MICROS_PER_MILLI: u64 = 1_000;
+const MILLIS_PER_SECOND: u64 = 1_000;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const STATUS_OK: u16 = 200;
 const STATUS_PARTIAL_CONTENT: u16 = 206;
@@ -40,6 +41,9 @@ const FIELD_MAX_PLAYLIST_BYTES: &str = "max_playlist_bytes";
 const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
 const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
 const REASON_DAMAGED_FRAGMENT: &str = "damaged_fragment";
+const MAX_RETRY_AFTER_SECS: u64 = 60;
+const STATUS_TOO_MANY_REQUESTS: u16 = 429;
+const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
 const DEADLINE_SLACK_FACTOR: usize = 4;
 const DEADLINE_SLACK_FLOOR: usize = 64;
 
@@ -117,6 +121,12 @@ pub(crate) enum Role {
     Audio,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct SegmentFailures {
+    count: u32,
+    status: Option<u16>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Purpose {
     Playlist,
@@ -168,6 +178,10 @@ pub(crate) struct HlsSource {
     key_timeout_us: u64,
     max_key_failures: u32,
     key_failures: u32,
+    max_segment_failures: u32,
+    seg_failures: HashMap<ResourceId, SegmentFailures>,
+    seg_retry: BTreeSet<ResourceId>,
+    retry_after_us: u64,
     reported: BTreeSet<&'static str>,
     fatal: bool,
     reserved_id_reported: bool,
@@ -217,6 +231,10 @@ impl HlsSource {
             key_timeout_us: config.hls_key_timeout_us,
             max_key_failures: config.max_key_failures,
             key_failures: 0,
+            max_segment_failures: config.hls_max_segment_failures,
+            seg_failures: HashMap::new(),
+            seg_retry: BTreeSet::new(),
+            retry_after_us: 0,
             reported: BTreeSet::new(),
             fatal: false,
             reserved_id_reported: false,
@@ -310,6 +328,7 @@ impl HlsSource {
             return Ok(());
         }
         self.reset_in_flight();
+        self.seg_failures.clear();
         self.attempt = 0;
         self.pump_core();
         self.drain_outputs();
@@ -420,7 +439,9 @@ impl HlsSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
+            self.retry_after_us = retry_after_us(status, headers);
             self.fail_status(req, now, Some(status));
+            self.retry_after_us = 0;
         }
         if !auth.is_waiting() {
             self.advance(now, auth);
@@ -554,7 +575,8 @@ impl HlsSource {
             Err(e) => {
                 self.pump_core();
                 self.drain_outputs();
-                if let CoreError::DecryptFailed { id: rid, .. } = &e
+                if let CoreError::DecryptFailed { id: rid, .. } | CoreError::NotMedia { id: rid } =
+                    &e
                     && !matches!(rid, ResourceId::Init)
                 {
                     self.order.push_front(*rid);
@@ -562,13 +584,13 @@ impl HlsSource {
                     if self.core_error(&e) {
                         return;
                     }
-                    self.fail_purpose(Purpose::Resource(*rid), None, now);
+                    self.fail_purpose(Purpose::Resource(*rid), None, now, None);
                     return;
                 }
                 if self.core_error(&e) {
                     return;
                 }
-                self.fail_purpose(Purpose::Key(id), None, now);
+                self.fail_purpose(Purpose::Key(id), None, now, None);
             }
         }
     }
@@ -626,6 +648,9 @@ impl HlsSource {
             if self.key_failures == 0 {
                 self.attempt = 0;
             }
+            if let Purpose::Resource(id) = purpose {
+                self.seg_failures.remove(&id);
+            }
         } else if let Purpose::Resource(id) = purpose
             && id != ResourceId::Init
         {
@@ -653,7 +678,7 @@ impl HlsSource {
             {
                 return;
             }
-            self.fail_purpose(purpose, retry_url, now);
+            self.fail_purpose(purpose, retry_url, now, None);
         }
     }
 
@@ -676,6 +701,8 @@ impl HlsSource {
                 self.failed.remove(&id);
                 self.order.retain(|o| *o != id);
                 self.held.remove(&id);
+                self.seg_failures.remove(&id);
+                self.seg_retry.remove(&id);
             }
         }
     }
@@ -708,7 +735,7 @@ impl HlsSource {
         if let Purpose::Resource(id) = req.purpose {
             self.failed.insert(id);
         }
-        self.fail_purpose(req.purpose, Some(req.original_url), now);
+        self.fail_purpose(req.purpose, Some(req.original_url), now, status);
     }
 
     fn fail_init_fetch(&mut self, now: u64) {
@@ -722,19 +749,70 @@ impl HlsSource {
         self.init_retry = true;
         let refetch = (!self.chain_alive() && !self.client.endlist_seen())
             .then(|| self.client.playlist_url().to_string());
-        self.schedule_retry(now, refetch);
+        self.schedule_retry(now, refetch, None);
     }
 
-    fn fail_purpose(&mut self, purpose: Purpose, retry_url: Option<String>, now: u64) {
+    fn fail_purpose(
+        &mut self,
+        purpose: Purpose,
+        retry_url: Option<String>,
+        now: u64,
+        status: Option<u16>,
+    ) {
         self.client_failed(purpose);
         self.pump_core();
         self.drain_outputs();
+        if let Purpose::Resource(id) = purpose
+            && id != ResourceId::Init
+        {
+            self.fail_segment(id, status, now);
+            return;
+        }
         let refetch = match purpose {
             _ if self.chain_alive() => None,
             Purpose::Playlist => retry_url,
             Purpose::Resource(_) | Purpose::Key(_) => Some(self.client.playlist_url().to_string()),
         };
-        self.schedule_retry(now, refetch);
+        self.schedule_retry(now, refetch, None);
+    }
+
+    fn fail_segment(&mut self, id: ResourceId, status: Option<u16>, now: u64) {
+        let entry = self.seg_failures.entry(id).or_default();
+        entry.count = entry.count.saturating_add(1);
+        entry.status = status;
+        let SegmentFailures { count, status } = *entry;
+        if count >= self.max_segment_failures {
+            self.give_up_segment(id, status, now);
+            return;
+        }
+        let vod = self.client.endlist_seen();
+        let refetch = if vod {
+            self.seg_retry.insert(id);
+            None
+        } else if self.chain_alive() {
+            None
+        } else {
+            Some(self.client.playlist_url().to_string())
+        };
+        self.schedule_retry(now, refetch, Some(count));
+    }
+
+    fn give_up_segment(&mut self, id: ResourceId, status: Option<u16>, now: u64) {
+        self.seg_failures.remove(&id);
+        let kind = ErrorKind::SegmentFetchFailed { status };
+        if self.client.endlist_seen() {
+            self.go_fatal(kind);
+            return;
+        }
+        self.events.push_back(Event::Error { kind, fatal: false });
+        self.failed.remove(&id);
+        self.order.retain(|o| *o != id);
+        self.held.remove(&id);
+        self.seg_retry.remove(&id);
+        self.client.skip_resource(id);
+        self.pump_core();
+        self.drain_outputs();
+        self.release_ready(now);
     }
 
     fn chain_alive(&self) -> bool {
@@ -746,8 +824,8 @@ impl HlsSource {
             || self.reqs.values().any(|r| r.purpose == Purpose::Playlist)
     }
 
-    fn backoff_us(&self) -> u64 {
-        let idx = usize::try_from(self.attempt.saturating_sub(1)).unwrap_or(usize::MAX);
+    fn backoff_us(&self, attempt: u64) -> u64 {
+        let idx = usize::try_from(attempt.saturating_sub(1)).unwrap_or(usize::MAX);
         self.backoff_ms
             .get(idx)
             .copied()
@@ -755,12 +833,18 @@ impl HlsSource {
             .saturating_mul(MICROS_PER_MILLI)
     }
 
-    fn schedule_retry(&mut self, now: u64, refetch: Option<String>) {
-        self.attempt = self.attempt.saturating_add(1);
-        let at = now.saturating_add(self.backoff_us());
-        self.events.push_back(Event::Status(Status::Reconnecting {
-            attempt: self.attempt,
-        }));
+    fn schedule_retry(&mut self, now: u64, refetch: Option<String>, segment_attempt: Option<u32>) {
+        let attempt = match segment_attempt {
+            Some(count) => u64::from(count),
+            None => {
+                self.attempt = self.attempt.saturating_add(1);
+                self.attempt
+            }
+        };
+        let wait = self.backoff_us(attempt).max(self.retry_after_us);
+        let at = now.saturating_add(wait);
+        self.events
+            .push_back(Event::Status(Status::Reconnecting { attempt }));
         self.gate_until = Some(self.gate_until.map_or(at, |g| g.max(at)));
         if let Some(url) = refetch
             && self.retry_refetch.is_none()
@@ -773,6 +857,7 @@ impl HlsSource {
     fn timeout_us(&self, purpose: Purpose) -> u64 {
         match purpose {
             Purpose::Playlist => self.playlist_timeout_us,
+            Purpose::Resource(ResourceId::Init) => self.playlist_timeout_us,
             Purpose::Resource(_) => self.segment_timeout_us,
             Purpose::Key(_) => self.key_timeout_us,
         }
@@ -842,6 +927,12 @@ impl HlsSource {
             if core::mem::take(&mut self.init_retry) && self.client.retry_init() {
                 self.pump_core();
             }
+            if !self.seg_retry.is_empty() {
+                for id in core::mem::take(&mut self.seg_retry) {
+                    self.client.retry_resource(id);
+                }
+                self.pump_core();
+            }
             let Some(action) = self.next_action() else {
                 return;
             };
@@ -891,7 +982,7 @@ impl HlsSource {
                 if let Purpose::Resource(id) = purpose {
                     self.failed.insert(id);
                 }
-                self.fail_purpose(purpose, None, now);
+                self.fail_purpose(purpose, None, now, None);
             }
         }
     }
@@ -1089,6 +1180,20 @@ impl HlsSource {
             }
         }
     }
+}
+
+fn retry_after_us(status: u16, headers: &[(String, String)]) -> u64 {
+    if status != STATUS_TOO_MANY_REQUESTS && status != STATUS_SERVICE_UNAVAILABLE {
+        return 0;
+    }
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("retry-after"))
+        .and_then(|(_, v)| v.trim().parse::<u64>().ok())
+        .map_or(0, |secs| {
+            secs.min(MAX_RETRY_AFTER_SECS)
+                .saturating_mul(MICROS_PER_MILLI * MILLIS_PER_SECOND)
+        })
 }
 
 fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
