@@ -10,6 +10,14 @@
 //! transports. Before this port, this file carried its own near-identical
 //! copy of that drain loop.
 //!
+//! # Shared policy core
+//!
+//! Finite/VOD detection and the post-establishment stall decision come from
+//! `tshttp_runtime::TsHttpPolicy` (the demux-free core also under
+//! `broadcast-client`); demuxing stays in [`crate::source::ts_program`] and
+//! reconnect/backoff stays with the route supervisor, so the core's `Reconnect`
+//! actions are ignored here.
+//!
 //! # Where the I/O boundary falls, and why `dial()` is still no-I/O
 //!
 //! Opening the HTTP body stream **is** real I/O — one GET (two if a Digest

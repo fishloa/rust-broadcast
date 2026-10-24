@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tshttp_runtime::{Config, TsHttpClient};
+use tshttp_runtime::{Config, TsHttpClient, TsHttpPolicy};
 
 fuzz_target!(|data: &[u8]| {
     let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);
@@ -31,5 +31,30 @@ fuzz_target!(|data: &[u8]| {
         while let Some(_) = client.poll() {}
         while let Some(_) = client.poll_event() {}
         let _ = client.next_deadline();
+    }
+
+    let mut policy = TsHttpPolicy::new("http://example/live.ts", Config::default(), 0);
+    let mut now = 0u64;
+    for chunk in data.chunks(64) {
+        now = now.saturating_add(1);
+        let tag = chunk.first().copied().unwrap_or(0);
+        match tag % 6 {
+            0 => policy.on_response(
+                200,
+                &[(
+                    "Content-Length".to_string(),
+                    (u64::from(chunk.get(1).copied().unwrap_or(0)) * 188).to_string(),
+                )],
+                now,
+            ),
+            1 => policy.on_response(404, &[], now),
+            2 => policy.on_eof(now),
+            3 => policy.on_error(now),
+            4 => policy.poll_timeout(now),
+            _ => policy.on_bytes(chunk.len(), now, tag & 0x80 != 0),
+        }
+        while let Some(_) = policy.poll() {}
+        while let Some(_) = policy.poll_event() {}
+        let _ = policy.next_deadline();
     }
 });

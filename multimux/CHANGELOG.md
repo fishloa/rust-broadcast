@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- TS-over-HTTP ingest (`source::ts_http`) now consults the shared `tshttp-runtime` policy core (new dependency): a finite response (`Content-Length` / 206 `Content-Range`) that ends before all declared bytes arrived is a failed `Connect` ("truncated transfer") instead of a clean `Ended`, and the post-establishment stall (same threshold, `ingest_read_timeout_secs`, same error text) is decided by the core. Reconnect/backoff stays with the route supervisor; the core's start timeout is disabled. Redirect and auth behaviour is unchanged. Covered by `tests/ts_http_policy.rs` and the `source::ts_http` unit tests.
+
 ### Added
 - `ts_hls` outputs now cut segments on IDR pictures only by default (Apple HLS Authoring Spec 7.4, issue #1425): new per-route option `Route::ts_hls_cut` (`"idr_only"` default, `"any_rap"` restores the previous open-GOP-tolerant rule; unknown values are rejected by serde), `RouteHandle::with_ts_cut_policy`. Open-GOP-only sources (no IDR at all) therefore produce no `ts_hls` segments unless `any_rap` is set. fMP4/CMAF outputs always cut on any random-access point. The start gate opens on the first IDR under `idr_only`.
 - A `ts_hls` output refuses HEVC and AV1 (Apple HLS Authoring Spec 1.5): the program is not segmented and the typed `MultimuxError::UnsupportedCodec` text is exposed as `RouteHandle::output_error()` and as `output_error` in the admin route status. This is a runtime check (codecs are only known once a program's tracks arrive); `Config::validate` cannot know them.
