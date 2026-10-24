@@ -3,6 +3,7 @@ pub mod hls_host;
 pub mod renditions;
 pub mod rtsp_host;
 pub mod ts_probe;
+pub mod ts_shift;
 
 use broadcast_client::{Action, Event, Session};
 
@@ -72,7 +73,7 @@ pub fn feed_chunks(
         match action {
             Action::HttpRequest { conn: c, .. } => {
                 conn = Some(c);
-                session.on_response(c, status, resp_headers);
+                session.on_response(c, status, resp_headers, now_us);
             }
             Action::Close { conn: c } => {
                 session.on_closed(c, None, now_us);

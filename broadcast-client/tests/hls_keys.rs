@@ -610,7 +610,7 @@ fn late_key_callbacks_after_close_ignored() {
     let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), 0).expect("open");
     let first = drain_actions(&mut s, 0);
     let (playlist_conn, _) = http_requests(&first)[0].clone();
-    s.on_response(playlist_conn, 200, &[]);
+    s.on_response(playlist_conn, 200, &[], 0);
     s.on_data(playlist_conn, &playlist(0, &entries, true), 0);
     s.on_closed(playlist_conn, None, 0);
     let actions = drain_actions(&mut s, 0);
@@ -628,7 +628,7 @@ fn late_key_callbacks_after_close_ignored() {
             .iter()
             .any(|a| matches!(a, Action::Close { conn } if *conn == key_conn))
     );
-    s.on_response(key_conn, 200, &[]);
+    s.on_response(key_conn, 200, &[], 0);
     s.on_data(key_conn, &KEY_A, 2);
     s.on_closed(key_conn, None, 2);
     assert!(s.next_event().is_none());
@@ -659,7 +659,7 @@ fn fatal_error_stops_session_no_more_requests() {
     let mut s = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
     let first = drain_actions(&mut s, 0);
     let (pconn, _) = http_requests(&first)[0].clone();
-    s.on_response(pconn, 200, &[]);
+    s.on_response(pconn, 200, &[], 3);
     s.on_data(pconn, &playlist(0, &entries, true), 0);
     s.on_closed(pconn, None, 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -672,7 +672,7 @@ fn fatal_error_stops_session_no_more_requests() {
     assert_eq!(seg_conns.len(), 2);
     let _ = drain_events(&mut s);
 
-    s.on_response(key_conn, 200, &[]);
+    s.on_response(key_conn, 200, &[], 3);
     s.on_data(key_conn, &KEY_A[..9], 0);
     s.on_closed(key_conn, None, 0);
     let events = drain_events(&mut s);
@@ -689,7 +689,7 @@ fn fatal_error_stops_session_no_more_requests() {
     assert!(http_requests(&actions).is_empty());
 
     for c in &seg_conns {
-        s.on_response(*c, 200, &[]);
+        s.on_response(*c, 200, &[], 3);
         s.on_data(*c, &plain_seg(0), 1);
         s.on_closed(*c, None, 1);
     }

@@ -62,6 +62,10 @@ required-features = ["test-seams"]
 name = "timeline_jump"
 required-features = ["test-seams"]
 
+[[test]]
+name = "audit_1498_live"
+required-features = ["test-seams"]
+
 [[example]]
 name = "live_loop"
 

@@ -155,7 +155,7 @@ fn reconnect_before_any_response_closes_old_conn_and_late_200_is_ignored() {
     assert_ne!(new_conn, old.conn);
     events(&mut session);
 
-    session.on_response(old.conn, 200, &[]);
+    session.on_response(old.conn, 200, &[], 0);
     session.on_data(old.conn, &[0x47; 188], SEC);
     let late = events(&mut session);
     assert!(
@@ -165,7 +165,7 @@ fn reconnect_before_any_response_closes_old_conn_and_late_200_is_ignored() {
         "a response for a closed connection took over: {late:?}"
     );
 
-    session.on_response(new_conn, 200, &[]);
+    session.on_response(new_conn, 200, &[], 0);
     let live = events(&mut session);
     assert_eq!(
         live.iter()
@@ -273,7 +273,7 @@ fn wake_only_host_sees_start_timeout() {
             _ => None,
         })
         .expect("first request");
-    session.on_response(first_conn, 200, &[]);
+    session.on_response(first_conn, 200, &[], SEC);
     tracked_wakes(&mut session, 0, &mut wakes);
     let (actions, evs) = wake_only_run(&mut session, &mut wakes, 4);
     assert!(closes(&actions).contains(&first_conn), "{actions:?}");
@@ -304,7 +304,7 @@ fn wake_only_host_sees_stall_notice_and_stall_reconnect() {
             _ => None,
         })
         .expect("first request");
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, SEC);
     for chunk in bytes.chunks(65_536) {
         session.on_data(conn, chunk, 0);
     }
@@ -558,7 +558,7 @@ fn credential_wait_freezes_timers_and_resume_restarts_the_start_timer() {
             _ => None,
         })
         .expect("request after credentials");
-    session.on_response(conn, 200, &[]);
+    session.on_response(conn, 200, &[], SEC);
     tracked_wakes(&mut session, late, &mut wakes);
     assert!(wakes.iter().all(|t| *t > late));
     let early = late + 14 * SEC;

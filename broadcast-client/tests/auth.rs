@@ -62,6 +62,7 @@ fn basic_401_replay_then_200() {
         conn1,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     let mut conn2 = None;
     let mut saw_close = false;
@@ -80,7 +81,7 @@ fn basic_401_replay_then_200() {
     }
     assert!(saw_close);
     let c2 = conn2.unwrap();
-    session.on_response(c2, 200, &[]);
+    session.on_response(c2, 200, &[], 0);
 }
 
 #[test]
@@ -98,6 +99,7 @@ fn digest_401_replay_then_200() {
         conn1,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     let mut conn2 = None;
     while let Some(a) = session.poll(0) {
@@ -112,7 +114,7 @@ fn digest_401_replay_then_200() {
         }
     }
     let c2 = conn2.unwrap();
-    session.on_response(c2, 200, &[]);
+    session.on_response(c2, 200, &[], 0);
 }
 
 #[test]
@@ -130,6 +132,7 @@ fn basic_digest_preemptive_after_replay() {
         conn1,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     // consume replay
     let mut conn2 = None;
@@ -139,7 +142,7 @@ fn basic_digest_preemptive_after_replay() {
         }
     }
     let c2 = conn2.unwrap();
-    session.on_response(c2, 200, &[]);
+    session.on_response(c2, 200, &[], 0);
     // trigger reconnect -> new request should be preemptive
     session.reconnect(1_000);
     let mut saw_auth = false;
@@ -170,6 +173,7 @@ fn digest_stale_rechallenge_replays() {
         conn1,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     let mut conn2 = None;
     while let Some(a) = session.poll(0) {
@@ -183,6 +187,7 @@ fn digest_stale_rechallenge_replays() {
         c2,
         401,
         &[("WWW-Authenticate".to_string(), stale_challenge.to_string())],
+        0,
     );
     let mut conn3 = None;
     let mut saw_close = false;
@@ -217,6 +222,7 @@ fn no_credentials_401_waits_no_timers() {
         conn,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     let mut events = Vec::new();
     while let Some(e) = session.next_event() {
@@ -262,6 +268,7 @@ fn no_credentials_407_waits() {
         conn,
         407,
         &[("Proxy-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     let mut events = Vec::new();
     while let Some(e) = session.next_event() {
@@ -294,6 +301,7 @@ fn auth_rejected_after_bad_credentials() {
         conn1,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     let mut conn2 = None;
     while let Some(a) = session.poll(0) {
@@ -306,6 +314,7 @@ fn auth_rejected_after_bad_credentials() {
         c2,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     let mut events = Vec::new();
     while let Some(e) = session.next_event() {
@@ -335,6 +344,7 @@ fn set_credentials_while_waiting_reopens() {
         conn,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     // consume close
     while session.poll(0).is_some() {}
@@ -364,7 +374,7 @@ fn set_credentials_while_streaming_stored_not_interrupt() {
         }
         _ => panic!(),
     };
-    session.on_response(conn, 200, &[]);
+    session.on_response(conn, 200, &[], 0);
     session
         .set_credentials(Credentials::bearer("new-token"))
         .unwrap();
@@ -411,7 +421,7 @@ fn forbidden_then_retry_policy() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, 403, &[]);
+    session.on_response(conn, 403, &[], 0);
     let mut events = Vec::new();
     while let Some(e) = session.next_event() {
         events.push(e);
@@ -478,6 +488,7 @@ fn challenged_session(challenge: &str) -> Session {
         conn,
         401,
         &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        0,
     );
     while session.poll(0).is_some() {}
     let mut saw_required = false;
@@ -522,7 +533,7 @@ fn reconnect_after_credentials_arrive_stays_preemptive() {
         .unwrap();
     let (conn, headers) = first_request_headers(&mut session, 1);
     assert!(authorization(&headers).is_some());
-    session.on_response(conn, 200, &[]);
+    session.on_response(conn, 200, &[], 0);
     session.reconnect(2);
     let (_, again) = first_request_headers(&mut session, 2);
     assert_eq!(authorization(&again), Some("Basic dXNlcjpwYXNz"));
@@ -551,6 +562,7 @@ fn rejected_credentials_then_new_ones_use_the_new_challenge_state() {
             "WWW-Authenticate".to_string(),
             "Basic realm=\"tv\"".to_string(),
         )],
+        0,
     );
     while session.poll(1).is_some() {}
     let mut rejected = false;

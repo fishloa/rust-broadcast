@@ -99,7 +99,7 @@ impl Drv {
     }
 
     fn respond(&mut self, conn: u32, body: &[u8]) {
-        self.session.on_response(conn, 200, &[]);
+        self.session.on_response(conn, 200, &[], self.now);
         for c in body.chunks(self.chunk.max(1)) {
             self.session.on_data(conn, c, self.now);
         }
@@ -635,7 +635,7 @@ fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Even
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, 200, &headers);
+    session.on_response(conn, 200, &headers, 0);
     let mut out = Vec::new();
     for (i, c) in bytes.chunks(chunk).enumerate() {
         let now = i as u64 * 1_000;
@@ -685,7 +685,7 @@ fn live_ts_http_still_uses_buffering_runtime() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    s.on_response(conn, status, &headers);
+    s.on_response(conn, status, &headers, 0);
     let mut events = Vec::new();
     for (i, c) in bytes.chunks(1316).take(2_500).enumerate() {
         let now = i as u64 * 3_200;

@@ -200,37 +200,37 @@ impl Host {
         let conn = req.conn;
         match reply {
             Reply::Ok(body) => {
-                self.session.on_response(conn, 200, &[]);
+                self.session.on_response(conn, 200, &[], self.now);
                 for chunk in body.chunks(self.chunk.max(1)) {
                     self.session.on_data(conn, chunk, self.now);
                 }
                 self.session.on_closed(conn, None, self.now);
             }
             Reply::OkHeaders(body, headers) => {
-                self.session.on_response(conn, 200, &headers);
+                self.session.on_response(conn, 200, &headers, self.now);
                 for chunk in body.chunks(self.chunk.max(1)) {
                     self.session.on_data(conn, chunk, self.now);
                 }
                 self.session.on_closed(conn, None, self.now);
             }
             Reply::Full(code, body, headers) => {
-                self.session.on_response(conn, code, &headers);
+                self.session.on_response(conn, code, &headers, self.now);
                 for chunk in body.chunks(self.chunk.max(1)) {
                     self.session.on_data(conn, chunk, self.now);
                 }
                 self.session.on_closed(conn, None, self.now);
             }
             Reply::Status(code) => {
-                self.session.on_response(conn, code, &[]);
+                self.session.on_response(conn, code, &[], self.now);
                 self.session.on_closed(conn, None, self.now);
             }
             Reply::StatusHeaders(code, headers) => {
-                self.session.on_response(conn, code, &headers);
+                self.session.on_response(conn, code, &headers, self.now);
                 self.session.on_closed(conn, None, self.now);
             }
             Reply::Redirect(loc) => {
                 self.session
-                    .on_response(conn, 302, &[("Location".to_string(), loc)]);
+                    .on_response(conn, 302, &[("Location".to_string(), loc)], self.now);
             }
             Reply::TransportError => {
                 self.session

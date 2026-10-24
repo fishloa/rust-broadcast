@@ -481,7 +481,7 @@ fn select_audio_rendition_switches_and_emits_audio_rendition_event() {
         ]
     );
     let before = h.events.len();
-    h.session.on_response(old_conn, 200, &[]);
+    h.session.on_response(old_conn, 200, &[], 0);
     h.session.on_data(old_conn, &f.audio.segments[1].1, h.now);
     h.session.on_closed(old_conn, None, h.now);
     h.collect();
@@ -514,7 +514,7 @@ fn select_audio_none_stops_audio_adapter_and_closes_conns() {
     let audio_before = count_audio(&h.events);
     let requests_before = h.seen.len();
     let evs_len = h.events.len();
-    h.session.on_response(audio_conn, 200, &[]);
+    h.session.on_response(audio_conn, 200, &[], 0);
     h.session.on_data(audio_conn, &f.audio.segments[1].1, h.now);
     h.session.on_closed(audio_conn, None, h.now);
     h.collect();
@@ -967,7 +967,7 @@ fn late_callbacks_after_close_ignored_for_both_adapters() {
         (video_conn, &f.video.segments[0].1),
         (audio_conn, &f.audio.segments[0].1),
     ] {
-        h.session.on_response(conn, 200, &[]);
+        h.session.on_response(conn, 200, &[], 0);
         h.session.on_data(conn, body, h.now);
         h.session.on_closed(conn, None, h.now);
     }

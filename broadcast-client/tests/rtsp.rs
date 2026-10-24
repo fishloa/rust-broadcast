@@ -58,7 +58,7 @@ fn reconnecting_attempts(events: &[Event]) -> Vec<u64> {
     statuses(events)
         .into_iter()
         .filter_map(|s| match s {
-            Status::Reconnecting { attempt } => Some(attempt),
+            Status::Reconnecting { attempt } if attempt > 0 => Some(attempt),
             _ => None,
         })
         .collect()
@@ -393,7 +393,15 @@ fn status_establishing_then_live_once() {
     let mut host = playing();
     let events = finish_stream(&mut host);
     assert!(samples_of(&events).len() > 2);
-    assert_eq!(statuses(&events), [Status::Establishing, Status::Live]);
+    assert_eq!(
+        statuses(&events),
+        [
+            Status::Establishing,
+            Status::Live,
+            Status::Reconnecting { attempt: 0 }
+        ],
+        "the finished stream ends a connection that played"
+    );
 }
 
 #[test]

@@ -101,7 +101,7 @@ fn run_vod(
         stats.steps += 1;
         if let Some((conn, url)) = outstanding.pop_front() {
             if url == playlist_url {
-                session.on_response(conn, 200, &[]);
+                session.on_response(conn, 200, &[], now);
                 session.on_data(conn, playlist, now);
                 session.on_closed(conn, None, now);
                 continue;
@@ -109,7 +109,7 @@ fn run_vod(
             let nth = hits.entry(url.clone()).or_insert(0);
             let code = segment_status(&url, *nth);
             *nth += 1;
-            session.on_response(conn, code, &[]);
+            session.on_response(conn, code, &[], now);
             if code == 200 {
                 stats.succeeded.push(url);
                 session.on_data(conn, &body, now);
@@ -397,7 +397,7 @@ fn finite_ts_reconnect_after_ended_still_restarts() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     for chunk in bytes.chunks(1316) {
         session.on_data(conn, chunk, 0);
     }

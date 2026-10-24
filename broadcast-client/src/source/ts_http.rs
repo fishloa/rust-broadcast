@@ -33,6 +33,8 @@ pub struct TsHttpSource {
     conn_seen_first_sample: bool,
     connection_count: u32,
     stalled: bool,
+    failure_announced: bool,
+    caller_actions: VecDeque<tshttp_runtime::Action>,
     last_pcr_27mhz: Option<u64>,
 }
 
@@ -49,6 +51,8 @@ impl TsHttpSource {
             conn_seen_first_sample: false,
             connection_count: 0,
             stalled: false,
+            failure_announced: false,
+            caller_actions: VecDeque::new(),
             last_pcr_27mhz: None,
         }
     }
@@ -93,7 +97,18 @@ impl TsHttpSource {
 
     /// Poll next tshttp action.
     pub fn poll_action(&mut self) -> Option<tshttp_runtime::Action> {
-        self.ts.poll()
+        if let Some(action) = self.caller_actions.pop_front() {
+            return Some(action);
+        }
+        let action = self.ts.poll()?;
+        if matches!(action, tshttp_runtime::Action::Reconnect { .. }) {
+            if self.failure_announced {
+                self.failure_announced = false;
+            } else {
+                self.push(Event::Status(Status::Reconnecting { attempt: 0 }));
+            }
+        }
+        Some(action)
     }
 
     /// Poll next mapped event.
@@ -150,6 +165,9 @@ impl TsHttpSource {
     /// Reconnect.
     pub fn reconnect(&mut self, now_us: u64) {
         self.ts.reconnect(now_us / 1000);
+        while let Some(action) = self.ts.poll() {
+            self.caller_actions.push_back(action);
+        }
         self.drain_ts_events();
     }
 
@@ -242,6 +260,7 @@ impl TsHttpSource {
                 self.stalled = true;
             }
             tshttp_runtime::Event::Reconnecting { attempt } => {
+                self.failure_announced = true;
                 self.push(Event::Status(Status::Reconnecting { attempt }));
             }
             tshttp_runtime::Event::NotFound { status: _ } => {

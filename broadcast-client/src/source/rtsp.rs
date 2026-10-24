@@ -18,6 +18,7 @@ use url::{Host, Url};
 
 use crate::auth::{AuthDecision, AuthState};
 use crate::events::{Action, Event, Status};
+use crate::redirect;
 use crate::source::rtsp_sdp::{ParsedSdp, TrackInit, parse_tracks};
 
 const SCHEME_RTSPS: &str = "rtsps";
@@ -34,6 +35,7 @@ const STATUS_UNAUTHORIZED: u16 = 401;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
+const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const KEEPALIVE_DEFAULT_US: u64 = 30 * US_PER_SEC;
 const KEEPALIVE_MIN_US: u64 = 5 * US_PER_SEC;
 const KEEPALIVE_MAX_US: u64 = 3_600 * US_PER_SEC;
@@ -68,6 +70,11 @@ enum Phase {
 }
 
 pub(crate) struct RtspSource {
+    original_url: Url,
+    max_redirects: u32,
+    redirects: u32,
+    credentials_in_scope: bool,
+    discontinuity_pending: bool,
     request_url: Url,
     uri: String,
     host: String,
@@ -118,7 +125,7 @@ fn keepalive_interval_for(declared_secs: Option<u64>) -> u64 {
 }
 
 impl RtspSource {
-    pub(crate) fn new(url: &Url, cfg: &TsConfig, now_us: u64) -> Self {
+    pub(crate) fn new(url: &Url, cfg: &TsConfig, max_redirects: u32, now_us: u64) -> Self {
         let tls = url.scheme() == SCHEME_RTSPS;
         let default_port = if tls {
             RTSPS_DEFAULT_PORT
@@ -135,6 +142,11 @@ impl RtspSource {
         let _ = request_url.set_username("");
         let _ = request_url.set_password(None);
         let mut me = Self {
+            original_url: request_url.clone(),
+            max_redirects,
+            redirects: 0,
+            credentials_in_scope: true,
+            discontinuity_pending: false,
             uri: request_url.to_string(),
             request_url,
             host,
@@ -209,9 +221,6 @@ impl RtspSource {
             return;
         }
         self.connections = self.connections.saturating_add(1);
-        if self.connections > 1 {
-            self.events.push_back(Event::Discontinuity);
-        }
         self.events.push_back(Event::Status(Status::Establishing));
         self.connected_at = now;
         self.last_byte_at = now;
@@ -258,7 +267,11 @@ impl RtspSource {
     pub(crate) fn on_credentials(&mut self, now: u64, auth: &AuthState) {
         self.stale_replayed = false;
         self.auth_replays = 0;
-        if let Some(creds) = auth.credentials().cloned() {
+        if let Some(creds) = auth
+            .credentials()
+            .filter(|_| self.credentials_in_scope)
+            .cloned()
+        {
             let client = core::mem::take(&mut self.client);
             self.client = Self::client_with_credentials(client, creds, self.challenge.as_deref());
         }
@@ -282,6 +295,7 @@ impl RtspSource {
             Phase::Backoff(_) | Phase::Closed | Phase::WaitingAuth(_) => {}
             Phase::Connecting | Phase::Awaiting(_) | Phase::Playing => {
                 self.flush_depacketiser(now);
+                self.discontinuity_pending |= self.seen_first_sample;
                 self.drop_connection(true);
                 self.attempt = 0;
                 self.phase = Phase::Backoff(now);
@@ -350,6 +364,9 @@ impl RtspSource {
             .saturating_mul(US_PER_MS)
             .saturating_sub(lasted);
         self.attempt = 0;
+        self.discontinuity_pending = true;
+        self.events
+            .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
         self.phase = Phase::Backoff(now.saturating_add(floor));
     }
 
@@ -357,6 +374,8 @@ impl RtspSource {
         if let Phase::Backoff(due) = self.phase
             && now >= due
         {
+            self.retarget(self.original_url.clone());
+            self.redirects = 0;
             self.start_connect(now, Some(auth));
         }
     }
@@ -374,7 +393,10 @@ impl RtspSource {
 
     fn start_connect(&mut self, now: u64, auth: Option<&AuthState>) {
         let mut client = ClientSession::new();
-        if let Some(creds) = auth.and_then(AuthState::credentials) {
+        if let Some(creds) = auth
+            .and_then(AuthState::credentials)
+            .filter(|_| self.credentials_in_scope)
+        {
             client =
                 Self::client_with_credentials(client, creds.clone(), self.challenge.as_deref());
         }
@@ -549,7 +571,15 @@ impl RtspSource {
             return;
         }
         let code = u16::from(status);
+        if REDIRECT_STATUSES.contains(&code) {
+            self.follow_redirect(now, auth);
+            return;
+        }
         if code == STATUS_UNAUTHORIZED || code == STATUS_PROXY_AUTH_REQUIRED {
+            if !self.credentials_in_scope {
+                self.fail_connection(now);
+                return;
+            }
             self.on_unauthorized(code, req, now, auth);
             return;
         }
@@ -580,6 +610,46 @@ impl RtspSource {
         if !proceeded {
             self.fail_connection(now);
         }
+    }
+
+    fn retarget(&mut self, url: Url) {
+        let default_port = if url.scheme() == SCHEME_RTSPS {
+            RTSPS_DEFAULT_PORT
+        } else {
+            RTSP_DEFAULT_PORT
+        };
+        self.tls = url.scheme() == SCHEME_RTSPS;
+        self.host = match url.host() {
+            Some(Host::Domain(d)) => d.to_string(),
+            Some(Host::Ipv4(a)) => a.to_string(),
+            Some(Host::Ipv6(a)) => a.to_string(),
+            None => String::new(),
+        };
+        self.port = url.port().unwrap_or(default_port);
+        self.uri = url.to_string();
+        self.credentials_in_scope = url.scheme() == self.original_url.scheme()
+            && url.host() == self.original_url.host()
+            && url.port_or_known_default() == self.original_url.port_or_known_default();
+        self.request_url = url;
+    }
+
+    fn follow_redirect(&mut self, now: u64, auth: &AuthState) {
+        let target = self.client.redirect_location().and_then(|location| {
+            redirect::resolve_rtsp(
+                &self.request_url,
+                location,
+                self.redirects,
+                self.max_redirects,
+            )
+        });
+        let Some(target) = target else {
+            self.fail_connection(now);
+            return;
+        };
+        self.drop_connection(false);
+        self.retarget(target);
+        self.redirects = self.redirects.saturating_add(1);
+        self.start_connect(now, Some(auth));
     }
 
     fn on_unauthorized(&mut self, code: u16, req: Req, now: u64, auth: &mut AuthState) {
@@ -680,6 +750,7 @@ impl RtspSource {
 
     fn on_play_ok(&mut self, now: u64) {
         self.phase = Phase::Playing;
+        self.redirects = 0;
         self.tracks_dirty = true;
         self.last_byte_at = now;
         self.last_sample_at = now;
@@ -750,6 +821,10 @@ impl RtspSource {
     }
 
     fn emit_sample(&mut self, track: TrackId, sample: Sample, now: u64) {
+        if self.discontinuity_pending && !self.seen_first_sample {
+            self.discontinuity_pending = false;
+            self.events.push_back(Event::Discontinuity);
+        }
         if self.tracks_dirty {
             let specs = self
                 .depa
@@ -915,7 +990,7 @@ mod tests {
     #[test]
     fn reconnect_never_reuses_the_live_connection_id() {
         let url = Url::parse("rtsp://cam.test/live/").unwrap();
-        let mut source = RtspSource::new(&url, &TsConfig::default(), 0);
+        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, 0);
         source.take_actions();
         source.next_conn = u32::MAX;
         source.conn = Some(u32::MAX);
@@ -927,7 +1002,7 @@ mod tests {
     #[test]
     fn connection_ids_wrap_to_one_and_skip_zero() {
         let url = Url::parse("rtsp://cam.test/live/").unwrap();
-        let mut source = RtspSource::new(&url, &TsConfig::default(), 0);
+        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, 0);
         source.conn = None;
         source.next_conn = u32::MAX;
         source.start_connect(1, None);

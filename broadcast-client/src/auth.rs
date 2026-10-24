@@ -147,7 +147,8 @@ impl AuthState {
                 }
                 Credentials::Basic { .. } | Credentials::Digest { .. } => {
                     if let Some(auth) = &mut self.authenticator {
-                        let ctx = broadcast_auth::RequestContext::new("GET", url.as_str());
+                        let target = &url[url::Position::BeforePath..url::Position::AfterQuery];
+                        let ctx = broadcast_auth::RequestContext::new("GET", target);
                         if let Ok(val) = auth.authorization(&ctx) {
                             headers.push((name.to_string(), val));
                         }

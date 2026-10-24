@@ -322,13 +322,13 @@ fn second_connection_buffer_events(first_headers: &[(String, String)]) -> Vec<Bu
     let (status, live_headers) = support::read_tf1_headers();
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let first = first_request(&mut session, 0);
-    session.on_response(first, status, first_headers);
+    session.on_response(first, status, first_headers, 0);
     session.on_data(first, &bytes[..bytes.len() / 4], 0);
     while session.next_event().is_some() {}
     let later = 10_000_000;
     session.reconnect(later);
     let second = first_request(&mut session, later);
-    session.on_response(second, status, &live_headers);
+    session.on_response(second, status, &live_headers, 0);
     buffer_events(&live_events(&mut session, second, &bytes, later))
 }
 
@@ -360,7 +360,7 @@ fn queued_events_are_capped_by_dropping_the_oldest_samples() {
     let drive = |config: Config| {
         let mut s = Session::open(TS_URL, config, 0).unwrap();
         let c = first_request(&mut s, 0);
-        s.on_response(c, status, &headers);
+        s.on_response(c, status, &headers, 0);
         for chunk in bytes.chunks(CHUNK) {
             s.on_data(c, chunk, 0);
         }
@@ -504,7 +504,7 @@ fn ts_time_jump_does_not_flood_stall_notices() {
     let (status, headers) = support::read_tf1_headers();
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let conn = first_request(&mut session, 0);
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     for chunk in bytes.chunks(65_536) {
         session.on_data(conn, chunk, 0);
     }
@@ -537,7 +537,7 @@ fn ts_time_jump_to_the_end_of_time_terminates() {
     let (status, headers) = support::read_tf1_headers();
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let conn = first_request(&mut session, 0);
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     for chunk in bytes.chunks(65_536) {
         session.on_data(conn, chunk, 0);
     }
@@ -594,7 +594,7 @@ fn ts_poll_at_the_end_of_time_goes_idle() {
     let (status, headers) = support::read_tf1_headers();
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let conn = first_request(&mut session, 0);
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     for chunk in bytes.chunks(65_536) {
         session.on_data(conn, chunk, 0);
     }
@@ -633,7 +633,7 @@ fn ts_session_started_at_the_end_of_time_goes_idle() {
         Some(Action::HttpRequest { conn, .. }) => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, u64::MAX);
     for chunk in bytes.chunks(65_536) {
         session.on_data(conn, chunk, u64::MAX);
     }
@@ -677,7 +677,7 @@ fn assert_wakes_in_the_future(actions: &[Action], now: u64) {
 fn ts_never_emits_a_wake_at_or_before_now() {
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let conn = first_request(&mut session, 0);
-    session.on_response(conn, 200, &[]);
+    session.on_response(conn, 200, &[], u64::MAX);
     for now in [1_000_000u64, 2_000_000, u64::MAX] {
         session.reconnect(now);
         let batch = actions(&mut session, now);

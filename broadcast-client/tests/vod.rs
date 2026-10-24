@@ -16,7 +16,7 @@ fn session_finite_file_ends_without_reconnect() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     for chunk in bytes.chunks(1316) {
         session.on_data(conn, chunk, 0);
     }
@@ -52,7 +52,7 @@ fn session_live_unchanged_reconnects_on_close() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     session.on_data(conn, &bytes[..4096], 0);
     session.on_closed(conn, None, 1000);
 
@@ -97,7 +97,7 @@ fn session_reconnect_after_ended_restarts() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     for chunk in bytes.chunks(1316) {
         session.on_data(conn, chunk, 0);
     }
@@ -147,7 +147,7 @@ fn truncated_finite_transfer_reconnects() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     session.on_data(conn, &bytes[..4096], 0);
     session.on_closed(conn, None, 1000);
 

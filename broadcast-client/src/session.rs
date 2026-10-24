@@ -47,6 +47,11 @@ fn replay_allowed(lineage: ConnAuth, replay_is_authenticated: bool) -> bool {
 }
 
 /// Generic sans-IO client session.
+///
+/// The host calls [`Session::poll`] until it returns `None` and drains [`Session::next_event`]
+/// after every callback (`on_response`, `on_data`, `on_closed`, `on_connected`,
+/// `on_playback_position`, `set_credentials`, `reconnect`): actions and events are produced
+/// inside the callbacks themselves, not only by `poll`.
 pub struct Session {
     closed: bool,
     now_us: u64,
@@ -66,6 +71,7 @@ pub struct Session {
     buffer: crate::buffer::Feeder,
     playout: Playout,
     jump: JumpDetector,
+    stale_dropped: u64,
 }
 
 impl Session {
@@ -113,8 +119,14 @@ impl Session {
         }
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
         let hls = use_hls.then(|| Box::new(HlsSession::new(&parsed, &config)));
-        let mut rtsp = is_rtsp_scheme
-            .then(|| Box::new(RtspSource::new(&parsed, &config.ts_http.clamped(), now_us)));
+        let mut rtsp = is_rtsp_scheme.then(|| {
+            Box::new(RtspSource::new(
+                &parsed,
+                &config.ts_http.clamped(),
+                config.max_redirects,
+                now_us,
+            ))
+        });
         if let Some(r) = rtsp.as_mut() {
             r.on_credentials(now_us, &auth);
         }
@@ -142,6 +154,7 @@ impl Session {
             buffer: crate::buffer::Feeder::new(buffer_cfg, seed),
             playout,
             jump,
+            stale_dropped: 0,
         })
     }
 
@@ -185,11 +198,18 @@ impl Session {
         self.events.pop_front()
     }
 
-    /// Response callback.
-    pub fn on_response(&mut self, conn: u32, status: u16, headers: &[(String, String)]) {
+    /// Response callback; `now_us` is the host clock when the response head arrived.
+    pub fn on_response(
+        &mut self,
+        conn: u32,
+        status: u16,
+        headers: &[(String, String)],
+        now_us: u64,
+    ) {
         if self.closed || self.rtsp.is_some() {
             return;
         }
+        self.now_us = now_us;
         if let Some(h) = self.hls.as_mut() {
             h.on_response(conn, status, headers, self.now_us, &mut self.auth);
             self.flush_hls();
@@ -639,8 +659,13 @@ impl Session {
                 sample,
                 join,
             } => {
+                if !self.jump.screen(*track, sample) {
+                    self.stale_dropped = self.stale_dropped.saturating_add(1);
+                    return;
+                }
                 if self.jump.is_jump(*track, sample, *join, self.now_us) {
                     self.emit(Event::Discontinuity);
+                    self.jump.begin_epoch(*track, sample);
                 }
                 self.jump.record(*track, sample, *join, self.now_us);
             }
@@ -663,8 +688,13 @@ impl Session {
                 join,
             } = &e
             {
+                if !self.jump.screen(*track, sample) {
+                    self.stale_dropped = self.stale_dropped.saturating_add(1);
+                    continue;
+                }
                 if self.jump.is_jump(*track, sample, *join, self.now_us) {
                     self.emit(Event::Discontinuity);
+                    self.jump.begin_epoch(*track, sample);
                 }
                 self.jump.record(*track, sample, *join, self.now_us);
             }
@@ -763,10 +793,15 @@ impl Session {
                     self.emit(Event::Tracks(specs));
                 }
                 Event::Sample { track, sample, .. } => {
+                    if !self.jump.screen(track, &sample) {
+                        self.stale_dropped = self.stale_dropped.saturating_add(1);
+                        continue;
+                    }
                     let mut join = self.buffer.join_sample(track, &sample);
                     if self.jump.is_jump(track, &sample, join, self.now_us) {
                         let handled = self.jump.already_handled();
                         self.emit(Event::Discontinuity);
+                        self.jump.begin_epoch(track, &sample);
                         if !handled {
                             self.buffer.on_demux_discontinuity(self.now_us);
                             join = self.buffer.join_sample(track, &sample);
@@ -781,6 +816,7 @@ impl Session {
                     });
                 }
                 Event::Discontinuity => {
+                    self.buffer.rejoin();
                     self.buffer.hint(self.now_us, Hint::Reconnected);
                     self.emit(e);
                 }
@@ -862,6 +898,14 @@ impl Session {
             }
             _ => {}
         }
+    }
+
+    /// Samples dropped because they still carried the timeline that a detected jump left: after
+    /// [`Event::Discontinuity`] from a jump, every other track delivers nothing until its first
+    /// sample lies within [`TimelineJumpConfig::forward_slack_us`](crate::TimelineJumpConfig) of
+    /// the new timeline's first sample.
+    pub fn stale_samples_dropped(&self) -> u64 {
+        self.stale_dropped
     }
 
     /// Samples dropped because the host did not drain the queue within
@@ -962,5 +1006,75 @@ mod tests {
         session.drain_source();
         assert!(!session.buffer.has_track(specs[0].track_id));
         assert!(session.buffer.has_track(specs[1].track_id));
+    }
+
+    #[cfg(feature = "test-seams")]
+    fn pcr_hints(session: &Session) -> usize {
+        session
+            .buffer_input_log()
+            .iter()
+            .filter(|l| {
+                matches!(
+                    l,
+                    crate::BufferInput::Hint {
+                        hint: Hint::PcrDiscontinuity,
+                        ..
+                    }
+                )
+            })
+            .count()
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[test]
+    fn a_pcr_discontinuity_coinciding_with_a_jump_hints_and_rearms_once() {
+        use broadcast_common::Unpackage;
+        const TICKS_PER_FRAME: i64 = 3_600;
+        const JUMP_TICKS: i64 = 30 * 90_000;
+        let data = test_fixtures::read("ts/h264_aac.ts");
+        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let video = media
+            .tracks
+            .into_iter()
+            .find(|t| transmux::LiveJoin::for_config(&t.spec.config).is_some())
+            .unwrap();
+        let id = video.spec.track_id;
+        let at = |i: usize, pts: i64| {
+            let mut s = video.samples[i].clone();
+            s.pts = Some(pts);
+            s.dts = Some(pts);
+            Event::Sample {
+                track: id,
+                sample: s,
+                join: None,
+            }
+        };
+        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        session
+            .source
+            .inject(Some(Event::Tracks(vec![video.spec.clone()])));
+        for i in 0..6 {
+            session
+                .source
+                .inject(Some(at(i, i as i64 * TICKS_PER_FRAME)));
+        }
+        session.source.inject(None);
+        session.source.inject(Some(at(0, 6 * TICKS_PER_FRAME)));
+        session
+            .source
+            .inject(Some(at(1, 7 * TICKS_PER_FRAME + JUMP_TICKS)));
+        session.drain_source();
+        let mut discontinuities = 0;
+        while let Some(e) = session.events.pop_front() {
+            if matches!(e, Event::Discontinuity) {
+                discontinuities += 1;
+            }
+        }
+        assert_eq!(discontinuities, 1, "the host is told once");
+        assert_eq!(
+            pcr_hints(&session),
+            1,
+            "the demuxer already hinted and re-armed; the jump must not do it again"
+        );
     }
 }
