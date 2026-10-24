@@ -153,7 +153,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   controller is seeded from the progress the session kept for it (media end from the join point, audio
   past the join PTS), so a late declaration neither pauses nor blinds the controller. A track that never
   emitted is waited for as before. `rejoin()` and a timeline discontinuity discard that progress. The
-  HLS/finite playout gate keeps its own default (first announced).
+  HLS/finite playout gate uses the same default rule.
 - `Action::HttpRequest::byte_range` is `(offset, length)`, not `(start, end)`; the host builds
   the `Range: bytes=offset-(offset+length-1)` header itself.
 - `Action::WakeAt(t)` means "poll at or after `t`"; the session drops one that is not after the `now` of
