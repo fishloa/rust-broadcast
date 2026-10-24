@@ -34,7 +34,7 @@ struct Stored {
 }
 
 impl Stored {
-    fn is_expired(&self, now_us: u64) -> bool {
+    fn expired_at(&self, now_us: u64) -> bool {
         self.expires_us.is_some_and(|at| now_us >= at)
     }
 }
@@ -166,7 +166,7 @@ impl CookieJar {
         if url.origin() != self.origin {
             return None;
         }
-        self.cookies.retain(|c| !c.is_expired(now_us));
+        self.cookies.retain(|c| !c.expired_at(now_us));
         let secure = url.scheme() == HTTPS;
         let mut matching: Vec<&Stored> = self
             .cookies
@@ -204,7 +204,7 @@ impl CookieJar {
     pub(crate) fn export(&self, now_us: u64) -> Vec<(String, String)> {
         self.cookies
             .iter()
-            .filter(|c| !c.is_expired(now_us))
+            .filter(|c| !c.expired_at(now_us))
             .map(|c| (c.name.clone(), c.value.clone()))
             .collect()
     }
