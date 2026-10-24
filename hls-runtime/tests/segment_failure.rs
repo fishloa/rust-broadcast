@@ -35,7 +35,9 @@ fn live() -> String {
         .to_string()
 }
 
-fn fetches(client: &mut HlsClient) -> Vec<(ResourceId, String, Option<(u64, u64)>)> {
+type Fetch = (ResourceId, String, Option<(u64, u64)>);
+
+fn fetches(client: &mut HlsClient) -> Vec<Fetch> {
     let mut out = Vec::new();
     while let Some(action) = client.poll() {
         if let Action::FetchResource {
