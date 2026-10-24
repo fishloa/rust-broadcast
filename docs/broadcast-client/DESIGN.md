@@ -450,3 +450,47 @@ Tests: `broadcast-client/tests/timeline_jump.rs` (TS via PES-PTS rewriting of th
   `on_playback_position` every display tick; `Start.at`/`Resume.at` are the 27 MHz clock the player
   sets; demuxer-level discontinuities are visible only through buffer events; `byte_range` is
   `(offset, length)`; `WakeAt` is "at or after" and past values are dropped.
+
+## Policy core split (tshttp-runtime, story mm-tshttp)
+
+`tshttp-runtime` gains a demux-free core, `policy::TsHttpPolicy`, and `TsHttpClient` becomes the core plus a
+`transmux::StreamingTsDemux`. The core sees only response headers, chunk LENGTHS, a "a sample was produced"
+flag and timestamps; it never sees TS bytes. Transition numbers are those of `docs/tshttp-runtime/DESIGN.md`.
+
+**Moves into the core (all decision logic):** T1 (new -> Open), T2, T3, T4 (response status handling, errors),
+T5 (Awaiting -> Playing on the sample flag), T6, T7, T8, T9 (backoff schedule), T10, T11, T12, T13, T14, T15,
+T16, T17, T18, T19, T20, plus finite/VOD detection (Content-Length / 206 Content-Range / identity coding) and
+`next_deadline`. Core inputs: `on_response`, `on_bytes(len, now, sampled)`, `on_sample`, `on_eof`, `on_error`,
+`reconnect`, `poll_timeout[_with]`. Core outputs: `Action`s and `Event`s (never `Event::Demux`).
+
+**Stays in the client (everything that touches TS bytes):** the `StreamingTsDemux` itself; creating a fresh demux
+on every `Open` (observed through `TsHttpPolicy::open_count`); gating `feed` on `accepts_bytes`; draining demux
+events into `Event::Demux` (through `push_event`, so ordering against policy events is unchanged); flushing the
+demux (`finish`) before the terminal decisions T6/T7/T8/T12/T13 and reporting whether the flush produced a
+first sample (the core takes that as a callback because a flushed sample changes the T6/T12 outcome).
+
+**Redirects and auth challenges are NOT in the core** (they live in the broadcast-client `Session` layer,
+unchanged): the core never sees a 3xx/401/407.
+
+**multimux adopts the core only** (`multimux/src/source/ts_http.rs`); it keeps `ts_program` for demuxing and
+the supervisor for reconnect/backoff: every core `Action::Open/Reconnect` and `Event::Reconnecting` backoff is
+ignored by multimux (no second retry loop). Mapping: `Event::Ended` -> clean end (`HealthState::Ended`);
+core `Abort` (T6/T12 stall) or a failure verdict (T7/T19 truncated transfer, T9) -> the existing
+`MultimuxError::Connect` failure; `Event::Starved`/`StallNotice` -> `tracing` only. "sampled" for multimux is
+"the ingest driver is `Live`" (route established).
+
+**multimux behaviour changes (all listed):**
+1. Finite responses (Content-Length / 206) are now detected from the response headers; EOF after all expected
+   bytes is `Ended` (unchanged outcome), EOF before them is a failure (`Connect`, reason "truncated transfer")
+   instead of `Ended`. With reqwest/hyper a short Content-Length body already surfaces as a read error, so this
+   only formalises the existing outcome; no user-visible difference is expected.
+2. The post-establishment stall threshold is decided by the core, configured from `IngestTimeouts::read`
+   (same value, same error text `ts/http stream read: no data within ..`). The wait inside one step is also
+   capped at the core's next deadline. The scaffold's own read-stall check stays as the pre-establishment guard.
+3. The core's START timeout is DISABLED in multimux (`u64::MAX`): enforcing it would newly fail a stream that
+   delivers bytes but no PMT, a user-visible change (today the handshake deadline is unbounded). Stall notices
+   are derived (`stall_reconnect / 2`) and only logged.
+4. Redirects: multimux already follows redirects (`source::redirect_policy`: 4 hops, no https -> http, credentials
+   scoped to the original origin). No change; a test pins it. The core does not implement redirects.
+
+None of these is a user-visible change in a supported flow, so the story proceeds.
