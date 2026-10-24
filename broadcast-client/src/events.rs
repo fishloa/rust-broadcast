@@ -184,6 +184,14 @@ pub enum ErrorKind {
         /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque data.
         stream_type: Option<u8>,
     },
+    /// [`crate::Session::set_rendered_tracks`] named a track id that no [`Event::Tracks`] has
+    /// announced. The id is ignored until an announcement names it (then it takes effect), and
+    /// reported once per declaration. A declaration none of whose ids is announced renders the
+    /// default set meanwhile.
+    UnknownRenderedTrack {
+        /// The declared id.
+        track_id: u32,
+    },
 }
 
 impl ErrorKind {
@@ -198,6 +206,7 @@ impl ErrorKind {
             Self::UnsupportedCodec { .. } => "unsupported_codec",
             Self::TrackIdReserved { .. } => "track_id_reserved",
             Self::TrackDropped { .. } => "track_dropped",
+            Self::UnknownRenderedTrack { .. } => "unknown_rendered_track",
         }
     }
 }

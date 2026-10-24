@@ -115,8 +115,8 @@ impl JumpDetector {
         self.last.retain(|t, _| present.contains_key(t));
     }
 
-    pub(crate) fn set_rendered(&mut self, tracks: &[TrackId]) {
-        self.rendered = Some(tracks.iter().copied().collect());
+    pub(crate) fn set_rendered(&mut self, tracks: Option<&[TrackId]>) {
+        self.rendered = tracks.map(|t| t.iter().copied().collect());
     }
 
     pub(crate) fn clear(&mut self) {

@@ -153,20 +153,28 @@ impl Playout {
                 },
             );
         }
-        if !self.rendered_explicit {
-            let (video, audio) = lowest_id_per_kind(
-                self.infos
-                    .iter()
-                    .map(|(id, i)| (*id, i.kind == Kind::Video, i.kind == Kind::Audio)),
-            );
-            self.rendered = video.into_iter().chain(audio).collect();
-        }
+        self.retarget_default();
         self.step();
     }
 
-    pub(crate) fn set_rendered(&mut self, tracks: &[TrackId]) {
-        self.rendered_explicit = true;
-        self.rendered = tracks.iter().copied().collect();
+    fn retarget_default(&mut self) {
+        if self.rendered_explicit {
+            return;
+        }
+        let (video, audio) = lowest_id_per_kind(
+            self.infos
+                .iter()
+                .map(|(id, i)| (*id, i.kind == Kind::Video, i.kind == Kind::Audio)),
+        );
+        self.rendered = video.into_iter().chain(audio).collect();
+    }
+
+    pub(crate) fn set_rendered(&mut self, tracks: Option<&[TrackId]>) {
+        self.rendered_explicit = tracks.is_some();
+        match tracks {
+            Some(t) => self.rendered = t.iter().copied().collect(),
+            None => self.retarget_default(),
+        }
         self.step();
     }
 
@@ -470,7 +478,7 @@ mod tests {
         let (audio, _) = audio_track();
         let video = video_spec();
         let mut p = Playout::new(PlayoutConfig::default());
-        p.set_rendered(&[audio.track_id]);
+        p.set_rendered(Some(&[audio.track_id]));
         p.engage(Source::Vod);
         p.on_tracks(&[video, audio.clone()]);
         assert_eq!(p.rendered, BTreeSet::from([audio.track_id]));
@@ -588,7 +596,7 @@ mod tests {
                     );
                 }
             }
-            p.set_rendered(&[video.track_id, high.track_id]);
+            p.set_rendered(Some(&[video.track_id, high.track_id]));
             assert_eq!(p.rendered, BTreeSet::from([video.track_id, high.track_id]));
             assert_eq!(
                 p.limiting().map(|(_, end)| end),

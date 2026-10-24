@@ -1,13 +1,16 @@
-use broadcast_client::{Action, Config, Event, Session};
+use broadcast_client::{Action, BufferEvent, Config, Event, Session};
 
 const TS_PACKET: usize = 188;
 const DEFAULT_STEP_US: u64 = 10_000;
+const TICKS_PER_US: u64 = 27;
 
 pub struct Host {
     pub session: Session,
     pub conn: u32,
     pub now: u64,
     pub log: Vec<Event>,
+    playing: Option<(u64, u64)>,
+    held: Option<u64>,
 }
 
 impl Host {
@@ -18,6 +21,8 @@ impl Host {
             conn: 0,
             now: 0,
             log: Vec::new(),
+            playing: None,
+            held: None,
         };
         host.settle();
         host
@@ -36,8 +41,47 @@ impl Host {
             }
         }
         while let Some(e) = self.session.next_event() {
+            match &e {
+                Event::Buffer(BufferEvent::Start { at_27mhz } | BufferEvent::Resume { at_27mhz }) => {
+                    self.playing = Some((*at_27mhz, self.now));
+                    self.held = None;
+                }
+                Event::Buffer(BufferEvent::Pause { hold_at_27mhz, .. }) => {
+                    self.playing = None;
+                    self.held = Some(*hold_at_27mhz);
+                }
+                _ => {}
+            }
             self.log.push(e);
         }
+    }
+
+    pub fn position(&self) -> Option<u64> {
+        match self.playing {
+            Some((base, since)) => Some(base + (self.now - since) * TICKS_PER_US),
+            None => self.held,
+        }
+    }
+
+    pub fn feed_playing(&mut self, bytes: &[u8], chunk: usize) {
+        let bytes = &bytes[..bytes.len() / TS_PACKET * TS_PACKET];
+        for part in bytes.chunks(chunk) {
+            self.now += DEFAULT_STEP_US;
+            self.session.on_data(self.conn, part, self.now);
+            self.settle();
+            self.tick(self.position());
+        }
+    }
+
+    pub fn buffer_events(&self) -> Vec<(usize, &'static str)> {
+        self.log
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e {
+                Event::Buffer(b) => Some((i, b.name())),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn feed(&mut self, bytes: &[u8], chunk: usize) {

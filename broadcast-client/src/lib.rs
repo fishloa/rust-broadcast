@@ -14,6 +14,7 @@ mod headers;
 mod join;
 pub mod playout;
 mod queue;
+mod rendered;
 #[doc(hidden)]
 pub mod redirect;
 pub mod session;

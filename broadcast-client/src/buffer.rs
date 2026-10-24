@@ -254,9 +254,12 @@ impl Feeder {
         self.apply_rendered(wanted);
     }
 
-    pub(crate) fn set_rendered_tracks(&mut self, tracks: &[TrackId]) {
-        self.rendered_explicit = true;
-        self.apply_rendered(tracks.iter().copied().collect());
+    pub(crate) fn set_rendered(&mut self, tracks: Option<&[TrackId]>) {
+        self.rendered_explicit = tracks.is_some();
+        match tracks {
+            Some(t) => self.apply_rendered(t.iter().copied().collect()),
+            None => self.retarget_default(),
+        }
     }
 
     fn apply_rendered(&mut self, wanted: BTreeSet<TrackId>) {
@@ -875,7 +878,7 @@ mod tests {
             r.events
         );
         let declared_at = r.now;
-        r.f.set_rendered_tracks(&[TrackId::new(VIDEO_ID), TrackId::new(AUDIO_B_ID)]);
+        r.f.set_rendered(Some(&[TrackId::new(VIDEO_ID), TrackId::new(AUDIO_B_ID)]));
         r.tick();
         let emitted_end = r.emitted_end_27mhz();
         r.tick_for(8_000_000);
@@ -932,7 +935,7 @@ mod tests {
         r.emitting = vec![VIDEO_ID, AUDIO_A_ID];
         r.prefill();
         let b = TrackId::new(AUDIO_B_ID);
-        r.f.set_rendered_tracks(&[TrackId::new(VIDEO_ID), b]);
+        r.f.set_rendered(Some(&[TrackId::new(VIDEO_ID), b]));
         assert!(r.f.rendered.contains(&b));
         assert!(!r.f.pending_ends.contains_key(&b));
         assert!(!r.f.audio_max_end.contains_key(&b));
