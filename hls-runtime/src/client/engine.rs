@@ -1700,12 +1700,18 @@ impl HlsClient {
         while let Some(event) = demux.poll_event() {
             match event {
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
-                    self.ts_specs.insert(spec.track_id, spec);
+                    if spec.config.is_muxable_in_bmff() {
+                        self.ts_specs.insert(spec.track_id, spec);
+                    } else {
+                        self.ts_specs.remove(&spec.track_id);
+                    }
                 }
                 DemuxEvent::TrackRemoved { track_id, .. } => {
                     self.ts_specs.remove(&track_id);
                 }
-                DemuxEvent::Sample { .. } | DemuxEvent::DisplayChanged { .. } => {
+                DemuxEvent::Sample { track_id, .. } | DemuxEvent::DisplayChanged { track_id, .. }
+                    if self.ts_specs.contains_key(&track_id) =>
+                {
                     events.push(event);
                 }
                 _ => {}

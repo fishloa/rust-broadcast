@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (live TS-HLS emitted nothing)
+- A TS segment carrying an opaque PES data track (e.g. `stream_type` 0x06 private data) made the synthesized init fail with `UnmuxableDataTrack`, so every segment was rejected and a live playlist retried forever with no `Tracks`/`Samples`. Tracks `build_init_segment` cannot carry (`!is_muxable_in_bmff`) are now left out of the track set, the synthesized init and the emitted samples.
+
 ### Added (pre-release audit #1498)
 - `HlsClient::set_playlist_base(url)`: the URL relative playlist, segment, key and map URIs resolve against (the final URL of a playlist response after redirects, RFC 3986 section 5.1.3). Reloads keep requesting `playlist_url()`; the base is cleared when the client switches playlist.
 

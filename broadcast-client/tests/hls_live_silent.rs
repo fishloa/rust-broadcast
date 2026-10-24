@@ -6,6 +6,8 @@ use broadcast_client::{Action, Config, Event, Session, Status};
 
 const INDEX: &str = "http://h/index.m3u8";
 const FIXTURE: &str = "zenith-http/tf1-live.ts";
+const REAL_SHAPE_SEGMENTS: usize = 3;
+const LONG_LIVED_SEGMENTS: usize = 5;
 const TS_PACKET: usize = 188;
 const STEP_US: u64 = 50_000;
 const END_US: u64 = 8_000_000;
@@ -39,6 +41,7 @@ struct Tally {
     samples: usize,
     live: usize,
     reconnecting: usize,
+    urls: Vec<String>,
     log: Vec<String>,
 }
 
@@ -89,14 +92,7 @@ enum Order {
     PlaylistLast,
 }
 
-fn answer(
-    session: &mut Session,
-    origin: &Origin,
-    conn: u32,
-    url: &str,
-    now: u64,
-    t: &mut Tally,
-) {
+fn answer(session: &mut Session, origin: &Origin, conn: u32, url: &str, now: u64, t: &mut Tally) {
     let (body, ctype) = origin.body(url);
     let mut headers = vec![("Content-Type".to_string(), ctype.to_string())];
     if origin.content_length {
@@ -110,58 +106,36 @@ fn answer(
     t.drain(session);
 }
 
-fn run(
-    origin: &Origin,
-    order: Order,
-    mut on_tick: impl FnMut(u64, &mut Origin2),
-) -> Tally {
-    let mut o = Origin2 {
-        origin_playlist: None,
-    };
+fn run(mut origin: Origin, order: Order, mut on_tick: impl FnMut(u64, &mut Origin)) -> Tally {
     let mut session = Session::open(INDEX, Config::default(), 0).unwrap();
     let mut t = Tally::default();
     let mut now = 0;
-    let mut origin = Origin {
-        playlist: origin.playlist.clone(),
-        segs: origin.segs.clone(),
-        content_length: origin.content_length,
-    };
     while now <= END_US {
-        on_tick(now, &mut o);
-        if let Some(p) = o.origin_playlist.take() {
-            origin.playlist = p;
-        }
+        on_tick(now, &mut origin);
         let mut pending: VecDeque<(u32, String)> = VecDeque::new();
         loop {
             while let Some(a) = session.poll(now) {
                 if let Action::HttpRequest { conn, url, .. } = a {
+                    t.urls.push(url.clone());
                     pending.push_back((conn, url));
                 }
             }
             if pending.is_empty() {
                 break;
             }
-            match order {
-                Order::InPoll => {
-                    while let Some((c, u)) = pending.pop_front() {
-                        answer(&mut session, &origin, c, &u, now, &mut t);
-                    }
-                }
-                Order::OneAtATime => {
-                    let (c, u) = pending.pop_front().unwrap();
-                    answer(&mut session, &origin, c, &u, now, &mut t);
-                    while let Some((c, u)) = pending.pop_front() {
-                        answer(&mut session, &origin, c, &u, now, &mut t);
-                    }
-                }
-                Order::PlaylistLast => {
-                    let mut v: Vec<_> = pending.drain(..).collect();
-                    v.sort_by_key(|(_, u)| u.ends_with(".m3u8"));
-                    for (c, u) in v {
-                        answer(&mut session, &origin, c, &u, now, &mut t);
-                    }
-                }
+            let mut batch: Vec<_> = pending.drain(..).collect();
+            if order == Order::PlaylistLast {
+                batch.sort_by_key(|(_, u)| u.ends_with(".m3u8"));
             }
+            let take = if order == Order::OneAtATime {
+                1
+            } else {
+                batch.len()
+            };
+            for (c, u) in batch.drain(..take) {
+                answer(&mut session, &origin, c, &u, now, &mut t);
+            }
+            pending.extend(batch);
         }
         t.drain(&mut session);
         now += STEP_US;
@@ -169,12 +143,12 @@ fn run(
     t
 }
 
-struct Origin2 {
-    origin_playlist: Option<String>,
+fn origin(first_seq: u64, count: usize, content_length: bool) -> Origin {
+    origin_with(first_seq, count, REAL_SHAPE_SEGMENTS, content_length)
 }
 
-fn origin(first_seq: u64, count: usize, content_length: bool) -> Origin {
-    let segs = segments(3);
+fn origin_with(first_seq: u64, count: usize, total: usize, content_length: bool) -> Origin {
+    let segs = segments(total);
     Origin {
         playlist: playlist(first_seq, count),
         segs: segs
@@ -187,32 +161,57 @@ fn origin(first_seq: u64, count: usize, content_length: bool) -> Origin {
 }
 
 fn assert_flowing(t: &Tally) {
-    eprintln!("reconnecting={} log={:#?} samples={}", t.reconnecting, t.log, t.samples);
     assert!(t.tracks > 0, "no Tracks; log {:#?}", t.log);
     assert!(t.samples > 0, "no Samples; log {:#?}", t.log);
     assert!(t.live > 0, "never Live; log {:#?}", t.log);
+    assert_eq!(t.reconnecting, 0, "reconnected; log {:#?}", t.log);
 }
 
 #[test]
 fn live_hls_without_endlist_emits_tracks_and_samples() {
-    let t = run(&origin(12, 3, true), Order::InPoll, |_, _| {});
+    let t = run(origin(12, 3, true), Order::InPoll, |_, _| {});
     assert_flowing(&t);
 }
 
 #[test]
 fn live_hls_emits_when_responses_arrive_one_at_a_time() {
-    let t = run(&origin(12, 3, true), Order::OneAtATime, |_, _| {});
+    let t = run(origin(12, 3, true), Order::OneAtATime, |_, _| {});
     assert_flowing(&t);
 }
 
 #[test]
 fn live_hls_emits_when_playlist_is_answered_last() {
-    let t = run(&origin(12, 3, true), Order::PlaylistLast, |_, _| {});
+    let t = run(origin(12, 3, true), Order::PlaylistLast, |_, _| {});
     assert_flowing(&t);
 }
 
 #[test]
 fn live_hls_emits_without_content_length() {
-    let t = run(&origin(12, 3, false), Order::InPoll, |_, _| {});
+    let t = run(origin(12, 3, false), Order::InPoll, |_, _| {});
     assert_flowing(&t);
+}
+
+#[test]
+fn live_hls_keeps_flowing_across_playlist_reloads() {
+    let mut grown = 0;
+    let t = run(
+        origin_with(12, 3, LONG_LIVED_SEGMENTS, true),
+        Order::InPoll,
+        |now, o| {
+            let want = match now {
+                0..=499_999 => 0,
+                500_000..=999_999 => 1,
+                _ => 2,
+            };
+            if want > grown {
+                grown = want;
+                o.playlist = playlist(12 + grown as u64, 3);
+            }
+        },
+    );
+    assert_flowing(&t);
+    for n in 12..12 + LONG_LIVED_SEGMENTS {
+        let url = format!("http://h/seg{n}.ts");
+        assert!(t.urls.contains(&url), "{url} never fetched: {:?}", t.urls);
+    }
 }
