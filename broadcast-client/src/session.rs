@@ -14,10 +14,16 @@ use crate::events::{Action, Config, Event, SourceKind};
 use crate::headers;
 use crate::redirect;
 use crate::source::hls_session::HlsSession;
+use crate::source::rtsp::RtspSource;
 use crate::source::ts_http::TsHttpSource;
 use transmux::TrackId;
 
 use tshttp_runtime::Action as TsAction;
+
+const SCHEME_HTTP: &str = "http";
+const SCHEME_HTTPS: &str = "https";
+const SCHEME_RTSP: &str = "rtsp";
+const SCHEME_RTSPS: &str = "rtsps";
 
 /// Generic sans-IO client session.
 pub struct Session {
@@ -27,6 +33,7 @@ pub struct Session {
     auth: AuthState,
     source: TsHttpSource,
     hls: Option<Box<HlsSession>>,
+    rtsp: Option<Box<RtspSource>>,
     redirect_count: u32,
     next_conn: u32,
     live_conn: Option<u32>,
@@ -52,14 +59,22 @@ impl Session {
     ) -> Result<Self, Error> {
         let parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
         let scheme = parsed.scheme();
-        if scheme != "http" && scheme != "https" {
+        let is_rtsp_scheme = scheme == SCHEME_RTSP || scheme == SCHEME_RTSPS;
+        let is_http_scheme = scheme == SCHEME_HTTP || scheme == SCHEME_HTTPS;
+        let rtsp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtsp);
+        let http_allowed = !matches!(config.kind, SourceKind::Rtsp);
+        if !((is_rtsp_scheme && rtsp_allowed) || (is_http_scheme && http_allowed)) {
             return Err(Error::UnsupportedScheme(scheme.to_string()));
         }
-        let use_hls = match config.kind {
-            SourceKind::Hls => true,
-            SourceKind::Auto => has_playlist_extension(&parsed),
-            _ => false,
-        };
+        if is_rtsp_scheme && parsed.host().is_none() {
+            return Err(Error::InvalidUrl("missing host".to_string()));
+        }
+        let use_hls = !is_rtsp_scheme
+            && match config.kind {
+                SourceKind::Hls => true,
+                SourceKind::Auto => has_playlist_extension(&parsed),
+                _ => false,
+            };
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
         let buffer_cfg = config.buffer;
@@ -67,6 +82,8 @@ impl Session {
         auth.seed_cookies(&config.initial_cookies);
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
         let hls = use_hls.then(|| Box::new(HlsSession::new(&parsed, &config)));
+        let rtsp =
+            is_rtsp_scheme.then(|| Box::new(RtspSource::new(&parsed, &config.ts_http, now_us)));
         Ok(Self {
             closed: false,
             now_us,
@@ -74,6 +91,7 @@ impl Session {
             auth,
             source,
             hls,
+            rtsp,
             redirect_count: 0,
             next_conn: 1,
             live_conn: None,
@@ -92,7 +110,10 @@ impl Session {
         }
         if !self.closed {
             self.now_us = now_us;
-            if let Some(h) = self.hls.as_mut() {
+            if let Some(r) = self.rtsp.as_mut() {
+                r.poll(now_us, &self.auth);
+                self.flush_rtsp();
+            } else if let Some(h) = self.hls.as_mut() {
                 h.poll(now_us, &mut self.auth);
                 self.flush_hls();
             } else {
@@ -110,7 +131,7 @@ impl Session {
         if self.closed && self.events.is_empty() {
             return None;
         }
-        if !self.closed && self.hls.is_none() {
+        if !self.closed && self.hls.is_none() && self.rtsp.is_none() {
             self.drain_source();
         }
         self.events.pop_front()
@@ -118,7 +139,7 @@ impl Session {
 
     /// Response callback.
     pub fn on_response(&mut self, conn: u32, status: u16, headers: &[(String, String)]) {
-        if self.closed {
+        if self.closed || self.rtsp.is_some() {
             return;
         }
         if let Some(h) = self.hls.as_mut() {
@@ -219,6 +240,12 @@ impl Session {
         if self.closed {
             return;
         }
+        if let Some(r) = self.rtsp.as_mut() {
+            self.now_us = now_us;
+            r.on_data(conn, bytes, now_us, &mut self.auth);
+            self.flush_rtsp();
+            return;
+        }
         if let Some(h) = self.hls.as_mut() {
             self.now_us = now_us;
             h.on_data(conn, bytes, now_us, &mut self.auth);
@@ -247,6 +274,12 @@ impl Session {
     /// Closed callback.
     pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now_us: u64) {
         if self.closed {
+            return;
+        }
+        if let Some(r) = self.rtsp.as_mut() {
+            self.now_us = now_us;
+            r.on_closed(conn, now_us);
+            self.flush_rtsp();
             return;
         }
         if let Some(h) = self.hls.as_mut() {
@@ -278,12 +311,42 @@ impl Session {
         }
     }
 
+    /// The host established the TCP connection requested by [`Action::TcpConnect`] (RTSP).
+    ///
+    /// A failed connect is reported with [`Session::on_closed`] and an error instead.
+    pub fn on_connected(&mut self, conn: u32) {
+        if self.closed {
+            return;
+        }
+        if let Some(r) = self.rtsp.as_mut() {
+            r.on_connected(conn, self.now_us);
+            self.flush_rtsp();
+        }
+    }
+
+    /// RTP packets the RTSP depayloader reported as lost or damaged so far (sequence gaps and
+    /// unrecoverable access units); the stream continues past them.
+    pub fn rtp_loss_count(&self) -> u64 {
+        self.rtsp.as_ref().map_or(0, |r| r.loss_events())
+    }
+
+    /// Interleaved RTP frames the RTSP depayloader rejected as malformed so far; each costs only
+    /// itself.
+    pub fn rtp_malformed_count(&self) -> u64 {
+        self.rtsp.as_ref().map_or(0, |r| r.malformed_frames())
+    }
+
     /// Set credentials.
     pub fn set_credentials(&mut self, creds: crate::Credentials) {
         if self.closed {
             return;
         }
         let was_waiting = self.auth.set_credentials(creds);
+        if let Some(r) = self.rtsp.as_mut() {
+            r.on_credentials(self.now_us, &self.auth);
+            self.flush_rtsp();
+            return;
+        }
         if was_waiting {
             if let Some(h) = self.hls.as_mut() {
                 h.resume(self.now_us, &mut self.auth);
@@ -307,6 +370,11 @@ impl Session {
             return;
         }
         self.now_us = now_us;
+        if let Some(r) = self.rtsp.as_mut() {
+            r.reconnect(now_us);
+            self.flush_rtsp();
+            return;
+        }
         if let Some(h) = self.hls.as_mut() {
             h.reconnect(now_us, &mut self.auth);
             self.flush_hls();
@@ -421,10 +489,22 @@ impl Session {
         for c in conns {
             self.actions.push_back(Action::Close { conn: c });
         }
+        if let Some(r) = self.rtsp.as_mut() {
+            r.close();
+            self.actions.extend(r.take_actions());
+        }
         self.known_conns.clear();
         self.conn_auth.clear();
         self.live_conn = None;
         self.events.clear();
+    }
+
+    fn flush_rtsp(&mut self) {
+        if let Some(r) = self.rtsp.as_mut() {
+            r.sync_wake(self.now_us);
+            self.actions.extend(r.take_actions());
+            self.events.extend(r.take_events());
+        }
     }
 
     fn flush_hls(&mut self) {

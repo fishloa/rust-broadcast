@@ -538,7 +538,7 @@ Driveable client and server state machines with CSeq correlation, Transport nego
 - **Cargo description:** Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types codec; optional tokio (+ rustls) socket adapter.
 - **Version (in-tree):** 0.8.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth)
-- **Used by (workspace):** [`multimux`](#multimux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [spec transcriptions](../rtsp-runtime/docs/) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
 
 #### srt-runtime
@@ -609,12 +609,12 @@ A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 dem
 
 #### broadcast-client
 
-Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP source on tshttp-runtime. Caller-supplied monotonic milliseconds, no I/O, std.
+Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds, no I/O, std.
 
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
-- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP and HLS sources.
+- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS and RTSP sources.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`hls-runtime`](#hls-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`hls-runtime`](#hls-runtime), [`rtsp-runtime`](#rtsp-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
 - **Used by (workspace):** none
 - **Links:** [README](../broadcast-client/README.md) · [spec transcriptions](../broadcast-client/docs/)
 
@@ -974,6 +974,7 @@ flowchart BT
   atsc3_route --> rmt_flute
   broadcast_client --> buffering_runtime
   broadcast_client --> hls_runtime
+  broadcast_client --> rtsp_runtime
   broadcast_client --> tshttp_runtime
   broadcast_hls --> broadcast_common
   broadcast_loudness --> broadcast_common

@@ -1,13 +1,44 @@
 # broadcast-client
 
 Generic sans-IO client session for live media: auth, redirects, reconnect/retry and buffering
-decisions over a TS-over-HTTP source (`tshttp-runtime`) and an HLS source (`hls-runtime`).
-The host performs only the HTTP transport; time is a caller-supplied monotonic `now_us`.
+decisions over a TS-over-HTTP source (`tshttp-runtime`), an HLS source (`hls-runtime`) and an
+RTSP source (`rtsp-runtime`). The host performs only transport I/O (HTTP requests, or a TCP
+connection for RTSP); time is a caller-supplied monotonic `now_us`.
 
 ## Sources
 
-`Config::kind` selects the source; `SourceKind::Auto` picks HLS for a `.m3u8`/`.m3u` URL path
-(ASCII case-insensitive) and TS-over-HTTP otherwise.
+`Config::kind` selects the source; `SourceKind::Auto` picks RTSP for an `rtsp://` or `rtsps://` URL,
+HLS for a `.m3u8`/`.m3u` URL path (ASCII case-insensitive) and TS-over-HTTP otherwise.
+
+## RTSP
+
+Sources for SAT>IP tuners and IP cameras. RTP/RTCP travel interleaved over the RTSP TCP connection
+(`RTP/AVP/TCP;interleaved`); UDP RTP is not supported. The host executes `Action::TcpConnect { conn,
+host, port, tls }` (ports default to 554 for `rtsp`, 322 for `rtsps`; for `rtsps` the host performs
+TLS and certificate validation, the session only sees plaintext) and reports the outcome with
+`Session::on_connected(conn)` or `Session::on_closed(conn, Some(error), now_us)`. It then writes the
+bytes of every `Action::Send { conn, bytes }` and feeds what it reads to `Session::on_data`.
+
+The handshake is DESCRIBE, one SETUP per SDP media (H.264 video and AAC audio; interleaved
+channels 0-1, 2-3, ...), then PLAY. Track ids are the 1-based SDP media order. `Event::Tracks` is
+emitted before the first sample of every connection, `Event::Sample { join: None }` per access
+unit, `Status::Establishing` on connect and `Status::Live` at the first sample. An `OPTIONS`
+keepalive is sent at half the server's `Session` `timeout` (clamped to 5 s..3600 s, 30 s when none
+is declared); a non-success reply to it is ignored. `close()` sends `TEARDOWN` before `Close`.
+RTCP sender reports are forwarded to the depayloader; no receiver reports are sent. Sequence gaps
+drop the damaged access unit and the stream continues (`Session::rtp_loss_count`); a malformed RTP
+frame costs only itself (`Session::rtp_malformed_count`).
+
+Credentials work as for HTTP (`Session::set_credentials`, Basic/Digest/Bearer through
+`rtsp-runtime`): a 401/407 without credentials reports `Event::AuthRequired` and
+`Status::WaitingForCredentials` and the session goes quiet on the open connection until
+credentials arrive, which re-send the challenged request. Rejected credentials report
+`Event::AuthRejected`. A 403 reports `Event::Forbidden`; a 404 on DESCRIBE reports
+`Status::NotFound`. Reconnect and stall behaviour is exactly the TS-over-HTTP policy and uses the
+same `Config::ts_http` values (`start_timeout_ms`, `stall_notice_ms`, `stall_reconnect_ms`,
+`backoff_ms`, `backoff_cap_ms`). No `Event::Buffer` is produced for RTSP; `Config::extra_headers`
+and cookies do not apply; credentials in the URL's userinfo are not used (they are stripped from
+request URIs) - pass them with `set_credentials`.
 
 HLS (BC-3a): a single media playlist, or a master playlist with the variant chosen by
 `Config::variant_policy` (`Event::Variants` reports the choice, `Session::select_variant` switches

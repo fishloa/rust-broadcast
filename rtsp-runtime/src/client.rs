@@ -157,6 +157,8 @@ pub struct ClientSession {
     scanned: usize,
     /// `inbound` length below which a re-parse cannot succeed (body wait).
     skip_until: usize,
+    /// The most recent `WWW-Authenticate` (else `Proxy-Authenticate`) value seen on any response.
+    last_challenge: Option<String>,
 }
 
 impl Default for ClientSession {
@@ -186,6 +188,7 @@ impl ClientSession {
             session_warning_total: 0,
             scanned: 0,
             skip_until: 0,
+            last_challenge: None,
         }
     }
 
@@ -193,6 +196,35 @@ impl ClientSession {
     pub fn with_credentials(mut self, credentials: Credentials) -> Self {
         self.credentials = Some(credentials);
         self
+    }
+
+    /// The most recent `WWW-Authenticate` (else `Proxy-Authenticate`) header value seen on any
+    /// response, kept even when no credentials are configured so the caller can learn the scheme
+    /// and realm to ask for.
+    pub fn last_challenge(&self) -> Option<&str> {
+        self.last_challenge.as_deref()
+    }
+
+    /// Attaches `credentials` to a live session and, when `challenge` (else the last challenge
+    /// seen) is available, builds the authenticator from it so the very next request already
+    /// carries an `Authorization` header instead of waiting for another `401`.
+    ///
+    /// # Errors
+    /// [`Error::Auth`] when the challenge cannot be answered with these credentials.
+    pub fn authenticate_with(
+        &mut self,
+        credentials: Credentials,
+        challenge: Option<&str>,
+    ) -> Result<()> {
+        let line = challenge
+            .map(str::to_string)
+            .or_else(|| self.last_challenge.clone());
+        self.authenticator = match line {
+            Some(line) => Some(Authenticator::from_challenge(&line, credentials.clone())?),
+            None => None,
+        };
+        self.credentials = Some(credentials);
+        Ok(())
     }
 
     /// Overrides the `User-Agent` header value sent on requests.
@@ -552,6 +584,12 @@ impl ClientSession {
                 };
                 let status = response.status();
 
+                if let Some(challenge) = header_value(response.header(&headers::WWW_AUTHENTICATE))
+                    .or_else(|| header_value(response.header(&headers::PROXY_AUTHENTICATE)))
+                {
+                    self.last_challenge = Some(challenge.to_string());
+                }
+
                 // 401: attempt a transparent auth retry.
                 if status == StatusCode::Unauthorized
                     && let Some(retry) = self.try_auth_retry(cseq, &response)?
@@ -775,6 +813,52 @@ mod tests {
         assert!(s.contains("ANNOUNCE rtsp://h/s"));
         assert!(s.contains("Content-Type: application/sdp"));
         assert!(s.contains(sdp));
+    }
+
+    fn wire_401(challenge: &str) -> Vec<u8> {
+        format!("RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\nWWW-Authenticate: {challenge}\r\n\r\n")
+            .into_bytes()
+    }
+
+    #[test]
+    fn challenge_is_recorded_without_credentials() {
+        let mut c = ClientSession::new();
+        c.describe("rtsp://h/s").unwrap();
+        assert_eq!(c.last_challenge(), None);
+        let events = c
+            .handle_data_strict(&wire_401("Basic realm=\"cam\""))
+            .unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [ClientEvent::Response {
+                status: StatusCode::Unauthorized,
+                ..
+            }]
+        ));
+        assert_eq!(c.last_challenge(), Some("Basic realm=\"cam\""));
+    }
+
+    #[test]
+    fn authenticate_with_makes_next_request_authorized() {
+        let mut c = ClientSession::new();
+        c.describe("rtsp://h/s").unwrap();
+        c.handle_data_strict(&wire_401("Basic realm=\"cam\""))
+            .unwrap();
+        let before = c.describe("rtsp://h/s").unwrap();
+        assert!(!String::from_utf8_lossy(&before).contains("Authorization"));
+        c.authenticate_with(Credentials::new("u", "p"), None)
+            .unwrap();
+        let after = String::from_utf8_lossy(&c.describe("rtsp://h/s").unwrap()).into_owned();
+        assert!(after.contains("Authorization: Basic dTpw"), "got: {after}");
+    }
+
+    #[test]
+    fn authenticate_with_explicit_challenge_overrides_recorded_one() {
+        let mut c = ClientSession::new();
+        c.authenticate_with(Credentials::new("u", "p"), Some("Basic realm=\"x\""))
+            .unwrap();
+        let req = String::from_utf8_lossy(&c.options("rtsp://h/s").unwrap()).into_owned();
+        assert!(req.contains("Authorization: Basic dTpw"), "got: {req}");
     }
 
     // Regression (audit run-09 W5): one unknown/duplicate CSeq in a batch of
