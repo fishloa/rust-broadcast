@@ -1929,7 +1929,7 @@ impl MediaPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BYTERANGE:") {
                 pending_byte_range = Some(ByteRange::parse(rest, line_no, line)?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MAP:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-MAP")?;
                 let byte_range = match attrs.get("BYTERANGE") {
                     Some(v) => Some(ByteRange::parse(v, line_no, line)?),
@@ -1957,14 +1957,14 @@ impl MediaPlaylist {
                 // it used to be split off and thrown away.
                 pending_title = (!title.is_empty()).then(|| title.to_string());
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART-INF:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 if let Some(v) = attrs.get("PART-TARGET") {
                     part_target = Some(parse_decimal_seconds(v, line_no, line, "PART-TARGET")?);
                 }
                 pi_extra_attrs.extend(filter_extra_attrs(&attrs, &["PART-TARGET"], &quoted)?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SERVER-CONTROL:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 if let Some(v) = attrs.get("PART-HOLD-BACK") {
                     part_hold_back =
                         Some(parse_decimal_seconds(v, line_no, line, "PART-HOLD-BACK")?);
@@ -1992,7 +1992,7 @@ impl MediaPlaylist {
                 )?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-PART")?;
                 let duration_str = attrs.get("DURATION").ok_or_else(|| Error::HlsParse {
                     line_no,
@@ -2022,7 +2022,7 @@ impl MediaPlaylist {
                 });
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PRELOAD-HINT:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 preload_hint_type = match attrs.get("TYPE").map(String::as_str) {
                     Some("MAP") => PreloadHintType::Map,
                     _ => PreloadHintType::Part,
@@ -2049,7 +2049,7 @@ impl MediaPlaylist {
                 )?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-RENDITION-REPORT:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-RENDITION-REPORT")?;
                 // Audit BH-W2 (issue #1111): LAST-MSN is REQUIRED
                 // (RFC 8216bis §4.4.5.3); defaulting it to 0 fabricated a
@@ -2070,7 +2070,7 @@ impl MediaPlaylist {
                     extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SKIP:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let skipped_segments_str =
                     require_attr(&attrs, "SKIPPED-SEGMENTS", line_no, line, "EXT-X-SKIP")?;
                 let skipped_segments =
@@ -2304,7 +2304,7 @@ fn push_define_line(s: &mut String, def: &Define) -> Result<()> {
 /// Parse an `#EXT-X-DEFINE:<attribute-list>` value (RFC 8216bis §4.4.2.3):
 /// exactly one of `NAME` (+ required `VALUE`), `IMPORT`, `QUERYPARAM`.
 fn parse_define(rest: &str, line_no: usize, line: &str) -> Result<Define> {
-    let (attrs, quoted) = parse_attribute_list(rest);
+    let (attrs, quoted) = parse_attribute_list_strict(rest)?;
     let present = [
         attrs.contains_key("NAME"),
         attrs.contains_key("IMPORT"),
@@ -2644,7 +2644,7 @@ fn push_start_line(s: &mut String, start: &StartPoint) {
 
 /// Parse the `#EXT-X-START:<attribute-list>` value.
 fn parse_start(rest: &str, line_no: usize, line: &str) -> Result<StartPoint> {
-    let (attrs, quoted) = parse_attribute_list(rest);
+    let (attrs, quoted) = parse_attribute_list_strict(rest)?;
     let time_offset_str = require_attr(&attrs, "TIME-OFFSET", line_no, line, "EXT-X-START")?;
     let time_offset = parse_signed_decimal_seconds(&time_offset_str, line_no, line, "TIME-OFFSET")?;
     let precise = attrs.get("PRECISE").map(String::as_str) == Some("YES");
@@ -2684,7 +2684,7 @@ fn push_session_data_line(s: &mut String, sd: &SessionData) -> Result<()> {
 
 /// Parse an `#EXT-X-SESSION-DATA:<attribute-list>` value.
 fn parse_session_data(rest: &str, line_no: usize, line: &str) -> Result<SessionData> {
-    let (attrs, quoted) = parse_attribute_list(rest);
+    let (attrs, quoted) = parse_attribute_list_strict(rest)?;
     let data_id = require_attr(&attrs, "DATA-ID", line_no, line, "EXT-X-SESSION-DATA")?;
     let value = attrs.get("VALUE");
     let uri = attrs.get("URI");
@@ -2770,7 +2770,7 @@ fn parse_key_attributes(
     tag: &str,
     allow_none: bool,
 ) -> Result<SessionKey> {
-    let (attrs, quoted) = parse_attribute_list(rest);
+    let (attrs, quoted) = parse_attribute_list_strict(rest)?;
     let method_str = require_attr(&attrs, "METHOD", line_no, line, tag)?;
     let method = match method_str.as_str() {
         "NONE" if allow_none => EncryptionMethod::None,
@@ -2796,7 +2796,7 @@ fn parse_key_attributes(
     };
     let uri = attrs.get("URI").cloned();
     let iv = match attrs.get("IV") {
-        Some(v) => Some(parse_iv(v, line_no, line)?),
+        Some(v) => Some(parse_iv(v)?),
         None => None,
     };
     let keyformat = attrs.get("KEYFORMAT").cloned();
@@ -2816,23 +2816,21 @@ fn parse_key_attributes(
     })
 }
 
-/// Parse a `0x`-prefixed (or bare) hexadecimal-sequence attribute value into
+/// Parse a `0x`-prefixed hexadecimal-sequence attribute value into
 /// exactly 16 bytes — the 128-bit IV of `#EXT-X-KEY`/`#EXT-X-SESSION-KEY`
 /// (RFC 8216bis §4.4.4.4). Only the *encoder* half of hex lives in
 /// `broadcast_common::hex` (see that module's doc comment); each consumer's
 /// decode error type differs, so the decoder is local to this crate.
-fn parse_iv(s: &str, line_no: usize, line: &str) -> Result<[u8; 16]> {
+const IV_HEX_DIGITS: usize = 32;
+
+fn parse_iv(s: &str) -> Result<[u8; 16]> {
     let hex = s
         .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
-        .unwrap_or(s);
-    if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(Error::HlsParse {
-            line_no,
-            line: line.to_string(),
-            reason: format!("IV value {s:?} is not a 128-bit (32 hex digit) sequence"),
-        });
-    }
+        .filter(|h| h.len() == IV_HEX_DIGITS && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or_else(|| Error::InvalidIv {
+            value: s.to_string(),
+        })?;
     let mut out = [0u8; 16];
     for i in 0..16 {
         // Safe: length and hex-digit-ness were just validated above.
@@ -3177,6 +3175,24 @@ fn parse_signed_decimal_seconds(
 /// #1045 / audit BH-C1 — `filter_extra_attrs` uses the quoted-name set to
 /// build a lossless [`AttrValue`] per unmodeled attribute).
 pub fn parse_attribute_list(s: &str) -> (BTreeMap<String, String>, BTreeSet<String>) {
+    scan_attribute_list(s, false).unwrap_or_default()
+}
+
+/// Strict [`parse_attribute_list`]: an unterminated quoted-string is
+/// [`Error::UnterminatedQuotedString`] and a repeated `AttributeName` is
+/// [`Error::DuplicateAttribute`] (RFC 8216bis §4.2: "A given AttributeName
+/// MUST NOT appear more than once in a given AttributeList"). Every typed
+/// playlist parser in this crate uses this form.
+pub fn parse_attribute_list_strict(
+    s: &str,
+) -> Result<(BTreeMap<String, String>, BTreeSet<String>)> {
+    scan_attribute_list(s, true)
+}
+
+fn scan_attribute_list(
+    s: &str,
+    strict: bool,
+) -> Result<(BTreeMap<String, String>, BTreeSet<String>)> {
     let mut map = BTreeMap::new();
     let mut quoted_keys = BTreeSet::new();
     let bytes = s.as_bytes();
@@ -3194,12 +3210,12 @@ pub fn parse_attribute_list(s: &str) -> (BTreeMap<String, String>, BTreeSet<Stri
             i += 1;
         }
         if i >= len {
-            // Trailing key with no '=': nothing sane to record, stop.
             break;
         }
         let key = &s[key_start..i];
-        i += 1; // skip '='
-        if i < len && bytes[i] == b'"' {
+        i += 1;
+        let quoted = i < len && bytes[i] == b'"';
+        let value = if quoted {
             i += 1;
             let value_start = i;
             while i < len && bytes[i] != b'"' {
@@ -3207,19 +3223,31 @@ pub fn parse_attribute_list(s: &str) -> (BTreeMap<String, String>, BTreeSet<Stri
             }
             let value = &s[value_start..i];
             if i < len {
-                i += 1; // skip closing '"'
+                i += 1;
+            } else if strict {
+                return Err(Error::UnterminatedQuotedString {
+                    list: s.to_string(),
+                });
             }
-            map.insert(key.to_string(), value.to_string());
-            quoted_keys.insert(key.to_string());
+            value
         } else {
             let value_start = i;
             while i < len && bytes[i] != b',' {
                 i += 1;
             }
-            map.insert(key.to_string(), s[value_start..i].to_string());
+            &s[value_start..i]
+        };
+        if strict && map.contains_key(key) {
+            return Err(Error::DuplicateAttribute {
+                name: key.to_string(),
+            });
+        }
+        map.insert(key.to_string(), value.to_string());
+        if quoted {
+            quoted_keys.insert(key.to_string());
         }
     }
-    (map, quoted_keys)
+    Ok((map, quoted_keys))
 }
 
 /// From an already-parsed attribute map, collect every attribute whose name
@@ -3443,13 +3471,18 @@ pub enum InstreamId {
     Other(String),
 }
 
+const INSTREAM_CC_PREFIX: &str = "CC";
+const INSTREAM_SERVICE_PREFIX: &str = "SERVICE";
+const INSTREAM_CC_RANGE: core::ops::RangeInclusive<u8> = 1..=4;
+const INSTREAM_SERVICE_RANGE: core::ops::RangeInclusive<u8> = 1..=63;
+
 impl InstreamId {
     /// Render the wire form.
     #[must_use]
     pub fn render(&self) -> String {
         match self {
-            InstreamId::Cc(n) => format!("CC{n}"),
-            InstreamId::Service(n) => format!("SERVICE{n}"),
+            InstreamId::Cc(n) => format!("{INSTREAM_CC_PREFIX}{n}"),
+            InstreamId::Service(n) => format!("{INSTREAM_SERVICE_PREFIX}{n}"),
             InstreamId::Other(s) => s.clone(),
         }
     }
@@ -3457,43 +3490,28 @@ impl InstreamId {
     /// Parse a closed-caption `INSTREAM-ID` value, rejecting `CC5+` and
     /// `SERVICE0`/`SERVICE64+`.
     pub fn parse_closed_captions(value: &str) -> Result<Self> {
-        if let Some(rest) = value.strip_prefix("CC") {
-            let n: u8 = rest.parse().map_err(|_| Error::HlsParse {
-                line_no: 0,
-                line: String::new(),
-                reason: format!("invalid CLOSED-CAPTIONS INSTREAM-ID {value:?}"),
-            })?;
-            if !(1..=4).contains(&n) {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("CLOSED-CAPTIONS INSTREAM-ID must be CC1..CC4, got {value:?}"),
-                });
-            }
-            return Ok(InstreamId::Cc(n));
+        let invalid = || Error::InvalidInstreamId {
+            value: value.to_string(),
+        };
+        let canonical_decimal = |digits: &str| -> Option<u8> {
+            let well_formed = !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && !digits.starts_with('0');
+            well_formed.then(|| digits.parse().ok()).flatten()
+        };
+        if let Some(rest) = value.strip_prefix(INSTREAM_CC_PREFIX) {
+            return canonical_decimal(rest)
+                .filter(|n| INSTREAM_CC_RANGE.contains(n))
+                .map(InstreamId::Cc)
+                .ok_or_else(invalid);
         }
-        if let Some(rest) = value.strip_prefix("SERVICE") {
-            let n: u8 = rest.parse().map_err(|_| Error::HlsParse {
-                line_no: 0,
-                line: String::new(),
-                reason: format!("invalid CLOSED-CAPTIONS INSTREAM-ID {value:?}"),
-            })?;
-            if !(1..=63).contains(&n) {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!(
-                        "CLOSED-CAPTIONS INSTREAM-ID must be SERVICE1..SERVICE63, got {value:?}"
-                    ),
-                });
-            }
-            return Ok(InstreamId::Service(n));
+        if let Some(rest) = value.strip_prefix(INSTREAM_SERVICE_PREFIX) {
+            return canonical_decimal(rest)
+                .filter(|n| INSTREAM_SERVICE_RANGE.contains(n))
+                .map(InstreamId::Service)
+                .ok_or_else(invalid);
         }
-        Err(Error::HlsParse {
-            line_no: 0,
-            line: String::new(),
-            reason: format!("invalid CLOSED-CAPTIONS INSTREAM-ID {value:?}"),
-        })
+        Err(invalid())
     }
 }
 
@@ -3921,6 +3939,7 @@ impl MasterPlaylist {
                 validate_quoted_string(codecs, "EXT-X-I-FRAME-STREAM-INF CODECS")?;
             }
         }
+        check_rendition_groups(&self.media)?;
         // EXT-X-MEDIA rendition validation (RFC 8216bis §4.4.6.1).
         for m in &self.media {
             if m.group_id.is_empty() {
@@ -4007,6 +4026,17 @@ impl MasterPlaylist {
             if let Some(ii) = &m.instream_id {
                 let v = ii.render();
                 validate_quoted_string(&v, "EXT-X-MEDIA INSTREAM-ID")?;
+                let closed_captions = m.media_type == MediaType::ClosedCaptions;
+                let cc_form = !matches!(ii, InstreamId::Other(_));
+                if closed_captions != cc_form {
+                    return Err(Error::InstreamIdTypeMismatch {
+                        media_type: m.media_type,
+                        value: v,
+                    });
+                }
+                if closed_captions {
+                    InstreamId::parse_closed_captions(&v)?;
+                }
             }
             if let Some(ch) = &m.channels {
                 validate_quoted_string(ch, "EXT-X-MEDIA CHANNELS")?;
@@ -4127,7 +4157,7 @@ impl MasterPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-VERSION:") {
                 version = parse_decimal_int(rest, line_no, line, "EXT-X-VERSION")?;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-STREAM-INF:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let bandwidth_str =
                     require_attr(&attrs, "BANDWIDTH", line_no, line, "EXT-X-STREAM-INF")?;
                 let bandwidth = parse_decimal_int(&bandwidth_str, line_no, line, "BANDWIDTH")?;
@@ -4189,7 +4219,7 @@ impl MasterPlaylist {
                     extra_attrs,
                 ));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-I-FRAME-STREAM-INF:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let bandwidth_str = require_attr(
                     &attrs,
                     "BANDWIDTH",
@@ -4238,7 +4268,7 @@ impl MasterPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SESSION-KEY:") {
                 session_keys.push(parse_session_key(rest, line_no, line)?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-CONTENT-STEERING:") {
-                let (attrs, quoted) = parse_attribute_list(rest);
+                let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let server_uri = require_attr(
                     &attrs,
                     "SERVER-URI",
@@ -4331,6 +4361,8 @@ impl MasterPlaylist {
                     .to_string(),
             });
         }
+
+        check_rendition_groups(&media)?;
 
         Ok(MasterPlaylist {
             version,
@@ -4575,8 +4607,42 @@ fn parse_resolution(v: &str, line_no: usize, line: &str) -> Result<(u32, u32)> {
     Ok((width, height))
 }
 
+fn parse_yes_no(attrs: &BTreeMap<String, String>, attribute: &'static str) -> Result<Option<bool>> {
+    match attrs.get(attribute).map(String::as_str) {
+        None => Ok(None),
+        Some("YES") => Ok(Some(true)),
+        Some("NO") => Ok(Some(false)),
+        Some(other) => Err(Error::InvalidYesNo {
+            attribute,
+            value: other.to_string(),
+        }),
+    }
+}
+
+fn check_rendition_groups(media: &[MediaRendition]) -> Result<()> {
+    let mut seen: BTreeSet<(&str, &str, &str)> = BTreeSet::new();
+    let mut defaults: BTreeSet<(&str, &str)> = BTreeSet::new();
+    for m in media {
+        let group = (m.media_type.name(), m.group_id.as_str());
+        if !seen.insert((m.media_type.name(), m.group_id.as_str(), m.name.as_str())) {
+            return Err(Error::DuplicateNameInGroup {
+                media_type: m.media_type,
+                group_id: m.group_id.clone(),
+                name: m.name.clone(),
+            });
+        }
+        if m.default && !defaults.insert(group) {
+            return Err(Error::DuplicateDefaultInGroup {
+                media_type: m.media_type,
+                group_id: m.group_id.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn parse_media_rendition(rest: &str, line_no: usize, line: &str) -> Result<MediaRendition> {
-    let (attrs, quoted) = parse_attribute_list(rest);
+    let (attrs, quoted) = parse_attribute_list_strict(rest)?;
 
     // TYPE (REQUIRED)
     let type_str = require_attr(&attrs, "TYPE", line_no, line, "EXT-X-MEDIA")?;
@@ -4642,15 +4708,9 @@ fn parse_media_rendition(rest: &str, line_no: usize, line: &str) -> Result<Media
     }
 
     // DEFAULT / AUTOSELECT
-    let default = attrs
-        .get("DEFAULT")
-        .map(|v| v.eq_ignore_ascii_case("YES"))
-        .unwrap_or(false);
+    let default = parse_yes_no(&attrs, "DEFAULT")?.unwrap_or(false);
     let autoselect_present = attrs.contains_key("AUTOSELECT");
-    let autoselect = attrs
-        .get("AUTOSELECT")
-        .map(|v| v.eq_ignore_ascii_case("YES"))
-        .unwrap_or(default);
+    let autoselect = parse_yes_no(&attrs, "AUTOSELECT")?.unwrap_or(default);
     if default && autoselect_present && !autoselect {
         return Err(Error::HlsParse {
             line_no,
@@ -4660,10 +4720,7 @@ fn parse_media_rendition(rest: &str, line_no: usize, line: &str) -> Result<Media
     }
 
     // FORCED
-    let forced = attrs
-        .get("FORCED")
-        .map(|v| v.eq_ignore_ascii_case("YES"))
-        .unwrap_or(false);
+    let forced = parse_yes_no(&attrs, "FORCED")?.unwrap_or(false);
     if forced && media_type != MediaType::Subtitles {
         // FORCED MUST NOT be present unless TYPE is SUBTITLES; treat YES as violation
         return Err(Error::HlsParse {
@@ -6148,7 +6205,7 @@ s0.m4s\n";
         let text = "#EXTM3U\n\
 #EXT-X-SESSION-KEY:METHOD=AES-128,URI=\"k\",IV=0xnotahexvalue\n";
         let err = MasterPlaylist::parse(text).expect_err("malformed IV must error");
-        assert!(matches!(err, Error::HlsParse { .. }));
+        assert!(matches!(err, Error::InvalidIv { value } if value == "0xnotahexvalue"));
     }
 
     #[test]

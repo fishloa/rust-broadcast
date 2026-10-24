@@ -117,20 +117,53 @@ pub struct Challenge {
     pub other_params: Vec<(String, String)>,
 }
 
+const RESOURCE_METADATA_SCHEME: &str = "https";
+
+/// Maximum number of challenges accepted from one [`parse_challenges`] call.
+pub const MAX_CHALLENGES: usize = 16;
+
+/// Outcome of [`parse_challenges`]: every challenge that parsed, plus one
+/// error per challenge (or header line) that did not.
+///
+/// The `token68` form (`Bearer abc123==`, RFC 9110 §11.6.1) is not supported
+/// by the underlying `http-auth` tokeniser and is reported in `errors`.
+#[non_exhaustive]
+#[derive(Debug, Default)]
+pub struct ParsedChallenges {
+    /// Challenges that parsed, in input order.
+    pub challenges: Vec<Challenge>,
+    /// Errors for the challenges that did not.
+    pub errors: Vec<Error>,
+}
+
 /// Parse one or more `WWW-Authenticate` header lines into challenges.
-pub fn parse_challenges(lines: &[&str]) -> Result<Vec<Challenge>> {
-    let mut out = Vec::new();
+///
+/// A malformed challenge never discards the valid ones around it. After
+/// [`MAX_CHALLENGES`] challenges, [`Error::TooManyChallenges`] is recorded and
+/// the rest are ignored.
+pub fn parse_challenges(lines: &[&str]) -> ParsedChallenges {
+    let mut out = ParsedChallenges::default();
     for line in lines {
         if line.trim().is_empty() {
             continue;
         }
-        let parser = ChallengeParser::new(line);
-        for item in parser {
-            let cr = item.map_err(|e| Error::ChallengeParse(e.to_string()))?;
-            out.push(convert(cr)?);
+        for item in ChallengeParser::new(line) {
+            if out.challenges.len() >= MAX_CHALLENGES {
+                out.errors.push(Error::TooManyChallenges {
+                    max: MAX_CHALLENGES,
+                });
+                return out;
+            }
+            match item
+                .map_err(|e| Error::ChallengeParse(e.to_string()))
+                .and_then(convert)
+            {
+                Ok(c) => out.challenges.push(c),
+                Err(e) => out.errors.push(e),
+            }
         }
     }
-    Ok(out)
+    out
 }
 
 fn convert(cr: http_auth::ChallengeRef<'_>) -> Result<Challenge> {
@@ -182,7 +215,10 @@ fn convert(cr: http_auth::ChallengeRef<'_>) -> Result<Challenge> {
                 if resource_metadata.is_some() {
                     return Err(Error::DuplicateParameter { name: key });
                 }
-                let url = url::Url::parse(&val).map_err(|_| Error::InvalidResourceMetadata)?;
+                let url = url::Url::parse(&val)
+                    .ok()
+                    .filter(|u| u.scheme() == RESOURCE_METADATA_SCHEME)
+                    .ok_or(Error::InvalidResourceMetadata)?;
                 resource_metadata = Some(url);
             }
             _ => other_params.push((name.to_string(), val)),

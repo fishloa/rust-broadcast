@@ -107,4 +107,80 @@ pub enum Error {
         /// The non-identity `KEYFORMAT` that applies.
         keyformat: String,
     },
+
+    /// A `CLOSED-CAPTIONS` `INSTREAM-ID` is not `CC1`..`CC4` or
+    /// `SERVICE1`..`SERVICE63` in canonical form (RFC 8216bis §4.4.6.1:
+    /// `"CC"` + one digit 1-4, or `"SERVICE"` + decimal 1-63 with no sign and
+    /// no leading zero).
+    #[error("invalid CLOSED-CAPTIONS INSTREAM-ID {value:?}")]
+    InvalidInstreamId {
+        /// The offending value.
+        value: String,
+    },
+
+    /// An `INSTREAM-ID` form does not match the rendition `TYPE`: `CC`/
+    /// `SERVICE` forms are only valid on `CLOSED-CAPTIONS`, and `Other` only on
+    /// the other types (RFC 8216bis §4.4.6.1).
+    #[error("INSTREAM-ID {value:?} is not valid on TYPE={media_type}")]
+    InstreamIdTypeMismatch {
+        /// The rendition `TYPE`.
+        media_type: crate::MediaType,
+        /// The rendered `INSTREAM-ID`.
+        value: String,
+    },
+
+    /// A Rendition Group has more than one member with `DEFAULT=YES`
+    /// (RFC 8216bis §4.4.6.1.1).
+    #[error("group {group_id:?} of TYPE={media_type} has more than one DEFAULT=YES member")]
+    DuplicateDefaultInGroup {
+        /// The group's `TYPE`.
+        media_type: crate::MediaType,
+        /// The group's `GROUP-ID`.
+        group_id: String,
+    },
+
+    /// Two members of one Rendition Group share a `NAME`
+    /// (RFC 8216bis §4.4.6.1.1).
+    #[error("group {group_id:?} of TYPE={media_type} has more than one member named {name:?}")]
+    DuplicateNameInGroup {
+        /// The group's `TYPE`.
+        media_type: crate::MediaType,
+        /// The group's `GROUP-ID`.
+        group_id: String,
+        /// The repeated `NAME`.
+        name: String,
+    },
+
+    /// An enumerated-string `YES`/`NO` attribute carries any other value;
+    /// enumerated-strings are case-sensitive (RFC 8216bis §4.2).
+    #[error("attribute {attribute} must be exactly YES or NO, got {value:?}")]
+    InvalidYesNo {
+        /// The attribute name.
+        attribute: &'static str,
+        /// The offending value.
+        value: String,
+    },
+
+    /// An `IV` is not a `0x`/`0X`-prefixed 128-bit hexadecimal-sequence
+    /// (RFC 8216bis §4.2, §4.4.4.4).
+    #[error("IV {value:?} is not a 0x-prefixed 128-bit hexadecimal-sequence")]
+    InvalidIv {
+        /// The offending value.
+        value: String,
+    },
+
+    /// A quoted-string attribute value has no closing `"` (RFC 8216bis §4.2).
+    #[error("unterminated quoted-string in attribute list {list:?}")]
+    UnterminatedQuotedString {
+        /// The attribute list text.
+        list: String,
+    },
+
+    /// An `AttributeName` appears more than once in one attribute list
+    /// (RFC 8216bis §4.2: "MUST NOT appear more than once").
+    #[error("duplicate attribute {name:?}")]
+    DuplicateAttribute {
+        /// The repeated attribute name.
+        name: String,
+    },
 }
