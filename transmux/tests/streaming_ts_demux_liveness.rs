@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 const CHUNK: usize = 64 * 1024;
+const SEAM_TAIL_FRAMES: usize = 12;
 
 struct Run {
     first_sample_byte: Option<usize>,
@@ -194,6 +195,50 @@ fn release_silent_heads_unblocks_a_unit_whose_declared_video_never_came() {
         assert!(
             samples_after(&mut released) > 0,
             "{rel}: a silent declared PID still blocks its program after the unit ended"
+        );
+    }
+}
+
+#[test]
+fn restart_timeline_keeps_tracks_and_ids_across_the_seam() {
+    let data = test_fixtures::read("ts/h264_aac_40s.ts");
+    let data = &data[..data.len() / 188 * 188];
+    let half = data.len() / 188 / 2 * 188;
+
+    let collect = |restart: bool| {
+        let mut d = StreamingTsDemux::new();
+        let mut added = Vec::new();
+        let mut samples: BTreeMap<u32, usize> = BTreeMap::new();
+        let mut drain = |d: &mut StreamingTsDemux| {
+            while let Some(e) = d.poll_event() {
+                match e {
+                    DemuxEvent::TrackAdded(s) => added.push((s.track_id.value(), s.source_pid)),
+                    DemuxEvent::Sample { track_id, .. } => {
+                        *samples.entry(track_id.value()).or_default() += 1;
+                    }
+                    _ => {}
+                }
+            }
+        };
+        d.feed(&data[..half]);
+        drain(&mut d);
+        if restart {
+            d.restart_timeline();
+            drain(&mut d);
+        }
+        d.feed(&data[half..]);
+        d.finish();
+        drain(&mut d);
+        (added, samples)
+    };
+    let (plain_added, plain_samples) = collect(false);
+    let (cut_added, cut_samples) = collect(true);
+    assert_eq!(cut_added, plain_added, "a seam must not re-announce tracks");
+    for (id, want) in &plain_samples {
+        let got = cut_samples[id];
+        assert!(
+            want.abs_diff(got) <= SEAM_TAIL_FRAMES,
+            "track {id}: {got} vs {want}"
         );
     }
 }
