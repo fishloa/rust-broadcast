@@ -24,6 +24,10 @@ const MICROS_PER_SEC: u64 = 1_000_000;
 /// [`crate::Config::buffer`].
 ///
 /// For live HLS the start lead is `min(3 x EXT-X-TARGETDURATION, live_start_lead_us)`.
+///
+/// A lead the stream cannot reach keeps the gate closed: a start lead of `u64::MAX` never emits
+/// `Start` before the source ends, and a `pause_lead_us` at or above the lead the source
+/// sustains pauses on every update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayoutConfig {
     /// Media that must be buffered past the origin before `Start`, VOD sources.

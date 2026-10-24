@@ -111,7 +111,7 @@ impl Session {
             };
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
-        config.validate_tracks_hold()?;
+        config.validate()?;
         let buffer_cfg = config.buffer;
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
