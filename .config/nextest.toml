@@ -41,3 +41,17 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 filter = 'test(/^real_browser_/)'
 test-group = 'browser'
 slow-timeout = { period = "60s", terminate-after = 5 }
+
+# transmux::garbled_input::garbled_fixtures_never_yield_unserializable_configs
+# walks every garbled fixture through the full parse path: measured 49.9 s in
+# isolation on a dev machine with the private fixtures present, so on a loaded
+# CI runner it crossed the default 90 s cap and was killed (PR #1479 CI run
+# 40047791074, a real timeout unrelated to the change under test). Own cap:
+# 6 x 60 s.
+[[profile.default.overrides]]
+filter = 'test(garbled_fixtures_never_yield_unserializable_configs)'
+slow-timeout = { period = "60s", terminate-after = 6 }
+
+[[profile.ci.overrides]]
+filter = 'test(garbled_fixtures_never_yield_unserializable_configs)'
+slow-timeout = { period = "60s", terminate-after = 6 }

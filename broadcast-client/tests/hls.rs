@@ -177,7 +177,25 @@ fn media_playlist_ts_segments_emit_tracks_then_samples() {
         h.seen.iter().map(|s| s.url.as_str()).collect::<Vec<_>>(),
         vec![TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL]
     );
-    assert!(h.events.iter().all(|e| !matches!(e, Event::Buffer(_))));
+    let starts = h
+        .events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Buffer(broadcast_client::BufferEvent::Start { .. })
+            )
+        })
+        .count();
+    assert_eq!(starts, 1, "the VOD playout gate starts once");
+    assert_eq!(
+        h.events
+            .iter()
+            .filter(|e| matches!(e, Event::Buffer(_)))
+            .count(),
+        1,
+        "and emits nothing else without a playback position"
+    );
     assert!(h.events.iter().all(|e| match e {
         Event::Sample { join, .. } => join.is_none(),
         _ => true,
@@ -211,7 +229,25 @@ fn media_playlist_fmp4_segments_emit_tracks_then_samples() {
     let expected = oracle_events(CMAF_PLAYLIST_URL, &bodies);
     assert!(count(&expected, is_sample) > 100);
     assert_eq!(count(&h.events, is_sample), count(&expected, is_sample));
-    assert!(h.events.iter().all(|e| !matches!(e, Event::Buffer(_))));
+    let starts = h
+        .events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Buffer(broadcast_client::BufferEvent::Start { .. })
+            )
+        })
+        .count();
+    assert_eq!(starts, 1, "the VOD playout gate starts once");
+    assert_eq!(
+        h.events
+            .iter()
+            .filter(|e| matches!(e, Event::Buffer(_)))
+            .count(),
+        1,
+        "and emits nothing else without a playback position"
+    );
 }
 
 #[test]

@@ -184,6 +184,14 @@ impl HlsSource {
         self.reqs.contains_key(&conn)
     }
 
+    pub(crate) fn endlist_seen(&self) -> bool {
+        self.client.endlist_seen()
+    }
+
+    pub(crate) fn target_duration_secs(&self) -> Option<u32> {
+        self.client.target_duration_secs()
+    }
+
     pub(crate) fn is_fatal(&self) -> bool {
         self.fatal
     }

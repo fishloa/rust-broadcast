@@ -419,6 +419,8 @@ pub struct Config {
     pub initial_cookies: Vec<(String, String)>,
     /// Buffer controller config.
     pub buffer: buffering_runtime::ControllerConfig,
+    /// Playout gate leads for HLS and finite TS (live TS-over-HTTP uses [`Config::buffer`]).
+    pub playout: crate::playout::PlayoutConfig,
     /// HLS variant selection policy.
     pub variant_policy: hls_runtime::client::VariantPolicy,
     /// HLS: maximum playlist body bytes.
@@ -456,6 +458,7 @@ impl Default for Config {
             extra_headers: Vec::new(),
             initial_cookies: Vec::new(),
             buffer: buffering_runtime::ControllerConfig::default(),
+            playout: crate::playout::PlayoutConfig::default(),
             variant_policy: hls_runtime::client::VariantPolicy::default(),
             max_playlist_bytes: DEFAULT_MAX_PLAYLIST_BYTES,
             max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
@@ -482,6 +485,7 @@ impl core::fmt::Debug for Config {
             .field("extra_header_names", &header_names)
             .field("initial_cookies", &self.initial_cookies.len())
             .field("buffer", &self.buffer)
+            .field("playout", &self.playout)
             .field("variant_policy", &self.variant_policy)
             .field("max_playlist_bytes", &self.max_playlist_bytes)
             .field("max_segment_bytes", &self.max_segment_bytes)

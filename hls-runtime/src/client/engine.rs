@@ -399,6 +399,18 @@ impl HlsClient {
         &self.playlist_url
     }
 
+    /// Whether a playlist carrying `EXT-X-ENDLIST` has been processed (the stream is VOD or
+    /// has finished).
+    pub fn endlist_seen(&self) -> bool {
+        self.saw_endlist
+    }
+
+    /// `EXT-X-TARGETDURATION` in seconds of the last full media playlist, `None` before one
+    /// was processed.
+    pub fn target_duration_secs(&self) -> Option<u32> {
+        self.last_full_playlist.as_ref().map(|p| p.target_duration)
+    }
+
     /// Set the variant selection policy. Must be callable before the first
     /// `on_playlist`.
     pub fn set_variant_policy(&mut self, policy: VariantPolicy) {

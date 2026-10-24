@@ -53,6 +53,10 @@ test-seams = []
 name = "buffer"
 required-features = ["test-seams"]
 
+[[test]]
+name = "playout"
+required-features = ["test-seams"]
+
 [[example]]
 name = "live_loop"
 
