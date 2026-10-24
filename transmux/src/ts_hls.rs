@@ -33,6 +33,14 @@
 //! is set; this packager itself produces a single continuous timeline from one
 //! contiguous IR, so it does not set the flag on any generated segment.
 //!
+//! # Cut policy
+//!
+//! [`StreamingTsHlsSegmenter::with_cut_policy`] selects a
+//! [`SegmentCutPolicy`]: the default `AnyRap` cuts on
+//! any sync sample; `IdrOnly` cuts only on an IDR picture and drops leading
+//! access units until the first one (Apple HLS Authoring Spec 7.4,
+//! `docs/hls-apple-conformance/`).
+//!
 //! # Streaming (live) input — [`StreamingTsHlsSegmenter`]
 //!
 //! [`TsHlsPackager::package`] is batch: it needs the whole [`Media`] up front.
@@ -77,7 +85,9 @@ use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
-use crate::pipeline::{Sample, TrackSpec};
+use crate::nal::{NalCodec, access_unit_is_idr};
+use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::segment_cut::SegmentCutPolicy;
 use crate::segmenter::{
     MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
 };
@@ -676,6 +686,17 @@ pub struct StreamingTsHlsSegmenter {
     /// Explicit discontinuity: when `true` the *next* cut is marked
     /// discontinuous. Reset to `false` after each cut.
     pending_discontinuity: bool,
+    /// Which anchor pictures may open a segment ([`SegmentCutPolicy`]).
+    cut_policy: SegmentCutPolicy,
+    /// [`SegmentCutPolicy::IdrOnly`] only: no IDR has been seen since the
+    /// session start or the last [`StreamingTsHlsSegmenter::mark_discontinuity`],
+    /// so every sample is dropped until the anchor delivers one.
+    awaiting_idr: bool,
+    /// [`SegmentCutPolicy::IdrOnly`] only: the segment opened by the IDR that
+    /// ends the current wait must be flagged discontinuous.
+    discontinuity_at_resync: bool,
+    /// Anchor access units dropped while awaiting an IDR.
+    dropped_leading_aus: u64,
     /// Set by [`Self::finish`]; makes [`Self::playlist`] emit `#EXT-X-ENDLIST`.
     finished: bool,
     /// `#EXT-X-VERSION` written to the playlist.
@@ -792,6 +813,10 @@ impl StreamingTsHlsSegmenter {
             anchor_clock: MediaClock::new(),
             origin_secs: None,
             pending_discontinuity: false,
+            cut_policy: SegmentCutPolicy::AnyRap,
+            awaiting_idr: false,
+            discontinuity_at_resync: false,
+            dropped_leading_aus: 0,
             finished: false,
             version: DEFAULT_HLS_VERSION,
             uri_prefix: String::from("seg"),
@@ -827,6 +852,55 @@ impl StreamingTsHlsSegmenter {
         let mut seg = Self::new(tracks, target_secs, window)?;
         seg.total_segments = next_sequence;
         Ok(seg)
+    }
+
+    /// Select the [`SegmentCutPolicy`] (default [`SegmentCutPolicy::AnyRap`]).
+    ///
+    /// With [`SegmentCutPolicy::IdrOnly`] the segmenter drops every sample
+    /// until the anchor track delivers its first IDR picture, so the first
+    /// segment starts on an IDR (Apple HLS Authoring Spec 7.4); the dropped
+    /// anchor access units are counted by [`Self::dropped_leading_aus`].
+    /// Only AVC/HEVC/VVC anchors carry IDR pictures: any other anchor codec
+    /// keeps the sync-flag rule under either policy.
+    ///
+    /// Call before the first [`Self::push`]; a later call re-arms the wait
+    /// only if nothing has been buffered or cut yet.
+    #[must_use]
+    pub fn with_cut_policy(mut self, policy: SegmentCutPolicy) -> Self {
+        self.cut_policy = policy;
+        let untouched =
+            self.total_segments == 0 && self.tracks.iter().all(|t| t.pending.is_empty());
+        self.awaiting_idr = policy == SegmentCutPolicy::IdrOnly && untouched;
+        self
+    }
+
+    /// The configured [`SegmentCutPolicy`].
+    pub fn cut_policy(&self) -> SegmentCutPolicy {
+        self.cut_policy
+    }
+
+    /// Anchor access units dropped because [`SegmentCutPolicy::IdrOnly`] was
+    /// waiting for an IDR (session start, or after
+    /// [`Self::mark_discontinuity`]). Always `0` under
+    /// [`SegmentCutPolicy::AnyRap`].
+    pub fn dropped_leading_aus(&self) -> u64 {
+        self.dropped_leading_aus
+    }
+
+    fn anchor_nal_codec(&self) -> Option<NalCodec> {
+        match self.tracks[self.anchor].spec.config {
+            CodecConfig::Avc { .. } => Some(NalCodec::Avc),
+            CodecConfig::Hevc { .. } => Some(NalCodec::Hevc),
+            CodecConfig::Vvc { .. } => Some(NalCodec::Vvc),
+            _ => None,
+        }
+    }
+
+    fn opens_segment(&self, sample: &Sample) -> bool {
+        match (self.cut_policy, self.anchor_nal_codec()) {
+            (SegmentCutPolicy::IdrOnly, Some(codec)) => access_unit_is_idr(codec, &sample.data),
+            _ => sample.flags.is_sync,
+        }
     }
 
     /// Push one coded sample for `track_id`, in decode order.
@@ -876,10 +950,28 @@ impl StreamingTsHlsSegmenter {
             .position(|t| t.spec.track_id == track_id)
             .ok_or(Error::InvalidInput("push: unknown track_id"))?;
 
+        if self.awaiting_idr {
+            if idx != self.anchor {
+                return Ok(());
+            }
+            if !self.opens_segment(&sample) {
+                self.dropped_leading_aus += 1;
+                return Ok(());
+            }
+            self.awaiting_idr = false;
+            if !self.tracks[self.anchor].pending.is_empty() {
+                self.cut_segment(false)?;
+            }
+            if self.discontinuity_at_resync {
+                self.pending_discontinuity = self.total_segments > 0;
+                self.discontinuity_at_resync = false;
+            }
+        }
+
         if idx == self.anchor
             && is_cut_point(
                 !self.tracks[self.anchor].pending.is_empty(),
-                sample.flags.is_sync,
+                self.opens_segment(&sample),
                 self.anchor_pending_dur,
                 self.target_ticks,
             )
@@ -949,8 +1041,17 @@ impl StreamingTsHlsSegmenter {
     /// (RFC 8216 §4.3.4.3) — call this when the caller detects a PID/PCR
     /// reset in the live source (e.g. an upstream PMT/PCR-PID change)
     /// between one push and the next.
+    ///
+    /// Under [`SegmentCutPolicy::IdrOnly`] the segmenter additionally drops
+    /// samples until the anchor's next IDR, closes the pre-gap segment there,
+    /// and flags the segment that IDR opens as discontinuous.
     pub fn mark_discontinuity(&mut self) {
-        self.pending_discontinuity = true;
+        if self.cut_policy == SegmentCutPolicy::IdrOnly {
+            self.awaiting_idr = true;
+            self.discontinuity_at_resync = true;
+        } else {
+            self.pending_discontinuity = true;
+        }
     }
 
     /// Register a track after construction (issue #624).

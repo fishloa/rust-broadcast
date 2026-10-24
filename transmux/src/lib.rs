@@ -218,6 +218,7 @@ pub mod rtp_stream;
 pub mod sample_aes;
 pub mod sample_entries;
 pub mod sample_groups;
+pub mod segment_cut;
 pub mod segmenter;
 pub mod segments;
 pub mod slice_header;
@@ -356,8 +357,8 @@ pub use mpegh::{
     MHADecoderConfigurationRecord, MHM1_FOURCC, MHM2_FOURCC,
 };
 pub use nal::{
-    NalCodec, access_unit_is_keyframe, access_unit_is_rap, caption_cc_data, is_keyframe_nal,
-    nal_unit_type, recovery_point_sei,
+    NalCodec, access_unit_is_idr, access_unit_is_keyframe, access_unit_is_rap, caption_cc_data,
+    is_idr_nal, is_keyframe_nal, nal_unit_type, recovery_point_sei,
 };
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
@@ -409,6 +410,7 @@ pub use sample_groups::{
     GROUPING_TYPE_ROLL, ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox,
     SbgpEntry, SgpdEntry, SubSampleDescriptor, SubSampleInformationBox, SubsEntry,
 };
+pub use segment_cut::SegmentCutPolicy;
 pub use segmenter::{SegmentMeta, Segmenter};
 pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 #[cfg(feature = "std")]

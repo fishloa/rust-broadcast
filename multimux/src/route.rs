@@ -781,6 +781,12 @@ pub struct RouteHandle {
     /// exclusivity rule): a `Trunk` has one segment ring per program, so a
     /// program's samples are segmented into fMP4 *or* TS, never both.
     container: Container,
+    /// Segment cut rule of this route's classic-TS segmenter, set via
+    /// [`Self::with_ts_cut_policy`]; unused by the fMP4 container.
+    ts_cut_policy: transmux::SegmentCutPolicy,
+    /// Display text of the typed error that failed this route's output (see
+    /// [`Self::fail_output`]); `None` while the output is healthy.
+    output_error: Mutex<Option<String>>,
     created_at: SystemTime,
     /// Egress-resolvable `ProgramId -> Arc<ProgramServing>` registry:
     /// `media_plane::IngestDriver` mints one `Trunk` per program the instant
@@ -871,6 +877,8 @@ impl RouteHandle {
             part_target_ms,
             window_segments_cap: window_segments,
             container: Container::default(),
+            ts_cut_policy: transmux::SegmentCutPolicy::default(),
+            output_error: Mutex::new(None),
             created_at: SystemTime::now(),
             programs: RwLock::new(BTreeMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
@@ -908,6 +916,38 @@ impl RouteHandle {
     pub fn with_container(mut self, container: Container) -> Self {
         self.container = container;
         self
+    }
+
+    /// Sets the segment cut rule of this route's classic-TS segmenter
+    /// ([`transmux::SegmentCutPolicy`]); `multimux` passes
+    /// [`crate::config::Route::ts_hls_cut`] here, whose default is
+    /// `IdrOnly`. A bare [`Self::new`] keeps `AnyRap`.
+    #[must_use]
+    pub fn with_ts_cut_policy(mut self, policy: transmux::SegmentCutPolicy) -> Self {
+        self.ts_cut_policy = policy;
+        self
+    }
+
+    /// The configured classic-TS cut rule (see [`Self::with_ts_cut_policy`]).
+    pub fn ts_cut_policy(&self) -> transmux::SegmentCutPolicy {
+        self.ts_cut_policy
+    }
+
+    /// Record that this route's output cannot serve what the program
+    /// delivered. Returns `true` only for the first failure, so a caller
+    /// retrying every poll logs once.
+    pub(crate) fn fail_output(&self, error: &crate::MultimuxError) -> bool {
+        let mut slot = self.output_error.lock();
+        if slot.is_some() {
+            return false;
+        }
+        *slot = Some(error.to_string());
+        true
+    }
+
+    /// The text of the typed error that failed this route's output, if any.
+    pub fn output_error(&self) -> Option<String> {
+        self.output_error.lock().clone()
     }
 
     /// Attach DVR config to this route (issue #746) — a consuming builder,

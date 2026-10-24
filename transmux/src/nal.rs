@@ -69,6 +69,10 @@ const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
 const HEVC_IRAP_FIRST: u8 = 16;
 /// Last HEVC IRAP `nal_unit_type` (`RSV_IRAP_VCL23`) — Table 7-1.
 const HEVC_IRAP_LAST: u8 = 23;
+/// HEVC `IDR_W_RADL` `nal_unit_type` — Table 7-1.
+const HEVC_NAL_IDR_W_RADL: u8 = 19;
+/// HEVC `IDR_N_LP` `nal_unit_type` — Table 7-1.
+const HEVC_NAL_IDR_N_LP: u8 = 20;
 /// HEVC `nal_unit_type` for a prefix SEI NAL unit (`PREFIX_SEI_NUT`) — Table 7-1.
 const HEVC_NAL_SEI_PREFIX: u8 = 39;
 /// HEVC `nal_unit_type` for a suffix SEI NAL unit (`SUFFIX_SEI_NUT`) — Table 7-1.
@@ -157,6 +161,32 @@ pub fn is_keyframe_nal(codec: NalCodec, nal: &[u8]) -> bool {
             NalCodec::Hevc => (HEVC_IRAP_FIRST..=HEVC_IRAP_LAST).contains(&t),
             NalCodec::Vvc => t == VVC_NAL_IDR_W_RADL || t == VVC_NAL_IDR_N_LP || t == VVC_NAL_CRA,
         },
+    }
+}
+
+/// Whether a single NAL unit is an **IDR** slice for `codec`: the strict
+/// subset of [`is_keyframe_nal`] that excludes CRA and BLA pictures.
+///
+/// - AVC: type 5.
+/// - HEVC: types 19 (`IDR_W_RADL`) and 20 (`IDR_N_LP`).
+/// - VVC: types 7 (`IDR_W_RADL`) and 8 (`IDR_N_LP`).
+pub fn is_idr_nal(codec: NalCodec, nal: &[u8]) -> bool {
+    match nal_unit_type(codec, nal) {
+        None => false,
+        Some(t) => match codec {
+            NalCodec::Avc => t == AVC_NAL_IDR,
+            NalCodec::Hevc => t == HEVC_NAL_IDR_W_RADL || t == HEVC_NAL_IDR_N_LP,
+            NalCodec::Vvc => t == VVC_NAL_IDR_W_RADL || t == VVC_NAL_IDR_N_LP,
+        },
+    }
+}
+
+/// Whether a 4-byte **length-prefixed** access unit contains an IDR slice for
+/// `codec` ([`is_idr_nal`]). A malformed buffer yields `false`.
+pub fn access_unit_is_idr(codec: NalCodec, au: &[u8]) -> bool {
+    match iter_length_prefixed_nals(au) {
+        Ok(nals) => nals.iter().any(|nal| is_idr_nal(codec, nal)),
+        Err(_) => false,
     }
 }
 
