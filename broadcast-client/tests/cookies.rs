@@ -227,25 +227,23 @@ fn expires_attribute_ignored() {
 }
 
 #[test]
-fn domain_attribute_reaches_domain_matching_hosts() {
+fn domain_attribute_accepted_but_sent_only_to_origin() {
     let line = "d=1; Domain=.example.com; Path=/";
     assert_eq!(
         cookie_of(
             "http://example.com/live.ts",
             &[line],
             "http://sub.example.com/live.ts"
-        )
-        .as_deref(),
-        Some("d=1")
+        ),
+        None
     );
     assert_eq!(
         cookie_of(
             "http://www.example.com/live.ts",
             &[line],
             "http://example.com/live.ts"
-        )
-        .as_deref(),
-        Some("d=1")
+        ),
+        None
     );
     assert_eq!(
         cookie_of(
@@ -554,6 +552,38 @@ fn hls_playlist_reload_and_init_and_cross_origin_cookie_scope() {
         !has_cookie(h.requests_to(CDN_SEG_URL)[0]),
         "no cookie to the CDN origin"
     );
+}
+
+#[test]
+fn hls_domain_cookie_never_reaches_a_sibling_segment_host() {
+    const PLAYLIST: &str = "http://a.example.com/live/index.m3u8";
+    const ORIGIN_SEG: &str = "http://a.example.com/live/index0.ts";
+    const SIBLING_SEG: &str = "http://b.example.com/seg/index1.ts";
+    let playlist = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:2.0,\nindex0.ts\n#EXTINF:1.0,\n{SIBLING_SEG}\n\
+         #EXT-X-ENDLIST\n"
+    );
+    let mut h = Host::new(PLAYLIST, hls_config());
+    h.route(
+        PLAYLIST,
+        vec![Reply::OkHeaders(
+            playlist.into_bytes(),
+            set_cookies(&["sid=1; Domain=example.com; Path=/"]),
+        )],
+    );
+    h.ok(ORIGIN_SEG, ts_segment(0));
+    h.ok(SIBLING_SEG, ts_segment(1));
+    h.run_to_end();
+    let cookie = |url: &str| {
+        h.requests_to(url)[0]
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+            .map(|(_, v)| v.clone())
+    };
+    assert_eq!(cookie(ORIGIN_SEG).as_deref(), Some("sid=1"));
+    assert_eq!(cookie(SIBLING_SEG), None);
 }
 
 #[test]

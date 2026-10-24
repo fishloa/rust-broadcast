@@ -34,11 +34,6 @@ struct Stored {
 }
 
 impl Stored {
-    fn reaches(&self, url: &Url, origin: &Origin) -> bool {
-        let scoped = matches!(self.domain, CookieDomain::Suffix(_)) || url.origin() == *origin;
-        scoped && self.domain.matches(url)
-    }
-
     fn expired_at(&self, now_us: u64) -> bool {
         self.expires_us.is_some_and(|at| now_us >= at)
     }
@@ -168,14 +163,15 @@ impl CookieJar {
     }
 
     pub(crate) fn header_for(&mut self, url: &Url, now_us: u64) -> Option<String> {
+        if url.origin() != self.origin {
+            return None;
+        }
         self.cookies.retain(|c| !c.expired_at(now_us));
         let secure = url.scheme() == HTTPS;
         let mut matching: Vec<&Stored> = self
             .cookies
             .iter()
-            .filter(|c| {
-                (secure || !c.secure) && c.reaches(url, &self.origin) && c.path.matches(url)
-            })
+            .filter(|c| (secure || !c.secure) && c.domain.matches(url) && c.path.matches(url))
             .collect();
         if matching.is_empty() {
             return None;

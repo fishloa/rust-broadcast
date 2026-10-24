@@ -22,68 +22,80 @@ fn cookie_to(auth: &mut AuthState, url: &str) -> Option<alloc::string::String> {
         .map(|(_, v)| v)
 }
 
-#[test]
-fn domain_cookie_reaches_sibling_and_parent_hosts() {
-    let mut auth = state_with(ORIGIN, "sid=1; Domain=example.com; Path=/");
-    assert_eq!(cookie_to(&mut auth, ORIGIN).as_deref(), Some("sid=1"));
-    assert_eq!(
-        cookie_to(&mut auth, "https://b.example.com/seg.ts").as_deref(),
-        Some("sid=1")
-    );
-    assert_eq!(
-        cookie_to(&mut auth, "https://example.com/").as_deref(),
-        Some("sid=1")
-    );
-}
+const NON_ORIGIN_HOSTS: [&str; 8] = [
+    "https://b.example.com/seg.ts",
+    "https://example.com/",
+    "https://x.a.example.com/",
+    "https://notexample.com/",
+    "https://example.com.evil.test/",
+    "https://evil.test/",
+    "https://com/",
+    "http://a.example.com:8080/live/x.m3u8",
+];
 
-#[test]
-fn domain_cookie_never_reaches_unrelated_hosts() {
-    let mut auth = state_with(ORIGIN, "sid=1; Domain=example.com; Path=/");
-    for url in [
-        "https://notexample.com/",
-        "https://example.com.evil.test/",
-        "https://evil.test/",
-        "https://com/",
-    ] {
-        assert_eq!(cookie_to(&mut auth, url), None, "{url}");
+fn assert_origin_only(line: &str, expected: &str) {
+    let mut auth = state_with(ORIGIN, line);
+    assert_eq!(cookie_to(&mut auth, ORIGIN).as_deref(), Some(expected));
+    for url in NON_ORIGIN_HOSTS {
+        assert_eq!(cookie_to(&mut auth, url), None, "{line} -> {url}");
     }
 }
 
 #[test]
-fn secure_domain_cookie_is_not_sent_over_http_to_a_sibling() {
+fn domain_cookie_matching_the_origin_is_sent_only_to_the_origin() {
+    assert_origin_only("sid=1; Domain=example.com; Path=/", "sid=1");
+    assert_origin_only("sid=1; Domain=.a.example.com; Path=/", "sid=1");
+}
+
+#[test]
+fn host_only_cookie_is_sent_only_to_the_origin() {
+    assert_origin_only("sid=1; Path=/", "sid=1");
+}
+
+#[test]
+fn public_suffix_domain_is_stored_but_never_leaves_the_origin() {
+    for line in ["sid=1; Domain=com; Path=/", "sid=1; Domain=.com; Path=/"] {
+        assert_origin_only(line, "sid=1");
+    }
+    let uk = "https://a.example.co.uk/live/x.m3u8";
+    let mut auth = state_with(uk, "sid=1; Domain=co.uk; Path=/");
+    assert_eq!(cookie_to(&mut auth, uk).as_deref(), Some("sid=1"));
+    assert_eq!(cookie_to(&mut auth, "https://b.other.co.uk/"), None);
+    assert_eq!(cookie_to(&mut auth, "https://evil.co.uk/"), None);
+}
+
+#[test]
+fn secure_domain_cookie_is_not_sent_over_http() {
     let mut auth = state_with(ORIGIN, "sid=1; Domain=example.com; Path=/; Secure");
-    assert_eq!(cookie_to(&mut auth, "http://b.example.com/seg.ts"), None);
     assert_eq!(
-        cookie_to(&mut auth, "https://b.example.com/seg.ts").as_deref(),
-        Some("sid=1")
-    );
-}
-
-#[test]
-fn host_only_cookie_is_not_sent_to_a_sibling() {
-    let mut auth = state_with(ORIGIN, "sid=1; Path=/");
-    assert_eq!(cookie_to(&mut auth, ORIGIN).as_deref(), Some("sid=1"));
-    for url in [
-        "https://b.example.com/seg.ts",
-        "https://example.com/",
-        "https://x.a.example.com/",
-    ] {
-        assert_eq!(cookie_to(&mut auth, url), None, "{url}");
-    }
-}
-
-#[test]
-fn path_scope_applies_on_the_sibling() {
-    let mut auth = state_with(ORIGIN, "sid=1; Domain=example.com; Path=/live");
-    assert_eq!(
-        cookie_to(&mut auth, "https://b.example.com/live/seg.ts").as_deref(),
-        Some("sid=1")
-    );
-    assert_eq!(
-        cookie_to(&mut auth, "https://b.example.com/other/seg.ts"),
+        cookie_to(&mut auth, "http://a.example.com/live/x.m3u8"),
         None
     );
-    assert_eq!(cookie_to(&mut auth, "https://b.example.com/livex"), None);
+    assert_eq!(cookie_to(&mut auth, ORIGIN).as_deref(), Some("sid=1"));
+}
+
+#[test]
+fn foreign_domain_cookie_is_refused() {
+    let url = Url::parse(ORIGIN).unwrap();
+    let mut auth = AuthState::new(url.clone(), Vec::new());
+    for line in [
+        "a=1; Domain=other.com",
+        "a=1; Domain=b.example.com",
+        "a=1; Domain=x.a.example.com",
+    ] {
+        auth.receive_cookies(&url, &[("Set-Cookie".to_string(), line.to_string())], 0);
+    }
+    assert_eq!(auth.cookies(0), Vec::new());
+}
+
+#[test]
+fn path_scope_still_applies_at_the_origin() {
+    let mut auth = state_with(ORIGIN, "sid=1; Domain=example.com; Path=/live");
+    assert_eq!(cookie_to(&mut auth, ORIGIN).as_deref(), Some("sid=1"));
+    assert_eq!(
+        cookie_to(&mut auth, "https://a.example.com/other/seg.ts"),
+        None
+    );
 }
 
 #[test]
