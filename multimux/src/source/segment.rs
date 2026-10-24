@@ -90,7 +90,7 @@ use media_plane::trunk::{
 };
 use transmux::SegmentMeta;
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
-use transmux::pipeline::{Sample, TrackSpec};
+use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
 use crate::route::RouteHandle;
@@ -425,6 +425,63 @@ fn ts_segmenter_window(route_handle: &RouteHandle) -> usize {
     route_handle.window_segments_cap().get()
 }
 
+/// Refuse a track a classic MPEG-TS HLS segment may not carry: Apple HLS
+/// Authoring Spec 1.5 allows only AVC video in TS, so HEVC and AV1 fail the
+/// output rather than producing an invalid stream.
+pub(crate) fn ts_hls_track_check(config: &CodecConfig) -> crate::Result<()> {
+    let (codec, reason) = match config {
+        CodecConfig::Hevc { .. } => ("HEVC", "HEVC is not allowed in MPEG-TS HLS segments"),
+        CodecConfig::Av1 { .. } => ("AV1", "AV1 is not allowed in MPEG-TS HLS segments"),
+        _ => return Ok(()),
+    };
+    Err(crate::MultimuxError::UnsupportedCodec {
+        output: "ts_hls",
+        codec,
+        reason,
+    })
+}
+
+/// Fail `route_handle`'s output on the first track [`ts_hls_track_check`]
+/// refuses, logging once. `true` when every track is acceptable.
+fn ts_hls_tracks_acceptable<'a>(
+    route_handle: &RouteHandle,
+    configs: impl IntoIterator<Item = &'a CodecConfig>,
+) -> bool {
+    for config in configs {
+        if let Err(e) = ts_hls_track_check(config) {
+            if route_handle.fail_output(&e) {
+                tracing::error!(error = %e, route = route_handle.name(), "ts_hls output failed");
+            }
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether `sample` of a video track may open the start gate: a sync sample,
+/// or under a classic-TS route cutting on IDR only
+/// ([`transmux::SegmentCutPolicy::IdrOnly`]) a sample carrying an IDR slice,
+/// so the media-time anchor is pinned on the picture the first segment starts
+/// with rather than on dropped leading pictures.
+fn gate_opens_on(
+    route_handle: &RouteHandle,
+    config: Option<&CodecConfig>,
+    sample: &Sample,
+) -> bool {
+    let idr_only = matches!(route_handle.container(), Container::MpegTs)
+        && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly;
+    let codec = match config {
+        Some(CodecConfig::Avc { .. }) => Some(transmux::NalCodec::Avc),
+        Some(CodecConfig::Hevc { .. }) => Some(transmux::NalCodec::Hevc),
+        Some(CodecConfig::Vvc { .. }) => Some(transmux::NalCodec::Vvc),
+        _ => None,
+    };
+    match (idr_only, codec) {
+        (true, Some(codec)) => transmux::access_unit_is_idr(codec, &sample.data),
+        _ => sample.flags.is_sync,
+    }
+}
+
 impl ProgramSegmenter {
     /// Attempt to start segmenting `trunk`. `None` if its track set hasn't
     /// landed yet (a `NewProgram` announcement with samples pending is
@@ -501,13 +558,16 @@ impl ProgramSegmenter {
                 // as `NonMonotonicSequenceNumber` and dropped forever
                 // (`drain_pending`'s `Err(TryPublishSegmentError::NonMonotonic(_))`
                 // arm), silently taking the whole route's TS-HLS output dark.
+                if !ts_hls_tracks_acceptable(route_handle, tracks.iter().map(|t| &t.config)) {
+                    return None;
+                }
                 match StreamingTsHlsSegmenter::with_start_sequence(
                     tracks.to_vec(),
                     target_secs,
                     ts_segmenter_window(route_handle),
                     u64::from(next_seq.value().saturating_sub(1)),
                 ) {
-                    Ok(seg) => AnySegmenter::Ts(seg),
+                    Ok(seg) => AnySegmenter::Ts(seg.with_cut_policy(route_handle.ts_cut_policy())),
                     Err(e) => {
                         tracing::warn!(error = %e, "driver-backed TS-HLS segmenter build failed");
                         return None;
@@ -714,6 +774,16 @@ impl ProgramSegmenter {
                         .find(|t| t.track_id == track_id)
                         .map(|t| crate::push::egress::is_video(&t.config))
                         .unwrap_or(false);
+                    let opens_gate = is_video_sample
+                        && gate_opens_on(
+                            route_handle,
+                            trunk
+                                .tracks()
+                                .iter()
+                                .find(|t| t.track_id == track_id)
+                                .map(|t| &t.config),
+                            &sample,
+                        );
                     // Safety valve: a video track that NEVER flags a sync
                     // sample (a broken or non-keyframe-signalling source)
                     // must not be dropped forever — after
@@ -731,7 +801,7 @@ impl ProgramSegmenter {
                              opening the gate on a non-sync sample",
                             START_GATE_MAX_VIDEO_DROPPED
                         );
-                    } else if !(is_video_sample && sample.flags.is_sync) {
+                    } else if !opens_gate {
                         self.start_gate_dropped += 1;
                         if is_video_sample {
                             self.start_gate_video_dropped += 1;
@@ -857,7 +927,11 @@ impl ProgramSegmenter {
         // For fMP4: rebuild below with the complete set.
         let is_ts = matches!(route_handle.container(), Container::MpegTs);
         let new_specs: Vec<TrackSpec> = if is_ts {
-            new_tracks.iter().cloned().collect()
+            new_tracks
+                .iter()
+                .filter(|t| ts_hls_tracks_acceptable(route_handle, [&t.config]))
+                .cloned()
+                .collect()
         } else {
             Vec::new()
         };
@@ -972,6 +1046,7 @@ impl ProgramSegmenter {
                         u64::from(next_seq.value().saturating_sub(1)),
                     ) {
                         Ok(seg) => {
+                            let seg = seg.with_cut_policy(route_handle.ts_cut_policy());
                             let replaced = std::mem::replace(&mut self.seg, AnySegmenter::Ts(seg));
                             if let AnySegmenter::Ts(mut old) = replaced {
                                 if let Err(e) = old.finish() {

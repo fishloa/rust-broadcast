@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- `ts_hls` outputs now cut segments on IDR pictures only by default (Apple HLS Authoring Spec 7.4, issue #1425): new per-route option `Route::ts_hls_cut` (`"idr_only"` default, `"any_rap"` restores the previous open-GOP-tolerant rule; unknown values are rejected by serde), `RouteHandle::with_ts_cut_policy`. Open-GOP-only sources (no IDR at all) therefore produce no `ts_hls` segments unless `any_rap` is set. fMP4/CMAF outputs always cut on any random-access point. The start gate opens on the first IDR under `idr_only`.
+- A `ts_hls` output refuses HEVC and AV1 (Apple HLS Authoring Spec 1.5): the program is not segmented and the typed `MultimuxError::UnsupportedCodec` text is exposed as `RouteHandle::output_error()` and as `output_error` in the admin route status. This is a runtime check (codecs are only known once a program's tracks arrive); `Config::validate` cannot know them.
 - `Route::declared_bandwidth_bps: Option<u64>` (serde, default `None`) and `RouteHandle::with_declared_bandwidth_bps(...)` — operator-declared peak bitrate wired into `HlsOriginBuilder::declared_bandwidth_bps`. Master playlist requests before the first measurable segment now return `503 Service Unavailable` with `Retry-After: 1` instead of a fabricated `BANDWIDTH`.
 
 

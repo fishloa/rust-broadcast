@@ -192,6 +192,7 @@ async fn real_browser_whep_playback_decodes_real_video() {
                 listen: whep_addr.to_string(),
             }],
             dvr: DvrConfig::default(),
+            ts_hls_cut: Default::default(),
             declared_bandwidth_bps: None,
         }],
         prebound,

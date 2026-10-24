@@ -143,6 +143,20 @@ pub enum MultimuxError {
         crate::source::file_reader::FileReaderError,
     ),
 
+    /// An output cannot carry a codec the ingested program delivered, so the
+    /// output was failed instead of emitting an invalid stream (Apple HLS
+    /// Authoring Spec 1.5: HEVC and AV1 are not allowed in MPEG-TS HLS
+    /// segments). Known only once the program's tracks arrive.
+    #[error("{output} output cannot carry {codec}: {reason}")]
+    UnsupportedCodec {
+        /// The output kind that rejected the program (`"ts_hls"`).
+        output: &'static str,
+        /// The offending codec (`"HEVC"`, `"AV1"`).
+        codec: &'static str,
+        /// Why the output cannot carry it.
+        reason: &'static str,
+    },
+
     /// The runtime admin API's `POST /admin/routes`
     /// (`crate::origin::admin::RouteRegistry::add_route`) named a route
     /// already present in the registry — mapped to `409 Conflict`. The

@@ -133,6 +133,7 @@ fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
             input,
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
+            ts_hls_cut: Default::default(),
             declared_bandwidth_bps: None,
         }],
         ..Config::default()

@@ -92,6 +92,7 @@ fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
             input,
             outputs: vec![OutputKind::TsHls],
             dvr: DvrConfig::default(),
+            ts_hls_cut: Default::default(),
             declared_bandwidth_bps: None,
         }],
         ..Config::default()
