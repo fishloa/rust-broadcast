@@ -85,7 +85,7 @@ enum Seen {
 }
 
 fn run_stream(ts: &[u8], track_id: TrackId) -> Vec<Seen> {
-    let mut demux = StreamingTsDemux::new();
+    let mut demux = StreamingTsDemux::new().with_strict_pmt_order();
     let mut out = Vec::new();
     let drain = |demux: &mut StreamingTsDemux, out: &mut Vec<Seen>| {
         while let Some(ev) = demux.poll_event() {

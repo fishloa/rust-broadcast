@@ -1305,6 +1305,7 @@ impl HlsClient {
             ResourceId::Segment { msn } => {
                 self.begin_ts_resource(id, msn)?;
                 self.demux_and_emit_ts(id, bytes)?;
+                self.release_ts_segment_end(id)?;
                 self.delivered_segments.insert(msn);
             }
             ResourceId::Init => {}
@@ -1634,18 +1635,28 @@ impl HlsClient {
     }
 
     /// Emit the pending `EXT-X-DISCONTINUITY` for `msn` and, when one fires,
-    /// start the TS demuxer afresh: the timestamps after a discontinuity are
-    /// a new timeline (RFC 8216 §4.3.4.3), so the previous 33-bit unwrap
-    /// anchor and track set must not carry across it. The old timeline's
-    /// held-back final access units are flushed *before* the marker.
+    /// restart the TS demuxer's timeline: the timestamps after a
+    /// discontinuity are a new timeline (RFC 8216 §4.3.4.3), so the previous
+    /// 33-bit unwrap anchor must not carry across it. The old timeline's
+    /// held-back final access units are flushed *before* the marker. The
+    /// track set is kept ([`StreamingTsDemux::restart_timeline`]): a fresh
+    /// demuxer would have to re-probe every PID from the new timeline alone
+    /// and loses any PID whose parameter sets are not in it (a segment that
+    /// opens mid-GOP).
     fn begin_ts_resource(&mut self, id: ResourceId, msn: u64) -> Result<()> {
         if self.discontinuous_msns.contains(&msn) && !self.discontinuity_emitted.contains(&msn) {
-            self.flush_ts_demux(id)?;
+            self.restart_ts_demux(id)?;
             self.emit_discontinuity_if_needed(msn);
-            self.ts_demux = None;
-            self.ts_specs.clear();
         }
         Ok(())
+    }
+
+    fn restart_ts_demux(&mut self, id: ResourceId) -> Result<()> {
+        let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
+            return Ok(());
+        };
+        demux.restart_timeline();
+        self.drain_ts_demux(id)
     }
 
     /// The classic-TS-HLS counterpart to [`Self::demux_and_emit`]: demux a
@@ -1676,6 +1687,17 @@ impl HlsClient {
             .ts_demux
             .get_or_insert_with(|| TsDemuxState(StreamingTsDemux::new()));
         demux.feed(bytes);
+        self.drain_ts_demux(id)
+    }
+
+    /// A whole media segment has been fed: a PID its PMT declares that sent
+    /// nothing in it is absent, so it must not hold the rest of its program
+    /// back until `EXT-X-ENDLIST` (a live playlist has none).
+    fn release_ts_segment_end(&mut self, id: ResourceId) -> Result<()> {
+        let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
+            return Ok(());
+        };
+        demux.release_silent_heads();
         self.drain_ts_demux(id)
     }
 
