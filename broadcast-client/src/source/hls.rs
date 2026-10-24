@@ -1042,16 +1042,14 @@ impl HlsSource {
                         self.events.push_back(Event::Error { kind, fatal: false });
                     }
                 }
-                Output::FragmentDamaged { .. } => {
-                    if !self.damaged_reported {
-                        self.damaged_reported = true;
-                        self.events.push_back(Event::Error {
-                            kind: ErrorKind::UnsupportedContainer {
-                                reason: REASON_DAMAGED_FRAGMENT,
-                            },
-                            fatal: false,
-                        });
-                    }
+                Output::FragmentDamaged { .. } if !self.damaged_reported => {
+                    self.damaged_reported = true;
+                    self.events.push_back(Event::Error {
+                        kind: ErrorKind::UnsupportedContainer {
+                            reason: REASON_DAMAGED_FRAGMENT,
+                        },
+                        fatal: false,
+                    });
                 }
                 Output::Discontinuity => self.events.push_back(Event::Discontinuity),
                 Output::EndOfStream => self.events.push_back(Event::Status(Status::Ended)),
