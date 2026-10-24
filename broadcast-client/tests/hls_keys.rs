@@ -821,6 +821,12 @@ fn error_kind_names_are_stable() {
             },
             "unsupported_container",
         ),
+        (
+            ErrorKind::BodyTooLarge {
+                field: "max_playlist_bytes",
+            },
+            "body_too_large",
+        ),
     ];
     for (kind, name) in cases {
         assert_eq!(kind.name(), name);

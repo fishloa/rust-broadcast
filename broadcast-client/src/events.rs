@@ -192,15 +192,24 @@ pub enum ErrorKind {
         /// The fMP4 sample entry's four-character code (`None` for a TS stream).
         fourcc: Option<String>,
     },
-    /// The HLS media is in a container this client does not play, detected at its first
-    /// segment: `reason` is `non_fragmented_mp4` (a progressive MP4 served as init + segment —
-    /// HLS fMP4 carries `moof`/`mdat` fragments) or `fragment_outside_segment` (a `moof` whose
-    /// sample data offset points outside its own segment, the absolute `tfhd` base-data-offset
-    /// layout; CMAF uses default-base-is-moof). The first is fatal, the second is reported
-    /// non-fatally once per session and the fragment's samples are lost.
+    /// The HLS media is not in the container layout this client plays. `reason` is
+    /// `non_fragmented_mp4` (a progressive MP4 served as init and segment — HLS fMP4 carries
+    /// `moof`/`mdat` fragments; fatal, reported at the first segment) or `damaged_fragment` (a
+    /// `moof` the demuxer had to skip: unparsable, or its sample data offset points outside its
+    /// own segment, as with an absolute `tfhd` base-data-offset — CMAF uses
+    /// default-base-is-moof — so that fragment's samples are lost; non-fatal, reported once per
+    /// session).
     UnsupportedContainer {
         /// The stable reason token.
         reason: &'static str,
+    },
+    /// A response body outgrew the cap `field` names (`max_playlist_bytes` or
+    /// `max_segment_bytes`), so the request was closed and retried. Reported once per field and
+    /// session, non-fatal: the retry meets the same cap unless the origin's response shrinks, so
+    /// a host that sees this should raise the cap.
+    BodyTooLarge {
+        /// The [`Config`] field whose cap was exceeded.
+        field: &'static str,
     },
 }
 
@@ -217,6 +226,7 @@ impl ErrorKind {
             Self::TrackIdReserved { .. } => "track_id_reserved",
             Self::TrackDropped { .. } => "track_dropped",
             Self::UnsupportedContainer { .. } => "unsupported_container",
+            Self::BodyTooLarge { .. } => "body_too_large",
         }
     }
 }
