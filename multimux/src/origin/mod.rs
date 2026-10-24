@@ -2072,7 +2072,7 @@ fn spawn_ingest(
             let route_cfg = crate::source::hls_pull::HlsPullRoute::new(name, url.clone())
                 .with_timeouts(timeouts)
                 .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised(
+            spawn_supervised_pull(
                 route_cfg,
                 ctx,
                 |cfg, trunk_config, handshake, handle, _cancel| async move {
@@ -2085,7 +2085,7 @@ fn spawn_ingest(
             let route_cfg = crate::source::dash_pull::DashPullRoute::new(name, url.clone())
                 .with_timeouts(timeouts)
                 .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised(
+            spawn_supervised_pull(
                 route_cfg,
                 ctx,
                 |cfg, trunk_config, handshake, handle, _cancel| async move {
@@ -2098,7 +2098,7 @@ fn spawn_ingest(
             let route_cfg = crate::source::smooth_pull::SmoothPullRoute::new(name, url.clone())
                 .with_timeouts(timeouts)
                 .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised(
+            spawn_supervised_pull(
                 route_cfg,
                 ctx,
                 |cfg, trunk_config, handshake, handle, _cancel| async move {
@@ -2293,6 +2293,51 @@ where
         + 'static,
     Fut: std::future::Future<Output = crate::Result<()>> + Send + 'static,
 {
+    spawn_supervised_with(crate::source::driver_trunk_config, route_cfg, ctx, run)
+}
+
+/// [`spawn_supervised`] for a segment-pulling input, whose `Trunk` needs a
+/// timed ring deep enough for one fetched segment.
+fn spawn_supervised_pull<R, F, Fut>(
+    route_cfg: R,
+    ctx: IngestSpawn,
+    run: F,
+) -> tokio::task::JoinHandle<()>
+where
+    R: Send + Sync + 'static,
+    F: Fn(
+            Arc<R>,
+            media_plane::trunk::TrunkConfig,
+            media_plane::ingress::HandshakePolicy,
+            Arc<RouteHandle>,
+            tokio_util::sync::CancellationToken,
+        ) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<Output = crate::Result<()>> + Send + 'static,
+{
+    spawn_supervised_with(crate::source::pull_trunk_config, route_cfg, ctx, run)
+}
+
+fn spawn_supervised_with<R, F, Fut>(
+    trunk_config_for: fn(usize) -> media_plane::trunk::TrunkConfig,
+    route_cfg: R,
+    ctx: IngestSpawn,
+    run: F,
+) -> tokio::task::JoinHandle<()>
+where
+    R: Send + Sync + 'static,
+    F: Fn(
+            Arc<R>,
+            media_plane::trunk::TrunkConfig,
+            media_plane::ingress::HandshakePolicy,
+            Arc<RouteHandle>,
+            tokio_util::sync::CancellationToken,
+        ) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<Output = crate::Result<()>> + Send + 'static,
+{
     let IngestSpawn {
         name,
         store,
@@ -2305,7 +2350,7 @@ where
     tokio::spawn(supervisor::supervise_driver(
         move |route_handle| {
             let cancel_for_run = cancel_for_run.clone();
-            let trunk_config = crate::source::driver_trunk_config(window_segments);
+            let trunk_config = trunk_config_for(window_segments);
             let handshake = crate::source::handshake_policy(timeouts.connect);
             run(
                 Arc::clone(&route_cfg),
