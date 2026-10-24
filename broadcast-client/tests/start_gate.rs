@@ -12,6 +12,15 @@ const PAYLOAD_START: usize = 4;
 const GARBAGE: u8 = 0xa5;
 const TICKS_PER_US: u64 = 27;
 const MICROS: u64 = 1_000_000;
+const BACKSTOP_WALL_US: u64 = 200_000;
+const FLAP_WINDOW_US: u64 = 2_000_000;
+const DEFAULT_START_LEAD_US: u64 = 1_800_000;
+const START_LEADS_US: [u64; 2] = [1_800_000, 1_100_000];
+const LEAD_TOLERANCE_PERCENT: i64 = 90;
+const SKEWS_MS: [usize; 3] = [0, 500, 1_000];
+const SKEW_SLACK_US: u64 = 300_000;
+const ALL_HOLDS: [Hold; 3] = [Hold::Early, Hold::Backstop, Hold::Disabled];
+const BOTH: [Declare; 2] = [Declare::Explicit, Declare::Default];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Hold {
@@ -74,16 +83,6 @@ fn pid_of(p: &[u8]) -> u16 {
     (u16::from(p[1]) << 8 | u16::from(p[2])) & PID_MASK
 }
 
-fn garbage_head(bytes: &[u8], pid: u16, packets: usize) -> Vec<u8> {
-    let mut out = bytes.to_vec();
-    for p in out.chunks_mut(TS_PACKET).take(packets) {
-        if pid_of(p) == pid {
-            p[PAYLOAD_START..].fill(GARBAGE);
-        }
-    }
-    out
-}
-
 fn delay_audio(bytes: &[u8], pid: u16, packets: usize) -> Vec<u8> {
     let all: Vec<&[u8]> = bytes.chunks(TS_PACKET).collect();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -115,7 +114,11 @@ fn garbage(bytes: &[u8], pid: u16) -> Vec<u8> {
 }
 
 fn config(hold: Hold, len: usize) -> Config {
-    match hold {
+    config_with_lead(hold, len, DEFAULT_START_LEAD_US)
+}
+
+fn config_with_lead(hold: Hold, len: usize, start_lead_us: u64) -> Config {
+    let mut cfg = match hold {
         Hold::Early => Config::default(),
         Hold::Disabled => Config {
             tracks_hold_max_wall_us: 0,
@@ -125,9 +128,12 @@ fn config(hold: Hold, len: usize) -> Config {
         Hold::Backstop => Config {
             tracks_hold_quiet_input_bytes: len / 2,
             tracks_hold_max_input_bytes: len,
+            tracks_hold_max_wall_us: BACKSTOP_WALL_US,
             ..Config::default()
         },
-    }
+    };
+    cfg.buffer.policy.initial_us = start_lead_us;
+    cfg
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,9 +251,8 @@ pub fn run(bytes: &[u8], cfg: Config, declare: Declare) -> Outcome {
                     let leads_ms = rendered
                         .iter()
                         .filter_map(|t| {
-                            ends.get(t).map(|&e| {
-                                (*t, (i128::from(e) - i128::from(pos)) as i64 / 27_000)
-                            })
+                            ends.get(t)
+                                .map(|&e| (*t, (i128::from(e) - i128::from(pos)) as i64 / 27_000))
                         })
                         .collect();
                     out.marks.push(Mark {
@@ -302,7 +307,13 @@ pub fn run(bytes: &[u8], cfg: Config, declare: Declare) -> Outcome {
     }
     #[cfg(feature = "test-seams")]
     if std::env::var("DUMP").is_ok() {
-        for l in s.buffer_input_log().iter().filter(|l| !matches!(l, broadcast_client::BufferInput::Chunk { .. })).filter(|l| !matches!(l, broadcast_client::BufferInput::Tick { .. })).take(60) {
+        for l in s
+            .buffer_input_log()
+            .iter()
+            .filter(|l| !matches!(l, broadcast_client::BufferInput::Chunk { .. }))
+            .filter(|l| !matches!(l, broadcast_client::BufferInput::Tick { .. }))
+            .take(60)
+        {
             eprintln!("{l:?}");
         }
     }
@@ -343,53 +354,99 @@ fn trimmed(b: Vec<u8>, c: &Capture) -> Vec<u8> {
 
 fn bytes_for(c: &Capture, hold: Hold) -> Option<Vec<u8>> {
     let b = trimmed(test_fixtures::require_bytes(c.path, "start_gate")?, c);
-    Some(match (hold, c.garbage_pid) {
-        (Hold::Backstop, Some(pid)) => garbage(&b, pid),
-        _ => b,
-    })
+    let _ = hold;
+    Some(b)
 }
 
-const LATE_AUDIO_US: u64 = 2_500_000;
+fn skewed(c: &Capture, skew_ms: usize) -> Option<Vec<u8>> {
+    let b = bytes_for(c, Hold::Early)?;
+    let per_s = (bitrate_bps(&b) / 8 / TS_PACKET as u64) as usize;
+    Some(delay_audio(&b, c.audio_pid, per_s * skew_ms / 1000))
+}
+
+fn describe(c: &Capture, hold: Hold, declare: Declare, skew_ms: usize, o: &Outcome) -> String {
+    format!(
+        "{} {hold:?} {declare:?} skew {skew_ms} ms: start {:?} marks {:?}",
+        c.name,
+        o.start_us(),
+        o.marks
+            .iter()
+            .take(3)
+            .map(|m| (m.at_us, &m.what, &m.leads_ms))
+            .collect::<Vec<_>>()
+    )
+}
 
 #[test]
-fn probe_late_audio() {
+fn start_never_precedes_a_rendered_track_that_trails_the_video() {
+    let mut ran = 0;
     for c in CAPTURES {
-        for hold in [Hold::Early, Hold::Backstop, Hold::Disabled] {
-            let Some(b0) = bytes_for(c, Hold::Early) else {
+        for skew in SKEWS_MS {
+            let Some(b) = skewed(c, skew) else {
                 return;
             };
-            let bps = bitrate_bps(&b0);
-            let n = (LATE_AUDIO_US * bps / 8 / MICROS) as usize / TS_PACKET;
-            let b = garbage_head(&b0, c.audio_pid, n);
-            for declare in [Declare::Explicit, Declare::Default] {
-                let o = run(&b, config(hold, b.len()), declare);
-                eprintln!("LATE {} {:?} {:?} tracks@{:?}", c.name, hold, declare, o.tracks_at_us);
-                for m in o.marks.iter().take(4) {
-                    eprintln!("   {:>8} us {:?} leads_ms {:?}", m.at_us, m.what, m.leads_ms);
+            for (hold, lead_us) in ALL_HOLDS
+                .into_iter()
+                .flat_map(|h| START_LEADS_US.map(|l| (h, l)))
+            {
+                for declare in BOTH {
+                    let o = run(&b, config_with_lead(hold, b.len(), lead_us), declare);
+                    let why = format!(
+                        "lead {lead_us} us: {}",
+                        describe(c, hold, declare, skew, &o)
+                    );
+                    let Some(start) = o.marks.iter().find(|m| m.what == Transition::Start) else {
+                        continue;
+                    };
+                    ran += 1;
+                    assert_eq!(start.leads_ms.len(), 2, "audio and video both led: {why}");
+                    for (track, lead) in &start.leads_ms {
+                        assert!(
+                            *lead >= lead_us as i64 / 1_000 * LEAD_TOLERANCE_PERCENT / 100,
+                            "track {track} had only {lead} ms at Start: {why}"
+                        );
+                    }
+                    assert!(
+                        o.flap_within(FLAP_WINDOW_US).is_none(),
+                        "Start then Pause: {why}"
+                    );
                 }
             }
         }
     }
+    assert!(ran > 0, "no capture reached Start");
 }
 
 #[test]
-fn probe() {
+fn start_latency_grows_by_no_more_than_the_audio_skew() {
     for c in CAPTURES {
-        for hold in [Hold::Early, Hold::Backstop, Hold::Disabled] {
-            if hold == Hold::Backstop && c.garbage_pid.is_none() {
+        for (hold, lead_us) in ALL_HOLDS
+            .into_iter()
+            .flat_map(|h| START_LEADS_US.map(|l| (h, l)))
+        {
+            let Some(base) = skewed(c, 0) else {
+                return;
+            };
+            let Some(base_start) = run(
+                &base,
+                config_with_lead(hold, base.len(), lead_us),
+                Declare::Default,
+            )
+            .start_us() else {
                 continue;
-            }
-            let Some(b) = bytes_for(c, hold) else {
-                return;
             };
-            for declare in [Declare::Explicit, Declare::Default] {
-                let o = run(&b, config(hold, b.len()), declare);
-                eprintln!(
-                    "{} {:?} {:?} bps={} tracks@{:?} first@{:?}",
-                    c.name, hold, declare, bitrate_bps(&b), o.tracks_at_us, o.first_sample_us
-                );
-                for m in o.marks.iter().take(4) {
-                    eprintln!("   {:>8} us {:?} leads_ms {:?}", m.at_us, m.what, m.leads_ms);
+            for skew in SKEWS_MS {
+                let b = skewed(c, skew).unwrap();
+                for declare in BOTH {
+                    let o = run(&b, config_with_lead(hold, b.len(), lead_us), declare);
+                    let start = o.start_us().unwrap_or(u64::MAX);
+                    let allowed = base_start + skew as u64 * 1_000 + SKEW_SLACK_US;
+                    assert!(
+                        start <= allowed,
+                        "{}: start {start} us, no-skew start {base_start} us + skew {skew} ms: {}",
+                        c.name,
+                        describe(c, hold, declare, skew, &o)
+                    );
                 }
             }
         }
@@ -397,26 +454,65 @@ fn probe() {
 }
 
 #[test]
-fn grid() {
-    let c = &CAPTURES[0];
-    let b0 = bytes_for(c, Hold::Early).unwrap();
-    let bps = bitrate_bps(&b0);
-    let per_s = (bps / 8 / TS_PACKET as u64) as usize;
-    for init_ms in [1800u64, 1100] {
-        for delay_ms in [0usize, 500, 1000, 1500] {
-            for late_ms in [0usize, 1500, 2500] {
-                for hold in [Hold::Early, Hold::Disabled] {
-                    let mut b = delay_audio(&b0, c.audio_pid, per_s * delay_ms / 1000);
-                    b = garbage_head(&b, c.audio_pid, per_s * late_ms / 1000);
-                    let mut cfg = config(hold, b.len());
-                    cfg.buffer.policy.initial_us = init_ms * 1000;
-                    let o = run(&b, cfg, Declare::Default);
-                    let st = o.start_us();
-                    let fl = o.flap_within(2_000_000).map(|m| m.at_us);
-                    let l = o.marks.first().map(|m| m.leads_ms.clone());
-                    eprintln!("init={init_ms} delay={delay_ms} late={late_ms} {hold:?}: start={st:?} flap@={fl:?} leads={l:?}");
-                }
+fn a_declared_audio_pid_that_never_sends_does_not_block_start_for_long() {
+    for c in CAPTURES {
+        let Some(b0) = bytes_for(c, Hold::Early) else {
+            return;
+        };
+        let b: Vec<u8> = b0
+            .chunks(TS_PACKET)
+            .filter(|p| pid_of(p) != c.audio_pid)
+            .flatten()
+            .copied()
+            .collect();
+        for hold in ALL_HOLDS {
+            for declare in [Declare::Default] {
+                let o = run(&b, config(hold, b.len()), declare);
+                let why = describe(c, hold, declare, 0, &o);
+                let start = o
+                    .start_us()
+                    .unwrap_or_else(|| panic!("never started: {why}"));
+                let first = o.first_sample_us.unwrap();
+                assert!(
+                    start <= first + START_BOUND_US,
+                    "start {start} us is more than {START_BOUND_US} us after first media {first}: {why}"
+                );
+                assert!(o.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
             }
+        }
+    }
+}
+
+const START_BOUND_US: u64 = 4_000_000;
+
+#[test]
+fn start_waits_for_audio_when_an_unresolvable_pid_is_in_the_mux() {
+    let c = &CAPTURES[0];
+    let Some(b0) = bytes_for(c, Hold::Early) else {
+        return;
+    };
+    let per_s = (bitrate_bps(&b0) / 8 / TS_PACKET as u64) as usize;
+    let b = garbage(
+        &delay_audio(&b0, c.audio_pid, per_s * 500 / 1000),
+        c.garbage_pid.unwrap(),
+    );
+    for lead_us in START_LEADS_US {
+        for declare in BOTH {
+            let mut cfg = config_with_lead(Hold::Early, b.len(), lead_us);
+            cfg.tracks_hold_quiet_input_bytes = b.len() / 2;
+            cfg.tracks_hold_max_input_bytes = b.len();
+            let o = run(&b, cfg, declare);
+            let why = format!(
+                "lead {lead_us} us: {}",
+                describe(c, Hold::Early, declare, 500, &o)
+            );
+            let start = o
+                .marks
+                .iter()
+                .find(|m| m.what == Transition::Start)
+                .expect(&why);
+            assert_eq!(start.leads_ms.len(), 2, "{why}");
+            assert!(o.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
         }
     }
 }
