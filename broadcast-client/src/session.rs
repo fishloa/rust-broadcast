@@ -5,8 +5,10 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use std::collections::HashMap;
 
+use percent_encoding::percent_decode_str;
 use url::Url;
 
+use crate::Credentials;
 use crate::Hint;
 use crate::auth::AuthState;
 use crate::error::{Error, TransportError};
@@ -30,10 +32,17 @@ const MICROS_PER_MILLI: u64 = 1_000;
 const TS_WAKE_TICK_US: u64 = 1_000_000;
 const FIRST_CONN_ID: u32 = 1;
 
+const MAX_UNAUTHENTICATED_REPLAYS: u32 = 2;
+
 #[derive(Debug, Clone, Copy, Default)]
 struct ConnAuth {
     authed: bool,
     stale_replayed: bool,
+    replays: u32,
+}
+
+fn replay_allowed(lineage: ConnAuth, replay_is_authenticated: bool) -> bool {
+    replay_is_authenticated || lineage.replays < MAX_UNAUTHENTICATED_REPLAYS
 }
 
 /// Generic sans-IO client session.
@@ -70,7 +79,8 @@ impl Session {
         now_us: u64,
         seed: Option<buffering_runtime::StallMemorySnapshot>,
     ) -> Result<Self, Error> {
-        let parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
+        let mut parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
+        let userinfo = take_userinfo(&mut parsed)?;
         let scheme = parsed.scheme();
         let is_rtsp_scheme = scheme == SCHEME_RTSP || scheme == SCHEME_RTSPS;
         let is_http_scheme = scheme == SCHEME_HTTP || scheme == SCHEME_HTTPS;
@@ -95,10 +105,16 @@ impl Session {
         let mut playout = Playout::new(config.playout);
         let mut auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
         auth.seed_cookies(&config.initial_cookies);
+        if let Some(creds) = userinfo {
+            auth.set_credentials(creds);
+        }
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
         let hls = use_hls.then(|| Box::new(HlsSession::new(&parsed, &config)));
-        let rtsp =
-            is_rtsp_scheme.then(|| Box::new(RtspSource::new(&parsed, &config.ts_http, now_us)));
+        let mut rtsp = is_rtsp_scheme
+            .then(|| Box::new(RtspSource::new(&parsed, &config.ts_http.clamped(), now_us)));
+        if let Some(r) = rtsp.as_mut() {
+            r.on_credentials(now_us, &auth);
+        }
         if use_hls {
             playout.engage(Source::Live {
                 target_duration_secs: None,
@@ -203,6 +219,7 @@ impl Session {
                     ConnAuth {
                         authed,
                         stale_replayed: lineage.stale_replayed,
+                        replays: lineage.replays,
                     },
                 );
                 self.actions.push_back(Action::HttpRequest {
@@ -219,6 +236,10 @@ impl Session {
         }
 
         if status == 401 || status == 407 {
+            if req_url.origin() != self.auth.origin().origin() {
+                self.fail_connect(conn);
+                return;
+            }
             self.known_conns.remove(&conn);
             self.conn_auth.remove(&conn);
             if self.live_conn == Some(conn) {
@@ -236,14 +257,19 @@ impl Session {
                 crate::auth::AuthDecision::Replay | crate::auth::AuthDecision::ReplayStale => {
                     let stale_replayed = lineage.stale_replayed
                         || matches!(decision, crate::auth::AuthDecision::ReplayStale);
-                    let new_conn = self.alloc_conn(req_url.clone());
                     let new_headers = self.auth.request_headers(&req_url, self.now_us);
                     let authed = has_authorization(&new_headers);
+                    if !replay_allowed(lineage, authed) {
+                        self.signal_connect_failure();
+                        return;
+                    }
+                    let new_conn = self.alloc_conn(req_url.clone());
                     self.conn_auth.insert(
                         new_conn,
                         ConnAuth {
                             authed,
                             stale_replayed,
+                            replays: lineage.replays.saturating_add(1),
                         },
                     );
                     self.actions.push_back(Action::HttpRequest {
@@ -272,6 +298,13 @@ impl Session {
         if (200..300).contains(&status) {
             self.redirect_count = 0;
             self.live_conn = Some(conn);
+        } else {
+            self.known_conns.remove(&conn);
+            self.conn_auth.remove(&conn);
+            if self.live_conn == Some(conn) {
+                self.live_conn = None;
+            }
+            self.actions.push_back(Action::Close { conn });
         }
         self.source.on_response(status, headers, self.now_us);
         self.drain_source();
@@ -634,6 +667,10 @@ impl Session {
             self.live_conn = None;
         }
         self.actions.push_back(Action::Close { conn });
+        self.signal_connect_failure();
+    }
+
+    fn signal_connect_failure(&mut self) {
         self.source.on_error(self.now_us);
         self.buffer.hint(self.now_us, Hint::SourceError);
         self.drain_source();
@@ -730,6 +767,7 @@ impl Session {
                     ConnAuth {
                         authed,
                         stale_replayed: false,
+                        replays: 0,
                     },
                 );
                 self.actions.push_back(Action::HttpRequest {
@@ -760,11 +798,31 @@ impl Session {
         }
     }
 
-    /// Events dropped because the host did not drain them within
-    /// [`Config::max_queued_events`]; only [`Event::Sample`]s are ever dropped.
+    /// Samples dropped because the host did not drain the queue within
+    /// [`Config::max_queued_events`]. A dropped sample leaves an [`Event::Discontinuity`] in its
+    /// place; coalesced [`Event::Starved`] and transient [`Status`] events are not counted.
     pub fn dropped_events(&self) -> u64 {
         self.events.dropped()
     }
+}
+
+fn take_userinfo(url: &mut Url) -> Result<Option<Credentials>, Error> {
+    if url.username().is_empty() && url.password().is_none() {
+        return Ok(None);
+    }
+    let decode = |raw: &str| {
+        percent_decode_str(raw)
+            .decode_utf8()
+            .map(|s| s.into_owned())
+            .map_err(|_| Error::InvalidUrl("userinfo is not valid UTF-8".to_string()))
+    };
+    let username = decode(url.username())?;
+    let password = decode(url.password().unwrap_or_default())?;
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    let creds = Credentials::new(username, password);
+    headers::validate_credentials(&creds)?;
+    Ok(Some(creds))
 }
 
 fn has_authorization(headers: &[(String, String)]) -> bool {
@@ -792,6 +850,21 @@ impl core::fmt::Debug for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unauthenticated_replay_lineage_is_capped() {
+        let fresh = ConnAuth::default();
+        assert!(replay_allowed(fresh, false));
+        let spent = ConnAuth {
+            replays: MAX_UNAUTHENTICATED_REPLAYS,
+            ..ConnAuth::default()
+        };
+        assert!(!replay_allowed(spent, false));
+        assert!(
+            replay_allowed(spent, true),
+            "an authenticated replay is not capped"
+        );
+    }
 
     #[test]
     fn alloc_conn_skips_live_ids_when_the_counter_wraps() {

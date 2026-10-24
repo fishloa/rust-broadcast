@@ -22,6 +22,8 @@ use crate::redirect;
 
 const MICROS_PER_MILLI: u64 = 1_000;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+const STATUS_OK: u16 = 200;
+const STATUS_PARTIAL_CONTENT: u16 = 206;
 const STATUS_UNAUTHORIZED: u16 = 401;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const STATUS_FORBIDDEN: u16 = 403;
@@ -117,6 +119,7 @@ struct Req {
     started_us: u64,
     responded_ok: bool,
     expected_len: Option<u64>,
+    slice: Option<(usize, usize)>,
     body: Vec<u8>,
 }
 
@@ -134,6 +137,7 @@ impl Req {
             started_us: 0,
             responded_ok: false,
             expected_len: None,
+            slice: None,
             body: Vec::new(),
         }
     }
@@ -149,6 +153,7 @@ pub(crate) struct HlsSource {
     key_failures: u32,
     reported: BTreeSet<&'static str>,
     fatal: bool,
+    reserved_id_reported: bool,
     playlist_timeout_us: u64,
     segment_timeout_us: u64,
     backoff_ms: Vec<u64>,
@@ -185,6 +190,7 @@ impl HlsSource {
             key_failures: 0,
             reported: BTreeSet::new(),
             fatal: false,
+            reserved_id_reported: false,
             playlist_timeout_us: config.hls_request_timeout_us,
             segment_timeout_us: config.hls_segment_timeout_us,
             backoff_ms: config.hls_backoff_ms.clone(),
@@ -344,6 +350,14 @@ impl HlsSource {
                 }
             }
         } else if (200..300).contains(&status) {
+            if !Self::range_honoured(&mut req, status, headers) {
+                self.actions.push_back(Action::Close { conn });
+                self.fail_status(req, now, Some(status));
+                if !auth.is_waiting() {
+                    self.advance(now, auth);
+                }
+                return;
+            }
             req.responded_ok = true;
             req.expected_len = headers
                 .iter()
@@ -419,11 +433,50 @@ impl HlsSource {
         if error.is_some() || !req.responded_ok || truncated {
             self.fail(req, now);
         } else {
-            self.deliver(req, now);
+            let mut req = req;
+            if Self::slice_body(&mut req) {
+                self.deliver(req, now);
+            } else {
+                self.fail(req, now);
+            }
         }
         if !auth.is_waiting() {
             self.advance(now, auth);
         }
+    }
+
+    /// A request carrying a byte range must be answered with `206` and a `Content-Range` naming
+    /// exactly that range, or with a `200` (the server ignored `Range`), from which the range is
+    /// sliced out once the whole body arrived (the body cap applies to the whole file). Any other
+    /// 2xx answer to a ranged request is a failure.
+    fn range_honoured(req: &mut Req, status: u16, headers: &[(String, String)]) -> bool {
+        let Some((start, len)) = req.byte_range else {
+            return true;
+        };
+        match status {
+            STATUS_PARTIAL_CONTENT => content_range_is(headers, start, len),
+            STATUS_OK => {
+                let bounds = usize::try_from(start)
+                    .ok()
+                    .zip(usize::try_from(len).ok())
+                    .filter(|(s, l)| s.checked_add(*l).is_some());
+                req.slice = bounds;
+                bounds.is_some()
+            }
+            _ => false,
+        }
+    }
+
+    fn slice_body(req: &mut Req) -> bool {
+        let Some((start, len)) = req.slice else {
+            return true;
+        };
+        let Some(end) = start.checked_add(len).filter(|end| *end <= req.body.len()) else {
+            return false;
+        };
+        req.body.truncate(end);
+        req.body.drain(..start);
+        true
     }
 
     fn deliver(&mut self, req: Req, now: u64) {
@@ -590,8 +643,8 @@ impl HlsSource {
         self.pump_core();
         self.drain_outputs();
         let refetch = match purpose {
+            _ if self.chain_alive() => None,
             Purpose::Playlist => retry_url,
-            Purpose::Resource(_) | Purpose::Key(_) if self.chain_alive() => None,
             Purpose::Resource(_) | Purpose::Key(_) => Some(self.client.playlist_url().to_string()),
         };
         self.schedule_retry(now, refetch);
@@ -735,6 +788,7 @@ impl HlsSource {
         req.started_us = now;
         req.responded_ok = false;
         req.expected_len = None;
+        req.slice = None;
         req.body.clear();
         let lease = self.conn_alloc.lease();
         let conn = lease.id();
@@ -779,6 +833,10 @@ impl HlsSource {
         }
     }
 
+    fn is_reserved(&self, id: TrackId) -> bool {
+        self.role == Role::Main && id.value() >= AUDIO_TRACK_ID_OFFSET
+    }
+
     fn pump_core(&mut self) {
         while let Some(action) = self.client.poll() {
             self.pending.push_back(action);
@@ -789,12 +847,29 @@ impl HlsSource {
         while let Some(output) = self.client.next_output() {
             match output {
                 Output::Master(selection) => self.events.push_back(Event::Variants(selection)),
-                Output::Tracks(mut specs) => {
+                Output::Tracks(specs) => {
+                    let (kept, rejected): (Vec<_>, Vec<_>) = specs
+                        .into_iter()
+                        .partition(|spec| !self.is_reserved(spec.track_id));
+                    if let Some(first) = rejected.first()
+                        && !self.reserved_id_reported
+                    {
+                        self.reserved_id_reported = true;
+                        self.events.push_back(Event::Error {
+                            kind: ErrorKind::TrackIdReserved {
+                                track_id: first.track_id.value(),
+                            },
+                            fatal: false,
+                        });
+                    }
+                    let mut specs = kept;
                     for spec in &mut specs {
                         spec.track_id = self.remap(spec.track_id);
                     }
                     self.events.push_back(Event::Tracks(specs));
                 }
+                Output::Samples { track_id, .. } | Output::DisplayChanged { track_id, .. }
+                    if self.is_reserved(track_id) => {}
                 Output::Samples { track_id, samples } => {
                     if !samples.is_empty() {
                         self.key_failures = 0;
@@ -827,6 +902,22 @@ impl HlsSource {
             }
         }
     }
+}
+
+fn content_range_is(headers: &[(String, String)], start: u64, len: u64) -> bool {
+    let Some(last) = len.checked_sub(1).and_then(|l| start.checked_add(l)) else {
+        return false;
+    };
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-range"))
+        .and_then(|(_, v)| v.trim().strip_prefix("bytes "))
+        .and_then(|v| v.split_once('/'))
+        .and_then(|(range, _total)| range.split_once('-'))
+        .is_some_and(|(a, b)| {
+            a.trim().parse::<u64>().ok() == Some(start)
+                && b.trim().parse::<u64>().ok() == Some(last)
+        })
 }
 
 fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {

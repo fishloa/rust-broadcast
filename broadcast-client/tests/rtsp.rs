@@ -23,6 +23,7 @@ const START_TIMEOUT: u64 = 15 * SEC;
 const BACKOFF_SECS: [u64; 6] = [2, 4, 8, 10, 10, 10];
 const SOME_FRAMES: usize = 30;
 const SLOW_SESSION_TIMEOUT: u32 = 100_000;
+const MIN_RECONNECT: u64 = SEC;
 
 fn fixture() -> &'static MediaFixture {
     static FIXTURE: OnceLock<MediaFixture> = OnceLock::new();
@@ -124,8 +125,13 @@ fn user_credentials(password: &str) -> Credentials {
 }
 
 fn finish_stream(host: &mut Host) -> Vec<Event> {
+    finish_stream_after(host, 0)
+}
+
+fn finish_stream_after(host: &mut Host, lasted_us: u64) -> Vec<Event> {
     let frames = fixture().frames();
     host.deliver_all(&frames);
+    host.advance(lasted_us);
     let conn = host.conn.expect("live connection");
     host.session.on_closed(conn, None, host.now);
     host.events()
@@ -752,7 +758,7 @@ fn stall_5s_notice_and_30s_reconnect_with_teardown_abort() {
 #[test]
 fn server_closes_after_play_reconnects_at_once_with_discontinuity() {
     let mut host = playing();
-    let first = finish_stream(&mut host);
+    let first = finish_stream_after(&mut host, MIN_RECONNECT);
     assert!(!samples_of(&first).is_empty());
     assert_eq!(tcp_connects(&host), 1);
     host.drain();
@@ -792,6 +798,7 @@ fn reconnect_resets_attempt_counter_after_playing() {
     let frames = fixture().frames();
     host.deliver_all(&frames[..SOME_FRAMES]);
     assert!(!samples_of(&host.events()).is_empty());
+    host.advance(MIN_RECONNECT);
     let conn = host.conn.expect("live");
     host.session.on_closed(conn, None, host.now);
     host.drain();
@@ -1031,6 +1038,7 @@ fn garbage_after_play_reconnects_at_once() {
     let frames = fixture().frames();
     host.deliver_all(&frames[..SOME_FRAMES]);
     host.events();
+    host.advance(MIN_RECONNECT);
     host.clear_actions();
     host.deliver(b"RTSP/9 nonsense\r\n\r\n");
     host.drain();

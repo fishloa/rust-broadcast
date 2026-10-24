@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- A zero `backoff_ms` entry made the session reconnect in the same instant: `Config::validate` now rejects it (`ConfigError::ZeroBackoffEntry`) and `Config::clamped` (used by `TsHttpClient::new`) raises it to 1 ms.
+
 - `next_deadline` no longer returns a time in the past after the first stall notice (hosts busy-looped until `stall_reconnect_ms`); bytes arriving after a notice restart the notice schedule.
 - The start timer now runs from `Open`: a server that accepts but never sends response headers is aborted and retried after `start_timeout_ms` (T20, `next_deadline` is `Some` while Opening).
 - A server that sends a sample and closes immediately can no longer cause a reconnect spin: `Config::min_reconnect_interval_ms` (default 1000) spaces opens after a short played-then-ended connection; long-lived streams still reconnect with 0 ms.

@@ -22,6 +22,13 @@ enum AudioMode {
     Manual(Option<usize>),
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DiscontinuitySeen {
+    at_us: u64,
+    from_main: bool,
+    from_audio: bool,
+}
+
 struct Audio {
     source: HlsSource,
     url: String,
@@ -43,6 +50,7 @@ pub(crate) struct HlsSession {
     establishing_sent: bool,
     live_sent: bool,
     session_fatal: bool,
+    discontinuity_seen: Option<DiscontinuitySeen>,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
 }
@@ -71,6 +79,7 @@ impl HlsSession {
             establishing_sent: false,
             live_sent: false,
             session_fatal: false,
+            discontinuity_seen: None,
             actions: VecDeque::new(),
             events: VecDeque::new(),
         }
@@ -333,6 +342,9 @@ impl HlsSession {
                     break;
                 }
                 let fatal = is_fatal_error(&e);
+                if matches!(e, Event::Discontinuity) && !self.first_report_of(now, Role::Main) {
+                    continue;
+                }
                 self.handle_main(e, now, auth);
                 if fatal {
                     self.propagate_fatal();
@@ -347,6 +359,10 @@ impl HlsSession {
                         break;
                     }
                     let fatal = is_fatal_error(&e);
+                    if matches!(e, Event::Discontinuity) && !self.first_report_of(now, Role::Audio)
+                    {
+                        continue;
+                    }
                     self.handle_audio(e);
                     if fatal {
                         self.propagate_fatal();
@@ -362,6 +378,30 @@ impl HlsSession {
         if let Some(a) = self.audio.as_mut() {
             self.actions.extend(a.source.take_actions());
         }
+    }
+
+    /// Both adapters report the one logical discontinuity of a stream (a stitched ad break, an
+    /// origin restart) at the same instant. The first report goes through; the other
+    /// adapter's report at that instant is dropped, so the playout gate resets and the host
+    /// re-syncs once. A second report from the same adapter at that instant is a distinct
+    /// discontinuity and goes through.
+    fn first_report_of(&mut self, now: u64, source: Role) -> bool {
+        let mut seen = match self.discontinuity_seen {
+            Some(seen) if seen.at_us == now => seen,
+            _ => DiscontinuitySeen {
+                at_us: now,
+                from_main: false,
+                from_audio: false,
+            },
+        };
+        let (own, other) = match source {
+            Role::Main => (&mut seen.from_main, seen.from_audio),
+            Role::Audio => (&mut seen.from_audio, seen.from_main),
+        };
+        let forward = *own || !other;
+        *own = true;
+        self.discontinuity_seen = Some(seen);
+        forward
     }
 
     fn propagate_fatal(&mut self) {

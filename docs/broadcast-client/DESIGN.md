@@ -97,6 +97,12 @@ Status: Establishing | Live | Stalled{secs} | Reconnecting{attempt} | NotFound |
 the request URL (`url::Url::join`), issue a new HttpRequest (+Close old conn), at most `max_redirects` (5) per
 open, then fail as a connect error. A redirect to a different origin DROPS credentials for that request
 (the original-origin credentials stay bound to the original origin). 3xx without Location = connect error.
+Only `http` and `https` targets are followed and an `https` request is never redirected to `http`; anything
+else is a connect error. A 401/407 from an origin other than the session origin is a connect error too (Close
+plus backoff, no credential prompt, no replay); a replay lineage that carries no `Authorization` is capped at
+two replays. Every final non-2xx answer closes and forgets its connection. `user:password@` in an `http(s)://`
+or `rtsp(s)://` URL is percent-decoded into initial Basic/Digest credentials (a later `set_credentials` wins)
+and stripped from every request URL.
 
 **Status codes** reach tshttp-runtime only after this layer: 2xx -> `on_response(2xx)`; 404/410 and other
 non-2xx -> `on_response(status)` (the layer handles 401/407/3xx itself).
@@ -242,9 +248,17 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
   not used for RTSP. Unknown or closed `conn` callbacks are ignored.
 - Handshake: on connect DESCRIBE, then SETUP per SDP media (interleaved `0-1`, `2-3`, ...; the channel the
   server negotiates is the one used for routing), then PLAY. Track ids are the 1-based SDP media order; SDP
-  parsing is `sdp-types`, fmtp/rtpmap decoding is `transmux::rtp_sdp`. Per-track SETUP URIs are
-  `Url::join(a=control)` against the request URI (aggregate/absent control = the request URI). Media other
-  than H.264 video and AAC audio, a missing fmtp, an SDP without media or unparsable SDP are a failure.
+  parsing is `sdp-types`, fmtp/rtpmap decoding is `transmux::rtp_sdp`. Per-track SETUP URIs resolve a relative
+  `a=control` against the base of RFC 2326 Appendix C.1.1: the DESCRIBE response's `Content-Base`, else its
+  `Content-Location` (both through the additive `ClientSession::content_base()`), else the request URL with a
+  trailing `/` guaranteed (`rtsp://cam/axis-media/media.amp` + `trackID=1` is `.../media.amp/trackID=1`);
+  `a=control:*` is the base itself and an absent control is the request URL. An absolute control whose
+  scheme, host or port differs from the connection's skips that section. A media section the client cannot
+  play (other than H.264 video and AAC audio, a missing or unusable fmtp) is skipped; an SDP with no playable
+  section left, or unparsable SDP, is a failure. At most 16 sections are played (later ones are ignored).
+  The channels the server negotiates (`ClientSession::take_negotiated_transport()`, so a SETUP reply without a
+  `Transport` header negotiates nothing) must be TCP-interleaved and must not repeat or overlap the channels
+  of an earlier track, else the connection fails with backoff.
 - Media: interleaved frames are routed by channel: the track's RTP channel to `push`, RTP channel + 1 to the
   depayloader's `push_rtcp` (sender reports; no receiver reports are sent). `Event::Tracks` before the first
   `Sample` after PLAY of every connection, `Event::Sample { join: None }` per sample, `Status::Establishing`
@@ -255,7 +269,8 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
   units are delivered.
 - Keepalive: `OPTIONS` on the request URI at half the `Session` header's `timeout` clamped to 5 s..3600 s,
   default 30 s, armed at the PLAY reply and re-armed at each send, driven by `poll(now_us)`. Any reply to it
-  is ignored (405/501 are common). `close()` sends `TEARDOWN` (only when a session id exists) and then
+  is ignored (405/501 are common); a reply while playing resets the auth replay budget, so keepalive
+  challenges with rotating Digest nonces never exhaust it. `close()` sends `TEARDOWN` (only when a session id exists) and then
   `Close { conn }`; the same TEARDOWN-then-Close is used when the session aborts a connection itself (stall
   reconnect, start timeout, handshake failure after SETUP, `reconnect()`).
 - Auth: credentials live in the session's `AuthState` (origin = the RTSP URL) and are given to
@@ -338,12 +353,32 @@ Behaviour pinned by `tests/audit_1484.rs`, `tests/audit_1484_sources.rs` and the
   of the representable time, and a `WakeAt` already issued for the same instant is not repeated.
 - RTSP bounds the `stale=true` retries `rtsp-runtime` performs on its own to two replays per lineage
   (`AuthRejected` afterwards).
-- `Config::max_queued_events` (default 100 000): when the host does not drain `next_event`, the oldest queued
-  `Sample`s are dropped and counted by `Session::dropped_events()`; every other event is kept. The action
+- `Config::max_queued_events` (default 100 000) caps the whole event queue. When the host does not drain
+  `next_event`, transient `Status` events and `Starved` notices coalesce to their latest, then the oldest
+  `Sample`s are dropped (counted by `Session::dropped_events()`) and each burst of dropped samples leaves one
+  `Event::Discontinuity` in their place so the player re-syncs. Tracks, errors, buffer events and terminal
+  statuses are never dropped (the queue is bounded by the cap plus the undroppable events a stalled host leaves
+  unread). It is a `VecDeque` of slots with per-kind lanes of sequence numbers: O(1) amortised, no scans. The action
   queue is not capped: dropping a `Send`, `HttpRequest` or `Close` would corrupt the protocol state, and every
   callback adds a bounded number of actions.
 - Cookies (RFC 6265bis): a `Secure` cookie from an `http` origin is rejected, `__Secure-` needs `Secure`,
   `__Host-` needs `Secure`, `Path=/` and no `Domain` (prefixes match ASCII case-insensitively), a `Path` over
-  1024 bytes is rejected.
+  1024 bytes is rejected. Seeded cookies obey the same rules: a name over 4096 bytes (name plus value) is
+  dropped, and `__Secure-`/`__Host-` cookies are accepted only on an `https` origin (stored `Secure`). The
+  `Cookie` header never exceeds 16 KiB (cookies that do not fit are left out, longest path first).
+- A byte-ranged HLS request (`EXT-X-BYTERANGE`) is answered with `206` and a `Content-Range` naming exactly
+  that range, or with a `200` (server ignored `Range`) from which the range is sliced once the whole body
+  arrived (the body cap applies to the whole file); anything else, or a body shorter than the range end, is a
+  failed request.
+- A main-playlist track id at or above `AUDIO_TRACK_ID_OFFSET` is dropped with its samples and reported once
+  as `ErrorKind::TrackIdReserved`. When both HLS adapters report the one logical discontinuity at the same
+  instant only the first reaches the playout gate and the host. A failed playlist delivery whose reload the
+  engine already queued (unmergeable delta) adds no second reload chain.
+- Playout: an effective resume lead is at least `pause_lead_us + 1 us`; a `set_rendered_tracks` made before the
+  gate engages is applied when it does. 33-bit PTS/DTS and 32-bit RTP timestamps are unwrapped once at the
+  demux edge (`transmux` `ts_demux`, `rtp_stream`), so every `Sample` timestamp the gate sees is an absolute
+  unrolled `i64` and the gate needs no wrap logic.
+- RTSP applies `Config::ts_http.clamped()` and the `min_reconnect_interval_ms` floor (only when the connection
+  that played lasted less) like the TS source.
 - `auth` and `redirect` are `#[doc(hidden)]` (the integration tests need them); everything else internal is
   crate-private.
