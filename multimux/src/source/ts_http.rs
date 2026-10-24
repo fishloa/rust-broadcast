@@ -59,9 +59,10 @@ use transmux::TrackId;
 use broadcast_common::Timestamp;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use media_plane::ingress::{Dialer, HandshakePolicy, IngestDriver};
+use media_plane::ingress::{Dialer, HandshakePolicy, HealthState, IngestDriver};
 use media_plane::trunk::TrunkConfig;
 use reqwest::Client;
+use tshttp_runtime::{Action, Config as PolicyConfig, Event as PolicyEvent, TsHttpPolicy};
 use url::Url;
 
 use broadcast_auth::Credentials;
@@ -160,6 +161,16 @@ pub type TsHttpStream = BoxStream<'static, reqwest::Result<Vec<u8>>>;
 /// (`401` maps to [`MultimuxError::Auth`], anything else to
 /// [`MultimuxError::Connect`]).
 pub async fn open_stream(route: &TsHttpRoute) -> Result<TsHttpStream> {
+    open_response(route).await.map(|(stream, _)| stream)
+}
+
+/// The response head the policy core needs: status and header pairs.
+pub(crate) struct ResponseHead {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+}
+
+pub(crate) async fn open_response(route: &TsHttpRoute) -> Result<(TsHttpStream, ResponseHead)> {
     let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad TS-over-HTTP URL {}: {e}",
@@ -189,10 +200,24 @@ pub async fn open_stream(route: &TsHttpRoute) -> Result<TsHttpStream> {
             }
         });
     }
-    Ok(response
+    let head = ResponseHead {
+        status: status.as_u16(),
+        headers: response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|v| (name.as_str().to_owned(), v.to_owned()))
+            })
+            .collect(),
+    };
+    let stream = response
         .bytes_stream()
         .map(|item| item.map(|b| b.to_vec()))
-        .boxed())
+        .boxed();
+    Ok((stream, head))
 }
 
 /// What one [`recv_and_feed`] call observed on the body stream.
@@ -236,13 +261,104 @@ pub async fn recv_and_feed(
     Ok(StreamStatus::Fed(chunk))
 }
 
+const NO_START_TIMEOUT_MS: u64 = u64::MAX;
+const STALL_NOTICE_DIVISOR: u64 = 2;
+const MIN_STALL_RECONNECT_MS: u64 = 2;
+
+fn duration_ms(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The policy-core configuration for a route: the post-establishment stall
+/// threshold is the route's read timeout, the core's start timeout is
+/// disabled (the handshake deadline owns establishment), and backoff is
+/// unused because the supervisor owns reconnect.
+pub(crate) fn policy_config(read: Duration) -> PolicyConfig {
+    let reconnect = duration_ms(read).max(MIN_STALL_RECONNECT_MS);
+    PolicyConfig {
+        start_timeout_ms: NO_START_TIMEOUT_MS,
+        stall_notice_ms: reconnect / STALL_NOTICE_DIVISOR,
+        stall_reconnect_ms: reconnect,
+        ..PolicyConfig::default()
+    }
+}
+
 /// The ts/http source's [`IngestStep`](crate::source::driver::IngestStep):
-/// one bounded body-chunk read, feeding the driver and the route's DVR EIT
-/// tracker.
+/// one bounded body-chunk read, feeding the driver, the route's DVR EIT
+/// tracker and the shared TS-over-HTTP policy core (`tshttp-runtime`).
 pub(crate) struct TsHttpStep {
     pub stream: TsHttpStream,
     pub start: tokio::time::Instant,
     pub route_handle: std::sync::Arc<crate::route::RouteHandle>,
+    pub policy: TsHttpPolicy,
+    read: Duration,
+}
+
+enum Verdict {
+    Continue,
+    Ended,
+    Stalled,
+    Truncated,
+}
+
+impl TsHttpStep {
+    pub(crate) fn new(
+        stream: TsHttpStream,
+        head: &ResponseHead,
+        timeouts: IngestTimeouts,
+        route_handle: std::sync::Arc<crate::route::RouteHandle>,
+    ) -> Self {
+        let start = tokio::time::Instant::now();
+        let mut policy = TsHttpPolicy::new("", policy_config(timeouts.read), 0);
+        policy.on_response(head.status, &head.headers, 0);
+        let mut step = TsHttpStep {
+            stream,
+            start,
+            route_handle,
+            policy,
+            read: timeouts.read,
+        };
+        step.verdict();
+        step
+    }
+
+    fn now_ms(&self) -> u64 {
+        duration_ms(self.start.elapsed())
+    }
+
+    fn verdict(&mut self) -> Verdict {
+        let mut verdict = Verdict::Continue;
+        while let Some(event) = self.policy.poll_event() {
+            match event {
+                PolicyEvent::Ended => verdict = Verdict::Ended,
+                PolicyEvent::Reconnecting { .. } if self.policy.is_finite() => {
+                    verdict = Verdict::Truncated;
+                }
+                PolicyEvent::StallNotice { secs } => {
+                    tracing::debug!(secs, "ts/http stalled");
+                }
+                PolicyEvent::Finite { expected_bytes } => {
+                    tracing::debug!(expected_bytes, "ts/http finite response");
+                }
+                _ => {}
+            }
+        }
+        while let Some(action) = self.policy.poll() {
+            if matches!(action, Action::Abort) {
+                verdict = Verdict::Stalled;
+            }
+        }
+        verdict
+    }
+
+    fn capped_window(&self, window: Duration) -> Duration {
+        match self.policy.next_deadline() {
+            Some(deadline) => window.min(Duration::from_millis(
+                deadline.saturating_sub(self.now_ms()),
+            )),
+            None => window,
+        }
+    }
 }
 
 impl crate::source::driver::IngestStep<TsIngestSession> for TsHttpStep {
@@ -252,15 +368,32 @@ impl crate::source::driver::IngestStep<TsIngestSession> for TsHttpStep {
         window: Duration,
     ) -> crate::source::driver::StepOutcome {
         use crate::source::driver::StepOutcome;
-        let chunk = match tokio::time::timeout(window, self.stream.next()).await {
+        let wait = self.capped_window(window);
+        let chunk = match tokio::time::timeout(wait, self.stream.next()).await {
             Ok(Some(Ok(chunk))) => chunk,
             Ok(Some(Err(e))) => {
                 return StepOutcome::Failed(MultimuxError::Connect {
                     reason: format!("ts/http stream read: {e}"),
                 });
             }
-            Ok(None) => return StepOutcome::Eof,
-            Err(_) => return StepOutcome::Idle,
+            Ok(None) => {
+                let now_ms = self.now_ms();
+                self.policy.on_eof(now_ms);
+                return match self.verdict() {
+                    Verdict::Truncated => StepOutcome::Failed(MultimuxError::Connect {
+                        reason: "ts/http stream read: truncated transfer".into(),
+                    }),
+                    _ => StepOutcome::Eof,
+                };
+            }
+            Err(_) => {
+                let now_ms = self.now_ms();
+                self.policy.poll_timeout(now_ms);
+                return match self.verdict() {
+                    Verdict::Stalled => StepOutcome::Failed(self.stalled(self.read)),
+                    _ => StepOutcome::Idle,
+                };
+            }
         };
         let now = Timestamp::from_instant(
             self.start.into_std(),
@@ -268,6 +401,10 @@ impl crate::source::driver::IngestStep<TsIngestSession> for TsHttpStep {
         );
         driver.feed(&chunk, now);
         self.route_handle.feed_si_ts(&chunk);
+        let established = matches!(driver.health(), HealthState::Live);
+        let now_ms = self.now_ms();
+        self.policy.on_bytes(chunk.len(), now_ms, established);
+        self.verdict();
         StepOutcome::Received
     }
 
@@ -296,7 +433,7 @@ pub async fn run_ts_http(
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
     _cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    let stream = open_stream(route).await?;
+    let (stream, head) = open_response(route).await?;
     let mut dialer = TsHttpDialer;
     let session = dialer
         .dial()
@@ -307,11 +444,12 @@ pub async fn run_ts_http(
         handshake,
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let mut step = TsHttpStep {
+    let mut step = TsHttpStep::new(
         stream,
-        start: tokio::time::Instant::now(),
-        route_handle: std::sync::Arc::clone(route_handle),
-    };
+        &head,
+        route.timeouts,
+        std::sync::Arc::clone(route_handle),
+    );
     let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
     let err = crate::source::driver::run_ingest_scaffold(

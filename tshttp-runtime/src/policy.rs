@@ -232,6 +232,12 @@ impl TsHttpPolicy {
         matches!(self.phase, Phase::Ended)
     }
 
+    /// `true` while the current response is a finite resource (T16).
+    #[must_use]
+    pub fn is_finite(&self) -> bool {
+        self.finite
+    }
+
     /// Number of `Open` actions issued so far; changes whenever a new
     /// connection starts.
     #[must_use]
