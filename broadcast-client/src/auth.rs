@@ -13,6 +13,30 @@ use crate::headers;
 use crate::{Event, Status};
 
 const COOKIE: &str = "Cookie";
+const AUTHORIZATION: &str = "Authorization";
+const PROXY_AUTHORIZATION: &str = "Proxy-Authorization";
+const WWW_AUTHENTICATE: &str = "www-authenticate";
+const PROXY_AUTHENTICATE: &str = "proxy-authenticate";
+const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
+const CHALLENGE_SEPARATOR: &str = ", ";
+
+/// Whether a request's headers carry credentials for the origin or for a proxy.
+pub(crate) fn carries_credentials(headers: &[(String, String)]) -> bool {
+    headers.iter().any(|(k, _)| {
+        k.eq_ignore_ascii_case(AUTHORIZATION) || k.eq_ignore_ascii_case(PROXY_AUTHORIZATION)
+    })
+}
+
+fn authenticator_for(lines: &[String], creds: &Credentials) -> Option<Authenticator> {
+    let combined = lines.join(CHALLENGE_SEPARATOR);
+    Authenticator::from_challenge(&combined, creds.clone())
+        .ok()
+        .or_else(|| {
+            lines
+                .iter()
+                .find_map(|line| Authenticator::from_challenge(line, creds.clone()).ok())
+        })
+}
 
 /// Result of handling a 401/407.
 #[non_exhaustive]
@@ -33,6 +57,7 @@ pub struct AuthState {
     credentials: Option<Credentials>,
     authenticator: Option<Authenticator>,
     last_challenge: Option<String>,
+    proxy: bool,
     waiting: bool,
     jar: CookieJar,
 }
@@ -47,6 +72,7 @@ impl AuthState {
             credentials: None,
             authenticator: None,
             last_challenge: None,
+            proxy: false,
             waiting: false,
             jar,
         }
@@ -109,16 +135,21 @@ impl AuthState {
         if let Some(cookie) = self.jar.header_for(url, now_us) {
             headers.push((COOKIE.to_string(), cookie));
         }
+        let name = if self.proxy {
+            PROXY_AUTHORIZATION
+        } else {
+            AUTHORIZATION
+        };
         if let Some(creds) = self.credentials.as_ref().filter(|_| same_origin) {
             match creds {
                 Credentials::Bearer { token } => {
-                    headers.push(("Authorization".to_string(), format!("Bearer {token}")));
+                    headers.push((name.to_string(), format!("Bearer {token}")));
                 }
                 Credentials::Basic { .. } | Credentials::Digest { .. } => {
                     if let Some(auth) = &mut self.authenticator {
                         let ctx = broadcast_auth::RequestContext::new("GET", url.as_str());
                         if let Ok(val) = auth.authorization(&ctx) {
-                            headers.push(("Authorization".to_string(), val));
+                            headers.push((name.to_string(), val));
                         }
                     }
                 }
@@ -137,25 +168,31 @@ impl AuthState {
         had_auth: bool,
         stale_replayed: bool,
     ) -> AuthDecision {
-        let challenge_headers: Vec<(String, String)> = headers
-            .iter()
-            .filter(|(k, _)| {
-                k.eq_ignore_ascii_case("www-authenticate")
-                    || k.eq_ignore_ascii_case("proxy-authenticate")
-            })
-            .cloned()
-            .collect();
-
-        let challenge_lines: Vec<String> =
-            challenge_headers.iter().map(|(_, v)| v.clone()).collect();
+        self.proxy = status == STATUS_PROXY_AUTH_REQUIRED;
+        let preferred = if self.proxy {
+            PROXY_AUTHENTICATE
+        } else {
+            WWW_AUTHENTICATE
+        };
+        let select = |wanted: &[&str]| -> Vec<String> {
+            headers
+                .iter()
+                .filter(|(k, _)| wanted.iter().any(|w| k.eq_ignore_ascii_case(w)))
+                .map(|(_, v)| v.clone())
+                .collect()
+        };
+        let mut challenge_lines = select(&[preferred]);
+        if challenge_lines.is_empty() {
+            challenge_lines = select(&[WWW_AUTHENTICATE, PROXY_AUTHENTICATE]);
+        }
 
         let challenges: Vec<broadcast_auth::Challenge> = challenge_lines
             .iter()
             .flat_map(|l| parse_challenges(&[l.as_str()]).challenges)
             .collect();
 
-        if let Some(line) = challenge_lines.first() {
-            self.last_challenge = Some(line.clone());
+        if !challenge_lines.is_empty() {
+            self.last_challenge = Some(challenge_lines.join(CHALLENGE_SEPARATOR));
         }
 
         let stale = challenges.iter().any(|c| {
@@ -200,9 +237,8 @@ impl AuthState {
 
         // First (unauthenticated) 401 or stale re-challenge: build authenticator
         // and replay once.
-        if let Some(line) = challenge_lines.first()
-            && let Some(creds) = self.credentials.clone()
-            && let Ok(auth) = Authenticator::from_challenge(line, creds)
+        if let Some(creds) = self.credentials.as_ref()
+            && let Some(auth) = authenticator_for(&challenge_lines, creds)
         {
             self.authenticator = Some(auth);
             self.waiting = false;

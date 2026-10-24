@@ -350,9 +350,18 @@ fn set_credentials_while_waiting_reopens() {
 
 #[test]
 fn set_credentials_while_streaming_stored_not_interrupt() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+    let mut config = Config::default();
+    config.ts_http.min_reconnect_interval_ms = 0;
+    let mut session = Session::open("http://example/live.ts", config, 0).unwrap();
     let conn = match session.poll(0).unwrap() {
-        Action::HttpRequest { conn, .. } => conn,
+        Action::HttpRequest { conn, headers, .. } => {
+            assert!(
+                !headers
+                    .iter()
+                    .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+            );
+            conn
+        }
         _ => panic!(),
     };
     session.on_response(conn, 200, &[]);
@@ -372,6 +381,27 @@ fn set_credentials_while_streaming_stored_not_interrupt() {
     }
     assert!(!saw_close);
     assert!(!saw_request);
+
+    session.on_closed(conn, None, 11_000_000);
+    let mut next_auth = None;
+    for now_us in [11_000_000, 12_000_000, 20_000_000, 40_000_000] {
+        while let Some(a) = session.poll(now_us) {
+            if let Action::HttpRequest { headers, .. } = a {
+                next_auth = headers
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                    .map(|(_, v)| v.clone());
+            }
+        }
+        if next_auth.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        next_auth.as_deref(),
+        Some("Bearer new-token"),
+        "the stored credentials are used for the next request"
+    );
 }
 
 #[test]

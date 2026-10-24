@@ -1,6 +1,6 @@
 mod support;
 
-use broadcast_client::{Action, Config, Event, Session, Status};
+use broadcast_client::{Action, Config, Event, Session, StarveKind, Status};
 use support::*;
 
 #[test]
@@ -35,9 +35,43 @@ fn display_changed_keeps_position_between_samples() {
     let (status, headers) = read_tf1_headers();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
-    let _ = evs
-        .iter()
-        .any(|e| matches!(e, Event::DisplayChanged { .. }));
+    let positions = |pred: fn(&Event) -> bool| -> Vec<usize> {
+        evs.iter()
+            .enumerate()
+            .filter(|(_, e)| pred(e))
+            .map(|(i, _)| i)
+            .collect()
+    };
+    let display = positions(|e| matches!(e, Event::DisplayChanged { .. }));
+    let samples = positions(|e| matches!(e, Event::Sample { .. }));
+    let tracks = positions(|e| matches!(e, Event::Tracks(_)));
+    assert!(
+        !display.is_empty(),
+        "the fixture reports its display geometry"
+    );
+    assert!(samples.len() > 1);
+    for at in &display {
+        assert!(
+            tracks.iter().any(|t| t < at),
+            "DisplayChanged at {at} precedes every Tracks"
+        );
+        assert!(
+            samples.iter().any(|s| s > at),
+            "DisplayChanged at {at} is not followed by a sample"
+        );
+    }
+    let last_sample = *samples.last().unwrap();
+    let first_display = display[0];
+    assert!(
+        first_display < last_sample,
+        "DisplayChanged was deferred past the last sample"
+    );
+    let samples_before_first = samples.iter().filter(|s| **s < first_display).count();
+    let samples_after_first = samples.len() - samples_before_first;
+    assert!(
+        samples_after_first > 0,
+        "{samples_before_first} samples before and none after the first DisplayChanged"
+    );
 }
 
 #[test]
@@ -167,8 +201,47 @@ fn not_found_status_and_keeps_retrying_at_cap() {
 
 #[test]
 fn starved_event_passthrough() {
+    let bytes = read_tf1_bytes();
+    let (status, headers) = read_tf1_headers();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-    let _ = session.poll(0);
+    let conn = match session.poll(0).unwrap() {
+        Action::HttpRequest { conn, .. } => conn,
+        other => panic!("{other:?}"),
+    };
+    session.on_response(conn, status, &headers);
+    session.on_data(conn, &bytes, 0);
+    while session.next_event().is_some() {}
+    let _ = session.poll(10_000_000);
+    let mut evs = Vec::new();
+    while let Some(e) = session.next_event() {
+        evs.push(e);
+    }
+    assert!(evs.contains(&Event::Starved(StarveKind::NoData)), "{evs:?}");
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(e, Event::Starved(StarveKind::NoData)))
+            .count(),
+        1,
+        "one notice per stall"
+    );
+
+    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+    let conn = match session.poll(0).unwrap() {
+        Action::HttpRequest { conn, .. } => conn,
+        other => panic!("{other:?}"),
+    };
+    session.on_response(conn, 200, &[]);
+    let mut null_packet = vec![0xFF; 188];
+    null_packet[..4].copy_from_slice(&[0x47, 0x1F, 0xFF, 0x10]);
+    session.on_data(conn, &null_packet, 10_000_000);
+    let mut evs = Vec::new();
+    while let Some(e) = session.next_event() {
+        evs.push(e);
+    }
+    assert!(
+        evs.contains(&Event::Starved(StarveKind::Data)),
+        "bytes without samples report data starvation: {evs:?}"
+    );
 }
 
 #[test]
@@ -200,8 +273,49 @@ fn close_is_terminal_and_emits_close_once() {
 
 #[test]
 fn unknown_conn_callbacks_ignored() {
+    let bytes = read_tf1_bytes();
+    let (status, headers) = read_tf1_headers();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-    session.on_response(999, 200, &[]);
-    session.on_data(999, &[1, 2, 3], 0);
-    session.on_closed(999, None, 0);
+    let conn = match session.poll(0).unwrap() {
+        Action::HttpRequest { conn, .. } => conn,
+        other => panic!("{other:?}"),
+    };
+    let unknown = conn.wrapping_add(998);
+    session.on_response(unknown, 200, &[]);
+    session.on_data(unknown, &bytes[..4096], 0);
+    session.on_closed(unknown, None, 1_000);
+    session.on_closed(unknown, Some("reset".to_string()), 2_000);
+    let mut actions = Vec::new();
+    while let Some(a) = session.poll(3_000) {
+        actions.push(a);
+    }
+    assert!(
+        actions.iter().all(|a| matches!(a, Action::WakeAt(_))),
+        "{actions:?}"
+    );
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, Action::HttpRequest { .. })),
+        "{actions:?}"
+    );
+    assert!(session.next_event().is_none());
+
+    session.on_response(conn, status, &headers);
+    for chunk in bytes.chunks(65_536).take(8) {
+        session.on_data(conn, chunk, 4_000);
+    }
+    let mut evs = Vec::new();
+    while let Some(e) = session.next_event() {
+        evs.push(e);
+    }
+    assert!(
+        evs.iter().any(|e| matches!(e, Event::Sample { .. })),
+        "the real connection still plays"
+    );
+    assert!(
+        !evs.iter()
+            .any(|e| matches!(e, Event::Status(Status::Reconnecting { .. }))),
+        "an unknown connection's close must not drive the retry policy: {evs:?}"
+    );
 }

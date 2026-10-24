@@ -556,14 +556,21 @@ fn hls_playlist_reload_and_init_and_cross_origin_cookie_scope() {
 
 #[test]
 fn hls_cookie_survives_session_reconnect() {
+    let live_playlist = String::from_utf8(ts_playlist())
+        .expect("utf8 playlist")
+        .replace("#EXT-X-ENDLIST\n", "")
+        .into_bytes();
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
     h.route(
         TS_PLAYLIST_URL,
-        vec![Reply::OkHeaders(ts_playlist(), cookie_playlist_headers())],
+        vec![Reply::OkHeaders(live_playlist, cookie_playlist_headers())],
     );
     h.ok(TS_SEG0_URL, ts_segment(0));
     h.ok(TS_SEG1_URL, ts_segment(1));
-    h.run_to_end();
+    h.run_until(
+        |evs| evs.iter().any(|e| matches!(e, Event::Sample { .. })),
+        200,
+    );
     let before = h.seen.len();
     h.session.reconnect(h.now);
     h.collect();
