@@ -58,6 +58,10 @@ required-features = ["test-seams"]
 name = "playout"
 required-features = ["test-seams"]
 
+[[test]]
+name = "timeline_jump"
+required-features = ["test-seams"]
+
 [[example]]
 name = "live_loop"
 
