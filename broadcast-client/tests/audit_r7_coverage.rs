@@ -279,6 +279,7 @@ fn cenc_fmp4_with_an_ext_x_key_is_one_fatal_unsupported_encryption_and_no_sample
         assert!(!t.ended, "{fixture}: {t:?}");
         assert_eq!(t.samples, 0, "{fixture}");
         assert_eq!(t.fatals.len(), 1, "{fixture}: {t:?}");
+        assert!(t.non_fatals.is_empty(), "{fixture}: fatal at once: {t:?}");
         assert!(
             matches!(&t.fatals[0], ErrorKind::UnsupportedEncryption { .. }),
             "{fixture}: {t:?}"
