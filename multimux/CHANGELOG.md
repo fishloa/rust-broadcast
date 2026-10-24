@@ -7,6 +7,8 @@
 
 
 ### Fixed
+- HLS pull input no longer stalls forever on an `#EXT-X-KEY:METHOD=AES-128` playlist (issue #1477). `run_hls_pull` now fetches every `Action::FetchKey` through the same authenticated GET path as segments (credentials stay scoped to the configured origin; redirect policy unchanged), bounds a key body at 4096 bytes, treats a non-2xx, transport error, oversized body or non-16-byte body as a failed fetch (`HlsClient::on_key_error`, then the existing bounded retry), and feeds a good key to `HlsClient::on_key`. A segment that does not decrypt (`DecryptFailed`) and any unsupported encryption (`SAMPLE-AES`, encrypted `EXT-X-MAP`, key without URI) end the session with the typed `MultimuxError::LlHls(..)` error instead of stalling or passing ciphertext through. `HlsFetchId` gains a `Key(KeyId)` variant and `HlsIngestSession::key_fetch_failed`. Covered by `tests/hls_pull_keys.rs`.
+
 - `parse_segment_filename` now accepts the real instance form `seg-{track}-{instance}-{seq}.m4s` in addition to the legacy `seg-{track}-{seq}.m4s` (issue #1422). As a result `inject_segment_events` (DASH SCTE-35 `emsg` splice) and the in-progress chunked whole-segment fallback now actually run for real HLS/DASH filenames instead of only the unit tests' short names. `iframe-seg-…` URIs are deliberately excluded so I-frame byte ranges never drift. Box-scan assertions in `tests/origin_iframe.rs` cover the new behaviour.
 
 
