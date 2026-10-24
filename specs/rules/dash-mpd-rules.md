@@ -117,4 +117,4 @@ Rule-by-rule comparison with [`docs/specs/dash/23009-1/`](../../docs/specs/dash/
 MPD update.
 
 **Not in 23009-1 text at all**: the `ceil((t[s+1] - t[s]) / d[s])` repeat-count formulas above come from DASH-IF IOP v4.3
-(see [`../../docs/specs/dash/`](../../docs/specs/dash/INDEX.md) once the IOP transcriptions land), not from 23009-1:2022.
+(see the DASH-IF IOP transcriptions under `docs/specs/dash/` once they land), not from 23009-1:2022.
