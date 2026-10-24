@@ -13,7 +13,7 @@ use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, Event, SourceKind};
 use crate::headers;
 use crate::redirect;
-use crate::source::hls::HlsSource;
+use crate::source::hls_session::HlsSession;
 use crate::source::ts_http::TsHttpSource;
 use transmux::TrackId;
 
@@ -26,7 +26,7 @@ pub struct Session {
     config: Config,
     auth: AuthState,
     source: TsHttpSource,
-    hls: Option<Box<HlsSource>>,
+    hls: Option<Box<HlsSession>>,
     redirect_count: u32,
     next_conn: u32,
     live_conn: Option<u32>,
@@ -66,7 +66,7 @@ impl Session {
         let mut auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
         auth.seed_cookies(&config.initial_cookies);
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
-        let hls = use_hls.then(|| Box::new(HlsSource::new(&parsed, &config)));
+        let hls = use_hls.then(|| Box::new(HlsSession::new(&parsed, &config)));
         Ok(Self {
             closed: false,
             now_us,
@@ -328,6 +328,28 @@ impl Session {
             return Ok(());
         }
         h.select_variant(index, self.now_us, &mut self.auth)?;
+        self.flush_hls();
+        Ok(())
+    }
+
+    /// Select the separate HLS audio rendition, or `None` for no separate audio.
+    ///
+    /// `index` addresses the renditions of the last [`Event::Variants`] filtered to the chosen
+    /// variant's `AUDIO` group and to audio type, in master-playlist order. A rendition without
+    /// a `URI` (carried inside the variant) is selectable but never fetched. A manual selection
+    /// replaces automatic selection until the session ends.
+    ///
+    /// # Errors
+    /// [`Error::NotHls`] for a non-HLS session, [`Error::NoSuchRendition`] for an out-of-range
+    /// index or when no master playlist was seen yet.
+    pub fn select_audio_rendition(&mut self, index: Option<usize>) -> Result<(), Error> {
+        let Some(h) = self.hls.as_mut() else {
+            return Err(Error::NotHls);
+        };
+        if self.closed {
+            return Ok(());
+        }
+        h.select_audio(index, self.now_us, &mut self.auth)?;
         self.flush_hls();
         Ok(())
     }

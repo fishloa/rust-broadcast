@@ -16,8 +16,11 @@ and emits `Event::Discontinuity`). TS and fMP4 segments, VOD (`Status::Ended` on
 Failed requests retry with the `Config::hls_backoff_ms` schedule (2, 4, 8 s, then
 `hls_backoff_cap_ms`, 10 s) and report `Status::Reconnecting`; a 404/410 playlist also reports
 `Status::NotFound`. Bodies are bounded (`max_playlist_bytes`, `max_segment_bytes`) and requests
-time out (`hls_request_timeout_us`, `hls_segment_timeout_us`). Separate audio/subtitle renditions
-and `Event::Buffer` for HLS are not implemented.
+time out (`hls_request_timeout_us`, `hls_segment_timeout_us`). Separate audio renditions are played by a second adapter
+(`Config::auto_select_audio`, `Config::preferred_audio_language`, `Session::select_audio_rendition`);
+audio track ids are offset by `AUDIO_TRACK_ID_OFFSET` (1000), `Event::Tracks` carries the merged set
+and `Event::AudioRendition` reports the active rendition. Subtitle renditions and `Event::Buffer`
+for HLS are not implemented.
 
 ## Encrypted HLS
 

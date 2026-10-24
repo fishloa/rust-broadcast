@@ -21,7 +21,9 @@ pub use buffer::BufferInput;
 pub use buffering_runtime::Hint;
 pub use buffering_runtime::Hint as BufferHint;
 pub use error::{Error, TransportError};
-pub use events::{Action, BufferEvent, Config, ErrorKind, Event, SourceKind, Status};
+pub use events::{
+    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ErrorKind, Event, SourceKind, Status,
+};
 pub use session::Session;
 pub use source::ts_http::TsHttpSource;
 pub use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};

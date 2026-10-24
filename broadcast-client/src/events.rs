@@ -253,6 +253,18 @@ pub enum Event {
     },
     /// A master playlist was parsed and a variant chosen.
     Variants(hls_runtime::client::MasterSelection),
+    /// The active separate-audio selection changed. `index` is the position in the chosen
+    /// variant's audio renditions (see [`crate::Session::select_audio_rendition`]); `None` means
+    /// no rendition is active. A rendition carried inside the variant itself (no `URI`) is
+    /// reported as active without any separate audio being fetched.
+    AudioRendition {
+        /// Index of the active rendition, `None` when none is active.
+        index: Option<usize>,
+        /// `NAME` of the active rendition.
+        name: Option<String>,
+        /// `LANGUAGE` of the active rendition.
+        language: Option<String>,
+    },
     /// A condition the player should tell the user about. `fatal` means the session will not
     /// recover by itself: it has closed its connections and goes silent, so the player shows a
     /// message and does not retry. Non-fatal errors are emitted once per kind until a success
@@ -318,6 +330,18 @@ impl PartialEq for Event {
             (Self::Buffer(a), Self::Buffer(b)) => *a == *b,
             (Self::Variants(a), Self::Variants(b)) => *a == *b,
             (
+                Self::AudioRendition {
+                    index: ia,
+                    name: na,
+                    language: la,
+                },
+                Self::AudioRendition {
+                    index: ib,
+                    name: nb,
+                    language: lb,
+                },
+            ) => *ia == *ib && *na == *nb && *la == *lb,
+            (
                 Self::Error {
                     kind: ka,
                     fatal: fa,
@@ -332,6 +356,9 @@ impl PartialEq for Event {
     }
 }
 
+/// Offset added to the track ids of a separate HLS audio rendition so they never collide with the
+/// main playlist's track ids (which must stay below this value).
+pub const AUDIO_TRACK_ID_OFFSET: u32 = 1000;
 /// Default maximum accepted HLS playlist body size.
 pub const DEFAULT_MAX_PLAYLIST_BYTES: usize = 4 * 1024 * 1024;
 /// Default maximum accepted HLS media resource body size.
@@ -389,6 +416,11 @@ pub struct Config {
     /// HLS: consecutive key/decrypt failures (no decoded samples in between) after which the
     /// session emits a fatal [`Event::Error`] and stops.
     pub max_key_failures: u32,
+    /// HLS: BCP 47 language (prefix match, ASCII case-insensitive) preferred for the separate
+    /// audio rendition.
+    pub preferred_audio_language: Option<String>,
+    /// HLS: pick a separate audio rendition automatically when the master playlist arrives.
+    pub auto_select_audio: bool,
 }
 
 impl Default for Config {
@@ -410,6 +442,8 @@ impl Default for Config {
             hls_key_timeout_us: DEFAULT_HLS_KEY_TIMEOUT_US,
             max_key_bytes: DEFAULT_MAX_KEY_BYTES,
             max_key_failures: DEFAULT_MAX_KEY_FAILURES,
+            preferred_audio_language: None,
+            auto_select_audio: true,
         }
     }
 }
@@ -434,6 +468,8 @@ impl core::fmt::Debug for Config {
             .field("hls_key_timeout_us", &self.hls_key_timeout_us)
             .field("max_key_bytes", &self.max_key_bytes)
             .field("max_key_failures", &self.max_key_failures)
+            .field("preferred_audio_language", &self.preferred_audio_language)
+            .field("auto_select_audio", &self.auto_select_audio)
             .finish()
     }
 }
