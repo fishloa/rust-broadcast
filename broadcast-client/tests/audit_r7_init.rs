@@ -64,8 +64,8 @@ fn vod_host(maps: &[&str], init_replies: &[(&str, Vec<Reply>)]) -> Host {
     for (m, replies) in init_replies {
         h.route(&format!("{BASE}/{m}"), replies.clone());
     }
-    for i in 0..maps.len() {
-        h.ok(&format!("{BASE}/s{i}.m4s"), segs[i].clone());
+    for (i, seg) in segs.iter().enumerate().take(maps.len()) {
+        h.ok(&format!("{BASE}/s{i}.m4s"), seg.clone());
     }
     h
 }
