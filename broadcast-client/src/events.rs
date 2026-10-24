@@ -160,6 +160,15 @@ pub enum ErrorKind {
         /// The HTTP status, `None` for a transport error, timeout or oversized body.
         status: Option<u16>,
     },
+    /// A Media Initialization Section (`EXT-X-MAP`) fetch failed with a non-authentication
+    /// status, a transport error, a timeout, or an oversized or undecodable body. The fetch is
+    /// retried with backoff; [`Config::max_key_failures`] consecutive failures (no decoded
+    /// samples in between) make one fatal error of this kind. Unlike a key request, a `403`
+    /// counts too (it is also reported as [`Event::Forbidden`]).
+    InitFetchFailed {
+        /// The HTTP status, `None` for a transport error, timeout or an undecodable body.
+        status: Option<u16>,
+    },
     /// The key response was not a valid 16-byte AES-128 key.
     BadKey,
     /// A segment did not decrypt (bad padding or length), typically because the key is wrong.
@@ -228,6 +237,7 @@ impl ErrorKind {
         match self {
             Self::UnsupportedEncryption { .. } => "unsupported_encryption",
             Self::KeyFetchFailed { .. } => "key_fetch_failed",
+            Self::InitFetchFailed { .. } => "init_fetch_failed",
             Self::BadKey => "bad_key",
             Self::DecryptFailed => "decrypt_failed",
             Self::UnsupportedCodec { .. } => "unsupported_codec",
@@ -418,8 +428,8 @@ pub enum Event {
     /// recover by itself: it has closed its connections and goes silent, so the player shows a
     /// message and does not retry. Non-fatal errors are emitted once per kind until a success
     /// (decoded samples) resets them, while the session keeps retrying with backoff; after
-    /// [`Config::max_key_failures`] consecutive key or decrypt failures one fatal error of the
-    /// same kind follows.
+    /// [`Config::max_key_failures`] consecutive key, decrypt or init-fetch failures one fatal
+    /// error of the same kind follows.
     Error {
         /// What went wrong.
         kind: ErrorKind,
@@ -601,7 +611,7 @@ pub struct Config {
     pub hls_key_timeout_us: u64,
     /// HLS: maximum key response body bytes; must be non-zero.
     pub max_key_bytes: usize,
-    /// HLS: consecutive key/decrypt failures (no decoded samples in between) after which the
+    /// HLS: consecutive key/decrypt/init-fetch failures (no decoded samples in between) after which the
     /// session emits a fatal [`Event::Error`] and stops; `0` behaves as `1` (the first failure is
     /// fatal).
     pub max_key_failures: u32,
