@@ -53,6 +53,15 @@ impl Declaration {
         self.resolve()
     }
 
+    /// A declared id has not been announced yet (and is not a vanished track awaiting its
+    /// replacement): the host renders a track that does not exist so far.
+    pub(crate) fn has_pending(&self) -> bool {
+        self.declared.as_ref().is_some_and(|d| {
+            d.iter()
+                .any(|id| !self.announced.contains_key(id) && !self.vanished.contains_key(id))
+        })
+    }
+
     pub(crate) fn on_tracks(&mut self, specs: &[TrackSpec]) -> Resolution {
         let next: BTreeMap<TrackId, Option<Kind>> =
             specs.iter().map(|s| (s.track_id, kind_of(s))).collect();

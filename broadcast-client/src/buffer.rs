@@ -85,6 +85,21 @@ macro_rules! rec {
 
 const TICKS_PER_SEC_27MHZ: u64 = 27_000_000;
 
+/// How long after its first media a live TS waits for an audio/video stream its PMT declares but
+/// that has not resolved to a track yet, before the first `Start` goes ahead with the tracks it
+/// has. A live mux sends audio up to about a second behind video and the audio codec config
+/// resolves only with its first frame: the zenith-tv trace (hold released on the wall backstop,
+/// audio announced about 1.3 s after the first media) started on video alone and paused 100 ms
+/// later with the audio 8 ms ahead of the playback position. Measured resolution gaps on the
+/// committed captures are 0.16 s to 0.48 s of media (`SETTLE_US` in the TS hold), so 1.5 s covers
+/// a skew three times the worst measured and is shorter than the 1.8 s default start lead, which a
+/// stream with no such stream (a declared but never delivering audio PID) waits out anyway.
+pub(crate) const START_PENDING_TRACK_WAIT_US: u64 = 1_500_000;
+
+/// Controller key of the placeholder for a declared stream that has not resolved yet; a real
+/// `TrackId` never takes it.
+const PENDING_TRACK_KEY: u32 = u32::MAX;
+
 pub(crate) fn raw_27mhz(pts: i64, timescale: u32) -> i128 {
     if timescale == 0 {
         return 0;
@@ -146,6 +161,10 @@ pub(crate) struct Feeder {
     video_join_pts_27: Option<u64>,
     origin: Option<i128>,
     last_chunk_us: Option<u64>,
+    expecting: bool,
+    pending_registered: bool,
+    started: bool,
+    first_media_us: Option<u64>,
     #[cfg(feature = "test-seams")]
     pub(crate) log: Vec<BufferInput>,
 }
@@ -172,6 +191,10 @@ impl Feeder {
             video_join_pts_27: None,
             origin: None,
             last_chunk_us: None,
+            expecting: false,
+            pending_registered: false,
+            started: false,
+            first_media_us: None,
             #[cfg(feature = "test-seams")]
             log: Vec::new(),
         }
@@ -180,6 +203,52 @@ impl Feeder {
     pub(crate) fn set_finite(&mut self) {
         self.finite = true;
         self.controller = None;
+        self.pending_registered = false;
+    }
+
+    pub(crate) fn has_audio(&self) -> bool {
+        self.track_specs
+            .values()
+            .any(|s| s.config.audio_sample_rate().is_some())
+    }
+
+    pub(crate) fn has_video(&self) -> bool {
+        self.track_specs
+            .keys()
+            .any(|t| self.live_joins.contains_key(t))
+    }
+
+    pub(crate) fn rendered_explicit(&self) -> bool {
+        self.rendered_explicit
+    }
+
+    /// A stream the source knows exists (PMT-declared) has no track yet: until one appears, or
+    /// [`START_PENDING_TRACK_WAIT_US`] after the first media, or the first `Start`, the
+    /// controller waits for it like for any registered track that has not delivered. The
+    /// placeholder is registered with the first media report, so a stream whose tracks all resolve
+    /// before any media never shows it to the controller.
+    pub(crate) fn set_expecting(&mut self, now_us: u64, expecting: bool) {
+        self.expecting = expecting;
+        self.sync_pending(now_us);
+    }
+
+    fn sync_pending(&mut self, now_us: u64) {
+        let want = self.expecting
+            && !self.started
+            && self
+                .first_media_us
+                .is_some_and(|f| now_us.saturating_sub(f) < START_PENDING_TRACK_WAIT_US);
+        let Some(c) = &mut self.controller else {
+            return;
+        };
+        if want && !self.pending_registered {
+            c.register_track(PENDING_TRACK_KEY);
+            rec!(self, BufferInput::Register(PENDING_TRACK_KEY));
+        } else if !want && self.pending_registered {
+            c.unregister_track(PENDING_TRACK_KEY);
+            rec!(self, BufferInput::Unregister(PENDING_TRACK_KEY));
+        }
+        self.pending_registered = want;
     }
 
     #[cfg(test)]
@@ -448,6 +517,7 @@ impl Feeder {
                 rec!(self, BufferInput::Register(t.value()));
             }
             self.controller = Some(c);
+            self.pending_registered = false;
         }
     }
 
@@ -467,6 +537,8 @@ impl Feeder {
     }
 
     fn report_media(&mut self, now_us: u64, t: TrackId, end: u64) {
+        self.first_media_us.get_or_insert(now_us);
+        self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
             c.on_track_media(now_us, t.value(), end);
             rec!(
@@ -488,6 +560,7 @@ impl Feeder {
         }
         self.ensure_controller();
         self.last_chunk_us = Some(now_us);
+        self.sync_pending(now_us);
         let Some(c) = &mut self.controller else {
             return;
         };
@@ -524,6 +597,7 @@ impl Feeder {
         if self.finite {
             return;
         }
+        self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
             c.on_tick(now_us, pts);
             rec!(self, BufferInput::Tick { now_us, pts });
@@ -536,6 +610,7 @@ impl Feeder {
             while let Some(ev) = c.poll_event() {
                 match ev {
                     RtEvent::StartPlaying { media_27mhz, .. } => {
+                        self.started = true;
                         out.push(Event::Buffer(BufferEvent::Start {
                             at_27mhz: media_27mhz,
                         }));

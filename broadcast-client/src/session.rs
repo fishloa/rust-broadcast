@@ -20,7 +20,7 @@ use crate::redirect;
 use crate::source::hls_session::HlsSession;
 use crate::source::rtsp::RtspSource;
 use crate::source::ts_http::TsHttpSource;
-use crate::source::ts_http_hold::HoldLimits;
+use crate::source::ts_http_hold::{HoldLimits, StreamKind};
 use crate::timeline::JumpDetector;
 use transmux::TrackId;
 
@@ -577,6 +577,17 @@ impl Session {
         }
         let resolution = self.declaration.declare(tracks);
         self.apply_rendered(resolution);
+        self.sync_expected();
+    }
+
+    fn sync_expected(&mut self) {
+        let missing = self.source.unresolved_kinds();
+        let absent = missing.iter().any(|kind| match kind {
+            StreamKind::Video => !self.buffer.has_video(),
+            StreamKind::Audio => !self.buffer.has_audio(),
+        });
+        let rendered = !self.buffer.rendered_explicit() || self.declaration.has_pending();
+        self.buffer.set_expecting(self.now_us, absent && rendered);
     }
 
     fn apply_rendered(&mut self, resolution: crate::rendered::Resolution) {
@@ -887,6 +898,7 @@ impl Session {
         while let Some(ta) = self.source.poll_action() {
             self.map_source_action(ta);
         }
+        self.sync_expected();
         self.sync_ts_wake();
     }
 
