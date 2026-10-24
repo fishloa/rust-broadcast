@@ -398,3 +398,106 @@ fn auth_state_debug_redacts() {
     let dbg = format!("{:?}", auth);
     assert!(!dbg.contains("supersecret-token"));
 }
+
+fn first_request_headers(session: &mut Session, now: u64) -> (u32, Vec<(String, String)>) {
+    while let Some(a) = session.poll(now) {
+        if let Action::HttpRequest { conn, headers, .. } = a {
+            return (conn, headers);
+        }
+    }
+    panic!("no HttpRequest was issued");
+}
+
+fn authorization(headers: &[(String, String)]) -> Option<&str> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        .map(|(_, v)| v.as_str())
+}
+
+fn challenged_session(challenge: &str) -> Session {
+    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+    let (conn, headers) = first_request_headers(&mut session, 0);
+    assert!(authorization(&headers).is_none());
+    session.on_response(
+        conn,
+        401,
+        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+    );
+    while session.poll(0).is_some() {}
+    let mut saw_required = false;
+    while let Some(e) = session.next_event() {
+        if matches!(e, Event::AuthRequired { .. }) {
+            saw_required = true;
+        }
+    }
+    assert!(saw_required);
+    session
+}
+
+#[test]
+fn basic_first_request_after_set_credentials_is_already_authorized() {
+    let mut session = challenged_session("Basic realm=\"tv\"");
+    session.set_credentials(Credentials::new("user", "pass"));
+    let (_, headers) = first_request_headers(&mut session, 1);
+    assert_eq!(authorization(&headers), Some("Basic dXNlcjpwYXNz"));
+}
+
+#[test]
+fn digest_first_request_after_set_credentials_is_already_authorized() {
+    let mut session = challenged_session("Digest realm=\"tv\", nonce=\"abc123\", qop=\"auth\"");
+    session.set_credentials(Credentials::new("user", "pass"));
+    let (_, headers) = first_request_headers(&mut session, 1);
+    let auth = authorization(&headers).expect("Authorization on the first request");
+    assert!(auth.starts_with("Digest "), "{auth}");
+    assert!(auth.contains("username=\"user\""), "{auth}");
+    assert!(auth.contains("realm=\"tv\""), "{auth}");
+    assert!(auth.contains("nonce=\"abc123\""), "{auth}");
+}
+
+#[test]
+fn reconnect_after_credentials_arrive_stays_preemptive() {
+    let mut session = challenged_session("Basic realm=\"tv\"");
+    session.set_credentials(Credentials::new("user", "pass"));
+    let (conn, headers) = first_request_headers(&mut session, 1);
+    assert!(authorization(&headers).is_some());
+    session.on_response(conn, 200, &[]);
+    session.reconnect(2);
+    let (_, again) = first_request_headers(&mut session, 2);
+    assert_eq!(authorization(&again), Some("Basic dXNlcjpwYXNz"));
+}
+
+#[test]
+fn bearer_credentials_after_challenge_still_preemptive() {
+    let mut session = challenged_session("Bearer realm=\"tv\"");
+    session.set_credentials(Credentials::bearer("tok"));
+    let (_, headers) = first_request_headers(&mut session, 1);
+    assert_eq!(authorization(&headers), Some("Bearer tok"));
+}
+
+#[test]
+fn rejected_credentials_then_new_ones_use_the_new_challenge_state() {
+    let mut session = challenged_session("Basic realm=\"tv\"");
+    session.set_credentials(Credentials::new("user", "wrong"));
+    let (conn, headers) = first_request_headers(&mut session, 1);
+    assert!(authorization(&headers).is_some());
+    session.on_response(
+        conn,
+        401,
+        &[(
+            "WWW-Authenticate".to_string(),
+            "Basic realm=\"tv\"".to_string(),
+        )],
+    );
+    while session.poll(1).is_some() {}
+    let mut rejected = false;
+    while let Some(e) = session.next_event() {
+        if matches!(e, Event::AuthRejected { .. }) {
+            rejected = true;
+        }
+    }
+    assert!(rejected);
+    session.set_credentials(Credentials::new("user", "right"));
+    let (_, again) = first_request_headers(&mut session, 2);
+    assert_eq!(authorization(&again), Some("Basic dXNlcjpyaWdodA=="));
+}

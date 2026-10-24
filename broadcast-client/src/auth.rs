@@ -25,6 +25,7 @@ pub struct AuthState {
     extra_headers: Vec<(String, String)>,
     credentials: Option<Credentials>,
     authenticator: Option<Authenticator>,
+    last_challenge: Option<String>,
     waiting: bool,
 }
 
@@ -36,6 +37,7 @@ impl AuthState {
             extra_headers,
             credentials: None,
             authenticator: None,
+            last_challenge: None,
             waiting: false,
         }
     }
@@ -53,8 +55,11 @@ impl AuthState {
     /// Set credentials; returns whether it was waiting.
     pub fn set_credentials(&mut self, creds: Credentials) -> bool {
         let was_waiting = self.waiting;
+        self.authenticator = match (&creds, &self.last_challenge) {
+            (Credentials::Bearer { .. }, _) | (_, None) => None,
+            (_, Some(line)) => Authenticator::from_challenge(line, creds.clone()).ok(),
+        };
         self.credentials = Some(creds);
-        self.authenticator = None;
         self.waiting = false;
         was_waiting
     }
@@ -106,6 +111,10 @@ impl AuthState {
             .iter()
             .flat_map(|l| parse_challenges(&[l.as_str()]).unwrap_or_default())
             .collect();
+
+        if let Some(line) = challenge_lines.first() {
+            self.last_challenge = Some(line.clone());
+        }
 
         let stale = challenges.iter().any(|c| {
             c.other_params
