@@ -713,6 +713,126 @@ mod tests {
         );
     }
 
+    fn head(content_length: Option<usize>) -> ResponseHead {
+        ResponseHead {
+            status: 200,
+            headers: content_length
+                .map(|n| vec![("content-length".to_string(), n.to_string())])
+                .unwrap_or_default(),
+        }
+    }
+
+    fn fresh_driver() -> IngestDriver<TsIngestSession> {
+        let mut dialer = TsHttpDialer;
+        IngestDriver::new(
+            dialer.dial().expect("infallible"),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        )
+    }
+
+    fn scripted_step(chunks: Vec<Vec<u8>>, head: &ResponseHead, read: Duration) -> TsHttpStep {
+        let items: Vec<reqwest::Result<Vec<u8>>> = chunks.into_iter().map(Ok).collect();
+        TsHttpStep::new(
+            futures_util::stream::iter(items).boxed(),
+            head,
+            IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read,
+            },
+            std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4)),
+        )
+    }
+
+    /// Mutation check: dropping the `policy.on_eof` call (or the finite
+    /// bookkeeping) turns this into `Eof` regardless of the byte count.
+    #[tokio::test]
+    async fn eof_before_declared_length_is_a_truncated_failure() {
+        use crate::source::driver::{IngestStep, StepOutcome};
+        let ts = build_ts_bytes(TrackId::new(1), 0xAB, 4);
+        let declared = ts.len() + 1;
+        let mut step = scripted_step(vec![ts], &head(Some(declared)), Duration::from_secs(30));
+        let mut driver = fresh_driver();
+        assert!(matches!(
+            step.step(&mut driver, Duration::from_secs(5)).await,
+            StepOutcome::Received
+        ));
+        match step.step(&mut driver, Duration::from_secs(5)).await {
+            StepOutcome::Failed(MultimuxError::Connect { reason }) => {
+                assert!(reason.contains("truncated transfer"), "{reason}");
+            }
+            _ => panic!("EOF before the declared Content-Length must fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn eof_after_declared_length_is_a_clean_end() {
+        use crate::source::driver::{IngestStep, StepOutcome};
+        let ts = build_ts_bytes(TrackId::new(1), 0xAB, 4);
+        let declared = ts.len();
+        let mut step = scripted_step(vec![ts], &head(Some(declared)), Duration::from_secs(30));
+        let mut driver = fresh_driver();
+        assert!(matches!(
+            step.step(&mut driver, Duration::from_secs(5)).await,
+            StepOutcome::Received
+        ));
+        assert!(matches!(
+            step.step(&mut driver, Duration::from_secs(5)).await,
+            StepOutcome::Eof
+        ));
+    }
+
+    #[tokio::test]
+    async fn live_eof_without_length_stays_a_clean_end() {
+        use crate::source::driver::{IngestStep, StepOutcome};
+        let ts = build_ts_bytes(TrackId::new(1), 0xAB, 4);
+        let mut step = scripted_step(vec![ts], &head(None), Duration::from_secs(30));
+        let mut driver = fresh_driver();
+        let _ = step.step(&mut driver, Duration::from_secs(5)).await;
+        assert!(matches!(
+            step.step(&mut driver, Duration::from_secs(5)).await,
+            StepOutcome::Eof
+        ));
+    }
+
+    /// The core, not the scaffold's window, decides the stall: `step` is given
+    /// a 60 s window but the core's threshold is 300 ms, so it must fail well
+    /// inside the window. Mutation check: removing the `poll_timeout` call or
+    /// the `capped_window` cap leaves this returning `Idle` for the whole
+    /// window and the outer 20 s bound fires instead.
+    #[tokio::test]
+    async fn stall_is_decided_by_the_policy_core_inside_the_window() {
+        use crate::source::driver::{IngestStep, StepOutcome};
+        let mut step = TsHttpStep::new(
+            futures_util::stream::pending().boxed(),
+            &head(None),
+            IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: Duration::from_millis(300),
+            },
+            std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4)),
+        );
+        step.policy.on_bytes(1, 0, true);
+        let mut driver = fresh_driver();
+        let outcome = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                match step.step(&mut driver, Duration::from_secs(60)).await {
+                    StepOutcome::Idle => {}
+                    other => return other,
+                }
+            }
+        })
+        .await
+        .expect("the policy core must fail the stall inside the 60 s window");
+        match outcome {
+            StepOutcome::Failed(MultimuxError::Connect { reason }) => {
+                assert!(reason.contains("no data within"), "{reason}");
+            }
+            _ => panic!("a stalled playing stream must fail"),
+        }
+    }
+
     // --- issue #663 "Finish client-side multi-scheme auth": Basic/Digest/
     // Bearer/wrong-creds against a real mock auth server ---
 
