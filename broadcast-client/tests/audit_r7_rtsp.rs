@@ -82,7 +82,11 @@ fn a_different_sdp_on_reconnect_reports_its_own_dropped_media() {
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&first));
     assert_eq!(dropped(&play(&mut host)), vec![3]);
     let again = reconnect_with(&mut host, &second);
-    assert_eq!(dropped(&again), vec![3], "a different media at the same position");
+    assert_eq!(
+        dropped(&again),
+        vec![3],
+        "a different media at the same position"
+    );
 }
 
 #[test]
