@@ -156,4 +156,25 @@ pub enum Error {
         /// What is unsupported.
         what: &'static str,
     },
+
+    /// Encrypted segments waiting for their key exceeded the buffering cap;
+    /// the oldest was dropped and will be requested again by a later reload.
+    #[error("encrypted segments waiting for a key exceed the buffer cap; dropped {dropped:?}")]
+    PendingKeyedOverflow {
+        /// The ciphertext that was dropped.
+        dropped: super::action::ResourceId,
+    },
+
+    /// A delta playlist (`EXT-X-SKIP`) could not be merged into a full view,
+    /// so none of its segments was processed; a full playlist has been
+    /// requested instead.
+    #[error(
+        "delta playlist at media sequence {media_sequence} skipping {skipped_segments} segments cannot be merged"
+    )]
+    DeltaNotMergeable {
+        /// The delta's `EXT-X-MEDIA-SEQUENCE`.
+        media_sequence: u64,
+        /// Its `EXT-X-SKIP` `SKIPPED-SEGMENTS`.
+        skipped_segments: u64,
+    },
 }
