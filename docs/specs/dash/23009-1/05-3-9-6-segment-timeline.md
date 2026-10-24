@@ -22,7 +22,7 @@ The SegmentTimeline element expresses the earliest presentation time and present
 - the specification of arbitrary Segment durations,
 - the specification of accurate Segment durations for one media stream where the duration expresses presentation duration of the Segment, and
 - the signalling of discontinuities of the Media Presentation timeline for which no Segment data are present in a specific Representation.
-- the ability to signal Segment sequences. For more details, refer to subclause [5.3.9.6.4.](#c5-3-9-6-4) Segment sequences shall only be used if explicitly permitted by the profile in use.
+- the ability to signal Segment sequences. For more details, refer to subclause [5.3.9.6.4](#c5-3-9-6-4). Segment sequences shall only be used if explicitly permitted by the profile in use.
 
 For compactness, the syntax of this element includes run-length compression to express a sequence of Segments having constant duration.
 
@@ -56,7 +56,7 @@ When the SegmentTemplate is in use and the $Time$ identifier is present in the S
 
 NOTE As the earliest presentation time of the next Media Segment in the same Representation can be derived from the actual Media Segment, e.g. by the use of the Segment Index, the Segment URL can be generated without reading of the updated MPD that contains the update to the Segment Timeline.
 
-The semantics of the attributes and elements for Segment Timeline are provided in subclause [5.3.9.6.2](#c5-3-9-6-2), Table 22. The XML syntax of the Segment Timeline is provided in subclause [5.3.9.6.3.](#c5-3-9-6-3)
+The semantics of the attributes and elements for Segment Timeline are provided in subclause [5.3.9.6.2](#c5-3-9-6-2), Table 22. The XML syntax of the Segment Timeline is provided in subclause [5.3.9.6.3](#c5-3-9-6-3).
 
 <a id="c5-3-9-6-2"></a>
 
@@ -71,7 +71,7 @@ Table 22 — Semantics of SegmentTimeline element
 | <!--PB printed 89--> `@t` | O | this value of this attribute minus the value of the `@presentationTimeOffset` specifies the MPD start time, in `@timescale` units, of the first Segment in the series. The MPD start time is relative to the beginning of the Period.<br><br>The value of this attribute shall be equal to or greater than the sum of the previous **S** element earliest presentation time and the sum of the contiguous Segment durations.<br><br>If the value of the attribute is greater than what is expressed by the previous **S** element, it expresses discontinuities in the timeline.<br><br>If not present, then the value shall be assumed to be zero for the first **S** element and for the subsequent **S** elements, the value shall be assumed to be the sum of the previous **S** element's earliest presentation time and contiguous duration [i.e. previous **S**`@t` + `@d` * (`@r` + 1)]. |
 | `@n` | O | specifies the Segment number of the first Segment in the series.<br><br>The value of this attribute shall be at least one greater than the number of previous **S** elements plus the `@startNumber` attribute value, if present. If the value of `@n` is greater than one plus the previously calculated Segment number, it expresses that one or more prior Segments in the timeline are unavailable. |
 | `@d` | M | specifies the Segment duration or the duration of a Segment sequence, in units of the value of the `@timescale`. |
-| `@k` | OD<br>default: 1 | specifies the number of Segments that are included in a Segment Sequence. The attribute shall not be present unless explicitly permitted by the profile.<br><br>For more details, refer to subclause [5.3.9.6.3.](#c5-3-9-6-3) |
+| `@k` | OD<br>default: 1 | specifies the number of Segments that are included in a Segment Sequence. The attribute shall not be present unless explicitly permitted by the profile.<br><br>For more details, refer to subclause [5.3.9.6.3](#c5-3-9-6-3). |
 | `@r` | OD<br>default: 0 | specifies the repeat count of the number of following contiguous Segments or Segment Sequences with the same duration expressed by the value of `@d`. This value is zero-based (e.g. a value of three means four Segments or Segment Sequences in the contiguous series). A negative value of the `@r` attribute of the **S** element indicates that the duration indicated in `@d` attribute repeats until the start of the next **S** element, the end of the Period or until the next MPD update. |
 
 <!--PB printed 90-->

@@ -19,7 +19,7 @@ verification: see VERIFICATION.md
 
 The elements AdaptationSet, Representation and SubRepresentation have assigned common attributes and elements. The attributes and elements listed in Table 14 of subclause [5.3.7.2](#c5-3-7-2) may be present in all three elements.
 
-The semantics of the common attributes and elements are provided in Table 14 in subclause [5.3.7.2](#c5-3-7-2), the syntax is provided in subclause [5.3.7.3.](#c5-3-7-3)
+The semantics of the common attributes and elements are provided in Table 14 in subclause [5.3.7.2](#c5-3-7-2), the syntax is provided in subclause [5.3.7.3](#c5-3-7-3).
 
 The 'Use' column in Table 14 shall be interpreted that an attribute marked with 'M' shall be available for a Representation, i.e. it shall either be present in the Representation element, or if not, it shall be in the containing AdaptationSet element. An attribute marked with 'O' may be absent in both.
 
@@ -59,7 +59,7 @@ Table 14 — Common Adaptation Set, Representation and Sub-Representation attrib
 | **SupplementalProperty** | 0 … N | specifies supplemental information about the containing element that may be used by the DASH Client optimizing the processing.<br><br>For details, see subclause 5.8.4.9. |
 | **InbandEventStream** | 0 … N | specifies the presence of an inband event stream in the associated Representations.<br><br>For details, refer to subclause 5.10. |
 | **Switching** | 0 … N | Specifies a switch-to times and types for the associated Representations. For more details, refer to subclause 0.<br><br>These elements shall only be present if the @timescale value is the same for all Representations in one Adaptation Set and if the Segment Timeline is used for segment duration signalling. |
-| **RandomAccess** | 0 … N | Specifies a random access times and types for the associated Representations. For more details, refer to subclause [5.3.5.5.](05-3-5-representation.md#c5-3-5-5)<br><br>These elements shall only be present if the @timescale value is the same for all Representations in one Adaptation Set and if the Segment Timeline is used for segment duration signalling. |
+| **RandomAccess** | 0 … N | Specifies a random access times and types for the associated Representations. For more details, refer to subclause [5.3.5.5](05-3-5-representation.md#c5-3-5-5).<br><br>These elements shall only be present if the @timescale value is the same for all Representations in one Adaptation Set and if the Segment Timeline is used for segment duration signalling. |
 | **GroupLabel** | 0 … N | specifies a summary label for a group of Labels. For more details, refer to subclause 5.3.10. |
 | **Label** | 0 … N | specifies a textual description of the element that may be used for annotation and selection purposes. For more details, refer to subclause 5.3.10. |
 | **ProducerReferenceTime** | 0 … N | specifies the presence of and possibly values of producer reference time in the associated Representations.<br><br>For details refer to subclause 5.12. |

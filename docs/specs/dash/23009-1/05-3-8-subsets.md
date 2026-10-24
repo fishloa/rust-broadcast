@@ -32,7 +32,7 @@ This implies that
 
 Each Adaptation Set for which the value of the @id is provided in the @contains attribute is contained in this Subset.
 
-The semantics of the attributes and elements within a Subset are provided in Table 15 of subclause [5.3.8.2.](#c5-3-8-2) The XML syntax of the Subset type is provided in subclause [5.3.8.3.](#c5-3-8-3)
+The semantics of the attributes and elements within a Subset are provided in Table 15 of subclause [5.3.8.2](#c5-3-8-2). The XML syntax of the Subset type is provided in subclause [5.3.8.3](#c5-3-8-3).
 
 <a id="c5-3-8-2"></a>
 

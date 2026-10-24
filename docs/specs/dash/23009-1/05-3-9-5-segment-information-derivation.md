@@ -25,7 +25,7 @@ The Segment Information provides the following information:
 - for services with MPD@type='dynamic', the Segment availability start time and Segment availability end time of each Segment,
 - an approximate Media Presentation start time of each Media Segment in the Media Presentation timeline within the Period.
 
-The derivation of Initialization, Media, Index and Bitstream Switching Segment Information from the elements SegmentBase, SegmentList and SegmentTemplate is provided in subclauses [5.3.9.5.2](#c5-3-9-5-2), [5.3.9.5.3](#c5-3-9-5-3), [5.3.9.5.4](#c5-3-9-5-4) and [5.3.9.5.5.](#c5-3-9-5-5) Reference resolution as defined in subclause 5.6.4 and base URL selection as defined in subclause 5.6.5 using BaseURL elements as defined in subclause 5.6 shall be applied to any URLs.
+The derivation of Initialization, Media, Index and Bitstream Switching Segment Information from the elements SegmentBase, SegmentList and SegmentTemplate is provided in subclauses [5.3.9.5.2](#c5-3-9-5-2), [5.3.9.5.3](#c5-3-9-5-3), [5.3.9.5.4](#c5-3-9-5-4) and [5.3.9.5.5](#c5-3-9-5-5). Reference resolution as defined in subclause 5.6.4 and base URL selection as defined in subclause 5.6.5 using BaseURL elements as defined in subclause 5.6 shall be applied to any URLs.
 
 <a id="c5-3-9-5-2"></a>
 
@@ -41,7 +41,7 @@ For services with MPD@type='dynamic', the Segment availability start time of the
 
 <!--PB printed 84-->
 
-Initialization Segment is the largest Segment availability end time of any Media Segment in this Representation. For Segment availability of Media Segments, refer to subclause [5.3.9.5.3.](#c5-3-9-5-3)
+Initialization Segment is the largest Segment availability end time of any Media Segment in this Representation. For Segment availability of Media Segments, refer to subclause [5.3.9.5.3](#c5-3-9-5-3).
 
 The data structures retrieved from the Initialization URL are defined in subclause 6.2.2.
 
@@ -125,8 +125,14 @@ The presence of a Bitstream Switching Segment is indicated by the presence of th
 
 If neither BitstreamSwitching element nor SegmentTemplate@bitstreamSwitching attribute are present for a Representation and the @bitstreamSwitching flag is set to 'true', there are no Bitstream Switching Segments.
 
-The Segment availability time of the Bitstream Switching Segment is identical to the one specified for the Initialization Segment in subclause [5.3.9.5.2.](#c5-3-9-5-2)
+The Segment availability time of the Bitstream Switching Segment is identical to the one specified for the Initialization Segment in subclause [5.3.9.5.2](#c5-3-9-5-2).
 
 The data structures retrieved from the URL referring to a Bitstream Switching Segment are defined in subclause 6.2.5.
 
 <!--PB printed 87-->
+
+## Transcription notes
+
+> **Spec note:** 5.3.9.5.3: the $Number$ bullet gives the replacement as "(k-1) + (kstart-1) with kstart the value of the @startNumber attribute, if present, or 1 otherwise", while the @duration bullet writes the segment number as "(k-1) + NumberStart". The two expressions differ by one; both reproduced as printed (k-1 + kstart-1 vs k-1 + NumberStart).
+>
+> **Spec note:** 5.3.9.5.4: the `$Number$`/`$Time$` mention in the third bullet is plain text (not code font) in the PDF.

@@ -250,12 +250,7 @@ Table 1 — Brands defined in this document
 | `sims` | 6.4.4.4 | Media Segment conforming to the Sub-Indexed Media Segment format type for ISO base media file format. |
 | `sisx` | 6.4.6.2 | Single Index Segment used to index MPEG-2 TS based Media Segments. |
 | `risx` | 6.4.6.3 | Representation Index Segment used to index MPEG-2 TS based Media Segments. |
-
-<!--PB printed 18-->
-
-| Brand identifier | Clause in this document | Informative description |
-|---|---|---|
-| `ssss` | 6.4.6.4 | Subsegment Index Segment used to index MPEG-2 TS based Media Segments. |
+| <!--PB printed 18--> `ssss` | 6.4.6.4 | Subsegment Index Segment used to index MPEG-2 TS based Media Segments. |
 | `lmsg` | 7.3.1 | Last Media Segment indicator for ISO base media file format. |
 | `dums` | 8.11.3 | Segment sequence indicator in ISO base media file format broadcast TV profile. |
 
@@ -282,12 +277,7 @@ Table 2 — Schemes defined in this document
 | `urn:mpeg:dash:13818:1:stereo_video_format_type:2011` | 5.8.5.3 | Frame-packing arrangement. |
 | `urn:mpeg:dash:23003:3:audio_channel_configuration:2011` | 5.8.5.4 | Channel configuration. Legacy format for backward-compatibility, it is recommended to use the signalling as defined in ISO/IEC 23091-3 instead. |
 | `urn:mpeg:dash:outputChannelPositionList:2012` | 5.8.5.4 | A list of output channel position to signal individual speaker positions as defined in ISO/IEC 23001-8. Legacy format for backward-compatibility, it is recommended to use the signalling as defined in ISO/IEC 23091-3 instead. |
-
-<!--PB printed 19-->
-
-| Scheme identifier | Clause in this document | Informative description |
-|---|---|---|
-| `urn:mpeg:dash:role:2011` | 5.8.5.5 | DASH role scheme. |
+| <!--PB printed 19--> `urn:mpeg:dash:role:2011` | 5.8.5.5 | DASH role scheme. |
 | `urn:mpeg:dash:stereoid:2011` | 5.8.5.6 | Scheme for multiple views media content description. |
 | `urn:mpeg:dash:utc:ntp:2014` | 5.8.5.7 | UTC Timing scheme for NTP servers. |
 | `urn:mpeg:dash:utc:sntp:2014` | 5.8.5.7 | UTC Timing scheme for SNTP servers. |
@@ -311,12 +301,7 @@ Table 2 — Schemes defined in this document
 | `urn:mpeg:dash:fallback:2016` | 5.11.2 | MPD fallback descriptor. |
 | `urn:mpeg:dash:profile:full:2011` | 8.2 | Identifier for Full profile. |
 | `urn:mpeg:dash:profile:isoff-on-demand:2011` | 8.3 | Identifier for ISO Base media file format On Demand profile. |
-
-<!--PB printed 20-->
-
-| Scheme identifier | Clause in this document | Informative description |
-|---|---|---|
-| `urn:mpeg:dash:profile:isoff-live:2011` | 8.4 | Identifier for ISO Base media file format live profile. |
+| <!--PB printed 20--> `urn:mpeg:dash:profile:isoff-live:2011` | 8.4 | Identifier for ISO Base media file format live profile. |
 | `urn:mpeg:dash:profile:isoff-main:2011` | 8.5 | Identifier for ISO Base media file format main profile. |
 | `urn:mpeg:dash:profile:mp2t-main:2011` | 8.6 | Identifier for MPEG-2 TS main profile. |
 | `urn:mpeg:dash:profile:mp2t-simple:2011` | 8.7 | Identifier for MPEG-2 TS simple profile. |

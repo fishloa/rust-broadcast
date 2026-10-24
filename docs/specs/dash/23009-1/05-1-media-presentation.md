@@ -19,7 +19,7 @@ verification: see VERIFICATION.md
 
 A Media Presentation is a collection of data that is accessible to a DASH Client to provide a streaming service to the user.
 
-A Media Presentation is described by an MPD including possible updates of the MPD. The MPD is defined in subclause [5.2](#c5-2) and the MPD update mechanism is defined in subclause 5.4. Assembly of a fragmented MPD is defined in subclause 5.5. The data model that constitutes a Media Presentation is defined in subclause [5.2.3.5.](#c5-2-3-5) In subclause 5.6, the formats and processing of URLs in the MPD is introduced. Program information is defined in subclause 5.7. Descriptors associated to Representations or collections thereof are provided in subclause 5.8. DASH metric collection description is specified in subclause 5.9. Subclause 5.10 defines Events and Event Streams. Subclause 5.11 defines MPD chaining. Subclause 5.12 defines the Producer Reference Time. Subclause 5.13 defines how to deal with leap seconds. Subclause 5.14 defines content popularity rates.
+A Media Presentation is described by an MPD including possible updates of the MPD. The MPD is defined in subclause [5.2](#c5-2) and the MPD update mechanism is defined in subclause 5.4. Assembly of a fragmented MPD is defined in subclause 5.5. The data model that constitutes a Media Presentation is defined in subclause [5.2.3.5](#c5-2-3-5). In subclause 5.6, the formats and processing of URLs in the MPD is introduced. Program information is defined in subclause 5.7. Descriptors associated to Representations or collections thereof are provided in subclause 5.8. DASH metric collection description is specified in subclause 5.9. Subclause 5.10 defines Events and Event Streams. Subclause 5.11 defines MPD chaining. Subclause 5.12 defines the Producer Reference Time. Subclause 5.13 defines how to deal with leap seconds. Subclause 5.14 defines content popularity rates.
 
 <a id="c5-2"></a>
 
@@ -35,9 +35,9 @@ NOTE 1 Actual playback of the media streams included in the Representations is n
 
 The format of URLs in the MPD and the process to generate HTTP GET and partial GET requests from URLs provided in the MPD is defined in subclause 5.6.
 
-The MPD is an XML document that shall be formatted according to the XML schema provided in Annex B. Some context on the schema is provided in subclause [5.2.2.](#c5-2-2)
+The MPD is an XML document that shall be formatted according to the XML schema provided in Annex B. Some context on the schema is provided in subclause [5.2.2](#c5-2-2).
 
-The extension of the DASH XML schema (as provided in Annex B), in particular the addition of XML attributes or elements in the DASH namespace, is reserved to ISO/IEC. Elements and attributes that have been added to the namespace compared to earlier revisions of this document are documented in subclause [5.2.3.](#c5-2-3)
+The extension of the DASH XML schema (as provided in Annex B), in particular the addition of XML attributes or elements in the DASH namespace, is reserved to ISO/IEC. Elements and attributes that have been added to the namespace compared to earlier revisions of this document are documented in subclause [5.2.3](#c5-2-3).
 
 The MPD shall be authored such that, after XML attributes or elements in the DASH namespace but not in the XML schema documented in Annex B are removed, the result is a valid XML document formatted according to that schema and that conforms to this document.
 
@@ -47,7 +47,7 @@ NOTE 2 Based on the last two paragraphs, if DASH Clients remove all XML attribut
 
 In addition, rules for authoring of MPDs conforming to a specific profile are provided in 8. Certain profiles as defined in 8 may permit ignoring certain elements and attributes. However, this has no effect on the general MPD conformance rules defined in this subclause.
 
-Following XML rules, the MPD document shall contain exactly one MPD element as specified in subclause [5.2.3.5.](#c5-2-3-5)
+Following XML rules, the MPD document shall contain exactly one MPD element as specified in subclause [5.2.3.5](#c5-2-3-5).
 
 <!--PB printed 22-->
 

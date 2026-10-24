@@ -1,5 +1,11 @@
 # ISO/IEC 23009-1 (DASH) — MPD timing rules
 
+> **SUPERSEDED (2026-10-24) by the page-verified ISO/IEC 23009-1:2022 (5th ed.) transcription in
+> [`docs/specs/dash/23009-1/`](../../docs/specs/dash/23009-1/INDEX.md).** This file is kept as a historical summary of the
+> 2012 first edition; its `L…` anchors point at a local dump that is not in the repository. Use the 2022 files for
+> any new work. Differences found when checking every rule against the 2022 transcription are listed in
+> "Check against the 2022 transcription" at the end of this file.
+
 MPD timeline / segment-timing model used by `timed-metadata` (DASH ↔ SCTE-35 / HLS
 `EXT-X-DATERANGE`). Source: ISO/IEC 23009-1:2012 (1st ed.) — `§` + line cites below refer to a
 local, gitignored `specs/fulltext/iso_iec_23009-1_dash_2012.md` pdf2md dump (per
@@ -70,3 +76,45 @@ When `SegmentTemplate` + `$Time$` are used, the MPD timing **shall** mirror the 
 - `S@t` == the first `sidx`'s `earliest_presentation_time` for that segment (L1762);
 - `S@d` == sum of `subsegment_duration` in the first `sidx` of that segment (L1764);
 - the `$Time$` substitution uses that earliest presentation time (L1766).
+
+## Check against the 2022 transcription (2026-10-24)
+
+Rule-by-rule comparison with [`docs/specs/dash/23009-1/`](../../docs/specs/dash/23009-1/INDEX.md). Clause numbers are the
+2022 edition's.
+
+**Contradicted by 2022**
+
+- *"`sidx` binding: at least one `sidx` shall be present"* (this file, last section). 2022 clause 5.3.9.6.1
+  ([`05-3-9-6-segment-timeline.md`](../../docs/specs/dash/23009-1/05-3-9-6-segment-timeline.md)) makes the mirroring
+  conditional: *if* a Segment Index (`sidx`) box is present the SegmentTimeline values shall reflect it
+  (`@timescale` = first `sidx` timescale, `S@t` = `earliest_presentation_time`, `S@d` = sum of `subsegment_duration`);
+  *if not present*, the earliest presentation time "shall be based on the media internal data".
+- *"`S@t` is relative to the Period start"* (SegmentTimeline section; and the IOP note "S@t is relative to the Period
+  start and absolute"). In 2022 Table 22 the attribute value itself is on the media timeline: `S@t` minus
+  `@presentationTimeOffset` is "the MPD start time ... relative to the beginning of the Period".
+
+**Present in 2022, missing here (not contradictions)**
+
+- `@timescale` default: "If not present on any level, it shall be set to 1" (Table 16).
+- `@presentationTimeOffset` default 0; plus `@eptDelta`, `@pdDelta`, `@presentationDuration`,
+  `@availabilityTimeOffset`, `@availabilityTimeComplete`, `@indexRange`/`@indexRangeExact`, `@endNumber`,
+  `SegmentBase.FailoverContent` (Tables 16, 17).
+- `$SubNumber$` and Segment sequences (`S@k`, hierarchical templating, 5.3.9.6.4 / 5.3.9.6.5); `S@n`.
+- Template identifier table is Table 21 in 2022 (here "Table 16").
+- Period kinds: Regular, Early Available, Early Terminated (5.3.2.1); Partially Unavailable / Live-Edge periods (5.3.2.5).
+- Segment availability start (dynamic) = `MPD@availabilityStartTime` + `PeriodStart` + MPD start time + MPD duration, minus
+  the summed `@availabilityTimeOffset` of all levels used for the URL (5.3.9.5.3). The IOP formula
+  `SAST[k] = PSwc[i] + (t[s] + d[s] - o[i,r]) / ts` quoted above is consistent with this.
+- Spec-internal inconsistency worth knowing (see the notes in
+  [`05-3-9-5-segment-information-derivation.md`](../../docs/specs/dash/23009-1/05-3-9-5-segment-information-derivation.md)):
+  2022 5.3.9.5.3 gives the `$Number$` replacement as `(k-1) + (kstart-1)` while the next bullet writes the segment number as
+  `(k-1) + NumberStart`.
+
+**Confirmed unchanged**: PeriodStart derivation; `@duration` xor `SegmentTimeline`; `@startNumber` default 1;
+`$Number$`/`$Time$` mutually exclusive; `S@r` default 0 and repeat-count-minus-one semantics; default `S@t`
+(`prev S@t + @d * (@r + 1)`); `S@t` greater than the derived value signals a discontinuity; `S` order = time order;
+`@d` shall not exceed `MPD@maxSegmentDuration`; negative `@r` repeats until the next `S@t`, the end of the Period or the next
+MPD update.
+
+**Not in 23009-1 text at all**: the `ceil((t[s+1] - t[s]) / d[s])` repeat-count formulas above come from DASH-IF IOP v4.3
+(see [`../../docs/specs/dash/`](../../docs/specs/dash/INDEX.md) once the IOP transcriptions land), not from 23009-1:2022.

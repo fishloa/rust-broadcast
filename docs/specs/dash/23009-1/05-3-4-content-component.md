@@ -19,7 +19,7 @@ verification: see VERIFICATION.md
 
 Each Adaptation Set contains one or more media content components. The properties of each media content component are described by a ContentComponent element or may be described directly on the AdaptationSet element if only one media content component is present in the Adaptation Set. ContentComponent elements are contained in an AdaptationSet element.
 
-The semantics of the attributes and elements within a ContentComponent element are provided in Table 8 in subclause [5.3.4.2.](#c5-3-4-2) The XML syntax of the ContentComponent element is provided in subclause [5.3.4.3.](#c5-3-4-3)
+The semantics of the attributes and elements within a ContentComponent element are provided in Table 8 in subclause [5.3.4.2](#c5-3-4-2). The XML syntax of the ContentComponent element is provided in subclause [5.3.4.3](#c5-3-4-3).
 
 <a id="c5-3-4-2"></a>
 

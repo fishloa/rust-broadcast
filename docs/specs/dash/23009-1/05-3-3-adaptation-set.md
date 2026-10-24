@@ -37,9 +37,9 @@ Representations shall appear in the same Adaptation Set if and only if they have
 
 The values for the elements Role, Accessibility, Viewpoint and Rating are generally not provided within the scope of this document. However, a number of simple schemes are defined in subclause 5.8.5.
 
-If there exist multiple media content components, then the properties of each media content component shall be described by a separate ContentComponent element as defined in subclause [5.3.4.](05-3-4-content-component.md#c5-3-4) The ContentComponent element shares common elements and attributes with the AdaptationSet element. Default values, or values applicable to all media content components, may be provided directly in the AdaptationSet element. Attributes present in the AdaptationSet shall not be repeated in the ContentComponent element.
+If there exist multiple media content components, then the properties of each media content component shall be described by a separate ContentComponent element as defined in subclause [5.3.4](05-3-4-content-component.md#c5-3-4). The ContentComponent element shares common elements and attributes with the AdaptationSet element. Default values, or values applicable to all media content components, may be provided directly in the AdaptationSet element. Attributes present in the AdaptationSet shall not be repeated in the ContentComponent element.
 
-The AdaptationSet element may contain default values for elements and attributes associated to the contained Representations. The list of possible present elements and attributes that are common to AdaptationSet and Representation (and also SubRepresentation) are collected in subclause [5.3.7.](05-3-7-common.md#c5-3-7) Any of the common attributes shall only be present either in the AdaptationSet element or in the Representation element, but not in both.
+The AdaptationSet element may contain default values for elements and attributes associated to the contained Representations. The list of possible present elements and attributes that are common to AdaptationSet and Representation (and also SubRepresentation) are collected in subclause [5.3.7](05-3-7-common.md#c5-3-7). Any of the common attributes shall only be present either in the AdaptationSet element or in the Representation element, but not in both.
 
 The AdaptationSet element also supports the description of ranges for the @bandwidth, @width, @height and @frameRate attributes associated to the contained Representations, which provide a summary of all values for all the Representations within this Adaptation Set. The Representations contained within an Adaptation Set shall not contain values outside the ranges documented for that Adaptation Set.
 
@@ -53,7 +53,7 @@ Adaptation Sets may be further arranged into groups using the @group attribute. 
 
 If the AdaptationSet@group attribute is not present, then all Representations in this Adaptation Set are assigned to a non-zero group specific to this Adaptation Set.
 
-The semantics of the attributes and elements within an AdaptationSet element are provided in Table 5 in subclause [5.3.3.2.](#c5-3-3-2) The XML syntax of the AdaptationSet element is provided in subclause [5.3.3.3.](#c5-3-3-3)
+The semantics of the attributes and elements within an AdaptationSet element are provided in Table 5 in subclause [5.3.3.2](#c5-3-3-2). The XML syntax of the AdaptationSet element is provided in subclause [5.3.3.3](#c5-3-3-3).
 
 <a id="c5-3-3-2"></a>
 
@@ -67,8 +67,8 @@ Table 5 — Semantics of AdaptationSet element
 | `@xlink:href` | O | specifies a reference to a remote element entity that shall contain exactly one element of type **AdaptationSet**. |
 | `@xlink:actuate` | OD<br>default: `'onRequest'` | specifies the processing instructions, which can be either "onLoad" or "onRequest". |
 | `@id` | O | specifies a unique identifier for this Adaptation Set in the scope of the Period. The attribute shall be a unique unsigned integer value in the scope of the containing Period.<br><br>The attribute shall not be present in a remote element entity.<br><br>If not present, no identifier for the Adaptation Set is specified. |
-| `@group` | O | specifies an identifier for the group that is unique in the scope of the containing Period. The value is an unsigned integer.<br><br>For details, refer to subclause [5.3.3.1.](#c5-3-3-1) |
-| ***CommonAttributesElements*** | — | specifies the common attributes and elements (attributes and elements from base type ***RepresentationBaseType***). For details, see subclause [5.3.7.](05-3-7-common.md#c5-3-7) |
+| `@group` | O | specifies an identifier for the group that is unique in the scope of the containing Period. The value is an unsigned integer.<br><br>For details, refer to subclause [5.3.3.1](#c5-3-3-1). |
+| ***CommonAttributesElements*** | — | specifies the common attributes and elements (attributes and elements from base type ***RepresentationBaseType***). For details, see subclause [5.3.7](05-3-7-common.md#c5-3-7). |
 | `@lang` | O | Declares the language code for this Adaptation Set. The syntax and semantics according to IETF RFC 5646 shall be used.<br><br>If not present, the language code may be defined for each media component or it may be unknown.<br><br>If the language is unknown, the 'und' code for undetermined primary language or the 'zxx' (Non-Linguistic, Not Applicable) code can be used. |
 | <!--PB printed 41--> `@contentType` | O | specifies the media content component type for this Adaptation Set. A value of the top-level Content-type 'type' value as defined in 4 of IETF RFC 6838:2013 shall be taken.<br><br>If not present, the media content component type may be defined for each media content component or it may be unknown. |
 | `@par` | O | specifies the picture aspect ratio of the video media component type, in the form of a string consisting of two integers separated by ':', e.g. "16:9". When this attribute is present, and the attributes @width and @height for the set of Representations are also present, the picture aspect ratio as specified by this attribute shall be the same as indicated by the values of @width, @height, and @sar, i.e. it shall express the same ratio as (@width * sarx): (@height * sary), with sarx the first number in @sar and sary the second number.<br><br>If not present, the picture aspect ratio may be defined for each media component or it may be unknown. |
@@ -90,12 +90,12 @@ Table 5 — Semantics of AdaptationSet element
 | **Role** | 0 … N | specifies information on role annotation scheme<br><br>For more details, refer to subclauses 5.8.1 and 5.8.4.2. |
 | **Rating** | 0 … N | specifies information on rating scheme.<br><br>For more details, refer to subclauses 5.8.1 and 5.8.4.4. |
 | **Viewpoint** | 0 … N | specifies information on viewpoint annotation scheme.<br><br>For more details, refer to subclauses 5.8.1 and 5.8.4.5. |
-| **ContentComponent** | 0…N | specifies the properties of one media content component contained in this Adaptation Set.<br><br>For more details, refer to subclause [5.3.4.](05-3-4-content-component.md#c5-3-4) |
+| **ContentComponent** | 0…N | specifies the properties of one media content component contained in this Adaptation Set.<br><br>For more details, refer to subclause [5.3.4](05-3-4-content-component.md#c5-3-4). |
 | **BaseURL** | 0…N | specifies a base URL that can be used for reference resolution and alternative URL selection. For more details, refer to the description in subclause 5.6. |
-| **SegmentBase** | 0...1 | specifies default Segment Base information.<br><br>Information in this element is overridden by information in the Representation.SegmentBase, if present.<br><br>For more details, see subclause [5.3.9.](05-3-9-segment-information.md#c5-3-9) |
-| **SegmentList** | 0...1 | specifies default Segment List information.<br><br>Information in this element is overridden by information in the Representation.SegmentList, if present.<br><br>For more details, see subclause [5.3.9.](05-3-9-segment-information.md#c5-3-9) |
-| <!--PB printed 45--> **SegmentTemplate** | 0...1 | specifies default Segment Template information.<br><br>Information in this element is overridden by information in the Representation.SegmentTemplate, if present.<br><br>For more details, see subclause [5.3.9.](05-3-9-segment-information.md#c5-3-9) |
-| **Representation** | 0 … N | specifies a Representation.<br><br>At least one Representation element shall be present in each Adaptation Set. The actual element may however be part of a remote element entity if xlink is used on the containing AdaptationSet element.<br><br>For more details, refer to subclause [5.3.5.](05-3-5-representation.md#c5-3-5) |
+| **SegmentBase** | 0...1 | specifies default Segment Base information.<br><br>Information in this element is overridden by information in the Representation.SegmentBase, if present.<br><br>For more details, see subclause [5.3.9](05-3-9-segment-information.md#c5-3-9). |
+| **SegmentList** | 0...1 | specifies default Segment List information.<br><br>Information in this element is overridden by information in the Representation.SegmentList, if present.<br><br>For more details, see subclause [5.3.9](05-3-9-segment-information.md#c5-3-9). |
+| <!--PB printed 45--> **SegmentTemplate** | 0...1 | specifies default Segment Template information.<br><br>Information in this element is overridden by information in the Representation.SegmentTemplate, if present.<br><br>For more details, see subclause [5.3.9](05-3-9-segment-information.md#c5-3-9). |
+| **Representation** | 0 … N | specifies a Representation.<br><br>At least one Representation element shall be present in each Adaptation Set. The actual element may however be part of a remote element entity if xlink is used on the containing AdaptationSet element.<br><br>For more details, refer to subclause [5.3.5](05-3-5-representation.md#c5-3-5). |
 
 
 
@@ -206,7 +206,7 @@ Elements are bold; attributes are non-bold and preceded with an @; list of eleme
 
 #### 5.3.3.4 Switching within Adaptation Sets
 
-Switching refers to the presentation of decoded data from one Representation up to a certain time t, and presentation of decoded data of another Representation from time t onwards; for details, refer to subclause [4.3.](04-overview.md#c4-3)
+Switching refers to the presentation of decoded data from one Representation up to a certain time t, and presentation of decoded data of another Representation from time t onwards; for details, refer to subclause [4.3](04-overview.md#c4-3).
 
 The Switching element as defined in Table 6 provides instructions of switch points within an Adaptation Set and the permitted switching options as defined in Table 7. When this element is present, it signals opportunities for simple switching across Representations in one Adaptation Set. This element may be used instead of the attributes @segmentAlignment or @bitstreamSwitching.
 

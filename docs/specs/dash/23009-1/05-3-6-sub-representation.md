@@ -30,7 +30,7 @@ In case the @level attribute is present in the SubRepresentation element,
 
 If the @level attribute is absent, then the SubRepresentation element is solely used to provide a more detailed description for media streams that are embedded in the Representation.
 
-The semantics of the attributes and elements within a Sub-Representation are provided in Table 13 of subclause [5.3.6.2.](#c5-3-6-2) The XML syntax of the Sub-Representation type is provided in subclause [5.3.6.3.](#c5-3-6-3)
+The semantics of the attributes and elements within a Sub-Representation are provided in Table 13 of subclause [5.3.6.2](#c5-3-6-2). The XML syntax of the Sub-Representation type is provided in subclause [5.3.6.3](#c5-3-6-3).
 
 <a id="c5-3-6-2"></a>
 
@@ -45,7 +45,7 @@ Table 13 — Semantics of SubRepresentation element
 | `@dependencyLevel` | O | specifies the set of Sub-Representations within this Representation that this Sub-Representation depends on in the decoding and/or presentation process as a whitespace-separated list of `@level` values.<br><br>If not present, the Sub-Representation can be decoded and presented independently of any other Representation. |
 | <!--PB printed 62--> `@bandwidth` | CM<br>shall be present if `@level` is present | Identical to the `@bandwidth` definition in Representation but applied to this Sub-Representation. This attribute shall be present if the `@level` attribute is present. |
 | `@contentComponent` | O | if present, specifies the set of all media content components that are contained in this Sub-Representation as a whitespace-separated list of values of **ContentComponent**`@id` values.<br><br>if not present, the Sub-Representation is not assigned to a media content component. |
-| ***CommonAttributesElements*** | - | Common Attributes and Elements (attributes and elements from base type ***RepresentationBaseType***). For details, see subclause [5.3.7.](05-3-7-common.md#c5-3-7) |
+| ***CommonAttributesElements*** | - | Common Attributes and Elements (attributes and elements from base type ***RepresentationBaseType***). For details, see subclause [5.3.7](05-3-7-common.md#c5-3-7). |
 
 Key
 

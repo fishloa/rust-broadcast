@@ -17,9 +17,9 @@ verification: see VERIFICATION.md
 
 ##### 5.3.9.4.1 Overview
 
-The Segment template is defined by the SegmentTemplate element. In this case, specific identifiers that are substituted by dynamic values assigned to Segments, to create a list of Segments. The substitution rules are provided in subclause [5.3.9.4.4.](#c5-3-9-4-4)
+The Segment template is defined by the SegmentTemplate element. In this case, specific identifiers that are substituted by dynamic values assigned to Segments, to create a list of Segments. The substitution rules are provided in subclause [5.3.9.4.4](#c5-3-9-4-4).
 
-The semantics of the attributes and elements for the Segment list are provided in subclause [5.3.9.4.2](#c5-3-9-4-2), Table 20. The XML syntax of the Segment Information is provided in subclause [5.3.9.4.3.](#c5-3-9-4-3)
+The semantics of the attributes and elements for the Segment list are provided in subclause [5.3.9.4.2](#c5-3-9-4-2), Table 20. The XML syntax of the Segment Information is provided in subclause [5.3.9.4.3](#c5-3-9-4-3).
 
 <a id="c5-3-9-4-2"></a>
 
@@ -30,11 +30,11 @@ Table 20 — Semantics of SegmentTemplate element
 | Element or Attribute Name | Use | Description |
 |---|---|---|
 | **SegmentTemplate** |  | specifies Segment template information. |
-| ***MultipleSegmentBaseInformation*** |  | Provides the Multiple Segment base information as defined in subclause [5.3.9.2.](05-3-9-segment-information.md#c5-3-9-2) |
-| `@media` | O | specifies the template to create the Media Segment List.<br><br>For more details, refer to subclause [5.3.9.4.4.](#c5-3-9-4-4) |
-| `@index` | O | specifies the template to create the Index Segment List. If neither the $Number$ nor the $Time$ identifier is included, this provides the URL to a Representation Index.<br><br>For more details, refer to subclause [5.3.9.4.4.](#c5-3-9-4-4) |
-| `@initialization` | O | specifies the template to create the Initialization Segment. Neither $Number$ nor the $Time$ identifier shall be included.<br><br>For more details, refer to subclause [5.3.9.4.4.](#c5-3-9-4-4) |
-| `@bitstreamSwitching` | O | specifies the template to create the Bitstream Switching Segment. Neither $Number$ nor the $Time$ identifier shall be included.<br><br>For more details, refer to subclause [5.3.9.4.4.](#c5-3-9-4-4) |
+| ***MultipleSegmentBaseInformation*** |  | Provides the Multiple Segment base information as defined in subclause [5.3.9.2](05-3-9-segment-information.md#c5-3-9-2). |
+| `@media` | O | specifies the template to create the Media Segment List.<br><br>For more details, refer to subclause [5.3.9.4.4](#c5-3-9-4-4). |
+| `@index` | O | specifies the template to create the Index Segment List. If neither the $Number$ nor the $Time$ identifier is included, this provides the URL to a Representation Index.<br><br>For more details, refer to subclause [5.3.9.4.4](#c5-3-9-4-4). |
+| `@initialization` | O | specifies the template to create the Initialization Segment. Neither $Number$ nor the $Time$ identifier shall be included.<br><br>For more details, refer to subclause [5.3.9.4.4](#c5-3-9-4-4). |
+| `@bitstreamSwitching` | O | specifies the template to create the Bitstream Switching Segment. Neither $Number$ nor the $Time$ identifier shall be included.<br><br>For more details, refer to subclause [5.3.9.4.4](#c5-3-9-4-4). |
 
 Key
 
@@ -90,10 +90,10 @@ Table 21 — Identifiers for URL templates
 |---|---|---|
 | *$$* | Is an escape sequence, i.e. "$$" is replaced with a single "$" | not applicable |
 | *$RepresentationID$* | This identifier is substituted with the value of the attribute **Representation**`@id` of the containing Representation. | The format tag shall not be present. |
-| *$Number$* | This identifier is substituted with the *number* of the corresponding Segment, if *$SubNumber$* is not present in the same string.<br><br>If $SubNumber$ is present, this identifier is substituted with the *number* of the corresponding Segment sequence. For details, refer to subclauses [5.3.9.6.4](05-3-9-6-segment-timeline.md#c5-3-9-6-4) and [5.3.9.6.5.](05-3-9-6-segment-timeline.md#c5-3-9-6-5) | The format tag may be present.<br><br>If no format tag is present, a default format tag with `width`=1 shall be used. |
+| *$Number$* | This identifier is substituted with the *number* of the corresponding Segment, if *$SubNumber$* is not present in the same string.<br><br>If $SubNumber$ is present, this identifier is substituted with the *number* of the corresponding Segment sequence. For details, refer to subclauses [5.3.9.6.4](05-3-9-6-segment-timeline.md#c5-3-9-6-4) and [5.3.9.6.5](05-3-9-6-segment-timeline.md#c5-3-9-6-5). | The format tag may be present.<br><br>If no format tag is present, a default format tag with `width`=1 shall be used. |
 | *$Bandwidth$* | This identifier is substituted with the value of **Representation**`@bandwidth` attribute value. | The format tag may be present.<br><br>If no format tag is present, a default format tag with `width`=1 shall be used. |
 | <!--PB printed 83--> *$Time$* | This identifier is substituted with the value of the MPD start time of the Segment being accessed. For the Segment Timeline, this means that this identifier is substituted with the value of the **SegmentTimeline**`@t` attribute for the Segment being accessed. Either `$Number$` or `$Time$` may be used but not both at the same time. | The format tag may be present.<br><br>If no format tag is present, a default format tag with `width`=1 shall be used. |
-| *$SubNumber$* | This identifier is substituted with the *number* of the corresponding Segment in a Seqment Sequence. This identifier shall only be present if either *$Number$* or *$Time$* are present as well. For details, refer to subclauses [5.3.9.6.4](05-3-9-6-segment-timeline.md#c5-3-9-6-4) and [5.3.9.6.5.](05-3-9-6-segment-timeline.md#c5-3-9-6-5) | The format tag may be present.<br><br>If no format tag is present, a default format tag with `width`=1 shall be used. |
+| *$SubNumber$* | This identifier is substituted with the *number* of the corresponding Segment in a Seqment Sequence. This identifier shall only be present if either *$Number$* or *$Time$* are present as well. For details, refer to subclauses [5.3.9.6.4](05-3-9-6-segment-timeline.md#c5-3-9-6-4) and [5.3.9.6.5](05-3-9-6-segment-timeline.md#c5-3-9-6-5). | The format tag may be present.<br><br>If no format tag is present, a default format tag with `width`=1 shall be used. |
 
 ## Transcription notes
 
