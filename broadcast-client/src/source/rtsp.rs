@@ -744,6 +744,7 @@ impl RtspSource {
                 kind: ErrorKind::TrackDropped {
                     track_id: u32::try_from(ordinal).unwrap_or(u32::MAX),
                     stream_type: None,
+                    fourcc: None,
                 },
                 fatal: false,
             });

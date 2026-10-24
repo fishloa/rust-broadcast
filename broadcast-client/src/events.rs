@@ -234,7 +234,6 @@ impl ErrorKind {
             Self::TrackIdReserved { .. } => "track_id_reserved",
             Self::TrackDropped { .. } => "track_dropped",
             Self::UnknownRenderedTrack { .. } => "unknown_rendered_track",
-
             Self::UnsupportedContainer { .. } => "unsupported_container",
             Self::BodyTooLarge { .. } => "body_too_large",
         }
