@@ -174,6 +174,16 @@ pub enum ErrorKind {
         /// The first offending track id.
         track_id: u32,
     },
+    /// An HLS TS-segment elementary stream was left out because it cannot be carried in the
+    /// fragmented MP4 the HLS source produces (opaque data such as SCTE-35, ID3 or private PES,
+    /// or a subtitle without a sample entry). Reported once per track per source; the other
+    /// tracks play, and a stream with no playable track ends after these reports.
+    TrackDropped {
+        /// The dropped track's id (remapped for an audio rendition).
+        track_id: u32,
+        /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque data.
+        stream_type: Option<u8>,
+    },
 }
 
 impl ErrorKind {
@@ -187,6 +197,7 @@ impl ErrorKind {
             Self::DecryptFailed => "decrypt_failed",
             Self::UnsupportedCodec { .. } => "unsupported_codec",
             Self::TrackIdReserved { .. } => "track_id_reserved",
+            Self::TrackDropped { .. } => "track_dropped",
         }
     }
 }

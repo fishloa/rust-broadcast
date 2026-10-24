@@ -330,8 +330,13 @@ fn first_video_pts_after(nb_events: &[Event], from: usize) -> u64 {
                 ts.insert(s.track_id, s.timescale);
             }
         }
-        if let Event::Sample { track, sample, .. } = e
+        if let Event::Sample {
+            track,
+            sample,
+            join,
+        } = e
             && track.value() == VIDEO
+            && !matches!(join, Some(JoinDecision::Drop(_)))
         {
             return to27(sample.pts.unwrap(), ts[track]);
         }

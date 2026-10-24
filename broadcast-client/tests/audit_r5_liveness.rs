@@ -30,7 +30,11 @@ impl Seen {
                 Event::Sample { .. } => self.samples += 1,
                 Event::Status(Status::Live) => self.live += 1,
                 Event::Status(Status::Reconnecting { .. }) => self.reconnecting += 1,
-                Event::Error { .. } => self.errors.push(format!("{e:?}")),
+                Event::Error { kind, .. }
+                    if !matches!(kind, broadcast_client::ErrorKind::TrackDropped { .. }) =>
+                {
+                    self.errors.push(format!("{e:?}"))
+                }
                 _ => {}
             }
         }

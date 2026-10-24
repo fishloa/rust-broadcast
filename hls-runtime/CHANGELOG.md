@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (round-5 audit)
+- `Output::TrackDropped { track_id, stream_type }` (additive; `Output` is `#[non_exhaustive]`): a TS-segment elementary stream that cannot be carried in fragmented MP4 (`!is_muxable_in_bmff`, e.g. SCTE-35/ID3/private data) is no longer dropped silently. Emitted each time the demuxer announces the track; a consumer reporting it deduplicates by `track_id`.
+
 ### Fixed (round-5 audit F2/F6)
 - Live TS-HLS (no `EXT-X-ENDLIST`) now starts emitting once a media segment has been fully fed: a PID the PMT declares that sent nothing in the segment no longer holds its program back until an `ENDLIST` that a live playlist never has (`StreamingTsDemux::release_silent_heads` after every whole segment; parts are not segment ends).
 - `EXT-X-DISCONTINUITY` on a TS playlist restarts the demuxer's timeline (`StreamingTsDemux::restart_timeline`) instead of discarding the demuxer: the track set and track ids are kept, so a PID whose parameter sets are not in the new timeline's first segment (a segment that opens mid-GOP) is no longer lost, and no `Tracks`/init is re-announced for an unchanged track set. The old timeline's final access units are still flushed before `Output::Discontinuity`, and the segment that straddles the seam loses at most its in-flight PES per PID.

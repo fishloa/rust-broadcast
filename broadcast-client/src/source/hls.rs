@@ -165,6 +165,7 @@ pub(crate) struct HlsSource {
     reported: BTreeSet<&'static str>,
     fatal: bool,
     reserved_id_reported: bool,
+    dropped_reported: BTreeSet<TrackId>,
     playlist_timeout_us: u64,
     segment_timeout_us: u64,
     backoff_ms: Vec<u64>,
@@ -208,6 +209,7 @@ impl HlsSource {
             reported: BTreeSet::new(),
             fatal: false,
             reserved_id_reported: false,
+            dropped_reported: BTreeSet::new(),
             playlist_timeout_us: config.hls_request_timeout_us,
             segment_timeout_us: config.hls_segment_timeout_us,
             backoff_ms,
@@ -986,6 +988,21 @@ impl HlsSource {
                     pts,
                     display,
                 }),
+                Output::TrackDropped {
+                    track_id,
+                    stream_type,
+                } => {
+                    let track_id = self.remap(track_id);
+                    if self.dropped_reported.insert(track_id) {
+                        self.events.push_back(Event::Error {
+                            kind: ErrorKind::TrackDropped {
+                                track_id: track_id.value(),
+                                stream_type,
+                            },
+                            fatal: false,
+                        });
+                    }
+                }
                 Output::Discontinuity => self.events.push_back(Event::Discontinuity),
                 Output::EndOfStream => self.events.push_back(Event::Status(Status::Ended)),
                 _ => {}

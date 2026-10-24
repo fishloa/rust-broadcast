@@ -122,6 +122,18 @@ pub enum Output {
         /// The full new display state, shared with the following sample.
         display: Arc<DisplayInfo>,
     },
+    /// A PMT-listed elementary stream of a TS segment was left out of the track set, the
+    /// synthesized init and the samples because it cannot be carried in fragmented MP4
+    /// ([`transmux::CodecConfig::is_muxable_in_bmff`] is false: opaque data such as SCTE-35,
+    /// ID3 or private PES, or a subtitle without a sample entry). Emitted each time the demuxer
+    /// (re)announces such a track, so a consumer that reports it must deduplicate by
+    /// `track_id`. A TS-segment stream with no muxable track at all produces only these.
+    TrackDropped {
+        /// The dropped track's id.
+        track_id: TrackId,
+        /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque data.
+        stream_type: Option<u8>,
+    },
     /// A master (multivariant) playlist was parsed and a variant selected.
     /// The caller may inspect [`MasterSelection`] and, for renditions with a
     /// `url`, create a second client via `HlsClient::new(rendition.url)`.

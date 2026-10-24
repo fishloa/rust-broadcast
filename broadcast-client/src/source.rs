@@ -1,6 +1,8 @@
 //! Source adapters.
 pub(crate) mod hls;
+pub(crate) mod hls_join;
 pub(crate) mod hls_session;
 pub(crate) mod rtsp;
 pub(crate) mod rtsp_sdp;
 pub mod ts_http;
+pub(crate) mod ts_http_hold;

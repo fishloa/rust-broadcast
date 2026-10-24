@@ -196,8 +196,26 @@ fn media_playlist_ts_segments_emit_tracks_then_samples() {
         1,
         "and emits nothing else without a playback position"
     );
+    let video = index_of(&h.events, is_tracks)
+        .and_then(|i| match &h.events[i] {
+            Event::Tracks(t) => t
+                .iter()
+                .find(|s| transmux::LiveJoin::for_config(&s.config).is_some())
+                .map(|s| s.track_id),
+            _ => None,
+        })
+        .expect("a video track");
+    let mut video_joins = h.events.iter().filter_map(|e| match e {
+        Event::Sample { track, join, .. } if *track == video => Some(*join),
+        _ => None,
+    });
+    assert!(matches!(
+        video_joins.next(),
+        Some(Some(transmux::JoinDecision::JoinPoint(_)))
+    ));
+    assert!(video_joins.all(|j| j.is_some()));
     assert!(h.events.iter().all(|e| match e {
-        Event::Sample { join, .. } => join.is_none(),
+        Event::Sample { track, join, .. } if *track != video => join.is_none(),
         _ => true,
     }));
     let expected = oracle_events(TS_PLAYLIST_URL, &ts_bodies());

@@ -67,7 +67,7 @@ use transmux::TrackId;
 use broadcast_common::Timestamp;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use media_plane::ingress::{Dialer, HandshakePolicy, HealthState, IngestDriver};
+use media_plane::ingress::{Dialer, HandshakePolicy, IngestDriver, ProgramId};
 use media_plane::trunk::TrunkConfig;
 use reqwest::Client;
 use tshttp_runtime::{Action, Config as PolicyConfig, Event as PolicyEvent, TsHttpPolicy};
@@ -269,7 +269,7 @@ pub async fn recv_and_feed(
     Ok(StreamStatus::Fed(chunk))
 }
 
-const NO_START_TIMEOUT_MS: u64 = u64::MAX;
+const MIN_START_TIMEOUT_MS: u64 = 1;
 const STALL_NOTICE_DIVISOR: u64 = 2;
 const MIN_STALL_RECONNECT_MS: u64 = 2;
 
@@ -278,13 +278,14 @@ fn duration_ms(d: Duration) -> u64 {
 }
 
 /// The policy-core configuration for a route: the post-establishment stall
-/// threshold is the route's read timeout, the core's start timeout is
-/// disabled (the handshake deadline owns establishment), and backoff is
-/// unused because the supervisor owns reconnect.
-pub(crate) fn policy_config(read: Duration) -> PolicyConfig {
-    let reconnect = duration_ms(read).max(MIN_STALL_RECONNECT_MS);
+/// threshold is the route's read timeout, the core's start timeout is the
+/// route's connect budget (the driver is `Live` from the first byte, so the
+/// handshake deadline alone never bounds a connection that sends bytes but no
+/// media), and backoff is unused because the supervisor owns reconnect.
+pub(crate) fn policy_config(timeouts: IngestTimeouts) -> PolicyConfig {
+    let reconnect = duration_ms(timeouts.read).max(MIN_STALL_RECONNECT_MS);
     PolicyConfig {
-        start_timeout_ms: NO_START_TIMEOUT_MS,
+        start_timeout_ms: duration_ms(timeouts.connect).max(MIN_START_TIMEOUT_MS),
         stall_notice_ms: reconnect / STALL_NOTICE_DIVISOR,
         stall_reconnect_ms: reconnect,
         ..PolicyConfig::default()
@@ -300,6 +301,8 @@ pub(crate) struct TsHttpStep {
     pub route_handle: std::sync::Arc<crate::route::RouteHandle>,
     pub policy: TsHttpPolicy,
     read: Duration,
+    connect: Duration,
+    media_seen: bool,
 }
 
 enum Verdict {
@@ -317,7 +320,7 @@ impl TsHttpStep {
         route_handle: std::sync::Arc<crate::route::RouteHandle>,
     ) -> Self {
         let start = tokio::time::Instant::now();
-        let mut policy = TsHttpPolicy::new("", policy_config(timeouts.read), 0);
+        let mut policy = TsHttpPolicy::new("", policy_config(timeouts), 0);
         policy.on_response(head.status, &head.headers, 0);
         let mut step = TsHttpStep {
             stream,
@@ -325,6 +328,8 @@ impl TsHttpStep {
             route_handle,
             policy,
             read: timeouts.read,
+            connect: timeouts.connect,
+            media_seen: false,
         };
         step.verdict();
         step
@@ -357,6 +362,15 @@ impl TsHttpStep {
             }
         }
         verdict
+    }
+
+    fn no_media(&self) -> MultimuxError {
+        MultimuxError::Connect {
+            reason: format!(
+                "ts/http handshake timed out: no media within {:?}",
+                self.connect
+            ),
+        }
     }
 
     fn capped_window(&self, window: Duration) -> Duration {
@@ -398,7 +412,10 @@ impl crate::source::driver::IngestStep<TsIngestSession> for TsHttpStep {
                 let now_ms = self.now_ms();
                 self.policy.poll_timeout(now_ms);
                 return match self.verdict() {
-                    Verdict::Stalled => StepOutcome::Failed(self.stalled(self.read)),
+                    Verdict::Stalled if self.media_seen => {
+                        StepOutcome::Failed(self.stalled(self.read))
+                    }
+                    Verdict::Stalled => StepOutcome::Failed(self.no_media()),
                     _ => StepOutcome::Idle,
                 };
             }
@@ -409,9 +426,9 @@ impl crate::source::driver::IngestStep<TsIngestSession> for TsHttpStep {
         );
         driver.feed(&chunk, now);
         self.route_handle.feed_si_ts(&chunk);
-        let established = matches!(driver.health(), HealthState::Live);
+        self.media_seen |= driver.trunk(ProgramId(0)).is_some();
         let now_ms = self.now_ms();
-        self.policy.on_bytes(chunk.len(), now_ms, established);
+        self.policy.on_bytes(chunk.len(), now_ms, self.media_seen);
         self.verdict();
         StepOutcome::Received
     }
@@ -721,6 +738,94 @@ mod tests {
         );
     }
 
+    const TS_PACKET_LEN: usize = 188;
+    const HANDSHAKE_BUDGET: Duration = Duration::from_secs(1);
+    const HANDSHAKE_MARGIN: Duration = Duration::from_secs(4);
+    const LONG_READ: Duration = Duration::from_secs(30);
+    const TRICKLE_PERIOD: Duration = Duration::from_millis(50);
+
+    async fn pre_pmt_server(trickle: bool) -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let pat_only = build_ts_bytes(TrackId::new(1), 0xAB, 10)[..TS_PACKET_LEN].to_vec();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf).await;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nTransfer-Encoding: chunked\r\n\r\n")
+                .await
+                .expect("write header");
+            let chunk = [
+                format!("{:x}\r\n", pat_only.len()).as_bytes(),
+                &pat_only,
+                b"\r\n",
+            ]
+            .concat();
+            loop {
+                if stream.write_all(&chunk).await.is_err() || !trickle {
+                    break;
+                }
+                tokio::time::sleep(TRICKLE_PERIOD).await;
+            }
+            std::future::pending::<()>().await;
+        });
+        addr
+    }
+
+    async fn run_against(addr: std::net::SocketAddr) -> (Result<()>, Duration) {
+        let route = TsHttpRoute::new("pre-pmt", format!("http://{addr}/stream.ts")).with_timeouts(
+            IngestTimeouts {
+                connect: HANDSHAKE_BUDGET,
+                read: LONG_READ,
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let started = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            HANDSHAKE_BUDGET + HANDSHAKE_MARGIN,
+            run_ts_http(
+                &route,
+                trunk_config(),
+                crate::source::handshake_policy(HANDSHAKE_BUDGET),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("the handshake deadline must abort the route, not the outer window");
+        (result, started.elapsed())
+    }
+
+    fn assert_handshake_timeout(result: &Result<()>) {
+        match result {
+            Err(MultimuxError::Connect { reason }) => {
+                assert!(reason.contains("handshake timed out"), "{reason}");
+            }
+            other => panic!("expected a handshake timeout, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_that_goes_silent_before_the_pmt_fails_at_the_handshake_deadline() {
+        let addr = pre_pmt_server(false).await;
+        let (result, elapsed) = run_against(addr).await;
+        assert_handshake_timeout(&result);
+        assert!(elapsed < LONG_READ, "{elapsed:?}");
+    }
+
+    #[tokio::test]
+    async fn a_server_that_keeps_sending_without_ever_sending_a_pmt_fails_at_the_handshake_deadline()
+     {
+        let addr = pre_pmt_server(true).await;
+        let (result, elapsed) = run_against(addr).await;
+        assert_handshake_timeout(&result);
+        assert!(elapsed < LONG_READ, "{elapsed:?}");
+    }
+
     fn head(content_length: Option<usize>) -> ResponseHead {
         ResponseHead {
             status: 200,
@@ -822,6 +927,7 @@ mod tests {
             std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4)),
         );
         step.policy.on_bytes(1, 0, true);
+        step.media_seen = true;
         let mut driver = fresh_driver();
         let outcome = tokio::time::timeout(Duration::from_secs(20), async {
             loop {

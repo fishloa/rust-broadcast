@@ -172,7 +172,7 @@ Scope split: **BC-3a** single media playlist and master playlist with the policy
   - `Action::FetchPlaylist{..}` -> `HttpRequest` GET to `action.playlist_request_url()` (blocking-reload query appended by hls-runtime), conn tagged `Playlist`. `Action::FetchResource{id,url,byte_range}` -> `HttpRequest{.., byte_range}` tagged `Resource(id)`. The session keeps a conn table `ConnId -> purpose`. In-flight segment and part requests are capped at `Config::hls_max_inflight_segments` (default 4, `0` means 1) per playlist adapter: the cap counts every segment/part that was issued and not yet delivered to the core (in flight, or completed and held for in-order delivery, or failed and awaiting retry), so held bodies are bounded by `cap * max_segment_bytes`; the rest of hls-runtime's actions stay queued and are released as responses complete, delivery to the core stays in order. A retry of a segment already inside the window is never blocked by the cap (a failed segment cannot deadlock the window); playlist, key and init requests are not counted and never wait behind segments (queued actions leave in the order the core emitted them among those allowed to go). Request timeouts are tracked in a deadline heap with lazy deletion, so `poll` is O(log n) per expiry, not a scan of every request.
   - Bodies accumulate per conn across `on_data` (bounded: `Config::max_playlist_bytes` 4 MiB, `max_segment_bytes` 64 MiB; exceeding = Close + failure) and are delivered on `on_closed(None)`: `on_playlist(bytes)` / `on_resource(id, bytes)`. A `HlsClient` parse error is a failure of that request.
   - `Action::WaitMs(ms)` -> `WakeAt(now_us + ms*1000)`; `HlsClient::next_wait()` converts the same way (the core takes `std::time::Instant` only in `poll_timeout`; the session never calls that, it computes deadlines from `now_us`).
-  - Output mapping: `Master(sel)` -> `Event::Variants(MasterSelection)` (new event, variants+chosen+renditions as in hls-runtime); `Tracks` -> `Event::Tracks`; `Init` dropped (not surfaced); `Samples{track_id, samples}` -> one `Event::Sample{track, sample, join: None}` per sample, in order; `DisplayChanged` -> `Event::DisplayChanged`; `Discontinuity` -> `Event::Discontinuity`; `EndOfStream` -> `Status::Ended`.
+  - Output mapping: `Master(sel)` -> `Event::Variants(MasterSelection)` (new event, variants+chosen+renditions as in hls-runtime); `Tracks` -> `Event::Tracks`; `Init` dropped (not surfaced); `Samples{track_id, samples}` -> one `Event::Sample{track, sample, join}` per sample, in order (`join` set by the session, see Audit round 5 F5); `DisplayChanged` -> `Event::DisplayChanged`; `Discontinuity` -> `Event::Discontinuity`; `EndOfStream` -> `Status::Ended`.
   - Status: `Establishing` until the first Sample, then `Live` once; `Status::Ended` for ENDLIST VOD at end of stream.
 - New inputs: `Config::variant_policy: hls_runtime::client::VariantPolicy`; `Session::select_variant(index)`; both delegate to HlsClient.
 - Retry policy (the core has none, "the caller drives retry cadence"): a failed request (transport error, non-2xx other than 401/407/3xx handled by the auth/redirect layers, truncated or oversized body, parse error) calls `HlsClient::on_error(id)` and schedules the next `poll` retry with the same table as TS-HTTP: backoff 2, 4, 8 s then 10 s forever (`Config::hls_backoff_ms`, `hls_backoff_cap_ms`), attempt counter resets on any successful playlist or resource. 404/410 on the MAIN (first) playlist: `Status::NotFound` per occurrence + same backoff; 404/410 on a segment: counted as a failure for that resource only (no NotFound status). While in backoff `Status::Reconnecting{attempt}` is emitted on each scheduled retry. Never gives up on live; the only terminal states are `Ended` (ENDLIST) and `close()`. Every `hls_backoff_ms` entry and `hls_backoff_cap_ms` is raised to at least 1 ms, so a zero never produces a burst of retries at one instant.
@@ -328,7 +328,7 @@ payload bytes and timestamps). Digest responses are verified by `broadcast-auth`
 
 `Event::Buffer(Start|Pause|Resume)` for the sources the PDV controller does not serve: HLS live, HLS VOD (`EXT-X-ENDLIST` seen) and finite TS (`Event::Finite`). Module `src/playout.rs`; live TS-over-HTTP keeps the BC-2 `buffering-runtime` path unchanged (`Config::buffer`). The gate is deterministic and lead-based: it does not measure jitter, so its events depend only on the delivered samples, the end of stream and the reported playback position, never on chunking or wall-clock time.
 
-Inputs (all from the session): per-rendered-track media end (27 MHz, the BC-2 definition: video end = max PTS of kept video samples since the origin + the latest sample's duration, audio end = max of pts + duration; finite TS skips `JoinDecision::Drop` samples, HLS has no `LiveJoin`), `on_playback_position(now_us, Option<pts_27mhz>)`, `set_rendered_tracks` (default: first video + first audio announced), `rejoin()`, `Event::Discontinuity` (and a demuxer discontinuity), a variant switch, and end of stream (`Status::Ended`; for HLS only once the main and any audio rendition playlist ended). The gate sees merged track ids, so the BC-3b audio rendition (id + 1000) is an ordinary audio track in the minimum.
+Inputs (all from the session): per-rendered-track media end (27 MHz, the BC-2 definition: video end = max PTS of kept video samples since the origin + the latest sample's duration, audio end = max of pts + duration; finite TS and HLS skip `JoinDecision::Drop` samples), `on_playback_position(now_us, Option<pts_27mhz>)`, `set_rendered_tracks` (default: first video + first audio announced), `rejoin()`, `Event::Discontinuity` (and a demuxer discontinuity), a variant switch, and end of stream (`Status::Ended`; for HLS only once the main and any audio rendition playlist ended). The gate sees merged track ids, so the BC-3b audio rendition (id + 1000) is an ordinary audio track in the minimum.
 
 Rules, with `lead = min over rendered tracks of end - reference`:
 - Origin = PTS of the first sample (since the last reset) of the first rendered video track, else of audio. A rendered video track reports only from its first sample.
@@ -408,7 +408,7 @@ The player used to detect a new timeline itself (`PlayerController.isNewTimeline
 
 Rule (`Config::timeline_jump: Option<TimelineJumpConfig { backward_us: 1_000_000, forward_slack_us: 5_000_000 }>`, default `Some`, `None` disables; also on for VOD): per video track (a track with a `LiveJoin`), between CONSECUTIVE KEPT samples (join decision not `Drop(_)`; `Drop`s are neither compared nor remembered), with `step = pts_i - pts_prev` converted to microseconds from the track timescale, a new timeline starts when `step < -backward_us` or `step > elapsed_us + forward_slack_us`. `elapsed_us` is the session `now_us` at which sample i was delivered minus the one of sample i-1 (the caller's monotonic clock; samples demuxed from one `on_data` share its `now_us`, so inside a burst any forward step above the slack is a jump). Both comparisons are strict. Audio uses the same rule only for the first RENDERED audio track (explicit `set_rendered_tracks` set, else the first announced) and only when no video track was announced. B-frame reordering (kept samples in decode order step backwards by a few frames) never reaches -1 s; the real TF1 capture, which reorders, is asserted jump-free.
 
-On detection, in sample order and before the sample is judged or emitted: (1) `Event::Discontinuity`; (2) the track's `LiveJoin` is re-armed and pending ends/maxPTS/join origin are cleared as `rejoin()` does, and the sample is judged again by the fresh state (so `Event::Sample::join` reflects the new timeline: `Drop(_)` or `JoinPoint`); (3) `Hint::PcrDiscontinuity` goes to the controller exactly as the demuxer-driven path does (live TS only: HLS and RTSP have no controller and never create one); (4) the BC-5 playout gate resets as for a `Discontinuity`; (5) the per-track last pts/last now are forgotten. HLS and RTSP samples carry `join: None` and are all "kept"; for them (2) and (3) are no-ops.
+On detection, in sample order and before the sample is judged or emitted: (1) `Event::Discontinuity`; (2) the track's `LiveJoin` is re-armed and pending ends/maxPTS/join origin are cleared as `rejoin()` does, and the sample is judged again by the fresh state (so `Event::Sample::join` reflects the new timeline: `Drop(_)` or `JoinPoint`); (3) `Hint::PcrDiscontinuity` goes to the controller exactly as the demuxer-driven path does (live TS only: HLS and RTSP have no controller and never create one); (4) the BC-5 playout gate resets as for a `Discontinuity`; (5) the per-track last pts/last now are forgotten. RTSP samples carry `join: None` and are all "kept"; for HLS (2) re-arms the per-track `LiveJoin` the session keeps (Audit round 5 F5) and (3) is a no-op.
 
 Deduplication and state scope: every `Event::Discontinuity` (source reconnect, HLS discontinuity, variant switch, a detected jump) and `Session::rejoin()` forget the detector state, so the first sample after them compares only within the new timeline and no second `Discontinuity` follows. A demuxer discontinuity (`DemuxEvent::Discontinuity`, PCR flag or PCR jump) is host-invisible today (it rejoins and hints only); the detector state is deliberately NOT cleared by it, so a PTS jump that coincides with it still produces the one host-visible `Event::Discontinuity`, but the rejoin and the hint are not repeated for the same sample (`handled` flag until the next kept sample is recorded).
 
@@ -495,6 +495,99 @@ core `Abort` (T6/T12 stall) or a failure verdict (T7/T19 truncated transfer, T9)
 
 None of these is a user-visible change in a supported flow, so the story proceeds.
 
+## Audit round 5 (r5client)
+
+### F5: HLS samples carry a join decision
+
+The HLS source used to emit every sample with `join: None`, so a stream whose first segment starts
+mid-GOP (a live join that is not PAT/IDR-aligned) delivered a non-sync first video sample and the host had
+to find the random-access point itself. The session now keeps one `transmux::LiveJoin` per video track of an
+HLS source (`source/hls_join.rs`, `LiveJoin::for_config` over `Event::Tracks`, the same helper the
+TS-over-HTTP path drives from `buffer.rs`). Every video sample is judged in delivery order before the
+timeline-jump check and the playout gate see it: the first random-access point is `Some(JoinPoint(_))`,
+everything before it (and the leading pictures the policy rejects) is `Some(Drop(_))`, later samples are
+`Some(Keep)`. As everywhere in this crate the session still emits `Drop` samples (it never drops samples);
+the host skips them, and the BC-5 gate and the jump detector already ignore them. The join is re-armed by
+every `Event::Discontinuity` (HLS discontinuity, variant switch, a detected timeline jump, which re-judges
+the triggering sample) and by `Session::rejoin()`. Audio and other non-AVC/HEVC/VVC tracks (including the
+BC-3b audio renditions) keep `join: None`. On a conformant PAT/IDR-aligned stream the first video sample is the
+join point and nothing is dropped, so the gate's behaviour is unchanged; after `Session::rejoin()` the gate
+now restarts at the next random-access point instead of the next video sample (the same rule as TS).
+
+### F4: HLS-TS tracks that cannot be muxed are reported
+
+`hls-runtime` re-muxes TS segments into fragmented MP4 and leaves out every elementary stream
+`!is_muxable_in_bmff` (opaque `Data` tracks: SCTE-35, ID3, private PES; subtitles without a sample entry).
+That used to be silent: a data-only stream reached `Status::Ended` with no samples and no explanation, and a
+stream with a PMT-listed data PID played without telling the host about the missing track. `hls-runtime` now
+emits an additive `Output::TrackDropped { track_id, stream_type }` from that branch of `drain_ts_demux`, and the
+HLS source turns each one into ONE non-fatal `Event::Error { kind: ErrorKind::TrackDropped { track_id,
+stream_type }, fatal: false }`, deduplicated by (remapped) track id for the life of the source. The existing
+`ErrorKind::UnsupportedCodec { fourcc }` was not reused: it names a codec by FourCC and is documented as a
+player-side kind, whereas these tracks have no FourCC (they are PMT stream types) and the host needs the track id
+to correlate. `ErrorKind` is `#[non_exhaustive]`; the new kind has `name()` `"track_dropped"` and `Display`
+via `impl_spec_display!`. Media of the muxable tracks flows unchanged. Audio renditions report the remapped id
+(`id + AUDIO_TRACK_ID_OFFSET`). Evidence: `fixtures/ts/scte35-other-pid.ts` (data-only) reports its data tracks
+and ends; the TF1 capture's two `stream_type` 0x06 tracks yield two reports while video and audio play.
+
+### F1: the initial TS-over-HTTP track set is announced once
+
+A live TS announces its tracks as each stream's codec config resolves (the first SPS, the first ADTS header), so a
+host that builds its pipeline from the first `Event::Tracks` started video-only (`ts/france2.ts` in 64 KB chunks:
+`[1]`, then `[1,2]` after 7 samples, the full six after 73; the 30-stream France TNT multiplex produced ~30
+announcements). The source now HOLDS the first media of every connection: from the first `Sample` or
+`DisplayChanged` it queues every item in order (`Sample`, `DisplayChanged`, discontinuity markers, `Status`
+events) without delivering them, and releases them behind ONE `Event::Tracks` carrying every track resolved so
+far. Release happens when the first of these holds:
+
+1. every PMT-declared elementary stream has resolved: a shadow PAT/PMT reader (`source/ts_http_hold.rs`:
+   `mpeg_ts::resync::TsResync` + `dvb_si::demux::SiDemux`, fed only until release) learns the programmes the PAT
+   lists, the elementary PIDs their PMTs declare (all programmes: the demuxer demuxes all of them), and a stream
+   counts as resolved when the demuxer reports `TrackAdded`/`TrackUpdated` with that `source_pid` or a
+   `TrackAbandoned` with that PID; the PAT must also have had every listed PMT seen;
+2. a limit, counted from the first media of the connection: `HOLD_QUIET_INPUT_BYTES` (512 KiB of input with no
+   further stream resolving: the scrambled `csa/csa2-plain.ts` leaves declared streams unresolved forever and
+   round-5 F2's liveness test needs media within 0.56 MB of it), `HOLD_MAX_INPUT_BYTES` (4 MiB of input),
+   `HOLD_MAX_MEDIA_US` (3 s of media, the largest per-track pts span among held samples), or `HOLD_MAX_WALL_US`
+   (3 s of caller clock, armed through `next_deadline_us`/`WakeAt`, so a source that goes quiet mid-hold still
+   releases);
+3. anything that must not overtake the held media: end of stream, a stall notice, a reconnect, a new connection,
+   a 404, a starved report.
+
+Evidence for the numbers (release point per capture): single programme `ts/france2.ts` 0.76 s of media / 0.85 MB,
+the TF1 capture 0.74 s / 0.26 MB, `ts/h264_aac.ts` within the first chunk, the 30-stream
+`france-tnt-uhf32-video-head-6MB.ts` 1.76 s / 1.5 MB when allowed to run to resolution; its 0.92 MB gap between
+two resolution bursts exceeds the quiet bound, so that multiplex is announced in several steps (first set, then one
+`Tracks` update per later track, the pre-F1 behaviour) rather than once. The limits leave ~1.7x headroom over the worst case and
+stay under the 5 s stall notice. A stream that declares a PID it never sends (modelled by dropping `PID 142` from
+`france2.ts`) is released at the limit with the streams that did resolve. Tracks that resolve after the release
+announce as updates exactly as before (`Event::Tracks` with the full merged set). Samples are never lost or
+reordered: the held items are appended behind the `Tracks` event in arrival order (tests compare the session's
+sample sequence with a bare `StreamingTsDemux` over the same bytes). `Status::Live` keeps its place in the
+stream (after the first `DisplayChanged`, before the first `Sample`), so it is now delivered at release rather
+than at the first sample. A reconnect starts a fresh hold for the new connection.
+
+Consequence for BC-2: the buffering controller learns the tracks and the media ends from the release on (the
+held samples replay in order within one drain), so its first `TrackMedia` and the zero-length join report can
+arrive up to the hold later than before; chunk arrival pacing (`on_chunk`, PCR) is unaffected. The oracle in
+`tests/buffer.rs` models the same hold. RTSP announces all tracks from the SDP before the first sample, so it
+needs no coalescing.
+
+### multimux check: TS-HTTP bytes without media
+
+`multimux`'s TS session is `Established` at construction (the HTTP response is already in), so the driver is
+`Live` from the first byte and the handshake deadline stops mattering once any byte arrives; the policy core's
+start timeout was disabled (`u64::MAX`, item 3 of the policy-core section), and its `sampled` input was "driver
+`Live`", so the core entered `Playing` on the first byte. A server that sent a PAT and went silent was therefore
+only aborted by the scaffold's `IngestTimeouts::read` check, and one that kept sending a PAT without a PMT was
+never aborted. Loopback tests (`multimux/src/source/ts_http.rs`: `a_server_that_goes_silent_before_the_pmt...`,
+`a_server_that_keeps_sending_without_ever_sending_a_pmt...`, 1 s connect budget, 30 s read) failed against the
+unfixed code (the outer window fired). Fix: the core's start timeout is now `IngestTimeouts::connect`, and
+`sampled` is "`driver.trunk(ProgramId(0))` exists" (a program was announced), so a route with bytes but no media
+fails with `ts/http handshake timed out: no media within <connect>` and the supervisor reconnects. This revises
+item 3 above: the previously avoided user-visible change (a stream that delivers bytes but no PMT now fails after
+the connect budget, default `DEFAULT_CONNECT_TIMEOUT`) is accepted deliberately.
+
 ## Round 5: live liveness of the TS demux path (F2, F3, F6)
 
 Decisions that change public behaviour (transmux `StreamingTsDemux`, hls-runtime TS client):
@@ -502,3 +595,12 @@ Decisions that change public behaviour (transmux `StreamingTsDemux`, hls-runtime
 - **F3, head-of-line blocking.** A `Probing` PID blocks only the PIDs of its own program (the declaring PMT). Across programs, promotion is by resolution order, so a live TS-HTTP source delivers as soon as any program resolves; track ids are therefore not in PMT order across programs. Inside a program PMT order is kept, with the existing step-over bounds plus two new ones: a head with 2 MiB of its own payload and no access unit (`STUCK_HEAD_OWN_BYTES`), and a non-video head 4 MiB of input after its declaration (`STUCK_HEAD_INPUT_PACKETS`). Video that yields access units stays bounded by the 4 MiB backlog cap. The stepped-over PID keeps probing and is announced later with a later id. Whole-buffer `TsDemux` keeps strict PMT order (`with_strict_pmt_order`), which is what `track_id_baseline` pins.
 - **F2, live HLS.** Evidence: `m6-single.ts` and `tnt-5w-12732v-isi6-10s.ts` declare video PIDs that never send a packet, so no byte bound can fire on a segment-sized input and the 9000-packet late-video regression forbids a small one. A whole segment is the one place absence is a fact, so after each `Segment` (not each LL-HLS `Part`) the client calls `release_silent_heads`. A PES that spans a segment boundary is untouched: nothing is flushed, so the sample sequence of PAT-aligned `tf1-live.ts` segments equals the whole-file demux byte for byte (`pat_aligned_segments_deliver_the_whole_file_demux_byte_for_byte`).
 - **F6, discontinuity.** The fresh demuxer after `EXT-X-DISCONTINUITY` re-probed from the new timeline alone; a segment that opens mid-GOP carries no SPS for some PIDs, so those tracks vanished (france-tnt video head 17 to 15 tracks). The client now calls `restart_timeline`: tracks, ids and parameter sets are kept, timing is reset. Measured cost against a no-discontinuity run on PAT-aligned cuts: at most one audio PES per PID (6 to 7 frames). Not recovered, by design: a PID that was still unresolved at the seam loses its old-timeline backlog (those access units precede the PID's first parameter set, so they are undecodable anyway: in `test-092.ts` PID 0x26C the first sync sample is the 147th of 149), and a PID whose config only exists across the seam stays unannounced (`csa2-plain.ts` PIDs 0x276 to 0x278). A changed PMT after the seam is diffed as usual (tracks added, removed or updated).
+
+### Interaction with the round-5 liveness fixes (#1502)
+
+`tests/audit_r5_liveness.rs` and `tests/audit_r5_discontinuity.rs` assert "no `Event::Error`". F4 deliberately
+reports each non-muxable HLS-TS track (SCTE-35, ID3, private data present in those captures) as a non-fatal
+`ErrorKind::TrackDropped`, so both files now ignore that one kind when collecting errors (nothing else in them
+changed). The F1 hold interacted with the TS-HTTP liveness test on `csa/csa2-plain.ts` (declared streams that never
+resolve): the hold had no input-driven bound below 4 MiB / 3 s, so nothing was released inside the test's 0.56 MB;
+`HOLD_QUIET_INPUT_BYTES` fixes that.

@@ -125,10 +125,14 @@ fn sample_events_as(
     events
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } if pick(*track) => Some(Event::Sample {
+            Event::Sample {
+                track,
+                sample,
+                join,
+            } if pick(*track) => Some(Event::Sample {
                 track: transmux::TrackId::new(track.value() - shift),
                 sample: sample.clone(),
-                join: None,
+                join: *join,
             }),
             _ => None,
         })
@@ -219,7 +223,7 @@ fn samples_from_both_adapters_carry_remapped_audio_track_ids() {
         .iter()
         .filter_map(|e| match e {
             Event::Sample { track, join, .. } => {
-                assert!(join.is_none());
+                assert_eq!(join.is_some(), track.value() == video_id);
                 Some(track.value())
             }
             _ => None,
