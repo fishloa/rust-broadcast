@@ -259,8 +259,9 @@ fn a_map_run_with_its_own_key_decrypts_its_own_init() {
     }
     for (i, seg) in second.parts.segments.iter().enumerate() {
         let msn = (first.parts.segments.len() + i) as u64;
+        let cipher = aes128_encrypt_segment(&KEY, &IV, seg);
         client
-            .on_resource(ResourceId::Segment { msn }, seg)
+            .on_resource(ResourceId::Segment { msn }, &cipher)
             .unwrap();
     }
     let mut seen = Seen::default();
