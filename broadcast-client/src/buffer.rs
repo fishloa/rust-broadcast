@@ -105,6 +105,26 @@ pub(crate) fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
     pts_to_27mhz_from(pts, timescale, 0)
 }
 
+pub(crate) fn lowest_id_per_kind(
+    tracks: impl IntoIterator<Item = (TrackId, bool, bool)>,
+) -> (Option<TrackId>, Option<TrackId>) {
+    let mut video: Option<TrackId> = None;
+    let mut audio: Option<TrackId> = None;
+    for (id, is_video, is_audio) in tracks {
+        let slot = if is_video {
+            &mut video
+        } else if is_audio {
+            &mut audio
+        } else {
+            continue;
+        };
+        if slot.is_none_or(|cur| id < cur) {
+            *slot = Some(id);
+        }
+    }
+    (video, audio)
+}
+
 pub(crate) struct Feeder {
     config: ControllerConfig,
     seed: Option<StallMemorySnapshot>,
@@ -167,16 +187,13 @@ impl Feeder {
     }
 
     pub(crate) fn default_rendered(&self) -> (Option<TrackId>, Option<TrackId>) {
-        let mut video = None;
-        let mut audio = None;
-        for (id, spec) in &self.track_specs {
-            if self.live_joins.contains_key(id) {
-                video.get_or_insert(*id);
-            } else if spec.config.audio_sample_rate().is_some() {
-                audio.get_or_insert(*id);
-            }
-        }
-        (video, audio)
+        lowest_id_per_kind(self.track_specs.iter().map(|(id, spec)| {
+            (
+                *id,
+                self.live_joins.contains_key(id),
+                spec.config.audio_sample_rate().is_some(),
+            )
+        }))
     }
 
     pub(crate) fn new_connection(&mut self) {

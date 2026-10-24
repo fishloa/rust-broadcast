@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
 
-use crate::buffer::{negative_origin, pts_to_27mhz_from, raw_27mhz};
+use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event};
 
 /// Default start lead for VOD sources (HLS with `EXT-X-ENDLIST`, finite TS), microseconds.
@@ -137,9 +137,6 @@ impl Playout {
         let ids: BTreeSet<TrackId> = specs.iter().map(|s| s.track_id).collect();
         self.infos.retain(|t, _| ids.contains(t));
         self.obs.retain(|t, _| ids.contains(t));
-        if !self.rendered_explicit {
-            self.rendered.retain(|t| ids.contains(t));
-        }
         for spec in specs {
             let kind = if LiveJoin::for_config(&spec.config).is_some() {
                 Kind::Video
@@ -155,16 +152,14 @@ impl Playout {
                     timescale: spec.timescale,
                 },
             );
-            if self.rendered_explicit || kind == Kind::Other {
-                continue;
-            }
-            let covered = self
-                .rendered
-                .iter()
-                .any(|t| self.infos.get(t).is_some_and(|i| i.kind == kind));
-            if !covered {
-                self.rendered.insert(spec.track_id);
-            }
+        }
+        if !self.rendered_explicit {
+            let (video, audio) = lowest_id_per_kind(
+                self.infos
+                    .iter()
+                    .map(|(id, i)| (*id, i.kind == Kind::Video, i.kind == Kind::Audio)),
+            );
+            self.rendered = video.into_iter().chain(audio).collect();
         }
         self.step();
     }
