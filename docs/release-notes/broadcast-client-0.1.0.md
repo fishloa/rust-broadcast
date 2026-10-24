@@ -71,7 +71,6 @@ This is the README snippet (it is a doctest, run by `cargo test --doc -p broadca
 
 - Public tests (run everywhere): the in-tree suites for the three sources, auth, redirects, cookies, HLS keys, renditions, playout, timeline jumps, the start gate and chunk invariance, plus the lexical no-hand-roll guard, the label-coverage drift guard and the `#[non_exhaustive]` coverage guard.
 - Real captures held in the private fixtures repository (CI checks them out with a read-only deploy key; a missing private fixture fails there): the start-gate and hold tests replay real head-end TS captures at real time.
-- Eight audit rounds against the design preceded this release; their regression tests are the `tests/audit_*` files.
 
 ## Known limits
 
