@@ -112,3 +112,84 @@ fn a_stream_whose_every_track_is_skipped_ends_fatal_not_ended() {
         0
     );
 }
+
+fn oracle_counts(bytes: &[u8]) -> std::collections::BTreeMap<u32, usize> {
+    use broadcast_common::Unpackage;
+    let media = transmux::Fmp4Demux::new().unpackage(bytes).unwrap();
+    media
+        .tracks
+        .iter()
+        .map(|t| (t.spec.track_id.value(), t.samples.len()))
+        .collect()
+}
+
+fn split_counts(events: &[Event]) -> (Vec<Vec<u32>>, [std::collections::BTreeMap<u32, usize>; 2]) {
+    let mut tracks = Vec::new();
+    let mut counts = [
+        std::collections::BTreeMap::new(),
+        std::collections::BTreeMap::new(),
+    ];
+    let mut side = 0;
+    for e in events {
+        match e {
+            Event::Tracks(t) => tracks.push(t.iter().map(|s| s.track_id.value()).collect()),
+            Event::Discontinuity => side = 1,
+            Event::Sample { track, .. } => *counts[side].entry(track.value()).or_default() += 1,
+            _ => {}
+        }
+    }
+    (tracks, counts)
+}
+
+#[test]
+fn each_segment_is_decoded_with_the_init_of_its_own_map_run() {
+    const FIRST: &str = "transmux/h264_aac_frag.mp4";
+    const SECOND: &str = "transmux/hevc_frag.mp4";
+    let first_bytes = test_fixtures::read(FIRST);
+    let second_bytes = test_fixtures::read(SECOND);
+    let first = split(&first_bytes).unwrap();
+    let second = split(&second_bytes).unwrap();
+
+    let mut playlist = String::from(
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:10\n#EXT-X-PLAYLIST-TYPE:VOD\n\
+         #EXT-X-MAP:URI=\"i1.mp4\"\n",
+    );
+    let mut h = Host::new(PLAYLIST_URL, hls_config());
+    h.ok(&format!("{BASE}/i1.mp4"), first.init.clone());
+    h.ok(&format!("{BASE}/i2.mp4"), second.init.clone());
+    for (i, s) in first.segments.iter().enumerate() {
+        h.ok(&format!("{BASE}/a{i}.m4s"), s.clone());
+        playlist.push_str(&format!("#EXTINF:1.0,\na{i}.m4s\n"));
+    }
+    playlist.push_str("#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI=\"i2.mp4\"\n");
+    for (i, s) in second.segments.iter().enumerate() {
+        h.ok(&format!("{BASE}/b{i}.m4s"), s.clone());
+        playlist.push_str(&format!("#EXTINF:1.0,\nb{i}.m4s\n"));
+    }
+    playlist.push_str("#EXT-X-ENDLIST\n");
+    h.ok(PLAYLIST_URL, playlist.into_bytes());
+    h.run_to_end();
+
+    assert_eq!(h.requests_to(&format!("{BASE}/i1.mp4")).len(), 1);
+    assert_eq!(h.requests_to(&format!("{BASE}/i2.mp4")).len(), 1);
+    let (tracks, counts) = split_counts(&h.events);
+    assert_eq!(
+        counts[0],
+        oracle_counts(&first_bytes),
+        "segments before the change use the first init"
+    );
+    assert_eq!(
+        counts[1],
+        oracle_counts(&second_bytes),
+        "segments after the change use the second init"
+    );
+    assert_eq!(
+        tracks,
+        vec![
+            oracle_counts(&first_bytes).into_keys().collect::<Vec<_>>(),
+            oracle_counts(&second_bytes).into_keys().collect::<Vec<_>>(),
+        ]
+    );
+    assert!(errors(&h.events).is_empty(), "{:?}", errors(&h.events));
+    assert!(ended(&h.events));
+}
