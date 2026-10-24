@@ -18,6 +18,18 @@ pub enum Error {
     /// The variant index does not exist (or no master playlist was seen yet).
     #[error("no such variant: {0}")]
     NoSuchVariant(usize),
+    /// A custom header name is owned by the session and cannot be set by the caller.
+    #[error("reserved header: {name}")]
+    ReservedHeader {
+        /// The offending header name.
+        name: String,
+    },
+    /// A custom header or initial cookie is not a valid HTTP field name or value.
+    #[error("invalid header: {name}")]
+    InvalidHeader {
+        /// The offending header (or cookie) name.
+        name: String,
+    },
 }
 
 /// Transport error passed to [`crate::Session::on_closed`].

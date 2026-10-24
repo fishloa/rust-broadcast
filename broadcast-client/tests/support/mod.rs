@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 pub mod hls_host;
+pub mod ts_probe;
 
 use broadcast_client::{Action, Event, Session};
 

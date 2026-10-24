@@ -190,6 +190,7 @@ impl HlsSource {
         let Some(mut req) = self.reqs.remove(&conn) else {
             return;
         };
+        auth.receive_cookies(&req.url, headers, now);
         if REDIRECT_STATUSES.contains(&status) {
             self.actions.push_back(Action::Close { conn });
             match redirect::resolve(&req.url, headers, req.redirects, self.max_redirects) {
@@ -501,7 +502,7 @@ impl HlsSource {
     }
 
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
-        let headers = auth.request_headers(&req.url);
+        let headers = auth.request_headers(&req.url, now);
         req.authed = headers
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
