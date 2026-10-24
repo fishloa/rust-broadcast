@@ -645,12 +645,6 @@ impl HlsSource {
             {
                 return;
             }
-            if purpose == Purpose::Resource(ResourceId::Init)
-                && matches!(&result, Err(e) if classify(e).is_none())
-                && self.report(ErrorKind::InitFetchFailed { status: None })
-            {
-                return;
-            }
             self.fail_purpose(purpose, retry_url, now);
         }
     }
@@ -697,29 +691,35 @@ impl HlsSource {
         {
             return;
         }
-        if req.purpose == Purpose::Resource(ResourceId::Init)
-            && self.report(ErrorKind::InitFetchFailed { status })
-        {
+        if req.purpose == Purpose::Resource(ResourceId::Init) {
+            if !self.report(ErrorKind::InitFetchFailed { status }) {
+                self.fail_init_fetch(now);
+            }
             return;
         }
-        if let Purpose::Resource(id) = req.purpose
-            && id != ResourceId::Init
-        {
+        if let Purpose::Resource(id) = req.purpose {
             self.failed.insert(id);
         }
         self.fail_purpose(req.purpose, Some(req.original_url), now);
+    }
+
+    fn fail_init_fetch(&mut self, now: u64) {
+        self.client_failed(Purpose::Resource(ResourceId::Init));
+        self.pump_core();
+        self.drain_outputs();
+        self.init_retry = true;
+        let refetch = (!self.chain_alive() && !self.client.endlist_seen())
+            .then(|| self.client.playlist_url().to_string());
+        self.schedule_retry(now, refetch);
     }
 
     fn fail_purpose(&mut self, purpose: Purpose, retry_url: Option<String>, now: u64) {
         self.client_failed(purpose);
         self.pump_core();
         self.drain_outputs();
-        let init = purpose == Purpose::Resource(ResourceId::Init);
-        self.init_retry |= init;
         let refetch = match purpose {
             _ if self.chain_alive() => None,
             Purpose::Playlist => retry_url,
-            Purpose::Resource(_) if init && self.client.endlist_seen() => None,
             Purpose::Resource(_) | Purpose::Key(_) => Some(self.client.playlist_url().to_string()),
         };
         self.schedule_retry(now, refetch);

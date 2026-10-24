@@ -161,12 +161,12 @@ pub enum ErrorKind {
         status: Option<u16>,
     },
     /// A Media Initialization Section (`EXT-X-MAP`) fetch failed with a non-authentication
-    /// status, a transport error, a timeout, or an oversized or undecodable body. The fetch is
+    /// status, a transport error, a timeout, or an oversized body. The fetch is
     /// retried with backoff; [`Config::max_key_failures`] consecutive failures (no decoded
     /// samples in between) make one fatal error of this kind. Unlike a key request, a `403`
     /// counts too (it is also reported as [`Event::Forbidden`]).
     InitFetchFailed {
-        /// The HTTP status, `None` for a transport error, timeout or an undecodable body.
+        /// The HTTP status, `None` for a transport error, timeout or oversized body.
         status: Option<u16>,
     },
     /// The key response was not a valid 16-byte AES-128 key.

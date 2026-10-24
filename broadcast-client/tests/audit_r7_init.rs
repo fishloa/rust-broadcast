@@ -212,3 +212,11 @@ fn init_failure_cap_follows_max_key_failures() {
     assert_eq!(h.hits(&format!("{BASE}/i1.mp4")), 2);
     assert_eq!(tally(&h).fatals.len(), 1);
 }
+
+#[test]
+fn vod_init_retry_does_not_refetch_the_ended_playlist() {
+    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])]);
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    assert!(tally(&h).ended);
+    assert_eq!(h.hits(PL), 1);
+}
