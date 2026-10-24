@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (round-6 audit F1)
+- `SkippedTrack::track_id: Option<TrackId>` (+ `SkippedTrack::with_track_id`): the skipped `trak`'s `tkhd.track_ID`, set by `Fmp4Demux` and `ProgressiveDemux`, so a consumer can report one drop per track id. `None` for a record with no track header to name (the `CencDecryptor::demux` skip records).
+
 ### Fixed (round-5 audit F3/F6)
 - **`StreamingTsDemux` no longer holds every resolved track back behind one stuck PID until `finish()`.** A `Probing` head used to stop `try_promote_ready` for all later PIDs of the whole multiplex, so a short or sparse multi-program capture (`private/fixtures/csa/csa2-plain.ts`, tsduck `test-062.ts`) emitted nothing until `finish()` and a live source stayed `Establishing` forever. An unresolved head now blocks only the PIDs of its own program (PMT order within a program is unchanged), and a head that cannot be a legitimate wait is stepped over, still probing and announced by a later `TrackAdded` if it resolves: `STUCK_HEAD_OWN_BYTES` (2 MiB of its own payload without a single access unit: scrambled or unframeable video never grows the byte-capped backlog) and, for non-video heads only, `STUCK_HEAD_INPUT_PACKETS` (4 MiB of input since the PID was declared). A video head that does produce access units is still bounded by `MAX_PROBE_BACKLOG_BYTES`. **Behaviour change for live consumers:** track ids follow resolution order across programs, not PMT order. The batch `TsDemux` (`demux`/`unpackage`) keeps strict PMT order, so `track_id_baseline` is untouched.
 
