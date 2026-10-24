@@ -539,5 +539,69 @@ mod tests {
         );
     }
 
+    const LOW_AUDIO_ID: u32 = 20;
+    const HIGH_AUDIO_ID: u32 = 30;
+    const EMITTED_SECONDS: i64 = 3;
+
+    fn with_id(spec: &TrackSpec, id: u32) -> TrackSpec {
+        let mut s = spec.clone();
+        s.track_id = TrackId::new(id);
+        s
+    }
+
+    fn both_sources() -> [Source; 2] {
+        [
+            Source::Vod,
+            Source::Live {
+                target_duration_secs: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn the_default_rendered_set_is_the_lowest_id_of_each_kind_in_any_announce_order() {
+        let (audio, _) = audio_track();
+        let video = video_spec();
+        let low = with_id(&audio, LOW_AUDIO_ID);
+        let high = with_id(&audio, HIGH_AUDIO_ID);
+        for source in both_sources() {
+            let mut p = Playout::new(PlayoutConfig::default());
+            p.engage(source);
+            p.on_tracks(&[high.clone(), video.clone()]);
+            assert_eq!(p.rendered, BTreeSet::from([video.track_id, high.track_id]));
+            p.on_tracks(&[high.clone(), video.clone(), low.clone()]);
+            assert_eq!(p.rendered, BTreeSet::from([video.track_id, low.track_id]));
+        }
+    }
+
+    #[test]
+    fn declaring_the_other_audio_late_retargets_and_is_seeded_from_its_observations() {
+        let (audio, samples) = audio_track();
+        let video = video_spec();
+        let low = with_id(&audio, LOW_AUDIO_ID);
+        let high = with_id(&audio, HIGH_AUDIO_ID);
+        for source in both_sources() {
+            let mut p = Playout::new(PlayoutConfig::default());
+            p.engage(source);
+            p.on_tracks(&[high.clone(), video.clone(), low.clone()]);
+            for i in 0..EMITTED_SECONDS {
+                for spec in [&video, &low, &high] {
+                    p.on_sample(
+                        spec.track_id,
+                        &one_second_sample(&samples[0], spec, i),
+                        None,
+                    );
+                }
+            }
+            p.set_rendered(&[video.track_id, high.track_id]);
+            assert_eq!(p.rendered, BTreeSet::from([video.track_id, high.track_id]));
+            assert_eq!(
+                p.limiting().map(|(_, end)| end),
+                Some(u64::try_from(EMITTED_SECONDS).unwrap() * ONE_SECOND_TICKS)
+            );
+            assert!(p.obs.contains_key(&high.track_id));
+        }
+    }
+
     const NEGATIVE_SECONDS: i64 = 50_000;
 }
