@@ -19,8 +19,22 @@ Failed requests retry with the `Config::hls_backoff_ms` schedule (2, 4, 8 s, the
 time out (`hls_request_timeout_us`, `hls_segment_timeout_us`). Separate audio renditions are played by a second adapter
 (`Config::auto_select_audio`, `Config::preferred_audio_language`, `Session::select_audio_rendition`);
 audio track ids are offset by `AUDIO_TRACK_ID_OFFSET` (1000), `Event::Tracks` carries the merged set
-and `Event::AudioRendition` reports the active rendition. Subtitle renditions and `Event::Buffer`
-for HLS are not implemented.
+and `Event::AudioRendition` reports the active rendition. Subtitle renditions are not implemented.
+
+## Buffer events
+
+`Event::Buffer(Start|Pause|Resume)` has two engines. Live TS-over-HTTP is driven by
+`buffering-runtime` (`Config::buffer`). HLS (live and VOD) and finite TS (a response with
+`Content-Length`, `Event::Finite`) use a deterministic playout gate (BC-5, `Config::playout`,
+`PlayoutConfig`): `Start { at }` once every rendered track has buffered `start lead` past the
+origin (the first sample of the first rendered video track, else audio; the minimum of the
+tracks' media ends decides), at the end of the stream if it ends first; `Pause` when the playback
+position reported with `Session::on_playback_position` reaches `pause_lead_us` (default 0) of the
+buffered media and the stream has not ended; `Resume` once the lead past the held position reaches
+the resume lead, or at once when the stream ends while paused. A `Discontinuity`, `rejoin()` or
+variant switch resets the gate and `Start` fires again. Leads: `vod_start_lead_us` 1 s, live HLS
+`min(3 x EXT-X-TARGETDURATION, live_start_lead_us)` with `live_start_lead_us` 6 s,
+`resume_lead_us` defaults to the start lead. Separate audio renditions join the minimum.
 
 ## Encrypted HLS
 

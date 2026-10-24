@@ -82,7 +82,7 @@ macro_rules! rec {
     };
 }
 
-fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
+pub(crate) fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
     if timescale == 0 {
         return 0;
     }

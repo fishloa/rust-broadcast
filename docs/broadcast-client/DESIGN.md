@@ -141,7 +141,7 @@ restarts the session (attempt 0). Truncated transfers (EOF before all expected b
 
 ## BC-3: HLS source (hls-runtime::HlsClient inside the session)
 
-Scope split: **BC-3a** single media playlist and master playlist with the policy-chosen variant (muxed audio), TS and fMP4 segments, VOD and live. **BC-3b** separate audio renditions as selectable tracks (built, see "BC-3b renditions"; subtitle renditions remain later). No Event::Buffer for HLS in BC-3a (segment delivery is bursty by nature; pacing is the player's media-clock business, like VOD).
+Scope split: **BC-3a** single media playlist and master playlist with the policy-chosen variant (muxed audio), TS and fMP4 segments, VOD and live. **BC-3b** separate audio renditions as selectable tracks (built, see "BC-3b renditions"; subtitle renditions remain later). No Event::Buffer for HLS in BC-3a; HLS and finite TS get the BC-5 playout gate (below).
 
 - `SourceKind::Hls`; `Auto` picks Hls when the URL path ends with `.m3u8`/`.m3u` (ASCII case-insensitive), else TsHttp.
 - Adapter `source/hls.rs` over `hls_runtime::client::HlsClient` (default features, no tokio):
@@ -162,7 +162,7 @@ Automatic feeding inside the session (the host does nothing):
 - `on_track_media(now_us, track, media_end_27mhz)`: once per delivered chunk and rendered track, using the LAST sample of that track demuxed from the chunk: end = (pts + duration) converted to 27 MHz (`pts * 27_000_000 / timescale`). Video samples count only from the JOIN POINT: the first video sample for which the session's per-video-track `transmux::LiveJoin` (`LiveJoin::for_config(&spec.config)`, `push(&sample) -> JoinDecision`, `rejoin()` on timeline restart; `Sample` itself carries no join) returns `JoinDecision::JoinPoint(_)`; video samples before it (`Drop(_)`) are not reported; at the join point report ONE zero-length media end (end = that sample's pts) for the video track BEFORE any other report (the controller takes the first reported position as its start origin). Audio ends are withheld until the video join point exists (when a video track is rendered); a stream with no rendered video reports audio immediately.
 - Hints: `Reconnected` BEFORE feeding the first chunk of every connection after the first; `SourceEnded` on EOF; `SourceError` on a transport error; `PcrDiscontinuity` when the demuxer emits `DemuxEvent::Discontinuity` (timeline restart) AND the join-point/withholding state resets (new timeline = wait for a new join point). The controller is NOT reset on a plain reconnect (it keeps its stall memory).
 - Time unit: the controller takes microseconds; the session clock is already `now_us`.
-- VOD (a `Finite` resource): the controller is not created (no live-edge decisions); `Event::Buffer` is never emitted; pacing is the player's media-clock business.
+- VOD (a `Finite` resource): the controller is not created (no live-edge decisions); the BC-5 playout gate emits the `Event::Buffer`s instead (see "BC-5 playout gate").
 
 Tests (BC-2) compare the session against a bare `BufferController` oracle fed the same inputs by the test, and use the real TF1 capture (`zenith-http/tf1-live.ts`, 1316-byte chunks, synthetic arrival schedule steady 100 ms/chunk, then a 3 s gap, then steady).
 
@@ -216,3 +216,22 @@ Binding spec: `broadcast-hls/docs/ext-x-key.md`. The core (`hls-runtime`) emits 
 - Reconnect (`Session::reconnect`) keeps the core's key cache (keys are cached per URI for the life of the session, `Expires` ignored): the post-reconnect playlist does not refetch a key that was already fetched; an in-flight key request at reconnect time is reported to the core as failed and re-requested by the refetched playlist.
 - Resources still reach the core in issue order; a segment that arrives before its key is held by the core and decrypted when the key lands.
 - Known core limitation: a key rejected by decryption stays cached in the core, so after `DecryptFailed` the retries re-fetch the segment but never replace the key; the session therefore ends in the fatal `DecryptFailed` after `max_key_failures`.
+
+## BC-5 playout gate
+
+`Event::Buffer(Start|Pause|Resume)` for the sources the PDV controller does not serve: HLS live, HLS VOD (`EXT-X-ENDLIST` seen) and finite TS (`Event::Finite`). Module `src/playout.rs`; live TS-over-HTTP keeps the BC-2 `buffering-runtime` path unchanged (`Config::buffer`). The gate is deterministic and lead-based: it does not measure jitter, so its events depend only on the delivered samples, the end of stream and the reported playback position, never on chunking or wall-clock time.
+
+Inputs (all from the session): per-rendered-track media end (27 MHz, the BC-2 definition: video end = max PTS of kept video samples since the origin + the latest sample's duration, audio end = max of pts + duration; finite TS skips `JoinDecision::Drop` samples, HLS has no `LiveJoin`), `on_playback_position(now_us, Option<pts_27mhz>)`, `set_rendered_tracks` (default: first video + first audio announced), `rejoin()`, `Event::Discontinuity` (and a demuxer discontinuity), a variant switch, and end of stream (`Status::Ended`; for HLS only once the main and any audio rendition playlist ended). The gate sees merged track ids, so the BC-3b audio rendition (id + 1000) is an ordinary audio track in the minimum.
+
+Rules, with `lead = min over rendered tracks of end - reference`:
+- Origin = PTS of the first sample (since the last reset) of the first rendered video track, else of audio. A rendered video track reports only from its first sample.
+- Before the start every rendered track must have reported; `Start { at_27mhz = origin }` when `min end - origin >= start lead`. If the stream ends first, `Start` is emitted at the end (using whatever has reported), so the player never waits forever.
+- Once started and not paused: `Pause { hold_at_27mhz = position, starving_track = track with the smallest end }` when the position is `Some`, `min end - position <= pause_lead` and the stream has not ended. Position `None` is never evaluated; after the end it never pauses.
+- While paused (reference = the held position): `Resume { at_27mhz = hold }` when `min end - hold >= resume lead`, or immediately when the stream ends. At most one transition per input.
+- A reset (discontinuity, variant switch) clears the origin, ends and state, so `Start` fires again; `rejoin()` does the same but keeps the ended flag. Events of the gate precede `Status::Ended` when the end triggers them.
+
+Config: `Config::playout: PlayoutConfig { vod_start_lead_us: 1_000_000, live_start_lead_us: 6_000_000, resume_lead_us: None (= the start lead of the source kind), pause_lead_us: 0 }`. For live HLS the start lead is `min(3 x EXT-X-TARGETDURATION, live_start_lead_us)`: `HlsClient::target_duration_secs()` and `endlist_seen()` were added to hls-runtime as additive accessors for this (and for the VOD/live decision). `Event::Buffer` types are unchanged; nothing is new for the player except `Config::playout`.
+
+Behaviour changes versus BC-2/BC-3a: finite TS and HLS now emit Buffer events (BC-2 finite TS and BC-3a HLS emitted none); the controller log (`buffer_input_log`, test seam) stays empty for them.
+
+Tests: `broadcast-client/tests/playout.rs` (HLS through the real HLS session with the classic-TS ts-hls and CMAF fixtures plus a 12 s contiguous stream built from the same fixture samples for live, finite TS from `fixtures/ts/h264_aac.ts` with `Content-Length`). The oracle in the test recomputes the leads from the delivered `Event::Sample`s independently of the gate.
