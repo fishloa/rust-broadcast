@@ -568,3 +568,18 @@ held samples replay in order within one drain), so its first `TrackMedia` and th
 arrive up to the hold later than before; chunk arrival pacing (`on_chunk`, PCR) is unaffected. The oracle in
 `tests/buffer.rs` models the same hold. RTSP announces all tracks from the SDP before the first sample, so it
 needs no coalescing.
+
+### multimux check: TS-HTTP bytes without media
+
+`multimux`'s TS session is `Established` at construction (the HTTP response is already in), so the driver is
+`Live` from the first byte and the handshake deadline stops mattering once any byte arrives; the policy core's
+start timeout was disabled (`u64::MAX`, item 3 of the policy-core section), and its `sampled` input was "driver
+`Live`", so the core entered `Playing` on the first byte. A server that sent a PAT and went silent was therefore
+only aborted by the scaffold's `IngestTimeouts::read` check, and one that kept sending a PAT without a PMT was
+never aborted. Loopback tests (`multimux/src/source/ts_http.rs`: `a_server_that_goes_silent_before_the_pmt...`,
+`a_server_that_keeps_sending_without_ever_sending_a_pmt...`, 1 s connect budget, 30 s read) failed against the
+unfixed code (the outer window fired). Fix: the core's start timeout is now `IngestTimeouts::connect`, and
+`sampled` is "`driver.trunk(ProgramId(0))` exists" (a program was announced), so a route with bytes but no media
+fails with `ts/http handshake timed out: no media within <connect>` and the supervisor reconnects. This revises
+item 3 above: the previously avoided user-visible change (a stream that delivers bytes but no PMT now fails after
+the connect budget, default `DEFAULT_CONNECT_TIMEOUT`) is accepted deliberately.

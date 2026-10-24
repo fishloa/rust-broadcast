@@ -67,7 +67,7 @@ use transmux::TrackId;
 use broadcast_common::Timestamp;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use media_plane::ingress::{Dialer, HandshakePolicy, HealthState, IngestDriver};
+use media_plane::ingress::{Dialer, HandshakePolicy, IngestDriver, ProgramId};
 use media_plane::trunk::TrunkConfig;
 use reqwest::Client;
 use tshttp_runtime::{Action, Config as PolicyConfig, Event as PolicyEvent, TsHttpPolicy};
@@ -269,7 +269,7 @@ pub async fn recv_and_feed(
     Ok(StreamStatus::Fed(chunk))
 }
 
-const NO_START_TIMEOUT_MS: u64 = u64::MAX;
+const MIN_START_TIMEOUT_MS: u64 = 1;
 const STALL_NOTICE_DIVISOR: u64 = 2;
 const MIN_STALL_RECONNECT_MS: u64 = 2;
 
@@ -278,13 +278,14 @@ fn duration_ms(d: Duration) -> u64 {
 }
 
 /// The policy-core configuration for a route: the post-establishment stall
-/// threshold is the route's read timeout, the core's start timeout is
-/// disabled (the handshake deadline owns establishment), and backoff is
-/// unused because the supervisor owns reconnect.
-pub(crate) fn policy_config(read: Duration) -> PolicyConfig {
-    let reconnect = duration_ms(read).max(MIN_STALL_RECONNECT_MS);
+/// threshold is the route's read timeout, the core's start timeout is the
+/// route's connect budget (the driver is `Live` from the first byte, so the
+/// handshake deadline alone never bounds a connection that sends bytes but no
+/// media), and backoff is unused because the supervisor owns reconnect.
+pub(crate) fn policy_config(timeouts: IngestTimeouts) -> PolicyConfig {
+    let reconnect = duration_ms(timeouts.read).max(MIN_STALL_RECONNECT_MS);
     PolicyConfig {
-        start_timeout_ms: NO_START_TIMEOUT_MS,
+        start_timeout_ms: duration_ms(timeouts.connect).max(MIN_START_TIMEOUT_MS),
         stall_notice_ms: reconnect / STALL_NOTICE_DIVISOR,
         stall_reconnect_ms: reconnect,
         ..PolicyConfig::default()
@@ -300,6 +301,8 @@ pub(crate) struct TsHttpStep {
     pub route_handle: std::sync::Arc<crate::route::RouteHandle>,
     pub policy: TsHttpPolicy,
     read: Duration,
+    connect: Duration,
+    media_seen: bool,
 }
 
 enum Verdict {
@@ -317,7 +320,7 @@ impl TsHttpStep {
         route_handle: std::sync::Arc<crate::route::RouteHandle>,
     ) -> Self {
         let start = tokio::time::Instant::now();
-        let mut policy = TsHttpPolicy::new("", policy_config(timeouts.read), 0);
+        let mut policy = TsHttpPolicy::new("", policy_config(timeouts), 0);
         policy.on_response(head.status, &head.headers, 0);
         let mut step = TsHttpStep {
             stream,
@@ -325,6 +328,8 @@ impl TsHttpStep {
             route_handle,
             policy,
             read: timeouts.read,
+            connect: timeouts.connect,
+            media_seen: false,
         };
         step.verdict();
         step
@@ -357,6 +362,15 @@ impl TsHttpStep {
             }
         }
         verdict
+    }
+
+    fn no_media(&self) -> MultimuxError {
+        MultimuxError::Connect {
+            reason: format!(
+                "ts/http handshake timed out: no media within {:?}",
+                self.connect
+            ),
+        }
     }
 
     fn capped_window(&self, window: Duration) -> Duration {
@@ -398,7 +412,10 @@ impl crate::source::driver::IngestStep<TsIngestSession> for TsHttpStep {
                 let now_ms = self.now_ms();
                 self.policy.poll_timeout(now_ms);
                 return match self.verdict() {
-                    Verdict::Stalled => StepOutcome::Failed(self.stalled(self.read)),
+                    Verdict::Stalled if self.media_seen => {
+                        StepOutcome::Failed(self.stalled(self.read))
+                    }
+                    Verdict::Stalled => StepOutcome::Failed(self.no_media()),
                     _ => StepOutcome::Idle,
                 };
             }
@@ -409,9 +426,9 @@ impl crate::source::driver::IngestStep<TsIngestSession> for TsHttpStep {
         );
         driver.feed(&chunk, now);
         self.route_handle.feed_si_ts(&chunk);
-        let established = matches!(driver.health(), HealthState::Live);
+        self.media_seen |= driver.trunk(ProgramId(0)).is_some();
         let now_ms = self.now_ms();
-        self.policy.on_bytes(chunk.len(), now_ms, established);
+        self.policy.on_bytes(chunk.len(), now_ms, self.media_seen);
         self.verdict();
         StepOutcome::Received
     }
@@ -910,6 +927,7 @@ mod tests {
             std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4)),
         );
         step.policy.on_bytes(1, 0, true);
+        step.media_seen = true;
         let mut driver = fresh_driver();
         let outcome = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
