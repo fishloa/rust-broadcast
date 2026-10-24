@@ -71,6 +71,10 @@ const SLEEP_ALLOW: &[&str] = &[
     "server_timeouts.rs",
     "smooth_oracle.rs",
     "ts_hls_oracle.rs",
+    // The paced HTTP origin that delivers a capture at a real-time-ish rate, hang-guard
+    // polls on the playlist and admin status, and one fixed 1 s dwell proving a strict
+    // route stays empty after it has reported.
+    "ts_hls_idr_fallback.rs",
     "whep_egress.rs",
     // `wait_until`: a bounded condition poll (5 ms step, 5 s bound) on a
     // session counter the route updates from another task; no event to await.
