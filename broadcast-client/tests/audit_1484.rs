@@ -536,3 +536,33 @@ fn reconnect_backoff_that_overflows_microseconds_saturates() {
         .expect("a wake for the backoff");
     assert!(wake >= u64::MAX / 2, "{wake}");
 }
+
+#[test]
+fn credential_wait_freezes_timers_and_resume_restarts_the_start_timer() {
+    let mut session = open(TS_URL, Config::default());
+    let first = one(&mut session, 0);
+    respond(&mut session, &first, 401, &challenge("Bearer realm=\"r\""));
+    drain(&mut session, 0);
+    events(&mut session);
+    let late = 100 * SEC;
+    assert!(drain(&mut session, late).is_empty());
+    assert!(events(&mut session).is_empty());
+
+    session.set_credentials(Credentials::bearer("tok")).unwrap();
+    let mut wakes = BTreeSet::new();
+    let actions = tracked_wakes(&mut session, late, &mut wakes);
+    let conn = actions
+        .iter()
+        .find_map(|a| match a {
+            Action::HttpRequest { conn, .. } => Some(*conn),
+            _ => None,
+        })
+        .expect("request after credentials");
+    session.on_response(conn, 200, &[]);
+    tracked_wakes(&mut session, late, &mut wakes);
+    assert!(wakes.iter().all(|t| *t > late));
+    let early = late + 14 * SEC;
+    assert!(closes(&drain(&mut session, early)).is_empty());
+    let due = late + 15 * SEC;
+    assert!(closes(&drain(&mut session, due)).contains(&conn));
+}

@@ -145,7 +145,13 @@ impl Session {
                 self.drain_source();
             }
         }
-        self.actions.pop_front()
+        while let Some(action) = self.actions.pop_front() {
+            if matches!(action, Action::WakeAt(at) if at <= now_us) {
+                continue;
+            }
+            return Some(action);
+        }
+        None
     }
 
     /// Poll next event.
@@ -250,6 +256,8 @@ impl Session {
                 }
                 crate::auth::AuthDecision::Wait(events) => {
                     self.events.extend(events);
+                    self.actions.retain(|a| !matches!(a, Action::WakeAt(_)));
+                    self.ts_wake = None;
                 }
             }
             return;

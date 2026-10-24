@@ -628,7 +628,7 @@ fn rtsp_poll_at_the_end_of_time_goes_idle() {
 fn ts_session_started_at_the_end_of_time_goes_idle() {
     let bytes = support::read_tf1_bytes();
     let (status, headers) = support::read_tf1_headers();
-    let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
+    let mut session = Session::open(TS_URL, Config::default(), u64::MAX).unwrap();
     let conn = match session.poll(u64::MAX) {
         Some(Action::HttpRequest { conn, .. }) => conn,
         other => panic!("{other:?}"),
@@ -663,4 +663,57 @@ fn rtsp_session_started_at_the_end_of_time_goes_idle() {
         }
     }
     assert!(polls < RUNAWAY_POLLS, "poll never went idle at u64::MAX");
+}
+
+fn assert_wakes_in_the_future(actions: &[Action], now: u64) {
+    for a in actions {
+        if let Action::WakeAt(t) = a {
+            assert!(*t > now, "WakeAt({t}) is not after now={now}");
+        }
+    }
+}
+
+#[test]
+fn ts_never_emits_a_wake_at_or_before_now() {
+    let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
+    let conn = first_request(&mut session, 0);
+    session.on_response(conn, 200, &[]);
+    for now in [1_000_000u64, 2_000_000, u64::MAX] {
+        session.reconnect(now);
+        let batch = actions(&mut session, now);
+        assert_wakes_in_the_future(&batch, now);
+    }
+}
+
+#[test]
+fn rtsp_never_emits_a_wake_at_or_before_now() {
+    let mut session = Session::open(RTSP_URL, Config::default(), 0).unwrap();
+    let conn = match session.poll(0) {
+        Some(Action::TcpConnect { conn, .. }) => conn,
+        other => panic!("{other:?}"),
+    };
+    session.on_connected(conn);
+    for now in [1_000_000u64, 2_000_000, u64::MAX] {
+        session.reconnect(now);
+        let batch: Vec<Action> = std::iter::from_fn(|| session.poll(now))
+            .take(RUNAWAY_POLLS)
+            .collect();
+        assert_wakes_in_the_future(&batch, now);
+    }
+}
+
+#[test]
+fn hls_never_emits_a_wake_at_or_before_now() {
+    let mut session = Session::open(TS_PLAYLIST_URL, hls_config(), 0).unwrap();
+    for now in [0u64, 1_000_000, u64::MAX] {
+        let batch: Vec<Action> = std::iter::from_fn(|| session.poll(now))
+            .take(RUNAWAY_POLLS)
+            .collect();
+        assert_wakes_in_the_future(&batch, now);
+        session.reconnect(now);
+        let batch: Vec<Action> = std::iter::from_fn(|| session.poll(now))
+            .take(RUNAWAY_POLLS)
+            .collect();
+        assert_wakes_in_the_future(&batch, now);
+    }
 }

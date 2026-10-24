@@ -14,8 +14,6 @@ use crate::{Event, Status};
 pub(crate) type Item = Option<Event>;
 
 const MICROS_PER_MILLI: u64 = 1_000;
-const CATCH_UP_THRESHOLD_MS: u64 = 60_000;
-const CATCH_UP_TICK_MS: u64 = 1_000;
 
 fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
     if clock_hz == 0 {
@@ -36,7 +34,6 @@ pub struct TsHttpSource {
     connection_count: u32,
     stalled: bool,
     last_pcr_27mhz: Option<u64>,
-    clock_ms: u64,
 }
 
 impl TsHttpSource {
@@ -53,7 +50,6 @@ impl TsHttpSource {
             connection_count: 0,
             stalled: false,
             last_pcr_27mhz: None,
-            clock_ms: now_us / MICROS_PER_MILLI,
         }
     }
 
@@ -91,27 +87,8 @@ impl TsHttpSource {
 
     /// Advance timers.
     pub fn poll_timeout(&mut self, now_us: u64) {
-        let target = now_us / MICROS_PER_MILLI;
-        let mut at = self.clock_ms;
-        let catching_up = target.saturating_sub(at) > CATCH_UP_THRESHOLD_MS;
-        loop {
-            let step_to = if catching_up && at < target {
-                match self.ts.next_deadline() {
-                    Some(d) if d > at => d.min(target),
-                    Some(_) => at.saturating_add(CATCH_UP_TICK_MS).min(target),
-                    None => target,
-                }
-            } else {
-                target
-            };
-            self.ts.poll_timeout(step_to);
-            self.drain_ts_events();
-            if step_to >= target {
-                break;
-            }
-            at = step_to;
-        }
-        self.clock_ms = target;
+        self.ts.poll_timeout(now_us / MICROS_PER_MILLI);
+        self.drain_ts_events();
     }
 
     /// Poll next tshttp action.
