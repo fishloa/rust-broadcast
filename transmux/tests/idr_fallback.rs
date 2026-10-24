@@ -58,6 +58,7 @@ fn looped(v: &Video) -> Vec<Sample> {
 struct Outcome {
     cuts: Vec<usize>,
     fell_back: bool,
+    dropped: u64,
 }
 
 fn run(v: &Video, stream: &[Sample], bound: Option<Duration>) -> Outcome {
@@ -77,6 +78,7 @@ fn run(v: &Video, stream: &[Sample], bound: Option<Duration>) -> Outcome {
     Outcome {
         cuts,
         fell_back: seg.idr_fallback_active(),
+        dropped: seg.dropped_leading_aus(),
     }
 }
 
@@ -92,10 +94,19 @@ fn open_gop_stream_falls_back_after_the_bound() {
     let stream = looped(&v);
     let out = run(&v, &stream, Some(FALLBACK_BOUND));
     assert!(out.fell_back);
+    let ticks_per_sec = i64::from(v.spec.timescale);
+    let within_bound = stream
+        .iter()
+        .take_while(|s| s.dts.expect("dts") - stream[0].dts.expect("dts") < 2 * ticks_per_sec)
+        .count() as u64;
+    assert!(
+        out.dropped >= within_bound,
+        "dropped {} anchor AUs but {within_bound} lie inside the {FALLBACK_BOUND:?} bound",
+        out.dropped
+    );
     let first = *out.cuts.first().expect("a segment after the fallback");
     let first_dts = stream[0].dts.expect("dts");
     let cut_dts = stream[first].dts.expect("dts");
-    let ticks_per_sec = i64::from(v.spec.timescale);
     assert!(
         cut_dts - first_dts >= 2 * ticks_per_sec,
         "first segment cut before the {FALLBACK_BOUND:?} bound"
@@ -116,8 +127,15 @@ fn strict_mode_on_an_open_gop_stream_never_cuts() {
 
 #[test]
 fn idr_stream_never_falls_back() {
-    let v = require_video("ts/france2.ts");
+    const FIRST_NON_IDR_SYNC: usize = 20;
+    let mut v = require_video("ts/france2.ts");
+    assert!(!access_unit_is_idr(
+        NalCodec::Avc,
+        &v.samples[FIRST_NON_IDR_SYNC].data
+    ));
+    v.samples.drain(..FIRST_NON_IDR_SYNC);
     let out = run(&v, &looped(&v), Some(GENEROUS_BOUND));
+    assert!(out.dropped > 0, "the stream must open on a non-IDR sample");
     assert!(!out.fell_back);
     assert!(!out.cuts.is_empty());
 }
