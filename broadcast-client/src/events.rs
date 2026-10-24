@@ -195,7 +195,9 @@ pub enum ErrorKind {
     /// tracks play, and a stream with no playable track ends fatally after these reports.
     TrackDropped {
         /// The dropped track's id (remapped for an audio rendition); `0` for a track the fMP4
-        /// demuxer could not name.
+        /// demuxer could not name. For RTSP it is not the id of an announced track: it is the
+        /// 1-based position of the dropped `m=` line among all media lines of the DESCRIBE SDP,
+        /// whatever the other lines are.
         track_id: u32,
         /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque TS data.
         stream_type: Option<u8>,
