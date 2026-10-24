@@ -1030,9 +1030,8 @@ impl HlsClient {
             let key = match keyed.iter().rev().find(|(m, _)| m == map) {
                 Some((_, key)) => key.clone(),
                 None => self
-                    .inits
-                    .values()
-                    .find(|slot| slot.map == *map)
+                    .init_slot_for(&url::resolve(self.base(), &map.uri), &map.byte_range)
+                    .and_then(|id| self.inits.get(&id))
                     .and_then(|slot| slot.encryption.clone()),
             };
             entries.push(MapEntry {
@@ -1051,20 +1050,35 @@ impl HlsClient {
             .and_then(MapEntry::unusable)
     }
 
+    /// The init slot holding the resource at `url` (resolved) with `byte_range`.
+    /// The query is not part of the identity: a CDN that re-signs the map URI
+    /// on every reload (as it does segment URIs, see [`without_query`]) still
+    /// names the same init.
+    fn init_slot_for(&self, url: &str, byte_range: &Option<ByteRange>) -> Option<InitId> {
+        self.inits
+            .iter()
+            .find(|(_, slot)| {
+                without_query(&slot.url) == without_query(url) && slot.map.byte_range == *byte_range
+            })
+            .map(|(id, _)| *id)
+    }
+
     /// The init slot for `map`, created (and queued for fetching) when the
     /// client has none for that resource yet; a slot whose fetch failed is
     /// queued again.
     fn init_for_map(&mut self, map: &MapTag) -> Result<InitId> {
         let url = url::resolve(self.base(), &map.uri);
-        if let Some((id, slot)) = self
-            .inits
-            .iter_mut()
-            .find(|(_, slot)| slot.url == url && slot.map.byte_range == map.byte_range)
+        if let Some(id) = self.init_slot_for(&url, &map.byte_range)
+            && let Some(slot) = self.inits.get_mut(&id)
         {
+            if slot.url != url {
+                slot.url = url;
+                slot.map = map.clone();
+            }
             if slot.fetch == InitFetch::Failed {
                 slot.fetch = InitFetch::Wanted;
             }
-            return Ok(*id);
+            return Ok(id);
         }
         let (key, first_msn) = self
             .playlist_maps

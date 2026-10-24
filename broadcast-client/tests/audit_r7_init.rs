@@ -254,9 +254,9 @@ fn resign(map_resign: bool, seg_resign: bool) -> Resign {
         }
     }
     h.run_until(|_| false, 400);
-    let init_fetches = (0..n)
-        .map(|r| h.hits(&format!("{BASE}/init.mp4{}", mq(r))))
-        .sum();
+    let init_urls: std::collections::BTreeSet<String> =
+        (0..n).map(|r| format!("{BASE}/init.mp4{}", mq(r))).collect();
+    let init_fetches = init_urls.iter().map(|u| h.hits(u)).sum();
     Resign { init_fetches, t: tally(&h) }
 }
 
