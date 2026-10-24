@@ -224,7 +224,9 @@ impl Feeder {
 
     /// A stream the source knows exists (PMT-declared) has no track yet: until one appears, or
     /// [`START_PENDING_TRACK_WAIT_US`] after the first media, or the first `Start`, the
-    /// controller waits for it like for any registered track that has not delivered.
+    /// controller waits for it like for any registered track that has not delivered. The
+    /// placeholder is registered with the first media report, so a stream whose tracks all resolve
+    /// before any media never shows it to the controller.
     pub(crate) fn set_expecting(&mut self, now_us: u64, expecting: bool) {
         self.expecting = expecting;
         self.sync_pending(now_us);
@@ -235,7 +237,7 @@ impl Feeder {
             && !self.started
             && self
                 .first_media_us
-                .is_none_or(|f| now_us.saturating_sub(f) < START_PENDING_TRACK_WAIT_US);
+                .is_some_and(|f| now_us.saturating_sub(f) < START_PENDING_TRACK_WAIT_US);
         let Some(c) = &mut self.controller else {
             return;
         };
@@ -516,9 +518,6 @@ impl Feeder {
             }
             self.controller = Some(c);
             self.pending_registered = false;
-            if let Some(now_us) = self.last_chunk_us {
-                self.sync_pending(now_us);
-            }
         }
     }
 
@@ -539,6 +538,7 @@ impl Feeder {
 
     fn report_media(&mut self, now_us: u64, t: TrackId, end: u64) {
         self.first_media_us.get_or_insert(now_us);
+        self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
             c.on_track_media(now_us, t.value(), end);
             rec!(
