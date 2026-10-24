@@ -27,6 +27,7 @@ broadcast-hls      = { path = "../broadcast-hls", version = "0.4" }
 rtsp-runtime       = { path = "../rtsp-runtime", version = "0.8", default-features = false }
 sdp-types          = { workspace = true }
 url                = "2"
+percent-encoding   = "2"
 http               = "1"
 cookie             = { version = "0.18", default-features = false }
 thiserror          = "2"

@@ -70,6 +70,7 @@ pub fn hls_config() -> Config {
 pub enum Reply {
     Ok(Vec<u8>),
     OkHeaders(Vec<u8>, Vec<(String, String)>),
+    Full(u16, Vec<u8>, Vec<(String, String)>),
     Status(u16),
     StatusHeaders(u16, Vec<(String, String)>),
     Redirect(String),
@@ -140,6 +141,10 @@ impl Host {
         self.hits.get(url).copied().unwrap_or(0)
     }
 
+    pub fn hung(&self) -> &[Seen] {
+        &self.hung
+    }
+
     pub fn requests_to(&self, url: &str) -> Vec<&Seen> {
         self.seen.iter().filter(|s| s.url == url).collect()
     }
@@ -203,6 +208,13 @@ impl Host {
             }
             Reply::OkHeaders(body, headers) => {
                 self.session.on_response(conn, 200, &headers);
+                for chunk in body.chunks(self.chunk.max(1)) {
+                    self.session.on_data(conn, chunk, self.now);
+                }
+                self.session.on_closed(conn, None, self.now);
+            }
+            Reply::Full(code, body, headers) => {
+                self.session.on_response(conn, code, &headers);
                 for chunk in body.chunks(self.chunk.max(1)) {
                     self.session.on_data(conn, chunk, self.now);
                 }

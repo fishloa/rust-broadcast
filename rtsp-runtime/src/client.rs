@@ -159,6 +159,8 @@ pub struct ClientSession {
     skip_until: usize,
     /// The most recent `WWW-Authenticate` (else `Proxy-Authenticate`) value seen on any response.
     last_challenge: Option<String>,
+    /// `Content-Base` (else `Content-Location`) of the most recent successful DESCRIBE response.
+    content_base: Option<String>,
 }
 
 impl Default for ClientSession {
@@ -189,6 +191,7 @@ impl ClientSession {
             scanned: 0,
             skip_until: 0,
             last_challenge: None,
+            content_base: None,
         }
     }
 
@@ -325,6 +328,19 @@ impl ClientSession {
     /// The transport negotiated in the SETUP response, if any.
     pub fn negotiated_transport(&self) -> Option<&Transport> {
         self.negotiated_transport.as_ref()
+    }
+
+    /// Takes the transport negotiated by the most recent SETUP response, leaving none behind, so
+    /// a later SETUP reply that carries no `Transport` header cannot be mistaken for it.
+    pub fn take_negotiated_transport(&mut self) -> Option<Transport> {
+        self.negotiated_transport.take()
+    }
+
+    /// The base URI for relative `a=control` values (RFC 2326 Appendix C.1.1): the
+    /// `Content-Base` of the most recent successful DESCRIBE response, else its
+    /// `Content-Location`, else `None` (the caller then uses the request URI).
+    pub fn content_base(&self) -> Option<&str> {
+        self.content_base.as_deref()
     }
 
     // --- Request builders -------------------------------------------------
@@ -634,6 +650,12 @@ impl ClientSession {
                     self.negotiated_transport = Some(Transport::parse(t)?);
                 }
 
+                if pending.method == Method::Describe && status.is_success() {
+                    self.content_base = header_value(response.header(&headers::CONTENT_BASE))
+                        .or_else(|| header_value(response.header(&headers::CONTENT_LOCATION)))
+                        .map(|v| v.trim().to_string());
+                }
+
                 // State transition.
                 if status.is_success() {
                     self.state = client_next_state(self.state, &pending.method)?;
@@ -859,6 +881,60 @@ mod tests {
             .unwrap();
         let req = String::from_utf8_lossy(&c.options("rtsp://h/s").unwrap()).into_owned();
         assert!(req.contains("Authorization: Basic dTpw"), "got: {req}");
+    }
+
+    fn setup_request(c: &mut ClientSession) {
+        let t = Transport::single(crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
+            0, 1,
+        ));
+        c.setup("rtsp://h/s/trackID=1", &t).unwrap();
+    }
+
+    fn feed(c: &mut ClientSession, text: &str) {
+        c.handle_data_strict(text.replace('\n', "\r\n").as_bytes())
+            .unwrap();
+    }
+
+    #[test]
+    fn content_base_is_taken_from_the_describe_response() {
+        let mut c = ClientSession::new();
+        assert_eq!(c.content_base(), None);
+        c.describe("rtsp://h/s").unwrap();
+        feed(
+            &mut c,
+            "RTSP/1.0 200 OK\nCSeq: 1\nContent-Base: rtsp://h/s/\nContent-Location: rtsp://h/loc/\n\n",
+        );
+        assert_eq!(c.content_base(), Some("rtsp://h/s/"));
+        c.describe("rtsp://h/s").unwrap();
+        feed(
+            &mut c,
+            "RTSP/1.0 200 OK\nCSeq: 2\nContent-Location: rtsp://h/loc/\n\n",
+        );
+        assert_eq!(c.content_base(), Some("rtsp://h/loc/"));
+        c.describe("rtsp://h/s").unwrap();
+        feed(&mut c, "RTSP/1.0 200 OK\nCSeq: 3\n\n");
+        assert_eq!(c.content_base(), None);
+    }
+
+    #[test]
+    fn take_negotiated_transport_only_returns_the_latest_setup_reply() {
+        let mut c = ClientSession::new();
+        setup_request(&mut c);
+        feed(
+            &mut c,
+            "RTSP/1.0 200 OK\nCSeq: 1\nSession: A1\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\n\n",
+        );
+        let first = c
+            .take_negotiated_transport()
+            .expect("first reply carries one");
+        assert_eq!(first.first().and_then(|s| s.interleaved), Some((0, 1)));
+        assert!(c.take_negotiated_transport().is_none(), "taken once");
+        setup_request(&mut c);
+        feed(&mut c, "RTSP/1.0 200 OK\nCSeq: 2\nSession: A1\n\n");
+        assert!(
+            c.take_negotiated_transport().is_none(),
+            "a reply without Transport negotiates nothing"
+        );
     }
 
     // Regression (audit run-09 W5): one unknown/duplicate CSeq in a batch of

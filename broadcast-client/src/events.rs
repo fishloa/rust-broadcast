@@ -153,6 +153,13 @@ pub enum ErrorKind {
         /// The codec's four-character code.
         fourcc: String,
     },
+    /// The main HLS playlist carries a track whose id is at or above
+    /// [`AUDIO_TRACK_ID_OFFSET`], the range reserved for separate audio renditions. That track
+    /// and its samples are dropped (reported once per session); the other tracks play.
+    TrackIdReserved {
+        /// The first offending track id.
+        track_id: u32,
+    },
 }
 
 impl ErrorKind {
@@ -165,6 +172,7 @@ impl ErrorKind {
             Self::BadKey => "bad_key",
             Self::DecryptFailed => "decrypt_failed",
             Self::UnsupportedCodec { .. } => "unsupported_codec",
+            Self::TrackIdReserved { .. } => "track_id_reserved",
         }
     }
 }
@@ -426,7 +434,8 @@ impl PartialEq for Event {
 }
 
 /// Offset added to the track ids of a separate HLS audio rendition so they never collide with the
-/// main playlist's track ids (which must stay below this value).
+/// main playlist's track ids, which must stay below this value (a main track at or above it is
+/// dropped with [`ErrorKind::TrackIdReserved`]).
 pub const AUDIO_TRACK_ID_OFFSET: u32 = 1000;
 /// Default maximum accepted HLS playlist body size.
 pub const DEFAULT_MAX_PLAYLIST_BYTES: usize = 4 * 1024 * 1024;
@@ -495,9 +504,12 @@ pub struct Config {
     /// HLS: pick a separate audio rendition automatically when the master playlist arrives.
     pub auto_select_audio: bool,
     /// Events the session keeps queued for the host. The host must drain
-    /// [`crate::Session::next_event`]; when a host does not, the oldest queued
-    /// [`Event::Sample`]s are dropped (counted by [`crate::Session::dropped_events`]) while every
-    /// other event is kept, so the queue stays bounded by this cap plus the non-sample events a
+    /// [`crate::Session::next_event`]; when a host does not and the queue exceeds this cap, the
+    /// oldest [`Event::Sample`]s, [`Event::Starved`] notices and transient [`Status`] values
+    /// are dropped (samples are counted by [`crate::Session::dropped_events`]; the latest status
+    /// always survives). One [`Event::Discontinuity`] takes the place of each burst of dropped samples
+    /// so the player re-syncs. Every other event (tracks, errors, buffer events, terminal
+    /// statuses) is kept, so the queue is bounded by this cap plus the undroppable events a
     /// stalled host leaves unread.
     pub max_queued_events: usize,
 }

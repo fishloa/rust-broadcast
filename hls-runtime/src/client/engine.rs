@@ -109,7 +109,7 @@ fn key_in_effect_at_last_map(text: &str) -> Option<Option<MediaKey>> {
 }
 
 /// `uri` up to its query string: a CDN that re-signs a segment URL on every
-/// reload changes only the query.
+/// reload changes only the query, on every segment of the window at once.
 fn without_query(uri: &str) -> &str {
     uri.split_once('?').map_or(uri, |(path, _)| path)
 }
@@ -1929,7 +1929,10 @@ impl HlsClient {
     ///    byte range) and, when both carry `EXT-X-PROGRAM-DATE-TIME` for it,
     ///    the same wall-clock time. A mismatch is a restart *whatever the
     ///    direction of the numbers* — an origin that restarts to an equal or
-    ///    higher number is caught here.
+    ///    higher number is caught here. The URI's query string is ignored only
+    ///    when it differs on *every* shared segment (a CDN re-signing the whole
+    ///    window); a window where some shared segments keep their query and
+    ///    others change it is a restart.
     /// 2. **`EXT-X-DISCONTINUITY-SEQUENCE`** may never decrease while the
     ///    media sequence number does not (RFC 8216 §6.2.2): a decrease at an
     ///    equal or higher number is a restart.
@@ -1963,8 +1966,12 @@ impl HlsClient {
         let (p0, n0) = (prev.media_sequence, new.media_sequence);
         let regressed = n0 < self.last_media_sequence.unwrap_or(p0).max(p0);
 
-        // 1. Identity at every shared number.
+        // 1. Identity at every shared number. A query that differs is a re-signing
+        //    only when it differs on every shared segment; on some of them it is a
+        //    restart that reuses names.
         let mut overlap = false;
+        let mut shared = 0usize;
+        let mut requeried = 0usize;
         for (i, seg) in new.segments.iter().enumerate() {
             let Some(msn) = n0.checked_add(index_u64(i)) else {
                 return Continuity::Restart;
@@ -1988,6 +1995,13 @@ impl HlsClient {
                 return Continuity::Restart;
             }
             overlap = true;
+            shared = shared.saturating_add(1);
+            if old.uri != seg.uri {
+                requeried = requeried.saturating_add(1);
+            }
+        }
+        if requeried != 0 && requeried != shared {
+            return Continuity::Restart;
         }
 
         // 2. The discontinuity sequence never decreases while the number does

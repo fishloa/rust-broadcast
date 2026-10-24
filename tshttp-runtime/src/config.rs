@@ -55,6 +55,8 @@ pub enum ConfigError {
     StallReconnectNotAfterNotice,
     /// `backoff_ms` is empty.
     EmptyBackoff,
+    /// A `backoff_ms` entry is zero.
+    ZeroBackoffEntry,
 }
 
 impl ConfigError {
@@ -69,6 +71,7 @@ impl ConfigError {
                 "stall_reconnect_ms is not greater than stall_notice_ms"
             }
             Self::EmptyBackoff => "backoff_ms is empty",
+            Self::ZeroBackoffEntry => "backoff_ms has a zero entry",
         }
     }
 }
@@ -99,14 +102,17 @@ impl Config {
         if self.backoff_ms.is_empty() {
             return Err(ConfigError::EmptyBackoff);
         }
+        if self.backoff_ms.contains(&0) {
+            return Err(ConfigError::ZeroBackoffEntry);
+        }
         Ok(())
     }
 
     /// The nearest configuration that passes [`Config::validate`]: zero
     /// timeouts become 1 ms, a `stall_reconnect_ms` not after the notice is
     /// moved to one millisecond after it, an empty `backoff_ms` becomes the
-    /// single entry `backoff_cap_ms` (at least 1 ms). A valid configuration
-    /// is returned unchanged.
+    /// single entry `backoff_cap_ms` (at least 1 ms), a zero `backoff_ms`
+    /// entry becomes 1 ms. A valid configuration is returned unchanged.
     #[must_use]
     pub fn clamped(&self) -> Self {
         let mut c = self.clone();
@@ -117,6 +123,9 @@ impl Config {
             .max(c.stall_notice_ms.saturating_add(1));
         if c.backoff_ms.is_empty() {
             c.backoff_ms = vec![c.backoff_cap_ms.max(1)];
+        }
+        for entry in &mut c.backoff_ms {
+            *entry = (*entry).max(1);
         }
         c
     }

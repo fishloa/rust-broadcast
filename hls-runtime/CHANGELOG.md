@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (client, pre-release audit #1492)
+- A query string that differs between two windows is a re-signing (not an origin restart) only when it differs on every shared segment; a window where some shared segments keep their query and others change it is an origin restart (`Output::Discontinuity`).
+
 ### Fixed (client, pre-release audit #1485)
 - `EXT-X-SKIP` delta reloads: the merged playlist (skip cleared) is now the baseline for the next delta, and the key tags dropped with the skipped prefix are restated on the merged first segment, so media sequence numbers, AES IVs and keys stay right after the window slides past the first full playlist. A delta that cannot be merged is answered with `Error::DeltaNotMergeable` and a plain (non-delta) playlist request instead of mis-numbered segments.
 - The `EXT-X-PRELOAD-HINT` part is requested once, not on every reload (it produced `DuplicateResource` and advanced the byte-range cursor each time).

@@ -443,6 +443,7 @@ dependencies = [
  "cookie",
  "hls-runtime",
  "http",
+ "percent-encoding",
  "rtsp-runtime",
  "rtsp-types",
  "sdp-types",

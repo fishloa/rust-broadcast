@@ -24,7 +24,7 @@ const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
 const RTSPS_DEFAULT_PORT: u16 = 322;
 const CONTROL_AGGREGATE: &str = "*";
-const RTCP_CHANNEL_OFFSET: u8 = 1;
+const PATH_SEPARATOR: char = '/';
 const FIRST_CONN_ID: u32 = 1;
 const MAX_AUTH_REPLAYS: u32 = 2;
 const MAX_STALL_NOTICES_PER_POLL: u32 = 64;
@@ -336,6 +336,17 @@ impl RtspSource {
         self.cfg.stall_reconnect_ms.saturating_mul(US_PER_MS)
     }
 
+    fn backoff_after_played(&mut self, now: u64) {
+        let lasted = now.saturating_sub(self.connected_at);
+        let floor = self
+            .cfg
+            .min_reconnect_interval_ms
+            .saturating_mul(US_PER_MS)
+            .saturating_sub(lasted);
+        self.attempt = 0;
+        self.phase = Phase::Backoff(now.saturating_add(floor));
+    }
+
     fn reconnect_if_due(&mut self, now: u64, auth: &AuthState) {
         if let Phase::Backoff(due) = self.phase
             && now >= due
@@ -424,13 +435,12 @@ impl RtspSource {
                 let Some(track) = self.tracks.get(index) else {
                     return false;
                 };
-                let Some(uri) = self.control_uri(track.control.as_deref()) else {
-                    return false;
-                };
                 let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
                     track.channel,
-                    track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
+                    track.rtcp_channel,
                 ));
+                let uri = track.setup_uri.clone();
+                let _ = self.client.take_negotiated_transport();
                 self.client.setup(&uri, &transport)
             }
             Req::Play => self.client.play(&self.uri),
@@ -445,10 +455,40 @@ impl RtspSource {
         }
     }
 
-    fn control_uri(&self, control: Option<&str>) -> Option<String> {
+    fn base_url(&self) -> Url {
+        self.client
+            .content_base()
+            .and_then(|base| self.request_url.join(base).ok())
+            .unwrap_or_else(|| {
+                let mut base = self.request_url.clone();
+                if !base.path().ends_with(PATH_SEPARATOR) {
+                    let path = alloc::format!("{}{PATH_SEPARATOR}", base.path());
+                    base.set_path(&path);
+                }
+                base
+            })
+    }
+
+    fn same_authority(&self, url: &Url) -> bool {
+        let default_port = if self.tls {
+            RTSPS_DEFAULT_PORT
+        } else {
+            RTSP_DEFAULT_PORT
+        };
+        url.scheme() == self.request_url.scheme()
+            && url.host() == self.request_url.host()
+            && url.port().unwrap_or(default_port) == self.port
+    }
+
+    fn resolve_control(&self, control: Option<&str>, base: &Url) -> Option<String> {
         match control {
-            None | Some(CONTROL_AGGREGATE) => Some(self.uri.clone()),
-            Some(c) => self.request_url.join(c).ok().map(|u| u.to_string()),
+            None => Some(self.uri.clone()),
+            Some(CONTROL_AGGREGATE) => Some(base.to_string()),
+            Some(c) => base
+                .join(c)
+                .ok()
+                .filter(|u| self.same_authority(u))
+                .map(|u| u.to_string()),
         }
     }
 
@@ -486,6 +526,11 @@ impl RtspSource {
         now: u64,
         auth: &mut AuthState,
     ) {
+        if self.phase == Phase::Playing {
+            self.stale_replayed = false;
+            self.auth_replays = 0;
+            return;
+        }
         let Phase::Awaiting(req) = self.phase else {
             return;
         };
@@ -574,7 +619,8 @@ impl RtspSource {
     }
 
     fn on_describe_ok(&mut self, body: &[u8]) -> bool {
-        let Ok(tracks) = parse_tracks(body) else {
+        let base = self.base_url();
+        let Ok(tracks) = parse_tracks(body, |control| self.resolve_control(control, &base)) else {
             return false;
         };
         self.tracks = tracks;
@@ -582,20 +628,29 @@ impl RtspSource {
     }
 
     fn on_setup_ok(&mut self, index: usize) -> bool {
-        let Some(channel) = self
+        let Some((channel, rtcp_channel)) = self
             .client
-            .negotiated_transport()
+            .take_negotiated_transport()
+            .as_ref()
             .and_then(Transport::first)
             .filter(|spec| spec.lower_transport == Some(LowerTransport::Tcp))
             .and_then(|spec| spec.interleaved)
-            .map(|(rtp, _rtcp)| rtp)
         else {
             return false;
         };
+        if channel == rtcp_channel
+            || self.tracks.iter().take(index).any(|t| {
+                [t.channel, t.rtcp_channel].contains(&channel)
+                    || [t.channel, t.rtcp_channel].contains(&rtcp_channel)
+            })
+        {
+            return false;
+        }
         let Some(track) = self.tracks.get_mut(index) else {
             return false;
         };
         track.channel = channel;
+        track.rtcp_channel = rtcp_channel;
         let next = index.saturating_add(1);
         if next < self.tracks.len() {
             return self.send(Req::Setup(next));
@@ -622,7 +677,7 @@ impl RtspSource {
         self.tracks.iter().find_map(|t| {
             if t.channel == channel {
                 Some((t.track_id, false))
-            } else if t.channel.checked_add(RTCP_CHANNEL_OFFSET) == Some(channel) {
+            } else if t.rtcp_channel == channel {
                 Some((t.track_id, true))
             } else {
                 None
@@ -772,8 +827,7 @@ impl RtspSource {
         if idle >= self.reconnect_us() {
             self.flush_depacketiser(now);
             self.drop_connection(true);
-            self.attempt = 0;
-            self.phase = Phase::Backoff(now);
+            self.backoff_after_played(now);
             return true;
         }
         false
@@ -817,8 +871,7 @@ impl RtspSource {
 
     fn after_connection_end(&mut self, now: u64) {
         if self.seen_first_sample {
-            self.attempt = 0;
-            self.phase = Phase::Backoff(now);
+            self.backoff_after_played(now);
         } else {
             self.fail_before_playing(now);
         }

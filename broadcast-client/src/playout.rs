@@ -31,7 +31,9 @@ pub struct PlayoutConfig {
     /// Media that must be buffered past the origin before `Start`, live HLS.
     pub live_start_lead_us: u64,
     /// Media that must be buffered past the held position before `Resume`; `None` uses the
-    /// start lead of the source kind.
+    /// start lead of the source kind. A value not above [`PlayoutConfig::pause_lead_us`] would
+    /// pause and resume on every update, so the effective resume lead is never less than
+    /// `pause_lead_us` plus one microsecond.
     pub resume_lead_us: Option<u64>,
     /// A started gate pauses when the lead (minimum rendered media end minus the playback
     /// position) is at or below this.
@@ -166,9 +168,6 @@ impl Playout {
     }
 
     pub(crate) fn set_rendered(&mut self, tracks: &[TrackId]) {
-        if !self.engaged {
-            return;
-        }
         self.rendered_explicit = true;
         self.rendered = tracks.iter().copied().collect();
         self.step();
@@ -258,9 +257,11 @@ impl Playout {
     }
 
     fn resume_lead(&self) -> u64 {
-        self.config
-            .resume_lead_us
-            .map_or_else(|| self.start_lead(), |us| us.saturating_mul(TICKS_PER_US))
+        let floor_us = self.config.pause_lead_us.saturating_add(1);
+        match self.config.resume_lead_us {
+            Some(us) => us.max(floor_us).saturating_mul(TICKS_PER_US),
+            None => self.start_lead().max(floor_us.saturating_mul(TICKS_PER_US)),
+        }
     }
 
     fn origin(&self, only_complete: bool) -> Option<u64> {
@@ -380,6 +381,114 @@ mod tests {
         let obs = p.obs.get(&track.spec.track_id).unwrap();
         assert_eq!(obs.end, u64::MAX);
         assert_eq!(obs.first_pts, u64::MAX);
+    }
+
+    const ONE_SECOND_TICKS: u64 = 27_000_000;
+
+    fn audio_track() -> (TrackSpec, Vec<Sample>) {
+        let data = test_fixtures::read(FIXTURE);
+        let media = TsDemux::new().unpackage(&data[..]).unwrap();
+        let track = media
+            .tracks
+            .into_iter()
+            .find(|t| t.spec.config.audio_sample_rate().is_some())
+            .unwrap();
+        (track.spec, track.samples)
+    }
+
+    fn video_spec() -> TrackSpec {
+        let data = test_fixtures::read(FIXTURE);
+        let media = TsDemux::new().unpackage(&data[..]).unwrap();
+        media
+            .tracks
+            .into_iter()
+            .find(|t| LiveJoin::for_config(&t.spec.config).is_some())
+            .unwrap()
+            .spec
+    }
+
+    fn one_second_sample(template: &Sample, spec: &TrackSpec, index: i64) -> Sample {
+        let timescale = i64::from(spec.timescale);
+        let mut s = template.clone();
+        s.pts = Some(index * timescale);
+        s.dts = s.pts;
+        s.duration = Some(spec.timescale);
+        s
+    }
+
+    fn buffer_events(p: &mut Playout) -> Vec<BufferEvent> {
+        p.drain()
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::Buffer(b) => Some(b),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_resume_lead_not_above_the_pause_lead_does_not_toggle_pause_and_resume() {
+        let (spec, samples) = audio_track();
+        let mut p = Playout::new(PlayoutConfig {
+            vod_start_lead_us: 1,
+            pause_lead_us: 0,
+            resume_lead_us: Some(0),
+            ..PlayoutConfig::default()
+        });
+        p.engage(Source::Vod);
+        p.on_tracks(std::slice::from_ref(&spec));
+        p.on_sample(
+            spec.track_id,
+            &one_second_sample(&samples[0], &spec, 0),
+            None,
+        );
+        let started = buffer_events(&mut p);
+        assert!(
+            matches!(started.as_slice(), [BufferEvent::Start { .. }]),
+            "{started:?}"
+        );
+        for _ in 0..6 {
+            p.on_position(Some(ONE_SECOND_TICKS));
+        }
+        let events = buffer_events(&mut p);
+        assert_eq!(
+            events,
+            vec![BufferEvent::Pause {
+                hold_at_27mhz: ONE_SECOND_TICKS,
+                starving_track: Some(spec.track_id.value()),
+            }],
+            "pause once, never resume without new media"
+        );
+    }
+
+    #[test]
+    fn a_selection_made_before_engage_is_applied_when_the_gate_engages() {
+        let (audio, _) = audio_track();
+        let video = video_spec();
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.set_rendered(&[audio.track_id]);
+        p.engage(Source::Vod);
+        p.on_tracks(&[video, audio.clone()]);
+        assert_eq!(p.rendered, BTreeSet::from([audio.track_id]));
+    }
+
+    #[test]
+    fn a_track_that_leaves_the_set_loses_its_observations_and_cannot_pin_the_lead() {
+        let (audio, samples) = audio_track();
+        let video = video_spec();
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.engage(Source::Vod);
+        p.on_tracks(&[video.clone(), audio.clone()]);
+        p.on_sample(
+            audio.track_id,
+            &one_second_sample(&samples[0], &audio, 0),
+            None,
+        );
+        assert!(p.obs.contains_key(&audio.track_id));
+        p.on_tracks(std::slice::from_ref(&video));
+        assert!(!p.obs.contains_key(&audio.track_id));
+        assert!(!p.infos.contains_key(&audio.track_id));
+        assert_eq!(p.limiting(), None);
     }
 
     #[test]

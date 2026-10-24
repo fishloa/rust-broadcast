@@ -11,6 +11,7 @@ use url::{Origin, Url};
 const MAX_COOKIE_BYTES: usize = 4096;
 const MAX_COOKIES: usize = 50;
 const MAX_PATH_BYTES: usize = 1024;
+const MAX_HEADER_BYTES: usize = 16 * 1024;
 const SECURE_PREFIX: &str = "__secure-";
 const HOST_PREFIX: &str = "__host-";
 const MICROS_PER_SEC: u64 = 1_000_000;
@@ -49,12 +50,20 @@ impl CookieJar {
     }
 
     pub(crate) fn seed(&mut self, pairs: &[(String, String)]) {
+        let https = matches!(&self.origin, Origin::Tuple(scheme, _, _) if scheme == HTTPS);
         for (name, value) in pairs {
+            if name.len().saturating_add(value.len()) > MAX_COOKIE_BYTES {
+                continue;
+            }
+            let prefixed = has_prefix(name, SECURE_PREFIX) || has_prefix(name, HOST_PREFIX);
+            if prefixed && !https {
+                continue;
+            }
             self.insert(Stored {
                 name: name.clone(),
                 value: value.clone(),
                 path: ROOT_PATH.to_string(),
-                secure: false,
+                secure: prefixed,
                 expires_us: None,
             });
         }
@@ -156,13 +165,28 @@ impl CookieJar {
             return None;
         }
         matching.sort_by_key(|c| core::cmp::Reverse(c.path.len()));
-        Some(
-            matching
-                .iter()
-                .map(|c| format!("{}={}", c.name, c.value))
-                .collect::<Vec<_>>()
-                .join(PAIR_SEPARATOR),
-        )
+        let mut header = String::new();
+        for cookie in matching {
+            let pair = format!("{}={}", cookie.name, cookie.value);
+            let separator = if header.is_empty() {
+                0
+            } else {
+                PAIR_SEPARATOR.len()
+            };
+            if header
+                .len()
+                .saturating_add(separator)
+                .saturating_add(pair.len())
+                > MAX_HEADER_BYTES
+            {
+                continue;
+            }
+            if separator > 0 {
+                header.push_str(PAIR_SEPARATOR);
+            }
+            header.push_str(&pair);
+        }
+        (!header.is_empty()).then_some(header)
     }
 
     pub(crate) fn export(&self, now_us: u64) -> Vec<(String, String)> {

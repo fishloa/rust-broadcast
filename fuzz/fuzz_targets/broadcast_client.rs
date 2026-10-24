@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-use broadcast_client::{Action, Config, Credentials, Event, Session};
+use broadcast_client::{Action, Config, Credentials, Event, Hint, Session, TrackId};
+use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
 
 const URLS: [&str; 4] = [
@@ -30,10 +31,20 @@ const STEP_US: u64 = 700_000;
 const BACKWARD_US: u64 = 5 * STEP_US;
 const TIMER_JUMP_US: u64 = 20_000_000;
 const RTSP_URLS: [&str; 2] = ["rtsp://example/live/", "rtsps://example:8322/live/"];
-const RTSP_SDP: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\na=control:trackID=1\r\n";
 const RTSP_REPLY_STATUSES: [u16; 6] = [200, 200, 200, 401, 404, 461];
 const INTERLEAVED_MAGIC: u8 = 0x24;
-const RTSP_CHANNELS: u8 = 4;
+const MTU: usize = 1400;
+const RTP_SSRC: u32 = 0x1234_5678;
+const RTP_TRACKS: usize = 2;
+const CHANNEL_STEP: u8 = 2;
+const MAX_PACKET_RUN: usize = 64;
+const POSITION_UNIT: u64 = 2_700_000;
+const STORM_ROUNDS: usize = 24;
+const STORM_FIRST_STATUSES: [u16; 5] = [302, 401, 404, 307, 301];
+const STORM_THEN_STATUSES: [u16; 8] = [401, 401, 404, 500, 407, 403, 410, 302];
+const BASIC_CHALLENGE: &str = "Basic realm=\"f\"";
+const PLAYER_HINTS: [Hint; 3] = [Hint::SourceEnded, Hint::SourceError, Hint::PcrDiscontinuity];
+const RENDERED_IDS: [u32; 5] = [1, 2, 3, 1_001, 1_002];
 const COOKIE_NAMES: [&str; 6] = ["sid", "a", "t", "__Host-h", "__Secure-s", "p"];
 const COOKIE_PREFIXES: [&str; 5] = ["", "Secure; ", "Path=/; ", "Secure; Path=/; ", "Path=/x; "];
 const STATUS_CODES: [u16; 7] = [200, 200, 404, 302, 401, 500, 307];
@@ -51,6 +62,160 @@ fn ts_seed(offset: usize, packets: usize) -> &'static [u8] {
     let first = offset % total;
     let last = (first + packets).min(total);
     &TS_FIXTURE[first * TS_PACKET..last * TS_PACKET]
+}
+
+struct RtpSeed {
+    sdp: String,
+    packets: Vec<Vec<Vec<u8>>>,
+}
+
+fn rtp_seed() -> &'static RtpSeed {
+    static SEED: OnceLock<RtpSeed> = OnceLock::new();
+    SEED.get_or_init(|| {
+        let media = transmux::TsDemux::new()
+            .unpackage(TS_FIXTURE)
+            .expect("demux fixture");
+        let mut packetiser = transmux::RtpPacketiser {
+            mtu: MTU,
+            ssrc: RTP_SSRC,
+            stap_a_parameter_sets: false,
+            ..transmux::RtpPacketiser::default()
+        };
+        let out = packetiser.package(&media).expect("packetise fixture");
+        let mut sdp = String::new();
+        let mut media_sections = 0usize;
+        for line in out.sdp.lines() {
+            sdp.push_str(line);
+            sdp.push_str("\r\n");
+            if line.starts_with("m=") {
+                media_sections += 1;
+                sdp.push_str(&format!("a=control:trackID={media_sections}\r\n"));
+            }
+        }
+        let packets = out
+            .streams
+            .iter()
+            .map(|stream| {
+                stream
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect()
+            })
+            .collect();
+        RtpSeed { sdp, packets }
+    })
+}
+
+fn interleaved_frame(channel: u8, payload: &[u8]) -> Vec<u8> {
+    let mut frame = vec![INTERLEAVED_MAGIC, channel];
+    frame.extend_from_slice(&u16::try_from(payload.len()).unwrap_or(0).to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn seed_frame(cursors: &mut [usize; RTP_TRACKS], chunk: &[u8]) -> Vec<u8> {
+    let seed = rtp_seed();
+    let byte = |i: usize| chunk.get(i).copied().unwrap_or(0);
+    let track = usize::from(byte(1)) % seed.packets.len().max(1);
+    let packets = &seed.packets[track];
+    let cursor = &mut cursors[track % RTP_TRACKS];
+    let mut packet = packets[*cursor % packets.len().max(1)].clone();
+    *cursor = cursor.wrapping_add(1 + usize::from(byte(2) % 3 == 0));
+    if byte(2) % 4 == 0 && !packet.is_empty() {
+        let at = usize::from(byte(3)) % packet.len();
+        packet[at] ^= byte(4).max(1);
+    }
+    let channel = u8::try_from(track).unwrap_or(0) * CHANNEL_STEP + u8::from(byte(5) % 8 == 0);
+    interleaved_frame(channel, &packet)
+}
+
+fn player(session: &mut Session, now: u64, chunk: &[u8]) {
+    let byte = |i: usize| chunk.get(i).copied().unwrap_or(0);
+    match byte(2) % 5 {
+        0 => {
+            let position = match byte(3) % 8 {
+                0 => u64::MAX,
+                _ => u64::from(byte(4)) * POSITION_UNIT,
+            };
+            session.on_playback_position(now, Some(position));
+        }
+        1 => session.on_playback_position(now, None),
+        2 => {
+            let ids: Vec<TrackId> = RENDERED_IDS
+                .iter()
+                .enumerate()
+                .filter(|(n, _)| byte(3) >> (n % 8) & 1 == 1)
+                .map(|(_, id)| TrackId::new(*id))
+                .collect();
+            session.set_rendered_tracks(&ids);
+        }
+        3 => session.rejoin(),
+        _ => session.hint(PLAYER_HINTS[usize::from(byte(3)) % PLAYER_HINTS.len()]),
+    }
+}
+
+fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
+    let byte = |i: usize| usize::from(chunk.get(i).copied().unwrap_or(0));
+    if byte(3) % 3 != 0 {
+        let _ = session.set_credentials(Credentials::new("user", "pass"));
+    }
+    let first = STORM_FIRST_STATUSES[byte(1) % STORM_FIRST_STATUSES.len()];
+    let then = STORM_THEN_STATUSES[byte(4) % STORM_THEN_STATUSES.len()];
+    let mut answered: Vec<(u32, u16)> = Vec::new();
+    let mut rounds = 0usize;
+    loop {
+        let requests = watch.actions(session, now);
+        if requests.is_empty() {
+            break;
+        }
+        rounds += 1;
+        if now == u64::MAX && rounds > STORM_ROUNDS {
+            break;
+        }
+        assert!(
+            rounds <= STORM_ROUNDS,
+            "{rounds} rounds of undelayed requests answered {first}/{then} at {now}"
+        );
+        let status = if rounds == 1 { first } else { then };
+        for (conn, _) in requests {
+            let mut headers = vec![
+                (
+                    "Location".to_string(),
+                    LOCATIONS[(byte(2) + rounds) % LOCATIONS.len()].to_string(),
+                ),
+                ("WWW-Authenticate".to_string(), BASIC_CHALLENGE.to_string()),
+            ];
+            if byte(5) % 2 == 0 {
+                headers.push(("Set-Cookie".to_string(), "storm=1".to_string()));
+            }
+            answered.push((conn, status));
+            session.on_response(conn, status, &headers);
+        }
+    }
+    if now != u64::MAX {
+        for (conn, status) in answered {
+            assert!(
+                !watch.live.contains(&conn),
+                "conn {conn} answered {status} is still open"
+            );
+        }
+    }
+}
+
+fn finish(session: &mut Session, watch: &mut Watch, now: u64) {
+    if !watch.closed {
+        session.close();
+        watch.closed = true;
+    }
+    watch.actions(session, now);
+    watch.events(session);
+    assert!(
+        watch.live.is_empty(),
+        "connections never closed after close(): {:?}",
+        watch.live
+    );
+    assert!(session.poll(now).is_none(), "action after drained close()");
 }
 
 fn encrypted_segment() -> &'static [u8] {
@@ -71,12 +236,15 @@ impl Watch {
     fn actions(&mut self, session: &mut Session, now: u64) -> Vec<(u32, String)> {
         let mut requests = Vec::new();
         let mut steps = 0usize;
-        while let Some(action) = session.poll(now) {
-            steps += 1;
-            if steps > MAX_PUMP_ACTIONS {
+        loop {
+            if steps >= MAX_PUMP_ACTIONS {
                 assert!(now == u64::MAX, "runaway action loop at {now}");
                 break;
             }
+            let Some(action) = session.poll(now) else {
+                break;
+            };
+            steps += 1;
             match action {
                 Action::HttpRequest {
                     conn, url, headers, ..
@@ -100,7 +268,10 @@ impl Watch {
                 Action::Close { conn } => {
                     self.live.remove(&conn);
                 }
-                Action::WakeAt(_) => assert!(!self.closed, "WakeAt after close"),
+                Action::WakeAt(at) => {
+                    assert!(!self.closed, "WakeAt after close");
+                    assert!(at > now, "WakeAt({at}) is not after now {now}");
+                }
                 _ => {}
             }
         }
@@ -188,7 +359,7 @@ fn drive(url: &str, data: &[u8]) {
         let pick = chunk.first().copied().unwrap_or(0);
         let second = usize::from(chunk.get(1).copied().unwrap_or(0));
         let conn = conn_ids.get(second % conn_ids.len().max(1)).copied();
-        match pick % 10 {
+        match pick % 12 {
             0 => serve(&mut session, &mut watch, now, false, chunk),
             1 => {
                 if let Some(conn) = conn {
@@ -244,6 +415,8 @@ fn drive(url: &str, data: &[u8]) {
                 let _ = session.select_variant(second);
             }
             8 => serve(&mut session, &mut watch, now, true, chunk),
+            10 => player(&mut session, now, chunk),
+            11 => storm(&mut session, &mut watch, now, chunk),
             _ => {
                 let _ = session.select_audio_rendition(
                     chunk
@@ -264,6 +437,7 @@ fn drive(url: &str, data: &[u8]) {
         let _ = session.cookies();
         watch.events(&mut session);
     }
+    finish(&mut session, &mut watch, now);
 }
 
 fn rtsp_cseq(request: &[u8]) -> u32 {
@@ -293,9 +467,10 @@ fn rtsp_reply(request: &[u8], status: u16) -> Vec<u8> {
         ));
     }
     if is_describe && status == 200 {
+        let sdp = &rtp_seed().sdp;
         head.push_str(&format!(
-            "Content-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{RTSP_SDP}",
-            RTSP_SDP.len()
+            "Content-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
+            sdp.len()
         ));
     } else {
         head.push_str("\r\n");
@@ -312,12 +487,15 @@ fn rtsp_pump(
     tail: &[u8],
 ) {
     let mut steps = 0usize;
-    while let Some(action) = session.poll(now) {
-        steps += 1;
-        if steps > MAX_PUMP_ACTIONS {
+    loop {
+        if steps >= MAX_PUMP_ACTIONS {
             assert!(now == u64::MAX, "runaway action loop at {now}");
             break;
         }
+        let Some(action) = session.poll(now) else {
+            break;
+        };
+        steps += 1;
         match action {
             Action::TcpConnect { conn, .. } => {
                 assert!(!watch.closed, "TcpConnect after close");
@@ -349,25 +527,18 @@ fn drive_rtsp(url: &str, data: &[u8]) {
     let mut watch = Watch::default();
     let mut now = 0u64;
     let mut conns: Vec<u32> = Vec::new();
+    let mut cursors = [0usize; RTP_TRACKS];
     for chunk in data.chunks(CHUNK_BYTES) {
         now = next_time(now, chunk);
         let pick = chunk.first().copied().unwrap_or(0);
         let second = usize::from(chunk.get(1).copied().unwrap_or(0));
         let status = RTSP_REPLY_STATUSES[second % RTSP_REPLY_STATUSES.len()];
         let conn = conns.get(second % conns.len().max(1)).copied();
-        match pick % 8 {
+        match pick % 10 {
             0 | 1 => rtsp_pump(&mut session, &mut watch, now, &mut conns, status, &[]),
             2 => {
                 if let Some(conn) = conn {
-                    let mut frame = vec![
-                        INTERLEAVED_MAGIC,
-                        chunk.get(1).copied().unwrap_or(0) % RTSP_CHANNELS,
-                    ];
-                    let payload = chunk.get(2..).unwrap_or(&[]);
-                    frame.extend_from_slice(
-                        &u16::try_from(payload.len()).unwrap_or(0).to_be_bytes(),
-                    );
-                    frame.extend_from_slice(payload);
+                    let frame = seed_frame(&mut cursors, chunk);
                     session.on_data(conn, &frame, now);
                 }
             }
@@ -387,10 +558,18 @@ fn drive_rtsp(url: &str, data: &[u8]) {
                 let _ = session.set_credentials(Credentials::new("u", "p"));
             }
             6 => session.reconnect(now),
-            _ => {
-                now = now.saturating_add(TIMER_JUMP_US);
-                let _ = session.poll(now);
+            7 => now = now.saturating_add(TIMER_JUMP_US),
+            8 => {
+                if let Some(conn) = conn {
+                    for _ in 0..=second % MAX_PACKET_RUN {
+                        let frame = seed_frame(&mut cursors, &[chunk[0], 0, 1, 0, 0, 1]);
+                        session.on_data(conn, &frame, now);
+                        let frame = seed_frame(&mut cursors, &[chunk[0], 1, 1, 0, 0, 1]);
+                        session.on_data(conn, &frame, now);
+                    }
+                }
             }
+            _ => player(&mut session, now, chunk),
         }
         if pick == u8::MAX {
             session.close();
@@ -401,6 +580,7 @@ fn drive_rtsp(url: &str, data: &[u8]) {
         let _ = session.rtp_malformed_count();
         watch.events(&mut session);
     }
+    finish(&mut session, &mut watch, now);
 }
 
 fuzz_target!(|data: &[u8]| {

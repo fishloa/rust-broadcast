@@ -1,3 +1,5 @@
+use std::cell::{Cell, RefCell};
+
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, Event, Session};
 use broadcast_common::{Package, Serialize, Unpackage};
@@ -145,8 +147,20 @@ impl ReqRec {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum SetupReply {
+    Echo,
+    NoTransport,
+    Fixed(u8, u8),
+}
+
 pub struct Server {
     inbound: Vec<u8>,
+    pub content_base: Option<String>,
+    pub setup_reply: Option<Box<dyn Fn(usize) -> SetupReply>>,
+    pub rotate_options_nonce: bool,
+    nonce_counter: Cell<u32>,
+    pending_nonce: RefCell<Option<String>>,
     pub log: Vec<ReqRec>,
     pub sdp: Vec<u8>,
     pub session_timeout: Option<u32>,
@@ -162,6 +176,11 @@ impl Server {
     pub fn new(sdp: &str) -> Self {
         Self {
             inbound: Vec::new(),
+            content_base: None,
+            setup_reply: None,
+            rotate_options_nonce: false,
+            nonce_counter: Cell::new(0),
+            pending_nonce: RefCell::new(None),
             log: Vec::new(),
             sdp: sdp.as_bytes().to_vec(),
             session_timeout: None,
@@ -242,33 +261,44 @@ impl Server {
         match rec.method.as_str() {
             DESCRIBE => match self.describe_status {
                 Some(status) => respond(rec.cseq, status, Vec::new(), Vec::new()),
-                None => respond(
-                    rec.cseq,
-                    200,
-                    vec![(headers::CONTENT_TYPE, "application/sdp".to_string())],
-                    self.sdp.clone(),
-                ),
+                None => {
+                    let mut extra = vec![(headers::CONTENT_TYPE, "application/sdp".to_string())];
+                    if let Some(base) = &self.content_base {
+                        extra.push((headers::CONTENT_BASE, base.clone()));
+                    }
+                    respond(rec.cseq, 200, extra, self.sdp.clone())
+                }
             },
             SETUP => match self.setup_status {
                 Some(status) => respond(rec.cseq, status, Vec::new(), Vec::new()),
                 None => {
-                    let transport = if self.udp_transport {
-                        UDP_TRANSPORT.to_string()
-                    } else {
-                        let (lo, hi) = rec.interleaved().expect("interleaved SETUP");
+                    let reply = self
+                        .setup_reply
+                        .as_ref()
+                        .map_or(SetupReply::Echo, |f| f(self.count(SETUP)));
+                    let interleaved = |lo, hi| {
                         Transport::single(TransportSpec::rtp_avp_tcp_interleaved(lo, hi))
                             .to_header_value()
                             .expect("transport header")
                     };
-                    respond(
-                        rec.cseq,
-                        200,
-                        vec![
-                            (headers::TRANSPORT, transport),
-                            (headers::SESSION, self.session_value()),
-                        ],
-                        Vec::new(),
-                    )
+                    let transport = if self.udp_transport {
+                        Some(UDP_TRANSPORT.to_string())
+                    } else {
+                        match reply {
+                            SetupReply::Echo => {
+                                let (lo, hi) = rec.interleaved().expect("interleaved SETUP");
+                                Some(interleaved(lo, hi))
+                            }
+                            SetupReply::NoTransport => None,
+                            SetupReply::Fixed(lo, hi) => Some(interleaved(lo, hi)),
+                        }
+                    };
+                    let mut extra = Vec::new();
+                    if let Some(transport) = transport {
+                        extra.push((headers::TRANSPORT, transport));
+                    }
+                    extra.push((headers::SESSION, self.session_value()));
+                    respond(rec.cseq, 200, extra, Vec::new())
                 }
             },
             PLAY => match self.play_status {
@@ -280,9 +310,33 @@ impl Server {
                     Vec::new(),
                 ),
             },
+            OPTIONS if self.rotate_options_nonce => self.answer_options_rotating(rec),
             OPTIONS => respond(rec.cseq, self.options_status, Vec::new(), Vec::new()),
             _ => respond(rec.cseq, 200, Vec::new(), Vec::new()),
         }
+    }
+
+    fn answer_options_rotating(&self, rec: &ReqRec) -> Vec<u8> {
+        let presented = rec.header("authorization").and_then(|h| {
+            let (_, rest) = h.split_once("nonce=\"")?;
+            rest.split_once('"').map(|(n, _)| n.to_string())
+        });
+        let mut pending = self.pending_nonce.borrow_mut();
+        if presented.is_some() && presented == *pending {
+            *pending = None;
+            return respond(rec.cseq, 200, Vec::new(), Vec::new());
+        }
+        let n = self.nonce_counter.get() + 1;
+        self.nonce_counter.set(n);
+        let nonce = format!("nonce{n}");
+        let challenge = format!("Digest realm=\"cam\", nonce=\"{nonce}\", qop=\"auth\"");
+        *pending = Some(nonce);
+        respond(
+            rec.cseq,
+            401,
+            vec![(headers::WWW_AUTHENTICATE, challenge)],
+            Vec::new(),
+        )
     }
 
     fn session_value(&self) -> String {
