@@ -48,7 +48,7 @@ fn reconnect_attempts(events: &[Event]) -> Vec<u64> {
 }
 
 fn respond_ok(session: &mut Session, conn: u32, body: &[u8], now: u64) {
-    session.on_response(conn, 200, &[]);
+    session.on_response(conn, 200, &[], 0);
     session.on_data(conn, body, now);
     session.on_closed(conn, None, now);
 }
@@ -449,7 +449,7 @@ fn prefetch_concurrent_connections_tracked() {
     assert_eq!(conns.len(), 4, "each prefetch has its own connection");
 
     for (c, _) in &reqs {
-        s.on_response(*c, 200, &[]);
+        s.on_response(*c, 200, &[], 0);
     }
     let bodies_by_conn: Vec<(u32, &Vec<u8>)> = reqs.iter().map(|(c, u)| (*c, &bodies[u])).collect();
     let max_len = bodies_by_conn
@@ -701,7 +701,7 @@ fn oversized_playlist_body_closes_and_fails() {
 
     let mut s = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
-    s.on_response(conn, 200, &[]);
+    s.on_response(conn, 200, &[], 0);
     s.on_data(conn, &exact, 0);
     assert!(closes(&drain_actions(&mut s, 0)).is_empty());
     s.on_data(conn, b"#", 0);
@@ -737,7 +737,7 @@ fn oversized_segment_body_closes_and_fails() {
     assert_eq!(seg_url, TS_SEG0_URL);
     let body = ts_segment(0);
     assert!(body.len() > limit + 1);
-    s.on_response(seg_conn, 200, &[]);
+    s.on_response(seg_conn, 200, &[], 0);
     s.on_data(seg_conn, &body[..limit], 0);
     assert!(closes(&drain_actions(&mut s, 0)).is_empty());
     s.on_data(seg_conn, &body[limit..=limit], 0);
@@ -938,6 +938,7 @@ fn credentials_401_on_playlist_waits_no_retry() {
             "WWW-Authenticate".to_string(),
             "Bearer realm=\"example\"".to_string(),
         )],
+        0,
     );
     let events = drain_events(&mut s);
     assert!(
@@ -990,7 +991,7 @@ fn late_callbacks_after_close_ignored() {
     expected.sort_unstable();
     assert_eq!(closed, expected);
     for (c, _) in &reqs {
-        s.on_response(*c, 200, &[]);
+        s.on_response(*c, 200, &[], 0);
         s.on_data(*c, &ts_segment(0), 0);
         s.on_closed(*c, None, 0);
     }
@@ -1005,12 +1006,12 @@ fn late_callbacks_after_close_ignored() {
     };
     let mut o = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut o, 0));
-    o.on_response(conn, 200, &[]);
+    o.on_response(conn, 200, &[], 1);
     o.on_data(conn, &[b'#'; 101], 0);
     assert_eq!(closes(&drain_actions(&mut o, 0)), vec![conn]);
     assert_eq!(reconnect_attempts(&drain_events(&mut o)), vec![1]);
     o.on_data(conn, &ts_playlist(), 0);
-    o.on_response(conn, 200, &[]);
+    o.on_response(conn, 200, &[], 1);
     o.on_closed(conn, None, 0);
     o.on_closed(conn, Some("late".to_string()), 0);
     assert!(

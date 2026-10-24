@@ -4,6 +4,7 @@ pub const TS_URL: &str = "http://example/live.ts";
 
 #[derive(Debug, Clone)]
 pub struct Req {
+    pub now: u64,
     pub conn: u32,
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -48,7 +49,12 @@ pub fn requests(session: &mut Session, now: u64) -> Vec<Req> {
             conn, url, headers, ..
         } = a
         {
-            out.push(Req { conn, url, headers });
+            out.push(Req {
+                now,
+                conn,
+                url,
+                headers,
+            });
         }
     }
     out
@@ -65,7 +71,7 @@ pub fn open(url: &str, config: Config) -> Session {
 }
 
 pub fn respond(session: &mut Session, req: &Req, status: u16, headers: &[(String, String)]) {
-    session.on_response(req.conn, status, headers);
+    session.on_response(req.conn, status, headers, req.now);
 }
 
 pub fn ok_with_cookies(session: &mut Session, req: &Req, lines: &[&str]) {

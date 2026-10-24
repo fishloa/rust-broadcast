@@ -190,7 +190,7 @@ fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
                 headers.push(("Set-Cookie".to_string(), "storm=1".to_string()));
             }
             answered.push((conn, status));
-            session.on_response(conn, status, &headers);
+            session.on_response(conn, status, &headers, now);
         }
     }
     if now != u64::MAX {
@@ -330,7 +330,7 @@ fn body_for(url: &str, encrypted: bool, chunk: &[u8]) -> Vec<u8> {
 
 fn serve(session: &mut Session, watch: &mut Watch, now: u64, encrypted: bool, chunk: &[u8]) {
     for (conn, url) in watch.actions(session, now) {
-        session.on_response(conn, 200, &[]);
+        session.on_response(conn, 200, &[], now);
         let body = body_for(&url, encrypted, chunk);
         session.on_data(conn, &body, now);
         session.on_data(conn, chunk, now);
@@ -402,7 +402,7 @@ fn drive(url: &str, data: &[u8]) {
                     if status == 401 && second % 3 == 0 {
                         headers.push(("WWW-Authenticate".to_string(), STALE_CHALLENGE.to_string()));
                     }
-                    session.on_response(conn, status, &headers);
+                    session.on_response(conn, status, &headers, now);
                 }
             }
             6 => {

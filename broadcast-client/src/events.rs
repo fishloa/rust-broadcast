@@ -56,9 +56,13 @@ pub enum Status {
         /// Stalled seconds.
         secs: u64,
     },
-    /// Reconnecting, attempt number.
+    /// Reconnecting. `attempt` is the number of consecutive failed attempts; `0` announces the
+    /// reconnect of a connection that had played (a finished stream, a stall reconnect, a close
+    /// by the server), after which [`Status::Establishing`] and [`Status::Live`] follow with the
+    /// first sample. A caller-initiated [`crate::Session::reconnect`] reports no
+    /// `Reconnecting`.
     Reconnecting {
-        /// Attempt number.
+        /// Consecutive failed attempts, `0` for a reconnect after a played connection.
         attempt: u64,
     },
     /// Not found.
@@ -88,6 +92,16 @@ impl Status {
 broadcast_common::impl_spec_display!(Status);
 
 /// Buffer event mapped from `buffering_runtime::Event`.
+///
+/// Positions are in the player's sample-time domain: the presentation time stamp of a sample
+/// converted to 27 MHz ticks, so `Start.at_27mhz` and `Resume.at_27mhz` are the 27 MHz clock the
+/// player must set before it plays (its position in `Session::on_playback_position` uses the
+/// same domain). A timeline whose first kept sample has a negative time stamp (a jump whose
+/// unrolled timestamps go below zero) cannot be expressed in `u64`: its positions are measured from
+/// that first kept sample, so `0` is that sample. Live TS-over-HTTP produces no buffer event
+/// unless the host calls `Session::on_playback_position` every display tick; a demuxer-level
+/// discontinuity (PCR discontinuity flag, re-anchor) is invisible to the host except through
+/// these events, whose `at_27mhz` may then jump.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BufferEvent {
@@ -196,7 +210,8 @@ pub enum Action {
         url: String,
         /// Headers to send.
         headers: Vec<(String, String)>,
-        /// Optional byte range.
+        /// Optional byte range as `(offset, length)`, not `(start, end)`: the host builds the
+        /// `Range: bytes=offset-(offset+length-1)` header itself.
         byte_range: Option<(u64, u64)>,
     },
     /// Open a TCP connection (RTSP). The host reports the outcome with
@@ -224,7 +239,9 @@ pub enum Action {
         /// Connection id.
         conn: ConnId,
     },
-    /// Wake the session at the given time.
+    /// Call [`crate::Session::poll`] at or after the given host clock time (`now_us`); the
+    /// session drops a `WakeAt` whose time is not after the `now_us` of the poll that would
+    /// return it, so a past value is never delivered.
     WakeAt(u64),
 }
 
@@ -294,7 +311,10 @@ pub enum Event {
         /// Display info.
         display: Arc<DisplayInfo>,
     },
-    /// Discontinuity.
+    /// A new timeline starts with the next sample: a reconnect that follows a connection that
+    /// produced media, a detected timeline jump, an HLS discontinuity. After a detected jump the
+    /// other tracks deliver nothing until their first sample lies on the new timeline
+    /// (see `Session::stale_samples_dropped`).
     Discontinuity,
     /// Finite resource expected byte count (VOD).
     Finite {

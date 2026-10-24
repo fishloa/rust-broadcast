@@ -23,6 +23,7 @@ fn resolve_all_3xx_codes_session() {
             conn,
             code,
             &[("Location".to_string(), "/moved.ts".to_string())],
+            0,
         );
         let mut saw_new = false;
         while let Some(a) = session.poll(0) {
@@ -65,7 +66,12 @@ fn redirect_limit_in_session() {
         _ => panic!(),
     };
     for i in 0..5 {
-        session.on_response(conn, 301, &[("Location".to_string(), format!("/r{i}.ts"))]);
+        session.on_response(
+            conn,
+            301,
+            &[("Location".to_string(), format!("/r{i}.ts"))],
+            0,
+        );
         let mut next = None;
         while let Some(a) = session.poll(0) {
             if let Action::HttpRequest { conn: c, .. } = a {
@@ -79,6 +85,7 @@ fn redirect_limit_in_session() {
         conn,
         301,
         &[("Location".to_string(), "/too-many.ts".to_string())],
+        0,
     );
     let mut saw_http = false;
     while let Some(a) = session.poll(0) {
@@ -96,7 +103,7 @@ fn redirect_without_location_is_connect_error() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, 302, &[]);
+    session.on_response(conn, 302, &[], 0);
     let mut saw_http = false;
     while let Some(a) = session.poll(0) {
         if matches!(a, Action::HttpRequest { .. }) {
@@ -129,6 +136,7 @@ fn cross_origin_redirect_drops_authorization() {
             "Location".to_string(),
             "http://other.example/live.ts".to_string(),
         )],
+        0,
     );
     let mut new_headers = None;
     while let Some(a) = session.poll(0) {

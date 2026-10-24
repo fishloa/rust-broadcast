@@ -25,7 +25,7 @@ threads, no wall clock. Time = caller monotonic `u64` microseconds (`now_us`).
 Session::open(url: &str, config: Config, now_us: u64) -> Result<Session>     // no I/O
 Session::poll(&mut self, now_us) -> Option<Action>       // advances timers, then pops
 Session::next_event(&mut self) -> Option<Event>
-Session::on_response(conn: ConnId, status: u16, headers: &[(String,String)])
+Session::on_response(conn: ConnId, status: u16, headers: &[(String,String)], now_us)
 Session::on_data(conn: ConnId, bytes: &[u8], now_us)
 Session::on_closed(conn: ConnId, error: Option<TransportError>, now_us)
 Session::set_credentials(Credentials)                    // broadcast_auth::Credentials
@@ -415,3 +415,38 @@ Deduplication and state scope: every `Event::Discontinuity` (source reconnect, H
 Controller semantics worth knowing: `buffering-runtime` answers a `PcrDiscontinuity` while Playing with `Pause` then `Resume`, never a second `StartPlaying`, so after a jump the player sees `Resume` (or `Start` if the controller was still Buffering) positioned on the new timeline's media. The BC-5 gate does fire `Start` again.
 
 Tests: `broadcast-client/tests/timeline_jump.rs` (TS via PES-PTS rewriting of the public `h264_aac.ts` and the real TF1 capture, HLS VOD/live through the real HLS session, RTSP through the fake server with rewritten RTP timestamps, a two-video-track RTSP SDP) and the exact-boundary unit tests in `src/timeline.rs`.
+
+## Audit round 4 (#1498)
+
+- **Reconnect re-arms the controller.** A `Discontinuity` from a new TS connection re-arms the live
+  join, clears the pending media ends, the maximum timestamps and the join state (`Feeder::rejoin`)
+  before the `Reconnected` hint, so the reconnected stream waits for an IDR (`Drop(BeforeRandomAccessPoint)`)
+  and the controller measures the new timeline (lower, equal or advanced base).
+- **Timeline rebasing.** The feeder and the playout gate convert time stamps to 27 MHz in `i128`
+  relative to a per-timeline origin: the first kept sample (video join point, else audio), taken as
+  `min(0, pts)`. A timeline that starts at or above zero is converted unchanged (positions are the
+  sample-time domain); one whose first kept sample is negative is measured from that sample and never
+  clamps to a flat zero. Only overflow of `u64` clamps.
+- **Stale tracks after a jump.** A detected jump tags every other track stale; its samples are dropped
+  (`Session::stale_samples_dropped`) until its first sample lies within `forward_slack_us` of the
+  first sample of the new timeline.
+- **PCR discontinuity plus jump.** `handled` is cleared only by a sample compared against a sample
+  recorded after the reset, so one coincident event hints and re-arms once.
+- **HLS redirect base.** `HlsClient::set_playlist_base(url)` (additive) sets the URL relative playlist
+  URIs resolve against; the adapter passes the final playlist URL before `on_playlist`. Reloads keep
+  requesting `playlist_url()`; credentials stay origin-scoped.
+- **Digest `uri`.** HTTP(S) requests use the origin-form request target (RFC 7616 section 3.4); RTSP
+  keeps the absolute request URI.
+- **RTSP redirects.** 301/302/303/307/308 with an `rtsp(s)` `Location` are followed (bounded by
+  `max_redirects`, never `rtsps` to `rtsp`), credentials only to the same authority; the redirect
+  needs `ClientSession::redirect_location()`. `Event::Discontinuity` is emitted only before the first
+  sample of a connection that follows one that produced media.
+- **`on_response` takes `now_us`** (breaking, pre-release).
+- **Played-then-ended reconnect** emits `Status::Reconnecting { attempt: 0 }` for TS-over-HTTP and RTSP
+  (a caller `reconnect()` does not); HLS has no such reconnect (its reload chain continues).
+- **Playout gate.** The position reported before `Start` is discarded at `Start`, so a host that keeps
+  reporting the position of the previous pass cannot pause the new pass at once.
+- **Host contract.** poll until `None` and drain after every callback; live TS needs
+  `on_playback_position` every display tick; `Start.at`/`Resume.at` are the 27 MHz clock the player
+  sets; demuxer-level discontinuities are visible only through buffer events; `byte_range` is
+  `(offset, length)`; `WakeAt` is "at or after" and past values are dropped.

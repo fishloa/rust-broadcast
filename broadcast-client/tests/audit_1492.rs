@@ -48,6 +48,7 @@ fn http_requests(actions: &[Action]) -> Vec<Req> {
             Action::HttpRequest {
                 conn, url, headers, ..
             } => Some(Req {
+                now: 0,
                 conn: *conn,
                 url: url.clone(),
                 headers: headers.clone(),

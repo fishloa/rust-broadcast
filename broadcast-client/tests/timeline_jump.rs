@@ -109,7 +109,7 @@ impl Host {
             Action::HttpRequest { conn, .. } => conn,
             other => panic!("{other:?}"),
         };
-        session.on_response(conn, status, &headers);
+        session.on_response(conn, status, &headers, 0);
         Self {
             session,
             conn,
@@ -1098,7 +1098,7 @@ fn detector_state_resets_on_reconnect_and_rejoin() {
         }
     }
     h.conn = conn.expect("reconnect request");
-    h.session.on_response(h.conn, 200, &[]);
+    h.session.on_response(h.conn, 200, &[], 1_000_000);
     h.drain(1_000_000);
     for (i, c) in bytes.chunks(CHUNK).enumerate() {
         h.data(c, 2_000_000 + i as u64 * STEP_US);

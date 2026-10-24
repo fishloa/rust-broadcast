@@ -84,12 +84,25 @@ macro_rules! rec {
 
 const TICKS_PER_SEC_27MHZ: u64 = 27_000_000;
 
-pub(crate) fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
+pub(crate) fn raw_27mhz(pts: i64, timescale: u32) -> i128 {
     if timescale == 0 {
         return 0;
     }
-    let v = i128::from(pts) * i128::from(TICKS_PER_SEC_27MHZ) / i128::from(timescale);
+    i128::from(pts) * i128::from(TICKS_PER_SEC_27MHZ) / i128::from(timescale)
+}
+
+pub(crate) fn negative_origin(raw: i128) -> i128 {
+    raw.min(0)
+}
+
+pub(crate) fn pts_to_27mhz_from(pts: i64, timescale: u32, origin: i128) -> u64 {
+    let v = raw_27mhz(pts, timescale).saturating_sub(origin);
     u64::try_from(v).unwrap_or(if v < 0 { 0 } else { u64::MAX })
+}
+
+#[cfg(test)]
+pub(crate) fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
+    pts_to_27mhz_from(pts, timescale, 0)
 }
 
 pub(crate) struct Feeder {
@@ -107,6 +120,7 @@ pub(crate) struct Feeder {
     video_max_pts: BTreeMap<TrackId, i64>,
     audio_max_end: BTreeMap<TrackId, u64>,
     video_join_pts_27: Option<u64>,
+    origin: Option<i128>,
     #[cfg(feature = "test-seams")]
     pub(crate) log: Vec<BufferInput>,
 }
@@ -128,6 +142,7 @@ impl Feeder {
             video_max_pts: BTreeMap::new(),
             audio_max_end: BTreeMap::new(),
             video_join_pts_27: None,
+            origin: None,
             #[cfg(feature = "test-seams")]
             log: Vec::new(),
         }
@@ -231,6 +246,16 @@ impl Feeder {
         }
     }
 
+    fn conv(&self, pts: i64, timescale: u32) -> u64 {
+        pts_to_27mhz_from(pts, timescale, self.origin.unwrap_or(0))
+    }
+
+    fn arm_origin(&mut self, pts: i64, timescale: u32) {
+        if self.origin.is_none() {
+            self.origin = Some(negative_origin(raw_27mhz(pts, timescale)));
+        }
+    }
+
     pub(crate) fn join_sample(&mut self, track: TrackId, sample: &Sample) -> Option<JoinDecision> {
         self.live_joins.get_mut(&track).map(|j| j.push(sample))
     }
@@ -254,14 +279,15 @@ impl Feeder {
         if self.live_joins.contains_key(&track) {
             match join {
                 Some(JoinDecision::JoinPoint(_)) if !self.video_joined.contains(&track) => {
+                    self.arm_origin(pts, timescale);
                     self.video_joined.insert(track);
                     self.pending_zero.insert(track, (pts, timescale));
                     self.video_max_pts.insert(track, pts);
                     if self.video_join_pts_27.is_none() {
-                        self.video_join_pts_27 = Some(pts_to_27mhz(pts, timescale));
+                        self.video_join_pts_27 = Some(self.conv(pts, timescale));
                     }
                     self.pending_ends
-                        .insert(track, pts_to_27mhz(pts.saturating_add(dur), timescale));
+                        .insert(track, self.conv(pts.saturating_add(dur), timescale));
                 }
                 Some(JoinDecision::Keep) if self.video_joined.contains(&track) => {
                     let max_pts = self
@@ -271,7 +297,7 @@ impl Feeder {
                         .map_or(pts, |m| m.max(pts));
                     self.video_max_pts.insert(track, max_pts);
                     self.pending_ends
-                        .insert(track, pts_to_27mhz(max_pts.saturating_add(dur), timescale));
+                        .insert(track, self.conv(max_pts.saturating_add(dur), timescale));
                 }
                 _ => {}
             }
@@ -287,7 +313,8 @@ impl Feeder {
             (true, None) => return,
             (true, Some(j)) => Some(j),
         };
-        let end = pts_to_27mhz(pts.saturating_add(dur), timescale);
+        self.arm_origin(pts, timescale);
+        let end = self.conv(pts.saturating_add(dur), timescale);
         let max_end = self
             .audio_max_end
             .get(&track)
@@ -306,6 +333,7 @@ impl Feeder {
         self.video_max_pts.clear();
         self.audio_max_end.clear();
         self.video_join_pts_27 = None;
+        self.origin = None;
         for j in self.live_joins.values_mut() {
             j.rejoin();
         }
@@ -349,7 +377,7 @@ impl Feeder {
 
         let zeros = core::mem::take(&mut self.pending_zero);
         for (t, (pts, ts)) in zeros {
-            let end = pts_to_27mhz(pts, ts);
+            let end = self.conv(pts, ts);
             if let Some(c) = &mut self.controller {
                 c.on_track_media(now_us, t.value(), end);
                 rec!(

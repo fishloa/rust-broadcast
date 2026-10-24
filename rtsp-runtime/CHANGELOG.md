@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `ClientSession::redirect_location()`: the `Location` header of the most recent redirection (3xx) response, cleared by any other response (`ClientEvent::Response` carries no headers). Used by `broadcast-client` to follow an RTSP redirect.
 - `ClientSession::content_base()`: the `Content-Base` (else `Content-Location`) of the most recent successful DESCRIBE response, the base for relative `a=control` values (RFC 2326 Appendix C.1.1). `ClientEvent::Response` carries no headers.
 - `ClientSession::take_negotiated_transport()`: takes the transport of the latest SETUP reply and clears it, so a later reply without a `Transport` header is detectable.
 - `ClientSession::last_challenge()`: the most recent `WWW-Authenticate` (else `Proxy-Authenticate`) value seen on any response, recorded even when no credentials are configured, so a caller can learn the scheme and realm to ask for (`ClientEvent::Response` carries no headers).

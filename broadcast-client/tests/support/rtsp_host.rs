@@ -173,6 +173,7 @@ pub struct Server {
     pub session_timeout: Option<u32>,
     pub auth: Option<Verifier>,
     pub describe_status: Option<u16>,
+    pub describe_location: Option<String>,
     pub setup_status: Option<u16>,
     pub play_status: Option<u16>,
     pub options_status: u16,
@@ -193,6 +194,7 @@ impl Server {
             session_timeout: None,
             auth: None,
             describe_status: None,
+            describe_location: None,
             setup_status: None,
             play_status: None,
             options_status: 200,
@@ -267,7 +269,14 @@ impl Server {
         }
         match rec.method.as_str() {
             DESCRIBE => match self.describe_status {
-                Some(status) => respond(rec.cseq, status, Vec::new(), Vec::new()),
+                Some(status) => {
+                    let extra = self
+                        .describe_location
+                        .iter()
+                        .map(|l| (headers::LOCATION, l.clone()))
+                        .collect();
+                    respond(rec.cseq, status, extra, Vec::new())
+                }
                 None => {
                     let mut extra = vec![(headers::CONTENT_TYPE, "application/sdp".to_string())];
                     if let Some(base) = &self.content_base {

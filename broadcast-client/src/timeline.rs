@@ -58,12 +58,20 @@ struct Last {
     now_us: u64,
 }
 
+struct Epoch {
+    reference_us: i128,
+    window_us: i128,
+    stale: BTreeSet<TrackId>,
+}
+
 pub(crate) struct JumpDetector {
     config: Option<TimelineJumpConfig>,
     tracks: BTreeMap<TrackId, TrackInfo>,
     audio_order: Vec<TrackId>,
     rendered: Option<BTreeSet<TrackId>>,
     last: BTreeMap<TrackId, Last>,
+    post_reset: BTreeSet<TrackId>,
+    epoch: Option<Epoch>,
     handled: bool,
 }
 
@@ -75,6 +83,8 @@ impl JumpDetector {
             audio_order: Vec::new(),
             rendered: None,
             last: BTreeMap::new(),
+            post_reset: BTreeSet::new(),
+            epoch: None,
             handled: false,
         }
     }
@@ -109,10 +119,55 @@ impl JumpDetector {
 
     pub(crate) fn clear(&mut self) {
         self.last.clear();
+        self.post_reset.clear();
+        self.epoch = None;
         self.handled = false;
     }
 
+    pub(crate) fn begin_epoch(&mut self, jumped: TrackId, sample: &Sample) {
+        let (Some(cfg), Some(pts), Some(info)) =
+            (self.config, sample.pts, self.tracks.get(&jumped).copied())
+        else {
+            return;
+        };
+        if info.timescale == 0 {
+            return;
+        }
+        self.epoch = Some(Epoch {
+            reference_us: Self::to_us(pts, info.timescale),
+            window_us: i128::from(cfg.forward_slack_us),
+            stale: self
+                .tracks
+                .keys()
+                .copied()
+                .filter(|t| *t != jumped)
+                .collect(),
+        });
+    }
+
+    pub(crate) fn screen(&mut self, track: TrackId, sample: &Sample) -> bool {
+        let Some(epoch) = self.epoch.as_mut() else {
+            return true;
+        };
+        if !epoch.stale.contains(&track) {
+            return true;
+        }
+        let (Some(pts), Some(info)) = (sample.pts, self.tracks.get(&track)) else {
+            return true;
+        };
+        if info.timescale == 0 {
+            return true;
+        }
+        let offset = Self::to_us(pts, info.timescale) - epoch.reference_us;
+        if offset.abs() <= epoch.window_us {
+            epoch.stale.remove(&track);
+            return true;
+        }
+        false
+    }
+
     pub(crate) fn note_reset(&mut self) {
+        self.post_reset.clear();
         self.handled = true;
     }
 
@@ -180,6 +235,7 @@ impl JumpDetector {
         let Some(info) = self.watched(track, join) else {
             return;
         };
+        let continued = self.last.contains_key(&track) && self.post_reset.contains(&track);
         self.last.insert(
             track,
             Last {
@@ -187,7 +243,10 @@ impl JumpDetector {
                 now_us,
             },
         );
-        self.handled = false;
+        self.post_reset.insert(track);
+        if continued {
+            self.handled = false;
+        }
     }
 }
 

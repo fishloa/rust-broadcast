@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (pre-release audit #1498)
+- `HlsClient::set_playlist_base(url)`: the URL relative playlist, segment, key and map URIs resolve against (the final URL of a playlist response after redirects, RFC 3986 section 5.1.3). Reloads keep requesting `playlist_url()`; the base is cleared when the client switches playlist.
+
 ### Fixed (client, pre-release audit #1492)
 - A query string that differs between two windows is a re-signing (not an origin restart) only when it differs on every shared segment; a window where some shared segments keep their query and others change it is an origin restart (`Output::Discontinuity`).
 

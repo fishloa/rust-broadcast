@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use transmux::{JoinDecision, LiveJoin, Sample, TrackId, TrackSpec};
 
-use crate::buffer::pts_to_27mhz;
+use crate::buffer::{negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event};
 
 /// Default start lead for VOD sources (HLS with `EXT-X-ENDLIST`, finite TS), microseconds.
@@ -85,6 +85,7 @@ pub(crate) struct Playout {
     rendered: BTreeSet<TrackId>,
     rendered_explicit: bool,
     obs: BTreeMap<TrackId, Obs>,
+    origin_shift: Option<i128>,
     started: bool,
     paused: bool,
     ended: bool,
@@ -103,6 +104,7 @@ impl Playout {
             rendered: BTreeSet::new(),
             rendered_explicit: false,
             obs: BTreeMap::new(),
+            origin_shift: None,
             started: false,
             paused: false,
             ended: false,
@@ -190,15 +192,20 @@ impl Playout {
         };
         let dur = i64::from(sample.duration.unwrap_or(0));
         let timescale = info.timescale;
+        let shift = *self
+            .origin_shift
+            .get_or_insert_with(|| negative_origin(raw_27mhz(pts, timescale)));
         let entry = self.obs.entry(track).or_insert(Obs {
-            first_pts: pts_to_27mhz(pts, timescale),
+            first_pts: pts_to_27mhz_from(pts, timescale, shift),
             max_pts: pts,
             end: 0,
         });
         entry.max_pts = entry.max_pts.max(pts);
         let end = match info.kind {
-            Kind::Video => pts_to_27mhz(entry.max_pts.saturating_add(dur), timescale),
-            Kind::Audio | Kind::Other => pts_to_27mhz(pts.saturating_add(dur), timescale),
+            Kind::Video => pts_to_27mhz_from(entry.max_pts.saturating_add(dur), timescale, shift),
+            Kind::Audio | Kind::Other => {
+                pts_to_27mhz_from(pts.saturating_add(dur), timescale, shift)
+            }
         };
         entry.end = match info.kind {
             Kind::Video => end,
@@ -230,6 +237,7 @@ impl Playout {
 
     pub(crate) fn rejoin(&mut self) {
         self.obs.clear();
+        self.origin_shift = None;
         self.started = false;
         self.paused = false;
         self.position = None;
@@ -320,6 +328,7 @@ impl Playout {
         };
         if self.ended || end.saturating_sub(origin) >= self.start_lead() {
             self.started = true;
+            self.position = None;
             self.out.push_back(BufferEvent::Start { at_27mhz: origin });
         }
     }
@@ -503,4 +512,32 @@ mod tests {
         p.on_ended();
         assert!(!p.ended);
     }
+
+    #[test]
+    fn a_negative_unrolled_timeline_starts_relative_to_its_first_sample() {
+        let (spec, samples) = audio_track();
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.engage(Source::Vod);
+        p.on_tracks(std::slice::from_ref(&spec));
+        let negative = |index: i64| one_second_sample(&samples[0], &spec, index - NEGATIVE_SECONDS);
+        p.on_sample(spec.track_id, &negative(0), None);
+        assert_eq!(
+            buffer_events(&mut p),
+            vec![BufferEvent::Start { at_27mhz: 0 }],
+            "times are measured from the first kept sample, never clamped to a flat zero"
+        );
+        p.on_sample(spec.track_id, &negative(1), None);
+        let obs = p.obs.get(&spec.track_id).unwrap();
+        assert_eq!(obs.end, 2 * ONE_SECOND_TICKS);
+        p.on_position(Some(2 * ONE_SECOND_TICKS));
+        assert_eq!(
+            buffer_events(&mut p),
+            vec![BufferEvent::Pause {
+                hold_at_27mhz: 2 * ONE_SECOND_TICKS,
+                starving_track: Some(spec.track_id.value()),
+            }]
+        );
+    }
+
+    const NEGATIVE_SECONDS: i64 = 50_000;
 }

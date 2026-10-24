@@ -29,11 +29,22 @@ interleaved channels, or carries no `Transport`, fails the connection. `Event::T
 emitted before the first sample of every connection, `Event::Sample { join: None }` per access
 unit, `Status::Establishing` on connect and `Status::Live` at the first sample. An `OPTIONS`
 keepalive is sent at half the server's `Session` `timeout` (clamped to 5 s..3600 s, 30 s when none
-is declared); a non-success reply to it is ignored. A session-level `a=control` is the URL of PLAY, the
+is declared); a non-success reply to it is ignored. `Event::Discontinuity` is emitted only
+before the first sample of a connection that follows one that produced media (never for a connection
+that failed or was redirected before playing); the end of a connection that had played reports
+`Status::Reconnecting { attempt: 0 }` first. A session-level `a=control` is the URL of PLAY, the
 keepalive and TEARDOWN. `close()` sends `TEARDOWN` before `Close`.
 RTCP sender reports are forwarded to the depayloader; no receiver reports are sent. Sequence gaps
 drop the damaged access unit and the stream continues (`Session::rtp_loss_count`); a malformed RTP
 frame costs only itself (`Session::rtp_malformed_count`).
+
+A `301`/`302`/`303`/`307`/`308` answer to a request is followed to its `rtsp://` or `rtsps://`
+`Location` (never from `rtsps` to `rtsp`, at most `Config::max_redirects`; anything else, or a
+missing `Location`, fails the attempt): the session asks for a `TcpConnect` to the new host and
+port. Credentials follow only a redirect to the same scheme, host and port; to another authority
+they are dropped, and a 401/407 there fails the attempt. A later reconnect starts from the
+original URL. Digest `uri=` is the RTSP request URI in absolute form; for HTTP(S) requests it is
+the origin-form request target (path and query), as RFC 7616 section 3.4 requires.
 
 Credentials work as for HTTP (`Session::set_credentials`, Basic/Digest/Bearer through
 `rtsp-runtime`): a 401/407 without credentials reports `Event::AuthRequired` and
@@ -74,8 +85,9 @@ origin (the first sample of the first rendered video track, else audio; the mini
 tracks' media ends decides), at the end of the stream if it ends first; `Pause` when the playback
 position reported with `Session::on_playback_position` reaches `pause_lead_us` (default 0) of the
 buffered media and the stream has not ended; `Resume` once the lead past the held position reaches
-the resume lead, or at once when the stream ends while paused. A `Discontinuity`, `rejoin()` or
-variant switch resets the gate and `Start` fires again. Leads: `vod_start_lead_us` 1 s, live HLS
+the resume lead, or at once when the stream ends while paused. A position the host reported before
+`Start` is discarded at `Start`: report the position again only after applying `Start.at`. A `Discontinuity`, `rejoin()`,
+variant switch or `reconnect()` resets the gate and `Start` fires again from the new timeline. Leads: `vod_start_lead_us` 1 s, live HLS
 `min(3 x EXT-X-TARGETDURATION, live_start_lead_us)` with `live_start_lead_us` 6 s,
 `resume_lead_us` defaults to the start lead and is never less than `pause_lead_us` plus 1 us (a
 smaller value would pause and resume on every update). A `set_rendered_tracks` made before the gate
@@ -94,6 +106,16 @@ stream without video. Before the first sample of the new timeline the session em
 gate, so `Start`/`Resume` follows from the new timeline's media. B-frame reordering stays far inside
 the backward threshold. Applies to TS-over-HTTP, HLS (main and audio rendition) and RTSP.
 
+After a detected jump every other track delivers nothing until its first sample lies within
+`forward_slack_us` of the new timeline's first sample (trailing samples of the old timeline queued
+behind the late video sample are dropped, counted by `Session::stale_samples_dropped()`). A PCR
+discontinuity that coincides with a jump hints and re-arms once. A reconnect, a `Discontinuity`
+from a new connection or a jump re-arms the live join and the buffering controller (the reconnected
+stream waits for an IDR and `Start`/`Resume` follow from the new timeline). Buffer positions
+are the time stamps converted to 27 MHz; a timeline whose first kept sample has a negative time stamp
+(a jump whose unrolled timestamps go below zero) is measured from that sample, so `0` is the first
+kept sample and positions never clamp to a flat zero.
+
 ## Encrypted HLS
 
 `METHOD=AES-128` playlists are decrypted inside the session: the key request is a normal request
@@ -106,6 +128,24 @@ FairPlay/Widevine key formats, ...) is fatal immediately; `KeyFetchFailed`, `Bad
 goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbidden`.
 
 ## Host contract
+
+- Drive the session with `poll(now)` until it returns `None` and drain `next_event()` after EVERY callback
+  (`on_response`, `on_data`, `on_closed`, `on_connected`, `on_playback_position`, `set_credentials`,
+  `reconnect`): actions and events are produced inside the callbacks, not only by `poll`.
+- `on_response(conn, status, headers, now_us)` takes the host clock at which the response head
+  arrived, so a redirect or 401 replay after a long blocking reload gets a fresh deadline and cookie
+  `Max-Age` counts from the response.
+- Live TS gets `Event::Buffer` only if the host calls `on_playback_position(now, pos)` every display
+  tick (`pos` is `None` before `Start`). `Start.at_27mhz` / `Resume.at_27mhz` are the 27 MHz position the
+  player must set (the sample-time domain of the samples); a demuxer-level discontinuity (PCR
+  discontinuity flag, re-anchor) is invisible to the host except through these events, so `Resume.at`
+  can jump.
+- `Action::HttpRequest::byte_range` is `(offset, length)`, not `(start, end)`; the host builds
+  the `Range: bytes=offset-(offset+length-1)` header itself.
+- `Action::WakeAt(t)` means "poll at or after `t`"; the session drops one that is not after the `now` of
+  the poll that would return it.
+- HLS: the final (post-redirect) URL of a playlist response is the base of its relative segment, key
+  and map URIs (RFC 3986 section 5.1.3); credentials stay scoped to the session origin.
 
 - `Session::close()` is terminal: queued actions other than `Close` are dropped, every live connection gets
   exactly one `Close` (RTSP first queues a `Send` carrying `TEARDOWN` when a session was set up), then `poll` and `next_event` return

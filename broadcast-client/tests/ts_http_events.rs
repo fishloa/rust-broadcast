@@ -119,7 +119,7 @@ fn stall_gives_stalled_then_live_on_next_byte() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     session.on_data(conn, &bytes, 0);
     let _ = session.poll(10_000_000);
     let mut evs = Vec::new();
@@ -153,7 +153,7 @@ fn server_close_reconnects_with_discontinuity_before_first_sample() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     session.on_data(conn, &bytes[..4096], 0);
     session.on_closed(conn, None, 1000);
     let mut new_conn = None;
@@ -163,7 +163,7 @@ fn server_close_reconnects_with_discontinuity_before_first_sample() {
         }
     }
     let c = new_conn.unwrap();
-    session.on_response(c, status, &headers);
+    session.on_response(c, status, &headers, 1000);
     session.on_data(c, &bytes[..65536], 2000);
     let mut evs = Vec::new();
     while let Some(e) = session.next_event() {
@@ -181,7 +181,7 @@ fn not_found_status_and_keeps_retrying_at_cap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     let mut evs = Vec::new();
     while let Some(e) = session.next_event() {
         evs.push(e);
@@ -208,7 +208,7 @@ fn starved_event_passthrough() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     session.on_data(conn, &bytes, 0);
     while session.next_event().is_some() {}
     let _ = session.poll(10_000_000);
@@ -230,7 +230,7 @@ fn starved_event_passthrough() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, 200, &[]);
+    session.on_response(conn, 200, &[], 0);
     let mut null_packet = vec![0xFF; 188];
     null_packet[..4].copy_from_slice(&[0x47, 0x1F, 0xFF, 0x10]);
     session.on_data(conn, &null_packet, 10_000_000);
@@ -258,7 +258,7 @@ fn close_is_terminal_and_emits_close_once() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     session.close();
     let mut closes = 0;
     while let Some(a) = session.poll(0) {
@@ -281,7 +281,7 @@ fn unknown_conn_callbacks_ignored() {
         other => panic!("{other:?}"),
     };
     let unknown = conn.wrapping_add(998);
-    session.on_response(unknown, 200, &[]);
+    session.on_response(unknown, 200, &[], 0);
     session.on_data(unknown, &bytes[..4096], 0);
     session.on_closed(unknown, None, 1_000);
     session.on_closed(unknown, Some("reset".to_string()), 2_000);
@@ -301,7 +301,7 @@ fn unknown_conn_callbacks_ignored() {
     );
     assert!(session.next_event().is_none());
 
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 3_000);
     for chunk in bytes.chunks(65_536).take(8) {
         session.on_data(conn, chunk, 4_000);
     }

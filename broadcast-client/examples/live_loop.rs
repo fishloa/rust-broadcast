@@ -10,7 +10,7 @@ fn main() {
             broadcast_client::Action::HttpRequest { conn, .. } => {
                 opens += 1;
                 let bytes = include_bytes!("../../fixtures/ts/h264_aac.ts");
-                session.on_response(conn, 200, &[]);
+                session.on_response(conn, 200, &[], 0);
                 session.on_data(conn, bytes, 0);
             }
             broadcast_client::Action::Close { .. } => {}

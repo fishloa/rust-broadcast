@@ -309,6 +309,7 @@ fn parse_rfc3339_ms(text: &str) -> Option<i64> {
 #[derive(Debug)]
 pub struct HlsClient {
     playlist_url: String,
+    base_override: Option<String>,
     variant_policy: VariantPolicy,
     master: Option<MasterSelection>,
 
@@ -466,6 +467,7 @@ impl HlsClient {
         });
         Self {
             playlist_url,
+            base_override: None,
             variant_policy: VariantPolicy::default(),
             master: None,
             pending_actions,
@@ -513,6 +515,18 @@ impl HlsClient {
         &self.playlist_url
     }
 
+    /// Set the URL relative playlist URIs resolve against: the final URL of the next playlist
+    /// response after redirects (RFC 3986 section 5.1.3). Reloads keep requesting
+    /// [`HlsClient::playlist_url`]; the base is cleared when the client switches to another
+    /// playlist URL.
+    pub fn set_playlist_base(&mut self, base: impl Into<String>) {
+        self.base_override = Some(base.into());
+    }
+
+    fn base(&self) -> &str {
+        self.base_override.as_deref().unwrap_or(&self.playlist_url)
+    }
+
     /// Whether a playlist carrying `EXT-X-ENDLIST` has been processed (the stream is VOD or
     /// has finished).
     pub fn endlist_seen(&self) -> bool {
@@ -551,6 +565,7 @@ impl HlsClient {
         self.restart_after_regression()?;
         self.pending_actions.clear();
         self.playlist_url = url.clone();
+        self.base_override = None;
         self.pending_actions.push_back(Action::FetchPlaylist {
             url,
             blocking: None,
@@ -614,7 +629,7 @@ impl HlsClient {
         let text = core::str::from_utf8(bytes)?;
         if text.contains("#EXT-X-STREAM-INF") {
             let master = MasterPlaylist::parse(text)?;
-            let base = self.playlist_url.clone();
+            let base = self.base().to_string();
             let mut variants: Vec<VariantInfo> = Vec::new();
             for v in &master.variants {
                 variants.push(VariantInfo {
@@ -657,6 +672,7 @@ impl HlsClient {
                 return Err(Error::NoSuchVariant { index: chosen });
             };
             self.playlist_url = chosen_url.clone();
+            self.base_override = None;
             self.pending_actions.clear();
             self.pending_actions.push_back(Action::FetchPlaylist {
                 url: chosen_url,
@@ -777,7 +793,7 @@ impl HlsClient {
                     if !self.requested.contains(&id)
                         && !self.delivered_parts.contains(&(next_msn, part_idx))
                     {
-                        let url = url::resolve(&self.playlist_url, hint_uri);
+                        let url = url::resolve(self.base(), hint_uri);
                         let byte_range = self.resolve_hint_byte_range(&url, ll)?;
                         self.request_resource(id, url, byte_range);
                     }
@@ -1168,7 +1184,7 @@ impl HlsClient {
     /// Request key `uri` once per distinct URI; the id is stable for the life
     /// of the client.
     fn ensure_key_requested(&mut self, uri: &str) -> KeyId {
-        let url = url::resolve(&self.playlist_url, uri);
+        let url = url::resolve(self.base(), uri);
         let id = match self.key_ids.get(&url) {
             Some(id) => *id,
             None => {
@@ -1439,7 +1455,7 @@ impl HlsClient {
             }
             let id = ResourceId::Segment { msn };
             if !self.requested.contains(&id) {
-                let url = url::resolve(&self.playlist_url, &seg.uri);
+                let url = url::resolve(self.base(), &seg.uri);
                 let byte_range = self.resolve_byte_range(&url, &seg.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
@@ -1455,7 +1471,7 @@ impl HlsClient {
             fully_accounted = false;
             let id = ResourceId::Part { msn, part: i };
             if !self.requested.contains(&id) {
-                let url = url::resolve(&self.playlist_url, &part.uri);
+                let url = url::resolve(self.base(), &part.uri);
                 let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
@@ -1474,7 +1490,7 @@ impl HlsClient {
             }
             let id = ResourceId::Part { msn, part: i };
             if !self.requested.contains(&id) {
-                let url = url::resolve(&self.playlist_url, &part.uri);
+                let url = url::resolve(self.base(), &part.uri);
                 let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
@@ -1491,7 +1507,7 @@ impl HlsClient {
     /// that uses the map) unless that same init — URI *and* `BYTERANGE` — is
     /// already requested or held.
     fn request_init(&mut self, map: &MapTag, key: Option<&MediaKey>, first_msn: u64) -> Result<()> {
-        let url = url::resolve(&self.playlist_url, &map.uri);
+        let url = url::resolve(self.base(), &map.uri);
         if self.init_uri.as_deref() == Some(url.as_str()) && self.init_range == map.byte_range {
             return Ok(());
         }
@@ -1854,11 +1870,11 @@ impl HlsClient {
     /// parts is addressed by its parts' ranges, a plain one by its own).
     fn skip_segment(&mut self, msn: u64, seg: &MediaSegment) -> Result<()> {
         if seg.parts.is_empty() {
-            let url = url::resolve(&self.playlist_url, &seg.uri);
+            let url = url::resolve(self.base(), &seg.uri);
             self.resolve_byte_range(&url, &seg.byte_range)?;
         } else {
             for part in seg.parts.iter().filter(|p| !p.gap) {
-                let url = url::resolve(&self.playlist_url, &part.uri);
+                let url = url::resolve(self.base(), &part.uri);
                 self.resolve_byte_range(&url, &part.byte_range)?;
             }
         }
@@ -1887,7 +1903,7 @@ impl HlsClient {
         self.discontinuity_emitted.retain(|&m| m >= first);
 
         if playlist.skip.is_none() {
-            let base = &self.playlist_url;
+            let base = self.base();
             let mut live: BTreeSet<String> = BTreeSet::new();
             for seg in &playlist.segments {
                 live.insert(url::resolve(base, &seg.uri));

@@ -508,6 +508,10 @@ impl HlsSource {
                 self.release_ready(now);
             }
             Purpose::Key(id) => self.deliver_key(id, &req.body, now),
+            Purpose::Playlist => {
+                self.client.set_playlist_base(req.url.as_str());
+                self.deliver_now(Purpose::Playlist, &req.body, Some(req.original_url), now);
+            }
             purpose => self.deliver_now(purpose, &req.body, Some(req.original_url), now),
         }
     }

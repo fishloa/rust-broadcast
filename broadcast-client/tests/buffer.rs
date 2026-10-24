@@ -146,7 +146,7 @@ impl Host {
             Action::HttpRequest { conn, .. } => conn,
             other => panic!("unexpected first action {other:?}"),
         };
-        session.on_response(conn, status, &headers);
+        session.on_response(conn, status, &headers, 0);
         Self {
             session,
             conn,
@@ -798,7 +798,7 @@ fn reconnect(h: &mut Host, now: u64) {
         }
     }
     h.conn = new_conn.unwrap();
-    h.session.on_response(h.conn, status, &headers);
+    h.session.on_response(h.conn, status, &headers, now);
     h.drain(now);
 }
 
@@ -885,7 +885,7 @@ fn source_ended_and_error_hints() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    forbidden.on_response(conn, 403, &[]);
+    forbidden.on_response(conn, 403, &[], 0);
     assert_eq!(
         hints(forbidden.buffer_input_log())
             .into_iter()
@@ -1055,7 +1055,7 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, status, &headers);
+    session.on_response(conn, status, &headers, 0);
     let mut events = Vec::new();
     for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
         let now = i as u64 * STEP_US;
@@ -1363,7 +1363,8 @@ fn rejoin_clears_pending_ends() {
         }
     }
     h.conn = conn.unwrap();
-    h.session.on_response(h.conn, status, &headers);
+    h.session
+        .on_response(h.conn, status, &headers, 1_300 * STEP_US);
     h.data(&bytes[..CHUNK], 1_400 * STEP_US);
     let tail = media_reports(h.log())
         .into_iter()

@@ -7,7 +7,7 @@ fn main() {
             "WWW-Authenticate".to_string(),
             "Bearer realm=\"example\", resource_metadata=\"https://resource.example.com/.well-known/oauth-protected-resource\"".to_string(),
         )];
-        session.on_response(conn, 401, &headers);
+        session.on_response(conn, 401, &headers, 0);
     }
     while let Some(e) = session.next_event() {
         println!("event: {e:?}");

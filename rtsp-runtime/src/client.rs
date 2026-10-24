@@ -161,6 +161,8 @@ pub struct ClientSession {
     last_challenge: Option<String>,
     /// `Content-Base` (else `Content-Location`) of the most recent successful DESCRIBE response.
     content_base: Option<String>,
+    /// `Location` of the most recent redirection (3xx) response, cleared by any other response.
+    redirect_location: Option<String>,
 }
 
 impl Default for ClientSession {
@@ -192,6 +194,7 @@ impl ClientSession {
             skip_until: 0,
             last_challenge: None,
             content_base: None,
+            redirect_location: None,
         }
     }
 
@@ -341,6 +344,13 @@ impl ClientSession {
     /// `Content-Location`, else `None` (the caller then uses the request URI).
     pub fn content_base(&self) -> Option<&str> {
         self.content_base.as_deref()
+    }
+
+    /// The `Location` header of the most recent redirection (3xx) response, `None` when that
+    /// response carried none or the most recent response was not a redirection
+    /// (`ClientEvent::Response` carries no headers).
+    pub fn redirect_location(&self) -> Option<&str> {
+        self.redirect_location.as_deref()
     }
 
     // --- Request builders -------------------------------------------------
@@ -650,6 +660,12 @@ impl ClientSession {
                     self.negotiated_transport = Some(Transport::parse(t)?);
                 }
 
+                self.redirect_location = status
+                    .is_redirection()
+                    .then(|| header_value(response.header(&headers::LOCATION)))
+                    .flatten()
+                    .map(|v| v.trim().to_string());
+
                 if pending.method == Method::Describe && status.is_success() {
                     self.content_base = header_value(response.header(&headers::CONTENT_BASE))
                         .or_else(|| header_value(response.header(&headers::CONTENT_LOCATION)))
@@ -835,6 +851,18 @@ mod tests {
         assert!(s.contains("ANNOUNCE rtsp://h/s"));
         assert!(s.contains("Content-Type: application/sdp"));
         assert!(s.contains(sdp));
+    }
+
+    #[test]
+    fn redirect_location_is_taken_from_a_3xx_and_cleared_by_the_next_response() {
+        let mut c = ClientSession::new();
+        c.describe("rtsp://h/s").unwrap();
+        assert_eq!(c.redirect_location(), None);
+        let _ = c.handle_data(b"RTSP/1.0 302 Found\r\nCSeq: 1\r\nLocation: rtsp://other/s\r\n\r\n");
+        assert_eq!(c.redirect_location(), Some("rtsp://other/s"));
+        c.describe("rtsp://other/s").unwrap();
+        let _ = c.handle_data(b"RTSP/1.0 200 OK\r\nCSeq: 2\r\n\r\n");
+        assert_eq!(c.redirect_location(), None);
     }
 
     fn wire_401(challenge: &str) -> Vec<u8> {
