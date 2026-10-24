@@ -69,7 +69,7 @@ Failed requests retry with the `Config::hls_backoff_ms` schedule (2, 4, 8 s, the
 playlist; after `Status::Ended` of an HLS session `reconnect()`, `select_variant()` and
 `select_audio_rendition()` do nothing. Bodies are bounded (`max_playlist_bytes`, `max_segment_bytes`) and requests
 time out (`hls_request_timeout_us`, `hls_segment_timeout_us`). A byte-ranged segment must come back as
-`206` with a matching `Content-Range`, or as a `200` the range is sliced out of; anything else fails. Separate audio renditions are played by a second adapter
+`206` with a matching `Content-Range`, or as a `200` the range is sliced out of; anything else fails. Video samples carry a `join` decision (`JoinPoint` at the first random-access point, `Drop(_)` before it, `Keep` after; audio is `None`), so a mid-GOP join starts at an IDR and the host skips `Drop` samples exactly as for TS-over-HTTP. A TS-segment elementary stream that cannot be carried (SCTE-35, ID3 or private data, a subtitle without a sample entry) is reported once per track as a non-fatal `Event::Error { kind: ErrorKind::TrackDropped { track_id, stream_type }, fatal: false }`; a stream with no playable track reports those and ends. Separate audio renditions are played by a second adapter
 (`Config::auto_select_audio`, `Config::preferred_audio_language`, `Session::select_audio_rendition`);
 audio track ids are offset by `AUDIO_TRACK_ID_OFFSET` (1000; a main-playlist track at or above it is
 dropped and reported once as `ErrorKind::TrackIdReserved`), `Event::Tracks` carries the merged set

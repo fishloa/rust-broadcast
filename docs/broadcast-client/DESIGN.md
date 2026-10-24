@@ -513,3 +513,19 @@ the triggering sample) and by `Session::rejoin()`. Audio and other non-AVC/HEVC/
 BC-3b audio renditions) keep `join: None`. On a conformant PAT/IDR-aligned stream the first video sample is the
 join point and nothing is dropped, so the gate's behaviour is unchanged; after `Session::rejoin()` the gate
 now restarts at the next random-access point instead of the next video sample (the same rule as TS).
+
+### F4: HLS-TS tracks that cannot be muxed are reported
+
+`hls-runtime` re-muxes TS segments into fragmented MP4 and leaves out every elementary stream
+`!is_muxable_in_bmff` (opaque `Data` tracks: SCTE-35, ID3, private PES; subtitles without a sample entry).
+That used to be silent: a data-only stream reached `Status::Ended` with no samples and no explanation, and a
+stream with a PMT-listed data PID played without telling the host about the missing track. `hls-runtime` now
+emits an additive `Output::TrackDropped { track_id, stream_type }` from that branch of `drain_ts_demux`, and the
+HLS source turns each one into ONE non-fatal `Event::Error { kind: ErrorKind::TrackDropped { track_id,
+stream_type }, fatal: false }`, deduplicated by (remapped) track id for the life of the source. The existing
+`ErrorKind::UnsupportedCodec { fourcc }` was not reused: it names a codec by FourCC and is documented as a
+player-side kind, whereas these tracks have no FourCC (they are PMT stream types) and the host needs the track id
+to correlate. `ErrorKind` is `#[non_exhaustive]`; the new kind has `name()` `"track_dropped"` and `Display`
+via `impl_spec_display!`. Media of the muxable tracks flows unchanged. Audio renditions report the remapped id
+(`id + AUDIO_TRACK_ID_OFFSET`). Evidence: `fixtures/ts/scte35-other-pid.ts` (data-only) reports its data tracks
+and ends; the TF1 capture's two `stream_type` 0x06 tracks yield two reports while video and audio play.

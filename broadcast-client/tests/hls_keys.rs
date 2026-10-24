@@ -807,6 +807,13 @@ fn error_kind_names_are_stable() {
             },
             "unsupported_codec",
         ),
+        (
+            ErrorKind::TrackDropped {
+                track_id: 0,
+                stream_type: None,
+            },
+            "track_dropped",
+        ),
     ];
     for (kind, name) in cases {
         assert_eq!(kind.name(), name);

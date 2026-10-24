@@ -1704,6 +1704,14 @@ impl HlsClient {
                         self.ts_specs.insert(spec.track_id, spec);
                     } else {
                         self.ts_specs.remove(&spec.track_id);
+                        let stream_type = match &spec.config {
+                            transmux::CodecConfig::Data { stream_type, .. } => Some(*stream_type),
+                            _ => None,
+                        };
+                        self.pending_outputs.push_back(Output::TrackDropped {
+                            track_id: spec.track_id,
+                            stream_type,
+                        });
                     }
                 }
                 DemuxEvent::TrackRemoved { track_id, .. } => {

@@ -1,6 +1,6 @@
 mod support;
 
-use broadcast_client::{Event, Status};
+use broadcast_client::{ErrorKind, Event, Status};
 use support::hls_host::{Host, hls_config};
 use support::ts_split::split_at_pat;
 
@@ -36,16 +36,51 @@ fn errors(events: &[Event]) -> Vec<&Event> {
         .collect()
 }
 
+fn dropped(events: &[Event]) -> Vec<(u32, Option<u8>)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Error {
+                kind:
+                    ErrorKind::TrackDropped {
+                        track_id,
+                        stream_type,
+                    },
+                fatal: false,
+            } => Some((*track_id, *stream_type)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn unmuxable_tracks(ts: &[u8]) -> Vec<(u32, Option<u8>)> {
+    use broadcast_common::Unpackage;
+    let media = transmux::TsDemux::new().unpackage(ts).unwrap();
+    media
+        .tracks
+        .iter()
+        .filter(|t| !t.spec.config.is_muxable_in_bmff())
+        .map(|t| {
+            let st = match &t.spec.config {
+                transmux::CodecConfig::Data { stream_type, .. } => Some(*stream_type),
+                _ => None,
+            };
+            (t.spec.track_id.value(), st)
+        })
+        .collect()
+}
+
 #[test]
 fn a_data_only_hls_ts_stream_reports_each_dropped_track_then_ends() {
     let data = test_fixtures::read("ts/scte35-other-pid.ts");
+    let expected = unmuxable_tracks(&data);
+    assert!(!expected.is_empty());
     let events = play(vec![data]);
     let errs = errors(&events);
-    assert!(!errs.is_empty(), "nothing told the host why no media came");
-    assert!(
-        errs.iter()
-            .all(|e| matches!(e, Event::Error { fatal: false, .. }))
-    );
+    assert_eq!(errs.len(), expected.len(), "{errs:?}");
+    let mut got = dropped(&events);
+    got.sort_unstable();
+    assert_eq!(got, expected);
     assert!(
         events
             .iter()
@@ -55,7 +90,7 @@ fn a_data_only_hls_ts_stream_reports_each_dropped_track_then_ends() {
 }
 
 #[test]
-fn a_dropped_data_track_is_reported_once_while_media_keeps_flowing() {
+fn each_dropped_data_track_is_reported_once_while_media_keeps_flowing() {
     let Some(bytes) = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "r5_hls_dropped")
     else {
         return;
@@ -65,12 +100,17 @@ fn a_dropped_data_track_is_reported_once_while_media_keeps_flowing() {
         .find(|&o| (0..5).all(|k| prefix.get(o + k * 188) == Some(&0x47)))
         .unwrap();
     let usable = (prefix.len() - first_sync) / 188 * 188;
-    let events = play(split_at_pat(
-        &prefix[first_sync..first_sync + usable],
-        TF1_SEGMENTS,
-    ));
+    let ts = &prefix[first_sync..first_sync + usable];
+    let expected = unmuxable_tracks(ts);
+    assert!(!expected.is_empty());
+    let events = play(split_at_pat(ts, TF1_SEGMENTS));
     let errs = errors(&events);
-    assert_eq!(errs.len(), 1, "{errs:?}");
-    assert!(matches!(errs[0], Event::Error { fatal: false, .. }));
+    assert_eq!(errs.len(), expected.len(), "{errs:?}");
+    let mut got = dropped(&events);
+    got.sort_unstable();
+    assert_eq!(
+        got, expected,
+        "one report per dropped track, not per segment"
+    );
     assert!(events.iter().any(|e| matches!(e, Event::Sample { .. })));
 }

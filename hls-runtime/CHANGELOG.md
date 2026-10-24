@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (round-5 audit)
+- `Output::TrackDropped { track_id, stream_type }` (additive; `Output` is `#[non_exhaustive]`): a TS-segment elementary stream that cannot be carried in fragmented MP4 (`!is_muxable_in_bmff`, e.g. SCTE-35/ID3/private data) is no longer dropped silently. Emitted each time the demuxer announces the track; a consumer reporting it deduplicates by `track_id`.
+
 ### Fixed (live TS-HLS emitted nothing)
 - A TS segment carrying an opaque PES data track (e.g. `stream_type` 0x06 private data) made the synthesized init fail with `UnmuxableDataTrack`, so every segment was rejected and a live playlist retried forever with no `Tracks`/`Samples`. Tracks `build_init_segment` cannot carry (`!is_muxable_in_bmff`) are now left out of the track set, the synthesized init and the emitted samples.
 
