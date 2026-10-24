@@ -121,15 +121,12 @@ fn build(pmt: &Pmt, es: &[Es], version: u8, cc: u8) -> Vec<u8> {
     p
 }
 
-pub fn rewrite(
-    bytes: &[u8],
-    pmt: &Pmt,
-    plan: &dyn Fn(f64) -> Option<(Vec<Es>, u8)>,
-) -> Vec<u8> {
+pub fn rewrite(bytes: &[u8], pmt: &Pmt, plan: &dyn Fn(f64) -> Option<(Vec<Es>, u8)>) -> Vec<u8> {
     let n = bytes.len() / PACKET;
     let mut out = Vec::with_capacity(bytes.len());
     for (i, p) in bytes.chunks_exact(PACKET).enumerate() {
-        if pid_of(p) == pmt.pid && p[1] & PUSI != 0
+        if pid_of(p) == pmt.pid
+            && p[1] & PUSI != 0
             && let Some((es, version)) = plan(i as f64 / n as f64)
         {
             out.extend(build(pmt, &es, version, p[3]));

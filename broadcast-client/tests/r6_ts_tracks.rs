@@ -88,10 +88,12 @@ fn run_declared(declared: Option<&[u32]>) -> Host {
 }
 
 fn samples_before_start(host: &Host) -> Option<usize> {
-    let start = host
-        .log
-        .iter()
-        .position(|e| matches!(e, Event::Buffer(broadcast_client::BufferEvent::Start { .. })))?;
+    let start = host.log.iter().position(|e| {
+        matches!(
+            e,
+            Event::Buffer(broadcast_client::BufferEvent::Start { .. })
+        )
+    })?;
     Some(
         host.log[..start]
             .iter()
@@ -104,7 +106,10 @@ fn samples_before_start(host: &Host) -> Option<usize> {
 fn declaring_only_an_unknown_track_neither_blocks_start_nor_registers_it() {
     let baseline = run_declared(None);
     let host = run_declared(Some(&[999]));
-    assert!(samples_before_start(&baseline).is_some(), "baseline never started");
+    assert!(
+        samples_before_start(&baseline).is_some(),
+        "baseline never started"
+    );
     assert_eq!(samples_before_start(&host), samples_before_start(&baseline));
     assert!(
         !registrations(&host).iter().any(|r| r.contains("999")),
@@ -119,7 +124,10 @@ fn an_unknown_id_beside_a_real_one_is_ignored_and_reported_once() {
     let host = run_declared(Some(&[1, 999]));
     let video_only = run_declared(Some(&[1]));
     assert!(samples_before_start(&host).is_some());
-    assert_eq!(samples_before_start(&host), samples_before_start(&video_only));
+    assert_eq!(
+        samples_before_start(&host),
+        samples_before_start(&video_only)
+    );
     assert!(!registrations(&host).iter().any(|r| r.contains("999")));
     assert_eq!(unknown_reports(&host), vec![999]);
     assert!(unknown_reports(&video_only).is_empty());

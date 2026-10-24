@@ -104,11 +104,10 @@ mod tests {
             .filter(|d| matches!(d, JoinDecision::JoinPoint(_)))
             .count();
         assert_eq!(joins, 1);
-        assert!(
-            decisions[first_kept + 1..]
-                .iter()
-                .all(|d| matches!(d, JoinDecision::Keep | JoinDecision::Drop(DropReason::LeadingPicture)))
-        );
+        assert!(decisions[first_kept + 1..].iter().all(|d| matches!(
+            d,
+            JoinDecision::Keep | JoinDecision::Drop(DropReason::LeadingPicture)
+        )));
     }
 
     #[test]

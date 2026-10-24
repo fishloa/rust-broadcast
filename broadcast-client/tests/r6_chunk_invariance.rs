@@ -3,7 +3,6 @@ mod support;
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
 use support::replay::TS_PACKET;
 
-
 const PRIVATE_FILES: &[&str] = &[
     "zenith-live/tf-1-8MB.ts",
     "zenith-live/arte-8MB.ts",
@@ -173,7 +172,11 @@ fn first_difference(a: &[Rec], b: &[Rec]) -> String {
 
 fn check(name: &str, bytes: &[u8]) {
     let bytes = &bytes[..bytes.len() / TS_PACKET * TS_PACKET];
-    for clock in [Clock::Fixed, Clock::Paced(FAST_LINK_BPS), Clock::Paced(LIVE_RATE_BPS)] {
+    for clock in [
+        Clock::Fixed,
+        Clock::Paced(FAST_LINK_BPS),
+        Clock::Paced(LIVE_RATE_BPS),
+    ] {
         let mut reference: Option<(String, Vec<Rec>)> = None;
         let mut cases: Vec<(String, Box<dyn FnMut() -> usize>)> = Vec::new();
         for &c in FIXED_CHUNKS {
@@ -183,7 +186,9 @@ fn check(name: &str, bytes: &[u8]) {
             let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
             cases.push((
                 format!("random seed {seed}"),
-                Box::new(move || (TS_PACKET as u64 * (1 + rng.next() % MAX_RANDOM_PACKETS)) as usize),
+                Box::new(move || {
+                    (TS_PACKET as u64 * (1 + rng.next() % MAX_RANDOM_PACKETS)) as usize
+                }),
             ));
         }
         for (label, mut sizes) in cases {
@@ -193,7 +198,12 @@ fn check(name: &str, bytes: &[u8]) {
                 continue;
             };
             let (ri, gi) = (invariant_part(r), invariant_part(&got));
-            assert_eq!(ri, gi, "{name}: {rl} vs {label}: {}", first_difference(&ri, &gi));
+            assert_eq!(
+                ri,
+                gi,
+                "{name}: {rl} vs {label}: {}",
+                first_difference(&ri, &gi)
+            );
             assert_eq!(
                 final_tracks(r),
                 final_tracks(&got),

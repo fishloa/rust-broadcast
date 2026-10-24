@@ -73,7 +73,8 @@ pub(crate) fn parse_tracks(
     let mut tracks: Vec<TrackInit> = Vec::new();
     let mut skipped: Vec<SkippedMedia> = Vec::new();
     for (media_index, media) in session.medias.iter().enumerate() {
-        let skip = |skipped: &mut Vec<SkippedMedia>| skipped.push(skipped_media(media_index, media));
+        let skip =
+            |skipped: &mut Vec<SkippedMedia>| skipped.push(skipped_media(media_index, media));
         if tracks.len() >= MAX_TRACKS {
             skip(&mut skipped);
             continue;

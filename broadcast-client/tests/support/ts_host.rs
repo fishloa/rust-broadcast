@@ -42,7 +42,9 @@ impl Host {
         }
         while let Some(e) = self.session.next_event() {
             match &e {
-                Event::Buffer(BufferEvent::Start { at_27mhz } | BufferEvent::Resume { at_27mhz }) => {
+                Event::Buffer(
+                    BufferEvent::Start { at_27mhz } | BufferEvent::Resume { at_27mhz },
+                ) => {
                     self.playing = Some((*at_27mhz, self.now));
                     self.held = None;
                 }

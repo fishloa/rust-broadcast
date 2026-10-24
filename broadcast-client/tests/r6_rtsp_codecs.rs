@@ -9,7 +9,8 @@ use transmux::rtp::RtpMediaKind;
 
 const PCMA_STATIC_PAYLOAD: u8 = 8;
 const HEVC_PAYLOAD: u8 = 96;
-const HEVC_SPROP: &str = "96 sprop-vps=QAEMAf//AWAAAAMAgAAAAwAAAwB4lcwJ;sprop-sps=QgEBAWAAAAMAgAAAAwAAAwB4oAeCAFB/FliZ";
+const HEVC_SPROP: &str =
+    "96 sprop-vps=QAEMAf//AWAAAAMAgAAAAwAAAwB4lcwJ;sprop-sps=QgEBAWAAAAMAgAAAAwAAAwB4oAeCAFB/FliZ";
 const IDLE_SECS: u64 = 120;
 
 fn fixture() -> &'static MediaFixture {
@@ -70,11 +71,7 @@ fn dropped(events: &[Event]) -> Vec<u32> {
 fn an_hevc_only_sdp_ends_with_one_fatal_unsupported_codec_and_no_reconnect_loop() {
     let mut session = parsed();
     session.medias = vec![hevc_media()];
-    let mut host = Host::new(
-        BASE_URL,
-        Config::default(),
-        Server::new(&write(&session)),
-    );
+    let mut host = Host::new(BASE_URL, Config::default(), Server::new(&write(&session)));
     host.connect();
     host.advance(IDLE_SECS * SEC);
     host.advance(IDLE_SECS * SEC);
@@ -110,11 +107,7 @@ fn an_hevc_only_sdp_ends_with_one_fatal_unsupported_codec_and_no_reconnect_loop(
 fn an_unplayable_media_line_beside_a_playable_one_is_reported_once_and_the_rest_plays() {
     let mut session = parsed();
     session.medias.push(pcma_media());
-    let mut host = Host::new(
-        BASE_URL,
-        Config::default(),
-        Server::new(&write(&session)),
-    );
+    let mut host = Host::new(BASE_URL, Config::default(), Server::new(&write(&session)));
     host.connect();
     host.deliver_all(&fixture().frames());
     host.advance(SEC);
@@ -145,11 +138,7 @@ fn an_unplayable_media_line_beside_a_playable_one_is_reported_once_and_the_rest_
 
 #[test]
 fn a_reconnect_to_a_server_that_dropped_a_track_announces_only_the_new_tracks() {
-    let mut host = Host::new(
-        BASE_URL,
-        Config::default(),
-        Server::new(&fixture().sdp),
-    );
+    let mut host = Host::new(BASE_URL, Config::default(), Server::new(&fixture().sdp));
     host.connect();
     host.deliver_all(&fixture().frames());
     host.advance(SEC);
