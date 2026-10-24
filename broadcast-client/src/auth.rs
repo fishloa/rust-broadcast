@@ -8,7 +8,11 @@ use url::Url;
 use broadcast_auth::challenge::parse_challenges;
 use broadcast_auth::{Authenticator, Credentials};
 
+use crate::cookies::CookieJar;
+use crate::headers;
 use crate::{Event, Status};
+
+const COOKIE: &str = "Cookie";
 
 /// Result of handling a 401/407.
 #[non_exhaustive]
@@ -27,11 +31,13 @@ pub struct AuthState {
     authenticator: Option<Authenticator>,
     last_challenge: Option<String>,
     waiting: bool,
+    jar: CookieJar,
 }
 
 impl AuthState {
     /// Create auth state.
     pub fn new(origin: Url, extra_headers: Vec<(String, String)>) -> Self {
+        let jar = CookieJar::new(origin.origin());
         Self {
             origin,
             extra_headers,
@@ -39,7 +45,23 @@ impl AuthState {
             authenticator: None,
             last_challenge: None,
             waiting: false,
+            jar,
         }
+    }
+
+    /// Seed the jar with cookies sent to the origin on path `/`.
+    pub fn seed_cookies(&mut self, cookies: &[(String, String)]) {
+        self.jar.seed(cookies);
+    }
+
+    /// Store the `Set-Cookie` lines of a response; ignored unless the response is from the origin.
+    pub fn receive_cookies(&mut self, url: &Url, headers: &[(String, String)], now_us: u64) {
+        self.jar.receive(url, headers, now_us);
+    }
+
+    /// Live cookies as `(name, value)` for persistence.
+    pub fn cookies(&self, now_us: u64) -> Vec<(String, String)> {
+        self.jar.export(now_us)
     }
 
     /// Origin.
@@ -65,11 +87,21 @@ impl AuthState {
     }
 
     /// Request headers for a URL.
-    pub fn request_headers(&mut self, url: &Url) -> Vec<(String, String)> {
-        let mut headers = self.extra_headers.clone();
-        if url.origin() == self.origin.origin()
-            && let Some(creds) = &self.credentials
-        {
+    pub fn request_headers(&mut self, url: &Url, now_us: u64) -> Vec<(String, String)> {
+        let same_origin = url.origin() == self.origin.origin();
+        let mut headers: Vec<(String, String)> = if same_origin {
+            self.extra_headers
+                .iter()
+                .filter(|(k, _)| !headers::is_reserved(k))
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if let Some(cookie) = self.jar.header_for(url, now_us) {
+            headers.push((COOKIE.to_string(), cookie));
+        }
+        if let Some(creds) = self.credentials.as_ref().filter(|_| same_origin) {
             match creds {
                 Credentials::Bearer { token } => {
                     headers.push(("Authorization".to_string(), format!("Bearer {token}")));
@@ -182,6 +214,7 @@ impl core::fmt::Debug for AuthState {
             .field("waiting", &self.waiting)
             .field("has_credentials", &self.credentials.is_some())
             .field("has_authenticator", &self.authenticator.is_some())
+            .field("jar", &self.jar)
             .finish_non_exhaustive()
     }
 }

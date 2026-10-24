@@ -616,7 +616,7 @@ Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP sou
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`buffering-runtime`](#buffering-runtime), [`hls-runtime`](#hls-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
 - **Used by (workspace):** none
-- **Links:** [README](../broadcast-client/README.md)
+- **Links:** [README](../broadcast-client/README.md) · [spec transcriptions](../broadcast-client/docs/)
 
 ### Servers, runtimes and tools
 

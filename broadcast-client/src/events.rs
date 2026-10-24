@@ -277,7 +277,7 @@ pub const DEFAULT_HLS_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
 pub const DEFAULT_HLS_BACKOFF_CAP_MS: u64 = 10_000;
 
 /// Session configuration.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Config {
     /// Source kind.
     pub kind: SourceKind,
@@ -285,8 +285,12 @@ pub struct Config {
     pub ts_http: tshttp_runtime::Config,
     /// Maximum redirects per open (per request for HLS).
     pub max_redirects: u32,
-    /// Extra headers (reserved).
+    /// Custom request headers, sent only to the session origin. `Authorization`, `Cookie`, `Host`,
+    /// `Content-Length`, `Transfer-Encoding`, `Connection` and `Range` are reserved and rejected
+    /// by [`crate::Session::open`].
     pub extra_headers: Vec<(String, String)>,
+    /// Cookies sent to the session origin on path `/` (see [`crate::Session::cookies`]).
+    pub initial_cookies: Vec<(String, String)>,
     /// Buffer controller config.
     pub buffer: buffering_runtime::ControllerConfig,
     /// HLS variant selection policy.
@@ -312,6 +316,7 @@ impl Default for Config {
             ts_http: tshttp_runtime::Config::default(),
             max_redirects: 5,
             extra_headers: Vec::new(),
+            initial_cookies: Vec::new(),
             buffer: buffering_runtime::ControllerConfig::default(),
             variant_policy: hls_runtime::client::VariantPolicy::default(),
             max_playlist_bytes: DEFAULT_MAX_PLAYLIST_BYTES,
@@ -321,5 +326,26 @@ impl Default for Config {
             hls_backoff_ms: DEFAULT_HLS_BACKOFF_MS.to_vec(),
             hls_backoff_cap_ms: DEFAULT_HLS_BACKOFF_CAP_MS,
         }
+    }
+}
+
+impl core::fmt::Debug for Config {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let header_names: Vec<&str> = self.extra_headers.iter().map(|(k, _)| k.as_str()).collect();
+        f.debug_struct("Config")
+            .field("kind", &self.kind)
+            .field("ts_http", &self.ts_http)
+            .field("max_redirects", &self.max_redirects)
+            .field("extra_header_names", &header_names)
+            .field("initial_cookies", &self.initial_cookies.len())
+            .field("buffer", &self.buffer)
+            .field("variant_policy", &self.variant_policy)
+            .field("max_playlist_bytes", &self.max_playlist_bytes)
+            .field("max_segment_bytes", &self.max_segment_bytes)
+            .field("hls_request_timeout_us", &self.hls_request_timeout_us)
+            .field("hls_segment_timeout_us", &self.hls_segment_timeout_us)
+            .field("hls_backoff_ms", &self.hls_backoff_ms)
+            .field("hls_backoff_cap_ms", &self.hls_backoff_cap_ms)
+            .finish()
     }
 }

@@ -69,6 +69,7 @@ pub fn hls_config() -> Config {
 #[derive(Debug, Clone)]
 pub enum Reply {
     Ok(Vec<u8>),
+    OkHeaders(Vec<u8>, Vec<(String, String)>),
     Status(u16),
     Redirect(String),
     TransportError,
@@ -194,6 +195,13 @@ impl Host {
         match reply {
             Reply::Ok(body) => {
                 self.session.on_response(conn, 200, &[]);
+                for chunk in body.chunks(self.chunk.max(1)) {
+                    self.session.on_data(conn, chunk, self.now);
+                }
+                self.session.on_closed(conn, None, self.now);
+            }
+            Reply::OkHeaders(body, headers) => {
+                self.session.on_response(conn, 200, &headers);
                 for chunk in body.chunks(self.chunk.max(1)) {
                     self.session.on_data(conn, chunk, self.now);
                 }

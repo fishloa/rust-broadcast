@@ -11,6 +11,7 @@ use crate::Hint;
 use crate::auth::AuthState;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, Event, SourceKind};
+use crate::headers;
 use crate::redirect;
 use crate::source::hls::HlsSource;
 use crate::source::ts_http::TsHttpSource;
@@ -59,8 +60,11 @@ impl Session {
             SourceKind::Auto => has_playlist_extension(&parsed),
             _ => false,
         };
+        headers::validate(&config.extra_headers)?;
+        headers::validate_cookies(&config.initial_cookies)?;
         let buffer_cfg = config.buffer;
-        let auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
+        let mut auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
+        auth.seed_cookies(&config.initial_cookies);
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
         let hls = use_hls.then(|| Box::new(HlsSource::new(&parsed, &config)));
         Ok(Self {
@@ -125,6 +129,7 @@ impl Session {
         let Some(req_url) = self.known_conns.get(&conn).cloned() else {
             return;
         };
+        self.auth.receive_cookies(&req_url, headers, self.now_us);
         let had_auth = self.conn_auth.get(&conn).copied().unwrap_or(false);
 
         if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
@@ -143,7 +148,7 @@ impl Session {
                 }
                 self.actions.push_back(Action::Close { conn });
                 let new_conn = self.alloc_conn(target.clone());
-                let new_headers = self.auth.request_headers(&target);
+                let new_headers = self.auth.request_headers(&target, self.now_us);
                 let authed = new_headers
                     .iter()
                     .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
@@ -173,7 +178,7 @@ impl Session {
                 crate::auth::AuthDecision::Replay => {
                     let target = self.source.url().clone();
                     let new_conn = self.alloc_conn(target.clone());
-                    let new_headers = self.auth.request_headers(&target);
+                    let new_headers = self.auth.request_headers(&target, self.now_us);
                     let authed = new_headers
                         .iter()
                         .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
@@ -288,6 +293,12 @@ impl Session {
                 self.drain_source();
             }
         }
+    }
+
+    /// Live cookies as `(name, value)` pairs, for the host to persist and pass back as
+    /// `Config::initial_cookies`. The values are secrets.
+    pub fn cookies(&self) -> Vec<(String, String)> {
+        self.auth.cookies(self.now_us)
     }
 
     /// Caller-initiated reconnect.
@@ -476,7 +487,7 @@ impl Session {
                 self.redirect_count = 0;
                 let target = self.source.url().clone();
                 let conn = self.alloc_conn(target.clone());
-                let headers = self.auth.request_headers(&target);
+                let headers = self.auth.request_headers(&target, self.now_us);
                 let authed = headers
                     .iter()
                     .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));

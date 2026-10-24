@@ -11,13 +11,13 @@ fn origin_scoped_request_headers() {
     let mut auth = AuthState::new(origin, vec![]);
     auth.set_credentials(Credentials::bearer("secret-token"));
     let same = Url::parse("http://example/other.ts").unwrap();
-    let h = auth.request_headers(&same);
+    let h = auth.request_headers(&same, 0);
     assert!(
         h.iter()
             .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer secret-token")
     );
     let other = Url::parse("http://other.example/live.ts").unwrap();
-    let h2 = auth.request_headers(&other);
+    let h2 = auth.request_headers(&other, 0);
     assert!(
         !h2.iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))

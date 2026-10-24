@@ -439,7 +439,9 @@ dependencies = [
  "broadcast-auth",
  "broadcast-common",
  "buffering-runtime",
+ "cookie",
  "hls-runtime",
+ "http",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -807,6 +809,16 @@ dependencies = [
  "mpeg-ts",
  "st377-1",
  "test-alloc",
+]
+
+[[package]]
+name = "cookie"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+dependencies = [
+ "time",
+ "version_check",
 ]
 
 [[package]]

@@ -6,8 +6,10 @@ extern crate alloc;
 
 pub mod auth;
 mod buffer;
+mod cookies;
 pub mod error;
 pub mod events;
+mod headers;
 pub mod redirect;
 pub mod session;
 pub mod source;

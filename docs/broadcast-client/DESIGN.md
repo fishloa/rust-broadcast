@@ -35,7 +35,7 @@ Session::close()                                         // terminal; Close for 
 `ConnId` is `u32` allocated by the session. `now_us` is caller monotonic microseconds.
 
 `Config { kind: SourceKind(Auto|TsHttp), ts_http: tshttp_runtime::Config, max_redirects: 5,
-extra_headers: vec![] (reserved for #1458) }`. `Auto` for an `http(s)` URL = TsHttp in BC-1 (HLS added in BC-3
+extra_headers: vec![], initial_cookies: vec![] (#1458) }`. `Auto` for an `http(s)` URL = TsHttp in BC-1 (HLS added in BC-3
 by extension `.m3u8`). Other schemes: `Error::UnsupportedScheme`.
 
 ```
@@ -177,3 +177,13 @@ Tests (BC-2) compare the session against a bare `BufferController` oracle fed th
 - A 401/407 from a host other than the session origin is an ordinary failed request (never answered with credentials).
 - hls-runtime accepts unrecognised segment bytes without error (no samples, stream still ends); only playlist parse/UTF-8 errors, demux errors on corrupt init-bound data, and duplicate/unrequested deliveries surface as `Err` and become failures.
 - hls-runtime fix made with BC-3a: `EndOfStream` now also waits until every segment of the last playlist is delivered (a failed segment under ENDLIST no longer ends the stream early). Known remaining limitation: after an `on_resource` error, `on_error(Some(id))` decrements the outstanding-fetch counter a second time.
+
+## BC cookies/headers (#1458)
+
+Binding spec: `broadcast-client/docs/cookies.md` (RFC 6265 verbatim plus the first-slice decisions). Summary of what is built:
+
+- `src/cookies.rs`: host-only jar scoped to the session origin; `Domain` and `Expires` ignored; default-path and path-match per RFC 6265 5.1.4; `Secure` only on https; `Max-Age` relative to the `now_us` of the response (<= 0 deletes, expiry is exclusive: gone at `stored_at + max_age`); same name+path replaces in place; `Cookie` header ordered longest path first, then storage order; at most 50 cookies (oldest evicted) and 4096 bytes of name+value per cookie. `Set-Cookie` lines are parsed with the `cookie` crate; every `Set-Cookie` line of any status (401 and 3xx included) is processed, but only for responses of the session origin.
+- The jar lives in `AuthState`, the single layer every request passes through (`request_headers(url, now_us)`), so the TS-HTTP and HLS adapters share it: playlists, segments, reconnects and in-origin redirects carry the cookies; requests to another origin carry no cookie, no extra header and no `Authorization`.
+- `Config::initial_cookies` seed the jar (path `/`); `Session::cookies()` exports the live `(name, value)` pairs for the host to persist. Values are secrets: `Debug` of `Config`, `Session`, `AuthState` never prints them.
+- `Config::extra_headers` are validated in `Session::open` with `http::HeaderName`/`HeaderValue` (`Error::InvalidHeader`), reserved names `Authorization`, `Cookie`, `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Range` are `Error::ReservedHeader`. Order sent: extra headers in the given order, then `Cookie`, then `Authorization`. `initial_cookies` with an invalid name/value are `Error::InvalidHeader`.
+- Not covered: HLS key requests (`EXT-X-KEY`, #1459) do not exist yet; when they do they go through the same `request_headers` path.

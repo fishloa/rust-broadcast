@@ -19,6 +19,17 @@ Failed requests retry with the `Config::hls_backoff_ms` schedule (2, 4, 8 s, the
 time out (`hls_request_timeout_us`, `hls_segment_timeout_us`). Separate audio/subtitle renditions
 and `Event::Buffer` for HLS are not implemented.
 
+## Cookies and custom headers
+
+Responses of the session origin may set cookies (`Set-Cookie`, any status including 401 and 3xx);
+the jar is host-only and scoped to the origin, honours `Path` (RFC 6265 path-match), `Secure` and
+`Max-Age` (relative to the session clock) and ignores `Domain` and `Expires`. Cookies ride on every
+request to the origin (TS-HTTP and HLS playlists, segments, reconnects) and never to another origin.
+Seed with `Config::initial_cookies`; persist with `Session::cookies()` (values are secrets, never in
+`Debug`). `Config::extra_headers` are sent only to the origin and validated at `Session::open`
+(`Error::InvalidHeader`; `Authorization`, `Cookie`, `Host`, `Content-Length`, `Transfer-Encoding`,
+`Connection`, `Range` are `Error::ReservedHeader`).
+
 ## Quick start
 
 ```rust
