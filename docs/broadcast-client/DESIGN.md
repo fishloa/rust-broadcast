@@ -546,22 +546,33 @@ announcements). The source now HOLDS the first media of every connection: from t
 events) without delivering them, and releases them behind ONE `Event::Tracks` carrying every track resolved so
 far. Release happens when the first of these holds:
 
-1. every PMT-declared elementary stream has resolved: a shadow PAT/PMT reader (`source/ts_http_hold.rs`:
+1. every PMT-declared elementary stream has resolved, or every declared stream that has SENT DATA has resolved
+   and the settle has elapsed: a shadow PAT/PMT reader (`source/ts_http_hold.rs`:
    `mpeg_ts::resync::TsResync` + `dvb_si::demux::SiDemux`, fed only until release) learns the programmes the PAT
-   lists, the elementary PIDs their PMTs declare (all programmes: the demuxer demuxes all of them), and a stream
-   counts as resolved when the demuxer reports `TrackAdded`/`TrackUpdated` with that `source_pid` or a
-   `TrackAbandoned` with that PID; the PAT must also have had every listed PMT seen;
+   lists, the elementary PIDs their PMTs declare (all programmes: the demuxer demuxes all of them) and the PIDs
+   that carried at least one payload packet (`sent`); a stream counts as resolved when the demuxer reports
+   `TrackAdded`/`TrackUpdated` with that `source_pid` or a `TrackAbandoned` with that PID; the PAT must also have
+   had every listed PMT seen. A declared PID that has sent nothing is never waited for (the declared-but-silent
+   data PIDs of the real zenith channels: stream_type 0, 11, 12 on rai-gulp, rai-news-24 and arte, each of which
+   cost every channel the whole wall limit before). `SETTLE_US` (500 ms) is how long a stream that has not
+   sent yet is still waited for: it is counted from the later of the hold's start and the last resolution, as
+   media time (largest per-track pts span among held samples) OR session-clock time, whichever passes first,
+   and armed through `next_deadline_us`/`WakeAt`. Measured gaps between consecutive resolutions: audio resolves
+   0.48 s of media after the first video in `ts/h264_aac_40s.ts`, 0.32 s in `ts/france2.ts`, 0.16 s in the TF1
+   capture, 0.32 s (rai-gulp) and 0.21 s (rai-news-24); the slowest sparse stream_type 6 PID resolves 0.44 s
+   after the previous one (`ts/france2.ts`). A stream that has sent but not resolved (scrambled, sparse) is
+   waited for until a limit below;
 2. a limit, counted from the first media of the connection: `HOLD_QUIET_INPUT_BYTES` (512 KiB of input with no
    further stream resolving: the scrambled `csa/csa2-plain.ts` leaves declared streams unresolved forever and
    round-5 F2's liveness test needs media within 0.56 MB of it), `HOLD_MAX_INPUT_BYTES` (4 MiB of input),
-   `HOLD_MAX_MEDIA_US` (3 s of media, the largest per-track pts span among held samples), or `HOLD_MAX_WALL_US`
-   (3 s of caller clock, armed through `next_deadline_us`/`WakeAt`, so a source that goes quiet mid-hold still
-   releases);
+   `HOLD_MAX_MEDIA_US` (1 s of media, the largest per-track pts span among held samples), or `HOLD_MAX_WALL_US`
+   (1 s of caller clock, armed through `next_deadline_us`/`WakeAt`, so a source that goes quiet mid-hold still
+   releases; the 3 s defaults of the first version cost the owner's Apple TV 2.29 s to first media against
+   0.07 s with no hold, 1.09 s at 1 s);
    The limits are `Config::tracks_hold_quiet_input_bytes`, `tracks_hold_max_input_bytes`,
    `tracks_hold_max_media_us` and `tracks_hold_max_wall_us`; the values above are their defaults.
    A zero wall or media limit disables the hold (tracks are announced as each stream resolves, the
-   pre-round-5 behaviour). A latency-sensitive host (first frame within 2.5 s) should lower the wall
-   limit, for example to 500 ms, since a declared stream that never sends costs the full wall limit.
+   pre-round-5 behaviour).
    `Session::open` rejects a zero quiet limit and a max-input below the quiet limit with
    `Error::InvalidConfig`;
 3. anything that must not overtake the held media: end of stream, a stall notice, a reconnect, a new connection,
@@ -573,7 +584,8 @@ the TF1 capture 0.74 s / 0.26 MB, `ts/h264_aac.ts` within the first chunk, the 3
 two resolution bursts exceeds the quiet bound, so that multiplex is announced in several steps (first set, then one
 `Tracks` update per later track, the pre-F1 behaviour) rather than once. The limits leave ~1.7x headroom over the worst case and
 stay under the 5 s stall notice. A stream that declares a PID it never sends (modelled by dropping `PID 142` from
-`france2.ts`) is released at the limit with the streams that did resolve. Tracks that resolve after the release
+`france2.ts`) is released at most one settle after the last resolution (it used to wait out the limit); only a stream that
+sends without resolving is released at the limit, with the streams that did resolve. Tracks that resolve after the release
 announce as updates exactly as before (`Event::Tracks` with the full merged set). Samples are never lost or
 reordered: the held items are appended behind the `Tracks` event in arrival order (tests compare the session's
 sample sequence with a bare `StreamingTsDemux` over the same bytes). `Status::Live` keeps its place in the
@@ -617,3 +629,23 @@ reports each non-muxable HLS-TS track (SCTE-35, ID3, private data present in tho
 changed). The F1 hold interacted with the TS-HTTP liveness test on `csa/csa2-plain.ts` (declared streams that never
 resolve): the hold had no input-driven bound below 4 MiB / 3 s, so nothing was released inside the test's 0.56 MB;
 `HOLD_QUIET_INPUT_BYTES` fixes that.
+
+### Hold transparency and the timeline-jump epoch
+
+`tests/hold_transparency.rs` replays every `.ts` fixture (public and private, 20+ producing samples) paced at its
+PCR bitrate with the hold at 0, 0.3 s, 1 s and 3 s and requires the delivered `Event::Sample` sequence (track, pts,
+dts, sync flag, join decision, data hash) to be identical to the disabled hold. It found one difference: after a
+detected timeline jump the stale set (tracks whose old-timeline samples are dropped until they reach the new
+timeline) was every track the jump detector KNEW, and the hold announces all tracks before the first sample, so
+tracks that had delivered nothing yet had their first samples dropped (`ts/m6-single.ts`: 17 of 22 samples,
+TF1 capture: 51 of 75) where the disabled hold delivered them. The stale set is now the tracks that delivered a
+sample on the old timeline (`JumpDetector::delivered`, reset at each epoch).
+
+With a host simulation (Buffer `Start`/`Pause`/`Resume` applied, samples behind the playout clock counted late) the
+real captures show no late sample at any hold setting. Before the early release, rai-gulp's first `Tracks` came at
+0.33 s / 1.33 s / 2.61 s for hold 0 / 1 s / 3 s with `Start` at 1.86 s / 1.96 s / 3.28 s and a burst of 229 / 242 / 401
+samples before `Start`, the sample sequences byte-identical. With the early release the first `Tracks` comes at
+0.76 s for a 1 s AND a 3 s hold, `Start` at 1.86 s and a 229-sample burst in all three (rai-news-24: 1.13 s,
+Start 2.68 s, 224 samples). So the 1439 decode failures the Apple TV reported for the 3 s hold are not caused by
+the released samples (identical bytes, order and flags to the no-hold run, which plays clean); the host must
+tolerate a burst of up to the hold length, and the early release removes that burst for these channels.

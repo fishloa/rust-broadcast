@@ -70,6 +70,7 @@ pub(crate) struct JumpDetector {
     audio_order: Vec<TrackId>,
     rendered: Option<BTreeSet<TrackId>>,
     last: BTreeMap<TrackId, Last>,
+    delivered: BTreeSet<TrackId>,
     post_reset: BTreeSet<TrackId>,
     epoch: Option<Epoch>,
     handled: bool,
@@ -83,6 +84,7 @@ impl JumpDetector {
             audio_order: Vec::new(),
             rendered: None,
             last: BTreeMap::new(),
+            delivered: BTreeSet::new(),
             post_reset: BTreeSet::new(),
             epoch: None,
             handled: false,
@@ -133,15 +135,17 @@ impl JumpDetector {
         if info.timescale == 0 {
             return;
         }
+        let stale: BTreeSet<TrackId> = self
+            .delivered
+            .iter()
+            .copied()
+            .filter(|t| *t != jumped && self.tracks.contains_key(t))
+            .collect();
+        self.delivered.clear();
         self.epoch = Some(Epoch {
             reference_us: Self::to_us(pts, info.timescale),
             window_us: i128::from(cfg.forward_slack_us),
-            stale: self
-                .tracks
-                .keys()
-                .copied()
-                .filter(|t| *t != jumped)
-                .collect(),
+            stale,
         });
     }
 
@@ -231,6 +235,7 @@ impl JumpDetector {
         join: Option<JoinDecision>,
         now_us: u64,
     ) {
+        self.delivered.insert(track);
         let Some(pts) = sample.pts else { return };
         let Some(info) = self.watched(track, join) else {
             return;

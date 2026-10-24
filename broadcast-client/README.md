@@ -11,8 +11,8 @@ connection for RTSP); time is a caller-supplied monotonic `now_us`.
 HLS for a `.m3u8`/`.m3u` URL path (ASCII case-insensitive) and TS-over-HTTP otherwise.
 
 TS-over-HTTP announces its tracks once: the first media of a connection is held until every elementary stream
-the PAT/PMT declares has resolved, or 4 MiB of input, 3 s of media or 3 s of wall clock (whichever is first)
-has passed, then released behind ONE `Event::Tracks` with the whole resolved set, so a host can build its
+the PAT/PMT declares and that has sent a packet has resolved (plus a 0.5 s settle for a stream that has not sent
+yet), or 4 MiB of input, 1 s of media or 1 s of wall clock (whichever is first) has passed, then released behind ONE `Event::Tracks` with the whole resolved set, so a host can build its
 pipeline from the first `Tracks`. A stream that resolves later is announced by a further `Event::Tracks` with the
 merged set. Samples keep their order; `Status::Live` is delivered with the release.
 
@@ -175,14 +175,22 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   tracks, errors, buffer events and terminal statuses are never dropped.
 - Redirects are followed only to `http`/`https` targets and never from `https` to `http`. A 401/407 from an
   origin other than the session origin is a connect failure (backoff), never a credential prompt.
-- Live TS-over-HTTP holds the first media of each connection behind ONE `Event::Tracks` until every
-  PMT-declared stream has resolved or a limit is hit: `Config::tracks_hold_max_wall_us` (3 s),
-  `tracks_hold_max_media_us` (3 s), `tracks_hold_max_input_bytes` (4 MiB), `tracks_hold_quiet_input_bytes`
-  (512 KiB). A stream whose declared PID never sends therefore delays the first frame by up to the wall
-  limit. A low-latency host sets `tracks_hold_max_wall_us` to its first-frame budget (for example
-  `500_000`), or `0` (also for `tracks_hold_max_media_us`) to disable the hold and take tracks as each
-  stream resolves. `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds
-  the input limit.
+- Live TS-over-HTTP holds the first media of each connection behind ONE `Event::Tracks`. The hold ends when
+  every declared stream has resolved, or when every declared stream that has carried a payload packet has
+  resolved and 0.5 s (media time or session clock) have passed since the last one did: a declared stream that
+  sends nothing is never waited for. Backstops: `Config::tracks_hold_max_wall_us` (1 s),
+  `tracks_hold_max_media_us` (1 s), `tracks_hold_max_input_bytes` (4 MiB), `tracks_hold_quiet_input_bytes`
+  (512 KiB); a stream that sends but does not resolve (scrambled, sparse data) costs up to the wall limit.
+  A host with a tighter first-frame budget lowers `tracks_hold_max_wall_us`, or sets `0` (also for
+  `tracks_hold_max_media_us`) to disable the hold and take tracks as each stream resolves.
+  `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds the input limit.
+  The hold never changes the sample sequence (track, pts, dts, sync flag, join decision, bytes): it is
+  identical to the disabled hold. Host contract: the held samples are delivered as one burst behind the
+  `Tracks`, up to the hold long; `Buffer::Start` follows within a few hundred ms. A host must accept that
+  burst without lateness-based dropping and without a decoder input queue smaller than the hold (1 s of
+  media by default). Before the early release, a captured rai-gulp run with a 3 s hold released 401
+  samples in one burst before `Start` (229 with no hold); those samples match the no-hold run byte for byte,
+  so a decode failure after such a burst is host-side.
 - `Action` implements `Debug` without header values or `Send` payloads.
 - `select_audio_rendition` after `Status::Ended` is accepted and ignored; so are `select_variant` and
   `reconnect` for HLS (a finite TS source restarts on `reconnect`).

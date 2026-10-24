@@ -8,6 +8,16 @@ use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
 use mpeg_ts::pid::{Pid, well_known};
 use mpeg_ts::resync::TsResync;
+use mpeg_ts::ts::TsHeader;
+
+/// How long, after the last stream resolved (or the hold began), the hold still waits for a
+/// stream that has not sent a packet yet, in media time and on the session clock. Measured on the
+/// committed captures as the gap between consecutive stream resolutions: audio resolves 0.16 s to
+/// 0.48 s of media after the first video (`ts/h264_aac_40s.ts` 0.48 s, `ts/france2.ts` 0.32 s,
+/// the TF1 capture 0.16 s) and the slowest later stream, a sparse stream_type 6 PID, resolves
+/// 0.44 s after the previous one (`ts/france2.ts`, 0.32 s to 0.76 s); `zenith-live` rai-gulp and
+/// rai-news-24 resolve the audio 0.32 s after the video. Half a second covers every measured gap.
+pub(crate) const SETTLE_US: u64 = 500_000;
 
 /// Limits on the initial-track hold, counted from the first media of a connection. Measured on
 /// the committed captures, every declared stream had resolved within 0.76 s of media and 0.9 MB
@@ -64,6 +74,7 @@ pub(crate) struct DeclaredStreams {
     programs: BTreeSet<u16>,
     seen_pmts: BTreeSet<u16>,
     declared: BTreeSet<Pid>,
+    sent: BTreeSet<Pid>,
 }
 
 impl DeclaredStreams {
@@ -77,11 +88,18 @@ impl DeclaredStreams {
             programs: BTreeSet::new(),
             seen_pmts: BTreeSet::new(),
             declared: BTreeSet::new(),
+            sent: BTreeSet::new(),
         }
     }
 
     pub(crate) fn feed(&mut self, bytes: &[u8]) {
         for packet in self.resync.feed(bytes) {
+            if let Ok(header) = TsHeader::parse(&packet)
+                && header.has_payload
+                && !header.tei
+            {
+                self.sent.insert(header.pid);
+            }
             for event in self.si.feed(&packet) {
                 match event.table_section() {
                     Ok(AnyTableSection::PatSection(pat)) => {
@@ -103,10 +121,22 @@ impl DeclaredStreams {
         }
     }
 
+    fn pmts_complete(&self) -> bool {
+        !self.programs.is_empty() && self.programs.is_subset(&self.seen_pmts)
+    }
+
     pub(crate) fn all_resolved(&self, resolved: &BTreeSet<Pid>) -> bool {
-        !self.programs.is_empty()
-            && self.programs.is_subset(&self.seen_pmts)
-            && self.declared.is_subset(resolved)
+        self.pmts_complete() && self.declared.is_subset(resolved)
+    }
+
+    /// Every declared stream that has carried at least one payload packet has resolved; a
+    /// declared stream that has sent nothing is not waited for.
+    pub(crate) fn active_resolved(&self, resolved: &BTreeSet<Pid>) -> bool {
+        self.pmts_complete()
+            && self
+                .declared
+                .iter()
+                .all(|pid| !self.sent.contains(pid) || resolved.contains(pid))
     }
 }
 

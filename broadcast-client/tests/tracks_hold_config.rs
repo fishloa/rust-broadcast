@@ -151,7 +151,7 @@ fn a_short_wall_limit_releases_a_stream_whose_declared_pid_never_sends() {
     default_events.extend(drain(&mut d));
     assert!(
         tracks_sets(&default_events).is_empty(),
-        "the 3 s default is still holding at {due} us"
+        "the 1 s default is still holding at {due} us"
     );
 }
 
@@ -186,8 +186,8 @@ fn the_documented_hold_defaults_are_unchanged_and_valid() {
     let c = Config::default();
     assert_eq!(c.tracks_hold_max_input_bytes, 4 * 1024 * 1024);
     assert_eq!(c.tracks_hold_quiet_input_bytes, 512 * 1024);
-    assert_eq!(c.tracks_hold_max_media_us, 3_000_000);
-    assert_eq!(c.tracks_hold_max_wall_us, 3_000_000);
+    assert_eq!(c.tracks_hold_max_media_us, 1_000_000);
+    assert_eq!(c.tracks_hold_max_wall_us, 1_000_000);
     assert!(Session::open("http://h/live.ts", c, 0).is_ok());
 }
 

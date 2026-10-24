@@ -11,7 +11,7 @@ use tshttp_runtime::{Config as TsConfig, TsHttpClient};
 
 use mpeg_ts::pid::Pid;
 
-use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits};
+use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US};
 use crate::{Event, Status};
 
 pub(crate) type Item = Option<Event>;
@@ -25,6 +25,8 @@ struct HoldState {
     quiet_bytes: usize,
     first_pts: BTreeMap<TrackId, i64>,
     span_us: u64,
+    settle_from_us: u64,
+    settle_base_span_us: u64,
 }
 
 fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
@@ -117,10 +119,14 @@ impl TsHttpSource {
             .ts
             .next_deadline()
             .map(|ms| ms.saturating_mul(MICROS_PER_MILLI));
-        let hold = self
-            .hold
-            .as_ref()
-            .map(|h| h.started_us.saturating_add(self.hold_limits.max_wall_us));
+        let hold = self.hold.as_ref().map(|h| {
+            let wall = h.started_us.saturating_add(self.hold_limits.max_wall_us);
+            if self.active_resolved() {
+                wall.min(h.settle_from_us.saturating_add(SETTLE_US))
+            } else {
+                wall
+            }
+        });
         match (ts, hold) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -176,6 +182,12 @@ impl TsHttpSource {
         }
     }
 
+    fn active_resolved(&self) -> bool {
+        self.declared
+            .as_ref()
+            .is_some_and(|d| d.active_resolved(&self.resolved))
+    }
+
     fn note_resolved(&mut self, pid: Option<Pid>) {
         let Some(pid) = pid else {
             return;
@@ -184,6 +196,8 @@ impl TsHttpSource {
             && let Some(h) = self.hold.as_mut()
         {
             h.quiet_bytes = 0;
+            h.settle_from_us = self.now_us;
+            h.settle_base_span_us = h.span_us;
         }
     }
 
@@ -215,6 +229,8 @@ impl TsHttpSource {
                 quiet_bytes: 0,
                 first_pts: BTreeMap::new(),
                 span_us: 0,
+                settle_from_us: self.now_us,
+                settle_base_span_us: 0,
             });
         }
     }
@@ -223,6 +239,8 @@ impl TsHttpSource {
         let Some(h) = self.hold.as_ref() else {
             return;
         };
+        let settled = self.now_us.saturating_sub(h.settle_from_us) >= SETTLE_US
+            || h.span_us.saturating_sub(h.settle_base_span_us) >= SETTLE_US;
         let due = self.hold_limits.reached(
             h.bytes,
             h.quiet_bytes,
@@ -231,7 +249,8 @@ impl TsHttpSource {
         ) || self
             .declared
             .as_ref()
-            .is_none_or(|d| d.all_resolved(&self.resolved));
+            .is_none_or(|d| d.all_resolved(&self.resolved))
+            || (settled && self.active_resolved());
         if due {
             self.release_hold();
         }
