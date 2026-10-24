@@ -1463,7 +1463,10 @@ impl<'a> EbmlReader<'a> {
         let body_end = if unknown {
             find_sibling_boundary(self.buf, body_start, boundary_ids).unwrap_or(self.buf.len())
         } else {
-            let end = body_start + size as usize;
+            let end = usize::try_from(size)
+                .ok()
+                .and_then(|len| body_start.checked_add(len))
+                .unwrap_or(usize::MAX);
             if end > self.buf.len() {
                 return Err(Error::BufferTooShort {
                     need: end,
@@ -1499,7 +1502,11 @@ fn find_sibling_boundary(buf: &[u8], from: usize, boundary_ids: &[u32]) -> Optio
             && let Some((size, size_len, unknown)) = read_element_size(&buf[p + id_len..])
         {
             let body_start = p + id_len + size_len;
-            if unknown || body_start + size as usize <= buf.len() {
+            let fits = usize::try_from(size)
+                .ok()
+                .and_then(|len| body_start.checked_add(len))
+                .is_some_and(|end| end <= buf.len());
+            if unknown || fits {
                 return Some(p);
             }
         }
