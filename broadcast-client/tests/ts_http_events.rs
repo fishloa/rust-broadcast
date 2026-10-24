@@ -112,7 +112,9 @@ fn stall_gives_stalled_then_live_on_next_byte() {
 fn server_close_reconnects_with_discontinuity_before_first_sample() {
     let bytes = read_tf1_bytes();
     let (status, headers) = read_tf1_headers();
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+    let mut config = Config::default();
+    config.ts_http.min_reconnect_interval_ms = 0;
+    let mut session = Session::open("http://example/live.ts", config, 0).unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),

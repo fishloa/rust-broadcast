@@ -62,7 +62,7 @@ fn real_live_capture() {
     for chunk in bytes.chunks(1316) {
         c.feed(chunk, 0);
     }
-    c.on_eof(1);
+    c.on_eof(60_000);
     let mut reconnect0 = false;
     while let Some(a) = c.poll() {
         if matches!(a, Action::Reconnect { after_ms: 0 }) {

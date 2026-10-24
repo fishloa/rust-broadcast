@@ -147,7 +147,7 @@ fn eof_with_only_flushed_sample_counts_as_played() {
     let _ = c.poll_event();
     c.feed(prefix, 0);
     while c.poll_event().is_some() {}
-    c.on_eof(1);
+    c.on_eof(60_000);
     let mut saw_zero = false;
     let mut saw_reconnecting = false;
     while let Some(e) = c.poll_event() {

@@ -28,7 +28,7 @@ client.on_eof(2);
 ## Defaults
 
 `Config::default()`: start_timeout_ms 15000, stall_notice_ms 5000,
-stall_reconnect_ms 30000, backoff_ms `[2000,4000,8000]`, backoff_cap_ms 10000.
+stall_reconnect_ms 30000, backoff_ms `[2000,4000,8000]`, backoff_cap_ms 10000, min_reconnect_interval_ms 1000.
 
 ## no_std
 

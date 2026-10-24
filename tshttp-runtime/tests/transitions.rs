@@ -17,7 +17,7 @@ fn t02_opening_response_2xx_connected_awaiting() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
     c.on_response(200, &[], 10);
-    assert_eq!(c.poll_event(), Some(Event::Connected));
+    assert!(matches!(c.poll_event(), Some(Event::Connected)));
     assert_eq!(c.poll(), None);
 }
 
@@ -26,8 +26,14 @@ fn t03_opening_404_notfound_then_backoff() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
     c.on_response(404, &[], 10);
-    assert_eq!(c.poll_event(), Some(Event::NotFound { status: 404 }));
-    assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::NotFound { status: 404 })
+    ));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::Reconnecting { attempt: 1 })
+    ));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
 }
 
@@ -37,14 +43,20 @@ fn t04_opening_other_status_or_error_backoff() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
     c.on_response(500, &[], 10);
-    assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::Reconnecting { attempt: 1 })
+    ));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
 
     // on_error
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
     c.on_error(10);
-    assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::Reconnecting { attempt: 1 })
+    ));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
 }
 
@@ -69,7 +81,7 @@ fn t05_awaiting_first_sample_moves_to_playing_and_resets_attempts() {
     }
     assert!(saw_sample);
     // attempt reset: a later failure after playing gives 0 ms
-    c.on_eof(7);
+    c.on_eof(60_000);
     let mut saw_zero = false;
     while let Some(a) = c.poll() {
         if a == (Action::Reconnect { after_ms: 0 }) {
@@ -100,7 +112,10 @@ fn t07_awaiting_eof_or_error_before_sample_backoff() {
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.on_eof(1);
-    assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::Reconnecting { attempt: 1 })
+    ));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
 
     // error
@@ -109,7 +124,10 @@ fn t07_awaiting_eof_or_error_before_sample_backoff() {
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.on_error(1);
-    assert_eq!(c.poll_event(), Some(Event::Reconnecting { attempt: 1 }));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::Reconnecting { attempt: 1 })
+    ));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
 }
 
@@ -120,7 +138,7 @@ fn t08_playing_eof_reconnect_zero() {
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
     c.feed(D, 1);
-    c.on_eof(2);
+    c.on_eof(60_000);
     let mut saw_zero = false;
     while let Some(a) = c.poll() {
         if a == (Action::Reconnect { after_ms: 0 }) {
@@ -136,10 +154,10 @@ fn t09_failure_before_playing_attempt_increments_and_emits_reconnecting() {
     let _ = c.poll();
     for expected in 1u64..=3 {
         c.on_error(0);
-        assert_eq!(
+        assert!(matches!(
             c.poll_event(),
-            Some(Event::Reconnecting { attempt: expected })
-        );
+            Some(Event::Reconnecting { attempt }) if attempt == expected
+        ));
         let dl = c.next_deadline().unwrap();
         c.poll_timeout(dl);
         let _ = c.poll(); // Open

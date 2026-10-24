@@ -15,7 +15,7 @@ pub mod events;
 /// TS-over-HTTP pull session client (see DESIGN.md).
 pub use client::TsHttpClient;
 /// Session configuration (see DESIGN.md).
-pub use config::Config;
+pub use config::{Config, ConfigError};
 /// Action, event and starve-kind types (see DESIGN.md).
 pub use events::{Action, Event, StarveKind};
 /// Re-exported demux event type from transmux.
