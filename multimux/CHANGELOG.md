@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed (round-9 audit F1/F3)
+- **`ts_hls` no longer serves an empty playlist forever for an H.264 stream with no IDR picture.** The `idr_only` default (Apple HLS Authoring Spec 7.4) stays the preferred cut rule, but after `IDR_FALLBACK_TARGETS` (3) target durations, at least `IDR_FALLBACK_MIN_SECS` (6 s), of IDR-less video the start gate replays the stream from the oldest non-IDR sync sample it saw and the segmenter cuts on non-IDR random-access points for the rest of the stream. New per-route option `Route::ts_hls_idr_fallback` (`"auto"` default, `{"targets": N}`, `"never"` = the old strict behaviour). Either way the operator is told once: a `warn` log, the counter `multimux_ts_hls_non_idr_total{route,mode}` and the admin route status field `ts_hls_idr` (`"fell_back"` / `"awaiting"`, `null` while IDR-aligned). A route that is IDR-aligned reports and counts nothing.
+- **A PMT-declared PID that never carries a packet no longer holds every TS output back until 4 MiB of input.** `TsIngestSession` now calls `StreamingTsDemux::release_silent_heads` once one second (`SILENT_PID_SETTLE`) of arrival time has passed, so a low-bitrate SPTS starts in about a second instead of tens of seconds or never. A silent PID that sends later is announced by a later track change.
+- `ts_hls` segment `EXTINF` now matches the segment's audio and video content (transmux: the segmenter holds a cut for lagging audio); verified with Apple's `mediastreamvalidator` through the full route.
+
 ### Changed
 - TS-over-HTTP ingest (`source::ts_http`) now consults the shared `tshttp-runtime` policy core (new dependency): a finite response (`Content-Length` / 206 `Content-Range`) that ends before all declared bytes arrived is a failed `Connect` ("truncated transfer") instead of a clean `Ended`, and the post-establishment stall (same threshold, `ingest_read_timeout_secs`, same error text) is decided by the core. Reconnect/backoff stays with the route supervisor; the core's start timeout is disabled. Redirect and auth behaviour is unchanged. Covered by `tests/ts_http_policy.rs` and the `source::ts_http` unit tests.
 

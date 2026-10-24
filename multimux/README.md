@@ -196,7 +196,7 @@ ingest-once, many-outputs, no per-output re-mux — so a route can enable more
 than one of them together (e.g. `["llhls", "dash"]`), and different routes
 may enable different sets.
 
-**`ts_hls` cut rule and codecs.** `ts_hls` segments start on an IDR picture by default (Apple HLS Authoring Spec 7.4); set the route option `"ts_hls_cut": "any_rap"` (default `"idr_only"`) to also cut on open-GOP random-access points. HEVC and AV1 are not allowed in MPEG-TS HLS (spec 1.5): such a program fails the output, reported as `output_error` in the admin route status.
+**`ts_hls` cut rule and codecs.** `ts_hls` segments start on an IDR picture by default (Apple HLS Authoring Spec 7.4); set the route option `"ts_hls_cut": "any_rap"` (default `"idr_only"`) to also cut on open-GOP random-access points. A stream with no IDR picture at all (open-GOP H.264) does not stall under `idr_only`: after the `ts_hls_idr_fallback` bound (`"auto"`: 3 target durations, at least 6 s; `{"targets": N}`; `"never"` waits forever) the route falls back to non-IDR random-access points and reports `ts_hls_idr` in the admin route status and `multimux_ts_hls_non_idr_total` in `/metrics`. HEVC and AV1 are not allowed in MPEG-TS HLS (spec 1.5): such a program fails the output, reported as `output_error` in the admin route status.
 
 **`"ts_hls"` is mutually exclusive with the four fMP4-based outputs on the
 same route** — `Config::validate()` rejects, at config-load time, a route
