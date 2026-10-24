@@ -1,7 +1,7 @@
-use tshttp_runtime::{Config, Event, TsHttpClient};
+use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
-fn samples_for(chunk_size: usize) -> (usize, usize, usize) {
-    let bytes = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream").unwrap();
+fn samples_for(chunk_size: usize) -> Option<(usize, usize, usize)> {
+    let bytes = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream")?;
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(200, &[], 0);
@@ -19,14 +19,15 @@ fn samples_for(chunk_size: usize) -> (usize, usize, usize) {
             }
         }
     }
-    (total_samples, tracks.len(), 0)
+    Some((total_samples, tracks.len(), 0))
 }
 
 #[test]
 fn chunking_identical() {
-    let a = samples_for(1316);
-    let b = samples_for(65536);
-    let c = samples_for(1);
+    let (Some(a), Some(b), Some(c)) = (samples_for(1316), samples_for(65536), samples_for(1))
+    else {
+        return;
+    };
     assert_eq!(a.0, b.0);
     assert_eq!(a.0, c.0);
     assert!(a.1 >= 1);
@@ -34,7 +35,9 @@ fn chunking_identical() {
 
 #[test]
 fn bare_demuxer_oracle() {
-    let bytes = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream").unwrap();
+    let Some(bytes) = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream") else {
+        return;
+    };
     let mut d = transmux::StreamingTsDemux::new();
     d.feed(&bytes);
     let mut total = 0;
@@ -48,7 +51,7 @@ fn bare_demuxer_oracle() {
         }
     }
     // compare to client 1316
-    let (cs, ct, _) = samples_for(1316);
+    let (cs, ct, _) = samples_for(1316).expect("fixture present: required above");
     assert_eq!(cs, total);
     assert_eq!(ct, tracks.len());
     assert!(tracks.len() >= 2); // >=1 video + >=1 audio
@@ -56,23 +59,46 @@ fn bare_demuxer_oracle() {
 
 #[test]
 fn first_sample_moves_to_playing() {
-    let bytes = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream").unwrap();
+    let Some(bytes) = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream") else {
+        return;
+    };
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
-    c.feed(&bytes[..4096], 0);
-    // after feed, if sample emitted, attempt reset (can't observe state; check reconnect 0 after eof)
-    c.on_eof(1);
-    // If playing, reconnect 0; if not, maybe 2000. Ensure at least no panic.
+    let mut sampled = false;
+    for chunk in bytes.chunks(1316) {
+        c.feed(chunk, 0);
+        while let Some(e) = c.poll_event() {
+            sampled |= matches!(e, Event::Demux(transmux::DemuxEvent::Sample { .. }));
+        }
+        if sampled {
+            break;
+        }
+    }
+    assert!(sampled, "no Sample in the whole fixture");
+    c.on_eof(5_000);
+    assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
+    assert_eq!(c.poll(), None);
+}
+
+#[test]
+fn eof_before_any_sample_backs_off() {
+    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let _ = c.poll();
+    c.on_response(200, &[], 0);
+    let _ = c.poll_event();
+    c.on_eof(5_000);
+    assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2_000 }));
 }
 
 #[test]
 fn missing_headers_404() {
-    let hdr = std::fs::read_to_string(
-        test_fixtures::require("zenith-http/missing.headers.txt", "real_stream").unwrap(),
-    )
-    .unwrap();
+    let Some(path) = test_fixtures::require("zenith-http/missing.headers.txt", "real_stream")
+    else {
+        return;
+    };
+    let hdr = std::fs::read_to_string(path).unwrap();
     let status: u16 = hdr
         .lines()
         .next()
@@ -86,15 +112,18 @@ fn missing_headers_404() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(status, &[], 0);
-    assert_eq!(c.poll_event(), Some(Event::NotFound { status: 404 }));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::NotFound { status: 404 })
+    ));
 }
 
 #[test]
 fn tf1_headers_200_connected() {
-    let hdr = std::fs::read_to_string(
-        test_fixtures::require("zenith-http/tf1.headers.txt", "real_stream").unwrap(),
-    )
-    .unwrap();
+    let Some(path) = test_fixtures::require("zenith-http/tf1.headers.txt", "real_stream") else {
+        return;
+    };
+    let hdr = std::fs::read_to_string(path).unwrap();
     let status: u16 = hdr
         .lines()
         .next()
@@ -108,5 +137,5 @@ fn tf1_headers_200_connected() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(status, &[], 0);
-    assert_eq!(c.poll_event(), Some(Event::Connected));
+    assert!(matches!(c.poll_event(), Some(Event::Connected)));
 }

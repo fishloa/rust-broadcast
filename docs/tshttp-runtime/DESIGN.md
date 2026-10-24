@@ -44,20 +44,21 @@ ignore any later callbacks for it (callbacks while not Connected are ignored).
 | T5 | Awaiting | first Sample emitted | none | Playing (attempt counter reset) |
 | T6 | Awaiting | now - open_at >= start_timeout | Abort, as T9 | Backoff |
 | T7 | Awaiting | on_eof / on_error before any sample | as T9 | Backoff |
-| T8 | Playing | on_eof / on_error | Reconnect{after_ms:0}, attempt = 0 | Backoff(0 ms) |
+| T8 | Playing | on_eof / on_error | Reconnect{after_ms: max(0, min_reconnect_interval - (now - open_at))}, attempt = 0 (0 ms once the connection lasted >= min_reconnect_interval_ms, default 1000) | Backoff |
 | T9 | any failure before playing | - | attempt += 1; Reconnect{after_ms: backoff[attempt-1] else cap}; Event Reconnecting | Backoff |
 | T10 | Backoff | now >= due | Open | Opening |
-| T11 | Playing | no bytes for stall_notice | Event StallNotice{secs} (repeats once per second after the first notice) | Playing |
-| T12 | Playing | no bytes for stall_reconnect | Abort, Reconnect{after_ms:0} (counts as played-then-ended: attempt = 0) | Backoff(0 ms) |
+| T11 | Playing | no bytes for stall_notice | Event StallNotice{secs} (repeats once per second after the first notice; at most one per poll_timeout call, carrying the current stalled seconds) | Playing |
+| T12 | Playing | no bytes for stall_reconnect | Abort, then as T8 (counts as played-then-ended: attempt = 0) | Backoff |
 | T13 | any connected | reconnect() | Abort, Reconnect{after_ms:0}, attempt = 0 | Backoff(0 ms) |
 | T16 | Opening | on_response 2xx with finite body (Content-Length / 206 Content-Range) | Event Connected, Event Finite{expected_bytes} | Awaiting (finite) |
 | T17 | finite Awaiting/Playing | received bytes >= expected | timers stopped | same (no events) |
 | T18 | finite connection | on_eof / on_error after all expected bytes | Event Ended | Ended (terminal) |
 | T19 | finite connection | on_eof / on_error before all expected bytes | as T9 (truncated transfer) | Backoff |
+| T20 | Opening | now - open_at >= start_timeout (no response headers yet) | Abort, as T9 | Backoff |
 | T14 | Playing/Awaiting | bytes arrive, no sample for stall_notice | Event Starved(Data) once per episode | same |
 | T15 | Playing | no bytes for stall_notice | Event Starved(NoData) once per episode | same |
 
-Rules: the start timer restarts on every Open. A "stall" is measured from the last received byte
+Rules: the start timer restarts on every Open and runs from Open (it covers Opening as well as Awaiting). `next_deadline` is never in the past after `poll_timeout(now)` except for a due zero-delay reconnect. `TsHttpClient::new` replaces an inconsistent `Config` (zero timeouts, `stall_reconnect_ms <= stall_notice_ms`, empty `backoff_ms`) with `Config::clamped()`; `Config::validate()` reports it. A finite response (T16) requires an identity (absent or `identity`) `Content-Encoding` and, for 206, `last < total` in `Content-Range`; otherwise it is treated as live. A "stall" is measured from the last received byte
 (or from Connected before any byte). Starved(Data) = bytes flowing but the demuxer emitted no
 sample for stall_notice; Starved(NoData) = no bytes. Live never gives up: the only terminal input is
 the host dropping the client. NotFound keeps retrying at the same backoff (cap 10 s) and the event is

@@ -1,4 +1,3 @@
-use alloc::format;
 use alloc::string::String;
 
 use transmux::DemuxEvent;
@@ -47,6 +46,12 @@ impl StarveKind {
 broadcast_common::impl_spec_display!(StarveKind);
 
 /// Session event (T2-T15).
+///
+/// Neither `PartialEq` nor `Deserialize` is implemented: [`DemuxEvent`]
+/// (transmux) has no structural equality and no serde support, so an `Event`
+/// carrying one can be neither compared nor reconstructed. With the `serde`
+/// feature an `Event` serializes only; [`Event::Demux`] serializes as the
+/// bare variant tag, without its payload.
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
@@ -81,26 +86,8 @@ pub enum Event {
     },
 }
 
-impl PartialEq for Event {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Demux(a), Self::Demux(b)) => format!("{a:?}") == format!("{b:?}"),
-            (Self::StallNotice { secs: a }, Self::StallNotice { secs: b }) => a == b,
-            (Self::Starved(a), Self::Starved(b)) => a == b,
-            (Self::NotFound { status: a }, Self::NotFound { status: b }) => a == b,
-            (Self::Connected, Self::Connected) => true,
-            (Self::Finite { expected_bytes: a }, Self::Finite { expected_bytes: b }) => a == b,
-            (Self::Ended, Self::Ended) => true,
-            (Self::Reconnecting { attempt: a }, Self::Reconnecting { attempt: b }) => a == b,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for Event {}
-
 #[cfg(feature = "serde")]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 enum EventSerde {
     StallNotice { secs: u64 },
     Starved(StarveKind),
@@ -136,24 +123,5 @@ impl serde::Serialize for Event {
                 EventSerde::Reconnecting { attempt: *attempt }.serialize(serializer)
             }
         }
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for Event {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let e = EventSerde::deserialize(deserializer)?;
-        Ok(match e {
-            EventSerde::StallNotice { secs } => Self::StallNotice { secs },
-            EventSerde::Starved(k) => Self::Starved(k),
-            EventSerde::NotFound { status } => Self::NotFound { status },
-            EventSerde::Connected => Self::Connected,
-            EventSerde::Finite { expected_bytes } => Self::Finite { expected_bytes },
-            EventSerde::Ended => Self::Ended,
-            EventSerde::Reconnecting { attempt } => Self::Reconnecting { attempt },
-        })
     }
 }

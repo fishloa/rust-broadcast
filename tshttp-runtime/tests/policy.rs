@@ -44,7 +44,7 @@ fn played_then_ended_resets_attempt_counter() {
     let _ = c.poll_event();
     c.feed(D, 1);
     // EOF
-    c.on_eof(2);
+    c.on_eof(60_000);
     // reconnect 0 (drain queued actions)
     let mut saw_zero = false;
     while let Some(a) = c.poll() {
@@ -84,14 +84,17 @@ fn not_found_then_ok() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(404, &[], 0);
-    assert_eq!(c.poll_event(), Some(Event::NotFound { status: 404 }));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::NotFound { status: 404 })
+    ));
     let _ = c.poll_event(); // reconnecting
     let _ = c.poll(); // reconnect
     let dl = c.next_deadline().unwrap();
     c.poll_timeout(dl);
     let _ = c.poll(); // open
     c.on_response(200, &[], 100);
-    assert_eq!(c.poll_event(), Some(Event::Connected));
+    assert!(matches!(c.poll_event(), Some(Event::Connected)));
     c.feed(&[0u8; 4], 101);
     // maybe no sample; ok
 }
@@ -101,7 +104,10 @@ fn gone_410_is_not_found_event() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(410, &[], 0);
-    assert_eq!(c.poll_event(), Some(Event::NotFound { status: 410 }));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::NotFound { status: 410 })
+    ));
 }
 
 #[test]
@@ -206,6 +212,7 @@ fn config_overrides_change_every_timeout() {
         stall_reconnect_ms: 9,
         backoff_ms: vec![5],
         backoff_cap_ms: 11,
+        min_reconnect_interval_ms: 0,
     };
     let mut c = TsHttpClient::new("u", cfg, 0);
     let _ = c.poll();

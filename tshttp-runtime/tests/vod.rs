@@ -15,13 +15,11 @@ fn finite_content_length_eof_is_ended_not_reconnect() {
         &[("Content-Length".to_string(), D.len().to_string())],
         0,
     );
-    assert_eq!(c.poll_event(), Some(Event::Connected));
-    assert_eq!(
+    assert!(matches!(c.poll_event(), Some(Event::Connected)));
+    assert!(matches!(
         c.poll_event(),
-        Some(Event::Finite {
-            expected_bytes: D.len() as u64
-        })
-    );
+        Some(Event::Finite { expected_bytes }) if expected_bytes == D.len() as u64
+    ));
     for chunk in D.chunks(1316) {
         c.feed(chunk, 0);
     }
@@ -54,7 +52,7 @@ fn chunked_without_length_stays_live() {
     for chunk in D.chunks(1316) {
         c.feed(chunk, 0);
     }
-    c.on_eof(1);
+    c.on_eof(60_000);
     let mut reconnect0 = false;
     let mut ended = false;
     while let Some(a) = c.poll() {
@@ -79,7 +77,7 @@ fn no_content_length_http2_style_stays_live() {
     for chunk in D.chunks(1316) {
         c.feed(chunk, 0);
     }
-    c.on_eof(1);
+    c.on_eof(60_000);
     let mut reconnect0 = false;
     while let Some(a) = c.poll() {
         if matches!(a, Action::Reconnect { after_ms: 0 }) {
@@ -98,8 +96,11 @@ fn status_206_with_content_range_is_finite() {
         &[("Content-Range".to_string(), "bytes 0-9/10".to_string())],
         0,
     );
-    assert_eq!(c.poll_event(), Some(Event::Connected));
-    assert_eq!(c.poll_event(), Some(Event::Finite { expected_bytes: 10 }));
+    assert!(matches!(c.poll_event(), Some(Event::Connected)));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::Finite { expected_bytes: 10 })
+    ));
 }
 
 #[test]
@@ -273,6 +274,9 @@ fn finite_event_follows_connected() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
     c.on_response(200, &[("Content-Length".to_string(), "5".to_string())], 0);
-    assert_eq!(c.poll_event(), Some(Event::Connected));
-    assert_eq!(c.poll_event(), Some(Event::Finite { expected_bytes: 5 }));
+    assert!(matches!(c.poll_event(), Some(Event::Connected)));
+    assert!(matches!(
+        c.poll_event(),
+        Some(Event::Finite { expected_bytes: 5 })
+    ));
 }

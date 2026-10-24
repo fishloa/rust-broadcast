@@ -6,6 +6,9 @@ use transmux::{DemuxEvent, StreamingTsDemux};
 use crate::config::Config;
 use crate::events::{Action, Event, StarveKind};
 
+const STALL_NOTICE_REPEAT_MS: u64 = 1_000;
+const IDENTITY_CODING: &str = "identity";
+
 #[derive(Debug, Clone, Copy)]
 enum Phase {
     Opening { open_at: u64 },
@@ -39,10 +42,13 @@ pub struct TsHttpClient {
 
 impl TsHttpClient {
     /// Create a new client (T1).
+    ///
+    /// An inconsistent `config` is replaced by [`Config::clamped`] rather
+    /// than rejected; call [`Config::validate`] first to detect it.
     pub fn new(url: impl Into<String>, config: Config, now_ms: u64) -> Self {
         let mut c = Self {
             url: url.into(),
-            config,
+            config: config.clamped(),
             phase: Phase::Backoff { due: 0 },
             attempt: 0,
             demux: StreamingTsDemux::new(),
@@ -136,7 +142,19 @@ impl TsHttpClient {
         t.parse::<u64>().ok()
     }
 
+    fn is_identity_coded(headers: &[(String, String)]) -> bool {
+        Self::header_values(headers, "content-encoding")
+            .iter()
+            .flat_map(|v| v.split(','))
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .all(|t| t.eq_ignore_ascii_case(IDENTITY_CODING))
+    }
+
     fn finite_and_expected(status: u16, headers: &[(String, String)]) -> (bool, u64) {
+        if !Self::is_identity_coded(headers) {
+            return (false, 0);
+        }
         if status == 200 {
             let vals = Self::header_values(headers, "content-length");
             if vals.is_empty() {
@@ -172,9 +190,9 @@ impl TsHttpClient {
             };
             let range_part = rest[..slash].trim();
             let total = rest[slash + 1..].trim();
-            if Self::parse_u64(total).is_none() {
+            let Some(total) = Self::parse_u64(total) else {
                 return (false, 0);
-            }
+            };
             let Some(dash) = range_part.find('-') else {
                 return (false, 0);
             };
@@ -184,7 +202,7 @@ impl TsHttpClient {
             let Some(b) = Self::parse_u64(&range_part[dash + 1..]) else {
                 return (false, 0);
             };
-            if b < a {
+            if b < a || b >= total {
                 return (false, 0);
             }
             (true, b - a + 1)
@@ -214,6 +232,8 @@ impl TsHttpClient {
             _ => return,
         }
         self.last_byte_at = now_ms;
+        self.first_notice_at = None;
+        self.next_notice_at = None;
         if self.finite {
             self.received_bytes = self.received_bytes.saturating_add(chunk.len() as u64);
             if !self.finite_done
@@ -347,17 +367,21 @@ impl TsHttpClient {
             self.start_open(now_ms);
             return;
         }
-        // Awaiting timeout (disabled once finite transfer complete)
+        if let Phase::Opening { open_at } = self.phase {
+            if now_ms.saturating_sub(open_at) >= self.config.start_timeout_ms {
+                self.actions.push_back(Action::Abort);
+                self.fail_before_playing(now_ms);
+            }
+            return;
+        }
         if let Phase::Awaiting { open_at } = self.phase
             && !(self.finite && self.finite_done)
             && now_ms.saturating_sub(open_at) >= self.config.start_timeout_ms
         {
             self.flush_demux(now_ms);
             if matches!(self.phase, Phase::Playing) {
-                self.attempt = 0;
                 self.actions.push_back(Action::Abort);
-                self.actions.push_back(Action::Reconnect { after_ms: 0 });
-                self.phase = Phase::Backoff { due: now_ms };
+                self.played_ended(now_ms);
             } else {
                 self.actions.push_back(Action::Abort);
                 self.fail_before_playing(now_ms);
@@ -372,27 +396,19 @@ impl TsHttpClient {
                     self.events.push_back(Event::Starved(StarveKind::NoData));
                     self.starved_nodata_fired = true;
                 }
-                // StallNotice
                 if self.first_notice_at.is_none() {
                     self.first_notice_at = Some(now_ms);
-                    self.next_notice_at = Some(now_ms + 1000);
+                    self.next_notice_at = Some(now_ms.saturating_add(STALL_NOTICE_REPEAT_MS));
                     self.events
                         .push_back(Event::StallNotice { secs: idle / 1000 });
-                } else {
-                    let mut next = self.next_notice_at;
-                    while let Some(n) = next {
-                        if now_ms >= n {
-                            let elapsed = n.saturating_sub(self.last_byte_at);
-                            self.events.push_back(Event::StallNotice {
-                                secs: elapsed / 1000,
-                            });
-                            let nn = n + 1000;
-                            self.next_notice_at = Some(nn);
-                            next = Some(nn);
-                        } else {
-                            break;
-                        }
-                    }
+                } else if let Some(n) = self.next_notice_at
+                    && now_ms >= n
+                {
+                    self.events
+                        .push_back(Event::StallNotice { secs: idle / 1000 });
+                    let steps = (now_ms - n) / STALL_NOTICE_REPEAT_MS + 1;
+                    self.next_notice_at =
+                        Some(n.saturating_add(steps.saturating_mul(STALL_NOTICE_REPEAT_MS)));
                 }
                 // stall_reconnect
                 if idle >= self.config.stall_reconnect_ms {
@@ -424,10 +440,15 @@ impl TsHttpClient {
                 let reconnect = self
                     .last_byte_at
                     .saturating_add(self.config.stall_reconnect_ms);
-                let next_notice = self.next_notice_at.unwrap_or(notice);
-                Some(next_notice.min(reconnect).min(notice))
+                let next_notice = match self.first_notice_at {
+                    Some(_) => self.next_notice_at.unwrap_or(notice),
+                    None => notice,
+                };
+                Some(next_notice.min(reconnect))
             }
-            Phase::Opening { .. } => None,
+            Phase::Opening { open_at } => {
+                Some(open_at.saturating_add(self.config.start_timeout_ms))
+            }
             Phase::Ended => None,
         }
     }
@@ -492,7 +513,12 @@ impl TsHttpClient {
 
     fn played_ended(&mut self, now_ms: u64) {
         self.attempt = 0;
-        self.actions.push_back(Action::Reconnect { after_ms: 0 });
-        self.phase = Phase::Backoff { due: now_ms };
+        let lasted = now_ms.saturating_sub(self.open_at);
+        let after = self.config.min_reconnect_interval_ms.saturating_sub(lasted);
+        self.actions
+            .push_back(Action::Reconnect { after_ms: after });
+        self.phase = Phase::Backoff {
+            due: now_ms.saturating_add(after),
+        };
     }
 }
