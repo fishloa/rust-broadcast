@@ -145,6 +145,7 @@ fn route_config(bind: SocketAddr, upstream: String) -> Config {
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
             ts_hls_cut: Default::default(),
+            ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
         }],
         ..Config::default()

@@ -89,6 +89,7 @@ fn route(path: &std::path::Path, outputs: Vec<OutputKind>, cut: TsHlsCutPolicy) 
         outputs,
         dvr: DvrConfig::default(),
         ts_hls_cut: cut,
+        ts_hls_idr_fallback: Default::default(),
         declared_bandwidth_bps: None,
     }
 }

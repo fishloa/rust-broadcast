@@ -1541,6 +1541,7 @@ async fn serve_with_registry_impl(
                 .with_name(route.name.clone())
                 .with_container(route_container(route))
                 .with_ts_cut_policy(route.ts_hls_cut.into())
+                .with_ts_idr_fallback(route.ts_hls_idr_fallback)
                 // Issue #900: without this, `route.dvr` was validated
                 // (`Route::validate_dvr`) but never actually reached the
                 // `RouteHandle` that `ProgramServing::new` builds a
@@ -4179,6 +4180,7 @@ mod tests {
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             bind: "127.0.0.1:0".into(),
@@ -4212,6 +4214,7 @@ mod tests {
                 }],
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             bind: "127.0.0.1:0".into(),
@@ -4242,6 +4245,7 @@ mod tests {
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             bind: "127.0.0.1:0".into(),
@@ -4355,6 +4359,7 @@ mod tests {
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             bind: "127.0.0.1:0".into(),
@@ -4604,6 +4609,7 @@ mod tests {
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             };
             let store = Arc::new(RouteHandle::new(

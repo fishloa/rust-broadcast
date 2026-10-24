@@ -1265,12 +1265,12 @@ impl<'a> Parse<'a> for DataReferenceBox {
             if off + 8 > bytes.len() {
                 break;
             }
-            let Some(sz) = crate::box_types::child_extent(&bytes[off..]) else {
+            let Some(sz) = crate::box_types::child_extent_in(&bytes[off..]) else {
                 break;
             };
-            let end = (off + sz).min(bytes.len());
+            let end = off + sz;
             entries.push(DataEntryUrlBox::parse(&bytes[off..end])?);
-            off += sz;
+            off = end;
         }
         Ok(Self {
             version: ver,
@@ -2679,7 +2679,7 @@ fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAu
         if sz < 8 {
             break;
         }
-        let end = (off + sz).min(body.len());
+        let end = off.saturating_add(sz).min(body.len());
         let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
         let data = body[off + 8..end].to_vec();
         config_boxes.push(OpaqueBox {
@@ -2688,7 +2688,7 @@ fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAu
             to_end: false,
             largesize: false,
         });
-        off += sz;
+        off = off.saturating_add(sz);
     }
     Ok(ParsedAudioSampleEntry {
         entry_version,
@@ -3013,10 +3013,10 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
             if off + 8 > bytes.len() {
                 break;
             }
-            let Some(sz) = crate::box_types::child_extent(&bytes[off..]) else {
+            let Some(sz) = crate::box_types::child_extent_in(&bytes[off..]) else {
                 break;
             };
-            let end = (off + sz).min(bytes.len());
+            let end = off + sz;
             let box_bytes = &bytes[off..end];
             let codec = &box_bytes[4..8];
             let entry = match codec {
@@ -3068,7 +3068,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 }
             };
             entries.push(entry);
-            off += sz;
+            off = end;
         }
         Ok(Self {
             version: ver,

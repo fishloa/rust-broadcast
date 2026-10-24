@@ -275,6 +275,7 @@ fn instant_route(name: &str) -> Route {
         outputs: vec![OutputKind::LlHls],
         dvr: DvrConfig::default(),
         ts_hls_cut: Default::default(),
+        ts_hls_idr_fallback: Default::default(),
         declared_bandwidth_bps: None,
     }
 }
@@ -293,6 +294,7 @@ fn unreachable_rtsp_route(name: &str, unique: &str) -> Route {
         outputs: vec![OutputKind::LlHls],
         dvr: DvrConfig::default(),
         ts_hls_cut: Default::default(),
+        ts_hls_idr_fallback: Default::default(),
         declared_bandwidth_bps: None,
     }
 }

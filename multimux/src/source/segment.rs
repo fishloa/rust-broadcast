@@ -93,7 +93,7 @@ use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
-use crate::route::RouteHandle;
+use crate::route::{RouteHandle, TsHlsIdrStatus};
 
 /// One closed segment, normalised across the two segmenter kinds
 /// [`AnySegmenter`] wraps — [`transmux::ll_hls::SegmentInfo`] (fMP4) and
@@ -372,7 +372,24 @@ pub struct ProgramSegmenter {
     pub(crate) start_gate_video_dropped: u64,
     /// Whether the one-shot `tracing::info!` on gate open has fired.
     pub(crate) start_gate_opened_logged: bool,
+    /// How long the start gate has dropped IDR-less video while an `idr_only`
+    /// classic-TS route waits for its first IDR.
+    idr_wait: transmux::IdrWait,
+    /// The wait ran out and the route cuts on non-IDR sync samples
+    /// (`ts_hls_idr_fallback` permitting).
+    idr_fallback_active: bool,
+    /// Every sample since the first non-IDR sync sample, kept while the gate
+    /// waits for an IDR: when the wait runs out the stream is replayed from
+    /// that sync sample, so a stream whose only random-access points came
+    /// before the bound still yields its first segment.
+    idr_hold: VecDeque<(TrackId, Sample)>,
+    idr_hold_bytes: usize,
 }
+
+/// Most sample payload bytes the IDR-fallback hold keeps (32 MiB). Past it the
+/// hold is discarded and restarts at the next sync sample, so a stream with
+/// no usable random-access point cannot grow it without bound.
+const IDR_HOLD_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 /// Maps this segmenter's internal per-segment timeline
 /// ([`SegmentEntry::timeline_position`], which starts at 0 for a fresh
@@ -467,9 +484,11 @@ fn gate_opens_on(
     route_handle: &RouteHandle,
     config: Option<&CodecConfig>,
     sample: &Sample,
+    idr_fallback_active: bool,
 ) -> bool {
     let idr_only = matches!(route_handle.container(), Container::MpegTs)
-        && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly;
+        && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly
+        && !idr_fallback_active;
     let codec = match config {
         Some(CodecConfig::Avc { .. }) => Some(transmux::NalCodec::Avc),
         Some(CodecConfig::Hevc { .. }) => Some(transmux::NalCodec::Hevc),
@@ -612,6 +631,12 @@ impl ProgramSegmenter {
             start_gate_dropped: 0,
             start_gate_video_dropped: 0,
             start_gate_opened_logged: false,
+            idr_wait: transmux::IdrWait::new(
+                route_handle.ts_idr_fallback().bound(target_duration_secs),
+            ),
+            idr_fallback_active: false,
+            idr_hold: VecDeque::new(),
+            idr_hold_bytes: 0,
         })
     }
 
@@ -783,6 +808,7 @@ impl ProgramSegmenter {
                                 .find(|t| t.track_id == track_id)
                                 .map(|t| &t.config),
                             &sample,
+                            self.idr_fallback_active,
                         );
                     // Safety valve: a video track that NEVER flags a sync
                     // sample (a broken or non-keyframe-signalling source)
@@ -805,10 +831,44 @@ impl ProgramSegmenter {
                         self.start_gate_dropped += 1;
                         if is_video_sample {
                             self.start_gate_video_dropped += 1;
+                            let timescale = trunk
+                                .tracks()
+                                .iter()
+                                .find(|t| t.track_id == track_id)
+                                .map_or(0, |t| t.timescale);
+                            let waiting = self.idr_wait_applies(route_handle);
+                            let tripped =
+                                waiting && self.idr_wait.observe_dropped(&sample, timescale);
+                            if waiting && route_handle.ts_idr_fallback().falls_back() {
+                                self.hold_for_fallback(is_video_sample, track_id, sample);
+                            }
+                            if tripped {
+                                self.idr_wait_ran_out(program, route_handle);
+                                if !self.idr_hold.is_empty() {
+                                    self.start_gate_open = true;
+                                    tracing::info!(
+                                        program = program.0,
+                                        dropped = self.start_gate_dropped,
+                                        replayed = self.idr_hold.len(),
+                                        "start gate opened on the first non-IDR sync sample after the IDR wait ran out"
+                                    );
+                                    self.start_gate_opened_logged = true;
+                                    self.idr_hold_bytes = 0;
+                                    for (held_track, held) in std::mem::take(&mut self.idr_hold) {
+                                        self.ingest_sample(trunk, held_track, held);
+                                    }
+                                }
+                            }
+                        } else if self.idr_wait_applies(route_handle)
+                            && route_handle.ts_idr_fallback().falls_back()
+                        {
+                            self.hold_for_fallback(false, track_id, sample);
                         }
                         continue;
                     }
                     self.start_gate_open = true;
+                    self.idr_hold.clear();
+                    self.idr_hold_bytes = 0;
                     if !self.start_gate_opened_logged {
                         tracing::info!(
                             program = program.0,
@@ -819,65 +879,7 @@ impl ProgramSegmenter {
                         self.start_gate_opened_logged = true;
                     }
                 }
-                // Keep the internal-timeline -> source-90kHz mapping anchored
-                // (issue #1083, E): anchor on the first timed sample, and
-                // re-anchor on a genuine source-clock discontinuity so a jump
-                // in the source PTS is not smeared across every later segment
-                // boundary. This is what makes `note_segment_start` (below)
-                // report the source clock the SCTE-35 events are on, not the
-                // segmenter's own restart-from-zero timeline.
-                if let Some(pts) = sample.pts
-                    && let Some(timescale) = trunk
-                        .tracks()
-                        .iter()
-                        .find(|t| t.track_id == track_id)
-                        .map(|t| t.timescale)
-                    && timescale > 0
-                {
-                    let re_anchor = match self.anchor {
-                        None => true,
-                        Some(a) => {
-                            // Same track AND a jump larger than any legitimate
-                            // inter-sample gap => discontinuity.
-                            let jump_ns = {
-                                let prev = i128::from(a.last_pts);
-                                let now = i128::from(pts);
-                                let scale = i128::from(timescale);
-                                (now - prev).saturating_mul(i128::from(NANOS_PER_SEC)) / scale
-                            };
-                            let sign_flip = (a.last_pts >= 0) != (pts >= 0);
-                            sign_flip
-                                || (a.last_timescale == timescale
-                                    && jump_ns.unsigned_abs() > MEDIA_DISCONTINUITY_NS as u128)
-                        }
-                    };
-                    if re_anchor {
-                        let fresh = MediaAnchor {
-                            source_90k: rescale_to_90k(pts, timescale),
-                            timeline_ns: self.next_timeline_ns,
-                            last_pts: pts,
-                            last_timescale: timescale,
-                        };
-                        if self.anchor.is_none() {
-                            // No anchor at all yet: this IS the first
-                            // segment's clock, so it applies immediately.
-                            self.anchor = Some(fresh);
-                        } else {
-                            // A discontinuity mid-stream. The segment being
-                            // filled right now must keep the OLD anchor (its
-                            // start really was before the jump); the new one
-                            // takes effect at the next segment boundary
-                            // (item 5).
-                            self.pending_anchor = Some(fresh);
-                        }
-                    } else if let Some(a) = self.anchor.as_mut() {
-                        a.last_pts = pts;
-                        a.last_timescale = timescale;
-                    }
-                }
-                if let Err(e) = self.seg.push(track_id, sample) {
-                    tracing::warn!(error = %e, "driver-backed segmenter push failed");
-                }
+                self.ingest_sample(trunk, track_id, sample);
             } else if let SampleCursorItem::Lagged { skipped } = item {
                 tracing::warn!(
                     program = program.0,
@@ -893,6 +895,131 @@ impl ProgramSegmenter {
             // `SampleCursorItem::Timed`.
         }
         self.publish_ready()
+    }
+
+    /// Anchor the media timeline on `sample` and push it through the
+    /// segmenter.
+    fn ingest_sample(&mut self, trunk: &Trunk, track_id: TrackId, sample: Sample) {
+        // Keep the internal-timeline -> source-90kHz mapping anchored
+        // (issue #1083, E): anchor on the first timed sample, and
+        // re-anchor on a genuine source-clock discontinuity so a jump
+        // in the source PTS is not smeared across every later segment
+        // boundary. This is what makes `note_segment_start` (below)
+        // report the source clock the SCTE-35 events are on, not the
+        // segmenter's own restart-from-zero timeline.
+        if let Some(pts) = sample.pts
+            && let Some(timescale) = trunk
+                .tracks()
+                .iter()
+                .find(|t| t.track_id == track_id)
+                .map(|t| t.timescale)
+            && timescale > 0
+        {
+            let re_anchor = match self.anchor {
+                None => true,
+                Some(a) => {
+                    // Same track AND a jump larger than any legitimate
+                    // inter-sample gap => discontinuity.
+                    let jump_ns = {
+                        let prev = i128::from(a.last_pts);
+                        let now = i128::from(pts);
+                        let scale = i128::from(timescale);
+                        (now - prev).saturating_mul(i128::from(NANOS_PER_SEC)) / scale
+                    };
+                    let sign_flip = (a.last_pts >= 0) != (pts >= 0);
+                    sign_flip
+                        || (a.last_timescale == timescale
+                            && jump_ns.unsigned_abs() > MEDIA_DISCONTINUITY_NS as u128)
+                }
+            };
+            if re_anchor {
+                let fresh = MediaAnchor {
+                    source_90k: rescale_to_90k(pts, timescale),
+                    timeline_ns: self.next_timeline_ns,
+                    last_pts: pts,
+                    last_timescale: timescale,
+                };
+                if self.anchor.is_none() {
+                    // No anchor at all yet: this IS the first
+                    // segment's clock, so it applies immediately.
+                    self.anchor = Some(fresh);
+                } else {
+                    // A discontinuity mid-stream. The segment being
+                    // filled right now must keep the OLD anchor (its
+                    // start really was before the jump); the new one
+                    // takes effect at the next segment boundary
+                    // (item 5).
+                    self.pending_anchor = Some(fresh);
+                }
+            } else if let Some(a) = self.anchor.as_mut() {
+                a.last_pts = pts;
+                a.last_timescale = timescale;
+            }
+        }
+        if let Err(e) = self.seg.push(track_id, sample) {
+            tracing::warn!(error = %e, "driver-backed segmenter push failed");
+        }
+    }
+
+    /// Keep `sample` for the IDR-fallback replay: collection starts at the
+    /// first non-IDR sync sample of a video track and takes every sample after
+    /// it, so the replay opens on the oldest random-access point the wait saw.
+    fn hold_for_fallback(&mut self, is_video: bool, track_id: TrackId, sample: Sample) {
+        if self.idr_hold.is_empty() && !(is_video && sample.flags.is_sync) {
+            return;
+        }
+        self.idr_hold_bytes = self.idr_hold_bytes.saturating_add(sample.data.len());
+        self.idr_hold.push_back((track_id, sample));
+        if self.idr_hold_bytes > IDR_HOLD_MAX_BYTES {
+            self.idr_hold.clear();
+            self.idr_hold_bytes = 0;
+        }
+    }
+
+    /// Whether this route is a classic-TS output cutting on IDR only, so a
+    /// stream without IDR pictures is a stall rather than normal operation.
+    fn idr_wait_applies(&self, route_handle: &RouteHandle) -> bool {
+        matches!(route_handle.container(), Container::MpegTs)
+            && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly
+            && !self.idr_fallback_active
+    }
+
+    /// The IDR wait passed its bound: fall back to non-IDR sync samples when
+    /// the route allows it, and tell the operator either way (once per route:
+    /// log, `multimux_ts_hls_non_idr_total`, admin `ts_hls_idr`).
+    fn idr_wait_ran_out(&mut self, program: ProgramId, route_handle: &RouteHandle) {
+        let falls_back = route_handle.ts_idr_fallback().falls_back();
+        let status = if falls_back {
+            TsHlsIdrStatus::FellBack
+        } else {
+            TsHlsIdrStatus::Awaiting
+        };
+        if falls_back {
+            self.idr_fallback_active = true;
+            if let AnySegmenter::Ts(seg) = &mut self.seg {
+                seg.fall_back_to_any_rap();
+            }
+        }
+        metrics::counter!(
+            crate::prometheus::TS_HLS_NON_IDR_TOTAL,
+            "route" => route_handle.name().to_string(),
+            "mode" => status.name()
+        )
+        .increment(1);
+        if route_handle.note_ts_idr_missing(status) {
+            tracing::warn!(
+                program = program.0,
+                route = route_handle.name(),
+                waited = ?self.idr_wait.bound(),
+                mode = status.name(),
+                "ts_hls: no IDR picture in the stream within the wait bound; {}",
+                if falls_back {
+                    "cutting segments on non-IDR random-access points instead (not Apple 7.4 IDR-aligned)"
+                } else {
+                    "ts_hls_idr_fallback is \"never\": serving no segments until an IDR arrives"
+                }
+            );
+        }
     }
 
     /// Apply a mid-stream track-set change detected via
@@ -1052,7 +1179,10 @@ impl ProgramSegmenter {
                         u64::from(next_seq.value().saturating_sub(1)),
                     ) {
                         Ok(seg) => {
-                            let seg = seg.with_cut_policy(route_handle.ts_cut_policy());
+                            let mut seg = seg.with_cut_policy(route_handle.ts_cut_policy());
+                            if self.idr_fallback_active {
+                                seg.fall_back_to_any_rap();
+                            }
                             let replaced = std::mem::replace(&mut self.seg, AnySegmenter::Ts(seg));
                             if let AnySegmenter::Ts(mut old) = replaced {
                                 if let Err(e) = old.finish() {
@@ -1068,6 +1198,9 @@ impl ProgramSegmenter {
                             self.start_gate_dropped = 0;
                             self.start_gate_video_dropped = 0;
                             self.start_gate_opened_logged = false;
+                            self.idr_wait = transmux::IdrWait::new(self.idr_wait.bound());
+                            self.idr_hold.clear();
+                            self.idr_hold_bytes = 0;
                             tracing::info!(
                                 "TS segmenter rebuilt with updated track set for \
                                  mid-stream addition"
@@ -2798,6 +2931,10 @@ mod tests {
             start_gate_dropped: 0,
             start_gate_video_dropped: 0,
             start_gate_opened_logged: false,
+            idr_wait: transmux::IdrWait::new(std::time::Duration::from_secs(6)),
+            idr_fallback_active: false,
+            idr_hold: VecDeque::new(),
+            idr_hold_bytes: 0,
         }
     }
 

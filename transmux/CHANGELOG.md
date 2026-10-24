@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (round-9 audit F1)
+- `IdrWait` and `StreamingTsHlsSegmenter::{with_idr_fallback, fall_back_to_any_rap, idr_fallback_active}`: a bounded fallback for `SegmentCutPolicy::IdrOnly`. Open-GOP H.264 (recovery-point SEI, zero IDR NALs) never delivers the IDR the policy waits for; after `bound` of dropped anchor media the segmenter cuts on any sync sample for the rest of the stream. Without `with_idr_fallback` the wait is unbounded as before. `IdrWait::observe_dropped` is the shared media-time accounting for callers that gate samples before the segmenter.
+
+### Fixed (round-9 audit F2)
+- **`StreamingTsHlsSegmenter` holds a cut for lagging audio.** A live multiplex delivers audio after the video it accompanies, so cutting the instant the anchor reached its next sync sample closed each segment with however much audio had arrived (1.15 s to 1.34 s of audio against 1.28 s of video on the zenith captures), which Apple's `mediastreamvalidator` reports as "Playlist vs segment duration mismatch". The cut is now held until every audio track that has delivered media holds a sample at or past the boundary, bounded by one second of further anchor media (`CATCH_UP_MAX_SECS`); a segment `EXTINF` still equals its video span. Pushes that already interleave by time cut exactly as before.
+
+### Fixed (round-9 audit F6)
+- **Box walkers no longer panic on an untrusted `largesize` that overflows `usize` arithmetic.** `find_config_box` (`off += size`, libFuzzer `transmux_sample_entries` crash), the `stsd`/`dref` entry walks, and the `stsd`/`dref`/`cenc`/subtitle/`webm` child walkers now clamp every extent to the bytes present (`box_types::child_extent_in`) and use checked/saturating advances; `parse_box` no longer truncates a `u64` size on 32-bit targets; the progressive chunk cursor saturates. Reachable through hls-runtime init validation (so `broadcast-client`).
+
 ### Fixed (round-9 audit F7)
 - `LlHlsSegmenter` keeps cutting parts after a segment passes its target duration while it waits for the next keyframe. The part boundary used to be suppressed past the target, so every sample until the next IDR piled into the segment's final part (0.28-6.04 s against a 0.2 s `PART-TARGET` on real TS captures), breaking RFC 8216bis §4.4.4.9. The final part is now the short remainder. A single source sample longer than the part target still cannot be split.
 

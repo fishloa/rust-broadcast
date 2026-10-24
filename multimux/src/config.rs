@@ -1475,7 +1475,72 @@ pub struct Route {
     /// fMP4/CMAF output, which always cut on any random-access point.
     #[serde(default)]
     pub ts_hls_cut: TsHlsCutPolicy,
+    /// What an `idr_only` `ts_hls` output does when the stream carries no IDR
+    /// picture (open-GOP H.264 with recovery-point SEI): `"auto"` (default)
+    /// falls back to any random-access point after
+    /// [`IDR_FALLBACK_TARGETS`] target durations (at least
+    /// [`IDR_FALLBACK_MIN_SECS`] seconds), `{"targets": N}` picks the number
+    /// of target durations, `"never"` keeps waiting for an IDR. Either way the
+    /// route reports `ts_hls_idr` in its admin status and bumps
+    /// `multimux_ts_hls_non_idr_total` once the wait passes the bound.
+    #[serde(default)]
+    pub ts_hls_idr_fallback: TsHlsIdrFallback,
 }
+
+/// Target durations an `auto` [`TsHlsIdrFallback`] waits for the first IDR.
+pub const IDR_FALLBACK_TARGETS: u32 = 3;
+
+/// Floor, in seconds, on the `auto` [`TsHlsIdrFallback`] bound: a stream with
+/// an IDR every few seconds is not "IDR-less" merely because the target is
+/// short.
+pub const IDR_FALLBACK_MIN_SECS: f64 = 6.0;
+
+/// The `ts_hls` behaviour selected by [`Route::ts_hls_idr_fallback`] when no
+/// IDR arrives; serde values `"auto"` (default), `"never"` and
+/// `{"targets": N}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TsHlsIdrFallback {
+    /// Fall back after [`IDR_FALLBACK_TARGETS`] target durations (default).
+    #[default]
+    Auto,
+    /// Fall back after this many target durations.
+    Targets(u32),
+    /// Never fall back: wait for an IDR forever (the empty-playlist
+    /// behaviour of the strict policy), but still report the wait.
+    Never,
+}
+
+impl TsHlsIdrFallback {
+    /// Whether the output may cut on a non-IDR random-access point.
+    pub fn falls_back(&self) -> bool {
+        !matches!(self, TsHlsIdrFallback::Never)
+    }
+
+    /// How much IDR-less media the output tolerates before it reports (and,
+    /// unless [`Self::falls_back`] is `false`, falls back).
+    pub fn bound(&self, target_duration_secs: f64) -> std::time::Duration {
+        let secs = match self {
+            TsHlsIdrFallback::Targets(n) => f64::from(*n) * target_duration_secs,
+            TsHlsIdrFallback::Auto | TsHlsIdrFallback::Never => {
+                (f64::from(IDR_FALLBACK_TARGETS) * target_duration_secs).max(IDR_FALLBACK_MIN_SECS)
+            }
+        };
+        std::time::Duration::from_secs_f64(secs)
+    }
+
+    /// The config token for this setting.
+    pub fn name(&self) -> &'static str {
+        match self {
+            TsHlsIdrFallback::Auto => "auto",
+            TsHlsIdrFallback::Targets(_) => "targets",
+            TsHlsIdrFallback::Never => "never",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(TsHlsIdrFallback);
 
 /// The `ts_hls` segment cut rule selected by [`Route::ts_hls_cut`]; the
 /// serde values are `"idr_only"` (default) and `"any_rap"`.
@@ -2900,6 +2965,7 @@ mod tests {
                     outputs: default_outputs(),
                     dvr: DvrConfig::default(),
                     ts_hls_cut: Default::default(),
+                    ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                 }],
                 request_timeout_secs: bad,
@@ -2921,6 +2987,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             max_concurrent_requests: 0,
@@ -2941,6 +3008,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             max_request_body_bytes: 0,
@@ -2985,6 +3053,7 @@ mod tests {
                 }],
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3017,6 +3086,7 @@ mod tests {
                 }],
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3061,6 +3131,7 @@ mod tests {
                     }],
                     dvr: DvrConfig::default(),
                     ts_hls_cut: Default::default(),
+                    ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                 }],
                 ..Config::default()
@@ -3133,6 +3204,7 @@ mod tests {
                     outputs: vec![kind],
                     dvr: DvrConfig::default(),
                     ts_hls_cut: Default::default(),
+                    ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                 }],
                 ..Config::default()
@@ -3705,6 +3777,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3726,6 +3799,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3750,6 +3824,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3819,6 +3894,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3838,6 +3914,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3857,6 +3934,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3877,6 +3955,7 @@ mod tests {
             outputs: default_outputs(),
             dvr: DvrConfig::default(),
             ts_hls_cut: Default::default(),
+            ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
         };
         let debug = format!("{ts_http:?}");
@@ -3896,6 +3975,7 @@ mod tests {
             outputs: default_outputs(),
             dvr: DvrConfig::default(),
             ts_hls_cut: Default::default(),
+            ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
         };
         let debug = format!("{hls_pull:?}");
@@ -3919,6 +3999,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3939,6 +4020,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3960,6 +4042,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -3981,6 +4064,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -4002,6 +4086,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -4025,6 +4110,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -4045,6 +4131,7 @@ mod tests {
                     outputs: default_outputs(),
                     dvr: DvrConfig::default(),
                     ts_hls_cut: Default::default(),
+                    ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                 },
                 Route {
@@ -4056,6 +4143,7 @@ mod tests {
                     outputs: default_outputs(),
                     dvr: DvrConfig::default(),
                     ts_hls_cut: Default::default(),
+                    ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                 },
             ],
@@ -4117,6 +4205,7 @@ mod tests {
             outputs: default_outputs(),
             dvr: DvrConfig::default(),
             ts_hls_cut: Default::default(),
+            ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
         };
         let debug = format!("{route:?}");
@@ -4143,6 +4232,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
@@ -4174,6 +4264,7 @@ mod tests {
             outputs: default_outputs(),
             dvr: DvrConfig::default(),
             ts_hls_cut: Default::default(),
+            ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
         };
         let debug = format!("{route:?}");
@@ -4197,6 +4288,7 @@ mod tests {
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
                 ts_hls_cut: Default::default(),
+                ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
             }],
             ..Config::default()
