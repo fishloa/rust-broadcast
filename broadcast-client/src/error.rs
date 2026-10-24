@@ -18,6 +18,10 @@ pub enum Error {
     /// The variant index does not exist (or no master playlist was seen yet).
     #[error("no such variant: {0}")]
     NoSuchVariant(usize),
+    /// The audio rendition index does not exist for the chosen variant (or no master playlist
+    /// was seen yet).
+    #[error("no such audio rendition")]
+    NoSuchRendition,
     /// A custom header name is owned by the session and cannot be set by the caller.
     #[error("reserved header: {name}")]
     ReservedHeader {

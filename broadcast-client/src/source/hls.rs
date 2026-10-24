@@ -3,17 +3,20 @@
 
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::collections::HashMap;
 
 use hls_runtime::client::{
     Action as HlsAction, Error as CoreError, HlsClient, KeyId, Output, ResourceId,
 };
+use transmux::TrackId;
 use url::Url;
 
 use crate::auth::{AuthDecision, AuthState};
 use crate::error::Error;
-use crate::events::{Action, Config, ErrorKind, Event, Status};
+use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::redirect;
 
 const MICROS_PER_MILLI: u64 = 1_000;
@@ -29,6 +32,33 @@ const AUTH_STATUSES: [u16; 3] = [
     STATUS_FORBIDDEN,
 ];
 const METHOD_GET: &str = "GET";
+
+const FIRST_CONN_ID: u32 = 1;
+
+/// Connection-id allocator shared by every adapter of one session.
+#[derive(Debug, Clone)]
+pub(crate) struct ConnAlloc(Arc<AtomicU32>);
+
+impl ConnAlloc {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(AtomicU32::new(FIRST_CONN_ID)))
+    }
+
+    fn next(&self) -> u32 {
+        self.0
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                Some(c.checked_add(1).unwrap_or(FIRST_CONN_ID))
+            })
+            .unwrap_or(FIRST_CONN_ID)
+    }
+}
+
+/// Which playlist an adapter plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Role {
+    Main,
+    Audio,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Purpose {
@@ -93,13 +123,14 @@ pub(crate) struct HlsSource {
     attempt: u64,
     established: bool,
     live: bool,
-    next_conn: u32,
+    conn_alloc: ConnAlloc,
+    role: Role,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
 }
 
 impl HlsSource {
-    pub(crate) fn new(url: &Url, config: &Config) -> Self {
+    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, role: Role) -> Self {
         let mut client = HlsClient::new(url.as_str());
         client.set_variant_policy(config.variant_policy.clone());
         let mut source = Self {
@@ -128,7 +159,8 @@ impl HlsSource {
             attempt: 0,
             established: false,
             live: false,
-            next_conn: 1,
+            conn_alloc,
+            role,
             actions: VecDeque::new(),
             events: VecDeque::new(),
         };
@@ -146,6 +178,19 @@ impl HlsSource {
 
     pub(crate) fn conns(&self) -> Vec<u32> {
         self.reqs.keys().copied().collect()
+    }
+
+    pub(crate) fn owns(&self, conn: u32) -> bool {
+        self.reqs.contains_key(&conn)
+    }
+
+    pub(crate) fn is_fatal(&self) -> bool {
+        self.fatal
+    }
+
+    pub(crate) fn halt(&mut self) {
+        self.fatal = true;
+        self.reset_in_flight();
     }
 
     pub(crate) fn poll(&mut self, now: u64, auth: &mut AuthState) {
@@ -260,7 +305,8 @@ impl HlsSource {
             if status == STATUS_FORBIDDEN {
                 self.events.push_back(Event::Forbidden { status });
             }
-            if req.purpose == Purpose::Playlist
+            if self.role == Role::Main
+                && req.purpose == Purpose::Playlist
                 && (status == STATUS_NOT_FOUND || status == STATUS_GONE)
             {
                 self.events.push_back(Event::Status(Status::NotFound));
@@ -636,8 +682,7 @@ impl HlsSource {
         req.responded_ok = false;
         req.expected_len = None;
         req.body.clear();
-        let conn = self.next_conn;
-        self.next_conn = self.next_conn.saturating_add(1);
+        let conn = self.conn_alloc.next();
         let timeout = match req.purpose {
             Purpose::Playlist => self.playlist_timeout_us,
             Purpose::Resource(_) => self.segment_timeout_us,
@@ -671,6 +716,13 @@ impl HlsSource {
         self.gate_until = None;
     }
 
+    fn remap(&self, id: TrackId) -> TrackId {
+        match self.role {
+            Role::Main => id,
+            Role::Audio => TrackId::new(id.value().saturating_add(AUDIO_TRACK_ID_OFFSET)),
+        }
+    }
+
     fn pump_core(&mut self) {
         while let Some(action) = self.client.poll() {
             self.pending.push_back(action);
@@ -681,7 +733,12 @@ impl HlsSource {
         while let Some(output) = self.client.next_output() {
             match output {
                 Output::Master(selection) => self.events.push_back(Event::Variants(selection)),
-                Output::Tracks(specs) => self.events.push_back(Event::Tracks(specs)),
+                Output::Tracks(mut specs) => {
+                    for spec in &mut specs {
+                        spec.track_id = self.remap(spec.track_id);
+                    }
+                    self.events.push_back(Event::Tracks(specs));
+                }
                 Output::Samples { track_id, samples } => {
                     if !samples.is_empty() {
                         self.key_failures = 0;
@@ -693,7 +750,7 @@ impl HlsSource {
                     }
                     for sample in samples {
                         self.events.push_back(Event::Sample {
-                            track: track_id,
+                            track: self.remap(track_id),
                             sample,
                             join: None,
                         });
@@ -704,7 +761,7 @@ impl HlsSource {
                     pts,
                     display,
                 } => self.events.push_back(Event::DisplayChanged {
-                    track: track_id,
+                    track: self.remap(track_id),
                     pts,
                     display,
                 }),

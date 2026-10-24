@@ -3,7 +3,12 @@
 use broadcast_client::{Action, Config, Credentials, Session};
 use libfuzzer_sys::fuzz_target;
 
-const URLS: [&str; 2] = ["http://example/live.ts", "http://example/live.m3u8"];
+const URLS: [&str; 3] = [
+    "http://example/live.ts",
+    "http://example/live.m3u8",
+    "http://example/master.m3u8",
+];
+const HLS_MASTER_SEED: &[u8] = b"#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"En\",LANGUAGE=\"en\",DEFAULT=YES,AUTOSELECT=YES,URI=\"audio/en.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"De\",LANGUAGE=\"de\",AUTOSELECT=YES,URI=\"http://cdn/audio/de.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"Mux\",DEFAULT=NO\n#EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO=\"a\"\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900000,AUDIO=\"a\"\nhigh.m3u8\n";
 const HLS_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
 const HLS_ENC_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x000102030405060708090A0B0C0D0E0F\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
 const STEP_US: u64 = 700_000;
@@ -12,6 +17,7 @@ const STATUS_CODES: [u16; 6] = [200, 200, 404, 302, 401, 500];
 
 fn drive(url: &str, data: &[u8]) {
     let config = Config {
+        preferred_audio_language: Some("de".to_string()),
         initial_cookies: vec![("seed".to_string(), "1".to_string())],
         extra_headers: vec![("X-Fuzz".to_string(), "1".to_string())],
         ..Config::default()
@@ -29,10 +35,15 @@ fn drive(url: &str, data: &[u8]) {
         match pick % 10 {
             0 => {
                 while let Some(action) = session.poll(now) {
-                    if let Action::HttpRequest { conn, .. } = action {
+                    if let Action::HttpRequest { conn, url, .. } = action {
                         conn_ids.push(conn);
                         session.on_response(conn, 200, &[]);
-                        session.on_data(conn, HLS_SEED, now);
+                        let body = if url.contains("master") {
+                            HLS_MASTER_SEED
+                        } else {
+                            HLS_SEED
+                        };
+                        session.on_data(conn, body, now);
                         session.on_data(conn, chunk, now);
                     }
                 }
@@ -87,6 +98,10 @@ fn drive(url: &str, data: &[u8]) {
                         session.on_closed(conn, None, now);
                     }
                 }
+            }
+            9 => {
+                let index = chunk.get(1).copied().filter(|b| b % 4 != 0);
+                let _ = session.select_audio_rendition(index.map(|b| usize::from(b % 4)));
             }
             _ => {
                 let _ = session.poll(now);
