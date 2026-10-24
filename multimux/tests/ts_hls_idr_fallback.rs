@@ -538,3 +538,94 @@ fn config_option_parses_and_rejects_unknown_value() {
         Duration::from_secs_f64(2.0)
     );
 }
+
+const VALIDATOR_WINDOW_SECS: &str = "14";
+const DURATION_MISMATCH_CODE: i64 = -50060;
+const MIN_VALIDATED_SEGMENTS: usize = 4;
+
+fn collect_codes(value: &serde_json::Value, out: &mut Vec<(i64, String)>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let (Some(code), Some(detail)) = (
+                map.get("errorStatusCode")
+                    .and_then(serde_json::Value::as_i64),
+                map.get("errorDetail").and_then(serde_json::Value::as_str),
+            ) {
+                out.push((code, detail.to_owned()));
+            }
+            map.values().for_each(|v| collect_codes(v, out));
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|v| collect_codes(v, out)),
+        _ => {}
+    }
+}
+
+/// Apple's own validator against the live route: every segment's measured
+/// duration must agree with its `EXTINF` (round-9 F2).
+async fn assert_validator_finds_no_duration_mismatch(tag: &str, input: InputSpec) {
+    let probe = std::process::Command::new("mediastreamvalidator")
+        .arg("--version")
+        .output();
+    if probe.is_err() {
+        eprintln!("{tag}: SKIPPED - mediastreamvalidator is not installed (macOS-only oracle)");
+        return;
+    }
+    let name = format!("validated-{tag}");
+    let server = start(route(
+        &name,
+        input,
+        TsHlsIdrFallback::Targets(SHORT_BOUND_TARGETS),
+    ));
+    server.segments(&name, MIN_VALIDATED_SEGMENTS).await;
+    let json_path =
+        std::env::temp_dir().join(format!("multimux-msv-{name}-{}.json", std::process::id()));
+    let url = format!("http://{}/{name}/media.m3u8", server.media);
+    let out = json_path.clone();
+    let run = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("mediastreamvalidator")
+            .args(["--quiet", "-t", VALIDATOR_WINDOW_SECS, "-O"])
+            .arg(&out)
+            .arg(&url)
+            .output()
+    })
+    .await
+    .expect("join")
+    .expect("run mediastreamvalidator");
+    let text = std::fs::read_to_string(&json_path).unwrap_or_else(|e| {
+        panic!(
+            "{tag}: mediastreamvalidator wrote no JSON ({e}): {}",
+            String::from_utf8_lossy(&run.stderr)
+        )
+    });
+    let _ = std::fs::remove_file(&json_path);
+    let report: serde_json::Value = serde_json::from_str(&text).expect("validator json");
+    assert!(
+        report["processedSegmentsCount"].as_i64().unwrap_or(0) >= 2,
+        "{tag}: the validator processed no segments: {report}"
+    );
+    let mut findings = Vec::new();
+    collect_codes(&report, &mut findings);
+    let mismatches: Vec<_> = findings
+        .iter()
+        .filter(|(code, _)| *code == DURATION_MISMATCH_CODE)
+        .collect();
+    assert!(
+        mismatches.is_empty(),
+        "{tag}: playlist vs segment duration mismatch: {mismatches:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn validator_accepts_segment_durations_of_an_open_gop_capture() {
+    let Some(path) = test_fixtures::require("zenith-http/tf1-live.ts", "ts_hls_idr_fallback")
+    else {
+        return;
+    };
+    assert_validator_finds_no_duration_mismatch("tf1", file_input(&path)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn validator_accepts_segment_durations_of_the_public_open_gop_capture() {
+    let path = test_fixtures::path("ts/gulli-opengop.ts");
+    assert_validator_finds_no_duration_mismatch("gulli", file_input(&path)).await;
+}
