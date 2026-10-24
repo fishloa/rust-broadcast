@@ -636,8 +636,10 @@ TF1 capture: 51 of 75) where the disabled hold delivered them. The stale set is 
 sample on the old timeline (`JumpDetector::delivered`, reset at each epoch).
 
 With a host simulation (Buffer `Start`/`Pause`/`Resume` applied, samples behind the playout clock counted late) the
-real captures show no late sample at any hold setting. rai-gulp: first `Tracks` 0.33 s / 1.33 s / 2.61 s,
-`Start` 1.86 s / 1.96 s / 3.28 s for hold 0 / 1 s / 3 s, burst before `Start` 229 / 242 / 401 samples, the sample
-sequences byte-identical. So the 1439 decode failures the Apple TV reported for the 3 s hold are not caused by
-the released samples; the host must tolerate a burst of up to the hold length. The early-release rule and the 1 s
-default shorten that burst and the delay.
+real captures show no late sample at any hold setting. Before the early release, rai-gulp's first `Tracks` came at
+0.33 s / 1.33 s / 2.61 s for hold 0 / 1 s / 3 s with `Start` at 1.86 s / 1.96 s / 3.28 s and a burst of 229 / 242 / 401
+samples before `Start`, the sample sequences byte-identical. With the early release the first `Tracks` comes at
+0.76 s for a 1 s AND a 3 s hold, `Start` at 1.86 s and a 229-sample burst in all three (rai-news-24: 1.13 s,
+Start 2.68 s, 224 samples). So the 1439 decode failures the Apple TV reported for the 3 s hold are not caused by
+the released samples (identical bytes, order and flags to the no-hold run, which plays clean); the host must
+tolerate a burst of up to the hold length, and the early release removes that burst for these channels.

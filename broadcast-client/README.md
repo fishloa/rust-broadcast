@@ -180,9 +180,9 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   identical to the disabled hold. Host contract: the held samples are delivered as one burst behind the
   `Tracks`, up to the hold long; `Buffer::Start` follows within a few hundred ms. A host must accept that
   burst without lateness-based dropping and without a decoder input queue smaller than the hold (1 s of
-  media by default). A captured rai-gulp run with a 3 s hold released 401 samples in one burst before
-  `Start` (229 with no hold); a host that failed to decode after such a burst fails in the host, not in the
-  samples, which match the no-hold run byte for byte.
+  media by default). Before the early release, a captured rai-gulp run with a 3 s hold released 401
+  samples in one burst before `Start` (229 with no hold); those samples match the no-hold run byte for byte,
+  so a decode failure after such a burst is host-side.
 - `Action` implements `Debug` without header values or `Send` payloads.
 - `select_audio_rendition` after `Status::Ended` is accepted and ignored; so are `select_variant` and
   `reconnect` for HLS (a finite TS source restarts on `reconnect`).
