@@ -118,6 +118,18 @@ fn keys_at_maps(text: &str) -> Vec<(MapTag, Option<MediaKey>)> {
     out
 }
 
+/// `true` when `bytes` holds a complete `moov` box: what every Media
+/// Initialization Section of fragmented MP4 carries.
+fn has_movie_box(bytes: &[u8]) -> bool {
+    for step in transmux::box_iter(bytes) {
+        let Ok((boxed, _)) = step else { return false };
+        if boxed.header.box_type.0 == MOVIE_BOX {
+            return true;
+        }
+    }
+    false
+}
+
 /// `true` when `bytes` holds a `moov` but no `moof`: a progressive MP4, not a
 /// media segment of fragmented MP4.
 fn is_progressive_movie(bytes: &[u8]) -> bool {
@@ -1226,6 +1238,10 @@ impl HlsClient {
         let Some(slot) = self.inits.get_mut(&target) else {
             return Ok(());
         };
+        if slot.crypto.is_none() && !has_movie_box(bytes) {
+            slot.fetch = InitFetch::Failed;
+            return Err(Error::InitUndecodable);
+        }
         match slot.crypto {
             Some(crypto) => match self.key_material.get(&crypto.key_id).copied() {
                 Some(KeyBytes(key)) => self.complete_encrypted_init(target, crypto, &key, bytes),
@@ -1295,6 +1311,12 @@ impl HlsClient {
         cipher: &[u8],
     ) -> Result<()> {
         match decrypt_segment(ResourceId::Init, crypto, key, cipher) {
+            Ok(plain) if !has_movie_box(&plain) => {
+                if let Some(slot) = self.inits.get_mut(&target) {
+                    slot.fetch = InitFetch::Failed;
+                }
+                Err(Error::InitUndecodable)
+            }
             Ok(plain) => self.complete_init(target, &plain),
             Err(e) => {
                 if let Some(slot) = self.inits.get_mut(&target) {

@@ -640,6 +640,14 @@ impl HlsSource {
                 self.release_ready(now);
             }
         } else {
+            if purpose == Purpose::Resource(ResourceId::Init)
+                && matches!(&result, Err(CoreError::InitUndecodable))
+            {
+                if !self.report(ErrorKind::InitDecodeFailed) {
+                    self.retry_init_later(now);
+                }
+                return;
+            }
             if let Err(e) = &result
                 && self.core_error(e)
             {
@@ -707,6 +715,10 @@ impl HlsSource {
         self.client_failed(Purpose::Resource(ResourceId::Init));
         self.pump_core();
         self.drain_outputs();
+        self.retry_init_later(now);
+    }
+
+    fn retry_init_later(&mut self, now: u64) {
         self.init_retry = true;
         let refetch = (!self.chain_alive() && !self.client.endlist_seen())
             .then(|| self.client.playlist_url().to_string());
