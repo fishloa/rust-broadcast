@@ -91,4 +91,20 @@ pub enum Error {
         /// The value that failed validation.
         value: String,
     },
+
+    /// An `#EXT-X-KEY` whose `METHOD` is not `NONE` carries no `URI`
+    /// (RFC 8216 §4.3.2.4: `URI` is REQUIRED unless `METHOD` is `NONE`).
+    #[error("EXT-X-KEY with METHOD={method} has no URI")]
+    KeyWithoutUri {
+        /// The method that needs a URI.
+        method: crate::EncryptionMethod,
+    },
+
+    /// A segment is covered only by `#EXT-X-KEY` tags of a `KEYFORMAT` other
+    /// than `identity`, which this crate cannot resolve to a key file.
+    #[error("no identity key applies; unsupported KEYFORMAT {keyformat:?}")]
+    UnsupportedKeyFormat {
+        /// The non-identity `KEYFORMAT` that applies.
+        keyformat: String,
+    },
 }

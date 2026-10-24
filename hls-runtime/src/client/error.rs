@@ -118,4 +118,42 @@ pub enum Error {
         /// The requested index.
         index: usize,
     },
+
+    /// [`crate::client::HlsClient::on_key`] was fed bytes that are not exactly
+    /// one AES-128 key (RFC 8216 §5.1: a key file is 16 octets).
+    #[error("key {id:?} is {len} bytes, an AES-128 key is exactly 16")]
+    BadKeyLength {
+        /// The key whose response was the wrong size.
+        id: super::action::KeyId,
+        /// The number of bytes received.
+        len: usize,
+    },
+
+    /// [`crate::client::HlsClient::on_key`] was fed a [`super::action::KeyId`]
+    /// the client never assigned, or one whose key it already holds.
+    #[error("key delivered for an id the client did not request: {id:?}")]
+    UnrequestedKey {
+        /// The unexpected id.
+        id: super::action::KeyId,
+    },
+
+    /// A segment could not be AES-128 decrypted (ciphertext not a positive
+    /// multiple of 16 bytes, or invalid PKCS7 padding — e.g. the wrong key).
+    #[error("segment {id:?} could not be decrypted with key {key_id:?}")]
+    DecryptFailed {
+        /// The segment that failed to decrypt.
+        id: super::action::ResourceId,
+        /// The key it was decrypted with.
+        key_id: super::action::KeyId,
+    },
+
+    /// The playlist uses an encryption this client does not decrypt. The
+    /// segment is never passed through as plaintext.
+    #[error("unsupported encryption ({method}): {what}")]
+    UnsupportedEncryption {
+        /// The `METHOD` of the key that applies.
+        method: broadcast_hls::EncryptionMethod,
+        /// What is unsupported.
+        what: &'static str,
+    },
 }

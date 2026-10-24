@@ -69,7 +69,7 @@ mod output;
 pub mod tokio_client;
 mod url;
 
-pub use action::{Action, BlockingReload, ResourceId};
+pub use action::{Action, BlockingReload, KeyId, ResourceId};
 pub use engine::HlsClient;
 pub use error::{Error, Result};
 pub use output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
