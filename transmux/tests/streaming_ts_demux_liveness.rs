@@ -165,3 +165,35 @@ fn strict_pmt_order_keeps_the_head_of_line_wait() {
     }
     assert_eq!(before_finish, 0, "strict order delivers only at finish()");
 }
+
+fn samples_after(demux: &mut StreamingTsDemux) -> usize {
+    let mut n = 0;
+    while let Some(e) = demux.poll_event() {
+        n += usize::from(matches!(e, DemuxEvent::Sample { .. }));
+    }
+    n
+}
+
+#[test]
+fn release_silent_heads_unblocks_a_unit_whose_declared_video_never_came() {
+    for rel in ["ts/m6-single.ts", "dvb-si/tnt-5w-12732v-isi6-10s.ts"] {
+        let data = test_fixtures::read(rel);
+        let data = &data[..data.len() / 188 * 188];
+
+        let mut waiting = StreamingTsDemux::new();
+        waiting.feed(data);
+        assert_eq!(
+            samples_after(&mut waiting),
+            0,
+            "{rel}: nothing before finish"
+        );
+
+        let mut released = StreamingTsDemux::new();
+        released.feed(data);
+        released.release_silent_heads();
+        assert!(
+            samples_after(&mut released) > 0,
+            "{rel}: a silent declared PID still blocks its program after the unit ended"
+        );
+    }
+}

@@ -2118,6 +2118,10 @@ struct StreamState {
     /// [`StreamingTsDemux::packet_index`] when this PID was declared, the age
     /// base for [`STUCK_HEAD_INPUT_PACKETS`].
     declared_at_packet: u64,
+    /// Set by [`StreamingTsDemux::release_silent_heads`] while this PID had
+    /// sent nothing: it no longer blocks the PIDs behind it, even after it
+    /// starts sending.
+    unit_released: bool,
 }
 
 /// Advance a one-behind (video/data) pending slot with a newly-built sample,
@@ -5472,6 +5476,7 @@ impl StreamingTsDemux {
             probe_walked_len: 0,
             payload_packets: 0,
             declared_at_packet: self.packet_index,
+            unit_released: false,
         };
         // Replay any payloads that arrived on this PID before its PMT
         // registration completed (see `unattributed`'s doc).
@@ -5973,13 +5978,15 @@ impl StreamingTsDemux {
                             .map_or(usize::MAX, |n| n.saturating_mul(TS_PACKET_SIZE))
                             >= STUCK_HEAD_OWN_BYTES;
                     let declared_at = stream.declared_at_packet;
+                    let released = stream.unit_released;
                     let silent =
                         never_sent && self.parked_behind(next_pid) >= SILENT_HEAD_PARKED_BYTES;
-                    let stuck = !self.strict_pmt_order
+                    let live_stuck = !self.strict_pmt_order
                         && (no_access_unit
                             || (!is_video
                                 && self.packet_index.saturating_sub(declared_at)
                                     >= STUCK_HEAD_INPUT_PACKETS));
+                    let stuck = released || live_stuck;
                     if silent || aus_stalled || stuck {
                         // Stalled: it no longer holds back the PIDs after it
                         // (see `PROBE_HEAD_BLOCK_AUS`); it stays unresolved and
@@ -6025,6 +6032,30 @@ impl StreamingTsDemux {
             }
         }
         self.maybe_signal_tracks_resolved();
+    }
+
+    /// Declare that the input fed so far is a complete, self-contained unit
+    /// (an HLS media segment: it carries its own PAT/PMT and every PID that
+    /// is in it), so a PID the PMT declares that has not sent a single
+    /// payload packet is absent from it, not late. Such a head stops holding
+    /// back the rest of its program ([`SILENT_HEAD_PARKED_BYTES`] is a
+    /// parked-bytes bound a short unit never reaches).
+    ///
+    /// The head is stepped over, not abandoned: if packets arrive later it
+    /// resolves and is announced by a later [`DemuxEvent::TrackAdded`] with a
+    /// later track id, re-arming [`DemuxEvent::TracksResolved`]. Nothing else
+    /// changes: a PES that continues into the next unit is untouched, so a
+    /// conformant or non-conformant cut yields the same samples as without
+    /// this call, only earlier.
+    pub fn release_silent_heads(&mut self) {
+        for stream in self.streams.values_mut() {
+            if stream.payload_packets == 0
+                && matches!(stream.track, Some(TrackState::Probing { .. }))
+            {
+                stream.unit_released = true;
+            }
+        }
+        self.try_promote_ready();
     }
 
     /// Bytes currently held in the `Probing`/`Parked` backlogs of every
