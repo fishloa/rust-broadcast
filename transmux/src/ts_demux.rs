@@ -4755,11 +4755,11 @@ impl StreamingTsDemux {
 
     /// Promote tracks strictly in PMT-declaration order across *all*
     /// programs, with only the pre-existing step-over bounds
-    /// ([`PROBE_HEAD_BLOCK_AUS`], [`SILENT_HEAD_PARKED_BYTES`]).
+    /// (`PROBE_HEAD_BLOCK_AUS`, `SILENT_HEAD_PARKED_BYTES`).
     ///
     /// The default is the live policy: an unresolved head holds back only the
     /// PIDs of its own program, and a head that cannot be a legitimate wait is
-    /// stepped over after [`STUCK_HEAD_OWN_BYTES`] / [`STUCK_HEAD_INPUT_PACKETS`],
+    /// stepped over after `STUCK_HEAD_OWN_BYTES` / `STUCK_HEAD_INPUT_PACKETS`,
     /// so a stuck PID never keeps a multi-program capture from delivering
     /// until `finish()`. The cost is that track ids follow resolution order,
     /// not PMT order. A caller that holds the whole input and calls `finish()`
@@ -6076,7 +6076,7 @@ impl StreamingTsDemux {
     /// (an HLS media segment: it carries its own PAT/PMT and every PID that
     /// is in it), so a PID the PMT declares that has not sent a single
     /// payload packet is absent from it, not late. Such a head stops holding
-    /// back the rest of its program ([`SILENT_HEAD_PARKED_BYTES`] is a
+    /// back the rest of its program (`SILENT_HEAD_PARKED_BYTES` is a
     /// parked-bytes bound a short unit never reaches).
     ///
     /// The head is stepped over, not abandoned: if packets arrive later it
