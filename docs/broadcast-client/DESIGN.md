@@ -69,8 +69,11 @@ Status: Establishing | Live | Stalled{secs} | Reconnecting{attempt} | NotFound |
   restarts (attempt 0).
 - `Starved(kind)` -> `Event::Starved(kind)`.
 - `StreamingTsDemux` events other than Track*/Sample/DisplayChanged are dropped.
-- tshttp `Action::Open` -> `HttpRequest`; `Abort` -> `Close{conn}` of the live conn; `Reconnect{after_ms}` ->
-  `WakeAt(now+after_ms)`; the client-owned timer then re-opens through `poll(now)`.
+- tshttp `Action::Open` -> `HttpRequest`; `Abort` -> `Close{conn}` of EVERY conn the session knows (pending
+  and live); `Reconnect{after_ms}` -> `WakeAt(now+after_ms)` (saturating); the client-owned timer then
+  re-opens through `poll(now)`. After every drain the session also emits `WakeAt(next_deadline)` from
+  tshttp's `next_deadline()` (gated on not waiting for credentials), so a host that only wakes on `WakeAt`
+  sees the start timeout, stall notices and the stall reconnect.
 
 **Auth layer (wraps every HttpRequest):**
 - Credentials are bound to the ORIGIN (scheme+host+port) of the session URL, never to anything else. A request
@@ -79,7 +82,8 @@ Status: Establishing | Live | Stalled{secs} | Reconnecting{attempt} | NotFound |
 - Basic/Digest (`Credentials::new(user, pass)`): first request unauthenticated; on 401 parse
   `WWW-Authenticate` with `broadcast_auth::parse_challenges`, build `Authenticator::from_challenge`, replay the
   SAME request once with `Authorization`; later requests (including after reconnect) send it preemptively,
-  Digest nc/nonce state kept in the Authenticator; a 401 with `stale=true` re-challenges transparently.
+  Digest nc/nonce state kept in the Authenticator; a 401 with `stale=true` re-challenges transparently, but
+  at most ONCE per request lineage (TS, HLS and RTSP): a second stale answer is `AuthRejected` and the wait.
 - 401/407 with no credentials set: `Event::AuthRequired{scheme (first challenge, preferring Bearer when the
   challenge carries resource_metadata), realm, origin, resource_metadata}`, `Status(WaitingForCredentials)`,
   `Action::Close`, NO retry and NO timers until `set_credentials` or `close`.
@@ -98,8 +102,9 @@ open, then fail as a connect error. A redirect to a different origin DROPS crede
 non-2xx -> `on_response(status)` (the layer handles 401/407/3xx itself).
 
 **Errors/robustness:** unknown ConnId callbacks are ignored (late callbacks after Close). `on_closed(error)` maps
-to tshttp `on_error`, `None` to `on_eof`. `close()` is terminal: emits `Close` for open conns once, then
-`poll`/`next_event` return None.
+to tshttp `on_error`, `None` to `on_eof`. `close()` is terminal: it drops every queued action except
+`Close`, adds one `Close` per live conn (never twice for the same conn), then `poll`/`next_event` return
+None.
 
 ## Tests required (BC-1)
 
@@ -305,3 +310,40 @@ Config: `Config::playout: PlayoutConfig { vod_start_lead_us: 1_000_000, live_sta
 Behaviour changes versus BC-2/BC-3a: finite TS and HLS now emit Buffer events (BC-2 finite TS and BC-3a HLS emitted none); the controller log (`buffer_input_log`, test seam) stays empty for them.
 
 Tests: `broadcast-client/tests/playout.rs` (HLS through the real HLS session with the classic-TS ts-hls and CMAF fixtures plus a 12 s contiguous stream built from the same fixture samples for live, finite TS from `fixtures/ts/h264_aac.ts` with `Content-Length`). The oracle in the test recomputes the leads from the delivered `Event::Sample`s independently of the gate.
+
+## Pre-release audit fixes (#1484)
+
+Behaviour pinned by `tests/audit_1484.rs`, `tests/audit_1484_sources.rs` and the in-crate unit tests.
+
+- `Action` has a manual `Debug`: header NAMES only (never values), `Send` prints its length, never the bytes.
+- Every failed connect (403, 3xx without `Location`, redirect over the limit) emits `Close{conn}`. A late
+  response, data or close for a conn the session already closed is ignored and never becomes the live conn.
+- TS-over-HTTP reconnects re-open the ORIGINAL URL (a redirect is followed again); a 401 replay targets the
+  URL that answered 401.
+- `Discontinuity` and `Hint::Reconnected` are emitted only for a connection that follows one that reached
+  `Connected`; a first open answered 503 then 200 is not a discontinuity. A new connection resets the finite
+  flag and disengages the finite-TS playout gate (`Event::Finite` re-arms both).
+- A `Tracks` event without a previously known track makes the buffer feeder forget that track.
+- `Session::set_credentials` returns `Result<(), Error>`: `Error::InvalidCredentials` for control characters
+  (or a bearer token that is not a valid header value). Cookie names must be RFC 7230 tokens
+  (`Error::InvalidHeader`).
+- `select_audio_rendition` after `Status::Ended` is accepted and ignored (nothing is started, nothing is
+  emitted). After a fatal `Event::Error` no later event of the same batch is forwarded.
+- A cross-origin 401/407 on a key request counts as `KeyFetchFailed { status: Some(status) }` (reported once
+  per kind, fatal at `max_key_failures`); 403 stays `Forbidden`.
+- Arithmetic is saturating or checked: reconnect delays, `pts + duration`, the 27 MHz conversion (clamps, never
+  truncates), connection ids (a wrapped counter skips ids still live; HLS ids are leased). A jump of the host
+  clock stays bounded: the TS source catches up a jump over 60 s in 1 s steps (at most one stall-notice
+  cadence per step), the RTSP source emits at most 64 stall notices per poll, RTSP keepalives stop at the end
+  of the representable time, and a `WakeAt` already issued for the same instant is not repeated.
+- RTSP bounds the `stale=true` retries `rtsp-runtime` performs on its own to two replays per lineage
+  (`AuthRejected` afterwards).
+- `Config::max_queued_events` (default 100 000): when the host does not drain `next_event`, the oldest queued
+  `Sample`s are dropped and counted by `Session::dropped_events()`; every other event is kept. The action
+  queue is not capped: dropping a `Send`, `HttpRequest` or `Close` would corrupt the protocol state, and every
+  callback adds a bounded number of actions.
+- Cookies (RFC 6265bis): a `Secure` cookie from an `http` origin is rejected, `__Secure-` needs `Secure`,
+  `__Host-` needs `Secure`, `Path=/` and no `Domain` (prefixes match ASCII case-insensitively), a `Path` over
+  1024 bytes is rejected.
+- `auth` and `redirect` are `#[doc(hidden)]` (the integration tests need them); everything else internal is
+  crate-private.

@@ -28,6 +28,10 @@ pub enum Error {
         /// The offending header name.
         name: String,
     },
+    /// The credentials cannot be sent as an HTTP header value (control characters in the token,
+    /// user name or password).
+    #[error("credentials contain characters that cannot be sent in a header")]
+    InvalidCredentials,
     /// A custom header or initial cookie is not a valid HTTP field name or value.
     #[error("invalid header: {name}")]
     InvalidHeader {

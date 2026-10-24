@@ -19,6 +19,9 @@ const COOKIE: &str = "Cookie";
 pub enum AuthDecision {
     /// Replay the request with credentials.
     Replay,
+    /// Replay the request after a `stale=true` re-challenge; the caller must mark the request
+    /// lineage so a second stale answer is rejected instead of replayed again.
+    ReplayStale,
     /// Wait for credentials.
     Wait(Vec<Event>),
 }
@@ -125,12 +128,14 @@ impl AuthState {
         headers
     }
 
-    /// Handle 401/407.
+    /// Handle 401/407. `stale_replayed` is whether this request lineage already got one stale
+    /// replay.
     pub fn handle_unauthorized(
         &mut self,
         status: u16,
         headers: &[(String, String)],
         had_auth: bool,
+        stale_replayed: bool,
     ) -> AuthDecision {
         let challenge_headers: Vec<(String, String)> = headers
             .iter()
@@ -183,8 +188,8 @@ impl AuthState {
             ]);
         }
 
-        // Credentials present but rejected (not a stale re-challenge): wait.
-        if had_auth && !stale {
+        // Credentials present but rejected (not a stale re-challenge, or a second one): wait.
+        if had_auth && (!stale || stale_replayed) {
             self.waiting = true;
             self.authenticator = None;
             return AuthDecision::Wait(vec![
@@ -201,7 +206,11 @@ impl AuthState {
         {
             self.authenticator = Some(auth);
             self.waiting = false;
-            return AuthDecision::Replay;
+            return if had_auth && stale {
+                AuthDecision::ReplayStale
+            } else {
+                AuthDecision::Replay
+            };
         }
         self.waiting = true;
         self.authenticator = None;

@@ -13,6 +13,10 @@ use crate::{Event, Status};
 
 pub(crate) type Item = Option<Event>;
 
+const MICROS_PER_MILLI: u64 = 1_000;
+const CATCH_UP_THRESHOLD_MS: u64 = 60_000;
+const CATCH_UP_TICK_MS: u64 = 1_000;
+
 fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
     if clock_hz == 0 {
         return ticks;
@@ -32,6 +36,7 @@ pub struct TsHttpSource {
     connection_count: u32,
     stalled: bool,
     last_pcr_27mhz: Option<u64>,
+    clock_ms: u64,
 }
 
 impl TsHttpSource {
@@ -48,6 +53,7 @@ impl TsHttpSource {
             connection_count: 0,
             stalled: false,
             last_pcr_27mhz: None,
+            clock_ms: now_us / MICROS_PER_MILLI,
         }
     }
 
@@ -66,24 +72,51 @@ impl TsHttpSource {
         self.last_pcr_27mhz.take()
     }
 
-    /// Connection count.
+    /// Connections that reached a successful response so far; an attempt that failed before
+    /// connecting does not count.
     pub fn connection_count(&self) -> u32 {
         self.connection_count
     }
 
+    #[cfg(test)]
+    pub(crate) fn inject(&mut self, item: Item) {
+        self.events.push_back(item);
+    }
+
+    pub(crate) fn next_deadline_us(&self) -> Option<u64> {
+        self.ts
+            .next_deadline()
+            .map(|ms| ms.saturating_mul(MICROS_PER_MILLI))
+    }
+
     /// Advance timers.
     pub fn poll_timeout(&mut self, now_us: u64) {
-        self.ts.poll_timeout(now_us / 1000);
-        self.drain_ts_events();
+        let target = now_us / MICROS_PER_MILLI;
+        let mut at = self.clock_ms;
+        let catching_up = target.saturating_sub(at) > CATCH_UP_THRESHOLD_MS;
+        loop {
+            let step_to = if catching_up && at < target {
+                match self.ts.next_deadline() {
+                    Some(d) if d > at => d.min(target),
+                    Some(_) => at.saturating_add(CATCH_UP_TICK_MS).min(target),
+                    None => target,
+                }
+            } else {
+                target
+            };
+            self.ts.poll_timeout(step_to);
+            self.drain_ts_events();
+            if step_to >= target {
+                break;
+            }
+            at = step_to;
+        }
+        self.clock_ms = target;
     }
 
     /// Poll next tshttp action.
     pub fn poll_action(&mut self) -> Option<tshttp_runtime::Action> {
-        let action = self.ts.poll();
-        if let Some(tshttp_runtime::Action::Open { .. }) = &action {
-            self.connection_count = self.connection_count.saturating_add(1);
-        }
-        action
+        self.ts.poll()
     }
 
     /// Poll next mapped event.
@@ -158,6 +191,7 @@ impl TsHttpSource {
                 self.push(Event::Status(Status::Ended));
             }
             tshttp_runtime::Event::Connected => {
+                self.connection_count = self.connection_count.saturating_add(1);
                 if self.connection_count > 1 {
                     self.push(Event::Discontinuity);
                 }

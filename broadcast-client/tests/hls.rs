@@ -779,7 +779,9 @@ fn request_timeout_aborts_playlist_and_segment() {
 #[test]
 fn auth_bearer_on_every_request_to_origin() {
     let mut h = host_with(&ts_bodies(), TS_PLAYLIST_URL, Config::default());
-    h.session.set_credentials(Credentials::bearer(BEARER_TOKEN));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .unwrap();
     h.run_to_end();
     assert_eq!(h.seen.len(), 3);
     let expected = format!("Bearer {BEARER_TOKEN}");
@@ -801,7 +803,9 @@ fn cross_origin_segment_carries_no_authorization() {
          #EXT-X-ENDLIST\n"
     );
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
-    h.session.set_credentials(Credentials::bearer(BEARER_TOKEN));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .unwrap();
     h.ok(TS_PLAYLIST_URL, playlist.into_bytes());
     h.ok(TS_SEG0_URL, ts_segment(0));
     h.ok(CDN_SEG_URL, ts_segment(1));
@@ -826,7 +830,9 @@ fn cross_origin_401_is_ordinary_failure_not_auth_prompt() {
          #EXT-X-ENDLIST\n"
     );
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
-    h.session.set_credentials(Credentials::bearer(BEARER_TOKEN));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .unwrap();
     h.ok(TS_PLAYLIST_URL, playlist.into_bytes());
     h.ok(TS_SEG0_URL, ts_segment(0));
     h.route(
@@ -901,7 +907,8 @@ fn per_request_redirect_followed_and_counted_separately() {
 
     let mut auth = Host::new(TS_PLAYLIST_URL, hls_config());
     auth.session
-        .set_credentials(Credentials::bearer(BEARER_TOKEN));
+        .set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .unwrap();
     auth.ok(TS_PLAYLIST_URL, ts_playlist());
     auth.route(
         TS_SEG0_URL,
@@ -953,7 +960,8 @@ fn credentials_401_on_playlist_waits_no_retry() {
     }
     assert!(s.next_event().is_none());
 
-    s.set_credentials(Credentials::bearer(BEARER_TOKEN));
+    s.set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .unwrap();
     let actions = drain_actions(&mut s, t);
     let (_, url) = single_http_request(&actions);
     assert_eq!(url, TS_PLAYLIST_URL);

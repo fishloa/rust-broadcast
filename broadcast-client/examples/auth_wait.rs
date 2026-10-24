@@ -12,7 +12,9 @@ fn main() {
     while let Some(e) = session.next_event() {
         println!("event: {e:?}");
     }
-    session.set_credentials(Credentials::bearer("secret-token"));
+    session
+        .set_credentials(Credentials::bearer("secret-token"))
+        .unwrap();
     if let Some(a) = session.poll(0) {
         println!("action after creds: {a:?}");
     }

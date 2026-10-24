@@ -10,6 +10,9 @@ use url::{Origin, Url};
 
 const MAX_COOKIE_BYTES: usize = 4096;
 const MAX_COOKIES: usize = 50;
+const MAX_PATH_BYTES: usize = 1024;
+const SECURE_PREFIX: &str = "__secure-";
+const HOST_PREFIX: &str = "__host-";
 const MICROS_PER_SEC: u64 = 1_000_000;
 const SET_COOKIE: &str = "set-cookie";
 const ROOT_PATH: &str = "/";
@@ -77,10 +80,25 @@ impl CookieJar {
         if name.len().saturating_add(value.len()) > MAX_COOKIE_BYTES {
             return;
         }
+        let secure = parsed.secure().unwrap_or(false);
+        if secure && url.scheme() != HTTPS {
+            return;
+        }
+        if has_prefix(name, SECURE_PREFIX) && !secure {
+            return;
+        }
+        if has_prefix(name, HOST_PREFIX)
+            && !(secure && parsed.path() == Some(ROOT_PATH) && parsed.domain().is_none())
+        {
+            return;
+        }
         let path = match parsed.path() {
             Some(p) if p.starts_with(PATH_SEPARATOR) => p.to_string(),
             _ => default_path(url.path()),
         };
+        if path.len() > MAX_PATH_BYTES {
+            return;
+        }
         let expires_us = match parsed.max_age() {
             Some(age) => {
                 let secs = age.whole_seconds();
@@ -99,7 +117,7 @@ impl CookieJar {
             name: name.to_string(),
             value: value.to_string(),
             path,
-            secure: parsed.secure().unwrap_or(false),
+            secure,
             expires_us,
         });
     }
@@ -162,6 +180,12 @@ impl core::fmt::Debug for CookieJar {
             .field("cookies", &self.cookies.len())
             .finish_non_exhaustive()
     }
+}
+
+fn has_prefix(name: &str, prefix: &str) -> bool {
+    name.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
 }
 
 fn default_path(uri_path: &str) -> String {

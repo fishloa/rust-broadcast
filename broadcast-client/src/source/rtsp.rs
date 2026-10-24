@@ -25,6 +25,9 @@ const RTSP_DEFAULT_PORT: u16 = 554;
 const RTSPS_DEFAULT_PORT: u16 = 322;
 const CONTROL_AGGREGATE: &str = "*";
 const RTCP_CHANNEL_OFFSET: u8 = 1;
+const FIRST_CONN_ID: u32 = 1;
+const MAX_AUTH_REPLAYS: u32 = 2;
+const MAX_STALL_NOTICES_PER_POLL: u32 = 64;
 const US_PER_MS: u64 = 1_000;
 const US_PER_SEC: u64 = 1_000_000;
 const STATUS_UNAUTHORIZED: u16 = 401;
@@ -77,6 +80,8 @@ pub(crate) struct RtspSource {
     connections: u32,
     client: ClientSession,
     challenge: Option<String>,
+    stale_replayed: bool,
+    auth_replays: u32,
     tracks: Vec<TrackInit>,
     depa: Option<RtpStreamDepacketiser>,
     tracks_dirty: bool,
@@ -133,10 +138,12 @@ impl RtspSource {
             cfg: cfg.clone(),
             phase: Phase::Backoff(now_us),
             conn: None,
-            next_conn: 1,
+            next_conn: FIRST_CONN_ID,
             connections: 0,
             client: ClientSession::new(),
             challenge: None,
+            stale_replayed: false,
+            auth_replays: 0,
             tracks: Vec::new(),
             depa: None,
             tracks_dirty: false,
@@ -243,6 +250,8 @@ impl RtspSource {
     }
 
     pub(crate) fn on_credentials(&mut self, now: u64, auth: &AuthState) {
+        self.stale_replayed = false;
+        self.auth_replays = 0;
         if let Some(creds) = auth.credentials().cloned() {
             let client = core::mem::take(&mut self.client);
             self.client = Self::client_with_credentials(client, creds, self.challenge.as_deref());
@@ -286,7 +295,9 @@ impl RtspSource {
         let Some(deadline) = self.next_deadline() else {
             return;
         };
-        let outstanding = self.wake_pending.is_some_and(|w| w > now && w <= deadline);
+        let outstanding = self
+            .wake_pending
+            .is_some_and(|w| w == deadline || (w > now && w < deadline));
         if !outstanding {
             self.actions.push_back(Action::WakeAt(deadline));
             self.wake_pending = Some(deadline);
@@ -351,13 +362,14 @@ impl RtspSource {
                 Self::client_with_credentials(client, creds.clone(), self.challenge.as_deref());
         }
         self.client = client;
+        self.stale_replayed = false;
+        self.auth_replays = 0;
         self.forget_connection_state();
         self.seen_first_sample = false;
         self.connected_at = now;
         self.last_byte_at = now;
         self.last_sample_at = now;
-        let conn = self.next_conn;
-        self.next_conn = self.next_conn.saturating_add(1).max(1);
+        let conn = self.alloc_conn();
         self.conn = Some(conn);
         self.phase = Phase::Connecting;
         self.actions.push_back(Action::TcpConnect {
@@ -366,6 +378,16 @@ impl RtspSource {
             port: self.port,
             tls: self.tls,
         });
+    }
+
+    fn alloc_conn(&mut self) -> u32 {
+        loop {
+            let candidate = self.next_conn;
+            self.next_conn = candidate.checked_add(1).unwrap_or(FIRST_CONN_ID);
+            if Some(candidate) != self.conn {
+                return candidate;
+            }
+        }
     }
 
     fn forget_connection_state(&mut self) {
@@ -433,6 +455,11 @@ impl RtspSource {
     fn on_client_event(&mut self, event: ClientEvent, now: u64, auth: &mut AuthState) {
         match event {
             ClientEvent::AuthRetry { request, .. } => {
+                self.auth_replays = self.auth_replays.saturating_add(1);
+                if self.auth_replays > MAX_AUTH_REPLAYS {
+                    self.reject_repeated_challenge(auth);
+                    return;
+                }
                 if let Some(conn) = self.conn {
                     self.actions.push_back(Action::Send {
                         conn,
@@ -484,6 +511,8 @@ impl RtspSource {
             self.fail_connection(now);
             return;
         }
+        self.stale_replayed = false;
+        self.auth_replays = 0;
         let proceeded = match req {
             Req::Describe => self.on_describe_ok(body),
             Req::Setup(index) => self.on_setup_ok(index),
@@ -507,7 +536,7 @@ impl RtspSource {
             .iter()
             .map(|line| (CHALLENGE_HEADER.to_string(), line.clone()))
             .collect();
-        match auth.handle_unauthorized(code, &headers, had_credentials) {
+        match auth.handle_unauthorized(code, &headers, had_credentials, self.stale_replayed) {
             AuthDecision::Wait(events) => {
                 self.events.extend(events);
                 self.phase = Phase::WaitingAuth(req);
@@ -517,7 +546,31 @@ impl RtspSource {
                     self.fail_connection(now);
                 }
             }
+            AuthDecision::ReplayStale => {
+                self.stale_replayed = true;
+                if !self.send(req) {
+                    self.fail_connection(now);
+                }
+            }
         }
+    }
+
+    fn reject_repeated_challenge(&mut self, auth: &mut AuthState) {
+        let Phase::Awaiting(req) = self.phase else {
+            return;
+        };
+        let headers: Vec<(String, String)> = self
+            .client
+            .last_challenge()
+            .map(|line| (CHALLENGE_HEADER.to_string(), line.to_string()))
+            .into_iter()
+            .collect();
+        if let AuthDecision::Wait(events) =
+            auth.handle_unauthorized(STATUS_UNAUTHORIZED, &headers, true, true)
+        {
+            self.events.extend(events);
+        }
+        self.phase = Phase::WaitingAuth(req);
     }
 
     fn on_describe_ok(&mut self, body: &[u8]) -> bool {
@@ -703,10 +756,15 @@ impl RtspSource {
                 self.push_stalled(idle / US_PER_SEC);
             }
             Some(mut next) => {
-                while now >= next {
+                let mut emitted = 0u32;
+                while now >= next && emitted < MAX_STALL_NOTICES_PER_POLL {
                     let elapsed = next.saturating_sub(self.last_byte_at);
                     self.push_stalled(elapsed / US_PER_SEC);
                     next = next.saturating_add(US_PER_SEC);
+                    emitted = emitted.saturating_add(1);
+                }
+                if now >= next {
+                    next = now.saturating_add(US_PER_SEC);
                 }
                 self.next_notice_at = Some(next);
             }
@@ -737,7 +795,7 @@ impl RtspSource {
         if now < due {
             return;
         }
-        self.next_keepalive = Some(now.saturating_add(self.keepalive_interval));
+        self.next_keepalive = now.checked_add(self.keepalive_interval);
         let Some(conn) = self.conn else {
             return;
         };
@@ -777,5 +835,35 @@ impl RtspSource {
             attempt: self.attempt,
         }));
         self.phase = Phase::Backoff(now.saturating_add(after_ms.saturating_mul(US_PER_MS)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_never_reuses_the_live_connection_id() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = RtspSource::new(&url, &TsConfig::default(), 0);
+        source.take_actions();
+        source.next_conn = u32::MAX;
+        source.conn = Some(u32::MAX);
+        source.start_connect(1, None);
+        assert_ne!(source.conn, Some(u32::MAX));
+        assert!(source.conn.is_some());
+    }
+
+    #[test]
+    fn connection_ids_wrap_to_one_and_skip_zero() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = RtspSource::new(&url, &TsConfig::default(), 0);
+        source.conn = None;
+        source.next_conn = u32::MAX;
+        source.start_connect(1, None);
+        assert_eq!(source.conn, Some(u32::MAX));
+        source.conn = None;
+        source.start_connect(2, None);
+        assert_eq!(source.conn, Some(1));
     }
 }
