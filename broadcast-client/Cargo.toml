@@ -32,7 +32,7 @@ url                = "2"
 percent-encoding   = "2"
 http               = "1"
 cookie             = { version = "0.18", default-features = false }
-cookie_store       = { version = "0.22", default-features = false }
+cookie_store       = { version = "~0.22.1", default-features = false }
 thiserror          = "2"
 serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
