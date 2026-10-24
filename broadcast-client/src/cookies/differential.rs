@@ -616,3 +616,15 @@ fn every_decision_is_exercised_and_really_differs() {
         assert_ne!(old, new, "{}", d.line);
     }
 }
+
+#[test]
+fn foreign_domain_cookie_is_refused_not_merely_unmatched() {
+    let origin = parse("http://example.com/");
+    let mut jar = CookieJar::new(&origin);
+    jar.receive(&origin, &headers("a=1; Domain=other.com"), 0);
+    jar.receive(&origin, &headers("b=2; Domain=example.com"), 0);
+    assert_eq!(
+        jar.export(0),
+        alloc::vec![("b".to_string(), "2".to_string())]
+    );
+}
