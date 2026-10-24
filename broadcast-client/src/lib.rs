@@ -17,6 +17,7 @@ mod queue;
 pub mod redirect;
 pub mod session;
 pub mod source;
+pub mod timeline;
 
 pub use broadcast_auth::Credentials;
 #[cfg(feature = "test-seams")]
@@ -31,6 +32,7 @@ pub use events::{
 pub use playout::PlayoutConfig;
 pub use session::Session;
 pub use source::ts_http::TsHttpSource;
+pub use timeline::TimelineJumpConfig;
 pub use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};
 pub use tshttp_runtime::StarveKind;
 
