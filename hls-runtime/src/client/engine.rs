@@ -1305,6 +1305,7 @@ impl HlsClient {
             ResourceId::Segment { msn } => {
                 self.begin_ts_resource(id, msn)?;
                 self.demux_and_emit_ts(id, bytes)?;
+                self.release_ts_segment_end(id)?;
                 self.delivered_segments.insert(msn);
             }
             ResourceId::Init => {}
@@ -1676,6 +1677,17 @@ impl HlsClient {
             .ts_demux
             .get_or_insert_with(|| TsDemuxState(StreamingTsDemux::new()));
         demux.feed(bytes);
+        self.drain_ts_demux(id)
+    }
+
+    /// A whole media segment has been fed: a PID its PMT declares that sent
+    /// nothing in it is absent, so it must not hold the rest of its program
+    /// back until `EXT-X-ENDLIST` (a live playlist has none).
+    fn release_ts_segment_end(&mut self, id: ResourceId) -> Result<()> {
+        let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
+            return Ok(());
+        };
+        demux.release_silent_heads();
         self.drain_ts_demux(id)
     }
 
