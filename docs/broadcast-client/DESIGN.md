@@ -650,6 +650,52 @@ Start 2.68 s, 224 samples). So the 1439 decode failures the Apple TV reported fo
 the released samples (identical bytes, order and flags to the no-hold run, which plays clean); the host must
 tolerate a burst of up to the hold length, and the early release removes that burst for these channels.
 
+## Start gate: a declared stream with no track yet (TS-HTTP)
+
+zenith-tv (Apple TV, defaults, `[video]` + `[audio]` declared) saw `Start` after the 1 s wall backstop released
+the hold, then a `Pause` 100 ms later with the audio 8 ms ahead of the playback position and the video 1.1 s ahead.
+
+Root cause. The start rule and the pause rule are the same: both use the minimum end over the controller's
+rendered tracks. The inconsistency is the SET the minimum is taken over. A live mux sends audio up to a second
+behind the video and an audio track is announced only once its first frame resolves its codec config, so at the
+moment the video has its start lead the audio has no `TrackSpec`: it is not in `track_specs`, an explicit
+declaration of it is pending (`rendered.rs`), the controller has never heard of it, and `Start` fires on video
+alone. The audio is announced afterwards, joins the set, and its end sits roughly `skew` behind the video end, so
+`start lead - skew` is its lead over the position: at or below `starve_threshold` (20 ms) the controller pauses.
+It is not hold-related: with the hold disabled, or released early, the same flap happens (rai-gulp with the audio
+muxed 500 ms later and a 1.1 s start lead: `Start` at 0.70 s, `Pause` at 0.85 s, audio lead 6 ms, in all three
+hold settings and with or without an explicit declaration). With the default 1.8 s start lead and the natural
+skew of the committed captures (0.3 s to 0.5 s) the audio is already announced when the video is ready, which is why
+the soak baseline never saw it.
+
+Rule (single, `buffer.rs`): `Start` fires only when every track the stream is known to carry has its start lead.
+The source keeps the PMT's audio/video streams (`ts_http_hold::StreamKind`: video and audio `stream_type`s, and
+`stream_type` 0x06 with an AC-3, E-AC-3, AAC or DTS descriptor) and which of them have resolved to a track or been
+abandoned (`TsHttpSource::unresolved_kinds`). When a kind is declared but unresolved and no track of that kind is
+announced (and, for an explicit declaration, a declared id is still pending), the session tells the feeder
+(`Feeder::set_expecting`) and the feeder registers a placeholder controller track (`PENDING_TRACK_KEY`) with the
+first media report. The controller then does what it already does for any registered track that has not
+delivered: no effective end, so no `Start`, until the real track is registered and delivers, which brings the
+unchanged min-lead rule. The wait is bounded by `START_PENDING_TRACK_WAIT_US` (1.5 s after the first media report,
+about three times the worst measured resolution gap and below the 1.8 s default start lead, so a declared stream
+that never delivers adds nothing at the default and at most 1.5 s of waiting otherwise) and ends at the first
+`Start`; after it `Start` goes ahead with the tracks that exist. Default and explicit declarations behave the same
+because the expectation comes from the PMT, filtered by the declaration only to leave out a stream the host never
+asked to render. `buffering-runtime` is unchanged. Streams whose tracks all resolve before the first media report
+(every committed capture at its natural skew) never show the placeholder to the controller: their controller
+input log, and so every existing oracle test, is unchanged.
+
+Evidence (`tests/start_gate.rs`, host simulation at real time with a 50 ms tick, captures rai-gulp, rai-news-24,
+`ts/h264_aac_40s.ts`, `ts/france2.ts`, hold early / 200 ms backstop / disabled, declared `[1, 2]` and default, the
+audio PES muxed 0 / 500 / 1000 ms later): before, every skewed run with a 1.1 s start lead flapped (`Start`
+0.70 s to 1.25 s, `Pause` 0.15 s to 0.6 s later); after, none flaps and `Start` carries both tracks at at least 90%
+of the start lead. At the default 1.8 s start lead and at skew 0 every `Start` time is identical before and after.
+With a 1.1 s start lead the skewed `Start` moves by the skew actually present plus the audio's own lead: rai-gulp
+skew 500 0.80 s to 1.80 s, skew 1000 0.80 s to 2.25 s; rai-news-24 skew 1000 1.25 s to 2.75 s;
+`h264_aac_40s` skew 1000 1.00 s to 2.10 s. `ts/france2.ts` (2.7 s long) never reaches the audio's lead at skew 1000
+and 1.1 s. The captures `tf-1-8MB.ts` and `arte-8MB.ts` are not used: 4% of their packets are missing (continuity
+errors on the video PID) and no track resolves for 13 s of real time.
+
 ## Audit round 6 (session, TS-HTTP, buffer, RTSP)
 
 ### F2: a new TS-HTTP connection rebuilds the track set
