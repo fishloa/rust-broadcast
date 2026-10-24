@@ -10,6 +10,7 @@ mod cookies;
 pub mod error;
 pub mod events;
 mod headers;
+pub mod playout;
 pub mod redirect;
 pub mod session;
 pub mod source;
@@ -24,6 +25,7 @@ pub use error::{Error, TransportError};
 pub use events::{
     AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ErrorKind, Event, SourceKind, Status,
 };
+pub use playout::PlayoutConfig;
 pub use session::Session;
 pub use source::ts_http::TsHttpSource;
 pub use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};

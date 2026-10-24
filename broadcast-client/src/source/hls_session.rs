@@ -13,6 +13,7 @@ use url::Url;
 use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{Action, Config, Event, Status};
+use crate::playout::Source;
 use crate::source::hls::{ConnAlloc, HlsSource, Role};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +73,16 @@ impl HlsSession {
             session_fatal: false,
             actions: VecDeque::new(),
             events: VecDeque::new(),
+        }
+    }
+
+    pub(crate) fn playout_source(&self) -> Source {
+        if self.main.endlist_seen() {
+            Source::Vod
+        } else {
+            Source::Live {
+                target_duration_secs: self.main.target_duration_secs(),
+            }
         }
     }
 

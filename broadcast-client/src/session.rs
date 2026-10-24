@@ -10,8 +10,9 @@ use url::Url;
 use crate::Hint;
 use crate::auth::AuthState;
 use crate::error::{Error, TransportError};
-use crate::events::{Action, Config, Event, SourceKind};
+use crate::events::{Action, Config, Event, SourceKind, Status};
 use crate::headers;
+use crate::playout::{Playout, Source};
 use crate::redirect;
 use crate::source::hls_session::HlsSession;
 use crate::source::ts_http::TsHttpSource;
@@ -35,6 +36,7 @@ pub struct Session {
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
     buffer: crate::buffer::Feeder,
+    playout: Playout,
 }
 
 impl Session {
@@ -63,10 +65,16 @@ impl Session {
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
         let buffer_cfg = config.buffer;
+        let mut playout = Playout::new(config.playout);
         let mut auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
         auth.seed_cookies(&config.initial_cookies);
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
         let hls = use_hls.then(|| Box::new(HlsSession::new(&parsed, &config)));
+        if use_hls {
+            playout.engage(Source::Live {
+                target_duration_secs: None,
+            });
+        }
         Ok(Self {
             closed: false,
             now_us,
@@ -82,6 +90,7 @@ impl Session {
             actions: VecDeque::new(),
             events: VecDeque::new(),
             buffer: crate::buffer::Feeder::new(buffer_cfg, seed),
+            playout,
         })
     }
 
@@ -328,6 +337,7 @@ impl Session {
             return Ok(());
         }
         h.select_variant(index, self.now_us, &mut self.auth)?;
+        self.playout.reset();
         self.flush_hls();
         Ok(())
     }
@@ -365,6 +375,8 @@ impl Session {
         for e in evs {
             self.events.push_back(e);
         }
+        self.playout.on_position(pts_27mhz);
+        self.drain_playout();
     }
 
     /// Set rendered tracks.
@@ -373,6 +385,8 @@ impl Session {
             return;
         }
         self.buffer.set_rendered_tracks(tracks);
+        self.playout.set_rendered(tracks);
+        self.drain_playout();
     }
 
     /// Hint passthrough.
@@ -393,6 +407,7 @@ impl Session {
             return;
         }
         self.buffer.rejoin();
+        self.playout.rejoin();
     }
 
     /// Inputs fed to the buffering controller so far.
@@ -428,10 +443,41 @@ impl Session {
     }
 
     fn flush_hls(&mut self) {
-        if let Some(h) = self.hls.as_mut() {
-            self.actions.extend(h.take_actions());
-            self.events.extend(h.take_events());
+        let Some(h) = self.hls.as_mut() else {
+            return;
+        };
+        self.actions.extend(h.take_actions());
+        self.playout.set_source(h.playout_source());
+        let events = h.take_events();
+        for e in events {
+            self.emit(e);
         }
+    }
+
+    fn emit(&mut self, e: Event) {
+        match &e {
+            Event::Tracks(specs) => self.playout.on_tracks(specs),
+            Event::Sample {
+                track,
+                sample,
+                join,
+            } => self.playout.on_sample(*track, sample, *join),
+            Event::Discontinuity => self.playout.reset(),
+            Event::Status(Status::Ended) => {
+                self.playout.on_ended();
+                self.drain_playout();
+                self.events.push_back(e);
+                return;
+            }
+            _ => {}
+        }
+        self.events.push_back(e);
+        self.drain_playout();
+    }
+
+    fn drain_playout(&mut self) {
+        let evs = self.playout.drain();
+        self.events.extend(evs);
     }
 
     fn alloc_conn(&mut self, url: Url) -> u32 {
@@ -463,23 +509,25 @@ impl Session {
         while let Some(item) = self.source.poll_item() {
             let Some(e) = item else {
                 self.buffer.on_demux_discontinuity(self.now_us);
+                self.playout.reset();
                 continue;
             };
             match e {
                 Event::Finite { .. } => {
                     self.buffer.set_finite();
-                    self.events.push_back(e);
+                    self.playout.engage(Source::Vod);
+                    self.emit(e);
                 }
                 Event::Tracks(specs) => {
                     for spec in &specs {
                         self.buffer.on_track_added(spec);
                     }
-                    self.events.push_back(Event::Tracks(specs));
+                    self.emit(Event::Tracks(specs));
                 }
                 Event::Sample { track, sample, .. } => {
                     let join = self.buffer.join_sample(track, &sample);
                     self.buffer.on_sample(track, &sample, join);
-                    self.events.push_back(Event::Sample {
+                    self.emit(Event::Sample {
                         track,
                         sample,
                         join,
@@ -487,10 +535,10 @@ impl Session {
                 }
                 Event::Discontinuity => {
                     self.buffer.hint(self.now_us, Hint::Reconnected);
-                    self.events.push_back(e);
+                    self.emit(e);
                 }
                 other => {
-                    self.events.push_back(other);
+                    self.emit(other);
                 }
             }
         }

@@ -1046,7 +1046,7 @@ fn stall_memory_roundtrip_seeds_next_session() {
 }
 
 #[test]
-fn vod_has_no_buffer_events() {
+fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
     let bytes = read_tf1_bytes();
     let (status, mut headers) = read_tf1_headers();
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
@@ -1077,7 +1077,21 @@ fn vod_has_no_buffer_events() {
             .iter()
             .any(|e| matches!(e, Event::Status(Status::Ended)))
     );
-    assert!(!events.iter().any(|e| matches!(e, Event::Buffer(_))));
+    let buffer: Vec<&BufferEvent> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Buffer(b) => Some(b),
+            _ => None,
+        })
+        .collect();
+    assert!(matches!(buffer.first(), Some(BufferEvent::Start { .. })));
+    assert_eq!(
+        buffer
+            .iter()
+            .filter(|b| matches!(b, BufferEvent::Start { .. }))
+            .count(),
+        1
+    );
     assert!(session.buffer_input_log().is_empty());
 }
 
