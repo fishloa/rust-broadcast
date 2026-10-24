@@ -172,8 +172,11 @@ impl ErrorKind {
 broadcast_common::impl_spec_display!(ErrorKind);
 
 /// Host action produced by [`crate::Session`].
+///
+/// `Debug` prints header names, lengths and URLs but never header values or `Send` payloads,
+/// which carry `Authorization`, `Cookie` and RTSP authentication in clear.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Action {
     /// HTTP request to issue.
     HttpRequest {
@@ -215,6 +218,48 @@ pub enum Action {
     },
     /// Wake the session at the given time.
     WakeAt(u64),
+}
+
+impl core::fmt::Debug for Action {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::HttpRequest {
+                conn,
+                method,
+                url,
+                headers,
+                byte_range,
+            } => {
+                let names: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
+                f.debug_struct("HttpRequest")
+                    .field("conn", conn)
+                    .field("method", method)
+                    .field("url", url)
+                    .field("header_names", &names)
+                    .field("byte_range", byte_range)
+                    .finish()
+            }
+            Self::TcpConnect {
+                conn,
+                host,
+                port,
+                tls,
+            } => f
+                .debug_struct("TcpConnect")
+                .field("conn", conn)
+                .field("host", host)
+                .field("port", port)
+                .field("tls", tls)
+                .finish(),
+            Self::Send { conn, bytes } => f
+                .debug_struct("Send")
+                .field("conn", conn)
+                .field("len", &bytes.len())
+                .finish(),
+            Self::Close { conn } => f.debug_struct("Close").field("conn", conn).finish(),
+            Self::WakeAt(at) => f.debug_tuple("WakeAt").field(at).finish(),
+        }
+    }
 }
 
 /// Session event.
@@ -401,6 +446,8 @@ pub const DEFAULT_MAX_KEY_FAILURES: u32 = 8;
 pub const DEFAULT_HLS_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
 /// Default HLS retry backoff once the schedule is exhausted, milliseconds.
 pub const DEFAULT_HLS_BACKOFF_CAP_MS: u64 = 10_000;
+/// Default cap on events queued for the host, see [`Config::max_queued_events`].
+pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 
 /// Session configuration.
 #[derive(Clone, PartialEq)]
@@ -447,6 +494,12 @@ pub struct Config {
     pub preferred_audio_language: Option<String>,
     /// HLS: pick a separate audio rendition automatically when the master playlist arrives.
     pub auto_select_audio: bool,
+    /// Events the session keeps queued for the host. The host must drain
+    /// [`crate::Session::next_event`]; when a host does not, the oldest queued
+    /// [`Event::Sample`]s are dropped (counted by [`crate::Session::dropped_events`]) while every
+    /// other event is kept, so the queue stays bounded by this cap plus the non-sample events a
+    /// stalled host leaves unread.
+    pub max_queued_events: usize,
 }
 
 impl Default for Config {
@@ -471,6 +524,7 @@ impl Default for Config {
             max_key_failures: DEFAULT_MAX_KEY_FAILURES,
             preferred_audio_language: None,
             auto_select_audio: true,
+            max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
         }
     }
 }
@@ -498,6 +552,7 @@ impl core::fmt::Debug for Config {
             .field("max_key_failures", &self.max_key_failures)
             .field("preferred_audio_language", &self.preferred_audio_language)
             .field("auto_select_audio", &self.auto_select_audio)
+            .field("max_queued_events", &self.max_queued_events)
             .finish()
     }
 }

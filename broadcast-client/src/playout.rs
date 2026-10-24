@@ -115,6 +115,13 @@ impl Playout {
         self.source = source;
     }
 
+    pub(crate) fn disengage(&mut self) {
+        self.engaged = false;
+        self.rejoin();
+        self.ended = false;
+        self.out.clear();
+    }
+
     pub(crate) fn set_source(&mut self, source: Source) {
         self.source = source;
     }
@@ -343,5 +350,48 @@ impl Playout {
                 starving_track: Some(track.value()),
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::Unpackage;
+    use transmux::TsDemux;
+
+    const FIXTURE: &str = "ts/h264_aac.ts";
+
+    #[test]
+    fn sample_at_the_end_of_the_i64_range_clamps_instead_of_wrapping() {
+        let data = test_fixtures::read(FIXTURE);
+        let media = TsDemux::new().unpackage(&data[..]).unwrap();
+        let track = media
+            .tracks
+            .into_iter()
+            .find(|t| t.spec.config.audio_sample_rate().is_some())
+            .unwrap();
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.engage(Source::Vod);
+        p.on_tracks(std::slice::from_ref(&track.spec));
+        let mut s = track.samples[0].clone();
+        s.pts = Some(i64::MAX);
+        s.duration = Some(3_000);
+        p.on_sample(track.spec.track_id, &s, None);
+        let obs = p.obs.get(&track.spec.track_id).unwrap();
+        assert_eq!(obs.end, u64::MAX);
+        assert_eq!(obs.first_pts, u64::MAX);
+    }
+
+    #[test]
+    fn disengage_stops_gating_and_forgets_progress() {
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.engage(Source::Vod);
+        p.on_ended();
+        assert!(p.ended);
+        p.disengage();
+        assert!(!p.engaged);
+        assert!(!p.ended);
+        p.on_ended();
+        assert!(!p.ended);
     }
 }

@@ -207,7 +207,9 @@ fn key_requested_once_for_all_segments() {
 #[test]
 fn key_request_carries_bearer_authorization_for_session_origin() {
     let mut h = encrypted_host(hls_config(), vec![good_key()]);
-    h.session.set_credentials(Credentials::bearer(BEARER));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER))
+        .unwrap();
     h.run_to_end();
     let keys = key_requests(&h, KEY_URL);
     assert_eq!(keys.len(), 1);
@@ -242,7 +244,9 @@ fn key_request_carries_cookie_and_extra_headers_for_session_origin() {
 #[test]
 fn key_on_other_origin_carries_no_authorization_cookie_or_extra_headers() {
     let mut h = encrypted_host_with(cookie_config(), OTHER_ORIGIN_KEY_URL, vec![good_key()]);
-    h.session.set_credentials(Credentials::bearer(BEARER));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER))
+        .unwrap();
     h.run_to_end();
     let keys = key_requests(&h, OTHER_ORIGIN_KEY_URL);
     assert_eq!(keys.len(), 1);
@@ -286,7 +290,9 @@ fn key_401_emits_auth_required_then_replays_with_credentials() {
     assert!(errors(&h.events).is_empty(), "401 is not an Error event");
     assert!(!h.events.iter().any(is_ended));
 
-    h.session.set_credentials(Credentials::new("user", "pass"));
+    h.session
+        .set_credentials(Credentials::new("user", "pass"))
+        .unwrap();
     h.run_to_end();
     let keys = key_requests(&h, KEY_URL);
     assert_eq!(keys.len(), 2);
@@ -687,7 +693,7 @@ fn fatal_error_stops_session_no_more_requests() {
         s.on_data(*c, &plain_seg(0), 1);
         s.on_closed(*c, None, 1);
     }
-    s.set_credentials(Credentials::bearer(BEARER));
+    s.set_credentials(Credentials::bearer(BEARER)).unwrap();
     s.reconnect(2);
     let mut t = 0u64;
     for _ in 0..50 {
@@ -765,7 +771,9 @@ fn auth_statuses_on_key_requests_are_not_error_events() {
         hls_config(),
         vec![Reply::StatusHeaders(401, challenge), good_key()],
     );
-    h.session.set_credentials(Credentials::bearer(BEARER));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER))
+        .unwrap();
     h.run_until(
         |evs| evs.iter().any(|e| matches!(e, Event::AuthRejected { .. })),
         1000,

@@ -1,6 +1,6 @@
 //! Public [`Session`] implementation.
 
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeSet, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
 use std::collections::HashMap;
@@ -13,6 +13,7 @@ use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, Event, SourceKind, Status};
 use crate::headers;
 use crate::playout::{Playout, Source};
+use crate::queue::EventQueue;
 use crate::redirect;
 use crate::source::hls_session::HlsSession;
 use crate::source::rtsp::RtspSource;
@@ -25,6 +26,15 @@ const SCHEME_HTTP: &str = "http";
 const SCHEME_HTTPS: &str = "https";
 const SCHEME_RTSP: &str = "rtsp";
 const SCHEME_RTSPS: &str = "rtsps";
+const MICROS_PER_MILLI: u64 = 1_000;
+const TS_WAKE_TICK_US: u64 = 1_000_000;
+const FIRST_CONN_ID: u32 = 1;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ConnAuth {
+    authed: bool,
+    stale_replayed: bool,
+}
 
 /// Generic sans-IO client session.
 pub struct Session {
@@ -39,9 +49,10 @@ pub struct Session {
     next_conn: u32,
     live_conn: Option<u32>,
     known_conns: HashMap<u32, Url>,
-    conn_auth: HashMap<u32, bool>,
+    conn_auth: HashMap<u32, ConnAuth>,
+    ts_wake: Option<u64>,
     actions: VecDeque<Action>,
-    events: VecDeque<Event>,
+    events: EventQueue,
     buffer: crate::buffer::Feeder,
     playout: Playout,
 }
@@ -80,6 +91,7 @@ impl Session {
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
         let buffer_cfg = config.buffer;
+        let event_cap = config.max_queued_events;
         let mut playout = Playout::new(config.playout);
         let mut auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
         auth.seed_cookies(&config.initial_cookies);
@@ -101,12 +113,13 @@ impl Session {
             hls,
             rtsp,
             redirect_count: 0,
-            next_conn: 1,
+            next_conn: FIRST_CONN_ID,
             live_conn: None,
             known_conns: HashMap::new(),
             conn_auth: HashMap::new(),
+            ts_wake: None,
             actions: VecDeque::new(),
-            events: VecDeque::new(),
+            events: EventQueue::new(event_cap),
             buffer: crate::buffer::Feeder::new(buffer_cfg, seed),
             playout,
         })
@@ -132,7 +145,13 @@ impl Session {
                 self.drain_source();
             }
         }
-        self.actions.pop_front()
+        while let Some(action) = self.actions.pop_front() {
+            if matches!(action, Action::WakeAt(at) if at <= now_us) {
+                continue;
+            }
+            return Some(action);
+        }
+        None
     }
 
     /// Poll next event.
@@ -160,7 +179,7 @@ impl Session {
             return;
         };
         self.auth.receive_cookies(&req_url, headers, self.now_us);
-        let had_auth = self.conn_auth.get(&conn).copied().unwrap_or(false);
+        let lineage = self.conn_auth.get(&conn).copied().unwrap_or_default();
 
         if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
             if let Some(target) = redirect::resolve(
@@ -170,19 +189,22 @@ impl Session {
                 self.config.max_redirects,
             ) {
                 self.redirect_count = self.redirect_count.saturating_add(1);
-                self.source.set_url(target.clone());
                 self.known_conns.remove(&conn);
-                self.conn_auth.remove(&conn);
+                let lineage = self.conn_auth.remove(&conn).unwrap_or_default();
                 if self.live_conn == Some(conn) {
                     self.live_conn = None;
                 }
                 self.actions.push_back(Action::Close { conn });
                 let new_conn = self.alloc_conn(target.clone());
                 let new_headers = self.auth.request_headers(&target, self.now_us);
-                let authed = new_headers
-                    .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
-                self.conn_auth.insert(new_conn, authed);
+                let authed = has_authorization(&new_headers);
+                self.conn_auth.insert(
+                    new_conn,
+                    ConnAuth {
+                        authed,
+                        stale_replayed: lineage.stale_replayed,
+                    },
+                );
                 self.actions.push_back(Action::HttpRequest {
                     conn: new_conn,
                     method: "GET".to_string(),
@@ -204,27 +226,38 @@ impl Session {
             }
             self.actions.push_back(Action::Close { conn });
 
-            match self.auth.handle_unauthorized(status, headers, had_auth) {
-                crate::auth::AuthDecision::Replay => {
-                    let target = self.source.url().clone();
-                    let new_conn = self.alloc_conn(target.clone());
-                    let new_headers = self.auth.request_headers(&target, self.now_us);
-                    let authed = new_headers
-                        .iter()
-                        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
-                    self.conn_auth.insert(new_conn, authed);
+            let decision = self.auth.handle_unauthorized(
+                status,
+                headers,
+                lineage.authed,
+                lineage.stale_replayed,
+            );
+            match decision {
+                crate::auth::AuthDecision::Replay | crate::auth::AuthDecision::ReplayStale => {
+                    let stale_replayed = lineage.stale_replayed
+                        || matches!(decision, crate::auth::AuthDecision::ReplayStale);
+                    let new_conn = self.alloc_conn(req_url.clone());
+                    let new_headers = self.auth.request_headers(&req_url, self.now_us);
+                    let authed = has_authorization(&new_headers);
+                    self.conn_auth.insert(
+                        new_conn,
+                        ConnAuth {
+                            authed,
+                            stale_replayed,
+                        },
+                    );
                     self.actions.push_back(Action::HttpRequest {
                         conn: new_conn,
                         method: "GET".to_string(),
-                        url: target.to_string(),
+                        url: req_url.to_string(),
                         headers: new_headers,
                         byte_range: None,
                     });
                 }
                 crate::auth::AuthDecision::Wait(events) => {
-                    for e in events {
-                        self.events.push_back(e);
-                    }
+                    self.events.extend(events);
+                    self.actions.retain(|a| !matches!(a, Action::WakeAt(_)));
+                    self.ts_wake = None;
                 }
             }
             return;
@@ -351,15 +384,20 @@ impl Session {
     }
 
     /// Set credentials.
-    pub fn set_credentials(&mut self, creds: crate::Credentials) {
+    ///
+    /// # Errors
+    /// [`Error::InvalidCredentials`] when the token, user name or password cannot be sent in an
+    /// HTTP header; the previous credentials stay in force.
+    pub fn set_credentials(&mut self, creds: crate::Credentials) -> Result<(), Error> {
         if self.closed {
-            return;
+            return Ok(());
         }
+        headers::validate_credentials(&creds)?;
         let was_waiting = self.auth.set_credentials(creds);
         if let Some(r) = self.rtsp.as_mut() {
             r.on_credentials(self.now_us, &self.auth);
             self.flush_rtsp();
-            return;
+            return Ok(());
         }
         if was_waiting {
             if let Some(h) = self.hls.as_mut() {
@@ -370,6 +408,7 @@ impl Session {
                 self.drain_source();
             }
         }
+        Ok(())
     }
 
     /// Live cookies as `(name, value)` pairs, for the host to persist and pass back as
@@ -420,7 +459,8 @@ impl Session {
     /// `index` addresses the renditions of the last [`Event::Variants`] filtered to the chosen
     /// variant's `AUDIO` group and to audio type, in master-playlist order. A rendition without
     /// a `URI` (carried inside the variant) is selectable but never fetched. A manual selection
-    /// replaces automatic selection until the session ends.
+    /// replaces automatic selection until the session ends. After [`Status::Ended`] the call is
+    /// accepted and ignored: nothing is started and nothing more is emitted.
     ///
     /// # Errors
     /// [`Error::NotHls`] for a non-HLS session, [`Error::NoSuchRendition`] for an out-of-range
@@ -501,15 +541,25 @@ impl Session {
             return;
         }
         self.closed = true;
-        let mut conns: Vec<u32> = self.known_conns.keys().copied().collect();
+        let mut seen: BTreeSet<u32> = BTreeSet::new();
+        let mut order: Vec<u32> = Vec::new();
+        for action in self.actions.drain(..) {
+            if let Action::Close { conn } = action
+                && seen.insert(conn)
+            {
+                order.push(conn);
+            }
+        }
+        let mut live: Vec<u32> = self.known_conns.keys().copied().collect();
         if let Some(h) = self.hls.as_ref() {
-            conns.extend(h.conns());
-            conns.sort_unstable();
+            live.extend(h.conns());
         }
-        for c in conns {
-            self.actions.push_back(Action::Close { conn: c });
-        }
+        live.sort_unstable();
+        order.extend(live.into_iter().filter(|c| seen.insert(*c)));
+        self.actions
+            .extend(order.into_iter().map(|conn| Action::Close { conn }));
         if let Some(r) = self.rtsp.as_mut() {
+            r.take_actions();
             r.close();
             self.actions.extend(r.take_actions());
         }
@@ -566,11 +616,13 @@ impl Session {
     }
 
     fn alloc_conn(&mut self, url: Url) -> u32 {
-        let id = self.next_conn;
-        self.next_conn = self.next_conn.saturating_add(1);
-        if self.next_conn == 0 {
-            self.next_conn = 1;
-        }
+        let id = loop {
+            let candidate = self.next_conn;
+            self.next_conn = candidate.checked_add(1).unwrap_or(FIRST_CONN_ID);
+            if !self.known_conns.contains_key(&candidate) {
+                break candidate;
+            }
+        };
         self.known_conns.insert(id, url);
         id
     }
@@ -581,6 +633,7 @@ impl Session {
         if self.live_conn == Some(conn) {
             self.live_conn = None;
         }
+        self.actions.push_back(Action::Close { conn });
         self.source.on_error(self.now_us);
         self.buffer.hint(self.now_us, Hint::SourceError);
         self.drain_source();
@@ -603,7 +656,13 @@ impl Session {
                     self.playout.engage(Source::Vod);
                     self.emit(e);
                 }
+                Event::Status(Status::Establishing) => {
+                    self.buffer.new_connection();
+                    self.playout.disengage();
+                    self.emit(e);
+                }
                 Event::Tracks(specs) => {
+                    self.buffer.retain_tracks(&specs);
                     for spec in &specs {
                         self.buffer.on_track_added(spec);
                     }
@@ -634,6 +693,28 @@ impl Session {
         while let Some(ta) = self.source.poll_action() {
             self.map_source_action(ta);
         }
+        self.sync_ts_wake();
+    }
+
+    fn sync_ts_wake(&mut self) {
+        if self.closed || self.auth.is_waiting() {
+            return;
+        }
+        let Some(deadline) = self.source.next_deadline_us() else {
+            return;
+        };
+        let at = if deadline > self.now_us {
+            deadline
+        } else {
+            self.now_us.saturating_add(TS_WAKE_TICK_US)
+        };
+        let outstanding = self
+            .ts_wake
+            .is_some_and(|w| w == at || (w > self.now_us && w < at));
+        if !outstanding {
+            self.actions.push_back(Action::WakeAt(at));
+            self.ts_wake = Some(at);
+        }
     }
 
     fn map_source_action(&mut self, a: TsAction) {
@@ -643,10 +724,14 @@ impl Session {
                 let target = self.source.url().clone();
                 let conn = self.alloc_conn(target.clone());
                 let headers = self.auth.request_headers(&target, self.now_us);
-                let authed = headers
-                    .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
-                self.conn_auth.insert(conn, authed);
+                let authed = has_authorization(&headers);
+                self.conn_auth.insert(
+                    conn,
+                    ConnAuth {
+                        authed,
+                        stale_replayed: false,
+                    },
+                );
                 self.actions.push_back(Action::HttpRequest {
                     conn,
                     method: "GET".to_string(),
@@ -656,20 +741,36 @@ impl Session {
                 });
             }
             TsAction::Abort => {
-                if let Some(conn) = self.live_conn {
-                    self.known_conns.remove(&conn);
-                    self.conn_auth.remove(&conn);
-                    self.live_conn = None;
+                let mut conns: Vec<u32> = self.known_conns.keys().copied().collect();
+                conns.sort_unstable();
+                for conn in conns {
                     self.actions.push_back(Action::Close { conn });
                 }
+                self.known_conns.clear();
+                self.conn_auth.clear();
+                self.live_conn = None;
             }
             TsAction::Reconnect { after_ms } => {
-                self.actions
-                    .push_back(Action::WakeAt(self.now_us.saturating_add(after_ms * 1000)));
+                self.actions.push_back(Action::WakeAt(
+                    self.now_us
+                        .saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
+                ));
             }
             _ => {}
         }
     }
+
+    /// Events dropped because the host did not drain them within
+    /// [`Config::max_queued_events`]; only [`Event::Sample`]s are ever dropped.
+    pub fn dropped_events(&self) -> u64 {
+        self.events.dropped()
+    }
+}
+
+fn has_authorization(headers: &[(String, String)]) -> bool {
+    headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
 }
 
 fn has_playlist_extension(url: &Url) -> bool {
@@ -685,5 +786,44 @@ impl core::fmt::Debug for Session {
             .field("now_us", &self.now_us)
             .field("auth", &self.auth)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alloc_conn_skips_live_ids_when_the_counter_wraps() {
+        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        let url = Url::parse("http://example/live.ts").unwrap();
+        session.next_conn = u32::MAX;
+        let a = session.alloc_conn(url.clone());
+        assert_eq!(a, u32::MAX);
+        let b = session.alloc_conn(url.clone());
+        assert_eq!(b, FIRST_CONN_ID);
+        session.next_conn = u32::MAX;
+        let c = session.alloc_conn(url);
+        assert!(c != a && c != b, "reused live id {c}");
+        assert_ne!(c, 0);
+    }
+
+    #[test]
+    fn a_tracks_event_without_a_track_removes_it_from_the_buffer_feeder() {
+        use broadcast_common::Unpackage;
+        let data = test_fixtures::read("ts/h264_aac.ts");
+        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
+        assert_eq!(specs.len(), 2);
+        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        session.source.inject(Some(Event::Tracks(specs.clone())));
+        session.drain_source();
+        assert!(specs.iter().all(|s| session.buffer.has_track(s.track_id)));
+        session
+            .source
+            .inject(Some(Event::Tracks(specs[1..].to_vec())));
+        session.drain_source();
+        assert!(!session.buffer.has_track(specs[0].track_id));
+        assert!(session.buffer.has_track(specs[1].track_id));
     }
 }

@@ -78,11 +78,29 @@ FairPlay/Widevine key formats, ...) is fatal immediately; `KeyFetchFailed`, `Bad
 `Config::max_key_failures` consecutive failures. A fatal error closes all connections and the session
 goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbidden`.
 
+## Host contract
+
+- `Session::close()` is terminal: queued actions other than `Close` are dropped, every live connection gets
+  exactly one `Close` (RTSP also a `TEARDOWN` when a session was set up), then `poll` and `next_event` return
+  nothing. A response, data or close callback for a connection the session already closed is ignored.
+- `Action::WakeAt(t)`: poll again at or after `t`. A host that polls only at `WakeAt` times sees every timer
+  (start timeout, stall notices, stall reconnect, backoff, keepalive, HLS retries) of all three sources.
+- `Session::set_credentials` returns `Err(Error::InvalidCredentials)` for a token, user name or password with
+  control characters and keeps the previous credentials. A `stale=true` Digest re-challenge is replayed once
+  per request; a second one is `Event::AuthRejected`.
+- `Config::max_queued_events` (default 100 000) bounds the event queue of a host that does not drain
+  `Session::next_event`: the oldest `Sample`s are dropped first and counted by `Session::dropped_events()`.
+- `Action` implements `Debug` without header values or `Send` payloads.
+- `select_audio_rendition` after `Status::Ended` is accepted and ignored.
+- After a fatal `Event::Error` the session emits nothing further.
+
 ## Cookies and custom headers
 
 Responses of the session origin may set cookies (`Set-Cookie`, any status including 401 and 3xx);
 the jar is host-only and scoped to the origin, honours `Path` (RFC 6265 path-match), `Secure` and
-`Max-Age` (relative to the session clock) and ignores `Domain` and `Expires`. Cookies ride on every
+`Max-Age` (relative to the session clock) and ignores `Domain` and `Expires`. A `Secure` cookie from an `http` origin, a `__Secure-` cookie without
+`Secure`, a `__Host-` cookie without `Secure` and `Path=/` (or with `Domain`) and a `Path` over 1024 bytes
+are rejected. Cookies ride on every
 request to the origin (TS-HTTP and HLS playlists, segments, reconnects) and never to another origin.
 Seed with `Config::initial_cookies`; persist with `Session::cookies()` (values are secrets, never in
 `Debug`). `Config::extra_headers` are sent only to the origin and validated at `Session::open`

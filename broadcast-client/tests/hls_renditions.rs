@@ -356,6 +356,25 @@ fn auto_select_disabled_starts_no_audio_adapter() {
     assert_eq!(ended_count(&h.events), 1);
     h.session
         .select_audio_rendition(Some(0))
+        .expect("manual select after Ended is accepted and ignored");
+    h.run_until(|_| false, SPLIT_STEPS);
+    assert_eq!(h.hits(AUDIO_PLAYLIST_URL), 0);
+    assert_eq!(count_audio(&h.events), 0);
+    assert_eq!(ended_count(&h.events), 1);
+}
+
+#[test]
+fn manual_audio_selection_before_ended_still_plays_the_rendition() {
+    let f = fixture();
+    let mut cfg = hls_config();
+    cfg.auto_select_audio = false;
+    let mut h = host(&f, default_master(), cfg);
+    h.run_until(
+        |evs| evs.iter().any(|e| matches!(e, Event::Variants(_))),
+        SPLIT_STEPS,
+    );
+    h.session
+        .select_audio_rendition(Some(0))
         .expect("manual select");
     h.run_until(|evs| count_audio(evs) >= AUDIO_SAMPLES, SPLIT_STEPS);
     assert_eq!(count_audio(&h.events), AUDIO_SAMPLES);
@@ -694,7 +713,9 @@ fn auth_applies_to_rendition_requests_same_origin_only() {
     let f = fixture();
     let expected = format!("Bearer {BEARER}");
     let mut h = host(&f, default_master(), hls_config());
-    h.session.set_credentials(Credentials::bearer(BEARER));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER))
+        .unwrap();
     h.run_to_end();
     let audio_requests: Vec<&Seen> = h
         .seen
@@ -715,7 +736,9 @@ fn auth_applies_to_rendition_requests_same_origin_only() {
         &mut h,
         f.audio.bodies(CDN_AUDIO_DIR, CDN_AUDIO_PLAYLIST_URL),
     );
-    h.session.set_credentials(Credentials::bearer(BEARER));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER))
+        .unwrap();
     h.run_to_end();
     let cdn: Vec<&Seen> = h
         .seen
@@ -819,7 +842,9 @@ fn rendition_key_fetch_uses_shared_machinery() {
         );
     }
     h.ok(KEY_URL, AUDIO_KEY.to_vec());
-    h.session.set_credentials(Credentials::bearer(BEARER));
+    h.session
+        .set_credentials(Credentials::bearer(BEARER))
+        .unwrap();
     h.run_to_end();
     assert_eq!(h.hits(KEY_URL), 1, "key fetched once for all segments");
     let key_request = h.requests_to(KEY_URL)[0];

@@ -82,12 +82,14 @@ macro_rules! rec {
     };
 }
 
+const TICKS_PER_SEC_27MHZ: u64 = 27_000_000;
+
 pub(crate) fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
     if timescale == 0 {
         return 0;
     }
-    let v = i128::from(pts) * 27_000_000i128 / i128::from(timescale);
-    if v < 0 { 0 } else { v as u64 }
+    let v = i128::from(pts) * i128::from(TICKS_PER_SEC_27MHZ) / i128::from(timescale);
+    u64::try_from(v).unwrap_or(if v < 0 { 0 } else { u64::MAX })
 }
 
 pub(crate) struct Feeder {
@@ -134,6 +136,44 @@ impl Feeder {
     pub(crate) fn set_finite(&mut self) {
         self.finite = true;
         self.controller = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_track(&self, t: TrackId) -> bool {
+        self.track_specs.contains_key(&t)
+    }
+
+    pub(crate) fn new_connection(&mut self) {
+        self.finite = false;
+    }
+
+    pub(crate) fn retain_tracks(&mut self, specs: &[TrackSpec]) {
+        let present: BTreeSet<TrackId> = specs.iter().map(|s| s.track_id).collect();
+        let gone: Vec<TrackId> = self
+            .track_specs
+            .keys()
+            .filter(|t| !present.contains(t))
+            .copied()
+            .collect();
+        for t in gone {
+            self.remove_track(t);
+        }
+    }
+
+    fn remove_track(&mut self, t: TrackId) {
+        self.track_specs.remove(&t);
+        self.live_joins.remove(&t);
+        self.pending_ends.remove(&t);
+        self.pending_zero.remove(&t);
+        self.video_joined.remove(&t);
+        self.video_max_pts.remove(&t);
+        self.audio_max_end.remove(&t);
+        if self.rendered.remove(&t)
+            && let Some(c) = &mut self.controller
+        {
+            c.unregister_track(t.value());
+            rec!(self, BufferInput::Unregister(t.value()));
+        }
     }
 
     pub(crate) fn on_track_added(&mut self, spec: &TrackSpec) {
@@ -221,7 +261,7 @@ impl Feeder {
                         self.video_join_pts_27 = Some(pts_to_27mhz(pts, timescale));
                     }
                     self.pending_ends
-                        .insert(track, pts_to_27mhz(pts + dur, timescale));
+                        .insert(track, pts_to_27mhz(pts.saturating_add(dur), timescale));
                 }
                 Some(JoinDecision::Keep) if self.video_joined.contains(&track) => {
                     let max_pts = self
@@ -231,7 +271,7 @@ impl Feeder {
                         .map_or(pts, |m| m.max(pts));
                     self.video_max_pts.insert(track, max_pts);
                     self.pending_ends
-                        .insert(track, pts_to_27mhz(max_pts + dur, timescale));
+                        .insert(track, pts_to_27mhz(max_pts.saturating_add(dur), timescale));
                 }
                 _ => {}
             }
@@ -247,7 +287,7 @@ impl Feeder {
             (true, None) => return,
             (true, Some(j)) => Some(j),
         };
-        let end = pts_to_27mhz(pts + dur, timescale);
+        let end = pts_to_27mhz(pts.saturating_add(dur), timescale);
         let max_end = self
             .audio_max_end
             .get(&track)
@@ -401,5 +441,135 @@ impl Feeder {
             .as_ref()
             .map(|c| c.snapshot_memory())
             .unwrap_or_else(|| self.seed.unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::Unpackage;
+    use transmux::TsDemux;
+
+    const FIXTURE: &str = "ts/h264_aac.ts";
+    const FAR_PTS_DURATION: u32 = 3_000;
+
+    struct Streams {
+        video: (TrackSpec, Vec<Sample>),
+        audio: (TrackSpec, Vec<Sample>),
+    }
+
+    fn streams() -> Streams {
+        let data = test_fixtures::read(FIXTURE);
+        let media = TsDemux::new().unpackage(&data[..]).unwrap();
+        let mut video = None;
+        let mut audio = None;
+        for track in media.tracks {
+            if LiveJoin::for_config(&track.spec.config).is_some() {
+                video = Some((track.spec, track.samples));
+            } else if track.spec.config.audio_sample_rate().is_some() {
+                audio = Some((track.spec, track.samples));
+            }
+        }
+        Streams {
+            video: video.unwrap(),
+            audio: audio.unwrap(),
+        }
+    }
+
+    fn feeder() -> Feeder {
+        Feeder::new(ControllerConfig::default(), None)
+    }
+
+    fn far(sample: &Sample) -> Sample {
+        let mut s = sample.clone();
+        s.pts = Some(i64::MAX);
+        s.dts = Some(i64::MAX);
+        s.duration = Some(FAR_PTS_DURATION);
+        s
+    }
+
+    #[test]
+    fn pts_to_27mhz_clamps_instead_of_truncating() {
+        assert_eq!(pts_to_27mhz(i64::MAX, 1), u64::MAX);
+        assert_eq!(pts_to_27mhz(i64::MIN, 1), 0);
+        assert_eq!(pts_to_27mhz(90_000, 90_000), 27_000_000);
+        assert_eq!(pts_to_27mhz(1, 0), 0);
+    }
+
+    #[test]
+    fn audio_sample_at_the_end_of_the_i64_range_does_not_overflow() {
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(&st.audio.0);
+        let id = st.audio.0.track_id;
+        f.on_sample(id, &far(&st.audio.1[0]), None);
+        assert_eq!(f.pending_ends.get(&id), Some(&u64::MAX));
+    }
+
+    #[test]
+    fn video_sample_at_the_end_of_the_i64_range_does_not_overflow() {
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(&st.video.0);
+        let id = st.video.0.track_id;
+        let mut joined = false;
+        for s in &st.video.1 {
+            let join = f.join_sample(id, s);
+            f.on_sample(id, s, join);
+            if matches!(join, Some(JoinDecision::JoinPoint(_))) {
+                joined = true;
+                break;
+            }
+        }
+        assert!(joined, "fixture has no join point");
+        let next = far(&st.video.1[st.video.1.len() - 1]);
+        let join = f.join_sample(id, &next);
+        assert_eq!(join, Some(JoinDecision::Keep));
+        f.on_sample(id, &next, join);
+        assert_eq!(f.pending_ends.get(&id), Some(&u64::MAX));
+    }
+
+    #[test]
+    fn retain_tracks_forgets_removed_tracks() {
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(&st.video.0);
+        f.on_track_added(&st.audio.0);
+        let (vid, aid) = (st.video.0.track_id, st.audio.0.track_id);
+        for s in &st.video.1 {
+            let join = f.join_sample(vid, s);
+            f.on_sample(vid, s, join);
+            if matches!(join, Some(JoinDecision::JoinPoint(_))) {
+                break;
+            }
+        }
+        let mut late_audio = st.audio.1[0].clone();
+        late_audio.pts = Some(1 << 40);
+        f.on_sample(aid, &late_audio, None);
+        assert!(f.rendered.contains(&vid) && f.video_joined.contains(&vid));
+        assert!(f.pending_zero.contains_key(&vid) && f.pending_ends.contains_key(&aid));
+
+        f.retain_tracks(std::slice::from_ref(&st.audio.0));
+        assert!(!f.track_specs.contains_key(&vid));
+        assert!(!f.live_joins.contains_key(&vid));
+        assert!(!f.rendered.contains(&vid));
+        assert!(!f.video_joined.contains(&vid));
+        assert!(!f.pending_zero.contains_key(&vid));
+        assert!(!f.pending_ends.contains_key(&vid));
+        assert!(!f.video_max_pts.contains_key(&vid));
+        assert!(f.track_specs.contains_key(&aid));
+        assert!(f.rendered.contains(&aid));
+        assert!(f.pending_ends.contains_key(&aid));
+    }
+
+    #[test]
+    fn a_new_connection_clears_the_finite_flag() {
+        let mut f = feeder();
+        f.set_finite();
+        assert!(f.finite);
+        f.new_connection();
+        assert!(!f.finite);
+        f.on_chunk(0, 1316, None);
+        assert!(f.controller.is_some());
     }
 }

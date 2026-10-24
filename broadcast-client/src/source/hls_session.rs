@@ -188,6 +188,9 @@ impl HlsSession {
         if self.master.is_none() || choice.is_some_and(|i| i >= candidates.len()) {
             return Err(Error::NoSuchRendition);
         }
+        if self.ended_sent {
+            return Ok(());
+        }
         self.mode = AudioMode::Manual(choice);
         self.apply_audio(choice, now, auth);
         self.collect(now, auth);
@@ -326,14 +329,28 @@ impl HlsSession {
             let main_events = self.main.take_events();
             progressed |= !main_events.is_empty();
             for e in main_events {
+                if self.session_fatal {
+                    break;
+                }
+                let fatal = is_fatal_error(&e);
                 self.handle_main(e, now, auth);
+                if fatal {
+                    self.propagate_fatal();
+                }
             }
             if let Some(a) = self.audio.as_mut() {
                 self.actions.extend(a.source.take_actions());
                 let audio_events = a.source.take_events();
                 progressed |= !audio_events.is_empty();
                 for e in audio_events {
+                    if self.session_fatal {
+                        break;
+                    }
+                    let fatal = is_fatal_error(&e);
                     self.handle_audio(e);
+                    if fatal {
+                        self.propagate_fatal();
+                    }
                 }
             }
             self.propagate_fatal();
@@ -414,6 +431,10 @@ impl HlsSession {
             other => self.events.push_back(other),
         }
     }
+}
+
+fn is_fatal_error(event: &Event) -> bool {
+    matches!(event, Event::Error { fatal: true, .. })
 }
 
 fn language_matches(language: &str, preferred: &str) -> bool {

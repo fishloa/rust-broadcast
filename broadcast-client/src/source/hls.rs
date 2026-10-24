@@ -7,6 +7,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::collections::HashMap;
+use std::sync::{Mutex, PoisonError};
 
 use hls_runtime::client::{
     Action as HlsAction, Error as CoreError, HlsClient, KeyId, Output, ResourceId,
@@ -26,30 +27,67 @@ const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_GONE: u16 = 410;
-const AUTH_STATUSES: [u16; 3] = [
-    STATUS_UNAUTHORIZED,
-    STATUS_PROXY_AUTH_REQUIRED,
-    STATUS_FORBIDDEN,
-];
+
 const METHOD_GET: &str = "GET";
 
 const FIRST_CONN_ID: u32 = 1;
 
-/// Connection-id allocator shared by every adapter of one session.
+type LiveIds = Arc<Mutex<BTreeSet<u32>>>;
+
+/// Connection-id allocator shared by every adapter of one session. An id stays reserved while its
+/// [`ConnLease`] lives, so a counter that wraps never hands out an id still in use.
 #[derive(Debug, Clone)]
-pub(crate) struct ConnAlloc(Arc<AtomicU32>);
+pub(crate) struct ConnAlloc {
+    next: Arc<AtomicU32>,
+    live: LiveIds,
+}
+
+/// A reserved connection id, released on drop.
+#[derive(Debug)]
+pub(crate) struct ConnLease {
+    id: u32,
+    live: LiveIds,
+}
+
+impl ConnLease {
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+impl Drop for ConnLease {
+    fn drop(&mut self) {
+        self.live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.id);
+    }
+}
 
 impl ConnAlloc {
     pub(crate) fn new() -> Self {
-        Self(Arc::new(AtomicU32::new(FIRST_CONN_ID)))
+        Self {
+            next: Arc::new(AtomicU32::new(FIRST_CONN_ID)),
+            live: Arc::new(Mutex::new(BTreeSet::new())),
+        }
     }
 
-    fn next(&self) -> u32 {
-        self.0
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                Some(c.checked_add(1).unwrap_or(FIRST_CONN_ID))
-            })
-            .unwrap_or(FIRST_CONN_ID)
+    fn lease(&self) -> ConnLease {
+        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            let candidate = self
+                .next
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                    Some(c.checked_add(1).unwrap_or(FIRST_CONN_ID))
+                })
+                .unwrap_or(FIRST_CONN_ID);
+            if live.insert(candidate) {
+                return ConnLease {
+                    id: candidate,
+                    live: self.live.clone(),
+                };
+            }
+        }
     }
 }
 
@@ -74,6 +112,8 @@ struct Req {
     byte_range: Option<(u64, u64)>,
     redirects: u32,
     authed: bool,
+    stale_replayed: bool,
+    lease: Option<ConnLease>,
     started_us: u64,
     responded_ok: bool,
     expected_len: Option<u64>,
@@ -89,6 +129,8 @@ impl Req {
             byte_range,
             redirects: 0,
             authed: false,
+            stale_replayed: false,
+            lease: None,
             started_us: 0,
             responded_ok: false,
             expected_len: None,
@@ -290,8 +332,12 @@ impl HlsSource {
             && req.url.origin() == auth.origin().origin()
         {
             self.actions.push_back(Action::Close { conn });
-            match auth.handle_unauthorized(status, headers, req.authed) {
+            match auth.handle_unauthorized(status, headers, req.authed, req.stale_replayed) {
                 AuthDecision::Replay => self.send(req, auth, now),
+                AuthDecision::ReplayStale => {
+                    req.stale_replayed = true;
+                    self.send(req, auth, now);
+                }
                 AuthDecision::Wait(events) => {
                     self.events.extend(events);
                     self.parked.push(req);
@@ -526,7 +572,7 @@ impl HlsSource {
 
     fn fail_status(&mut self, req: Req, now: u64, status: Option<u16>) {
         if let Purpose::Key(_) = req.purpose
-            && !status.is_some_and(|s| AUTH_STATUSES.contains(&s))
+            && status != Some(STATUS_FORBIDDEN)
             && self.report(ErrorKind::KeyFetchFailed { status })
         {
             return;
@@ -690,7 +736,9 @@ impl HlsSource {
         req.responded_ok = false;
         req.expected_len = None;
         req.body.clear();
-        let conn = self.conn_alloc.next();
+        let lease = self.conn_alloc.lease();
+        let conn = lease.id();
+        req.lease = Some(lease);
         let timeout = match req.purpose {
             Purpose::Playlist => self.playlist_timeout_us,
             Purpose::Resource(_) => self.segment_timeout_us,
@@ -806,5 +854,44 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
             true,
         )),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl ConnAlloc {
+        fn starting_at(n: u32) -> Self {
+            let alloc = Self::new();
+            alloc.next.store(n, Ordering::Relaxed);
+            alloc
+        }
+    }
+
+    #[test]
+    fn lease_skips_ids_still_held_after_the_counter_wraps() {
+        let alloc = ConnAlloc::starting_at(u32::MAX - 1);
+        let a = alloc.lease();
+        let b = alloc.lease();
+        assert_eq!((a.id(), b.id()), (u32::MAX - 1, u32::MAX));
+        let c = alloc.lease();
+        assert_eq!(c.id(), FIRST_CONN_ID);
+
+        alloc.next.store(u32::MAX - 1, Ordering::Relaxed);
+        let d = alloc.lease();
+        assert!(
+            ![a.id(), b.id(), c.id()].contains(&d.id()),
+            "reused live id {}",
+            d.id()
+        );
+
+        drop(a);
+        alloc.next.store(u32::MAX - 1, Ordering::Relaxed);
+        assert_eq!(
+            alloc.lease().id(),
+            u32::MAX - 1,
+            "a released id is reusable"
+        );
     }
 }

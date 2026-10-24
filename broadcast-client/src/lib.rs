@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+#[doc(hidden)]
 pub mod auth;
 mod buffer;
 mod cookies;
@@ -11,6 +12,8 @@ pub mod error;
 pub mod events;
 mod headers;
 pub mod playout;
+mod queue;
+#[doc(hidden)]
 pub mod redirect;
 pub mod session;
 pub mod source;

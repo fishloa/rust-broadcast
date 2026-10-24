@@ -110,7 +110,9 @@ fn redirect_without_location_is_connect_error() {
 fn cross_origin_redirect_drops_authorization() {
     use broadcast_client::Credentials;
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-    session.set_credentials(Credentials::bearer("secret-token"));
+    session
+        .set_credentials(Credentials::bearer("secret-token"))
+        .unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, headers, .. } => {
             assert!(headers.iter().any(
