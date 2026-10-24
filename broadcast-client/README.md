@@ -146,6 +146,14 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   player must set (the sample-time domain of the samples); a demuxer-level discontinuity (PCR
   discontinuity flag, re-anchor) is invisible to the host except through these events, so `Resume.at`
   can jump.
+- Live TS rendered set: until `set_rendered_tracks` is called the buffer controller judges the default
+  set, the lowest `TrackId` of each kind among the announced tracks (`Session::default_rendered_tracks()`
+  returns `(video, audio)`; it moves when a lower id is announced later, not by announce order). The session
+  runs ahead of the player, so `set_rendered_tracks` may name a track that already emitted samples: the
+  controller is seeded from the progress the session kept for it (media end from the join point, audio
+  past the join PTS), so a late declaration neither pauses nor blinds the controller. A track that never
+  emitted is waited for as before. `rejoin()` and a timeline discontinuity discard that progress. The
+  HLS/finite playout gate keeps its own default (first announced).
 - `Action::HttpRequest::byte_range` is `(offset, length)`, not `(start, end)`; the host builds
   the `Range: bytes=offset-(offset+length-1)` header itself.
 - `Action::WakeAt(t)` means "poll at or after `t`"; the session drops one that is not after the `now` of
