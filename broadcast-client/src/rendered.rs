@@ -3,7 +3,8 @@
 //! A declared id that is announced renders as declared. A declared id that was announced and then
 //! vanished (a PMT drop and restore returns the stream under a new id) is replaced by the lowest
 //! announced track of its kind that is not itself declared. A declared id that was never announced
-//! is pending: it is ignored until a later announcement names it, and reported once.
+//! is pending: it is ignored until a later announcement names it, and reported once. A declared id
+//! that vanished and has no replacement yet is waiting, not unknown, and is not reported.
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
@@ -91,6 +92,7 @@ impl Declaration {
             });
             match replacement {
                 Some(cand) => picked.push(cand),
+                None if self.vanished.contains_key(id) => {}
                 None => unknown.push(*id),
             }
         }
@@ -114,5 +116,124 @@ impl Declaration {
             rendered,
             unknown,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::Unpackage;
+
+    fn specs() -> (TrackSpec, TrackSpec) {
+        let data = test_fixtures::read("ts/h264_aac.ts");
+        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let mut video = None;
+        let mut audio = None;
+        for t in media.tracks {
+            if t.spec.config.is_video() {
+                video = Some(t.spec);
+            } else if t.spec.config.audio_sample_rate().is_some() {
+                audio = Some(t.spec);
+            }
+        }
+        (video.unwrap(), audio.unwrap())
+    }
+
+    fn with_id(spec: &TrackSpec, id: u32) -> TrackSpec {
+        let mut s = spec.clone();
+        s.track_id = TrackId::new(id);
+        s
+    }
+
+    fn ids(v: &[u32]) -> Vec<TrackId> {
+        v.iter().map(|i| TrackId::new(*i)).collect()
+    }
+
+    #[test]
+    fn no_declaration_leaves_the_default_policy() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        let r = d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        assert_eq!(r.rendered, None);
+        assert!(!r.changed);
+    }
+
+    #[test]
+    fn an_empty_declaration_renders_nothing_but_a_wholly_pending_one_falls_back() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        assert_eq!(d.declare(&[]).rendered, Some(Vec::new()));
+        let r = d.declare(&ids(&[999]));
+        assert_eq!(r.rendered, None);
+        assert_eq!(r.unknown, ids(&[999]));
+    }
+
+    #[test]
+    fn unknown_ids_are_reported_once_per_declaration_and_only_after_an_announcement() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        assert!(d.declare(&ids(&[1, 999])).unknown.is_empty());
+        let r = d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        assert_eq!(r.rendered, Some(ids(&[1])));
+        assert_eq!(r.unknown, ids(&[999]));
+        let again = d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        assert!(again.unknown.is_empty());
+        assert_eq!(d.declare(&ids(&[1, 999])).unknown, ids(&[999]));
+    }
+
+    #[test]
+    fn a_pending_id_applies_when_it_is_announced() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        d.on_tracks(&[with_id(&v, 1)]);
+        assert_eq!(d.declare(&ids(&[1, 7])).rendered, Some(ids(&[1])));
+        let r = d.on_tracks(&[with_id(&v, 1), with_id(&a, 7)]);
+        assert_eq!(r.rendered, Some(ids(&[1, 7])));
+    }
+
+    #[test]
+    fn a_vanished_declared_track_is_replaced_by_the_same_kind_and_waits_silently_meanwhile() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        d.declare(&ids(&[1, 2]));
+        let gone = d.on_tracks(&[with_id(&v, 1)]);
+        assert_eq!(gone.rendered, Some(ids(&[1])));
+        assert!(gone.unknown.is_empty());
+        let back = d.on_tracks(&[with_id(&v, 1), with_id(&a, 3)]);
+        assert_eq!(back.rendered, Some(ids(&[1, 3])));
+    }
+
+    #[test]
+    fn a_replacement_is_never_a_track_the_host_declared_itself() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 2), with_id(&a, 3)]);
+        d.declare(&ids(&[1, 2, 3]));
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 3)]);
+        let r = d.on_tracks(&[with_id(&v, 1), with_id(&a, 3), with_id(&a, 4)]);
+        assert_eq!(r.rendered, Some(ids(&[1, 4, 3])));
+    }
+
+    #[test]
+    fn the_original_id_wins_when_it_returns() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        d.declare(&ids(&[1, 2]));
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 3)]);
+        let r = d.on_tracks(&[with_id(&v, 1), with_id(&a, 2), with_id(&a, 3)]);
+        assert_eq!(r.rendered, Some(ids(&[1, 2])));
+    }
+
+    #[test]
+    fn a_video_id_is_never_replaced_by_an_audio_track() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        d.declare(&ids(&[1]));
+        let r = d.on_tracks(&[with_id(&a, 2)]);
+        assert_eq!(r.rendered, None);
     }
 }

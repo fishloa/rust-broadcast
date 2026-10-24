@@ -139,3 +139,63 @@ fn a_declaration_made_before_the_first_announcement_applies_when_it_arrives_with
     assert!(regs.iter().any(|r| r.contains("Register(1)")), "{regs:?}");
     assert!(regs.iter().any(|r| r.contains("Register(2)")), "{regs:?}");
 }
+
+const DROP_AT: f64 = 0.4;
+const RESTORE_AT: f64 = 0.7;
+
+fn flipped_h264_aac() -> Vec<u8> {
+    let bytes = test_fixtures::read("ts/h264_aac_40s.ts");
+    let pmt = support::ts_pmt::find(&bytes).expect("a PMT");
+    assert_eq!(pmt.es.len(), 2);
+    let all = pmt.es.clone();
+    let video_only = vec![pmt.es[0].clone()];
+    let v = pmt.version;
+    support::ts_pmt::rewrite(&bytes, &pmt, &|at| {
+        if at < DROP_AT {
+            None
+        } else if at < RESTORE_AT {
+            Some((video_only.clone(), v.wrapping_add(1)))
+        } else {
+            Some((all.clone(), v.wrapping_add(2)))
+        }
+    })
+}
+
+#[test]
+fn an_explicit_video_audio_declaration_survives_a_pmt_drop_and_restore() {
+    let bytes = flipped_h264_aac();
+    let mut host = Host::open(Config::default());
+    host.feed_playing(&bytes[..CHUNK * 3], CHUNK);
+    host.session
+        .set_rendered_tracks(&[TrackId::new(1), TrackId::new(2)]);
+    host.settle();
+    host.feed_playing(&bytes[CHUNK * 3..], CHUNK);
+
+    let announced: Vec<Vec<u32>> = host
+        .log
+        .iter()
+        .filter_map(|e| match e {
+            Event::Tracks(t) => Some(t.iter().map(|s| s.track_id.value()).collect()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(announced, vec![vec![1, 2], vec![1], vec![1, 3]]);
+    let regs = registrations(&host);
+    assert!(
+        regs.iter().any(|r| r.contains("Register(3)")),
+        "the restored audio is never judged by the controller: {regs:?}"
+    );
+    assert!(host.samples_on(3) > 0);
+    assert!(unknown_reports(&host).is_empty());
+}
+
+#[test]
+fn a_drop_and_restore_without_a_declaration_follows_the_default_set() {
+    let bytes = flipped_h264_aac();
+    let mut host = Host::open(Config::default());
+    host.feed_playing(&bytes, CHUNK);
+    assert_eq!(
+        host.session.default_rendered_tracks(),
+        (Some(TrackId::new(1)), Some(TrackId::new(3)))
+    );
+}
