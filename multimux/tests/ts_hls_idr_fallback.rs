@@ -35,6 +35,7 @@ const HTTP_CHUNK_PACKETS: usize = 56;
 const HTTP_CHUNK_INTERVAL: Duration = Duration::from_millis(10);
 const AUTO_BOUND_SECS: f64 = 6.0;
 const SHORT_BOUND_TARGETS: u32 = 2;
+const PACED_BOUND_TARGETS: u32 = 5;
 const FRAME_SLACK_SECS: f64 = 0.2;
 const LATE_SLACK_SECS: f64 = 6.0;
 const MIN_SEGMENTS: usize = 2;
@@ -352,7 +353,8 @@ fn short_bound() -> (TsHlsIdrFallback, f64) {
 
 #[tokio::test]
 async fn open_gop_public_capture_falls_back_after_the_bound() {
-    let (fallback, bound) = short_bound();
+    let fallback = TsHlsIdrFallback::Targets(PACED_BOUND_TARGETS);
+    let bound = f64::from(PACED_BOUND_TARGETS) * TARGET_SECS;
     assert_falls_back(
         "gulli",
         &test_fixtures::path("ts/gulli-opengop.ts"),
