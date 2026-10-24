@@ -697,6 +697,11 @@ pub struct StreamingTsHlsSegmenter {
     discontinuity_at_resync: bool,
     /// Anchor access units dropped while awaiting an IDR.
     dropped_leading_aus: u64,
+    /// Bound on the wait for the first IDR; `None` waits forever (strict).
+    idr_wait: Option<crate::segment_cut::IdrWait>,
+    /// [`SegmentCutPolicy::IdrOnly`] gave up waiting for an IDR and cuts on
+    /// any sync sample for the rest of the stream.
+    idr_fallback_active: bool,
     /// Set by [`Self::finish`]; makes [`Self::playlist`] emit `#EXT-X-ENDLIST`.
     finished: bool,
     /// `#EXT-X-VERSION` written to the playlist.
@@ -817,6 +822,8 @@ impl StreamingTsHlsSegmenter {
             awaiting_idr: false,
             discontinuity_at_resync: false,
             dropped_leading_aus: 0,
+            idr_wait: None,
+            idr_fallback_active: false,
             finished: false,
             version: DEFAULT_HLS_VERSION,
             uri_prefix: String::from("seg"),
@@ -874,6 +881,28 @@ impl StreamingTsHlsSegmenter {
         self
     }
 
+    /// Bound the [`SegmentCutPolicy::IdrOnly`] wait for the first IDR: once
+    /// `bound` of anchor media has been dropped without one, the segmenter
+    /// falls back to any sync sample for the rest of the stream
+    /// ([`Self::idr_fallback_active`]). Without this call it waits forever.
+    #[must_use]
+    pub fn with_idr_fallback(mut self, bound: core::time::Duration) -> Self {
+        self.idr_wait = Some(crate::segment_cut::IdrWait::new(bound));
+        self
+    }
+
+    /// Stop requiring an IDR: cut on any sync sample from now on. For a caller
+    /// that measured the wait itself.
+    pub fn fall_back_to_any_rap(&mut self) {
+        self.idr_fallback_active = true;
+    }
+
+    /// `true` once [`SegmentCutPolicy::IdrOnly`] has fallen back to any sync
+    /// sample (see [`Self::with_idr_fallback`]).
+    pub fn idr_fallback_active(&self) -> bool {
+        self.idr_fallback_active
+    }
+
     /// The configured [`SegmentCutPolicy`].
     pub fn cut_policy(&self) -> SegmentCutPolicy {
         self.cut_policy
@@ -898,7 +927,9 @@ impl StreamingTsHlsSegmenter {
 
     fn opens_segment(&self, sample: &Sample) -> bool {
         match (self.cut_policy, self.anchor_nal_codec()) {
-            (SegmentCutPolicy::IdrOnly, Some(codec)) => access_unit_is_idr(codec, &sample.data),
+            (SegmentCutPolicy::IdrOnly, Some(codec)) if !self.idr_fallback_active => {
+                access_unit_is_idr(codec, &sample.data)
+            }
             _ => sample.flags.is_sync,
         }
     }
@@ -956,6 +987,12 @@ impl StreamingTsHlsSegmenter {
             }
             if !self.opens_segment(&sample) {
                 self.dropped_leading_aus += 1;
+                let timescale = self.tracks[self.anchor].spec.timescale;
+                if let Some(wait) = self.idr_wait.as_mut()
+                    && wait.observe_dropped(&sample, timescale)
+                {
+                    self.idr_fallback_active = true;
+                }
                 return Ok(());
             }
             self.awaiting_idr = false;

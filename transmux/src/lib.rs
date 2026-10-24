@@ -410,7 +410,7 @@ pub use sample_groups::{
     GROUPING_TYPE_ROLL, ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox,
     SbgpEntry, SgpdEntry, SubSampleDescriptor, SubSampleInformationBox, SubsEntry,
 };
-pub use segment_cut::SegmentCutPolicy;
+pub use segment_cut::{IdrWait, SegmentCutPolicy};
 pub use segmenter::{SegmentMeta, Segmenter};
 pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 #[cfg(feature = "std")]
