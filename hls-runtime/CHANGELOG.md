@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (round-8 audit)
+- `Error::NotMedia { id }` (additive; `Error` is `#[non_exhaustive]`): a Part/Segment body that is not media for its container is rejected by `on_resource` instead of being consumed silently. MPEG-TS needs the sync byte on at least half of its 188-byte lanes (ISO/IEC 13818-1 §2.4.3.2), ISO BMFF a complete `moof` then `mdat` (ISO/IEC 14496-12 §8.8.4) or a progressive movie (still `Error::NotFragmented`). Structurally valid media with zero samples is still accepted. A non-`0x47` body used to be buffered forever as "waiting for an init" a TS playlist never has, ending a VOD cleanly with samples missing.
+- `HlsClient::retry_resource(id)`: re-request a failed Part/Segment with its original URL and byte range without a playlist reload, for a VOD playlist (`EXT-X-ENDLIST`) that has no reload to do it.
+- `HlsClient::skip_resource(id)`: give up on a Part/Segment: it is never requested again, the TS timeline restarts (the old timeline's held-back access units are flushed first) and `Output::Discontinuity` follows; a skip of the last open segment of an ended playlist ends the stream.
+
 ### Added (round-7 audit)
 - `Error::InitUndecodable` (additive; `Error` is `#[non_exhaustive]`): a fetched Media Initialization Section with no complete `moov` box was accepted and only failed later as an endless series of segment demux errors. It is now rejected at once, the slot is marked failed, and `retry_init()` fetches it again.
 

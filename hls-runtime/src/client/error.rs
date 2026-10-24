@@ -61,6 +61,18 @@ pub enum Error {
         id: super::action::ResourceId,
     },
 
+    /// A fetched Part/Segment answered with bytes that are not media for its
+    /// container: for MPEG-TS (ISO/IEC 13818-1 §2.4.3.2) no sync-byte lattice, for ISO BMFF (ISO/IEC 14496-12 §8.8.4) no complete
+    /// `moof` followed by its `mdat`. The resource is marked unrequested, so a
+    /// retry ([`crate::client::HlsClient::retry_resource`] or the next
+    /// playlist) fetches it again. Structurally valid media that yields no
+    /// samples is not this error.
+    #[error("resource {id:?} is not media for its container")]
+    NotMedia {
+        /// The id whose bytes are not media.
+        id: super::action::ResourceId,
+    },
+
     /// A fetched Media Initialization Section holds no `moov` box (it is not an
     /// ISO BMFF init at all, or it is truncated). The init is marked failed, so
     /// [`crate::client::HlsClient::retry_init`] fetches it again.

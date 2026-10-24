@@ -77,6 +77,7 @@ const QUEUE_CAPS: [usize; 4] = [1, 16, 100_000, usize::MAX];
 const JUMP_US: [u64; 4] = [1, 1_000_000, 5_000_000, u64::MAX];
 const LEAD_US: [u64; 4] = [0, 1_000_000, 6_000_000, u64::MAX];
 const KEY_FAILURES: [u32; 4] = [0, 1, 3, u32::MAX];
+const SEGMENT_FAILURES: [u32; 4] = [0, 1, 3, u32::MAX];
 const REDIRECTS: [u32; 4] = [0, 1, 5, u32::MAX];
 const INFLIGHT: [usize; 4] = [0, 1, 4, usize::MAX];
 const BYTE_LIMITS: [usize; 4] = [1, 4096, 4 * 1024 * 1024, usize::MAX];
@@ -520,6 +521,7 @@ fn config_from(header: &[u8]) -> Config {
     config.playout.live_start_lead_us = knob(header, 16, &LEAD_US);
     config.playout.pause_lead_us = knob(header, 17, &LEAD_US);
     config.start_pending_track_wait_us = knob(header, 18, &START_WAIT_US);
+    config.hls_max_segment_failures = knob(header, 19, &SEGMENT_FAILURES);
     config
 }
 

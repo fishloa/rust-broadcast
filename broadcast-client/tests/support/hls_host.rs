@@ -75,6 +75,7 @@ pub enum Reply {
     StatusHeaders(u16, Vec<(String, String)>),
     Redirect(String),
     TransportError,
+    ResetMid(Vec<u8>),
     Hang,
 }
 
@@ -233,6 +234,12 @@ impl Host {
                     .on_response(conn, 302, &[("Location".to_string(), loc)], self.now);
             }
             Reply::TransportError => {
+                self.session
+                    .on_closed(conn, Some("reset".to_string()), self.now);
+            }
+            Reply::ResetMid(partial) => {
+                self.session.on_response(conn, 200, &[], self.now);
+                self.session.on_data(conn, &partial, self.now);
                 self.session
                     .on_closed(conn, Some("reset".to_string()), self.now);
             }

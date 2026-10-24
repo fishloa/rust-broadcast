@@ -28,6 +28,9 @@ use super::url;
 /// playlist itself has never advertised a Media Initialization Section.
 const TS_SYNC_BYTE: u8 = 0x47;
 
+/// Length of one MPEG-2 TS packet (ISO/IEC 13818-1 §2.4.3.2).
+const TS_PACKET_LEN: usize = 188;
+
 /// Movie timescale of the init segment synthesized for classic TS-segment
 /// HLS: the 90 kHz MPEG-2 system clock the PES PTS/DTS are expressed in
 /// (ISO/IEC 13818-1 §2.4.3.7), the same clock `transmux`'s TS demuxer stamps
@@ -55,6 +58,7 @@ const MILLIS_PER_SECOND: u64 = 1000;
 /// `moov`, `moof` (ISO/IEC 14496-12 §8.2.1, §8.8.4).
 const MOVIE_BOX: [u8; 4] = *b"moov";
 const MOVIE_FRAGMENT_BOX: [u8; 4] = *b"moof";
+const MEDIA_DATA_BOX: [u8; 4] = *b"mdat";
 
 const MAP_PROBE_VERSION: u32 = 6;
 
@@ -143,6 +147,49 @@ fn is_progressive_movie(bytes: &[u8]) -> bool {
         }
     }
     movie
+}
+
+/// `true` when `bytes` holds a complete `moof` box followed by its complete
+/// `mdat` box (ISO/IEC 14496-12 §8.8.4, §8.1.1): what every media segment or
+/// part of fragmented MP4 carries.
+fn has_media_fragment(bytes: &[u8]) -> bool {
+    let mut fragment = false;
+    for step in transmux::box_iter(bytes) {
+        let Ok((boxed, _)) = step else { return false };
+        match boxed.header.box_type.0 {
+            MOVIE_FRAGMENT_BOX => fragment = true,
+            MEDIA_DATA_BOX if fragment => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Lanes below which a TS body must be synced on every one of them.
+const TS_TRUSTED_LANES: usize = 3;
+
+/// `true` when `bytes` is MPEG-TS at some packet phase (ISO/IEC 13818-1
+/// §2.4.3.2, 188-byte packets, `sync_byte` first): a body cut mid-packet or
+/// led by junk is still media, the demuxer resynchronises. At the best phase,
+/// a body of at least [`TS_TRUSTED_LANES`] lanes needs half of them synced; a
+/// shorter one needs every lane synced, and a single lane is trusted only at
+/// phase 0 (a one-packet body has up to 188 phases, so noise would match one).
+/// An HTML error page, random bytes and an empty body all fail; a segment of
+/// nothing but null packets passes. 192-byte M2TS packets are not accepted:
+/// the demuxer behind this check does not read them.
+fn has_ts_structure(bytes: &[u8]) -> bool {
+    (0..TS_PACKET_LEN).any(|phase| {
+        let lanes = bytes.len().saturating_sub(phase) / TS_PACKET_LEN;
+        let lanes_synced = (0..lanes)
+            .filter(|lane| bytes[phase + lane * TS_PACKET_LEN] == TS_SYNC_BYTE)
+            .count();
+        match lanes {
+            0 => false,
+            1 => phase == 0 && lanes_synced == 1,
+            n if n < TS_TRUSTED_LANES => lanes_synced == n,
+            n => lanes_synced.saturating_mul(2) >= n,
+        }
+    })
 }
 
 /// `uri` up to its query string: a CDN that re-signs a segment URL on every
@@ -449,6 +496,9 @@ pub struct HlsClient {
     full_reload_requested: bool,
 
     requested: BTreeSet<ResourceId>,
+    /// URL and byte range of every Part/Segment fetch issued, so [`Self::retry_resource`] can re-request a failed one
+    /// without a playlist reload. Pruned with the other MSN-keyed records.
+    resource_requests: BTreeMap<ResourceId, (String, Option<(u64, u64)>)>,
     /// Ids whose bytes `on_resource` has accepted (delivered *or* buffered in
     /// [`Self::pending_demux`]) — the exactly-once guard against a second
     /// delivery of the same id. Pruned with the other MSN-keyed sets.
@@ -577,6 +627,7 @@ impl HlsClient {
             next_key_id: 0,
             full_reload_requested: false,
             requested: BTreeSet::new(),
+            resource_requests: BTreeMap::new(),
             fulfilled: BTreeSet::new(),
             joined: false,
             ts_demux: None,
@@ -1014,6 +1065,45 @@ impl HlsClient {
         !failed.is_empty()
     }
 
+    /// Request a Part/Segment again after a failed fetch ([`Self::on_error`]
+    /// or an [`Error`] from [`Self::on_resource`]) without a playlist reload:
+    /// a VOD playlist (`EXT-X-ENDLIST`) has no further reload to do it. `false`
+    /// when there is nothing to retry (the fetch is in flight, the resource
+    /// was accepted, or it left the window).
+    pub fn retry_resource(&mut self, id: ResourceId) -> bool {
+        if self.requested.contains(&id) {
+            return false;
+        }
+        let Some((url, byte_range)) = self.resource_requests.get(&id).cloned() else {
+            return false;
+        };
+        self.request_resource(id, url, byte_range);
+        true
+    }
+
+    /// Give up on a Part/Segment that cannot be fetched and carry on with the
+    /// next one: it is never requested again, the timeline restarts (held-back
+    /// final access units of the old one are flushed first) and
+    /// [`Output::Discontinuity`] follows, so the consumer re-syncs across the
+    /// gap. No-op for [`ResourceId::Init`], which cannot be skipped.
+    pub fn skip_resource(&mut self, id: ResourceId) {
+        match id {
+            ResourceId::Init => return,
+            ResourceId::Segment { msn } => {
+                self.delivered_segments.insert(msn);
+            }
+            ResourceId::Part { msn, part } => {
+                self.delivered_parts.insert((msn, part));
+            }
+        }
+        self.requested.remove(&id);
+        self.resource_requests.remove(&id);
+        // Flushing can only fail to rebuild a track init; the gap is reported either way.
+        let _ = self.restart_ts_demux(id);
+        self.pending_outputs.push_back(Output::Discontinuity);
+        let _ = self.maybe_emit_end_of_stream();
+    }
+
     /// The `EXT-X-MAP`s of `playlist`, in playlist order, each with the key
     /// that encrypts it and the Media Sequence Number it first applies to.
     fn map_entries(&self, playlist: &MediaPlaylist, text: &str, next_msn: u64) -> Vec<MapEntry> {
@@ -1373,6 +1463,14 @@ impl HlsClient {
     }
 
     fn route_media_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let recognised = if self.is_ts_segment(bytes) {
+            has_ts_structure(bytes)
+        } else {
+            has_media_fragment(bytes) || is_progressive_movie(bytes)
+        };
+        if !recognised {
+            return Err(Error::NotMedia { id });
+        }
         if self.is_ts_segment(bytes) {
             // Classic MPEG-TS-segment HLS (issue #760): no init
             // resource will ever arrive for this playlist, so demux
@@ -1605,7 +1703,7 @@ impl HlsClient {
     /// fMP4/CMAF resource always starts with an ISOBMFF box
     /// (`ftyp`/`styp`/`moof`), never [`TS_SYNC_BYTE`].
     fn is_ts_segment(&self, bytes: &[u8]) -> bool {
-        self.inits.is_empty() && bytes.first() == Some(&TS_SYNC_BYTE)
+        self.inits.is_empty() && (bytes.first() == Some(&TS_SYNC_BYTE) || has_ts_structure(bytes))
     }
 
     /// Report that a previously requested [`ResourceId`] (or the playlist
@@ -1796,6 +1894,7 @@ impl HlsClient {
 
     fn request_resource(&mut self, id: ResourceId, url: String, byte_range: Option<(u64, u64)>) {
         self.requested.insert(id);
+        self.resource_requests.insert(id, (url.clone(), byte_range));
         self.outstanding_fetches += 1;
         self.pending_actions.push_back(Action::FetchResource {
             id,
@@ -2217,6 +2316,7 @@ impl HlsClient {
         let fulfilled = &self.fulfilled;
         self.requested
             .retain(|id| !(below(id) && fulfilled.contains(id)));
+        self.resource_requests.retain(|id, _| !below(id));
         self.fulfilled.retain(|id| !below(id));
         self.pending_keyed.retain(|(id, _)| !below(id));
         self.segment_crypto.retain(|&m, _| m >= first);
@@ -2465,6 +2565,10 @@ mod tests {
     use super::*;
     use transmux::sample_aes::aes128_encrypt_segment;
 
+    const EMPTY_FRAGMENT: &[u8] = &[
+        0, 0, 0, 8, b'm', b'o', b'o', b'f', 0, 0, 0, 8, b'm', b'd', b'a', b't',
+    ];
+
     #[test]
     fn decrypt_segment_strips_pkcs7_padding_to_the_exact_plaintext() {
         let key = [0x5Au8; KEY_LEN];
@@ -2537,7 +2641,7 @@ mod tests {
         // No init segment cached yet, so this is buffered rather than
         // demuxed — the point here is only that it is *not* rejected as
         // unrequested.
-        let result = client.on_resource(id, b"some bytes");
+        let result = client.on_resource(id, EMPTY_FRAGMENT);
         assert!(
             result.is_ok(),
             "a requested id must be accepted: {result:?}"
@@ -2735,7 +2839,7 @@ mod tests {
         );
         // Deliver msn 0 (buffered: no init), leave msn 1 in flight.
         client
-            .on_resource(ResourceId::Segment { msn: 0 }, b"opaque")
+            .on_resource(ResourceId::Segment { msn: 0 }, EMPTY_FRAGMENT)
             .unwrap();
 
         client
@@ -2773,7 +2877,7 @@ mod tests {
         };
         client.on_playlist(pl(5).as_bytes()).unwrap();
         client
-            .on_resource(ResourceId::Segment { msn: 5 }, b"opaque")
+            .on_resource(ResourceId::Segment { msn: 5 }, EMPTY_FRAGMENT)
             .unwrap();
         assert_eq!(
             client

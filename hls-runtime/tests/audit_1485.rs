@@ -238,6 +238,10 @@ fn vod_with_init() -> &'static str {
      #EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2.0,\nseg0.m4s\n#EXT-X-ENDLIST\n"
 }
 
+const EMPTY_FRAGMENT: &[u8] = &[
+    0, 0, 0, 8, b'm', b'o', b'o', b'f', 0, 0, 0, 8, b'm', b'd', b'a', b't',
+];
+
 #[test]
 fn a_failed_init_never_ends_the_stream_cleanly_and_can_be_retried() {
     let mut client = HlsClient::new(URL);
@@ -246,7 +250,7 @@ fn a_failed_init_never_ends_the_stream_cleanly_and_can_be_retried() {
     let ids = resource_ids(&drain(&mut client));
     assert!(ids.contains(&ResourceId::Init), "{ids:?}");
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, b"opaque-media")
+        .on_resource(ResourceId::Segment { msn: 0 }, EMPTY_FRAGMENT)
         .unwrap();
     client.on_error(Some(ResourceId::Init));
     let outputs = drain_outputs(&mut client);

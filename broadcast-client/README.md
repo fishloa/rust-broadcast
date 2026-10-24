@@ -77,7 +77,7 @@ and emits `Event::Discontinuity`). TS and fMP4 segments, VOD (`Status::Ended` on
 (blocking reload). Every request gets the origin-scoped auth layer and its own redirect budget.
 Failed requests retry with the `Config::hls_backoff_ms` schedule (2, 4, 8 s, then
 `hls_backoff_cap_ms`, 10 s) and report `Status::Reconnecting`; a 404/410 playlist also reports
-`Status::NotFound`; schedule entries below 1 ms are raised to 1 ms. At most
+`Status::NotFound`; schedule entries below 1 ms are raised to 1 ms. A `429` or `503` with a `Retry-After` in seconds stretches the wait to at least that long (clamped to 60 s; the HTTP-date form is ignored, the session has no wall clock). A segment's retries are counted per segment: its failures walk the schedule and the count resets only when that segment is delivered as media. A `200` whose body is not media for its container (an HTML error page, random bytes, an empty body, a fragment without its `mdat`) is a failed fetch, never a consumed segment. After `Config::hls_max_segment_failures` (8) consecutive failures of one segment (`0`: the first is final; `u32::MAX`: retry forever) a VOD playlist ends with one fatal `ErrorKind::SegmentFetchFailed { status }`, and a live one skips the segment: one non-fatal `SegmentFetchFailed`, then `Event::Discontinuity`, and playback continues with the next segment. A playlist reload is never given up on. Init fetches time out after `hls_request_timeout_us`. At most
 `Config::hls_max_inflight_segments` (4) segment/part requests are outstanding at once, however long the
 playlist; after `Status::Ended` of an HLS session `reconnect()`, `select_variant()` and
 `select_audio_rendition()` do nothing. Bodies are bounded (`max_playlist_bytes`, `max_segment_bytes`) and requests
@@ -228,7 +228,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   `max_segment_bytes`, `max_key_bytes`, `hls_request_timeout_us`, `hls_segment_timeout_us`,
   `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, and a
   `buffer` that `buffering_runtime::ControllerConfig::validate` rejects. `ts_http` values are clamped to the
-  nearest valid ones (`tshttp_runtime::Config::clamped`), `max_key_failures: 0` behaves as `1`, and a
+  nearest valid ones (`tshttp_runtime::Config::clamped`), `max_key_failures: 0` behaves as `1`, `hls_max_segment_failures: 0` makes the first segment failure final, and a
   playout lead that the stream cannot reach (`u64::MAX`) keeps the gate closed.
   The hold never changes the sample sequence (track, pts, dts, sync flag, join decision, bytes): it is
   identical to the disabled hold. Host contract: the held samples are delivered as one burst behind the
