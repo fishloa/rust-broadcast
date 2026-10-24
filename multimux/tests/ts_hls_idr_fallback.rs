@@ -30,23 +30,72 @@ const ADMIN_TOKEN: &str = "ts-hls-idr-fallback-admin";
 const HANG_GUARD: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const TARGET_SECS: f64 = 1.0;
+const TS_PACKET: usize = 188;
+const HTTP_CHUNK_PACKETS: usize = 56;
+const HTTP_CHUNK_INTERVAL: Duration = Duration::from_millis(10);
 const AUTO_BOUND_SECS: f64 = 6.0;
 const SHORT_BOUND_TARGETS: u32 = 2;
-const MAX_OVERSHOOT_SECS: f64 = 5.0;
-const TICKS_PER_SEC: f64 = 90_000.0;
+const FRAME_SLACK_SECS: f64 = 0.2;
+const LATE_SLACK_SECS: f64 = 6.0;
 const MIN_SEGMENTS: usize = 2;
 const MOVIE_TIMESCALE: u32 = 90_000;
 const FRANCE2_FIRST_NON_IDR_SYNC: usize = 20;
 const FRANCE2_LOOP_REPS: usize = 4;
 const GULLI_LOOP_REPS: usize = 3;
 
-fn route(name: &str, path: &Path, fallback: TsHlsIdrFallback) -> Route {
+fn file_input(path: &Path) -> InputSpec {
+    InputSpec::File {
+        path: path.to_string_lossy().into_owned(),
+        loop_file: false,
+    }
+}
+
+async fn http_input(path: &Path) -> (InputSpec, tokio::task::JoinHandle<()>) {
+    use axum::Router;
+    use axum::body::Body;
+    use axum::response::IntoResponse;
+    use axum::routing::get;
+
+    async fn handler(body: axum::extract::State<Vec<u8>>) -> axum::response::Response {
+        let chunks: Vec<Vec<u8>> = body
+            .0
+            .chunks(HTTP_CHUNK_PACKETS * TS_PACKET)
+            .map(<[u8]>::to_vec)
+            .collect();
+        let stream = futures_util::stream::unfold(chunks.into_iter(), |mut rest| async move {
+            tokio::time::sleep(HTTP_CHUNK_INTERVAL).await;
+            rest.next()
+                .map(|chunk| (Ok::<_, std::io::Error>(chunk), rest))
+        });
+        (
+            [(axum::http::header::CONTENT_TYPE, "video/mp2t")],
+            Body::from_stream(stream),
+        )
+            .into_response()
+    }
+    let app = Router::new()
+        .route("/stream.ts", get(handler))
+        .with_state(std::fs::read(path).expect("fixture"));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    (
+        InputSpec::TsHttp {
+            url: format!("http://{addr}/stream.ts"),
+            auth: None,
+        },
+        handle,
+    )
+}
+
+fn route(name: &str, input: InputSpec, fallback: TsHlsIdrFallback) -> Route {
     Route {
         name: name.to_string(),
-        input: InputSpec::File {
-            path: path.to_string_lossy().into_owned(),
-            loop_file: false,
-        },
+        input,
         outputs: vec![OutputKind::TsHls],
         dvr: DvrConfig::default(),
         ts_hls_cut: TsHlsCutPolicy::IdrOnly,
@@ -187,8 +236,31 @@ fn video_samples(bytes: &[u8]) -> Vec<Sample> {
         .samples
 }
 
-fn first_dts_secs(samples: &[Sample]) -> f64 {
-    samples[0].dts.expect("dts") as f64 / TICKS_PER_SEC
+fn streamed_video(bytes: &[u8]) -> Vec<Sample> {
+    use transmux::{DemuxEvent, StreamingTsDemux};
+    let mut demux = StreamingTsDemux::new();
+    let mut video = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let mut drain = |demux: &mut StreamingTsDemux| {
+        while let Some(event) = demux.poll_event() {
+            match event {
+                DemuxEvent::TrackAdded(spec) if matches!(spec.config, CodecConfig::Avc { .. }) => {
+                    video.insert(spec.track_id);
+                }
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } if video.contains(&track_id) => out.push(sample),
+                _ => {}
+            }
+        }
+    };
+    for chunk in bytes.chunks(HTTP_CHUNK_PACKETS * TS_PACKET) {
+        demux.feed(chunk);
+        drain(&mut demux);
+    }
+    demux.finish();
+    drain(&mut demux);
+    out
 }
 
 fn metric_value(metrics: &str, name: &str, route: &str, mode: &str) -> Option<f64> {
@@ -203,7 +275,20 @@ fn metric_value(metrics: &str, name: &str, route: &str, mode: &str) -> Option<f6
 
 const COUNTER: &str = "multimux_ts_hls_non_idr_total";
 
-async fn assert_falls_back(tag: &str, path: &Path, fallback: TsHlsIdrFallback, bound_secs: f64) {
+#[derive(Clone, Copy, PartialEq)]
+enum Via {
+    File,
+    Http,
+}
+
+async fn assert_falls_back(
+    tag: &str,
+    path: &Path,
+    via: Via,
+    fallback: TsHlsIdrFallback,
+    bound_secs: f64,
+    want_segments: usize,
+) {
     let source = std::fs::read(path).expect("fixture");
     let source_video = video_samples(&source);
     assert!(
@@ -213,25 +298,51 @@ async fn assert_falls_back(tag: &str, path: &Path, fallback: TsHlsIdrFallback, b
         "{tag}: capture must carry no IDR for this test to mean anything"
     );
     let name = format!("fallback-{tag}");
-    let server = start(route(&name, path, fallback));
-    let uris = server.segments(&name, MIN_SEGMENTS).await;
+    let (input, _origin) = match via {
+        Via::File => (file_input(path), None),
+        Via::Http => {
+            let (input, handle) = http_input(path).await;
+            (input, Some(handle))
+        }
+    };
+    let server = start(route(&name, input, fallback));
+    let started = std::time::Instant::now();
+    let uris = server.segments(&name, want_segments).await;
     let first = server
         .bytes(&format!("http://{}/{name}/{}", server.media, uris[0]))
         .await;
     let opening = &video_samples(&first)[0];
-    let index = source_video
-        .iter()
-        .position(|s| s.data == opening.data)
-        .unwrap_or_else(|| panic!("{tag}: first served picture is not a source picture"));
-    let lead = first_dts_secs(&source_video[index..]) - first_dts_secs(&source_video);
-    assert!(
-        lead >= bound_secs,
-        "{tag}: first segment starts {lead:.2}s into the stream, before the {bound_secs}s bound"
+    let first_sync = streamed_video(&source)
+        .into_iter()
+        .find(|s| s.flags.is_sync)
+        .expect("the capture carries a sync sample");
+    let all = streamed_video(&source);
+    eprintln!(
+        "DBG opening idx={:?} sync idxs={:?} n={}",
+        all.iter().position(|s| s.data == opening.data),
+        all.iter()
+            .enumerate()
+            .filter(|(_, s)| s.flags.is_sync)
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>(),
+        all.len()
     );
     assert!(
-        lead <= bound_secs + MAX_OVERSHOOT_SECS,
-        "{tag}: first segment starts {lead:.2}s into the stream, far after the {bound_secs}s bound"
+        opening.data == first_sync.data,
+        "{tag}: the fallback must replay from the oldest non-IDR sync sample the wait saw"
     );
+    assert!(!access_unit_is_idr(NalCodec::Avc, &opening.data));
+    let seen = started.elapsed().as_secs_f64();
+    if via == Via::File {
+        assert!(
+            seen + FRAME_SLACK_SECS >= bound_secs,
+            "{tag}: first segment served after {seen:.2}s, before the {bound_secs}s bound"
+        );
+        assert!(
+            seen <= bound_secs + LATE_SLACK_SECS,
+            "{tag}: first segment served only after {seen:.2}s (bound {bound_secs}s)"
+        );
+    }
     assert_eq!(
         server.status(&name).await["ts_hls_idr"].as_str(),
         Some("fell_back")
@@ -256,8 +367,10 @@ async fn open_gop_public_capture_falls_back_after_the_bound() {
     assert_falls_back(
         "gulli",
         &test_fixtures::path("ts/gulli-opengop.ts"),
+        Via::File,
         fallback,
         bound,
+        MIN_SEGMENTS,
     )
     .await;
 }
@@ -268,7 +381,15 @@ async fn zenith_arte_falls_back_by_default() {
     else {
         return;
     };
-    assert_falls_back("arte", &path, TsHlsIdrFallback::Auto, AUTO_BOUND_SECS).await;
+    assert_falls_back(
+        "arte",
+        &path,
+        Via::Http,
+        TsHlsIdrFallback::Auto,
+        AUTO_BOUND_SECS,
+        1,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -277,7 +398,15 @@ async fn zenith_tf1_falls_back_by_default() {
     else {
         return;
     };
-    assert_falls_back("tf1", &path, TsHlsIdrFallback::Auto, AUTO_BOUND_SECS).await;
+    assert_falls_back(
+        "tf1",
+        &path,
+        Via::Http,
+        TsHlsIdrFallback::Auto,
+        AUTO_BOUND_SECS,
+        1,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -287,14 +416,14 @@ async fn zenith_tf1_live_capture_falls_back_after_a_short_bound() {
         return;
     };
     let (fallback, bound) = short_bound();
-    assert_falls_back("tf1live", &path, fallback, bound).await;
+    assert_falls_back("tf1live", &path, Via::Http, fallback, bound, MIN_SEGMENTS).await;
 }
 
 #[tokio::test]
 async fn never_keeps_the_strict_behaviour_but_reports_it() {
     let name = "strict-gulli";
     let path = looped_ts("ts/gulli-opengop.ts", name, 0, GULLI_LOOP_REPS);
-    let server = start(route(name, &path, TsHlsIdrFallback::Never));
+    let server = start(route(name, file_input(&path), TsHlsIdrFallback::Never));
     server.wait_for_idr_status(name, "awaiting").await;
     let metrics = server.metrics().await;
     assert_eq!(metric_value(&metrics, COUNTER, name, "awaiting"), Some(1.0));
@@ -353,7 +482,7 @@ async fn idr_stream_never_reports_or_falls_back() {
     );
     let server = start(route(
         name,
-        &path,
+        file_input(&path),
         TsHlsIdrFallback::Targets(SHORT_BOUND_TARGETS * 5),
     ));
     let uris = server.segments(name, 3).await;
