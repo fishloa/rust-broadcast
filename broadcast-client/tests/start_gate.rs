@@ -475,19 +475,18 @@ fn a_declared_audio_pid_that_never_sends_does_not_block_start_for_long() {
             .copied()
             .collect();
         for hold in ALL_HOLDS {
-            for declare in [Declare::Default] {
-                let o = run(&b, config(hold, b.len()), declare);
-                let why = describe(c, hold, declare, 0, &o);
-                let start = o
-                    .start_us()
-                    .unwrap_or_else(|| panic!("never started: {why}"));
-                let first = o.first_sample_us.unwrap();
-                assert!(
-                    start <= first + START_BOUND_US,
-                    "start {start} us is more than {START_BOUND_US} us after first media {first}: {why}"
-                );
-                assert!(o.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
-            }
+            let declare = Declare::Default;
+            let o = run(&b, config(hold, b.len()), declare);
+            let why = describe(c, hold, declare, 0, &o);
+            let start = o
+                .start_us()
+                .unwrap_or_else(|| panic!("never started: {why}"));
+            let first = o.first_sample_us.unwrap();
+            assert!(
+                start <= first + START_BOUND_US,
+                "start {start} us is more than {START_BOUND_US} us after first media {first}: {why}"
+            );
+            assert!(o.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
         }
     }
 }
