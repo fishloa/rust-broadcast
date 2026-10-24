@@ -139,6 +139,7 @@ const PID_MASK: u16 = 0x1fff;
 const WALL_LIMIT_US: u64 = 3_000_000;
 const LAST_FRANCE2_PID: u16 = 142;
 const HOLD_START_CHUNKS: usize = 8;
+const EOF_PREFIX_PACKETS: usize = 50;
 
 fn without_pid(bytes: &[u8], pid: u16) -> Vec<u8> {
     bytes
@@ -250,7 +251,8 @@ fn an_undeclared_gap_releases_the_hold_at_the_media_limit() {
 
 #[test]
 fn a_connection_that_ends_while_holding_delivers_everything_in_order() {
-    let bytes = without_pid(&test_fixtures::read("ts/h264_aac.ts"), 0x101);
+    let mut bytes = without_pid(&test_fixtures::read("ts/h264_aac.ts"), 0x101);
+    bytes.truncate(EOF_PREFIX_PACKETS * TS_PACKET);
     let (mut s, c) = open_live(0);
     s.on_data(c, &bytes, STEP_US);
     while s.poll(STEP_US).is_some() {}

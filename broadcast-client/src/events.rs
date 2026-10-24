@@ -497,10 +497,10 @@ pub const DEFAULT_HLS_MAX_INFLIGHT_SEGMENTS: usize = 4;
 pub const DEFAULT_TRACKS_HOLD_MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
 /// Default cap on media time the initial-tracks hold may buffer, microseconds, see
 /// [`Config::tracks_hold_max_media_us`].
-pub const DEFAULT_TRACKS_HOLD_MAX_MEDIA_US: u64 = 3_000_000;
+pub const DEFAULT_TRACKS_HOLD_MAX_MEDIA_US: u64 = 1_000_000;
 /// Default cap on session-clock time the initial-tracks hold may last, microseconds, see
 /// [`Config::tracks_hold_max_wall_us`].
-pub const DEFAULT_TRACKS_HOLD_MAX_WALL_US: u64 = 3_000_000;
+pub const DEFAULT_TRACKS_HOLD_MAX_WALL_US: u64 = 1_000_000;
 /// Default input bytes without a stream resolving after which the initial-tracks hold gives up,
 /// see [`Config::tracks_hold_quiet_input_bytes`].
 pub const DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES: usize = 512 * 1024;
