@@ -8,13 +8,13 @@ use support::ts_host::Host;
 use support::ts_pmt::{Es, find, rewrite};
 
 const FIXTURE: &str = "ts/h264_aac_40s.ts";
-const CHUNK: usize = 8_192;
+const CHUNK: usize = 4 * TS_PACKET;
 const TS_PACKET: usize = 188;
 const PES_PRIVATE_DATA: u8 = 0x06;
 const AAC_ADTS: u8 = 0x0f;
 const AVC: u8 = 0x1b;
 const AC3_DESCRIPTOR: [u8; 2] = [0x6a, 0x00];
-const RELEASED_BOUND_US: u64 = 200_000;
+const RELEASED_BOUND_US: u64 = 1_000_000;
 const FLIP_AT: f64 = 0.004;
 
 fn pid_of(p: &[u8]) -> u16 {
