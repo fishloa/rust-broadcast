@@ -67,7 +67,7 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::output::Output;
 use crate::registry::{AuthCtx, InputCtx, OutputCtx, SchemeRegistry};
-use crate::route::{HealthState, RouteHandle};
+use crate::route::RouteHandle;
 use supervisor::Backoff;
 
 /// Realm advertised by the shared output-auth `Verifier`'s Basic/Digest
@@ -1057,7 +1057,7 @@ async fn healthz() -> StatusCode {
 }
 
 /// `GET /readyz` — readiness: `200 OK` once **at least one** configured
-/// route's [`HealthState`] is `Live`, `503 Service Unavailable` otherwise
+/// route's [`HealthState`](crate::route::HealthState) is serving (`Live`, or `Ended` with its media retained), `503 Service Unavailable` otherwise
 /// (including before any route has ever connected, and if every route is
 /// currently down). Chosen policy: an origin serving several streams has
 /// *something* playable to offer as soon as any one of them is live, so a
@@ -2353,6 +2353,7 @@ mod tests {
     use super::*;
     use crate::dvr::DvrConfig;
     use crate::output::llhls::LlHlsOutput;
+    use crate::route::HealthState;
     use crate::route::RouteHandle;
     use tower::ServiceExt;
 
@@ -2568,6 +2569,28 @@ mod tests {
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
+        );
+        let app = router(Arc::new(AppState::new(streams)));
+        let resp = app.oneshot(get("/readyz")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// A finished (`Ended`) route still serves its retained media, so
+    /// `/readyz` reports it ready.
+    ///
+    /// Revert-check: comparing `health() == Live` in `readyz` fails this.
+    #[tokio::test]
+    async fn readyz_200_when_a_route_has_ended_but_is_still_served() {
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_health(HealthState::Ended);
+        let mut streams = HashMap::new();
+        streams.insert(
+            "vod".to_string(),
             (
                 store,
                 vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],

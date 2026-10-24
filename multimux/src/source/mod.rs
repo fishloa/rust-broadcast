@@ -656,6 +656,20 @@ pub async fn advance_route<S: media_plane::ingress::IngestSession>(
     route_handle.drain_dvr().await;
 }
 
+/// Passes a pull drive loop's terminal result through, first marking the route
+/// [`HealthState::Ended`](crate::route::HealthState::Ended) when the source
+/// finished cleanly: a finite playlist/manifest has nothing more to pull, so
+/// the supervisor serves what was published rather than re-pulling it.
+pub(crate) fn finish_vod(
+    route_handle: &crate::route::RouteHandle,
+    result: crate::Result<()>,
+) -> crate::Result<()> {
+    if result.is_ok() {
+        route_handle.set_health(crate::route::HealthState::Ended);
+    }
+    result
+}
+
 /// Release every program `driver` published from `route_handle`'s registry —
 /// [`advance_route`]'s unpublish-side counterpart, called once a
 /// `Listener`-backed session (RTMP/WHIP/SRT push ingest, admitted
