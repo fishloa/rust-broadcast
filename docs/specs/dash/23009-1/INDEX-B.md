@@ -2,12 +2,12 @@
 
 Public, own-words implementer notes for **ISO/IEC 23009-1:2022(E)** clauses 5.3.10 to 7 (printed pp. 93-178, PDF pp. 101-186; printed page = PDF page - 8), written to
 sit beside the part-A notes (clauses 3 to 5.3.9, PR #1516, index `INDEX.md` there). The spec text itself is **not** reproduced here (the repository is public); the
-page-verified verbatim transcription lives in the private submodule at `private/specs-verified/dash/23009-1/` (branch `dash-specs-B` of `rust-broadcast-private`),
+verbatim conversion (pdf2md hybrid, exit code 0 on every range, rendered-page verified and independently re-verified; a round-2 correction pass is recorded in the private VERIFICATION-B.md) lives in the private submodule at `private/specs-verified/dash/23009-1/` (branch `dash-specs-B` of `rust-broadcast-private`),
 together with `VERIFICATION-B.md` (commands, exit codes, every page compared, every correction, gaps), which exists **only** in private.
 
 How to read a note: each file gives what the clause defines, the behaviour an implementer needs (shall/should/may as the clause states them, formulas as formulas), an
 inventory table (name | use | type | default | gloss), enumerations and URN values, a compact structure outline in place of the XML syntax, a "Quirks" list of
-oddities of the print (cross-references that point to the wrong clause, misspelt attribute names, ...), and a citation of the private verbatim text.
+oddities of the print (cross-references that point to the wrong clause, misspelt attribute names, ...), and a citation of the private verbatim conversion.
 
 ## Clause map
 

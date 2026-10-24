@@ -4,7 +4,7 @@ clauses: 5.8.5.1-5.8.5.14.2
 printed_pages: 122-133
 pdf_pages: 130-141
 verbatim_source: private/specs-verified/dash/23009-1/05-8.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.8.5 Specific scheme definitions
@@ -53,7 +53,7 @@ These two URIs only name the *encryption mode*, they are not full DRM schemes (t
 
 **MP4 protection scheme** (ISO/IEC 14496-12 content)
 - `@value` is mandatory: the four-character code from the Scheme Type Box of the Protection Scheme Information Box, percent-encoded as in RFC 8141, optionally followed by ":" and a version number of up to eight hex digits (leading zeros may be omitted).
-- ABNF as printed: `MP4-PROTECTION-VALUE = VERSIONED-4CC`, `VERSIONED-4CC = CCCC [ CCCC-VERSION ]`, `CCCC = ALPHA ALPHA ALPHA ALPHA`, `CCCC-VERSION = ":" 1*8HEX` (the same listing also prints an unused `CA-DESCRIPTOR-VALUE = LHEX LHEX LHEX LHEX` with `LHEX = DIGIT / "a" ... "f"`).
+- Value grammar (print's rule names `MP4-PROTECTION-VALUE`, `VERSIONED-4CC`, `CCCC`, `CCCC-VERSION`): four letters, optionally a colon and 1-8 hex digits. The same listing in the print also carries an unused rule `CA-DESCRIPTOR-VALUE` (four lower-case hex digits).
 - `@robustness` shall not be present.
 - If the Scheme Type Box value is one defined by ISO/IEC 23001-7 (CENC): the author is encouraged to add DRM-specific ContentProtection elements whose `@schemeIdUri` carries a UUID (RFC 4122); the value semantics are governed by that scheme; `@cenc:default_KID` (namespace `urn:mpeg:cenc:2013`) should be present; a player may read it to learn whether the key is already held and may fetch a licence in advance using a `cenc:pssh` element, whose carriage is recommended.
 
@@ -61,7 +61,7 @@ These two URIs only name the *encryption mode*, they are not full DRM schemes (t
 
 ## 5.8.5.3 Frame packing
 
-Two URIs, one per video codec family; in both the value is the `VideoFramePackingType` code of ISO/IEC 23091-2; grammar `FRAME-PACKING-ARRANGEMENT-TYPE-VALUE = VIDEO-FRAME-PACKING-TYPE`, `STEREO-VIDEO-FORMAT-TYPE = VIDEO-FRAME-PACKING-TYPE`, `VIDEO-FRAME-PACKING-TYPE = 1*2DIGIT` (the second rule is printed as an alias, as given).
+Two URIs, one per video codec family; in both the value is the `VideoFramePackingType` code of ISO/IEC 23091-2; the value is one or two decimal digits (print's rule names `FRAME-PACKING-ARRANGEMENT-TYPE-VALUE`, `STEREO-VIDEO-FORMAT-TYPE`, `VIDEO-FRAME-PACKING-TYPE`, the second being printed as an alias of the third).
 
 ## 5.8.5.4 Audio channel configuration
 
@@ -70,7 +70,7 @@ Two URIs, one per video codec family; in both the value is the `VideoFramePackin
 
 ## 5.8.5.5 DASH role scheme (Table 34)
 
-`urn:mpeg:dash:role:2011`; the Role value is assigned to Adaptation Sets that contain the media component type to which the role belongs. ABNF: `ROLE-VALUE` = one of the tokens below.
+`urn:mpeg:dash:role:2011`; the Role value is assigned to Adaptation Sets that contain the media component type to which the role belongs. The print's rule `ROLE-VALUE` enumerates exactly the tokens below.
 
 | Value | Meaning (gloss) | Media types |
 |---|---|---|
@@ -90,11 +90,11 @@ Two URIs, one per video codec family; in both the value is the `VideoFramePackin
 | easyreader | simplified/reduced captions as in the cited US regulation | text, video |
 | karaoke | lyrics text in the song's language (SMPTE ST 2067-2 cited) | any |
 
-Informative notes: audio+video of a normal programme are both "main"; if one is clearly secondary use "supplementary". Values like subtitle/caption/description/sign/metadata can be mapped to the HTML5 track "kind". The table prints "Main" capitalised while the ABNF lists "main" (ABNF literals are case-insensitive).
+Informative notes: audio+video of a normal programme are both "main"; if one is clearly secondary use "supplementary". Values like subtitle/caption/description/sign/metadata can be mapped to the HTML5 track "kind". The table prints "Main" capitalised while the grammar lists "main".
 
 ## 5.8.5.6 Multiple views scheme
 
-`urn:mpeg:dash:stereoid:2011` on a Role of a video ContentComponent or Adaptation Set (an Adaptation Set with several views must give each video Content Component such a Role). It tells which views form stereo pairs and which is left/right when N views combine into M valid pairs. `@value`: space-delimited indicators `l<i>` or `r<j>` (non-negative decimals). Stereo pair i (0 <= i < M) = the view whose Role has `l<i>` (left) plus the view whose Role has `r<i>` (right). All left indicators precede all right ones and each group is in ascending index order. ABNF name `STEROID-VALUE` (sic): `LEFT-VIEW-INDICATOR *[ SP LEFT-VIEW-INDICATOR ] RIGHT-VIEW-INDICATOR *[ SP RIGHT-VIEW-INDICATOR ]`, indicators `"l"|"r" DECIMAL_DIGITS`.
+`urn:mpeg:dash:stereoid:2011` on a Role of a video ContentComponent or Adaptation Set (an Adaptation Set with several views must give each video Content Component such a Role). It tells which views form stereo pairs and which is left/right when N views combine into M valid pairs. `@value`: space-delimited indicators `l<i>` or `r<j>` (non-negative decimals). Stereo pair i (0 <= i < M) = the view whose Role has `l<i>` (left) plus the view whose Role has `r<i>` (right). All left indicators precede all right ones and each group is in ascending index order. Grammar (print's rule name `STEROID-VALUE`, sic): all left indicators, then all right indicators, separated by single spaces; an indicator is the letter l or r followed by decimal digits.
 
 ## 5.8.5.7 DASH UTC timing schemes (Table 35) - the `UTCTiming` element
 
@@ -110,11 +110,7 @@ Purpose: let the client obtain wall-clock time synchronised with the clock used 
 | `urn:mpeg:dash:utc:http-ntp:2014` | HTTP GET; body holds the time as an NTP timestamp (RFC 5905 format) | HTTP-VALUE |
 | `urn:mpeg:dash:utc:direct:2014` | the `@value` itself is the time as xs:dateTime | DIRECT-VALUE |
 
-Grammars as printed (RFC 5234):
-
-- `NTP-VALUE = TIME-SERVER *[ WS TIME-SERVER ]`; `TIME-SERVER = host [ ":" port ]` (host/port per the RFC cited in the text as "3896", augmented by RFC 6874)
-- `HTTP-VALUE = httpurl *[ WS httpurl ]` (httpurl per RFC 1738)
-- `DIRECT-VALUE = ["-"] 4DIGIT "-" 2DIGIT "-" 2DIGIT "T" 2DIGIT ":" 2DIGIT ":" 2DIGIT [ "Z" / ( "+" / "-" ) 2DIGIT ":" 2DIGIT ]`
+Value grammars (the print's rule names): `NTP-VALUE` is one or more servers (host with optional port) separated by white space, host/port per the RFC the text cites as 3896 with the RFC 6874 augmentation; `HTTP-VALUE` is one or more HTTP URLs (RFC 1738) separated by white space; `DIRECT-VALUE` is an ISO 8601 style date-time `[-]YYYY-MM-DDThh:mm:ss` optionally followed by `Z` or a signed `hh:mm` offset.
 
 All time values are based on a wall clock synchronised with the MPD generator's clock. Element-level rules (order = preference, free choice by the client) are in [`05-8-descriptors.md`](05-8-descriptors.md); the UTCTiming element is also reused in the Producer Reference Time element ([`05-12-producer-reference-time.md`](05-12-producer-reference-time.md)) and a dynamic-MPD client uses the resulting clock for availability computations ([`05-3-9-5-segment-information-derivation.md`](05-3-9-5-segment-information-derivation.md)).
 
@@ -122,15 +118,15 @@ Quirks (as printed): the sentence assigning HTTP-VALUE lists http-head, http-xsd
 
 ## 5.8.5.8 Audio receiver mix
 
-`urn:mpeg:dash:audio-receiver-mix:2014` in an Essential/SupplementalProperty: the media engine must mix two audio Adaptation Sets before playback. `@value` = `AdaptationSet@id` of the audio set this one must be mixed with (grammar: `ADAPTATION-SET-ID = DECIMAL_DIGITS`). Typical use: a music-and-effects set plus several dialogue-language sets that depend on it. The requirement is one-way: A selected requires B does not mean B selected requires A.
+`urn:mpeg:dash:audio-receiver-mix:2014` in an Essential/SupplementalProperty: the media engine must mix two audio Adaptation Sets before playback. `@value` = `AdaptationSet@id` of the audio set this one must be mixed with (print's rule names `AUDIO-RECEIVER_MIX-VALUE`, `ADAPTATION-SET-ID`: decimal digits). Typical use: a music-and-effects set plus several dialogue-language sets that depend on it. The requirement is one-way: A selected requires B does not mean B selected requires A.
 
 ## 5.8.5.9 Adaptation Set linking
 
-`urn:mpeg:dash:mpd-as-linking:2015` says the same Adaptation Set can be found in another MPD. Used with EssentialProperty together with an `EmptyAdaptationSet`, or with SupplementalProperty. Value: a URL to the other MPD including Period/Adaptation Set anchors as defined in C.4.2, optionally followed by whitespace and `timeOffset=<signed integer>` (difference of media time between linked and originating MPD, in `@timescale` units of the linked sets; absent = identical media times). Grammar: `MPD-AS-LINKING-VALUE = MPD-URL [ WSP TIMELINE-OFFSET ]`, `TIMELINE-OFFSET = "timeOffset=" ["-"] DECIMAL_DIGITS`. Only valid on Adaptation Sets (regular or empty); an Adaptation Set with neither Representation nor `@xlink` must be an empty one marked with an Essential descriptor. Informative: used with Spatial Relationship Description (same `source_id`) for server-based mosaics.
+`urn:mpeg:dash:mpd-as-linking:2015` says the same Adaptation Set can be found in another MPD. Used with EssentialProperty together with an `EmptyAdaptationSet`, or with SupplementalProperty. Value: a URL to the other MPD including Period/Adaptation Set anchors as defined in C.4.2, optionally followed by whitespace and `timeOffset=<signed integer>` (difference of media time between linked and originating MPD, in `@timescale` units of the linked sets; absent = identical media times). Print's rule names: `MPD-AS-LINKING-VALUE`, `MPD-URL`, `TIMELINE-OFFSET`. Only valid on Adaptation Sets (regular or empty); an Adaptation Set with neither Representation nor `@xlink` must be an empty one marked with an Essential descriptor. Informative: used with Spatial Relationship Description (same `source_id`) for server-based mosaics.
 
 ## 5.8.5.10 Sub-asset identifier
 
-`urn:mpeg:dash:sai:2015` on a SupplementalProperty at Adaptation Set or Sub-Representation level; equal `@value` in different Periods means at least the same sub-asset; one set/sub-representation may carry several (it then represents several identified parts). The same scheme+value must not appear on different Adaptation Sets or Sub-Representations inside one Period. Value grammar: any string (`SAI-VALUE = STRING`).
+`urn:mpeg:dash:sai:2015` on a SupplementalProperty at Adaptation Set or Sub-Representation level; equal `@value` in different Periods means at least the same sub-asset; one set/sub-representation may carry several (it then represents several identified parts). The same scheme+value must not appear on different Adaptation Sets or Sub-Representations inside one Period. Value: any visible-character string (print's rule name `SAI-VALUE`).
 
 ## 5.8.5.11 Client authentication and content access authorisation
 
@@ -142,7 +138,7 @@ Generic signalling for external schemes (OMAP, OAuth 2.0, SAML, GAA, GBA are nam
 
 ## 5.8.5.13 Quality equivalence
 
-`urn:mpeg:dash:qr-equivalence:2019` in a SupplementalProperty at MPD, Period or Preselection level (several may exist): the `@qualityRanking` values of the listed Adaptation Sets are comparable. `@value` = Adaptation Set ids (the text says comma-separated; the ABNF given is `AS-ID [ WSP AS-ID ]`); without `@value` all Adaptation Sets below it are equivalent.
+`urn:mpeg:dash:qr-equivalence:2019` in a SupplementalProperty at MPD, Period or Preselection level (several may exist): the `@qualityRanking` values of the listed Adaptation Sets are comparable. `@value` = Adaptation Set ids (the text says comma-separated while the printed grammar `QR-EQUIVALENCE-VALUE` separates ids with white space); without `@value` all Adaptation Sets below it are equivalent.
 
 ## 5.8.5.14 Output protection schemes
 

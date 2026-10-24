@@ -4,7 +4,7 @@ clauses: 5.14.1-5.14.3
 printed_pages: 152-154
 pdf_pages: 160-162
 verbatim_source: private/specs-verified/dash/23009-1/05-11_to_5-15.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.14 Content Popularity Rate
@@ -30,8 +30,9 @@ Placement: element **ContentPopularityRate** (0..N) is one of the common element
 If `PR@start` is absent the run starts at the first Segment of the Period (first PR element) or at the Segment following the previous PR's last Segment (later PR elements).
 
 ```text
-ContentPopularityRateType: sequence PR+ (popularityRate, start?, r?, @*##other), any(##other, lax)*;
-  @source (required, enum content|statistics|other), @source_description xs:string, @* ##other
+ContentPopularityRate
+  PR (1..N): attributes popularityRate, start, r
+  attributes: source, source_description
 ```
 
 ## Quirks

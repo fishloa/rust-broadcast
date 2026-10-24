@@ -4,7 +4,7 @@ clauses: 5.5.1-5.5.3
 printed_pages: 108-110
 pdf_pages: 116-118
 verbatim_source: private/specs-verified/dash/23009-1/05-4_to_5-7.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.5 MPD assembly (XLink)

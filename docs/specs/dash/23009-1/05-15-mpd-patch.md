@@ -4,7 +4,7 @@ clauses: 5.15.1-5.15.5
 printed_pages: 155-159
 pdf_pages: 163-167
 verbatim_source: private/specs-verified/dash/23009-1/05-11_to_5-15.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.15 MPD patch framework
@@ -23,7 +23,8 @@ Placement: child of the MPD element, 0..N (Table 3, [`05-3-1-hierarchy.md`](05-3
 | @ttl | O | xs:double | unknown | seconds, counted from `MPD@publishTime`, during which the patch document is at least available at that location (the print cites "5.14.4" for the processing model; it is 5.15.4) |
 
 ```text
-PatchLocationType: simple content, extension of xs:anyURI; @ttl xs:double (optional); @* ##other (lax)
+PatchLocation (text = URL)
+  attributes: ttl
 ```
 
 ## Patch document (5.15.3)
@@ -45,8 +46,9 @@ Patch element (Table 50):
 | any element from another namespace | in the choice | - | - | extension |
 
 ```text
-PatchType: choice (minOccurs=1, unbounded) of { add, remove, replace, any(##other, lax) };
-  @mpdId string required, @publishTime dateTime required, @originalPublishTime dateTime required, @* ##other
+Patch
+  children (at least one): add | remove | replace | foreign-namespace element
+  attributes: mpdId, publishTime, originalPublishTime
 ```
 
 ### Element addressing restrictions (5.15.3.4)

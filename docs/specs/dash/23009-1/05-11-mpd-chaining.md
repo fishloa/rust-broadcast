@@ -4,7 +4,7 @@ clauses: 5.11.1-5.11.3
 printed_pages: 146-148
 pdf_pages: 154-156
 verbatim_source: private/specs-verified/dash/23009-1/05-11_to_5-15.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.11 MPD chaining

@@ -4,7 +4,7 @@ clauses: 5.7.1-5.7.3
 printed_pages: 113-114
 pdf_pages: 121-122
 verbatim_source: private/specs-verified/dash/23009-1/05-4_to_5-7.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.7 Program information
@@ -32,9 +32,9 @@ Placement: **ProgramInformation** is a child of the MPD element, 0..N (Table 3, 
 | Copyright | 0..1 | xs:string | - | copyright statement, usually starting with U+00A9 |
 
 ```text
-ProgramInformationType
-  sequence: Title? Source? Copyright? any(##other, lax)*
-  @lang xs:language, @moreInformationURL xs:anyURI, @* ##other (lax)
+ProgramInformation
+  Title, Source, Copyright (0..1 each)
+  attributes: lang, moreInformationURL
 ```
 
 Verbatim text: see `private/specs-verified/dash/23009-1/05-4_to_5-7.md` section 5.7 (printed pp. 113-114).

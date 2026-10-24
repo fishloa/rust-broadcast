@@ -4,7 +4,7 @@ clauses: 5.10.1-5.10.4.6
 printed_pages: 135-146
 pdf_pages: 143-154
 verbatim_source: private/specs-verified/dash/23009-1/05-9_to_5-10.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.10 Events
@@ -46,11 +46,11 @@ Event (Table 39; mixed content allowed in the schema):
 | @messageData | O | xs:string | - | deprecated string carriage, kept for compatibility; preferred: message in the element content; expected to be removed in later editions |
 
 ```text
-EventStreamType: sequence Event*, any(##other)*; attributes xlink:href, xlink:actuate(default onRequest), xlink:type(fixed simple),
-  xlink:show(fixed embed), schemeIdUri (anyURI, required), value, timescale (unsignedInt), presentationTimeOffset (unsignedLong, default 0)
-EventType (mixed): any(##other)*; presentationTime (unsignedLong, default 0), duration (unsignedLong), id (unsignedInt),
-  contentEncoding (ContentEncodingType), messageData (string, deprecated); @* ##other
-ContentEncodingType = xs:string enumeration { base64 }
+EventStream
+  Event (0..N)
+  attributes: xlink:href, xlink:actuate, xlink:type, xlink:show, schemeIdUri, value, timescale, presentationTimeOffset
+Event (mixed content)
+  attributes: presentationTime, duration, id, contentEncoding, messageData
 ```
 
 ## 5.10.3 Inband event signalling
@@ -92,9 +92,10 @@ If an AdaptationSet has an InbandEventStream and `AdaptationSet@segmentAlignment
 Scheme `urn:mpeg:dash:event:2012` (Table 40, inband `@value`): the `emsg` message_data holds a **DASHEvent** structure:
 
 ```text
-DASHEvent { string publish_time;               // MPD@publishTime
-            if (emsg.value == 2) string mpd_patch;   // an MPD patch, clause 5.15
-            if (emsg.value == 3) string mpd;         // a full MPD }
+DASHEvent (message_data of the emsg)
+  publish_time                       string
+  mpd_patch   only when emsg value = 2   string
+  mpd         only when emsg value = 3   string
 ```
 
 | InbandEventStream@value | Meaning |

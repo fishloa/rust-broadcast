@@ -4,7 +4,7 @@ clauses: 5.8.1, 5.8.2, 5.8.3, 5.8.4.1-5.8.4.12
 printed_pages: 114-122
 pdf_pages: 122-130
 verbatim_source: private/specs-verified/dash/23009-1/05-8.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.8 Descriptors (generic and specific elements)
@@ -26,7 +26,8 @@ Rules:
 - **Equivalence of two descriptors**: same element name, equivalent `@schemeIdUri` and equivalent `@value`. URNs compare lexically (RFC 8141 clause 3); URLs compare character-for-character (RFC 3986 section 6.2.1); a missing `@value` means the schemes alone decide; extension-namespace content is ignored; `@id` may be ignored.
 
 ```text
-DescriptorType: sequence any(##other, lax)*; @schemeIdUri anyURI required; @value string; @id string; @* ##other
+any descriptor element
+  attributes: schemeIdUri, value, id; foreign-namespace children allowed
 ```
 
 ## Specific descriptor elements (5.8.4)
@@ -79,7 +80,7 @@ Rules:
 - Defining a ContentProtection scheme (5.8.4.1.6): required = unique `@schemeIdUri`, and the list of permitted `@value` values with meanings (none needed if the URI alone is enough). Recommended = how `@robustness` is used with ordered values, example value discovery through common APIs (W3C EME, Android), how players use the values in existing workflows, other important information. This document defines no scheme in that sense.
 
 ```text
-ContentProtectionType = extension of DescriptorType: @robustness StringNoWhitespaceType; @refId xs:ID; @ref xs:IDREF
+ContentProtection = descriptor element plus attributes: robustness, refId, ref
 ```
 
 ### OutputProtection (5.8.4.12)

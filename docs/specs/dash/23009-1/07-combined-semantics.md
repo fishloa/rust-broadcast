@@ -4,7 +4,7 @@ clauses: 7.1-7.4.4
 printed_pages: 172-178
 pdf_pages: 180-186
 verbatim_source: private/specs-verified/dash/23009-1/07-combined-semantics.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 7 Combined semantics of MPD and Segment formats

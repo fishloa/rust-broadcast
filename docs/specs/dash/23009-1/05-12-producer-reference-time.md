@@ -4,7 +4,7 @@ clauses: 5.12.1-5.12.3
 printed_pages: 148-150
 pdf_pages: 156-158
 verbatim_source: private/specs-verified/dash/23009-1/05-11_to_5-15.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.12 Producer Reference Time
@@ -35,9 +35,9 @@ A correlation between media timestamps and wall-clock production time, usable by
 | application | wall-clock relation defined by an application scheme | flag 16 set, flag 8 unset |
 
 ```text
-ProducerReferenceTimeType: sequence UTCTiming? (DescriptorType), any(##other)*;
-  @id unsignedInt required, @inband boolean default false, @type ProducerReferenceTimeTypeType default encoder,
-  @applicationScheme string, @wallClockTime string required, @presentationTime unsignedLong required, @* ##other
+ProducerReferenceTime
+  UTCTiming (0..1)
+  attributes: id, inband, type, applicationScheme, wallClockTime, presentationTime
 ```
 
 ## Quirks

@@ -4,7 +4,7 @@ clauses: 5.9.1-5.9.4
 printed_pages: 133-135
 pdf_pages: 141-143
 verbatim_source: private/specs-verified/dash/23009-1/05-9_to_5-10.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.9 DASH metrics descriptor
@@ -27,8 +27,10 @@ Placement: **Metrics** is a child of the MPD element, 0..N (Table 3, [`05-3-1-hi
 | Reporting | 1..N | DescriptorType | - | requested reporting method/format (descriptor with scheme URI) |
 
 ```text
-MetricsType: sequence Range* (RangeType), Reporting+ (DescriptorType), any(##other, lax)*; @metrics xs:string required; @* ##other
-RangeType: @starttime xs:duration, @duration xs:duration, @* ##other
+Metrics
+  Range (0..N): attributes starttime, duration
+  Reporting (1..N)
+  attributes: metrics
 ```
 
 ## Reporting rules (5.9.4)

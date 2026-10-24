@@ -4,7 +4,7 @@ clauses: 6.1-6.4.7.2.3
 printed_pages: 159-172
 pdf_pages: 167-180
 verbatim_source: private/specs-verified/dash/23009-1/06-segment-formats.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 6 Segment formats

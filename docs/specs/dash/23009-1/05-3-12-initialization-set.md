@@ -4,7 +4,7 @@ clauses: 5.3.12.1-5.3.12.4.2
 printed_pages: 99-103
 pdf_pages: 107-111
 verbatim_source: private/specs-verified/dash/23009-1/05-3-10_to_5-3-13.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.3.12 Initialization Set, Group and Presentation
@@ -48,11 +48,10 @@ Placement: **InitializationSet** is a child of the MPD element, 0..N (Table 3, [
 | Accessibility, Role, Rating, Viewpoint | 0..N | DescriptorType | - | annotation descriptors applying to all member Adaptation Sets |
 
 ```text
-InitializationSetType = extension of RepresentationBaseType
-  sequence: Accessibility* Role* Rating* Viewpoint*  (DescriptorType)
-  attributes: xlink:href, xlink:actuate(default onRequest), xlink:type(fixed simple),
-              id (unsignedInt, required), inAllPeriods (boolean, default true),
-              contentType, par, maxWidth, maxHeight, maxFrameRate, initialization
+InitializationSet (RepresentationBaseType content plus)
+  Accessibility, Role, Rating, Viewpoint (0..N each)
+  attributes: xlink:href, xlink:actuate, xlink:type, id, inAllPeriods, contentType, par,
+              maxWidth, maxHeight, maxFrameRate, initialization
 ```
 
 ## Figure 4 (example, printed p. 103)

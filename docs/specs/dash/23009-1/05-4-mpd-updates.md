@@ -4,7 +4,7 @@ clauses: 5.4.1, 5.4.2
 printed_pages: 106-108
 pdf_pages: 114-116
 verbatim_source: private/specs-verified/dash/23009-1/05-4_to_5-7.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.4 MPD updates

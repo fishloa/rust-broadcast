@@ -4,7 +4,7 @@ clauses: 5.13.1-5.13.4
 printed_pages: 150-152
 pdf_pages: 158-160
 verbatim_source: private/specs-verified/dash/23009-1/05-11_to_5-15.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.13 Leap seconds
@@ -43,8 +43,8 @@ Informative: this update is seamless for clients that process the element and fo
 | @nextLeapChangeTime | O | xs:dateTime | - | UTC time of the next leap second; omit if unknown |
 
 ```text
-LeapSecondInformationType: sequence any(##other, lax)*; @availabilityStartLeapOffset integer required;
-  @nextAvailabilityStartLeapOffset integer; @nextLeapChangeTime dateTime; @* ##other
+LeapSecondInformation (no children)
+  attributes: availabilityStartLeapOffset, nextAvailabilityStartLeapOffset, nextLeapChangeTime
 ```
 
 ## Quirks

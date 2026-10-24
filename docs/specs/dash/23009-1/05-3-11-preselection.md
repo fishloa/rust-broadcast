@@ -4,7 +4,7 @@ clauses: 5.3.11.1-5.3.11.5.3
 printed_pages: 95-99
 pdf_pages: 103-107
 verbatim_source: private/specs-verified/dash/23009-1/05-3-10_to_5-3-13.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.3.11 Preselection
@@ -30,7 +30,7 @@ element (full feature set).
 | Carrier | an EssentialProperty or SupplementalProperty with `@schemeIdUri` = `urn:mpeg:dash:preselection:2016` (the print spells the attribute `@schemeIdURI` here) |
 | Placement | Adaptation Set level only |
 | Value | optional; when present: `tag "," id-list`, the id list is whitespace separated, first id = main Adaptation Set |
-| ABNF as printed | `PRESELECTION-DESCRIPTOR-VALUE = TAG-VALUE "," ID-LIST`; `ID-LIST = ID-VALUE [ WHITESPACE ID-VALUE ]`; `TAG-VALUE = *VCHAR`; `ID-VALUE = 1*DIGIT` |
+| Value grammar | two fields separated by a comma: a free-text tag, then one or more decimal ids separated by white space (the print's grammar names are `PRESELECTION-DESCRIPTOR-VALUE`, `ID-LIST`, `TAG-VALUE`, `ID-VALUE`) |
 | Descriptor without a value | the Adaptation Set shall be referenced by at least one Preselection |
 | Descriptor with a value | it defines a Preselection (tag + member ids) |
 | Essential flavour | the Adaptation Set is only consumable as part of a Preselection |
@@ -50,13 +50,9 @@ element (full feature set).
 Enumeration `@order`: `undefined`, `time-ordered`, `fully-ordered`.
 
 ```text
-PreselectionType  = extension of RepresentationBaseType
-  sequence: Accessibility* Role* Rating* Viewpoint*   (all DescriptorType)
-  @id StringNoWhitespaceType default "1"
-  @preselectionComponents StringVectorType required
-  @lang xs:language
-  @order PreselectionOrderType default "undefined"
-PreselectionOrderType = xs:string enumeration { undefined, time-ordered, fully-ordered }
+Preselection (RepresentationBaseType content plus)
+  Accessibility, Role, Rating, Viewpoint (0..N each)
+  attributes: id, preselectionComponents, lang, order   (order values: undefined, time-ordered, fully-ordered)
 ```
 
 ## Conformance rules (5.3.11.5)
@@ -70,7 +66,7 @@ PreselectionOrderType = xs:string enumeration { undefined, time-ordered, fully-o
 ## Quirks
 
 - 5.3.11.2 says the "Multi-Segment Track" rule of 5.3.11.5.2 applies to descriptor-defined Preselections, but 5.3.11.5.2 is the time-ordered rule (multi-segment is 5.3.11.5.1).
-- The table caption says "PreSelection"; the abbreviated ABNF cannot express more than two ids although the prose describes a list of any length.
+- The table caption says "PreSelection"; the printed grammar for the id list admits at most two ids although the prose describes a list of any length, and it leaves white space undefined.
 - The time-ordered rule's first list item has an unbalanced parenthesis.
 - Table 26's `@id` default is printed "default=1", `@order` "Default: 'undefined'".
 

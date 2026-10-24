@@ -4,7 +4,7 @@ clauses: 5.3.13.1-5.3.13.3
 printed_pages: 103-106
 pdf_pages: 111-114
 verbatim_source: private/specs-verified/dash/23009-1/05-3-10_to_5-3-13.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.3.13 Resynchronization
@@ -55,9 +55,8 @@ If `Resync` carries `@dImin` and `@dT` (i.e. adjusted values dImin bytes and dT 
 | @marker | OD | xs:boolean | false | true: every point carries a detectable marker; a Segment format that uses the feature must define its marker (clause 6) |
 
 ```text
-ResyncType: attributes only
-  @type SAPType default 0, @dT xs:unsignedInt, @dImax xs:float, @dImin xs:float default 0,
-  @marker xs:boolean default false, @* ##other (lax)
+Resync (no children)
+  attributes: type, dT, dImax, dImin, marker
 ```
 
 ## Quirks

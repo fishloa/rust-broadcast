@@ -4,7 +4,7 @@ clauses: 5.6.1-5.6.5
 printed_pages: 110-113
 pdf_pages: 118-121
 verbatim_source: private/specs-verified/dash/23009-1/05-4_to_5-7.md
-status: derived from the page-verified private transcription; not a copy of the spec text
+status: own-words notes derived from the private verbatim conversion (pdf2md hybrid, exit 0, rendered-page verified, independently verified); not a copy of the spec text
 ---
 
 # 5.6 Base URL processing
@@ -41,10 +41,9 @@ The `BaseURL` element (levels: MPD, Period, AdaptationSet, Representation) and t
 | @rangeAccess | OD | xs:boolean | false | true: byte-range requests may target partially available Segments; a client wanting an aggregating response for a non-zero-first-byte request should use the RFC 8673 convention, i.e. signal a last-byte value of 9007199254740991 so the server answers 206 and keeps streaming rather than waiting and answering 200 with a content-length; false: do not expect range responses |
 
 ```text
-BaseURLType = simple content, extension of xs:anyURI
-  @serviceLocation xs:string, @byteRange xs:string, @availabilityTimeOffset xs:double,
-  @availabilityTimeComplete xs:boolean, @timeShiftBufferDepth xs:duration,
-  @rangeAccess xs:boolean default false, @* ##other (lax)
+BaseURL (text = URL)
+  attributes: serviceLocation, byteRange, availabilityTimeOffset, availabilityTimeComplete,
+              timeShiftBufferDepth, rangeAccess
 ```
 
 ## Quirks
