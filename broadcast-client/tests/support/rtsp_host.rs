@@ -40,15 +40,22 @@ pub struct MediaFixture {
 
 impl MediaFixture {
     pub fn load() -> Self {
+        Self::from_media(&Self::demux())
+    }
+
+    pub fn demux() -> transmux::Media {
         let data = test_fixtures::read(FIXTURE);
-        let media = TsDemux::new().unpackage(&data[..]).expect("demux fixture");
+        TsDemux::new().unpackage(&data[..]).expect("demux fixture")
+    }
+
+    pub fn from_media(media: &transmux::Media) -> Self {
         let mut packetiser = RtpPacketiser {
             mtu: MTU,
             ssrc: SSRC,
             stap_a_parameter_sets: false,
             ..RtpPacketiser::default()
         };
-        let out = packetiser.package(&media).expect("packetise fixture");
+        let out = packetiser.package(media).expect("packetise fixture");
         let mut session = sdp_types::Session::parse(out.sdp.as_bytes()).expect("parse sdp");
         for (n, m) in session.medias.iter_mut().enumerate() {
             m.add_attribute_with_value("control", format!("trackID={}", n + 1));

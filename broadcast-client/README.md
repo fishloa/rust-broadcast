@@ -81,6 +81,19 @@ variant switch resets the gate and `Start` fires again. Leads: `vod_start_lead_u
 smaller value would pause and resume on every update). A `set_rendered_tracks` made before the gate
 engages (finite TS) is applied when it does. Separate audio renditions join the minimum.
 
+## Timeline jumps
+
+A new timeline that no TS discontinuity flag announces (origin restart, a recorder looping a file, a
+channel swap behind one URL) is detected by the session itself (`Config::timeline_jump`,
+`TimelineJumpConfig`, on by default; `None` disables it). Per video track, between consecutive kept
+samples (`join` not `Drop`), a step below `-backward_us` (1 s) or above the session-clock time
+between the two deliveries plus `forward_slack_us` (5 s) starts a new timeline; inside one burst the
+elapsed time is zero. Audio is watched the same way only for the first rendered audio track of a
+stream without video. Before the first sample of the new timeline the session emits
+`Event::Discontinuity`, re-arms the join, hints `PcrDiscontinuity` (live TS), and resets the playout
+gate, so `Start`/`Resume` follows from the new timeline's media. B-frame reordering stays far inside
+the backward threshold. Applies to TS-over-HTTP, HLS (main and audio rendition) and RTSP.
+
 ## Encrypted HLS
 
 `METHOD=AES-128` playlists are decrypted inside the session: the key request is a normal request

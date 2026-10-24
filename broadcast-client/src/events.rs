@@ -524,6 +524,11 @@ pub struct Config {
     /// statuses) is kept, so the queue is bounded by this cap plus the undroppable events a
     /// stalled host leaves unread.
     pub max_queued_events: usize,
+    /// Timeline-jump detector thresholds; `None` disables the detector. A jump of the media
+    /// timeline without a TS discontinuity flag emits [`Event::Discontinuity`] before the first
+    /// sample of the new timeline and re-arms the join, buffering and playout state as a
+    /// demuxer discontinuity does (see [`crate::TimelineJumpConfig`]). Applies to every source.
+    pub timeline_jump: Option<crate::timeline::TimelineJumpConfig>,
 }
 
 const MIN_BACKOFF_MS: u64 = 1;
@@ -566,6 +571,7 @@ impl Default for Config {
             preferred_audio_language: None,
             auto_select_audio: true,
             max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
+            timeline_jump: Some(crate::timeline::TimelineJumpConfig::default()),
         }
     }
 }
@@ -595,6 +601,7 @@ impl core::fmt::Debug for Config {
             .field("preferred_audio_language", &self.preferred_audio_language)
             .field("auto_select_audio", &self.auto_select_audio)
             .field("max_queued_events", &self.max_queued_events)
+            .field("timeline_jump", &self.timeline_jump)
             .finish()
     }
 }
