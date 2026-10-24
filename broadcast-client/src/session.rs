@@ -20,6 +20,7 @@ use crate::redirect;
 use crate::source::hls_session::HlsSession;
 use crate::source::rtsp::RtspSource;
 use crate::source::ts_http::TsHttpSource;
+use crate::source::ts_http_hold::HoldLimits;
 use crate::timeline::JumpDetector;
 use transmux::TrackId;
 
@@ -109,6 +110,7 @@ impl Session {
             };
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
+        config.validate_tracks_hold()?;
         let buffer_cfg = config.buffer;
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
@@ -118,7 +120,8 @@ impl Session {
         if let Some(creds) = userinfo {
             auth.set_credentials(creds);
         }
-        let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us);
+        let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us)
+            .with_hold_limits(HoldLimits::from_config(&config));
         let hls = use_hls.then(|| Box::new(HlsSession::new(&parsed, &config)));
         let mut rtsp = is_rtsp_scheme.then(|| {
             Box::new(RtspSource::new(
