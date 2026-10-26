@@ -50,7 +50,7 @@ The standard prints two readings, both reproduced in the public notes (they were
 - the `@duration` bullet (p. 86): the Segment number is `(k - 1) + NumberStart` (the text even brackets "[e.g. (k-1) + NumberStart]"), which is `startNumber` for the first Segment.
 
 Settled by data, which the previous note had left "to confirm": `fixtures/dash/manifest.mpd` (`startNumber="1"`) names its first Segment `chunk-stream0-00001.m4s` (`tfdt` 0), and
-`fixtures/dash/segmentlist/` (`startNumber="1"`, `oracle.txt`) names it `seg-0-001.m4s`; the first reading would make that Segment number 0. The second reading (`startNumber + k - 1`) is correct and the public note now says so,
+`fixtures/dash/timeline-gpac/` (a different packager, GPAC; `startNumber="1"`, `$Number$`, `oracle.txt`) names it `seg-1-1.m4s` (`tfdt` 0); the first reading would make that Segment number 0. The second reading (`startNumber + k - 1`) is correct and the public note now says so,
 citing the fixtures (and, per `docs/dash-runtime/DESIGN.md` section 11 item 1, livesim2 with `startNumber="0"`).
 
 ### D3. `$Time$` substitution when `PTO != 0` (standard-internal contradiction; public note fixed to state it)
@@ -90,5 +90,5 @@ The note now says so; no formula changed.
 
 - 5.3.9.5.3: `MPDstart(Number) = (Number - NumberStart) * @duration`, `Number = (k-1) + NumberStart`; single-segment rule (start 0); last-Segment duration from the Period duration; `@endNumber` (at most 1 from nominal, higher numbers invalid);
   `SegAvailStart = AST + PeriodStart + MPDstart + MPDduration`; `SegAvailEnd = SegAvailStart + MPDduration + @timeShiftBufferDepth`; `ATO` as the sum of all levels used to resolve the URL, adjusted start = start - ATO; the coverage rule for URL listing; Initialization availability (start `AST + PeriodStart`, end = latest Media Segment end).
-- 5.3.9.6: expansion of `S` (`@t` default = previous `t + d*(r+1)`, first 0; MPD start = `t - PTO`; `r+1` Segments; negative `@r` to next `S@t` / Period end / next MPD update; no rounding rule printed); `@n` constraints; `@d` at most `maxSegmentDuration`; sidx equalities for `$Time$` (timescale, `earliest_presentation_time`, sum of subsegment durations); `@k` semantics (`floor(d/k)`); `$SubNumber$` rules; mutual exclusion of `@duration` and `SegmentTimeline` (it is in 5.3.9.2.1, p. 72, not in this clause).
+- 5.3.9.6: expansion of `S` (`@t` default = previous `t + d*(r+1)`, first 0; MPD start = `t - PTO`; `r+1` Segments; negative `@r` to next `S@t` / Period end / next MPD update; no rounding rule printed); `@n` constraints; `@d` at most `maxSegmentDuration`; sidx equalities for `$Time$` (timescale, `earliest_presentation_time`, sum of subsegment durations); `@k` semantics (`floor(d/k)`); `$SubNumber$` rules; mutual exclusion of `@duration` and `SegmentTimeline` (it is in 5.3.9.2.1, p. 73, not in this clause).
 - 5.3.2.1: all five rules, the early-available restrictions (not before a regular Period, announced resources must be available, may be removed by an update while no PeriodStart exists), the remote-Period remark, the PeriodStart formula.
