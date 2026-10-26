@@ -417,9 +417,9 @@ fn all_sources() -> Vec<Src> {
     ]
 }
 
-fn check(src: Src) {
-    let (bad, cells) = matrix(&src);
-    assert!(!cells.is_empty(), "{}: no cell was run", src.name);
+fn check_stage(src: Src, stage: &str) {
+    let (bad, cells) = matrix(&src, Some(stage));
+    assert!(!cells.is_empty(), "{}: {stage}: no cell was run", src.name);
     assert!(
         bad.is_empty(),
         "{} cells off the expected states:\n{}",
@@ -428,44 +428,99 @@ fn check(src: Src) {
     );
 }
 
-#[test]
-fn static_presentation() {
-    check(static_src());
+/// One test per (source, stage): nextest caps a test at 90 s and a CI runner is several times
+/// slower than a workstation, so a whole source in one test does not fit.
+macro_rules! stage_tests {
+    ($($name:ident => ($source:ident, $source_name:literal, $stage:literal)),+ $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                check_stage($source(), $stage);
+            }
+        )+
+
+        const COVERED: &[(&str, &str)] = &[$(($source_name, $stage)),+];
+    };
 }
 
-#[test]
-fn static_template_presentation() {
-    check(static_template());
+stage_tests! {
+    static_mpd => (static_src, "static", "mpd"),
+    static_init_v => (static_src, "static", "init-v"),
+    static_init_a => (static_src, "static", "init-a"),
+    static_seg_v2 => (static_src, "static", "seg-v2"),
+    static_seg_a3 => (static_src, "static", "seg-a3"),
+    template_mpd => (static_template, "static-template", "mpd"),
+    template_init_p1_v => (static_template, "static-template", "init-p1-v"),
+    template_init_p1_a => (static_template, "static-template", "init-p1-a"),
+    template_init_p2_v => (static_template, "static-template", "init-p2-v"),
+    template_seg_p1_v => (static_template, "static-template", "seg-p1-v"),
+    template_seg_p2_a => (static_template, "static-template", "seg-p2-a"),
+    list_mpd => (static_list, "static-list", "mpd"),
+    list_init_v => (static_list, "static-list", "init-v"),
+    list_init_a => (static_list, "static-list", "init-a"),
+    list_seg_v => (static_list, "static-list", "seg-v"),
+    list_seg_a => (static_list, "static-list", "seg-a"),
+    sidx_mpd => (sidx_src, "ondemand-sidx", "mpd"),
+    sidx_init_v => (sidx_src, "ondemand-sidx", "init-v"),
+    sidx_index_v => (sidx_src, "ondemand-sidx", "index-v"),
+    sidx_seg_v => (sidx_src, "ondemand-sidx", "seg-v"),
+    sidx_init_a => (sidx_src, "ondemand-sidx", "init-a"),
+    sidx_index_a => (sidx_src, "ondemand-sidx", "index-a"),
+    sidx_seg_a => (sidx_src, "ondemand-sidx", "seg-a"),
+    number_mpd => (live_number, "live-number", "mpd"),
+    number_mpd_refresh => (live_number, "live-number", "mpd-refresh"),
+    number_utc => (live_number, "live-number", "utc"),
+    number_init_v => (live_number, "live-number", "init-v"),
+    number_init_a => (live_number, "live-number", "init-a"),
+    number_seg_v => (live_number, "live-number", "seg-v"),
+    number_seg_a => (live_number, "live-number", "seg-a"),
+    timeline_mpd => (live_timeline, "live-timeline", "mpd"),
+    timeline_mpd_refresh => (live_timeline, "live-timeline", "mpd-refresh"),
+    timeline_utc => (live_timeline, "live-timeline", "utc"),
+    timeline_init_v => (live_timeline, "live-timeline", "init-v"),
+    timeline_init_a => (live_timeline, "live-timeline", "init-a"),
+    timeline_seg_v => (live_timeline, "live-timeline", "seg-v"),
+    timeline_seg_a => (live_timeline, "live-timeline", "seg-a"),
+    head_mpd => (live_head, "live-head-utc", "mpd"),
+    head_mpd_refresh => (live_head, "live-head-utc", "mpd-refresh"),
+    head_utc => (live_head, "live-head-utc", "utc"),
+    head_init_v => (live_head, "live-head-utc", "init-v"),
+    head_init_a => (live_head, "live-head-utc", "init-a"),
+    head_seg_v => (live_head, "live-head-utc", "seg-v"),
+    head_seg_a => (live_head, "live-head-utc", "seg-a"),
+    periods_mpd => (live_multiperiod, "live-multiperiod", "mpd"),
+    periods_mpd_refresh => (live_multiperiod, "live-multiperiod", "mpd-refresh"),
+    periods_utc => (live_multiperiod, "live-multiperiod", "utc"),
+    periods_init_v => (live_multiperiod, "live-multiperiod", "init-v"),
+    periods_init_a => (live_multiperiod, "live-multiperiod", "init-a"),
+    periods_seg_v => (live_multiperiod, "live-multiperiod", "seg-v"),
+    periods_seg_a => (live_multiperiod, "live-multiperiod", "seg-a"),
+    periods_init_v_next => (live_multiperiod, "live-multiperiod", "init-v-next"),
+    periods_seg_v_next => (live_multiperiod, "live-multiperiod", "seg-v-next"),
+    periods_mpd_boundary => (live_multiperiod, "live-multiperiod", "mpd-boundary"),
 }
 
+/// A stage without a test above would silently never run: every stage of every source must be
+/// listed in `stage_tests!`, and nothing listed may name a stage that no longer exists.
 #[test]
-fn static_segment_list_presentation() {
-    check(static_list());
-}
-
-#[test]
-fn on_demand_sidx_presentation() {
-    check(sidx_src());
-}
-
-#[test]
-fn live_number_presentation() {
-    check(live_number());
-}
-
-#[test]
-fn live_timeline_presentation() {
-    check(live_timeline());
-}
-
-#[test]
-fn live_head_utc_presentation() {
-    check(live_head());
-}
-
-#[test]
-fn live_multiperiod_presentation() {
-    check(live_multiperiod());
+fn every_stage_of_every_source_has_a_test() {
+    let mut offered: Vec<(String, String)> = Vec::new();
+    for src in all_sources() {
+        let (_, stages) = (src.build)();
+        offered.extend(stages.into_iter().map(|s| (src.name.to_owned(), s.name)));
+    }
+    let mut problems = Vec::new();
+    for (source, stage) in &offered {
+        if !COVERED.contains(&(source.as_str(), stage.as_str())) {
+            problems.push(format!("{source} / {stage} has no test"));
+        }
+    }
+    for (source, stage) in COVERED {
+        if !offered.iter().any(|(s, g)| s == source && g == stage) {
+            problems.push(format!("{source} / {stage} is tested but not offered"));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
 #[test]
@@ -557,49 +612,56 @@ fn clock_run(skew_us: i64, step_us: i64, with_utc: bool) -> DashSim {
 /// any error ahead of true time, which the origin's 425 answers absorb) must still play, and a
 /// larger error behind true time may lose the stream but never ends the session, loops on the
 /// wire, or panics.
-#[test]
-fn host_clock_skew_and_step_faults() {
+fn host_clock_faults(with_utc: bool) {
     let mut bad = Vec::new();
-    for with_utc in [true, false] {
-        let mut cases: Vec<(i64, i64)> = CLOCK_SKEWS_US.iter().map(|s| (*s, 0)).collect();
-        cases.extend(CLOCK_STEPS_US.iter().map(|st| (0, *st)));
-        for (skew, step) in cases {
-            let sim = clock_run(skew, step, with_utc);
-            let label = format!("utc={with_utc} skew={skew} step={step}");
-            let applied = (skew != 0 || step != 0)
-                && sim.world.host_skew_us == skew
-                && sim.world.host_step_us == step
-                && sim.host_clock_calls.len() > usize::from(step != 0);
-            if !applied {
-                bad.push(format!("{label}: the clock fault was not applied"));
-            }
-            if let Some(kind) = sim.fatal() {
-                bad.push(format!("{label}: fatal {kind:?}"));
-            }
-            if terminal(&sim.events) {
-                bad.push(format!("{label}: the session ended"));
-            }
-            let samples: usize = sim.samples().values().map(Vec::len).sum();
-            let must_play = with_utc || skew >= -TOLERATED_SKEW_US;
-            if must_play && samples == 0 {
-                bad.push(format!("{label}: no samples"));
-            }
-            let served = served_segments(&sim.log, &[]);
-            if let Some(why) = served.repeated {
-                bad.push(format!("{label}: {why}"));
-            }
-            let (peak, url) = peak_rate_per_url(&sim.log);
-            if peak > dash_matrix::RATE_CAP_PER_WINDOW {
-                bad.push(format!("{label}: {url} {peak}/s"));
-            }
-            println!(
-                "clock {label}: samples={samples} reqs={} gap={:?}",
-                sim.log.len(),
-                served.gap.is_some()
-            );
+    let mut cases: Vec<(i64, i64)> = CLOCK_SKEWS_US.iter().map(|s| (*s, 0)).collect();
+    cases.extend(CLOCK_STEPS_US.iter().map(|st| (0, *st)));
+    for (skew, step) in cases {
+        let sim = clock_run(skew, step, with_utc);
+        let label = format!("utc={with_utc} skew={skew} step={step}");
+        let applied = (skew != 0 || step != 0)
+            && sim.world.host_skew_us == skew
+            && sim.world.host_step_us == step
+            && sim.host_clock_calls.len() > usize::from(step != 0);
+        if !applied {
+            bad.push(format!("{label}: the clock fault was not applied"));
         }
+        if let Some(kind) = sim.fatal() {
+            bad.push(format!("{label}: fatal {kind:?}"));
+        }
+        if terminal(&sim.events) {
+            bad.push(format!("{label}: the session ended"));
+        }
+        let samples: usize = sim.samples().values().map(Vec::len).sum();
+        let must_play = with_utc || skew >= -TOLERATED_SKEW_US;
+        if must_play && samples == 0 {
+            bad.push(format!("{label}: no samples"));
+        }
+        let served = served_segments(&sim.log, &[]);
+        if let Some(why) = served.repeated {
+            bad.push(format!("{label}: {why}"));
+        }
+        let (peak, url) = peak_rate_per_url(&sim.log);
+        if peak > dash_matrix::RATE_CAP_PER_WINDOW {
+            bad.push(format!("{label}: {url} {peak}/s"));
+        }
+        println!(
+            "clock {label}: samples={samples} reqs={} gap={:?}",
+            sim.log.len(),
+            served.gap.is_some()
+        );
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
+fn host_clock_faults_with_utc_timing() {
+    host_clock_faults(true);
+}
+
+#[test]
+fn host_clock_faults_without_utc_timing() {
+    host_clock_faults(false);
 }
 
 const ALT_HOST: &str = "http://alt.test";

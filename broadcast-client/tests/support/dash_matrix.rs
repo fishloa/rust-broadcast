@@ -1038,7 +1038,7 @@ pub fn classify(
 /// One executed cell: which source, stage class and fault, transient or permanent.
 pub type Cell = (&'static str, Class, F, bool);
 
-pub fn matrix(src: &Src) -> (Vec<String>, Vec<Cell>) {
+pub fn matrix(src: &Src, only_stage: Option<&str>) -> (Vec<String>, Vec<Cell>) {
     let (base_o, stages) = {
         let (mut sim, stages) = (src.build)();
         if src.live {
@@ -1070,7 +1070,17 @@ pub fn matrix(src: &Src) -> (Vec<String>, Vec<Cell>) {
     let mut bad = Vec::new();
     let mut table = Vec::new();
     let mut cells = Vec::new();
+    if let Some(only) = only_stage {
+        assert!(
+            stages.iter().any(|s| s.name == only),
+            "{}: no stage named {only}",
+            src.name
+        );
+    }
     for stage in &stages {
+        if only_stage.is_some_and(|only| only != stage.name) {
+            continue;
+        }
         let mut row = String::new();
         for &f in F::ALL {
             if !f.applies_to(stage.class, src.caps) {
