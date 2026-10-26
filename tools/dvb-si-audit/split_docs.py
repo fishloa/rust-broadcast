@@ -16,6 +16,8 @@ import re
 import sys
 from pathlib import Path
 
+from private_docs import docs_dir
+
 ROOT = Path(__file__).resolve().parents[2]
 CRATES = ["dvb-si", "dvb-t2mi", "dvb-scte35", "dvb-bbframe"]
 KINDS = ["tables", "descriptors", "enums", "text"]
@@ -64,7 +66,7 @@ def split_caption(heading: str):
 def fix_slugs():
     for crate in CRATES:
         for kind in KINDS:
-            base = ROOT / crate / "docs" / kind
+            base = docs_dir(crate) / kind
             if not base.is_dir():
                 continue
             for bad, good in SLUG_FIX.items():
@@ -87,7 +89,7 @@ def find_monoliths():
     out = []
     for crate in CRATES:
         for kind in KINDS:
-            base = ROOT / crate / "docs" / kind
+            base = docs_dir(crate) / kind
             if not base.is_dir():
                 continue
             for spec_dir in base.iterdir():
@@ -118,7 +120,7 @@ def split_one(crate, default_kind, spec, md: Path):
         kind = classify(heading, default_kind)
         slug = slugify(title) or slugify(heading)
         name = f"{num}-{slug}.md" if num else f"{slug}.md"
-        dest_dir = ROOT / crate / "docs" / kind / spec
+        dest_dir = docs_dir(crate) / kind / spec
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / name
         if dest.exists():

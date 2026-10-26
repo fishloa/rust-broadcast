@@ -6,7 +6,7 @@ A genuine capture of **real ST 2022-6 HBRMT/RTP/UDP packets emitted by an
 independent, permissively-licensed implementation** — `cisco/herisson`'s
 `ip2vf` library — captured on loopback inside a throwaway Ubuntu 22.04
 container. This directly answers the open question in
-[`st2022/docs/st2022-6-framing.md`](../../st2022/docs/st2022-6-framing.md)
+[`st2022/docs/st2022-6-framing.md`](../../st2022/docs/README.md#private-spec-transcriptions)
 (issue #926/#943): "no permissively-licensed ST 2022-6 capture has been
 found" — this is one, and it independently corroborates that doc's
 transcription of ETSI/SMPTE ST 2022-6 §6.4 byte-for-byte (see "Verification"
@@ -213,7 +213,7 @@ framing with zeroed MACs, unlike macOS `lo0`'s `DLT_NULL`), 4,497 packets,
 `29cc5a2565e12be4ff9acfd191909d920a5ae1c4b7f0fc8c0962f0b5c605f65e`.
 
 First packet's UDP payload, read byte-by-byte against
-[`st2022-6-framing.md`](../../st2022/docs/st2022-6-framing.md) §3:
+[`st2022-6-framing.md`](../../st2022/docs/README.md#private-spec-transcriptions) §3:
 
 ```
 80 62 00 01 00 00 00 00 00 00 00 00   <- RTP header (12 bytes)

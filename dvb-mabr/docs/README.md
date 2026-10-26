@@ -1,5 +1,13 @@
 # dvb-mabr — spec table reference
 
+<!-- BEGIN private-pointer (docs/specs/PRIVATE-MAP.md) -->
+## Private spec transcriptions
+
+The page-verified transcriptions of ETSI TS 103 769 for this crate (4 files) live only in the private companion repository `rust-broadcast-private` (the `private/` submodule) at `private/specs-verified/dvb/dvb-mabr/`. The standards are (c) their publishers, so the text is not published here. Old public path to private path: [`docs/specs/PRIVATE-MAP.md`](../../docs/specs/PRIVATE-MAP.md); code comments keep their original `docs/...` citations.
+
+Nothing else remains in this directory.
+<!-- END private-pointer -->
+
 Prep work for issue **#755** ("new crate: DVB multicast ABR (DVB-MABR, ETSI TS 103
 769)"). This directory is **docs only** — no `Cargo.toml`, no Rust source. It exists so
 that implementation (delegated or otherwise) starts from a reviewable, spec-cited
@@ -51,10 +59,10 @@ transcription rather than from memory of the spec.
 
 | File | Covers |
 |---|---|
-| [`mabr-architecture.md`](mabr-architecture.md) | Reference architecture: logical functions, reference points (clause 5), deployment models (clause 6), modes of system operation incl. rendezvous request/redirect syntax (clause 7). |
-| [`mabr-transport.md`](mabr-transport.md) | Multicast transport object formats: the FLUTE profile (Annex F), the ROUTE profile (Annex H, excluding the ATSC A/331 packet-header bytes themselves — see below), FEC (clause 8.3.4.2), unicast repair (clause 9), and the integrity/authenticity metadata profiles (clause 12) both annexes build on. |
-| [`mabr-signalling.md`](mabr-signalling.md) | The multicast session configuration XML document: data model (clause 10), extensibility mechanism and full baseline schema (Annex A), classification schemes (Annex B). |
-| [`mabr-reporting.md`](mabr-reporting.md) | Service reporting information document (JSON): the full OpenAPI 3.0.1 YAML schema from normative Annex N, cross-checked against clause 11 prose — including the seven event types, all per-session counters, and the flagged `object-delivery-status` enum conflict (§2.2.1). |
+| `mabr-architecture.md` (private: `specs-verified/dvb/dvb-mabr/mabr-architecture.md`) | Reference architecture: logical functions, reference points (clause 5), deployment models (clause 6), modes of system operation incl. rendezvous request/redirect syntax (clause 7). |
+| `mabr-transport.md` (private: `specs-verified/dvb/dvb-mabr/mabr-transport.md`) | Multicast transport object formats: the FLUTE profile (Annex F), the ROUTE profile (Annex H, excluding the ATSC A/331 packet-header bytes themselves — see below), FEC (clause 8.3.4.2), unicast repair (clause 9), and the integrity/authenticity metadata profiles (clause 12) both annexes build on. |
+| `mabr-signalling.md` (private: `specs-verified/dvb/dvb-mabr/mabr-signalling.md`) | The multicast session configuration XML document: data model (clause 10), extensibility mechanism and full baseline schema (Annex A), classification schemes (Annex B). |
+| `mabr-reporting.md` (private: `specs-verified/dvb/dvb-mabr/mabr-reporting.md`) | Service reporting information document (JSON): the full OpenAPI 3.0.1 YAML schema from normative Annex N, cross-checked against clause 11 prose — including the seven event types, all per-session counters, and the flagged `object-delivery-status` enum conflict (§2.2.1). |
 
 **34 distinct wire/data structures** are documented with a field table across the four
 files: the rendezvous request/redirect URL syntax (2 tables, clause 7), 3 root/session
@@ -68,7 +76,7 @@ FLUTE Extended-FDT `Signature`/digest attributes (Annex F.2.3-F.2.4), the ROUTE
 `Table H.2.0-1` LCT-field constraints and the `S-TSID` mapping tables (H.5.0-1/2/3),
 the two HTTP security profiles (chunk-digest / chunk-signature ABNF, clause 12), and
 the full service reporting JSON/OpenAPI schema (Annex N in
-[`mabr-reporting.md`](mabr-reporting.md)).
+`mabr-reporting.md` (private: `specs-verified/dvb/dvb-mabr/mabr-reporting.md`)).
 
 ## Overlap with existing crates and issues in this workspace
 
@@ -129,7 +137,7 @@ This list has been updated after the **adversarial fidelity audit** (2026-07-30 
 
 **Resolved gaps** (formerly on this list, now fixed):
 - ~~The full JSON service-reporting schema~~ — now transcribed from Annex N in
-  [`mabr-reporting.md`](mabr-reporting.md). Annex N (page 179, the complete OpenAPI
+  `mabr-reporting.md` (private: `specs-verified/dvb/dvb-mabr/mabr-reporting.md`). Annex N (page 179, the complete OpenAPI
   3.0.1 YAML) was initially missed entirely by the first transcription pass.
 
 ## Flagged spec-internal conflicts (do not resolve by picking one silently)
@@ -152,14 +160,14 @@ PDF and verified against the source:
    - Clause 11.1.2.2 has `cache-hit-mr` and `cache-miss-expired`; Annex N has
      `cache-miss-timeshift`. The other 8 values overlap.
    - An implementation that picks one side will emit reports the other side rejects.
-     Documented in full in [`mabr-reporting.md`](mabr-reporting.md) §flag.
+     Documented in full in `mabr-reporting.md` (private: `specs-verified/dvb/dvb-mabr/mabr-reporting.md`) §flag.
 
 2. **Signature key attribute — `@keyUri` vs `keyId`:**
    - **Prose Table F.2.4.1-1** (page 137) names it `@keyUri`, typed as a URI string.
    - **Annex F.2.5.1 XSD** (page 138, the normative wire-format authority) names it
      `keyId`, typed as `xs:hexBinary`.
    - These disagree on both *name* and *type*. Documented in
-     [`mabr-transport.md`](mabr-transport.md) §2.4.
+     `mabr-transport.md` (private: `specs-verified/dvb/dvb-mabr/mabr-transport.md`) §2.4.
 
 ## Audit history
 

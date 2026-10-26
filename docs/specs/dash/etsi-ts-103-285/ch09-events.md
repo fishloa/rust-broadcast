@@ -14,7 +14,7 @@ verification_date: 2026-10-24
 
 Structured notes in the project's own wording (the standard's text is not reproduced; short quoted phrases only). Strength words are kept: **shall** = mandatory, **should** = recommended, **may** = optional. Verbatim, page-verified text: the private file named in the front matter. Back to [INDEX](INDEX.md).
 
-Related: `emsg` wire format [mp4-emsg](../../../../mp4-emsg/docs/emsg.md), [emsg-rules](../../../../specs/rules/emsg-rules.md); inband-event rules in [dashif-iop-part10-v5.0.0](../dashif-iop-part10-v5.0.0/); MPD update/event semantics are 23009-1 ([dash-mpd-rules](../../../../specs/rules/dash-mpd-rules.md)).
+Related: `emsg` wire format [mp4-emsg](../../../../mp4-emsg/docs/README.md#private-spec-transcriptions), [emsg-rules](../../../../specs/rules/emsg-rules.md); inband-event rules in [dashif-iop-part10-v5.0.0](../dashif-iop-part10-v5.0.0/); MPD update/event semantics are 23009-1 ([dash-mpd-rules](../../../../specs/rules/dash-mpd-rules.md)).
 
 ## 9.1.1 Background (p.64-65)
 

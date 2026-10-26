@@ -52,10 +52,10 @@ tkhd presentation size) landed (`[Unreleased]`).**
   origin engine.
 
 **Spec groundwork for the crop and AFD phases (page-verified transcriptions, written before any implementation):**
-[`crop-conformance-window.md`](../../transmux/docs/codec/crop-conformance-window.md) (H.264 frame cropping, H.265
+[`crop-conformance-window.md`](../../transmux/docs/README.md#private-spec-transcriptions) (H.264 frame cropping, H.265
 conformance window + default display window, H.266 SPS/PPS windows),
-[`afd-bar-data.md`](../../transmux/docs/codec/afd-bar-data.md) (ST 2016-1/-3, TS 101 154 Annex B, A/53 Part 4, T.35 SEI),
-[`isobmff-14496-12-2012-visual.md`](../../transmux/docs/codec/isobmff-14496-12-2012-visual.md) and
+[`afd-bar-data.md`](../../transmux/docs/README.md#private-spec-transcriptions) (ST 2016-1/-3, TS 101 154 Annex B, A/53 Part 4, T.35 SEI),
+[`isobmff-14496-12-2012-visual.md`](../../transmux/docs/README.md#private-spec-transcriptions) and
 [`dash-23009-1-2022-aspect.md`](../specs/dash/23009-1/dash-23009-1-2022-aspect.md). Known source gaps are listed at
 the end of each: AFD persistence for H.264/HEVC is unstated; the order of crop / SAR rescale / `clap` / `tkhd` is
 unspecified; CTA-CEB16 (receiver behaviour) is paywalled.

@@ -50,7 +50,7 @@ CLAUDE.md → "Releases are tag-driven"). One-time setup was completed in v7.4.0
 
 ### 3. GitHub — source of truth + release record
 - **Workspace `README.md`**: architecture map, the crate table, the spec-grounding
-  story and the `docs/` transcription tree.
+  story and the crate's `docs/` tree (own-words notes + the pointer to the private spec transcriptions in `private/specs-verified/`).
 - **Per-crate `CHANGELOG.md`** in keep-a-changelog format.
 - **A GitHub Release per tag**, body = the `docs/release-notes/vX.Y.Z.md` narrative.
 

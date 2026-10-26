@@ -171,7 +171,7 @@ One credentials model and one challenge-response helper for clients, plus one se
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
-- **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [spec transcriptions](../broadcast-auth/docs/) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
+- **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [docs + spec pointer](../broadcast-auth/docs/) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
 
 #### broadcast-common
 
@@ -197,7 +197,7 @@ The layer between TS packets and elementary streams: PES packet header parse/ser
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`media-doctor`](#media-doctor), [`mpeg-ps`](#mpeg-ps), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
-- **Links:** [README](../mpeg-pes/README.md) · [CHANGELOG](../mpeg-pes/CHANGELOG.md) · [spec transcriptions](../mpeg-pes/docs/) · [crates.io](https://crates.io/crates/mpeg-pes) · [docs.rs](https://docs.rs/mpeg-pes)
+- **Links:** [README](../mpeg-pes/README.md) · [CHANGELOG](../mpeg-pes/CHANGELOG.md) · [docs + spec pointer](../mpeg-pes/docs/) · [crates.io](https://crates.io/crates/mpeg-pes) · [docs.rs](https://docs.rs/mpeg-pes)
 
 #### mpeg-ts
 
@@ -208,7 +208,7 @@ Generic MPEG-2 Transport Stream framing: zero-copy and owned 188-byte packets, t
 - **Version (in-tree):** 0.6.2 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`compliance-probe`](#compliance-probe), [`dvb-ci`](#dvb-ci), [`dvb-ci-runtime`](#dvb-ci-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-csa`](#dvb-csa), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`dvb-t2mi`](#dvb-t2mi), [`dvb-tools`](#dvb-tools), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
-- **Links:** [README](../mpeg-ts/README.md) · [CHANGELOG](../mpeg-ts/CHANGELOG.md) · [spec transcriptions](../mpeg-ts/docs/) · [crates.io](https://crates.io/crates/mpeg-ts) · [docs.rs](https://docs.rs/mpeg-ts)
+- **Links:** [README](../mpeg-ts/README.md) · [CHANGELOG](../mpeg-ts/CHANGELOG.md) · [docs + spec pointer](../mpeg-ts/docs/) · [crates.io](https://crates.io/crates/mpeg-ts) · [docs.rs](https://docs.rs/mpeg-ts)
 
 #### mpeg-ps
 
@@ -219,7 +219,7 @@ Program Stream (`.mpg` / `.vob`) framing around PES packets. Only the MPEG-2 pac
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-pes`](#mpeg-pes)
 - **Used by (workspace):** [`transmux`](#transmux)
-- **Links:** [README](../mpeg-ps/README.md) · [CHANGELOG](../mpeg-ps/CHANGELOG.md) · [spec transcriptions](../mpeg-ps/docs/) · [crates.io](https://crates.io/crates/mpeg-ps) · [docs.rs](https://docs.rs/mpeg-ps)
+- **Links:** [README](../mpeg-ps/README.md) · [CHANGELOG](../mpeg-ps/CHANGELOG.md) · [docs + spec pointer](../mpeg-ps/docs/) · [crates.io](https://crates.io/crates/mpeg-ps) · [docs.rs](https://docs.rs/mpeg-ps)
 
 #### dvb-stream
 
@@ -245,7 +245,7 @@ The 10-byte BBHEADER (MATYPE/UPL/DFL/SYNC/SYNCD) with CRC-8, user-packet extract
 - **Version (in-tree):** 12.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`dvb-t2mi`](#dvb-t2mi)
-- **Links:** [README](../dvb-bbframe/README.md) · [CHANGELOG](../dvb-bbframe/CHANGELOG.md) · [spec transcriptions](../dvb-bbframe/docs/) · [crates.io](https://crates.io/crates/dvb-bbframe) · [docs.rs](https://docs.rs/dvb-bbframe)
+- **Links:** [README](../dvb-bbframe/README.md) · [CHANGELOG](../dvb-bbframe/CHANGELOG.md) · [docs + spec pointer](../dvb-bbframe/docs/) · [crates.io](https://crates.io/crates/dvb-bbframe) · [docs.rs](https://docs.rs/dvb-bbframe)
 
 #### dvb-si
 
@@ -256,7 +256,7 @@ The largest crate: parse and build every allocated EN 300 468 table and descript
 - **Version (in-tree):** 12.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvb-ci`](#dvb-ci), [`dvb-ci-runtime`](#dvb-ci-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-stream`](#dvb-stream), [`dvb-tools`](#dvb-tools), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
-- **Links:** [README](../dvb-si/README.md) · [CHANGELOG](../dvb-si/CHANGELOG.md) · [spec transcriptions](../dvb-si/docs/) · [crates.io](https://crates.io/crates/dvb-si) · [docs.rs](https://docs.rs/dvb-si)
+- **Links:** [README](../dvb-si/README.md) · [CHANGELOG](../dvb-si/CHANGELOG.md) · [docs + spec pointer](../dvb-si/docs/) · [crates.io](https://crates.io/crates/dvb-si) · [docs.rs](https://docs.rs/dvb-si)
 
 #### dvb-t2mi
 
@@ -267,7 +267,7 @@ Parses and builds T2-MI packets (BBFrame, L1-current/future, FEF, timestamp, ind
 - **Version (in-tree):** 12.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-bbframe`](#dvb-bbframe), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`dvb-stream`](#dvb-stream), [`dvb-tools`](#dvb-tools)
-- **Links:** [README](../dvb-t2mi/README.md) · [CHANGELOG](../dvb-t2mi/CHANGELOG.md) · [spec transcriptions](../dvb-t2mi/docs/) · [crates.io](https://crates.io/crates/dvb-t2mi) · [docs.rs](https://docs.rs/dvb-t2mi)
+- **Links:** [README](../dvb-t2mi/README.md) · [CHANGELOG](../dvb-t2mi/CHANGELOG.md) · [docs + spec pointer](../dvb-t2mi/docs/) · [crates.io](https://crates.io/crates/dvb-t2mi) · [docs.rs](https://docs.rs/dvb-t2mi)
 
 #### dvb-conformance
 
@@ -278,7 +278,7 @@ Feeds TS packets through the TR 101 290 indicator set on a caller-supplied clock
 - **Version (in-tree):** 12.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-si`](#dvb-si), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`media-doctor`](#media-doctor), [`ts-fix`](#ts-fix)
-- **Links:** [README](../dvb-conformance/README.md) · [CHANGELOG](../dvb-conformance/CHANGELOG.md) · [spec transcriptions](../dvb-conformance/docs/) · [crates.io](https://crates.io/crates/dvb-conformance) · [docs.rs](https://docs.rs/dvb-conformance)
+- **Links:** [README](../dvb-conformance/README.md) · [CHANGELOG](../dvb-conformance/CHANGELOG.md) · [docs + spec pointer](../dvb-conformance/docs/) · [crates.io](https://crates.io/crates/dvb-conformance) · [docs.rs](https://docs.rs/dvb-conformance)
 
 ### Common Interface, conditional access, scrambling, SimulCrypt
 
@@ -293,7 +293,7 @@ A codec for the head-end CA control messages (no sockets): the generic message h
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../dvb-simulcrypt/README.md) · [CHANGELOG](../dvb-simulcrypt/CHANGELOG.md) · [spec transcriptions](../dvb-simulcrypt/docs/) · [crates.io](https://crates.io/crates/dvb-simulcrypt) · [docs.rs](https://docs.rs/dvb-simulcrypt)
+- **Links:** [README](../dvb-simulcrypt/README.md) · [CHANGELOG](../dvb-simulcrypt/CHANGELOG.md) · [docs + spec pointer](../dvb-simulcrypt/docs/) · [crates.io](https://crates.io/crates/dvb-simulcrypt) · [docs.rs](https://docs.rs/dvb-simulcrypt)
 
 #### dvb-csa
 
@@ -315,7 +315,7 @@ The host-to-CICAM wire protocol: resource APDUs (resource manager, application i
 - **Version (in-tree):** 0.10.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-si`](#dvb-si), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`dvb-ci-runtime`](#dvb-ci-runtime)
-- **Links:** [README](../dvb-ci/README.md) · [CHANGELOG](../dvb-ci/CHANGELOG.md) · [spec transcriptions](../dvb-ci/docs/) · [crates.io](https://crates.io/crates/dvb-ci) · [docs.rs](https://docs.rs/dvb-ci)
+- **Links:** [README](../dvb-ci/README.md) · [CHANGELOG](../dvb-ci/CHANGELOG.md) · [docs + spec pointer](../dvb-ci/docs/) · [crates.io](https://crates.io/crates/dvb-ci) · [docs.rs](https://docs.rs/dvb-ci)
 
 #### dvb-ci-runtime
 
@@ -326,7 +326,7 @@ Drives a physical CAM over the `dvb-ci` codecs: a `CaDevice` abstraction (with a
 - **Version (in-tree):** 0.18.1 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 4
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-ci`](#dvb-ci), [`dvb-si`](#dvb-si), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** none
-- **Links:** [README](../dvb-ci-runtime/README.md) · [CHANGELOG](../dvb-ci-runtime/CHANGELOG.md) · [spec transcriptions](../dvb-ci-runtime/docs/) · [crates.io](https://crates.io/crates/dvb-ci-runtime) · [docs.rs](https://docs.rs/dvb-ci-runtime)
+- **Links:** [README](../dvb-ci-runtime/README.md) · [CHANGELOG](../dvb-ci-runtime/CHANGELOG.md) · [docs + spec pointer](../dvb-ci-runtime/docs/) · [crates.io](https://crates.io/crates/dvb-ci-runtime) · [docs.rs](https://docs.rs/dvb-ci-runtime)
 
 ### Subtitles, captions, teletext, VBI and ancillary data
 
@@ -341,7 +341,7 @@ Parses the `cc_data()` structure carried in MPEG-2/AVC/HEVC picture user data in
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`caption-convert`](#caption-convert), [`timed-metadata`](#timed-metadata)
-- **Links:** [README](../cc-data/README.md) · [CHANGELOG](../cc-data/CHANGELOG.md) · [spec transcriptions](../cc-data/docs/) · [crates.io](https://crates.io/crates/cc-data) · [docs.rs](https://docs.rs/cc-data)
+- **Links:** [README](../cc-data/README.md) · [CHANGELOG](../cc-data/CHANGELOG.md) · [docs + spec pointer](../cc-data/docs/) · [crates.io](https://crates.io/crates/cc-data) · [docs.rs](https://docs.rs/cc-data)
 
 #### dvb-subtitle
 
@@ -352,7 +352,7 @@ Parses and builds the subtitling segments of a DVB subtitle PES data field, incl
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../dvb-subtitle/README.md) · [CHANGELOG](../dvb-subtitle/CHANGELOG.md) · [spec transcriptions](../dvb-subtitle/docs/) · [crates.io](https://crates.io/crates/dvb-subtitle) · [docs.rs](https://docs.rs/dvb-subtitle)
+- **Links:** [README](../dvb-subtitle/README.md) · [CHANGELOG](../dvb-subtitle/CHANGELOG.md) · [docs + spec pointer](../dvb-subtitle/docs/) · [crates.io](https://crates.io/crates/dvb-subtitle) · [docs.rs](https://docs.rs/dvb-subtitle)
 
 #### dvb-vbi
 
@@ -363,7 +363,7 @@ Decodes the VBI PES data field: the data identifier and the data-unit loop for V
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`caption-convert`](#caption-convert), [`timed-metadata`](#timed-metadata)
-- **Links:** [README](../dvb-vbi/README.md) · [CHANGELOG](../dvb-vbi/CHANGELOG.md) · [spec transcriptions](../dvb-vbi/docs/) · [crates.io](https://crates.io/crates/dvb-vbi) · [docs.rs](https://docs.rs/dvb-vbi)
+- **Links:** [README](../dvb-vbi/README.md) · [CHANGELOG](../dvb-vbi/CHANGELOG.md) · [docs + spec pointer](../dvb-vbi/docs/) · [crates.io](https://crates.io/crates/dvb-vbi) · [docs.rs](https://docs.rs/dvb-vbi)
 
 #### ttml-subtitle
 
@@ -374,7 +374,7 @@ Parses TTML2 documents into typed structures and validates them, as a separate p
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../ttml-subtitle/README.md) · [CHANGELOG](../ttml-subtitle/CHANGELOG.md) · [spec transcriptions](../ttml-subtitle/docs/) · [crates.io](https://crates.io/crates/ttml-subtitle) · [docs.rs](https://docs.rs/ttml-subtitle)
+- **Links:** [README](../ttml-subtitle/README.md) · [CHANGELOG](../ttml-subtitle/CHANGELOG.md) · [docs + spec pointer](../ttml-subtitle/docs/) · [crates.io](https://crates.io/crates/ttml-subtitle) · [docs.rs](https://docs.rs/ttml-subtitle)
 
 #### st291
 
@@ -385,7 +385,7 @@ Parses and builds ANC data packets (DID/SDID, user data words, parity and checks
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** none
-- **Links:** [README](../st291/README.md) · [CHANGELOG](../st291/CHANGELOG.md) · [spec transcriptions](../st291/docs/) · [crates.io](https://crates.io/crates/st291) · [docs.rs](https://docs.rs/st291)
+- **Links:** [README](../st291/README.md) · [CHANGELOG](../st291/CHANGELOG.md) · [docs + spec pointer](../st291/docs/) · [crates.io](https://crates.io/crates/st291) · [docs.rs](https://docs.rs/st291)
 
 #### caption-convert
 
@@ -411,7 +411,7 @@ Parses and builds the `emsg` box used for in-band DASH/CMAF events (SCTE 35, ID3
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
-- **Links:** [README](../mp4-emsg/README.md) · [CHANGELOG](../mp4-emsg/CHANGELOG.md) · [spec transcriptions](../mp4-emsg/docs/) · [crates.io](https://crates.io/crates/mp4-emsg) · [docs.rs](https://docs.rs/mp4-emsg)
+- **Links:** [README](../mp4-emsg/README.md) · [CHANGELOG](../mp4-emsg/CHANGELOG.md) · [docs + spec pointer](../mp4-emsg/docs/) · [crates.io](https://crates.io/crates/mp4-emsg) · [docs.rs](https://docs.rs/mp4-emsg)
 
 #### scte104
 
@@ -422,7 +422,7 @@ Parses and builds `single_operation_message` and `multiple_operation_message` an
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../scte104/README.md) · [CHANGELOG](../scte104/CHANGELOG.md) · [spec transcriptions](../scte104/docs/) · [crates.io](https://crates.io/crates/scte104) · [docs.rs](https://docs.rs/scte104)
+- **Links:** [README](../scte104/README.md) · [CHANGELOG](../scte104/CHANGELOG.md) · [docs + spec pointer](../scte104/docs/) · [crates.io](https://crates.io/crates/scte104) · [docs.rs](https://docs.rs/scte104)
 
 #### scte35-splice
 
@@ -433,7 +433,7 @@ Parser and builder for the SCTE 35 cueing message (table_id 0xFC): all splice co
 - **Version (in-tree):** 4.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`media-doctor`](#media-doctor), [`playout-runtime`](#playout-runtime), [`timed-metadata`](#timed-metadata)
-- **Links:** [README](../scte35-splice/README.md) · [CHANGELOG](../scte35-splice/CHANGELOG.md) · [spec transcriptions](../scte35-splice/docs/) · [crates.io](https://crates.io/crates/scte35-splice) · [docs.rs](https://docs.rs/scte35-splice)
+- **Links:** [README](../scte35-splice/README.md) · [CHANGELOG](../scte35-splice/CHANGELOG.md) · [docs + spec pointer](../scte35-splice/docs/) · [crates.io](https://crates.io/crates/scte35-splice) · [docs.rs](https://docs.rs/scte35-splice)
 
 #### timed-metadata
 
@@ -444,7 +444,7 @@ Lossless conversion of SCTE 35 cues between in-band TS, DASH `emsg` (both direct
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`cc-data`](#cc-data), [`dvb-vbi`](#dvb-vbi), [`mp4-emsg`](#mp4-emsg), [`scte35-splice`](#scte35-splice)
 - **Used by (workspace):** [`caption-convert`](#caption-convert), [`compliance-probe`](#compliance-probe), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux)
-- **Links:** [README](../timed-metadata/README.md) · [CHANGELOG](../timed-metadata/CHANGELOG.md) · [spec transcriptions](../timed-metadata/docs/) · [crates.io](https://crates.io/crates/timed-metadata) · [docs.rs](https://docs.rs/timed-metadata)
+- **Links:** [README](../timed-metadata/README.md) · [CHANGELOG](../timed-metadata/CHANGELOG.md) · [docs + spec pointer](../timed-metadata/docs/) · [crates.io](https://crates.io/crates/timed-metadata) · [docs.rs](https://docs.rs/timed-metadata)
 
 ### Containers and adaptive streaming
 
@@ -459,7 +459,7 @@ Parses and serializes HLS playlists, including Low-Latency HLS (parts, preload h
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`ssai-runtime`](#ssai-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
-- **Links:** [README](../broadcast-hls/README.md) · [CHANGELOG](../broadcast-hls/CHANGELOG.md) · [spec transcriptions](../broadcast-hls/docs/) · [crates.io](https://crates.io/crates/broadcast-hls) · [docs.rs](https://docs.rs/broadcast-hls)
+- **Links:** [README](../broadcast-hls/README.md) · [CHANGELOG](../broadcast-hls/CHANGELOG.md) · [docs + spec pointer](../broadcast-hls/docs/) · [crates.io](https://crates.io/crates/broadcast-hls) · [docs.rs](https://docs.rs/broadcast-hls)
 
 #### container-probe
 
@@ -481,7 +481,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Version (in-tree):** 0.27.7 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`tshttp-runtime`](#tshttp-runtime)
-- **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [spec transcriptions](../transmux/docs/) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
+- **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [docs + spec pointer](../transmux/docs/) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
 ### Live transport protocols
 
@@ -507,7 +507,7 @@ Typed, symmetric parse and serialize for every RFC 3550 RTCP packet type and the
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`rist-runtime`](#rist-runtime), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
-- **Links:** [README](../rtcp-packet/README.md) · [CHANGELOG](../rtcp-packet/CHANGELOG.md) · [spec transcriptions](../rtcp-packet/docs/) · [crates.io](https://crates.io/crates/rtcp-packet) · [docs.rs](https://docs.rs/rtcp-packet)
+- **Links:** [README](../rtcp-packet/README.md) · [CHANGELOG](../rtcp-packet/CHANGELOG.md) · [docs + spec pointer](../rtcp-packet/docs/) · [crates.io](https://crates.io/crates/rtcp-packet) · [docs.rs](https://docs.rs/rtcp-packet)
 
 #### rtmp-runtime
 
@@ -518,7 +518,7 @@ Server-side publish session engine (`connect` -> `createStream` -> `publish`) ov
 - **Version (in-tree):** 0.8.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`multimux`](#multimux)
-- **Links:** [README](../rtmp-runtime/README.md) · [CHANGELOG](../rtmp-runtime/CHANGELOG.md) · [spec transcriptions](../rtmp-runtime/docs/) · [crates.io](https://crates.io/crates/rtmp-runtime) · [docs.rs](https://docs.rs/rtmp-runtime)
+- **Links:** [README](../rtmp-runtime/README.md) · [CHANGELOG](../rtmp-runtime/CHANGELOG.md) · [docs + spec pointer](../rtmp-runtime/docs/) · [crates.io](https://crates.io/crates/rtmp-runtime) · [docs.rs](https://docs.rs/rtmp-runtime)
 
 #### rtp-packet
 
@@ -529,7 +529,7 @@ Spec-complete parse and serialize of the RTP packet header and its extension, wi
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`dvb-stream`](#dvb-stream), [`multimux`](#multimux), [`st291`](#st291), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
-- **Links:** [README](../rtp-packet/README.md) · [CHANGELOG](../rtp-packet/CHANGELOG.md) · [spec transcriptions](../rtp-packet/docs/) · [crates.io](https://crates.io/crates/rtp-packet) · [docs.rs](https://docs.rs/rtp-packet)
+- **Links:** [README](../rtp-packet/README.md) · [CHANGELOG](../rtp-packet/CHANGELOG.md) · [docs + spec pointer](../rtp-packet/docs/) · [crates.io](https://crates.io/crates/rtp-packet) · [docs.rs](https://docs.rs/rtp-packet)
 
 #### rtsp-runtime
 
@@ -540,7 +540,7 @@ Driveable client and server state machines with CSeq correlation, Transport nego
 - **Version (in-tree):** 0.8.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
-- **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [spec transcriptions](../rtsp-runtime/docs/) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
+- **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [docs + spec pointer](../rtsp-runtime/docs/) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
 
 #### srt-runtime
 
@@ -562,7 +562,7 @@ Parses and serializes the HBRMT payload header that carries uncompressed SDI ove
 - **Version (in-tree):** 0.2.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../st2022/README.md) · [CHANGELOG](../st2022/CHANGELOG.md) · [spec transcriptions](../st2022/docs/) · [crates.io](https://crates.io/crates/st2022) · [docs.rs](https://docs.rs/st2022)
+- **Links:** [README](../st2022/README.md) · [CHANGELOG](../st2022/CHANGELOG.md) · [docs + spec pointer](../st2022/docs/) · [crates.io](https://crates.io/crates/st2022) · [docs.rs](https://docs.rs/st2022)
 
 #### rist-runtime
 
@@ -573,7 +573,7 @@ Wire codecs for the RIST Simple Profile RTCP messages on top of `rtcp-packet`, c
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtcp-packet`](#rtcp-packet)
 - **Used by (workspace):** none
-- **Links:** [README](../rist-runtime/README.md) · [CHANGELOG](../rist-runtime/CHANGELOG.md) · [spec transcriptions](../rist-runtime/docs/) · [crates.io](https://crates.io/crates/rist-runtime) · [docs.rs](https://docs.rs/rist-runtime)
+- **Links:** [README](../rist-runtime/README.md) · [CHANGELOG](../rist-runtime/CHANGELOG.md) · [docs + spec pointer](../rist-runtime/docs/) · [crates.io](https://crates.io/crates/rist-runtime) · [docs.rs](https://docs.rs/rist-runtime)
 
 #### webrtc-runtime
 
@@ -584,7 +584,7 @@ WHIP ingest and WHEP egress session establishment as state machines over `http` 
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`multimux`](#multimux)
-- **Links:** [README](../webrtc-runtime/README.md) · [CHANGELOG](../webrtc-runtime/CHANGELOG.md) · [spec transcriptions](../webrtc-runtime/docs/) · [crates.io](https://crates.io/crates/webrtc-runtime) · [docs.rs](https://docs.rs/webrtc-runtime)
+- **Links:** [README](../webrtc-runtime/README.md) · [CHANGELOG](../webrtc-runtime/CHANGELOG.md) · [docs + spec pointer](../webrtc-runtime/docs/) · [crates.io](https://crates.io/crates/webrtc-runtime) · [docs.rs](https://docs.rs/webrtc-runtime)
 
 #### dash-runtime
 
@@ -595,7 +595,7 @@ A bounded, namespace-aware MPD parser and typed consume-only model, attribute in
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 4
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`transmux`](#transmux)
 - **Used by (workspace):** none
-- **Links:** [README](../dash-runtime/README.md) · [CHANGELOG](../dash-runtime/CHANGELOG.md) · [spec transcriptions](../dash-runtime/docs/)
+- **Links:** [README](../dash-runtime/README.md) · [CHANGELOG](../dash-runtime/CHANGELOG.md) · [docs + spec pointer](../dash-runtime/docs/)
 
 #### tshttp-runtime
 
@@ -628,7 +628,7 @@ Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (ts
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtsp-runtime`](#rtsp-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
 - **Used by (workspace):** none
-- **Links:** [README](../broadcast-client/README.md) · [CHANGELOG](../broadcast-client/CHANGELOG.md) · [spec transcriptions](../broadcast-client/docs/)
+- **Links:** [README](../broadcast-client/README.md) · [CHANGELOG](../broadcast-client/CHANGELOG.md) · [docs + spec pointer](../broadcast-client/docs/)
 
 ### Servers, runtimes and tools
 
@@ -746,7 +746,7 @@ Parses and builds Atmos frames and their elements, including bed definitions, ob
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../rdd29/README.md) · [CHANGELOG](../rdd29/CHANGELOG.md) · [spec transcriptions](../rdd29/docs/) · [crates.io](https://crates.io/crates/rdd29) · [docs.rs](https://docs.rs/rdd29)
+- **Links:** [README](../rdd29/README.md) · [CHANGELOG](../rdd29/CHANGELOG.md) · [docs + spec pointer](../rdd29/docs/) · [crates.io](https://crates.io/crates/rdd29) · [docs.rs](https://docs.rs/rdd29)
 
 #### st12-1
 
@@ -757,7 +757,7 @@ Parses and builds the LTC codeword: BCD time address, drop-frame and colour-fram
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../st12-1/README.md) · [CHANGELOG](../st12-1/CHANGELOG.md) · [spec transcriptions](../st12-1/docs/) · [crates.io](https://crates.io/crates/st12-1) · [docs.rs](https://docs.rs/st12-1)
+- **Links:** [README](../st12-1/README.md) · [CHANGELOG](../st12-1/CHANGELOG.md) · [docs + spec pointer](../st12-1/docs/) · [crates.io](https://crates.io/crates/st12-1) · [docs.rs](https://docs.rs/st12-1)
 
 #### st337
 
@@ -768,7 +768,7 @@ Parses and builds the burst preamble (Pa..Pd, or the extended Pa..Pf form) with 
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../st337/README.md) · [CHANGELOG](../st337/CHANGELOG.md) · [spec transcriptions](../st337/docs/) · [crates.io](https://crates.io/crates/st337) · [docs.rs](https://docs.rs/st337)
+- **Links:** [README](../st337/README.md) · [CHANGELOG](../st337/CHANGELOG.md) · [docs + spec pointer](../st337/docs/) · [crates.io](https://crates.io/crates/st337) · [docs.rs](https://docs.rs/st337)
 
 #### st377-1
 
@@ -779,7 +779,7 @@ Types the MXF backbone: KLV framing, partition packs, the primer pack, local-set
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../st377-1/README.md) · [CHANGELOG](../st377-1/CHANGELOG.md) · [spec transcriptions](../st377-1/docs/) · [crates.io](https://crates.io/crates/st377-1) · [docs.rs](https://docs.rs/st377-1)
+- **Links:** [README](../st377-1/README.md) · [CHANGELOG](../st377-1/CHANGELOG.md) · [docs + spec pointer](../st377-1/docs/) · [crates.io](https://crates.io/crates/st377-1) · [docs.rs](https://docs.rs/st377-1)
 
 ### IP and multicast delivery over broadcast
 
@@ -794,7 +794,7 @@ ATSC 3.0 work is abandoned: the market is closed and real fixtures are unobtaina
 - **Version (in-tree):** 0.1.0 · **Status:** archived, never published · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../atsc3/README.md) · [CHANGELOG](../atsc3/CHANGELOG.md) · [spec transcriptions](../atsc3/docs/)
+- **Links:** [README](../atsc3/README.md) · [CHANGELOG](../atsc3/CHANGELOG.md) · [docs + spec pointer](../atsc3/docs/)
 
 #### dvb-mabr
 
@@ -805,7 +805,7 @@ Reads and writes the `MulticastServerConfiguration` and `MulticastGatewayConfigu
 - **Version (in-tree):** 0.3.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../dvb-mabr/README.md) · [CHANGELOG](../dvb-mabr/CHANGELOG.md) · [spec transcriptions](../dvb-mabr/docs/) · [crates.io](https://crates.io/crates/dvb-mabr) · [docs.rs](https://docs.rs/dvb-mabr)
+- **Links:** [README](../dvb-mabr/README.md) · [CHANGELOG](../dvb-mabr/CHANGELOG.md) · [docs + spec pointer](../dvb-mabr/docs/) · [crates.io](https://crates.io/crates/dvb-mabr) · [docs.rs](https://docs.rs/dvb-mabr)
 
 #### rmt-flute
 
@@ -816,7 +816,7 @@ LCT headers with flag-driven field sizing, header-extension chains, ALC and FEC 
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`atsc3-route`](#atsc3-route)
-- **Links:** [README](../rmt-flute/README.md) · [CHANGELOG](../rmt-flute/CHANGELOG.md) · [spec transcriptions](../rmt-flute/docs/) · [crates.io](https://crates.io/crates/rmt-flute) · [docs.rs](https://docs.rs/rmt-flute)
+- **Links:** [README](../rmt-flute/README.md) · [CHANGELOG](../rmt-flute/CHANGELOG.md) · [docs + spec pointer](../rmt-flute/docs/) · [crates.io](https://crates.io/crates/rmt-flute) · [docs.rs](https://docs.rs/rmt-flute)
 
 #### ule
 
@@ -827,7 +827,7 @@ Encapsulates and decapsulates network-layer PDUs as SNDUs (with optional destina
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../ule/README.md) · [CHANGELOG](../ule/CHANGELOG.md) · [spec transcriptions](../ule/docs/) · [crates.io](https://crates.io/crates/ule) · [docs.rs](https://docs.rs/ule)
+- **Links:** [README](../ule/README.md) · [CHANGELOG](../ule/CHANGELOG.md) · [docs + spec pointer](../ule/docs/) · [crates.io](https://crates.io/crates/ule) · [docs.rs](https://docs.rs/ule)
 
 #### atsc3-route
 
@@ -853,7 +853,7 @@ K-weighting at any non-zero sample rate (coefficients derived by bilinear transf
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../broadcast-loudness/README.md) · [CHANGELOG](../broadcast-loudness/CHANGELOG.md) · [spec transcriptions](../broadcast-loudness/docs/) · [crates.io](https://crates.io/crates/broadcast-loudness) · [docs.rs](https://docs.rs/broadcast-loudness)
+- **Links:** [README](../broadcast-loudness/README.md) · [CHANGELOG](../broadcast-loudness/CHANGELOG.md) · [docs + spec pointer](../broadcast-loudness/docs/) · [crates.io](https://crates.io/crates/broadcast-loudness) · [docs.rs](https://docs.rs/broadcast-loudness)
 
 ### Internal test helpers (never published)
 

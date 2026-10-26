@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from private_docs import docs_dir
+
 ROOT = Path(__file__).resolve().parents[2]
 CRATES = ["dvb-si", "dvb-t2mi", "dvb-scte35", "dvb-bbframe"]
 
@@ -59,7 +61,8 @@ def main():
         if not base.is_dir():
             continue
         for toml in base.rglob("*.toml"):
-            md = toml.with_suffix(".md")
+            md = (docs_dir(crate) / "enums" / toml.relative_to(base)).with_suffix(".md")
+            md.parent.mkdir(parents=True, exist_ok=True)
             if md.exists():
                 continue
             cite, rows = parse(toml.read_text(encoding="utf-8"))

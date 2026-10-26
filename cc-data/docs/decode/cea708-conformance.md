@@ -9,7 +9,7 @@ This document captures the **decode CONFORMANCE / SEMANTIC model** that the FCC
 regulation imposes on DTV closed-caption decoders. It is the public-domain
 grounding for the CEA-708 (DTVCC) decode layer that folds **into the existing
 `cc-data` crate** (above the `cc_data()` carriage already implemented from ETSI TS
-101 154 Table B.9 — see [`../ts_101_154/b9-cc-data.md`](../ts_101_154/b9-cc-data.md)).
+101 154 Table B.9 — see [`../ts_101_154/b9-cc-data.md`](../README.md#private-spec-transcriptions)).
 
 §79.102 mandates the decoder's display/rendering behaviour and which parts of the
 CEA-708 code spaces, services, window/pen model, colour/opacity/edge tables and

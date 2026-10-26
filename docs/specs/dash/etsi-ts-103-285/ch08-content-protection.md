@@ -14,7 +14,7 @@ verification_date: 2026-10-24
 
 Structured notes in the project's own wording (the standard's text is not reproduced; short quoted phrases only). Strength words are kept: **shall** = mandatory, **should** = recommended, **may** = optional. Verbatim, page-verified text: the private file named in the front matter. Back to [INDEX](INDEX.md).
 
-Related: ISO/IEC 23009-1 ContentProtection rules ([dash-mpd-rules](../../../../specs/rules/dash-mpd-rules.md)); CENC ([cenc-23001-7](../../../../transmux/docs/codec/cenc-23001-7.md)); DASH-IF IOP content protection ([dashif-iop-4.3](../dashif-iop-4.3/)).
+Related: ISO/IEC 23009-1 ContentProtection rules ([dash-mpd-rules](../../../../specs/rules/dash-mpd-rules.md)); CENC ([cenc-23001-7](../../../../transmux/docs/README.md#private-spec-transcriptions)); DASH-IF IOP content protection ([dashif-iop-4.3](../dashif-iop-4.3/)).
 
 ## 8.1-8.2 Scope and background (p.61-62)
 

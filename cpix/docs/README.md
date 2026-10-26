@@ -1,5 +1,13 @@
 # cpix — spec table reference
 
+<!-- BEGIN private-pointer (docs/specs/PRIVATE-MAP.md) -->
+## Private spec transcriptions
+
+The page-verified transcriptions of DASH-IF CPIX 2.3; SPEKE v2 API (Amazon/AWS Elemental) for this crate (2 files) live only in the private companion repository `rust-broadcast-private` (the `private/` submodule) at `private/specs-verified/dash/cpix/`. The standards are (c) their publishers, so the text is not published here. Old public path to private path: [`docs/specs/PRIVATE-MAP.md`](../../docs/specs/PRIVATE-MAP.md); code comments keep their original `docs/...` citations.
+
+Nothing else remains in this directory.
+<!-- END private-pointer -->
+
 Prep work for issue **#745** ("multimux: DRM key-server integration (Widevine /
 PlayReady / FairPlay)"). This directory is **docs only** — no `Cargo.toml`, no Rust
 source, not a workspace member. It exists so that a future `cpix` crate (per
@@ -34,9 +42,9 @@ before this task (confirmed by a case-insensitive grep across `*.rs`/`*.md`, exc
 
 - **DASH-IF CPIX 2.3** — `https://dash-industry-forum.github.io/docs/CPIX2.3/Cpix.html`
   (+ PDF/XSD at the same path). "Commit Snapshot, 3 September 2020." Also published as
-  ETSI TS 103799 V1.1.1. Transcribed in [`cpix-2.3-dashif.md`](cpix-2.3-dashif.md).
+  ETSI TS 103799 V1.1.1. Transcribed in `cpix-2.3-dashif.md` (private: `specs-verified/dash/cpix/cpix-2.3-dashif.md`).
 - **AWS SPEKE v1/v2** — `https://docs.aws.amazon.com/speke/latest/documentation/`.
-  Transcribed in [`speke-api.md`](speke-api.md).
+  Transcribed in `speke-api.md` (private: `specs-verified/dash/cpix/speke-api.md`).
 - Both fetched 2026-08-09, both freely public (no login, no NDA, no paywall).
 
 ### Version currency — why CPIX 2.3, not 2.3.1 or 2.4
@@ -73,8 +81,8 @@ DASH-IF itself publishes at a stable path.
 
 | File | Covers |
 |---|---|
-| [`cpix-2.3-dashif.md`](cpix-2.3-dashif.md) | The full CPIX 2.3 XSD data model (§5.2 in the spec): `CPIX` root, `DeliveryData(List)`, `ContentKey(List)`, `DRMSystem(List)` + `HLSSignalingData`, `ContentKeyPeriod(List)`, `ContentKeyUsageRule(List)` + its five filter types, `UpdateHistoryItem(List)`; the Key Management chapter (§6: document/content/delivery/MAC key hierarchy, mandatory algorithms, key rotation, 2-level key hierarchies, multi-scheme reuse); and a byte-level cross-corroboration of a real CPIX document's Widevine `pssh` payload against `transmux/docs/drm/pssh.md`. |
-| [`speke-api.md`](speke-api.md) | AWS SPEKE v1/v2: HTTP method/headers/status codes, the v1→v2 delta, SPEKE's restriction profile over full CPIX (what's ignored, what's mandatory, the exact error-message taxonomy), the standard payload-component tables, the full "encryption contract" (`ContentKeyUsageRuleList`) semantics including SPEKE's filter subset, a complete real VOD request/response example, and the content-key-encryption (`DeliveryDataList`) flow. |
+| `cpix-2.3-dashif.md` (private: `specs-verified/dash/cpix/cpix-2.3-dashif.md`) | The full CPIX 2.3 XSD data model (§5.2 in the spec): `CPIX` root, `DeliveryData(List)`, `ContentKey(List)`, `DRMSystem(List)` + `HLSSignalingData`, `ContentKeyPeriod(List)`, `ContentKeyUsageRule(List)` + its five filter types, `UpdateHistoryItem(List)`; the Key Management chapter (§6: document/content/delivery/MAC key hierarchy, mandatory algorithms, key rotation, 2-level key hierarchies, multi-scheme reuse); and a byte-level cross-corroboration of a real CPIX document's Widevine `pssh` payload against `transmux/docs/drm/pssh.md`. |
+| `speke-api.md` (private: `specs-verified/dash/cpix/speke-api.md`) | AWS SPEKE v1/v2: HTTP method/headers/status codes, the v1→v2 delta, SPEKE's restriction profile over full CPIX (what's ignored, what's mandatory, the exact error-message taxonomy), the standard payload-component tables, the full "encryption contract" (`ContentKeyUsageRuleList`) semantics including SPEKE's filter subset, a complete real VOD request/response example, and the content-key-encryption (`DeliveryDataList`) flow. |
 
 **21 distinct CPIX elements** are documented with a full attribute/child table across
 the two files (`CPIX`, `DeliveryDataList`, `DeliveryData`, `ContentKeyList`,
