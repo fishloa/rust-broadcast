@@ -226,7 +226,8 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds the input limit.
   It also rejects every other value that silently disables output: `max_queued_events`, `max_manifest_bytes`,
   `max_segment_bytes`, `max_key_bytes`, `request_timeout_us`, `segment_timeout_us`,
-  `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, and a
+  `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, an invalid
+  `dash` field (see the clock section), and a
   `buffer` that `buffering_runtime::ControllerConfig::validate` rejects. `ts_http` values are clamped to the
   nearest valid ones (`tshttp_runtime::Config::clamped`), `max_key_failures: 0` behaves as `1`, `max_segment_failures: 0` makes the first segment failure final, and a
   playout lead that the stream cannot reach (`u64::MAX`) keeps the gate closed.
@@ -243,6 +244,44 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
 - `Event::AuthRequired::resource_metadata` is chosen by the server that sent the challenge: validate it
   (https, expected host, no private/loopback address) before fetching it.
 - After a fatal `Event::Error` the session emits nothing further.
+
+## Clock, `Retry-After` dates and the DASH knobs
+
+The session never reads a clock. Besides the monotonic `now_us` every call takes, a host can give it
+the UTC time once:
+
+- `Session::set_wall_clock(now_us, unix_us)`: "at the monotonic instant `now_us` my UTC clock read
+  `unix_us` microseconds since 1970-01-01T00:00:00Z" (POSIX time, no leap seconds). Read both clocks back to
+  back. Call it any time and as often as you like (after `open` and before the first `poll`, every ten
+  minutes, on a system clock-change notification, after a device wakes): the latest call replaces the
+  previous anchor, an earlier `now_us` than a previous call is accepted, no value is rejected.
+- What it changes today: an HLS `429`/`503` whose `Retry-After` is an HTTP-date (RFC 9110 5.6.7: IMF-fixdate,
+  RFC 850 and asctime forms) waits until that date, counted from the anchor, clamped to 60 s like the
+  delta-seconds form, and never shorter than the backoff step. With no anchor the date is counted from the
+  response's own `Date` header (the server's clock cancels out); with neither the header is ignored as before.
+  A date in the past waits nothing extra; garbage is ignored.
+- Every other source ignores the anchor. The DASH source (design: `docs/dash-runtime/DESIGN.md`, not yet in
+  this crate) will use it for dynamic MPDs only, below a measured `UTCTiming` unless
+  `DashConfig::clock_policy` is `PreferHost`. Static MPDs and every other source need no clock.
+- `Event::ClockSynced { source: ClockSource, uncertainty_us }` is the type the DASH source will emit when it
+  first has a UTC clock and when the clock's source changes (not on a re-sync from the same source), before
+  the first sample that depends on it. `ClockSource` is `UtcTiming`, `Host` or `MpdDate`; `uncertainty_us` is the
+  half-width of the error bar. No source emits it yet; match on it now.
+- `Action::HttpRequest::method` is `"GET"` today; the DASH `http-head` clock method will make it `"HEAD"`
+  for `UTCTiming` requests, so pass `method` through verbatim and do not assume GET.
+- `Config::dash: DashConfig` holds the DASH-only knobs (`clock_policy`, `utc_timeout_us` 2 s, `utc_wait_us`
+  5 s, `utc_max_rtt_us` 2 s, `utc_resync_us` 600 s, `host_clock_uncertainty_us` 500 ms, `live_delay_us`,
+  `availability_margin_us`, `early_retry_us` 250 ms, `early_grace_us` 1 s, `min_mpd_refresh_us` 1 s,
+  `use_availability_time_offset`, `cross_origin_urls`). `Session::open` rejects, as
+  `Error::InvalidConfig { field: "dash.<name>" }`, a zero `utc_timeout_us`, `utc_wait_us`, `utc_max_rtt_us`,
+  `utc_resync_us`, `early_retry_us` or `min_mpd_refresh_us`, and a `utc_wait_us` shorter than `utc_timeout_us`;
+  it does so for every source kind, because a config is a value, not a promise to play DASH. `u64::MAX` is
+  accepted everywhere zero is not (read as "never"); zero is accepted for `host_clock_uncertainty_us`,
+  `availability_margin_us`, `early_grace_us` and `live_delay_us`.
+- New `ErrorKind`s reserved for the DASH source, each with a stable `name()`: `MpdParse`, `MpdInvalid`,
+  `UnsupportedAddressing`, `UnsupportedFeature`, `LiveEdgeLost` and the fatal `ClockUnavailable` (a dynamic MPD
+  with no `UTCTiming`, no `Date` header and no `set_wall_clock`). `select_variant` and `select_audio_rendition`
+  return `Error::NotHls` for sessions that are neither HLS nor DASH.
 
 ## Cookies and custom headers
 
