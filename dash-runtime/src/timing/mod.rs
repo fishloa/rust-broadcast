@@ -4,6 +4,7 @@
 
 use thiserror::Error;
 
+pub mod availability;
 pub mod clock;
 pub mod datetime;
 pub mod utc_timing;
