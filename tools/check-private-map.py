@@ -118,7 +118,7 @@ def main() -> int:
             cands = [cite, f"{crate}/{cite}", posixpath.normpath(posixpath.join(d, cite))]
             if any(c in present or c in old_paths for c in cands):
                 continue
-            if cite in tails and any(o.startswith(crate + "/") for o in tails[cite]):
+            if cite in tails or any(c in tails for c in cands):
                 continue
             key = f"{f}\t{cite}"
             if key in baseline:

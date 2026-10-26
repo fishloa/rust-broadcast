@@ -163,6 +163,11 @@ jobs:
       # Pure Python (tomllib, 3.11+); no cargo, no network.
       - name: crate index is current
         run: python3 tools/gen-crate-index.py --check
+      # Spec transcriptions live in the private repo; docs/specs/PRIVATE-MAP.md
+      # decodes the old public paths. Fails on a Markdown link into a moved path
+      # or a citation that is neither on disk nor in the map. Pure Python.
+      - name: private spec map is consistent
+        run: python3 tools/check-private-map.py
       # README dependency snippets (`crate = "x.y"`) must name the epoch the
       # workspace crate is at; they went stale every wave before this gate.
       # Pure Python, no cargo, no network.
