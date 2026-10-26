@@ -20,6 +20,55 @@ pub fn ato_seconds_to_us(seconds: f64) -> i128 {
     (us as i128).clamp(-ATO_CLAMP_US, ATO_CLAMP_US)
 }
 
+/// Ticks to microseconds, rounded toward negative infinity.
+#[must_use]
+pub fn ticks_to_us(ticks: i128, timescale: u64) -> i128 {
+    ticks
+        .saturating_mul(MICROS_PER_SECOND)
+        .div_euclid(i128::from(timescale.max(1)))
+}
+
+/// [`segment_available_from`] for a segment given in ticks: the end of the
+/// segment (`MPDstart + MPDduration`) is converted once, so rounding never
+/// accumulates.
+#[must_use]
+pub fn segment_available_from_ticks(
+    ast_us: i128,
+    period_start_us: i128,
+    start_ticks: i128,
+    duration_ticks: i128,
+    timescale: u64,
+    ato_us: i128,
+) -> i128 {
+    segment_available_from(
+        ast_us,
+        period_start_us,
+        ticks_to_us(start_ticks.saturating_add(duration_ticks), timescale),
+        0,
+        ato_us,
+    )
+}
+
+/// [`segment_available_until`] for a segment given in ticks.
+#[must_use]
+pub fn segment_available_until_ticks(
+    ast_us: i128,
+    period_start_us: i128,
+    start_ticks: i128,
+    duration_ticks: i128,
+    timescale: u64,
+    tsb_us: Option<i128>,
+) -> Option<i128> {
+    let end2 = start_ticks.saturating_add(duration_ticks.saturating_mul(2));
+    segment_available_until(
+        ast_us,
+        period_start_us,
+        ticks_to_us(end2, timescale),
+        0,
+        tsb_us,
+    )
+}
+
 /// Availability start of a Media Segment.
 #[must_use]
 pub fn segment_available_from(

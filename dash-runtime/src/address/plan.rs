@@ -25,18 +25,10 @@ use crate::error::Unsupported;
 use crate::mpd::inherit::{ListInfo, ResolvedMulti, SegmentInfo, TemplateInfo};
 use crate::mpd::model::{BaseInfo, ByteRange, UrlType};
 use crate::timing::availability::{
-    init_available_from, segment_available_from, segment_available_until,
+    init_available_from, segment_available_from_ticks, segment_available_until_ticks, ticks_to_us,
 };
 
 const MICROS: i128 = 1_000_000;
-
-/// Ticks to microseconds, rounded toward negative infinity.
-#[must_use]
-pub fn ticks_to_us(ticks: i128, timescale: u64) -> i128 {
-    ticks
-        .saturating_mul(MICROS)
-        .div_euclid(i128::from(timescale.max(1)))
-}
 
 fn us_to_ticks_ceil(us: i128, timescale: u64) -> u64 {
     let n = us.max(0).saturating_mul(i128::from(timescale));
@@ -581,18 +573,20 @@ impl SegmentPlan {
         let duration_us = ticks_to_us(i128::from(duration), self.timescale);
         let (available_from_us, available_until_us) = match &self.avail {
             Some(a) => (
-                Some(segment_available_from(
+                Some(segment_available_from_ticks(
                     a.ast_us,
                     self.period_start_us,
-                    start_us,
-                    duration_us,
+                    start_ticks,
+                    i128::from(duration),
+                    self.timescale,
                     a.ato_us,
                 )),
-                segment_available_until(
+                segment_available_until_ticks(
                     a.ast_us,
                     self.period_start_us,
-                    start_us,
-                    duration_us,
+                    start_ticks,
+                    i128::from(duration),
+                    self.timescale,
                     a.tsb_us,
                 ),
             ),
