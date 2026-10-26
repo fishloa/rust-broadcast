@@ -62,6 +62,32 @@ CORPORA: dict[str, tuple[str, ...]] = {
 }
 
 
+# Whole-file seeds (an MPD is XML: a head is just a truncated document). `dash_address` decodes
+# its bytes as numbers, so the same MPDs only seed the neighbourhood of "mostly zero"; its own
+# structure comes from libFuzzer's mutations.
+WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
+    "dash_mpd_parse": (
+        "fixtures/dash/**/*.mpd",
+        "transmux/tests/golden/*.mpd",
+        "multimux/tests/golden/dash_mpd*.golden",
+        "multimux/tests/golden/ll_dash_mpd.golden",
+    ),
+    "dash_address": ("fixtures/dash/**/*.mpd",),
+}
+
+
+def seed_whole(target: str, patterns: tuple[str, ...], check_only: bool) -> int:
+    out = REPO / "fuzz" / "corpus" / target
+    files = sorted({p for pat in patterns for p in REPO.glob(pat)})
+    if check_only:
+        return len(files)
+    out.mkdir(parents=True, exist_ok=True)
+    for path in files:
+        name = "_".join(path.relative_to(REPO).parts)
+        (out / name).write_bytes(path.read_bytes())
+    return len(files)
+
+
 # `broadcast_client` takes no file bytes: its input is an 8-byte Config header (two bits per knob
 # selecting a row of each knob table, 0xAA = the documented defaults) followed by 32-byte steering
 # chunks. The TS payloads are compiled into the target (four real fixtures plus a PMT-flipped
@@ -192,6 +218,10 @@ def main() -> int:
     scripted = seed_scripts("broadcast_client", args.check)
     if not args.check:
         print(f"broadcast_client: {scripted} scripted scenario seeds")
+    for target, patterns in WHOLE_FILE_GLOBS.items():
+        count = seed_whole(target, patterns, args.check)
+        if not args.check:
+            print(f"{target}: {count} whole-file seeds")
     for target, sources in CORPORA.items():
         written, missing = seed(target, sources, args.check)
         all_missing += missing

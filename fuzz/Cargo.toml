@@ -58,6 +58,8 @@ rist-runtime   = { path = "../rist-runtime" }
 webrtc-runtime = { path = "../webrtc-runtime" }
 atsc3-route    = { path = "../atsc3-route" }
 rmt-flute      = { path = "../rmt-flute" }
+dash-runtime   = { path = "../dash-runtime" }
+jiff           = { version = "0.2", default-features = false, features = ["std"] }
 ule            = { path = "../ule" }
 caption-convert = { path = "../caption-convert" }
 container-probe = { path = "../container-probe" }
@@ -438,5 +440,17 @@ doc  = false
 [[bin]]
 name = "container_probe"
 path = "fuzz_targets/container_probe.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "dash_mpd_parse"
+path = "fuzz_targets/dash_mpd_parse.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "dash_address"
+path = "fuzz_targets/dash_address.rs"
 test = false
 doc  = false
