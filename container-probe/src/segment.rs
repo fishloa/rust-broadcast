@@ -156,11 +156,6 @@ mod tests {
     use std::vec;
     use std::vec::Vec;
 
-    fn fixture(rel: &str) -> Vec<u8> {
-        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
-    }
-
     fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
         let mut b = u32::try_from(8 + body.len())
             .unwrap()
@@ -174,16 +169,16 @@ mod tests {
     #[test]
     fn real_cmaf_fragments_are_media_fragments_and_inits_are_not() {
         for rel in [
-            "fixtures/hls/cmaf-fmp4/index0.m4s",
-            "fixtures/hls/cmaf-fmp4/index1.m4s",
-            "fixtures/dash/chunk-stream0-00001.m4s",
-            "fixtures/mp4/llcmaf/ll_chunked.mp4",
+            "hls/cmaf-fmp4/index0.m4s",
+            "hls/cmaf-fmp4/index1.m4s",
+            "dash/chunk-stream0-00001.m4s",
+            "mp4/llcmaf/ll_chunked.mp4",
         ] {
-            let bytes = fixture(rel);
+            let bytes = test_fixtures::read(rel);
             assert!(media_fragment(&bytes), "{rel}");
             assert!(!progressive_movie(&bytes), "{rel}");
         }
-        let init = fixture("fixtures/hls/cmaf-fmp4/init.mp4");
+        let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
         assert!(!media_fragment(&init));
         assert!(
             progressive_movie(&init),
@@ -193,7 +188,7 @@ mod tests {
 
     #[test]
     fn a_real_progressive_mp4_is_progressive_and_not_a_fragment() {
-        let bytes = fixture("fixtures/mp4/progressive/av_faststart.mp4");
+        let bytes = test_fixtures::read("mp4/progressive/av_faststart.mp4");
         assert!(progressive_movie(&bytes));
         assert!(!media_fragment(&bytes));
     }
@@ -299,7 +294,7 @@ mod tests {
 
     #[test]
     fn real_ts_is_structured_at_any_packet_phase() {
-        let whole = fixture("hls-runtime/tests/fixtures/ts-hls/index0.ts");
+        let whole = test_fixtures::read("ts/h264_aac.ts");
         const PROBE_PACKETS: usize = 40;
         const CUT: usize = 100;
         let aligned = &whole[..PROBE_PACKETS * TS_PACKET_SIZE];
@@ -311,14 +306,14 @@ mod tests {
         ));
         assert!(ts_structure(&junk));
         assert!(ts_structure(&whole[CUT..]));
-        assert!(ts_structure(&fixture(
-            "fixtures/container-probe/ts_midpacket_phase.ts"
+        assert!(ts_structure(&test_fixtures::read(
+            "container-probe/ts_midpacket_phase.ts"
         )));
     }
 
     #[test]
     fn tiny_ts_bodies_need_every_lane_synced() {
-        let whole = fixture("hls-runtime/tests/fixtures/ts-hls/index0.ts");
+        let whole = test_fixtures::read("ts/h264_aac.ts");
         assert!(ts_structure(&whole[..TS_PACKET_SIZE]), "one packet");
         assert!(ts_structure(&whole[..2 * TS_PACKET_SIZE]), "two packets");
         assert!(ts_structure(&null_packet().repeat(3)), "only null packets");
@@ -361,6 +356,8 @@ mod tests {
 
     #[test]
     fn a_real_fmp4_body_is_not_ts() {
-        assert!(!ts_structure(&fixture("fixtures/hls/cmaf-fmp4/index0.m4s")));
+        assert!(!ts_structure(&test_fixtures::read(
+            "hls/cmaf-fmp4/index0.m4s"
+        )));
     }
 }

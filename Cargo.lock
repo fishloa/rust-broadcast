@@ -817,6 +817,7 @@ dependencies = [
  "mpeg-ts",
  "st377-1",
  "test-alloc",
+ "test-fixtures",
 ]
 
 [[package]]
