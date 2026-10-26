@@ -1,0 +1,31 @@
+[package]
+name         = "dash-runtime"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Sans-IO MPEG-DASH (ISO/IEC 23009-1) core: MPD model and parser, segment addressing, UTC clock and live-edge arithmetic. No I/O, no clock reads."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["dash", "mpd", "sans-io", "streaming", "manifest"]
+categories   = ["multimedia", "network-programming", "parser-implementations"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+exclude      = ["docs/**", "fuzz/**"]
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false, features = ["std"] }
+transmux         = { path = "../transmux", version = "0.27", default-features = false, features = ["std"] }
+quick-xml        = { workspace = true }
+url              = "2"
+jiff             = { version = "0.2", default-features = false, features = ["std"] }
+thiserror        = "2"
+
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+
+[lints]
+workspace = true
