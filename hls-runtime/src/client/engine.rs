@@ -4,6 +4,7 @@ use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use container_probe::segment;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
@@ -27,9 +28,6 @@ use super::url;
 /// segment (which starts with an ISOBMFF box: `ftyp`/`styp`/`moof`) once the
 /// playlist itself has never advertised a Media Initialization Section.
 const TS_SYNC_BYTE: u8 = 0x47;
-
-/// Length of one MPEG-2 TS packet (ISO/IEC 13818-1 §2.4.3.2).
-const TS_PACKET_LEN: usize = 188;
 
 /// Movie timescale of the init segment synthesized for classic TS-segment
 /// HLS: the 90 kHz MPEG-2 system clock the PES PTS/DTS are expressed in
@@ -55,10 +53,8 @@ const MILLIS_PER_SECOND: u64 = 1000;
 /// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
 /// parsed in: the lowest version that allows `EXT-X-MAP` without
 /// `EXT-X-I-FRAMES-ONLY` (RFC 8216 §4.4.4.5).
-/// `moov`, `moof` (ISO/IEC 14496-12 §8.2.1, §8.8.4).
+/// `moov` (ISO/IEC 14496-12 §8.2.1).
 const MOVIE_BOX: [u8; 4] = *b"moov";
-const MOVIE_FRAGMENT_BOX: [u8; 4] = *b"moof";
-const MEDIA_DATA_BOX: [u8; 4] = *b"mdat";
 
 const MAP_PROBE_VERSION: u32 = 6;
 
@@ -132,64 +128,6 @@ fn has_movie_box(bytes: &[u8]) -> bool {
         }
     }
     false
-}
-
-/// `true` when `bytes` holds a `moov` but no `moof`: a progressive MP4, not a
-/// media segment of fragmented MP4.
-fn is_progressive_movie(bytes: &[u8]) -> bool {
-    let mut movie = false;
-    for step in transmux::box_iter(bytes) {
-        let Ok((boxed, _)) = step else { break };
-        match boxed.header.box_type.0 {
-            MOVIE_FRAGMENT_BOX => return false,
-            MOVIE_BOX => movie = true,
-            _ => {}
-        }
-    }
-    movie
-}
-
-/// `true` when `bytes` holds a complete `moof` box followed by its complete
-/// `mdat` box (ISO/IEC 14496-12 §8.8.4, §8.1.1): what every media segment or
-/// part of fragmented MP4 carries.
-fn has_media_fragment(bytes: &[u8]) -> bool {
-    let mut fragment = false;
-    for step in transmux::box_iter(bytes) {
-        let Ok((boxed, _)) = step else { return false };
-        match boxed.header.box_type.0 {
-            MOVIE_FRAGMENT_BOX => fragment = true,
-            MEDIA_DATA_BOX if fragment => return true,
-            _ => {}
-        }
-    }
-    false
-}
-
-/// Lanes below which a TS body must be synced on every one of them.
-const TS_TRUSTED_LANES: usize = 3;
-
-/// `true` when `bytes` is MPEG-TS at some packet phase (ISO/IEC 13818-1
-/// §2.4.3.2, 188-byte packets, `sync_byte` first): a body cut mid-packet or
-/// led by junk is still media, the demuxer resynchronises. At the best phase,
-/// a body of at least [`TS_TRUSTED_LANES`] lanes needs half of them synced; a
-/// shorter one needs every lane synced, and a single lane is trusted only at
-/// phase 0 (a one-packet body has up to 188 phases, so noise would match one).
-/// An HTML error page, random bytes and an empty body all fail; a segment of
-/// nothing but null packets passes. 192-byte M2TS packets are not accepted:
-/// the demuxer behind this check does not read them.
-fn has_ts_structure(bytes: &[u8]) -> bool {
-    (0..TS_PACKET_LEN).any(|phase| {
-        let lanes = bytes.len().saturating_sub(phase) / TS_PACKET_LEN;
-        let lanes_synced = (0..lanes)
-            .filter(|lane| bytes[phase + lane * TS_PACKET_LEN] == TS_SYNC_BYTE)
-            .count();
-        match lanes {
-            0 => false,
-            1 => phase == 0 && lanes_synced == 1,
-            n if n < TS_TRUSTED_LANES => lanes_synced == n,
-            n => lanes_synced.saturating_mul(2) >= n,
-        }
-    })
 }
 
 /// `uri` up to its query string: a CDN that re-signs a segment URL on every
@@ -1464,9 +1402,9 @@ impl HlsClient {
 
     fn route_media_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
         let recognised = if self.is_ts_segment(bytes) {
-            has_ts_structure(bytes)
+            segment::ts_structure(bytes)
         } else {
-            has_media_fragment(bytes) || is_progressive_movie(bytes)
+            segment::media_fragment(bytes) || segment::progressive_movie(bytes)
         };
         if !recognised {
             return Err(Error::NotMedia { id });
@@ -1703,7 +1641,8 @@ impl HlsClient {
     /// fMP4/CMAF resource always starts with an ISOBMFF box
     /// (`ftyp`/`styp`/`moof`), never [`TS_SYNC_BYTE`].
     fn is_ts_segment(&self, bytes: &[u8]) -> bool {
-        self.inits.is_empty() && (bytes.first() == Some(&TS_SYNC_BYTE) || has_ts_structure(bytes))
+        self.inits.is_empty()
+            && (bytes.first() == Some(&TS_SYNC_BYTE) || segment::ts_structure(bytes))
     }
 
     /// Report that a previously requested [`ResourceId`] (or the playlist
@@ -1963,7 +1902,7 @@ impl HlsClient {
             .get(&slot)
             .and_then(|s| s.bytes.as_ref())
             .ok_or(Error::InitNotYetAvailable { id })?;
-        if is_progressive_movie(bytes) {
+        if segment::progressive_movie(bytes) {
             return Err(Error::NotFragmented { id });
         }
         let mut combined = Vec::with_capacity(init.len() + bytes.len());

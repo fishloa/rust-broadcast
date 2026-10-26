@@ -1687,6 +1687,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-hls",
  "bytes",
+ "container-probe",
  "headers",
  "jiff",
  "media-plane",

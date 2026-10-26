@@ -185,7 +185,10 @@ mod tests {
         }
         let init = fixture("fixtures/hls/cmaf-fmp4/init.mp4");
         assert!(!media_fragment(&init));
-        assert!(progressive_movie(&init), "an init segment is a moov with no moof");
+        assert!(
+            progressive_movie(&init),
+            "an init segment is a moov with no moof"
+        );
     }
 
     #[test]
@@ -226,7 +229,9 @@ mod tests {
             body.extend_from_slice(&mdat);
             assert!(media_fragment(&body));
         }
-        assert!(media_fragment(&[moof.clone(), mdat.clone()].concat().repeat(3)));
+        assert!(media_fragment(
+            &[moof.clone(), mdat.clone()].concat().repeat(3)
+        ));
     }
 
     #[test]
@@ -234,7 +239,10 @@ mod tests {
         let moof = boxed(b"moof", &[]);
         let mdat = boxed(b"mdat", &[0; 4]);
         assert!(!media_fragment(&moof), "moof only");
-        assert!(!media_fragment(&[mdat.clone(), moof.clone()].concat()), "mdat first");
+        assert!(
+            !media_fragment(&[mdat.clone(), moof.clone()].concat()),
+            "mdat first"
+        );
         assert!(
             !media_fragment(&[moof.clone(), mdat[..mdat.len() - 1].to_vec()].concat()),
             "truncated mdat"
@@ -270,10 +278,17 @@ mod tests {
         let mut short_uuid = 16u32.to_be_bytes().to_vec();
         short_uuid.extend_from_slice(b"uuid");
         short_uuid.extend_from_slice(&[7; 16]);
-        assert_eq!(next_box(&short_uuid), None, "size smaller than the uuid header");
+        assert_eq!(
+            next_box(&short_uuid),
+            None,
+            "size smaller than the uuid header"
+        );
 
         assert_eq!(next_box(&[0, 0, 0, 7, b'f', b'r', b'e', b'e']), None);
-        assert_eq!(next_box(&[0, 0, 0, 8, b'f', b'r', b'e', b'e']), Some((*b"free", 8)));
+        assert_eq!(
+            next_box(&[0, 0, 0, 8, b'f', b'r', b'e', b'e']),
+            Some((*b"free", 8))
+        );
     }
 
     fn null_packet() -> [u8; TS_PACKET_SIZE] {
@@ -291,10 +306,14 @@ mod tests {
         let mut junk = vec![0xA5; TS_PACKET_SIZE - 1];
         junk.extend_from_slice(aligned);
         assert!(ts_structure(aligned));
-        assert!(ts_structure(&whole[CUT..CUT + PROBE_PACKETS * TS_PACKET_SIZE]));
+        assert!(ts_structure(
+            &whole[CUT..CUT + PROBE_PACKETS * TS_PACKET_SIZE]
+        ));
         assert!(ts_structure(&junk));
         assert!(ts_structure(&whole[CUT..]));
-        assert!(ts_structure(&fixture("fixtures/container-probe/ts_midpacket_phase.ts")));
+        assert!(ts_structure(&fixture(
+            "fixtures/container-probe/ts_midpacket_phase.ts"
+        )));
     }
 
     #[test]
@@ -308,7 +327,10 @@ mod tests {
         assert!(!ts_structure(&second_lane_broken));
         let mut one_lane_late = vec![0u8; 3];
         one_lane_late.extend_from_slice(&whole[..TS_PACKET_SIZE]);
-        assert!(!ts_structure(&one_lane_late), "one lane is only trusted at phase 0");
+        assert!(
+            !ts_structure(&one_lane_late),
+            "one lane is only trusted at phase 0"
+        );
     }
 
     #[test]
