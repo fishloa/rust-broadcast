@@ -835,3 +835,56 @@ fn a_stream_whose_only_track_is_encrypted_is_fatal_unsupported_encryption() {
     );
     assert_eq!(sim.count(|e| matches!(e, Event::Sample { .. })), 0);
 }
+
+#[test]
+fn a_feature_is_reported_once_per_session_even_across_a_reconnect() {
+    let text = manifest_text().replacen(
+        "<Period id=\"0\" start=\"PT0.0S\">",
+        "<Period id=\"0\" start=\"PT0.0S\"><EventStream schemeIdUri=\"urn:x:events\"/>",
+        1,
+    );
+    let mut config = Config::default();
+    config.max_inflight_segments = 1;
+    let mut sim = text_sim(MANIFEST, text, config);
+    while !sim.events.iter().any(|e| matches!(e, Event::Sample { .. })) {
+        sim.run_for(10_000);
+    }
+    sim.session.reconnect(sim.world.mono());
+    let sim = finished(sim);
+    assert!(sim.ended());
+    let n = kinds(&sim)
+        .iter()
+        .filter(|(k, _)| {
+            *k == ErrorKind::UnsupportedFeature {
+                feature: "event_stream",
+            }
+        })
+        .count();
+    assert_eq!(n, 1, "{:?}", kinds(&sim));
+}
+
+#[test]
+fn live_edge_lost_is_reported_again_after_the_session_recovered() {
+    let synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+    let mut sim = DashSim::new(
+        MPD_URL,
+        Config::default(),
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(WorldBackend(synth)),
+    );
+    sim.run_for(12 * SEC);
+    sim.sleep(120 * SEC);
+    sim.run_for(30 * SEC);
+    sim.sleep(120 * SEC);
+    sim.run_for(30 * SEC);
+    assert!(sim.fatal().is_none(), "{:?}", kinds(&sim));
+    let lost = kinds(&sim)
+        .iter()
+        .filter(|(k, _)| *k == ErrorKind::LiveEdgeLost)
+        .count();
+    assert_eq!(
+        lost, 2,
+        "once per run, and a run ends when samples flow again"
+    );
+}

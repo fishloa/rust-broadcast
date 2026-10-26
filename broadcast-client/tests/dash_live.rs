@@ -784,3 +784,69 @@ fn the_live_playout_lead_is_three_segments_at_most() {
         "3 x the 2 s segments is 6 s: more changes nothing"
     );
 }
+
+#[test]
+fn a_live_variant_switch_continues_on_the_other_representation_without_a_gap() {
+    let mut synth = with_utc(Addressing::Number);
+    synth.second_video = true;
+    let geo = synth.geo();
+    let (mut sim, _) = live(synth, 41 * MICROS + 120_000, Config::default());
+    sim.run_for(15 * SEC);
+    let m = sim
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::Variants(m) => Some(m.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(m.variants.len(), 2);
+    assert_eq!(m.chosen, 1, "the 262 kbit/s Representation is the best");
+    let switch_at = sim.world.true_utc();
+    sim.session.select_variant(0).unwrap();
+    sim.run_for(20 * SEC);
+    assert!(sim.fatal().is_none(), "{:?}", sim.errors());
+    let video: Vec<_> = segment_requests(&sim, geo)
+        .into_iter()
+        .filter(|r| r.rep == "V" || r.rep == "W")
+        .collect();
+    assert!(video.iter().any(|r| r.rep == "W"));
+    assert!(
+        video
+            .iter()
+            .any(|r| r.rep == "V" && r.send_utc_us >= switch_at),
+        "the switch moves the requests to the other Representation"
+    );
+    let mut idx: Vec<i64> = video.iter().map(|r| r.idx).collect();
+    idx.sort_unstable();
+    idx.dedup();
+    assert!(
+        idx.windows(2).all(|w| w[1] == w[0] + 1),
+        "every segment index requested once, none skipped: {idx:?}"
+    );
+}
+
+#[test]
+fn a_clock_given_to_a_closed_session_produces_no_event() {
+    let mut config = Config::default();
+    config.dash.clock_policy = DashClockPolicy::PreferHost;
+    let (mut sim, _) = live(with_utc(Addressing::Number), 41 * MICROS + 120_000, config);
+    sim.fault = Some(Box::new(|req: &dash_sim::Logged, _| {
+        req.url
+            .starts_with("http://utc.test/")
+            .then_some(dash_sim::Answer::Hang)
+    }));
+    sim.run_for(SEC);
+    assert!(
+        clock_events(&sim).is_empty(),
+        "the ladder is still waiting for UTCTiming"
+    );
+    sim.session.close();
+    while sim.session.poll(sim.world.mono()).is_some() {}
+    while sim.session.next_event().is_some() {}
+    sim.give_host_clock();
+    assert!(
+        sim.session.next_event().is_none(),
+        "the anchor of a closed session resolves no ladder and emits nothing"
+    );
+}

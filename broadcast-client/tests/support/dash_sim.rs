@@ -217,6 +217,7 @@ pub struct DashSim {
     pub log: Vec<Logged>,
     pub events: Vec<Event>,
     pub closes: Vec<u32>,
+    pub close_log: Vec<(u32, u64)>,
     pub rtt_us: u64,
     pub chunk: usize,
     pub fault: Option<FaultFn>,
@@ -243,6 +244,7 @@ impl DashSim {
             log: Vec::new(),
             events: Vec::new(),
             closes: Vec::new(),
+            close_log: Vec::new(),
             rtt_us: 40 * MS,
             chunk: 65_536,
             fault: None,
@@ -350,6 +352,7 @@ impl DashSim {
                 Action::Close { conn } => {
                     self.pending.retain(|p| p.conn != conn);
                     self.closes.push(conn);
+                    self.close_log.push((conn, self.world.elapsed_us));
                 }
                 Action::WakeAt(t) if t > now => {
                     self.wakes.insert(t);

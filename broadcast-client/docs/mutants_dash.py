@@ -197,7 +197,7 @@ M = [
   "            a.set_wall_clock(now_us, unix_us);", "            let _ = (now_us, unix_us);"),
  ("E01", "core: stopping audio keeps requesting it", DR + "client/engine.rs",
   "            if let Some(rep) = lane.reps.last_mut() {\n                rep.dead = true;\n            }\n            self.periods[pi].selection.chosen_audio = None;",
-  "            self.periods[pi].selection.chosen_audio = None;\n            let _ = lane;"),
+  "            if let Some(rep) = lane.reps.last_mut() {\n                let _ = rep;\n            }\n            self.periods[pi].selection.chosen_audio = None;"),
  ("E02", "core: restarting audio on the same set is a no-op", DR + "client/engine.rs",
   "if current_at == at && !was_dead {", "if current_at == at {"),
  ("E03", "core: a set plays its lowest-bandwidth Representation", DR + "client/engine.rs",

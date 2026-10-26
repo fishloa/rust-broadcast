@@ -372,9 +372,10 @@ fn a_hung_segment_is_closed_at_the_segment_timeout_and_requested_again() {
         sim.closes.contains(&reqs[0].conn),
         "the hung connection was closed"
     );
+    let gap = reqs[1].send_elapsed_us - reqs[0].send_elapsed_us;
     assert!(
-        reqs[1].send_elapsed_us >= reqs[0].send_elapsed_us + 3 * SEC,
-        "not before the timeout"
+        (3 * SEC..=7 * SEC).contains(&gap),
+        "retried after the 3 s segment timeout and one backoff step, not the 20 s manifest timeout: {gap} us"
     );
 }
 
@@ -439,7 +440,7 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
                     429,
                     vec![("Retry-After".into(), "9".into())],
                 )),
-                2 => Some(Answer::status(500)),
+                2 => Some(Answer::ok(vec![0x5a; 3000])),
                 _ => None,
             };
         }
@@ -456,7 +457,7 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
     assert_eq!(
         gaps,
         [9, 4],
-        "Retry-After 9 s for the 429; the 500 that follows has none, so the second backoff step (4 s) applies"
+        "Retry-After 9 s for the 429; the junk body that follows carries none, so the second backoff step (4 s) applies"
     );
     assert!(
         sim.log
@@ -558,9 +559,16 @@ fn a_utc_request_is_abandoned_at_the_utc_timeout_and_an_init_at_the_request_time
     sim.give_host_clock();
     sim.run_for(20 * SEC);
     let first_utc = sim.requests_to("utc.test")[0].clone();
-    assert!(
-        sim.closes.contains(&first_utc.conn),
-        "the hung UTC request was closed"
+    let closed_at = sim
+        .close_log
+        .iter()
+        .find(|(c, _)| *c == first_utc.conn)
+        .map(|(_, at)| *at)
+        .expect("the hung UTC request was closed");
+    assert_eq!(
+        closed_at - first_utc.send_elapsed_us,
+        2 * SEC,
+        "closed at dash.utc_timeout_us, not at the 4 s request timeout"
     );
     let init = sim.requests_to("/V/init.mp4");
     assert!(init.len() >= 2, "{} init requests", init.len());
@@ -606,4 +614,68 @@ fn a_401_from_another_origin_is_a_failed_request_not_a_credential_prompt() {
         "a CDN's challenge is not the session's"
     );
     assert!(!sim.statuses().contains(&Status::WaitingForCredentials));
+}
+
+#[test]
+fn an_endless_body_is_cut_at_the_cap_and_the_connection_closed_at_once() {
+    let mut config = Config::default();
+    config.max_manifest_bytes = 100;
+    let mut sim = DashSim::static_origin(&url_of(MANIFEST), config);
+    sim.fault = Some(Box::new(|req: &Logged, _| {
+        req.is_mpd().then(|| Answer::Stall(vec![b' '; 400]))
+    }));
+    sim.run_for(3 * SEC);
+    let mpd = sim.requests_to("manifest.mpd")[0].clone();
+    let closed_at = sim
+        .close_log
+        .iter()
+        .find(|(c, _)| *c == mpd.conn)
+        .map(|(_, at)| *at)
+        .expect("the oversize MPD connection was closed");
+    assert!(
+        closed_at - mpd.send_elapsed_us <= SEC,
+        "closed on arrival of the bytes past the cap, not at the 20 s request timeout"
+    );
+
+    let mut config = Config::default();
+    config.max_segment_bytes = 5_000;
+    let mut sim = DashSim::static_origin(&url_of(MANIFEST), config);
+    sim.fault = Some(Box::new(|req: &Logged, _| {
+        req.url
+            .ends_with("chunk-stream0-00001.m4s")
+            .then(|| Answer::Stall(vec![0u8; 6_000]))
+    }));
+    sim.run_for(3 * SEC);
+    let seg = sim.requests_to("chunk-stream0-00001")[0].clone();
+    let closed_at = sim
+        .close_log
+        .iter()
+        .find(|(c, _)| *c == seg.conn)
+        .map(|(_, at)| *at)
+        .expect("the oversize segment connection was closed");
+    assert!(
+        closed_at - seg.send_elapsed_us <= SEC,
+        "closed on arrival, not at the 60 s segment timeout"
+    );
+}
+
+#[test]
+fn an_mpd_retry_waits_for_retry_after() {
+    let mut sim = DashSim::static_origin(&url_of(MANIFEST), Config::default());
+    let mut first = true;
+    sim.fault = Some(Box::new(move |req: &Logged, _| {
+        if req.is_mpd() && first {
+            first = false;
+            return Some(Answer::status_with(
+                503,
+                vec![("Retry-After".into(), "7".into())],
+            ));
+        }
+        None
+    }));
+    sim.run_to_terminal(120 * SEC);
+    assert!(sim.ended(), "{:?}", sim.errors());
+    let mpd: Vec<&Logged> = sim.log.iter().filter(|l| l.is_mpd()).collect();
+    assert_eq!(mpd.len(), 2);
+    assert_eq!((mpd[1].send_elapsed_us - mpd[0].send_elapsed_us) / SEC, 7);
 }

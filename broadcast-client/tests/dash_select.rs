@@ -433,12 +433,13 @@ fn audio_can_be_stopped_and_started_again() {
     let mut sim = sim_for(
         MANIFEST,
         with_two_audio("en", "main", "fr", "alternate"),
-        one_at_a_time(),
+        Config::default(),
         alias_ffmpeg,
     );
     run_until(&mut sim, |s| samples_of(s, 2) > 0);
     sim.session.select_audio_rendition(None).unwrap();
     let stop_at = sim.events.len();
+    let log_at_stop = sim.log.len();
     let audio_so_far = samples_of(&sim, 2);
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
@@ -467,7 +468,10 @@ fn audio_can_be_stopped_and_started_again() {
     assert!(samples_of(&sim, 1) > 0);
     assert!(audio_events(&sim).last().is_some_and(|a| a.0.is_none()));
     assert!(
-        sim.requests_to("alt-a-").is_empty() && sim.requests_to("chunk-stream1-00004").is_empty()
+        sim.log[log_at_stop..]
+            .iter()
+            .all(|l| !l.url.contains("stream1") && !l.url.contains("alt-a-")),
+        "no audio request is made once audio is stopped"
     );
 }
 
@@ -560,29 +564,28 @@ fn a_manual_audio_choice_survives_a_period_change_by_name_and_language() {
 #[test]
 fn a_variant_switch_neither_restarts_nor_pauses_the_playout_gate() {
     let mut sim = sim_for(MANIFEST, with_two_video(), one_at_a_time(), alias_ffmpeg);
-    run_until(&mut sim, |s| samples_of(s, 1) > 0);
+    run_until(&mut sim, |s| {
+        s.events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Buffer(broadcast_client::BufferEvent::Start { .. })
+            )
+        })
+    });
     sim.session.select_variant(1).unwrap();
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended());
-    let starts = sim.count(|e| {
-        matches!(
-            e,
-            Event::Buffer(broadcast_client::BufferEvent::Start { .. })
-        )
-    });
-    let pauses = sim.count(|e| {
-        matches!(
-            e,
-            Event::Buffer(broadcast_client::BufferEvent::Pause { .. })
-        )
-    });
-    assert_eq!(
-        (starts, pauses),
-        (1, 0),
-        "{:?}",
+    assert!(
+        !sim.requests_to("alt-v-00003").is_empty(),
+        "the switch happened while segments were still to come"
+    );
+    let count = |f: fn(&broadcast_client::BufferEvent) -> bool| {
         sim.events
             .iter()
-            .filter(|e| matches!(e, Event::Buffer(_)))
-            .collect::<Vec<_>>()
-    );
+            .filter(|e| matches!(e, Event::Buffer(b) if f(b)))
+            .count()
+    };
+    let starts = count(|b| matches!(b, broadcast_client::BufferEvent::Start { .. }));
+    let pauses = count(|b| matches!(b, broadcast_client::BufferEvent::Pause { .. }));
+    assert_eq!((starts, pauses), (1, 0));
 }
