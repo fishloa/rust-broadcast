@@ -1,0 +1,26 @@
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/ondemand-gpac-pto-quirk/ondemand.mpd
+fixtures/dash/ondemand-gpac-pto-quirk/ondemand.mpd validates
+
+
+## gpac -i ondemand.mpd inspect:test=network
+PID 2 ID 1 audio inMovie duration 00:00:12.000 delay -1024 44100 Hz 1 chan 48 kbps codec mp4a.40.2 AAC LC (aot=2 implicit)
+PID 1 ID 1 video inMovie duration 00:00:12.000 timescale 12800 delay 512 320x240 SAR 1/1 99 kbps codec avc1.4D400D AVC|H264 PL Main@1.3 YUV 4:2:0 8 bpp
+
+
+## MP4Box -diso (tfdt per fragment, sidx where present)
+  a_dashinit.mp4: tfdt=0,89088,177152,265216,353280,441343 sidx(timescale=44100,earliest_presentation_time=0,references=6)
+  v_dashinit.mp4: tfdt=0,25600,51200,76800,102400,128000 sidx(timescale=12800,earliest_presentation_time=512,references=6)
+
+
+## ffprobe -count_packets (whole file, or init + segments concatenated)
+$ ffprobe a_dashinit.mp4
+stream|index=0|codec_name=aac|codec_type=audio|sample_rate=44100|start_time=0.000000|duration=12.023220|nb_read_packets=518
+
+$ ffprobe v_dashinit.mp4
+stream|index=0|codec_name=h264|codec_type=video|width=320|height=240|start_time=0.040000|duration=12.000000|nb_read_packets=293
+
+
+## box walk (cross-check of SegmentBase Initialization@range / indexRange)
+  a_dashinit.mp4 boxes: ftyp[0-31] moov[90-844] sidx[885-988]
+  v_dashinit.mp4 boxes: ftyp[0-31] moov[90-925] sidx[966-1069]
+

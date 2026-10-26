@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT10S" minBufferTime="PT2S"
+     profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period id="p">
+    <AdaptationSet id="10" mimeType="audio/mp4" codecs="mp4a.40.2" segmentAlignment="true" startWithSAP="1">
+      <SegmentTemplate timescale="48000" duration="96000" startNumber="1" initialization="me-init.mp4" media="me-$Number$.m4s"/>
+      <Representation id="me" bandwidth="64000"/>
+    </AdaptationSet>
+    <AdaptationSet id="11" mimeType="audio/mp4" codecs="mp4a.40.2" lang="fr" segmentAlignment="true" startWithSAP="1">
+      <SegmentTemplate timescale="48000" duration="96000" startNumber="1" initialization="fr-init.mp4" media="fr-$Number$.m4s"/>
+      <Representation id="fr" bandwidth="32000"/>
+    </AdaptationSet>
+    <Preselection id="1" tag="fr" lang="fr" preselectionComponents="10 11"><Label>Francais</Label></Preselection>
+  </Period>
+</MPD>
