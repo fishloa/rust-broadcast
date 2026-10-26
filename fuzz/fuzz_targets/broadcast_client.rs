@@ -514,7 +514,6 @@ fn config_from(header: &[u8]) -> Config {
     config.segment_timeout_us = knob(header, 7, &TIMEOUTS_US);
     config.tracks_hold_max_wall_us = knob(header, 8, &HOLD_WALL_US);
     config.tracks_hold_max_media_us = knob(header, 9, &HOLD_MEDIA_US);
-;
     let quiet = knob(header, 10, &HOLD_QUIET_BYTES);
     config.tracks_hold_quiet_input_bytes = quiet;
     config.tracks_hold_max_input_bytes = knob(header, 11, &HOLD_MAX_BYTES).max(quiet);
