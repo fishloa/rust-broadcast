@@ -602,7 +602,7 @@ fn the_vod_playout_gate_starts_at_the_vod_lead_and_the_live_gate_at_the_segment_
         sim.run_for(30 * SEC);
         sim
     };
-    let quick = live(1 * SEC);
+    let quick = live(SEC);
     let slow = live(1_000 * SEC);
     let cap = live(6 * SEC);
     assert!(samples_before_start(&quick) < samples_before_start(&slow));

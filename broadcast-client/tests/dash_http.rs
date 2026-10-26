@@ -148,12 +148,7 @@ fn a_utc_server_and_a_cdn_on_other_origins_receive_nothing_the_session_origin_do
         .collect();
     assert!(cdn.len() >= 9);
     assert!(cdn.iter().all(|l| carries_none(l)));
-    assert!(
-        sim.log
-            .iter()
-            .filter(|l| l.is_mpd())
-            .all(|l| carries_all(l))
-    );
+    assert!(sim.log.iter().filter(|l| l.is_mpd()).all(carries_all));
 }
 
 #[test]
