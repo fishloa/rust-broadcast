@@ -7,6 +7,7 @@ use transmux::{Sample, TrackId, TrackSpec};
 use super::action::ResourceId;
 use super::error::FatalKind;
 use crate::selection::{DropReason, RepRef};
+use crate::timing::clock::ClockSource;
 
 /// One Representation of a selectable video AdaptationSet, in the shape a
 /// host's variant list wants (DESIGN D11).
@@ -114,6 +115,18 @@ pub enum Notice {
     XlinkSkipped,
     /// `PatchLocation` present; patches are not used.
     PatchIgnored,
+    /// A low-latency MPD (`availabilityTimeOffset` or
+    /// `availabilityTimeComplete="false"`): played at segment granularity.
+    LowLatencyIgnored,
+    /// The client requested segments too slowly: the segments it wanted left
+    /// the time-shift window and it continued at the oldest one still there.
+    FellBehind,
+    /// A `UTCTiming` element this client cannot act on (`ntp`, `sntp`, an
+    /// unknown scheme) was skipped.
+    UtcSchemeUnsupported,
+    /// A `UTCTiming` URL left the MPD origin while `cross_origin_urls` is
+    /// off and was skipped.
+    UtcCrossOrigin,
 }
 
 impl Notice {
@@ -126,6 +139,10 @@ impl Notice {
             Self::PreselectionIgnored => "preselection_ignored",
             Self::XlinkSkipped => "xlink_skipped",
             Self::PatchIgnored => "patch_ignored",
+            Self::LowLatencyIgnored => "low_latency_ignored",
+            Self::FellBehind => "fell_behind",
+            Self::UtcSchemeUnsupported => "utc_scheme_unsupported",
+            Self::UtcCrossOrigin => "utc_cross_origin",
         }
     }
 }
@@ -205,6 +222,23 @@ pub enum Output {
     },
     /// A non-fatal observation.
     Notice(Notice),
+    /// The UTC clock has its first anchor, or its source changed (23009-1
+    /// 5.8.5.7; DESIGN 3.4). Not emitted for every refinement.
+    ClockSynced {
+        /// Where the anchor came from.
+        source: ClockSource,
+        /// Half-width of its error bar, microseconds.
+        uncertainty_us: u64,
+    },
+    /// A segment of a live presentation was given up on after the configured
+    /// number of failures; a `Discontinuity` marks the gap. (A static
+    /// presentation ends with a fatal error instead.)
+    SegmentLost {
+        /// The segment.
+        id: ResourceId,
+        /// Status of the last failure, when it was an HTTP status.
+        status: Option<u16>,
+    },
     /// The presentation cannot continue; nothing follows.
     Fatal(FatalKind),
     /// Every selected segment was delivered.
