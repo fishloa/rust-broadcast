@@ -699,8 +699,6 @@ pub struct Config {
     pub start_pending_track_wait_us: u64,
 }
 
-const MIN_BACKOFF_MS: u64 = 1;
-
 impl Config {
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
         let invalid = |field| Err(crate::Error::InvalidConfig { field });
@@ -751,18 +749,6 @@ impl Config {
             });
         }
         Ok(())
-    }
-
-    /// The HLS retry schedule with every entry and the cap raised to at least one millisecond,
-    /// so a zero never produces an unbounded burst of retries at one instant.
-    pub(crate) fn backoff(&self) -> (Vec<u64>, u64) {
-        (
-            self.backoff_ms
-                .iter()
-                .map(|ms| (*ms).max(MIN_BACKOFF_MS))
-                .collect(),
-            self.backoff_cap_ms.max(MIN_BACKOFF_MS),
-        )
     }
 }
 

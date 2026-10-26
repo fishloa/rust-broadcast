@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `segment::{ts_structure, media_fragment, progressive_movie}`: structural checks that a fetched HLS/DASH segment body is media (TS at any packet phase, ISO/IEC 14496-12 §8.8.4 `moof`+`mdat`, a `moov` without `moof`), moved out of `hls-runtime` so the HLS and DASH clients share one definition. Additive.
 
 ## [0.2.0] - 2026-10-17
 ### Documentation

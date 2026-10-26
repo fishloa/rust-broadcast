@@ -124,6 +124,7 @@ O(log n) reads.
 | `Candidate { format, confidence, detail }` | One entry of an `Ambiguous` result |
 | `Detail` (`Ts { stride, phase }`, `Isobmff { major_brand, boxes_walked, layout }`, `Ebml { doc_type }`, `Flv { has_audio, has_video, data_offset }`, `Mxf { partition_kind }`, `MpegPs { structurally_valid }`, `None`) | Prober-specific facts so a demuxer need not re-derive them |
 | `IsobmffLayout`, `DocType`, `PartitionKind` | Typed discriminators (no raw bytes exposed) |
+| `segment::ts_structure`, `segment::media_fragment`, `segment::progressive_movie` | Is a fetched segment body structurally media: TS at any packet phase (half the 188-byte lanes synced), a complete `moof` then `mdat`, a `moov` with no `moof` |
 
 ## How detection works
 

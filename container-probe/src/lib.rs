@@ -22,6 +22,7 @@ mod mpegps;
 mod mxf;
 mod ogg;
 mod riff;
+pub mod segment;
 mod ts;
 
 use alloc::vec::Vec;

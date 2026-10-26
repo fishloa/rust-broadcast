@@ -14,7 +14,8 @@ use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{Action, Config, Event, Status};
 use crate::playout::Source;
-use crate::source::hls::{ConnAlloc, HlsSource, Role};
+use crate::source::fetch::conn::ConnAlloc;
+use crate::source::hls::{HlsSource, Role};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AudioMode {
