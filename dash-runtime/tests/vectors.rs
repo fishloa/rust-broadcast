@@ -682,3 +682,21 @@ fn utc_timing_schemes_are_classified_from_the_real_mpd() {
     assert_eq!(m.utc_timings[0].values().count(), 2);
     assert_eq!(m.utc_timings[1].scheme, UtcScheme::Direct);
 }
+
+#[test]
+fn timescale_defaults_to_one_when_no_level_declares_it() {
+    // DESIGN section 11 item 7: livesim2's testpic_2s has `duration="2"` and no
+    // @timescale at any level.
+    let m = mpd(
+        r#"type="static" mediaPresentationDuration="PT6S""#,
+        r#"<Period><AdaptationSet mimeType="video/mp4">
+           <SegmentTemplate duration="2" startNumber="0" media="$RepresentationID$/$Number$.m4s"/>
+           <Representation id="V300" bandwidth="300000"/></AdaptationSet></Period>"#,
+    );
+    let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
+    assert_eq!(p.plan.timescale(), 1);
+    assert_eq!(p.plan.len(), Some(3));
+    assert_eq!(p.plan.get(1).unwrap().start_us, 2 * S);
+    assert_eq!(p.plan.get(1).unwrap().duration_us, 2 * S);
+    assert_eq!(p.plan.get(2).unwrap().reference, "V300/2.m4s");
+}
