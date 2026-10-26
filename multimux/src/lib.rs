@@ -2,6 +2,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub(crate) mod catchup;
+pub(crate) mod clock;
 pub mod config;
 pub mod dashif_ingest;
 pub mod dvr;

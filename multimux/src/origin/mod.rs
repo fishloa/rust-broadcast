@@ -2082,10 +2082,15 @@ fn spawn_ingest(
                 },
             )
         }
-        crate::config::InputSpec::DashPull { url, auth } => {
+        crate::config::InputSpec::DashPull {
+            url,
+            auth,
+            allow_cross_origin,
+        } => {
             let route_cfg = crate::source::dash_pull::DashPullRoute::new(name, url.clone())
                 .with_timeouts(timeouts)
-                .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
+                .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials))
+                .with_cross_origin_urls(*allow_cross_origin);
             spawn_supervised_pull(
                 route_cfg,
                 ctx,
@@ -4577,6 +4582,7 @@ mod tests {
             crate::config::InputSpec::DashPull {
                 url: format!("http://{refused_addr}/x"),
                 auth: None,
+                allow_cross_origin: false,
             },
             crate::config::InputSpec::SmoothPull {
                 url: format!("http://{refused_addr}/x"),
