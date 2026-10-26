@@ -18,31 +18,31 @@ use crate::{Confidence, Detail::Isobmff, Evidence, IsobmffLayout, Outcome};
 
 /// Header size of the fixed `size`(32) + `type`(32) Box fields (ISO/IEC
 /// 14496-12:2015 §4.2).
-const BOX_HEADER_MIN_SIZE: usize = 8;
+pub(crate) const BOX_HEADER_MIN_SIZE: usize = 8;
 /// Header size of the 64-bit `largesize` form: 8 fixed + 8 largesize
 /// (`size==1`) (§4.2).
-const BOX_HEADER_LARGESIZE_SIZE: usize = 16;
+pub(crate) const BOX_HEADER_LARGESIZE_SIZE: usize = 16;
 /// Byte offset of the major brand within a `ftyp`/`styp` box — 4 bytes into
 /// the box body, i.e. 8 bytes into the box (after the header) (§8.16.2).
 const BRAND_OFFSET: usize = 8;
 /// The special `size` value `0`: the box runs to the end of file (§4.2).
-const SIZE_TO_EOF: u32 = 0;
+pub(crate) const SIZE_TO_EOF: u32 = 0;
 /// The special `size` value `1`: a 64-bit `largesize` follows (§4.2).
-const SIZE_INDICATES_LARGESIZE: u32 = 1;
+pub(crate) const SIZE_INDICATES_LARGESIZE: u32 = 1;
 /// The `ftyp` box type (ISO/IEC 14496-12 §8.16.2).
 const TYPE_FTYP: [u8; 4] = *b"ftyp";
 /// The `styp` box type (segment type, §8.16.3).
 const TYPE_STYP: [u8; 4] = *b"styp";
 /// The `moov` box type (§8.2.1).
-const TYPE_MOOV: [u8; 4] = *b"moov";
+pub(crate) const TYPE_MOOV: [u8; 4] = *b"moov";
 /// The `moof` box type (§8.8.1).
-const TYPE_MOOF: [u8; 4] = *b"moof";
+pub(crate) const TYPE_MOOF: [u8; 4] = *b"moof";
 /// The `skip` box type (§8.2.2).
 const TYPE_SKIP: [u8; 4] = *b"skip";
 /// The `free` box type (§8.2.1).
 const TYPE_FREE: [u8; 4] = *b"free";
 /// The `mdat` box type (§8.2.1).
-const TYPE_MDAT: [u8; 4] = *b"mdat";
+pub(crate) const TYPE_MDAT: [u8; 4] = *b"mdat";
 /// The major brand field of an ISO file (its 4-byte brand), which is what the
 /// leading `ftyp`/`styp` box reports.
 const BRAND_LEN: usize = 4;

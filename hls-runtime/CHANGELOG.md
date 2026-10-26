@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The structural "is this body media" checks behind `Error::NotMedia` (TS lane lattice, `moof`+`mdat`, progressive `moov`) are now `container-probe::segment::{ts_structure, media_fragment, progressive_movie}` instead of private functions; behaviour is unchanged. New dependency on `container-probe` 0.2 (`no_std`+`alloc`).
 
 ### Added (round-8 audit)
 - `Error::NotMedia { id }` (additive; `Error` is `#[non_exhaustive]`): a Part/Segment body that is not media for its container is rejected by `on_resource` instead of being consumed silently. MPEG-TS needs the sync byte on at least half of its 188-byte lanes (ISO/IEC 13818-1 §2.4.3.2), ISO BMFF a complete `moof` then `mdat` (ISO/IEC 14496-12 §8.8.4) or a progressive movie (still `Error::NotFragmented`). Structurally valid media with zero samples is still accepted. A non-`0x47` body used to be buffered forever as "waiting for an init" a TS playlist never has, ending a VOD cleanly with samples missing.

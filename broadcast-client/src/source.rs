@@ -1,4 +1,5 @@
 //! Source adapters.
+pub(crate) mod fetch;
 pub(crate) mod hls;
 pub(crate) mod hls_join;
 pub(crate) mod hls_session;

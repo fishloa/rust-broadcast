@@ -27,6 +27,7 @@ mpeg-ts  = { path = "../mpeg-ts",  version = "0.6" }
 mpeg-ps  = { path = "../mpeg-ps",  version = "0.6" }
 st377-1  = { path = "../st377-1",  version = "0.5" }
 test-alloc = { path = "../test-alloc" }
+test-fixtures = { path = "../test-fixtures" }
 
 [features]
 default = ["std"]

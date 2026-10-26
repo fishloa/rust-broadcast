@@ -24,6 +24,9 @@ broadcast-hls     = { path = "../broadcast-hls", version = "0.4", default-featur
 # ring as `#EXT-X-DATERANGE` tag lines via `Timeline::with_anchor`/`to_daterange`
 # (issue #965). timed-metadata is `no_std`+`alloc`, so it does not force `std`.
 timed-metadata    = { path = "../timed-metadata", version = "0.7", default-features = false }
+# `client::engine` decides whether a fetched segment body is media with the
+# shared `segment` checks (the DASH client uses the same ones).
+container-probe   = { path = "../container-probe", version = "0.2", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `std` feature: `server::engine::HlsOrigin` renders
