@@ -164,9 +164,10 @@ fn a_hostile_150k_segment_playlist_completes_in_bounded_steps() {
 #[test]
 fn the_configured_cap_is_honoured_and_zero_means_one() {
     for (configured, effective) in [(2usize, 2usize), (1, 1), (0, 1), (7, 7)] {
-        let config = Config {
-            max_inflight_segments: configured,
-            ..hls_config()
+        let config = {
+            let mut new_config = hls_config();
+            new_config.max_inflight_segments = configured;
+            new_config
         };
         let mut session = vod_session(config);
         let n = 60;
@@ -230,9 +231,10 @@ fn a_failed_segment_holds_later_ones_within_the_cap_and_is_retried_in_order() {
 fn playlist_and_init_requests_bypass_a_full_segment_window() {
     let init_url = format!("{ORIGIN}/c/init.mp4");
     let playlist_url = format!("{ORIGIN}/c/index.m3u8");
-    let config = Config {
-        max_inflight_segments: 1,
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.max_inflight_segments = 1;
+        new_config
     };
     let mut h = Host::new(&playlist_url, config);
     h.ok(
@@ -268,9 +270,10 @@ fn live_playlist_reloads_are_not_starved_by_a_full_segment_window() {
     let playlist_url = "http://origin.test/live/index.m3u8";
     let names: Vec<String> = (0..10).map(|n| format!("s{n}.ts")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let config = Config {
-        max_inflight_segments: 1,
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.max_inflight_segments = 1;
+        new_config
     };
     let mut h = Host::new(playlist_url, config);
     h.ok(playlist_url, live_playlist_text(0, &refs).into_bytes());
@@ -298,10 +301,11 @@ fn live_playlist_reloads_are_not_starved_by_a_full_segment_window() {
 
 #[test]
 fn zero_backoff_entries_and_cap_are_floored_at_one_millisecond() {
-    let config = Config {
-        backoff_ms: vec![0],
-        backoff_cap_ms: 0,
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.backoff_ms = vec![0];
+        new_config.backoff_cap_ms = 0;
+        new_config
     };
     let mut h = Host::new(TS_PLAYLIST_URL, config);
     h.route(TS_PLAYLIST_URL, vec![Reply::Status(500)]);

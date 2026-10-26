@@ -120,17 +120,19 @@ fn config(hold: Hold, len: usize) -> Config {
 fn config_with_lead(hold: Hold, len: usize, start_lead_us: u64) -> Config {
     let mut cfg = match hold {
         Hold::Early => Config::default(),
-        Hold::Disabled => Config {
-            tracks_hold_max_wall_us: 0,
-            tracks_hold_max_media_us: 0,
-            ..Config::default()
-        },
-        Hold::Backstop => Config {
-            tracks_hold_quiet_input_bytes: len / 2,
-            tracks_hold_max_input_bytes: len,
-            tracks_hold_max_wall_us: BACKSTOP_WALL_US,
-            ..Config::default()
-        },
+        Hold::Disabled => {
+            let mut new_config = Config::default();
+            new_config.tracks_hold_max_wall_us = 0;
+            new_config.tracks_hold_max_media_us = 0;
+            new_config
+        }
+        Hold::Backstop => {
+            let mut new_config = Config::default();
+            new_config.tracks_hold_quiet_input_bytes = len / 2;
+            new_config.tracks_hold_max_input_bytes = len;
+            new_config.tracks_hold_max_wall_us = BACKSTOP_WALL_US;
+            new_config
+        }
     };
     cfg.buffer.policy.initial_us = start_lead_us;
     cfg

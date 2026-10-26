@@ -42,10 +42,11 @@ fn to27(pts: i64, timescale: u32) -> u64 {
 }
 
 fn cfg(playout: PlayoutConfig) -> Config {
-    Config {
-        kind: SourceKind::Hls,
-        playout,
-        ..Config::default()
+    {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::Hls;
+        new_config.playout = playout;
+        new_config
     }
 }
 

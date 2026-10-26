@@ -146,9 +146,10 @@ fn auto_detects_m3u8_suffix() {
         "a .ts URL must stay TS-over-HTTP"
     );
 
-    let forced = Config {
-        kind: SourceKind::TsHttp,
-        ..Config::default()
+    let forced = {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::TsHttp;
+        new_config
     };
     let mut ts2 = Session::open("http://origin.test/hls/index.m3u8", forced, 0).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ts2, 0));
@@ -319,13 +320,14 @@ fn master_emits_variants_event_then_fetches_chosen_variant() {
 
 #[test]
 fn variant_policy_in_config_applied() {
-    let by_bandwidth = Config {
-        kind: SourceKind::Hls,
-        variant_policy: hls_runtime::client::VariantPolicy {
+    let by_bandwidth = {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::Hls;
+        new_config.variant_policy = hls_runtime::client::VariantPolicy {
             max_bandwidth: Some(300_000),
             ..Default::default()
-        },
-        ..Config::default()
+        };
+        new_config
     };
     let mut s = Session::open(MASTER_URL, by_bandwidth, 0).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
@@ -341,13 +343,14 @@ fn variant_policy_in_config_applied() {
     let (_, url) = single_http_request(&drain_actions(&mut s, 0));
     assert_eq!(url, LOW_PLAYLIST_URL);
 
-    let by_height = Config {
-        kind: SourceKind::Hls,
-        variant_policy: hls_runtime::client::VariantPolicy {
+    let by_height = {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::Hls;
+        new_config.variant_policy = hls_runtime::client::VariantPolicy {
             max_height: Some(180),
             ..Default::default()
-        },
-        ..Config::default()
+        };
+        new_config
     };
     let mut s2 = Session::open(MASTER_URL, by_height, 0).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s2, 0));
@@ -702,10 +705,11 @@ fn non_2xx_playlist_calls_on_error_and_retries() {
 #[test]
 fn oversized_playlist_body_closes_and_fails() {
     let limit = 4096usize;
-    let config = Config {
-        kind: SourceKind::Hls,
-        max_manifest_bytes: limit,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::Hls;
+        new_config.max_manifest_bytes = limit;
+        new_config
     };
     let exact = padded_playlist(limit);
     let mut ok = Session::open(TS_PLAYLIST_URL, config.clone(), 0).expect("open");
@@ -741,10 +745,11 @@ fn oversized_playlist_body_closes_and_fails() {
 #[test]
 fn oversized_segment_body_closes_and_fails() {
     let limit = 1000usize;
-    let config = Config {
-        kind: SourceKind::Hls,
-        max_segment_bytes: limit,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::Hls;
+        new_config.max_segment_bytes = limit;
+        new_config
     };
     let mut s = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
@@ -1017,10 +1022,11 @@ fn late_callbacks_after_close_ignored() {
     assert!(s.next_event().is_none());
     assert!(s.poll(1).is_none());
 
-    let config = Config {
-        kind: SourceKind::Hls,
-        max_manifest_bytes: 100,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::Hls;
+        new_config.max_manifest_bytes = 100;
+        new_config
     };
     let mut o = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut o, 0));

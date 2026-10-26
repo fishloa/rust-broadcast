@@ -134,9 +134,10 @@ fn the_same_fragments_with_resolvable_offsets_report_nothing() {
 }
 
 fn tiny_cap_config(playlist: bool) -> Config {
-    let mut c = Config {
-        kind: SourceKind::Hls,
-        ..hls_config()
+    let mut c = {
+        let mut new_config = hls_config();
+        new_config.kind = SourceKind::Hls;
+        new_config
     };
     if playlist {
         c.max_manifest_bytes = TINY_BODY_CAP;

@@ -500,22 +500,21 @@ fn knob<T: Copy>(header: &[u8], field: usize, table: &[T; 4]) -> T {
 }
 
 fn config_from(header: &[u8]) -> Config {
-    let mut config = Config {
-        preferred_audio_language: Some("de".to_string()),
-        initial_cookies: vec![("seed".to_string(), "1".to_string())],
-        extra_headers: vec![("X-Fuzz".to_string(), "1".to_string())],
-        max_key_failures: knob(header, 0, &KEY_FAILURES),
-        max_redirects: knob(header, 1, &REDIRECTS),
-        max_inflight_segments: knob(header, 2, &INFLIGHT),
-        max_queued_events: knob(header, 3, &QUEUE_CAPS),
-        max_manifest_bytes: knob(header, 4, &BYTE_LIMITS),
-        max_segment_bytes: knob(header, 5, &BYTE_LIMITS),
-        request_timeout_us: knob(header, 6, &TIMEOUTS_US),
-        segment_timeout_us: knob(header, 7, &TIMEOUTS_US),
-        tracks_hold_max_wall_us: knob(header, 8, &HOLD_WALL_US),
-        tracks_hold_max_media_us: knob(header, 9, &HOLD_MEDIA_US),
-        ..Config::default()
-    };
+    let mut config = Config::default();
+    config.preferred_audio_language = Some("de".to_string());
+    config.initial_cookies = vec![("seed".to_string(), "1".to_string())];
+    config.extra_headers = vec![("X-Fuzz".to_string(), "1".to_string())];
+    config.max_key_failures = knob(header, 0, &KEY_FAILURES);
+    config.max_redirects = knob(header, 1, &REDIRECTS);
+    config.max_inflight_segments = knob(header, 2, &INFLIGHT);
+    config.max_queued_events = knob(header, 3, &QUEUE_CAPS);
+    config.max_manifest_bytes = knob(header, 4, &BYTE_LIMITS);
+    config.max_segment_bytes = knob(header, 5, &BYTE_LIMITS);
+    config.request_timeout_us = knob(header, 6, &TIMEOUTS_US);
+    config.segment_timeout_us = knob(header, 7, &TIMEOUTS_US);
+    config.tracks_hold_max_wall_us = knob(header, 8, &HOLD_WALL_US);
+    config.tracks_hold_max_media_us = knob(header, 9, &HOLD_MEDIA_US);
+;
     let quiet = knob(header, 10, &HOLD_QUIET_BYTES);
     config.tracks_hold_quiet_input_bytes = quiet;
     config.tracks_hold_max_input_bytes = knob(header, 11, &HOLD_MAX_BYTES).max(quiet);

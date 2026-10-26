@@ -592,6 +592,7 @@ pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 
 /// Session configuration.
 #[derive(Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Config {
     /// Source kind.
     pub kind: SourceKind,

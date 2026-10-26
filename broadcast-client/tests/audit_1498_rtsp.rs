@@ -116,9 +116,10 @@ fn a_describe_redirect_is_followed_to_the_new_authority() {
 
 #[test]
 fn redirects_are_bounded_by_max_redirects() {
-    let config = Config {
-        max_redirects: 2,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.max_redirects = 2;
+        new_config
     };
     let mut host = Host::new(BASE_URL, config, redirecting(302, REDIRECT_TARGET));
     host.connect();
