@@ -198,12 +198,24 @@ fn a_representation_switch_mid_stream_continues_at_the_next_segment_without_gap(
     idxs.sort_unstable();
     idxs.dedup();
     for w in idxs.windows(2) {
-        assert_eq!(w[1], w[0] + 1, "one video sequence across both Representations");
+        assert_eq!(
+            w[1],
+            w[0] + 1,
+            "one video sequence across both Representations"
+        );
     }
     let reps: std::collections::BTreeSet<&str> = video.iter().map(|r| r.rep.as_str()).collect();
     assert_eq!(reps.len(), 2, "both Representations were used");
-    assert_eq!(sim.requests(common::world::Kind::Init).len(), 3, "the new init is fetched");
-    assert_eq!(sim.count(|o| matches!(o, Output::Discontinuity)), 0, "aligned set");
+    assert_eq!(
+        sim.requests(common::world::Kind::Init).len(),
+        3,
+        "the new init is fetched"
+    );
+    assert_eq!(
+        sim.count(|o| matches!(o, Output::Discontinuity)),
+        0,
+        "aligned set"
+    );
 }
 
 #[test]

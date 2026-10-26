@@ -312,3 +312,88 @@ fn use_availability_time_offset_requests_early_by_the_offset() {
     assert!(!early.is_empty());
     assert!(early_requests(&reqs, geo, 1_500_000 + TOLERANCE_US).is_empty());
 }
+
+#[test]
+fn a_reset_descriptor_in_an_unchanged_mpd_resets_nothing() {
+    let mut synth = with_utc(Addressing::Number);
+    synth.extra_mpd_children =
+        "<SupplementalProperty schemeIdUri=\"urn:mpeg:dash:reset:2016\"/>".into();
+    let fixed = {
+        let mut probe = Synth::new(AST_US, Addressing::Number);
+        probe.utc_elements = synth.utc_elements.clone();
+        probe.extra_mpd_children = synth.extra_mpd_children.clone();
+        probe.mpd_at(AST_US + START)
+    };
+    synth.mpd_override = Some(Box::new(move |_| Some(fixed.clone())));
+    let (mut sim, geo) = sim_with(synth, START, DashConfig::default());
+    run_checked(&mut sim, geo, 30);
+    assert!(sim.requests(Kind::Mpd).len() >= 10);
+    assert_eq!(
+        sim.count(|o| matches!(o, Output::Discontinuity)),
+        0,
+        "the same MPD fetched again is not a new reset"
+    );
+}
+
+#[test]
+fn a_trailing_negative_repeat_runs_to_the_fetch_time_plus_the_update_period() {
+    let mut synth = with_utc(Addressing::TimelineNumber);
+    synth.negative_r = true;
+    synth.mup_us = Some(10 * MICROS);
+    let (mut sim, geo) = sim_with(synth, START, DashConfig::default());
+    run_checked(&mut sim, geo, 40);
+    assert!(
+        sim.requests(Kind::Mpd).len() <= 6,
+        "the plan runs ahead to FetchTime + MUP, so the 10 s refresh interval is enough"
+    );
+    let per_track = sim.samples_per_track();
+    assert!(per_track.values().all(|n| *n > 150), "{per_track:?}");
+}
+
+#[test]
+fn a_304_nobody_asked_for_is_an_error() {
+    let mut c = dash_runtime::client::DashClient::new(
+        common::synth::MPD_URL,
+        DashConfig::default(),
+        dash_runtime::client::PullLimits::default(),
+    );
+    let meta = dash_runtime::client::ResponseMeta::at(0);
+    assert!(c.on_mpd_unchanged(0, &meta).is_err());
+}
+
+#[test]
+fn a_utc_step_found_by_a_resync_forces_an_mpd_refresh() {
+    let mut dash = DashConfig::default();
+    dash.utc_resync_us = 20 * MICROS as u64;
+    let mut synth = with_utc(Addressing::Number);
+    synth.mup_us = Some(30 * MICROS);
+    let (mut sim, _geo, handle) = sim_shared(synth, START, dash);
+    sim.run_for(10 * MICROS as u64);
+    handle.borrow_mut().utc.skew_us = 30 * MICROS;
+    sim.run_for(30 * MICROS as u64);
+    let utc = sim.requests(Kind::Utc);
+    let second = utc[1].send_mono_us;
+    let mpd_after = sim
+        .requests(Kind::Mpd)
+        .iter()
+        .any(|l| l.send_mono_us > second && l.send_mono_us <= second + 1_500_000);
+    assert!(mpd_after, "refresh right after the step");
+}
+
+#[test]
+fn a_media_presentation_duration_ends_a_dynamic_presentation() {
+    let mut synth = with_utc(Addressing::Number);
+    let text = {
+        let mut probe = Synth::new(AST_US, Addressing::Number);
+        probe.utc_elements = synth.utc_elements.clone();
+        probe.mpd_at(AST_US + START).replacen(
+            "type=\"dynamic\"",
+            "type=\"dynamic\" mediaPresentationDuration=\"PT50S\"",
+            1,
+        )
+    };
+    synth.mpd_override = Some(Box::new(move |_| Some(text.clone())));
+    let (mut sim, _geo) = sim_with(synth, START, DashConfig::default());
+    sim.run_for(60 * MICROS as u64);
+    assert!(sim.client.presentation_ended(), "{:?}", sim.fatal());
+}

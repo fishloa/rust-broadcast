@@ -270,14 +270,18 @@ fn an_ntp_element_is_skipped_with_a_notice_and_the_host_clock_plays() {
         "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:ntp:2014\" value=\"time.example.org\"/>".into(),
     );
     synth.utc_elements.push(
-        "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:sntp:2014\" value=\"time.example.org\"/>".into(),
+        "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:sntp:2014\" value=\"time.example.org\"/>"
+            .into(),
     );
     let (mut sim, geo) = sim_with(synth, START, quick());
     sim.give_host_clock();
     run_checked(&mut sim, geo, 20);
     assert_eq!(first_source(&sim), Some(ClockSource::Host));
     assert_eq!(
-        sim.count(|o| matches!(o, Output::Notice(dash_runtime::client::Notice::UtcSchemeUnsupported))),
+        sim.count(|o| matches!(
+            o,
+            Output::Notice(dash_runtime::client::Notice::UtcSchemeUnsupported)
+        )),
         1
     );
     assert!(sim.requests(Kind::Utc).is_empty());
@@ -293,7 +297,10 @@ fn a_utc_server_on_another_origin_is_skipped_when_cross_origin_urls_are_off() {
     assert!(sim.requests(Kind::Utc).is_empty());
     assert_eq!(first_source(&sim), Some(ClockSource::Host));
     assert_eq!(
-        sim.count(|o| matches!(o, Output::Notice(dash_runtime::client::Notice::UtcCrossOrigin))),
+        sim.count(|o| matches!(
+            o,
+            Output::Notice(dash_runtime::client::Notice::UtcCrossOrigin)
+        )),
         1
     );
 }
@@ -309,10 +316,16 @@ fn inits_are_fetched_while_the_utc_sample_is_taken_and_segments_wait_for_it() {
     let utc = sim.requests(Kind::Utc)[0].send_mono_us;
     let arrival = utc + 300_000;
     for init in sim.requests(Kind::Init) {
-        assert!(init.send_mono_us <= utc + 1, "inits are requested with the UTC sample");
+        assert!(
+            init.send_mono_us <= utc + 1,
+            "inits are requested with the UTC sample"
+        );
     }
     let first_segment = sim.requests(Kind::Segment)[0].send_mono_us;
-    assert!(first_segment >= arrival, "no segment before the clock is known");
+    assert!(
+        first_segment >= arrival,
+        "no segment before the clock is known"
+    );
     assert!(first_segment - arrival < 1_000, "and one as soon as it is");
 }
 
@@ -331,4 +344,16 @@ fn prefer_host_keeps_the_host_clock_through_a_forced_resync() {
     assert!(sim.requests(Kind::Utc).is_empty());
     assert_eq!(first_source(&sim), Some(ClockSource::Host));
     assert!(clock_sources(&sim).iter().all(|s| s.0 == ClockSource::Host));
+}
+
+#[test]
+fn an_early_answer_the_clock_disagrees_with_asks_for_a_resync() {
+    let mut dash = quick();
+    dash.utc_resync_us = u64::MAX;
+    let mut synth = with_utc(Addressing::Number);
+    synth.early_status = 425;
+    synth.utc.skew_us = 3 * MICROS;
+    let (mut sim, _geo) = sim_with(synth, START, dash);
+    sim.run_for(60 * MICROS as u64);
+    assert!(sim.requests(Kind::Utc).len() >= 2);
 }

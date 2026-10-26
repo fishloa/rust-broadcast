@@ -80,8 +80,12 @@ fn http_head_is_tried_after_the_other_http_schemes() {
         let seen = utc_urls(&actions);
         assert_eq!(seen.len(), 1, "one candidate at a time");
         order.push((seen[0].1.clone(), seen[0].2));
-        c.on_utc_failure(0, utc_id(&actions), dash_runtime::client::Failure::Status(500))
-            .unwrap();
+        c.on_utc_failure(
+            0,
+            utc_id(&actions),
+            dash_runtime::client::Failure::Status(500),
+        )
+        .unwrap();
         actions = drain(&mut c);
     }
     assert_eq!(
@@ -96,7 +100,10 @@ fn http_head_is_tried_after_the_other_http_schemes() {
 
 #[test]
 fn a_value_with_several_urls_offers_each_in_order() {
-    let els = [element("http-xsdate", "http://utc.test/one http://utc.test/two")];
+    let els = [element(
+        "http-xsdate",
+        "http://utc.test/one http://utc.test/two",
+    )];
     let (mut c, first) = client_with(&els, None);
     let a = utc_urls(&first);
     assert_eq!(a[0].1, "http://utc.test/one");
@@ -107,7 +114,8 @@ fn a_value_with_several_urls_offers_each_in_order() {
             _ => None,
         })
         .unwrap();
-    c.on_utc_failure(0, id, dash_runtime::client::Failure::Transport).unwrap();
+    c.on_utc_failure(0, id, dash_runtime::client::Failure::Transport)
+        .unwrap();
     let mut next = Vec::new();
     while let Some(a) = c.poll(0) {
         next.push(a);
@@ -130,14 +138,18 @@ fn a_valid_direct_value_anchors_without_any_request() {
     let (c, first) = client_with(&[], Some(0));
     assert!(utc_urls(&first).is_empty());
     let anchor = c.clock_anchor().unwrap();
-    assert_eq!(anchor.source, dash_runtime::timing::clock::ClockSource::UtcTiming);
+    assert_eq!(
+        anchor.source,
+        dash_runtime::timing::clock::ClockSource::UtcTiming
+    );
     assert_eq!(anchor.utc_us, AST_US + 41 * MICROS);
 }
 
 #[test]
 fn an_unreadable_direct_value_falls_through_to_the_next_candidate() {
     let els = [
-        "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:direct:2014\" value=\"not-a-time\"/>".to_owned(),
+        "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:direct:2014\" value=\"not-a-time\"/>"
+            .to_owned(),
         element("http-xsdate", "http://utc.test/after"),
     ];
     let (_, first) = client_with(&els, None);
@@ -159,5 +171,8 @@ fn an_answer_for_an_unknown_id_is_an_error_not_a_panic() {
     let r = UtcResponse::new(0, 0, &body);
     c.on_utc_response(0, id, &r).unwrap();
     assert!(c.on_utc_response(0, id, &r).is_err(), "answered twice");
-    assert!(c.on_utc_failure(0, id, dash_runtime::client::Failure::Timeout).is_err());
+    assert!(
+        c.on_utc_failure(0, id, dash_runtime::client::Failure::Timeout)
+            .is_err()
+    );
 }

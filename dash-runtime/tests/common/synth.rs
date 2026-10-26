@@ -171,6 +171,7 @@ pub struct Synth {
     pub period_starts_us: Vec<i64>,
     pub announce_ahead_us: i64,
     pub per_segment_s: bool,
+    pub negative_r: bool,
     pub extra_mpd_children: String,
     pub mpd_id: Option<String>,
     pub mpd_urls: Vec<String>,
@@ -208,6 +209,7 @@ impl Synth {
             period_starts_us: Vec::new(),
             announce_ahead_us: 0,
             per_segment_s: false,
+            negative_r: false,
             extra_mpd_children: String::new(),
             mpd_id: None,
             mpd_urls: Vec::new(),
@@ -296,6 +298,8 @@ impl Synth {
                         e.push_str(&format!("<S d=\"{rep_ticks}\"/>"));
                     }
                     e
+                } else if self.negative_r {
+                    format!("<S t=\"{t}\" d=\"{rep_ticks}\" r=\"-1\"/>")
                 } else {
                     format!("<S t=\"{t}\" d=\"{rep_ticks}\" r=\"{}\"/>", count - 1)
                 };
