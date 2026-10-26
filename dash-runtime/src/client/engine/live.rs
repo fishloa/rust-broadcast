@@ -410,6 +410,9 @@ impl DashClient {
             l.ready && l.sampler.is_none() && l.next_resync_us.is_some_and(|t| now_us >= t)
         });
         if resync_due {
+            if let Some(l) = self.live.as_mut() {
+                l.next_resync_us = None;
+            }
             self.start_sampler(now_us, false);
         }
         let mut due: Vec<ResourceId> = Vec::new();
