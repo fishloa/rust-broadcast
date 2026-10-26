@@ -41,7 +41,17 @@ fn no_hand_rolled_protocol_code_in_src() {
 #[test]
 fn the_scanner_itself_bites() {
     let src = "fn real() { let x = \"HTTP/1.1 200\"; }\n#[cfg(test)]\nmod tests {\n    fn t() { let y = \"HTTP/1.1 200\"; }\n}\n";
-    assert_eq!(common::scan::non_test_source(src).matches("HTTP/1.").count(), 1);
+    assert_eq!(
+        common::scan::non_test_source(src)
+            .matches("HTTP/1.")
+            .count(),
+        1
+    );
     let out_of_line = "#[cfg(test)]\nmod tests;\nfn real() { let x = \"HTTP/1.1 200\"; }\n";
-    assert_eq!(common::scan::non_test_source(out_of_line).matches("HTTP/1.").count(), 1);
+    assert_eq!(
+        common::scan::non_test_source(out_of_line)
+            .matches("HTTP/1.")
+            .count(),
+        1
+    );
 }

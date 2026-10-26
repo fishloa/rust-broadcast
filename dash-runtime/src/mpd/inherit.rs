@@ -28,7 +28,9 @@ pub const DEFAULT_PRESENTATION_TIME_OFFSET: u64 = 0;
 #[non_exhaustive]
 pub enum InheritError {
     /// A SegmentTemplate and a SegmentList along one chain (5.3.9.1).
-    #[error("SegmentTemplate and SegmentList both appear along one Period/AdaptationSet/Representation chain")]
+    #[error(
+        "SegmentTemplate and SegmentList both appear along one Period/AdaptationSet/Representation chain"
+    )]
     TemplateAndList,
     /// `@duration` and `SegmentTimeline` on one element (5.3.9.2.1).
     #[error("both @duration and SegmentTimeline are present on one level")]
@@ -192,10 +194,7 @@ pub fn resolve_segment_info(
                 media: t.media.clone().or(merged.media),
                 index: t.index.clone().or(merged.index),
                 initialization: t.initialization.clone().or(merged.initialization),
-                bitstream_switching: t
-                    .bitstream_switching
-                    .clone()
-                    .or(merged.bitstream_switching),
+                bitstream_switching: t.bitstream_switching.clone().or(merged.bitstream_switching),
             };
         }
         return Ok(SegmentInfo::Template(TemplateInfo {

@@ -65,9 +65,7 @@ pub fn base_candidates(levels: &[&[BaseUrl]]) -> Vec<BaseCandidate> {
         for b in ordered {
             let parent = candidates
                 .iter()
-                .find(|c| {
-                    c.service_location.is_some() && c.service_location == b.service_location
-                })
+                .find(|c| c.service_location.is_some() && c.service_location == b.service_location)
                 .unwrap_or(&candidates[0]);
             let mut chain = parent.chain.clone();
             chain.push(b.url.clone());
@@ -175,7 +173,10 @@ pub fn segment_url_query(
         &mut parts,
     )?;
     level_query(
-        &[&period.essential_properties, &period.supplemental_properties],
+        &[
+            &period.essential_properties,
+            &period.supplemental_properties,
+        ],
         mpd_query,
         &mut parts,
     )?;
@@ -199,7 +200,11 @@ pub fn append_query(url: &str, query: &str) -> String {
         Some((b, f)) => (b, Some(f)),
         None => (url, None),
     };
-    let sep = if base.contains('?') { QUERY_SEPARATOR } else { '?' };
+    let sep = if base.contains('?') {
+        QUERY_SEPARATOR
+    } else {
+        '?'
+    };
     let mut out = format!("{base}{sep}{query}");
     if let Some(f) = fragment {
         out.push('#');

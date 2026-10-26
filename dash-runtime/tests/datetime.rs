@@ -21,7 +21,10 @@ fn accepted_table() {
         ("2024-02-29T12:00:00Z", 1_709_208_000 * SECOND),
         ("0001-01-01T00:00:00Z", -62_135_596_800 * SECOND),
         ("9999-12-30T22:00:00Z", 253_402_207_200 * SECOND),
-        ("2026-10-26T08:39:04.123456789012Z", 1_793_003_944 * SECOND + 123_456),
+        (
+            "2026-10-26T08:39:04.123456789012Z",
+            1_793_003_944 * SECOND + 123_456,
+        ),
         ("  2026-02-01T00:00:00Z\n", 1_769_904_000 * SECOND),
     ];
     for (text, us) in cases {
@@ -54,7 +57,10 @@ fn rejected_table() {
         "2026-02-01T00:00:00Z extra",
         "2026-02-01T00:00:00 Z",
     ] {
-        assert!(parse_xs_datetime(text).is_err(), "{text:?} must be rejected");
+        assert!(
+            parse_xs_datetime(text).is_err(),
+            "{text:?} must be rejected"
+        );
     }
 }
 

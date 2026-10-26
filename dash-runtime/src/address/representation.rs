@@ -5,8 +5,8 @@
 use thiserror::Error;
 use transmux::SegmentIndexBox;
 
-use super::plan::{DynamicContext, PlanInput, SegmentPlan};
 use super::AddressError;
+use super::plan::{DynamicContext, PlanInput, SegmentPlan};
 use crate::mpd::inherit::{InheritError, SegmentInfo, resolve_segment_info};
 use crate::mpd::model::{Mpd, PresentationType};
 use crate::mpd::urls::{BaseCandidate, representation_candidates};
@@ -127,16 +127,14 @@ pub fn plan_representation(
             .availability_start_time_us
             .ok_or(PlanError::MissingAvailabilityStartTime)?;
         let tsb = info_tsb(&info)
-            .or_else(|| {
-                rep.base_urls
-                    .iter()
-                    .find_map(|b| b.time_shift_buffer_depth)
-            })
+            .or_else(|| rep.base_urls.iter().find_map(|b| b.time_shift_buffer_depth))
             .or(mpd.time_shift_buffer_depth)
             .map(duration_us);
         let mut ctx = DynamicContext::new(i128::from(ast), tsb);
         if opts.use_availability_time_offset {
-            let base_ato = candidates.first().map_or(0.0, |c| c.availability_time_offset_s);
+            let base_ato = candidates
+                .first()
+                .map_or(0.0, |c| c.availability_time_offset_s);
             ctx.availability_time_offset_us =
                 ato_seconds_to_us(base_ato + info_ato(&info).unwrap_or(0.0));
         }

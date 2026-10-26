@@ -254,7 +254,11 @@ pub fn classify(set: &AdaptationSet) -> SetClass {
 
 fn container_drop(set: &AdaptationSet) -> Option<DropReason> {
     let mimes = std::iter::once(set.common.mime_type.as_deref())
-        .chain(set.representations.iter().map(|r| r.common.mime_type.as_deref()))
+        .chain(
+            set.representations
+                .iter()
+                .map(|r| r.common.mime_type.as_deref()),
+        )
         .flatten();
     for mime in mimes {
         if mime.ends_with(MIME_MP2T_SUFFIX) {
@@ -359,13 +363,17 @@ pub fn select(mpd: &Mpd, period_idx: usize, policy: &Policy) -> Selection {
         } else if unknown_essential(&set.essential_properties) {
             Some(DropReason::UnknownEssentialProperty)
         } else if is_protected(set) {
-            let alternative = period.adaptation_sets.iter().enumerate().any(|(oi, other)| {
-                oi != si
-                    && set.group.is_some()
-                    && other.group == set.group
-                    && classes[oi] == class
-                    && !is_protected(other)
-            });
+            let alternative = period
+                .adaptation_sets
+                .iter()
+                .enumerate()
+                .any(|(oi, other)| {
+                    oi != si
+                        && set.group.is_some()
+                        && other.group == set.group
+                        && classes[oi] == class
+                        && !is_protected(other)
+                });
             Some(if alternative {
                 DropReason::ProtectedAlternativeExists
             } else {

@@ -85,25 +85,46 @@ fn compare(path: &Path) -> Option<Compared> {
         path.display()
     );
     assert_eq!(ours.profiles.join(","), theirs.profiles.replace(", ", ","));
-    assert_eq!(ours.media_presentation_duration, theirs.media_presentation_duration);
+    assert_eq!(
+        ours.media_presentation_duration,
+        theirs.media_presentation_duration
+    );
     assert_eq!(ours.minimum_update_period, theirs.minimum_update_period);
     assert_eq!(ours.time_shift_buffer_depth, theirs.time_shift_buffer_depth);
-    match (&theirs.availability_start_time, ours.availability_start_time_us) {
+    match (
+        &theirs.availability_start_time,
+        ours.availability_start_time_us,
+    ) {
         (Some(raw), Some(us)) => {
             assert_eq!(parse_xs_datetime(raw).unwrap().unix_us, us);
         }
         (None, None) => {}
         other => panic!("{}: availabilityStartTime {other:?}", path.display()),
     }
-    assert_eq!(ours.periods.len(), theirs.periods.len(), "{}", path.display());
+    assert_eq!(
+        ours.periods.len(),
+        theirs.periods.len(),
+        "{}",
+        path.display()
+    );
     for (pi, (op, tp)) in ours.periods.iter().zip(&theirs.periods).enumerate() {
         assert_eq!(op.id, tp.id);
         assert_eq!(op.start, tp.start);
         assert_eq!(op.duration, tp.duration);
         assert_eq!(op.adaptation_sets.len(), tp.adaptation_sets.len());
-        for (si, (os, ts)) in op.adaptation_sets.iter().zip(&tp.adaptation_sets).enumerate() {
+        for (si, (os, ts)) in op
+            .adaptation_sets
+            .iter()
+            .zip(&tp.adaptation_sets)
+            .enumerate()
+        {
             assert_eq!(os.representations.len(), ts.representations.len());
-            for (ri, (or, tr)) in os.representations.iter().zip(&ts.representations).enumerate() {
+            for (ri, (or, tr)) in os
+                .representations
+                .iter()
+                .zip(&ts.representations)
+                .enumerate()
+            {
                 cmp.reps += 1;
                 assert_eq!(or.id, tr.id);
                 assert_eq!(or.bandwidth, tr.bandwidth);
@@ -113,12 +134,21 @@ fn compare(path: &Path) -> Option<Compared> {
                 let Ok(planned) = plan_representation(&ours, at, &PlanOptions::default()) else {
                     continue;
                 };
-                let Some(tt) = &tr.segment_template else { continue };
-                let SegmentInfo::Template(info) = &planned.info else { continue };
+                let Some(tt) = &tr.segment_template else {
+                    continue;
+                };
+                let SegmentInfo::Template(info) = &planned.info else {
+                    continue;
+                };
                 assert_eq!(info.multi.timescale, tt.timescale);
                 assert_eq!(info.multi.start_number, tt.start_number);
-                assert_eq!(info.multi.presentation_time_offset, tt.presentation_time_offset);
-                let Some(count) = planned.plan.len() else { continue };
+                assert_eq!(
+                    info.multi.presentation_time_offset,
+                    tt.presentation_time_offset
+                );
+                let Some(count) = planned.plan.len() else {
+                    continue;
+                };
                 let no_n = info
                     .multi
                     .timeline
@@ -155,11 +185,20 @@ fn compare(path: &Path) -> Option<Compared> {
                     .iter()
                     .map(|s| (s.number, s.time_ticks))
                     .collect();
-                assert_eq!(ours_segments, theirs_segments, "{} rep {}", path.display(), or.id);
+                assert_eq!(
+                    ours_segments,
+                    theirs_segments,
+                    "{} rep {}",
+                    path.display(),
+                    or.id
+                );
                 cmp.segments += ours_segments.len();
-                for seg in [planned.plan.get(0), planned.plan.get(count.saturating_sub(1))]
-                    .into_iter()
-                    .flatten()
+                for seg in [
+                    planned.plan.get(0),
+                    planned.plan.get(count.saturating_sub(1)),
+                ]
+                .into_iter()
+                .flatten()
                 {
                     let media = tt.media.as_deref().unwrap();
                     let reference = transmux::SegmentTemplate::resolve(
@@ -193,8 +232,14 @@ fn differential_a_new_parser_agrees_with_transmux_on_shared_mpds() {
             urls += c.urls;
         }
     }
-    eprintln!("differential a: {parsed_by_both}/{} MPDs, {reps} reps, {segments} segments, {urls} urls", files.len());
-    assert!(parsed_by_both >= 20, "only {parsed_by_both} MPDs comparable");
+    eprintln!(
+        "differential a: {parsed_by_both}/{} MPDs, {reps} reps, {segments} segments, {urls} urls",
+        files.len()
+    );
+    assert!(
+        parsed_by_both >= 20,
+        "only {parsed_by_both} MPDs comparable"
+    );
     assert!(reps >= 40);
     assert!(segments >= 100);
     assert!(urls >= 40);
@@ -210,9 +255,7 @@ fn differential_b_generator_output_is_consumed() {
         let ours = Mpd::parse(&text).unwrap_or_else(|e| panic!("{}: {e}", g.display()));
         assert!(!ours.periods.is_empty(), "{}", g.display());
         assert!(
-            ours.periods
-                .iter()
-                .all(|p| !p.adaptation_sets.is_empty()),
+            ours.periods.iter().all(|p| !p.adaptation_sets.is_empty()),
             "{}",
             g.display()
         );
@@ -220,7 +263,10 @@ fn differential_b_generator_output_is_consumed() {
             compared += 1;
         }
     }
-    assert!(compared >= 10, "structural equality checked on {compared} goldens");
+    assert!(
+        compared >= 10,
+        "structural equality checked on {compared} goldens"
+    );
 }
 
 fn random_timeline(rng: &mut Rng) -> (SegmentTimeline, transmux::SegmentTimeline) {
@@ -249,7 +295,11 @@ fn random_timeline(rng: &mut Rng) -> (SegmentTimeline, transmux::SegmentTimeline
             d,
             r: repeat,
         });
-        let count = if repeat >= 0 { repeat as u64 + 1 } else { rng.range(1, 6) };
+        let count = if repeat >= 0 {
+            repeat as u64 + 1
+        } else {
+            rng.range(1, 6)
+        };
         clock = if explicit_t { t } else { clock } + d * count;
         if repeat < 0 {
             clock += rng.below(d);
@@ -271,8 +321,12 @@ fn differential_c_lazy_timeline_equals_transmux_resolve() {
         let ix = TimelineIndex::build(&ours, start_number, end);
         match (tm, ix) {
             (Ok(t), Ok(i)) => {
-                let t: Vec<(u64, u64, u64)> = t.into_iter().map(|s| (s.number, s.time, s.duration)).collect();
-                let i: Vec<(u64, u64, u64)> = i.iter().map(|s| (s.number, s.time, s.duration)).collect();
+                let t: Vec<(u64, u64, u64)> = t
+                    .into_iter()
+                    .map(|s| (s.number, s.time, s.duration))
+                    .collect();
+                let i: Vec<(u64, u64, u64)> =
+                    i.iter().map(|s| (s.number, s.time, s.duration)).collect();
                 assert_eq!(i, t);
                 compared += 1;
             }

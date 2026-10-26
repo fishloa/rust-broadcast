@@ -296,7 +296,10 @@ fn segment_layer(e: &Elem, ctx: &mut Ctx<'_>) -> Result<SegmentLayer, MpdError> 
     if count > 1 {
         return Err(invalid(
             "Segment information",
-            format!("more than one of SegmentBase/SegmentList/SegmentTemplate in {}", e.name),
+            format!(
+                "more than one of SegmentBase/SegmentList/SegmentTemplate in {}",
+                e.name
+            ),
         ));
     }
     if let Some(b) = e.child("SegmentBase") {
@@ -307,7 +310,11 @@ fn segment_layer(e: &Elem, ctx: &mut Ctx<'_>) -> Result<SegmentLayer, MpdError> 
     if let Some(l) = e.child("SegmentList") {
         let mut urls = Vec::new();
         for u in l.children_named("SegmentURL") {
-            check_count(urls.len() + 1, ctx.limits.max_segment_urls, Limit::SegmentUrls)?;
+            check_count(
+                urls.len() + 1,
+                ctx.limits.max_segment_urls,
+                Limit::SegmentUrls,
+            )?;
             urls.push(SegmentUrl {
                 media: opt_str(u, "media"),
                 media_range: opt_range(u, "mediaRange")?,

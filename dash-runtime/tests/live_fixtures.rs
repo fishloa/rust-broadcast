@@ -31,7 +31,10 @@ fn ffmpeg_live_number_window_matches_the_capture() {
     for number in 5..=7 {
         let seg = video.plan.get(number - 1).unwrap();
         assert_eq!(seg.number, number);
-        assert!(seg.index >= oldest && seg.index <= newest, "segment {number} is in the window");
+        assert!(
+            seg.index >= oldest && seg.index <= newest,
+            "segment {number} is in the window"
+        );
         let file = l.file_of(&video, &seg.reference);
         assert!(file.is_file(), "{}", file.display());
     }
@@ -47,7 +50,10 @@ fn ffmpeg_live_number_window_matches_the_capture() {
     assert_eq!(video.plan.get(join).unwrap().number, 7);
     // A much older clock clamps to the oldest segment still in the window.
     let w = window(&video.plan, publish).unwrap();
-    assert_eq!(join_index(&video.plan, publish, 100 * SECOND_US).unwrap(), w.oldest);
+    assert_eq!(
+        join_index(&video.plan, publish, 100 * SECOND_US).unwrap(),
+        w.oldest
+    );
     // Before the first segment completes there is nothing to join.
     let ast = i128::from(l.mpd.availability_start_time_us.unwrap());
     assert!(newest_complete(&video.plan, ast + SECOND_US).is_none());
@@ -85,7 +91,11 @@ fn ffmpeg_live_timeline_window_matches_the_capture() {
 #[test]
 fn livesim2_time_timeline_window_and_numbers() {
     let l = load("dash/livesim2/segtimeline_time_a.mpd");
-    assert_eq!(l.mpd.availability_start_time_us, Some(0), "epoch zero is a value");
+    assert_eq!(
+        l.mpd.availability_start_time_us,
+        Some(0),
+        "epoch zero is a value"
+    );
     let publish = i128::from(l.mpd.publish_time_us.unwrap());
     let audio = l.plan(RepRef::at(0, 0, 0));
     let video = l.plan(RepRef::at(0, 1, 0));
@@ -95,21 +105,31 @@ fn livesim2_time_timeline_window_and_numbers() {
     assert_eq!(first.time_ticks, 161_274_100_320_000);
     let last = video.plan.get(30).unwrap();
     assert_eq!(last.reference, "V300/161274105720000.m4s");
-    assert_eq!(last.available_from_us.unwrap(), publish, "newest segment completes at publishTime");
+    assert_eq!(
+        last.available_from_us.unwrap(),
+        publish,
+        "newest segment completes at publishTime"
+    );
     assert_eq!(newest_complete(&video.plan, publish), Some(30));
     assert_eq!(oldest_in_window(&video.plan, publish), Some(0));
     assert_eq!(video.plan.init().unwrap().reference, "V300/init.mp4");
     let total: u64 = audio.plan.iter().map(|s| s.duration_ticks).sum();
     assert_eq!(audio.plan.get(0).unwrap().time_ticks, 86_012_853_504_000);
     let audio_end_us = (i128::from(86_012_853_504_000u64) + i128::from(total)) * SECOND_US / 48_000;
-    assert!((audio_end_us - publish).abs() < 2 * SECOND_US, "audio list ends near publishTime");
+    assert!(
+        (audio_end_us - publish).abs() < 2 * SECOND_US,
+        "audio list ends near publishTime"
+    );
 }
 
 #[test]
 fn livesim2_consecutive_refreshes_keep_numbers_stable() {
     let a = load("dash/livesim2/segtimelinenr_a.mpd");
     let b = load("dash/livesim2/segtimelinenr_b.mpd");
-    assert!(b.mpd.publish_time_us > a.mpd.publish_time_us, "b is the later refresh");
+    assert!(
+        b.mpd.publish_time_us > a.mpd.publish_time_us,
+        "b is the later refresh"
+    );
     for set in 0..2 {
         let pa = a.plan(RepRef::at(0, set, 0));
         let pb = b.plan(RepRef::at(0, set, 0));
@@ -123,7 +143,10 @@ fn livesim2_consecutive_refreshes_keep_numbers_stable() {
         let overlap: Vec<_> = ma.keys().filter(|n| mb.contains_key(n)).collect();
         assert!(overlap.len() >= 2, "set {set}: the two windows overlap");
         for n in overlap {
-            assert_eq!(ma[n], mb[n], "set {set}: segment {n} identical across the refresh");
+            assert_eq!(
+                ma[n], mb[n],
+                "set {set}: segment {n} identical across the refresh"
+            );
         }
         let first_b = *mb.keys().next().unwrap();
         let first_a = *ma.keys().next().unwrap();
@@ -136,6 +159,6 @@ fn livesim2_number_variant_uses_a_large_start_number() {
     let l = load("dash/livesim2/segtimelinenr_a.mpd");
     let video = l.plan(RepRef::at(0, 1, 0));
     let first = video.plan.get(0).unwrap();
-    assert_eq!(first.number, 895_967_208 + 0);
+    assert_eq!(first.number, 895_967_208);
     assert_eq!(first.reference, format!("V300/{}.m4s", first.number));
 }

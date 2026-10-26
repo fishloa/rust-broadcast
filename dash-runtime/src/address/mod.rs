@@ -16,8 +16,8 @@ pub mod representation;
 pub mod template;
 pub mod timeline;
 
-pub use representation::{PlanError, PlanOptions, PlannedRepresentation, plan_representation};
 pub use plan::{DynamicContext, PlanInput, ResourceRef, SegmentPlan, SegmentRef};
+pub use representation::{PlanError, PlanOptions, PlannedRepresentation, plan_representation};
 
 /// Why a Representation's segments cannot be addressed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

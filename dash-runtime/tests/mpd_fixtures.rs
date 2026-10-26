@@ -26,7 +26,11 @@ fn all_mpds() -> Vec<PathBuf> {
 #[test]
 fn every_committed_mpd_parses() {
     let files = all_mpds();
-    assert!(files.len() >= 24, "expected the full P0 set, found {}", files.len());
+    assert!(
+        files.len() >= 24,
+        "expected the full P0 set, found {}",
+        files.len()
+    );
     for f in files {
         let bytes = std::fs::read(&f).unwrap();
         Mpd::parse(&bytes).unwrap_or_else(|e| panic!("{}: {e}", f.display()));

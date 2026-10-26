@@ -29,5 +29,8 @@ fn every_public_enum_is_non_exhaustive() {
             }
         }
     }
-    assert!(missing.is_empty(), "pub enum(s) missing #[non_exhaustive]: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "pub enum(s) missing #[non_exhaustive]: {missing:?}"
+    );
 }

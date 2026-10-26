@@ -13,10 +13,21 @@ use dash_runtime::timing::live_edge::{join_index, newest_complete, oldest_in_win
 
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
 
-fn dynamic_mpd(ast_s: i64, ps_s: u64, ts: u64, d: u64, tsb_s: Option<u64>, ato: Option<f64>) -> Mpd {
+fn dynamic_mpd(
+    ast_s: i64,
+    ps_s: u64,
+    ts: u64,
+    d: u64,
+    tsb_s: Option<u64>,
+    ato: Option<f64>,
+) -> Mpd {
     let ast = jiff::Timestamp::from_second(ast_s).unwrap();
-    let tsb = tsb_s.map_or(String::new(), |t| format!(r#" timeShiftBufferDepth="PT{t}S""#));
-    let ato = ato.map_or(String::new(), |a| format!(r#" availabilityTimeOffset="{a}""#));
+    let tsb = tsb_s.map_or(String::new(), |t| {
+        format!(r#" timeShiftBufferDepth="PT{t}S""#)
+    });
+    let ato = ato.map_or(String::new(), |a| {
+        format!(r#" availabilityTimeOffset="{a}""#)
+    });
     let xml = format!(
         r#"<MPD xmlns="{NS}" type="dynamic" availabilityStartTime="{ast}"{tsb}>
            <Period id="p" start="PT{ps_s}S"><AdaptationSet mimeType="video/mp4">
@@ -37,8 +48,8 @@ fn closed_form_equals_brute_force_over_segment_formulas() {
         let ast_s = i64::try_from(rng.range(0, 4_000_000_000)).unwrap();
         let ps_s = rng.below(10_000);
         let tsb_s = (rng.below(3) != 0).then(|| rng.range(1, 600));
-        let ato = (rng.below(3) == 0)
-            .then(|| (rng.below(300) as f64 / 100.0) * (d as f64 / ts as f64));
+        let ato =
+            (rng.below(3) == 0).then(|| (rng.below(300) as f64 / 100.0) * (d as f64 / ts as f64));
         let m = dynamic_mpd(ast_s, ps_s, ts, d, tsb_s, ato);
         let p = plan_representation(
             &m,
@@ -53,10 +64,19 @@ fn closed_form_equals_brute_force_over_segment_formulas() {
         let brute_newest = (0..1_000u64)
             .take_while(|i| p.plan.get(*i).unwrap().available_from_us.unwrap() <= now)
             .last();
-        assert_eq!(newest_complete(&p.plan, now), brute_newest, "ts={ts} d={d} ato={ato:?}");
+        assert_eq!(
+            newest_complete(&p.plan, now),
+            brute_newest,
+            "ts={ts} d={d} ato={ato:?}"
+        );
         if let Some(newest) = brute_newest {
-            let brute_oldest = (0..=newest)
-                .find(|i| p.plan.get(*i).unwrap().available_until_us.is_none_or(|u| u >= now));
+            let brute_oldest = (0..=newest).find(|i| {
+                p.plan
+                    .get(*i)
+                    .unwrap()
+                    .available_until_us
+                    .is_none_or(|u| u >= now)
+            });
             assert_eq!(oldest_in_window(&p.plan, now), brute_oldest);
             if let Some(w) = window(&p.plan, now) {
                 assert!(w.oldest <= w.newest);
@@ -112,7 +132,7 @@ fn extreme_inputs_never_panic_or_wrap() {
         let _ = p.plan.get(u64::MAX);
         let _ = p.plan.get(0);
     }
-    assert_eq!(complete_count_constant(i128::MAX, 0, 0, 0, 1, 1), u64::try_from(i128::MAX / 1_000_000).unwrap_or(u64::MAX).min(u64::MAX));
+    assert_eq!(complete_count_constant(i128::MAX, 0, 0, 0, 1, 1), u64::MAX);
     assert_eq!(complete_count_constant(i128::MIN, 0, 0, 0, 1, 1), 0);
     assert_eq!(complete_count_constant(0, 0, 0, 0, 0, 1), 0);
     assert_eq!(complete_count_constant(0, 0, 0, 0, 1, 0), 0);

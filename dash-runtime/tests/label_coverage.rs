@@ -26,7 +26,8 @@ const SKIP: &[&str] = &[
 
 fn has_display(all: &str, name: &str) -> bool {
     let macro_needle = format!("impl_spec_display!({name}");
-    let boundary = |rest: &str| !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_');
+    let boundary =
+        |rest: &str| !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_');
     all.lines().any(|line| {
         let t = line.trim_start();
         if let Some(rest) = t.strip_prefix(&macro_needle)
@@ -35,7 +36,11 @@ fn has_display(all: &str, name: &str) -> bool {
             return true;
         }
         t.strip_prefix("impl")
-            .and_then(|after| after.find(&format!("Display for {name}")).map(|p| (after, p)))
+            .and_then(|after| {
+                after
+                    .find(&format!("Display for {name}"))
+                    .map(|p| (after, p))
+            })
             .is_some_and(|(after, p)| {
                 let rest = &after[p + format!("Display for {name}").len()..];
                 boundary(rest)
@@ -67,14 +72,20 @@ fn every_public_spec_enum_has_a_display_impl() {
         .iter()
         .filter(|n| !SKIP.contains(&n.as_str()) && !has_display(&all, n))
         .collect();
-    assert!(missing.is_empty(), "public enum(s) missing a #204 Display/name(): {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "public enum(s) missing a #204 Display/name(): {missing:?}"
+    );
 }
 
 #[test]
 fn display_matches_name_for_a_sample() {
     use dash_runtime::timing::clock::{AdoptReason, ClockSource};
     use dash_runtime::timing::utc_timing::UtcScheme;
-    assert_eq!(ClockSource::UtcTiming.to_string(), ClockSource::UtcTiming.name());
+    assert_eq!(
+        ClockSource::UtcTiming.to_string(),
+        ClockSource::UtcTiming.name()
+    );
     assert_eq!(AdoptReason::Step.to_string(), "step");
     assert_eq!(UtcScheme::HttpXsdate.to_string(), "http_xsdate");
 }

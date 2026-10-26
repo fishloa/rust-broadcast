@@ -4,7 +4,9 @@ mod common;
 
 use common::load;
 use dash_runtime::mpd::Mpd;
-use dash_runtime::selection::{DropReason, Policy, RepRef, SetClass, classify, lang_matches, select};
+use dash_runtime::selection::{
+    DropReason, Policy, RepRef, SetClass, classify, lang_matches, select,
+};
 
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
 
@@ -15,7 +17,8 @@ fn mpd(period_body: &str) -> Mpd {
     Mpd::parse(xml.as_bytes()).unwrap_or_else(|e| panic!("{e}"))
 }
 
-const TPL: &str = r#"<SegmentTemplate timescale="1" duration="2" media="$RepresentationID$-$Number$.m4s"/>"#;
+const TPL: &str =
+    r#"<SegmentTemplate timescale="1" duration="2" media="$RepresentationID$-$Number$.m4s"/>"#;
 
 fn set(attrs: &str, inner: &str, reps: &[(&str, u64, &str)]) -> String {
     let reps: String = reps
@@ -26,7 +29,10 @@ fn set(attrs: &str, inner: &str, reps: &[(&str, u64, &str)]) -> String {
 }
 
 fn drops(sel: &dash_runtime::selection::Selection) -> Vec<(usize, Option<usize>, DropReason)> {
-    sel.dropped.iter().map(|d| (d.set, d.rep, d.reason)).collect()
+    sel.dropped
+        .iter()
+        .map(|d| (d.set, d.rep, d.reason))
+        .collect()
 }
 
 #[test]
@@ -92,7 +98,11 @@ fn video_picks_highest_bandwidth_within_policy_else_lowest() {
     ));
     let pick = |p: &Policy| {
         let s = select(&m, 0, p);
-        assert_eq!(s.variants.len(), 3, "variants lists every Representation in MPD order");
+        assert_eq!(
+            s.variants.len(),
+            3,
+            "variants lists every Representation in MPD order"
+        );
         s.chosen_variant
     };
     assert_eq!(pick(&Policy::default()), Some(2));
@@ -117,8 +127,16 @@ fn video_prefers_the_main_role_set() {
     let role = |v: &str| format!(r#"<Role schemeIdUri="urn:mpeg:dash:role:2011" value="{v}"/>"#);
     let m = mpd(&format!(
         "{}{}",
-        set(r#"contentType="video" mimeType="video/mp4""#, &role("alternate"), &[("alt", 9, "")]),
-        set(r#"contentType="video" mimeType="video/mp4""#, &role("main"), &[("main", 1, "")]),
+        set(
+            r#"contentType="video" mimeType="video/mp4""#,
+            &role("alternate"),
+            &[("alt", 9, "")]
+        ),
+        set(
+            r#"contentType="video" mimeType="video/mp4""#,
+            &role("main"),
+            &[("main", 1, "")]
+        ),
     ));
     let s = select(&m, 0, &Policy::default());
     assert_eq!(s.variants.len(), 2);
@@ -131,10 +149,26 @@ fn audio_language_role_and_fallbacks() {
     let role = |v: &str| format!(r#"<Role schemeIdUri="urn:mpeg:dash:role:2011" value="{v}"/>"#);
     let m = mpd(&format!(
         "{}{}{}{}",
-        set(r#"contentType="audio" mimeType="audio/mp4" lang="fr""#, &role("main"), &[("fr", 64_000, "")]),
-        set(r#"contentType="audio" mimeType="audio/mp4" lang="en-GB""#, &role("commentary"), &[("en-com", 64_000, "")]),
-        set(r#"contentType="audio" mimeType="audio/mp4" lang="en-US""#, &role("alternate"), &[("en-lo", 32_000, ""), ("en-hi", 96_000, "")]),
-        set(r#"contentType="audio" mimeType="audio/mp4" lang="de""#, "", &[("de", 64_000, "")]),
+        set(
+            r#"contentType="audio" mimeType="audio/mp4" lang="fr""#,
+            &role("main"),
+            &[("fr", 64_000, "")]
+        ),
+        set(
+            r#"contentType="audio" mimeType="audio/mp4" lang="en-GB""#,
+            &role("commentary"),
+            &[("en-com", 64_000, "")]
+        ),
+        set(
+            r#"contentType="audio" mimeType="audio/mp4" lang="en-US""#,
+            &role("alternate"),
+            &[("en-lo", 32_000, ""), ("en-hi", 96_000, "")]
+        ),
+        set(
+            r#"contentType="audio" mimeType="audio/mp4" lang="de""#,
+            "",
+            &[("de", 64_000, "")]
+        ),
     ));
     let chosen = |lang: Option<&str>| {
         let mut p = Policy::default();
@@ -143,15 +177,29 @@ fn audio_language_role_and_fallbacks() {
         let r = s.chosen_audio.unwrap();
         r.resolve(&m).unwrap().2.id.clone()
     };
-    assert_eq!(chosen(Some("en")), "en-hi", "prefix match, skipping the commentary set, best bandwidth");
+    assert_eq!(
+        chosen(Some("en")),
+        "en-hi",
+        "prefix match, skipping the commentary set, best bandwidth"
+    );
     assert_eq!(chosen(Some("EN")), "en-hi", "case-insensitive");
     assert_eq!(chosen(Some("en-US")), "en-hi");
     assert_eq!(chosen(Some("de")), "de");
     assert_eq!(chosen(Some("ja")), "fr", "no match: Role main");
     assert_eq!(chosen(None), "fr");
-    let no_main = mpd(&set(r#"contentType="audio" mimeType="audio/mp4""#, "", &[("only", 1, "")]));
+    let no_main = mpd(&set(
+        r#"contentType="audio" mimeType="audio/mp4""#,
+        "",
+        &[("only", 1, "")],
+    ));
     assert_eq!(
-        select(&no_main, 0, &Policy::default()).chosen_audio.unwrap().resolve(&no_main).unwrap().2.id,
+        select(&no_main, 0, &Policy::default())
+            .chosen_audio
+            .unwrap()
+            .resolve(&no_main)
+            .unwrap()
+            .2
+            .id,
         "only"
     );
     assert!(lang_matches("en", "en-GB"));
@@ -206,7 +254,11 @@ fn drops_and_their_reasons() {
     assert!(d.contains(&(8, Some(1), DropReason::DependencyRepresentation)));
     assert!(d.contains(&(9, None, DropReason::UnresolvedXlink)));
     assert!(d.contains(&(10, None, DropReason::NotMedia)));
-    let kept: Vec<_> = s.variants.iter().map(|v| v.resolve(&m).unwrap().2.id.clone()).collect();
+    let kept: Vec<_> = s
+        .variants
+        .iter()
+        .map(|v| v.resolve(&m).unwrap().2.id.clone())
+        .collect();
     assert_eq!(kept, vec!["ok", "base", "repess"]);
     assert!(s.audio_sets.is_empty() && s.chosen_audio.is_none());
 }

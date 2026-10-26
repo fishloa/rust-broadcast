@@ -58,9 +58,7 @@ pub fn expand(
                 let start = idx.checked_mul(d).ok_or(AddressError::Overflow)?;
                 let last = i + 1 == urls.len();
                 let dur = match (last, multi.duration, period_duration_ticks) {
-                    (true, Some(nominal), Some(total)) => {
-                        total.saturating_sub(start).min(nominal)
-                    }
+                    (true, Some(nominal), Some(total)) => total.saturating_sub(start).min(nominal),
                     _ => d,
                 };
                 (multi.start_number.saturating_add(idx), start, dur)

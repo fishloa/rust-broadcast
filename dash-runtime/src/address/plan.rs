@@ -16,11 +16,11 @@
 
 use transmux::SegmentIndexBox;
 
+use super::AddressError;
 use super::base_index::{self, IndexedSegment};
 use super::list;
 use super::template::{self, TemplateFault, TemplateUse};
 use super::timeline::TimelineIndex;
-use super::AddressError;
 use crate::error::Unsupported;
 use crate::mpd::inherit::{ListInfo, ResolvedMulti, SegmentInfo, TemplateInfo};
 use crate::mpd::model::{BaseInfo, ByteRange, UrlType};

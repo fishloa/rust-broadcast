@@ -134,9 +134,7 @@ pub fn complete_count_constant(
     if x1 <= 0 {
         return 0;
     }
-    let numerator = x1
-        .saturating_mul(i128::from(timescale))
-        .saturating_sub(1);
+    let numerator = x1.saturating_mul(i128::from(timescale)).saturating_sub(1);
     let denominator = i128::from(duration_ticks).saturating_mul(MICROS_PER_SECOND);
     let n = numerator / denominator;
     u64::try_from(n.max(0)).unwrap_or(u64::MAX)

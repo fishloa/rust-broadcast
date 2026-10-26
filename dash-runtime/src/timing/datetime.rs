@@ -252,8 +252,8 @@ pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<i64, DateTimeError> {
     let arr: [u8; NTP_TIMESTAMP_LEN] = bytes.try_into().map_err(|_| DateTimeError::Ntp)?;
     let seconds = u32::from_be_bytes([arr[0], arr[1], arr[2], arr[3]]);
     let fraction = u32::from_be_bytes([arr[4], arr[5], arr[6], arr[7]]);
-    let micros = (u128::from(fraction) * u128::from(MICROS_PER_SECOND.unsigned_abs()))
-        >> NTP_FRACTION_BITS;
+    let micros =
+        (u128::from(fraction) * u128::from(MICROS_PER_SECOND.unsigned_abs())) >> NTP_FRACTION_BITS;
     let micros = i64::try_from(micros).map_err(|_| DateTimeError::Ntp)?;
     let prime_epoch = Date::new(1900, 1, 1)
         .map_err(|_| DateTimeError::Ntp)?
@@ -268,4 +268,3 @@ pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<i64, DateTimeError> {
         .and_then(|us| us.checked_add(micros))
         .ok_or(DateTimeError::Ntp)
 }
-

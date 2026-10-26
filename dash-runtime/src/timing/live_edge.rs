@@ -43,7 +43,8 @@ pub fn presentation_delay_us(
         duration_us,
     );
     if let Some(tsb) = time_shift_buffer_depth_us {
-        let ceiling = tsb.saturating_sub(max_segment_duration_us.saturating_mul(TSB_GUARD_SEGMENTS));
+        let ceiling =
+            tsb.saturating_sub(max_segment_duration_us.saturating_mul(TSB_GUARD_SEGMENTS));
         delay = delay.min(ceiling);
     }
     delay.max(0)

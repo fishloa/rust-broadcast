@@ -7,19 +7,28 @@ mod common;
 use common::{load, oracle_epct, oracle_tfdt};
 use dash_runtime::address::base_index;
 use dash_runtime::address::{AddressError, PlanError, PlanOptions, plan_representation};
-use dash_runtime::mpd::inherit::resolve_segment_info;
 use dash_runtime::mpd::inherit::SegmentInfo;
+use dash_runtime::mpd::inherit::resolve_segment_info;
 use dash_runtime::selection::RepRef;
 
 const SECOND_US: i128 = 1_000_000;
 
-fn plans_of(rel: &str) -> (common::Loaded, Vec<(RepRef, dash_runtime::address::PlannedRepresentation)>) {
+fn plans_of(
+    rel: &str,
+) -> (
+    common::Loaded,
+    Vec<(RepRef, dash_runtime::address::PlannedRepresentation)>,
+) {
     let l = load(rel);
     let plans = l.reps().into_iter().map(|r| (r, l.plan(r))).collect();
     (l, plans)
 }
 
-fn exists(l: &common::Loaded, p: &dash_runtime::address::PlannedRepresentation, reference: &str) -> bool {
+fn exists(
+    l: &common::Loaded,
+    p: &dash_runtime::address::PlannedRepresentation,
+    reference: &str,
+) -> bool {
     l.file_of(p, reference).is_file()
 }
 
@@ -72,7 +81,10 @@ fn ffmpeg_quirk_time_is_the_sidx_value_not_tfdt() {
                 .to_str()
                 .unwrap()
                 .to_owned();
-            assert_eq!(epct[&name], seg.time_ticks, "{name}: $Time$ is the sidx earliest_presentation_time");
+            assert_eq!(
+                epct[&name], seg.time_ticks,
+                "{name}: $Time$ is the sidx earliest_presentation_time"
+            );
             let offset = seg.time_ticks - tfdt[&name][0];
             assert_eq!(offset, if video_stream { 2090 } else { 0 }, "{name}");
         }
@@ -91,7 +103,10 @@ fn gpac_timeline_video_matches_tfdt_and_audio_quirk_is_kept() {
         let file = l.file_of(video, &seg.reference);
         assert!(file.is_file(), "{}", file.display());
         let name = file.file_name().unwrap().to_str().unwrap().to_owned();
-        assert_eq!(tfdt[&name][0], seg.time_ticks, "{name}: video timeline equals tfdt");
+        assert_eq!(
+            tfdt[&name][0], seg.time_ticks,
+            "{name}: video timeline equals tfdt"
+        );
     }
     let mut mismatches = 0;
     for seg in audio.plan.iter() {
@@ -102,7 +117,10 @@ fn gpac_timeline_video_matches_tfdt_and_audio_quirk_is_kept() {
             mismatches += 1;
         }
     }
-    assert_eq!(mismatches, 5, "the real audio timeline disagrees with the media after segment 1");
+    assert_eq!(
+        mismatches, 5,
+        "the real audio timeline disagrees with the media after segment 1"
+    );
     let init = video.plan.init().unwrap();
     assert_eq!(init.reference, "seg-1-.mp4");
     assert!(exists(&l, video, &init.reference));
@@ -145,7 +163,10 @@ fn on_demand_sidx_ranges_tile_the_real_file() {
             };
             let index_range = base.index_range.expect("indexRange");
             let bytes = l.base_file_bytes(at);
-            let (a, b) = (index_range.first as usize, index_range.last.unwrap() as usize);
+            let (a, b) = (
+                index_range.first as usize,
+                index_range.last.unwrap() as usize,
+            );
             let sidx = base_index::parse_index(&bytes[a..=b]).unwrap();
             let anchor = base_index::anchor_after(&index_range).unwrap();
             let planned = plan_representation(
@@ -159,13 +180,21 @@ fn on_demand_sidx_ranges_tile_the_real_file() {
             for seg in planned.plan.iter() {
                 let r = seg.byte_range.unwrap();
                 let (first, last) = (r.first as usize, r.last.unwrap() as usize);
-                assert_eq!(&bytes[first + 4..first + 8], b"moof", "{dir}: range starts at a moof");
+                assert_eq!(
+                    &bytes[first + 4..first + 8],
+                    b"moof",
+                    "{dir}: range starts at a moof"
+                );
                 if let Some(next) = expected_next {
                     assert_eq!(first, next, "{dir}: ranges are contiguous");
                 }
                 expected_next = Some(last + 1);
             }
-            assert_eq!(expected_next, Some(bytes.len()), "{dir}: ranges end at the end of the file");
+            assert_eq!(
+                expected_next,
+                Some(bytes.len()),
+                "{dir}: ranges end at the end of the file"
+            );
             let init = planned.plan.init().unwrap();
             let range = init.byte_range.unwrap();
             assert_eq!(&bytes[4..8], b"ftyp");
@@ -181,11 +210,14 @@ fn ondemand_pto_quirk_does_not_overflow() {
     let at = RepRef::at(0, 0, 0);
     let (period, set, rep) = at.resolve(&l.mpd).unwrap();
     let info = resolve_segment_info(period, set, rep).unwrap();
-    let SegmentInfo::Base(b) = &info else { panic!() };
+    let SegmentInfo::Base(b) = &info else {
+        panic!()
+    };
     assert_eq!(b.presentation_time_offset, Some(5_354_157_010_056_287_232));
     let bytes = l.base_file_bytes(at);
     let r = b.index_range.unwrap();
-    let sidx = base_index::parse_index(&bytes[r.first as usize..=r.last.unwrap() as usize]).unwrap();
+    let sidx =
+        base_index::parse_index(&bytes[r.first as usize..=r.last.unwrap() as usize]).unwrap();
     let planned = plan_representation(
         &l.mpd,
         at,
@@ -194,7 +226,10 @@ fn ondemand_pto_quirk_does_not_overflow() {
     .unwrap();
     let first = planned.plan.get(0).unwrap();
     assert_eq!(first.time_ticks, 512);
-    assert!(first.start_us < 0, "a nonsense PTO yields a hugely negative start, never a wrap");
+    assert!(
+        first.start_us < 0,
+        "a nonsense PTO yields a hugely negative start, never a wrap"
+    );
 }
 
 #[test]
@@ -207,8 +242,15 @@ fn multiperiod_restart_plans_each_period_and_keeps_the_tail_quirk() {
     assert_eq!(p1_video.plan.len(), Some(4));
     let tail = p1_video.plan.get(3).unwrap();
     assert!(tail.duration_us < 14_000, "tail is {} us", tail.duration_us);
-    assert!(exists(&l, p1_video, &p1_video.plan.get(2).unwrap().reference));
-    assert!(!exists(&l, p1_video, &tail.reference), "the 4th segment is not on disk");
+    assert!(exists(
+        &l,
+        p1_video,
+        &p1_video.plan.get(2).unwrap().reference
+    ));
+    assert!(
+        !exists(&l, p1_video, &tail.reference),
+        "the 4th segment is not on disk"
+    );
     // Period 2: start 6 s, duration 6 s, three segments each, all on disk.
     for (_, p) in &plans[2..] {
         assert_eq!(p.period.start_us, Some(6 * SECOND_US));

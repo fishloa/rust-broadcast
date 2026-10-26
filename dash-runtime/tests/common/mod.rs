@@ -56,8 +56,7 @@ impl Loaded {
     /// The bytes of the single file a SegmentBase Representation lives in.
     pub fn base_file_bytes(&self, at: RepRef) -> Vec<u8> {
         let (period, set, rep) = at.resolve(&self.mpd).unwrap();
-        let cands =
-            dash_runtime::mpd::urls::representation_candidates(&self.mpd, period, set, rep);
+        let cands = dash_runtime::mpd::urls::representation_candidates(&self.mpd, period, set, rep);
         let resolved = cands[0].resolve(Some(&self.url), "").unwrap();
         let path = Url::parse(&resolved).unwrap().to_file_path().unwrap();
         std::fs::read(path).unwrap()

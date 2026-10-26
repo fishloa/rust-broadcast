@@ -19,7 +19,10 @@ pub fn rs_files(dir: &Path, out: &mut Vec<(String, String)>) {
 
 pub fn src_files() -> Vec<(String, String)> {
     let mut files = Vec::new();
-    rs_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    rs_files(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
     files
 }
 

@@ -40,13 +40,20 @@ fn billion_laughs_is_refused_before_any_expansion() {
         Err(MpdError::Xml { message, .. }) => assert!(message.contains("DOCTYPE"), "{message}"),
         other => panic!("{other:?}"),
     }
-    let external = r#"<!DOCTYPE MPD SYSTEM "file:///etc/passwd"><MPD xmlns="urn:mpeg:dash:schema:mpd:2011"/>"#;
+    let external =
+        r#"<!DOCTYPE MPD SYSTEM "file:///etc/passwd"><MPD xmlns="urn:mpeg:dash:schema:mpd:2011"/>"#;
     assert!(matches!(parse(external), Err(MpdError::Xml { .. })));
     assert!(matches!(
         parse(&wrap("<BaseURL>&undefined;</BaseURL>")),
         Err(MpdError::Xml { .. })
     ));
-    assert_eq!(parse(&wrap("<BaseURL>a&amp;b&#65;</BaseURL>")).unwrap().base_urls[0].url, "a&bA");
+    assert_eq!(
+        parse(&wrap("<BaseURL>a&amp;b&#65;</BaseURL>"))
+            .unwrap()
+            .base_urls[0]
+            .url,
+        "a&bA"
+    );
 }
 
 #[test]
@@ -76,7 +83,12 @@ fn depth_bound() {
 
 #[test]
 fn attribute_bounds() {
-    let long = |n: usize| wrap(&format!(r#"<BaseURL serviceLocation="{}">x</BaseURL>"#, "a".repeat(n)));
+    let long = |n: usize| {
+        wrap(&format!(
+            r#"<BaseURL serviceLocation="{}">x</BaseURL>"#,
+            "a".repeat(n)
+        ))
+    };
     assert!(parse(&long(8 * 1024)).is_ok());
     assert_eq!(too_large(parse(&long(8 * 1024 + 1))), Limit::AttributeBytes);
     let many = |n: usize| {
@@ -89,16 +101,24 @@ fn attribute_bounds() {
 
 #[test]
 fn structure_bounds() {
-    assert_eq!(too_large(parse(&wrap(&"<Period/>".repeat(1_001)))), Limit::Periods);
+    assert_eq!(
+        too_large(parse(&wrap(&"<Period/>".repeat(1_001)))),
+        Limit::Periods
+    );
     assert!(parse(&wrap(&"<Period/>".repeat(1_000))).is_ok());
     let sets = format!("<Period>{}</Period>", "<AdaptationSet/>".repeat(1_001));
     assert_eq!(too_large(parse(&wrap(&sets))), Limit::AdaptationSets);
     let reps = format!(
         "<Period><AdaptationSet>{}</AdaptationSet></Period>",
-        (0..1_001).map(|i| format!(r#"<Representation id="{i}" bandwidth="1"/>"#)).collect::<String>()
+        (0..1_001)
+            .map(|i| format!(r#"<Representation id="{i}" bandwidth="1"/>"#))
+            .collect::<String>()
     );
     assert_eq!(too_large(parse(&wrap(&reps))), Limit::Representations);
-    assert_eq!(too_large(parse(&wrap(&"<BaseURL>x</BaseURL>".repeat(65)))), Limit::BaseUrls);
+    assert_eq!(
+        too_large(parse(&wrap(&"<BaseURL>x</BaseURL>".repeat(65)))),
+        Limit::BaseUrls
+    );
     let tl = format!(
         r#"<Period><AdaptationSet><Representation id="r" bandwidth="1"><SegmentTemplate media="$Number$" duration="1"><SegmentTimeline>{}</SegmentTimeline></SegmentTemplate></Representation></AdaptationSet></Period>"#,
         r#"<S d="1"/>"#.repeat(100_001)
@@ -106,7 +126,10 @@ fn structure_bounds() {
     let r = Mpd::parse_with(wrap(&tl).as_bytes(), &Limits::default());
     assert!(matches!(
         r,
-        Err(MpdError::TooLarge { limit: Limit::TimelineEntries | Limit::Elements, .. })
+        Err(MpdError::TooLarge {
+            limit: Limit::TimelineEntries | Limit::Elements,
+            ..
+        })
     ));
     let urls = format!(
         r#"<Period><AdaptationSet><Representation id="r" bandwidth="1"><SegmentList duration="1">{}</SegmentList></Representation></AdaptationSet></Period>"#,
@@ -114,7 +137,10 @@ fn structure_bounds() {
     );
     assert!(matches!(
         Mpd::parse(wrap(&urls).as_bytes()),
-        Err(MpdError::TooLarge { limit: Limit::SegmentUrls | Limit::Elements, .. })
+        Err(MpdError::TooLarge {
+            limit: Limit::SegmentUrls | Limit::Elements,
+            ..
+        })
     ));
 }
 
@@ -123,13 +149,19 @@ fn input_size_bound_and_custom_limits() {
     let big = vec![b' '; 4 * 1024 * 1024 + 1];
     assert!(matches!(
         Mpd::parse(&big),
-        Err(MpdError::TooLarge { limit: Limit::InputBytes, .. })
+        Err(MpdError::TooLarge {
+            limit: Limit::InputBytes,
+            ..
+        })
     ));
     let mut tight = Limits::default();
     tight.max_periods = 1;
     assert!(matches!(
         Mpd::parse_with(wrap("<Period/><Period/>").as_bytes(), &tight),
-        Err(MpdError::TooLarge { limit: Limit::Periods, max: 1 })
+        Err(MpdError::TooLarge {
+            limit: Limit::Periods,
+            max: 1
+        })
     ));
 }
 
@@ -153,7 +185,10 @@ fn byte_level_garbage() {
     ));
     assert!(matches!(parse(""), Err(MpdError::Xml { .. })));
     assert!(matches!(parse("not xml at all"), Err(MpdError::Xml { .. })));
-    assert!(matches!(parse(&format!(r#"<MPD xmlns="{NS}">"#)), Err(MpdError::Xml { .. })));
+    assert!(matches!(
+        parse(&format!(r#"<MPD xmlns="{NS}">"#)),
+        Err(MpdError::Xml { .. })
+    ));
     assert!(matches!(
         parse(&format!(r#"<MPD xmlns="{NS}"></Foo>"#)),
         Err(MpdError::Xml { .. })
@@ -185,38 +220,82 @@ fn not_an_mpd() {
 #[test]
 fn schema_violations_are_typed_not_panics() {
     for (what, xml) in [
-        ("bad duration", r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" mediaPresentationDuration="soon"/>"#),
-        ("bad type", r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="live"/>"#),
-        ("bad time", r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" availabilityStartTime="yesterday"/>"#),
+        (
+            "bad duration",
+            r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" mediaPresentationDuration="soon"/>"#,
+        ),
+        (
+            "bad type",
+            r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="live"/>"#,
+        ),
+        (
+            "bad time",
+            r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" availabilityStartTime="yesterday"/>"#,
+        ),
     ] {
-        assert!(matches!(parse(xml), Err(MpdError::Invalid { .. })), "{what}");
+        assert!(
+            matches!(parse(xml), Err(MpdError::Invalid { .. })),
+            "{what}"
+        );
     }
     assert!(matches!(
         parse(r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="list"/>"#),
         Err(MpdError::Unsupported(Unsupported::PresentationTypeList))
     ));
     let rep = |attrs: &str| {
-        wrap(&format!(r#"<Period><AdaptationSet><Representation {attrs}/></AdaptationSet></Period>"#))
+        wrap(&format!(
+            r#"<Period><AdaptationSet><Representation {attrs}/></AdaptationSet></Period>"#
+        ))
     };
-    assert!(matches!(parse(&rep(r#"bandwidth="1""#)), Err(MpdError::Invalid { .. })));
-    assert!(matches!(parse(&rep(r#"id="x""#)), Err(MpdError::Invalid { .. })));
-    assert!(matches!(parse(&rep(r#"id="x" bandwidth="-1""#)), Err(MpdError::Invalid { .. })));
-    assert!(matches!(parse(&rep(r#"id="x" bandwidth="99999999999999999999999""#)), Err(MpdError::Invalid { .. })));
+    assert!(matches!(
+        parse(&rep(r#"bandwidth="1""#)),
+        Err(MpdError::Invalid { .. })
+    ));
+    assert!(matches!(
+        parse(&rep(r#"id="x""#)),
+        Err(MpdError::Invalid { .. })
+    ));
+    assert!(matches!(
+        parse(&rep(r#"id="x" bandwidth="-1""#)),
+        Err(MpdError::Invalid { .. })
+    ));
+    assert!(matches!(
+        parse(&rep(r#"id="x" bandwidth="99999999999999999999999""#)),
+        Err(MpdError::Invalid { .. })
+    ));
     let seg = |inner: &str| {
-        wrap(&format!(r#"<Period><AdaptationSet><Representation id="x" bandwidth="1">{inner}</Representation></AdaptationSet></Period>"#))
+        wrap(&format!(
+            r#"<Period><AdaptationSet><Representation id="x" bandwidth="1">{inner}</Representation></AdaptationSet></Period>"#
+        ))
     };
-    assert!(matches!(parse(&seg(r#"<SegmentTemplate duration="0"/>"#)), Err(MpdError::Invalid { .. })));
-    assert!(matches!(parse(&seg(r#"<SegmentTemplate timescale="0"/>"#)), Err(MpdError::Invalid { .. })));
     assert!(matches!(
-        parse(&seg(r#"<SegmentTemplate><SegmentTimeline><S d="0"/></SegmentTimeline></SegmentTemplate>"#)),
+        parse(&seg(r#"<SegmentTemplate duration="0"/>"#)),
         Err(MpdError::Invalid { .. })
     ));
     assert!(matches!(
-        parse(&seg(r#"<SegmentTemplate><SegmentTimeline><S/></SegmentTimeline></SegmentTemplate>"#)),
+        parse(&seg(r#"<SegmentTemplate timescale="0"/>"#)),
         Err(MpdError::Invalid { .. })
     ));
-    assert!(matches!(parse(&seg(r#"<SegmentBase indexRange="9-3"/>"#)), Err(MpdError::Invalid { .. })));
-    assert!(matches!(parse(&seg(r#"<SegmentBase indexRange="abc"/>"#)), Err(MpdError::Invalid { .. })));
+    assert!(matches!(
+        parse(&seg(
+            r#"<SegmentTemplate><SegmentTimeline><S d="0"/></SegmentTimeline></SegmentTemplate>"#
+        )),
+        Err(MpdError::Invalid { .. })
+    ));
+    assert!(matches!(
+        parse(&seg(
+            r#"<SegmentTemplate><SegmentTimeline><S/></SegmentTimeline></SegmentTemplate>"#
+        )),
+        Err(MpdError::Invalid { .. })
+    ));
+    assert!(matches!(
+        parse(&seg(r#"<SegmentBase indexRange="9-3"/>"#)),
+        Err(MpdError::Invalid { .. })
+    ));
+    assert!(matches!(
+        parse(&seg(r#"<SegmentBase indexRange="abc"/>"#)),
+        Err(MpdError::Invalid { .. })
+    ));
     assert!(matches!(
         parse(&seg(r#"<SegmentBase/><SegmentTemplate/>"#)),
         Err(MpdError::Invalid { .. })
@@ -273,7 +352,10 @@ fn mutate(rng: &mut Rng, src: &[u8]) -> Vec<u8> {
             2 => {
                 b.remove(at);
             }
-            3 => b.insert(at, b"<>&\"'/=$%0123456789"[usize::try_from(rng.below(19)).unwrap()]),
+            3 => b.insert(
+                at,
+                b"<>&\"'/=$%0123456789"[usize::try_from(rng.below(19)).unwrap()],
+            ),
             _ => b.truncate(at.max(1)),
         }
     }
@@ -298,7 +380,11 @@ fn mutated_fixtures_never_panic() {
                 let _ = select(&mpd, pi, &Policy::default());
                 for (si, s) in p.adaptation_sets.iter().enumerate() {
                     for ri in 0..s.representations.len() {
-                        if let Ok(pl) = plan_representation(&mpd, RepRef::at(pi, si, ri), &PlanOptions::default()) {
+                        if let Ok(pl) = plan_representation(
+                            &mpd,
+                            RepRef::at(pi, si, ri),
+                            &PlanOptions::default(),
+                        ) {
                             planned += 1;
                             let _ = pl.plan.get(0);
                             let _ = pl.plan.iter().take(50).count();
