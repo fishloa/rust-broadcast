@@ -373,7 +373,12 @@ fn utc_head_is_sent_with_the_head_method_and_a_refused_head_is_retried_as_get() 
 fn the_mpd_refresh_is_conditional_and_a_304_is_accepted() {
     let mut synth = with_utc(Addressing::Number);
     synth.send_etag = true;
-    synth.mup_us = Some(2 * MICROS);
+    let fixed = {
+        let mut probe = Synth::new(AST_US, Addressing::Number);
+        probe.utc_elements = synth.utc_elements.clone();
+        probe.mpd_at(AST_US + 41 * MICROS + 120_000)
+    };
+    synth.mpd_override = Some(Box::new(move |_| Some(fixed.clone())));
     let shared = Rc::new(RefCell::new(synth));
     let geo = shared.borrow().geo();
     let world = World::new(AST_US + 41 * MICROS + 120_000);
@@ -386,19 +391,17 @@ fn the_mpd_refresh_is_conditional_and_a_304_is_accepted() {
     sim.run_for(30 * SEC);
     assert!(sim.fatal().is_none());
     let mpds: Vec<_> = sim.log.iter().filter(|l| l.is_mpd()).collect();
-    assert!(mpds.len() >= 5);
+    assert!(mpds.len() >= 10);
     assert!(mpds[0].header("if-none-match").is_none());
     assert!(
-        mpds.iter()
-            .skip(1)
-            .any(|r| r.header("if-none-match").is_some()),
-        "refreshes carry the validator"
+        mpds.iter().skip(1).all(|r| r.header("if-none-match").is_some()),
+        "every refresh carries the validator"
     );
     assert!(sim.errors().is_empty(), "{:?}", sim.errors());
     assert_contiguous(&segment_requests(&sim, geo));
     assert!(
-        shared.borrow().if_none_match_hits > 0,
-        "the origin answered a conditional request with 304 and the session carried on"
+        shared.borrow().if_none_match_hits >= 10,
+        "the origin answered conditional requests with 304 and the session carried on"
     );
 }
 

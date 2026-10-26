@@ -148,3 +148,39 @@ fn every_public_spec_enum_has_a_display_impl() {
         "public enum(s) missing a #204 Display/name() label (or a SKIP-list entry): {missing:?}"
     );
 }
+
+#[test]
+fn every_error_kind_variant_has_a_stable_name() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/events.rs");
+    let text = fs::read_to_string(src).expect("read events.rs");
+    let body_start = text
+        .find("pub enum ErrorKind {")
+        .expect("ErrorKind declaration");
+    let body = &text[body_start..];
+    let end = body.find("\n}\n").expect("end of ErrorKind");
+    let mut variants = BTreeSet::new();
+    for line in body[..end].lines().skip(1) {
+        let t = line.trim_start();
+        if t.starts_with("//") || t.starts_with('#') || t.is_empty() {
+            continue;
+        }
+        if line.starts_with("    ") && !line.starts_with("     ") {
+            let name: String = t
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                variants.insert(name);
+            }
+        }
+    }
+    assert!(variants.len() >= 19, "found {variants:?}");
+    let name_fn = &text[text.find("pub fn name(&self) -> &'static str {\n        match self {\n            Self::UnsupportedEncryption").expect("ErrorKind::name")..];
+    let name_fn = &name_fn[..name_fn.find("\n    }\n").unwrap()];
+    for v in &variants {
+        assert!(
+            name_fn.contains(&format!("Self::{v} ")) || name_fn.contains(&format!("Self::{v},")),
+            "ErrorKind::{v} has no arm in name()"
+        );
+    }
+}
