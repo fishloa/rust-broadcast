@@ -262,3 +262,73 @@ fn a_utc_server_clock_step_at_a_resync_is_adopted_without_gap_or_duplicate() {
     assert!(sim.count(|o| matches!(o, Output::Samples { .. })) > 20);
     assert_eq!(first_source(&sim), Some(ClockSource::UtcTiming));
 }
+
+#[test]
+fn an_ntp_element_is_skipped_with_a_notice_and_the_host_clock_plays() {
+    let mut synth = common::synth::Synth::new(AST_US, Addressing::Number);
+    synth.utc_elements.push(
+        "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:ntp:2014\" value=\"time.example.org\"/>".into(),
+    );
+    synth.utc_elements.push(
+        "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:sntp:2014\" value=\"time.example.org\"/>".into(),
+    );
+    let (mut sim, geo) = sim_with(synth, START, quick());
+    sim.give_host_clock();
+    run_checked(&mut sim, geo, 20);
+    assert_eq!(first_source(&sim), Some(ClockSource::Host));
+    assert_eq!(
+        sim.count(|o| matches!(o, Output::Notice(dash_runtime::client::Notice::UtcSchemeUnsupported))),
+        1
+    );
+    assert!(sim.requests(Kind::Utc).is_empty());
+}
+
+#[test]
+fn a_utc_server_on_another_origin_is_skipped_when_cross_origin_urls_are_off() {
+    let mut dash = quick();
+    dash.cross_origin_urls = false;
+    let (mut sim, geo) = sim_with(with_utc(Addressing::Number), START, dash);
+    sim.give_host_clock();
+    run_checked(&mut sim, geo, 20);
+    assert!(sim.requests(Kind::Utc).is_empty());
+    assert_eq!(first_source(&sim), Some(ClockSource::Host));
+    assert_eq!(
+        sim.count(|o| matches!(o, Output::Notice(dash_runtime::client::Notice::UtcCrossOrigin))),
+        1
+    );
+}
+
+#[test]
+fn inits_are_fetched_while_the_utc_sample_is_taken_and_segments_wait_for_it() {
+    let mut sim = {
+        let (mut sim, _) = sim_with(with_utc(Addressing::Number), START, quick());
+        sim.rtt_us = 300_000;
+        sim
+    };
+    sim.run_for(5 * MICROS as u64);
+    let utc = sim.requests(Kind::Utc)[0].send_mono_us;
+    let arrival = utc + 300_000;
+    for init in sim.requests(Kind::Init) {
+        assert!(init.send_mono_us <= utc + 1, "inits are requested with the UTC sample");
+    }
+    let first_segment = sim.requests(Kind::Segment)[0].send_mono_us;
+    assert!(first_segment >= arrival, "no segment before the clock is known");
+    assert!(first_segment - arrival < 1_000, "and one as soon as it is");
+}
+
+#[test]
+fn prefer_host_keeps_the_host_clock_through_a_forced_resync() {
+    let mut dash = quick();
+    dash.clock_policy = DashClockPolicy::PreferHost;
+    dash.early_grace_us = 500_000;
+    let (mut sim, _geo) = sim_with(with_utc(Addressing::Number), START, dash);
+    sim.give_host_clock();
+    sim.fault = Some(Box::new(|req, kind, _| {
+        (*kind == Kind::Segment && req.url.ends_with("/V/25.m4s"))
+            .then(|| common::world::Outcome::Resp(common::world::HttpResp::status(404)))
+    }));
+    sim.run_for(40 * MICROS as u64);
+    assert!(sim.requests(Kind::Utc).is_empty());
+    assert_eq!(first_source(&sim), Some(ClockSource::Host));
+    assert!(clock_sources(&sim).iter().all(|s| s.0 == ClockSource::Host));
+}

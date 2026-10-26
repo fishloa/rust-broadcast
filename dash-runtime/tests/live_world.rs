@@ -169,3 +169,39 @@ fn date_only_clock_is_a_usable_fallback() {
     assert!(early_requests(&reqs, geo, 600_000).is_empty());
     let _ = UTC_HOST;
 }
+
+#[test]
+fn a_representation_switch_mid_stream_continues_at_the_next_segment_without_gap() {
+    let mut synth = with_utc(Addressing::TimelineNumber);
+    synth.second_video = true;
+    let (mut sim, geo) = sim_with(synth, 41 * MICROS + 120_000, DashConfig::default());
+    sim.run_for(12 * MICROS as u64);
+    let variants = sim
+        .outputs
+        .iter()
+        .find_map(|o| match o {
+            Output::Manifest(m) => Some((m.variants.len(), m.chosen)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(variants.0, 2);
+    let other = 1 - variants.1.unwrap();
+    sim.client.select_representation(other).unwrap();
+    sim.run_for(30 * MICROS as u64);
+    no_fatal(&sim);
+    let reqs = segment_requests(&sim, geo);
+    let video: Vec<_> = reqs
+        .iter()
+        .filter(|r| r.rep == "V" || r.rep == "W")
+        .collect();
+    let mut idxs: Vec<i64> = video.iter().map(|r| r.idx).collect();
+    idxs.sort_unstable();
+    idxs.dedup();
+    for w in idxs.windows(2) {
+        assert_eq!(w[1], w[0] + 1, "one video sequence across both Representations");
+    }
+    let reps: std::collections::BTreeSet<&str> = video.iter().map(|r| r.rep.as_str()).collect();
+    assert_eq!(reps.len(), 2, "both Representations were used");
+    assert_eq!(sim.requests(common::world::Kind::Init).len(), 3, "the new init is fetched");
+    assert_eq!(sim.count(|o| matches!(o, Output::Discontinuity)), 0, "aligned set");
+}

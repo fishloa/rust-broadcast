@@ -58,6 +58,10 @@ impl Default for UtcServer {
     }
 }
 
+pub fn is_video(rep: &str) -> bool {
+    rep.starts_with('V') || rep.starts_with('W')
+}
+
 pub const MAX_PERIODS: usize = 512;
 
 #[derive(Clone, Copy, Debug)]
@@ -163,6 +167,7 @@ pub struct Synth {
     pub if_none_match_hits: u64,
     pub segment_bytes_overrides: BTreeMap<String, Vec<u8>>,
     pub min_update_attr: bool,
+    pub second_video: bool,
     pub period_starts_us: Vec<i64>,
     pub announce_ahead_us: i64,
     pub per_segment_s: bool,
@@ -199,6 +204,7 @@ impl Synth {
             if_none_match_hits: 0,
             segment_bytes_overrides: BTreeMap::new(),
             min_update_attr: true,
+            second_video: false,
             period_starts_us: Vec::new(),
             announce_ahead_us: 0,
             per_segment_s: false,
@@ -354,8 +360,20 @@ impl Synth {
         } else {
             String::new()
         };
+        let second = if self.second_video {
+            let wr = if self.period_starts_us.is_empty() {
+                "W".to_owned()
+            } else {
+                format!("W{pi}")
+            };
+            format!(
+                "<Representation id=\"{wr}\" codecs=\"avc1.4d400d\" bandwidth=\"262440\" width=\"320\" height=\"240\">{vt}</Representation>"
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "<Period id=\"{name}\" start=\"PT{}S\"><AdaptationSet id=\"0\" contentType=\"video\" mimeType=\"video/mp4\" segmentAlignment=\"true\" startWithSAP=\"1\"><Representation id=\"{vr}\" codecs=\"avc1.4d400d\" bandwidth=\"62440\" width=\"320\" height=\"240\">{vt}</Representation></AdaptationSet>{audio}</Period>",
+            "<Period id=\"{name}\" start=\"PT{}S\"><AdaptationSet id=\"0\" contentType=\"video\" mimeType=\"video/mp4\" segmentAlignment=\"true\" startWithSAP=\"1\"><Representation id=\"{vr}\" codecs=\"avc1.4d400d\" bandwidth=\"62440\" width=\"320\" height=\"240\">{vt}</Representation>{second}</AdaptationSet>{audio}</Period>",
             start_us as f64 / 1e6
         )
     }
@@ -524,7 +542,7 @@ impl Synth {
             return Outcome::Resp(HttpResp::status(404));
         };
         if file == "init.mp4" {
-            let b = if rep.starts_with('V') {
+            let b = if is_video(rep) {
                 self.pool.video_init.clone()
             } else {
                 self.pool.audio_init.clone()

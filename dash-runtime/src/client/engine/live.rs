@@ -604,6 +604,14 @@ impl DashClient {
     }
 
     fn start_sampler(&mut self, now_us: u64, gating: bool) -> bool {
+        let host_holds = self.dash.clock_policy == DashClockPolicy::PreferHost
+            && self
+                .clock
+                .anchor()
+                .is_some_and(|a| a.source == ClockSource::Host);
+        if !gating && (host_holds || !self.is_live_mpd()) {
+            return false;
+        }
         let Some(mpd) = self.mpd.as_ref() else {
             return false;
         };

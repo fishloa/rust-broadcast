@@ -1851,12 +1851,17 @@ impl DashClient {
         let (current_at, switch_us) = {
             let lane = &self.periods[pi].lanes[li];
             let cur = lane.current().ok_or(Error::NotSwitchable)?;
-            let seg = cur
-                .plan
-                .as_ref()
-                .and_then(|p| p.get(cur.next_issue))
-                .ok_or(Error::NotSwitchable)?;
-            (cur.at, seg.start_us)
+            let plan = cur.plan.as_ref().ok_or(Error::NotSwitchable)?;
+            let at_us = match plan.get(cur.next_issue) {
+                Some(seg) => seg.start_us,
+                None => plan
+                    .len()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|last| plan.get(last))
+                    .map(|seg| seg.start_us.saturating_add(seg.duration_us))
+                    .ok_or(Error::NotSwitchable)?,
+            };
+            (cur.at, at_us)
         };
         if current_at == at {
             return Ok(());
