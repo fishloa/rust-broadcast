@@ -292,3 +292,31 @@ fn multiperiod_continuous_numbers_and_pto() {
     assert_eq!(b.plan.get(1).unwrap().start_us, 2 * SECOND_US);
     assert_eq!(b.plan.period_start_us(), 6 * SECOND_US);
 }
+
+#[test]
+fn hierarchical_sidx_is_a_typed_unsupported_error() {
+    use dash_runtime::error::Unsupported;
+    let l = load("dash/ondemand-sidx/ondemand.mpd");
+    let at = RepRef::at(0, 0, 0);
+    let (p, s, r) = at.resolve(&l.mpd).unwrap();
+    let SegmentInfo::Base(base) = resolve_segment_info(p, s, r).unwrap() else {
+        panic!()
+    };
+    let range = base.index_range.unwrap();
+    let bytes = l.base_file_bytes(at);
+    let mut sidx =
+        base_index::parse_index(&bytes[range.first as usize..=range.last.unwrap() as usize])
+            .unwrap();
+    sidx.references[1].reference_type = 1;
+    let anchor = base_index::anchor_after(&range).unwrap();
+    assert!(matches!(
+        plan_representation(
+            &l.mpd,
+            at,
+            &PlanOptions::default().with_index(&sidx, anchor)
+        ),
+        Err(PlanError::Address(AddressError::Unsupported(
+            Unsupported::HierarchicalSidx
+        )))
+    ));
+}

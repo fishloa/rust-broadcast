@@ -397,6 +397,21 @@ fn template_widths_escapes_and_invalid_forms() {
         scan("$Number%0999d$").unwrap_err(),
         TemplateFault::WidthTooLarge
     );
+    assert!(scan("$Number%020d$").is_ok(), "the largest supported width");
+    assert_eq!(
+        scan("$Number%021d$").unwrap_err(),
+        TemplateFault::WidthTooLarge
+    );
+    let escaped = scan("cost$$5-$$Number$$").unwrap();
+    assert!(
+        !escaped.number && !escaped.time,
+        "$$ is an escape, not an identifier"
+    );
+    assert_eq!(
+        scan("$$$Number$").map(|u| u.number),
+        Ok(true),
+        "an escape followed by an identifier"
+    );
     assert_eq!(
         scan_media("a.m4s").unwrap_err(),
         TemplateFault::MissingNumberOrTime
@@ -589,4 +604,81 @@ fn url_query_info_minimal_form() {
     let m = xml(r#"useMPDUrlQuery="true""#);
     let _ = none;
     assert_eq!(get(&m, None).unwrap(), None);
+}
+
+#[test]
+fn time_substitution_is_the_raw_s_at_even_with_a_presentation_time_offset() {
+    // Decision D3 (docs/dash-runtime/DESIGN.md section 0 and 11): the standard's
+    // three statements disagree when @presentationTimeOffset != 0; `$Time$`
+    // takes the raw S@t, the Period-relative start takes S@t - PTO.
+    let m = mpd(
+        r#"type="static" mediaPresentationDuration="PT4S""#,
+        r#"<Period><AdaptationSet mimeType="video/mp4"><Representation id="r" bandwidth="1">
+           <SegmentTemplate timescale="1000" presentationTimeOffset="5000" media="$Time$.m4s">
+           <SegmentTimeline><S t="5000" d="2000" r="1"/></SegmentTimeline></SegmentTemplate>
+           </Representation></AdaptationSet></Period>"#,
+    );
+    let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
+    let first = p.plan.get(0).unwrap();
+    assert_eq!(first.reference, "5000.m4s");
+    assert_eq!(first.start_us, 0);
+    assert_eq!(p.plan.get(1).unwrap().reference, "7000.m4s");
+    assert_eq!(p.plan.get(1).unwrap().start_us, 2 * S);
+}
+
+#[test]
+fn end_number_truncates_a_timeline() {
+    let m = mpd(
+        r#"type="static" mediaPresentationDuration="PT10S""#,
+        r#"<Period><AdaptationSet mimeType="video/mp4"><Representation id="r" bandwidth="1">
+           <SegmentTemplate timescale="1" endNumber="4" media="$Number$.m4s">
+           <SegmentTimeline><S t="0" d="1" r="2"/><S d="1" r="5"/></SegmentTimeline></SegmentTemplate>
+           </Representation></AdaptationSet></Period>"#,
+    );
+    let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
+    assert_eq!(
+        p.plan.len(),
+        Some(4),
+        "a segment numbered above @endNumber is invalid"
+    );
+    assert_eq!(p.plan.get(3).unwrap().number, 4);
+    assert!(p.plan.get(4).is_none());
+}
+
+#[test]
+fn utc_timing_schemes_are_classified_from_the_real_mpd() {
+    use dash_runtime::timing::utc_timing::UtcScheme;
+    let l = common::load("dash/livesim2/segtimeline_time_a.mpd");
+    let u = &l.mpd.utc_timings[0];
+    assert_eq!(u.scheme, UtcScheme::HttpXsdate);
+    assert_eq!(
+        u.values().collect::<Vec<_>>(),
+        ["https://time.akamai.com/?iso&ms"]
+    );
+    for (uri, scheme) in [
+        ("urn:mpeg:dash:utc:ntp:2014", UtcScheme::Ntp),
+        ("urn:mpeg:dash:utc:sntp:2014", UtcScheme::Sntp),
+        ("urn:mpeg:dash:utc:http-head:2014", UtcScheme::HttpHead),
+        ("urn:mpeg:dash:utc:http-xsdate:2014", UtcScheme::HttpXsdate),
+        ("urn:mpeg:dash:utc:http-iso:2014", UtcScheme::HttpIso),
+        ("urn:mpeg:dash:utc:http-ntp:2014", UtcScheme::HttpNtp),
+        ("urn:mpeg:dash:utc:direct:2014", UtcScheme::Direct),
+        ("urn:other", UtcScheme::Unknown),
+    ] {
+        assert_eq!(UtcScheme::from_scheme_id_uri(uri), scheme, "{uri}");
+    }
+    assert!(UtcScheme::HttpHead.needs_request() && !UtcScheme::Direct.needs_request());
+    assert!(UtcScheme::Direct.is_actionable() && !UtcScheme::Ntp.is_actionable());
+    let m = mpd(
+        r#"type="dynamic" availabilityStartTime="1970-01-01T00:00:00Z""#,
+        r#"<UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-head:2014" value="http://a/t http://b/t"/>
+           <UTCTiming schemeIdUri="urn:mpeg:dash:utc:direct:2014" value="2026-10-26T08:39:04Z"/>"#,
+    );
+    assert_eq!(
+        m.utc_timings.len(),
+        2,
+        "alternatives are kept in document order"
+    );
+    assert_eq!(m.utc_timings[0].values().count(), 2);
+    assert_eq!(m.utc_timings[1].scheme, UtcScheme::Direct);
 }

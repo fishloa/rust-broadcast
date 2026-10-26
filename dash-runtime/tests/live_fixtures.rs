@@ -116,6 +116,17 @@ fn livesim2_time_timeline_window_and_numbers() {
     assert_eq!(newest_complete(&video.plan, publish), Some(30));
     assert_eq!(oldest_in_window(&video.plan, publish), Some(0));
     assert_eq!(video.plan.init().unwrap().reference, "V300/init.mp4");
+    // Join six seconds behind the live edge: T_join falls exactly on the start
+    // of the 29th segment (index 28), the one that contains it, not the next.
+    let join = join_index(&video.plan, publish, 6 * SECOND_US).unwrap();
+    assert_eq!(join, 28);
+    let join_mid = join_index(&video.plan, publish, 6 * SECOND_US - 1).unwrap();
+    assert_eq!(
+        join_mid, 28,
+        "one microsecond closer to the edge is still inside it"
+    );
+    let join_before = join_index(&video.plan, publish, 6 * SECOND_US + 1).unwrap();
+    assert_eq!(join_before, 27);
     let total: u64 = audio.plan.iter().map(|s| s.duration_ticks).sum();
     assert_eq!(audio.plan.get(0).unwrap().time_ticks, 86_012_853_504_000);
     let audio_end_us = (i128::from(86_012_853_504_000u64) + i128::from(total)) * SECOND_US / 48_000;

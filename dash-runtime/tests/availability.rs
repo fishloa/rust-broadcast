@@ -8,7 +8,10 @@ use common::Rng;
 use dash_runtime::address::{PlanOptions, plan_representation};
 use dash_runtime::mpd::Mpd;
 use dash_runtime::selection::RepRef;
-use dash_runtime::timing::availability::{ato_seconds_to_us, complete_count_constant};
+use dash_runtime::timing::availability::{
+    ato_seconds_to_us, complete_count_constant, init_available_from, segment_available_from,
+    segment_available_until,
+};
 use dash_runtime::timing::live_edge::{join_index, newest_complete, oldest_in_window, window};
 
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
@@ -160,4 +163,17 @@ fn availability_time_offset_makes_segments_available_earlier_only_when_applied()
         without.plan.get(0).unwrap().available_until_us,
         "the end of the window is not shifted"
     );
+}
+
+#[test]
+fn public_formulas_on_hand_computed_numbers() {
+    // AST 1000 + PeriodStart 100 + MPDstart 10 + MPDduration 5 - ATO 3.
+    assert_eq!(segment_available_from(1000, 100, 10, 5, 3), 1112);
+    // AST 1000 + PeriodStart 100 + MPDstart 10 + 2 x MPDduration 5 + TSB 7.
+    assert_eq!(
+        segment_available_until(1000, 100, 10, 5, Some(7)),
+        Some(1127)
+    );
+    assert_eq!(segment_available_until(1000, 100, 10, 5, None), None);
+    assert_eq!(init_available_from(1000, 100), 1100);
 }
