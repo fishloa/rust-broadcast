@@ -56,7 +56,7 @@ impl Default for UtcServer {
     }
 }
 
-pub const MAX_PERIODS: usize = 8;
+pub const MAX_PERIODS: usize = 512;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Geo {

@@ -196,6 +196,8 @@ pub struct Sim {
     pub max_stall_run: u64,
     pub steps: u64,
     pub trace_stall: bool,
+    pub keep_samples: bool,
+    pub sample_counts: BTreeMap<u32, usize>,
 }
 
 fn backoff_us(attempt: u32) -> u64 {
@@ -231,6 +233,8 @@ impl Sim {
             max_stall_run: 0,
             steps: 0,
             trace_stall: false,
+            keep_samples: true,
+            sample_counts: BTreeMap::new(),
         }
     }
 
@@ -327,6 +331,16 @@ impl Sim {
 
     fn drain_outputs(&mut self) {
         while let Some(o) = self.client.next_output() {
+            if !self.keep_samples {
+                match &o {
+                    Output::Samples { track_id, samples } => {
+                        *self.sample_counts.entry(track_id.value()).or_insert(0) += samples.len();
+                        continue;
+                    }
+                    Output::Init(_) => continue,
+                    _ => {}
+                }
+            }
             self.outputs.push(o);
         }
     }
@@ -548,7 +562,7 @@ impl Sim {
     }
 
     pub fn samples_per_track(&self) -> BTreeMap<u32, usize> {
-        let mut m = BTreeMap::new();
+        let mut m = self.sample_counts.clone();
         for o in &self.outputs {
             if let Output::Samples { track_id, samples } = o {
                 *m.entry(track_id.value()).or_insert(0) += samples.len();
