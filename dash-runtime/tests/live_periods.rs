@@ -23,9 +23,9 @@ fn period_changes(sim: &Sim) -> Vec<(String, bool)> {
     sim.outputs
         .iter()
         .filter_map(|o| match o {
-            Output::PeriodChanged {
-                id, continuous, ..
-            } => Some((id.clone().unwrap_or_default(), *continuous)),
+            Output::PeriodChanged { id, continuous, .. } => {
+                Some((id.clone().unwrap_or_default(), *continuous))
+            }
             _ => None,
         })
         .collect()
@@ -50,14 +50,22 @@ fn assert_across_boundaries(reqs: &[SegReq]) {
             all.extend(v);
         }
         for w in all.windows(2) {
-            assert_eq!(w[1], w[0] + 1, "{rep}: gap or repeat across Periods in {all:?}");
+            assert_eq!(
+                w[1],
+                w[0] + 1,
+                "{rep}: gap or repeat across Periods in {all:?}"
+            );
         }
     }
 }
 
 #[test]
 fn playing_through_two_boundaries_changes_period_twice_with_a_discontinuity_each() {
-    for a in [Addressing::Number, Addressing::TimelineNumber, Addressing::TimelineTime] {
+    for a in [
+        Addressing::Number,
+        Addressing::TimelineNumber,
+        Addressing::TimelineTime,
+    ] {
         let (mut sim, geo) = sim_with(multi(a, 6 * MICROS), 25 * MICROS, DashConfig::default());
         sim.run_for(80 * MICROS as u64);
         no_fatal(&sim);
@@ -72,8 +80,15 @@ fn playing_through_two_boundaries_changes_period_twice_with_a_discontinuity_each
             vec!["P0", "P1", "P2"],
             "{a:?}"
         );
-        assert!(changes.iter().all(|c| !c.1), "unsignalled boundaries are not continuous");
-        assert_eq!(sim.count(|o| matches!(o, Output::Discontinuity)), 2, "{a:?}");
+        assert!(
+            changes.iter().all(|c| !c.1),
+            "unsignalled boundaries are not continuous"
+        );
+        assert_eq!(
+            sim.count(|o| matches!(o, Output::Discontinuity)),
+            2,
+            "{a:?}"
+        );
         let inits = sim.requests(Kind::Init).len();
         assert_eq!(inits, 6, "{a:?}: one init per Representation per Period");
     }
@@ -81,7 +96,11 @@ fn playing_through_two_boundaries_changes_period_twice_with_a_discontinuity_each
 
 #[test]
 fn a_period_announced_ahead_gets_its_init_before_its_first_segment() {
-    let (mut sim, geo) = sim_with(multi(Addressing::Number, 10 * MICROS), 25 * MICROS, DashConfig::default());
+    let (mut sim, geo) = sim_with(
+        multi(Addressing::Number, 10 * MICROS),
+        25 * MICROS,
+        DashConfig::default(),
+    );
     sim.run_for(30 * MICROS as u64);
     no_fatal(&sim);
     let p1_init = sim
@@ -105,7 +124,11 @@ fn a_period_announced_ahead_gets_its_init_before_its_first_segment() {
 
 #[test]
 fn expired_periods_dropping_out_of_the_mpd_do_not_disturb_playback() {
-    let (mut sim, geo) = sim_with(multi(Addressing::TimelineNumber, 6 * MICROS), 55 * MICROS, DashConfig::default());
+    let (mut sim, geo) = sim_with(
+        multi(Addressing::TimelineNumber, 6 * MICROS),
+        55 * MICROS,
+        DashConfig::default(),
+    );
     sim.run_for(70 * MICROS as u64);
     no_fatal(&sim);
     let reqs = segment_requests(&sim, geo);
@@ -120,7 +143,11 @@ fn expired_periods_dropping_out_of_the_mpd_do_not_disturb_playback() {
 
 #[test]
 fn a_period_that_appears_with_a_refresh_closes_the_previous_open_ended_one() {
-    let (mut sim, geo) = sim_with(multi(Addressing::Number, 4 * MICROS), 25 * MICROS, DashConfig::default());
+    let (mut sim, geo) = sim_with(
+        multi(Addressing::Number, 4 * MICROS),
+        25 * MICROS,
+        DashConfig::default(),
+    );
     sim.run_for(40 * MICROS as u64);
     no_fatal(&sim);
     let reqs = segment_requests(&sim, geo);

@@ -411,6 +411,15 @@ impl DashClient {
         }
     }
 
+    /// Whether the client still waits for the answer to the fetch of `id`.
+    /// An MPD reset (or a rejoin) abandons the requests of the old timeline:
+    /// a caller may cancel those downloads; a late answer is rejected with
+    /// [`Error::UnrequestedResource`] either way.
+    #[must_use]
+    pub fn awaits(&self, id: ResourceId) -> bool {
+        self.inflight.contains(&id)
+    }
+
     /// The next drained output, if any.
     pub fn next_output(&mut self) -> Option<Output> {
         self.outputs.pop_front()
@@ -647,7 +656,7 @@ impl DashClient {
             let utc = self.utc_now(now_us);
             let mut pick: Option<(usize, i128)> = None;
             for li in 0..self.periods[pi].lanes.len() {
-                match self.lane_candidate(pi, li, utc) {
+                match self.lane_candidate(pi, li, utc, now_us) {
                     Candidate::Ready(start_us) => {
                         if pick.is_none_or(|(_, best)| start_us < best) {
                             pick = Some((li, start_us));
@@ -666,9 +675,15 @@ impl DashClient {
         }
     }
 
-    fn lane_candidate(&mut self, pi: usize, li: usize, utc: Option<i128>) -> Candidate {
+    fn lane_candidate(
+        &mut self,
+        pi: usize,
+        li: usize,
+        utc: Option<i128>,
+        now_us: u64,
+    ) -> Candidate {
         match utc {
-            Some(utc) if self.is_live_mpd() => self.live_lane_candidate(pi, li, utc),
+            Some(utc) if self.is_live_mpd() => self.live_lane_candidate(pi, li, utc, now_us),
             _ => {
                 let lane = &self.periods[pi].lanes[li];
                 let Some(rep) = lane.current() else {
@@ -1481,9 +1496,7 @@ impl DashClient {
     }
 
     fn prune_finished(&mut self) {
-        while self.deliver > 0
-            && self.issue > 0
-            && self.periods.first().is_some_and(|p| p.finished)
+        while self.deliver > 0 && self.issue > 0 && self.periods.first().is_some_and(|p| p.finished)
         {
             self.periods.remove(0);
             self.deliver -= 1;

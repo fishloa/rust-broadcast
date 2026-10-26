@@ -8,7 +8,9 @@
 
 use std::collections::BTreeMap;
 
-use super::world::{HttpReq, HttpResp, MICROS, Method, Origin, Outcome, http_date, xs_datetime_ms, xs_datetime_s};
+use super::world::{
+    HttpReq, HttpResp, MICROS, Method, Origin, Outcome, http_date, xs_datetime_ms, xs_datetime_s,
+};
 use dash_runtime::client::Failure;
 
 pub const MPD_URL: &str = "http://dash.test/live/manifest.mpd";
@@ -80,7 +82,8 @@ impl Geo {
     }
 
     pub fn avail_until_us(&self, idx: i64) -> Option<i64> {
-        self.tsb_us.map(|t| self.ast_us + (idx + 2) * self.seg_us + t)
+        self.tsb_us
+            .map(|t| self.ast_us + (idx + 2) * self.seg_us + t)
     }
 
     pub fn complete_count(&self, utc_us: i64) -> i64 {
@@ -93,13 +96,21 @@ impl Geo {
 
     pub fn index_of(&self, rep: &str, n: u64) -> Option<i64> {
         let p = Self::period_of(rep);
-        let base = if p < self.n_periods { self.period_first_idx[p] } else { 0 };
+        let base = if p < self.n_periods {
+            self.period_first_idx[p]
+        } else {
+            0
+        };
         match self.addressing {
             Addressing::Number | Addressing::TimelineNumber => {
                 n.checked_sub(self.start_number).map(|v| base + v as i64)
             }
             Addressing::TimelineTime => {
-                let ts = if rep.starts_with('V') { VIDEO_TIMESCALE } else { AUDIO_TIMESCALE };
+                let ts = if rep.starts_with('V') {
+                    VIDEO_TIMESCALE
+                } else {
+                    AUDIO_TIMESCALE
+                };
                 let d = self.ticks(ts);
                 n.checked_sub(self.t0_ticks).map(|v| (v / d) as i64)
             }
@@ -294,7 +305,15 @@ impl Synth {
         }
     }
 
-    fn period_xml(&self, pi: usize, name: &str, start_us: i64, first_global: i64, cl: i64, closed: bool) -> String {
+    fn period_xml(
+        &self,
+        pi: usize,
+        name: &str,
+        start_us: i64,
+        first_global: i64,
+        cl: i64,
+        closed: bool,
+    ) -> String {
         let (first_local, count) = match self.addressing {
             Addressing::Number => (0, 0),
             _ => {
@@ -311,8 +330,22 @@ impl Synth {
                 0
             }
         };
-        let vt = self.template(self.ticks(VIDEO_TIMESCALE), VIDEO_TIMESCALE, first_local, count, first_global, pto(VIDEO_TIMESCALE));
-        let at = self.template(self.ticks(AUDIO_TIMESCALE), AUDIO_TIMESCALE, first_local, count, first_global, pto(AUDIO_TIMESCALE));
+        let vt = self.template(
+            self.ticks(VIDEO_TIMESCALE),
+            VIDEO_TIMESCALE,
+            first_local,
+            count,
+            first_global,
+            pto(VIDEO_TIMESCALE),
+        );
+        let at = self.template(
+            self.ticks(AUDIO_TIMESCALE),
+            AUDIO_TIMESCALE,
+            first_local,
+            count,
+            first_global,
+            pto(AUDIO_TIMESCALE),
+        );
         let (vr, ar) = if self.period_starts_us.is_empty() {
             ("V".to_owned(), "A".to_owned())
         } else {
@@ -371,7 +404,10 @@ impl Synth {
             }
         }
         let periods = if self.period_starts_us.is_empty() {
-            self.period_xml(0, "P0", 0, 0, c, false).replace("<Period id=\"P0\" start=\"PT0S\">", "<Period id=\"P0\" start=\"PT0S\">")
+            self.period_xml(0, "P0", 0, 0, c, false).replace(
+                "<Period id=\"P0\" start=\"PT0S\">",
+                "<Period id=\"P0\" start=\"PT0S\">",
+            )
         } else {
             let now_off = at_utc - self.ast_us;
             let starts = self.period_starts_us.clone();
@@ -393,7 +429,14 @@ impl Synth {
                 if let Some(e) = end {
                     cl = cl.min((e - st) / self.seg_us);
                 }
-                out.push_str(&self.period_xml(i, &format!("P{i}"), *st, first_global, cl, end.is_some()));
+                out.push_str(&self.period_xml(
+                    i,
+                    &format!("P{i}"),
+                    *st,
+                    first_global,
+                    cl,
+                    end.is_some(),
+                ));
             }
             out
         };
@@ -522,7 +565,11 @@ impl Synth {
         if let Some(b) = self.segment_bytes_overrides.get(file) {
             return Outcome::Resp(HttpResp::ok(b.clone()));
         }
-        let pool = if rep.starts_with('V') { &self.pool.video } else { &self.pool.audio };
+        let pool = if rep.starts_with('V') {
+            &self.pool.video
+        } else {
+            &self.pool.audio
+        };
         Outcome::Resp(HttpResp::ok(pool[(idx as usize) % POOL].clone()))
     }
 }

@@ -132,7 +132,10 @@ fn a_location_element_replaces_the_mpd_update_url() {
     run_checked(&mut sim, geo, 20);
     let urls = handle.borrow().mpd_urls.clone();
     assert!(urls[0].ends_with("/manifest.mpd"));
-    assert!(urls[1..].iter().all(|u| u.ends_with("/updates.mpd")), "{urls:?}");
+    assert!(
+        urls[1..].iter().all(|u| u.ends_with("/updates.mpd")),
+        "{urls:?}"
+    );
 }
 
 #[test]
@@ -143,7 +146,10 @@ fn a_redirect_target_becomes_the_update_url_when_there_is_no_location() {
     run_checked(&mut sim, geo, 20);
     let urls = handle.borrow().mpd_urls.clone();
     assert!(urls[0].ends_with("/manifest.mpd"));
-    assert!(urls[1..].iter().all(|u| u.ends_with("/moved.mpd")), "{urls:?}");
+    assert!(
+        urls[1..].iter().all(|u| u.ends_with("/moved.mpd")),
+        "{urls:?}"
+    );
 }
 
 #[test]
@@ -154,7 +160,10 @@ fn location_wins_over_a_redirect() {
     let (mut sim, geo, handle) = sim_shared(synth, START, DashConfig::default());
     run_checked(&mut sim, geo, 20);
     let urls = handle.borrow().mpd_urls.clone();
-    assert!(urls[1..].iter().all(|u| u.ends_with("/updates.mpd")), "{urls:?}");
+    assert!(
+        urls[1..].iter().all(|u| u.ends_with("/updates.mpd")),
+        "{urls:?}"
+    );
 }
 
 #[test]
@@ -170,8 +179,16 @@ fn dynamic_to_static_plays_the_rest_and_ends() {
         let reqs = segment_requests(&sim, geo);
         assert_contiguous(&reqs);
         assert_no_duplicates(&reqs);
-        let last_v = reqs.iter().filter(|r| r.rep == "V").map(|r| r.idx).max().unwrap();
-        assert_eq!(last_v, 29, "{a:?}: the 30 segments of the 60 s presentation");
+        let last_v = reqs
+            .iter()
+            .filter(|r| r.rep == "V")
+            .map(|r| r.idx)
+            .max()
+            .unwrap();
+        assert_eq!(
+            last_v, 29,
+            "{a:?}: the 30 segments of the 60 s presentation"
+        );
         let after_end = sim
             .requests(Kind::Mpd)
             .iter()
@@ -183,12 +200,21 @@ fn dynamic_to_static_plays_the_rest_and_ends() {
 
 #[test]
 fn an_availability_start_change_is_an_mpd_reset_and_rejoins_the_live_edge() {
-    let (mut sim, geo, handle) = sim_shared(with_utc(Addressing::Number), START, DashConfig::default());
+    let (mut sim, geo, handle) =
+        sim_shared(with_utc(Addressing::Number), START, DashConfig::default());
     sim.run_for(30 * MICROS as u64);
     let new_ast = AST_US + 50 * MICROS;
     handle.borrow_mut().ast_us = new_ast;
     let changed_at = sim.world.true_utc();
+    let before_reset: Vec<_> = sim.seen_ids.clone();
     sim.run_for(40 * MICROS as u64);
+    assert!(
+        before_reset
+            .iter()
+            .filter(|id| matches!(id, dash_runtime::client::ResourceId::Segment { .. }))
+            .all(|id| !sim.client.awaits(*id)),
+        "the requests of the abandoned timeline are no longer awaited"
+    );
     no_fatal(&sim);
     assert!(sim.count(|o| matches!(o, Output::Discontinuity)) >= 1);
     let old = segment_requests(&sim, geo);
@@ -208,7 +234,8 @@ fn an_availability_start_change_is_an_mpd_reset_and_rejoins_the_live_edge() {
 
 #[test]
 fn the_reset_descriptor_restarts_the_presentation_even_with_the_same_start_time() {
-    let (mut sim, geo, handle) = sim_shared(with_utc(Addressing::Number), START, DashConfig::default());
+    let (mut sim, geo, handle) =
+        sim_shared(with_utc(Addressing::Number), START, DashConfig::default());
     sim.run_for(20 * MICROS as u64);
     handle.borrow_mut().extra_mpd_children =
         "<SupplementalProperty schemeIdUri=\"urn:mpeg:dash:reset:2016\"/>".into();
@@ -255,7 +282,10 @@ fn a_low_latency_mpd_plays_at_segment_granularity_with_a_notice() {
     synth.mpd_override = Some(Box::new(move |_| Some(ll.clone())));
     let (mut sim, geo) = sim_with(synth, START, DashConfig::default());
     let reqs = run_checked(&mut sim, geo, 20);
-    assert!(early_requests(&reqs, geo, TOLERANCE_US).is_empty(), "complete-segment time");
+    assert!(
+        early_requests(&reqs, geo, TOLERANCE_US).is_empty(),
+        "complete-segment time"
+    );
     assert!(sim.count(|o| matches!(o, Output::Notice(Notice::LowLatencyIgnored))) == 1);
 }
 

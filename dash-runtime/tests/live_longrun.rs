@@ -42,7 +42,10 @@ fn day(mut sim: Sim, label: &str) -> Vec<StateSize> {
         sizes.push(s);
     }
     assert!(sim.max_stall_run < 3, "{label}");
-    assert!(sim.samples_per_track().values().all(|n| *n > 100_000), "{label}");
+    assert!(
+        sim.samples_per_track().values().all(|n| *n > 100_000),
+        "{label}"
+    );
     sizes
 }
 

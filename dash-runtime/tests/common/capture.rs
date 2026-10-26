@@ -91,29 +91,47 @@ impl Origin for Livesim2Pair {
             return Outcome::Resp(HttpResp::status(404));
         };
         if path == "manifest.mpd" {
-            let text = if at_utc_us >= self.switch_utc_us { &self.b } else { &self.a };
+            let text = if at_utc_us >= self.switch_utc_us {
+                &self.b
+            } else {
+                &self.a
+            };
             return Outcome::Resp(HttpResp::ok(text.clone().into_bytes()));
         }
         let Some((rep, file)) = path.split_once('/') else {
             return Outcome::Resp(HttpResp::status(404));
         };
         if file == "init.mp4" {
-            let b = if rep == "V300" { &self.pool.video_init } else { &self.pool.audio_init };
+            let b = if rep == "V300" {
+                &self.pool.video_init
+            } else {
+                &self.pool.audio_init
+            };
             return Outcome::Resp(HttpResp::ok(b.clone()));
         }
-        let Some(t) = file.strip_suffix(".m4s").and_then(|s| s.parse::<u64>().ok()) else {
+        let Some(t) = file
+            .strip_suffix(".m4s")
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
             return Outcome::Resp(HttpResp::status(404));
         };
         let Some(&avail) = self.avail_utc_us.get(&(rep.to_owned(), t)) else {
-            self.segment_requests.push((rep.to_owned(), t, at_utc_us, 404));
+            self.segment_requests
+                .push((rep.to_owned(), t, at_utc_us, 404));
             return Outcome::Resp(HttpResp::status(404));
         };
         if at_utc_us < avail {
-            self.segment_requests.push((rep.to_owned(), t, at_utc_us, 425));
+            self.segment_requests
+                .push((rep.to_owned(), t, at_utc_us, 425));
             return Outcome::Resp(HttpResp::status(425));
         }
-        self.segment_requests.push((rep.to_owned(), t, at_utc_us, 200));
-        let pool = if rep == "V300" { &self.pool.video } else { &self.pool.audio };
+        self.segment_requests
+            .push((rep.to_owned(), t, at_utc_us, 200));
+        let pool = if rep == "V300" {
+            &self.pool.video
+        } else {
+            &self.pool.audio
+        };
         Outcome::Resp(HttpResp::ok(pool[(t as usize / 7) % 4].clone()))
     }
 }

@@ -33,10 +33,11 @@ fn a_utc_server_ahead_of_the_origin_makes_early_requests_that_are_absorbed() {
     assert_no_duplicates(&reqs);
     assert!(!early_requests(&reqs, geo, TOLERANCE_US).is_empty());
     assert_eq!(first_source(&sim), Some(ClockSource::UtcTiming));
-    assert!(sim
-        .classes
-        .iter()
-        .all(|c| !matches!(c, FailureClass::Retry { .. })));
+    assert!(
+        sim.classes
+            .iter()
+            .all(|c| !matches!(c, FailureClass::Retry { .. }))
+    );
 }
 
 #[test]
@@ -58,7 +59,10 @@ fn direct_utc_timing_anchors_at_the_mpd_exchange_midpoint() {
     let (mut sim, geo) = sim_with(synth, START, quick());
     let reqs = run_checked(&mut sim, geo, 30);
     assert_eq!(first_source(&sim), Some(ClockSource::UtcTiming));
-    assert!(sim.requests(Kind::Utc).is_empty(), "direct needs no request");
+    assert!(
+        sim.requests(Kind::Utc).is_empty(),
+        "direct needs no request"
+    );
     assert!(early_requests(&reqs, geo, 25_000).is_empty());
 }
 
@@ -194,7 +198,10 @@ fn the_host_clock_stepping_forward_and_back_never_duplicates_a_segment() {
         let reqs = segment_requests(&sim, geo);
         assert_no_duplicates(&reqs);
         assert!(sim.max_stall_run < 3);
-        assert!(sim.count(|o| matches!(o, Output::Samples { .. })) > 20, "step {step}");
+        assert!(
+            sim.count(|o| matches!(o, Output::Samples { .. })) > 20,
+            "step {step}"
+        );
         let per_second = reqs.len() as f64 / 180.0;
         assert!(per_second <= 8.0, "rate {per_second}");
     }

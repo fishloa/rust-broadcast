@@ -62,7 +62,12 @@ fn the_ffmpeg_number_capture_plays_exactly_the_segments_the_clock_selects() {
     segments.sort();
     assert_eq!(
         segments,
-        ["seg-0-007.m4s", "seg-0-008.m4s", "seg-1-007.m4s", "seg-1-008.m4s"],
+        [
+            "seg-0-007.m4s",
+            "seg-0-008.m4s",
+            "seg-1-007.m4s",
+            "seg-1-008.m4s"
+        ],
         "T_join = utc - SPD - AST = 13.34 s lies in segment 7; 8 completes at AST + 16 s"
     );
     let seg8 = sim
@@ -75,10 +80,26 @@ fn the_ffmpeg_number_capture_plays_exactly_the_segments_the_clock_selects() {
         "segment 8 is not requested before it is complete"
     );
     let got = samples_by_track(&sim);
-    let video = oracle(&["live-number/init-0.m4s", "live-number/seg-0-007.m4s", "live-number/seg-0-008.m4s"]);
-    let audio = oracle(&["live-number/init-1.m4s", "live-number/seg-1-007.m4s", "live-number/seg-1-008.m4s"]);
-    assert_eq!(got.get(&1), Some(&video[0]), "video samples equal the demux oracle");
-    assert_eq!(got.get(&2), Some(&audio[0]), "audio samples equal the demux oracle");
+    let video = oracle(&[
+        "live-number/init-0.m4s",
+        "live-number/seg-0-007.m4s",
+        "live-number/seg-0-008.m4s",
+    ]);
+    let audio = oracle(&[
+        "live-number/init-1.m4s",
+        "live-number/seg-1-007.m4s",
+        "live-number/seg-1-008.m4s",
+    ]);
+    assert_eq!(
+        got.get(&1),
+        Some(&video[0]),
+        "video samples equal the demux oracle"
+    );
+    assert_eq!(
+        got.get(&2),
+        Some(&audio[0]),
+        "audio samples equal the demux oracle"
+    );
 }
 
 #[test]
@@ -92,7 +113,12 @@ fn the_ffmpeg_timeline_capture_joins_on_s_t_not_on_tfdt() {
         let at = ast + micros(start + 273_763, 90_000);
         origin = origin.available(&format!("seg-0-{:03}.m4s", 3 + k), at);
     }
-    let audio = [(353_280i64, 89_087i64), (442_367, 89_088), (531_455, 89_089), (620_544, 89_088)];
+    let audio = [
+        (353_280i64, 89_087i64),
+        (442_367, 89_088),
+        (531_455, 89_089),
+        (620_544, 89_088),
+    ];
     for (k, (t, d)) in audio.iter().enumerate() {
         let at = ast + micros(t + d, 44_100);
         origin = origin.available(&format!("seg-1-{:03}.m4s", 5 + k), at);
@@ -112,12 +138,25 @@ fn the_ffmpeg_timeline_capture_joins_on_s_t_not_on_tfdt() {
     segments.sort();
     assert_eq!(
         segments,
-        ["seg-0-005.m4s", "seg-0-006.m4s", "seg-1-007.m4s", "seg-1-008.m4s"],
+        [
+            "seg-0-005.m4s",
+            "seg-0-006.m4s",
+            "seg-1-007.m4s",
+            "seg-1-008.m4s"
+        ],
         "video joins in 5 and audio in 7: boundaries of each Representation, not by number"
     );
     let got = samples_by_track(&sim);
-    let video = oracle(&["live-timeline/init-0.m4s", "live-timeline/seg-0-005.m4s", "live-timeline/seg-0-006.m4s"]);
-    let aud = oracle(&["live-timeline/init-1.m4s", "live-timeline/seg-1-007.m4s", "live-timeline/seg-1-008.m4s"]);
+    let video = oracle(&[
+        "live-timeline/init-0.m4s",
+        "live-timeline/seg-0-005.m4s",
+        "live-timeline/seg-0-006.m4s",
+    ]);
+    let aud = oracle(&[
+        "live-timeline/init-1.m4s",
+        "live-timeline/seg-1-007.m4s",
+        "live-timeline/seg-1-008.m4s",
+    ]);
     assert_eq!(got.get(&1), Some(&video[0]));
     assert_eq!(got.get(&2), Some(&aud[0]));
 }
@@ -129,11 +168,15 @@ fn pair() -> (Livesim2Pair, i64, i64) {
     for text in [&a, &b] {
         let mpd = Mpd::parse(text.as_bytes()).unwrap();
         for (set, name) in [(0usize, "A48"), (1usize, "V300")] {
-            let planned = plan_representation(&mpd, RepRef::at(0, set, 0), &PlanOptions::default()).unwrap();
+            let planned =
+                plan_representation(&mpd, RepRef::at(0, set, 0), &PlanOptions::default()).unwrap();
             let scale = planned.plan.timescale() as i64;
             for s in planned.plan.iter() {
                 let end = s.time_ticks as i64 + s.duration_ticks as i64;
-                avail.insert((name.to_owned(), s.time_ticks), (i128::from(end) * i128::from(MICROS) / i128::from(scale)) as i64);
+                avail.insert(
+                    (name.to_owned(), s.time_ticks),
+                    (i128::from(end) * i128::from(MICROS) / i128::from(scale)) as i64,
+                );
             }
         }
     }
@@ -174,20 +217,31 @@ fn the_real_livesim2_refresh_pair_plays_across_the_update_without_gap_or_early_r
         .map(|r| (r.1, r.2, r.3))
         .collect();
     let ok: Vec<u64> = video.iter().filter(|r| r.2 == 200).map(|r| r.0).collect();
-    assert_eq!(ok.len(), 5, "3 segments of a up to the live edge, 2 added by b: {ok:?}");
+    assert_eq!(
+        ok.len(),
+        5,
+        "3 segments of a up to the live edge, 2 added by b: {ok:?}"
+    );
     let mut sorted = ok.clone();
     sorted.sort_unstable();
     sorted.dedup();
     assert_eq!(sorted.len(), ok.len(), "no segment twice");
     for w in sorted.windows(2) {
-        assert_eq!(w[1] - w[0], 180_000, "one 2 s video segment after the other, none skipped");
+        assert_eq!(
+            w[1] - w[0],
+            180_000,
+            "one 2 s video segment after the other, none skipped"
+        );
     }
     assert_eq!(
         sorted.last(),
         Some(&161_274_106_080_000),
         "the newest segment MPD b lists was played: the refresh to b was applied"
     );
-    assert!(video.iter().all(|r| r.2 == 200), "never early, never missing: {video:?}");
+    assert!(
+        video.iter().all(|r| r.2 == 200),
+        "never early, never missing: {video:?}"
+    );
     let audio_ok: Vec<u64> = o
         .segment_requests
         .iter()

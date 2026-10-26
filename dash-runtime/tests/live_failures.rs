@@ -7,18 +7,26 @@ use common::checks::*;
 use common::scenario::*;
 use common::synth::{Addressing, parse_segment_url};
 use common::world::{HttpResp, Kind, MICROS, Outcome, Sim};
-use dash_runtime::client::{DashConfig, Failure, FailureClass, FailureKind, FatalKind, Notice, Output};
+use dash_runtime::client::{
+    DashConfig, Failure, FailureClass, FailureKind, FatalKind, Notice, Output,
+};
 
 const START: i64 = 41 * MICROS + 120_000;
 
-fn segment_fault(rep: &'static str, idx_from: i64, idx_to: i64, status: u16) -> common::world::FaultFn {
+fn segment_fault(
+    rep: &'static str,
+    idx_from: i64,
+    idx_to: i64,
+    status: u16,
+) -> common::world::FaultFn {
     Box::new(move |req, kind, _| {
         if *kind != Kind::Segment {
             return None;
         }
         let (r, n) = parse_segment_url(&req.url)?;
         let idx = n as i64 - 1;
-        (r == rep && idx >= idx_from && idx <= idx_to).then(|| Outcome::Resp(HttpResp::status(status)))
+        (r == rep && idx >= idx_from && idx <= idx_to)
+            .then(|| Outcome::Resp(HttpResp::status(status)))
     })
 }
 
@@ -50,13 +58,22 @@ fn a_425_is_never_counted_and_retried_at_250ms_doubling_to_one_second() {
     no_fatal(&sim);
     let s = sends_of(&sim, "/V/25.m4s");
     assert_eq!(s.len(), 7, "six refusals then the segment");
-    let gaps: Vec<f64> = s.windows(2).map(|w| (w[1].0 - w[0].0) as f64 / 1e6).collect();
+    let gaps: Vec<f64> = s
+        .windows(2)
+        .map(|w| (w[1].0 - w[0].0) as f64 / 1e6)
+        .collect();
     let expect = [0.29, 0.54, 1.04, 1.04, 1.04, 1.04];
     for (g, e) in gaps.iter().zip(expect) {
         assert!((g - e).abs() < 0.02, "{gaps:?}");
     }
-    assert_eq!(class_count(&sim, |c| matches!(c, FailureClass::Retry { .. })), 0);
-    assert_eq!(class_count(&sim, |c| matches!(c, FailureClass::NotYetAvailable { .. })), 6);
+    assert_eq!(
+        class_count(&sim, |c| matches!(c, FailureClass::Retry { .. })),
+        0
+    );
+    assert_eq!(
+        class_count(&sim, |c| matches!(c, FailureClass::NotYetAvailable { .. })),
+        6
+    );
     let reqs = segment_requests(&sim, geo);
     assert_contiguous(&reqs);
 }
@@ -75,11 +92,20 @@ fn a_404_inside_the_grace_window_is_early_and_after_it_is_missing() {
         .iter()
         .filter(|l| l.kind == Kind::Segment && l.url.ends_with("/V/25.m4s"))
         .collect();
-    let early: Vec<_> = sends.iter().filter(|l| l.send_utc_us < avail + 1_000_000 - 50_000).collect();
+    let early: Vec<_> = sends
+        .iter()
+        .filter(|l| l.send_utc_us < avail + 1_000_000 - 50_000)
+        .collect();
     assert!(early.len() >= 2, "retried inside grace");
     assert!(class_count(&sim, |c| matches!(c, FailureClass::NotYetAvailable { .. })) >= 2);
     assert!(
-        class_count(&sim, |c| matches!(c, FailureClass::Retry { kind: FailureKind::Missing, .. })) >= 1,
+        class_count(&sim, |c| matches!(
+            c,
+            FailureClass::Retry {
+                kind: FailureKind::Missing,
+                ..
+            }
+        )) >= 1,
         "{:?}",
         sim.classes
     );
@@ -93,15 +119,31 @@ fn a_hole_in_the_window_is_retried_then_skipped_with_a_discontinuity_and_playbac
     sim.fault = Some(segment_fault("V", 23, 23, 404));
     sim.run_for(80 * MICROS as u64);
     no_fatal(&sim);
-    assert_eq!(class_count(&sim, |c| matches!(c, FailureClass::SegmentSkipped)), 1);
     assert_eq!(
-        sim.count(|o| matches!(o, Output::SegmentLost { status: Some(404), .. })),
+        class_count(&sim, |c| matches!(c, FailureClass::SegmentSkipped)),
+        1
+    );
+    assert_eq!(
+        sim.count(|o| matches!(
+            o,
+            Output::SegmentLost {
+                status: Some(404),
+                ..
+            }
+        )),
         1
     );
     assert!(sim.count(|o| matches!(o, Output::Discontinuity)) >= 1);
     let reqs = segment_requests(&sim, geo);
-    let v: Vec<i64> = reqs.iter().filter(|r| r.rep == "V").map(|r| r.idx).collect();
-    assert!(v.contains(&24) && v.contains(&22), "carried on past the hole");
+    let v: Vec<i64> = reqs
+        .iter()
+        .filter(|r| r.rep == "V")
+        .map(|r| r.idx)
+        .collect();
+    assert!(
+        v.contains(&24) && v.contains(&22),
+        "carried on past the hole"
+    );
     let attempts = sends_of(&sim, "/V/24.m4s").len();
     assert!(attempts >= 8, "{attempts} attempts before giving up");
 }
@@ -141,7 +183,10 @@ fn a_5xx_and_transport_errors_are_counted_with_backoff_and_recover() {
     }));
     sim.run_for(40 * MICROS as u64);
     no_fatal(&sim);
-    assert_eq!(class_count(&sim, |c| matches!(c, FailureClass::Retry { .. })), 4);
+    assert_eq!(
+        class_count(&sim, |c| matches!(c, FailureClass::Retry { .. })),
+        4
+    );
     let attempts: Vec<u32> = sim
         .classes
         .iter()
@@ -153,7 +198,10 @@ fn a_5xx_and_transport_errors_are_counted_with_backoff_and_recover() {
     assert_eq!(attempts, vec![1, 2, 3, 4]);
     let reqs = segment_requests(&sim, geo);
     assert_contiguous(&reqs);
-    assert_eq!(class_count(&sim, |c| matches!(c, FailureClass::SegmentSkipped)), 0);
+    assert_eq!(
+        class_count(&sim, |c| matches!(c, FailureClass::SegmentSkipped)),
+        0
+    );
 }
 
 #[test]
@@ -170,10 +218,15 @@ fn an_init_that_keeps_failing_is_fatal_for_a_live_presentation_too() {
         Box::new(synth),
     );
     sim.fault = Some(Box::new(|req, kind, _| {
-        (*kind == Kind::Init && req.url.contains("/V/")).then(|| Outcome::Resp(HttpResp::status(500)))
+        (*kind == Kind::Init && req.url.contains("/V/"))
+            .then(|| Outcome::Resp(HttpResp::status(500)))
     }));
     sim.run_for(40 * MICROS as u64);
-    assert!(matches!(sim.fatal(), Some(FatalKind::InitFetchFailed { .. })), "{:?}", sim.fatal());
+    assert!(
+        matches!(sim.fatal(), Some(FatalKind::InitFetchFailed { .. })),
+        "{:?}",
+        sim.fatal()
+    );
 }
 
 #[test]
@@ -196,7 +249,10 @@ fn a_host_that_slept_past_the_window_skips_to_the_oldest_segment_and_rejoins_aft
     let now = sim.world.true_utc();
     let edge = geo.complete_count(now) - 1;
     let last = after.last().unwrap().idx;
-    assert!(edge - last <= 3, "back near the live edge: {last} vs {edge}");
+    assert!(
+        edge - last <= 3,
+        "back near the live edge: {last} vs {edge}"
+    );
     assert!(early_requests(&reqs, geo, TOLERANCE_US).is_empty());
 }
 
@@ -206,12 +262,20 @@ fn a_response_that_arrives_after_its_segment_left_the_window_is_expired_not_coun
     synth.tsb_us = Some(10 * MICROS);
     let (mut sim, geo) = sim_with(synth, START, DashConfig::default());
     sim.rtt_fn = Some(Box::new(|kind, url, sent| {
-        (*kind == Kind::Segment && url.contains("/V/") && sent < 100_000).then_some(40 * MICROS as u64)
+        (*kind == Kind::Segment && url.contains("/V/") && sent < 100_000)
+            .then_some(40 * MICROS as u64)
     }));
     sim.run_for(80 * MICROS as u64);
     no_fatal(&sim);
-    assert!(class_count(&sim, |c| matches!(c, FailureClass::Expired)) >= 1, "{:?}", sim.classes);
-    assert_eq!(class_count(&sim, |c| matches!(c, FailureClass::Retry { .. })), 0);
+    assert!(
+        class_count(&sim, |c| matches!(c, FailureClass::Expired)) >= 1,
+        "{:?}",
+        sim.classes
+    );
+    assert_eq!(
+        class_count(&sim, |c| matches!(c, FailureClass::Retry { .. })),
+        0
+    );
     assert!(sim.count(|o| matches!(o, Output::Notice(Notice::FellBehind))) >= 1);
     let reqs = segment_requests(&sim, geo);
     assert!(sim.count(|o| matches!(o, Output::Samples { .. })) > 10);
@@ -223,13 +287,26 @@ fn garbage_and_truncated_segment_bodies_are_counted_not_delivered() {
     let (mut sim, geo) = sim_with(with_utc(Addressing::Number), START, DashConfig::default());
     sim.fault = Some(Box::new(|req, kind, _| {
         if *kind == Kind::Segment && req.url.ends_with("/A/25.m4s") {
-            return Some(Outcome::Resp(HttpResp::ok(b"<html>captive</html>".to_vec())));
+            return Some(Outcome::Resp(HttpResp::ok(
+                b"<html>captive</html>".to_vec(),
+            )));
         }
         None
     }));
     sim.run_for(80 * MICROS as u64);
     no_fatal(&sim);
-    assert!(class_count(&sim, |c| matches!(c, FailureClass::Retry { kind: FailureKind::Invalid, .. })) >= 1);
-    assert_eq!(class_count(&sim, |c| matches!(c, FailureClass::SegmentSkipped)), 1);
+    assert!(
+        class_count(&sim, |c| matches!(
+            c,
+            FailureClass::Retry {
+                kind: FailureKind::Invalid,
+                ..
+            }
+        )) >= 1
+    );
+    assert_eq!(
+        class_count(&sim, |c| matches!(c, FailureClass::SegmentSkipped)),
+        1
+    );
     let _ = geo;
 }

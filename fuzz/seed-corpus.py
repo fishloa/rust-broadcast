@@ -211,6 +211,46 @@ def seed_dash_client(check_only: bool) -> int:
     return len(blobs)
 
 
+# `dash_client_live`: 6-byte header (b0: window-1 in bits 0-1, failure cap row in bits 2-3, bit 4
+# PreferHost, bit 5 pins the origin, bit 6 applies availabilityTimeOffset; b1: 0 = the fuzz bytes
+# are the MPD, 1..=6 = a compiled-in live MPD; b2/b3: length of an arbitrary MPD; b4: resync period
+# row in bits 0-1 and early-grace row in bits 2-3; b5: host clock mode, 0 none, 1 exact, 2 +7 s,
+# 3 -90 s) then 3-byte steering chunks (mode, pick, jump). Modes 0..=7 answer with the real file,
+# 8 truncates, 9 flips a byte, 10 sends arbitrary bytes, 11..=16 and 19 fail, 17 is a 304, 18
+# swaps in another MPD; jump 0 advances to the client's own next wake.
+DASH_LIVE_FIXTURE_MPDS = (1, 2, 3, 4, 5, 6)
+DASH_LIVE_STEPS = 64
+
+
+def dash_client_live_scenarios() -> dict[str, bytes]:
+    out: dict[str, bytes] = {}
+    for sel in DASH_LIVE_FIXTURE_MPDS:
+        for host in (0, 1):
+            header = bytes([3, sel, 0, 0, 0, host])
+            clean = b"".join(bytes([0, n % 7, 7 if n % 2 else 1]) for n in range(DASH_LIVE_STEPS))
+            out[f"live{sel}_host{host}_clean"] = header + clean
+            damaged = b"".join(
+                bytes([n % 20, n * 5 % 256, n % 7]) for n in range(DASH_LIVE_STEPS)
+            )
+            out[f"live{sel}_host{host}_damaged"] = header + damaged
+            refresh = b"".join(
+                bytes([18 if n % 4 == 1 else 0, n % 6, 7]) for n in range(DASH_LIVE_STEPS)
+            )
+            out[f"live{sel}_host{host}_refresh"] = bytes([3, sel, 0, 0, 0, host]) + refresh
+    return out
+
+
+def seed_dash_client_live(check_only: bool) -> int:
+    if check_only:
+        return 0
+    out = REPO / "fuzz" / "corpus" / "dash_client_live"
+    out.mkdir(parents=True, exist_ok=True)
+    blobs = dash_client_live_scenarios()
+    for name, blob in blobs.items():
+        (out / f"scenario_{name}").write_bytes(blob)
+    return len(blobs)
+
+
 def seed(target: str, sources: tuple[str, ...], check_only: bool) -> tuple[int, list[str]]:
     out = REPO / "fuzz" / "corpus" / target
     if not check_only:
@@ -254,6 +294,9 @@ def main() -> int:
     dash_client = seed_dash_client(args.check)
     if not args.check:
         print(f"dash_client_static: {dash_client} scripted scenario seeds")
+    dash_live = seed_dash_client_live(args.check)
+    if not args.check:
+        print(f"dash_client_live: {dash_live} scripted scenario seeds")
     for target, patterns in WHOLE_FILE_GLOBS.items():
         count = seed_whole(target, patterns, args.check)
         if not args.check:

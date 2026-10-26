@@ -5,9 +5,9 @@
 use super::checks::*;
 use super::synth::{Addressing, Geo, MPD_URL, Synth};
 use super::world::{MICROS, Shared, Sim, World};
+use dash_runtime::client::{DashConfig, PullLimits};
 use std::cell::RefCell;
 use std::rc::Rc;
-use dash_runtime::client::{DashConfig, PullLimits};
 
 pub const AST_US: i64 = 1_700_000_000 * MICROS;
 pub const UTC_XSDATE: &str = "http://utc.test/xsdate";

@@ -304,10 +304,7 @@ impl DashClient {
             return false;
         };
         let run = &self.periods[pi];
-        let Some(end) = period_timings(mpd)
-            .get(run.index)
-            .and_then(|t| t.end_us)
-        else {
+        let Some(end) = period_timings(mpd).get(run.index).and_then(|t| t.end_us) else {
             return true;
         };
         let len = end.saturating_sub(run.start_us);
@@ -412,11 +409,7 @@ impl DashClient {
 
     fn refresh_due_at(&self) -> Option<u64> {
         let live = self.live.as_ref()?;
-        if !self.live_open()
-            || self.mpd_inflight
-            || self.want_mpd
-            || live.refresh.awaiting_retry
-        {
+        if !self.live_open() || self.mpd_inflight || self.want_mpd || live.refresh.awaiting_retry {
             return None;
         }
         match (live.refresh.next_at, live.refresh.forced_at) {
@@ -583,10 +576,9 @@ impl DashClient {
                 );
             }
         }
-        let mid = self
-            .live
-            .as_ref()
-            .map_or(now_us, |l| l.mpd_exchange.sent_us + (l.mpd_exchange.received_us - l.mpd_exchange.sent_us) / 2);
+        let mid = self.live.as_ref().map_or(now_us, |l| {
+            l.mpd_exchange.sent_us + (l.mpd_exchange.received_us - l.mpd_exchange.sent_us) / 2
+        });
         let fetch_utc = self.clock.utc_at(mid).map(i128_from_i64).or_else(|| {
             self.mpd
                 .as_ref()
@@ -758,9 +750,7 @@ impl DashClient {
         let Some(mpd) = self.mpd.as_ref() else {
             return 0;
         };
-        let max_seg = mpd
-            .max_segment_duration
-            .map_or(plan_hint_us, duration_us);
+        let max_seg = mpd.max_segment_duration.map_or(plan_hint_us, duration_us);
         presentation_delay_us(
             mpd.suggested_presentation_delay,
             max_seg,
@@ -862,7 +852,13 @@ impl DashClient {
         self.issue = self.periods.len().saturating_sub(1);
     }
 
-    pub(super) fn live_lane_candidate(&mut self, pi: usize, li: usize, utc: i128) -> Candidate {
+    pub(super) fn live_lane_candidate(
+        &mut self,
+        pi: usize,
+        li: usize,
+        utc: i128,
+        now_us: u64,
+    ) -> Candidate {
         let margin = i128::from(self.dash.availability_margin_us);
         for _ in 0..MAX_LANE_STEPS {
             let lane = &self.periods[pi].lanes[li];
@@ -890,10 +886,18 @@ impl DashClient {
                         continue;
                     }
                     None => {
-                        return plan
+                        let first = plan
                             .get(0)
                             .and_then(|s| s.available_from_us)
-                            .map_or(Candidate::Idle, |a| Candidate::Wait(a.saturating_add(margin)));
+                            .map(|a| a.saturating_add(margin));
+                        return match first {
+                            Some(a) if a > utc => Candidate::Wait(a),
+                            _ => {
+                                self.force_refresh(now_us);
+                                self.request_resync(now_us);
+                                Candidate::Idle
+                            }
+                        };
                     }
                 }
             }
@@ -920,7 +924,9 @@ impl DashClient {
         let (oldest, next) = {
             let lane = &self.periods[pi].lanes[li];
             let Some(rep) = lane.current() else { return };
-            let Some(plan) = rep.plan.as_ref() else { return };
+            let Some(plan) = rep.plan.as_ref() else {
+                return;
+            };
             (oldest_in_window(plan, utc), rep.next_issue)
         };
         self.outputs.push_back(Output::Notice(Notice::FellBehind));
@@ -984,8 +990,8 @@ impl DashClient {
                 .get(&id)
                 .map_or((None, None), |r| (r.avail_from_us, r.avail_until_us));
             let grace = i128::from(self.dash.early_grace_us);
-            let early =
-                status == Some(STATUS_TOO_EARLY) || from.is_some_and(|f| utc < f.saturating_add(grace));
+            let early = status == Some(STATUS_TOO_EARLY)
+                || from.is_some_and(|f| utc < f.saturating_add(grace));
             if early {
                 return Ok(self.early_wait(now_us, id, from, utc));
             }
@@ -1214,7 +1220,9 @@ impl DashClient {
                 .chain(new.supplemental_properties.iter())
                 .any(|d| d.scheme_id_uri == SCHEME_RESET);
             let old_dynamic = old.kind == PresentationType::Dynamic;
-            (old_dynamic && dynamic && old.availability_start_time_us != new.availability_start_time_us)
+            (old_dynamic
+                && dynamic
+                && old.availability_start_time_us != new.availability_start_time_us)
                 || ids_differ
                 || has_reset
         };
@@ -1243,13 +1251,15 @@ impl DashClient {
             if run.finished {
                 continue;
             }
-            let found = mpd.periods.iter().enumerate().position(|(i, p)| {
-                match (&run.id, &p.id) {
+            let found = mpd
+                .periods
+                .iter()
+                .enumerate()
+                .position(|(i, p)| match (&run.id, &p.id) {
                     (Some(a), Some(b)) => a == b,
                     (None, None) => timings.get(i).and_then(|t| t.start_us) == Some(run.start_us),
                     _ => false,
-                }
-            });
+                });
             match found {
                 Some(ni) => moves.push((pi, ni)),
                 None => return false,
@@ -1268,10 +1278,13 @@ impl DashClient {
                     continue;
                 };
                 let rep = &mut lane.reps[ri];
-                let new_set = period.adaptation_sets.iter().position(|s| match rep.set_id {
-                    Some(id) => s.id == Some(id),
-                    None => false,
-                });
+                let new_set = period
+                    .adaptation_sets
+                    .iter()
+                    .position(|s| match rep.set_id {
+                        Some(id) => s.id == Some(id),
+                        None => false,
+                    });
                 let new_set = new_set.or_else(|| {
                     (rep.set_id.is_none() && rep.set_pos < period.adaptation_sets.len())
                         .then_some(rep.set_pos)
@@ -1294,7 +1307,12 @@ impl DashClient {
                     None => vanished.push((pi, li)),
                 }
             }
-            let chosen = run.lanes.iter().filter_map(|l| l.current()).map(|r| r.at).collect::<Vec<_>>();
+            let chosen = run
+                .lanes
+                .iter()
+                .filter_map(|l| l.current())
+                .map(|r| r.at)
+                .collect::<Vec<_>>();
             run.selection = selection;
             for at in chosen {
                 if let Some(pos) = run.selection.variants.iter().position(|v| *v == at) {

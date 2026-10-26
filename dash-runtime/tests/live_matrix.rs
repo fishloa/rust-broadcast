@@ -89,7 +89,9 @@ fn mutate(f: F, resp: HttpResp, redirect: u32) -> Outcome {
             Outcome::Resp(r)
         }
         F::Garbage => Outcome::Resp(HttpResp::ok(vec![0xA5; 400])),
-        F::Html => Outcome::Resp(HttpResp::ok(b"<html><body>captive portal</body></html>".to_vec())),
+        F::Html => Outcome::Resp(HttpResp::ok(
+            b"<html><body>captive portal</body></html>".to_vec(),
+        )),
         F::Empty => Outcome::Resp(HttpResp::ok(Vec::new())),
         F::Huge => Outcome::Resp(HttpResp::ok(vec![0u8; 3 * 1024 * 1024])),
         F::RedirectLoop => {
@@ -127,30 +129,38 @@ fn build(target: Kind, f: F, permanent: bool) -> (Sim, common::synth::Geo, Rc<Ce
     limits.max_segment_bytes = 2 * 1024 * 1024;
     limits.limits.max_bytes = 2 * 1024 * 1024;
     let world = World::new(AST_US + 41 * MICROS + 120_000);
-    let mut sim = Sim::new(MPD_URL, DashConfig::default(), limits, world, Box::new(synth));
+    let mut sim = Sim::new(
+        MPD_URL,
+        DashConfig::default(),
+        limits,
+        world,
+        Box::new(synth),
+    );
     sim.give_host_clock();
     let hits = Rc::new(Cell::new(0u32));
     let h = hits.clone();
     let warm = AST_US + (41 + WARMUP_S) * MICROS;
-    sim.post = Some(Box::new(move |req: &HttpReq, kind: &Kind, at: i64, resp: Outcome| {
-        let applies = match kind {
-            Kind::Mpd => *kind == target && at > warm,
-            Kind::Segment => *kind == target && req.url.contains("/V/") && at > warm,
-            Kind::Init => *kind == target && req.url.contains("/V/"),
-            Kind::Utc => *kind == target,
-            Kind::Index => false,
-        };
-        let cap = if matches!(f, F::Stall | F::NoResponse | F::Late) {
-            TRANSIENT_TIMING_HITS
-        } else {
-            TRANSIENT_HITS
-        };
-        if !applies || (!permanent && h.get() >= cap) {
-            return resp;
-        }
-        h.set(h.get() + 1);
-        outcome_for(f, resp, h.get())
-    }));
+    sim.post = Some(Box::new(
+        move |req: &HttpReq, kind: &Kind, at: i64, resp: Outcome| {
+            let applies = match kind {
+                Kind::Mpd => *kind == target && at > warm,
+                Kind::Segment => *kind == target && req.url.contains("/V/") && at > warm,
+                Kind::Init => *kind == target && req.url.contains("/V/"),
+                Kind::Utc => *kind == target,
+                Kind::Index => false,
+            };
+            let cap = if matches!(f, F::Stall | F::NoResponse | F::Late) {
+                TRANSIENT_TIMING_HITS
+            } else {
+                TRANSIENT_HITS
+            };
+            if !applies || (!permanent && h.get() >= cap) {
+                return resp;
+            }
+            h.set(h.get() + 1);
+            outcome_for(f, resp, h.get())
+        },
+    ));
     if f == F::Late {
         sim.rtt_fn = Some(Box::new(move |kind, _, sent| {
             (*kind == target && sent > 8 * MICROS as u64).then_some(6 * MICROS as u64)
@@ -171,7 +181,9 @@ fn rates(sim: &Sim, kind: Kind) -> (usize, f64) {
     let mut sustained = 0.0f64;
     let secs: Vec<u64> = buckets.keys().copied().collect();
     for &s in &secs {
-        let n: usize = (s..s + SUSTAIN_WINDOW_S).filter_map(|t| buckets.get(&t)).sum();
+        let n: usize = (s..s + SUSTAIN_WINDOW_S)
+            .filter_map(|t| buckets.get(&t))
+            .sum();
         sustained = sustained.max(n as f64 / SUSTAIN_WINDOW_S as f64);
     }
     (burst, sustained)
@@ -193,7 +205,10 @@ fn check_cell(target: Kind, f: F, permanent: bool) {
     assert!(sim.steps < 200_000, "{label}: {} steps", sim.steps);
     for kind in [Kind::Mpd, Kind::Segment, Kind::Init, Kind::Utc] {
         let (burst, sustained) = rates(&sim, kind);
-        assert!(burst <= MAX_BURST_PER_S, "{label}: {burst} {kind:?} requests in one second");
+        assert!(
+            burst <= MAX_BURST_PER_S,
+            "{label}: {burst} {kind:?} requests in one second"
+        );
         assert!(
             sustained <= MAX_SUSTAINED_PER_S,
             "{label}: {sustained} {kind:?} requests/s over 30 s"
@@ -204,7 +219,11 @@ fn check_cell(target: Kind, f: F, permanent: bool) {
     accepted.sort();
     let before = accepted.len();
     accepted.dedup();
-    assert_eq!(before, accepted.len(), "{label}: a segment was accepted twice");
+    assert_eq!(
+        before,
+        accepted.len(),
+        "{label}: a segment was accepted twice"
+    );
     let fatal = sim.fatal().cloned();
     let recent: usize = sim
         .log
@@ -235,13 +254,20 @@ fn check_cell(target: Kind, f: F, permanent: bool) {
         }
     }
     if !permanent && hits.get() > 0 {
-        assert!(fatal.is_none(), "{label}: a transient fault ended the stream: {fatal:?}");
-        if sim.count(|o| matches!(o, Output::Notice(dash_runtime::client::Notice::FellBehind))) == 0 {
+        assert!(
+            fatal.is_none(),
+            "{label}: a transient fault ended the stream: {fatal:?}"
+        );
+        if sim.count(|o| matches!(o, Output::Notice(dash_runtime::client::Notice::FellBehind))) == 0
+        {
             assert_contiguous(&reqs);
         }
         let lost = sim.count(|o| matches!(o, Output::SegmentLost { .. }));
         assert_eq!(lost, 0, "{label}: a transient fault lost a segment");
-        assert!(sim.count(|o| matches!(o, Output::Samples { .. })) > 10, "{label}");
+        assert!(
+            sim.count(|o| matches!(o, Output::Samples { .. })) > 10,
+            "{label}"
+        );
     }
 }
 

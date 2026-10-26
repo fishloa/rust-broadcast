@@ -65,11 +65,7 @@ pub fn assert_contiguous(reqs: &[SegReq]) {
     for (rep, mut idxs) in delivered(reqs) {
         idxs.sort_unstable();
         for w in idxs.windows(2) {
-            assert_eq!(
-                w[1],
-                w[0] + 1,
-                "rep {rep}: gap or reorder in {idxs:?}"
-            );
+            assert_eq!(w[1], w[0] + 1, "rep {rep}: gap or reorder in {idxs:?}");
         }
     }
 }

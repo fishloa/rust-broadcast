@@ -49,18 +49,35 @@ fn every_addressing_joins_at_the_delay_and_plays_on_utc_timing() {
     ] {
         let ast = if a == Addressing::Number { AST_US } else { 0 };
         let mut synth = Synth::new(ast, a).with_utc("http-xsdate", UTC_XSDATE);
-        synth.start_number = if a == Addressing::TimelineNumber { 895_967_208 } else { 1 };
+        synth.start_number = if a == Addressing::TimelineNumber {
+            895_967_208
+        } else {
+            1
+        };
         let geo = synth.geo();
         let world = World::new(AST_US + 41 * MICROS + 120_000);
-        let mut sim = Sim::new(MPD_URL, DashConfig::default(), PullLimits::default(), world, Box::new(synth));
+        let mut sim = Sim::new(
+            MPD_URL,
+            DashConfig::default(),
+            PullLimits::default(),
+            world,
+            Box::new(synth),
+        );
         let start_utc = sim.world.true_utc();
         let reqs = run_checked(&mut sim, geo, 30);
         assert!(early_requests(&reqs, geo, TOLERANCE_US).is_empty(), "{a:?}");
         let first = first_index(&reqs, "V").unwrap();
         let edge = geo.complete_count(start_utc) - 1;
-        assert!((first - (edge - 3)).abs() <= 1, "{a:?}: join {first} edge {edge}");
+        assert!(
+            (first - (edge - 3)).abs() <= 1,
+            "{a:?}: join {first} edge {edge}"
+        );
         let sources = clock_sources(&sim);
-        assert_eq!(sources.first().map(|s| s.0), Some(ClockSource::UtcTiming), "{a:?}");
+        assert_eq!(
+            sources.first().map(|s| s.0),
+            Some(ClockSource::UtcTiming),
+            "{a:?}"
+        );
         let requested: Vec<_> = sim.requests(common::world::Kind::Utc);
         assert!(!requested.is_empty());
     }
@@ -68,13 +85,30 @@ fn every_addressing_joins_at_the_delay_and_plays_on_utc_timing() {
 
 #[test]
 fn host_skew_with_utc_timing_never_requests_early() {
-    for skew in [-60 * MICROS, -5 * MICROS, -500_000, 500_000, 5 * MICROS, 60 * MICROS] {
-        let (mut sim, geo) = sim_with(with_utc(Addressing::Number), 41 * MICROS + 120_000, DashConfig::default());
+    for skew in [
+        -60 * MICROS,
+        -5 * MICROS,
+        -500_000,
+        500_000,
+        5 * MICROS,
+        60 * MICROS,
+    ] {
+        let (mut sim, geo) = sim_with(
+            with_utc(Addressing::Number),
+            41 * MICROS + 120_000,
+            DashConfig::default(),
+        );
         sim.world.host_skew_us = skew;
         sim.give_host_clock();
         let reqs = run_checked(&mut sim, geo, 25);
-        assert!(early_requests(&reqs, geo, TOLERANCE_US).is_empty(), "skew {skew}");
-        assert_eq!(clock_sources(&sim).first().map(|s| s.0), Some(ClockSource::UtcTiming));
+        assert!(
+            early_requests(&reqs, geo, TOLERANCE_US).is_empty(),
+            "skew {skew}"
+        );
+        assert_eq!(
+            clock_sources(&sim).first().map(|s| s.0),
+            Some(ClockSource::UtcTiming)
+        );
     }
 }
 
@@ -99,7 +133,10 @@ fn host_skew_without_utc_timing_is_absorbed_as_early_requests() {
             .filter(|c| matches!(c, dash_runtime::client::FailureClass::Retry { .. }))
             .count();
         assert_eq!(counted, 0, "early answers are never counted");
-        assert!(sim.classes.iter().any(|c| matches!(c, dash_runtime::client::FailureClass::NotYetAvailable { .. })));
+        assert!(sim.classes.iter().any(|c| matches!(
+            c,
+            dash_runtime::client::FailureClass::NotYetAvailable { .. }
+        )));
         assert!(sim.count(|o| matches!(o, Output::Samples { .. })) > 0);
     }
 }
