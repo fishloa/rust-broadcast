@@ -243,7 +243,7 @@ fn cross_origin_urls_are_refused_when_pinned_and_never_requested() {
             PullLimits::default(),
             &mut origin,
             &mut Drive {
-                dash: dash.clone(),
+                dash,
                 ..Drive::default()
             },
         );

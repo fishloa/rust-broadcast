@@ -261,7 +261,7 @@ impl Run {
 }
 
 pub fn drive(url: &str, cfg: PullLimits, origin: &mut Origin, opts: &mut Drive) -> Run {
-    let mut client = DashClient::new(url, opts.dash.clone(), cfg);
+    let mut client = DashClient::new(url, opts.dash, cfg);
     let mut run = Run {
         outputs: Vec::new(),
         requests: Vec::new(),
