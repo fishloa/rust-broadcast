@@ -204,6 +204,7 @@ frameRate (string), audioSamplingRate, mimeType, first BaseURL, effective Segmen
 | `SegmentTemplate@endNumber/@index/@bitstreamSwitching`, `@eptDelta/@pdDelta/@presentationDuration`, `Initialization`/`RepresentationIndex` | missing | parsed; `endNumber` bounds the plan; PTO/eptDelta feed continuity; bitstream switching ignored | 5.3.9.2.2 Tables 16-17 |
 | `SegmentList` + `SegmentURL@media/@mediaRange/@index/@indexRange`, `@duration/@startNumber` | missing | parsed and planned | 5.3.9.3 Table 19 |
 | `SegmentBase@indexRange` + `Initialization@range` (on-demand profile, one file + sidx) | missing | parsed; sidx fetched and expanded (4.4) | 5.3.9.2, 5.3.9.5.4; 14496-12 8.16.3 |
+| `urn:mpeg:dash:urlparam:2014` (`UrlQueryInfo`) | skipped | minimal: `@useMPDUrlQuery`, literal `@queryString` (7.1) | Annex I.2 |
 | `xlink:href/@actuate` on Period/AdaptationSet/SegmentList | missing | `urn:mpeg:dash:resolve-to-zero:2013` removes the element; any other href: element skipped + `Notice::XlinkSkipped` (not resolved in 0.1.0) | 5.5.3 rule 4 |
 | `EventStream`, `InbandEventStream` | skipped | parsed only to count; `Notice::EventStreamIgnored`; emsg boxes ride along in segments untouched | 5.10 |
 | `Preselection`, `Resync`, `ServiceDescription`/`Latency`, `ProducerReferenceTime`, `PatchLocation`, `ContentSteering` | skipped | skipped; one `Notice` per kind per session | 5.3.11, 5.3.13, Annex K, 5.12, 5.15 |
@@ -388,8 +389,8 @@ Shared with HLS and therefore documented as "every segment-pull source": `max_re
 ## 7. Transport details
 
 7.1 **URL building.** Every URL resolves by RFC 3986 5.2 through the chain document URL (the final MPD URL, A.11) > `MPD.BaseURL` > `Period.BaseURL` > `AdaptationSet.BaseURL` > `Representation.BaseURL` > template/`SegmentURL`
-(5.6.4; an absolute `BaseURL` overrides higher levels, 5.6.5), with `url::Url::join` (never string concatenation, 5.6 informative note). The query of the MPD URL is NOT propagated to segment URLs (RFC 3986 drops it; credentials
-travel as origin-scoped `Authorization`/cookies/`extra_headers` instead). Only `http`/`https` are fetched; a `data:` URL (5.3.9.1 b) is `UnsupportedAddressing{"data_url"}`; the URL fragment is ignored.
+(5.6.4; an absolute `BaseURL` overrides higher levels, 5.6.5), with `url::Url::join` (never string concatenation, 5.6 informative note). The query of the MPD URL is NOT propagated to segment URLs by default (RFC 3986 drops it; credentials
+travel as origin-scoped `Authorization`/cookies/`extra_headers` instead). The one normative propagation mechanism, `urn:mpeg:dash:urlparam:2014` (Annex I.2: `up:UrlQueryInfo@useMPDUrlQuery` and a literal `@queryString`, at MPD/AdaptationSet/Representation level), IS implemented in its minimal form so a token-in-the-MPD-URL service plays; `@queryTemplate` placeholders, `xlink` query info and the 2016 `ExtUrlQueryInfo`/`ExtHttpHeaderInfo` scheme (Annex I.3, headers and MPD requests) are not understood: as an `EssentialProperty` they drop the parent, as a `SupplementalProperty` they are ignored. Only `http`/`https` are fetched; a `data:` URL (5.3.9.1 b) is `UnsupportedAddressing{"data_url"}`; the URL fragment is ignored.
 
 7.2 **BaseURL alternates (5.6.5, DVB-DASH 10.8.2).** Candidate order: DVB `@priority` ascending (default 1, namespace `urn:dvb:dash:dash-extensions:2014-1`) then document order; `@weight` is parsed but NOT used, because
 weighted random selection (10.8.2.2) needs an RNG and the core is deterministic and replayable (a documented departure; multimux can layer randomisation outside the core). After 2 consecutive failures on one location its `@serviceLocation`
@@ -411,5 +412,5 @@ Self-initializing Media Segments (no Initialization element, 5.3.9.5.2) are demu
 `ResourceId::Init`); a segment that arrives before its init is held (bounded, `PendingKeyedOverflow` analogue); each segment is demuxed as `init ++ segment` with a fresh `Fmp4Demux` (the `hls-runtime` `demux_and_emit` and multimux `dash_pull` pattern); `Tracks` is re-announced only when the
 `TrackSpec` set changed; a Representation switch fetches the new init before its first segment and re-announces. There are no keys (D10), so no key-per-run analogue.
 
-7.7 **MPEG-2 TS segments in DASH** (`urn:mpeg:dash:profile:mp2t-main:2011`, 23009-1 8, segment format 6.4): out, typed `UnsupportedContainer{"mp2t_segments"}`. DVB-DASH and the DASH-IF live profiles are ISOBMFF-only; the hls-runtime TS path is entangled with `EXT-X-DISCONTINUITY`
+7.7 **MPEG-2 TS segments in DASH** (`urn:mpeg:dash:profile:mp2t-main:2011`, 23009-1 8.6, segment formats 6.4): out, typed `UnsupportedContainer{"mp2t_segments"}`. DVB-DASH and the DASH-IF live profiles are ISOBMFF-only; the hls-runtime TS path is entangled with `EXT-X-DISCONTINUITY`
 handling, so reuse would first need a `TsSegmentDemux` extraction: a follow-up if anyone asks.
