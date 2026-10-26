@@ -809,7 +809,7 @@ A segment answered `200` with random bytes, an HTML error page or an empty body 
 Every segment failure used to look like attempt 1 because the playlist refetch that re-requests a segment reset the shared counter (604 requests in 602 s at 2 s). The source keeps `seg_failures: ResourceId -> {count, last status}`; the backoff is `backoff_ms[count - 1]` (then the cap), the counter is cleared only when that resource is delivered to the core (`deliver_now` Ok), or when the resource leaves the window, never by a playlist delivery. A VOD playlist (`endlist_seen`) re-requests through the new `HlsClient::retry_resource(id)` (URL and byte range kept in `resource_requests`) without refetching the playlist. At `Config::max_segment_failures` (8; `0` = first failure final; `u32::MAX` = retry forever) consecutive failures: VOD is `go_fatal(SegmentFetchFailed { status })`; live calls `HlsClient::skip_resource(id)` (marks it delivered so no reload requests it again, restarts the TS timeline flushing the old one's held access units, queues `Output::Discontinuity`) and the source emits ONE non-fatal `SegmentFetchFailed` immediately before the `Event::Discontinuity` it maps from that output (samples flushed from the old timeline precede both), then releases the segments held behind it. This ends the head-of-line block of a listed-but-permanently-404 segment. Playlist reload failures keep retrying forever. Stream restarts reuse ids: a count survives a restart that reuses a still-failing media sequence number (accepted; a delivery clears it).
 
 ### F3: Retry-After
-`429` and `503` carry `Retry-After`; the delta-seconds form is honoured for playlist, segment, init and key fetches: the wait is `max(backoff step, Retry-After)` with the header clamped to 60 s (`u64::MAX` cannot stall). The HTTP-date form is ignored: the session has only a monotonic microsecond clock, no wall clock to subtract it from. Any other status ignores the header.
+`429` and `503` carry `Retry-After`; the delta-seconds form is honoured for playlist, segment, init and key fetches: the wait is `max(backoff step, Retry-After)` with the header clamped to 60 s (`u64::MAX` cannot stall). The HTTP-date form was ignored here: the session has only a monotonic microsecond clock, no wall clock to subtract it from (superseded by the W-b section at the end of this file). Any other status ignores the header.
 
 ### F4: init timeout
 An init fetch used the 60 s segment timeout, so an init with no response took about nine minutes to go fatal. Init fetches use `request_timeout_us` (20 s, the playlist class; key fetches already had `hls_key_timeout_us`), about three minutes with the default 8 failures.
@@ -831,3 +831,31 @@ Tests: `broadcast-client/tests/audit_r8_segments.rs` (every fault kind VOD and l
 | `DEFAULT_MAX_PLAYLIST_BYTES` | `DEFAULT_MAX_MANIFEST_BYTES` |
 
 `Error::InvalidConfig { field }` strings follow the new names. `hls_key_timeout_us` and `max_key_*` stay: they are HLS-only. `Config` is `#[non_exhaustive]`: hosts build it with `Config::default()` plus field assignment.
+
+## DASH clock and configuration surface (dash-runtime W-b)
+
+Design source: `docs/dash-runtime/DESIGN.md` D4, 3.2-3.5 (clock), 6.3 (`ErrorKind`), 6.4 (`DashConfig`), 9 (work breakdown: W-b lands the whole surface so 0.1.0 does not ship a clock-less API that DASH then bolts onto). Only the API surface and its plumbing; no DASH source, and `SourceKind::Dash` is deliberately NOT added (design section 9: no stub variant that returns `UnsupportedScheme`; it lands with W-e).
+
+Public API delta against the 3.5 table, minus `SourceKind::Dash`:
+
+| Type | Change |
+|---|---|
+| `Session` | `set_wall_clock(now_us, unix_us)` |
+| `Config` | field `dash: DashConfig`; `Default` and `Config::validate` extended |
+| `Event` | `ClockSynced { source: ClockSource, uncertainty_us: u64 }` |
+| `ErrorKind` | `MpdParse`, `MpdInvalid`, `UnsupportedAddressing`, `UnsupportedFeature`, `LiveEdgeLost`, `ClockUnavailable` |
+| `Error::NotHls` | docs and message say "HLS or DASH" |
+| crate root | `ClockSource`, `DashConfig`, `DashClockPolicy` re-exported from `dash-runtime` |
+| `Action::HttpRequest` | unchanged; `method` may become `"HEAD"` with the DASH source (README host contract) |
+
+Decisions made while building it:
+
+- `ClockSource` already exists in `dash-runtime::timing::clock` (trust-ordered `MpdDate < Host < UtcTiming`, labelled): re-exported, not duplicated. `DashConfig` and `DashClockPolicy` live in `dash-runtime::client::config` (the design's layout: `DashClient::new(mpd_url, DashConfig)` takes it), so the future client engine and this crate share one definition. `broadcast-client` therefore depends on `dash-runtime` by path and `0.1` caret like its siblings; both are unpublished, so there is no epoch to keep pure yet.
+- The anchor is stored as `WallClock { mono_us, unix_us }` (both `u64`) and mapped in `i128`: `unix_at(now) = unix_us + now - mono_us`. No input is rejected and nothing wraps; a response before the anchor maps by the same offset. The latest call wins. A non-DASH source consults it only in `retry_after_us`.
+- `Retry-After` HTTP-date: `retry_after_us(status, headers, now_us, wall)`. The date minus "now" where "now" is the anchor mapped at the response instant, else the response's own `Date` header (RFC 9110 10.2.3 lets a client count from the server's clock; a skewed server clock cancels out), else the header is ignored. The result is clamped to `0..=60 s`, and the existing `max(backoff step, Retry-After)` rule applies unchanged. A value of only digits is delta-seconds and saturates (a value past `u64` clamps to 60 s instead of being ignored, and `+5` is no longer read as `5`); anything else must parse as an HTTP-date. `dash_runtime::timing::datetime::parse_http_date` accepts IMF-fixdate, RFC 850 (two-digit years by jiff's POSIX window, so no clock is needed) and asctime. A date beyond jiff's representable range (after 9999-12-30) is treated as garbage.
+- `DashConfig::validate` rejects a zero `utc_timeout_us`, `utc_wait_us`, `utc_max_rtt_us`, `utc_resync_us`, `early_retry_us`, `min_mpd_refresh_us` and a `utc_wait_us` shorter than `utc_timeout_us` (the ladder would give up before one request can time out). Zero stays valid where it means "none" (`host_clock_uncertainty_us`, `availability_margin_us`, `early_grace_us`, `live_delay_us`); `u64::MAX` is valid everywhere (consumers saturate). The 6.4 table's 2 s `utc_timeout_us` is used, not the 3 s of the 3.3 prose. `max_mpd_bytes` of 4.2 is not a `DashConfig` field: the shared `max_manifest_bytes` bounds the MPD, as 6.4 says.
+- `Config::validate` runs the DASH check for every source kind. `Error::InvalidConfig { field }` carries `"dash.<name>"`; the field strings are a static map in `events.rs`, pinned by a test per field.
+- `Event::ClockSynced` ordering contract (documented on the variant, enforced when the DASH source lands): emitted once when the first anchor appears and again only when its source changes, never for a source that needs no clock, and before the first sample that depends on it. Here only the type exists and a test pins that no current source emits it.
+- The session still reads no clock: `tests/no_handroll_guard.rs` now also bans `Timestamp::now`, `Zoned::now`, `UNIX_EPOCH`, `Utc::now`, `Local::now` and `OffsetDateTime::now` in `src/` outside tests, alongside `SystemTime::now` and `Instant::now`.
+
+Tests: `tests/dash_clock_surface.rs` (anchor edge cases `u64::MAX`, backwards, repeated, after close; the Retry-After matrix through a whole HLS session; `DashConfig` validation per field; labels), `source::fetch::retry` unit tests (past dates, the 60 s clamp, garbage, anchor vs `Date`), `dash-runtime/tests/client_config.rs` and the HTTP-date forms in `dash-runtime/tests/datetime.rs`. The mutation table is `broadcast-client/docs/mutation-table.md`, re-runnable with `broadcast-client/docs/mutants.py`.

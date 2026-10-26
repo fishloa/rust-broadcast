@@ -17,6 +17,7 @@ use crate::headers;
 use crate::playout::{Playout, Source};
 use crate::queue::EventQueue;
 use crate::redirect;
+use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
 use crate::source::rtsp::RtspSource;
 use crate::source::ts_http::TsHttpSource;
@@ -75,6 +76,7 @@ pub struct Session {
     declaration: crate::rendered::Declaration,
     stale_dropped: u64,
     hls_joins: crate::source::hls_join::HlsJoins,
+    wall: Option<WallClock>,
 }
 
 impl Session {
@@ -163,6 +165,7 @@ impl Session {
             declaration: crate::rendered::Declaration::default(),
             stale_dropped: 0,
             hls_joins: crate::source::hls_join::HlsJoins::default(),
+            wall: None,
         })
     }
 
@@ -219,7 +222,14 @@ impl Session {
         }
         self.now_us = now_us;
         if let Some(h) = self.hls.as_mut() {
-            h.on_response(conn, status, headers, self.now_us, &mut self.auth);
+            h.on_response(
+                conn,
+                status,
+                headers,
+                self.now_us,
+                self.wall.as_ref(),
+                &mut self.auth,
+            );
             self.flush_hls();
             return;
         }
@@ -474,6 +484,28 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Tell the session the UTC time: at the monotonic instant `now_us` (the clock every other
+    /// call takes) the host's UTC clock read `unix_us` microseconds since 1970-01-01T00:00:00Z
+    /// (POSIX time, no leap seconds). The host reads both clocks back to back, so the pair is as
+    /// tight as the host can make it; the session never reads a clock itself.
+    ///
+    /// Callable at any time and repeatedly (at open, every ten minutes, on a system clock-change
+    /// notification or after a device wakes): each call replaces the previous anchor, a call
+    /// whose `now_us` is earlier than the last one is accepted as it stands, and no value is
+    /// rejected (`unix_us` is a `u64`, so dates past the year 584 000 are representable).
+    /// [`Session::open`] performs no I/O, so a host calls this between `open` and the first
+    /// [`Session::poll`].
+    ///
+    /// Sources that do not play DASH ignore the anchor, with one exception: an HTTP-date
+    /// `Retry-After` on a `429`/`503` of an HLS request is counted against it (RFC 9110 10.2.3),
+    /// and without an anchor against the response's own `Date` header. The anchor is also kept
+    /// for the DASH source, which needs a clock only for dynamic MPDs (availability and the live
+    /// edge) and ranks this one below a measured `UTCTiming` unless
+    /// [`crate::DashConfig::clock_policy`] says otherwise.
+    pub fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
+        self.wall = Some(WallClock::new(now_us, unix_us));
     }
 
     /// Live cookies as `(name, value)` pairs, for the host to persist and pass back as

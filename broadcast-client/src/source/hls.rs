@@ -21,6 +21,7 @@ use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
 use crate::source::fetch::retry::{Backoff, RetryGate, retry_after_us};
+use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
 
 const MICROS_PER_MILLI: u64 = 1_000;
@@ -306,6 +307,7 @@ impl HlsSource {
         status: u16,
         headers: &[(String, String)],
         now: u64,
+        wall: Option<&WallClock>,
         auth: &mut AuthState,
     ) {
         if self.fatal {
@@ -366,7 +368,7 @@ impl HlsSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            self.retry_after_us = retry_after_us(status, headers);
+            self.retry_after_us = retry_after_us(status, headers, now, wall);
             self.fail_status(req, now, Some(status));
             self.retry_after_us = 0;
         }

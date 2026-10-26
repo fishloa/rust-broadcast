@@ -442,6 +442,7 @@ dependencies = [
  "buffering-runtime",
  "cookie",
  "cookie_store",
+ "dash-runtime",
  "dvb-si",
  "hls-runtime",
  "http",
