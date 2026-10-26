@@ -7,6 +7,8 @@ use thiserror::Error;
 pub mod availability;
 pub mod clock;
 pub mod datetime;
+pub mod live_edge;
+pub mod period;
 pub mod utc_timing;
 
 /// Why a clock sample could not be built.
