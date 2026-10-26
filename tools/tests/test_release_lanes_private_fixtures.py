@@ -43,7 +43,7 @@ CASES = list(_jobs_needing_private("lane"))
 
 def test_lane_set_is_not_vacuous():
     assert ACTION.is_file(), f"{ACTION} is missing"
-    assert len(LANES) == 54,[p.name for p in LANES]
+    assert len(LANES) == 55,[p.name for p in LANES]
     assert CASES, "no release job runs `cargo test`: the guard is vacuous"
 
 
