@@ -51,7 +51,7 @@ Dependencies: `broadcast-common`, `transmux` (`Fmp4Demux`, `Sample`, `TrackSpec`
 | `Action::WaitMs` + `next_wait()` | `Action::WaitUntil(us)` + `next_wake()` | absolute, same domain as `Action::WakeAt` |
 | `on_playlist(bytes)` | `on_mpd(now_us, bytes, ResponseMeta)` + `on_mpd_unchanged(now_us)` (304) | `ResponseMeta{sent_us, received_us, date: Option<&str>, etag, last_modified, final_url}`; the client parses `Date` with jiff |
 | `on_resource(id, bytes)` | `on_init` / `on_index` / `on_segment(now_us, id, bytes)` | `Err(NotMedia{id})` from the shared structural check |
-| `on_error(id)` | `on_failure(now_us, id, Failure) -> FailureClass` | **deviation**: DASH needs the status to tell "too early" from "gone" (A.7, section 5.5); `Failure::{Status(u16), Transport, Timeout, TooLarge}` |
+| `on_error(id)` | `on_failure(now_us, id, Failure) -> FailureClass` | **deviation**: DASH needs the status to tell "too early" from "gone" (A.7, section 5.4); `Failure::{Status(u16), Transport, Timeout, TooLarge}` |
 | `retry_resource(id)`, `skip_resource(id)`, `retry_init()` | `retry(now_us, id)`, `skip(now_us, id)` | same contract: `skip` marks delivered and emits `Output::Discontinuity` |
 | `set_playlist_base(url)` | `set_mpd_base(url)` | redirect target becomes the BaseURL base (A.11 priority 2) |
 | `endlist_seen()`, `target_duration_secs()` | `is_static()`/`presentation_ended()`, `max_segment_duration_secs()` | feed the BC-5 playout gate |
@@ -65,7 +65,7 @@ across MPD refreshes, so a refresh never re-requests a segment already in flight
 `Output` (non_exhaustive): `Manifest(ManifestSelection)` (the `Master` analogue: periods, sets, chosen, audio candidates), `Tracks(Vec<TrackSpec>)`, `Init(Vec<u8>)` (dropped by the adapter, as HLS),
 `Samples{track_id, samples}`, `DisplayChanged`, `Discontinuity`, `PeriodChanged{id, start_us, continuous}`, `EndOfStream`, `ClockSynced{source, uncertainty_us}`, `Notice(Notice)`
 (non-fatal typed: `PreselectionIgnored`, `XlinkSkipped`, `PatchIgnored`, `SegmentSequenceUnsupported`, `EventStreamIgnored`, `LowLatencyIgnored`), `TrackDropped{..}`, `TrackSkipped{..}`,
-`FragmentDamaged{..}` (the last three exactly as HLS). Samples carry the container media timeline (tfdt based), not a Period-rebased one (HLS parity; section 5.6).
+`FragmentDamaged{..}` (the last three exactly as HLS). Samples carry the container media timeline (tfdt based), not a Period-rebased one (HLS parity; section 5.5).
 
 Config lives in `DashConfig` (pure data, `non_exhaustive`, `validate()` like `Config::validate`): see section 6.4 for the full list; the session maps its own `Config` onto it.
 
@@ -147,7 +147,7 @@ cursor is a position (a segment number), not a time, a step changes only gating 
 | `static` | none needed | works with no clock; `UTCTiming` is never fetched (availability is dynamic-only, 5.3.9.5.3) |
 | `dynamic`, usable `UTCTiming` | UTCTiming | init segments are fetched concurrently while the sample is taken (an init is available from `AST + PeriodStart`, 5.3.9.5.2); the join waits at most `utc_wait_us` |
 | `dynamic`, none/failed, `set_wall_clock` given | Host | `Output::ClockSynced{Host, uncertainty = DashConfig::host_clock_uncertainty_us (500 ms)}` |
-| `dynamic`, none/failed, no host clock | MpdDate: the `Date` of the MPD response (IOP 4.8.5: servers SHOULD send it) | uncertainty = rtt/2 + 500 ms; early 404/425 are then expected and absorbed by section 5.5 |
+| `dynamic`, none/failed, no host clock | MpdDate: the `Date` of the MPD response (IOP 4.8.5: servers SHOULD send it) | uncertainty = rtt/2 + 500 ms; early 404/425 are then expected and absorbed by section 5.4 |
 | `dynamic`, no source at all | fatal `ErrorKind::ClockUnavailable` | only a server with neither UTCTiming nor `Date` and a host that never called `set_wall_clock` |
 
 `DashClockPolicy::Auto` (default) is the order above (UTCTiming first because it IS the packager's time authority; IOP 4.7.3 "SHOULD use at least one announced method");
