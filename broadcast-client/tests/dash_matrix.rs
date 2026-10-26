@@ -569,7 +569,7 @@ fn host_clock_skew_and_step_faults() {
             let applied = (skew != 0 || step != 0)
                 && sim.world.host_skew_us == skew
                 && sim.world.host_step_us == step
-                && sim.host_clock_calls.len() >= 1 + usize::from(step != 0);
+                && sim.host_clock_calls.len() > usize::from(step != 0);
             if !applied {
                 bad.push(format!("{label}: the clock fault was not applied"));
             }

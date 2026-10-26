@@ -208,6 +208,14 @@ const SHAPES: [Shape; 6] = [
     },
 ];
 
+struct Pending {
+    conn: u32,
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    range: Option<(u64, u64)>,
+}
+
 struct Sent {
     url: String,
     method: String,
@@ -247,16 +255,16 @@ fn perform(
     client: &reqwest::blocking::Client,
     session: &mut Session,
     start: Instant,
-    action: (
-        u32,
-        String,
-        String,
-        Vec<(String, String)>,
-        Option<(u64, u64)>,
-    ),
+    action: Pending,
     observed: &mut Observed,
 ) {
-    let (conn, method, url, headers, range) = action;
+    let Pending {
+        conn,
+        method,
+        url,
+        headers,
+        range,
+    } = action;
     let mono = || u64::try_from(start.elapsed().as_micros()).expect("mono fits");
     let mut request = client.request(method.parse().expect("method"), &url);
     for (name, value) in &headers {
@@ -338,7 +346,13 @@ fn play(port: u16, shape: &Shape) -> Observed {
                     url,
                     headers,
                     byte_range,
-                } => pending.push((conn, method, url, headers, byte_range)),
+                } => pending.push(Pending {
+                    conn,
+                    method,
+                    url,
+                    headers,
+                    range: byte_range,
+                }),
                 Action::WakeAt(t) => wake = Some(wake.map_or(t, |w| w.min(t))),
                 _ => {}
             }
