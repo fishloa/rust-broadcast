@@ -21,6 +21,7 @@ use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
 use crate::source::fetch::retry::{Backoff, RetryGate, retry_after_us};
+use crate::source::fetch::window::{Lane, Lanes, Window};
 
 const MICROS_PER_MILLI: u64 = 1_000;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
@@ -38,15 +39,6 @@ const FIELD_MAX_MANIFEST_BYTES: &str = "max_manifest_bytes";
 const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
 const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
 const REASON_DAMAGED_FRAGMENT: &str = "damaged_fragment";
-
-type Queued = (u64, HlsAction);
-
-#[derive(Debug, Clone, Copy)]
-enum Lane {
-    Other,
-    Retry,
-    Fresh,
-}
 
 /// Which playlist an adapter plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,17 +135,11 @@ pub(crate) struct HlsSource {
     timeouts: Timeouts,
     backoff: Backoff,
     max_redirects: u32,
-    max_inflight_segments: usize,
     reqs: HashMap<u32, Req>,
     deadlines: Deadlines<u32>,
     parked: Vec<Req>,
-    queue_seq: u64,
-    pending: VecDeque<Queued>,
-    retries: VecDeque<Queued>,
-    fresh: VecDeque<Queued>,
-    order: VecDeque<ResourceId>,
-    held: HashMap<ResourceId, Vec<u8>>,
-    failed: BTreeSet<ResourceId>,
+    lanes: Lanes<HlsAction>,
+    window: Window<ResourceId>,
     gate: RetryGate,
     retry_refetch: Option<(u64, String)>,
     init_retry: bool,
@@ -199,17 +185,11 @@ impl HlsSource {
             },
             backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
             max_redirects: config.max_redirects,
-            max_inflight_segments: config.max_inflight_segments.max(1),
             reqs: HashMap::new(),
             deadlines: Deadlines::new(),
             parked: Vec::new(),
-            queue_seq: 0,
-            pending: VecDeque::new(),
-            retries: VecDeque::new(),
-            fresh: VecDeque::new(),
-            order: VecDeque::new(),
-            held: HashMap::new(),
-            failed: BTreeSet::new(),
+            lanes: Lanes::new(),
+            window: Window::new(config.max_inflight_segments),
             gate: RetryGate::default(),
             retry_refetch: None,
             init_retry: false,
@@ -464,7 +444,7 @@ impl HlsSource {
     fn deliver(&mut self, req: Req, now: u64) {
         match req.purpose {
             Purpose::Resource(id) if id != ResourceId::Init => {
-                self.held.insert(id, req.body.into_bytes());
+                self.window.hold(id, req.body.into_bytes());
                 self.release_ready(now);
             }
             Purpose::Key(id) => self.deliver_key(id, req.body.as_slice(), now),
@@ -496,8 +476,7 @@ impl HlsSource {
                     &e
                     && !matches!(rid, ResourceId::Init)
                 {
-                    self.order.push_front(*rid);
-                    self.failed.insert(*rid);
+                    self.window.requeue(*rid);
                     if self.core_error(&e) {
                         return;
                     }
@@ -541,15 +520,8 @@ impl HlsSource {
     }
 
     fn release_ready(&mut self, now: u64) {
-        while let Some(front) = self.order.front().copied() {
-            if self.failed.contains(&front) {
-                return;
-            }
-            let Some(body) = self.held.remove(&front) else {
-                return;
-            };
-            self.order.pop_front();
-            self.deliver_now(Purpose::Resource(front), &body, None, now);
+        while let Some((id, body)) = self.window.pop_ready() {
+            self.deliver_now(Purpose::Resource(id), &body, None, now);
         }
     }
 
@@ -570,8 +542,7 @@ impl HlsSource {
         } else if let Purpose::Resource(id) = purpose
             && id != ResourceId::Init
         {
-            self.order.push_front(id);
-            self.failed.insert(id);
+            self.window.requeue(id);
         }
         self.pump_core();
         self.drain_outputs();
@@ -599,24 +570,21 @@ impl HlsSource {
     }
 
     fn purge_unrequested(&mut self) {
-        if self.failed.is_empty() {
+        let failed = self.window.failed();
+        if failed.is_empty() {
             return;
         }
         let requested: BTreeSet<ResourceId> = self
-            .retries
-            .iter()
-            .chain(self.fresh.iter())
-            .filter_map(|(_, action)| match action {
+            .lanes
+            .resource_actions()
+            .filter_map(|action| match action {
                 HlsAction::FetchResource { id, .. } => Some(*id),
                 _ => None,
             })
             .collect();
-        let failed: Vec<ResourceId> = self.failed.iter().copied().collect();
         for id in failed {
             if !requested.contains(&id) {
-                self.failed.remove(&id);
-                self.order.retain(|o| *o != id);
-                self.held.remove(&id);
+                self.window.retire(&id);
                 self.seg_failures.clear(&id);
                 self.seg_retry.remove(&id);
             }
@@ -649,7 +617,7 @@ impl HlsSource {
             return;
         }
         if let Purpose::Resource(id) = req.purpose {
-            self.failed.insert(id);
+            self.window.fail(id);
         }
         self.fail_purpose(req.purpose, Some(req.original_url), now, status);
     }
@@ -718,9 +686,7 @@ impl HlsSource {
             return;
         }
         self.skip_error = Some(kind);
-        self.failed.remove(&id);
-        self.order.retain(|o| *o != id);
-        self.held.remove(&id);
+        self.window.retire(&id);
         self.seg_retry.remove(&id);
         self.client.skip_resource(id);
         self.pump_core();
@@ -731,9 +697,8 @@ impl HlsSource {
     fn chain_alive(&self) -> bool {
         self.retry_refetch.is_some()
             || self
-                .pending
-                .iter()
-                .any(|(_, a)| matches!(a, HlsAction::FetchPlaylist { .. }))
+                .lanes
+                .any_other(|a| matches!(a, HlsAction::FetchPlaylist { .. }))
             || self.reqs.values().any(|r| r.purpose == Purpose::Playlist)
     }
 
@@ -771,23 +736,7 @@ impl HlsSource {
     }
 
     fn next_action(&mut self) -> Option<HlsAction> {
-        let window_open = self.order.len() < self.max_inflight_segments;
-        let head = |queue: &VecDeque<Queued>| queue.front().map(|(seq, _)| *seq);
-        let lane = [
-            (head(&self.pending), Lane::Other),
-            (head(&self.retries), Lane::Retry),
-            (head(&self.fresh).filter(|_| window_open), Lane::Fresh),
-        ]
-        .into_iter()
-        .filter_map(|(seq, lane)| seq.map(|seq| (seq, lane)))
-        .min_by_key(|(seq, _)| *seq)
-        .map(|(_, lane)| lane)?;
-        let queue = match lane {
-            Lane::Other => &mut self.pending,
-            Lane::Retry => &mut self.retries,
-            Lane::Fresh => &mut self.fresh,
-        };
-        queue.pop_front().map(|(_, action)| action)
+        self.lanes.next(self.window.is_open())
     }
 
     fn advance(&mut self, now: u64, auth: &mut AuthState) {
@@ -851,10 +800,7 @@ impl HlsSource {
         if let Purpose::Resource(id) = purpose
             && id != ResourceId::Init
         {
-            self.failed.remove(&id);
-            if !self.order.contains(&id) {
-                self.order.push_back(id);
-            }
+            self.window.issue(id);
         }
         match Url::parse(url) {
             Ok(parsed) => self.send(
@@ -864,7 +810,7 @@ impl HlsSource {
             ),
             Err(_) => {
                 if let Purpose::Resource(id) = purpose {
-                    self.failed.insert(id);
+                    self.window.fail(id);
                 }
                 self.fail_purpose(purpose, None, now, None);
             }
@@ -912,12 +858,8 @@ impl HlsSource {
         self.reqs.clear();
         self.deadlines.clear();
         self.parked.clear();
-        self.pending.clear();
-        self.retries.clear();
-        self.fresh.clear();
-        self.order.clear();
-        self.held.clear();
-        self.failed.clear();
+        self.lanes.clear();
+        self.window.clear();
         self.retry_refetch = None;
         self.gate.clear();
     }
@@ -935,19 +877,17 @@ impl HlsSource {
 
     fn pump_core(&mut self) {
         while let Some(action) = self.client.poll() {
-            let seq = self.queue_seq;
-            self.queue_seq = self.queue_seq.wrapping_add(1);
-            let queue = match &action {
+            let lane = match &action {
                 HlsAction::FetchResource { id, .. } if *id != ResourceId::Init => {
-                    if self.order.contains(id) {
-                        &mut self.retries
+                    if self.window.contains(id) {
+                        Lane::Retry
                     } else {
-                        &mut self.fresh
+                        Lane::Fresh
                     }
                 }
-                _ => &mut self.pending,
+                _ => Lane::Other,
             };
-            queue.push_back((seq, action));
+            self.lanes.push(lane, action);
         }
     }
 
