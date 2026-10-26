@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns="urn:mpeg:dash:schema:mpd:2011"
+	xmlns:xlink="http://www.w3.org/1999/xlink"
+	xsi:schemaLocation="urn:mpeg:DASH:schema:MPD:2011 http://standards.iso.org/ittf/PubliclyAvailableStandards/MPEG-DASH_schema_files/DASH-MPD.xsd"
+	profiles="urn:mpeg:dash:profile:isoff-live:2011"
+	type="dynamic"
+	minimumUpdatePeriod="PT3S"
+	suggestedPresentationDelay="PT3S"
+	availabilityStartTime="2026-10-26T09:18:20.766Z"
+	publishTime="2026-10-26T09:18:36.438Z"
+	timeShiftBufferDepth="PT12.1S"
+	maxSegmentDuration="PT2.0S"
+	minBufferTime="PT6.0S">
+	<ProgramInformation>
+	</ProgramInformation>
+	<ServiceDescription id="0">
+	</ServiceDescription>
+	<Period id="0" start="PT0.0S">
+		<AdaptationSet id="0" contentType="video" startWithSAP="1" segmentAlignment="true" bitstreamSwitching="true" frameRate="25/1" maxWidth="320" maxHeight="240" par="4:3">
+			<Representation id="0" mimeType="video/mp4" codecs="avc1.4d400d" bandwidth="62440" width="320" height="240" sar="1:1">
+				<SegmentTemplate timescale="90000" initialization="init-$RepresentationID$.m4s" media="seg-$RepresentationID$-$Number%03d$.m4s" startNumber="3">
+					<SegmentTimeline>
+						<S t="365853" d="273763" r="3" />
+					</SegmentTimeline>
+				</SegmentTemplate>
+			</Representation>
+		</AdaptationSet>
+		<AdaptationSet id="1" contentType="audio" startWithSAP="1" segmentAlignment="true" bitstreamSwitching="true">
+			<Representation id="1" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="98701" audioSamplingRate="44100">
+				<AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1" />
+				<SegmentTemplate timescale="44100" initialization="init-$RepresentationID$.m4s" media="seg-$RepresentationID$-$Number%03d$.m4s" startNumber="5">
+					<SegmentTimeline>
+						<S t="353280" d="89087" />
+						<S d="89088" />
+						<S d="89089" />
+						<S d="89088" />
+					</SegmentTimeline>
+				</SegmentTemplate>
+			</Representation>
+		</AdaptationSet>
+	</Period>
+</MPD>

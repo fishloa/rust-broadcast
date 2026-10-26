@@ -1,0 +1,29 @@
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/live-number/live.mpd
+fixtures/dash/live-number/live.mpd validates
+
+
+## gpac -i live.mpd:shift_utc=<now - (publishTime - 3 s), ms>:noseek inspect:test=network:dur=0/1  (killed after 20 s; dynamic MPD)
+PID 1 ID 1 video inMovie timescale 90000 delay -5130 320x240 SAR 1/1 0 bps codec avc1.4D400D AVC|H264 PL Main@1.3 YUV 4:2:0 8 bpp
+PID 2 ID 1 audio inMovie 44100 Hz 1 chan 98 kbps codec mp4a.40.2 AAC LC (aot=2 implicit)
+
+
+## MP4Box -diso (tfdt per fragment, sidx where present)
+  init-0.m4s: no moof/sidx
+  init-1.m4s: no moof/sidx
+  seg-0-005.m4s: tfdt=727526 sidx(timescale=90000,earliest_presentation_time=729616,references=1)
+  seg-0-006.m4s: tfdt=911289 sidx(timescale=90000,earliest_presentation_time=913379,references=1)
+  seg-0-007.m4s: tfdt=1185052 sidx(timescale=90000,earliest_presentation_time=1187142,references=1)
+  seg-0-008.m4s: tfdt=1275052 sidx(timescale=90000,earliest_presentation_time=1277142,references=1)
+  seg-1-005.m4s: tfdt=353280 sidx(timescale=44100,earliest_presentation_time=353280,references=1)
+  seg-1-006.m4s: tfdt=441343 sidx(timescale=44100,earliest_presentation_time=441343,references=1)
+  seg-1-007.m4s: tfdt=529408 sidx(timescale=44100,earliest_presentation_time=529408,references=1)
+  seg-1-008.m4s: tfdt=617471 sidx(timescale=44100,earliest_presentation_time=617471,references=1)
+
+
+## ffprobe -count_packets (whole file, or init + segments concatenated)
+$ cat init-0.m4s seg-0-005.m4s seg-0-006.m4s seg-0-007.m4s seg-0-008.m4s | ffprobe
+stream|index=0|codec_name=h264|codec_type=video|width=320|height=240|start_time=8.106622|duration=16.232278|nb_read_packets=197
+
+$ cat init-1.m4s seg-1-005.m4s seg-1-006.m4s seg-1-007.m4s seg-1-008.m4s | ffprobe
+stream|index=0|codec_name=aac|codec_type=audio|sample_rate=44100|start_time=8.010884|duration=16.021769|nb_read_packets=345
+
