@@ -642,6 +642,7 @@ impl Backend for Faulty {
 
 pub struct Out {
     pub events: Vec<Event>,
+    pub event_times: Vec<u64>,
     pub log: Vec<Logged>,
     pub end_elapsed_us: u64,
     pub hung: bool,
@@ -720,6 +721,7 @@ pub fn run_cell(src: &Src, plan: Option<Plan>) -> Out {
             end_elapsed_us: sim.world.elapsed_us,
             loop_cap: sim.log.len() >= sim.request_cap,
             events: sim.events,
+            event_times: sim.event_times,
             log: sim.log,
             hung,
             panicked: false,
@@ -729,6 +731,7 @@ pub fn run_cell(src: &Src, plan: Option<Plan>) -> Out {
     }));
     r.unwrap_or(Out {
         events: vec![],
+        event_times: vec![],
         log: vec![],
         end_elapsed_us: 0,
         hung: false,
@@ -786,6 +789,9 @@ pub fn served_segments(log: &[Logged], faulted: &[(String, u64, bool)]) -> Serve
     out
 }
 
+/// A permanently refused segment may cost a few segments, never most of the session (a huge
+/// `Retry-After` is honoured up to its clamp, so it is the one fault allowed to outlast the horizon).
+const STUCK_DIVISOR: usize = 2;
 const RATE_WINDOW_US: u64 = SEC;
 const REDIRECT_HOP_US: u64 = 100_000;
 pub const RATE_CAP_PER_WINDOW: usize = 4;
@@ -942,8 +948,22 @@ pub fn classify(
         }
         let served = served_segments(&o.log, &o.faulted);
         let allow_gaps = perm || plan.fault == F::S429Huge;
-        if plan.fault.resets() {
-            if (served.repeated.is_some() || served.gap.is_some()) && discs == 0 {
+        let first_fault = o.faulted.iter().map(|f| f.1).min().unwrap_or(0);
+        let discs_after_fault = o
+            .events
+            .iter()
+            .zip(&o.event_times)
+            .filter(|(e, t)| is_disc(e) && **t >= first_fault)
+            .count();
+        let blinded_across_a_period = src.caps.contains(&Cap::MultiPeriod)
+            && plan.fault != F::PeriodDuplicated
+            && matches!(
+                plan.stage.class,
+                Class::Mpd | Class::MpdRefresh | Class::MpdBoundary
+            );
+        let rejoin_expected = plan.fault.resets() || blinded_across_a_period;
+        if rejoin_expected {
+            if (served.repeated.is_some() || served.gap.is_some()) && discs_after_fault == 0 {
                 return ("NODISC".into(), format!("{tail} {served:?}"));
             }
         } else if let Some(why) = served.repeated.or(served.gap.filter(|_| !allow_gaps)) {
@@ -969,6 +989,12 @@ pub fn classify(
         }
         if busy {
             return ("BUSY".into(), tail);
+        }
+        if plan.stage.class == Class::Media
+            && plan.fault != F::S429Huge
+            && s.len() * STUCK_DIVISOR < base.len()
+        {
+            return ("STUCK".into(), tail);
         }
         return ("RETRY".into(), tail);
     }
@@ -1022,6 +1048,7 @@ pub fn matrix(src: &Src) -> (Vec<String>, Vec<Cell>) {
                 end_elapsed_us: sim.world.elapsed_us,
                 loop_cap: false,
                 events: sim.events,
+                event_times: sim.event_times,
                 log: sim.log,
                 hung: false,
                 panicked: false,

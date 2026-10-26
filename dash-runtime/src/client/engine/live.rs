@@ -999,12 +999,20 @@ impl DashClient {
                 .get(&id)
                 .map_or((None, None), |r| (r.avail_from_us, r.avail_until_us));
             let grace = i128::from(self.dash.early_grace_us);
-            let early = status == Some(STATUS_TOO_EARLY)
-                || from.is_some_and(|f| utc < f.saturating_add(grace));
+            let past_window = until.is_some_and(|u| utc > u);
+            let refused_past_window = past_window
+                && status == Some(STATUS_TOO_EARLY)
+                && self
+                    .clock
+                    .anchor()
+                    .is_some_and(|a| a.source == ClockSource::UtcTiming);
+            let early = !refused_past_window
+                && (status == Some(STATUS_TOO_EARLY)
+                    || from.is_some_and(|f| utc < f.saturating_add(grace)));
             if early {
                 return Ok(self.early_wait(now_us, id, from, utc));
             }
-            if until.is_some_and(|u| utc > u) {
+            if past_window {
                 return Ok(self.expired_segment(now_us, id, utc));
             }
         }

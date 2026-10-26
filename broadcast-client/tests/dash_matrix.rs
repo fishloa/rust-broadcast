@@ -30,6 +30,7 @@ const SIDX_VIDEO: &str = "http://dash.test/ondemand-sidx/v_dashinit.mp4";
 const SIDX_AUDIO: &str = "http://dash.test/ondemand-sidx/a_dashinit.mp4";
 const RESTART_MPD: &str = "http://dash.test/multiperiod-restart/multiperiod.mpd";
 const LIST_MPD: &str = "http://dash.test/segmentlist/list.mpd";
+const MATRIX_SEGMENT_FAILURES: u32 = 3;
 const LIVE_HORIZON_US: u64 = 120 * SEC;
 const PROBE_US: u64 = 60 * SEC;
 const PERIOD_STARTS_US: [i64; 3] = [0, 40 * MICROS, 80 * MICROS];
@@ -51,6 +52,7 @@ fn matrix_config() -> Config {
     config.request_timeout_us = 5 * SEC;
     config.segment_timeout_us = 10 * SEC;
     config.dash.utc_timeout_us = 4 * SEC;
+    config.max_segment_failures = MATRIX_SEGMENT_FAILURES;
     config
 }
 
