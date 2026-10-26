@@ -653,3 +653,134 @@ fn reconnect_starts_a_fresh_presentation_and_keeps_the_host_clock() {
     let reqs = segment_requests(&sim, geo);
     assert!(early_requests(&reqs, geo, TOLERANCE_US).is_empty());
 }
+
+struct LastModified {
+    inner: Box<dyn dash_sim::Backend>,
+    hits: Rc<RefCell<u32>>,
+}
+
+const LAST_MODIFIED: &str = "Mon, 26 Oct 2026 08:00:00 GMT";
+
+impl dash_sim::Backend for LastModified {
+    fn serve(&mut self, at: i64, req: &dash_sim::Logged) -> dash_sim::Answer {
+        if req.is_mpd() {
+            if req.header("if-modified-since") == Some(LAST_MODIFIED) {
+                *self.hits.borrow_mut() += 1;
+                return dash_sim::Answer::status(304);
+            }
+            return self
+                .inner
+                .serve(at, req)
+                .with_header("Last-Modified", LAST_MODIFIED);
+        }
+        self.inner.serve(at, req)
+    }
+}
+
+#[test]
+fn a_last_modified_validator_comes_back_as_if_modified_since_and_a_304_is_accepted() {
+    let mut synth = with_utc(Addressing::Number);
+    let fixed = {
+        let mut probe = Synth::new(AST_US, Addressing::Number);
+        probe.utc_elements = synth.utc_elements.clone();
+        probe.mpd_at(AST_US + 41 * MICROS + 120_000)
+    };
+    synth.mpd_override = Some(Box::new(move |_| Some(fixed.clone())));
+    let hits = Rc::new(RefCell::new(0));
+    let backend = LastModified {
+        inner: Box::new(WorldBackend(synth)),
+        hits: hits.clone(),
+    };
+    let mut sim = DashSim::new(
+        MPD_URL,
+        Config::default(),
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(backend),
+    );
+    sim.run_for(30 * SEC);
+    assert!(sim.fatal().is_none());
+    assert!(sim.errors().is_empty(), "{:?}", sim.errors());
+    assert!(*hits.borrow() >= 10, "{} conditional hits", hits.borrow());
+    assert!(sample_count(&sim) > 0);
+}
+
+struct HeadWithLength(Box<dyn dash_sim::Backend>);
+
+impl dash_sim::Backend for HeadWithLength {
+    fn serve(&mut self, at: i64, req: &dash_sim::Logged) -> dash_sim::Answer {
+        let answer = self.0.serve(at, req);
+        if req.method == "HEAD" {
+            return answer.with_header("Content-Length", "1234");
+        }
+        answer
+    }
+}
+
+#[test]
+fn a_head_answer_declares_the_length_of_the_body_it_does_not_send() {
+    let synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-head", "http://utc.test/head");
+    let mut sim = DashSim::new(
+        MPD_URL,
+        Config::default(),
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(HeadWithLength(Box::new(WorldBackend(synth)))),
+    );
+    sim.run_for(10 * SEC);
+    assert!(sim.fatal().is_none(), "{:?}", sim.fatal());
+    assert_eq!(
+        clock_events(&sim).first().map(|s| s.0),
+        Some(ClockSource::UtcTiming),
+        "the Content-Length of a HEAD response is not a truncated body"
+    );
+}
+
+#[test]
+fn a_clock_set_after_close_changes_nothing() {
+    let (mut sim, _) = live(
+        Synth::new(AST_US, Addressing::Number),
+        41 * MICROS,
+        Config::default(),
+    );
+    sim.run_for(SEC);
+    sim.session.close();
+    while sim.session.poll(sim.world.mono()).is_some() {}
+    while sim.session.next_event().is_some() {}
+    sim.give_host_clock();
+    assert!(sim.session.next_event().is_none());
+    assert!(sim.session.poll(sim.world.mono()).is_none());
+}
+
+#[test]
+fn the_live_playout_lead_is_three_segments_at_most() {
+    let samples_before_start = |lead_us: u64| {
+        let mut config = Config::default();
+        config.playout.live_start_lead_us = lead_us;
+        let (mut sim, _) = live(with_utc(Addressing::Number), 41 * MICROS + 120_000, config);
+        sim.run_for(30 * SEC);
+        let at = sim
+            .events
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    Event::Buffer(broadcast_client::BufferEvent::Start { .. })
+                )
+            })
+            .expect("Start");
+        sim.events[..at]
+            .iter()
+            .filter(|e| matches!(e, Event::Sample { .. }))
+            .count()
+    };
+    let (three, six, huge) = (
+        samples_before_start(3 * SEC),
+        samples_before_start(6 * SEC),
+        samples_before_start(1_000 * SEC),
+    );
+    assert!(three < six, "{three} {six}");
+    assert_eq!(
+        six, huge,
+        "3 x the 2 s segments is 6 s: more changes nothing"
+    );
+}

@@ -459,9 +459,10 @@ fn audio_can_be_stopped_and_started_again() {
         tracks[0].iter().map(|t| t.track_id).collect::<Vec<_>>(),
         vec![TrackId::new(1)]
     );
-    assert!(
-        samples_of(&sim, 2) <= audio_so_far + 1,
-        "at most the segment already in flight is still delivered"
+    assert_eq!(
+        samples_of(&sim, 2),
+        audio_so_far,
+        "nothing more is delivered for the stopped track, even from a segment already in flight"
     );
     assert!(samples_of(&sim, 1) > 0);
     assert!(audio_events(&sim).last().is_some_and(|a| a.0.is_none()));
@@ -494,4 +495,94 @@ fn a_ts_over_http_session_has_no_variants_or_renditions() {
     let mut s = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     assert!(matches!(s.select_variant(0), Err(Error::NotHls)));
     assert!(matches!(s.select_audio_rendition(None), Err(Error::NotHls)));
+}
+
+fn restart_with_two_audio_sets() -> String {
+    let alt = |period: u32| {
+        format!(
+            r#"<AdaptationSet segmentAlignment="true" mimeType="audio/mp4" startWithSAP="1" lang="fr">
+   <Label>Second</Label>
+   <SegmentTemplate media="alt-p{period}_dash_track2_$Number$.m4s" initialization="alt-p{period}_dash_track2_init.mp4" timescale="44100" startNumber="1" duration="88200"/>
+   <Representation id="8{period}" codecs="mp4a.40.2" audioSamplingRate="44100" bandwidth="48000"/>
+  </AdaptationSet>
+ </Period>"#
+        )
+    };
+    let text = test_fixtures::read_to_string(&format!("dash/{RESTART}")).replace(
+        "mimeType=\"audio/mp4\" startWithSAP=\"1\">",
+        "mimeType=\"audio/mp4\" startWithSAP=\"1\" lang=\"en\">",
+    );
+    let p1 = text.find("</Period>").unwrap();
+    let mut out = String::new();
+    out.push_str(&text[..p1]);
+    out.push_str(&alt(1));
+    let rest = &text[p1 + "</Period>".len()..];
+    let p2 = rest.find("</Period>").unwrap();
+    out.push_str(&rest[..p2]);
+    out.push_str(&alt(2));
+    out.push_str(&rest[p2 + "</Period>".len()..]);
+    out
+}
+
+#[test]
+fn a_manual_audio_choice_survives_a_period_change_by_name_and_language() {
+    let text = restart_with_two_audio_sets();
+    assert_eq!(text.matches("alt-p").count(), 4);
+    let mut sim = sim_for(RESTART, text, one_at_a_time(), alias_restart);
+    run_until(&mut sim, |s| samples_of(s, 2) > 0);
+    sim.session.select_audio_rendition(Some(1)).unwrap();
+    sim.run_to_terminal(120 * SEC);
+    assert!(sim.ended(), "{:?}", sim.errors());
+    let asked: Vec<String> = sim
+        .log
+        .iter()
+        .map(|l| l.url.rsplit('/').next().unwrap().to_owned())
+        .collect();
+    let has = |n: &str| asked.iter().any(|u| u == n);
+    assert!(
+        has("alt-p1_dash_track2_2.m4s") && has("alt-p1_dash_track2_3.m4s"),
+        "{asked:?}"
+    );
+    assert!(
+        has("alt-p2_dash_track2_2.m4s") && has("alt-p2_dash_track2_3.m4s"),
+        "the second Period keeps the French set from its next segment: {asked:?}"
+    );
+    let events = audio_events(&sim);
+    assert_eq!(
+        events.iter().map(|e| e.0).collect::<Vec<_>>(),
+        vec![Some(0), Some(1)],
+        "one announcement per change, none for the carried-over choice: {events:?}"
+    );
+    assert_eq!(manifests(&sim).len(), 2);
+    assert_eq!(manifests(&sim)[1].renditions[1].name, "Second");
+}
+
+#[test]
+fn a_variant_switch_neither_restarts_nor_pauses_the_playout_gate() {
+    let mut sim = sim_for(MANIFEST, with_two_video(), one_at_a_time(), alias_ffmpeg);
+    run_until(&mut sim, |s| samples_of(s, 1) > 0);
+    sim.session.select_variant(1).unwrap();
+    sim.run_to_terminal(60 * SEC);
+    assert!(sim.ended());
+    let starts = sim.count(|e| {
+        matches!(
+            e,
+            Event::Buffer(broadcast_client::BufferEvent::Start { .. })
+        )
+    });
+    let pauses = sim.count(|e| {
+        matches!(
+            e,
+            Event::Buffer(broadcast_client::BufferEvent::Pause { .. })
+        )
+    });
+    assert_eq!(
+        (starts, pauses),
+        (1, 0),
+        "{:?}",
+        sim.events
+            .iter()
+            .filter(|e| matches!(e, Event::Buffer(_)))
+            .collect::<Vec<_>>()
+    );
 }

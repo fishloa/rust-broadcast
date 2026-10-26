@@ -427,6 +427,7 @@ fn a_whole_file_answer_to_a_ranged_request_is_sliced_and_a_wrong_range_is_a_fail
 fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
     let mut sim = DashSim::static_origin(&url_of(MANIFEST), Config::default());
     let mut first = true;
+    let mut second = false;
     sim.fault = Some(Box::new(move |req: &Logged, _| {
         if req.is_mpd() {
             let text = test_fixtures::read(&format!("dash/{MANIFEST}"));
@@ -438,6 +439,10 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
                 429,
                 vec![("Retry-After".into(), "9".into())],
             ));
+        }
+        if req.url.ends_with("chunk-stream1-00004.m4s") && !second {
+            second = true;
+            return Some(Answer::status(500));
         }
         None
     }));
@@ -459,4 +464,146 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
             .iter()
             .any(|(k, v)| k == "sid" && v == "abc")
     );
+    let plain = sim.requests_to("chunk-stream1-00004");
+    assert_eq!(plain.len(), 2);
+    assert_eq!(
+        (plain[1].send_elapsed_us - plain[0].send_elapsed_us) / SEC,
+        2,
+        "a later failure without Retry-After uses the ordinary backoff"
+    );
+}
+
+#[test]
+fn a_whole_file_answer_too_short_for_the_range_is_a_failure_and_data_before_the_head_is_ignored() {
+    let mut sim = DashSim::static_origin(&url_of(SIDX), Config::default());
+    let mut once = true;
+    sim.fault = Some(Box::new(move |req: &Logged, _| {
+        if req.byte_range.is_some() && once {
+            once = false;
+            return Some(Answer::ok(vec![0u8; 10]));
+        }
+        None
+    }));
+    sim.run_to_terminal(120 * SEC);
+    assert!(sim.ended(), "{:?}", sim.errors());
+    assert!(
+        sim.statuses()
+            .iter()
+            .any(|s| matches!(s, Status::Reconnecting { attempt: 1 }))
+    );
+    dash_sim::assert_samples_equal_oracle(
+        &sim,
+        &[
+            whole("ondemand-sidx/v_dashinit.mp4"),
+            whole("ondemand-sidx/a_dashinit.mp4"),
+        ],
+    );
+
+    let mut session =
+        broadcast_client::Session::open(&url_of(MANIFEST), Config::default(), 0).unwrap();
+    let conn = loop {
+        match session.poll(0) {
+            Some(broadcast_client::Action::HttpRequest { conn, .. }) => break conn,
+            Some(_) => {}
+            None => panic!("no request"),
+        }
+    };
+    session.on_data(conn, b"<MPD junk before any response head", 0);
+    let text = test_fixtures::read(&format!("dash/{MANIFEST}"));
+    session.on_response(conn, 200, &[], 0);
+    session.on_data(conn, &text, 0);
+    session.on_closed(conn, None, 0);
+    while let Some(e) = session.next_event() {
+        assert!(!matches!(e, Event::Error { .. }), "{e:?}");
+    }
+    let asked: Vec<String> = std::iter::from_fn(|| session.poll(0))
+        .filter_map(|a| match a {
+            broadcast_client::Action::HttpRequest { url, .. } => Some(url),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        asked.iter().any(|u| u.ends_with("init-stream0.m4s")),
+        "the MPD parsed, so the junk before the head did not enter the body: {asked:?}"
+    );
+}
+
+#[test]
+fn a_utc_request_is_abandoned_at_the_utc_timeout_and_an_init_at_the_request_timeout() {
+    let synth = Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", UTC_URL);
+    let mut config = Config::default();
+    config.request_timeout_us = 4 * SEC;
+    config.segment_timeout_us = 30 * SEC;
+    config.dash.utc_timeout_us = 2 * SEC;
+    config.dash.utc_wait_us = 5 * SEC;
+    let mut sim = DashSim::new(
+        MPD_URL,
+        config,
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(WorldBackend(synth)),
+    );
+    let mut utc_hung = false;
+    let mut init_hung = false;
+    sim.fault = Some(Box::new(move |req: &Logged, _| {
+        if req.url.starts_with("http://utc.test/") && !utc_hung {
+            utc_hung = true;
+            return Some(Answer::Hang);
+        }
+        if req.url.ends_with("/V/init.mp4") && !init_hung {
+            init_hung = true;
+            return Some(Answer::Hang);
+        }
+        None
+    }));
+    sim.give_host_clock();
+    sim.run_for(20 * SEC);
+    let first_utc = sim.requests_to("utc.test")[0].clone();
+    assert!(
+        sim.closes.contains(&first_utc.conn),
+        "the hung UTC request was closed"
+    );
+    let init = sim.requests_to("/V/init.mp4");
+    assert!(init.len() >= 2, "{} init requests", init.len());
+    let gap = (init[1].send_elapsed_us - init[0].send_elapsed_us) / SEC;
+    assert!(
+        (4..=8).contains(&gap),
+        "the init is retried after the 4 s request timeout plus a backoff, not after the 30 s segment timeout: {gap} s"
+    );
+}
+
+#[test]
+fn a_401_from_another_origin_is_a_failed_request_not_a_credential_prompt() {
+    let text = test_fixtures::read_to_string(&format!("dash/{MANIFEST}")).replacen(
+        "<Period",
+        "<BaseURL>http://cdn.test/</BaseURL><Period",
+        1,
+    );
+    let url = url_of(MANIFEST);
+    let origin = cdn_origin().doc(&url, text.into_bytes());
+    let mut sim = DashSim::new(
+        &url,
+        Config::default(),
+        World::new(AST_US),
+        Box::new(StaticBackend(origin)),
+    );
+    let mut once = true;
+    sim.fault = Some(Box::new(move |req: &Logged, _| {
+        if req.url.starts_with("http://cdn.test/chunk-stream0-00002") && once {
+            once = false;
+            return Some(Answer::status_with(
+                401,
+                vec![("WWW-Authenticate".into(), "Basic realm=\"r\"".into())],
+            ));
+        }
+        None
+    }));
+    sim.run_to_terminal(120 * SEC);
+    assert!(sim.ended(), "{:?}", sim.errors());
+    assert!(
+        !sim.events
+            .iter()
+            .any(|e| matches!(e, Event::AuthRequired { .. })),
+        "a CDN's challenge is not the session's"
+    );
+    assert!(!sim.statuses().contains(&Status::WaitingForCredentials));
 }

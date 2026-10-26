@@ -8,6 +8,9 @@ mod dash_checks;
 mod dash_common;
 #[path = "support/dash_sim.rs"]
 mod dash_sim;
+#[allow(dead_code)]
+#[path = "support/fmp4_split.rs"]
+mod fmp4_split;
 
 use broadcast_client::{BufferEvent, Config, ErrorKind, Event, Status};
 use dash_common::loopback::Origin;
@@ -634,4 +637,201 @@ fn a_closed_session_ignores_everything_and_a_dash_session_reports_ended_once() {
     );
     sim.session.close();
     assert!(sim.session.poll(0).is_none());
+}
+
+#[test]
+fn only_the_first_mpd_not_found_or_gone_is_reported_as_not_found() {
+    for status in [404u16, 410] {
+        let mut sim = DashSim::static_origin(&url_of(MANIFEST), Config::default());
+        let mut first = true;
+        sim.fault = Some(Box::new(move |req: &Logged, _| {
+            if is_mpd(req) && first {
+                first = false;
+                return Some(Answer::status(status));
+            }
+            None
+        }));
+        let sim = finished(sim);
+        assert!(sim.ended());
+        assert_eq!(
+            sim.statuses()
+                .iter()
+                .filter(|s| **s == Status::NotFound)
+                .count(),
+            1,
+            "{status}"
+        );
+    }
+    let synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+    let mut sim = DashSim::new(
+        MPD_URL,
+        Config::default(),
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(WorldBackend(synth)),
+    );
+    let mut seen = 0;
+    sim.fault = Some(Box::new(move |req: &Logged, _| {
+        if is_mpd(req) {
+            seen += 1;
+            if seen == 3 {
+                return Some(Answer::status(404));
+            }
+        }
+        None
+    }));
+    sim.run_for(20 * SEC);
+    assert!(
+        !sim.statuses().contains(&Status::NotFound),
+        "a refresh that 404s after a good MPD is a retry, not 'not found'"
+    );
+}
+
+#[test]
+fn a_truncated_mpd_transfer_is_a_transport_failure_not_a_parse_error() {
+    let mut sim = DashSim::static_origin(&url_of(MANIFEST), Config::default());
+    let mut first = true;
+    sim.fault = Some(Box::new(move |req: &Logged, _| {
+        if is_mpd(req) && first {
+            first = false;
+            let text = test_fixtures::read(&format!("dash/{MANIFEST}"));
+            return Some(Answer::Truncated {
+                body: text[..text.len() / 2].to_vec(),
+                declared: text.len(),
+            });
+        }
+        None
+    }));
+    let sim = finished(sim);
+    assert!(sim.ended());
+    assert!(
+        sim.errors().is_empty(),
+        "a cut-off MPD is retried silently: {:?}",
+        sim.errors()
+    );
+}
+
+#[test]
+fn a_good_mpd_between_bad_ones_resets_the_parse_failure_count() {
+    let mut config = Config::default();
+    config.max_key_failures = 3;
+    let synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+    let mut sim = DashSim::new(
+        MPD_URL,
+        config,
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(WorldBackend(synth)),
+    );
+    let mut seen = 0;
+    sim.fault = Some(Box::new(move |req: &Logged, _| {
+        if is_mpd(req) {
+            seen += 1;
+            if matches!(seen, 3 | 4 | 6 | 7) {
+                return Some(Answer::ok(b"not xml".to_vec()));
+            }
+        }
+        None
+    }));
+    sim.run_for(60 * SEC);
+    assert!(sim.fatal().is_none(), "{:?}", sim.errors());
+    assert!(sim.count(|e| matches!(e, Event::Sample { .. })) > 0);
+}
+
+#[test]
+fn utc_timing_notices_name_the_scheme_and_the_foreign_origin() {
+    let ntp = Synth::new(AST_US, Addressing::Number).with_utc("ntp", "pool.ntp.org");
+    let mut sim = DashSim::new(
+        MPD_URL,
+        Config::default(),
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(WorldBackend(ntp)),
+    );
+    sim.give_host_clock();
+    sim.run_for(10 * SEC);
+    assert_eq!(
+        kinds(&sim),
+        vec![(
+            ErrorKind::UnsupportedFeature {
+                feature: "utc_timing_scheme"
+            },
+            false
+        )]
+    );
+
+    let mut config = Config::default();
+    config.dash.cross_origin_urls = false;
+    let foreign =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+    let mut sim = DashSim::new(
+        MPD_URL,
+        config,
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(WorldBackend(foreign)),
+    );
+    sim.give_host_clock();
+    sim.run_for(10 * SEC);
+    assert_eq!(
+        kinds(&sim),
+        vec![(
+            ErrorKind::UnsupportedFeature {
+                feature: "utc_cross_origin"
+            },
+            false
+        )]
+    );
+    assert!(sim.requests_to("utc.test").is_empty());
+}
+
+#[test]
+fn an_unresolved_xlink_set_is_reported_as_the_xlink_feature() {
+    let text = manifest_text().replacen(
+        "<AdaptationSet id=\"1\"",
+        "<AdaptationSet id=\"9\" xlink:href=\"http://dash.test/remote.xml\" xlink:actuate=\"onLoad\"/><AdaptationSet id=\"1\"",
+        1,
+    );
+    let sim = finished(text_sim(MANIFEST, text, Config::default()));
+    assert!(sim.ended(), "{:?}", kinds(&sim));
+    assert!(
+        kinds(&sim)
+            .iter()
+            .any(|(k, _)| *k == ErrorKind::UnsupportedFeature { feature: "xlink" }),
+        "{:?}",
+        kinds(&sim)
+    );
+}
+
+#[test]
+fn a_stream_whose_only_track_is_encrypted_is_fatal_unsupported_encryption() {
+    use dash_common::world::World as W;
+    let whole = test_fixtures::read("transmux/h264_cenc.mp4");
+    let split = fmp4_split::split(&whole).unwrap();
+    let init = fmp4_split::drop_track(&split.init, 2);
+    let segments = fmp4_split::group(&split.segments, 4);
+    let mut entries = String::new();
+    let mut origin = Origin::new().doc(&format!("{HOST}/m/init.mp4"), init);
+    for (i, seg) in segments.iter().enumerate() {
+        entries.push_str(&format!("<SegmentURL media=\"s{i}.m4s\"/>"));
+        origin = origin.doc(&format!("{HOST}/m/s{i}.m4s"), seg.clone());
+    }
+    let mpd = format!(
+        "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" type=\"static\" mediaPresentationDuration=\"PT{}S\" minBufferTime=\"PT1S\"><Period><AdaptationSet mimeType=\"video/mp4\"><Representation id=\"m\" bandwidth=\"500000\" codecs=\"avc1.64001e\"><SegmentList timescale=\"1000\" duration=\"1000\"><Initialization sourceURL=\"init.mp4\"/>{entries}</SegmentList></Representation></AdaptationSet></Period></MPD>",
+        segments.len()
+    );
+    let url = format!("{HOST}/m/manifest.mpd");
+    let origin = origin.doc(&url, mpd.into_bytes());
+    let mut sim = DashSim::new(
+        &url,
+        Config::default(),
+        W::new(AST_US),
+        Box::new(StaticBackend(origin)),
+    );
+    sim.run_to_terminal(120 * SEC);
+    assert_eq!(
+        sim.fatal(),
+        Some(ErrorKind::UnsupportedEncryption {
+            method: "encv".to_owned()
+        })
+    );
+    assert_eq!(sim.count(|e| matches!(e, Event::Sample { .. })), 0);
 }
