@@ -27,10 +27,10 @@
 use crate::{Confidence, Detail::Ts, Evidence, Outcome};
 
 /// The sync byte that begins every TS packet (ISO/IEC 13818-1 §2.4.3.3).
-const TS_SYNC_BYTE: u8 = 0x47;
+pub(crate) const TS_SYNC_BYTE: u8 = 0x47;
 
 /// The nominal MPEG-2 TS packet length in bytes (ISO/IEC 13818-1 §2.4.3.2).
-const TS_PACKET_SIZE: usize = 188;
+pub(crate) const TS_PACKET_SIZE: usize = 188;
 
 /// M2TS/BDAV packet length: a `188`-byte TS packet preceded by a 4-byte
 /// `TP_extra_header` (copy-permission + arrival-time-stamp); an M2TS file is
