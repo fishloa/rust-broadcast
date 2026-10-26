@@ -466,3 +466,9 @@ name = "dash_client_live"
 path = "fuzz_targets/dash_client_live.rs"
 test = false
 doc  = false
+
+[[bin]]
+name = "dash_session"
+path = "fuzz_targets/dash_session.rs"
+test = false
+doc  = false
