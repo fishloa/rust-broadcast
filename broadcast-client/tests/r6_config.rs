@@ -85,3 +85,43 @@ fn a_disabled_detector_and_unbounded_thresholds_open() {
     };
     assert_eq!(field_of(unbounded), None);
 }
+
+const RETIRED_KNOBS: [&str; 10] = [
+    "hls_backoff_ms",
+    "hls_backoff_cap_ms",
+    "hls_max_segment_failures",
+    "hls_max_inflight_segments",
+    "hls_request_timeout_us",
+    "hls_segment_timeout_us",
+    "max_playlist_bytes",
+    "DEFAULT_MAX_PLAYLIST_BYTES",
+    "DEFAULT_HLS_BACKOFF_MS",
+    "DEFAULT_HLS_MAX_SEGMENT_FAILURES",
+];
+
+fn rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read_dir") {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            rust_sources(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn retired_hls_prefixed_knob_names_do_not_reappear_in_src() {
+    let mut files = Vec::new();
+    rust_sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    assert!(!files.is_empty());
+    for file in files {
+        let text = std::fs::read_to_string(&file).expect("read");
+        for name in RETIRED_KNOBS {
+            assert!(!text.contains(name), "{} mentions {name}", file.display());
+        }
+    }
+}
