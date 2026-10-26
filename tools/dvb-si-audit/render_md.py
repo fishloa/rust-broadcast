@@ -22,10 +22,12 @@ import re
 import sys
 from pathlib import Path
 
+from private_docs import docs_dir
+
 import pdfplumber
 
 PDF_PATH = Path(__file__).resolve().parents[2] / "docs/superpowers/specs/etsi_en_300_468_v01.19.01_dvb_si.pdf"
-DOCS = Path(__file__).resolve().parents[2] / "dvb-si/docs"
+DOCS = docs_dir("dvb-si")
 OUT_DIR = Path(__file__).resolve().parent / "out"
 TABLE_DIR = OUT_DIR / "tables"
 SECTIONS_JSON = OUT_DIR / "sections.json"
