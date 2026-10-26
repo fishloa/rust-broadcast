@@ -119,7 +119,7 @@ State: `Option<Anchor{mono_us, utc_us, source: ClockSource, uncertainty_us}>`. `
 the same source replaces its anchor when `new.uncertainty <= old.uncertainty` or the old anchor is older than `DashConfig::utc_resync_us`; a lower source never replaces a higher one,
 except when the higher one failed `utc_wait_us` after the MPD arrived (the ladder in 3.4).
 
-### 3.3 UTCTiming (23009-1 5.8.5.7 Table 35; IOP 4.7.3; DVB-DASH 4.7)
+### 3.3 UTCTiming (23009-1 5.8.4.11, 5.8.5.7 Table 35; IOP 4.7.3; DVB-DASH 4.7)
 
 The client measures `offset = server_time - local_time` itself: the session records `sent_us` (the `now_us` at which it emitted the `HttpRequest`) and `received_us` (the `now_us` of
 `on_response`, i.e. the first byte). The server time is stamped near response generation, so the sample is `(mono = sent + (received - sent) / 2, utc = parsed time)` with
@@ -197,7 +197,7 @@ frameRate (string), audioSamplingRate, mimeType, first BaseURL, effective Segmen
 | Period chaining (`start` absent, previous `duration`), early-available/terminated Periods | `start`/`duration` only | PeriodStart derivation 5.3.2.1 (steps 1-5), early terminated honoured, early-available ignored until a start exists | 5.3.2.1, 5.3.2.5 |
 | `AdaptationSet@id/group/lang/segmentAlignment/startWithSAP`, `Role`, `Accessibility`, `Label` | missing | parsed (Role/lang feed audio selection) | 5.3.3, 5.8.5.5 |
 | `ContentProtection` (+ `cenc:default_KID`) | skipped | parsed; presence on a set/rep => that set is `UnsupportedEncryption` unless an unprotected alternative exists | 5.8.4.1, 5.8.5.2 |
-| `Essential/SupplementalProperty` | skipped | parsed generically; understood: `urn:mpeg:dash:period-continuity:2015`, `...:period-connectivity:2015`, `urn:mpeg:dash:reset:2016`, `http://dashif.org/guidelines/last-segment-number`; an unknown `EssentialProperty` on a set drops that set (5.8.4.8: client that does not understand shall ignore the element) | 5.3.2.4, 5.4.2; IOP 4.4.3 |
+| `Essential/SupplementalProperty` | skipped | parsed generically; understood: `urn:mpeg:dash:period-continuity:2015`, `...:period-connectivity:2015`, `urn:mpeg:dash:reset:2016`, `http://dashif.org/guidelines/last-segment-number`; an unrecognised `EssentialProperty` on a set/Representation drops that parent element (5.8.4.8 client rule); at MPD level an id-group none of whose members is understood ends the presentation (fatal `MpdInvalid`) | 5.3.2.4, 5.4.2; IOP 4.4.3 |
 | `SegmentTemplate` `$RepresentationID$/$Number$/$Time$/$Bandwidth$`, `%0Nd`, `$$` | yes | reuse `SegmentTemplate::resolve` for substitution; unknown identifier => Representation dropped (5.3.9.4.4 step 2) | 5.3.9.4.4 Table 21 |
 | `$SubNumber$`, `S@k`, Ed.6 `Pattern`/`S@p/@pE/@ssp` | literal / ignored | Representation dropped with `Notice::SegmentSequenceUnsupported` + `TrackDropped` | 5.3.9.6.4/5, ED6-SCHEMA-DIFF |
 | `S@n`, negative `r` | no `@n`; negative `r` yes | both, lazily expanded (4.3) | 5.3.9.6.1, 5.3.9.6.2 |
