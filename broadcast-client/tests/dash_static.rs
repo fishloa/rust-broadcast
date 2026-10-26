@@ -124,3 +124,207 @@ fn on_demand_sidx_equals_the_demux_oracle_and_uses_byte_ranges() {
     );
     assert!(sim.log.iter().all(|l| l.method == "GET"));
 }
+
+fn kinds(sim: &DashSim) -> Vec<String> {
+    sim.events
+        .iter()
+        .map(|e| match e {
+            Event::Variants(v) => format!("variants({}/{})", v.variants.len(), v.renditions.len()),
+            Event::Error { kind, fatal } => {
+                format!("error({}{})", kind.name(), if *fatal { "!" } else { "" })
+            }
+            Event::Status(s) => s.to_string(),
+            Event::Tracks(t) => format!("tracks({})", t.len()),
+            Event::ClockSynced { .. } => "clock".into(),
+            Event::Sample { .. } => "sample".into(),
+            Event::Discontinuity => "discontinuity".into(),
+            Event::AudioRendition { .. } => "audio".into(),
+            _ => "other".into(),
+        })
+        .collect()
+}
+
+fn dedup(names: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in names {
+        if out.last() != Some(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+fn strs(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| (*s).to_owned()).collect()
+}
+
+#[test]
+fn the_annex_g_examples_without_media_end_in_the_typed_state_each_one_calls_for() {
+    let want: [(&str, &[&str]); 9] = [
+        (
+            "F1",
+            &["establishing", "error(track_dropped)", "error(mpd_invalid!)"],
+        ),
+        ("F2", &["establishing", "error(clock_unavailable!)"]),
+        ("F3", &["establishing", "error(clock_unavailable!)"]),
+        (
+            "F4",
+            &[
+                "establishing",
+                "error(unsupported_feature)",
+                "reconnecting",
+                "error(segment_fetch_failed!)",
+            ],
+        ),
+        (
+            "F5",
+            &[
+                "establishing",
+                "error(unsupported_feature)",
+                "reconnecting",
+                "error(segment_fetch_failed!)",
+            ],
+        ),
+        (
+            "F6",
+            &["establishing", "reconnecting", "error(segment_fetch_failed!)"],
+        ),
+        (
+            "F7",
+            &[
+                "establishing",
+                "error(unsupported_feature)",
+                "error(clock_unavailable!)",
+            ],
+        ),
+        (
+            "F8",
+            &[
+                "establishing",
+                "error(unsupported_feature)",
+                "error(clock_unavailable!)",
+            ],
+        ),
+        ("F9", &["establishing", "error(clock_unavailable!)"]),
+    ];
+    for (n, expected) in want {
+        let url = format!("{HOST}/annex-g/example-{n}.mpd");
+        let mut config = Config::default();
+        config.max_segment_failures = 2;
+        let mut sim = DashSim::static_origin(&url, config);
+        sim.run_to_terminal(120 * SEC);
+        assert_eq!(dedup(kinds(&sim)), strs(expected), "{n}");
+        assert!(sim.fatal().is_some(), "{n}: every media-less example ends fatally");
+        assert!(
+            sim.log.iter().filter(|l| l.is_mpd()).count() == 1,
+            "{n}: the MPD is fetched once and never refetched after a fatal"
+        );
+    }
+}
+
+fn period_files(period: u32, track: u32, segments: usize) -> Vec<String> {
+    let mut v = vec![format!("multiperiod-restart/p{period}_dash_track{track}_init.mp4")];
+    for n in 1..=segments {
+        v.push(format!("multiperiod-restart/p{period}_dash_track{track}_{n}.m4s"));
+    }
+    v
+}
+
+fn oracle_of(files: &[String]) -> Vec<Sig> {
+    let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+    oracle(&refs).remove(0)
+}
+
+fn restart_expected() -> Vec<Vec<Sig>> {
+    let mut video = oracle_of(&period_files(1, 1, 3));
+    video.extend(oracle_of(&period_files(2, 1, 3)));
+    let mut audio = oracle_of(&period_files(1, 2, 3));
+    audio.extend(oracle_of(&period_files(2, 2, 3)));
+    vec![video, audio]
+}
+
+#[test]
+fn restart_periods_play_in_order_with_one_discontinuity_and_the_tail_404_is_silent() {
+    let sim = play("multiperiod-restart/multiperiod.mpd");
+    assert_clean(&sim);
+    assert_samples_equal_oracle(&sim, &restart_expected());
+    let names = kinds(&sim);
+    assert_eq!(names.iter().filter(|n| *n == "discontinuity").count(), 1);
+    assert_eq!(
+        names.iter().filter(|n| n.starts_with("variants")).count(),
+        2,
+        "one selection per Period"
+    );
+    let disc = names.iter().position(|n| n == "discontinuity").unwrap();
+    let before = names[..disc].iter().filter(|n| *n == "sample").count();
+    let total = names.iter().filter(|n| *n == "sample").count();
+    assert!(before > 0 && before < total, "samples on both sides");
+    for tail in ["p1_dash_track1_4.m4s", "p1_dash_track2_4.m4s"] {
+        assert_eq!(sim.requests_to(tail).len(), 1, "{tail}: 404 once, never retried");
+    }
+}
+
+fn continuous_expected() -> Vec<Vec<Sig>> {
+    let mut files = vec!["timeline-gpac/seg-1-.mp4".to_owned()];
+    for n in 1..=6 {
+        files.push(format!("timeline-gpac/seg-1-{n}.m4s"));
+    }
+    vec![oracle_of(&files)]
+}
+
+const CONTINUOUS: &str = "multiperiod-continuous/multiperiod.mpd";
+
+fn play_text(rel: &str, edit: impl Fn(String) -> String) -> DashSim {
+    let text = edit(test_fixtures::read_to_string(&format!("dash/{rel}")));
+    let url = format!("{HOST}/{rel}");
+    let origin = dash_common::loopback::Origin::new().doc(&url, text.into_bytes());
+    let mut sim = DashSim::new(
+        &url,
+        Config::default(),
+        dash_common::world::World::new(1_700_000_000 * 1_000_000),
+        Box::new(dash_sim::StaticBackend(origin)),
+    );
+    sim.run_to_terminal(600 * SEC);
+    sim
+}
+
+#[test]
+fn continuous_periods_join_without_a_discontinuity_or_a_second_init() {
+    let sim = play(CONTINUOUS);
+    assert_clean(&sim);
+    assert_samples_equal_oracle(&sim, &continuous_expected());
+    let names = kinds(&sim);
+    assert_eq!(names.iter().filter(|n| *n == "discontinuity").count(), 0);
+    assert_eq!(names.iter().filter(|n| n.starts_with("tracks")).count(), 1);
+    assert_eq!(sim.requests_to("seg-1-.mp4").len(), 1, "the shared init is fetched once");
+}
+
+#[test]
+fn without_the_continuity_signal_the_same_boundary_is_a_discontinuity() {
+    let sim = play_text(CONTINUOUS, |t| {
+        let start = t.find("<SupplementalProperty").unwrap();
+        let end = t[start..].find("/>").unwrap() + start + 2;
+        format!("{}{}", &t[..start], &t[end..])
+    });
+    assert_clean(&sim);
+    assert_samples_equal_oracle(&sim, &continuous_expected());
+    assert_eq!(sim.count(|e| matches!(e, Event::Discontinuity)), 1);
+}
+
+fn chunk_run(mpd: &str, chunk: usize) -> Vec<Event> {
+    let mut sim = DashSim::static_origin(&format!("{HOST}/{mpd}"), Config::default());
+    sim.chunk = chunk;
+    sim.run_to_terminal(600 * SEC);
+    assert_clean(&sim);
+    sim.events
+}
+
+#[test]
+fn the_event_sequence_does_not_depend_on_how_the_bodies_are_chunked() {
+    for mpd in ["manifest.mpd", "ondemand-sidx/ondemand.mpd", "segmentlist/list.mpd"] {
+        let reference = chunk_run(mpd, 65_536);
+        for chunk in [1usize, 1316] {
+            assert_eq!(chunk_run(mpd, chunk), reference, "{mpd} chunk {chunk}");
+        }
+    }
+}
