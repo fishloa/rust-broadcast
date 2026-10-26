@@ -326,3 +326,90 @@ LL-DASH (`availabilityTimeOffset` + `availabilityTimeComplete=false`, CMAF chunk
 play at segment granularity (requests are scheduled at the complete-segment time, so no chunk is ever consumed half-delivered, DVB-DASH 10.20.2 notes progressive arrival only matters when requesting early) and emit `Notice::LowLatencyIgnored`.
 Reason: chunk-level delivery needs an incremental `Fmp4Demux` feed and a partial-body event in the session that the HLS adapter also lacks (it delivers on `on_closed`); doing it once for both is a 0.2 story (it would be shared with
 LL-HLS parts in `hls-runtime`). `use_availability_time_offset=true` is available for experimentation and still delivers whole segments. Out: subtitles (typed `TrackDropped`), trick modes (`Representation@maxPlayoutRate`, A.5), segment sequences, seeking, CENC decryption, MPEG-2 TS and WebM segments (typed `UnsupportedContainer{"mp2t_segments"|"webm"}`), `EventStream` surfacing (HLS does not surface SCTE-35 either; `mp4-emsg`/`timed-metadata` are the future route).
+
+## 6. Mapping into `broadcast-client` (source/dash.rs)
+
+New `source/dash.rs` (adapter over `DashClient`, the `source/hls.rs` analogue) and `source/dash_session.rs` only if a second client is ever needed (it is not: D7). It owns exactly what `hls.rs` owns after W-a:
+`Purpose{Mpd, Utc(id), Resource(ResourceId)}`, `Req`, the `fail_*` routing, `go_fatal`, `drain_outputs`, and uses the `fetch/` pieces for everything else. The auth/cookie/redirect layer (`AuthState`, `redirect.rs`) is
+reused untouched.
+
+### 6.1 Output -> Event
+
+| `Output` | `Event` / effect |
+|---|---|
+| `Manifest` | `Event::Variants(MasterSelection)`: `VariantInfo{url = the Representation's initialization URL (a real absolute URL), bandwidth, average_bandwidth: None, resolution, codecs, audio_group = audio set @group or @id, subtitles_group: None}`; audio sets -> `RenditionInfo{media_type: Audio, group_id, name = Label else @lang else Representation@id, language, default = Role main, autoselect: true, url = Some(init URL), None for a muxed Representation}`; then `Event::AudioRendition` for the active one (HLS BC-3b semantics) |
+| `Tracks` | `Event::Tracks` (ids are session-global already; no `AUDIO_TRACK_ID_OFFSET`) |
+| `Init` | dropped |
+| `Samples` | one `Event::Sample{track, sample, join}` per sample; `join` from the per-video-track `LiveJoin` wrapper (`join.rs`, shared with HLS/TS: AVC/HEVC/VVC and the sync-sample rule for the rest) |
+| `DisplayChanged` | `Event::DisplayChanged` |
+| `Discontinuity` | `Event::Discontinuity` (re-arms joins, resets the jump detector and the playout gate exactly as for HLS) |
+| `EndOfStream` | `Status::Ended` (terminal, as HLS ENDLIST: `reconnect()`/`select_*` become no-ops afterwards) |
+| `ClockSynced` | `Event::ClockSynced` |
+| `Notice` | one non-fatal `Event::Error{UnsupportedFeature{feature}}` per feature per session (`preselection`, `xlink`, `mpd_patch`, `segment_sequence`, `event_stream`, `low_latency`); `FellBehind` -> `LiveEdgeLost` (non-fatal, once per occurrence run) |
+| `TrackDropped` / `TrackSkipped` / `FragmentDamaged` | `ErrorKind::TrackDropped{track_id (0 for a set that was never fetched), stream_type: None, fourcc: Some(first token of @codecs)}` / `skipped_kind` (encv/enca => `UnsupportedEncryption`) / `UnsupportedContainer{damaged_fragment}`, deduplicated as HLS F4/F1/F9a |
+
+Status: `Establishing` until the first sample then `Live` once; `NotFound` for 404/410 of the FIRST MPD (per occurrence, with backoff, as HLS main playlist); `Reconnecting{attempt}` from the shared retry; `Ended`.
+An audio set that never delivers does not block `Ended` forever: ONE client, so the end is the end of all selected plans (unlike HLS BC-3b where a failing rendition blocks it).
+
+Buffering: static MPD => BC-5 playout gate in VOD mode (`vod_start_lead_us`); dynamic => BC-5 gate in live mode with `min(3 x max_segment_duration_secs(), live_start_lead_us)` (the `target_duration_secs` role). The BC-2
+`buffering-runtime` PDV controller is NOT used (it models TS arrival jitter; HLS does not use it either). Timeline-jump detection stays on (VOD and live), rendered-track defaults are unchanged (lowest id per kind).
+An explicit `set_rendered_tracks` passes through (HLS rule in `rendered.rs`).
+
+### 6.2 `Session` surface for DASH
+
+`select_variant(i)` -> `DashClient::select_representation(i)` (index into `ManifestSelection.variants`; unknown index `Error::NoSuchVariant`); `select_audio_rendition(Option<usize>)` -> `select_audio`
+(`None` stops separate audio; manual choice replaces automatic selection for the session, kept across Period changes by `(Label/@lang, Role)` else re-picked); `Config::variant_policy`, `preferred_audio_language`, `auto_select_audio` are
+reused; `reconnect()` restarts the MPD fetch and rejoins (key/cookie jar kept); `close()` as HLS. `Session::set_wall_clock` per section 3.5. After a fatal error everything is ignored (HLS rule).
+
+### 6.3 `ErrorKind` additions (all `#[non_exhaustive]`, `name()` snake_case + `impl_spec_display!`, `label_coverage` guard updated)
+
+`MpdParse{reason: &'static str}` (XML/size/namespace problems; non-fatal, one per kind until a success, fatal after `max_key_failures` consecutive with no good MPD between, the init-decode rule), `MpdInvalid{reason}`
+(no Period, no playable set, unprocessable essential group; fatal when nothing can play), `UnsupportedAddressing{reason}` (`presentation_type_list`, `data_url`, `open_ended_range`, `hierarchical_sidx`; fatal only when no Representation is left),
+`UnsupportedFeature{feature: &'static str}` (non-fatal, 6.1), `LiveEdgeLost` (non-fatal), `ClockUnavailable` (fatal). Reused unchanged: `UnsupportedEncryption`, `TrackDropped`, `UnsupportedContainer`, `SegmentFetchFailed`, `InitFetchFailed`,
+`InitDecodeFailed`, `BodyTooLarge{field}` (fields renamed per Q3), `UnknownRenderedTrack`.
+
+### 6.4 `DashConfig` (inside `Config::dash`; defaults; every zero timeout/limit rejected by `Config::validate` with `Error::InvalidConfig`)
+
+| Field | Default | Meaning |
+|---|---|---|
+| `clock_policy` | `Auto` | `Auto` / `PreferHost` (3.4) |
+| `utc_timeout_us` / `utc_wait_us` | 2 s / 5 s | per UTCTiming request / total before the ladder falls through |
+| `utc_max_rtt_us`, `utc_resync_us`, `host_clock_uncertainty_us` | 2 s, 600 s, 500 ms | 3.3 |
+| `live_delay_us` | `None` (derive, 5.3) | override of `D` |
+| `availability_margin_us` | 0 | added to `avail_start` before requesting |
+| `early_retry_us`, `early_grace_us` | 250 ms, 1 s | 5.4 |
+| `min_mpd_refresh_us` | 1 s | 5.2 floor |
+| `use_availability_time_offset` | false | D9 |
+
+Shared with HLS and therefore documented as "every segment-pull source": `max_redirects`, `extra_headers`, cookies, `variant_policy`, the audio-language pair, `hls_backoff_ms`, `hls_backoff_cap_ms`,
+`hls_max_segment_failures`, `hls_max_inflight_segments`, `hls_request_timeout_us` (MPD, init, index, UTC class), `hls_segment_timeout_us`, `max_playlist_bytes` (MPD), `max_segment_bytes`, `max_key_failures` (init/MPD-parse counter),
+`playout`, `timeline_jump`, `max_queued_events`. The `hls_` prefix is a wart for DASH; renaming them to neutral names before 0.1.0 is owner question Q3.
+
+## 7. Transport details
+
+7.1 **URL building.** Every URL resolves by RFC 3986 5.2 through the chain document URL (the final MPD URL, A.11) > `MPD.BaseURL` > `Period.BaseURL` > `AdaptationSet.BaseURL` > `Representation.BaseURL` > template/`SegmentURL`
+(5.6.4; an absolute `BaseURL` overrides higher levels, 5.6.5), with `url::Url::join` (never string concatenation, 5.6 informative note). The query of the MPD URL is NOT propagated to segment URLs (RFC 3986 drops it; credentials
+travel as origin-scoped `Authorization`/cookies/`extra_headers` instead). Only `http`/`https` are fetched; a `data:` URL (5.3.9.1 b) is `UnsupportedAddressing{"data_url"}`; the URL fragment is ignored.
+
+7.2 **BaseURL alternates (5.6.5, DVB-DASH 10.8.2).** Candidate order: DVB `@priority` ascending (default 1, namespace `urn:dvb:dash:dash-extensions:2014-1`) then document order; `@weight` is parsed but NOT used, because
+weighted random selection (10.8.2.2) needs an RNG and the core is deterministic and replayable (a documented departure; multimux can layer randomisation outside the core). After 2 consecutive failures on one location its `@serviceLocation`
+(default: the URL) joins the blacklist together with every other entry of the same priority (10.8.2.1), the next location is used and the MPD is refreshed (A.7); the blacklist lives as long as the MPD URL; when every alternate is blacklisted it is
+cleared once and the cycle restarts (DVB-DASH 10.8.2.2 would stop playback; a live client keeps trying and the counters decide).
+
+7.3 **Byte ranges.** `byte_range` is `(offset, length)` as for HLS. Sources: `Initialization@range`, `indexRange`, `SegmentURL@mediaRange`, sidx subsegments (4.4). Grammar `a-b` (RFC 7233 2.1 single range); open-ended `a-` => `UnsupportedAddressing{"open_ended_range"}`.
+206 + exact `Content-Range`, or a 200 sliced after the whole body (shared `body.rs`). `BaseURL@byteRange` (Annex E.2) is ignored.
+
+7.4 **Auth, cookies, redirects, headers.** The `AuthState` layer applies to every request (MPD, UTCTiming, init, index, segment) exactly as for HLS: credentials, cookies and `extra_headers` only to the session origin (the MPD's), segments or UTC servers on
+a CDN origin carry none; per-request redirect budget; a 401/407 from the session origin enters `AuthRequired`/wait with the request parked. The final URL of an MPD redirect becomes the base (`set_mpd_base`) and the update URL unless a `Location` element exists
+(A.11 priorities 1-2; risk: a temporary signed-URL redirect target is then reused, the spec text is followed and the risk recorded in section 10).
+
+7.5 **Content checks.** MPD: `application/dash+xml` is the registered type (Annex C) but not required (many origins send `text/xml`); the body must have root `MPD` in the MPD namespace (`NotMpd`). Segments/inits: no `Content-Type` check; a 200 that is not
+`media_fragment` is a failed fetch (`NotMedia`, HLS Round 8 F1); an init without a complete `moov` is `InitDecodeFailed`; a progressive MP4 served as a media segment is the fatal `UnsupportedContainer{non_fragmented_mp4}` (HLS F9a).
+Self-initializing Media Segments (no Initialization element, 5.3.9.5.2) are demuxed alone.
+
+7.6 **Init handling.** One init per Representation, identity = resolved URL without query + byte range (HLS Round 7 F2 rule); inits for all selected Representations are fetched CONCURRENTLY (`ResourceId::Init{rep}` carries identity, unlike HLS's one-at-a-time
+`ResourceId::Init`); a segment that arrives before its init is held (bounded, `PendingKeyedOverflow` analogue); each segment is demuxed as `init ++ segment` with a fresh `Fmp4Demux` (the `hls-runtime` `demux_and_emit` and multimux `dash_pull` pattern); `Tracks` is re-announced only when the
+`TrackSpec` set changed; a Representation switch fetches the new init before its first segment and re-announces. There are no keys (D10), so no key-per-run analogue.
+
+7.7 **MPEG-2 TS segments in DASH** (`urn:mpeg:dash:profile:mp2t-main:2011`, 23009-1 8, segment format 6.4): out, typed `UnsupportedContainer{"mp2t_segments"}`. DVB-DASH and the DASH-IF live profiles are ISOBMFF-only; the hls-runtime TS path is entangled with `EXT-X-DISCONTINUITY`
+handling, so reuse would first need a `TsSegmentDemux` extraction: a follow-up if anyone asks.
