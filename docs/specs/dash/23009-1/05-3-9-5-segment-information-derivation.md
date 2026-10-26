@@ -2,20 +2,20 @@
 
 # ISO/IEC 23009-1:2022 clause 5.3.9.5 - deriving Segment information (implementer notes)
 
-Original-wording notes on ISO/IEC 23009-1:2022(E) (5th ed.), 5.3.9.5, printed pp. 83-87 (PDF 91-95). Verbatim, page-verified text:
+Original-wording notes on ISO/IEC 23009-1:2022(E) (5th ed.), 5.3.9.5, printed pp. 84-87 (PDF 92-95). Verbatim, page-verified text:
 `private/specs-verified/dash/23009-1/05-3-9-5-segment-information-derivation.md`. Notation below: `k` = 1-based position of a Media Segment in the Representation within its Period,
 `startNumber` = `@startNumber` (1 if absent), `AST` = `MPD@availabilityStartTime`, `PeriodStart` per [`05-3-2-period.md`](05-3-2-period.md#c5-3-2-1). See [`INDEX.md`](INDEX.md).
 
 <a id="c5-3-9-5-1"></a>
 
-## 5.3.9.5.1 What Segment information yields (p. 83)
+## 5.3.9.5.1 What Segment information yields (p. 84)
 
 From SegmentBase/SegmentList/SegmentTemplate the client derives: which of Initialization, Index and Bitstream Switching Segments exist; the HTTP-URL (and byte range) of every accessible Segment, or an embedded data URL; the full set of valid Segment URLs the MPD declares;
 for dynamic MPDs, each Segment's availability start and end time; and an approximate Media Presentation start time of each Media Segment within its Period. Reference resolution (5.6.4) and base URL selection (5.6.5) apply to every URL produced.
 
 <a id="c5-3-9-5-2"></a>
 
-## 5.3.9.5.2 Initialization Segment (p. 83-84)
+## 5.3.9.5.2 Initialization Segment (p. 84)
 
 - At most one per Representation. It exists when `SegmentBase.Initialization`, `SegmentList.Initialization`, `SegmentTemplate.Initialization` or `SegmentTemplate@initialization` is present (URL + optional range, or a template).
 - If none is present, every Media Segment of the Representation must be self-initializing.
@@ -24,7 +24,7 @@ for dynamic MPDs, each Segment's availability start and end time; and an approxi
 
 <a id="c5-3-9-5-3"></a>
 
-## 5.3.9.5.3 Media Segments: URLs, times and availability (p. 84-86)
+## 5.3.9.5.3 Media Segments: URLs, times and availability (p. 85-87)
 
 A Representation with more than one Media Segment has a consecutive list of them, explicit (`SegmentList`) or implicit (`SegmentTemplate`). Each entry has a URL (plus optional range), a
 number/position, an MPD start time (approximate presentation start inside the Period) and an MPD duration (approximate length).
@@ -32,8 +32,8 @@ The MPD times are approximate and need not equal exact Media Presentation time (
 
 **URL for position k**
 
-- `SegmentTemplate` with `$Number$`: substitute `$Number$` using the formula the spec prints as `(k-1) + (kstart-1)` with `kstart = @startNumber` or 1 (see the quirk note below; the conventional reading is `startNumber + k - 1`, which equals `(k-1) + NumberStart` as written in the `@duration` rule).
-- `SegmentTemplate` with `$Time$`: substitute the Segment's MPD start time (the value computed below, or the timeline `@t`).
+- `SegmentTemplate` (contained or inherited) with `$Number$`: the spec prints the replacement as `(k-1) + (kstart-1)` with `kstart = @startNumber` or 1 (p. 85), which gives `startNumber - 1` for the first Segment. Use `startNumber + k - 1`, which is what the `@duration` rule prints as `(k-1) + NumberStart` (p. 86) and what the committed real captures show (quirk note below; `RECHECK-P0.md` D2).
+- `SegmentTemplate` (contained or inherited) with `$Time$`: this bullet says "the MPD start time of this segment", but with a `SegmentTimeline` the MPD start time is `S@t - PTO` (5.3.9.6.1) while Table 21 (5.3.9.4.4) and 5.3.9.6.1 say the substituted value is the timeline's `@t` / earliest presentation time itself. The three statements disagree whenever `PTO != 0`; substitute the raw `S@t` (see `RECHECK-P0.md` D3 and [`05-3-9-4-segment-template.md`](05-3-9-4-segment-template.md)).
 - `SegmentList`: the first listed Segment of the Period has number `SegmentList@startNumber` (1 if absent); several SegmentList elements in one Representation must continue with consecutive numbers.
 - Neither: exactly one Media Segment, its URL from `BaseURL`, with an optional `SegmentBase`.
 
@@ -57,7 +57,7 @@ The MPD times are approximate and need not equal exact Media Presentation time (
 
 <a id="c5-3-9-5-4"></a>
 
-## 5.3.9.5.4 Index Segments (p. 86-87)
+## 5.3.9.5.4 Index Segments (p. 87)
 
 - Explicit Index Segment information is signalled by: one `RepresentationIndex` (index for the whole Representation); or `@index` and/or `@indexRange` on a `SegmentList.SegmentURL`; or `SegmentTemplate@index`.
 - With `SegmentTemplate@index`, if the template contains `$Number$` or `$Time$` it is processed like the media template with the number of the corresponding Media Segment; without them the attribute is a reference to a Representation Index.
@@ -74,7 +74,7 @@ Its availability time equals that of the Initialization Segment (5.3.9.5.2). Ret
 
 ## Transcription notes (spec quirks)
 
-- **$Number$ formula inconsistency (5.3.9.5.3, p. 84).** The `$Number$` bullet prints the replacement as "(k-1) + (kstart-1)" with kstart the `@startNumber` (or 1), while the `@duration` bullet on the
-  next page (p. 85) writes the segment number as "(k-1) + NumberStart". The two differ by exactly 1 (for k = 1 the first yields startNumber - 1, the second startNumber).
-  The second is consistent with the start-time formula and with `SegmentList@startNumber` being the number of the first Segment; treat the first as a misprint, but confirm against Annex A/DASH-IF behaviour and real packager output before relying on it.
+- **$Number$ formula inconsistency (5.3.9.5.3, p. 85-86).** The `$Number$` bullet (p. 85) prints the replacement as "(k-1) + (kstart-1)" with kstart the `@startNumber` (or 1), while the `@duration` bullet on the
+  next page (p. 86) writes the segment number as "(k-1) + NumberStart". The two differ by exactly 1 (for k = 1 the first yields startNumber - 1, the second startNumber).
+  The second is consistent with the start-time formula and with `SegmentList@startNumber` being the number of the first Segment; treat the first as a misprint. Real output confirms it: `fixtures/dash/manifest.mpd` has `startNumber="1"` and its first Segment is `chunk-stream0-00001.m4s` with `tfdt` 0, which the `(kstart-1)` reading would call number 0; the same holds for `fixtures/dash/segmentlist/` (`startNumber="1"`, first file `seg-0-001.m4s`, `tfdt` 0).
 - Cross-reference "5.3.12.1" (gradual Segment availability) and "6.2.x" data-structure pointers are outside the transcribed range.

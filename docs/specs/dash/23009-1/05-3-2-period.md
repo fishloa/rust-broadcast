@@ -9,7 +9,7 @@ Original-wording notes on ISO/IEC 23009-1:2022(E) (5th ed.), 5.3.2, printed pp. 
 
 ## 5.3.2.1 Period kinds and PeriodStart derivation (p. 33-34)
 
-Three kinds of Period exist: regular, early available, early terminated. Decision procedure, applied per Period in document order:
+Three kinds of Period exist: regular, early available, early terminated. The five rules below are the spec's bullet list; they are not mutually exclusive and carry no stated precedence (rule 5 refines rules 1 and 2: a Period can have `@start`, be regular by rule 1 and early terminated by rule 5). Evaluate each Period in document order:
 
 1. `@start` present: the Period is regular or early terminated and PeriodStart = `@start`.
 2. `@start` absent and the previous Period has `@duration`: regular/early terminated; PeriodStart = previous PeriodStart + previous `@duration`.
