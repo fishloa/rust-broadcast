@@ -6,3 +6,4 @@ pub mod error;
 pub mod limits;
 pub mod mpd;
 pub mod timing;
+pub mod selection;
