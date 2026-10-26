@@ -24,6 +24,7 @@ rustup install nightly      # libFuzzer needs nightly rustc
 | `bbframe`               | `dvb_bbframe::header::Bbheader::parse` + `up_iter` + `CarryOverExtractor` |
 | `rtsp_headers`          | `rtsp_runtime::{Transport, SessionHeader}` parse + canonical round-trip invariants |
 | `roundtrip`             | parse → serialize → re-parse: asserts serialized bytes are idempotent |
+| `dash_client_static`    | `dash_runtime::client::DashClient`: arbitrary or fixture MPD plus steered, damaged and failing answers completed in arbitrary order; asserts the request window, no output after a terminal event, bounded requests |
 
 ## Running
 

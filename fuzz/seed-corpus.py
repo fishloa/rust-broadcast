@@ -178,6 +178,39 @@ def seed_scripts(target: str, check_only: bool) -> int:
     return len(blobs)
 
 
+# `dash_client_static`: 4-byte header (b0: window-1 in bits 0-1, failure cap row in bits 2-3, bit 4
+# pins the origin; b1: 0 = the fuzz bytes are the MPD, 1..=2 = the compiled-in fixture MPD; b2/b3:
+# length of an arbitrary MPD) then 2-byte steering chunks (mode, pick). Mode 0..=4 answers with the
+# real file, 5 truncates it, 6 flips a byte, 7 sends arbitrary bytes, 8..=11 fail.
+DASH_CLIENT_FIXTURE_MPDS = (1, 2)
+DASH_CLIENT_STEPS = 48
+
+
+def dash_client_scenarios() -> dict[str, bytes]:
+    out: dict[str, bytes] = {}
+    for sel in DASH_CLIENT_FIXTURE_MPDS:
+        for window in (0, 3):
+            header = bytes([window, sel, 0, 0])
+            clean = b"".join(bytes([0, n % 7]) for n in range(DASH_CLIENT_STEPS))
+            out[f"mpd{sel}_window{window + 1}_clean"] = header + clean
+            damaged = b"".join(bytes([n % 12, n * 5 % 256]) for n in range(DASH_CLIENT_STEPS))
+            out[f"mpd{sel}_window{window + 1}_damaged"] = header + damaged
+            flaky = b"".join(bytes([9 if n % 5 == 2 else 0, 0]) for n in range(DASH_CLIENT_STEPS))
+            out[f"mpd{sel}_window{window + 1}_flaky"] = bytes([window | 0b1000, sel, 0, 0]) + flaky
+    return out
+
+
+def seed_dash_client(check_only: bool) -> int:
+    if check_only:
+        return 0
+    out = REPO / "fuzz" / "corpus" / "dash_client_static"
+    out.mkdir(parents=True, exist_ok=True)
+    blobs = dash_client_scenarios()
+    for name, blob in blobs.items():
+        (out / f"scenario_{name}").write_bytes(blob)
+    return len(blobs)
+
+
 def seed(target: str, sources: tuple[str, ...], check_only: bool) -> tuple[int, list[str]]:
     out = REPO / "fuzz" / "corpus" / target
     if not check_only:
@@ -218,6 +251,9 @@ def main() -> int:
     scripted = seed_scripts("broadcast_client", args.check)
     if not args.check:
         print(f"broadcast_client: {scripted} scripted scenario seeds")
+    dash_client = seed_dash_client(args.check)
+    if not args.check:
+        print(f"dash_client_static: {dash_client} scripted scenario seeds")
     for target, patterns in WHOLE_FILE_GLOBS.items():
         count = seed_whole(target, patterns, args.check)
         if not args.check:

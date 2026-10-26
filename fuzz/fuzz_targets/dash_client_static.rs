@@ -57,8 +57,7 @@ enum Answer {
     Fail(Failure),
 }
 
-fn answer(action: &Action, mode: u8, aux: u8, rest: &mut &[u8]) -> Answer {
-    let real = real_body(action.url(), action.byte_range());
+fn answer(real: Option<Vec<u8>>, mode: u8, aux: u8, rest: &mut &[u8]) -> Answer {
     match mode % MODES {
         0..=4 => real.map_or(Answer::Fail(Failure::Status(404)), Answer::Body),
         5 => match real {
@@ -160,7 +159,11 @@ fuzz_target!(|data: &[u8]| {
             break;
         };
         now += 1_000;
-        let reply = answer(&action, mode, aux, &mut tail_data);
+        let real = match action.id() {
+            None => Some(mpd.clone()),
+            Some(_) => real_body(action.url(), action.byte_range()),
+        };
+        let reply = answer(real, mode, aux, &mut tail_data);
         match (action.id(), reply) {
             (None, Answer::Body(b)) => {
                 if let Err(Error::Mpd(_)) = client.on_mpd(now, &b) {
