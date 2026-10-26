@@ -1,5 +1,13 @@
 # atsc3 — spec table reference (prep for issue #750)
 
+<!-- BEGIN private-pointer (docs/specs/PRIVATE-MAP.md) -->
+## Private spec transcriptions
+
+The page-verified transcriptions of ATSC A/321, A/331 for this crate (4 files) live only in the private companion repository `rust-broadcast-private` (the `private/` submodule) at `private/specs-verified/atsc/atsc3/`. The standards are (c) their publishers, so the text is not published here. Old public path to private path: [`docs/specs/PRIVATE-MAP.md`](../../docs/specs/PRIVATE-MAP.md); code comments keep their original `docs/...` citations.
+
+Nothing else remains in this directory.
+<!-- END private-pointer -->
+
 The `atsc3` crate now exists (`Cargo.toml`, `src/`), but only implements the
 A/331 §6.2 LLS binary envelope and the A/331 §6.3 Service List Table (SLT) —
 see the crate's own README for what is shipped vs. planned. This `docs/`
@@ -54,7 +62,7 @@ on IETF RFC 5651 (LCT), RFC 5775 (ALC), and RFC 6726 (FLUTE). All three are alre
 freely-redistributable text in this repo's public `specs/` directory
 (`rfc5651_lct.txt`, `rfc5775_alc.txt`, `rfc6726_flute.txt`) and are **already implemented** by
 the existing `rmt-flute` crate (with its own `docs/{lct,alc,flute,norm}.md` transcriptions).
-[`a331-route.md`](a331-route.md) reads those RFCs directly (not just A/331's summary of them)
+`a331-route.md` (private: `specs-verified/atsc/atsc3/a331-route.md`) reads those RFCs directly (not just A/331's summary of them)
 for the base LCT header/extension format, and points to `rmt-flute` rather than re-transcribing
 what that crate's docs already cover. RFC 6330 (RaptorQ, referenced by A/331 for repair-flow FEC
 Payload IDs) and 3GPP TS 26.346 (MBMS, referenced by A/331 for FDT extensions) are **not**
@@ -63,10 +71,10 @@ establish" below.
 
 ## Files in this directory
 
-- [`a321-bootstrap.md`](a321-bootstrap.md) — A/321 system-discovery bootstrap: fixed
+- `a321-bootstrap.md` (private: `specs-verified/atsc/atsc3/a321-bootstrap.md`) — A/321 system-discovery bootstrap: fixed
   physical-layer signal dimensions, major/minor versioning (ZC root + PN seed), per-symbol
   signaling-bit fields for major versions 0 and 1, multiplexing of signal types.
-- [`a331-route.md`](a331-route.md) — **the load-bearing document.** A/331 Annex A's ROUTE
+- `a331-route.md` (private: `specs-verified/atsc/atsc3/a331-route.md`) — **the load-bearing document.** A/331 Annex A's ROUTE
   profile of LCT/ALC/FLUTE: ROUTE's LCT-field constraints, the two ROUTE-only extension headers
   (EXT_ROUTE_PRESENTATION_TIME, EXT_TOL), the two ROUTE FEC Payload ID formats, the Codepoint
   semantics table, the delivery-object model (File/Entity/Unsigned-Package/Signed-Package
@@ -74,10 +82,10 @@ establish" below.
   object/super-object construction, the `RepairFlow` XML element, TOI mapping). Opens with an
   explicit pointer to reuse the existing `rmt-flute` crate for the underlying LCT/ALC/FLUTE
   layer rather than re-implementing it.
-- [`a331-signalling.md`](a331-signalling.md) — LLS (transport, `LLS_table()` envelope, SLT) and
+- `a331-signalling.md` (private: `specs-verified/atsc/atsc3/a331-signalling.md`) — LLS (transport, `LLS_table()` envelope, SLT) and
   ROUTE/DASH SLS (USBD, S-TSID, MPD pointer, APD, HELD, DWD, RSAT pointer), plus the Annex H
   media-type registry.
-- [`a331-mmt.md`](a331-mmt.md) — the MMT signalling path, **partially transcribed with an
+- `a331-mmt.md` (private: `specs-verified/atsc/atsc3/a331-mmt.md`) — the MMT signalling path, **partially transcribed with an
   explicit scope statement**: the ATSC-original `mmt_atsc3_message()` envelope and the MMTP USBD
   fragment are fully transcribed; the further catalog of video/audio/caption/DRM descriptor
   bit-tables (A/331 §7.2.3.2-§7.2.4) is listed by clause number but not transcribed, and the
@@ -111,7 +119,7 @@ explicitly-scoped catalog (MMT's remaining descriptors) left for future work.
 - **`rmt-flute`** (this workspace) already implements RFC 5651 LCT, RFC 5775 ALC (incl. EXT_FTI),
   and RFC 6726 FLUTE (incl. EXT_FDT/EXT_CENC, the TOI=0 convention). The `atsc3` crate's ROUTE
   layer should **depend on `rmt-flute`**, not duplicate its LCT/header-extension parsing. See
-  [`a331-route.md`](a331-route.md) §0.
+  `a331-route.md` (private: `specs-verified/atsc/atsc3/a331-route.md`) §0.
 - **Issue #755 (DVB-MABR)** — ETSI TS 103 769 is a sibling multicast/ROUTE-like stack over the
   same FLUTE/ALC/LCT base (this is in fact part of why `rmt-flute` exists as a shared crate per
   its own README). Whichever of #750/#755 lands a genuinely-shared helper (e.g. FEC
@@ -139,18 +147,18 @@ explicitly-scoped catalog (MMT's remaining descriptors) left for future work.
 - **A/331 §6 (LLS)**: §6.4 (System Time fragment), §6.5 (Advanced Emergency Alerting Table),
   §6.6 (OnscreenMessageNotification), §6.7 (SignedMultiTable), §6.8 (UserDefined), and Annex F
   (Rating Region Table) were not read/transcribed in this pass — flagged inline in
-  [`a331-signalling.md`](a331-signalling.md) rather than guessed at. Annex C ("Filtering for
+  `a331-signalling.md` (private: `specs-verified/atsc/atsc3/a331-signalling.md`) rather than guessed at. Annex C ("Filtering for
   Signaling Fragments", the TOI-encoding rule for SLS-fragment-type filtering) was likewise not
   transcribed.
 - **A/331 §7.2 (MMT)**: the entire MP table / MPU / MMTP packet/session model is defined by
   ISO/IEC 23008-1, which is not vendored in this repo and was not independently obtained (it is
   a paywalled ISO standard, unlike the freely-published ATSC/IETF documents used elsewhere in
-  this pass). Everything in [`a331-mmt.md`](a331-mmt.md) about MP-table/MPU/MMTP-packet
+  this pass). Everything in `a331-mmt.md` (private: `specs-verified/atsc/atsc3/a331-mmt.md`) about MP-table/MPU/MMTP-packet
   structure is at most a paraphrase of A/331's own references to those ISO clauses, never an
   independent transcription of ISO/IEC 23008-1's normative syntax. Within A/331 itself, the
   video/audio/caption stream-properties descriptors, the Staggercast descriptor, and the
   CENC/DRM descriptors (§7.2.3.2-§7.2.4, roughly 1,500 lines of source PDF, Tables 7.12-7.39)
-  were read enough to catalog by clause number (see [`a331-mmt.md`](a331-mmt.md) §4) but not
+  were read enough to catalog by clause number (see `a331-mmt.md` (private: `specs-verified/atsc/atsc3/a331-mmt.md`) §4) but not
   transcribed field-by-field.
 - **The `.xsd` XML schema files** A/331 cites throughout (e.g. `SLT-1.0-20211209.xsd`,
   `S-TSID-1.0-20230714.xsd`, `ROUTEUSD-1.0-20170920.xsd`, `MMTUSD-1.0-20210401.xsd`,
@@ -182,14 +190,14 @@ and a second adversarial audit was done against the same source with the followi
    explicitly in A/321's bibliography §2.1). The `ea_wake_up_1`/`ea_wake_up_2` semantics were
    always present in the A/331 PDF already transcribed — the gap was a research error, not a
    sourcing one. Fixed: ref [2] identified, A/331 Annex G.2's Wake-up Field table + semantics
-   transcribed into [`a321-bootstrap.md`](a321-bootstrap.md) §7, and the README gaps list
+   transcribed into `a321-bootstrap.md` (private: `specs-verified/atsc/atsc3/a321-bootstrap.md`) §7, and the README gaps list
    updated.
 2. **A/331 revision currency** — A/321:2026-06 cites A/331:2026-04; this PR transcribed
    2025-06. A/331:2026-04 was fetched and diffed against 2025-06 across every transcribed
    clause. **No value, bit-width, or semantic differs in any transcribed clause.** The
    transcription remains current. The README source table now names both revisions.
 3. **Wrong cross-reference** — EXT_TOL "should be present" selection rule cited "§A.3.5.1 area"
-   in [`a331-route.md`](a331-route.md); it lives in §A.3.8/A.3.8.1. Fixed.
+   in `a331-route.md` (private: `specs-verified/atsc/atsc3/a331-route.md`); it lives in §A.3.8/A.3.8.1. Fixed.
 4. **Missing ROUTE-vs-FLUTE delta** — §A.3.3.2.7 (File Template mode) upgrades
    EXT_TOL/EXT_FTI presence from the general "should" of §A.3.8.1 to "shall", with a
    last-packet timing requirement. This was omitted from the delta list. Added.
