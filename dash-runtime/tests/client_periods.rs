@@ -343,3 +343,32 @@ fn continuity_with_a_different_init_url_is_not_continuous() {
     assert_eq!(run.count(|o| matches!(o, Output::Init(_))), 2);
     assert_eq!(run.requested("seg-1-"), 8, "two inits and six segments");
 }
+
+#[test]
+fn a_gone_tail_ends_the_period_like_a_not_found_tail() {
+    let mut origin = Origin::new().fault(Fault::always(
+        "p1_dash_track1_4.m4s",
+        FaultKind::Status(410),
+    ));
+    let run = run_restart(&mut origin, &mut Drive::default(), DashConfig::default());
+    assert!(run.ended && run.fatal.is_none(), "{:?}", run.fatal);
+    assert_eq!(run.requested("p1_dash_track1_4.m4s"), 1);
+    assert_matches_oracle(&run, &restart_expected());
+}
+
+#[test]
+fn a_tail_that_fails_for_another_reason_is_retried_like_any_segment() {
+    let mut origin = Origin::new().fault(Fault::times(
+        "p1_dash_track1_4.m4s",
+        FaultKind::Status(503),
+        2,
+    ));
+    let run = run_restart(&mut origin, &mut Drive::default(), DashConfig::default());
+    assert!(run.ended && run.fatal.is_none(), "{:?}", run.fatal);
+    assert_eq!(
+        run.requested("p1_dash_track1_4.m4s"),
+        3,
+        "503 twice, then the real 404"
+    );
+    assert_matches_oracle(&run, &restart_expected());
+}

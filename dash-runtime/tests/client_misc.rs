@@ -597,3 +597,161 @@ fn config_validation_names_the_first_bad_field() {
     c.limits.max_bytes = 0;
     assert_eq!(c.validate().unwrap_err().field, "limits.max_bytes");
 }
+
+#[test]
+fn the_mpd_url_query_is_appended_to_media_segments_only_when_the_mpd_asks() {
+    let info = "<SupplementalProperty schemeIdUri=\"urn:mpeg:dash:urlparam:2014\" xmlns:up=\"urn:mpeg:dash:schema:urlparam:2014\"><up:UrlQueryInfo useMPDUrlQuery=\"true\"/></SupplementalProperty><Representation id=\"";
+    let text = base_text().replace("<Representation id=\"", info);
+    let url = format!("{URL}?token=abc");
+    let mut origin = Origin::new().doc(&url, text.into_bytes());
+    let run = drive(
+        &url,
+        DashConfig::default(),
+        &mut origin,
+        &mut Drive::default(),
+    );
+    assert!(run.ended, "{:?}", run.fatal);
+    assert_matches_oracle(&run, &[video_oracle(), audio_oracle()]);
+    let segments: Vec<_> = run
+        .requests
+        .iter()
+        .filter(|r| r.url.contains("chunk-stream"))
+        .collect();
+    assert_eq!(segments.len(), 7);
+    assert!(segments.iter().all(|r| r.url.ends_with("?token=abc")));
+    let inits: Vec<_> = run
+        .requests
+        .iter()
+        .filter(|r| r.url.contains("init-stream"))
+        .collect();
+    assert_eq!(inits.len(), 2);
+    assert!(inits.iter().all(|r| !r.url.contains('?')));
+}
+
+#[test]
+fn init_and_segment_failure_caps_are_independent() {
+    let mut cfg = DashConfig::default();
+    cfg.max_init_failures = 2;
+    cfg.max_segment_failures = 5;
+    let mut origin = Origin::new().fault(Fault::always("init-stream0.m4s", FaultKind::Status(503)));
+    let run = drive(URL, cfg.clone(), &mut origin, &mut Drive::default());
+    assert_eq!(run.requested("init-stream0.m4s"), 2);
+    let mut origin = Origin::new().fault(Fault::always(
+        "chunk-stream0-00002.m4s",
+        FaultKind::Status(503),
+    ));
+    let run = drive(URL, cfg, &mut origin, &mut Drive::default());
+    assert_eq!(run.requested("chunk-stream0-00002.m4s"), 5);
+}
+
+#[test]
+fn the_size_cap_accepts_a_body_of_exactly_the_cap() {
+    let all: Vec<String> = ["init-stream0.m4s", "init-stream1.m4s"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .chain((1..=3).map(|n| format!("chunk-stream0-{n:05}.m4s")))
+        .chain((1..=4).map(|n| format!("chunk-stream1-{n:05}.m4s")))
+        .collect();
+    let largest = all
+        .iter()
+        .map(|f| test_fixtures::read(&format!("dash/{DIR}/{f}")).len())
+        .max()
+        .unwrap();
+    let mut cfg = DashConfig::default();
+    cfg.max_segment_bytes = largest;
+    let run = drive(URL, cfg.clone(), &mut Origin::new(), &mut Drive::default());
+    assert!(run.ended, "{:?}", run.fatal);
+    cfg.max_segment_bytes = largest - 1;
+    let run = drive(URL, cfg, &mut Origin::new(), &mut Drive::default());
+    assert!(run.fatal.is_some());
+}
+
+#[test]
+fn a_switch_that_is_not_segment_aligned_is_marked_with_a_discontinuity() {
+    const SWITCH_URL: &str = "http://dash.test/switch.mpd";
+    let text = switch_mpd().replace("segmentAlignment=\"true\"", "segmentAlignment=\"false\"");
+    let mut cfg = DashConfig::default();
+    cfg.max_inflight_segments = 1;
+    let mut origin = Origin::new().doc(SWITCH_URL, text.into_bytes());
+    let mut switched = false;
+    let run = drive(
+        SWITCH_URL,
+        cfg,
+        &mut origin,
+        &mut Drive {
+            hook: Some(Box::new(move |c, _| {
+                if !switched && c.select_representation(1).is_ok() {
+                    switched = true;
+                }
+            })),
+            ..Drive::default()
+        },
+    );
+    assert!(run.ended, "{:?}", run.fatal);
+    assert_eq!(run.count(|o| matches!(o, Output::Discontinuity)), 1);
+}
+
+#[test]
+fn a_retried_resource_is_requested_before_anything_queued_behind_it() {
+    use dash_runtime::client::Failure;
+    let mut c = DashClient::new(URL, DashConfig::default());
+    let _ = c.poll(0);
+    c.on_mpd(0, base_text().as_bytes()).unwrap();
+    let Some(Action::FetchInit { id: first, .. }) = c.poll(0) else {
+        panic!("first init")
+    };
+    c.on_failure(0, first, Failure::Status(503)).unwrap();
+    assert!(c.retry(0, first));
+    let Some(Action::FetchInit { id, .. }) = c.poll(0) else {
+        panic!("init again")
+    };
+    assert_eq!(id, first, "the retry goes ahead of the second init");
+}
+
+#[test]
+fn with_a_window_of_one_requests_follow_the_media_timeline() {
+    let mut cfg = DashConfig::default();
+    cfg.max_inflight_segments = 1;
+    let run = drive(URL, cfg, &mut Origin::new(), &mut Drive::default());
+    let order: Vec<&str> = run
+        .requests
+        .iter()
+        .filter(|r| r.url.contains("chunk-stream"))
+        .map(|r| r.url.rsplit('/').next().unwrap())
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            "chunk-stream1-00001.m4s",
+            "chunk-stream0-00001.m4s",
+            "chunk-stream1-00002.m4s",
+            "chunk-stream0-00002.m4s",
+            "chunk-stream1-00003.m4s",
+            "chunk-stream0-00003.m4s",
+            "chunk-stream1-00004.m4s",
+        ]
+    );
+}
+
+#[test]
+fn alternates_rotate_every_two_failures_in_a_fixed_order() {
+    let mut cfg = DashConfig::default();
+    cfg.max_segment_failures = 6;
+    let mut origin = two_hosts(alternates_text(1, 2))
+        .fault(Fault::always(
+            "a.test/chunk-stream0-00002",
+            FaultKind::Status(503),
+        ))
+        .fault(Fault::always(
+            "b.test/chunk-stream0-00002",
+            FaultKind::Status(503),
+        ));
+    let run = drive(URL, cfg, &mut origin, &mut Drive::default());
+    let hosts: Vec<&str> = run
+        .requests
+        .iter()
+        .filter(|r| r.url.contains("chunk-stream0-00002"))
+        .map(|r| if r.url.contains("a.test") { "a" } else { "b" })
+        .collect();
+    assert_eq!(hosts, vec!["a", "a", "b", "b", "a", "a"]);
+}
