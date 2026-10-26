@@ -381,6 +381,7 @@ reused; `reconnect()` restarts the MPD fetch and rejoins (key/cookie jar kept); 
 | `early_retry_us`, `early_grace_us` | 250 ms, 1 s | 5.4 |
 | `min_mpd_refresh_us` | 1 s | 5.2 floor |
 | `use_availability_time_offset` | false | D9 |
+| `cross_origin_urls` | true | `false`: any MPD-derived URL (BaseURL, segment, UTCTiming) whose origin differs from the MPD's fails as `UnsupportedAddressing{"cross_origin"}`; for server-side pulls (section 10, R3) |
 
 Shared with HLS and therefore documented as "every segment-pull source": `max_redirects`, `extra_headers`, cookies, `variant_policy`, the audio-language pair, `hls_backoff_ms`, `hls_backoff_cap_ms`,
 `hls_max_segment_failures`, `hls_max_inflight_segments`, `hls_request_timeout_us` (MPD, init, index, UTC class), `hls_segment_timeout_us`, `max_playlist_bytes` (MPD), `max_segment_bytes`, `max_key_failures` (init/MPD-parse counter),
@@ -414,3 +415,57 @@ Self-initializing Media Segments (no Initialization element, 5.3.9.5.2) are demu
 
 7.7 **MPEG-2 TS segments in DASH** (`urn:mpeg:dash:profile:mp2t-main:2011`, 23009-1 8.6, segment formats 6.4): out, typed `UnsupportedContainer{"mp2t_segments"}`. DVB-DASH and the DASH-IF live profiles are ISOBMFF-only; the hls-runtime TS path is entangled with `EXT-X-DISCONTINUITY`
 handling, so reuse would first need a `TsSegmentDemux` extraction: a follow-up if anyone asks.
+
+## 8. Test plan
+
+Rules carried over from the repo: real data first (no inline-bytes-only suites), every assertion mutation-checked and the mutation actually recompiled, fixtures only through `test_fixtures`, tests that can fail (no skip-on-missing for
+public fixtures), the r8 fault harness designed in from the first adapter PR.
+
+### 8.1 Real data inventory
+
+| Source | What it gives | Status |
+|---|---|---|
+| `fixtures/dash/manifest.mpd` + `init-stream*.m4s`/`chunk-stream*-0000N.m4s` | real ffmpeg static timeline presentation (video 90 kHz, audio 44.1 kHz); first chunk tfdt 0, second 90 000; `S@t=2070` while tfdt=0 (section 11) | committed |
+| `fixtures/dash/manifest-inheritance.mpd` | Period/AdaptationSet/Representation attribute inheritance (5.3.9.1) | committed (derived, documented) |
+| `fixtures/dash/livesim2/segtimeline*_{a,b}.mpd` | real DASH-IF livesim2 dynamic MPDs, `$Time$` and `$Number$`+timeline, huge absolute `t`, `startNumber=895967208`, `UTCTiming http-xsdate`; the a/b pairs are consecutive refreshes (`publishTime` 23:34:38 -> 23:34:46) = a real MPD-update sequence | committed |
+| `docs/specs/dash/23009-1/annex-g-examples.md` | the spec's own example MPDs (G.1...) as parser inputs; W-c extracts them to `fixtures/dash/annex-g/*.mpd` with provenance | P0 |
+| IOP v4.3 Table 10 (`ch04-02`) | a complete numeric vector: 43 s, SPD 15 s, MBT 5 s, TSB 25 s, 5 s segments => `k1=1, k2=9, SAST[k]=START+5k, SAET[k]=SAST[k]+30 s`, init available `START..START+75 s` | exact-value test of `address::plan` + `timing::availability` |
+| CMAF segments from repo media | `transmux`'s `DashPackager`/CMAF segmenter over `fixtures/ts/h264_aac_40s.ts` and `fixtures/mp4/cmaf/*` produce contiguous segments with known continuous tfdt; the loopback origin serves them under a generated dynamic MPD (template, timeline, multi-Period, SegmentBase+sidx, SegmentList variants) | built in W-d |
+| DASH-IF livesim2 (BSD licence, `LICENSE.md` verified in the module) | third-party origin: `go install github.com/Dash-Industry-Forum/livesim2/cmd/livesim2@v1.15.2` BUILT here (29.6 MB binary, `--help` runs); the module ships 33 MB of test assets (`cmd/livesim2/app/testdata/assets`: `testpic_2s`, `testpic_6s`, `timeline_number_2s`, `testpic_2s_low_delay`, ...) usable with `--vodroot`. NOT verified: actually serving locally (this sandbox's permission classifier refused to run the downloaded binary), so the local e2e run is a W-g item to prove | plan below |
+| public livesim2 / testassets.dashif.org | fetched ONLY small samples into `/private/tmp/claude-501/dashassets` (not committed): MPDs for `testpic_2s`, `segtimeline_1`, `startrel_-20`, `utc_direct-head`, one segment, one init, `time.txt` headers; the service is rate-limited (`livesim2-requests: 1 (max 10000)`), so never CI | used for section 11 |
+
+livesim2 e2e: `broadcast-client/tests/e2e_livesim2.rs`, `ureq` (blocking, rustls) as dev-dependency only; the test starts the binary through `test-bounded` on an ephemeral port with `--vodroot` at the module's assets, drives a real `Session`
+with the real monotonic clock and `set_wall_clock` from `SystemTime`, 30 s live: join, >= 10 segments in order, two MPD refreshes, `startrel_-20`, a `utc_*` URL, a Period-bearing URL (names beyond the three verified above come from livesim2's README and are verified in W-g).
+CI gets a `dash-e2e` job that installs Go and the pinned module and runs it with `REQUIRE_LIVESIM2=1` (missing binary = hard failure there; locally it skips loudly, the `mediastreamvalidator_oracle` pattern).
+
+### 8.2 Layers
+
+1. **Unit/vector:** every formula of sections 4.3 and 5.3 with hand-computed numbers (the Table 10 vector; `$Number$` with `startNumber` 0 and 1; PeriodStart rules 1-5; timeline with `@n`, gaps, negative `r`; sidx anchor; template widths and invalid identifiers; BaseURL join/override; `urlparam:2014`).
+2. **Differential:** (a) new parser vs `transmux::dash_parse` on the shared fields for every `DashPackager` configuration and every committed MPD, and the URL lists vs `Mpd::resolve_segment_url`; (b) lazy timeline expander vs `SegmentTimeline::resolve` as oracle (property: equal whenever no `@n`);
+   (c) vs `multimux` `dash_pull::plan_timeline`/`build_plan` on the subset multimux supports (this test lives in `multimux`, the highest crate, after W-f: the cross-crate-tests rule); (d) generator round trip: `DashPackager` output of the source fixture, served by the loopback origin, consumed by `DashClient`, must yield the byte-identical `Sample` sequence of a direct `Fmp4Demux` of the same segments.
+3. **Whole-client sans-IO** with the `World` of section 3.6: join, refresh sequence (the livesim2 a/b pairs), Period transition continuous/connected/unsignalled, representation switch, audio switch, early/gone/expired cadence, give-up VOD/live, MPD reset.
+4. **Session level** (`broadcast-client/tests/dash_*.rs`): oracle = a bare `DashClient` driven with the same bodies; chunking invariance of the Event sequence (1 B, 1316 B, 64 KiB body chunks); auth scoping (credentials never reach a CDN origin or a UTC server), per-request redirects, cookies, `extra_headers`, Retry-After table, bounded bodies, request timeouts, in-flight window table, gate (VOD lead, live lead) from real segment durations, jump detector, `select_variant`/`select_audio_rendition`, status sequence, terminal rules after fatal.
+5. **Loopback real wire:** one test in `multimux` (hyper, W-f) for the socket path; the in-crate fake host covers the rest.
+6. **Fuzz:** `fuzz_mpd_parse` (bytes -> parse -> plan iteration, no panic, bounded work), `fuzz_address` (structured arbitrary `SegmentInfo` + times: monotone numbers, no overflow, bounded expansion), `fuzz_session_dash` (config header + scripted World + arbitrary response bodies mutated from annex-G/livesim2/ffmpeg seeds + real fMP4 segments; the r6 `Config` knob randomisation), seeds from `fuzz/seed-corpus.py`; every fuzz finding gets a verbatim-artifact regression test that is revert-verified.
+
+### 8.3 Fault-injection matrix (r8 template, designed in at W-e, widened at W-g)
+
+Template: `.../scratchpad/r8/r8_matrix.rs` (fault enum `F` x source `Src` x permanent/transient, a `Sim` that owns the session, a simulated clock, per-cell `classify` with hang, request-loop, panic and sample-order/duplication checks). New file `broadcast-client/tests/support/dash_matrix.rs`.
+Sources: static timeline (ffmpeg fixture), static template, live `$Number$`, live timeline (a/b refresh), live multi-Period, live + separate audio set, on-demand sidx. Faults: the 22 of r8 (500, 503, 429, 429-huge, 404, 401, 403, conn-fail, reset-mid, short-body, truncated-chunk, stall, no-response, garbage, HTML, empty, huge, late, dup-response, unknown-conn, closed-twice, redirect-loop)
+PLUS: early-404, early-425, gone-410-in-window, expired (client fell behind), host-clock-skew (+-5 s, +-60 s), clock-step, UTC garbage/timeout/rtt-too-large/`Date`-missing, MPD 304, stale `publishTime`, truncated MPD, AST changed, type flip dynamic->static, Period removed, Representation vanishes, alternate-BaseURL 503, 200-ignores-Range, sidx/size mismatch, huge MPD. Each cell asserts: no panic, no hang (terminal state or bounded progress), request rate bounded
+(r8 found 604 requests in 602 s: the cap here is <= 4 per second per request class), delivered numbers contain no duplicate and no unexplained gap, transient faults recover without loss, permanent ones end with the specified `ErrorKind`.
+
+### 8.4 Mutation-resistant list (each mutant must be killed by a named test; the mutation must be shown to recompile)
+
+| Feature | Mutants |
+|---|---|
+| `$Number$` | `startNumber + k` instead of `+ k - 1`; width ignored; `$$` kept doubled |
+| Availability | `+ duration` dropped from `avail_start`; ATO sign; TSB omitted from `avail_end`; `<=` vs `<` at the boundary |
+| Timeline | negative `r` count `floor` vs `ceil`; `@n` ignored; `@t` gap treated as contiguous; PTO not subtracted |
+| Live edge/join | newest off by one; join picks segment AFTER `T_join`; audio joined by number not time |
+| Clock | midpoint sign; 500 ms Date half-second dropped; lower-trust source replacing higher; step threshold; resync period |
+| Refresh | `MUP=0` unthrottled; stale `publishTime` accepted; 304 treated as failure; conditional headers omitted |
+| Errors | 425 counted; early window boundary; Expired retried; give-up count `>` vs `>=`; Retry-After ignored/unclamped |
+| Periods | continuity signal ignored; `Discontinuity` missing/duplicated at a boundary; init not refetched |
+| URLs | query propagated when it must not be (and not when `useMPDUrlQuery`); absolute BaseURL not overriding; alternate not rotated; blacklist not cleared |
+| Containers | non-fragmented MP4 accepted; `media_fragment` bypassed; init without `moov` accepted |
