@@ -23,7 +23,9 @@ import re
 import sys
 from pathlib import Path
 
-DOCS = Path(__file__).resolve().parents[2] / "dvb-si/docs"
+from private_docs import docs_dir
+
+DOCS = docs_dir("dvb-si")
 GROUND = Path(__file__).resolve().parent / "out/tables"
 OUT_DIR = Path(__file__).resolve().parent / "out"
 

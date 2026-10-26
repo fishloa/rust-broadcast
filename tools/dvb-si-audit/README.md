@@ -26,6 +26,14 @@ vendored PDFs in [`../../specs/`](../../specs/), used to generate the per-crate
 `render_md.py` / `audit.py` are the older EN 300 468-only helpers kept for
 reference; `extract_tables.py` + `render_docs.py` supersede them.
 
+## Where the output goes
+
+The generated spec markdown (`split_docs.py`, `gen_enum_pages.py`; `audit.py` / `fix_front_matter.py` /
+`render_md.py` read it) is (c) the standards bodies and lives only in the private companion repo, under
+`private/specs-verified/dvb/<crate>/{tables,descriptors,enums,text}/`. `private_docs.py` resolves that path and
+exits with a clear message when `private/` is not checked out. The `enums/**/*.toml` drift guards stay in the
+public tree (`<crate>/docs/enums/`) and are only read.
+
 ## Deps
 
 - Python 3.11+

@@ -16,7 +16,7 @@ rendered pages; the verbatim, page-verified text lives in the private submodule 
 `§clause (p. N)`. Strength words (shall / should / may) are the spec's own.
 
 Related notes elsewhere in the repo (not duplicated here):
-[`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/emsg.md) (box byte layout),
+[`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/README.md#private-spec-transcriptions) (box byte layout),
 [`specs/rules/emsg-rules.md`](../../../../specs/rules/emsg-rules.md) (rules digest),
 [`docs/dashif-ingest/DESIGN.md`](../../../dashif-ingest/DESIGN.md) (ingest-side companion),
 [`transmux/docs/codec/dash-23009-1-2022-ids.md`](../../../../transmux/docs/codec/dash-23009-1-2022-ids.md).

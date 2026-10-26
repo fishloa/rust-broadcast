@@ -7,7 +7,7 @@ Original-wording notes on ISO/IEC 23009-1:2022(E) (5th ed.), 5.3.9.6, printed pp
 
 <a id="c5-3-9-6-1"></a>
 
-## 5.3.9.6.1 What the timeline is and how it expands (p. 88)
+## 5.3.9.6.1 What the timeline is and how it expands (p. 88-89)
 
 `SegmentTimeline` states the earliest presentation time and duration of each Segment; it is the alternative to `@duration` (the two are mutually exclusive, 5.3.9.2.1) and buys: arbitrary durations,
 accurate durations for one media stream, signalling of timeline discontinuities for which a Representation holds no data, and Segment sequences (5.3.9.6.4; only if the profile permits).
@@ -24,20 +24,20 @@ accurate durations for one media stream, signalling of timeline discontinuities 
    Period. The spec gives no rounding rule for the resulting count; derive it from the Period-duration rules of 5.3.9.5.3.
 5. Advance: `time += d * (r + 1)`, `number += r + 1` (for sequences see below).
 
-Constraints: every `@d` must not exceed `MPD@maxSegmentDuration`. `@d` must be the accurate presentation duration of the Segment, **except** for the single Segment that simultaneously (a) is the `S`
-with the largest `@t` in the MPD, (b) belongs to a Representation with `@availabilityTimeOffset` and `@availabilityTimeComplete=false`, and (c) has a non-adjusted availability time at or after the
-MPD's publish time.
+Constraints: every `@d` must not exceed `MPD@maxSegmentDuration`. `@d` must be the accurate presentation duration of the Segment, **except** where all four of these hold: (a) the `S` element is the one
+with the largest `@t` in the MPD, (b) the Representation has `@availabilityTimeOffset`, (c) it has `@availabilityTimeComplete=false`, and (d) the Segment's non-adjusted availability time is at or after the
+MPD's publish time (the printed list has four items; the exception is therefore about the newest, still-growing Segment).
 For that Segment `@d` is nominal and may be corrected in a later MPD (or a new `S` added); with `$Time$` addressing a client should not rely on nominal durations to form addresses, but parse the Segment or refetch the MPD after the non-adjusted availability time.
 
 **`$Time$` addressing with SegmentTemplate** (when `@media` contains `$Time$`):
 
 - If a `sidx` box exists, the timeline must match it exactly: `@timescale` equals the first `sidx` timescale; `S@t` equals the `earliest_presentation_time` of the first `sidx` in the described Media Segment; `S@d` equals the sum of all `subsegment_duration` fields of that first `sidx`.
 - If no `sidx`, the earliest presentation time comes from media-internal data, depending on the Segment format.
-- The URL is the template with `$Time$` replaced by that earliest presentation time. Because the next Segment's earliest presentation time can be read from the actual Segment, URLs can be built without refetching an updated MPD.
+- The URL is the template with `$Time$` replaced by that earliest presentation time, i.e. the raw `S@t` (the same clause defines `S@t - PTO` as the *MPD start time*, so the "MPD start time" wording of 5.3.9.5.3 and Table 21 disagrees when `PTO != 0`: `RECHECK-P0.md` D3). Because the next Segment's earliest presentation time can be read from the actual Segment, URLs can be built without refetching an updated MPD.
 
 <a id="c5-3-9-6-2"></a>
 
-## 5.3.9.6.2 SegmentTimeline semantics (Table 22, p. 88-89)
+## 5.3.9.6.2 SegmentTimeline semantics (Table 22, p. 89-90)
 
 | Name | Use | Type | Default | Gloss |
 |---|---|---|---|---|
@@ -57,25 +57,25 @@ other-namespace attributes. Ed.6 changes (`Pattern` child, `S` 1..N, `@d` option
 
 <a id="c5-3-9-6-4"></a>
 
-## 5.3.9.6.4 Segment sequences (p. 90)
+## 5.3.9.6.4 Segment sequences (p. 91)
 
 `@k` may be present only if (i) the Representation uses a SegmentTemplate with `$Number$` or the hierarchical `$SubNumber$` scheme of 5.3.9.6.5, and (ii) the profile explicitly allows Segment sequences. When `@k > 1`:
 
 - `@d` is the accurate duration of the whole sequence of `@k` Segments. The MPD duration of one Segment is the integer quotient `floor(d / k)`; it drives MPD start time and hence availability, and need not equal the media duration of that Segment.
-- Constraint between runs: the integer quotient of `@d` and `@k` of any `S` must not exceed the quotient of `@d` and (`@k` minus 1) of any other `S` (printed p. 90; read verbatim in the private file before implementing a validator).
+- Constraint between runs (printed p. 91): "The integer of the quotient of the value of @d and the value of @k of any S element shall not exceed the quotient of @d and the value of @k minus 1 of any other S element". The print does not say whether the right-hand side is `d / (k - 1)` or `(d / k) - 1`; neither reading is established, so a validator must not reject on either until the owner decides (`RECHECK-P0.md` D4).
 - The concatenation of all Segments in a sequence has an accurate total duration equal to `@d`. Any Segment in a sequence may carry inband events.
 
 <a id="c5-3-9-6-5"></a>
 
-## 5.3.9.6.5 Hierarchical templating and sub-numbering (p. 90-91)
+## 5.3.9.6.5 Hierarchical templating and sub-numbering (p. 91-92)
 
 With a template containing `$SubNumber$` and a timeline using Segment sequences: `$Time$` becomes the earliest presentation time of the whole sequence (same for every Segment of it); `$Number$` becomes the sequence number (each sequence counted as one Segment);
 `$SubNumber$` becomes the 1-based index of the Segment inside the sequence. The next sequence starts at current sequence start plus the duration of the concatenated sequence; for ISOBMFF this can be obtained by summing the track runs of the sequence's Segments.
 
 ## Transcription notes (spec quirks)
 
-- Table 22 `@k` points to "subclause 5.3.9.6.3" for more detail; Segment sequences are in 5.3.9.6.4 (p. 89).
-- 5.3.9.6.1 has a grammar slip in the exception list: "except for the following conditions are met" (p. 87-88). The four conditions are conjunctive.
-- 5.3.9.6.5 NOTE misspells "segment sequence" (p. 91).
+- Table 22 `@k` points to "subclause 5.3.9.6.3" for more detail; Segment sequences are in 5.3.9.6.4 (Table 22 `@k` row is on p. 90).
+- 5.3.9.6.1 has a grammar slip in the exception list: "except for the following conditions are met" (p. 88). The four conditions are conjunctive.
+- 5.3.9.6.5 NOTE misspells "segment sequence" (p. 92).
 - The Table 22 `@t` rule says "equal to or greater than the sum of the previous S earliest presentation time and the sum of the contiguous Segment durations", which is the previous run's end time.
 - The number of Segments for a negative `@r` is not given a rounding rule in this clause (see step 4).

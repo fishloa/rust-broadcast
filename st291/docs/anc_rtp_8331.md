@@ -11,9 +11,9 @@ from the vendored `specs/rfc8331_anc_rtp.txt`._
 > (`C`/`Line_Number`/`Horizontal_Offset`/`S`/`StreamNum`/`DID`/`SDID`/
 > `Data_Count`/`User_Data_Words`/`Checksum_Word`/`word_align`), the 10-bit-word
 > parity rule, and the `Checksum_Word` computation are **already fully
-> curated** in [`anc_packet_291.md`](anc_packet_291.md) — reused unchanged
+> curated** in [`anc_packet_291.md`](README.md#private-spec-transcriptions) — reused unchanged
 > here, not re-transcribed. This file is a sibling of
-> [`st_2038.md`](st_2038.md): that file covers the ST 2038 MPEG-2 TS/PES
+> [`st_2038.md`](README.md#private-spec-transcriptions): that file covers the ST 2038 MPEG-2 TS/PES
 > transport of the same ST 291-1 content; this one covers the RFC 8331 / ST
 > 2110-40 RTP transport.
 

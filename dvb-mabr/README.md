@@ -99,10 +99,9 @@ Runnable examples: `cargo run -p dvb-mabr --example parse_session` and
 - **Namespace constants:** `NS_MULTICAST_SESSION_CONFIGURATION_2019`, `..._2024`,
   `NS_EXTENSIBILITY_2024`, `NS_XSI`; `Error` / `Result` (structured `Error::XmlParse`).
 
-Field-level spec transcriptions:
-[`docs/mabr-signalling.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-mabr/docs/mabr-signalling.md),
-[`mabr-transport.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-mabr/docs/mabr-transport.md),
-[`mabr-reporting.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-mabr/docs/mabr-reporting.md).
+Field-level spec transcriptions (`mabr-signalling.md`, `mabr-transport.md`, `mabr-reporting.md`) are kept
+in the private companion repository, not published; see the
+[docs pointer](https://github.com/fishloa/rust-broadcast/blob/main/dvb-mabr/docs/README.md#private-spec-transcriptions).
 
 ## Round-trip guarantee
 

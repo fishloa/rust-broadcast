@@ -13,7 +13,7 @@ Status values: `transcribed` / `transcribed-as-notes` = covered by a notes file 
 Companions: [Part 10 events](../dashif-iop-part10-v5.0.0/INDEX.md), [DVB-DASH TS 103 285](../etsi-ts-103-285/INDEX.md),
 live-ingest design [`docs/dashif-ingest/DESIGN.md`](../../../dashif-ingest/DESIGN.md) (DASH-IF Live Media Ingest 1.3,
 `private/specs-md/dashif_live_media_ingest_v1.3.md`, not in scope here), `emsg`:
-[`specs/rules/emsg-rules.md`](../../../../specs/rules/emsg-rules.md), [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/emsg.md),
+[`specs/rules/emsg-rules.md`](../../../../specs/rules/emsg-rules.md), [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/README.md#private-spec-transcriptions),
 ISO/IEC 23009-1: [`transmux/docs/codec/dash-23009-1-2022-ids.md`](../../../../transmux/docs/codec/dash-23009-1-2022-ids.md).
 Verification summary: [../VERIFICATION.md](../VERIFICATION.md).
 

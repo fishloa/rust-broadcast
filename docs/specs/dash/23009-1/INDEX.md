@@ -22,7 +22,7 @@ The Ed.6 XML-schema comparison (names and types only) is in [`ED6-SCHEMA-DIFF.md
 | [`05-3-7-common.md`](05-3-7-common.md) | Clause 5.3.7 - Common attributes and elements | 63-70 | 71-78 | T14 | `private/specs-verified/dash/23009-1/05-3-7-common.md` |
 | [`05-3-8-subsets.md`](05-3-8-subsets.md) | Clause 5.3.8 - Subsets | 70-71 | 78-79 | T15 | `private/specs-verified/dash/23009-1/05-3-8-subsets.md` |
 | [`05-3-9-4-segment-template.md`](05-3-9-4-segment-template.md) | Clause 5.3.9.4 - Segment template | 82-83 | 90-91 | T20, T21 | `private/specs-verified/dash/23009-1/05-3-9-4-segment-template.md` |
-| [`05-3-9-5-segment-information-derivation.md`](05-3-9-5-segment-information-derivation.md) | Clause 5.3.9.5 - Segment information (Initialization, Media, Index, Bitstream Switching) | 83-87 | 91-95 | - | `private/specs-verified/dash/23009-1/05-3-9-5-segment-information-derivation.md` |
+| [`05-3-9-5-segment-information-derivation.md`](05-3-9-5-segment-information-derivation.md) | Clause 5.3.9.5 - Segment information (Initialization, Media, Index, Bitstream Switching) | 84-87 | 92-95 | - | `private/specs-verified/dash/23009-1/05-3-9-5-segment-information-derivation.md` |
 | [`05-3-9-6-segment-timeline.md`](05-3-9-6-segment-timeline.md) | Clause 5.3.9.6 - Segment timeline | 88-92 | 96-100 | T22 | `private/specs-verified/dash/23009-1/05-3-9-6-segment-timeline.md` |
 | [`05-3-9-7-failover-content.md`](05-3-9-7-failover-content.md) | Clause 5.3.9.7 - Failover Content Signalling | 92-93 | 100-101 | T23 | `private/specs-verified/dash/23009-1/05-3-9-7-failover-content.md` |
 | [`05-3-9-segment-information.md`](05-3-9-segment-information.md) | Clauses 5.3.9 to 5.3.9.3 - Segments and Segment information: general, Segment base information, Segment list | 71-82 | 79-90 | T16, T17, T18, T19 | `private/specs-verified/dash/23009-1/05-3-9-segment-information.md` |
@@ -69,7 +69,7 @@ The Ed.6 XML-schema comparison (names and types only) is in [`ED6-SCHEMA-DIFF.md
 
 - Existing analysis files consolidated here: [`dash-23009-1-2022-ids.md`](dash-23009-1-2022-ids.md) (`@id`/`@group` and the xsd id types; short quoted rows only),
   [`dash-23009-1-2022-aspect.md`](dash-23009-1-2022-aspect.md) (`@sar`/`@par`/`@width`/`@height`). They quote only the specific rows they analyse and link here for the rest.
-- Events / `emsg` (clause 5.10, outside this range; only the `emsg` brand row of Table 1 touches it): [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/emsg.md),
+- Events / `emsg` (clause 5.10, outside this range; only the `emsg` brand row of Table 1 touches it): [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/README.md#private-spec-transcriptions),
   [`specs/rules/emsg-rules.md`](../../../../specs/rules/emsg-rules.md).
 - Superseded 2012-edition summary, with a rule-by-rule check against this transcription: [`specs/rules/dash-mpd-rules.md`](../../../../specs/rules/dash-mpd-rules.md).
 - DASH-IF IOP trick-mode analysis (consumes the id rules above): [`transmux/docs/codec/dashif-iop-4.3-trickmode.md`](../../../../transmux/docs/codec/dashif-iop-4.3-trickmode.md).

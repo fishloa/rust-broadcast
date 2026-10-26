@@ -26,7 +26,11 @@ fn without(bytes: &[u8], pid: u16) -> Vec<u8> {
 }
 
 fn rai() -> Vec<u8> {
-    std::fs::read(test_fixtures::require(RAI, "r7").unwrap()).unwrap()
+    let Some(path) = test_fixtures::require(RAI, "r7") else {
+        eprintln!("r7: SKIPPED - the rest of this test binary needs the private rai-gulp capture");
+        std::process::exit(0)
+    };
+    std::fs::read(path).unwrap()
 }
 
 fn drain(s: &mut Session, now: u64, starts: &mut Vec<u64>) {
