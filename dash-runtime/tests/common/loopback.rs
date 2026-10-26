@@ -37,6 +37,8 @@ pub enum FaultKind {
     HeaderOnly,
     Garbage,
     ShortRange(usize),
+    IgnoreRange,
+    Replace(Vec<u8>),
 }
 
 #[derive(Debug, Clone)]
@@ -141,7 +143,18 @@ impl Origin {
                 body: b"not found".to_vec(),
             });
         };
-        let (status, mut body) = match req.range {
+        if let Some(FaultKind::Replace(b)) = &fault {
+            return Ok(Resp {
+                status: 200,
+                body: b.clone(),
+            });
+        }
+        let range = if matches!(fault, Some(FaultKind::IgnoreRange)) {
+            None
+        } else {
+            req.range
+        };
+        let (status, mut body) = match range {
             Some((off, len)) => {
                 let off = off as usize;
                 if off >= all.len() {

@@ -1315,12 +1315,11 @@ impl DashClient {
             let ri = lane.reps.len() - 1;
             let key = lane.reps[ri].init_key.clone();
             summary.push((lane.kind, lane.set_id, key.clone()));
-            if lane.announced_init.as_ref() != Some(&key) {
-                if let Some(bytes) = self.inits.get(&key).and_then(|e| e.bytes.as_ref()) {
-                    self.outputs.push_back(Output::Init(bytes.as_ref().clone()));
-                }
-                lane.announced_init = Some(key);
+            if !continuous && let Some(bytes) = self.inits.get(&key).and_then(|e| e.bytes.as_ref())
+            {
+                self.outputs.push_back(Output::Init(bytes.as_ref().clone()));
             }
+            lane.announced_init = Some(key);
             lane.announced_rep = Some(ri);
         }
         self.announce_tracks(pi);
