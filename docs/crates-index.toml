@@ -581,7 +581,7 @@ lifecycle = "active"
 domain = "live"
 summary = "Generic sans-IO client session: auth, redirects, TS-over-HTTP, HLS and RTSP sources."
 standards = "none (implementation-defined policy; requirements from zenith-tv player)"
-what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds, no I/O, std."
+what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`), no I/O, std. The DASH clock and configuration surface (`DashConfig`, `Event::ClockSynced`) is in place; the DASH source itself is a later step."
 crates_io = false
 lifecycle = "active"
 # ------------------------------------------------------------------ internal
