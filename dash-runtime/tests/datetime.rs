@@ -107,6 +107,8 @@ fn http_date_accepts_the_three_forms_of_rfc_9110_5_6_7() {
         "Sunday, 06-Nov-94 08:49:37 GMT",
         "Sun Nov  6 08:49:37 1994",
         "  Sun, 06 Nov 1994 08:49:37 GMT  ",
+        "  Sunday, 06-Nov-94 08:49:37 GMT\t",
+        " Sun Nov  6 08:49:37 1994 ",
     ] {
         assert_eq!(parse_http_date(text).unwrap(), expected, "{text}");
     }
