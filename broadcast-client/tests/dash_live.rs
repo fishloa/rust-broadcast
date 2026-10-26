@@ -850,3 +850,22 @@ fn a_clock_given_to_a_closed_session_produces_no_event() {
         "the anchor of a closed session resolves no ladder and emits nothing"
     );
 }
+
+#[test]
+fn the_live_event_sequence_does_not_depend_on_how_the_bodies_are_chunked() {
+    let run = |chunk: usize| {
+        let (mut sim, _) = live(
+            with_utc(Addressing::Number),
+            41 * MICROS + 120_000,
+            Config::default(),
+        );
+        sim.chunk = chunk;
+        sim.run_for(15 * SEC);
+        sim.events
+    };
+    let reference = run(65_536);
+    assert!(reference.iter().any(|e| matches!(e, Event::Sample { .. })));
+    for chunk in [1_316usize, 4_096] {
+        assert_eq!(run(chunk), reference, "chunk {chunk}");
+    }
+}
