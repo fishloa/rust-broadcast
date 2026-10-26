@@ -469,7 +469,7 @@ Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF
 - **Cargo description:** Robust media container-format detection — MPEG-2 TS (188/192/204/208 stride + phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF, and elementary streams.
 - **Version (in-tree):** 0.2.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux)
+- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux)
 - **Links:** [README](../container-probe/README.md) · [CHANGELOG](../container-probe/CHANGELOG.md) · [crates.io](https://crates.io/crates/container-probe) · [docs.rs](https://docs.rs/container-probe)
 
 #### transmux
@@ -588,12 +588,12 @@ WHIP ingest and WHEP egress session establishment as state machines over `http` 
 
 #### dash-runtime
 
-A bounded, namespace-aware MPD parser and typed consume-only model, attribute inheritance, a lazy Segment plan (SegmentTemplate, SegmentTimeline, SegmentList, SegmentBase + sidx) with availability windows, a UTC clock fed by UTCTiming measurements, PeriodStart and live-edge arithmetic, and Representation selection. No I/O and no clock reads: every instant is an argument. The client state machine is a later step; not yet published.
+A bounded, namespace-aware MPD parser and typed consume-only model, attribute inheritance, a lazy Segment plan (SegmentTemplate, SegmentTimeline, SegmentList, SegmentBase + sidx) with availability windows, a UTC clock fed by UTCTiming measurements, PeriodStart and live-edge arithmetic, and Representation selection. `DashClient` plays a static MPD (SegmentTemplate/Timeline/List, on-demand `sidx`, multiple Periods with continuity) to ordered `Fmp4Demux` samples, with typed failure classes and an origin pin; live MPDs are the next step. No I/O and no clock reads: every instant is an argument. Not yet published.
 
 - **Standards:** ISO/IEC 23009-1:2022 (5.3, 5.6, 5.8.5.7, Annex A, Annex I); DASH-IF IOP v4.3 (live timing); ETSI TS 103 285 (BaseURL priority)
 - **Cargo description:** Sans-IO MPEG-DASH (ISO/IEC 23009-1) core: MPD model and parser, segment addressing, UTC clock and live-edge arithmetic. No I/O, no clock reads.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 4
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`container-probe`](#container-probe), [`transmux`](#transmux)
 - **Used by (workspace):** none
 - **Links:** [README](../dash-runtime/README.md) · [CHANGELOG](../dash-runtime/CHANGELOG.md) · [docs + spec pointer](../dash-runtime/docs/)
 
