@@ -700,3 +700,29 @@ fn timescale_defaults_to_one_when_no_level_declares_it() {
     assert_eq!(p.plan.get(1).unwrap().duration_us, 2 * S);
     assert_eq!(p.plan.get(2).unwrap().reference, "V300/2.m4s");
 }
+
+fn period_ids(ids: &[&str]) -> Result<Mpd, dash_runtime::error::MpdError> {
+    let periods: String = ids
+        .iter()
+        .map(|id| format!(r#"<Period id="{id}"/>"#))
+        .collect();
+    let xml = format!(r#"<?xml version="1.0"?><MPD xmlns="{NS}">{periods}</MPD>"#);
+    Mpd::parse(xml.as_bytes())
+}
+
+#[test]
+fn two_periods_may_not_share_an_id() {
+    use dash_runtime::error::MpdError;
+
+    assert!(period_ids(&["a", "b", "c"]).is_ok());
+    let err = period_ids(&["a", "b", "a"]).unwrap_err();
+    assert!(
+        matches!(&err, MpdError::Invalid { what: "Period@id", detail } if detail.contains('a')),
+        "{err}"
+    );
+    let no_id = format!(r#"<?xml version="1.0"?><MPD xmlns="{NS}"><Period/><Period/></MPD>"#);
+    assert!(
+        Mpd::parse(no_id.as_bytes()).is_ok(),
+        "Periods without an id never collide"
+    );
+}

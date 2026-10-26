@@ -845,15 +845,12 @@ impl Baseline {
 
 impl F {
     /// Faults that make the client drop its timeline and rejoin (a changed availability start,
-    /// a Period that vanished or was duplicated): the rejoin may repeat or skip segments, but it
+    /// a Period that vanished): the rejoin may repeat or skip segments, but it
     /// must announce itself with a `Discontinuity`.
     pub fn resets(self) -> bool {
         matches!(
             self,
-            F::MpdAstChanged
-                | F::PeriodOldestRemoved
-                | F::PeriodNewestDropped
-                | F::PeriodDuplicated
+            F::MpdAstChanged | F::PeriodOldestRemoved | F::PeriodNewestDropped
         )
     }
 
