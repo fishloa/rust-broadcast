@@ -628,11 +628,12 @@ impl DashClient {
                 Some(d) => d.join(value).ok()?,
                 None => Url::parse(value).ok()?,
             };
-            if pin && let Some(d) = &doc {
-                if !same_origin(d, &url) {
-                    cross = true;
-                    return None;
-                }
+            if pin
+                && let Some(d) = &doc
+                && !same_origin(d, &url)
+            {
+                cross = true;
+                return None;
             }
             matches!(url.scheme(), "http" | "https").then(|| url.to_string())
         };

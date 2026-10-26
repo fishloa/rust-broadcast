@@ -277,12 +277,8 @@ impl Synth {
                 "<SegmentTemplate timescale=\"{timescale}\" duration=\"{rep_ticks}\" startNumber=\"{}\" media=\"{media}\" initialization=\"{init}\"/>",
                 self.start_number
             ),
-            a => {
-                let t = if a == Addressing::TimelineTime {
-                    self.t0_ticks + (global_first + first_local) as u64 * rep_ticks
-                } else {
-                    self.t0_ticks + (global_first + first_local) as u64 * rep_ticks
-                };
+            _ => {
+                let t = self.t0_ticks + (global_first + first_local) as u64 * rep_ticks;
                 let pto = if pto_ticks > 0 {
                     format!(" presentationTimeOffset=\"{pto_ticks}\"")
                 } else {
@@ -404,10 +400,7 @@ impl Synth {
             }
         }
         let periods = if self.period_starts_us.is_empty() {
-            self.period_xml(0, "P0", 0, 0, c, false).replace(
-                "<Period id=\"P0\" start=\"PT0S\">",
-                "<Period id=\"P0\" start=\"PT0S\">",
-            )
+            self.period_xml(0, "P0", 0, 0, c, false)
         } else {
             let now_off = at_utc - self.ast_us;
             let starts = self.period_starts_us.clone();

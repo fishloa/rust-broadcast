@@ -340,7 +340,6 @@ impl Sim {
             id: action.id(),
         });
         let mut arrive = arrive;
-        let mut outcome = outcome;
         if matches!(outcome, Outcome::Hang) {
             if is_utc {
                 return;
