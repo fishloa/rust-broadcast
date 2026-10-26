@@ -134,12 +134,13 @@ fn the_same_fragments_with_resolvable_offsets_report_nothing() {
 }
 
 fn tiny_cap_config(playlist: bool) -> Config {
-    let mut c = Config {
-        kind: SourceKind::Hls,
-        ..hls_config()
+    let mut c = {
+        let mut new_config = hls_config();
+        new_config.kind = SourceKind::Hls;
+        new_config
     };
     if playlist {
-        c.max_playlist_bytes = TINY_BODY_CAP;
+        c.max_manifest_bytes = TINY_BODY_CAP;
     } else {
         c.max_segment_bytes = TINY_BODY_CAP;
     }
@@ -156,7 +157,7 @@ fn an_oversized_playlist_names_the_cap_that_was_hit() {
         errs,
         vec![(
             ErrorKind::BodyTooLarge {
-                field: "max_playlist_bytes"
+                field: "max_manifest_bytes"
             },
             false
         )]

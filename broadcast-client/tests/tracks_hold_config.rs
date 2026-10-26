@@ -83,9 +83,10 @@ fn feed_chunks_waking(
 #[test]
 fn a_zero_wall_limit_announces_tracks_as_each_stream_resolves() {
     let bytes = test_fixtures::read("ts/france2.ts");
-    let config = Config {
-        tracks_hold_max_wall_us: 0,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.tracks_hold_max_wall_us = 0;
+        new_config
     };
     let (mut s, c) = open_live(config);
     let (_, events) = feed_chunks(&mut s, c, &bytes, usize::MAX);
@@ -103,9 +104,10 @@ fn a_zero_wall_limit_announces_tracks_as_each_stream_resolves() {
 #[test]
 fn a_zero_media_limit_announces_tracks_as_each_stream_resolves() {
     let bytes = test_fixtures::read("ts/france2.ts");
-    let config = Config {
-        tracks_hold_max_media_us: 0,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.tracks_hold_max_media_us = 0;
+        new_config
     };
     let (mut s, c) = open_live(config);
     let (_, events) = feed_chunks(&mut s, c, &bytes, usize::MAX);
@@ -129,9 +131,10 @@ fn a_short_wall_limit_releases_a_stream_whose_declared_pid_never_sends() {
     let fed_until = HOLD_START_CHUNKS as u64 * STEP_US;
     let due = fed_until + SHORT_WALL_US;
 
-    let config = Config {
-        tracks_hold_max_wall_us: SHORT_WALL_US,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.tracks_hold_max_wall_us = SHORT_WALL_US;
+        new_config
     };
     let (mut s, c) = open_live(config);
     let (now, mut events, wake) = feed_chunks_waking(&mut s, c, &bytes, HOLD_START_CHUNKS);
@@ -164,19 +167,21 @@ fn rejected(config: Config) -> &'static str {
 
 #[test]
 fn a_zero_quiet_limit_is_rejected() {
-    let field = rejected(Config {
-        tracks_hold_quiet_input_bytes: 0,
-        ..Config::default()
+    let field = rejected({
+        let mut new_config = Config::default();
+        new_config.tracks_hold_quiet_input_bytes = 0;
+        new_config
     });
     assert_eq!(field, "tracks_hold_quiet_input_bytes");
 }
 
 #[test]
 fn a_max_input_below_the_quiet_limit_is_rejected() {
-    let field = rejected(Config {
-        tracks_hold_max_input_bytes: 1024,
-        tracks_hold_quiet_input_bytes: 2048,
-        ..Config::default()
+    let field = rejected({
+        let mut new_config = Config::default();
+        new_config.tracks_hold_max_input_bytes = 1024;
+        new_config.tracks_hold_quiet_input_bytes = 2048;
+        new_config
     });
     assert_eq!(field, "tracks_hold_max_input_bytes");
 }
@@ -193,10 +198,11 @@ fn the_documented_hold_defaults_are_unchanged_and_valid() {
 
 #[test]
 fn zero_wall_and_media_limits_are_valid() {
-    let c = Config {
-        tracks_hold_max_wall_us: 0,
-        tracks_hold_max_media_us: 0,
-        ..Config::default()
+    let c = {
+        let mut new_config = Config::default();
+        new_config.tracks_hold_max_wall_us = 0;
+        new_config.tracks_hold_max_media_us = 0;
+        new_config
     };
     assert!(Session::open("http://h/live.ts", c, 0).is_ok());
 }

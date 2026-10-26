@@ -3,7 +3,7 @@
 //! one typed fatal error, and a re-signed MAP URI is the same init.
 
 mod support;
-use broadcast_client::{Config, ErrorKind, Event, events::DEFAULT_MAX_KEY_FAILURES};
+use broadcast_client::{ErrorKind, Event, events::DEFAULT_MAX_KEY_FAILURES};
 use support::fmp4_split::{group, split};
 use support::hls_host::{Host, Reply, hls_config, is_ended};
 
@@ -233,9 +233,10 @@ fn vod_second_map_init_permanent_failure_is_one_typed_fatal() {
 
 #[test]
 fn init_failure_cap_follows_max_key_failures() {
-    let cfg = Config {
-        max_key_failures: 2,
-        ..hls_config()
+    let cfg = {
+        let mut new_config = hls_config();
+        new_config.max_key_failures = 2;
+        new_config
     };
     let (init, segs) = parts();
     let mut h = Host::new(PL, cfg);

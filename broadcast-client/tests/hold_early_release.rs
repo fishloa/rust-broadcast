@@ -42,10 +42,11 @@ fn garbage(bytes: &[u8], pid: u16) -> Vec<u8> {
 }
 
 fn config(wall: u64, media: u64) -> Config {
-    Config {
-        tracks_hold_max_wall_us: wall,
-        tracks_hold_max_media_us: media,
-        ..Config::default()
+    {
+        let mut new_config = Config::default();
+        new_config.tracks_hold_max_wall_us = wall;
+        new_config.tracks_hold_max_media_us = media;
+        new_config
     }
 }
 
@@ -141,10 +142,11 @@ fn a_stream_that_keeps_sending_but_never_resolves_is_bounded_by_the_wall_limit()
     let wall = 2 * SETTLE_US;
     let held = replay_paced(
         &bytes,
-        Config {
-            tracks_hold_quiet_input_bytes: bytes.len() / 2,
-            tracks_hold_max_input_bytes: bytes.len(),
-            ..config(wall, FAR_US)
+        {
+            let mut new_config = config(wall, FAR_US);
+            new_config.tracks_hold_quiet_input_bytes = bytes.len() / 2;
+            new_config.tracks_hold_max_input_bytes = bytes.len();
+            new_config
         },
         CHUNK,
         bps,

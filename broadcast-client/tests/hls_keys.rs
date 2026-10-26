@@ -219,10 +219,11 @@ fn key_request_carries_bearer_authorization_for_session_origin() {
 }
 
 fn cookie_config() -> Config {
-    Config {
-        extra_headers: vec![(CUSTOM_HEADER.to_string(), "1".to_string())],
-        initial_cookies: vec![(COOKIE_NAME.to_string(), COOKIE_VALUE.to_string())],
-        ..hls_config()
+    {
+        let mut new_config = hls_config();
+        new_config.extra_headers = vec![(CUSTOM_HEADER.to_string(), "1".to_string())];
+        new_config.initial_cookies = vec![(COOKIE_NAME.to_string(), COOKIE_VALUE.to_string())];
+        new_config
     }
 }
 
@@ -319,9 +320,10 @@ fn key_redirect_followed_and_counted() {
     assert!(h.events.iter().any(is_ended));
     assert!(errors(&h.events).is_empty());
 
-    let config = Config {
-        max_redirects: 1,
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.max_redirects = 1;
+        new_config
     };
     let mut h = encrypted_host(
         config,
@@ -402,9 +404,10 @@ fn key_404_retries_not_not_found_status() {
 
 #[test]
 fn key_timeout_aborts_and_retries() {
-    let config = Config {
-        hls_key_timeout_us: KEY_TIMEOUT_US,
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.hls_key_timeout_us = KEY_TIMEOUT_US;
+        new_config
     };
     let mut h = encrypted_host(config, vec![Reply::Hang, good_key()]);
     h.run_to_end();
@@ -652,9 +655,10 @@ fn fatal_error_stops_session_no_more_requests() {
         entry(key_tag(KEY_URL, Some(&iv)), "index0.ts"),
         entry(String::new(), "index1.ts"),
     ];
-    let config = Config {
-        max_key_failures: 1,
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.max_key_failures = 1;
+        new_config
     };
     let mut s = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
     let first = drain_actions(&mut s, 0);
@@ -731,9 +735,10 @@ fn non_fatal_error_emitted_once_not_per_retry() {
 #[test]
 fn escalates_to_fatal_after_max_key_failures() {
     const MAX: u32 = 3;
-    let config = Config {
-        max_key_failures: MAX,
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.max_key_failures = MAX;
+        new_config
     };
     let mut h = encrypted_host(config, vec![Reply::Status(404)]);
     run_until_fatal(&mut h);
@@ -823,7 +828,7 @@ fn error_kind_names_are_stable() {
         ),
         (
             ErrorKind::BodyTooLarge {
-                field: "max_playlist_bytes",
+                field: "max_manifest_bytes",
             },
             "body_too_large",
         ),

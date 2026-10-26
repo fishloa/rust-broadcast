@@ -147,9 +147,10 @@ fn auto_detects_rtsp_and_rtsps_schemes() {
         );
         let mut explicit = Session::open(
             url,
-            Config {
-                kind: SourceKind::Rtsp,
-                ..Config::default()
+            {
+                let mut new_config = Config::default();
+                new_config.kind = SourceKind::Rtsp;
+                new_config
             },
             0,
         )
@@ -164,9 +165,10 @@ fn auto_detects_rtsp_and_rtsps_schemes() {
         ("rtsp://cam.test/x", SourceKind::Hls),
         ("http://cam.test/x", SourceKind::Rtsp),
     ] {
-        let config = Config {
-            kind,
-            ..Config::default()
+        let config = {
+            let mut new_config = Config::default();
+            new_config.kind = kind;
+            new_config
         };
         assert!(
             matches!(

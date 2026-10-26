@@ -30,9 +30,10 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
 }
 
 fn with_wall(w: u64) -> Config {
-    Config {
-        tracks_hold_max_wall_us: w,
-        ..Config::default()
+    {
+        let mut new_config = Config::default();
+        new_config.tracks_hold_max_wall_us = w;
+        new_config
     }
 }
 

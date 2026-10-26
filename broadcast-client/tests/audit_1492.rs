@@ -182,12 +182,13 @@ fn the_total_cookie_header_is_capped() {
 }
 
 fn first_cookie_header(url: &str, cookies: &[(&str, &str)]) -> Option<String> {
-    let config = Config {
-        initial_cookies: cookies
+    let config = {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = cookies
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-        ..Config::default()
+            .collect();
+        new_config
     };
     let mut session = open(url, config);
     one(&mut session, 0).cookie().map(str::to_string)

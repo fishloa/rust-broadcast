@@ -29,9 +29,10 @@ fn pair(n: &str, v: &str) -> (String, String) {
 }
 
 fn with_headers(headers: Vec<(String, String)>) -> Config {
-    Config {
-        extra_headers: headers,
-        ..Config::default()
+    {
+        let mut new_config = Config::default();
+        new_config.extra_headers = headers;
+        new_config
     }
 }
 
@@ -40,9 +41,10 @@ fn open_err(headers: Vec<(String, String)>) -> Error {
 }
 
 fn hls_with_headers() -> Config {
-    Config {
-        extra_headers: vec![pair("X-Trace", "t-1")],
-        ..hls_config()
+    {
+        let mut new_config = hls_config();
+        new_config.extra_headers = vec![pair("X-Trace", "t-1")];
+        new_config
     }
 }
 
@@ -212,10 +214,11 @@ fn extra_headers_never_override_session_cookie_or_authorization() {
             .all(|(k, _)| !k.eq_ignore_ascii_case("authorization"))
     );
 
-    let config = Config {
-        extra_headers: vec![pair("X-Keep", "1")],
-        initial_cookies: vec![pair("sid", "real")],
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.extra_headers = vec![pair("X-Keep", "1")];
+        new_config.initial_cookies = vec![pair("sid", "real")];
+        new_config
     };
     let mut s = ts_probe::open(TS_URL, config);
     s.set_credentials(Credentials::bearer("tok")).unwrap();
@@ -228,10 +231,11 @@ fn extra_headers_never_override_session_cookie_or_authorization() {
 
 #[test]
 fn extra_headers_order_preserved() {
-    let config = Config {
-        extra_headers: vec![pair("X-B", "2"), pair("X-A", "1"), pair("X-C", "3")],
-        initial_cookies: vec![pair("sid", "1")],
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.extra_headers = vec![pair("X-B", "2"), pair("X-A", "1"), pair("X-C", "3")];
+        new_config.initial_cookies = vec![pair("sid", "1")];
+        new_config
     };
     let mut s = ts_probe::open(TS_URL, config);
     let req = one(&mut s, 0);
