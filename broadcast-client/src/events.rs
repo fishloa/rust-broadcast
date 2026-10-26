@@ -20,12 +20,14 @@ use dash_runtime::timing::clock::ClockSource;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
     /// Auto-detect from the URL: an `rtsp://` or `rtsps://` URL is RTSP, a `.m3u8`/`.m3u` path
-    /// is HLS, anything else TS-over-HTTP.
+    /// is HLS, a `.mpd` path (ASCII case-insensitive) is DASH, anything else TS-over-HTTP.
     Auto,
     /// TS-over-HTTP.
     TsHttp,
     /// HLS (M3U8) on `hls-runtime`.
     Hls,
+    /// MPEG-DASH (MPD) on `dash-runtime`, static and dynamic presentations.
+    Dash,
     /// RTSP 1.0 with RTP interleaved over the RTSP TCP connection (`rtsp://` and `rtsps://`).
     Rtsp,
 }
@@ -38,6 +40,7 @@ impl SourceKind {
             Self::Auto => "auto",
             Self::TsHttp => "ts-http",
             Self::Hls => "hls",
+            Self::Dash => "dash",
             Self::Rtsp => "rtsp",
         }
     }

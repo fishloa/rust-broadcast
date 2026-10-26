@@ -17,6 +17,9 @@ use crate::headers;
 use crate::playout::{Playout, Source};
 use crate::queue::EventQueue;
 use crate::redirect;
+use crate::source::adaptive::Adaptive;
+use crate::source::dash::DashSource;
+use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
 use crate::source::rtsp::RtspSource;
@@ -60,7 +63,7 @@ pub struct Session {
     config: Config,
     auth: AuthState,
     source: TsHttpSource,
-    hls: Option<Box<HlsSession>>,
+    adaptive: Option<Adaptive>,
     rtsp: Option<Box<RtspSource>>,
     redirect_count: u32,
     next_conn: u32,
@@ -111,6 +114,12 @@ impl Session {
                 SourceKind::Auto => has_playlist_extension(&parsed),
                 _ => false,
             };
+        let use_dash = !is_rtsp_scheme
+            && match config.kind {
+                SourceKind::Dash => true,
+                SourceKind::Auto => has_mpd_extension(&parsed),
+                _ => false,
+            };
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
         config.validate()?;
@@ -126,7 +135,17 @@ impl Session {
         }
         let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us)
             .with_hold_limits(HoldLimits::from_config(&config));
-        let hls = use_hls.then(|| Box::new(HlsSession::new(&parsed, &config)));
+        let adaptive = if use_hls {
+            Some(Adaptive::Hls(Box::new(HlsSession::new(&parsed, &config))))
+        } else if use_dash {
+            Some(Adaptive::Dash(Box::new(DashSource::new(
+                &parsed,
+                &config,
+                ConnAlloc::new(),
+            ))))
+        } else {
+            None
+        };
         let mut rtsp = is_rtsp_scheme.then(|| {
             Box::new(RtspSource::new(
                 &parsed,
@@ -138,7 +157,7 @@ impl Session {
         if let Some(r) = rtsp.as_mut() {
             r.on_credentials(now_us, &auth);
         }
-        if use_hls {
+        if use_hls || use_dash {
             playout.engage(Source::Live {
                 target_duration_secs: None,
             });
@@ -149,7 +168,7 @@ impl Session {
             config,
             auth,
             source,
-            hls,
+            adaptive,
             rtsp,
             redirect_count: 0,
             next_conn: FIRST_CONN_ID,
@@ -179,9 +198,9 @@ impl Session {
             if let Some(r) = self.rtsp.as_mut() {
                 r.poll(now_us, &self.auth);
                 self.flush_rtsp();
-            } else if let Some(h) = self.hls.as_mut() {
+            } else if let Some(h) = self.adaptive.as_mut() {
                 h.poll(now_us, &mut self.auth);
-                self.flush_hls();
+                self.flush_adaptive();
             } else {
                 if !self.auth.is_waiting() {
                     self.source.poll_timeout(now_us);
@@ -203,7 +222,7 @@ impl Session {
         if self.closed && self.events.is_empty() {
             return None;
         }
-        if !self.closed && self.hls.is_none() && self.rtsp.is_none() {
+        if !self.closed && self.adaptive.is_none() && self.rtsp.is_none() {
             self.drain_source();
         }
         self.events.pop_front()
@@ -221,7 +240,7 @@ impl Session {
             return;
         }
         self.now_us = now_us;
-        if let Some(h) = self.hls.as_mut() {
+        if let Some(h) = self.adaptive.as_mut() {
             h.on_response(
                 conn,
                 status,
@@ -230,7 +249,7 @@ impl Session {
                 self.wall.as_ref(),
                 &mut self.auth,
             );
-            self.flush_hls();
+            self.flush_adaptive();
             return;
         }
         let Some(req_url) = self.known_conns.get(&conn).cloned() else {
@@ -363,10 +382,10 @@ impl Session {
             self.flush_rtsp();
             return;
         }
-        if let Some(h) = self.hls.as_mut() {
+        if let Some(h) = self.adaptive.as_mut() {
             self.now_us = now_us;
             h.on_data(conn, bytes, now_us, &mut self.auth);
-            self.flush_hls();
+            self.flush_adaptive();
             return;
         }
         if !self.known_conns.contains_key(&conn) {
@@ -399,10 +418,10 @@ impl Session {
             self.flush_rtsp();
             return;
         }
-        if let Some(h) = self.hls.as_mut() {
+        if let Some(h) = self.adaptive.as_mut() {
             self.now_us = now_us;
             h.on_closed(conn, error.as_deref(), now_us, &mut self.auth);
-            self.flush_hls();
+            self.flush_adaptive();
             return;
         }
         if !self.known_conns.contains_key(&conn) {
@@ -475,9 +494,9 @@ impl Session {
             return Ok(());
         }
         if was_waiting {
-            if let Some(h) = self.hls.as_mut() {
+            if let Some(h) = self.adaptive.as_mut() {
                 h.resume(self.now_us, &mut self.auth);
-                self.flush_hls();
+                self.flush_adaptive();
             } else {
                 self.source.reconnect(self.now_us);
                 self.drain_source();
@@ -506,6 +525,13 @@ impl Session {
     /// [`crate::DashConfig::clock_policy`] says otherwise.
     pub fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
         self.wall = Some(WallClock::new(now_us, unix_us));
+        if self.closed {
+            return;
+        }
+        if let Some(a) = self.adaptive.as_mut() {
+            a.set_wall_clock(now_us, unix_us);
+            self.flush_adaptive();
+        }
     }
 
     /// Live cookies as `(name, value)` pairs, for the host to persist and pass back as
@@ -528,9 +554,9 @@ impl Session {
             self.flush_rtsp();
             return;
         }
-        if let Some(h) = self.hls.as_mut() {
+        if let Some(h) = self.adaptive.as_mut() {
             h.reconnect(now_us, &mut self.auth);
-            self.flush_hls();
+            self.flush_adaptive();
             return;
         }
         self.source.reconnect(now_us);
@@ -543,7 +569,7 @@ impl Session {
     /// # Errors
     /// [`Error::NotHls`] for a non-HLS session, [`Error::NoSuchVariant`] for an unknown index.
     pub fn select_variant(&mut self, index: usize) -> Result<(), Error> {
-        let Some(h) = self.hls.as_mut() else {
+        let Some(h) = self.adaptive.as_mut() else {
             return Err(Error::NotHls);
         };
         if self.closed {
@@ -551,10 +577,10 @@ impl Session {
         }
         let ended = h.is_ended();
         h.select_variant(index, self.now_us, &mut self.auth)?;
-        if !ended {
+        if !ended && h.variant_switch_restarts_playout() {
             self.playout.reset();
         }
-        self.flush_hls();
+        self.flush_adaptive();
         Ok(())
     }
 
@@ -570,14 +596,14 @@ impl Session {
     /// [`Error::NotHls`] for a non-HLS session, [`Error::NoSuchRendition`] for an out-of-range
     /// index or when no master playlist was seen yet.
     pub fn select_audio_rendition(&mut self, index: Option<usize>) -> Result<(), Error> {
-        let Some(h) = self.hls.as_mut() else {
+        let Some(h) = self.adaptive.as_mut() else {
             return Err(Error::NotHls);
         };
         if self.closed {
             return Ok(());
         }
         h.select_audio(index, self.now_us, &mut self.auth)?;
-        self.flush_hls();
+        self.flush_adaptive();
         Ok(())
     }
 
@@ -601,7 +627,7 @@ impl Session {
         if self.closed {
             return;
         }
-        if self.hls.is_some() || self.rtsp.is_some() {
+        if self.adaptive.is_some() || self.rtsp.is_some() {
             self.buffer.set_rendered(Some(tracks));
             self.jump.set_rendered(Some(tracks));
             self.playout.set_rendered(Some(tracks));
@@ -705,7 +731,7 @@ impl Session {
             }
         }
         let mut live: Vec<u32> = self.known_conns.keys().copied().collect();
-        if let Some(h) = self.hls.as_ref() {
+        if let Some(h) = self.adaptive.as_ref() {
             live.extend(h.conns());
         }
         live.sort_unstable();
@@ -758,8 +784,8 @@ impl Session {
         self.events.push_back(e);
     }
 
-    fn flush_hls(&mut self) {
-        let Some(h) = self.hls.as_mut() else {
+    fn flush_adaptive(&mut self) {
+        let Some(h) = self.adaptive.as_mut() else {
             return;
         };
         self.actions.extend(h.take_actions());
@@ -817,7 +843,7 @@ impl Session {
             _ => {}
         }
         let announced = match &e {
-            Event::Tracks(specs) if self.hls.is_none() => Some(specs.clone()),
+            Event::Tracks(specs) if self.adaptive.is_none() => Some(specs.clone()),
             _ => None,
         };
         self.events.push_back(e);
@@ -1037,6 +1063,12 @@ fn take_userinfo(url: &mut Url) -> Result<Option<Credentials>, Error> {
 
 fn has_authorization(headers: &[(String, String)]) -> bool {
     crate::auth::carries_credentials(headers)
+}
+
+fn has_mpd_extension(url: &Url) -> bool {
+    std::path::Path::new(url.path())
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("mpd"))
 }
 
 fn has_playlist_extension(url: &Url) -> bool {

@@ -1834,23 +1834,84 @@ impl DashClient {
     /// nothing is left to fetch; [`Error::Stopped`].
     pub fn select_representation(&mut self, index: usize) -> Result<()> {
         self.ensure_live()?;
-        let pi = self.deliver;
-        if pi != self.issue || self.periods.get(pi).is_none_or(|p| !p.started) {
-            return Err(Error::NotSwitchable);
-        }
+        let pi = self.switchable_period()?;
         let at = *self.periods[pi]
             .selection
             .variants
             .get(index)
             .ok_or(Error::NoSuchVariant)?;
+        self.switch_lane(pi, SetClass::Video, at)?;
+        self.periods[pi].selection.chosen_variant = Some(index);
+        Ok(())
+    }
+
+    /// Play audio set `index` of the latest [`Output::Manifest`]'s `audio`
+    /// list, or stop audio with `None`. The best Representation of the set
+    /// the codec policy allows is used; segments already requested keep their
+    /// Representation, the new one continues from the segment containing the
+    /// next unrequested media time and the track set is re-announced. The
+    /// audio track ids keep their numbers. `None` stops requesting audio
+    /// segments (those already requested are still delivered); a later
+    /// `Some` starts audio again.
+    ///
+    /// # Errors
+    /// [`Error::NoSuchAudio`] for an index outside the list;
+    /// [`Error::NotSwitchable`] when the Period being played is not the one
+    /// being fetched or it has no audio lane; [`Error::Stopped`].
+    pub fn select_audio(&mut self, index: Option<usize>) -> Result<()> {
+        self.ensure_live()?;
+        let pi = self.switchable_period()?;
+        let Some(index) = index else {
+            let lane = self.periods[pi]
+                .lanes
+                .iter_mut()
+                .find(|l| l.kind == SetClass::Audio)
+                .ok_or(Error::NotSwitchable)?;
+            if let Some(rep) = lane.reps.last_mut() {
+                rep.dead = true;
+            }
+            self.periods[pi].selection.chosen_audio = None;
+            return Ok(());
+        };
+        let at = self.best_audio_rep(pi, index)?;
+        self.switch_lane(pi, SetClass::Audio, at)?;
+        self.periods[pi].selection.chosen_audio = Some(at);
+        Ok(())
+    }
+
+    fn switchable_period(&self) -> Result<usize> {
+        let pi = self.deliver;
+        if pi != self.issue || self.periods.get(pi).is_none_or(|p| !p.started) {
+            return Err(Error::NotSwitchable);
+        }
+        Ok(pi)
+    }
+
+    fn best_audio_rep(&self, pi: usize, index: usize) -> Result<RepRef> {
+        let mpd = self.mpd.as_ref().expect("mpd present");
+        let set = self.periods[pi]
+            .selection
+            .audio_sets
+            .get(index)
+            .ok_or(Error::NoSuchAudio)?;
+        let bandwidth = |r: &RepRef| r.resolve(mpd).map_or(0, |(_, _, rep)| rep.bandwidth);
+        set.reps
+            .iter()
+            .max_by_key(|r| bandwidth(r))
+            .copied()
+            .ok_or(Error::NoSuchAudio)
+    }
+
+    fn switch_lane(&mut self, pi: usize, kind: SetClass, at: RepRef) -> Result<()> {
+        let revive = kind == SetClass::Audio;
         let li = self.periods[pi]
             .lanes
             .iter()
-            .position(|l| l.kind == SetClass::Video && l.current().is_some())
+            .position(|l| l.kind == kind && (revive || l.current().is_some()))
             .ok_or(Error::NotSwitchable)?;
-        let (current_at, switch_us) = {
+        let (current_at, was_dead, switch_us) = {
             let lane = &self.periods[pi].lanes[li];
-            let cur = lane.current().ok_or(Error::NotSwitchable)?;
+            let cur = lane.reps.last().ok_or(Error::NotSwitchable)?;
             let plan = cur.plan.as_ref().ok_or(Error::NotSwitchable)?;
             let at_us = match plan.get(cur.next_issue) {
                 Some(seg) => seg.start_us,
@@ -1861,9 +1922,9 @@ impl DashClient {
                     .map(|seg| seg.start_us.saturating_add(seg.duration_us))
                     .ok_or(Error::NotSwitchable)?,
             };
-            (cur.at, at_us)
+            (cur.at, cur.dead, at_us)
         };
-        if current_at == at {
+        if current_at == at && !was_dead {
             return Ok(());
         }
         let aligned = {
@@ -1910,7 +1971,6 @@ impl DashClient {
         }
         let ri = self.periods[pi].lanes[li].reps.len();
         self.periods[pi].lanes[li].reps.push(rep);
-        self.periods[pi].selection.chosen_variant = Some(index);
         self.periods[pi].issue_done = false;
         self.register_rep(pi, li, ri);
         Ok(())

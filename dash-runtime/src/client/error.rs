@@ -234,6 +234,10 @@ pub enum Error {
     /// current variant list.
     #[error("no such variant")]
     NoSuchVariant,
+    /// [`super::DashClient::select_audio`] with an index outside the current
+    /// audio list.
+    #[error("no such audio set")]
+    NoSuchAudio,
     /// A switch is only possible while the Period being played is the one
     /// being fetched.
     #[error("the Representation cannot be switched now")]
