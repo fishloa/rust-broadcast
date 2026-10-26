@@ -179,3 +179,70 @@ host skew +-{0.5, 5, 60} s with and without UTCTiming; UTCTiming server skewed a
 garbage/empty/huge UTC bodies; HEAD answered 405; UTC fetch timeout falling to the next element then to the host clock; `direct`; `PreferHost`; a static MPD with no clock and no `Date`.
 `UtcClock` property tests: mapping is monotone in `now_us`, replacement order matches 3.2, extremes saturate. Mutants: sign of the midpoint, 500 ms half-second omitted, anchor replaced by lower trust,
 step threshold off by one, resync period ignored.
+
+## 4. MPD parsing: what exists, what is missing, where it lives
+
+### 4.1 `transmux::dash_parse` today (read from the source, `transmux/src/dash_parse.rs`)
+
+A v1 subset written as the inverse of `DashPackager`: `Mpd{profiles, mpd_type, mediaPresentationDuration, minimumUpdatePeriod, availabilityStartTime (RAW string), timeShiftBufferDepth,
+first BaseURL, periods}`, `Period{id,start,duration, first BaseURL}`, `AdaptationSet{mimeType, contentType, first BaseURL, effective SegmentTemplate}`, `Representation{id,bandwidth,codecs,width,height,
+frameRate (string), audioSamplingRate, mimeType, first BaseURL, effective SegmentTemplate}`, `SegmentTemplate{timescale, initialization, media, startNumber, duration, presentationTimeOffset, timeline}`,
+`SegmentTimeline{S{t,d,r}}` with negative `r`. It is not namespace-aware (prefixes stripped) and skips everything else as opaque subtrees. The structs are NOT `#[non_exhaustive]`.
+
+| Feature | dash_parse today | dash-runtime 0.1.0 | Clause |
+|---|---|---|---|
+| `MPD@publishTime/minBufferTime/maxSegmentDuration/suggestedPresentationDelay/availabilityEndTime/@id`, `Location` | missing | parsed (xs:dateTime via jiff, any offset; no zone = UTC) | 5.3.1.2 Table 3; IOP 4.4.4 |
+| `UTCTiming` (all 7 schemes) | missing | parsed, ordered; 5 acted on (section 3.3) | 5.8.5.7 |
+| `BaseURL` alternates, `@serviceLocation`, `@availabilityTimeOffset/Complete`, DVB `@priority/@weight` | first only | all levels, all alternates, deterministic failover (section 7.2) | 5.6.5; DVB-DASH 10.8.2 |
+| Period chaining (`start` absent, previous `duration`), early-available/terminated Periods | `start`/`duration` only | PeriodStart derivation 5.3.2.1 (steps 1-5), early terminated honoured, early-available ignored until a start exists | 5.3.2.1, 5.3.2.5 |
+| `AdaptationSet@id/group/lang/segmentAlignment/startWithSAP`, `Role`, `Accessibility`, `Label` | missing | parsed (Role/lang feed audio selection) | 5.3.3, 5.8.5.5 |
+| `ContentProtection` (+ `cenc:default_KID`) | skipped | parsed; presence on a set/rep => that set is `UnsupportedEncryption` unless an unprotected alternative exists | 5.8.4.1, 5.8.5.2 |
+| `Essential/SupplementalProperty` | skipped | parsed generically; understood: `urn:mpeg:dash:period-continuity:2015`, `...:period-connectivity:2015`, `urn:mpeg:dash:reset:2016`, `http://dashif.org/guidelines/last-segment-number`; an unknown `EssentialProperty` on a set drops that set (5.8.4.8: client that does not understand shall ignore the element) | 5.3.2.4, 5.4.2; IOP 4.4.3 |
+| `SegmentTemplate` `$RepresentationID$/$Number$/$Time$/$Bandwidth$`, `%0Nd`, `$$` | yes | reuse `SegmentTemplate::resolve` for substitution; unknown identifier => Representation dropped (5.3.9.4.4 step 2) | 5.3.9.4.4 Table 21 |
+| `$SubNumber$`, `S@k`, Ed.6 `Pattern`/`S@p/@pE/@ssp` | literal / ignored | Representation dropped with `Notice::SegmentSequenceUnsupported` + `TrackDropped` | 5.3.9.6.4/5, ED6-SCHEMA-DIFF |
+| `S@n`, negative `r` | no `@n`; negative `r` yes | both, lazily expanded (4.3) | 5.3.9.6.1, 5.3.9.6.2 |
+| `SegmentTemplate@endNumber/@index/@bitstreamSwitching`, `@eptDelta/@pdDelta/@presentationDuration`, `Initialization`/`RepresentationIndex` | missing | parsed; `endNumber` bounds the plan; PTO/eptDelta feed continuity; bitstream switching ignored | 5.3.9.2.2 Tables 16-17 |
+| `SegmentList` + `SegmentURL@media/@mediaRange/@index/@indexRange`, `@duration/@startNumber` | missing | parsed and planned | 5.3.9.3 Table 19 |
+| `SegmentBase@indexRange` + `Initialization@range` (on-demand profile, one file + sidx) | missing | parsed; sidx fetched and expanded (4.4) | 5.3.9.2, 5.3.9.5.4; 14496-12 8.16.3 |
+| `xlink:href/@actuate` on Period/AdaptationSet/SegmentList | missing | `urn:mpeg:dash:resolve-to-zero:2013` removes the element; any other href: element skipped + `Notice::XlinkSkipped` (not resolved in 0.1.0) | 5.5.3 rule 4 |
+| `EventStream`, `InbandEventStream` | skipped | parsed only to count; `Notice::EventStreamIgnored`; emsg boxes ride along in segments untouched | 5.10 |
+| `Preselection`, `Resync`, `ServiceDescription`/`Latency`, `ProducerReferenceTime`, `PatchLocation`, `ContentSteering` | skipped | skipped; one `Notice` per kind per session | 5.3.11, 5.3.13, Annex K, 5.12, 5.15 |
+| `MPD@type="list"` (Ed.6) | `Static` default | fatal `UnsupportedAddressing{"presentation_type_list"}` | ED6-SCHEMA-DIFF |
+
+### 4.2 Decision (D5): new module, `transmux` untouched
+
+Extending `dash_parse` in place would add public fields to non-`#[non_exhaustive]` structs (breaking), and any `transmux` version move forces every workspace dependent through the epoch-purity rule
+(a caret bucket spanning two epochs; CLAUDE.md "Epoch-pure compat buckets"). So the full model lives in `dash_runtime::mpd` (consume-only: no serializer; the workspace round-trip invariant is met against the
+transmux generator by a differential test, the same exception `dash_parse` itself relies on). It is namespace-aware (`quick_xml::NsReader`: `urn:mpeg:dash:schema:mpd:2011`, `xlink`, `cenc`,
+`urn:dvb:dash:dash-extensions:2014-1`), skips foreign-namespace content (the schema's `any`), and is bounded: input `DashConfig::max_mpd_bytes` (4 MiB), nesting depth 32, element count 100 000,
+attribute length 8 KiB, Periods 1 000, timeline entries via the same 100 000 expansion cap `transmux` uses. Failure taxonomy: `MpdError::{Xml, NotMpd, Invalid{what}, TooLarge}`.
+It is designed to be hoisted into a `broadcast-dash` syntax crate later (as `broadcast-hls` was, issue #878) without an API change: the module has no dependency on the client.
+
+Reuse from `transmux` (all existing public API, zero change): `parse_iso8601_duration` (xs:duration; rejects calendar `Y`/`M` and negatives, which for Period/MPD times is correct),
+`SegmentTemplate::resolve` (substitution, widths up to `MAX_FORMAT_WIDTH`, `$$`), `SegmentIndexBox::parse_body` (sidx v0/v1), `Fmp4Demux`. `SegmentTimeline::resolve` is NOT the production
+expander: it materialises up to 100 000 entries per call and has no `@n`; dash-runtime's lazy expander (4.3) is checked against it as an ORACLE in a differential test whenever no `@n` is present.
+
+### 4.3 Segment information: inheritance and the plan
+
+Inheritance is attribute-by-attribute down Period > AdaptationSet > Representation, lower level wins (5.3.9.1; the repo's `fixtures/dash/manifest-inheritance.mpd` is the shape fixture);
+`@duration` and `SegmentTimeline` are exclusive, so a child that introduces a timeline does not inherit `@duration` (5.3.9.2.1); a SegmentTemplate at one level forbids a SegmentList below and
+vice versa (5.3.9.1), violation drops the Representation. The result per Representation is one `SegmentInfo` = `Template | List | Base`.
+
+`address::plan` turns a `SegmentInfo` plus (PeriodStart, Period end, `utc_us`, MPD fetch context) into a lazy ordered view of `SegmentRef{number, media_time_ticks, duration_ticks, presentation_us
+(Period-relative = time - PTO), url, byte_range, avail_start_us, avail_end_us}`. Formulas (all in integer microseconds/i128, ticks via `@timescale`, which defaults to 1, 5.3.9.2.2):
+
+- `$Number$` with `@duration`: `MPDstart(n) = (n - NumberStart) * d`, `n = NumberStart + k - 1` (5.3.9.5.3; section 11 explains the printed `(k-1)+(kstart-1)` misprint and the real-content check). Last segment of a Period: `PeriodEnd - start`
+  (A.3.3 case 1); `@endNumber` caps (5.3.9.5.3). Neither `@duration` nor timeline: exactly one segment, `start 0` (A.3.3 case 3).
+- `$Time$` / timeline: running `time`, `@t` absolute (gap allowed, never smaller than the previous end), `@n` resets the number, `r >= 0` => `r + 1` segments, `r < 0` => to the next `S@t`, else to Period end
+  (dynamic: to `FetchTime + MUP`, A.3.2); `presentation_us = (time - PTO)/timescale` (5.3.9.6.1 step 1). Period end on the media timeline is `PTO + (PEwc - PSwc)` (the contract documented in `SegmentTimeline::resolve`).
+- Availability, dynamic only: `avail_start = AST + PeriodStart + MPDstart + MPDduration - ATO`, `avail_end = avail_start_without_ATO + MPDduration + TSB` (5.3.9.5.3; A.3.4 prints the equal form `start + TSB + 2*dur`;
+  IOP 4.3.3.2 SAET). ATO is the sum over every level that contributed to the URL (Segment information and BaseURL levels) and is applied only when `use_availability_time_offset` (D9).
+  `Initialization` available from `AST + PeriodStart` (5.3.9.5.2).
+- A timeline-listed segment is available at publish time by the IOP 4.3.6 sanity rule, so with a timeline the clock gates only the JOIN and the earliest-in-window check, not each request.
+
+### 4.4 SegmentBase / on-demand profile
+
+`Representation` with `BaseURL` + `SegmentBase@indexRange` (+ `Initialization@range`): init = `FetchInit` with the byte range; `FetchIndex` fetches `indexRange`; `SegmentIndexBox::parse_body`
+gives references (type 0 only; a hierarchical type-1 reference => `SegmentSequenceUnsupported`) which become `SegmentRef`s whose byte range is `first_offset + sum(referenced_size)`, anchored at the first byte
+after the sidx box (14496-12 8.16.3 as noted in `transmux/src/timing.rs`); `presentation_us = earliest_presentation_time + cumulative duration - PTO`. Responses honour the shared range rules (206 + exact `Content-Range`, or a 200 sliced
+after the whole body, W-a `body.rs`). Static MPDs only in practice; the dynamic variant works identically.
