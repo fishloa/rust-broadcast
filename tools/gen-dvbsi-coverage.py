@@ -607,8 +607,8 @@ def registry_counts() -> dict[str, int]:
     }
 
 
-# Spec-transcription directories under dvb-si/docs/{kind}/<dir>/ -> document title.
-# A new directory without an entry fails generation, so the index cannot rot.
+# Spec-transcription directory name -> document title. A name in SPEC_INDEX without an
+# entry here fails generation, so the index cannot rot.
 SPEC_DIRS = {
     "en_300_468": "ETSI EN 300 468 — DVB Service Information",
     "en_300_706": "ETSI EN 300 706 — Enhanced Teletext",
@@ -648,15 +648,44 @@ INDEX_BEGIN = "<!-- BEGIN GENERATED: dvb-si-docs-index (tools/gen-dvbsi-coverage
 INDEX_END = "<!-- END GENERATED: dvb-si-docs-index -->"
 
 
+PRIVATE_ROOT = "private/specs-verified/dvb/dvb-si"
+# EN 300 743 is stored once, under dvb-subtitle (byte-identical pages).
+PRIVATE_ALIAS = {("tables", "en_300_743"): "private/specs-verified/dvb/dvb-subtitle/tables/en_300_743"}
+
+# The spec-transcription markdown itself lives only in the private companion repo
+# (`private/specs-verified/dvb/dvb-si/{kind}/<spec>/`), so this index is a static
+# table: it must not scan directories that a public clone does not have.
+SPEC_INDEX = {
+    "tables": [
+        "en_300_468", "en_300_706", "en_300_743", "en_301_192", "iso_13818_1", "ts_101_154",
+        "ts_102_006", "ts_102_323", "ts_102_366", "ts_102_772", "ts_102_809",
+    ],
+    "descriptors": [
+        "en_300_468", "en_301_192", "en_303_560", "gy_t_270", "gy_t_420", "gy_t_422", "iso_13818_1",
+        "iso_13818_6", "iso_14496_1", "nordig", "t_ai_109_6", "t_ai_109_7", "t_uwa_012_2",
+        "ts_102_006", "ts_102_323", "ts_102_727", "ts_102_772", "ts_102_809", "ts_102_825",
+    ],
+    "enums": [
+        "en_300_468", "en_301_192", "en_303_560", "iso_13818_1", "iso_13818_6", "ts_101_154",
+        "ts_101_162", "ts_102_006", "ts_102_323", "ts_102_809",
+    ],
+    "text": ["iso_13818_6", "tr_101_211", "tr_101_290"],
+}
+
+
 def render_docs_index() -> list[str]:
-    out = [INDEX_BEGIN, "", "| Kind | Standard | Files |", "|---|---|---|"]
-    for kind, label in SPEC_KINDS:
+    for kind in SPEC_INDEX:
         base = CRATE / "docs" / kind
-        for d in sorted(p for p in base.iterdir() if p.is_dir()):
-            if d.name not in SPEC_DIRS:
-                raise GenError(f"docs/{kind}/{d.name}/ has no title in SPEC_DIRS (tools/gen-dvbsi-coverage.py)")
-            n = sum(1 for f in d.rglob("*.md") if f.name != "README.md")
-            out.append(f"| {label} | [{SPEC_DIRS[d.name]}]({kind}/{d.name}/) | {n} |")
+        for d in sorted(p.name for p in base.iterdir() if p.is_dir()) if base.is_dir() else []:
+            if d not in SPEC_INDEX[kind]:
+                raise GenError(f"docs/{kind}/{d}/ exists but is missing from SPEC_INDEX (tools/gen-dvbsi-coverage.py)")
+    out = [INDEX_BEGIN, "", "| Kind | Standard | Private path |", "|---|---|---|"]
+    for kind, label in SPEC_KINDS:
+        for name in SPEC_INDEX[kind]:
+            if name not in SPEC_DIRS:
+                raise GenError(f"docs/{kind}/{name}/ has no title in SPEC_DIRS (tools/gen-dvbsi-coverage.py)")
+            path = PRIVATE_ALIAS.get((kind, name), f"{PRIVATE_ROOT}/{kind}/{name}")
+            out.append(f"| {label} | {SPEC_DIRS[name]} | `{path}/` |")
     out += ["", INDEX_END]
     return out
 
