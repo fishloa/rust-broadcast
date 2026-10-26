@@ -5,19 +5,11 @@
 mod common;
 
 use common::checks::*;
+use common::scenario::*;
 use common::synth::{Addressing, MPD_URL, Synth, UTC_HOST};
 use common::world::{MICROS, Sim, World};
 use dash_runtime::client::{DashConfig, Output, PullLimits};
 use dash_runtime::timing::clock::ClockSource;
-
-const AST_US: i64 = 1_700_000_000 * MICROS;
-
-fn sim_with(synth: Synth, start_after_ast_us: i64, dash: DashConfig) -> (Sim, common::synth::Geo) {
-    let geo = synth.geo();
-    let world = World::new(AST_US + start_after_ast_us);
-    let sim = Sim::new(MPD_URL, dash, PullLimits::default(), world, Box::new(synth));
-    (sim, geo)
-}
 
 #[test]
 fn host_clock_number_template_joins_near_the_edge_and_plays_without_gaps() {
@@ -46,25 +38,6 @@ fn host_clock_number_template_joins_near_the_edge_and_plays_without_gaps() {
     assert!(per_track.values().all(|n| *n > 0));
     let _ = UTC_HOST;
     assert!(sim.count(|o| matches!(o, Output::Samples { .. })) > 0);
-}
-
-const UTC_XSDATE: &str = "http://utc.test/xsdate";
-const TOLERANCE_US: i64 = 2_000;
-
-fn with_utc(a: Addressing) -> Synth {
-    Synth::new(AST_US, a).with_utc("http-xsdate", UTC_XSDATE)
-}
-
-fn run_checked(sim: &mut Sim, geo: common::synth::Geo, secs: i64) -> Vec<SegReq> {
-    sim.run_for((secs * MICROS) as u64);
-    no_fatal(sim);
-    assert!(sim.errors.is_empty(), "{:?}", sim.errors);
-    assert!(sim.max_stall_run < 3, "stalled {}", sim.max_stall_run);
-    let reqs = segment_requests(sim, geo);
-    assert!(!reqs.is_empty());
-    assert_contiguous(&reqs);
-    assert_no_duplicates(&reqs);
-    reqs
 }
 
 #[test]

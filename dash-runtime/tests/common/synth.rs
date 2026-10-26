@@ -41,7 +41,7 @@ pub struct UtcServer {
     pub mode: UtcMode,
     pub head_status: Option<u16>,
     pub date_skew_us: i64,
-    pub extra_delay_us: i64,
+    pub by_path: BTreeMap<String, UtcMode>,
 }
 
 impl Default for UtcServer {
@@ -51,7 +51,7 @@ impl Default for UtcServer {
             mode: UtcMode::Ok,
             head_status: None,
             date_skew_us: 0,
-            extra_delay_us: 0,
+            by_path: BTreeMap::new(),
         }
     }
 }
@@ -136,6 +136,7 @@ pub struct Synth {
     pub static_from_utc_us: Option<i64>,
     pub with_audio: bool,
     pub mpd_override: Option<Box<dyn FnMut(i64) -> Option<String>>>,
+    pub utc_direct: bool,
     pub pool: Pool,
     pub mpd_requests: Vec<i64>,
     pub if_none_match_hits: u64,
@@ -165,6 +166,7 @@ impl Synth {
             static_from_utc_us: None,
             with_audio: true,
             mpd_override: None,
+            utc_direct: false,
             pool: Pool::load(),
             mpd_requests: Vec::new(),
             if_none_match_hits: 0,
@@ -288,7 +290,13 @@ impl Synth {
             .as_ref()
             .map(|l| format!("<Location>{l}</Location>"))
             .unwrap_or_default();
-        let utc = self.utc_elements.concat();
+        let mut utc = self.utc_elements.concat();
+        if self.utc_direct {
+            utc.push_str(&format!(
+                "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:direct:2014\" value=\"{}\"/>",
+                xs_datetime_ms(at_utc + self.utc.skew_us)
+            ));
+        }
         format!(
             "<?xml version=\"1.0\"?><MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" profiles=\"urn:mpeg:dash:profile:isoff-live:2011\" minBufferTime=\"PT2S\" maxSegmentDuration=\"PT{}S\"{attrs}>{location}<Period id=\"P0\" start=\"PT0S\"><AdaptationSet id=\"0\" contentType=\"video\" mimeType=\"video/mp4\" segmentAlignment=\"true\" startWithSAP=\"1\"><Representation id=\"V\" codecs=\"avc1.4d400d\" bandwidth=\"62440\" width=\"320\" height=\"240\">{vt}</Representation></AdaptationSet>{audio}</Period>{utc}</MPD>",
             self.seg_us / MICROS
@@ -297,7 +305,9 @@ impl Synth {
 
     fn serve_utc(&mut self, at_utc: i64, req: &HttpReq) -> Outcome {
         let u = self.utc.clone();
-        match u.mode {
+        let path = req.url.rsplit('/').next().unwrap_or("").to_owned();
+        let mode = u.by_path.get(&path).copied().unwrap_or(u.mode);
+        match mode {
             UtcMode::Hang => return Outcome::Hang,
             UtcMode::Fail => return Outcome::Fail(Failure::Timeout),
             UtcMode::Garbage => return Outcome::Resp(HttpResp::ok(b"not a time at all".to_vec())),

@@ -139,3 +139,4 @@ pub mod scan;
 pub mod synth;
 pub mod world;
 pub mod checks;
+pub mod scenario;

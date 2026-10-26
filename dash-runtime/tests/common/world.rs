@@ -127,6 +127,15 @@ pub trait Origin {
     fn serve(&mut self, at_utc_us: i64, req: &HttpReq) -> Outcome;
 }
 
+/// An origin the test keeps a handle to, to change it mid-run.
+pub struct Shared<O: Origin>(pub std::rc::Rc<std::cell::RefCell<O>>);
+
+impl<O: Origin> Origin for Shared<O> {
+    fn serve(&mut self, at_utc_us: i64, req: &HttpReq) -> Outcome {
+        self.0.borrow_mut().serve(at_utc_us, req)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
     Mpd,
@@ -177,6 +186,7 @@ pub struct Sim {
     pub errors: Vec<Error>,
     pub classes: Vec<FailureClass>,
     pub rtt_us: u64,
+    pub rtt_utc_us: Option<u64>,
     pub fault: Option<FaultFn>,
     pub host_clock_calls: Vec<u64>,
     pub send_headers: bool,
@@ -210,6 +220,7 @@ impl Sim {
             errors: Vec::new(),
             classes: Vec::new(),
             rtt_us: 40_000,
+            rtt_utc_us: None,
             fault: None,
             host_clock_calls: Vec::new(),
             send_headers: true,
@@ -239,8 +250,14 @@ impl Sim {
     fn dispatch(&mut self, action: Action) {
         let sent_elapsed = self.world.elapsed_us;
         let sent_mono = self.world.mono();
-        let origin_elapsed = sent_elapsed + self.rtt_us / 2;
-        let arrive = sent_elapsed + self.rtt_us;
+        let is_utc = matches!(action, Action::FetchUtcTiming { .. });
+        let rtt = if is_utc {
+            self.rtt_utc_us.unwrap_or(self.rtt_us)
+        } else {
+            self.rtt_us
+        };
+        let origin_elapsed = sent_elapsed + rtt / 2;
+        let arrive = sent_elapsed + rtt;
         let (kind, method, url) = match &action {
             Action::FetchMpd { url, .. } => (Kind::Mpd, Method::Get, url.clone()),
             Action::FetchUtcTiming { url, method, .. } => (
