@@ -69,7 +69,7 @@ M = [
  ("C45", "failed resource cannot be retried", E, "self.parked.insert(id);\n        FailureClass::Retry {", "FailureClass::Retry {"),
  ("C46", "byte ranges dropped from init/index requests", E, "range: range.and_then(|r| r.offset_len().ok()),", "range: None,"),
  ("C47", "lane exhausted one segment late", E, ".is_some_and(|p| rep.next_issue >= p.len().unwrap_or(0)),", ".is_some_and(|p| rep.next_issue > p.len().unwrap_or(0)),"),
- ("C48", "mpd-level and sets: TrackDropped notices not emitted", E, "            notices.push(Output::TrackDropped {\n                period: index,\n                set: d.set,", "            let _ = Output::TrackDropped {\n                period: index,\n                set: d.set,"),
+ ("C48", "dropped sets are not reported", E, "for d in &selection.dropped {", "for d in selection.dropped.iter().take(0) {"),
 ]
 
 

@@ -227,6 +227,7 @@ fn cross_origin_urls_are_refused_when_pinned_and_never_requested() {
     for base in [
         "http://other.test/m/",
         "https://dash.test/m/",
+        "https://dash.test:80/m/",
         "http://dash.test:8080/m/",
     ] {
         let text = absolute_base(base_text(), base);
@@ -754,4 +755,22 @@ fn alternates_rotate_every_two_failures_in_a_fixed_order() {
         .map(|r| if r.url.contains("a.test") { "a" } else { "b" })
         .collect();
     assert_eq!(hosts, vec!["a", "a", "b", "b", "a", "a"]);
+}
+
+#[test]
+fn a_short_segment_in_the_middle_is_not_a_tail() {
+    let text = base_text().replace("<S d=\"44032\" />", "<S d=\"1000\" />");
+    assert_ne!(text, base_text());
+    let mut cfg = DashConfig::default();
+    cfg.max_segment_failures = 3;
+    let mut origin = origin_with(text).fault(Fault::always(
+        "chunk-stream1-00002.m4s",
+        FaultKind::Status(404),
+    ));
+    let run = drive(URL, cfg, &mut origin, &mut Drive::default());
+    assert!(matches!(
+        run.fatal,
+        Some(FatalKind::SegmentFetchFailed { .. })
+    ));
+    assert_eq!(run.requested("chunk-stream1-00002.m4s"), 3);
 }
