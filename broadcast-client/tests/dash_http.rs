@@ -426,31 +426,38 @@ fn a_whole_file_answer_to_a_ranged_request_is_sliced_and_a_wrong_range_is_a_fail
 #[test]
 fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
     let mut sim = DashSim::static_origin(&url_of(MANIFEST), Config::default());
-    let mut first = true;
-    let mut second = false;
+    let mut hits = 0;
     sim.fault = Some(Box::new(move |req: &Logged, _| {
         if req.is_mpd() {
             let text = test_fixtures::read(&format!("dash/{MANIFEST}"));
             return Some(Answer::ok(text).with_header("Set-Cookie", "sid=abc; Path=/"));
         }
-        if req.url.ends_with("chunk-stream0-00003.m4s") && first {
-            first = false;
-            return Some(Answer::status_with(
-                429,
-                vec![("Retry-After".into(), "9".into())],
-            ));
-        }
-        if req.url.ends_with("chunk-stream1-00004.m4s") && !second {
-            second = true;
-            return Some(Answer::status(500));
+        if req.url.ends_with("chunk-stream0-00003.m4s") {
+            hits += 1;
+            return match hits {
+                1 => Some(Answer::status_with(
+                    429,
+                    vec![("Retry-After".into(), "9".into())],
+                )),
+                2 => Some(Answer::status(500)),
+                _ => None,
+            };
         }
         None
     }));
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     let reqs = sim.requests_to("chunk-stream0-00003");
-    assert_eq!(reqs.len(), 2);
-    assert_eq!((reqs[1].send_elapsed_us - reqs[0].send_elapsed_us) / SEC, 9);
+    assert_eq!(reqs.len(), 3);
+    let gaps: Vec<u64> = reqs
+        .windows(2)
+        .map(|w| (w[1].send_elapsed_us - w[0].send_elapsed_us) / SEC)
+        .collect();
+    assert_eq!(
+        gaps,
+        [9, 4],
+        "Retry-After 9 s for the 429; the 500 that follows has none, so the second backoff step (4 s) applies"
+    );
     assert!(
         sim.log
             .iter()
@@ -463,13 +470,6 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
             .cookies()
             .iter()
             .any(|(k, v)| k == "sid" && v == "abc")
-    );
-    let plain = sim.requests_to("chunk-stream1-00004");
-    assert_eq!(plain.len(), 2);
-    assert_eq!(
-        (plain[1].send_elapsed_us - plain[0].send_elapsed_us) / SEC,
-        2,
-        "a later failure without Retry-After uses the ordinary backoff"
     );
 }
 
