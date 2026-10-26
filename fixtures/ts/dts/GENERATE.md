@@ -24,5 +24,5 @@ Two distinct tones (L 440 Hz / R 660 Hz) so the two channels are distinguishable
 - Codec: `dts` (DCA core), **48000 Hz**, **stereo (2ch)**, ~1.984 s.
 - Size: 219960 bytes = 1170 × 188-byte TS packets (whole packets).
 - Core frame: sync `0x7FFE8001`; SFREQ `0b1101` (48 kHz); see
-  [`../../../transmux/docs/codec/dts-core-frame.md`](../../../transmux/docs/codec/dts-core-frame.md)
+  [`../../../transmux/docs/codec/dts-core-frame.md`](../../../transmux/docs/README.md#private-spec-transcriptions)
   for the frame-header layout used to parse it.

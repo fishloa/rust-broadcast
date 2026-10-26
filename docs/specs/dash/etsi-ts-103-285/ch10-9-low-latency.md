@@ -14,7 +14,7 @@ verification_date: 2026-10-24
 
 Structured notes in the project's own wording (the standard's text is not reproduced; short quoted phrases only). Strength words are kept: **shall** = mandatory, **should** = recommended, **may** = optional. Verbatim, page-verified text: the private file named in the front matter. Back to [INDEX](INDEX.md).
 
-Related: ServiceDescription/Latency/PlaybackRate/ProducerReferenceTime/LeapSecondInformation are ISO/IEC 23009-1 (Annex K and 5.x), cited not restated ([dash-mpd-rules](../../../../specs/rules/dash-mpd-rules.md)); `prft` box [isobmff-prft](../../../../transmux/docs/codec/isobmff-prft.md); MPD-side constraints 4.2.9 and clock sync 4.7.3 in [ch04](ch04-dash-constraints-http-sync.md); provider guidance 11.18 in [ch11](ch11-content-provider-guidelines.md); sample MPD in [annex-d-e](annex-d-e-examples.md).
+Related: ServiceDescription/Latency/PlaybackRate/ProducerReferenceTime/LeapSecondInformation are ISO/IEC 23009-1 (Annex K and 5.x), cited not restated ([dash-mpd-rules](../../../../specs/rules/dash-mpd-rules.md)); `prft` box [isobmff-prft](../../../../transmux/docs/README.md#private-spec-transcriptions); MPD-side constraints 4.2.9 and clock sync 4.7.3 in [ch04](ch04-dash-constraints-http-sync.md); provider guidance 11.18 in [ch11](ch11-content-provider-guidelines.md); sample MPD in [annex-d-e](annex-d-e-examples.md).
 
 ## 10.20.1 Applicability (p.103)
 
