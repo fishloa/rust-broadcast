@@ -563,11 +563,14 @@ impl Session {
         self.drain_source();
     }
 
-    /// Switch to another HLS variant of the last master playlist. After [`Status::Ended`] a known
-    /// index is accepted and ignored: nothing is started and nothing is emitted.
+    /// Switch to another variant of the last [`Event::Variants`]: an HLS variant of the master
+    /// playlist, or a video Representation of the current DASH Period (the switch takes effect at the
+    /// next segment boundary and is kept in later Periods). After [`Status::Ended`] a known index is
+    /// accepted and ignored: nothing is started and nothing is emitted.
     ///
     /// # Errors
-    /// [`Error::NotHls`] for a non-HLS session, [`Error::NoSuchVariant`] for an unknown index.
+    /// [`Error::NotHls`] for a session that is neither HLS nor DASH, [`Error::NoSuchVariant`] for an
+    /// unknown index.
     pub fn select_variant(&mut self, index: usize) -> Result<(), Error> {
         let Some(h) = self.adaptive.as_mut() else {
             return Err(Error::NotHls);
@@ -584,17 +587,19 @@ impl Session {
         Ok(())
     }
 
-    /// Select the separate HLS audio rendition, or `None` for no separate audio.
+    /// Select the separate audio rendition, or `None` for no separate audio.
     ///
-    /// `index` addresses the renditions of the last [`Event::Variants`] filtered to the chosen
-    /// variant's `AUDIO` group and to audio type, in master-playlist order. A rendition without
-    /// a `URI` (carried inside the variant) is selectable but never fetched. A manual selection
-    /// replaces automatic selection until the session ends. After [`Status::Ended`] the call is
-    /// accepted and ignored: nothing is started and nothing more is emitted.
+    /// For HLS `index` addresses the renditions of the last [`Event::Variants`] filtered to the
+    /// chosen variant's `AUDIO` group and to audio type, in master-playlist order. A rendition
+    /// without a `URI` (carried inside the variant) is selectable but never fetched. For DASH it
+    /// addresses every audio AdaptationSet of the current Period in MPD order, `None` stops requesting
+    /// audio and a later `Some` starts it again. A manual selection replaces automatic selection
+    /// until the session ends. After [`Status::Ended`] the call is accepted and ignored: nothing is
+    /// started and nothing more is emitted.
     ///
     /// # Errors
-    /// [`Error::NotHls`] for a non-HLS session, [`Error::NoSuchRendition`] for an out-of-range
-    /// index or when no master playlist was seen yet.
+    /// [`Error::NotHls`] for a session that is neither HLS nor DASH, [`Error::NoSuchRendition`] for
+    /// an out-of-range index or when no master playlist (or MPD selection) was seen yet.
     pub fn select_audio_rendition(&mut self, index: Option<usize>) -> Result<(), Error> {
         let Some(h) = self.adaptive.as_mut() else {
             return Err(Error::NotHls);

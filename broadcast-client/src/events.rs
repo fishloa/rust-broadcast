@@ -686,11 +686,13 @@ pub struct Config {
     pub buffer: buffering_runtime::ControllerConfig,
     /// Playout gate leads for HLS and finite TS (live TS-over-HTTP uses [`Config::buffer`]).
     pub playout: crate::playout::PlayoutConfig,
-    /// HLS variant selection policy.
+    /// HLS and DASH variant selection policy (`max_bandwidth` and `max_height` bound the chosen
+    /// Representation, `supported_codecs` filters by codec prefix).
     pub variant_policy: hls_runtime::client::VariantPolicy,
     /// Segment-pull sources (HLS, DASH): maximum manifest (playlist) body bytes; must be non-zero.
     pub max_manifest_bytes: usize,
-    /// HLS: maximum media resource body bytes; must be non-zero.
+    /// Segment-pull sources: maximum media resource body bytes (HLS segment or part, DASH init,
+    /// index or segment); must be non-zero.
     pub max_segment_bytes: usize,
     /// Segment-pull sources: manifest request timeout, microseconds; must be non-zero.
     pub request_timeout_us: u64,
@@ -723,10 +725,13 @@ pub struct Config {
     /// forever. Playlist reload failures are not counted: a playlist cannot be skipped, so they
     /// retry forever.
     pub max_segment_failures: u32,
-    /// HLS: BCP 47 language (prefix match, ASCII case-insensitive) preferred for the separate
-    /// audio rendition.
+    /// HLS and DASH: BCP 47 language (prefix match, ASCII case-insensitive) preferred for the
+    /// separate audio rendition (DASH: the audio AdaptationSet, never a commentary or description
+    /// role).
     pub preferred_audio_language: Option<String>,
-    /// HLS: pick a separate audio rendition automatically when the master playlist arrives.
+    /// HLS and DASH: pick a separate audio rendition automatically when the master playlist (HLS)
+    /// or the Period's selection (DASH) arrives; `false` plays video only until
+    /// [`crate::Session::select_audio_rendition`] chooses one.
     pub auto_select_audio: bool,
     /// Events the session keeps queued for the host. The host must drain
     /// [`crate::Session::next_event`]; when a host does not and the queue exceeds this cap, the
