@@ -3,7 +3,9 @@
 //! Scans `src/**/*.rs` outside `#[cfg(test)] mod` bodies for: HTTP status-line literals, a CRLFCRLF
 //! header terminator, `find("://")`, `strip_prefix("<scheme>://")`, SDP line building (`"a=`, `"m=`,
 //! `"v=0`), civil-date helpers, a base64 alphabet literal, and `thread::sleep` / `sleep(` in
-//! non-test async code, and wall-clock reads (`now_utc`, `SystemTime::now`, `Instant::now`) plus
+//! non-test async code, and wall-clock reads (`now_utc`, `SystemTime::now`, `Instant::now`,
+//! `Timestamp::now`, `Zoned::now`, `UNIX_EPOCH`, `Utc::now`, `Local::now`, `OffsetDateTime::now`:
+//! the session never reads a clock, the host passes `now_us` and `set_wall_clock`) plus
 //! `cookie_store`'s clock-reading `is_expired(` / `CookieStore` (cookie expiry runs on the session's
 //! injected `now_us` only).
 //!
@@ -42,6 +44,12 @@ const NEEDLES: &[&str] = &[
     "now_utc",
     "SystemTime::now",
     "Instant::now",
+    "Timestamp::now",
+    "Zoned::now",
+    "UNIX_EPOCH",
+    "Utc::now",
+    "Local::now",
+    "OffsetDateTime::now",
     "is_expired(",
     "CookieStore",
 ];
@@ -222,4 +230,24 @@ fn the_scanner_itself_bites() {
         1,
         "an out-of-line test mod must not swallow the next real item"
     );
+}
+
+#[test]
+fn every_clock_reader_needle_bites() {
+    const CLOCK_READERS: &[&str] = &[
+        "now_utc",
+        "SystemTime::now",
+        "Instant::now",
+        "Timestamp::now",
+        "Zoned::now",
+        "UNIX_EPOCH",
+        "Utc::now",
+        "Local::now",
+        "OffsetDateTime::now",
+    ];
+    for needle in CLOCK_READERS {
+        assert!(NEEDLES.contains(needle), "{needle} is not scanned");
+        let src = format!("fn f() {{ let _ = {needle}(); }}\n");
+        assert!(non_test_source(&src).contains(needle), "{needle}");
+    }
 }

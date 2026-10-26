@@ -25,6 +25,7 @@ mpeg-ts            = { path = "../mpeg-ts", version = "0.6", default-features = 
 buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-features = false }
 tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
 hls-runtime        = { path = "../hls-runtime", version = "0.9" }
+dash-runtime       = { path = "../dash-runtime", version = "0.1" }
 broadcast-hls      = { path = "../broadcast-hls", version = "0.4" }
 rtsp-runtime       = { path = "../rtsp-runtime", version = "0.8", default-features = false }
 sdp-types          = { workspace = true }

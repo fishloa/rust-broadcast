@@ -6,4 +6,5 @@ pub(crate) mod conn;
 pub(crate) mod deadlines;
 pub(crate) mod failures;
 pub(crate) mod retry;
+pub(crate) mod wall;
 pub(crate) mod window;

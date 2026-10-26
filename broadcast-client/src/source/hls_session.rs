@@ -15,6 +15,7 @@ use crate::error::Error;
 use crate::events::{Action, Config, Event, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::wall::WallClock;
 use crate::source::hls::{HlsSource, Role};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,11 +127,14 @@ impl HlsSession {
         status: u16,
         headers: &[(String, String)],
         now: u64,
+        wall: Option<&WallClock>,
         auth: &mut AuthState,
     ) {
         match self.audio.as_mut().filter(|a| a.source.owns(conn)) {
-            Some(a) => a.source.on_response(conn, status, headers, now, auth),
-            None => self.main.on_response(conn, status, headers, now, auth),
+            Some(a) => a.source.on_response(conn, status, headers, now, wall, auth),
+            None => self
+                .main
+                .on_response(conn, status, headers, now, wall, auth),
         }
         self.collect(now, auth);
     }
