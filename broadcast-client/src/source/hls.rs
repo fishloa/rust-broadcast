@@ -3,12 +3,9 @@
 
 use alloc::collections::{BTreeSet, BinaryHeap, VecDeque};
 use alloc::string::{String, ToString};
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
-use core::sync::atomic::{AtomicU32, Ordering};
 use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
 
 use hls_runtime::client::{
     Action as HlsAction, Error as CoreError, HlsClient, KeyId, Output, ResourceId,
@@ -20,6 +17,7 @@ use crate::auth::{AuthDecision, AuthState};
 use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::redirect;
+use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 
 const MICROS_PER_MILLI: u64 = 1_000;
 const MILLIS_PER_SECOND: u64 = 1_000;
@@ -34,7 +32,6 @@ const STATUS_GONE: u16 = 410;
 
 const METHOD_GET: &str = "GET";
 
-const FIRST_CONN_ID: u32 = 1;
 const ENCRYPTED_SAMPLE_ENTRIES: [&str; 2] = ["encv", "enca"];
 const UNNAMED_TRACK_ID: u32 = 0;
 const FIELD_MAX_MANIFEST_BYTES: &str = "max_manifest_bytes";
@@ -47,7 +44,6 @@ const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
 const DEADLINE_SLACK_FACTOR: usize = 4;
 const DEADLINE_SLACK_FLOOR: usize = 64;
 
-type LiveIds = Arc<Mutex<BTreeSet<u32>>>;
 type Queued = (u64, HlsAction);
 
 #[derive(Debug, Clone, Copy)]
@@ -55,63 +51,6 @@ enum Lane {
     Other,
     Retry,
     Fresh,
-}
-
-/// Connection-id allocator shared by every adapter of one session. An id stays reserved while its
-/// [`ConnLease`] lives, so a counter that wraps never hands out an id still in use.
-#[derive(Debug, Clone)]
-pub(crate) struct ConnAlloc {
-    next: Arc<AtomicU32>,
-    live: LiveIds,
-}
-
-/// A reserved connection id, released on drop.
-#[derive(Debug)]
-pub(crate) struct ConnLease {
-    id: u32,
-    live: LiveIds,
-}
-
-impl ConnLease {
-    fn id(&self) -> u32 {
-        self.id
-    }
-}
-
-impl Drop for ConnLease {
-    fn drop(&mut self) {
-        self.live
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.id);
-    }
-}
-
-impl ConnAlloc {
-    pub(crate) fn new() -> Self {
-        Self {
-            next: Arc::new(AtomicU32::new(FIRST_CONN_ID)),
-            live: Arc::new(Mutex::new(BTreeSet::new())),
-        }
-    }
-
-    fn lease(&self) -> ConnLease {
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
-        loop {
-            let candidate = self
-                .next
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                    Some(c.checked_add(1).unwrap_or(FIRST_CONN_ID))
-                })
-                .unwrap_or(FIRST_CONN_ID);
-            if live.insert(candidate) {
-                return ConnLease {
-                    id: candidate,
-                    live: self.live.clone(),
-                };
-            }
-        }
-    }
 }
 
 /// Which playlist an adapter plays.
@@ -1269,39 +1208,6 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
 mod tests {
     use super::*;
 
-    impl ConnAlloc {
-        fn starting_at(n: u32) -> Self {
-            let alloc = Self::new();
-            alloc.next.store(n, Ordering::Relaxed);
-            alloc
-        }
-    }
-
-    #[test]
-    fn lease_skips_ids_still_held_after_the_counter_wraps() {
-        let alloc = ConnAlloc::starting_at(u32::MAX - 1);
-        let a = alloc.lease();
-        let b = alloc.lease();
-        assert_eq!((a.id(), b.id()), (u32::MAX - 1, u32::MAX));
-        let c = alloc.lease();
-        assert_eq!(c.id(), FIRST_CONN_ID);
-
-        alloc.next.store(u32::MAX - 1, Ordering::Relaxed);
-        let d = alloc.lease();
-        assert!(
-            ![a.id(), b.id(), c.id()].contains(&d.id()),
-            "reused live id {}",
-            d.id()
-        );
-
-        drop(a);
-        alloc.next.store(u32::MAX - 1, Ordering::Relaxed);
-        assert_eq!(
-            alloc.lease().id(),
-            u32::MAX - 1,
-            "a released id is reusable"
-        );
-    }
     fn source_with_auth() -> (HlsSource, AuthState, Url) {
         let url = Url::parse("http://o.test/p.m3u8").unwrap();
         let auth = AuthState::new(url.clone(), Vec::new());
