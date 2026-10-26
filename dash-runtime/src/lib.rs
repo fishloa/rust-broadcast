@@ -17,6 +17,7 @@
 //! | [`mpd`] | [`mpd::Mpd`]: the consume-only model, a bounded namespace-aware parser, attribute inheritance down Period > AdaptationSet > Representation, BaseURL alternates and URL resolution |
 //! | [`address`] | [`address::SegmentPlan`]: the lazy Segment list of a Representation (templates with width tags and `$$`, timelines with negative `@r` and `@n`, `SegmentList`, `SegmentBase` + `sidx`), with availability windows |
 //! | [`timing`] | [`timing::clock::UtcClock`], `UTCTiming` sampling, `xs:dateTime` / HTTP `Date` / NTP readers, PeriodStart, availability and live-edge arithmetic |
+//! | [`client`] | [`client::config::DashConfig`]: the DASH knobs of a client session (clock ladder, early-request cadence, refresh floor) |
 //! | [`selection`] | Pure choice of AdaptationSet and Representation by role, language, codec and bandwidth |
 //!
 //! # Format policy
@@ -66,6 +67,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod address;
+pub mod client;
 pub mod error;
 pub mod limits;
 pub mod mpd;
