@@ -27,11 +27,11 @@ it, and how do I call it.
    not included.
 2. **Every claim is checked against the code or the spec transcription.** A
    standards row, a feature description or a "supports X" sentence is written
-   by reading the module that implements it and the `docs/` transcription it
+   by reading the module that implements it and the spec transcription it
    cites, not from memory, the issue text or another README. If it cannot be
    confirmed, write **unverified**. Never round "most of" up to "full".
 3. **Editions come from the vendored spec.** Cite the edition the code was
-   written against, exactly as the module doc or the `docs/` transcription
+   written against, exactly as the module doc or the spec transcription
    header names it (`ETSI EN 300 468 V1.20.1`, `ANSI/SCTE 35 2023r1`,
    `SMPTE ST 377-1:2019`). Do not cite a newer edition the code has not been
    checked against.
@@ -87,8 +87,8 @@ Copy this into the PR description when you write or rewrite a crate README.
       non-empty unless the crate genuinely covers its whole standard.
 - [ ] **Standards supported** table with a row per standard: number and title,
       edition implemented, scope (clauses/tables), status from the vocabulary
-      above, notes. Every row traced to a module doc citation or a `docs/`
-      transcription.
+      above, notes. Every row traced to a module doc citation or a spec
+      transcription (private: `private/specs-verified/`).
 - [ ] **Feature flags** table: every feature in `Cargo.toml`, its default, what
       it enables, and whether it needs `std`. Must match `[features]` exactly.
 - [ ] **Quick start**: a compiling doctest of the most common use, plus the
@@ -146,7 +146,7 @@ says it may be deleted.
 |---|---|---|---|---|
 | <ETSI EN 300 468 — DVB Service Information> | <V1.20.1> | <§5 tables, §6 descriptors, Annex A> | <Full / Partial / Typed-opaque / Label-only / Reference> | <what is and is not covered> |
 
-Spec transcriptions: [`docs/`](docs/).
+Spec notes and the pointer to the private transcriptions: [`docs/`](docs/).
 
 ## Feature flags
 

@@ -1,15 +1,16 @@
 # Vendored specification PDFs
 
 Canonical source-of-truth standards for the workspace crates. The structured
-markdown under each crate's `docs/` is transcribed from these, and **that
-markdown is the public, reviewable artefact** the parsers are checked against.
+markdown transcribed from these is **private too**: it lives in the private companion repo
+(`private/specs-verified/<family>/<owner>/`; old-path table: `docs/specs/PRIVATE-MAP.md`). The public tree keeps
+data (`*.toml` registries), free-licence text (IETF/W3C) and own-words notes.
 
 > **The PDFs themselves are now private.** Every spec PDF lives in the private
 > companion repo **`rust-broadcast-specs`** (checked out as a sibling at
 > `../rust-broadcast-specs`), NOT in this repo. `specs/*.pdf` is gitignored
 > here. This keeps redistribution-restricted standards (ISO/IEC, ITU-T, and —
 > conservatively — even the freely-downloadable ETSI/DVB/SCTE deliverables) out
-> of the public tree, while the derived syntax markdown stays public.
+> of the public tree, and the derived syntax markdown goes with them.
 >
 > To regenerate a `docs/` transcription, clone `rust-broadcast-specs` next to
 > this repo (`git clone …/rust-broadcast-specs ../rust-broadcast-specs`) so the

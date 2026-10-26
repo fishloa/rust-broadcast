@@ -12,7 +12,7 @@ notes_original_wording: true
 
 Printed page = PDF page - 21. Own-wording notes. Inband events (`urn:mpeg:dash:event:2012`, `emsg`, MPD validity expiry, patch, full MPD) are defined in 23009-1 5.10.4
 (`private/specs-md/iso_iec_23009-1_dash_2022_ed5.md`, Table 40, ~l. 5326-5360); box layout: [`../../../../specs/rules/emsg-rules.md`](../../../../specs/rules/emsg-rules.md),
-[`../../../../mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/emsg.md). Previous [ch04-03](ch04-03-live-edge-and-mpd-updates.md); next [ch04-05](ch04-05-time-sync-robust-operation.md).
+[`../../../../mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/README.md#private-spec-transcriptions). Previous [ch04-03](ch04-03-live-edge-and-mpd-updates.md); next [ch04-05](ch04-05-time-sync-robust-operation.md).
 
 ## 4.5 Main live (MPD + segment controlled)
 

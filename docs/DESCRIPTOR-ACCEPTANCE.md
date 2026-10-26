@@ -39,7 +39,7 @@ Each item is tagged with how it is enforced:
   data-carrying ADTs go in its SKIP list.
 
 ## 4. Typing (minimise untyped surface)
-- [REVIEW] No public raw-byte / bare-integer field where a transcribed spec table
+- [REVIEW] No public raw-byte / bare-integer field where a transcribed spec table (private, or its `docs/enums/` toml)
   defines the values — use the typed enum. A bare `&[u8]` / `uN` is allowed ONLY
   when: the bytes are an **opaque sub-structure defined by another spec** (e.g.
   `InitialObjectDescriptor`, `MuxCodeTableEntry`, `si_rbsp`, private_data), or the

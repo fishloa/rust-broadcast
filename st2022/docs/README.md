@@ -1,5 +1,13 @@
 # st2022 — spec prep (issue #752)
 
+<!-- BEGIN private-pointer (docs/specs/PRIVATE-MAP.md) -->
+## Private spec transcriptions
+
+The page-verified transcriptions of SMPTE ST 2022-6/-7 for this crate (2 files) live only in the private companion repository `rust-broadcast-private` (the `private/` submodule) at `private/specs-verified/smpte/st2022/`. The standards are (c) their publishers, so the text is not published here. Old public path to private path: [`docs/specs/PRIVATE-MAP.md`](../../docs/specs/PRIVATE-MAP.md); code comments keep their original `docs/...` citations.
+
+Nothing else remains in this directory.
+<!-- END private-pointer -->
+
 Spec-grounding docs for the SMPTE ST 2022-6/-7 family (SDI-over-IP transport
 + seamless protection switching). The `st2022` crate now exists and
 implements the ST 2022-6 HBRMT payload header parser; it does **not**
@@ -42,7 +50,7 @@ mismatch:
   triggered a diagnostic. Cross-checked independently against a plain
   `pdftotext -layout` extraction of the same PDF — the two extraction
   methods agree byte-for-byte on every field name, bit width, and coded
-  value used in [`st2022-6-framing.md`](st2022-6-framing.md).
+  value used in `st2022-6-framing.md` (private: `specs-verified/smpte/st2022/st2022-6-framing.md`).
 - **ST 2022-7:2019**: exit code 0, no diagnostics.
 - **ST 2022-7:2013**: consulted via `pdftotext -layout` only (used for
   cross-version comparison text, not as the primary transcription source —
@@ -50,13 +58,13 @@ mismatch:
 
 ## What each doc covers
 
-- [`st2022-6-framing.md`](st2022-6-framing.md) — RTP/UDP/IP header (§6.3),
+- `st2022-6-framing.md` (private: `specs-verified/smpte/st2022/st2022-6-framing.md`) — RTP/UDP/IP header (§6.3),
   the full HBRMT Payload Header field-by-field (§6.4: fixed row + Video
   Source Format row + Video Timestamp + TLV Header Extension), the Media
   Payload structure and last-payload sizing equations (§6.5), a frame/field
   structure summary, and the FEC interoperability *limits* (§7.1 — not the
   FEC wire format itself, which lives in a different standard, see below).
-- [`st2022-7-hitless.md`](st2022-7-hitless.md) — the redundancy model (§6),
+- `st2022-7-hitless.md` (private: `specs-verified/smpte/st2022/st2022-7-hitless.md`) — the redundancy model (§6),
   the exact duplicate-identification rule a receiver needs (§4.3 + Annex A —
   this is the section written to directly answer "what does
   `media_plane::byte_merge::MergePolicy::Hitless2022_7` need to parse"), the
