@@ -1,5 +1,13 @@
 # ITU-T H.222.0 / ISO/IEC 13818-1 — cited clauses
 
+<!-- BEGIN private-pointer (docs/specs/PRIVATE-MAP.md) -->
+## Private spec transcriptions
+
+The page-verified transcriptions of ITU-T H.222.0; scrambling_control.md for this crate (3 files) live only in the private companion repository `rust-broadcast-private` (the `private/` submodule) at `private/specs-verified/mpeg/mpeg-ts/`. The standards are (c) their publishers, so the text is not published here. Old public path to private path: [`docs/specs/PRIVATE-MAP.md`](../../docs/specs/PRIVATE-MAP.md); code comments keep their original `docs/...` citations.
+
+Nothing else remains in this directory.
+<!-- END private-pointer -->
+
 `mpeg-ts` owns MPEG-2 TS framing here, so the H.222.0 references the workspace
 relies on are collected in this directory. H.222.0 is cited **451 times across
 10 crates**.

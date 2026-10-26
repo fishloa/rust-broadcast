@@ -21,5 +21,5 @@ Notes file: [part10-events-and-timed-metadata.md](./part10-events-and-timed-meta
 | 11 | Externally defined schemes | 18 | transcribed | registry pointer only |
 | Annex A | Change history | 19 | transcribed | |
 
-Verification: [../VERIFICATION.md](../VERIFICATION.md). Related: [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/emsg.md),
+Verification: [../VERIFICATION.md](../VERIFICATION.md). Related: [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/README.md#private-spec-transcriptions),
 [`specs/rules/emsg-rules.md`](../../../../specs/rules/emsg-rules.md), [`docs/dashif-ingest/DESIGN.md`](../../../dashif-ingest/DESIGN.md).

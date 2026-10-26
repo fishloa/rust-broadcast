@@ -69,7 +69,7 @@ The Ed.6 XML-schema comparison (names and types only) is in [`ED6-SCHEMA-DIFF.md
 
 - Existing analysis files consolidated here: [`dash-23009-1-2022-ids.md`](dash-23009-1-2022-ids.md) (`@id`/`@group` and the xsd id types; short quoted rows only),
   [`dash-23009-1-2022-aspect.md`](dash-23009-1-2022-aspect.md) (`@sar`/`@par`/`@width`/`@height`). They quote only the specific rows they analyse and link here for the rest.
-- Events / `emsg` (clause 5.10, outside this range; only the `emsg` brand row of Table 1 touches it): [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/emsg.md),
+- Events / `emsg` (clause 5.10, outside this range; only the `emsg` brand row of Table 1 touches it): [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/README.md#private-spec-transcriptions),
   [`specs/rules/emsg-rules.md`](../../../../specs/rules/emsg-rules.md).
 - Superseded 2012-edition summary, with a rule-by-rule check against this transcription: [`specs/rules/dash-mpd-rules.md`](../../../../specs/rules/dash-mpd-rules.md).
 - DASH-IF IOP trick-mode analysis (consumes the id rules above): [`transmux/docs/codec/dashif-iop-4.3-trickmode.md`](../../../../transmux/docs/codec/dashif-iop-4.3-trickmode.md).
