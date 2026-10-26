@@ -56,6 +56,8 @@ impl Default for UtcServer {
     }
 }
 
+pub const MAX_PERIODS: usize = 8;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Geo {
     pub ast_us: i64,
@@ -64,6 +66,8 @@ pub struct Geo {
     pub t0_ticks: u64,
     pub addressing: Addressing,
     pub tsb_us: Option<i64>,
+    pub n_periods: usize,
+    pub period_first_idx: [i64; MAX_PERIODS],
 }
 
 impl Geo {
@@ -83,13 +87,19 @@ impl Geo {
         (utc_us - self.ast_us).div_euclid(self.seg_us)
     }
 
+    pub fn period_of(rep: &str) -> usize {
+        rep.get(1..).and_then(|s| s.parse().ok()).unwrap_or(0)
+    }
+
     pub fn index_of(&self, rep: &str, n: u64) -> Option<i64> {
+        let p = Self::period_of(rep);
+        let base = if p < self.n_periods { self.period_first_idx[p] } else { 0 };
         match self.addressing {
             Addressing::Number | Addressing::TimelineNumber => {
-                n.checked_sub(self.start_number).map(|v| v as i64)
+                n.checked_sub(self.start_number).map(|v| base + v as i64)
             }
             Addressing::TimelineTime => {
-                let ts = if rep == "V" { VIDEO_TIMESCALE } else { AUDIO_TIMESCALE };
+                let ts = if rep.starts_with('V') { VIDEO_TIMESCALE } else { AUDIO_TIMESCALE };
                 let d = self.ticks(ts);
                 n.checked_sub(self.t0_ticks).map(|v| (v / d) as i64)
             }
@@ -142,6 +152,12 @@ pub struct Synth {
     pub if_none_match_hits: u64,
     pub segment_bytes_overrides: BTreeMap<String, Vec<u8>>,
     pub min_update_attr: bool,
+    pub period_starts_us: Vec<i64>,
+    pub announce_ahead_us: i64,
+    pub per_segment_s: bool,
+    pub extra_mpd_children: String,
+    pub mpd_id: Option<String>,
+    pub mpd_urls: Vec<String>,
 }
 
 impl Synth {
@@ -172,6 +188,12 @@ impl Synth {
             if_none_match_hits: 0,
             segment_bytes_overrides: BTreeMap::new(),
             min_update_attr: true,
+            period_starts_us: Vec::new(),
+            announce_ahead_us: 0,
+            per_segment_s: false,
+            extra_mpd_children: String::new(),
+            mpd_id: None,
+            mpd_urls: Vec::new(),
         }
     }
 
@@ -194,6 +216,14 @@ impl Synth {
             t0_ticks: self.t0_ticks,
             addressing: self.addressing,
             tsb_us: self.tsb_us,
+            n_periods: self.period_starts_us.len().min(MAX_PERIODS),
+            period_first_idx: {
+                let mut a = [0i64; MAX_PERIODS];
+                for (i, st) in self.period_starts_us.iter().take(MAX_PERIODS).enumerate() {
+                    a[i] = st / self.seg_us;
+                }
+                a
+            },
         }
     }
 
@@ -220,22 +250,85 @@ impl Synth {
         }
     }
 
-    fn template(&self, rep_ticks: u64, timescale: u64, first_idx: i64, count: i64) -> String {
+    fn template(
+        &self,
+        rep_ticks: u64,
+        timescale: u64,
+        first_local: i64,
+        count: i64,
+        global_first: i64,
+        pto_ticks: u64,
+    ) -> String {
         let media = self.media_attr();
+        let init = "seg/$RepresentationID$/init.mp4";
         match self.addressing {
             Addressing::Number => format!(
-                "<SegmentTemplate timescale=\"{timescale}\" duration=\"{rep_ticks}\" startNumber=\"{}\" media=\"{media}\" initialization=\"seg/$RepresentationID$/init.mp4\"/>",
+                "<SegmentTemplate timescale=\"{timescale}\" duration=\"{rep_ticks}\" startNumber=\"{}\" media=\"{media}\" initialization=\"{init}\"/>",
                 self.start_number
             ),
-            _ => {
-                let t = self.t0_ticks + first_idx as u64 * rep_ticks;
+            a => {
+                let t = if a == Addressing::TimelineTime {
+                    self.t0_ticks + (global_first + first_local) as u64 * rep_ticks
+                } else {
+                    self.t0_ticks + (global_first + first_local) as u64 * rep_ticks
+                };
+                let pto = if pto_ticks > 0 {
+                    format!(" presentationTimeOffset=\"{pto_ticks}\"")
+                } else {
+                    String::new()
+                };
+                let entries = if self.per_segment_s {
+                    let mut e = format!("<S t=\"{t}\" d=\"{rep_ticks}\"/>");
+                    for _ in 1..count {
+                        e.push_str(&format!("<S d=\"{rep_ticks}\"/>"));
+                    }
+                    e
+                } else {
+                    format!("<S t=\"{t}\" d=\"{rep_ticks}\" r=\"{}\"/>", count - 1)
+                };
                 format!(
-                    "<SegmentTemplate timescale=\"{timescale}\" startNumber=\"{}\" media=\"{media}\" initialization=\"seg/$RepresentationID$/init.mp4\"><SegmentTimeline><S t=\"{t}\" d=\"{rep_ticks}\" r=\"{}\"/></SegmentTimeline></SegmentTemplate>",
-                    self.start_number + first_idx as u64,
-                    count - 1
+                    "<SegmentTemplate timescale=\"{timescale}\" startNumber=\"{}\"{pto} media=\"{media}\" initialization=\"{init}\"><SegmentTimeline>{entries}</SegmentTimeline></SegmentTemplate>",
+                    self.start_number + first_local as u64
                 )
             }
         }
+    }
+
+    fn period_xml(&self, pi: usize, name: &str, start_us: i64, first_global: i64, cl: i64, closed: bool) -> String {
+        let (first_local, count) = match self.addressing {
+            Addressing::Number => (0, 0),
+            _ => {
+                let first = (cl - self.window as i64).max(0);
+                let count = (cl - first).max(1);
+                (first, count)
+            }
+        };
+        let _ = closed;
+        let pto = |ts: u64| {
+            if self.addressing == Addressing::TimelineTime && !self.period_starts_us.is_empty() {
+                (start_us as u64) * ts / 1_000_000
+            } else {
+                0
+            }
+        };
+        let vt = self.template(self.ticks(VIDEO_TIMESCALE), VIDEO_TIMESCALE, first_local, count, first_global, pto(VIDEO_TIMESCALE));
+        let at = self.template(self.ticks(AUDIO_TIMESCALE), AUDIO_TIMESCALE, first_local, count, first_global, pto(AUDIO_TIMESCALE));
+        let (vr, ar) = if self.period_starts_us.is_empty() {
+            ("V".to_owned(), "A".to_owned())
+        } else {
+            (format!("V{pi}"), format!("A{pi}"))
+        };
+        let audio = if self.with_audio {
+            format!(
+                "<AdaptationSet id=\"1\" contentType=\"audio\" mimeType=\"audio/mp4\" segmentAlignment=\"true\" startWithSAP=\"1\"><Representation id=\"{ar}\" codecs=\"mp4a.40.2\" bandwidth=\"98701\" audioSamplingRate=\"44100\">{at}</Representation></AdaptationSet>"
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "<Period id=\"{name}\" start=\"PT{}S\"><AdaptationSet id=\"0\" contentType=\"video\" mimeType=\"video/mp4\" segmentAlignment=\"true\" startWithSAP=\"1\"><Representation id=\"{vr}\" codecs=\"avc1.4d400d\" bandwidth=\"62440\" width=\"320\" height=\"240\">{vt}</Representation></AdaptationSet>{audio}</Period>",
+            start_us as f64 / 1e6
+        )
     }
 
     pub fn mpd_at(&mut self, at_utc: i64) -> String {
@@ -245,10 +338,11 @@ impl Synth {
             return t;
         }
         let c = self.complete_count(at_utc).max(1);
-        let first_idx = (c - self.window as i64).max(0);
-        let count = c - first_idx;
         let is_static = self.static_from_utc_us.is_some_and(|s| at_utc >= s);
         let mut attrs = String::new();
+        if let Some(id) = &self.mpd_id {
+            attrs.push_str(&format!(" id=\"{id}\""));
+        }
         if is_static {
             let total = self
                 .static_from_utc_us
@@ -276,14 +370,32 @@ impl Synth {
                 ));
             }
         }
-        let vt = self.template(self.ticks(VIDEO_TIMESCALE), VIDEO_TIMESCALE, first_idx, count);
-        let at = self.template(self.ticks(AUDIO_TIMESCALE), AUDIO_TIMESCALE, first_idx, count);
-        let audio = if self.with_audio {
-            format!(
-                "<AdaptationSet id=\"1\" contentType=\"audio\" mimeType=\"audio/mp4\" segmentAlignment=\"true\" startWithSAP=\"1\"><Representation id=\"A\" codecs=\"mp4a.40.2\" bandwidth=\"98701\" audioSamplingRate=\"44100\">{at}</Representation></AdaptationSet>"
-            )
+        let periods = if self.period_starts_us.is_empty() {
+            self.period_xml(0, "P0", 0, 0, c, false).replace("<Period id=\"P0\" start=\"PT0S\">", "<Period id=\"P0\" start=\"PT0S\">")
         } else {
-            String::new()
+            let now_off = at_utc - self.ast_us;
+            let starts = self.period_starts_us.clone();
+            let mut out = String::new();
+            for (i, st) in starts.iter().enumerate() {
+                let announced = *st <= now_off + self.announce_ahead_us;
+                let next_visible = starts
+                    .get(i + 1)
+                    .is_some_and(|n| *n <= now_off + self.announce_ahead_us);
+                let end = starts.get(i + 1).copied().filter(|_| next_visible);
+                let removed = end.is_some_and(|e| {
+                    e + self.tsb_us.unwrap_or(i64::MAX / 4) + 2 * self.seg_us < now_off
+                });
+                if !announced || removed {
+                    continue;
+                }
+                let first_global = st / self.seg_us;
+                let mut cl = (c - first_global).max(0);
+                if let Some(e) = end {
+                    cl = cl.min((e - st) / self.seg_us);
+                }
+                out.push_str(&self.period_xml(i, &format!("P{i}"), *st, first_global, cl, end.is_some()));
+            }
+            out
         };
         let location = self
             .location
@@ -298,8 +410,9 @@ impl Synth {
             ));
         }
         format!(
-            "<?xml version=\"1.0\"?><MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" profiles=\"urn:mpeg:dash:profile:isoff-live:2011\" minBufferTime=\"PT2S\" maxSegmentDuration=\"PT{}S\"{attrs}>{location}<Period id=\"P0\" start=\"PT0S\"><AdaptationSet id=\"0\" contentType=\"video\" mimeType=\"video/mp4\" segmentAlignment=\"true\" startWithSAP=\"1\"><Representation id=\"V\" codecs=\"avc1.4d400d\" bandwidth=\"62440\" width=\"320\" height=\"240\">{vt}</Representation></AdaptationSet>{audio}</Period>{utc}</MPD>",
-            self.seg_us / MICROS
+            "<?xml version=\"1.0\"?><MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" profiles=\"urn:mpeg:dash:profile:isoff-live:2011\" minBufferTime=\"PT2S\" maxSegmentDuration=\"PT{}S\"{attrs}>{}{location}{periods}{utc}</MPD>",
+            self.seg_us / MICROS,
+            self.extra_mpd_children
         )
     }
 
@@ -345,18 +458,16 @@ impl Synth {
 
     fn serve_media(&mut self, at_utc: i64, req: &HttpReq) -> Outcome {
         let path = req.url.strip_prefix("http://dash.test").unwrap_or("");
-        if path == "/live/manifest.mpd" {
+        if path.starts_with("/live/") && path.ends_with(".mpd") {
             self.mpd_requests.push(at_utc);
+            self.mpd_urls.push(req.url.clone());
+            let body = self.mpd_at(at_utc).into_bytes();
+            let mut r = HttpResp::ok(body.clone());
             if let Some(to) = self.redirect_to.clone()
                 && req.url != to
             {
-                let body = self.mpd_at(at_utc).into_bytes();
-                let mut r = HttpResp::ok(body);
                 r.final_url = Some(to);
-                return Outcome::Resp(r);
             }
-            let body = self.mpd_at(at_utc).into_bytes();
-            let mut r = HttpResp::ok(body.clone());
             if self.send_date {
                 r.date = Some(http_date(at_utc));
             }
@@ -377,7 +488,7 @@ impl Synth {
             return Outcome::Resp(HttpResp::status(404));
         };
         if file == "init.mp4" {
-            let b = if rep == "V" {
+            let b = if rep.starts_with('V') {
                 self.pool.video_init.clone()
             } else {
                 self.pool.audio_init.clone()
@@ -393,6 +504,15 @@ impl Synth {
         let Some(idx) = self.index_of(rep, n) else {
             return Outcome::Resp(HttpResp::status(404));
         };
+        let p = Geo::period_of(rep);
+        if let (Some(st), Some(next)) = (
+            self.period_starts_us.get(p),
+            self.period_starts_us.get(p + 1),
+        ) && idx >= next / self.seg_us
+            && idx >= st / self.seg_us
+        {
+            return Outcome::Resp(HttpResp::status(404));
+        }
         if at_utc < self.avail_from_us(idx) {
             return Outcome::Resp(HttpResp::status(self.early_status));
         }
@@ -402,7 +522,7 @@ impl Synth {
         if let Some(b) = self.segment_bytes_overrides.get(file) {
             return Outcome::Resp(HttpResp::ok(b.clone()));
         }
-        let pool = if rep == "V" { &self.pool.video } else { &self.pool.audio };
+        let pool = if rep.starts_with('V') { &self.pool.video } else { &self.pool.audio };
         Outcome::Resp(HttpResp::ok(pool[(idx as usize) % POOL].clone()))
     }
 }

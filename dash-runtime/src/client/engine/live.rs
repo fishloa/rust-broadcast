@@ -507,6 +507,7 @@ impl DashClient {
         if let Some(l) = self.live.as_mut() {
             l.refresh.body = bytes.to_vec();
             l.refresh.publish_time_us = self.mpd.as_ref().and_then(|m| m.publish_time_us);
+            l.refresh.last_request_us = Some(meta.sent_us.min(meta.received_us));
         }
         self.speculative_activate(now_us);
         let want_sampler = self.begin_sampler(now_us, meta);
