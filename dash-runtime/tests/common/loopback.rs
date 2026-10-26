@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, VecDeque};
 
 use broadcast_common::Unpackage;
 use dash_runtime::client::{
-    Action, DashClient, DashConfig, Error, Failure, FailureClass, FatalKind, Output, ResourceId,
+    Action, DashClient, DashConfig, Error, Failure, FailureClass, FatalKind, Output, PullLimits,
+    ResourceId,
 };
 use transmux::{Fmp4Demux, Sample};
 use url::Url;
@@ -202,6 +203,7 @@ pub enum Order {
 pub type Hook = Box<dyn FnMut(&mut DashClient, usize)>;
 
 pub struct Drive {
+    pub dash: DashConfig,
     pub order: Order,
     pub max_steps: usize,
     pub retry: bool,
@@ -213,6 +215,7 @@ impl Default for Drive {
     fn default() -> Self {
         Self {
             order: Order::Fifo,
+            dash: DashConfig::default(),
             max_steps: 20_000,
             retry: true,
             skip_instead: false,
@@ -257,8 +260,8 @@ impl Run {
     }
 }
 
-pub fn drive(url: &str, cfg: DashConfig, origin: &mut Origin, opts: &mut Drive) -> Run {
-    let mut client = DashClient::new(url, cfg);
+pub fn drive(url: &str, cfg: PullLimits, origin: &mut Origin, opts: &mut Drive) -> Run {
+    let mut client = DashClient::new(url, opts.dash.clone(), cfg);
     let mut run = Run {
         outputs: Vec::new(),
         requests: Vec::new(),
@@ -401,7 +404,7 @@ fn deliver(
     }
 }
 
-pub fn play(mpd: &str, cfg: DashConfig) -> Run {
+pub fn play(mpd: &str, cfg: PullLimits) -> Run {
     drive(
         &format!("http://{HOST}/{mpd}"),
         cfg,

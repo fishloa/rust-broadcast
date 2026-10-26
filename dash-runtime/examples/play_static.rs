@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
 use dash_runtime::client::{
-    Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, ResourceId,
+    Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
 };
 use url::Url;
 
@@ -33,7 +33,7 @@ struct Args {
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         mpd: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_MPD),
-        window: DashConfig::default().max_inflight_segments,
+        window: PullLimits::default().max_inflight_segments,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -79,10 +79,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
     let path = std::fs::canonicalize(&args.mpd)?;
     let url = Url::from_file_path(&path).map_err(|()| "MPD path is not absolute")?;
-    let mut config = DashConfig::default();
+    let mut config = PullLimits::default();
     config.max_inflight_segments = args.window;
     config.validate()?;
-    let mut client = DashClient::new(url.as_str(), config);
+    let mut client = DashClient::new(url.as_str(), DashConfig::default(), config);
 
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut samples: BTreeMap<u32, (usize, f64)> = BTreeMap::new();

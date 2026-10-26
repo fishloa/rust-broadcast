@@ -24,6 +24,8 @@ const FIRST_YEAR: i16 = 1;
 const YEAR_DIGITS: usize = 4;
 const NTP_FRACTION_BITS: u32 = 32;
 const NTP_TIMESTAMP_LEN: usize = 8;
+const HTTP_DATE_RFC850: &str = "%A, %d-%b-%y %H:%M:%S GMT";
+const HTTP_DATE_ASCTIME: &str = "%a %b %e %H:%M:%S %Y";
 
 /// Why a time string or timestamp was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -231,16 +233,29 @@ fn parse_zone(c: &mut Cursor<'_>) -> Result<Offset, DateTimeError> {
     Offset::from_seconds(seconds).map_err(|_| DateTimeError::Field("zone offset"))
 }
 
-/// Parse an HTTP `Date` header value (RFC 9110 5.6.7, IMF-fixdate) to Unix
-/// microseconds. Resolution is whole seconds.
+/// Parse an HTTP-date (RFC 9110 5.6.7) to Unix microseconds: the preferred
+/// IMF-fixdate and the two obsolete forms a recipient must still accept, the
+/// RFC 850 form (two-digit years follow jiff's POSIX window: 69-99 are 19xx,
+/// 00-68 are 20xx, so no clock is needed) and the asctime form (always UTC).
+/// Resolution is whole seconds. Used for the `Date` and `Retry-After` headers.
 ///
 /// # Errors
 /// [`DateTimeError::HttpDate`] when `text` is not a date.
 pub fn parse_http_date(text: &str) -> Result<i64, DateTimeError> {
-    jiff::fmt::rfc2822::DateTimeParser::new()
-        .parse_timestamp(text.trim())
-        .map(|t| t.as_microsecond())
-        .map_err(|_| DateTimeError::HttpDate)
+    let text = text.trim();
+    if let Ok(t) = jiff::fmt::rfc2822::DateTimeParser::new().parse_timestamp(text) {
+        return Ok(t.as_microsecond());
+    }
+    [HTTP_DATE_RFC850, HTTP_DATE_ASCTIME]
+        .iter()
+        .find_map(|format| {
+            jiff::fmt::strtime::parse(format, text)
+                .and_then(|broken| broken.to_datetime())
+                .and_then(|datetime| datetime.to_zoned(jiff::tz::TimeZone::UTC))
+                .ok()
+        })
+        .map(|zoned| zoned.timestamp().as_microsecond())
+        .ok_or(DateTimeError::HttpDate)
 }
 
 /// Read a 64-bit NTP timestamp (RFC 5905 Figure 3: 32-bit seconds since

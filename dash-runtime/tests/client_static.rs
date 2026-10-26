@@ -7,7 +7,7 @@ mod common;
 use common::loopback::{
     Drive, Order, Origin, Run, Sig, assert_matches_oracle, drive, oracle, play,
 };
-use dash_runtime::client::{DashConfig, Output};
+use dash_runtime::client::{Output, PullLimits};
 
 fn seq(prefix: &str, init: &str, pattern: &str, n: std::ops::RangeInclusive<usize>) -> Vec<String> {
     let mut out = vec![format!("{prefix}{init}")];
@@ -62,14 +62,14 @@ fn ffmpeg(prefix: &str) -> Vec<Vec<String>> {
 
 #[test]
 fn ffmpeg_timeline_manifest_equals_the_demux_oracle() {
-    let run = play("manifest.mpd", DashConfig::default());
+    let run = play("manifest.mpd", PullLimits::default());
     assert_clean(&run);
     assert_matches_oracle(&run, &want(&ffmpeg("")));
 }
 
 #[test]
 fn ffmpeg_quirk_timeline_equals_the_demux_oracle() {
-    let run = play("timeline-ffmpeg-quirk/manifest.mpd", DashConfig::default());
+    let run = play("timeline-ffmpeg-quirk/manifest.mpd", PullLimits::default());
     assert_clean(&run);
     assert_matches_oracle(&run, &want(&ffmpeg("timeline-ffmpeg-quirk/")));
 }
@@ -80,7 +80,7 @@ fn gpac_timeline_equals_the_demux_oracle() {
         seq("timeline-gpac/", "seg-1-.mp4", "seg-1-{n}.m4s", 1..=6),
         seq("timeline-gpac/", "seg-2-.mp4", "seg-2-{n}.m4s", 1..=6),
     ];
-    let run = play("timeline-gpac/timeline.mpd", DashConfig::default());
+    let run = play("timeline-gpac/timeline.mpd", PullLimits::default());
     assert_clean(&run);
     assert_matches_oracle(&run, &want(&sets));
 }
@@ -91,7 +91,7 @@ fn segment_list_equals_the_demux_oracle() {
         seq3("segmentlist/", "init-0.m4s", "seg-0-", 1..=6),
         seq3("segmentlist/", "init-1.m4s", "seg-1-", 1..=6),
     ];
-    let run = play("segmentlist/list.mpd", DashConfig::default());
+    let run = play("segmentlist/list.mpd", PullLimits::default());
     assert_clean(&run);
     assert_matches_oracle(&run, &want(&sets));
 }
@@ -106,7 +106,7 @@ fn whole_files(dir: &str) -> Vec<Vec<Sig>> {
 
 #[test]
 fn on_demand_sidx_equals_the_demux_oracle() {
-    let run = play("ondemand-sidx/ondemand.mpd", DashConfig::default());
+    let run = play("ondemand-sidx/ondemand.mpd", PullLimits::default());
     assert_clean(&run);
     assert_matches_oracle(&run, &whole_files("ondemand-sidx"));
     let ranged = run.requests.iter().filter(|r| r.range.is_some()).count();
@@ -120,7 +120,7 @@ fn on_demand_sidx_equals_the_demux_oracle() {
 fn on_demand_gpac_pto_quirk_equals_the_demux_oracle() {
     let run = play(
         "ondemand-gpac-pto-quirk/ondemand.mpd",
-        DashConfig::default(),
+        PullLimits::default(),
     );
     assert_clean(&run);
     assert_matches_oracle(&run, &whole_files("ondemand-gpac-pto-quirk"));
@@ -131,7 +131,7 @@ fn completion_order_and_window_do_not_change_the_samples() {
     let expected = want(&ffmpeg("timeline-ffmpeg-quirk/"));
     for order in [Order::Fifo, Order::Lifo, Order::Alternate] {
         for window in [1usize, 2, 3, 8] {
-            let mut cfg = DashConfig::default();
+            let mut cfg = PullLimits::default();
             cfg.max_inflight_segments = window;
             let run = drive(
                 "http://dash.test/timeline-ffmpeg-quirk/manifest.mpd",
@@ -155,7 +155,7 @@ fn completion_order_and_window_do_not_change_the_samples() {
 
 #[test]
 fn window_zero_behaves_as_one() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = 0;
     let run = drive(
         "http://dash.test/manifest.mpd",
@@ -169,7 +169,7 @@ fn window_zero_behaves_as_one() {
 
 #[test]
 fn the_window_fills_when_the_cap_allows_it() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = 4;
     let run = drive(
         "http://dash.test/timeline-gpac/timeline.mpd",
@@ -183,7 +183,7 @@ fn the_window_fills_when_the_cap_allows_it() {
 
 #[test]
 fn track_ids_are_one_based_video_then_audio_and_announced_once() {
-    let run = play("manifest.mpd", DashConfig::default());
+    let run = play("manifest.mpd", PullLimits::default());
     let tracks: Vec<_> = run
         .outputs
         .iter()
@@ -201,7 +201,7 @@ fn track_ids_are_one_based_video_then_audio_and_announced_once() {
 
 #[test]
 fn tracks_and_init_precede_every_sample() {
-    let run = play("manifest.mpd", DashConfig::default());
+    let run = play("manifest.mpd", PullLimits::default());
     let first_sample = run
         .outputs
         .iter()
@@ -232,7 +232,7 @@ fn tracks_and_init_precede_every_sample() {
 
 #[test]
 fn samples_of_a_track_never_go_back_in_decode_time() {
-    let run = play("timeline-gpac/timeline.mpd", DashConfig::default());
+    let run = play("timeline-gpac/timeline.mpd", PullLimits::default());
     for (id, samples) in run.samples() {
         let mut last: Option<i64> = None;
         for (n, s) in samples.iter().enumerate() {

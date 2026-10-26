@@ -69,9 +69,9 @@ for seg in planned.plan.iter() {
 Playing a static MPD (the host performs the I/O):
 
 ```rust
-use dash_runtime::client::{Action, DashClient, DashConfig};
+use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits};
 
-let mut client = DashClient::new("https://origin.example/vod/manifest.mpd", DashConfig::default());
+let mut client = DashClient::new("https://origin.example/vod/manifest.mpd", DashConfig::default(), PullLimits::default());
 let Some(Action::FetchMpd { url }) = client.poll(0) else { unreachable!() };
 assert_eq!(url, "https://origin.example/vod/manifest.mpd");
 // GET it, then client.on_mpd(now_us, &body); poll() now yields FetchInit / FetchIndex /

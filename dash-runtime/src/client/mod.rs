@@ -36,9 +36,9 @@
 //! No clock is read; the `now_us` arguments are the caller's monotonic clock.
 //!
 //! ```
-//! use dash_runtime::client::{Action, DashClient, DashConfig};
+//! use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits};
 //!
-//! let mut client = DashClient::new("https://origin.example/vod/manifest.mpd", DashConfig::default());
+//! let mut client = DashClient::new("https://origin.example/vod/manifest.mpd", DashConfig::default(), PullLimits::default());
 //! let Some(Action::FetchMpd { url }) = client.poll(0) else { unreachable!() };
 //! assert_eq!(url, "https://origin.example/vod/manifest.mpd");
 //! // The MPD is requested once until the caller reports a failure and retries.
@@ -46,14 +46,14 @@
 //! ```
 
 mod action;
-mod config;
+pub mod config;
 mod demux;
 mod engine;
 mod error;
 mod output;
 
 pub use action::{Action, RepId, ResourceId};
-pub use config::{ConfigError, DashConfig};
+pub use config::{DashClockPolicy, DashConfig, DashConfigError, PullLimits, PullLimitsError};
 pub use engine::DashClient;
 pub use error::{Error, Failure, FailureClass, FailureKind, FatalKind, Rejection, Result};
 pub use output::{AudioRendition, DropCause, ManifestSelection, Notice, Output, VariantInfo};

@@ -12,7 +12,7 @@ use common::loopback::{
     Drive, Fault, FaultKind, Origin, Run, Sig, assert_matches_oracle, drive, oracle,
 };
 use dash_runtime::client::{
-    DashConfig, Error, FailureClass, FailureKind, FatalKind, Rejection, ResourceId,
+    DashConfig, Error, FailureClass, FailureKind, FatalKind, PullLimits, Rejection, ResourceId,
 };
 
 const FFMPEG: &str = "http://dash.test/timeline-ffmpeg-quirk/manifest.mpd";
@@ -45,8 +45,8 @@ fn ondemand_expected() -> Vec<Vec<Sig>> {
     out
 }
 
-fn cfg() -> DashConfig {
-    let mut c = DashConfig::default();
+fn cfg() -> PullLimits {
+    let mut c = PullLimits::default();
     c.max_segment_failures = CAP;
     c.max_init_failures = CAP;
     c
@@ -281,7 +281,7 @@ fn a_body_over_the_size_cap_is_a_counted_failure() {
 #[test]
 fn a_caller_reported_oversize_is_counted_like_any_other_failure() {
     use dash_runtime::client::{Action, DashClient, Failure};
-    let mut c = DashClient::new(FFMPEG, cfg());
+    let mut c = DashClient::new(FFMPEG, DashConfig::default(), cfg());
     let Some(Action::FetchMpd { .. }) = c.poll(0) else {
         panic!("mpd first")
     };

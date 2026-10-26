@@ -8,12 +8,19 @@ use common::loopback::{
     Drive, Fault, FaultKind, Origin, Sig, assert_matches_oracle, drive, mpd_text, oracle,
 };
 use dash_runtime::client::{
-    Action, DashClient, DashConfig, DropCause, Error, FatalKind, Notice, Output, ResourceId,
+    Action, DashClient, DashConfig, DropCause, Error, FatalKind, Notice, Output, PullLimits,
+    ResourceId,
 };
 use dash_runtime::selection::DropReason;
 
 const DIR: &str = "timeline-ffmpeg-quirk";
 const URL: &str = "http://dash.test/timeline-ffmpeg-quirk/manifest.mpd";
+
+fn pinned() -> DashConfig {
+    let mut d = DashConfig::default();
+    d.cross_origin_urls = false;
+    d
+}
 
 fn base_text() -> String {
     mpd_text("timeline-ffmpeg-quirk/manifest.mpd")
@@ -55,7 +62,7 @@ fn dropped(run: &common::loopback::Run) -> Vec<(usize, Option<usize>, DropCause)
         .collect()
 }
 
-fn play_text(text: String, cfg: DashConfig) -> common::loopback::Run {
+fn play_text(text: String, cfg: PullLimits) -> common::loopback::Run {
     drive(URL, cfg, &mut origin_with(text), &mut Drive::default())
 }
 
@@ -68,7 +75,7 @@ fn a_protected_video_set_is_dropped_with_a_notice_and_the_audio_plays_alone_as_t
         "<Representation id=\"0\"",
         &format!("{PROTECTION}<Representation id=\"0\""),
     );
-    let run = play_text(text, DashConfig::default());
+    let run = play_text(text, PullLimits::default());
     assert!(run.ended, "{:?}", run.fatal);
     assert_matches_oracle(&run, &[audio_oracle()]);
     assert_eq!(
@@ -88,7 +95,7 @@ fn a_protected_video_set_is_dropped_with_a_notice_and_the_audio_plays_alone_as_t
 #[test]
 fn protection_on_every_representation_drops_the_set() {
     let text = base_text().replacen("sar=\"1:1\">", &format!("sar=\"1:1\">{PROTECTION}"), 1);
-    let run = play_text(text, DashConfig::default());
+    let run = play_text(text, PullLimits::default());
     assert!(run.ended, "{:?}", run.fatal);
     assert_matches_oracle(&run, &[audio_oracle()]);
     assert_eq!(
@@ -140,7 +147,7 @@ fn every_set_kind_the_client_cannot_play_is_reported_not_misplayed() {
         ),
     ];
     for (name, text, reason) in cases {
-        let run = play_text(text, DashConfig::default());
+        let run = play_text(text, PullLimits::default());
         let d = dropped(&run);
         assert!(
             d.iter().any(|(_, _, c)| *c == DropCause::Selection(reason)),
@@ -157,7 +164,7 @@ fn a_subtitle_set_is_reported_and_ignored() {
         "</Period>",
         "<AdaptationSet id=\"9\" contentType=\"text\" mimeType=\"application/mp4\" codecs=\"stpp\"><Representation id=\"9\" bandwidth=\"1000\"><BaseURL>sub.mp4</BaseURL></Representation></AdaptationSet></Period>",
     );
-    let run = play_text(text, DashConfig::default());
+    let run = play_text(text, PullLimits::default());
     assert!(run.ended);
     assert_matches_oracle(&run, &[video_oracle(), audio_oracle()]);
     assert!(dropped(&run).contains(&(2, None, DropCause::Selection(DropReason::Text))));
@@ -169,7 +176,7 @@ fn nothing_playable_is_a_typed_fatal() {
     let text = base_text()
         .replace("video/mp4", "video/webm")
         .replace("audio/mp4", "audio/webm");
-    let run = play_text(text, DashConfig::default());
+    let run = play_text(text, PullLimits::default());
     assert_eq!(
         run.fatal,
         Some(FatalKind::MpdInvalid {
@@ -183,7 +190,7 @@ fn nothing_playable_is_a_typed_fatal() {
 fn a_dynamic_mpd_is_refused_cleanly_and_nothing_else_is_requested() {
     let run = drive(
         "http://dash.test/live-number/live.mpd",
-        DashConfig::default(),
+        PullLimits::default(),
         &mut Origin::new(),
         &mut Drive::default(),
     );
@@ -207,7 +214,7 @@ fn a_cross_origin_base_url_is_followed_by_default() {
     let mut origin = origin_with(text).mount("other.test", DIR);
     let run = drive(
         URL,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -222,8 +229,7 @@ fn a_cross_origin_base_url_is_followed_by_default() {
 
 #[test]
 fn cross_origin_urls_are_refused_when_pinned_and_never_requested() {
-    let mut cfg = DashConfig::default();
-    cfg.cross_origin_urls = false;
+    let dash = pinned();
     for base in [
         "http://other.test/m/",
         "https://dash.test/m/",
@@ -232,7 +238,15 @@ fn cross_origin_urls_are_refused_when_pinned_and_never_requested() {
     ] {
         let text = absolute_base(base_text(), base);
         let mut origin = origin_with(text).mount("other.test", DIR);
-        let run = drive(URL, cfg.clone(), &mut origin, &mut Drive::default());
+        let run = drive(
+            URL,
+            PullLimits::default(),
+            &mut origin,
+            &mut Drive {
+                dash: dash.clone(),
+                ..Drive::default()
+            },
+        );
         assert_eq!(
             run.fatal,
             Some(FatalKind::MpdInvalid {
@@ -252,32 +266,45 @@ fn cross_origin_urls_are_refused_when_pinned_and_never_requested() {
 
 #[test]
 fn a_same_origin_absolute_url_passes_the_pin() {
-    let mut cfg = DashConfig::default();
-    cfg.cross_origin_urls = false;
+    let dash = pinned();
     let text = absolute_base(base_text(), "http://dash.test/timeline-ffmpeg-quirk/");
-    let run = drive(URL, cfg, &mut origin_with(text), &mut Drive::default());
+    let run = drive(
+        URL,
+        PullLimits::default(),
+        &mut origin_with(text),
+        &mut Drive {
+            dash,
+            ..Drive::default()
+        },
+    );
     assert!(run.ended, "{:?}", run.fatal);
 }
 
 #[test]
 fn an_absolute_segment_template_cannot_escape_the_pin() {
-    let mut cfg = DashConfig::default();
-    cfg.cross_origin_urls = false;
+    let dash = pinned();
     let text = base_text().replace(
         "media=\"chunk-stream$RepresentationID$-",
         "media=\"http://169.254.169.254/chunk-stream$RepresentationID$-",
     );
     let mut origin = origin_with(text);
-    let run = drive(URL, cfg, &mut origin, &mut Drive::default());
+    let run = drive(
+        URL,
+        PullLimits::default(),
+        &mut origin,
+        &mut Drive {
+            dash,
+            ..Drive::default()
+        },
+    );
     assert!(run.requests.iter().all(|r| !r.url.contains("169.254")));
     assert!(run.fatal.is_some());
 }
 
 #[test]
 fn the_pin_follows_the_base_set_after_a_redirect() {
-    let mut cfg = DashConfig::default();
-    cfg.cross_origin_urls = false;
-    let mut client = DashClient::new(URL, cfg);
+    let dash = pinned();
+    let mut client = DashClient::new(URL, dash, PullLimits::default());
     client.set_mpd_base("http://cdn.test/timeline-ffmpeg-quirk/manifest.mpd");
     let Some(Action::FetchMpd { .. }) = client.poll(0) else {
         panic!("mpd")
@@ -316,7 +343,7 @@ fn base_url_alternates_are_used_in_priority_order() {
     let mut origin = two_hosts(alternates_text(2, 1));
     let run = drive(
         URL,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -339,7 +366,7 @@ fn a_failing_alternate_is_rotated_away_after_two_failures() {
     ));
     let run = drive(
         URL,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -351,7 +378,7 @@ fn a_failing_alternate_is_rotated_away_after_two_failures() {
 
 #[test]
 fn alternates_that_all_fail_end_at_the_cap_having_tried_both() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_segment_failures = 6;
     let mut origin = two_hosts(alternates_text(1, 2))
         .fault(Fault::always(
@@ -379,7 +406,7 @@ fn alternates_that_all_fail_end_at_the_cap_having_tried_both() {
 fn the_manifest_describes_the_selection() {
     let run = drive(
         "http://dash.test/manifest.mpd",
-        DashConfig::default(),
+        PullLimits::default(),
         &mut Origin::new(),
         &mut Drive::default(),
     );
@@ -419,7 +446,7 @@ fn a_skipped_segment_is_one_discontinuity_and_the_rest_plays() {
     ));
     let run = drive(
         URL,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive {
             skip_instead: true,
@@ -457,7 +484,7 @@ fn switch_mpd() -> String {
 #[test]
 fn a_representation_switch_continues_on_the_new_representation_and_reannounces() {
     const SWITCH_URL: &str = "http://dash.test/switch.mpd";
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = 1;
     let mut origin = Origin::new().doc(SWITCH_URL, switch_mpd().into_bytes());
     let mut switched = false;
@@ -503,7 +530,7 @@ fn a_representation_switch_continues_on_the_new_representation_and_reannounces()
 
 #[test]
 fn switching_to_an_unknown_variant_or_before_the_start_is_an_error() {
-    let mut c = DashClient::new(URL, DashConfig::default());
+    let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
     assert_eq!(c.select_representation(0), Err(Error::NotSwitchable));
     let Some(Action::FetchMpd { .. }) = c.poll(0) else {
         panic!()
@@ -514,7 +541,7 @@ fn switching_to_an_unknown_variant_or_before_the_start_is_an_error() {
 
 #[test]
 fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
-    let mut c = DashClient::new(URL, DashConfig::default());
+    let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
     let mpd = base_text();
     assert_eq!(c.on_mpd(0, mpd.as_bytes()), Err(Error::MpdNotAwaited));
     let Some(Action::FetchMpd { url }) = c.poll(0) else {
@@ -554,9 +581,9 @@ fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
 
 #[test]
 fn after_a_fatal_everything_is_ignored() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_init_failures = 0;
-    let mut c = DashClient::new(URL, cfg);
+    let mut c = DashClient::new(URL, DashConfig::default(), cfg);
     let _ = c.poll(0);
     c.on_mpd(0, base_text().as_bytes()).unwrap();
     let Some(Action::FetchInit { id, .. }) = c.poll(0) else {
@@ -577,7 +604,7 @@ fn after_a_fatal_everything_is_ignored() {
 
 #[test]
 fn accessors_report_the_presentation() {
-    let mut c = DashClient::new(URL, DashConfig::default());
+    let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
     assert_eq!(c.mpd_url(), URL);
     assert_eq!(c.is_static(), None);
     assert_eq!(c.max_segment_duration_secs(), None);
@@ -590,11 +617,11 @@ fn accessors_report_the_presentation() {
 
 #[test]
 fn config_validation_names_the_first_bad_field() {
-    assert!(DashConfig::default().validate().is_ok());
-    let mut c = DashConfig::default();
+    assert!(PullLimits::default().validate().is_ok());
+    let mut c = PullLimits::default();
     c.max_segment_bytes = 0;
     assert_eq!(c.validate().unwrap_err().field, "max_segment_bytes");
-    let mut c = DashConfig::default();
+    let mut c = PullLimits::default();
     c.limits.max_bytes = 0;
     assert_eq!(c.validate().unwrap_err().field, "limits.max_bytes");
 }
@@ -607,7 +634,7 @@ fn the_mpd_url_query_is_appended_to_media_segments_only_when_the_mpd_asks() {
     let mut origin = Origin::new().doc(&url, text.into_bytes());
     let run = drive(
         &url,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -631,7 +658,7 @@ fn the_mpd_url_query_is_appended_to_media_segments_only_when_the_mpd_asks() {
 
 #[test]
 fn init_and_segment_failure_caps_are_independent() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_init_failures = 2;
     cfg.max_segment_failures = 5;
     let mut origin = Origin::new().fault(Fault::always("init-stream0.m4s", FaultKind::Status(503)));
@@ -658,7 +685,7 @@ fn the_size_cap_accepts_a_body_of_exactly_the_cap() {
         .map(|f| test_fixtures::read(&format!("dash/{DIR}/{f}")).len())
         .max()
         .unwrap();
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_segment_bytes = largest;
     let run = drive(URL, cfg.clone(), &mut Origin::new(), &mut Drive::default());
     assert!(run.ended, "{:?}", run.fatal);
@@ -671,7 +698,7 @@ fn the_size_cap_accepts_a_body_of_exactly_the_cap() {
 fn a_switch_that_is_not_segment_aligned_is_marked_with_a_discontinuity() {
     const SWITCH_URL: &str = "http://dash.test/switch.mpd";
     let text = switch_mpd().replace("segmentAlignment=\"true\"", "segmentAlignment=\"false\"");
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = 1;
     let mut origin = Origin::new().doc(SWITCH_URL, text.into_bytes());
     let mut switched = false;
@@ -695,7 +722,7 @@ fn a_switch_that_is_not_segment_aligned_is_marked_with_a_discontinuity() {
 #[test]
 fn a_retried_resource_is_requested_before_anything_queued_behind_it() {
     use dash_runtime::client::Failure;
-    let mut c = DashClient::new(URL, DashConfig::default());
+    let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
     let _ = c.poll(0);
     c.on_mpd(0, base_text().as_bytes()).unwrap();
     let Some(Action::FetchInit { id: first, .. }) = c.poll(0) else {
@@ -711,7 +738,7 @@ fn a_retried_resource_is_requested_before_anything_queued_behind_it() {
 
 #[test]
 fn with_a_window_of_one_requests_follow_the_media_timeline() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = 1;
     let run = drive(URL, cfg, &mut Origin::new(), &mut Drive::default());
     let order: Vec<&str> = run
@@ -736,7 +763,7 @@ fn with_a_window_of_one_requests_follow_the_media_timeline() {
 
 #[test]
 fn alternates_rotate_every_two_failures_in_a_fixed_order() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_segment_failures = 6;
     let mut origin = two_hosts(alternates_text(1, 2))
         .fault(Fault::always(
@@ -761,7 +788,7 @@ fn alternates_rotate_every_two_failures_in_a_fixed_order() {
 fn a_short_segment_in_the_middle_is_not_a_tail() {
     let text = base_text().replace("<S d=\"44032\" />", "<S d=\"1000\" />");
     assert_ne!(text, base_text());
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_segment_failures = 3;
     let mut origin = origin_with(text).fault(Fault::always(
         "chunk-stream1-00002.m4s",

@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use dash_runtime::client::{
-    Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, ResourceId,
+    Action, DashClient, DashConfig, PullLimits, Error, Failure, FailureClass, Output, ResourceId,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -102,12 +102,13 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let (head, mut rest) = data.split_at(HEADER);
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = usize::from(head[0] & WINDOW_MASK) + 1;
     let cap = CAPS[usize::from((head[0] >> CAP_SHIFT) & CAP_MASK)];
     cfg.max_segment_failures = cap;
     cfg.max_init_failures = cap;
-    cfg.cross_origin_urls = head[0] & PIN_ORIGIN == 0;
+    let mut dash = DashConfig::default();
+    dash.cross_origin_urls = head[0] & PIN_ORIGIN == 0;
     let window = cfg.max_inflight_segments;
 
     let selector = usize::from(head[1]) % (MPDS.len() + 1);
@@ -121,7 +122,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let url = format!("{BASE_URL}{MPD_NAME}");
-    let mut client = DashClient::new(url, cfg);
+    let mut client = DashClient::new(url, dash, cfg);
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut terminal = false;
     let mut chunks = rest.chunks_exact(CHUNK).map(|c| (c[0], c[1])).collect::<Vec<_>>();

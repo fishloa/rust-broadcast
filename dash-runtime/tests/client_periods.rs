@@ -8,7 +8,7 @@ use common::loopback::{
     Drive, Fault, FaultKind, Order, Origin, Run, Sig, assert_matches_oracle, drive, mpd_text,
     oracle,
 };
-use dash_runtime::client::{DashConfig, FailureClass, FatalKind, Output};
+use dash_runtime::client::{DashConfig, FailureClass, FatalKind, Output, PullLimits};
 
 const RESTART: &str = "http://dash.test/multiperiod-restart/multiperiod.mpd";
 const CONTINUOUS: &str = "http://dash.test/multiperiod-continuous/multiperiod.mpd";
@@ -38,7 +38,7 @@ fn restart_expected() -> Vec<Vec<Sig>> {
     vec![video, audio]
 }
 
-fn run_restart(origin: &mut Origin, drive_opts: &mut Drive, cfg: DashConfig) -> Run {
+fn run_restart(origin: &mut Origin, drive_opts: &mut Drive, cfg: PullLimits) -> Run {
     drive(RESTART, cfg, origin, drive_opts)
 }
 
@@ -47,7 +47,7 @@ fn restart_periods_play_the_files_that_exist_in_order() {
     let run = run_restart(
         &mut Origin::new(),
         &mut Drive::default(),
-        DashConfig::default(),
+        PullLimits::default(),
     );
     assert!(run.errors.is_empty(), "{:?}", run.errors);
     assert!(run.ended && run.fatal.is_none());
@@ -59,7 +59,7 @@ fn restart_boundary_is_one_discontinuity_before_the_new_periods_samples() {
     let run = run_restart(
         &mut Origin::new(),
         &mut Drive::default(),
-        DashConfig::default(),
+        PullLimits::default(),
     );
     let changes: Vec<_> = run
         .outputs
@@ -111,9 +111,9 @@ fn restart_boundary_is_one_discontinuity_before_the_new_periods_samples() {
 #[test]
 fn restart_period_two_inits_are_requested_while_period_one_is_in_flight() {
     use dash_runtime::client::{Action, DashClient};
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = 8;
-    let mut c = DashClient::new(RESTART, cfg);
+    let mut c = DashClient::new(RESTART, DashConfig::default(), cfg);
     assert!(matches!(c.poll(0), Some(Action::FetchMpd { .. })));
     let mpd = test_fixtures::read("dash/multiperiod-restart/multiperiod.mpd");
     c.on_mpd(0, &mpd).unwrap();
@@ -131,7 +131,7 @@ fn restart_period_two_inits_are_requested_while_period_one_is_in_flight() {
 #[test]
 fn restart_with_the_window_of_one_and_reverse_completion_is_unchanged() {
     for order in [Order::Lifo, Order::Alternate] {
-        let mut cfg = DashConfig::default();
+        let mut cfg = PullLimits::default();
         cfg.max_inflight_segments = 1;
         let run = run_restart(
             &mut Origin::new(),
@@ -151,7 +151,7 @@ fn the_gpac_tail_past_the_media_is_requested_once_and_ends_the_period() {
     let run = run_restart(
         &mut Origin::new(),
         &mut Drive::default(),
-        DashConfig::default(),
+        PullLimits::default(),
     );
     for tail in ["p1_dash_track1_4.m4s", "p1_dash_track2_4.m4s"] {
         assert_eq!(run.requested(tail), 1, "{tail}: 404 once, never retried");
@@ -167,7 +167,7 @@ fn the_gpac_tail_past_the_media_is_requested_once_and_ends_the_period() {
 
 #[test]
 fn a_missing_full_length_last_segment_is_not_a_tail() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_segment_failures = 3;
     let mut origin = Origin::new().fault(Fault::always(
         "p2_dash_track1_3.m4s",
@@ -187,7 +187,7 @@ fn a_missing_full_length_last_segment_is_not_a_tail() {
 
 #[test]
 fn a_missing_middle_segment_is_not_a_tail() {
-    let mut cfg = DashConfig::default();
+    let mut cfg = PullLimits::default();
     cfg.max_segment_failures = 2;
     let mut origin = Origin::new().fault(Fault::always(
         "p1_dash_track1_2.m4s",
@@ -218,7 +218,7 @@ fn continuous_origin(edit: impl Fn(String) -> String) -> Origin {
 fn continuous_periods_join_without_a_discontinuity_or_a_second_init() {
     let run = drive(
         CONTINUOUS,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut Origin::new(),
         &mut Drive::default(),
     );
@@ -253,7 +253,7 @@ fn without_the_continuity_signal_the_same_boundary_is_a_discontinuity() {
     });
     let run = drive(
         CONTINUOUS,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -268,7 +268,7 @@ fn continuity_naming_another_period_is_not_continuity() {
     let mut origin = continuous_origin(|t| t.replace("value=\"a\"", "value=\"zzz\""));
     let run = drive(
         CONTINUOUS,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -283,7 +283,7 @@ fn continuity_needs_the_same_adaptation_set_id() {
     });
     let run = drive(
         CONTINUOUS,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -304,7 +304,7 @@ fn init_identity_ignores_the_query() {
     });
     let run = drive(
         CONTINUOUS,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -333,7 +333,7 @@ fn continuity_with_a_different_init_url_is_not_continuous() {
     .doc("http://dash.test/timeline-gpac/seg-1-b.mp4", init);
     let run = drive(
         CONTINUOUS,
-        DashConfig::default(),
+        PullLimits::default(),
         &mut origin,
         &mut Drive::default(),
     );
@@ -350,7 +350,7 @@ fn a_gone_tail_ends_the_period_like_a_not_found_tail() {
         "p1_dash_track1_4.m4s",
         FaultKind::Status(410),
     ));
-    let run = run_restart(&mut origin, &mut Drive::default(), DashConfig::default());
+    let run = run_restart(&mut origin, &mut Drive::default(), PullLimits::default());
     assert!(run.ended && run.fatal.is_none(), "{:?}", run.fatal);
     assert_eq!(run.requested("p1_dash_track1_4.m4s"), 1);
     assert_matches_oracle(&run, &restart_expected());
@@ -363,7 +363,7 @@ fn a_tail_that_fails_for_another_reason_is_retried_like_any_segment() {
         FaultKind::Status(503),
         2,
     ));
-    let run = run_restart(&mut origin, &mut Drive::default(), DashConfig::default());
+    let run = run_restart(&mut origin, &mut Drive::default(), PullLimits::default());
     assert!(run.ended && run.fatal.is_none(), "{:?}", run.fatal);
     assert_eq!(
         run.requested("p1_dash_track1_4.m4s"),

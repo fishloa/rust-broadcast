@@ -8,7 +8,7 @@ use transmux::{TrackId, TrackSpec};
 use url::Url;
 
 use super::action::{Action, RepId, ResourceId};
-use super::config::DashConfig;
+use super::config::{DashConfig, PullLimits};
 use super::demux::{self, Staged};
 use super::error::{Error, Failure, FailureClass, FailureKind, FatalKind, Rejection, Result};
 use super::output::{AudioRendition, DropCause, ManifestSelection, Notice, Output, VariantInfo};
@@ -167,7 +167,8 @@ struct PrevPeriod {
 /// A dynamic MPD is answered with [`Error::LiveNotYetSupported`] and a
 /// fatal output; that is temporary and goes away with W-d2.
 pub struct DashClient {
-    cfg: DashConfig,
+    cfg: PullLimits,
+    dash: DashConfig,
     mpd_url: String,
     doc_url: Option<Url>,
     mpd_query: Option<String>,
@@ -254,12 +255,13 @@ fn continuity_signals(set: &crate::mpd::model::AdaptationSet, previous: &str) ->
 impl DashClient {
     /// A client for the MPD at `mpd_url`. Performs no I/O.
     #[must_use]
-    pub fn new(mpd_url: impl Into<String>, config: DashConfig) -> Self {
+    pub fn new(mpd_url: impl Into<String>, dash: DashConfig, limits: PullLimits) -> Self {
         let mpd_url = mpd_url.into();
         let doc_url = Url::parse(&mpd_url).ok();
         let mpd_query = doc_url.as_ref().and_then(|u| u.query()).map(str::to_owned);
         Self {
-            cfg: config,
+            cfg: limits,
+            dash,
             mpd_url,
             doc_url,
             mpd_query,
@@ -563,7 +565,7 @@ impl DashClient {
         if media && let Some(q) = &rep.query {
             url = append_query(&url, q);
         }
-        if !self.cfg.cross_origin_urls
+        if !self.dash.cross_origin_urls
             && let Some(doc) = &self.doc_url
         {
             let parsed = Url::parse(&url).map_err(|_| DropCause::UnusableUrl)?;

@@ -12,6 +12,8 @@ use transmux::{DisplayInfo, JoinDecision, Sample, TrackId, TrackSpec};
 use alloc::sync::Arc;
 
 use crate::ConnId;
+use dash_runtime::client::config::DashConfig;
+use dash_runtime::timing::clock::ClockSource;
 
 /// Source kind for [`Config`].
 #[non_exhaustive]
@@ -249,6 +251,43 @@ pub enum ErrorKind {
         /// The declared id.
         track_id: u32,
     },
+    /// An MPD could not be read as XML or broke a size or structure bound (`reason` is a stable
+    /// token). Non-fatal and reported once per kind until a good MPD arrives; the session keeps
+    /// the last good MPD and retries. After [`Config::max_key_failures`] consecutive bad MPDs
+    /// with no good one between, one fatal error of this kind follows.
+    MpdParse {
+        /// The stable reason token.
+        reason: &'static str,
+    },
+    /// An MPD parsed but cannot be played: no Period, no playable AdaptationSet, or an
+    /// essential descriptor group none of whose members is understood. Fatal when nothing is
+    /// left to play.
+    MpdInvalid {
+        /// The stable reason token.
+        reason: &'static str,
+    },
+    /// The MPD addresses media in a way this client does not implement: `presentation_type_list`,
+    /// `data_url`, `open_ended_range`, `hierarchical_sidx` or `cross_origin` (a URL whose origin
+    /// differs from the MPD's while [`DashConfig::cross_origin_urls`] is `false`). The affected
+    /// Representation is dropped; fatal only when no Representation is left.
+    UnsupportedAddressing {
+        /// The stable reason token.
+        reason: &'static str,
+    },
+    /// A feature the stream uses and this client ignores: `preselection`, `xlink`, `mpd_patch`,
+    /// `segment_sequence`, `event_stream` or `low_latency`. Non-fatal, reported once per feature
+    /// and session; playback continues without it.
+    UnsupportedFeature {
+        /// The stable feature token.
+        feature: &'static str,
+    },
+    /// A live session fell behind the availability window: the segments it needed are no longer
+    /// served, so it skipped ahead (an [`Event::Discontinuity`] follows). Non-fatal, reported
+    /// once per run of consecutive occurrences.
+    LiveEdgeLost,
+    /// A dynamic MPD needs a UTC clock and there is none: no usable `UTCTiming`, no response
+    /// `Date` header, and the host never called [`crate::Session::set_wall_clock`]. Fatal.
+    ClockUnavailable,
 }
 
 impl ErrorKind {
@@ -269,6 +308,12 @@ impl ErrorKind {
             Self::UnknownRenderedTrack { .. } => "unknown_rendered_track",
             Self::UnsupportedContainer { .. } => "unsupported_container",
             Self::BodyTooLarge { .. } => "body_too_large",
+            Self::MpdParse { .. } => "mpd_parse",
+            Self::MpdInvalid { .. } => "mpd_invalid",
+            Self::UnsupportedAddressing { .. } => "unsupported_addressing",
+            Self::UnsupportedFeature { .. } => "unsupported_feature",
+            Self::LiveEdgeLost => "live_edge_lost",
+            Self::ClockUnavailable => "clock_unavailable",
         }
     }
 }
@@ -447,6 +492,20 @@ pub enum Event {
         /// `LANGUAGE` of the active rendition.
         language: Option<String>,
     },
+    /// The session has a UTC clock for the first time, or the source of its clock changed
+    /// (for example a measured `UTCTiming` replaced the host clock). Not repeated for a re-sync
+    /// from the same source. `uncertainty_us` is the half-width of the error bar around the
+    /// session's UTC estimate, microseconds.
+    ///
+    /// Ordering contract: it is emitted before the first [`Event::Sample`] that depends on the
+    /// clock (a live DASH join is placed with it), and never for a source that needs no clock.
+    /// The DASH source that emits it lands after this surface; hosts can match on it now.
+    ClockSynced {
+        /// Where the clock came from.
+        source: ClockSource,
+        /// Half-width of the error bar, microseconds.
+        uncertainty_us: u64,
+    },
     /// A condition the player should tell the user about. `fatal` means the session will not
     /// recover by itself: it has closed its connections and goes silent, so the player shows a
     /// message and does not retry. Non-fatal errors are emitted once per kind until a success
@@ -523,6 +582,16 @@ impl PartialEq for Event {
                     language: lb,
                 },
             ) => *ia == *ib && *na == *nb && *la == *lb,
+            (
+                Self::ClockSynced {
+                    source: sa,
+                    uncertainty_us: ua,
+                },
+                Self::ClockSynced {
+                    source: sb,
+                    uncertainty_us: ub,
+                },
+            ) => *sa == *sb && *ua == *ub,
             (
                 Self::Error {
                     kind: ka,
@@ -638,7 +707,7 @@ pub struct Config {
     pub hls_key_timeout_us: u64,
     /// HLS: maximum key response body bytes; must be non-zero.
     pub max_key_bytes: usize,
-    /// HLS: consecutive key/decrypt/init-fetch failures (no decoded samples in between) after which the
+    /// HLS and DASH: consecutive key/decrypt/init-fetch failures (no decoded samples in between) after which the
     /// session emits a fatal [`Event::Error`] and stops; `0` behaves as `1` (the first failure is
     /// fatal).
     pub max_key_failures: u32,
@@ -697,6 +766,12 @@ pub struct Config {
     /// first-frame budget lowers this; any value is accepted and `u64::MAX` waits until the
     /// first `Start`.
     pub start_pending_track_wait_us: u64,
+    /// DASH-specific knobs (clock ladder, `UTCTiming` timeouts, early-request cadence, MPD refresh
+    /// floor); the knobs every segment-pull source shares stay on this struct. A value
+    /// [`DashConfig::validate`] rejects fails [`crate::Session::open`] with
+    /// [`crate::Error::InvalidConfig`] naming `dash.<field>`, even for a session that does not
+    /// play DASH.
+    pub dash: DashConfig,
 }
 
 impl Config {
@@ -734,6 +809,9 @@ impl Config {
                 return invalid("timeline_jump.forward_slack_us");
             }
         }
+        if let Err(e) = self.dash.validate() {
+            return invalid(dash_field(e.field));
+        }
         self.validate_tracks_hold()
     }
 
@@ -749,6 +827,18 @@ impl Config {
             });
         }
         Ok(())
+    }
+}
+
+fn dash_field(name: &str) -> &'static str {
+    match name {
+        "utc_timeout_us" => "dash.utc_timeout_us",
+        "utc_wait_us" => "dash.utc_wait_us",
+        "utc_max_rtt_us" => "dash.utc_max_rtt_us",
+        "utc_resync_us" => "dash.utc_resync_us",
+        "early_retry_us" => "dash.early_retry_us",
+        "min_mpd_refresh_us" => "dash.min_mpd_refresh_us",
+        _ => "dash",
     }
 }
 
@@ -783,6 +873,7 @@ impl Default for Config {
             tracks_hold_max_media_us: DEFAULT_TRACKS_HOLD_MAX_MEDIA_US,
             tracks_hold_max_wall_us: DEFAULT_TRACKS_HOLD_MAX_WALL_US,
             start_pending_track_wait_us: DEFAULT_START_PENDING_TRACK_WAIT_US,
+            dash: DashConfig::default(),
         }
     }
 }
@@ -828,6 +919,7 @@ impl core::fmt::Debug for Config {
                 "start_pending_track_wait_us",
                 &self.start_pending_track_wait_us,
             )
+            .field("dash", &self.dash)
             .finish()
     }
 }

@@ -12,8 +12,10 @@ pub enum Error {
     /// The session URL could not be parsed.
     #[error("invalid url: {0}")]
     InvalidUrl(String),
-    /// The operation needs an HLS session.
-    #[error("operation requires an HLS session")]
+    /// The operation needs an adaptive-bitrate session (HLS or DASH): `select_variant` and
+    /// `select_audio_rendition` act on a master playlist or an MPD's Representations, which
+    /// TS-over-HTTP and RTSP sessions do not have.
+    #[error("operation requires an HLS or DASH session")]
     NotHls,
     /// The variant index does not exist (or no master playlist was seen yet).
     #[error("no such variant: {0}")]
