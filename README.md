@@ -110,7 +110,7 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 
 | Crate | What it does | Headline standards | Status |
 |---|---|---|---|
-| [`broadcast-client`](broadcast-client/) | Generic sans-IO client session: auth, redirects, TS-over-HTTP, HLS and RTSP sources. | none (implementation-defined policy; requirements from zenith-tv player) | not on crates.io |
+| [`broadcast-client`](broadcast-client/) | Generic sans-IO client session: auth, redirects, TS-over-HTTP, HLS, DASH and RTSP sources. | none (implementation-defined policy; requirements from zenith-tv player) | not on crates.io |
 | [`buffering-runtime`](buffering-runtime/) | Sans-IO live-TS playout buffer controller: jitter measurement, stall memory, start/pause/resume decisions. | RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) |
 | [`dash-runtime`](dash-runtime/) | Sans-IO MPEG-DASH: MPD model and parser, segment addressing, UTC clock and live-edge arithmetic, and a client for static (VOD) and dynamic (live) presentations. | ISO/IEC 23009-1:2022 (5.3, 5.6, 5.8.5.7, Annex A, Annex I); DASH-IF IOP v4.3 (live timing); ETSI TS 103 285 (BaseURL priority) | not on crates.io |
 | [`hls-runtime`](hls-runtime/) | Sans-IO Low-Latency HLS client and origin engines; optional tokio+reqwest client adapter. | RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS) | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) |

@@ -2,7 +2,7 @@
 name    = "broadcast-client"
 version = "0.1.0"
 edition = "2024"
-description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS and RTSP sources."
+description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH and RTSP sources."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["broadcast", "client", "rtsp", "live", "streaming"]

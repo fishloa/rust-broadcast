@@ -147,6 +147,37 @@ jobs:
       - name: Run examples (all features)
         run: ./tools/run-examples.sh --all-features --locked
 
+  # The one real-wire DASH check: a broadcast-client Session plays 30 s of live
+  # DASH from DASH-IF livesim2 over loopback HTTP (docs/dash-runtime/DESIGN.md
+  # Q9). livesim2 is BSD 3-clause licensed (Copyright (c) 2023, Dash Industry
+  # Forum, LICENSE.md in the module); it is built from source at the pinned tag
+  # and never redistributed. REQUIRE_LIVESIM2=1 makes a missing or wrong-version
+  # server a hard failure here; the same test skips loudly on a machine without
+  # it, exactly like the private-fixtures rule.
+  dash-e2e:
+    name: dash e2e (livesim2 v1.15.2)
+    runs-on: ubuntu-latest
+    env:
+      LIVESIM2_VERSION: v1.15.2
+      REQUIRE_LIVESIM2: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+      - name: Install livesim2 (pinned)
+        run: |
+          set -euo pipefail
+          go install "github.com/Dash-Industry-Forum/livesim2/cmd/livesim2@${LIVESIM2_VERSION}"
+          echo "LIVESIM2_BIN=$(go env GOPATH)/bin/livesim2" >> "$GITHUB_ENV"
+          DIR=$(go mod download -json "github.com/Dash-Industry-Forum/livesim2@${LIVESIM2_VERSION}" | jq -r .Dir)
+          echo "LIVESIM2_VODROOT=${DIR}/cmd/livesim2/app/testdata/assets" >> "$GITHUB_ENV"
+      - name: Play 30 s of live DASH from livesim2
+        timeout-minutes: 15
+        run: cargo test -p broadcast-client --all-features --locked --test e2e_livesim2 -- --nocapture
+
   lint:
     name: clippy
     runs-on: ubuntu-latest
@@ -471,6 +502,6 @@ jobs:
         run: cargo check -p transmux --target ${{ matrix.target }} --locked
       - name: Check the client stack (sans-IO crates, no tokio/reqwest; issue #1454)
         run: |
-          for c in broadcast-auth buffering-runtime broadcast-hls media-plane hls-runtime tshttp-runtime broadcast-client; do
+          for c in broadcast-auth buffering-runtime broadcast-hls media-plane hls-runtime tshttp-runtime dash-runtime broadcast-client; do
             cargo check -p "$c" --target ${{ matrix.target }} --locked
           done
