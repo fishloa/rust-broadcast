@@ -18,7 +18,10 @@ use broadcast_client::Config;
 use dash_common::loopback::Origin;
 use dash_common::synth::{Addressing, MPD_URL, Synth, parse_segment_url};
 use dash_common::world::{MICROS, World};
-use dash_matrix::{Cap, Class, F, Limits, Matcher, Src, Stage, distinct_urls, matrix};
+use dash_matrix::{
+    Cap, Class, F, Limits, Matcher, Src, Stage, distinct_urls, matrix, peak_rate_per_url,
+    served_segments, terminal,
+};
 use dash_sim::{DashSim, Logged, SEC, StaticBackend, WorldBackend};
 
 const HOST: &str = "http://dash.test";
@@ -515,4 +518,164 @@ fn the_fault_list_has_no_duplicates() {
     let before = shorts.len();
     shorts.dedup();
     assert_eq!(before, shorts.len(), "two faults share a table label");
+}
+
+const CLOCK_SKEWS_US: [i64; 4] = [5 * MICROS, -5 * MICROS, 60 * MICROS, -60 * MICROS];
+const CLOCK_STEPS_US: [i64; 2] = [30 * MICROS, -30 * MICROS];
+const CLOCK_RUN_BEFORE_STEP_US: u64 = 30 * SEC;
+const CLOCK_RUN_AFTER_STEP_US: u64 = 150 * SEC;
+const TOLERATED_SKEW_US: i64 = 5 * MICROS;
+const HTTP_TOO_EARLY: u16 = 425;
+
+fn clock_run(skew_us: i64, step_us: i64, with_utc: bool) -> DashSim {
+    let mut synth = Synth::new(AST_US, Addressing::Number);
+    if with_utc {
+        synth = synth.with_utc("http-xsdate", UTC_URL);
+    }
+    synth.send_date = true;
+    synth.early_status = HTTP_TOO_EARLY;
+    let mut world = World::new(AST_US + 41 * MICROS + 120_000);
+    world.host_skew_us = skew_us;
+    let mut sim = DashSim::new(
+        MPD_URL,
+        matrix_config(),
+        world,
+        Box::new(WorldBackend(synth)),
+    );
+    sim.give_host_clock();
+    sim.run_for(CLOCK_RUN_BEFORE_STEP_US);
+    if step_us != 0 {
+        sim.world.host_step_us = step_us;
+        sim.give_host_clock();
+    }
+    sim.run_for(CLOCK_RUN_AFTER_STEP_US);
+    sim
+}
+
+/// A host clock that is wrong: with UTCTiming the origin's clock wins and the host's error is
+/// irrelevant; with the host clock as the only source, an error within the tolerated skew (and
+/// any error ahead of true time, which the origin's 425 answers absorb) must still play, and a
+/// larger error behind true time may lose the stream but never ends the session, loops on the
+/// wire, or panics.
+#[test]
+fn host_clock_skew_and_step_faults() {
+    let mut bad = Vec::new();
+    for with_utc in [true, false] {
+        let mut cases: Vec<(i64, i64)> = CLOCK_SKEWS_US.iter().map(|s| (*s, 0)).collect();
+        cases.extend(CLOCK_STEPS_US.iter().map(|st| (0, *st)));
+        for (skew, step) in cases {
+            let sim = clock_run(skew, step, with_utc);
+            let label = format!("utc={with_utc} skew={skew} step={step}");
+            let applied = (skew != 0 || step != 0)
+                && sim.world.host_skew_us == skew
+                && sim.world.host_step_us == step
+                && sim.host_clock_calls.len() >= 1 + usize::from(step != 0);
+            if !applied {
+                bad.push(format!("{label}: the clock fault was not applied"));
+            }
+            if let Some(kind) = sim.fatal() {
+                bad.push(format!("{label}: fatal {kind:?}"));
+            }
+            if terminal(&sim.events) {
+                bad.push(format!("{label}: the session ended"));
+            }
+            let samples: usize = sim.samples().values().map(Vec::len).sum();
+            let must_play = with_utc || skew >= -TOLERATED_SKEW_US;
+            if must_play && samples == 0 {
+                bad.push(format!("{label}: no samples"));
+            }
+            let served = served_segments(&sim.log, &[]);
+            if let Some(why) = served.repeated {
+                bad.push(format!("{label}: {why}"));
+            }
+            let (peak, url) = peak_rate_per_url(&sim.log);
+            if peak > dash_matrix::RATE_CAP_PER_WINDOW {
+                bad.push(format!("{label}: {url} {peak}/s"));
+            }
+            println!(
+                "clock {label}: samples={samples} reqs={} gap={:?}",
+                sim.log.len(),
+                served.gap.is_some()
+            );
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+const ALT_HOST: &str = "http://alt.test";
+const PRIMARY_SEGMENTS: &str = "http://dash.test/live/seg/";
+
+struct AltHost<B>(B);
+
+impl<B: dash_sim::Backend> dash_sim::Backend for AltHost<B> {
+    fn serve(&mut self, at_utc_us: i64, req: &Logged) -> dash_sim::Answer {
+        let mut mapped = req.clone();
+        mapped.url = req.url.replacen(ALT_HOST, HOST, 1);
+        self.0.serve(at_utc_us, &mapped)
+    }
+}
+
+fn live_alt_base_url() -> Src {
+    let config = matrix_config();
+    let build_config = config.clone();
+    let base = move || {
+        let mut synth = Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", UTC_URL);
+        synth.extra_mpd_children =
+            format!("<BaseURL>{HOST}/live/</BaseURL><BaseURL>{ALT_HOST}/live/</BaseURL>");
+        DashSim::new(
+            MPD_URL,
+            build_config.clone(),
+            World::new(AST_US + 41 * MICROS + 120_000),
+            Box::new(AltHost(WorldBackend(synth))),
+        )
+    };
+    let stages = vec![stage(
+        "primary-segments",
+        Class::Media,
+        Matcher::Prefix(PRIMARY_SEGMENTS.to_owned()),
+    )];
+    Src {
+        name: "live-alt-base-url",
+        live: true,
+        caps: &[Cap::Live],
+        config,
+        limits,
+        build: Box::new(move || (base(), stages.clone())),
+        horizon_us: LIVE_HORIZON_US,
+    }
+}
+
+/// The primary BaseURL refusing every segment (the design's "alternate-BaseURL 503"): the client
+/// rotates to the alternate and keeps playing, instead of retrying the dead host.
+#[test]
+fn an_alternate_base_url_takes_over_when_the_primary_refuses() {
+    let src = live_alt_base_url();
+    let baseline = dash_matrix::run_cell(&src, None);
+    let (_, stages) = (src.build)();
+    for fault in [F::S503, F::ConnFail, F::S404] {
+        let plan = dash_matrix::Plan {
+            stage: stages[0].clone(),
+            fault,
+            permanent: true,
+        };
+        let out = dash_matrix::run_cell(&src, Some(plan));
+        assert!(
+            !out.faulted.is_empty(),
+            "{fault:?}: the fault was not applied"
+        );
+        assert!(!out.panicked, "{fault:?}: panic");
+        let alternate = out
+            .log
+            .iter()
+            .filter(|l| l.url.starts_with(ALT_HOST))
+            .count();
+        assert!(alternate > 0, "{fault:?}: the alternate was never used");
+        let played = dash_matrix::samples(&out.events).len();
+        let wanted = dash_matrix::samples(&baseline.events).len() / 2;
+        assert!(
+            played >= wanted,
+            "{fault:?}: {played} samples, wanted {wanted}"
+        );
+        assert!(out.log.len() < 600, "{fault:?}: {} requests", out.log.len());
+    }
 }

@@ -217,6 +217,8 @@ pub enum Matcher {
         url: String,
         from: u64,
     },
+    /// Every request whose url starts with this prefix.
+    Prefix(String),
     MpdAll,
     MpdRefresh,
     /// The MPD request with this zero-based index and every later one.
@@ -599,6 +601,7 @@ impl Backend for Faulty {
             Matcher::Ranged { url, from } => {
                 req.url == *url && req.byte_range.is_some_and(|(off, _)| off == *from)
             }
+            Matcher::Prefix(p) => req.url.starts_with(p.as_str()),
             Matcher::MpdAll => is_mpd,
             Matcher::MpdRefresh => is_mpd && index >= 1,
             Matcher::MpdFrom(n) => is_mpd && index >= *n,
