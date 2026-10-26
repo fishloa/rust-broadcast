@@ -209,7 +209,7 @@ pub type FaultFn = Box<dyn FnMut(&Logged, i64) -> Option<Answer>>;
 pub struct DashSim {
     pub session: Session,
     pub world: World,
-    backend: Box<dyn Backend>,
+    pub backend: Box<dyn Backend>,
     pending: Vec<Pending>,
     seq: u64,
     wakes: BTreeSet<u64>,
@@ -434,6 +434,10 @@ impl DashSim {
             }
             Answer::Hang | Answer::Late(..) => {}
         }
+    }
+
+    pub fn idle(&self) -> bool {
+        self.pending.is_empty() && self.wakes.is_empty()
     }
 
     pub fn terminal(&self) -> bool {

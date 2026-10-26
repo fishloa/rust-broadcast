@@ -146,7 +146,12 @@ fn an_mpd_nothing_can_play_is_fatal_mpd_invalid() {
     let sim = finished(text_sim(MANIFEST, no_period.to_owned(), Config::default()));
     assert_eq!(
         kinds(&sim),
-        vec![(ErrorKind::MpdInvalid { reason: "no_period" }, true)]
+        vec![(
+            ErrorKind::MpdInvalid {
+                reason: "no_period"
+            },
+            true
+        )]
     );
     let dynamic_without_ast = manifest_text().replacen("type=\"static\"", "type=\"dynamic\"", 1);
     let sim = finished(text_sim(MANIFEST, dynamic_without_ast, Config::default()));
@@ -228,7 +233,8 @@ fn unsupported_features_are_reported_once_each_and_playback_goes_on() {
 #[test]
 fn a_low_latency_live_mpd_plays_at_segment_granularity_with_one_notice() {
     let ll = |at: i64| {
-        let mut base = Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+        let mut base = Synth::new(AST_US, Addressing::Number)
+            .with_utc("http-xsdate", "http://utc.test/xsdate");
         let mpd = base.mpd_at(at);
         mpd.replacen(
             "<SegmentTemplate ",
@@ -236,7 +242,8 @@ fn a_low_latency_live_mpd_plays_at_segment_granularity_with_one_notice() {
             2,
         )
     };
-    let mut synth = Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+    let mut synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
     synth.mpd_override = Some(Box::new(move |at| Some(ll(at))));
     let mut sim = DashSim::new(
         MPD_URL,
@@ -247,7 +254,11 @@ fn a_low_latency_live_mpd_plays_at_segment_granularity_with_one_notice() {
     sim.run_for(30 * SEC);
     let low: Vec<_> = kinds(&sim)
         .into_iter()
-        .filter(|(k, _)| *k == ErrorKind::UnsupportedFeature { feature: "low_latency" })
+        .filter(|(k, _)| {
+            *k == ErrorKind::UnsupportedFeature {
+                feature: "low_latency",
+            }
+        })
         .collect();
     assert_eq!(low.len(), 1, "{:?}", kinds(&sim));
     assert!(sim.count(|e| matches!(e, Event::Sample { .. })) > 0);
@@ -256,18 +267,33 @@ fn a_low_latency_live_mpd_plays_at_segment_granularity_with_one_notice() {
 
 #[test]
 fn protected_content_is_reported_and_all_protected_content_is_fatal_unsupported_encryption() {
-    let protection = "<ContentProtection schemeIdUri=\"urn:mpeg:dash:mp4protection:2011\" value=\"cenc\"/>";
+    let protection =
+        "<ContentProtection schemeIdUri=\"urn:mpeg:dash:mp4protection:2011\" value=\"cenc\"/>";
     let both = manifest_text().replace("<Representation", &format!("{protection}<Representation"));
     let sim = finished(text_sim(MANIFEST, both, Config::default()));
     let method = "content_protection".to_owned();
     assert_eq!(
         kinds(&sim),
         vec![
-            (ErrorKind::UnsupportedEncryption { method: method.clone() }, false),
-            (ErrorKind::UnsupportedEncryption { method: method.clone() }, true),
+            (
+                ErrorKind::UnsupportedEncryption {
+                    method: method.clone()
+                },
+                false
+            ),
+            (
+                ErrorKind::UnsupportedEncryption {
+                    method: method.clone()
+                },
+                true
+            ),
         ]
     );
-    let video_only = manifest_text().replacen("<Representation", &format!("{protection}<Representation"), 1);
+    let video_only = manifest_text().replacen(
+        "<Representation",
+        &format!("{protection}<Representation"),
+        1,
+    );
     let sim = finished(text_sim(MANIFEST, video_only, Config::default()));
     assert!(sim.ended(), "the clear audio plays: {:?}", kinds(&sim));
     assert_eq!(
@@ -368,7 +394,8 @@ fn a_live_segment_that_keeps_failing_is_skipped_with_one_error_and_a_discontinui
     config.max_segment_failures = 2;
     config.backoff_ms = vec![100];
     config.backoff_cap_ms = 100;
-    let synth = Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+    let synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
     let geo = synth.geo();
     let mut sim = DashSim::new(
         MPD_URL,
@@ -412,9 +439,9 @@ fn an_init_that_keeps_failing_is_fatal_init_fetch_failed_and_retry_after_is_hono
     config.max_key_failures = 3;
     let mut sim = DashSim::static_origin(&url_of(MANIFEST), config);
     sim.fault = Some(Box::new(|req: &Logged, _| {
-        req.url.ends_with("init-stream0.m4s").then(|| {
-            Answer::status_with(503, vec![("Retry-After".into(), "7".into())])
-        })
+        req.url
+            .ends_with("init-stream0.m4s")
+            .then(|| Answer::status_with(503, vec![("Retry-After".into(), "7".into())]))
     }));
     let sim = finished(sim);
     assert_eq!(
@@ -427,7 +454,11 @@ fn an_init_that_keeps_failing_is_fatal_init_fetch_failed_and_retry_after_is_hono
         .map(|l| l.send_elapsed_us)
         .collect();
     assert_eq!(at.len(), 3);
-    assert_eq!((at[1] - at[0]) / SEC, 7, "Retry-After 7 s beats the 2 s step");
+    assert_eq!(
+        (at[1] - at[0]) / SEC,
+        7,
+        "Retry-After 7 s beats the 2 s step"
+    );
     assert_eq!((at[2] - at[1]) / SEC, 7);
 }
 
@@ -459,7 +490,13 @@ fn an_oversize_segment_body_is_reported_once_and_counted_as_a_failure() {
     let sim = finished(DashSim::static_origin(&url_of(MANIFEST), config));
     let names: Vec<ErrorKind> = kinds(&sim).into_iter().map(|(k, _)| k).collect();
     assert_eq!(
-        names.iter().filter(|k| **k == ErrorKind::BodyTooLarge { field: "max_segment_bytes" }).count(),
+        names
+            .iter()
+            .filter(|k| **k
+                == ErrorKind::BodyTooLarge {
+                    field: "max_segment_bytes"
+                })
+            .count(),
         1
     );
     assert!(matches!(
@@ -477,10 +514,18 @@ fn an_oversize_mpd_is_reported_once_and_retried_forever_with_backoff() {
     assert!(sim.fatal().is_none());
     assert_eq!(
         kinds(&sim),
-        vec![(ErrorKind::BodyTooLarge { field: "max_manifest_bytes" }, false)]
+        vec![(
+            ErrorKind::BodyTooLarge {
+                field: "max_manifest_bytes"
+            },
+            false
+        )]
     );
     let n = sim.log.iter().filter(|l| l.is_mpd()).count();
-    assert!(n > 10 && n < 60, "bounded retry rate: {n} requests in 300 s");
+    assert!(
+        n > 10 && n < 60,
+        "bounded retry rate: {n} requests in 300 s"
+    );
 }
 
 #[test]
@@ -489,7 +534,8 @@ fn errors_are_reported_again_after_a_success_resets_them() {
     config.max_segment_failures = 2;
     config.backoff_ms = vec![50];
     config.backoff_cap_ms = 50;
-    let synth = Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+    let synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
     let mut sim = DashSim::new(
         MPD_URL,
         config,
@@ -514,7 +560,10 @@ fn errors_are_reported_again_after_a_success_resets_them() {
         .into_iter()
         .filter(|(k, _)| matches!(k, ErrorKind::SegmentFetchFailed { .. }))
         .count();
-    assert_eq!(skipped, 2, "samples in between reset the once-per-kind rule");
+    assert_eq!(
+        skipped, 2,
+        "samples in between reset the once-per-kind rule"
+    );
 }
 
 #[test]
@@ -542,7 +591,8 @@ fn the_vod_playout_gate_starts_at_the_vod_lead_and_the_live_gate_at_the_segment_
     let live = |lead_us: u64| {
         let mut config = Config::default();
         config.playout.live_start_lead_us = lead_us;
-        let synth = Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+        let synth = Synth::new(AST_US, Addressing::Number)
+            .with_utc("http-xsdate", "http://utc.test/xsdate");
         let mut sim = DashSim::new(
             MPD_URL,
             config,
@@ -577,7 +627,11 @@ fn a_closed_session_ignores_everything_and_a_dash_session_reports_ended_once() {
     sim.session.reconnect(sim.world.mono());
     let after = sim.log.len();
     sim.run_for(30 * SEC);
-    assert_eq!(sim.log.len(), after, "an ended presentation ignores reconnect");
+    assert_eq!(
+        sim.log.len(),
+        after,
+        "an ended presentation ignores reconnect"
+    );
     sim.session.close();
     assert!(sim.session.poll(0).is_none());
 }

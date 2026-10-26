@@ -28,8 +28,11 @@ fn cdn_origin() -> Origin {
 }
 
 fn with_cdn(rel: &str, config: Config) -> DashSim {
-    let text = test_fixtures::read_to_string(&format!("dash/{rel}"))
-        .replacen("<Period", "<BaseURL>http://cdn.test/</BaseURL><Period", 1);
+    let text = test_fixtures::read_to_string(&format!("dash/{rel}")).replacen(
+        "<Period",
+        "<BaseURL>http://cdn.test/</BaseURL><Period",
+        1,
+    );
     let url = url_of(rel);
     DashSim::new(
         &url,
@@ -53,7 +56,9 @@ fn carries_all(l: &Logged) -> bool {
 }
 
 fn carries_none(l: &Logged) -> bool {
-    l.header("authorization").is_none() && l.header("cookie").is_none() && l.header("x-probe").is_none()
+    l.header("authorization").is_none()
+        && l.header("cookie").is_none()
+        && l.header("x-probe").is_none()
 }
 
 fn live_with_utc(url: &'static str, config: Config) -> DashSim {
@@ -89,35 +94,66 @@ fn whole(rel: &str) -> Vec<Sig> {
 #[test]
 fn credentials_cookies_and_headers_reach_every_request_class_on_the_session_origin() {
     let mut sim = DashSim::static_origin(&url_of(SIDX), secured());
-    sim.session.set_credentials(Credentials::bearer("tok")).unwrap();
+    sim.session
+        .set_credentials(Credentials::bearer("tok"))
+        .unwrap();
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     let mpd = sim.log.iter().filter(|l| l.is_mpd()).count();
     let ranged = sim.log.iter().filter(|l| l.byte_range.is_some()).count();
-    assert_eq!((mpd, ranged), (1, 16), "one MPD; init + sidx + 6 subsegments for each of two Representations");
-    assert!(sim.log.iter().all(carries_all), "{:?}", sim.log.iter().find(|l| !carries_all(l)));
+    assert_eq!(
+        (mpd, ranged),
+        (1, 16),
+        "one MPD; init + sidx + 6 subsegments for each of two Representations"
+    );
+    assert!(
+        sim.log.iter().all(carries_all),
+        "{:?}",
+        sim.log.iter().find(|l| !carries_all(l))
+    );
 }
 
 #[test]
 fn a_utc_server_and_a_cdn_on_other_origins_receive_nothing_the_session_origin_does() {
     let mut sim = live_with_utc(UTC_URL, secured());
-    sim.session.set_credentials(Credentials::bearer("tok")).unwrap();
+    sim.session
+        .set_credentials(Credentials::bearer("tok"))
+        .unwrap();
     sim.run_for(15 * SEC);
-    let utc: Vec<&Logged> = sim.log.iter().filter(|l| l.url.starts_with("http://utc.test/")).collect();
-    let own: Vec<&Logged> = sim.log.iter().filter(|l| l.url.starts_with("http://dash.test/")).collect();
+    let utc: Vec<&Logged> = sim
+        .log
+        .iter()
+        .filter(|l| l.url.starts_with("http://utc.test/"))
+        .collect();
+    let own: Vec<&Logged> = sim
+        .log
+        .iter()
+        .filter(|l| l.url.starts_with("http://dash.test/"))
+        .collect();
     assert!(!utc.is_empty() && !own.is_empty());
     assert!(utc.iter().all(|l| carries_none(l)), "{utc:?}");
     assert!(own.iter().all(|l| carries_all(l)));
     assert!(sim.fatal().is_none());
 
     let mut sim = with_cdn(MANIFEST, secured());
-    sim.session.set_credentials(Credentials::bearer("tok")).unwrap();
+    sim.session
+        .set_credentials(Credentials::bearer("tok"))
+        .unwrap();
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
-    let cdn: Vec<&Logged> = sim.log.iter().filter(|l| l.url.starts_with("http://cdn.test/")).collect();
+    let cdn: Vec<&Logged> = sim
+        .log
+        .iter()
+        .filter(|l| l.url.starts_with("http://cdn.test/"))
+        .collect();
     assert!(cdn.len() >= 9);
     assert!(cdn.iter().all(|l| carries_none(l)));
-    assert!(sim.log.iter().filter(|l| l.is_mpd()).all(|l| carries_all(l)));
+    assert!(
+        sim.log
+            .iter()
+            .filter(|l| l.is_mpd())
+            .all(|l| carries_all(l))
+    );
 }
 
 #[test]
@@ -135,9 +171,15 @@ fn a_utc_server_on_the_session_origin_gets_the_credentials_too() {
         World::new(AST_US + 41 * MICROS + 120_000),
         Box::new(backend),
     );
-    sim.session.set_credentials(Credentials::bearer("tok")).unwrap();
+    sim.session
+        .set_credentials(Credentials::bearer("tok"))
+        .unwrap();
     sim.run_for(15 * SEC);
-    let utc: Vec<&Logged> = sim.log.iter().filter(|l| l.url.contains("/live/utc/")).collect();
+    let utc: Vec<&Logged> = sim
+        .log
+        .iter()
+        .filter(|l| l.url.contains("/live/utc/"))
+        .collect();
     assert!(!utc.is_empty());
     assert!(utc.iter().all(|l| carries_all(l)), "{utc:?}");
 }
@@ -164,7 +206,9 @@ fn a_401_waits_for_credentials_and_replays_the_parked_request() {
     );
     sim.run_for(30 * SEC);
     assert!(
-        sim.events.iter().any(|e| matches!(e, Event::AuthRequired { .. })),
+        sim.events
+            .iter()
+            .any(|e| matches!(e, Event::AuthRequired { .. })),
         "{:?}",
         sim.events
     );
@@ -172,11 +216,19 @@ fn a_401_waits_for_credentials_and_replays_the_parked_request() {
     let waiting = sim.log.len();
     sim.run_for(60 * SEC);
     assert_eq!(sim.log.len(), waiting, "no request is made while waiting");
-    sim.session.set_credentials(Credentials::new("u", "p")).unwrap();
+    sim.session
+        .set_credentials(Credentials::new("u", "p"))
+        .unwrap();
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     let mpd = sim.log.iter().filter(|l| l.is_mpd()).collect::<Vec<_>>();
-    assert!(mpd.last().unwrap().header("authorization").unwrap().starts_with("Basic "));
+    assert!(
+        mpd.last()
+            .unwrap()
+            .header("authorization")
+            .unwrap()
+            .starts_with("Basic ")
+    );
 }
 
 #[test]
@@ -192,7 +244,10 @@ fn a_403_is_reported_and_the_request_is_retried() {
     }));
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended());
-    assert_eq!(sim.count(|e| matches!(e, Event::Forbidden { status: 403 })), 1);
+    assert_eq!(
+        sim.count(|e| matches!(e, Event::Forbidden { status: 403 })),
+        1
+    );
     assert_eq!(sim.requests_to("chunk-stream0-00002").len(), 2);
 }
 
@@ -212,12 +267,17 @@ fn an_mpd_redirect_moves_the_base_for_every_relative_reference() {
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     assert!(
-        sim.log.iter().all(|l| !l.url.contains("/old/chunk") && !l.url.contains("/old/init")),
+        sim.log
+            .iter()
+            .all(|l| !l.url.contains("/old/chunk") && !l.url.contains("/old/init")),
         "segments resolve against the redirect target"
     );
     assert_eq!(sim.log.iter().filter(|l| l.is_mpd()).count(), 2);
     let first = sim.log.iter().find(|l| l.is_mpd()).unwrap().conn;
-    assert!(sim.closes.contains(&first), "the redirected connection is closed");
+    assert!(
+        sim.closes.contains(&first),
+        "the redirected connection is closed"
+    );
 }
 
 #[test]
@@ -231,7 +291,9 @@ fn a_segment_redirect_to_a_cdn_is_followed_without_credentials() {
         World::new(AST_US),
         Box::new(StaticBackend(origin)),
     );
-    sim.session.set_credentials(Credentials::bearer("tok")).unwrap();
+    sim.session
+        .set_credentials(Credentials::bearer("tok"))
+        .unwrap();
     sim.fault = Some(Box::new(|req: &Logged, _| {
         (req.url == "http://dash.test/chunk-stream0-00002.m4s")
             .then(|| Answer::Redirect("http://cdn.test/chunk-stream0-00002.m4s".into()))
@@ -267,7 +329,11 @@ fn a_redirect_loop_is_bounded_per_attempt_and_ends_as_a_failed_segment() {
         Some(ErrorKind::SegmentFetchFailed { status: None })
     );
     let hops = sim.requests_to("chunk-stream0-00001").len();
-    assert_eq!(hops, 2 * (1 + 2), "two attempts of one request and two redirects each");
+    assert_eq!(
+        hops,
+        2 * (1 + 2),
+        "two attempts of one request and two redirects each"
+    );
 }
 
 #[test]
@@ -281,7 +347,8 @@ fn no_redirects_allowed_fails_an_mpd_redirect_and_retries_it() {
         Box::new(StaticBackend(Origin::new())),
     );
     sim.fault = Some(Box::new(|req: &Logged, _| {
-        req.is_mpd().then(|| Answer::Redirect("http://dash.test/manifest.mpd".into()))
+        req.is_mpd()
+            .then(|| Answer::Redirect("http://dash.test/manifest.mpd".into()))
     }));
     sim.run_for(30 * SEC);
     assert_eq!(sim.count(|e| matches!(e, Event::Sample { .. })), 0);
@@ -306,7 +373,10 @@ fn a_hung_segment_is_closed_at_the_segment_timeout_and_requested_again() {
     assert!(sim.ended(), "{:?}", sim.errors());
     let reqs = sim.requests_to("chunk-stream1-00002");
     assert_eq!(reqs.len(), 2);
-    assert!(sim.closes.contains(&reqs[0].conn), "the hung connection was closed");
+    assert!(
+        sim.closes.contains(&reqs[0].conn),
+        "the hung connection was closed"
+    );
     assert!(
         reqs[1].send_elapsed_us >= reqs[0].send_elapsed_us + 3 * SEC,
         "not before the timeout"
@@ -318,7 +388,11 @@ fn a_whole_file_answer_to_a_ranged_request_is_sliced_and_a_wrong_range_is_a_fail
     let mut sim = DashSim::static_origin(&url_of(SIDX), Config::default());
     sim.fault = Some(Box::new(|req: &Logged, _| {
         req.byte_range.map(|_| {
-            let file = if req.url.contains("/a_") { "a_dashinit.mp4" } else { "v_dashinit.mp4" };
+            let file = if req.url.contains("/a_") {
+                "a_dashinit.mp4"
+            } else {
+                "v_dashinit.mp4"
+            };
             Answer::ok(test_fixtures::read(&format!("dash/ondemand-sidx/{file}")))
         })
     }));
@@ -326,7 +400,10 @@ fn a_whole_file_answer_to_a_ranged_request_is_sliced_and_a_wrong_range_is_a_fail
     assert!(sim.ended(), "{:?}", sim.errors());
     dash_sim::assert_samples_equal_oracle(
         &sim,
-        &[whole("ondemand-sidx/v_dashinit.mp4"), whole("ondemand-sidx/a_dashinit.mp4")],
+        &[
+            whole("ondemand-sidx/v_dashinit.mp4"),
+            whole("ondemand-sidx/a_dashinit.mp4"),
+        ],
     );
 
     let mut sim = DashSim::static_origin(&url_of(SIDX), Config::default());
@@ -344,7 +421,11 @@ fn a_whole_file_answer_to_a_ranged_request_is_sliced_and_a_wrong_range_is_a_fail
     }));
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
-    assert!(sim.statuses().iter().any(|s| matches!(s, Status::Reconnecting { attempt: 1 })));
+    assert!(
+        sim.statuses()
+            .iter()
+            .any(|s| matches!(s, Status::Reconnecting { attempt: 1 }))
+    );
 }
 
 #[test]
@@ -354,13 +435,14 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
     sim.fault = Some(Box::new(move |req: &Logged, _| {
         if req.is_mpd() {
             let text = test_fixtures::read(&format!("dash/{MANIFEST}"));
-            return Some(
-                Answer::ok(text).with_header("Set-Cookie", "sid=abc; Path=/"),
-            );
+            return Some(Answer::ok(text).with_header("Set-Cookie", "sid=abc; Path=/"));
         }
         if req.url.ends_with("chunk-stream0-00003.m4s") && first {
             first = false;
-            return Some(Answer::status_with(429, vec![("Retry-After".into(), "9".into())]));
+            return Some(Answer::status_with(
+                429,
+                vec![("Retry-After".into(), "9".into())],
+            ));
         }
         None
     }));
@@ -370,8 +452,16 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
     assert_eq!(reqs.len(), 2);
     assert_eq!((reqs[1].send_elapsed_us - reqs[0].send_elapsed_us) / SEC, 9);
     assert!(
-        sim.log.iter().skip(1).all(|l| l.header("cookie") == Some("sid=abc")),
+        sim.log
+            .iter()
+            .skip(1)
+            .all(|l| l.header("cookie") == Some("sid=abc")),
         "the MPD's cookie rides on every later request"
     );
-    assert!(sim.session.cookies().iter().any(|(k, v)| k == "sid" && v == "abc"));
+    assert!(
+        sim.session
+            .cookies()
+            .iter()
+            .any(|(k, v)| k == "sid" && v == "abc")
+    );
 }
