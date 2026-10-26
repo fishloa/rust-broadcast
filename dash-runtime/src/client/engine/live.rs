@@ -71,6 +71,10 @@ pub(super) struct Live {
 }
 
 impl Live {
+    pub(super) fn bookkeeping(&self) -> usize {
+        self.early.len() + self.missing_seen.len()
+    }
+
     fn new(now_us: u64) -> Self {
         Self {
             ready: false,

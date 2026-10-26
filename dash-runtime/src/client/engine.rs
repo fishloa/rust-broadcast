@@ -178,6 +178,34 @@ struct PrevPeriod {
     lanes: Vec<(SetClass, Option<u64>, InitKey)>,
 }
 
+/// The sizes of a [`DashClient`]'s bookkeeping, see [`DashClient::state_size`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct StateSize {
+    /// Period runs held (finished ones are dropped).
+    pub periods: usize,
+    /// Resources with a request on record.
+    pub requests: usize,
+    /// Requests awaiting an answer.
+    pub inflight: usize,
+    /// Failed resources awaiting the caller's retry.
+    pub parked: usize,
+    /// Resources with a consecutive-failure count.
+    pub failures: usize,
+    /// Delivered resources remembered for duplicate detection.
+    pub done: usize,
+    /// Initialization Segments held.
+    pub inits: usize,
+    /// Representations indexed.
+    pub reps: usize,
+    /// Fetches queued for the next poll.
+    pub queued: usize,
+    /// Outputs not yet drained.
+    pub outputs: usize,
+    /// Live-only bookkeeping entries (early waits, missing-segment flags).
+    pub live: usize,
+}
+
 /// The sans-IO DASH client for static and dynamic presentations.
 ///
 /// Drive it like `hls_runtime::client::HlsClient`: call [`DashClient::poll`]
@@ -363,6 +391,26 @@ impl DashClient {
         Some(d.as_secs() + u64::from(d.subsec_nanos() > 0))
     }
 
+    /// The sizes of the client's bookkeeping, for tests and monitoring: every
+    /// collection is bounded by the in-flight window and the Periods in play
+    /// (a live session of any length does not grow them).
+    #[must_use]
+    pub fn state_size(&self) -> StateSize {
+        StateSize {
+            periods: self.periods.len(),
+            requests: self.reqs.len(),
+            inflight: self.inflight.len(),
+            parked: self.parked.len(),
+            failures: self.failures.len(),
+            done: self.done.len(),
+            inits: self.inits.len(),
+            reps: self.rep_loc.len(),
+            queued: self.queue.len(),
+            outputs: self.outputs.len(),
+            live: self.live.as_ref().map_or(0, live::Live::bookkeeping),
+        }
+    }
+
     /// The next drained output, if any.
     pub fn next_output(&mut self) -> Option<Output> {
         self.outputs.pop_front()
@@ -487,6 +535,9 @@ impl DashClient {
         if dynamic {
             self.start_live(now_us, bytes, meta);
         } else {
+            if let Some(u) = meta.final_url.and_then(|f| Url::parse(f).ok()) {
+                self.doc_url = Some(u);
+            }
             self.activate(0);
             self.issue = 0;
         }
@@ -1408,9 +1459,11 @@ impl DashClient {
             }
             self.periods[pi].finished = true;
             self.periods[pi].lanes.clear();
-            self.deliver += 1;
             let total = self.mpd.as_ref().map_or(0, |m| m.periods.len());
-            if self.periods[pi].index + 1 >= total {
+            let last_of_mpd = self.periods[pi].index + 1 >= total;
+            self.deliver += 1;
+            self.prune_finished();
+            if last_of_mpd {
                 if self.live_open() {
                     return;
                 }
@@ -1425,6 +1478,32 @@ impl DashClient {
                 return;
             }
         }
+    }
+
+    fn prune_finished(&mut self) {
+        while self.deliver > 0
+            && self.issue > 0
+            && self.periods.first().is_some_and(|p| p.finished)
+        {
+            self.periods.remove(0);
+            self.deliver -= 1;
+            self.issue -= 1;
+            self.rep_loc.retain(|_, loc| loc.0 != 0);
+            for loc in self.rep_loc.values_mut() {
+                loc.0 -= 1;
+            }
+        }
+        let mut keep: BTreeSet<InitKey> = self
+            .periods
+            .iter()
+            .flat_map(|p| p.lanes.iter())
+            .flat_map(|l| l.reps.iter())
+            .map(|r| r.init_key.clone())
+            .collect();
+        if let Some(prev) = &self.prev {
+            keep.extend(prev.lanes.iter().map(|(_, _, k)| k.clone()));
+        }
+        self.inits.retain(|k, _| keep.contains(k));
     }
 
     fn ready_to_start(&self, pi: usize) -> bool {
