@@ -1,14 +1,16 @@
 # broadcast-client
 
 Generic sans-IO client session for live media: auth, redirects, reconnect/retry and buffering
-decisions over a TS-over-HTTP source (`tshttp-runtime`), an HLS source (`hls-runtime`) and an
-RTSP source (`rtsp-runtime`). The host performs only transport I/O (HTTP requests, or a TCP
+decisions over a TS-over-HTTP source (`tshttp-runtime`), an HLS source (`hls-runtime`), a DASH
+source (`dash-runtime`) and an RTSP source (`rtsp-runtime`). The host performs only transport I/O (HTTP requests, or a TCP
 connection for RTSP); time is a caller-supplied monotonic `now_us`.
 
 ## Sources
 
 `Config::kind` selects the source; `SourceKind::Auto` picks RTSP for an `rtsp://` or `rtsps://` URL,
-HLS for a `.m3u8`/`.m3u` URL path (ASCII case-insensitive) and TS-over-HTTP otherwise.
+HLS for a `.m3u8`/`.m3u` URL path and DASH for a `.mpd` URL path (both ASCII case-insensitive) and
+TS-over-HTTP otherwise. An explicit kind wins over the extension (`SourceKind::Dash` plays an MPD served
+from any path; DASH is HTTP-only, so `rtsp://` with `SourceKind::Dash` is `Error::UnsupportedScheme`).
 
 TS-over-HTTP announces its tracks once: the first media of a connection is held until every elementary stream
 the PAT/PMT declares and that has sent a packet has resolved (plus a 0.5 s settle for a stream that has not sent
@@ -240,7 +242,8 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   so a decode failure after such a burst is host-side.
 - `Action` implements `Debug` without header values or `Send` payloads.
 - `select_audio_rendition` after `Status::Ended` is accepted and ignored; so are `select_variant` and
-  `reconnect` for HLS (a finite TS source restarts on `reconnect`).
+  `reconnect` for HLS and DASH (a finite TS source restarts on `reconnect`). A DASH `reconnect` starts over
+  from a fresh MPD request and announces `Event::Discontinuity` first; cookies and credentials are kept.
 - `Event::AuthRequired::resource_metadata` is chosen by the server that sent the challenge: validate it
   (https, expected host, no private/loopback address) before fetching it.
 - After a fatal `Event::Error` the session emits nothing further.
@@ -260,15 +263,20 @@ the UTC time once:
   delta-seconds form, and never shorter than the backoff step. With no anchor the date is counted from the
   response's own `Date` header (the server's clock cancels out); with neither the header is ignored as before.
   A date in the past waits nothing extra; garbage is ignored.
-- Every other source ignores the anchor. The DASH source (design: `docs/dash-runtime/DESIGN.md`, not yet in
-  this crate) will use it for dynamic MPDs only, below a measured `UTCTiming` unless
-  `DashConfig::clock_policy` is `PreferHost`. Static MPDs and every other source need no clock.
-- `Event::ClockSynced { source: ClockSource, uncertainty_us }` is the type the DASH source will emit when it
-  first has a UTC clock and when the clock's source changes (not on a re-sync from the same source), before
-  the first sample that depends on it. `ClockSource` is `UtcTiming`, `Host` or `MpdDate`; `uncertainty_us` is the
-  half-width of the error bar. No source emits it yet; match on it now.
-- `Action::HttpRequest::method` is `"GET"` today; the DASH `http-head` clock method will make it `"HEAD"`
-  for `UTCTiming` requests, so pass `method` through verbatim and do not assume GET.
+- DASH uses the anchor for dynamic MPDs only (segment availability and the live edge are defined on UTC); a
+  static MPD and every other source need no clock. The anchor is the second rung of the clock ladder: a
+  measured `UTCTiming` comes first (it is the packager's own time authority, sampled by the session through
+  its own requests), then `set_wall_clock`, then the MPD response's `Date` header; with `DashClockPolicy::PreferHost`
+  the host clock comes first and no `UTCTiming` request is made. A dynamic MPD with no source at all is the
+  fatal `ErrorKind::ClockUnavailable`. Call `set_wall_clock` between `Session::open` (which performs no I/O)
+  and the first `poll`; calling it later or again is fine and a step is detected and followed.
+- `Event::ClockSynced { source: ClockSource, uncertainty_us }` is emitted by the DASH source when it first has
+  a UTC clock and when the clock's source changes (not on a re-sync from the same source), before the first
+  sample that depends on it. `ClockSource` is `UtcTiming`, `Host` or `MpdDate`; `uncertainty_us` is the
+  half-width of the error bar.
+- `Action::HttpRequest::method` is `"GET"` or `"HEAD"` (the DASH `http-head` clock method issues `HEAD` for a
+  `UTCTiming` element): pass `method` through verbatim and do not assume GET. A `HEAD` response has no body;
+  the session ignores its `Content-Length`.
 - `Config::dash: DashConfig` holds the DASH-only knobs (`clock_policy`, `utc_timeout_us` 2 s, `utc_wait_us`
   5 s, `utc_max_rtt_us` 2 s, `utc_resync_us` 600 s, `host_clock_uncertainty_us` 500 ms, `live_delay_us`,
   `availability_margin_us`, `early_retry_us` 250 ms, `early_grace_us` 1 s, `min_mpd_refresh_us` 1 s,
@@ -278,10 +286,84 @@ the UTC time once:
   it does so for every source kind, because a config is a value, not a promise to play DASH. `u64::MAX` is
   accepted everywhere zero is not (read as "never"); zero is accepted for `host_clock_uncertainty_us`,
   `availability_margin_us`, `early_grace_us` and `live_delay_us`.
-- New `ErrorKind`s reserved for the DASH source, each with a stable `name()`: `MpdParse`, `MpdInvalid`,
-  `UnsupportedAddressing`, `UnsupportedFeature`, `LiveEdgeLost` and the fatal `ClockUnavailable` (a dynamic MPD
-  with no `UTCTiming`, no `Date` header and no `set_wall_clock`). `select_variant` and `select_audio_rendition`
-  return `Error::NotHls` for sessions that are neither HLS nor DASH.
+
+## DASH
+
+`SourceKind::Dash` plays an MPD through `dash-runtime`: static (VOD) and dynamic (live) presentations,
+`SegmentTemplate` (`$Number$`, `$Time$`), `SegmentTimeline`, `SegmentList` and `SegmentBase` with a `sidx`
+(on-demand profile), multiple Periods, fMP4/CMAF segments. The host makes the requests the session asks for
+and answers them exactly as for HLS; what differs is below.
+
+**Host contract.**
+- `set_wall_clock` between `open` and the first `poll` (see the clock section): without it a dynamic MPD with
+  neither `UTCTiming` nor a `Date` header is fatal. Static MPDs need nothing.
+- Pass `Action::HttpRequest::method` through (`HEAD` occurs) and honour `byte_range` (`(offset, length)`):
+  init segments, `sidx` indexes and on-demand subsegments are byte-range requests. A server that ignores `Range`
+  and answers `200` with the whole file is handled (the range is cut out); a `206` must carry an exact
+  `Content-Range`.
+- The MPD refresh is conditional: the session sets `If-None-Match` / `If-Modified-Since` from the last
+  `ETag` / `Last-Modified`, and a `304` is accepted. Report response headers verbatim, `Date`, `ETag`,
+  `Last-Modified` and `Set-Cookie` included.
+- Cookies, `Config::extra_headers` and credentials ride on every request to the session origin (the MPD's) and on
+  no request to another origin: a `UTCTiming` server or a CDN `BaseURL` on another origin gets none. Redirects
+  follow `max_redirects` per request; the final URL of an MPD redirect becomes the base of every relative
+  reference (ISO/IEC 23009-1 A.11), a `Location` element in the MPD wins over it.
+- Samples carry the container media timeline (`tfdt`), not a Period-rebased one. `Event::Discontinuity` marks a
+  Period that does not continue the previous one (no `urn:mpeg:dash:period-continuity:2015` signal or a changed
+  init), a skipped segment and a live join that fell behind.
+
+**Shared knobs.** `max_redirects`, `extra_headers`, cookies, `variant_policy` (`max_bandwidth`, `max_height`,
+`supported_codecs`), `preferred_audio_language`, `auto_select_audio`, `backoff_ms`, `backoff_cap_ms`,
+`max_segment_failures`, `max_inflight_segments`, `request_timeout_us` (MPD, init, index), `segment_timeout_us`,
+`max_manifest_bytes` (MPD), `max_segment_bytes`, `max_key_failures` (consecutive init and MPD-parse failures),
+`playout`, `timeline_jump` and `max_queued_events` apply as for HLS. A `UTCTiming` request is bounded by
+`dash.utc_timeout_us` and its body by 4 KiB. `Config::hls_key_timeout_us` and `max_key_bytes` are HLS-only.
+
+**What the host sees.** `Event::Variants` lists the Representations of the video AdaptationSets of the current
+Period in MPD order (`VariantInfo::url` is the Representation's initialization URL) and, as `renditions`, the
+audio AdaptationSets (`name` is the first `Label`, else `@lang`, else the first Representation's `@id`; `default`
+is Role `main`; `url` is the init URL). It is emitted once per Period. `select_variant(i)` takes an index into
+those variants, `select_audio_rendition(Some(i))` an index into those renditions (`None` stops audio; it starts
+again with a later `Some`). A choice takes effect at the next segment boundary and is kept across Periods by
+Representation properties (bandwidth, size, codecs) and by rendition name and language, else the Period's own
+pick stands. Automatic audio selection follows `preferred_audio_language` (BCP 47 prefix, ASCII
+case-insensitive, never a commentary or description role), then Role `main`, then the first set;
+`auto_select_audio = false` plays video only until a rendition is chosen. Track ids are 1-based, video then
+audio, session-global and stable across a Representation switch (`AUDIO_TRACK_ID_OFFSET` is HLS-only).
+`Status`: `Establishing` at the first successful response, `Live` at the first sample, `NotFound` for a 404/410
+of the first MPD, `Reconnecting` from every scheduled retry, `Ended` when every selected segment of a
+presentation that ends was delivered. The playout gate runs in VOD mode for a static MPD and in live mode for a
+dynamic one, with a start lead of `min(3 x maxSegmentDuration, playout.live_start_lead_us)`.
+
+**Errors.** `MpdParse { reason }` (`xml`, `invalid_utf8`, `not_mpd`, `invalid`, `too_large`; non-fatal, once per
+kind until samples arrive, fatal after `max_key_failures` consecutive bodies with no good MPD between),
+`MpdInvalid { reason }` (no Period, no playable Representation, missing `availabilityStartTime`; fatal),
+`UnsupportedAddressing { reason }` (`presentation_type_list` is fatal; a Representation that cannot be addressed
+or leaves the MPD origin under `cross_origin_urls = false` is dropped, non-fatal, and fatal only when nothing is
+left), `UnsupportedFeature { feature }` (`preselection`, `xlink`, `mpd_patch`, `event_stream`, `low_latency`,
+`utc_timing_scheme`, `utc_cross_origin`; once per feature per session, never fatal), `LiveEdgeLost` (the session
+fell outside the time-shift window and continued at the oldest segment still there, with a `Discontinuity`),
+`ClockUnavailable` (fatal), plus the shared `UnsupportedEncryption`, `TrackDropped` (subtitles, TS and WebM
+segments, trick modes, dependent Representations), `UnsupportedContainer` (`non_fragmented_mp4` is fatal),
+`SegmentFetchFailed` (fatal for a static MPD at `max_segment_failures`, a skipped segment plus a `Discontinuity`
+for a live one), `InitFetchFailed`, `InitDecodeFailed` and `BodyTooLarge`.
+
+**Supported and not.**
+
+| Feature | Status |
+|---|---|
+| Static MPD, VOD to `Ended` | supported |
+| Dynamic MPD, live edge, time-shift window, refresh | supported; needs a clock (see above) |
+| `SegmentTemplate` (`$Number$`, `$Time$`, `$Bandwidth$`, `$RepresentationID$`, widths), `SegmentTimeline`, `SegmentList`, `SegmentBase` + `sidx` | supported |
+| Periods, `period-continuity` | supported (continuity honoured, `period-connectivity` treated as a discontinuity) |
+| `UTCTiming` `direct`, `http-xsdate`, `http-iso`, `http-ntp`, `http-head` | supported; `ntp`/`sntp` skipped (`UnsupportedFeature`) |
+| `BaseURL` alternates, DVB `@priority` | supported; `@weight` is not used |
+| Video and audio Representation switching, audio set switching | supported (`select_variant`, `select_audio_rendition`); no automatic ABR |
+| Low-latency DASH | plays at segment granularity (`UnsupportedFeature { feature: "low_latency" }`) |
+| `EventStream`/`InbandEventStream`, `Preselection`, MPD patch, xlink | reported, not used (xlink `resolve-to-zero` is honoured) |
+| Subtitles, WebM, MPEG-2 TS segments, trick modes | dropped (`TrackDropped`) |
+| CENC/CBCS | never decrypted (`UnsupportedEncryption`) |
+| Seeking, `MPD@type="list"`, segment sequences, hierarchical `sidx`, `data:` URLs, open-ended byte ranges | not supported (typed errors) |
 
 ## Cookies and custom headers
 

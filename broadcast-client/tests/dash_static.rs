@@ -358,3 +358,74 @@ fn the_event_sequence_does_not_depend_on_how_the_bodies_are_chunked() {
         }
     }
 }
+
+#[test]
+fn reconnect_restarts_a_static_presentation_from_a_fresh_mpd_after_a_discontinuity() {
+    let mut config = Config::default();
+    config.max_inflight_segments = 1;
+    let mut sim = DashSim::static_origin(&format!("{HOST}/manifest.mpd"), config);
+    while !sim.events.iter().any(|e| matches!(e, Event::Sample { .. })) {
+        sim.run_for(10_000);
+    }
+    let before = sim.events.len();
+    sim.session.reconnect(sim.world.mono());
+    sim.run_to_terminal(120 * SEC);
+    assert_clean(&sim);
+    let tail = &sim.events[before..];
+    assert!(
+        matches!(tail.first(), Some(Event::Discontinuity)),
+        "the host is told first: {:?}",
+        tail.first()
+    );
+    assert_eq!(
+        sim.log.iter().filter(|l| l.is_mpd()).count(),
+        2,
+        "a fresh MPD request"
+    );
+    let second_pass: Vec<_> = tail
+        .iter()
+        .filter_map(|e| match e {
+            Event::Sample { track, sample, .. } if track.value() == 1 => Some(sample.clone()),
+            _ => None,
+        })
+        .collect();
+    let want = want(&ffmpeg(""));
+    assert_eq!(
+        dash_sim::sigs_of(&second_pass),
+        want[0],
+        "the whole video again, in order"
+    );
+    assert!(
+        tail.iter().any(|e| matches!(e, Event::Variants(_))),
+        "the new presentation is announced again"
+    );
+}
+
+#[test]
+fn close_is_terminal_and_closes_every_connection_in_flight_exactly_once() {
+    let mut sim = DashSim::static_origin(&format!("{HOST}/manifest.mpd"), Config::default());
+    while sim.log.len() < 6 {
+        sim.run_for(5_000);
+    }
+    sim.session.close();
+    let mut closed = Vec::new();
+    while let Some(a) = sim.session.poll(sim.world.mono()) {
+        if let broadcast_client::Action::Close { conn } = a {
+            closed.push(conn);
+        }
+    }
+    let mut closed_sorted = closed.clone();
+    closed_sorted.sort_unstable();
+    closed_sorted.dedup();
+    assert_eq!(closed_sorted.len(), closed.len(), "each connection once");
+    assert!(!closed.is_empty(), "requests were in flight");
+    assert!(
+        closed.iter().all(|c| sim.log.iter().any(|l| l.conn == *c)),
+        "only connections the session opened"
+    );
+    assert!(sim.session.poll(sim.world.mono()).is_none());
+    assert!(sim.session.next_event().is_none());
+    sim.session.on_response(1, 200, &[], 0);
+    sim.session.on_data(1, b"x", 0);
+    assert!(sim.session.next_event().is_none());
+}

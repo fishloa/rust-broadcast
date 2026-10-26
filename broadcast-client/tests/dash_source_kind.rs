@@ -53,7 +53,10 @@ fn an_explicit_kind_wins_over_the_extension() {
     assert!(is_adaptive("http://h/stream", SourceKind::Dash));
     assert!(!is_adaptive("http://h/stream.mpd", SourceKind::TsHttp));
     let hls = first_request("http://h/stream.mpd", SourceKind::Hls).unwrap();
-    assert_eq!(hls.1, "http://h/stream.mpd", "HLS fetches whatever it is given");
+    assert_eq!(
+        hls.1, "http://h/stream.mpd",
+        "HLS fetches whatever it is given"
+    );
 }
 
 #[test]

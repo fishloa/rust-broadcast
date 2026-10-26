@@ -394,7 +394,9 @@ fn the_mpd_refresh_is_conditional_and_a_304_is_accepted() {
     assert!(mpds.len() >= 10);
     assert!(mpds[0].header("if-none-match").is_none());
     assert!(
-        mpds.iter().skip(1).all(|r| r.header("if-none-match").is_some()),
+        mpds.iter()
+            .skip(1)
+            .all(|r| r.header("if-none-match").is_some()),
         "every refresh carries the validator"
     );
     assert!(sim.errors().is_empty(), "{:?}", sim.errors());
@@ -620,4 +622,34 @@ fn the_real_livesim2_refresh_pair_plays_across_the_update_without_gap_or_early_r
         assert!(times.len() >= 2, "{rep}: {times:?}");
     }
     assert!(sample_count(&sim) > 0);
+}
+
+#[test]
+fn reconnect_starts_a_fresh_presentation_and_keeps_the_host_clock() {
+    let synth = Synth::new(AST_US, Addressing::Number);
+    let (mut sim, geo) = live(synth, 41 * MICROS + 120_000, Config::default());
+    sim.give_host_clock();
+    sim.run_for(15 * SEC);
+    let before = sim.events.len();
+    let mpds_before = sim.log.iter().filter(|l| l.is_mpd()).count();
+    sim.session.reconnect(sim.world.mono());
+    sim.run_for(15 * SEC);
+    assert!(sim.fatal().is_none(), "{:?}", sim.fatal());
+    let tail = &sim.events[before..];
+    assert!(matches!(tail.first(), Some(Event::Discontinuity)));
+    assert!(tail.iter().any(|e| matches!(e, Event::Variants(_))));
+    assert!(
+        tail.iter().any(|e| matches!(
+            e,
+            Event::ClockSynced {
+                source: ClockSource::Host,
+                ..
+            }
+        )),
+        "the host anchor is applied to the new presentation without another set_wall_clock"
+    );
+    assert!(sim.log.iter().filter(|l| l.is_mpd()).count() > mpds_before);
+    assert!(tail.iter().any(|e| matches!(e, Event::Sample { .. })));
+    let reqs = segment_requests(&sim, geo);
+    assert!(early_requests(&reqs, geo, TOLERANCE_US).is_empty());
 }
