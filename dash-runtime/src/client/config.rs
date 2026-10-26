@@ -146,7 +146,7 @@ impl DashConfig {
         if self.utc_timeout_us == 0 {
             return invalid("utc_timeout_us");
         }
-        if self.utc_wait_us == 0 || self.utc_wait_us < self.utc_timeout_us {
+        if self.utc_wait_us < self.utc_timeout_us {
             return invalid("utc_wait_us");
         }
         if self.utc_max_rtt_us == 0 {

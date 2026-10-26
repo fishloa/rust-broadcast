@@ -69,7 +69,7 @@ pub(crate) fn retry_after_us(
         let secs = value.parse::<u64>().unwrap_or(u64::MAX);
         i128::from(secs).saturating_mul(i128::from(MICROS_PER_SECOND))
     } else {
-        let Some(until) = parse_http_date(value).ok() else {
+        let Ok(until) = parse_http_date(value) else {
             return 0;
         };
         let now_unix = match wall {
@@ -83,7 +83,7 @@ pub(crate) fn retry_after_us(
         };
         i128::from(until) - now_unix
     };
-    let capped = wait_us.clamp(0, i128::from(MAX_RETRY_AFTER_SECS * MICROS_PER_SECOND));
+    let capped = wait_us.min(i128::from(MAX_RETRY_AFTER_SECS * MICROS_PER_SECOND));
     u64::try_from(capped).unwrap_or(0)
 }
 
