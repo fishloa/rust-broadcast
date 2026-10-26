@@ -354,7 +354,7 @@ def render_crates_md_block(domains: list[dict], crates: dict[str, Crate], root: 
             if (root / c.name / "CHANGELOG.md").exists():
                 links.append(f"[CHANGELOG](../{c.name}/CHANGELOG.md)")
             if (root / c.name / "docs").is_dir():
-                links.append(f"[spec transcriptions](../{c.name}/docs/)")
+                links.append(f"[docs + spec pointer](../{c.name}/docs/)")
             if c.crates_io:
                 links.append(f"[crates.io](https://crates.io/crates/{c.name})")
                 if c.has_lib:
