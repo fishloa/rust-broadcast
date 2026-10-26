@@ -15,8 +15,11 @@
 //!
 //! What it does, and does not:
 //!
-//! * Static MPDs only. A dynamic MPD is answered with
-//!   [`Error::LiveNotYetSupported`] (temporary, removed by design step W-d2).
+//! * Static and dynamic MPDs. A dynamic one needs a UTC clock
+//!   ([`DashClient::set_wall_clock`], `UTCTiming` through
+//!   [`Action::FetchUtcTiming`], or the response `Date` in [`ResponseMeta`]),
+//!   gates every request on the segment's availability, refreshes the MPD
+//!   and reports [`Output::ClockSynced`]; see `next_wake` for timers.
 //! * fMP4/CMAF segments only; encrypted, MPEG-2 TS, WebM, subtitle and
 //!   trick-mode sets are reported as [`Output::TrackDropped`], never
 //!   misplayed.
