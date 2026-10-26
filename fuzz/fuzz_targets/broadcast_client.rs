@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-use broadcast_client::{Action, Config, Credentials, Event, Hint, Session, TrackId};
+use broadcast_client::{
+    Action, Config, Credentials, DashClockPolicy, Event, Hint, Session, TrackId,
+};
 use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
 
@@ -70,6 +72,16 @@ const PLAYER_HINTS: [Hint; 3] = [Hint::SourceEnded, Hint::SourceError, Hint::Pcr
 const RENDERED_IDS: [u32; 7] = [1, 2, 3, 1_001, 1_002, 999, u32::MAX];
 const HOLD_WALL_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
 const START_WAIT_US: [u64; 4] = [0, 500_000, 1_500_000, u64::MAX];
+const DASH_US: [u64; 4] = [1, 1_000, 20_000_000, u64::MAX];
+const DASH_ZERO_OK_US: [u64; 4] = [0, 1_000, 20_000_000, u64::MAX];
+const DASH_LIVE_DELAY_US: [Option<u64>; 4] = [None, Some(0), Some(6_000_000), Some(u64::MAX)];
+const DASH_POLICIES: [DashClockPolicy; 4] = [
+    DashClockPolicy::Auto,
+    DashClockPolicy::PreferHost,
+    DashClockPolicy::Auto,
+    DashClockPolicy::PreferHost,
+];
+const DASH_FLAGS: [(bool, bool); 4] = [(false, true), (true, true), (false, false), (true, false)];
 const HOLD_MEDIA_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
 const HOLD_QUIET_BYTES: [usize; 4] = [1, TS_PACKET, 512 * 1024, 1 << 30];
 const HOLD_MAX_BYTES: [usize; 4] = [0, TS_PACKET, 4 * 1024 * 1024, usize::MAX];
@@ -93,7 +105,26 @@ const COOKIE_PREFIXES: [&str; 8] = [
     "Domain=.EXAMPLE; Path=/; ",
     "Domain=other.example; ",
 ];
-const STATUS_CODES: [u16; 7] = [200, 200, 404, 302, 401, 500, 307];
+const STATUS_CODES: [u16; 9] = [200, 200, 404, 302, 401, 500, 307, 429, 503];
+const RETRY_AFTER_VALUES: [&str; 8] = [
+    "30",
+    "0",
+    "99999999999999999999",
+    "Mon, 26 Oct 2026 08:39:34 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+    "",
+    "soon",
+];
+const RESPONSE_DATES: [&str; 4] = [
+    "Mon, 26 Oct 2026 08:39:04 GMT",
+    "Thu, 01 Jan 1970 00:00:00 GMT",
+    "Thu, 30 Dec 9999 00:00:00 GMT",
+    "yesterday",
+];
+const WALL_UNIX_US: [u64; 4] = [0, 1, 1_793_003_944_000_000, u64::MAX];
+const WALL_CLOCK_BYTE: usize = 7;
+const WALL_CLOCK_PERIOD: u8 = 8;
 const LOCATIONS: [&str; 4] = [
     "http://example/next.ts",
     "http://other.example/x.ts",
@@ -529,7 +560,35 @@ fn config_from(header: &[u8]) -> Config {
     config.playout.pause_lead_us = knob(header, 17, &LEAD_US);
     config.start_pending_track_wait_us = knob(header, 18, &START_WAIT_US);
     config.max_segment_failures = knob(header, 19, &SEGMENT_FAILURES);
+    config.dash.clock_policy = knob(header, 20, &DASH_POLICIES);
+    let utc_timeout = knob(header, 21, &DASH_US);
+    config.dash.utc_timeout_us = utc_timeout;
+    config.dash.utc_wait_us = knob(header, 22, &DASH_US).max(utc_timeout);
+    config.dash.utc_max_rtt_us = knob(header, 23, &DASH_US);
+    config.dash.utc_resync_us = knob(header, 24, &DASH_US);
+    config.dash.host_clock_uncertainty_us = knob(header, 25, &DASH_ZERO_OK_US);
+    config.dash.live_delay_us = knob(header, 26, &DASH_LIVE_DELAY_US);
+    config.dash.availability_margin_us = knob(header, 27, &DASH_ZERO_OK_US);
+    config.dash.early_retry_us = knob(header, 28, &DASH_US);
+    config.dash.early_grace_us = knob(header, 29, &DASH_ZERO_OK_US);
+    config.dash.min_mpd_refresh_us = knob(header, 30, &DASH_US);
+    let (offset, cross_origin) = knob(header, 31, &DASH_FLAGS);
+    config.dash.use_availability_time_offset = offset;
+    config.dash.cross_origin_urls = cross_origin;
     config
+}
+
+fn wall_clock(session: &mut Session, now: u64, chunk: &[u8]) {
+    let byte = |i: usize| usize::from(chunk.get(i).copied().unwrap_or(0));
+    if chunk.get(WALL_CLOCK_BYTE).copied().unwrap_or(1) % WALL_CLOCK_PERIOD != 0 {
+        return;
+    }
+    let mono = match byte(3) % 4 {
+        0 => 0,
+        1 => u64::MAX,
+        _ => now,
+    };
+    session.set_wall_clock(mono, WALL_UNIX_US[byte(4) % WALL_UNIX_US.len()]);
 }
 
 fn split_header(data: &[u8]) -> (&[u8], &[u8]) {
@@ -551,6 +610,7 @@ fn drive(url: &str, data: &[u8]) {
         let pick = chunk.first().copied().unwrap_or(0);
         let second = usize::from(chunk.get(1).copied().unwrap_or(0));
         let conn = conn_ids.get(second % conn_ids.len().max(1)).copied();
+        wall_clock(&mut session, now, chunk);
         match pick % 12 {
             0 => serve(&mut session, &mut watch, now, false, chunk),
             1 => {
@@ -593,6 +653,17 @@ fn drive(url: &str, data: &[u8]) {
                     headers.push(("Set-Cookie".to_string(), attrs));
                     if status == 401 && second % 3 == 0 {
                         headers.push(("WWW-Authenticate".to_string(), STALE_CHALLENGE.to_string()));
+                    }
+                    let retry_after = match second % (RETRY_AFTER_VALUES.len() + 1) {
+                        n if n < RETRY_AFTER_VALUES.len() => RETRY_AFTER_VALUES[n].to_string(),
+                        _ => String::from_utf8_lossy(chunk.get(8..).unwrap_or(&[])).into_owned(),
+                    };
+                    headers.push(("Retry-After".to_string(), retry_after));
+                    if second % 2 == 1 {
+                        headers.push((
+                            "Date".to_string(),
+                            RESPONSE_DATES[second % RESPONSE_DATES.len()].to_string(),
+                        ));
                     }
                     session.on_response(conn, status, &headers, now);
                 }
@@ -727,6 +798,7 @@ fn drive_rtsp(url: &str, data: &[u8]) {
         let second = usize::from(chunk.get(1).copied().unwrap_or(0));
         let status = RTSP_REPLY_STATUSES[second % RTSP_REPLY_STATUSES.len()];
         let conn = conns.get(second % conns.len().max(1)).copied();
+        wall_clock(&mut session, now, chunk);
         match pick % 10 {
             0 | 1 => rtsp_pump(&mut session, &mut watch, now, &mut conns, status, &[]),
             2 => {
