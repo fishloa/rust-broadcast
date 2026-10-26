@@ -197,6 +197,7 @@ pub struct Sim {
     pub seen_ids: Vec<ResourceId>,
     pub accepted_segments: Vec<String>,
     pub inject_stale: bool,
+    pub stale_pool: Vec<ResourceId>,
     pub rtt_fn: Option<RttFn>,
     pub host_clock_calls: Vec<u64>,
     pub send_headers: bool,
@@ -241,6 +242,7 @@ impl Sim {
             seen_ids: Vec::new(),
             accepted_segments: Vec::new(),
             inject_stale: false,
+            stale_pool: Vec::new(),
             rtt_fn: None,
             host_clock_calls: Vec::new(),
             send_headers: true,
@@ -426,7 +428,7 @@ impl Sim {
             } => self.deliver_response(now, action, sent_mono, received_mono, outcome),
         }
         if self.inject_stale
-            && let Some(old) = self.seen_ids.first().copied()
+            && let Some(old) = self.stale_pool.first().copied()
         {
             let bogus = b"stale";
             let r = match old {
@@ -548,6 +550,9 @@ impl Sim {
                         };
                         match r {
                             Ok(()) => {
+                                if self.stale_pool.is_empty() {
+                                    self.stale_pool.push(id);
+                                }
                                 if matches!(id, ResourceId::Segment { .. }) {
                                     self.accepted_segments.push(url);
                                 }
