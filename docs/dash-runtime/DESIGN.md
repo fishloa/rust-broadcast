@@ -246,3 +246,83 @@ vice versa (5.3.9.1), violation drops the Representation. The result per Represe
 gives references (type 0 only; a hierarchical type-1 reference => `SegmentSequenceUnsupported`) which become `SegmentRef`s whose byte range is `first_offset + sum(referenced_size)`, anchored at the first byte
 after the sidx box (14496-12 8.16.3 as noted in `transmux/src/timing.rs`); `presentation_us = earliest_presentation_time + cumulative duration - PTO`. Responses honour the shared range rules (206 + exact `Content-Range`, or a 200 sliced
 after the whole body, W-a `body.rs`). Static MPDs only in practice; the dynamic variant works identically.
+
+## 5. Client algorithms (live and VOD)
+
+Phases of `DashClient`: `FetchingMpd` -> (dynamic) `Syncing` (UTC sample, section 3; inits are fetched meanwhile) -> `Running` -> `Ended` | `Fatal`. VOD (static MPD) is the same loop with no clock,
+no refresh and no availability gating (A.2: "static is a subset of the same behaviour").
+
+### 5.1 Selection (per Period, re-run on every Period change and on `select_*`)
+
+1. Candidate sets: `mimeType`/`contentType` `video/mp4`|`audio/mp4` (or the Representations' own), not dropped by D10 (text, TS/WebM mime, `dependencyId` representations, protected sets
+   with no clear alternative in the same `@group`, unknown `EssentialProperty`, templates failing 5.3.9.4.4 step 2). Each dropped set yields one `TrackDropped`/`UnsupportedEncryption`/`Notice`.
+2. Video: first remaining video set with Role `main` (else document order); Representation = highest `@bandwidth` satisfying `RepresentationPolicy` (`max_bandwidth`, `max_height`, codec-prefix list), else the lowest.
+   `ManifestSelection.variants` = every Representation of every selectable video set in MPD order (so `select_variant(i)` can cross sets), `chosen` = that index.
+3. Audio: renditions = selectable audio sets of the Period. Pick: first set whose `@lang` BCP 47 prefix matches `preferred_audio_language` (ASCII case-insensitive) and whose Role is not `commentary`/`description`;
+   else Role `main`; else the first. Representation = highest `@bandwidth` the codec policy allows. DASH has no DEFAULT/AUTOSELECT flag, Role `main` plays that part (5.8.5.5 Table 34). A muxed Representation
+   (audio and video in one init) yields several local tracks and needs no separate pick.
+4. `TrackId`s: 1-based in selection order (video sets then audio), stable for the life of the selection; a Representation switch inside a set KEEPS the id (the `Tracks` event re-announces the new `TrackSpec`);
+   local `moov` track ids are remapped (every Representation's init typically uses id 1, multimux `dash_pull` "Track id remapping" note).
+
+### 5.2 MPD refresh (dynamic only)
+
+- Next refresh at `fetch_time + max(MUP, min_mpd_refresh_us)` where `fetch_time` is the UTC the SERVER processed the request, approximated by the client-clock midpoint of the exchange (A.2, IOP 4.4.4 step 1: not the
+  arrival time); `min_mpd_refresh_us` defaults to 1 s so `MUP=0` (instant updates, IOP 4.4.3) does not become a request storm; no `MUP` => no refresh (5.4.1: valid to the end; `mediaPresentationDuration` or the last `Period@duration` must exist).
+- Forced early refresh (bounded by the same floor): the plan is exhausted before the presentation end; a segment 404/410/5xx inside its availability window (A.7); a clock step; a failed segment alternate-BaseURL rotation.
+- The request is conditional (`If-None-Match`/`If-Modified-Since` from the previous `ETag`/`Last-Modified`, IOP 4.4.4 step 1); a 304 or byte-identical body is a success that only advances `fetch_time` (A.2).
+  An MPD whose `publishTime` is older than the current one is a stale edge answer: ignored, retried at the floor (IOP 4.5.1: a later `publishTime` identifies an update).
+- Update rules enforced (5.4.1): `MPD@id`/`Period@id`/`AdaptationSet@id` continuity, `Representation@id` equivalence assumed, `availabilityStartTime` and `Period@start` unchanged. A changed AST, a removed current Period, or the
+  `urn:mpeg:dash:reset:2016` descriptor (5.4.2) is an MPD RESET: `Output::Discontinuity`, drop the plan, rejoin at the live edge (departure from 5.4.2's "keep playing the old MPD as long as possible", documented).
+  A Representation or set that disappears is re-selected within its Period (section 5.1) and re-announced.
+- MPD URL for updates: first `Location`, else the redirect target, else the original (A.11); `BaseURL` never applies to MPD requests (A.11).
+- MPD patch (5.15) is not used: `PatchLocation` is ignored and the whole MPD refetched; `Notice::PatchIgnored` once.
+- Dynamic -> static (IOP 4.6.4): the new MPD ends the presentation; the plan closes at the last segment, `EndOfStream` follows its delivery.
+- Refresh failure: never given up (like a playlist); shared backoff, `Status::Reconnecting`; the last MPD keeps driving a duration-template plan meanwhile, a timeline plan simply stops growing.
+
+### 5.3 Live edge and join (23009-1 5.3.9.5.3, A.2 step 4, IOP 4.3.4.1/4.3.4.2)
+
+- Presentation delay `D` = `MPD@suggestedPresentationDelay` when present (A.2 step 4; IOP 4.3.4.1 step 5 "may be used"), else `max(4 s, 3 x maxSegmentDuration)` (IOP 4.3.3.2.2: SPD "2-4 x SDURATION and not under 4 s"),
+  clamped to `TSB - 2 x maxSegmentDuration` when a `timeShiftBufferDepth` exists. `DashConfig::live_delay_us` overrides.
+- Join media time `T_join = utc_now - D - (AST + PeriodStart)` (Period-relative). For EACH selected Representation choose the segment that CONTAINS `T_join` on that Representation's own timeline (audio and video
+  segment boundaries differ, e.g. the livesim2 audio timeline mixes 96 256- and 95 232-tick segments), clamped to `[oldest in window, newest complete]` where complete means `avail_start <= utc_now`. Number-based
+  oldest/newest: with `n = floor((utc_now - AST - PS + ATO) / d)` complete segments, newest = `startNumber + n - 1`; oldest = `max(startNumber, startNumber + ceil((utc_now - AST - PS - TSB)/d) - 2)` from `avail_end >= utc_now`.
+- The delivered burst up to `D` of media is what the BC-5 live playout gate then measures (lead based, `min(3 x max segment duration, live_start_lead_us)`), so start-up latency is the parallel fetch time, not `D`.
+- Cursor semantics: after the join, each Representation advances by segment identity (number), never by the clock. The clock decides only (a) the join, (b) `avail_start` gating, (c) `Expired` detection.
+  Request time of segment `k`: `avail_start(k) [- ATO if enabled] + availability_margin_us` (default 0; IOP 4.7.3 "must not request a segment before its availability start measured by any chosen method"); already-available backlog is
+  emitted at once and the adapter's in-flight window caps it. `next_wake()` is the earliest unmet `avail_start`.
+- Static MPD: start at the first segment of the first Period; no seek in 0.1.0 (the `#t=` fragment of Annex C.4 and IOP 4.3.3.5 is not interpreted).
+
+### 5.4 Segment request failures (A.7, IOP 4.8.2.1/4.8.5, DVB-DASH 10.8)
+
+`on_failure(now, id, Failure) -> FailureClass`; the core classifies, the adapter applies the shared retry policy (section 2):
+
+| Condition | Class | Counted by `FailureCounter`? | Cadence |
+|---|---|---|---|
+| 404/410/425 and `utc_now < avail_start + early_grace_us` (default 1 s); any 425 (RFC 8470 "Too Early", observed from livesim2) | `NotYetAvailable{retry_at}` | no | `early_retry_us` 250 ms doubling to 1 s; never the 2/4/8 s table (IOP 4.3.6: "back off slightly") |
+| 404/410 inside `[avail_start + grace, avail_end]` | `Missing` | yes | shared backoff; the FIRST one per Representation also forces an MPD refresh and one UTC re-sync (A.7 "check clock accuracy, then refetch the MPD"; at most one re-sync / 30 s) |
+| `utc_now > avail_end` (seen before requesting, or 404/410 after it) | `Expired` | no | none: the core skips to the oldest in-window segment, emits `Output::Discontinuity` and one `Notice::FellBehind`; three in a row => rejoin at the live edge |
+| 5xx, 429, 503, transport error, timeout, a 200 that fails `media_fragment` | `Server` | yes | shared backoff + `Retry-After`; after 2 consecutive failures on one BaseURL alternate rotate to the next and refresh the MPD (A.7; DVB-DASH 10.8.2.3) |
+| 401/403/407, redirects | handled by the session auth/redirect layers | n/a | unchanged |
+
+Give-up at `hls_max_segment_failures` consecutive counted failures (HLS Round 8 contract, same counter semantics): static => fatal `SegmentFetchFailed`; dynamic => `skip` (marks delivered, `Discontinuity`) plus one
+non-fatal `SegmentFetchFailed`. An init or index failure uses the init counter (`InitFetchFailed`, fatal after `max_key_failures`, HLS Round 7 F1).
+
+### 5.5 Periods
+
+PeriodStart by 5.3.2.1; segments of consecutive Periods are planned back to back by identity. At a boundary: if every selected set carries `urn:mpeg:dash:period-continuity:2015` naming the previous Period and the
+same `AdaptationSet@id` (5.3.2.4), and the new Representation's resolved init URL equals the old one, nothing changes (no init, no `Discontinuity`); otherwise the new init is fetched, `Tracks` is re-announced if the config changed and
+`Output::Discontinuity` precedes the first sample (A.9: period-connected => tell the decoder about the discontinuity; unsignalled Periods are resync points, IOP 4.3.4.3). Samples keep the container media timeline (tfdt), as for HLS;
+`Output::PeriodChanged{id, start_us, continuous}` exposes the Period mapping for a host that wants to rebase. No trimming of a segment that overshoots `PeriodEnd` (23009-1 7.2.1 permits small overlaps).
+
+### 5.6 Representation switching and ABR hooks
+
+No automatic ABR in 0.1.0 (HLS parity: `VariantPolicy` at start, `select_variant` after). A switch inside a set takes effect at the next segment boundary: the new Representation's plan continues from the segment containing the next unrequested
+media time; allowed when the set is `segmentAlignment` true with `startWithSAP` 1 or 2 (A.6 row 1), else it is performed as a rejoin with a `Discontinuity`. The new init is always fetched (bitstream switching is ignored: always correct).
+`Output::Manifest` carries per-Representation `bandwidth` so a host can build its own ABR on measured throughput (A.10) and call `select_variant`.
+
+### 5.7 Low-latency DASH (D9) and everything else deliberately out
+
+LL-DASH (`availabilityTimeOffset` + `availabilityTimeComplete=false`, CMAF chunked transfer, `ServiceDescription/Latency`, DVB-DASH 10.20) is OUT as a feature for 0.1.0, with a safe degradation: such MPDs
+play at segment granularity (requests are scheduled at the complete-segment time, so no chunk is ever consumed half-delivered, DVB-DASH 10.20.2 notes progressive arrival only matters when requesting early) and emit `Notice::LowLatencyIgnored`.
+Reason: chunk-level delivery needs an incremental `Fmp4Demux` feed and a partial-body event in the session that the HLS adapter also lacks (it delivers on `on_closed`); doing it once for both is a 0.2 story (it would be shared with
+LL-HLS parts in `hls-runtime`). `use_availability_time_offset=true` is available for experimentation and still delivers whole segments. Out: subtitles (typed `TrackDropped`), trick modes (`Representation@maxPlayoutRate`, A.5), segment sequences, seeking, CENC decryption, MPEG-2 TS and WebM segments (typed `UnsupportedContainer{"mp2t_segments"|"webm"}`), `EventStream` surfacing (HLS does not surface SCTE-35 either; `mp4-emsg`/`timed-metadata` are the future route).
