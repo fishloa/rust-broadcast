@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 
@@ -61,7 +62,7 @@ M = [
  ("D13", "data before the response head enters the body", D,
   "if !req.responded_ok || bytes.is_empty() {", "if bytes.is_empty() {"),
  ("D14", "body cap not enforced", D,
-  "if req.body.push(bytes).is_err() {", "if false {"),
+  "if req.body.push(bytes).is_err() {", "if req.body.push(bytes).is_err() && false {"),
  ("D15", "oversize body reported every time", D,
   "&& self.oversize_reported.insert(field)", "&& true"),
  ("D16", "truncated transfer delivered as a complete body", D,
@@ -204,8 +205,24 @@ M = [
 ]
 
 
+TIMEOUT_S = 600
+
+
+class Result:
+    def __init__(self, stdout, stderr, timed_out=False):
+        self.stdout, self.stderr, self.timed_out = stdout, stderr, timed_out
+
+
 def run(cmd):
-    return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    p = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=TIMEOUT_S)
+        return Result(out, err)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        out, err = p.communicate()
+        return Result(out or "", err or "", timed_out=True)
 
 
 def main():
@@ -232,6 +249,8 @@ def main():
             for cmd in ([CORE_TESTS, DASH_TESTS] if crate == "dash-runtime" else [DASH_TESTS]):
                 r = run(cmd)
                 out = r.stdout + r.stderr
+                if r.timed_out:
+                    out += "\ntest TIMEOUT-hang ... FAILED\n"
                 outs.append(out)
                 if re.search(r"^test (\S+) \.\.\. FAILED", out, re.M) or "could not compile" in out:
                     break

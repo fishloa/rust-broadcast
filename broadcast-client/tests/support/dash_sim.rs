@@ -15,6 +15,7 @@ use super::dash_common::world::{self, HttpReq, Method, Outcome, World};
 pub type Headers = Vec<(String, String)>;
 
 pub const MS: u64 = 1_000;
+const MAX_STEPS: u64 = 3_000_000;
 pub const SEC: u64 = 1_000_000;
 
 #[derive(Debug, Clone)]
@@ -453,6 +454,10 @@ impl DashSim {
         let mut stall_run = 0u64;
         loop {
             self.steps += 1;
+            assert!(
+                self.steps < MAX_STEPS,
+                "the simulation did not settle in {MAX_STEPS} steps"
+            );
             self.poll_all();
             if (stop_when_terminal && self.terminal()) || self.log.len() > self.request_cap {
                 break;
