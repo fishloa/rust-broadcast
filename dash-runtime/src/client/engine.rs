@@ -576,7 +576,7 @@ impl DashClient {
                 return;
             }
             let exhausted = self.periods[pi].lanes.iter().all(Lane::exhausted);
-            if self.periods[pi].issue_done || (exhausted && !self.period_open(pi)) {
+            if self.periods[pi].issue_done || (exhausted && !self.period_open(pi, now_us)) {
                 self.periods[pi].issue_done = true;
                 let next = self.periods[pi].index + 1;
                 if self.can_activate(next) {

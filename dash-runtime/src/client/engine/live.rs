@@ -30,6 +30,9 @@ const FORCED_RESYNC_MIN_GAP_US: u64 = 30_000_000;
 const EARLY_RETRY_CAP_US: u64 = 1_000_000;
 /// Expiries in a row on one lane before the client rejoins the live edge.
 const EXPIRED_REJOIN_RUN: u32 = 3;
+/// A closed Period's lists are final this many segment durations (or one
+/// `minimumUpdatePeriod`, if longer) after its end (23009-1 5.4.1).
+const PERIOD_FINAL_SEGMENTS: i128 = 2;
 /// Bound on the steps one lane evaluation may take.
 const MAX_LANE_STEPS: usize = 8;
 /// The early-retry doubling stops growing here (the cap applies first).
@@ -286,17 +289,48 @@ impl DashClient {
         })
     }
 
-    pub(super) fn period_open(&self, pi: usize) -> bool {
+    /// Whether more segments may still be added to Period `pi` by a refresh:
+    /// its end is unknown, or it is closed but its lists do not yet reach the
+    /// end and the grace after which 5.4.1 makes them final has not passed.
+    pub(super) fn period_open(&self, pi: usize, now_us: u64) -> bool {
         if !self.live_open() {
             return false;
         }
         let Some(mpd) = self.mpd.as_ref() else {
             return false;
         };
-        let index = self.periods[pi].index;
-        period_timings(mpd)
-            .get(index)
-            .is_none_or(|t| t.end_us.is_none())
+        let run = &self.periods[pi];
+        let Some(end) = period_timings(mpd)
+            .get(run.index)
+            .and_then(|t| t.end_us)
+        else {
+            return true;
+        };
+        let len = end.saturating_sub(run.start_us);
+        let reaches = run.lanes.iter().filter_map(Lane::current).all(|r| {
+            r.plan.as_ref().is_some_and(|p| {
+                p.len()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|last| p.get(last))
+                    .is_some_and(|s| {
+                        s.start_us
+                            .saturating_add(s.duration_us)
+                            .saturating_add(MISSING_TAIL_MAX_US)
+                            >= len
+                    })
+            })
+        });
+        if reaches {
+            return false;
+        }
+        let Some(utc) = self.utc_now(now_us) else {
+            return false;
+        };
+        let ast = i128::from(mpd.availability_start_time_us.unwrap_or(0));
+        let mup = mpd.minimum_update_period.map_or(0, duration_us);
+        let seg = mpd.max_segment_duration.map_or(0, duration_us);
+        let grace = mup.max(seg.saturating_mul(PERIOD_FINAL_SEGMENTS));
+        utc < ast.saturating_add(end).saturating_add(grace)
     }
 
     pub(super) fn can_activate(&self, next: usize) -> bool {

@@ -305,7 +305,7 @@ impl Synth {
         };
         let _ = closed;
         let pto = |ts: u64| {
-            if self.addressing == Addressing::TimelineTime && !self.period_starts_us.is_empty() {
+            if self.addressing != Addressing::Number && !self.period_starts_us.is_empty() {
                 (start_us as u64) * ts / 1_000_000
             } else {
                 0
