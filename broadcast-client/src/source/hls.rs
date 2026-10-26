@@ -18,6 +18,7 @@ use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::redirect;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
+use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
 use crate::source::fetch::retry::{Backoff, RetryGate, retry_after_us};
 
 const MICROS_PER_MILLI: u64 = 1_000;
@@ -55,12 +56,6 @@ enum Lane {
 pub(crate) enum Role {
     Main,
     Audio,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct SegmentFailures {
-    count: u32,
-    status: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,9 +108,9 @@ pub(crate) struct HlsSource {
     max_key_bytes: usize,
     key_timeout_us: u64,
     max_key_failures: u32,
-    key_failures: u32,
+    key_failures: Attempts,
     max_segment_failures: u32,
-    seg_failures: HashMap<ResourceId, SegmentFailures>,
+    seg_failures: FailureCounter<ResourceId>,
     seg_retry: BTreeSet<ResourceId>,
     skip_error: Option<ErrorKind>,
     retry_after_us: u64,
@@ -145,7 +140,7 @@ pub(crate) struct HlsSource {
     gate: RetryGate,
     retry_refetch: Option<(u64, String)>,
     init_retry: bool,
-    attempt: u64,
+    attempt: Attempts,
     established: bool,
     live: bool,
     conn_alloc: ConnAlloc,
@@ -165,9 +160,9 @@ impl HlsSource {
             max_key_bytes: config.max_key_bytes,
             key_timeout_us: config.hls_key_timeout_us,
             max_key_failures: config.max_key_failures,
-            key_failures: 0,
+            key_failures: Attempts::default(),
             max_segment_failures: config.max_segment_failures,
-            seg_failures: HashMap::new(),
+            seg_failures: FailureCounter::new(),
             seg_retry: BTreeSet::new(),
             skip_error: None,
             retry_after_us: 0,
@@ -197,7 +192,7 @@ impl HlsSource {
             gate: RetryGate::default(),
             retry_refetch: None,
             init_retry: false,
-            attempt: 0,
+            attempt: Attempts::default(),
             established: false,
             live: false,
             conn_alloc,
@@ -263,8 +258,8 @@ impl HlsSource {
             return Ok(());
         }
         self.reset_in_flight();
-        self.seg_failures.clear();
-        self.attempt = 0;
+        self.seg_failures.clear_all();
+        self.attempt.reset();
         self.pump_core();
         self.drain_outputs();
         if !auth.is_waiting() {
@@ -283,7 +278,7 @@ impl HlsSource {
             self.client_failed(purpose);
         }
         self.reset_in_flight();
-        self.attempt = 0;
+        self.attempt.reset();
         self.retry_refetch = Some((now, self.client.playlist_url().to_string()));
         self.pump_core();
         self.drain_outputs();
@@ -296,7 +291,7 @@ impl HlsSource {
         if self.fatal {
             return;
         }
-        self.attempt = 0;
+        self.attempt.reset();
         let parked: Vec<Req> = core::mem::take(&mut self.parked);
         for req in parked {
             self.send(req, auth, now);
@@ -502,7 +497,7 @@ impl HlsSource {
     fn deliver_key(&mut self, id: KeyId, body: &[u8], now: u64) {
         match self.client.on_key(id, body) {
             Ok(()) => {
-                self.attempt = 0;
+                self.attempt.reset();
                 self.pump_core();
                 self.drain_outputs();
             }
@@ -542,8 +537,7 @@ impl HlsSource {
     }
 
     fn report(&mut self, kind: ErrorKind) -> bool {
-        self.key_failures = self.key_failures.saturating_add(1);
-        if self.key_failures >= self.max_key_failures {
+        if verdict(self.key_failures.bump(), self.max_key_failures) == Verdict::GiveUp {
             self.go_fatal(kind);
             return true;
         }
@@ -580,11 +574,11 @@ impl HlsSource {
         };
         let delivered = result.is_ok();
         if delivered {
-            if self.key_failures == 0 {
-                self.attempt = 0;
+            if self.key_failures.is_zero() {
+                self.attempt.reset();
             }
             if let Purpose::Resource(id) = purpose {
-                self.seg_failures.remove(&id);
+                self.seg_failures.clear(&id);
             }
         } else if let Purpose::Resource(id) = purpose
             && id != ResourceId::Init
@@ -636,7 +630,7 @@ impl HlsSource {
                 self.failed.remove(&id);
                 self.order.retain(|o| *o != id);
                 self.held.remove(&id);
-                self.seg_failures.remove(&id);
+                self.seg_failures.clear(&id);
                 self.seg_retry.remove(&id);
             }
         }
@@ -712,11 +706,8 @@ impl HlsSource {
     }
 
     fn fail_segment(&mut self, id: ResourceId, status: Option<u16>, now: u64) {
-        let entry = self.seg_failures.entry(id).or_default();
-        entry.count = entry.count.saturating_add(1);
-        entry.status = status;
-        let SegmentFailures { count, status } = *entry;
-        if count >= self.max_segment_failures {
+        let Failure { count, status } = self.seg_failures.record(id, status);
+        if verdict(u64::from(count), self.max_segment_failures) == Verdict::GiveUp {
             self.give_up_segment(id, status, now);
             return;
         }
@@ -733,7 +724,7 @@ impl HlsSource {
     }
 
     fn give_up_segment(&mut self, id: ResourceId, status: Option<u16>, now: u64) {
-        self.seg_failures.remove(&id);
+        self.seg_failures.clear(&id);
         let kind = ErrorKind::SegmentFetchFailed { status };
         if self.client.endlist_seen() {
             self.go_fatal(kind);
@@ -762,10 +753,7 @@ impl HlsSource {
     fn schedule_retry(&mut self, now: u64, refetch: Option<String>, segment_attempt: Option<u32>) {
         let attempt = match segment_attempt {
             Some(count) => u64::from(count),
-            None => {
-                self.attempt = self.attempt.saturating_add(1);
-                self.attempt
-            }
+            None => self.attempt.bump(),
         };
         let wait = self.backoff.delay_us(attempt).max(self.retry_after_us);
         let at = now.saturating_add(wait);
@@ -1038,7 +1026,7 @@ impl HlsSource {
                     if self.is_reserved(track_id) => {}
                 Output::Samples { track_id, samples } => {
                     if !samples.is_empty() {
-                        self.key_failures = 0;
+                        self.key_failures.reset();
                         self.reported.clear();
                     }
                     if !self.live && !samples.is_empty() {
