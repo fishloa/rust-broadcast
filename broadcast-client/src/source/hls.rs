@@ -1,10 +1,9 @@
 //! Adapter over [`hls_runtime::client::HlsClient`]: per-request connection table, bounded body
 //! accumulation, timeouts, retry backoff, and Output-to-Event mapping.
 
-use alloc::collections::{BTreeSet, BinaryHeap, VecDeque};
+use alloc::collections::{BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::cmp::Reverse;
 use std::collections::HashMap;
 
 use hls_runtime::client::{
@@ -18,6 +17,7 @@ use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::redirect;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
+use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
 use crate::source::fetch::retry::{Backoff, RetryGate, retry_after_us};
 
@@ -39,8 +39,6 @@ const FIELD_MAX_MANIFEST_BYTES: &str = "max_manifest_bytes";
 const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
 const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
 const REASON_DAMAGED_FRAGMENT: &str = "damaged_fragment";
-const DEADLINE_SLACK_FACTOR: usize = 4;
-const DEADLINE_SLACK_FLOOR: usize = 64;
 
 type Queued = (u64, HlsAction);
 
@@ -65,6 +63,23 @@ enum Purpose {
     Key(KeyId),
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Timeouts {
+    playlist_us: u64,
+    segment_us: u64,
+    key_us: u64,
+}
+
+impl Timeouts {
+    fn of(&self, purpose: Purpose) -> u64 {
+        match purpose {
+            Purpose::Playlist | Purpose::Resource(ResourceId::Init) => self.playlist_us,
+            Purpose::Resource(_) => self.segment_us,
+            Purpose::Key(_) => self.key_us,
+        }
+    }
+}
+
 struct Req {
     purpose: Purpose,
     original_url: String,
@@ -82,6 +97,10 @@ struct Req {
 }
 
 impl Req {
+    fn deadline(&self, timeouts: &Timeouts) -> Option<u64> {
+        self.started_us.checked_add(timeouts.of(self.purpose))
+    }
+
     fn new(purpose: Purpose, url: Url, byte_range: Option<(u64, u64)>) -> Self {
         Self {
             purpose,
@@ -106,7 +125,6 @@ pub(crate) struct HlsSource {
     max_manifest_bytes: usize,
     max_segment_bytes: usize,
     max_key_bytes: usize,
-    key_timeout_us: u64,
     max_key_failures: u32,
     key_failures: Attempts,
     max_segment_failures: u32,
@@ -122,13 +140,12 @@ pub(crate) struct HlsSource {
     skipped_kind: Option<ErrorKind>,
     damaged_reported: bool,
     oversize_reported: BTreeSet<&'static str>,
-    playlist_timeout_us: u64,
-    segment_timeout_us: u64,
+    timeouts: Timeouts,
     backoff: Backoff,
     max_redirects: u32,
     max_inflight_segments: usize,
     reqs: HashMap<u32, Req>,
-    deadlines: BinaryHeap<Reverse<(u64, u32)>>,
+    deadlines: Deadlines<u32>,
     parked: Vec<Req>,
     queue_seq: u64,
     pending: VecDeque<Queued>,
@@ -158,7 +175,6 @@ impl HlsSource {
             max_manifest_bytes: config.max_manifest_bytes,
             max_segment_bytes: config.max_segment_bytes,
             max_key_bytes: config.max_key_bytes,
-            key_timeout_us: config.hls_key_timeout_us,
             max_key_failures: config.max_key_failures,
             key_failures: Attempts::default(),
             max_segment_failures: config.max_segment_failures,
@@ -174,13 +190,16 @@ impl HlsSource {
             skipped_kind: None,
             damaged_reported: false,
             oversize_reported: BTreeSet::new(),
-            playlist_timeout_us: config.request_timeout_us,
-            segment_timeout_us: config.segment_timeout_us,
+            timeouts: Timeouts {
+                playlist_us: config.request_timeout_us,
+                segment_us: config.segment_timeout_us,
+                key_us: config.hls_key_timeout_us,
+            },
             backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
             max_redirects: config.max_redirects,
             max_inflight_segments: config.max_inflight_segments.max(1),
             reqs: HashMap::new(),
-            deadlines: BinaryHeap::new(),
+            deadlines: Deadlines::new(),
             parked: Vec::new(),
             queue_seq: 0,
             pending: VecDeque::new(),
@@ -768,32 +787,14 @@ impl HlsSource {
         self.actions.push_back(Action::WakeAt(at));
     }
 
-    fn timeout_us(&self, purpose: Purpose) -> u64 {
-        match purpose {
-            Purpose::Playlist => self.playlist_timeout_us,
-            Purpose::Resource(ResourceId::Init) => self.playlist_timeout_us,
-            Purpose::Resource(_) => self.segment_timeout_us,
-            Purpose::Key(_) => self.key_timeout_us,
-        }
-    }
-
-    fn deadline_of(&self, req: &Req) -> Option<u64> {
-        req.started_us.checked_add(self.timeout_us(req.purpose))
-    }
-
     fn expire(&mut self, now: u64) {
-        while let Some(Reverse((deadline, conn))) = self.deadlines.peek().copied() {
-            if deadline > now {
-                break;
-            }
-            self.deadlines.pop();
-            let live = self
-                .reqs
-                .get(&conn)
-                .is_some_and(|r| self.deadline_of(r) == Some(deadline));
-            if !live {
-                continue;
-            }
+        let reqs = &self.reqs;
+        let timeouts = &self.timeouts;
+        let overdue = self.deadlines.expire(now, |conn, deadline| {
+            reqs.get(conn)
+                .is_some_and(|r| r.deadline(timeouts) == Some(deadline))
+        });
+        for conn in overdue {
             if let Some(req) = self.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
                 self.fail(req, now);
@@ -909,7 +910,7 @@ impl HlsSource {
         let lease = self.conn_alloc.lease();
         let conn = lease.id();
         req.lease = Some(lease);
-        let timeout = self.timeout_us(req.purpose);
+        let timeout = self.timeouts.of(req.purpose);
         self.actions.push_back(Action::HttpRequest {
             conn,
             method: METHOD_GET.to_string(),
@@ -922,25 +923,14 @@ impl HlsSource {
         let deadline = now.checked_add(timeout);
         self.reqs.insert(conn, req);
         if let Some(deadline) = deadline {
-            self.deadlines.push(Reverse((deadline, conn)));
+            self.deadlines.arm(conn, deadline);
         }
-        self.compact_deadlines();
-    }
-
-    fn compact_deadlines(&mut self) {
-        let limit = self
-            .reqs
-            .len()
-            .saturating_mul(DEADLINE_SLACK_FACTOR)
-            .saturating_add(DEADLINE_SLACK_FLOOR);
-        if self.deadlines.len() <= limit {
-            return;
-        }
-        self.deadlines = self
-            .reqs
-            .iter()
-            .filter_map(|(conn, r)| self.deadline_of(r).map(|d| Reverse((d, *conn))))
-            .collect();
+        let timeouts = &self.timeouts;
+        self.deadlines.compact(self.reqs.len(), || {
+            self.reqs
+                .iter()
+                .filter_map(|(conn, r)| r.deadline(timeouts).map(|d| (d, *conn)))
+        });
     }
 
     fn reset_in_flight(&mut self) {
@@ -1163,6 +1153,7 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::fetch::deadlines::{SLACK_FACTOR, SLACK_FLOOR};
 
     fn source_with_auth() -> (HlsSource, AuthState, Url) {
         let url = Url::parse("http://o.test/p.m3u8").unwrap();
@@ -1184,7 +1175,7 @@ mod tests {
             source.reqs.remove(&conn);
         }
         assert!(
-            source.deadlines.len() <= DEADLINE_SLACK_FLOOR + DEADLINE_SLACK_FACTOR,
+            source.deadlines.len() <= SLACK_FLOOR + SLACK_FACTOR,
             "{} stale deadlines kept",
             source.deadlines.len()
         );
@@ -1193,7 +1184,7 @@ mod tests {
     #[test]
     fn expire_fails_only_the_overdue_live_request() {
         let (mut source, mut auth, url) = source_with_auth();
-        let timeout = source.playlist_timeout_us;
+        let timeout = source.timeouts.playlist_us;
         source.send(Req::new(Purpose::Playlist, url.clone(), None), &mut auth, 0);
         let overdue = source.reqs.keys().next().copied().unwrap();
         source.send(
@@ -1237,7 +1228,7 @@ mod tests {
     #[test]
     fn a_stale_deadline_never_expires_a_newer_request_on_a_reused_id() {
         let (mut source, mut auth, url) = source_with_auth();
-        let timeout = source.playlist_timeout_us;
+        let timeout = source.timeouts.playlist_us;
         source.send(Req::new(Purpose::Playlist, url.clone(), None), &mut auth, 0);
         let conn = source.reqs.keys().next().copied().unwrap();
         source.reqs.remove(&conn);

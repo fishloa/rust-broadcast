@@ -2,5 +2,6 @@
 //! machines with no knowledge of what is being fetched. Each adapter keeps its own failure routing.
 
 pub(crate) mod conn;
+pub(crate) mod deadlines;
 pub(crate) mod failures;
 pub(crate) mod retry;
