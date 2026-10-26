@@ -100,6 +100,50 @@ fn http_date_is_whole_seconds() {
 }
 
 #[test]
+fn http_date_accepts_the_three_forms_of_rfc_9110_5_6_7() {
+    let expected = 784_111_777 * SECOND;
+    for text in [
+        "Sun, 06 Nov 1994 08:49:37 GMT",
+        "Sunday, 06-Nov-94 08:49:37 GMT",
+        "Sun Nov  6 08:49:37 1994",
+        "  Sun, 06 Nov 1994 08:49:37 GMT  ",
+    ] {
+        assert_eq!(parse_http_date(text).unwrap(), expected, "{text}");
+    }
+    assert_eq!(
+        parse_http_date("Mon Oct 26 08:39:04 2026").unwrap(),
+        1_793_003_944 * SECOND
+    );
+}
+
+#[test]
+fn http_date_two_digit_years_use_the_posix_window() {
+    assert_eq!(
+        parse_http_date("Thursday, 01-Jan-70 00:00:00 GMT").unwrap(),
+        0
+    );
+    assert_eq!(
+        parse_http_date("Monday, 26-Oct-26 08:39:04 GMT").unwrap(),
+        1_793_003_944 * SECOND
+    );
+}
+
+#[test]
+fn http_date_rejects_garbage_and_impossible_dates() {
+    for text in [
+        "",
+        "now",
+        "Sun, 31 Feb 1994 08:49:37 GMT",
+        "Sunday, 31-Feb-94 08:49:37 GMT",
+        "Sun Feb 31 08:49:37 1994",
+        "Sun, 06 Nov 1994 25:49:37 GMT",
+        "Sun Nov  6 08:49:37",
+    ] {
+        assert!(parse_http_date(text).is_err(), "{text:?}");
+    }
+}
+
+#[test]
 fn ntp_timestamp_maps_prime_epoch() {
     let unix_epoch_in_ntp_seconds: u32 = 2_208_988_800;
     let mut bytes = unix_epoch_in_ntp_seconds.to_be_bytes().to_vec();
