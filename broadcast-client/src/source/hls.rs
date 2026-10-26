@@ -16,6 +16,7 @@ use crate::auth::{AuthDecision, AuthState};
 use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::redirect;
+use crate::source::fetch::body::BodyAcc;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
@@ -23,8 +24,6 @@ use crate::source::fetch::retry::{Backoff, RetryGate, retry_after_us};
 
 const MICROS_PER_MILLI: u64 = 1_000;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-const STATUS_OK: u16 = 200;
-const STATUS_PARTIAL_CONTENT: u16 = 206;
 const STATUS_UNAUTHORIZED: u16 = 401;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const STATUS_FORBIDDEN: u16 = 403;
@@ -80,6 +79,13 @@ impl Timeouts {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BodyLimits {
+    manifest: usize,
+    segment: usize,
+    key: usize,
+}
+
 struct Req {
     purpose: Purpose,
     original_url: String,
@@ -91,9 +97,7 @@ struct Req {
     lease: Option<ConnLease>,
     started_us: u64,
     responded_ok: bool,
-    expected_len: Option<u64>,
-    slice: Option<(usize, usize)>,
-    body: Vec<u8>,
+    body: BodyAcc,
 }
 
 impl Req {
@@ -101,7 +105,7 @@ impl Req {
         self.started_us.checked_add(timeouts.of(self.purpose))
     }
 
-    fn new(purpose: Purpose, url: Url, byte_range: Option<(u64, u64)>) -> Self {
+    fn new(purpose: Purpose, url: Url, byte_range: Option<(u64, u64)>, body_limit: usize) -> Self {
         Self {
             purpose,
             original_url: url.to_string(),
@@ -113,18 +117,14 @@ impl Req {
             lease: None,
             started_us: 0,
             responded_ok: false,
-            expected_len: None,
-            slice: None,
-            body: Vec::new(),
+            body: BodyAcc::new(body_limit),
         }
     }
 }
 
 pub(crate) struct HlsSource {
     client: HlsClient,
-    max_manifest_bytes: usize,
-    max_segment_bytes: usize,
-    max_key_bytes: usize,
+    body_limits: BodyLimits,
     max_key_failures: u32,
     key_failures: Attempts,
     max_segment_failures: u32,
@@ -172,9 +172,11 @@ impl HlsSource {
         client.set_variant_policy(config.variant_policy.clone());
         let mut source = Self {
             client,
-            max_manifest_bytes: config.max_manifest_bytes,
-            max_segment_bytes: config.max_segment_bytes,
-            max_key_bytes: config.max_key_bytes,
+            body_limits: BodyLimits {
+                manifest: config.max_manifest_bytes,
+                segment: config.max_segment_bytes,
+                key: config.max_key_bytes,
+            },
             max_key_failures: config.max_key_failures,
             key_failures: Attempts::default(),
             max_segment_failures: config.max_segment_failures,
@@ -359,7 +361,7 @@ impl HlsSource {
                 }
             }
         } else if (200..300).contains(&status) {
-            if !Self::range_honoured(&mut req, status, headers) {
+            if !req.body.accept(status, headers, req.byte_range) {
                 self.actions.push_back(Action::Close { conn });
                 self.fail_status(req, now, Some(status));
                 if !auth.is_waiting() {
@@ -368,10 +370,6 @@ impl HlsSource {
                 return;
             }
             req.responded_ok = true;
-            req.expected_len = headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-                .and_then(|(_, v)| v.trim().parse::<u64>().ok());
             if !self.established {
                 self.established = true;
                 self.events.push_back(Event::Status(Status::Establishing));
@@ -407,12 +405,8 @@ impl HlsSource {
         if !req.responded_ok || bytes.is_empty() {
             return;
         }
-        let (limit, field) = match req.purpose {
-            Purpose::Playlist => (self.max_manifest_bytes, Some(FIELD_MAX_MANIFEST_BYTES)),
-            Purpose::Resource(_) => (self.max_segment_bytes, Some(FIELD_MAX_SEGMENT_BYTES)),
-            Purpose::Key(_) => (self.max_key_bytes, None),
-        };
-        if req.body.len().saturating_add(bytes.len()) > limit {
+        let field = oversize_field(req.purpose);
+        if req.body.push(bytes).is_err() {
             if let Some(field) = field
                 && self.oversize_reported.insert(field)
             {
@@ -428,9 +422,7 @@ impl HlsSource {
                     self.advance(now, auth);
                 }
             }
-            return;
         }
-        req.body.extend_from_slice(bytes);
     }
 
     pub(crate) fn on_closed(
@@ -446,14 +438,11 @@ impl HlsSource {
         let Some(req) = self.reqs.remove(&conn) else {
             return;
         };
-        let truncated = req
-            .expected_len
-            .is_some_and(|n| n != u64::try_from(req.body.len()).unwrap_or(u64::MAX));
-        if error.is_some() || !req.responded_ok || truncated {
+        if error.is_some() || !req.responded_ok || req.body.is_truncated() {
             self.fail(req, now);
         } else {
             let mut req = req;
-            if Self::slice_body(&mut req) {
+            if req.body.finish() {
                 self.deliver(req, now);
             } else {
                 self.fail(req, now);
@@ -464,52 +453,31 @@ impl HlsSource {
         }
     }
 
-    /// A request carrying a byte range must be answered with `206` and a `Content-Range` naming
-    /// exactly that range, or with a `200` (the server ignored `Range`), from which the range is
-    /// sliced out once the whole body arrived (the body cap applies to the whole file). Any other
-    /// 2xx answer to a ranged request is a failure.
-    fn range_honoured(req: &mut Req, status: u16, headers: &[(String, String)]) -> bool {
-        let Some((start, len)) = req.byte_range else {
-            return true;
-        };
-        match status {
-            STATUS_PARTIAL_CONTENT => content_range_is(headers, start, len),
-            STATUS_OK => {
-                let bounds = usize::try_from(start)
-                    .ok()
-                    .zip(usize::try_from(len).ok())
-                    .filter(|(s, l)| s.checked_add(*l).is_some());
-                req.slice = bounds;
-                bounds.is_some()
-            }
-            _ => false,
+    fn body_limit(&self, purpose: Purpose) -> usize {
+        match purpose {
+            Purpose::Playlist => self.body_limits.manifest,
+            Purpose::Resource(_) => self.body_limits.segment,
+            Purpose::Key(_) => self.body_limits.key,
         }
-    }
-
-    fn slice_body(req: &mut Req) -> bool {
-        let Some((start, len)) = req.slice else {
-            return true;
-        };
-        let Some(end) = start.checked_add(len).filter(|end| *end <= req.body.len()) else {
-            return false;
-        };
-        req.body.truncate(end);
-        req.body.drain(..start);
-        true
     }
 
     fn deliver(&mut self, req: Req, now: u64) {
         match req.purpose {
             Purpose::Resource(id) if id != ResourceId::Init => {
-                self.held.insert(id, req.body);
+                self.held.insert(id, req.body.into_bytes());
                 self.release_ready(now);
             }
-            Purpose::Key(id) => self.deliver_key(id, &req.body, now),
+            Purpose::Key(id) => self.deliver_key(id, req.body.as_slice(), now),
             Purpose::Playlist => {
                 self.client.set_playlist_base(req.url.as_str());
-                self.deliver_now(Purpose::Playlist, &req.body, Some(req.original_url), now);
+                self.deliver_now(
+                    Purpose::Playlist,
+                    req.body.as_slice(),
+                    Some(req.original_url),
+                    now,
+                );
             }
-            purpose => self.deliver_now(purpose, &req.body, Some(req.original_url), now),
+            purpose => self.deliver_now(purpose, req.body.as_slice(), Some(req.original_url), now),
         }
     }
 
@@ -889,7 +857,11 @@ impl HlsSource {
             }
         }
         match Url::parse(url) {
-            Ok(parsed) => self.send(Req::new(purpose, parsed, byte_range), auth, now),
+            Ok(parsed) => self.send(
+                Req::new(purpose, parsed, byte_range, self.body_limit(purpose)),
+                auth,
+                now,
+            ),
             Err(_) => {
                 if let Purpose::Resource(id) = purpose {
                     self.failed.insert(id);
@@ -904,9 +876,7 @@ impl HlsSource {
         req.authed = crate::auth::carries_credentials(&headers);
         req.started_us = now;
         req.responded_ok = false;
-        req.expected_len = None;
-        req.slice = None;
-        req.body.clear();
+        req.body.reset();
         let lease = self.conn_alloc.lease();
         let conn = lease.id();
         req.lease = Some(lease);
@@ -1088,6 +1058,14 @@ impl HlsSource {
     }
 }
 
+fn oversize_field(purpose: Purpose) -> Option<&'static str> {
+    match purpose {
+        Purpose::Playlist => Some(FIELD_MAX_MANIFEST_BYTES),
+        Purpose::Resource(_) => Some(FIELD_MAX_SEGMENT_BYTES),
+        Purpose::Key(_) => None,
+    }
+}
+
 fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
     if ENCRYPTED_SAMPLE_ENTRIES.contains(&fourcc.as_str()) {
         ErrorKind::UnsupportedEncryption { method: fourcc }
@@ -1098,22 +1076,6 @@ fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
             fourcc: Some(fourcc),
         }
     }
-}
-
-fn content_range_is(headers: &[(String, String)], start: u64, len: u64) -> bool {
-    let Some(last) = len.checked_sub(1).and_then(|l| start.checked_add(l)) else {
-        return false;
-    };
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("content-range"))
-        .and_then(|(_, v)| v.trim().strip_prefix("bytes "))
-        .and_then(|v| v.split_once('/'))
-        .and_then(|(range, _total)| range.split_once('-'))
-        .is_some_and(|(a, b)| {
-            a.trim().parse::<u64>().ok() == Some(start)
-                && b.trim().parse::<u64>().ok() == Some(last)
-        })
 }
 
 fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
@@ -1153,6 +1115,8 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MAX_TEST_BODY: usize = 1024;
     use crate::source::fetch::deadlines::{SLACK_FACTOR, SLACK_FLOOR};
 
     fn source_with_auth() -> (HlsSource, AuthState, Url) {
@@ -1167,7 +1131,7 @@ mod tests {
         let (mut source, mut auth, url) = source_with_auth();
         for now in 0..10_000u64 {
             source.send(
-                Req::new(Purpose::Playlist, url.clone(), None),
+                Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY),
                 &mut auth,
                 now,
             );
@@ -1185,10 +1149,14 @@ mod tests {
     fn expire_fails_only_the_overdue_live_request() {
         let (mut source, mut auth, url) = source_with_auth();
         let timeout = source.timeouts.playlist_us;
-        source.send(Req::new(Purpose::Playlist, url.clone(), None), &mut auth, 0);
+        source.send(
+            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY),
+            &mut auth,
+            0,
+        );
         let overdue = source.reqs.keys().next().copied().unwrap();
         source.send(
-            Req::new(Purpose::Playlist, url.clone(), None),
+            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY),
             &mut auth,
             10,
         );
@@ -1229,10 +1197,14 @@ mod tests {
     fn a_stale_deadline_never_expires_a_newer_request_on_a_reused_id() {
         let (mut source, mut auth, url) = source_with_auth();
         let timeout = source.timeouts.playlist_us;
-        source.send(Req::new(Purpose::Playlist, url.clone(), None), &mut auth, 0);
+        source.send(
+            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY),
+            &mut auth,
+            0,
+        );
         let conn = source.reqs.keys().next().copied().unwrap();
         source.reqs.remove(&conn);
-        let mut newer = Req::new(Purpose::Playlist, url, None);
+        let mut newer = Req::new(Purpose::Playlist, url, None, MAX_TEST_BODY);
         newer.started_us = timeout / 2;
         source.reqs.insert(conn, newer);
         source.take_actions();
