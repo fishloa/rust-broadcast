@@ -134,4 +134,5 @@ impl Rng {
         lo + self.below(hi - lo + 1)
     }
 }
+pub mod loopback;
 pub mod scan;

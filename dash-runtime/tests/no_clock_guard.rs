@@ -36,3 +36,14 @@ fn the_scanner_bites_on_each_needle() {
     let in_tests = "#[cfg(test)]\nmod tests {\n    fn f() { let _ = SystemTime::now(); }\n}\n";
     assert!(!common::scan::non_test_source(in_tests).contains("SystemTime::now"));
 }
+
+#[test]
+fn the_scan_covers_the_client_module() {
+    let files = common::scan::src_files();
+    for name in ["client/engine.rs", "client/action.rs", "client/output.rs"] {
+        assert!(
+            files.iter().any(|(path, _)| path.ends_with(name)),
+            "{name} is not scanned"
+        );
+    }
+}

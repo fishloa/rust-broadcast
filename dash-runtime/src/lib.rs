@@ -1,5 +1,7 @@
-//! Sans-IO MPEG-DASH core: the MPD model and parser, segment addressing, the
-//! UTC clock and the live-edge arithmetic a DASH client is built on.
+//! Sans-IO MPEG-DASH: the MPD model and parser, segment addressing, the UTC
+//! clock and the live-edge arithmetic a DASH client is built on, and
+//! [`client::DashClient`], a client state machine for static (VOD)
+//! presentations.
 //!
 //! **Spec:** ISO/IEC 23009-1:2022 (clause 5.3 MPD, 5.3.9 Segment information,
 //! 5.6 BaseURL, 5.8.5.7 UTCTiming, Annex A client behaviour, Annex I URL
@@ -19,6 +21,7 @@
 //! | [`timing`] | [`timing::clock::UtcClock`], `UTCTiming` sampling, `xs:dateTime` / HTTP `Date` / NTP readers, PeriodStart, availability and live-edge arithmetic |
 //! | [`client`] | [`client::config::DashConfig`]: the DASH knobs of a client session (clock ladder, early-request cadence, refresh floor) |
 //! | [`selection`] | Pure choice of AdaptationSet and Representation by role, language, codec and bandwidth |
+//! | [`client`] | [`client::DashClient`]: plays a static MPD to ordered `Fmp4Demux` samples, with typed failure classes, Period continuity and an origin pin (design step W-d1) |
 //!
 //! # Format policy
 //!
@@ -30,7 +33,10 @@
 //!
 //! # Scope of 0.1
 //!
-//! Handled: static and dynamic MPDs, `SegmentTemplate` (`$Number$`, `$Time$`,
+//! The client plays static MPDs; a dynamic MPD is a typed
+//! `LiveNotYetSupported` until the live client (design step W-d2).
+//!
+//! The core handles: static and dynamic MPDs, `SegmentTemplate` (`$Number$`, `$Time$`,
 //! `$Bandwidth$`, `$RepresentationID$`), `SegmentTimeline`, `SegmentList`,
 //! `SegmentBase` with a `sidx`, BaseURL alternates, multiple Periods,
 //! `UTCTiming` (`direct`, `http-xsdate`, `http-iso`, `http-head`,
@@ -44,6 +50,8 @@
 //!   URLs of an MPD file.
 //! * `cargo run -p dash-runtime --example live_window` prints the live edge
 //!   of a dynamic MPD at a simulated clock.
+//! * `cargo run -p dash-runtime --example play_static` plays a static MPD from
+//!   the file system through `DashClient` and prints what a host receives.
 //!
 //! ```
 //! use dash_runtime::address::{PlanOptions, plan_representation};

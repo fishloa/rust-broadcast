@@ -8,6 +8,10 @@
 //!   `InheritError`: `thiserror` errors, not spec labels.
 //! - `OfferOutcome`: wraps an `AdoptReason` or a `RejectReason`, both labelled.
 //! - `SegmentInfo`: data-carrying (`Template`/`List`/`Base`) resolution result.
+//! - `client::Error`: `thiserror` error. `Action`, `ResourceId`, `Output`,
+//!   `Failure`, `FailureClass`: data-carrying protocol messages of the client,
+//!   whose payload a static label would drop (their label-bearing parts,
+//!   `FailureKind`, `Rejection`, `FatalKind`, `DropCause`, `Notice`, are covered).
 
 mod common;
 
@@ -22,6 +26,12 @@ const SKIP: &[&str] = &[
     "InheritError",
     "OfferOutcome",
     "SegmentInfo",
+    "Error",
+    "Action",
+    "ResourceId",
+    "Output",
+    "Failure",
+    "FailureClass",
 ];
 
 fn has_display(all: &str, name: &str) -> bool {

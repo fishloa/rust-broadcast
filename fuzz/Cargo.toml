@@ -454,3 +454,9 @@ name = "dash_address"
 path = "fuzz_targets/dash_address.rs"
 test = false
 doc  = false
+
+[[bin]]
+name = "dash_client_static"
+path = "fuzz_targets/dash_client_static.rs"
+test = false
+doc  = false

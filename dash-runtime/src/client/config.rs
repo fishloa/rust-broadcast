@@ -164,3 +164,81 @@ impl DashConfig {
         Ok(())
     }
 }
+
+/// Default bound on one fetched resource body (init, index or segment).
+pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
+/// Default number of segment requests kept outstanding at once.
+pub const DEFAULT_MAX_INFLIGHT_SEGMENTS: usize = 4;
+/// Default consecutive failures of one segment before it is given up on.
+pub const DEFAULT_MAX_SEGMENT_FAILURES: u32 = 8;
+/// Default consecutive failures of one init or index resource before the
+/// presentation is given up on.
+pub const DEFAULT_MAX_INIT_FAILURES: u32 = 8;
+
+/// A rejected [`PullLimits`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("invalid PullLimits: {field} must be non-zero")]
+pub struct PullLimitsError {
+    /// The offending field.
+    pub field: &'static str,
+}
+
+/// The knobs every segment-pull source shares (DESIGN 6.4, "shared with
+/// HLS"): the session owns them in its own config and passes them in; they
+/// are deliberately not part of [`DashConfig`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct PullLimits {
+    /// Representation and AdaptationSet selection policy.
+    pub policy: crate::selection::Policy,
+    /// MPD parse bounds; `limits.max_bytes` is the MPD body cap.
+    pub limits: crate::limits::Limits,
+    /// Largest accepted init, index or segment body, bytes.
+    pub max_segment_bytes: usize,
+    /// Segment requests kept outstanding at once, counting bodies that have
+    /// arrived but are not yet delivered; `0` behaves as `1`.
+    pub max_inflight_segments: usize,
+    /// Consecutive failures of one segment after which a static presentation
+    /// ends with a fatal error; `0` makes the first failure final and
+    /// `u32::MAX` retries forever (the `broadcast-client` rule).
+    pub max_segment_failures: u32,
+    /// The same for the init and index resources.
+    pub max_init_failures: u32,
+}
+
+impl Default for PullLimits {
+    fn default() -> Self {
+        Self {
+            policy: crate::selection::Policy::default(),
+            limits: crate::limits::Limits::default(),
+            max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
+            max_inflight_segments: DEFAULT_MAX_INFLIGHT_SEGMENTS,
+            max_segment_failures: DEFAULT_MAX_SEGMENT_FAILURES,
+            max_init_failures: DEFAULT_MAX_INIT_FAILURES,
+        }
+    }
+}
+
+impl PullLimits {
+    /// Reject limits that cannot work.
+    ///
+    /// # Errors
+    /// [`PullLimitsError`] naming the first zero size bound.
+    pub fn validate(&self) -> Result<(), PullLimitsError> {
+        if self.limits.max_bytes == 0 {
+            return Err(PullLimitsError {
+                field: "limits.max_bytes",
+            });
+        }
+        if self.max_segment_bytes == 0 {
+            return Err(PullLimitsError {
+                field: "max_segment_bytes",
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn window(&self) -> usize {
+        self.max_inflight_segments.max(1)
+    }
+}
