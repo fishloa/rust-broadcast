@@ -446,6 +446,7 @@ dependencies = [
  "dvb-si",
  "hls-runtime",
  "http",
+ "jiff",
  "mpeg-ts",
  "percent-encoding",
  "rtsp-runtime",

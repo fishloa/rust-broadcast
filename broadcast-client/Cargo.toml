@@ -46,6 +46,7 @@ rtsp-runtime = { path = "../rtsp-runtime", version = "0.8", default-features = f
 sdp-types = { workspace = true }
 rtsp-types = "0.1"
 url = "2"
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 
 [features]
 default = ["std"]
