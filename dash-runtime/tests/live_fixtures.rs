@@ -48,6 +48,9 @@ fn ffmpeg_live_number_window_matches_the_capture() {
     let delay = 2 * SECOND_US;
     let join = join_index(&video.plan, publish, delay).unwrap();
     assert_eq!(video.plan.get(join).unwrap().number, 7);
+    // Delay 0 puts T_join inside the not-yet-complete segment 8: clamped back to 7.
+    let join0 = join_index(&video.plan, publish, 0).unwrap();
+    assert_eq!(video.plan.get(join0).unwrap().number, 7);
     // A much older clock clamps to the oldest segment still in the window.
     let w = window(&video.plan, publish).unwrap();
     assert_eq!(

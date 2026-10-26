@@ -391,6 +391,14 @@ what = "A caller-driven LL-HLS playback client (blocking reload, part prefetch, 
 crates_io = true
 lifecycle = "active"
 
+[crate.dash-runtime]
+domain = "live"
+summary = "Sans-IO MPEG-DASH core: MPD model and parser, segment addressing, UTC clock and live-edge arithmetic."
+standards = "ISO/IEC 23009-1:2022 (5.3, 5.6, 5.8.5.7, Annex A, Annex I); DASH-IF IOP v4.3 (live timing); ETSI TS 103 285 (BaseURL priority)"
+what = "A bounded, namespace-aware MPD parser and typed consume-only model, attribute inheritance, a lazy Segment plan (SegmentTemplate, SegmentTimeline, SegmentList, SegmentBase + sidx) with availability windows, a UTC clock fed by UTCTiming measurements, PeriodStart and live-edge arithmetic, and Representation selection. No I/O and no clock reads: every instant is an argument. The client state machine is a later step; not yet published."
+crates_io = false
+lifecycle = "active"
+
 # ------------------------------------------------------------------- servers
 
 [crate.media-plane]

@@ -99,6 +99,23 @@ fn newest_and_oldest_follow_the_closed_form_on_an_open_ended_plan() {
 }
 
 #[test]
+fn derived_presentation_delay_and_clamp() {
+    let d = |spd: Option<u64>, max: i128, tsb: Option<i128>, over: Option<i128>| {
+        presentation_delay_us(spd.map(std::time::Duration::from_secs), max * S, tsb.map(|t| t * S), over.map(|o| o * S))
+            / S
+    };
+    assert_eq!(d(None, 1, None, None), 4, "never under four seconds");
+    assert_eq!(d(None, 2, None, None), 6, "three segment durations");
+    assert_eq!(d(Some(9), 2, None, None), 9, "a suggested delay wins");
+    assert_eq!(d(None, 2, Some(10), None), 6);
+    assert_eq!(d(None, 2, Some(8), None), 4, "clamped to TSB - 2 x maxSegmentDuration");
+    assert_eq!(d(Some(30), 2, Some(20), None), 16);
+    assert_eq!(d(None, 2, Some(3), None), 0, "never negative");
+    assert_eq!(d(Some(9), 2, Some(8), Some(3)), 3, "an explicit override replaces it");
+    assert_eq!(d(None, 2, None, Some(-5)), 0);
+}
+
+#[test]
 fn start_number_zero_and_one() {
     for (attr, first) in [
         (r#"startNumber="0""#, 0u64),
