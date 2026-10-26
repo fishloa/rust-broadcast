@@ -20,11 +20,11 @@ fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
     type Mutate = fn(&mut Config);
     let cases: [(&str, Mutate); 10] = [
         ("max_queued_events", |c| c.max_queued_events = 0),
-        ("max_playlist_bytes", |c| c.max_playlist_bytes = 0),
+        ("max_manifest_bytes", |c| c.max_manifest_bytes = 0),
         ("max_segment_bytes", |c| c.max_segment_bytes = 0),
         ("max_key_bytes", |c| c.max_key_bytes = 0),
-        ("hls_request_timeout_us", |c| c.hls_request_timeout_us = 0),
-        ("hls_segment_timeout_us", |c| c.hls_segment_timeout_us = 0),
+        ("request_timeout_us", |c| c.request_timeout_us = 0),
+        ("segment_timeout_us", |c| c.segment_timeout_us = 0),
         ("hls_key_timeout_us", |c| c.hls_key_timeout_us = 0),
         ("buffer", |c| c.buffer.track_silence_timeout_us = 0),
         ("timeline_jump.backward_us", |c| {
@@ -51,11 +51,11 @@ fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
 fn the_smallest_valid_values_open() {
     let config = Config {
         max_queued_events: 1,
-        max_playlist_bytes: 1,
+        max_manifest_bytes: 1,
         max_segment_bytes: 1,
         max_key_bytes: 1,
-        hls_request_timeout_us: 1,
-        hls_segment_timeout_us: 1,
+        request_timeout_us: 1,
+        segment_timeout_us: 1,
         hls_key_timeout_us: 1,
         timeline_jump: Some(TimelineJumpConfig {
             backward_us: 1,

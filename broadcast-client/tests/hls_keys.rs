@@ -823,7 +823,7 @@ fn error_kind_names_are_stable() {
         ),
         (
             ErrorKind::BodyTooLarge {
-                field: "max_playlist_bytes",
+                field: "max_manifest_bytes",
             },
             "body_too_large",
         ),

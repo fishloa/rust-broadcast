@@ -179,7 +179,7 @@ pub enum ErrorKind {
     /// status, a transport error or a timeout, an oversized body, or a `200` whose body is not
     /// media for its container (an HTML error page, random bytes, an empty body, a fragment
     /// without its `mdat`). Each failure is retried on the backoff schedule;
-    /// [`Config::hls_max_segment_failures`] consecutive failures of the same segment end it: a
+    /// [`Config::max_segment_failures`] consecutive failures of the same segment end it: a
     /// VOD playlist (`EXT-X-ENDLIST`) with one fatal error of this kind, a live one with one
     /// non-fatal error of this kind followed by [`Event::Discontinuity`] and playback continuing
     /// with the next segment.
@@ -233,7 +233,7 @@ pub enum ErrorKind {
         /// The stable reason token.
         reason: &'static str,
     },
-    /// A response body outgrew the cap `field` names (`max_playlist_bytes` or
+    /// A response body outgrew the cap `field` names (`max_manifest_bytes` or
     /// `max_segment_bytes`), so the request was closed and retried. Reported once per field and
     /// session, non-fatal: the retry meets the same cap unless the origin's response shrinks, so
     /// a host that sees this should raise the cap.
@@ -542,14 +542,14 @@ impl PartialEq for Event {
 /// main playlist's track ids, which must stay below this value (a main track at or above it is
 /// dropped with [`ErrorKind::TrackIdReserved`]).
 pub const AUDIO_TRACK_ID_OFFSET: u32 = 1000;
-/// Default maximum accepted HLS playlist body size.
-pub const DEFAULT_MAX_PLAYLIST_BYTES: usize = 4 * 1024 * 1024;
+/// Default maximum accepted manifest (playlist) body size.
+pub const DEFAULT_MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 /// Default maximum accepted HLS media resource body size.
 pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
-/// Default per-request timeout for HLS playlists, microseconds.
-pub const DEFAULT_HLS_REQUEST_TIMEOUT_US: u64 = 20_000_000;
+/// Default per-request timeout for manifests (playlists), microseconds.
+pub const DEFAULT_REQUEST_TIMEOUT_US: u64 = 20_000_000;
 /// Default per-request timeout for HLS media resources, microseconds.
-pub const DEFAULT_HLS_SEGMENT_TIMEOUT_US: u64 = 60_000_000;
+pub const DEFAULT_SEGMENT_TIMEOUT_US: u64 = 60_000_000;
 /// Default per-request timeout for HLS key requests, microseconds.
 pub const DEFAULT_HLS_KEY_TIMEOUT_US: u64 = 20_000_000;
 /// Default maximum accepted HLS key response body size.
@@ -557,15 +557,15 @@ pub const DEFAULT_MAX_KEY_BYTES: usize = 4096;
 /// Default number of consecutive key/decrypt failures before the session gives up.
 pub const DEFAULT_MAX_KEY_FAILURES: u32 = 8;
 /// Default number of consecutive failures of one HLS segment before it is given up on, see
-/// [`Config::hls_max_segment_failures`].
-pub const DEFAULT_HLS_MAX_SEGMENT_FAILURES: u32 = 8;
+/// [`Config::max_segment_failures`].
+pub const DEFAULT_MAX_SEGMENT_FAILURES: u32 = 8;
 /// Default HLS retry backoff schedule, milliseconds per attempt.
-pub const DEFAULT_HLS_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
+pub const DEFAULT_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
 /// Default HLS retry backoff once the schedule is exhausted, milliseconds.
-pub const DEFAULT_HLS_BACKOFF_CAP_MS: u64 = 10_000;
+pub const DEFAULT_BACKOFF_CAP_MS: u64 = 10_000;
 /// Default cap on simultaneously outstanding HLS segment and part requests, see
-/// [`Config::hls_max_inflight_segments`].
-pub const DEFAULT_HLS_MAX_INFLIGHT_SEGMENTS: usize = 4;
+/// [`Config::max_inflight_segments`].
+pub const DEFAULT_MAX_INFLIGHT_SEGMENTS: usize = 4;
 /// Default cap on input bytes the initial-tracks hold may buffer, see
 /// [`Config::tracks_hold_max_input_bytes`].
 pub const DEFAULT_TRACKS_HOLD_MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
@@ -615,24 +615,24 @@ pub struct Config {
     pub playout: crate::playout::PlayoutConfig,
     /// HLS variant selection policy.
     pub variant_policy: hls_runtime::client::VariantPolicy,
-    /// HLS: maximum playlist body bytes; must be non-zero.
-    pub max_playlist_bytes: usize,
+    /// Segment-pull sources (HLS, DASH): maximum manifest (playlist) body bytes; must be non-zero.
+    pub max_manifest_bytes: usize,
     /// HLS: maximum media resource body bytes; must be non-zero.
     pub max_segment_bytes: usize,
-    /// HLS: playlist request timeout, microseconds; must be non-zero.
-    pub hls_request_timeout_us: u64,
-    /// HLS: media resource request timeout, microseconds; must be non-zero.
-    pub hls_segment_timeout_us: u64,
-    /// HLS: retry backoff per attempt, milliseconds; an entry of `0` is treated as `1`.
-    pub hls_backoff_ms: Vec<u64>,
-    /// HLS: retry backoff after `hls_backoff_ms` is exhausted, milliseconds; `0` is treated as `1`.
-    pub hls_backoff_cap_ms: u64,
-    /// HLS: segment and part requests kept outstanding at once, per playlist adapter. The rest
+    /// Segment-pull sources: manifest request timeout, microseconds; must be non-zero.
+    pub request_timeout_us: u64,
+    /// Segment-pull sources: media resource request timeout, microseconds; must be non-zero.
+    pub segment_timeout_us: u64,
+    /// Segment-pull sources: retry backoff per attempt, milliseconds; an entry of `0` is treated as `1`.
+    pub backoff_ms: Vec<u64>,
+    /// Segment-pull sources: retry backoff after `backoff_ms` is exhausted, milliseconds; `0` is treated as `1`.
+    pub backoff_cap_ms: u64,
+    /// Segment-pull sources: segment and part requests kept outstanding at once, per playlist adapter. The rest
     /// stay queued and are released as responses complete, in order; playlist, key and
     /// initialization-section requests are not counted and never wait behind them. Held bodies
     /// of completed-but-undelivered segments count against the same cap, so memory is bounded
     /// by this value times [`Config::max_segment_bytes`]. `0` is treated as `1`.
-    pub hls_max_inflight_segments: usize,
+    pub max_inflight_segments: usize,
     /// HLS: key request timeout, microseconds; must be non-zero.
     pub hls_key_timeout_us: u64,
     /// HLS: maximum key response body bytes; must be non-zero.
@@ -641,15 +641,15 @@ pub struct Config {
     /// session emits a fatal [`Event::Error`] and stops; `0` behaves as `1` (the first failure is
     /// fatal).
     pub max_key_failures: u32,
-    /// HLS: consecutive failures of one media segment (or part) after which it is given up on: a
+    /// Segment-pull sources: consecutive failures of one media segment (or part) after which it is given up on: a
     /// VOD playlist (`EXT-X-ENDLIST`) ends with one fatal [`ErrorKind::SegmentFetchFailed`], a
     /// live one skips the segment with one non-fatal [`ErrorKind::SegmentFetchFailed`] followed by
     /// [`Event::Discontinuity`]. The count is per segment, grows the backoff schedule
-    /// ([`Config::hls_backoff_ms`]) and resets only when that segment is delivered as media,
+    /// ([`Config::backoff_ms`]) and resets only when that segment is delivered as media,
     /// never on a playlist delivery. `0` makes the first failure final; `u32::MAX` retries
     /// forever. Playlist reload failures are not counted: a playlist cannot be skipped, so they
     /// retry forever.
-    pub hls_max_segment_failures: u32,
+    pub max_segment_failures: u32,
     /// HLS: BCP 47 language (prefix match, ASCII case-insensitive) preferred for the separate
     /// audio rendition.
     pub preferred_audio_language: Option<String>,
@@ -706,8 +706,8 @@ impl Config {
         if self.max_queued_events == 0 {
             return invalid("max_queued_events");
         }
-        if self.max_playlist_bytes == 0 {
-            return invalid("max_playlist_bytes");
+        if self.max_manifest_bytes == 0 {
+            return invalid("max_manifest_bytes");
         }
         if self.max_segment_bytes == 0 {
             return invalid("max_segment_bytes");
@@ -715,11 +715,11 @@ impl Config {
         if self.max_key_bytes == 0 {
             return invalid("max_key_bytes");
         }
-        if self.hls_request_timeout_us == 0 {
-            return invalid("hls_request_timeout_us");
+        if self.request_timeout_us == 0 {
+            return invalid("request_timeout_us");
         }
-        if self.hls_segment_timeout_us == 0 {
-            return invalid("hls_segment_timeout_us");
+        if self.segment_timeout_us == 0 {
+            return invalid("segment_timeout_us");
         }
         if self.hls_key_timeout_us == 0 {
             return invalid("hls_key_timeout_us");
@@ -754,13 +754,13 @@ impl Config {
 
     /// The HLS retry schedule with every entry and the cap raised to at least one millisecond,
     /// so a zero never produces an unbounded burst of retries at one instant.
-    pub(crate) fn hls_backoff(&self) -> (Vec<u64>, u64) {
+    pub(crate) fn backoff(&self) -> (Vec<u64>, u64) {
         (
-            self.hls_backoff_ms
+            self.backoff_ms
                 .iter()
                 .map(|ms| (*ms).max(MIN_BACKOFF_MS))
                 .collect(),
-            self.hls_backoff_cap_ms.max(MIN_BACKOFF_MS),
+            self.backoff_cap_ms.max(MIN_BACKOFF_MS),
         )
     }
 }
@@ -776,17 +776,17 @@ impl Default for Config {
             buffer: buffering_runtime::ControllerConfig::default(),
             playout: crate::playout::PlayoutConfig::default(),
             variant_policy: hls_runtime::client::VariantPolicy::default(),
-            max_playlist_bytes: DEFAULT_MAX_PLAYLIST_BYTES,
+            max_manifest_bytes: DEFAULT_MAX_MANIFEST_BYTES,
             max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
-            hls_request_timeout_us: DEFAULT_HLS_REQUEST_TIMEOUT_US,
-            hls_segment_timeout_us: DEFAULT_HLS_SEGMENT_TIMEOUT_US,
-            hls_backoff_ms: DEFAULT_HLS_BACKOFF_MS.to_vec(),
-            hls_backoff_cap_ms: DEFAULT_HLS_BACKOFF_CAP_MS,
-            hls_max_inflight_segments: DEFAULT_HLS_MAX_INFLIGHT_SEGMENTS,
+            request_timeout_us: DEFAULT_REQUEST_TIMEOUT_US,
+            segment_timeout_us: DEFAULT_SEGMENT_TIMEOUT_US,
+            backoff_ms: DEFAULT_BACKOFF_MS.to_vec(),
+            backoff_cap_ms: DEFAULT_BACKOFF_CAP_MS,
+            max_inflight_segments: DEFAULT_MAX_INFLIGHT_SEGMENTS,
             hls_key_timeout_us: DEFAULT_HLS_KEY_TIMEOUT_US,
             max_key_bytes: DEFAULT_MAX_KEY_BYTES,
             max_key_failures: DEFAULT_MAX_KEY_FAILURES,
-            hls_max_segment_failures: DEFAULT_HLS_MAX_SEGMENT_FAILURES,
+            max_segment_failures: DEFAULT_MAX_SEGMENT_FAILURES,
             preferred_audio_language: None,
             auto_select_audio: true,
             max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
@@ -812,17 +812,17 @@ impl core::fmt::Debug for Config {
             .field("buffer", &self.buffer)
             .field("playout", &self.playout)
             .field("variant_policy", &self.variant_policy)
-            .field("max_playlist_bytes", &self.max_playlist_bytes)
+            .field("max_manifest_bytes", &self.max_manifest_bytes)
             .field("max_segment_bytes", &self.max_segment_bytes)
-            .field("hls_request_timeout_us", &self.hls_request_timeout_us)
-            .field("hls_segment_timeout_us", &self.hls_segment_timeout_us)
-            .field("hls_backoff_ms", &self.hls_backoff_ms)
-            .field("hls_backoff_cap_ms", &self.hls_backoff_cap_ms)
-            .field("hls_max_inflight_segments", &self.hls_max_inflight_segments)
+            .field("request_timeout_us", &self.request_timeout_us)
+            .field("segment_timeout_us", &self.segment_timeout_us)
+            .field("backoff_ms", &self.backoff_ms)
+            .field("backoff_cap_ms", &self.backoff_cap_ms)
+            .field("max_inflight_segments", &self.max_inflight_segments)
             .field("hls_key_timeout_us", &self.hls_key_timeout_us)
             .field("max_key_bytes", &self.max_key_bytes)
             .field("max_key_failures", &self.max_key_failures)
-            .field("hls_max_segment_failures", &self.hls_max_segment_failures)
+            .field("max_segment_failures", &self.max_segment_failures)
             .field("preferred_audio_language", &self.preferred_audio_language)
             .field("auto_select_audio", &self.auto_select_audio)
             .field("max_queued_events", &self.max_queued_events)

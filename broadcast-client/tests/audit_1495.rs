@@ -153,7 +153,7 @@ fn a_hostile_150k_segment_playlist_completes_in_bounded_steps() {
     let mut session = vod_session(hls_config());
     let n = 150_000;
     let playlist = vod_playlist(n);
-    assert!(playlist.len() < broadcast_client::events::DEFAULT_MAX_PLAYLIST_BYTES);
+    assert!(playlist.len() < broadcast_client::events::DEFAULT_MAX_MANIFEST_BYTES);
     let stats = run_vod(&mut session, VOD_PLAYLIST_URL, &playlist, |_, _| 200, n * 2);
     assert!(!stats.overloaded, "unbounded fan-out: {stats:?}");
     assert!(stats.peak_total <= 5, "{}", stats.peak_total);
@@ -165,7 +165,7 @@ fn a_hostile_150k_segment_playlist_completes_in_bounded_steps() {
 fn the_configured_cap_is_honoured_and_zero_means_one() {
     for (configured, effective) in [(2usize, 2usize), (1, 1), (0, 1), (7, 7)] {
         let config = Config {
-            hls_max_inflight_segments: configured,
+            max_inflight_segments: configured,
             ..hls_config()
         };
         let mut session = vod_session(config);
@@ -231,7 +231,7 @@ fn playlist_and_init_requests_bypass_a_full_segment_window() {
     let init_url = format!("{ORIGIN}/c/init.mp4");
     let playlist_url = format!("{ORIGIN}/c/index.m3u8");
     let config = Config {
-        hls_max_inflight_segments: 1,
+        max_inflight_segments: 1,
         ..hls_config()
     };
     let mut h = Host::new(&playlist_url, config);
@@ -269,7 +269,7 @@ fn live_playlist_reloads_are_not_starved_by_a_full_segment_window() {
     let names: Vec<String> = (0..10).map(|n| format!("s{n}.ts")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let config = Config {
-        hls_max_inflight_segments: 1,
+        max_inflight_segments: 1,
         ..hls_config()
     };
     let mut h = Host::new(playlist_url, config);
@@ -299,8 +299,8 @@ fn live_playlist_reloads_are_not_starved_by_a_full_segment_window() {
 #[test]
 fn zero_backoff_entries_and_cap_are_floored_at_one_millisecond() {
     let config = Config {
-        hls_backoff_ms: vec![0],
-        hls_backoff_cap_ms: 0,
+        backoff_ms: vec![0],
+        backoff_cap_ms: 0,
         ..hls_config()
     };
     let mut h = Host::new(TS_PLAYLIST_URL, config);

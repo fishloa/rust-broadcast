@@ -139,7 +139,7 @@ fn tiny_cap_config(playlist: bool) -> Config {
         ..hls_config()
     };
     if playlist {
-        c.max_playlist_bytes = TINY_BODY_CAP;
+        c.max_manifest_bytes = TINY_BODY_CAP;
     } else {
         c.max_segment_bytes = TINY_BODY_CAP;
     }
@@ -156,7 +156,7 @@ fn an_oversized_playlist_names_the_cap_that_was_hit() {
         errs,
         vec![(
             ErrorKind::BodyTooLarge {
-                field: "max_playlist_bytes"
+                field: "max_manifest_bytes"
             },
             false
         )]

@@ -506,12 +506,12 @@ fn config_from(header: &[u8]) -> Config {
         extra_headers: vec![("X-Fuzz".to_string(), "1".to_string())],
         max_key_failures: knob(header, 0, &KEY_FAILURES),
         max_redirects: knob(header, 1, &REDIRECTS),
-        hls_max_inflight_segments: knob(header, 2, &INFLIGHT),
+        max_inflight_segments: knob(header, 2, &INFLIGHT),
         max_queued_events: knob(header, 3, &QUEUE_CAPS),
-        max_playlist_bytes: knob(header, 4, &BYTE_LIMITS),
+        max_manifest_bytes: knob(header, 4, &BYTE_LIMITS),
         max_segment_bytes: knob(header, 5, &BYTE_LIMITS),
-        hls_request_timeout_us: knob(header, 6, &TIMEOUTS_US),
-        hls_segment_timeout_us: knob(header, 7, &TIMEOUTS_US),
+        request_timeout_us: knob(header, 6, &TIMEOUTS_US),
+        segment_timeout_us: knob(header, 7, &TIMEOUTS_US),
         tracks_hold_max_wall_us: knob(header, 8, &HOLD_WALL_US),
         tracks_hold_max_media_us: knob(header, 9, &HOLD_MEDIA_US),
         ..Config::default()
@@ -530,7 +530,7 @@ fn config_from(header: &[u8]) -> Config {
     config.playout.live_start_lead_us = knob(header, 16, &LEAD_US);
     config.playout.pause_lead_us = knob(header, 17, &LEAD_US);
     config.start_pending_track_wait_us = knob(header, 18, &START_WAIT_US);
-    config.hls_max_segment_failures = knob(header, 19, &SEGMENT_FAILURES);
+    config.max_segment_failures = knob(header, 19, &SEGMENT_FAILURES);
     config
 }
 

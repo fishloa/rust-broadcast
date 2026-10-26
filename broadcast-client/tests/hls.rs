@@ -704,7 +704,7 @@ fn oversized_playlist_body_closes_and_fails() {
     let limit = 4096usize;
     let config = Config {
         kind: SourceKind::Hls,
-        max_playlist_bytes: limit,
+        max_manifest_bytes: limit,
         ..Config::default()
     };
     let exact = padded_playlist(limit);
@@ -1019,7 +1019,7 @@ fn late_callbacks_after_close_ignored() {
 
     let config = Config {
         kind: SourceKind::Hls,
-        max_playlist_bytes: 100,
+        max_manifest_bytes: 100,
         ..Config::default()
     };
     let mut o = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
