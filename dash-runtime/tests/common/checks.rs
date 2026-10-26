@@ -59,9 +59,11 @@ pub fn delivered(reqs: &[SegReq]) -> BTreeMap<String, Vec<i64>> {
     out
 }
 
-/// Assert each rep's delivered indices are consecutive (no gap, no repeat).
+/// Assert each rep's served indices form one run (no gap, no repeat); the wire
+/// order is not the delivery order, retries and the in-flight window reorder it.
 pub fn assert_contiguous(reqs: &[SegReq]) {
-    for (rep, idxs) in delivered(reqs) {
+    for (rep, mut idxs) in delivered(reqs) {
+        idxs.sort_unstable();
         for w in idxs.windows(2) {
             assert_eq!(
                 w[1],

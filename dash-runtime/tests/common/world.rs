@@ -157,6 +157,7 @@ pub struct Logged {
 }
 
 pub type FaultFn = Box<dyn FnMut(&HttpReq, &Kind, i64) -> Option<Outcome>>;
+pub type RttFn = Box<dyn FnMut(&Kind, &str, u64) -> Option<u64>>;
 
 enum Delivery {
     Response {
@@ -188,6 +189,7 @@ pub struct Sim {
     pub rtt_us: u64,
     pub rtt_utc_us: Option<u64>,
     pub fault: Option<FaultFn>,
+    pub rtt_fn: Option<RttFn>,
     pub host_clock_calls: Vec<u64>,
     pub send_headers: bool,
     pub stalls: u64,
@@ -222,6 +224,7 @@ impl Sim {
             rtt_us: 40_000,
             rtt_utc_us: None,
             fault: None,
+            rtt_fn: None,
             host_clock_calls: Vec::new(),
             send_headers: true,
             stalls: 0,
@@ -256,8 +259,6 @@ impl Sim {
         } else {
             self.rtt_us
         };
-        let origin_elapsed = sent_elapsed + rtt / 2;
-        let arrive = sent_elapsed + rtt;
         let (kind, method, url) = match &action {
             Action::FetchMpd { url, .. } => (Kind::Mpd, Method::Get, url.clone()),
             Action::FetchUtcTiming { url, method, .. } => (
@@ -273,6 +274,13 @@ impl Sim {
             Action::FetchSegment { url, .. } => (Kind::Segment, Method::Get, url.clone()),
             _ => return,
         };
+        let rtt = self
+            .rtt_fn
+            .as_mut()
+            .and_then(|f| f(&kind, &url, sent_elapsed))
+            .unwrap_or(rtt);
+        let origin_elapsed = sent_elapsed + rtt / 2;
+        let arrive = sent_elapsed + rtt;
         let if_none_match = match &action {
             Action::FetchMpd { validators, .. } if self.send_headers => validators.etag.clone(),
             _ => None,
@@ -527,6 +535,11 @@ impl Sim {
                 break;
             }
         }
+    }
+
+    /// The host sleeps: simulated time passes with no calls into the client.
+    pub fn sleep(&mut self, dur_us: u64) {
+        self.world.elapsed_us += dur_us;
     }
 
     pub fn run_for(&mut self, dur_us: u64) {
