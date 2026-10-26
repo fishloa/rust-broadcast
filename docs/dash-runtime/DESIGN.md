@@ -469,3 +469,73 @@ PLUS: early-404, early-425, gone-410-in-window, expired (client fell behind), ho
 | Periods | continuity signal ignored; `Discontinuity` missing/duplicated at a boundary; init not refetched |
 | URLs | query propagated when it must not be (and not when `useMPDUrlQuery`); absolute BaseURL not overriding; alternate not rotated; blacklist not cleared |
 | Containers | non-fragmented MP4 accepted; `media_fragment` bypassed; init without `moov` accepted |
+
+## 9. Work breakdown (agent-sized PRs)
+
+Order is by dependency then value-for-effort; each PR follows the repo loop (baseline commit, brief with ungameable real-fixture gates, audit on own gate run, adversarial review by a different model). Sizes: S < 1 day, M 1-2, L 3-5, XL > 5 agent-days.
+
+| Step | Scope | Depends on | Size | Exit gate (beyond the 6-gate suite + Apple-target check) |
+|---|---|---|---|---|
+| P0 fixtures + spec prep | extract Annex G MPDs to `fixtures/dash/annex-g/`; produce REAL on-demand (`SegmentBase`+sidx, `-single_file`), `SegmentList`, multi-Period and period-continuity MPDs+media with GPAC `MP4Box`/ffmpeg (provenance + licence quoted; `fixtures/dash/PROVENANCE.md`); transcribe RFC 8470 (425) and the xs:dateTime accepted subset into `docs/specs/`; re-read the private verbatim 5.3.9.5.3, 5.3.9.6, 5.3.2.1 against the public notes | none | S-M | every fixture parses with an external oracle (MP4Box/ffprobe) and has provenance; no hand-made media |
+| W-a0 rename (Q1) | mechanical `hls_*` -> neutral names in `Config` + tests (sed-only test edits) | none | S | `git diff` of tests is pure renames; all green |
+| W-a shared extraction | section 2: `source/fetch/` pieces, `hls.rs` rebased on them; `container-probe` segment checks + hls-runtime uses them | W-a0 | M + S | tests dir diff EMPTY (after W-a0), mutation list killed, hls-runtime tests unchanged |
+| W-c dash-runtime core | crate skeleton (README, CHANGELOG, examples >= 2, docs/), `mpd` model/parse/inherit, `address` (template validation, lazy timeline, list, sidx), `timing` (`UtcClock`, availability, live edge, PeriodStart), selection; fuzz `mpd`+`address` | P0 | L | annex-G all parse; Table 10 vector; differentials 8.2(a)(b); fuzz run clean 10 min each; CRATE-ACCEPTANCE items except release lane |
+| W-b clock + config surface in broadcast-client | `Config::dash`, `Session::set_wall_clock`, `ClockSource`, `Event::ClockSynced`, new `ErrorKind`s, `Config::validate`, README host contract (HEAD method, clock) | W-c (types), W-a | M | public-API diff = exactly section 3.5 table; unit tests; `label_coverage` |
+| W-d1 `DashClient` static/VOD | actions/outputs, selection, init/index/segment fetch, demux, periods, switching, failures classification (no clock) | W-c | L | generator round trip 8.2(d) static; ffmpeg fixture byte-equal to `Fmp4Demux` oracle; on-demand sidx fixture |
+| W-d2 `DashClient` live | clock ladder, UTC sampling, refresh, join, availability gating, early/expired, MPD reset, dynamic->static | W-d1, W-b | L-XL | World tests 3.6; livesim2 a/b refresh pairs; every row of the 8.4 table |
+| W-e adapter + Session | `source/dash.rs`, `SourceKind::Dash` + `Auto` `.mpd`, Variants/AudioRendition mapping, gate integration, errors, matrix harness v1 | W-d2, W-a | L | session suites 8.2(4); matrix on static + live-number + live-timeline with r8's 22 faults |
+| W-g fuzz + matrix + docs + release lane | `fuzz_session_dash`, matrix widening (all sources and DASH faults), `release-dash-runtime.yml` (copy of `release-hls-runtime.yml`), CHANGELOG, `docs/release-notes/`, README coverage table, `docs/crates-index.toml`, `CRATES.md`, `tests/no_handroll_guard.rs` + a `no_clock_guard.rs` banning `SystemTime::now`/`Instant::now`/`jiff::Timestamp::now` outside `#[cfg(test)]`, livesim2 e2e + `dash-e2e` CI job | W-e | M-L | docs.rs green; the e2e actually serves and plays 30 s; guards bite |
+| W-f multimux adoption | `dash_pull` rebased on `dash-runtime` (keeps the tokio loop and the media-plane mapping); removes `jiff::Timestamp::now` and the first-Period/first-Representation limits; listed behaviour changes (policy-core style); differential 8.2(c); loopback wire test | W-d2 (published) | L | multimux suite green; behaviour-change list accepted by the owner |
+| W-h audit rounds | adversarial rounds like r5-r8: (1) formulas and clock, (2) failure/refresh/period state machine, (3) session mapping + fault matrix; fixes in one merged brief per round | after each of W-d2, W-e, W-f | 3 x M | each round: findings fixed, a test per finding, matrix re-run |
+
+Release order (CI-only, owner sign-off, no workstation publish): `container-probe` minor, `hls-runtime` patch, `dash-runtime` 0.1.0, `broadcast-client` 0.1.0, then `multimux` (W-f) and `multimux-cli`. `transmux` is untouched, so no epoch moves there.
+What must precede `broadcast-client` 0.1.0 publishing: strictly only the non-additive changes, i.e. `Config` (new `dash` field, the Q1 renames, the Q3 `#[non_exhaustive]`); everything else in section 3.5 is additive on non-exhaustive enums and could follow in 0.1.x, but W-b lands the whole surface so 0.1.0 does not ship a clock-less API that DASH then bolts onto.
+`SourceKind::Dash` itself only lands with W-e (no stub variant that returns `UnsupportedScheme`).
+Needs spec clarification FIRST: nothing blocks (the public notes cover every clause used); P0 closes the three gaps it lists (on-demand and period fixtures, RFC 8470, xs:dateTime subset).
+
+## 10. Risks and open questions
+
+### 10.1 Owner-level questions (each with a recommendation)
+
+| # | Question | Recommendation |
+|---|---|---|
+| Q1 | Rename the shared `hls_*` knobs (`hls_backoff_ms`, `hls_max_segment_failures`, `hls_max_inflight_segments`, `hls_request_timeout_us`, `hls_segment_timeout_us`, `max_playlist_bytes`) to source-neutral names before 0.1.0? | Yes (W-a0): a published `hls_` prefix on DASH knobs is an API wart forever; now it is a sed |
+| Q2 | `Event::Variants` stays the hls-runtime `MasterSelection` with DASH mapped into it (`VariantInfo.url` = init URL), or a neutral source-independent type now? | Map now (hosts already speak it, `select_variant`/`select_audio_rendition` keep working); neutral type as a breaking 0.2 if a second adaptive source (e.g. MSS) appears |
+| Q3 | Make `Config` `#[non_exhaustive]` now (hosts then build it with `Default` + field assignment; later knobs become additive)? | Yes: DASH is the third source to add knobs and it will not be the last |
+| Q4 | Ship DASH 0.1.0 without chunk-level LL-DASH delivery (segment-granular, safe degradation)? | Yes; chunk delivery is a 0.2 story shared with LL-HLS parts |
+| Q5 | Clock ladder default: UTCTiming > host clock > MPD `Date` (`Auto`), `PreferHost` available? | Yes; UTCTiming is the packager's own authority and costs one overlapped round trip |
+| Q6 | No automatic ABR in 0.1.0 (policy at start + `select_variant`, bandwidth exposed)? | Yes; the player owns adaptation (zenith) |
+| Q7 | CENC/CBCS decryption, MPEG-2 TS and WebM segments, subtitles, seeking, EventStream surfacing: all out of 0.1.0 with typed errors? | Yes |
+| Q8 | `dash-runtime::mpd` is consume-only (no serializer), an exception to the symmetric Parse/Serialize invariant, justified by the differential against `transmux`'s generator (the same exception `dash_parse` has)? | Accept; revisit if the module is hoisted to `broadcast-dash` |
+| Q9 | CI gains a Go toolchain job to run livesim2 (BSD, pinned `@v1.15.2`) as a hard e2e gate? | Yes; skip-loudly locally, hard-fail in CI like the private-fixtures rule |
+| Q10 | multimux behaviour changes when it adopts the core (all Periods and every selected set instead of the first Period / first Representation; clock from UTCTiming instead of the host wall clock; early-404 cadence)? | Accept, listed per the policy-core precedent in W-f |
+
+### 10.2 Risks
+
+- **R1 clock errors.** A wrong clock requests too early (404/425, absorbed by `NotYetAvailable`, never counted) or joins too far behind (`Expired`/rejoin). Mitigations: ladder, uncertainty reported, A.7 re-sync on the first in-window 404, simulated-skew matrix.
+- **R2 `Date` rung.** Edge caches can serve a stale `Date` (IOP 4.7.2 warns for `http-head`); it is the last resort and flagged by `ClockSource::MpdDate`.
+- **R3 SSRF / hostile MPD.** BaseURL, segment and UTCTiming URLs are chosen by the MPD's server (the same property as the `resource_metadata` note in the client design). A player tolerates it; a SERVER-side pull (multimux) must not fetch `169.254.169.254` because an MPD says so: `DashConfig::cross_origin_urls=false` restricts every derived URL to the MPD origin, and multimux sets it by default (W-f; note the existing `dash_pull` has the same exposure today). UTC and MPD bodies are size-bounded (UTC bodies 4 KiB), MPD bounds in 4.2, timelines expand lazily, `MUP=0` is floored at 1 s.
+- **R4 host clock semantics.** The host's monotonic clock must keep counting across device sleep (Apple: continuous clock) or the host must call `set_wall_clock` after wake; the `now_us` jump catch-up rules of the client design (audit #1484) bound the damage, documented in the host contract.
+- **R5 two MPD parsers.** `transmux::dash_parse` and `dash_runtime::mpd` coexist until W-f; the differentials are the guard; deprecating `dash_parse` is a later, separate transmux decision.
+- **R6 A.11 redirect rule.** Using a redirect target as the permanent update URL (A.11) can pin a temporary signed URL; the spec is followed, `Location` wins when present.
+- **R7 `S@t` vs tfdt.** Clock/addressing code must use `S@t` for `$Time$` and presentation arithmetic, never tfdt (section 11 item 2); a regression test uses the ffmpeg fixture whose `t=2070` differs from tfdt 0.
+- **R8 livesim2 drift.** Pinned version, e2e asserts structure not timing constants.
+
+## 11. Spec quirks that affect implementation
+
+1. **`$Number$` formula (5.3.9.5.3).** The URL bullet prints the replacement as `(k-1) + (kstart-1)` (`kstart` = `@startNumber`, default 1) while the `@duration` bullet one page later writes `(k-1) + NumberStart` (`docs/specs/dash/23009-1/05-3-9-5-segment-information-derivation.md`, quirk note). Real content, checked this session:
+   livesim2 v1.15.2 `testpic_2s` (`startNumber="0"`, `duration="2"`, no `@timescale`): `V300/896501965.m4s` has `tfdt = 161 370 353 700 000 / 90 000 = 1 793 003 930 s = 896 501 965 x 2`, i.e. `MPDstart(Number) = (Number - startNumber) x duration`; the same server answers a number 4 ahead with `425 "earl"` and a number 80 behind with `410 Gone`.
+   The committed ffmpeg fixture (`startNumber="1"`): `chunk-stream0-00001.m4s` tfdt 0, `-00002` tfdt 90 000. Both packagers use `Number = startNumber + k - 1`, the `NumberStart` reading, which is also what Annex A.3.3 (`(i-1) + @startNumber`) and IOP 4.3.2 print. The `(kstart-1)` reading would yield number -1 for livesim2's `startNumber=0`. Implement `startNumber + k - 1`; pinned by a test on both real captures.
+2. **`S@t` is a presentation time, not tfdt.** The ffmpeg fixture has `<S t="2070" d="90000" r="2"/>` for video while the first segment's `tfdt` is 0 (the 2 070-tick difference is the composition offset); `$Time$` substitutes `S@t` (5.3.9.4.4 Table 21, 5.3.9.6.1) and the spec's sidx rule equates `S@t` with the sidx `earliest_presentation_time`. Never derive `$Time$` or Period-relative times from tfdt.
+3. **Annex A.3.3 pseudo-code counts `r+2` segments per `S`** (`r[s]=@r+1` then a loop `j=1..r[s]` after emitting one) and uses an undefined `d[0]`; the normative 5.3.9.6.1/5.3.9.6.2 give `r+1`. Follow the clause, not the informative code.
+4. **Availability end.** 5.3.9.5.3 `SegAvailEnd = SegAvailStart + MPDduration + TSB`, Annex A.3.4 `TavailEnd = AST + PeriodStart + start + TSB + 2 x duration`, IOP `SAET = SAST + TSB + SDURATION` are the same quantity (SegAvailStart already contains one duration).
+5. **IOP 4.3.4.3 multi-Period list is unreachable in its third branch** and mixes Period end with start; implement the per-Period `SAST/SAET` model of 4.3.2.2 (the IOP notes say so).
+6. **Epoch zero.** livesim2 uses `availabilityStartTime="1970-01-01T00:00:00Z"` and `publishTime="1970-01-01T00:00:00Z"`: unix 0 is a VALUE, never "absent".
+7. **`@timescale` default 1**: `testpic_2s` has `duration="2"` with no timescale; do not require it.
+8. **Early/expired status codes.** Specs say "4xx" (A.7) or 404 (IOP 4.8.5); livesim2 uses 425 (early, body `earl`) and 410 (expired). Classification accepts 404/410/425 (section 5.4).
+9. **`Date` resolution** is whole seconds (livesim2 `time.txt` `date: ... 08:39:04 GMT`), `http-xsdate` carries milliseconds (`time.akamai.com/?iso&ms` returned `2026-10-26T08:39:04.952Z`): uncertainty bookkeeping in 3.3.
+10. **`@startNumber`/`@endNumber` width**: unsignedInt in Ed.5, unsignedLong in Ed.6 (`ED6-SCHEMA-DIFF.md`); parse as u64 (livesim2 numbers already reach 8.9e8).
+11. **Ed.6 differences that matter** (schema only, prose paywalled, `ED6-SCHEMA-DIFF.md`): `MPD@type="list"` (fatal typed), `S@d` optional and `SegmentTimeline/Pattern`, `S@p/@pE/@ssp`, `@k` (segment sequences: Representation dropped), `Period@minBufferTime` (read), `Location` as a complex type (read the text), `ContentSteering` and `RequestParam` (ignored). Everything else is identical.
+12. **5.3.9.4.4 table cross-references are wrong** ("Table 20"/"Table 16" for identifiers; Table 21 is operative); an invalid template drops the containing Representation, not the MPD.
+13. **5.8.5.7:** the HTTP-VALUE sentence lists `ntp` where `http-ntp` is meant; IOP 4.7.2 omits `sntp`. Both `ntp` and `sntp` are skipped here; `http-ntp` is implemented.
+14. **`MPD@minimumUpdatePeriod=0`** means every announced segment is already available and the MPD may change before each request (IOP 4.4.3): hence the 1 s refresh floor rather than a literal zero.
