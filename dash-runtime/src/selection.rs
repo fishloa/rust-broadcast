@@ -127,6 +127,13 @@ pub struct RepRef {
 }
 
 impl RepRef {
+    /// A reference to Period `period`, AdaptationSet `set`, Representation
+    /// `rep`.
+    #[must_use]
+    pub fn at(period: usize, set: usize, rep: usize) -> Self {
+        Self { period, set, rep }
+    }
+
     /// The three elements this reference names.
     #[must_use]
     pub fn resolve<'a>(

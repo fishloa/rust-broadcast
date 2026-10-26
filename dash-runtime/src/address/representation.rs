@@ -48,6 +48,29 @@ pub struct PlanOptions<'a> {
     pub index: Option<(&'a SegmentIndexBox, u64)>,
 }
 
+impl<'a> PlanOptions<'a> {
+    /// Supply the parsed `sidx` and its anchor offset.
+    #[must_use]
+    pub fn with_index(mut self, sidx: &'a SegmentIndexBox, anchor: u64) -> Self {
+        self.index = Some((sidx, anchor));
+        self
+    }
+
+    /// Set the horizon of a trailing negative `@r`.
+    #[must_use]
+    pub fn with_horizon_utc_us(mut self, horizon_utc_us: i128) -> Self {
+        self.horizon_utc_us = Some(horizon_utc_us);
+        self
+    }
+
+    /// Opt into applying `@availabilityTimeOffset`.
+    #[must_use]
+    pub fn with_availability_time_offset(mut self, apply: bool) -> Self {
+        self.use_availability_time_offset = apply;
+        self
+    }
+}
+
 /// A planned Representation.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
