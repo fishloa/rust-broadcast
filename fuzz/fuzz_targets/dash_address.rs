@@ -78,15 +78,20 @@ fuzz_target!(|data: &[u8]| {
         ),
     };
     let type_attr = if dynamic { "dynamic" } else { "static" };
-    let tsb_attr = tsb.map_or(String::new(), |t| format!(r#" timeShiftBufferDepth="PT{t}S""#));
+    let tsb_attr = tsb.map_or(String::new(), |t| {
+        format!(r#" timeShiftBufferDepth="PT{t}S""#)
+    });
     let pd_attr = period_duration.map_or(String::new(), |d| format!(r#" duration="PT{d}S""#));
     let ast = jiff::Timestamp::from_second(i64::try_from(ast_s).unwrap_or(0)).unwrap_or_default();
     let xml = format!(
         r#"<MPD xmlns="{NS}" type="{type_attr}" availabilityStartTime="{ast}" mediaPresentationDuration="PT{mpd_duration}S"{tsb_attr}>
            <Period start="PT{period_start}S"{pd_attr}><AdaptationSet><Representation id="r" bandwidth="1">{segment}</Representation></AdaptationSet></Period></MPD>"#
     );
-    let Ok(mpd) = Mpd::parse(xml.as_bytes()) else { return };
-    let Ok(planned) = plan_representation(&mpd, RepRef::at(0, 0, 0), &PlanOptions::default()) else {
+    let Ok(mpd) = Mpd::parse(xml.as_bytes()) else {
+        return;
+    };
+    let Ok(planned) = plan_representation(&mpd, RepRef::at(0, 0, 0), &PlanOptions::default())
+    else {
         return;
     };
     let plan = &planned.plan;
@@ -96,7 +101,10 @@ fuzz_target!(|data: &[u8]| {
         let seg = plan.get(i).expect("index below len() exists");
         assert_eq!(seg.index, i);
         if let Some((n, t, from)) = previous {
-            assert!(seg.number > n || kind == 2 || end_number.is_some(), "numbers increase");
+            assert!(
+                seg.number > n || kind == 2 || end_number.is_some(),
+                "numbers increase"
+            );
             if kind != 2 {
                 assert!(seg.time_ticks >= t, "time never decreases");
             }
@@ -117,7 +125,10 @@ fuzz_target!(|data: &[u8]| {
         if let Some(k) = newest {
             assert!(plan.get(k).unwrap().available_from_us.unwrap() <= now);
             if let Some(next) = plan.get(k + 1) {
-                assert!(next.available_from_us.unwrap() > now, "newest is the last complete one");
+                assert!(
+                    next.available_from_us.unwrap() > now,
+                    "newest is the last complete one"
+                );
             }
         }
         let _ = oldest_in_window(plan, now);

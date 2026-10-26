@@ -34,7 +34,10 @@ fuzz_target!(|data: &[u8]| {
                 let _ = plan.init();
                 let _ = plan.index();
                 for seg in plan.iter().take(SEGMENTS_WALKED) {
-                    let _ = planned.candidates.first().and_then(|c| c.resolve(None, &seg.reference));
+                    let _ = planned
+                        .candidates
+                        .first()
+                        .and_then(|c| c.resolve(None, &seg.reference));
                 }
                 if plan.is_dynamic() {
                     let _ = newest_complete(plan, SAMPLE_CLOCK_US);
