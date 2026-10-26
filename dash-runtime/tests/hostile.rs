@@ -77,7 +77,10 @@ fn depth_bound() {
         wrap(&s)
     };
     assert!(parse(&nest(30)).is_ok(), "MPD + 30 = depth 31");
-    assert!(parse(&nest(31)).is_ok(), "MPD + 31 = depth 32, exactly the limit");
+    assert!(
+        parse(&nest(31)).is_ok(),
+        "MPD + 31 = depth 32, exactly the limit"
+    );
     assert_eq!(too_large(parse(&nest(32))), Limit::Depth);
     assert_eq!(too_large(parse(&nest(5_000))), Limit::Depth);
 }

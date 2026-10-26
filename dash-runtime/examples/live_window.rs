@@ -34,7 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--mpd" => path = it.next().ok_or("--mpd needs a path")?.into(),
             "--utc" => utc_arg = Some(it.next().ok_or("--utc needs an xs:dateTime")?),
             other => {
-                return Err(format!("unknown argument {other} (use --mpd PATH, --utc TIME)").into());
+                return Err(
+                    format!("unknown argument {other} (use --mpd PATH, --utc TIME)").into(),
+                );
             }
         }
     }
