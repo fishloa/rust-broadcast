@@ -15,8 +15,11 @@
 //!
 //! What it does, and does not:
 //!
-//! * Static MPDs only. A dynamic MPD is answered with
-//!   [`Error::LiveNotYetSupported`] (temporary, removed by design step W-d2).
+//! * Static and dynamic MPDs. A dynamic one needs a UTC clock
+//!   ([`DashClient::set_wall_clock`], `UTCTiming` through
+//!   [`Action::FetchUtcTiming`], or the response `Date` in [`ResponseMeta`]),
+//!   gates every request on the segment's availability, refreshes the MPD
+//!   and reports [`Output::ClockSynced`]; see `next_wake` for timers.
 //! * fMP4/CMAF segments only; encrypted, MPEG-2 TS, WebM, subtitle and
 //!   trick-mode sets are reported as [`Output::TrackDropped`], never
 //!   misplayed.
@@ -39,7 +42,7 @@
 //! use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits};
 //!
 //! let mut client = DashClient::new("https://origin.example/vod/manifest.mpd", DashConfig::default(), PullLimits::default());
-//! let Some(Action::FetchMpd { url }) = client.poll(0) else { unreachable!() };
+//! let Some(Action::FetchMpd { url, .. }) = client.poll(0) else { unreachable!() };
 //! assert_eq!(url, "https://origin.example/vod/manifest.mpd");
 //! // The MPD is requested once until the caller reports a failure and retries.
 //! assert!(client.poll(0).is_none());
@@ -50,10 +53,13 @@ pub mod config;
 mod demux;
 mod engine;
 mod error;
+mod meta;
 mod output;
+mod utc_sampler;
 
-pub use action::{Action, RepId, ResourceId};
+pub use action::{Action, MpdValidators, RepId, ResourceId, UtcId, UtcMethod};
 pub use config::{DashClockPolicy, DashConfig, DashConfigError, PullLimits, PullLimitsError};
-pub use engine::DashClient;
+pub use engine::{DashClient, StateSize};
 pub use error::{Error, Failure, FailureClass, FailureKind, FatalKind, Rejection, Result};
+pub use meta::{ResponseMeta, UtcResponse};
 pub use output::{AudioRendition, DropCause, ManifestSelection, Notice, Output, VariantInfo};

@@ -7,3 +7,4 @@ This crate has no spec transcriptions of its own; it relies on the workspace one
 - `docs/specs/dash/xs-datetime-subset.md`: the accepted `xs:dateTime` subset and its accept/reject table.
 - `docs/mutation-table.md` (this directory): the mutants applied to the formulas and the test that kills each.
 - `docs/mutation-table-client.md` (this directory): the 48 mutants applied to `DashClient` and the test that kills each; `mutants_client.py` re-runs them.
+- `docs/mutation-table-live.md` (this directory): the live-client mutants; `mutants_live.py` re-runs them.

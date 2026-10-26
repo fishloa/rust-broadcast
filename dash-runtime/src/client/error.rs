@@ -5,7 +5,7 @@
 use broadcast_common::impl_spec_display;
 use thiserror::Error;
 
-use super::action::ResourceId;
+use super::action::{ResourceId, UtcId};
 use crate::error::MpdError;
 
 /// How a fetch failed, as the caller observed it.
@@ -71,6 +71,21 @@ pub enum FailureClass {
     /// The failure count reached the configured cap: the presentation has
     /// ended with an [`super::Output::Fatal`].
     GiveUp,
+    /// A live segment requested before it exists (a `425`, or a `404`/`410`
+    /// inside the early-grace window): not counted. The client asks for it
+    /// again from [`super::DashClient::poll`] at `retry_at_us`; the caller
+    /// does nothing.
+    NotYetAvailable {
+        /// Monotonic microseconds at which the segment is requested again.
+        retry_at_us: u64,
+    },
+    /// A live segment that left the time-shift window before it was fetched:
+    /// not counted and not retried. The client continues at the oldest
+    /// segment still available and marks the gap with a `Discontinuity`.
+    Expired,
+    /// A live segment given up on after the configured number of consecutive
+    /// failures: [`super::Output::SegmentLost`] and a `Discontinuity` follow.
+    SegmentSkipped,
     /// The resource is the missing tail of a Period (DESIGN section 5.5 and
     /// the multi-period decision in the crate README): nothing to retry,
     /// nothing counted, playback continues.
@@ -119,9 +134,10 @@ impl_spec_display!(Rejection);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FatalKind {
-    /// A dynamic MPD: live presentations are not supported yet. Temporary,
-    /// removed when the live client (design step W-d2) lands.
-    LiveNotYetSupported,
+    /// A dynamic MPD and no UTC source at all: no `UTCTiming` could be read,
+    /// the host never supplied a wall clock and the MPD response carried no
+    /// usable `Date`. Segment availability cannot be decided (DESIGN 3.4).
+    ClockUnavailable,
     /// The MPD has nothing a client can play.
     MpdInvalid {
         /// What is missing.
@@ -159,7 +175,7 @@ impl FatalKind {
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::LiveNotYetSupported => "live_not_yet_supported",
+            Self::ClockUnavailable => "clock_unavailable",
             Self::MpdInvalid { .. } => "mpd_invalid",
             Self::UnsupportedAddressing { .. } => "unsupported_addressing",
             Self::SegmentFetchFailed { .. } => "segment_fetch_failed",
@@ -194,9 +210,13 @@ pub enum Error {
     /// [`super::DashClient::retry_mpd`].
     #[error("MPD rejected: {0}")]
     Mpd(MpdError),
-    /// The MPD is dynamic; live presentations are not supported yet.
-    #[error("dynamic (live) MPDs are not supported yet")]
-    LiveNotYetSupported,
+    /// A `UTCTiming` answer for a request the client does not wait for
+    /// (answered twice, abandoned after its timeout, or never made).
+    #[error("UTC request {id:?} was not requested")]
+    UnrequestedUtc {
+        /// The id.
+        id: UtcId,
+    },
     /// A body was rejected and counted as a failure; `class` says what to do.
     #[error("resource {id:?} rejected ({reason}): {class:?}")]
     Rejected {

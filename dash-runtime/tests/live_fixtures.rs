@@ -176,3 +176,19 @@ fn livesim2_number_variant_uses_a_large_start_number() {
     assert_eq!(first.number, 895_967_208);
     assert_eq!(first.reference, format!("V300/{}.m4s", first.number));
 }
+
+#[test]
+fn a_segment_is_in_the_window_through_its_availability_end_and_out_one_microsecond_later() {
+    let l = load("dash/livesim2/segtimeline_time_a.mpd");
+    let video = l.plan(RepRef::at(0, 1, 0));
+    let first = video.plan.get(0).unwrap();
+    let until = first.available_until_us.unwrap();
+    let newest_at = |utc: i128| oldest_in_window(&video.plan, utc);
+    let publish = i128::from(l.mpd.publish_time_us.unwrap());
+    assert!(
+        until > publish,
+        "the first listed segment outlives the publish time"
+    );
+    assert_eq!(newest_at(until), Some(0), "still available at SegAvailEnd");
+    assert_eq!(newest_at(until + 1), Some(1), "gone one microsecond later");
+}

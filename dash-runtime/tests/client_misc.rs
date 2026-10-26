@@ -187,15 +187,14 @@ fn nothing_playable_is_a_typed_fatal() {
 }
 
 #[test]
-fn a_dynamic_mpd_is_refused_cleanly_and_nothing_else_is_requested() {
+fn a_dynamic_mpd_with_no_clock_source_is_fatal_and_nothing_else_is_requested() {
     let run = drive(
         "http://dash.test/live-number/live.mpd",
         PullLimits::default(),
         &mut Origin::new(),
         &mut Drive::default(),
     );
-    assert_eq!(run.fatal, Some(FatalKind::LiveNotYetSupported));
-    assert!(run.errors.contains(&Error::LiveNotYetSupported));
+    assert_eq!(run.fatal, Some(FatalKind::ClockUnavailable));
     assert_eq!(run.requests.len(), 1);
     assert!(run.samples().is_empty());
 }
@@ -544,7 +543,7 @@ fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
     let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
     let mpd = base_text();
     assert_eq!(c.on_mpd(0, mpd.as_bytes()), Err(Error::MpdNotAwaited));
-    let Some(Action::FetchMpd { url }) = c.poll(0) else {
+    let Some(Action::FetchMpd { url, .. }) = c.poll(0) else {
         panic!()
     };
     assert_eq!(url, URL);
