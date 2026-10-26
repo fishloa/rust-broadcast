@@ -34,6 +34,16 @@
 //!   client request must have the MPD's origin.
 //!
 //! No clock is read; the `now_us` arguments are the caller's monotonic clock.
+//!
+//! ```
+//! use dash_runtime::client::{Action, DashClient, DashConfig};
+//!
+//! let mut client = DashClient::new("https://origin.example/vod/manifest.mpd", DashConfig::default());
+//! let Some(Action::FetchMpd { url }) = client.poll(0) else { unreachable!() };
+//! assert_eq!(url, "https://origin.example/vod/manifest.mpd");
+//! // The MPD is requested once until the caller reports a failure and retries.
+//! assert!(client.poll(0).is_none());
+//! ```
 
 mod action;
 mod config;

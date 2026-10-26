@@ -2,7 +2,7 @@
 name         = "dash-runtime"
 version      = "0.1.0"
 edition      = "2024"
-description  = "Sans-IO MPEG-DASH (ISO/IEC 23009-1) core: MPD model and parser, segment addressing, UTC clock and live-edge arithmetic. No I/O, no clock reads."
+description  = "Sans-IO MPEG-DASH (ISO/IEC 23009-1): MPD model and parser, segment addressing, UTC clock and live-edge arithmetic, and a client for static presentations. No I/O, no clock reads."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["dash", "mpd", "sans-io", "streaming", "manifest"]
