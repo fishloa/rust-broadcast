@@ -1042,6 +1042,7 @@ name = "dash-runtime"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "container-probe",
  "jiff",
  "quick-xml",
  "test-fixtures",

@@ -66,6 +66,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod address;
+pub mod client;
 pub mod error;
 pub mod limits;
 pub mod mpd;
