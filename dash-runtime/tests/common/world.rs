@@ -136,7 +136,7 @@ impl<O: Origin> Origin for Shared<O> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Mpd,
     Utc,
@@ -158,6 +158,7 @@ pub struct Logged {
 
 pub type FaultFn = Box<dyn FnMut(&HttpReq, &Kind, i64) -> Option<Outcome>>;
 pub type RttFn = Box<dyn FnMut(&Kind, &str, u64) -> Option<u64>>;
+pub type PostFn = Box<dyn FnMut(&HttpReq, &Kind, i64, Outcome) -> Outcome>;
 
 enum Delivery {
     Response {
@@ -189,6 +190,13 @@ pub struct Sim {
     pub rtt_us: u64,
     pub rtt_utc_us: Option<u64>,
     pub fault: Option<FaultFn>,
+    pub post: Option<PostFn>,
+    pub duplicate_responses: bool,
+    pub double_failures: bool,
+    pub request_timeout_us: u64,
+    pub seen_ids: Vec<ResourceId>,
+    pub accepted_segments: Vec<String>,
+    pub inject_stale: bool,
     pub rtt_fn: Option<RttFn>,
     pub host_clock_calls: Vec<u64>,
     pub send_headers: bool,
@@ -226,6 +234,13 @@ impl Sim {
             rtt_us: 40_000,
             rtt_utc_us: None,
             fault: None,
+            post: None,
+            duplicate_responses: false,
+            double_failures: false,
+            request_timeout_us: 20_000_000,
+            seen_ids: Vec::new(),
+            accepted_segments: Vec::new(),
+            inject_stale: false,
             rtt_fn: None,
             host_clock_calls: Vec::new(),
             send_headers: true,
@@ -300,7 +315,15 @@ impl Sim {
         if let Some(f) = self.fault.as_mut() {
             outcome = f(&req, &kind, at_utc);
         }
-        let outcome = outcome.unwrap_or_else(|| self.origin.serve(at_utc, &req));
+        let mut outcome = outcome.unwrap_or_else(|| self.origin.serve(at_utc, &req));
+        if let Some(f) = self.post.as_mut() {
+            outcome = f(&req, &kind, at_utc, outcome);
+        }
+        if let Some(id) = action.id()
+            && self.seen_ids.len() < 64
+        {
+            self.seen_ids.push(id);
+        }
         let status = match &outcome {
             Outcome::Resp(r) => Some(r.status),
             _ => None,
@@ -314,9 +337,41 @@ impl Sim {
             status,
             id: action.id(),
         });
-        let received_mono = self.world.mono_at(arrive);
+        let mut arrive = arrive;
+        let mut outcome = outcome;
         if matches!(outcome, Outcome::Hang) {
-            return;
+            if is_utc {
+                return;
+            }
+            arrive = sent_elapsed + self.request_timeout_us;
+            outcome = Outcome::Fail(Failure::Timeout);
+        }
+        let received_mono = self.world.mono_at(arrive);
+        if self.duplicate_responses
+            && let Outcome::Resp(r) = &outcome
+        {
+            self.push(
+                arrive,
+                Delivery::Response {
+                    action: action.clone(),
+                    sent_mono,
+                    received_mono,
+                    outcome: Outcome::Resp(r.clone()),
+                },
+            );
+        }
+        if self.double_failures
+            && let Outcome::Fail(f) = &outcome
+        {
+            self.push(
+                arrive,
+                Delivery::Response {
+                    action: action.clone(),
+                    sent_mono,
+                    received_mono,
+                    outcome: Outcome::Fail(*f),
+                },
+            );
         }
         self.push(
             arrive,
@@ -369,6 +424,20 @@ impl Sim {
                 received_mono,
                 outcome,
             } => self.deliver_response(now, action, sent_mono, received_mono, outcome),
+        }
+        if self.inject_stale
+            && let Some(old) = self.seen_ids.first().copied()
+        {
+            let bogus = b"stale";
+            let r = match old {
+                ResourceId::Init { .. } => self.client.on_init(now, old, bogus),
+                ResourceId::Index { .. } => self.client.on_index(now, old, bogus),
+                _ => self.client.on_segment(now, old, bogus),
+            };
+            if let Err(e) = r {
+                self.errors.push(e);
+            }
+            let _ = self.client.on_failure(now, old, Failure::Transport);
         }
         self.drain_outputs();
     }
@@ -460,6 +529,7 @@ impl Sim {
             Action::FetchInit { id, .. }
             | Action::FetchIndex { id, .. }
             | Action::FetchSegment { id, .. } => {
+                let url = action.url().to_owned();
                 let result = match resp {
                     Ok(r) if (200..300).contains(&r.status) => Ok(r.body),
                     Ok(r) => Err(Failure::Status(r.status)),
@@ -476,11 +546,18 @@ impl Sim {
                             ResourceId::Index { .. } => self.client.on_index(now, id, &body),
                             _ => self.client.on_segment(now, id, &body),
                         };
-                        if let Err(e) = r {
-                            if let Error::Rejected { id, class, .. } = &e {
-                                self.after_class(now, *id, *class);
+                        match r {
+                            Ok(()) => {
+                                if matches!(id, ResourceId::Segment { .. }) {
+                                    self.accepted_segments.push(url);
+                                }
                             }
-                            self.errors.push(e);
+                            Err(e) => {
+                                if let Error::Rejected { id, class, .. } = &e {
+                                    self.after_class(now, *id, *class);
+                                }
+                                self.errors.push(e);
+                            }
                         }
                     }
                 }
