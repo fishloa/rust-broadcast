@@ -12,9 +12,11 @@ use crate::error::Unsupported;
 pub mod base_index;
 pub mod list;
 pub mod plan;
+pub mod representation;
 pub mod template;
 pub mod timeline;
 
+pub use representation::{PlanError, PlanOptions, PlannedRepresentation, plan_representation};
 pub use plan::{DynamicContext, PlanInput, ResourceRef, SegmentPlan, SegmentRef};
 
 /// Why a Representation's segments cannot be addressed.
