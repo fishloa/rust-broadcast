@@ -27,7 +27,7 @@ MAP = ROOT / "docs" / "specs" / "PRIVATE-MAP.md"
 BASELINE = ROOT / "tools" / "private-map-baseline.txt"
 PRIVATE_PREFIX = "private/specs-verified/"
 
-HISTORICAL = re.compile(r"(^|/)CHANGELOG[^/]*\.md$|^docs/release-notes/|^docs/superpowers/|^\.delegate/|^private/|^tools/private-map-baseline\.txt$|^docs/specs/PRIVATE-MAP\.md$")
+HISTORICAL = re.compile(r"(^|/)CHANGELOG[^/]*\.md$|^docs/release-notes/|^docs/superpowers/|^\.delegate/|^private/|^tools/private-map-baseline\.txt$|^tools/tests/test_check_private_map\.py$|^docs/specs/PRIVATE-MAP\.md$")
 LINK = re.compile(r"\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)|^\[[^\]]+\]:\s*(\S+)", re.M)
 CITE = re.compile(r"(?<![\w./-])((?:[\w.+-]+/)*docs/[\w.+/-]*[\w-]\.(?:md|html|tsv))")
 TEXT_SUFFIXES = (".md", ".rs", ".toml", ".py", ".txt", ".yml")
