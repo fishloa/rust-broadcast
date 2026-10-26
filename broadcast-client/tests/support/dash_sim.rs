@@ -501,6 +501,11 @@ impl DashSim {
         }
     }
 
+    /// The host sleeps: time passes with no call into the session.
+    pub fn sleep(&mut self, dur_us: u64) {
+        self.world.elapsed_us += dur_us;
+    }
+
     pub fn run_until(&mut self, end_elapsed_us: u64) {
         self.run_loop(end_elapsed_us, false);
     }
