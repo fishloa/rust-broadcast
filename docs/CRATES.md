@@ -468,7 +468,7 @@ Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF
 - **Cargo description:** Robust media container-format detection — MPEG-2 TS (188/192/204/208 stride + phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF, and elementary streams.
 - **Version (in-tree):** 0.2.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux)
+- **Used by (workspace):** [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux)
 - **Links:** [README](../container-probe/README.md) · [CHANGELOG](../container-probe/CHANGELOG.md) · [crates.io](https://crates.io/crates/container-probe) · [docs.rs](https://docs.rs/container-probe)
 
 #### transmux
@@ -603,7 +603,7 @@ A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 dem
 - **Standards:** RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS)
 - **Cargo description:** Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter.
 - **Version (in-tree):** 0.9.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 5
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`media-plane`](#media-plane), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`media-plane`](#media-plane), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../hls-runtime/README.md) · [CHANGELOG](../hls-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/hls-runtime) · [docs.rs](https://docs.rs/hls-runtime)
 
