@@ -20,9 +20,9 @@ use dash_common::capture::{CaptureOrigin, Livesim2Pair};
 use dash_common::loopback::{Sig, oracle, sigs};
 use dash_common::synth::{Addressing, MPD_URL, Synth};
 use dash_common::world::{MICROS, Shared, World};
-use dash_sim::{DashSim, SEC, WorldBackend};
 use dash_runtime::mpd::Mpd;
 use dash_runtime::timing::datetime::parse_xs_datetime;
+use dash_sim::{DashSim, SEC, WorldBackend};
 
 const AST_US: i64 = 1_700_000_000 * MICROS;
 const UTC_XSDATE: &str = "http://utc.test/xsdate";
@@ -32,7 +32,11 @@ fn ts(text: &str) -> i64 {
     parse_xs_datetime(text).unwrap().unix_us
 }
 
-fn live(synth: Synth, start_after_ast_us: i64, config: Config) -> (DashSim, dash_common::synth::Geo) {
+fn live(
+    synth: Synth,
+    start_after_ast_us: i64,
+    config: Config,
+) -> (DashSim, dash_common::synth::Geo) {
     let geo = synth.geo();
     let world = World::new(AST_US + start_after_ast_us);
     let sim = DashSim::new(MPD_URL, config, world, Box::new(WorldBackend(synth)));
@@ -129,7 +133,10 @@ fn every_addressing_joins_at_the_delay_and_plays_on_utc_timing() {
         assert!(early_requests(&reqs, geo, TOLERANCE_US).is_empty(), "{a:?}");
         let first = first_index(&reqs, "V").unwrap();
         let edge = geo.complete_count(start_utc) - 1;
-        assert!((first - (edge - 3)).abs() <= 1, "{a:?}: join {first} edge {edge}");
+        assert!(
+            (first - (edge - 3)).abs() <= 1,
+            "{a:?}: join {first} edge {edge}"
+        );
         assert_eq!(
             clock_events(&sim).first().map(|s| s.0),
             Some(ClockSource::UtcTiming),
@@ -282,7 +289,11 @@ fn a_host_clock_step_does_not_disturb_a_utc_timing_anchored_session() {
         shape(&steady),
         "the event sequence is the one of a session whose host clock never stepped"
     );
-    assert_eq!(clock_events(&stepped).len(), 1, "one anchor, one ClockSynced");
+    assert_eq!(
+        clock_events(&stepped).len(),
+        1,
+        "one anchor, one ClockSynced"
+    );
     assert_eq!(stepped.host_clock_calls.len(), 2);
 }
 
@@ -306,7 +317,10 @@ fn falling_behind_the_window_reports_live_edge_lost_and_a_discontinuity_then_rec
         .count();
     assert_eq!(lost, 1, "one LiveEdgeLost per run: {:?}", sim.errors());
     assert!(sim.count(|e| matches!(e, Event::Discontinuity)) >= 1);
-    assert!(sample_count(&sim) > before, "playback resumes after the skip");
+    assert!(
+        sample_count(&sim) > before,
+        "playback resumes after the skip"
+    );
     let reqs = segment_requests(&sim, geo);
     assert_no_duplicates(&reqs);
 }
@@ -325,7 +339,8 @@ fn the_status_sequence_is_establishing_then_live_once() {
 
 #[test]
 fn utc_head_is_sent_with_the_head_method_and_a_refused_head_is_retried_as_get() {
-    let synth = Synth::new(AST_US, Addressing::Number).with_utc("http-head", "http://utc.test/head");
+    let synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-head", "http://utc.test/head");
     let (mut sim, _) = live(synth, 41 * MICROS + 120_000, Config::default());
     sim.run_for(10 * SEC);
     let utc: Vec<_> = sim.requests_to("utc.test");
@@ -336,7 +351,8 @@ fn utc_head_is_sent_with_the_head_method_and_a_refused_head_is_retried_as_get() 
         Some(ClockSource::UtcTiming)
     );
 
-    let mut synth = Synth::new(AST_US, Addressing::Number).with_utc("http-head", "http://utc.test/head");
+    let mut synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-head", "http://utc.test/head");
     synth.utc.head_status = Some(405);
     let (mut sim, _) = live(synth, 41 * MICROS + 120_000, Config::default());
     sim.run_for(10 * SEC);
@@ -373,7 +389,9 @@ fn the_mpd_refresh_is_conditional_and_a_304_is_accepted() {
     assert!(mpds.len() >= 5);
     assert!(mpds[0].header("if-none-match").is_none());
     assert!(
-        mpds.iter().skip(1).any(|r| r.header("if-none-match").is_some()),
+        mpds.iter()
+            .skip(1)
+            .any(|r| r.header("if-none-match").is_some()),
         "refreshes carry the validator"
     );
     assert!(sim.errors().is_empty(), "{:?}", sim.errors());
@@ -396,7 +414,10 @@ fn ffmpeg_number_origin(ast: i64) -> CaptureOrigin {
 }
 
 fn samples_by_track(sim: &DashSim) -> BTreeMap<u32, Vec<Sig>> {
-    sim.samples().into_iter().map(|(k, v)| (k, sigs(&v))).collect()
+    sim.samples()
+        .into_iter()
+        .map(|(k, v)| (k, sigs(&v)))
+        .collect()
 }
 
 fn requested_files(sim: &DashSim) -> Vec<String> {
@@ -413,7 +434,12 @@ fn the_ffmpeg_number_capture_plays_exactly_the_segments_the_clock_selects() {
     let origin = ffmpeg_number_origin(ast);
     let url = origin.url("live.mpd");
     let world = World::new(ast + 15_300_000);
-    let mut sim = DashSim::new(&url, Config::default(), world, Box::new(WorldBackend(origin)));
+    let mut sim = DashSim::new(
+        &url,
+        Config::default(),
+        world,
+        Box::new(WorldBackend(origin)),
+    );
     sim.give_host_clock();
     sim.run_until(1_300_000);
     assert!(sim.fatal().is_none(), "{:?}", sim.fatal());
@@ -449,8 +475,16 @@ fn the_ffmpeg_number_capture_plays_exactly_the_segments_the_clock_selects() {
         "live-number/seg-1-007.m4s",
         "live-number/seg-1-008.m4s",
     ]);
-    assert_eq!(got.get(&1), Some(&video[0]), "video samples equal the demux oracle");
-    assert_eq!(got.get(&2), Some(&audio[0]), "audio samples equal the demux oracle");
+    assert_eq!(
+        got.get(&1),
+        Some(&video[0]),
+        "video samples equal the demux oracle"
+    );
+    assert_eq!(
+        got.get(&2),
+        Some(&audio[0]),
+        "audio samples equal the demux oracle"
+    );
 }
 
 #[test]
@@ -584,4 +618,3 @@ fn the_real_livesim2_refresh_pair_plays_across_the_update_without_gap_or_early_r
     }
     assert!(sample_count(&sim) > 0);
 }
-

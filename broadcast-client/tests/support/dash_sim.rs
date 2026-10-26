@@ -39,7 +39,10 @@ impl Logged {
     }
 
     pub fn is_mpd(&self) -> bool {
-        self.url.split('?').next().is_some_and(|p| p.ends_with(".mpd"))
+        self.url
+            .split('?')
+            .next()
+            .is_some_and(|p| p.ends_with(".mpd"))
     }
 }
 
@@ -271,7 +274,14 @@ impl DashSim {
         }
     }
 
-    fn dispatch(&mut self, conn: u32, method: String, url: String, headers: Headers, range: Option<(u64, u64)>) {
+    fn dispatch(
+        &mut self,
+        conn: u32,
+        method: String,
+        url: String,
+        headers: Headers,
+        range: Option<(u64, u64)>,
+    ) {
         let sent_elapsed = self.world.elapsed_us;
         let logged = Logged {
             conn,
@@ -468,7 +478,12 @@ impl DashSim {
             let _ = stall_run;
             self.world.elapsed_us = next.min(end_elapsed_us);
             let now_mono = self.world.mono();
-            let expired: Vec<u64> = self.wakes.iter().copied().filter(|w| *w <= now_mono).collect();
+            let expired: Vec<u64> = self
+                .wakes
+                .iter()
+                .copied()
+                .filter(|w| *w <= now_mono)
+                .collect();
             for w in expired {
                 self.wakes.remove(&w);
             }

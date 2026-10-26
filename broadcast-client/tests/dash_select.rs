@@ -94,7 +94,12 @@ fn with_two_video() -> String {
     t.replacen(marker, ALT_VIDEO, 1)
 }
 
-fn with_two_audio(first_lang: &str, first_role: &str, second_lang: &str, second_role: &str) -> String {
+fn with_two_audio(
+    first_lang: &str,
+    first_role: &str,
+    second_lang: &str,
+    second_role: &str,
+) -> String {
     let t = base_manifest()
         .replacen(
             "<AdaptationSet id=\"1\" contentType=\"audio\" startWithSAP=\"1\" segmentAlignment=\"true\" bitstreamSwitching=\"true\" lang=\"und\">",
@@ -243,7 +248,10 @@ fn select_variant_switches_at_the_next_segment_and_keeps_the_samples_intact() {
         !sim.requests_to("alt-v-00003").is_empty(),
         "the later segments come from the new Representation"
     );
-    assert!(sim.requests_to("alt-v-00001").is_empty(), "the first was already requested");
+    assert!(
+        sim.requests_to("alt-v-00001").is_empty(),
+        "the first was already requested"
+    );
     let want = oracle(&[
         "init-stream0.m4s",
         "chunk-stream0-00001.m4s",
@@ -257,7 +265,10 @@ fn select_variant_switches_at_the_next_segment_and_keeps_the_samples_intact() {
 #[test]
 fn an_unknown_variant_is_an_error_and_nothing_is_known_before_the_manifest() {
     let mut early = Session::open(&format!("{HOST}/{MANIFEST}"), Config::default(), 0).unwrap();
-    assert!(matches!(early.select_variant(0), Err(Error::NoSuchVariant(0))));
+    assert!(matches!(
+        early.select_variant(0),
+        Err(Error::NoSuchVariant(0))
+    ));
     assert!(matches!(
         early.select_audio_rendition(Some(0)),
         Err(Error::NoSuchRendition)
@@ -268,10 +279,17 @@ fn an_unknown_variant_is_an_error_and_nothing_is_known_before_the_manifest() {
         sim.session.select_variant(2),
         Err(Error::NoSuchVariant(2))
     ));
-    assert!(sim.session.select_variant(1).is_ok(), "a known index after Ended is accepted");
+    assert!(
+        sim.session.select_variant(1).is_ok(),
+        "a known index after Ended is accepted"
+    );
     let after = sim.events.len();
     sim.run_for(5 * SEC);
-    assert_eq!(sim.events.len(), after, "and ignored: nothing starts, nothing is emitted");
+    assert_eq!(
+        sim.events.len(),
+        after,
+        "and ignored: nothing starts, nothing is emitted"
+    );
 }
 
 #[test]
@@ -311,7 +329,10 @@ fn a_manual_variant_choice_survives_a_period_change() {
     assert!(sim.ended(), "{:?}", sim.errors());
     let all = manifests(&sim);
     assert_eq!(all.len(), 2);
-    assert_ne!(all[1].chosen, low, "the second Period starts on its own best Representation");
+    assert_ne!(
+        all[1].chosen, low,
+        "the second Period starts on its own best Representation"
+    );
     let urls: Vec<String> = sim
         .log
         .iter()
@@ -326,7 +347,10 @@ fn a_manual_variant_choice_survives_a_period_change() {
         asked("alt-p2_dash_track1_2.m4s") && asked("alt-p2_dash_track1_3.m4s"),
         "and is re-applied in the second, from the next segment not yet requested: {urls:?}"
     );
-    assert!(!asked("alt-p1_dash_track1_1.m4s"), "the first segment was already requested");
+    assert!(
+        !asked("alt-p1_dash_track1_1.m4s"),
+        "the first segment was already requested"
+    );
 }
 
 #[test]
@@ -393,7 +417,11 @@ fn select_audio_rendition_switches_the_audio_set_mid_stream() {
         "chunk-stream1-00003.m4s",
         "chunk-stream1-00004.m4s",
     ]);
-    assert_eq!(dash_sim::sigs_of(&sim.samples()[&2]), want[0], "no audio sample lost or repeated");
+    assert_eq!(
+        dash_sim::sigs_of(&sim.samples()[&2]),
+        want[0],
+        "no audio sample lost or repeated"
+    );
     assert!(matches!(
         sim.session.select_audio_rendition(Some(2)),
         Err(Error::NoSuchRendition)
@@ -422,7 +450,11 @@ fn audio_can_be_stopped_and_started_again() {
             _ => None,
         })
         .collect();
-    assert_eq!(tracks.len(), 1, "the track set is re-announced once, without audio");
+    assert_eq!(
+        tracks.len(),
+        1,
+        "the track set is re-announced once, without audio"
+    );
     assert_eq!(
         tracks[0].iter().map(|t| t.track_id).collect::<Vec<_>>(),
         vec![TrackId::new(1)]
@@ -433,7 +465,9 @@ fn audio_can_be_stopped_and_started_again() {
     );
     assert!(samples_of(&sim, 1) > 0);
     assert!(audio_events(&sim).last().is_some_and(|a| a.0.is_none()));
-    assert!(sim.requests_to("alt-a-").is_empty() && sim.requests_to("chunk-stream1-00004").is_empty());
+    assert!(
+        sim.requests_to("alt-a-").is_empty() && sim.requests_to("chunk-stream1-00004").is_empty()
+    );
 }
 
 #[test]

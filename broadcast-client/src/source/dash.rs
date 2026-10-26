@@ -234,7 +234,7 @@ pub(crate) struct DashSource {
     wake_pushed: Option<u64>,
     reported: BTreeSet<&'static str>,
     features_reported: BTreeSet<&'static str>,
-    dropped_reported: BTreeSet<(usize, Option<usize>, &'static str)>,
+    drop_errors: Vec<ErrorKind>,
     skipped_reported: BTreeSet<(Option<u32>, String)>,
     skipped_kind: Option<ErrorKind>,
     damaged_reported: bool,
@@ -307,7 +307,7 @@ impl DashSource {
             wake_pushed: None,
             reported: BTreeSet::new(),
             features_reported: BTreeSet::new(),
-            dropped_reported: BTreeSet::new(),
+            drop_errors: Vec::new(),
             skipped_reported: BTreeSet::new(),
             skipped_kind: None,
             damaged_reported: false,
@@ -1112,9 +1112,7 @@ impl DashSource {
             }
             Output::Samples { track_id, samples } => self.on_samples(track_id, samples),
             Output::Discontinuity => self.events.push_back(Event::Discontinuity),
-            Output::TrackDropped {
-                set, rep, cause, ..
-            } => self.on_dropped(set, rep, cause),
+            Output::TrackDropped { cause, .. } => self.on_dropped(cause),
             Output::TrackSkipped {
                 track_id, fourcc, ..
             } => {
@@ -1184,12 +1182,9 @@ impl DashSource {
         }
     }
 
-    fn on_dropped(&mut self, set: usize, rep: Option<usize>, cause: DropCause) {
+    fn on_dropped(&mut self, cause: DropCause) {
         if cause == DropCause::Selection(DropReason::UnsupportedEncryption) {
             self.encryption_seen = true;
-        }
-        if !self.dropped_reported.insert((set, rep, cause.name())) {
-            return;
         }
         let kind = match cause {
             DropCause::Selection(DropReason::UnsupportedEncryption) => {
@@ -1207,6 +1202,10 @@ impl DashSource {
                 fourcc: None,
             },
         };
+        if self.drop_errors.contains(&kind) {
+            return;
+        }
+        self.drop_errors.push(kind.clone());
         self.events.push_back(Event::Error { kind, fatal: false });
     }
 
