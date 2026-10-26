@@ -207,9 +207,10 @@ fn audio_rendition_switch_after_ended_is_ignored() {
 
 #[test]
 fn nothing_is_emitted_after_a_fatal_error_in_the_same_poll() {
-    let config = Config {
-        max_key_failures: 1,
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.max_key_failures = 1;
+        new_config
     };
     let master = "#EXTM3U\n\
         #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"English\",LANGUAGE=\"en\",DEFAULT=YES,AUTOSELECT=YES,URI=\"a/index.m3u8\"\n\
@@ -381,9 +382,10 @@ fn queued_events_are_capped_by_dropping_the_oldest_samples() {
     assert!(all_samples.len() > 200, "fixture too small");
 
     let cap = 100;
-    let capped_cfg = Config {
-        max_queued_events: cap,
-        ..Config::default()
+    let capped_cfg = {
+        let mut new_config = Config::default();
+        new_config.max_queued_events = cap;
+        new_config
     };
     let (capped, dropped) = drive(capped_cfg);
     let kept: Vec<_> = capped.iter().filter_map(key).collect();
@@ -407,9 +409,10 @@ fn queued_events_are_capped_by_dropping_the_oldest_samples() {
 
 #[test]
 fn kind_is_unaffected_by_rtsp_url_with_forced_ts_http() {
-    let config = Config {
-        kind: SourceKind::TsHttp,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::TsHttp;
+        new_config
     };
     assert!(Session::open(RTSP_URL, config, 0).is_err());
 }

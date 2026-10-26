@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT30S" minBufferTime="PT2S"
+     profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">
+  <BaseURL>https://a.test/vod/</BaseURL>
+  <Period>
+    <AdaptationSet mimeType="video/mp4" codecs="avc1.4d401f" subsegmentAlignment="true" subsegmentStartsWithSAP="1">
+      <Representation id="lo" bandwidth="400000" width="426" height="240"><BaseURL>lo.mp4</BaseURL><SegmentBase indexRange="800-1199"/></Representation>
+      <Representation id="hi" bandwidth="1600000" width="1280" height="720"><BaseURL>hi.mp4</BaseURL><SegmentBase indexRange="900-1499"/></Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" codecs="mp4a.40.2" lang="en" subsegmentAlignment="true" subsegmentStartsWithSAP="1">
+      <Representation id="aud" bandwidth="96000"><BaseURL>aud.mp4</BaseURL><SegmentBase indexRange="700-1099"/></Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

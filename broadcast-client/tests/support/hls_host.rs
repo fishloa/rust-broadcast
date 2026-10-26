@@ -60,9 +60,10 @@ pub fn live_playlist_text(media_sequence: u64, segments: &[&str]) -> String {
 }
 
 pub fn hls_config() -> Config {
-    Config {
-        kind: SourceKind::Hls,
-        ..Config::default()
+    {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::Hls;
+        new_config
     }
 }
 

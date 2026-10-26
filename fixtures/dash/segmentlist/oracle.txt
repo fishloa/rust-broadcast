@@ -1,0 +1,33 @@
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/segmentlist/list.mpd
+fixtures/dash/segmentlist/list.mpd validates
+
+
+## gpac -i list.mpd inspect:test=network
+PID 2 ID 1 audio inMovie duration 00:00:12.000 delay -1024 44100 Hz 1 chan 48 kbps codec mp4a.40.2 AAC LC (aot=2 implicit)
+PID 1 ID 1 video inMovie duration 00:00:12.000 timescale 12800 320x240 SAR 1/1 99 kbps codec avc1.4D400D AVC|H264 PL Main@1.3 YUV 4:2:0 8 bpp
+
+
+## MP4Box -diso (tfdt per fragment, sidx where present)
+  init-0.m4s: no moof/sidx
+  init-1.m4s: no moof/sidx
+  seg-0-001.m4s: tfdt=0 sidx(timescale=12800,earliest_presentation_time=0,references=1)
+  seg-0-002.m4s: tfdt=25600 sidx(timescale=12800,earliest_presentation_time=25600,references=1)
+  seg-0-003.m4s: tfdt=51200 sidx(timescale=12800,earliest_presentation_time=51200,references=1)
+  seg-0-004.m4s: tfdt=76800 sidx(timescale=12800,earliest_presentation_time=76800,references=1)
+  seg-0-005.m4s: tfdt=102400 sidx(timescale=12800,earliest_presentation_time=102400,references=1)
+  seg-0-006.m4s: tfdt=128000 sidx(timescale=12800,earliest_presentation_time=128000,references=1)
+  seg-1-001.m4s: tfdt=0 sidx(timescale=44100,earliest_presentation_time=0,references=1)
+  seg-1-002.m4s: tfdt=89088 sidx(timescale=44100,earliest_presentation_time=88064,references=1)
+  seg-1-003.m4s: tfdt=178176 sidx(timescale=44100,earliest_presentation_time=177152,references=1)
+  seg-1-004.m4s: tfdt=266240 sidx(timescale=44100,earliest_presentation_time=265216,references=1)
+  seg-1-005.m4s: tfdt=354304 sidx(timescale=44100,earliest_presentation_time=353280,references=1)
+  seg-1-006.m4s: tfdt=442367 sidx(timescale=44100,earliest_presentation_time=441343,references=1)
+
+
+## ffprobe -count_packets (whole file, or init + segments concatenated)
+$ cat init-0.m4s seg-0-001.m4s seg-0-002.m4s seg-0-003.m4s seg-0-004.m4s seg-0-005.m4s seg-0-006.m4s | ffprobe
+stream|index=0|codec_name=h264|codec_type=video|width=320|height=240|start_time=0.000000|duration=12.000000|nb_read_packets=294
+
+$ cat init-1.m4s seg-1-001.m4s seg-1-002.m4s seg-1-003.m4s seg-1-004.m4s seg-1-005.m4s seg-1-006.m4s | ffprobe
+stream|index=0|codec_name=aac|codec_type=audio|sample_rate=44100|start_time=0.000000|duration=12.023220|nb_read_packets=518
+

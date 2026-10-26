@@ -634,16 +634,11 @@ fn config_none_disables_detector() {
     let bytes = test_fixtures::read(SMALL);
     let on = jumped(&bytes, true, 0, |_| FAR_JUMP_US, Config::default());
     assert_eq!(on.host.discontinuities().len(), 1, "positive control");
-    let off = jumped(
-        &bytes,
-        true,
-        0,
-        |_| FAR_JUMP_US,
-        Config {
-            timeline_jump: None,
-            ..Config::default()
-        },
-    );
+    let off = jumped(&bytes, true, 0, |_| FAR_JUMP_US, {
+        let mut new_config = Config::default();
+        new_config.timeline_jump = None;
+        new_config
+    });
     assert!(off.host.discontinuities().is_empty());
     assert!(!off.host.log().iter().any(|l| matches!(
         l,
@@ -663,19 +658,21 @@ fn config_none_disables_detector() {
 #[test]
 fn config_custom_thresholds_applied() {
     let bytes = test_fixtures::read(SMALL);
-    let tight = Config {
-        timeline_jump: Some(TimelineJumpConfig {
+    let tight = {
+        let mut new_config = Config::default();
+        new_config.timeline_jump = Some(TimelineJumpConfig {
             backward_us: 500_000,
             forward_slack_us: 1_000_000,
-        }),
-        ..Config::default()
+        });
+        new_config
     };
-    let loose = Config {
-        timeline_jump: Some(TimelineJumpConfig {
+    let loose = {
+        let mut new_config = Config::default();
+        new_config.timeline_jump = Some(TimelineJumpConfig {
             backward_us: 2_000_000,
             forward_slack_us: 20_000_000,
-        }),
-        ..Config::default()
+        });
+        new_config
     };
     let back = |_: &Boundary| -(SEC_US - BACKWARD_MARGIN_US);
     assert_eq!(
@@ -947,13 +944,11 @@ fn audio_jump_ignored_when_video_present() {
         "the audio really jumped"
     );
     assert!(h.discontinuities().is_empty());
-    let off = feed_all(
-        &shifted,
-        Config {
-            timeline_jump: None,
-            ..Config::default()
-        },
-    );
+    let off = feed_all(&shifted, {
+        let mut new_config = Config::default();
+        new_config.timeline_jump = None;
+        new_config
+    });
     assert_eq!(
         h.log(),
         off.log(),
@@ -1033,21 +1028,17 @@ fn no_false_positive_on_normal_stream_all_fixtures() {
                 feed_all(&bytes, Config::default())
             };
             let off = if burst {
-                run_burst(
-                    &bytes,
-                    Config {
-                        timeline_jump: None,
-                        ..Config::default()
-                    },
-                )
+                run_burst(&bytes, {
+                    let mut new_config = Config::default();
+                    new_config.timeline_jump = None;
+                    new_config
+                })
             } else {
-                feed_all(
-                    &bytes,
-                    Config {
-                        timeline_jump: None,
-                        ..Config::default()
-                    },
-                )
+                feed_all(&bytes, {
+                    let mut new_config = Config::default();
+                    new_config.timeline_jump = None;
+                    new_config
+                })
             };
             let flagged_off = off.discontinuities().len();
             let flagged_on = on.discontinuities().len();
@@ -1336,9 +1327,10 @@ impl Trace {
 }
 
 fn rtsp_config(timeline_jump: Option<TimelineJumpConfig>) -> Config {
-    Config {
-        timeline_jump,
-        ..quiet_config()
+    {
+        let mut new_config = quiet_config();
+        new_config.timeline_jump = timeline_jump;
+        new_config
     }
 }
 
@@ -1753,9 +1745,10 @@ fn hls_live_jump_resets_gate() {
         false,
     );
     assert_hls_jump(&clean, &jumped, delta);
-    let off_config = Config {
-        timeline_jump: None,
-        ..config()
+    let off_config = {
+        let mut new_config = config();
+        new_config.timeline_jump = None;
+        new_config
     };
     let off = hls_run(
         LIVE_PLAYLIST_URL,

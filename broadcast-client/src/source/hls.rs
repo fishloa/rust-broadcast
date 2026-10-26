@@ -37,7 +37,7 @@ const METHOD_GET: &str = "GET";
 const FIRST_CONN_ID: u32 = 1;
 const ENCRYPTED_SAMPLE_ENTRIES: [&str; 2] = ["encv", "enca"];
 const UNNAMED_TRACK_ID: u32 = 0;
-const FIELD_MAX_PLAYLIST_BYTES: &str = "max_playlist_bytes";
+const FIELD_MAX_MANIFEST_BYTES: &str = "max_manifest_bytes";
 const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
 const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
 const REASON_DAMAGED_FRAGMENT: &str = "damaged_fragment";
@@ -172,7 +172,7 @@ impl Req {
 
 pub(crate) struct HlsSource {
     client: HlsClient,
-    max_playlist_bytes: usize,
+    max_manifest_bytes: usize,
     max_segment_bytes: usize,
     max_key_bytes: usize,
     key_timeout_us: u64,
@@ -223,16 +223,16 @@ impl HlsSource {
     pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, role: Role) -> Self {
         let mut client = HlsClient::new(url.as_str());
         client.set_variant_policy(config.variant_policy.clone());
-        let (backoff_ms, backoff_cap_ms) = config.hls_backoff();
+        let (backoff_ms, backoff_cap_ms) = config.backoff();
         let mut source = Self {
             client,
-            max_playlist_bytes: config.max_playlist_bytes,
+            max_manifest_bytes: config.max_manifest_bytes,
             max_segment_bytes: config.max_segment_bytes,
             max_key_bytes: config.max_key_bytes,
             key_timeout_us: config.hls_key_timeout_us,
             max_key_failures: config.max_key_failures,
             key_failures: 0,
-            max_segment_failures: config.hls_max_segment_failures,
+            max_segment_failures: config.max_segment_failures,
             seg_failures: HashMap::new(),
             seg_retry: BTreeSet::new(),
             skip_error: None,
@@ -245,12 +245,12 @@ impl HlsSource {
             skipped_kind: None,
             damaged_reported: false,
             oversize_reported: BTreeSet::new(),
-            playlist_timeout_us: config.hls_request_timeout_us,
-            segment_timeout_us: config.hls_segment_timeout_us,
+            playlist_timeout_us: config.request_timeout_us,
+            segment_timeout_us: config.segment_timeout_us,
             backoff_ms,
             backoff_cap_ms,
             max_redirects: config.max_redirects,
-            max_inflight_segments: config.hls_max_inflight_segments.max(1),
+            max_inflight_segments: config.max_inflight_segments.max(1),
             reqs: HashMap::new(),
             deadlines: BinaryHeap::new(),
             parked: Vec::new(),
@@ -461,7 +461,7 @@ impl HlsSource {
             return;
         }
         let (limit, field) = match req.purpose {
-            Purpose::Playlist => (self.max_playlist_bytes, Some(FIELD_MAX_PLAYLIST_BYTES)),
+            Purpose::Playlist => (self.max_manifest_bytes, Some(FIELD_MAX_MANIFEST_BYTES)),
             Purpose::Resource(_) => (self.max_segment_bytes, Some(FIELD_MAX_SEGMENT_BYTES)),
             Purpose::Key(_) => (self.max_key_bytes, None),
         };

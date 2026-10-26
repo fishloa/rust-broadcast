@@ -327,9 +327,10 @@ fn set_cookie_from_other_origin_response_ignored() {
 
 #[test]
 fn initial_cookies_sent_on_first_request() {
-    let config = Config {
-        initial_cookies: vec![pair("a", "1"), pair("b", "2")],
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = vec![pair("a", "1"), pair("b", "2")];
+        new_config
     };
     let mut s = open(TS_URL, config);
     let first = one(&mut s, 0);
@@ -340,9 +341,10 @@ fn initial_cookies_sent_on_first_request() {
 
 #[test]
 fn initial_cookies_not_sent_cross_origin() {
-    let config = Config {
-        initial_cookies: vec![pair("a", "1")],
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = vec![pair("a", "1")];
+        new_config
     };
     let mut s = open(TS_URL, config);
     let first = one(&mut s, 0);
@@ -364,9 +366,10 @@ fn invalid_initial_cookies_rejected_at_open() {
         ("a", "x;y"),
         ("a", "x\r\ny"),
     ] {
-        let config = Config {
-            initial_cookies: vec![pair(name, value)],
-            ..Config::default()
+        let config = {
+            let mut new_config = Config::default();
+            new_config.initial_cookies = vec![pair(name, value)];
+            new_config
         };
         assert!(
             matches!(
@@ -392,9 +395,10 @@ fn cookies_export_roundtrip_seeds_new_session() {
     assert_eq!(exported, vec![pair("a", "1"), pair("b", "2")]);
     assert_eq!(later.cookie(), Some("a=1"));
 
-    let config = Config {
-        initial_cookies: exported,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = exported;
+        new_config
     };
     let mut s2 = open(TS_URL, config);
     let seeded = one(&mut s2, 0);
@@ -404,13 +408,11 @@ fn cookies_export_roundtrip_seeds_new_session() {
         "seeded cookies use path /"
     );
     assert_eq!(s2.cookies(), vec![pair("a", "1"), pair("b", "2")]);
-    let mut s3 = open(
-        "http://example/x/live.ts",
-        Config {
-            initial_cookies: s2.cookies(),
-            ..Config::default()
-        },
-    );
+    let mut s3 = open("http://example/x/live.ts", {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = s2.cookies();
+        new_config
+    });
     assert_eq!(
         one(&mut s3, 0).cookie(),
         Some("a=1; b=2"),
@@ -464,10 +466,11 @@ fn oversized_cookie_ignored() {
 
 #[test]
 fn debug_never_prints_cookie_value() {
-    let config = Config {
-        initial_cookies: vec![pair("sid", "SEEDSECRET")],
-        extra_headers: vec![pair("X-Api-Key", "HEADERSECRET")],
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = vec![pair("sid", "SEEDSECRET")];
+        new_config.extra_headers = vec![pair("X-Api-Key", "HEADERSECRET")];
+        new_config
     };
     let config_dbg = format!("{config:?}");
     let mut s = open(TS_URL, config);
@@ -532,9 +535,10 @@ fn hls_playlist_reload_and_init_and_cross_origin_cookie_scope() {
          #EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:2.0,\nindex0.ts\n#EXTINF:1.0,\n{CDN_SEG_URL}\n\
          #EXT-X-ENDLIST\n"
     );
-    let config = Config {
-        initial_cookies: vec![pair("sid", "seed")],
-        ..hls_config()
+    let config = {
+        let mut new_config = hls_config();
+        new_config.initial_cookies = vec![pair("sid", "seed")];
+        new_config
     };
     let mut h = Host::new(TS_PLAYLIST_URL, config);
     h.ok(TS_PLAYLIST_URL, playlist.into_bytes());
@@ -638,9 +642,10 @@ fn cookie_survives_reconnect() {
 
 #[test]
 fn cookie_header_does_not_leak_into_auth_decision() {
-    let config = Config {
-        initial_cookies: vec![pair("sid", "1")],
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = vec![pair("sid", "1")];
+        new_config
     };
     let mut s = open(TS_URL, config);
     s.set_credentials(Credentials::new("user", "pass")).unwrap();

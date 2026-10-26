@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" id="live-x" type="dynamic" publishTime="2026-04-01T00:00:00Z" availabilityStartTime="2026-03-01T00:00:00Z"
+     minimumUpdatePeriod="PT2S" minBufferTime="PT1S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <PatchLocation ttl="30">patch.mpp?pt=2026-04-01T00:00:00Z</PatchLocation>
+  <Period id="p1" start="PT0S">
+    <AdaptationSet id="1" mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">
+      <SegmentTemplate timescale="1000" initialization="i.mp4" media="$Time$.m4s"><SegmentTimeline><S t="0" d="2000" r="2"/></SegmentTimeline></SegmentTemplate>
+      <Representation id="v" codecs="avc1.4d401f" width="640" height="360" bandwidth="700000"/>
+    </AdaptationSet>
+  </Period>
+</MPD>

@@ -595,13 +595,11 @@ fn the_never_sent_private_audio_is_what_delays_the_start() {
 fn a_zero_wait_removes_the_delay_from_the_never_sent_private_audio() {
     let bytes = forty_stream_pmt(true);
     let (_, default_start) = start_of(&bytes);
-    let (_, zero_start) = start_of_with(
-        &bytes,
-        Config {
-            start_pending_track_wait_us: 0,
-            ..Config::default()
-        },
-    );
+    let (_, zero_start) = start_of_with(&bytes, {
+        let mut new_config = Config::default();
+        new_config.start_pending_track_wait_us = 0;
+        new_config
+    });
     let (default_start, zero_start) = (
         default_start.expect("started"),
         zero_start.expect("started"),

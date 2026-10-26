@@ -30,3 +30,22 @@
   shape outright, so no real-world capture of this layout could be pulled —
   hence a derivation from the real file rather than a fabricated one.
   Released under the workspace licence.
+
+## P0 fixture sets (DASH runtime groundwork)
+
+Real external-muxer output (ffmpeg 8.1.2, GPAC 26.07) derived from this workspace's own TS fixtures; exact commands,
+licence and the real-world quirks each set carries are in [`PROVENANCE.md`](PROVENANCE.md), the external-oracle output
+for each is in its `oracle.txt`, and `python3 tools/check-dash-fixtures.py` re-verifies checksums, XML and references.
+
+| Directory | Addressing | What it is |
+| --- | --- | --- |
+| `annex-g/` | n/a (no media) | the nine fresh example MPDs of `docs/specs/dash/23009-1/annex-g-examples.md` plus the F8 patch |
+| `ondemand-sidx/` | `SegmentBase` + `sidx` | on-demand profile, one single-file fMP4 per Representation |
+| `ondemand-gpac-pto-quirk/` | `SegmentBase` + `sidx` | same, with GPAC's nonsense `presentationTimeOffset` |
+| `segmentlist/` | `SegmentList` | ffmpeg, `Initialization@sourceURL` + `SegmentURL`s |
+| `timeline-gpac/` | `SegmentTimeline`, `$Number$` | static; audio timeline disagrees with the media |
+| `timeline-ffmpeg-quirk/` | `SegmentTimeline`, `$Number%05d$` | reproduces `S@t` != `tfdt` of `manifest.mpd` |
+| `multiperiod-restart/` | `SegmentTemplate@duration` | two Periods, each Period's media restarts at tfdt 0 |
+| `multiperiod-continuous/` | `SegmentTimeline`, PTO, continuity | two Periods over one continuous timeline (derived MPD) |
+| `live-number/` | `$Number$` + `@duration`, dynamic | real ffmpeg live capture, 4-segment window |
+| `live-timeline/` | `SegmentTimeline`, dynamic | real ffmpeg live capture, 4-segment window, `S@t` != `tfdt` |

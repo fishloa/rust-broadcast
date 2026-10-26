@@ -1,0 +1,39 @@
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F1.mpd
+fixtures/dash/annex-g/example-F1.mpd validates
+
+
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F2.mpd
+fixtures/dash/annex-g/example-F2.mpd validates
+
+
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F3.mpd
+fixtures/dash/annex-g/example-F3.mpd validates
+
+
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F4.mpd
+fixtures/dash/annex-g/example-F4.mpd validates
+
+
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F5.mpd
+fixtures/dash/annex-g/example-F5.mpd validates
+
+
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F6.mpd
+fixtures/dash/annex-g/example-F6.mpd validates
+
+
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F7.mpd
+fixtures/dash/annex-g/example-F7.mpd validates
+
+
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F8.mpd
+fixtures/dash/annex-g/example-F8.mpd validates
+
+
+## xmllint --noout --schema private/specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd fixtures/dash/annex-g/example-F9.mpd
+fixtures/dash/annex-g/example-F9.mpd validates
+
+
+## xmllint --noout fixtures/dash/annex-g/example-F8.patch.mpp  (well-formedness only: DASH-MPD-PATCH.xsd includes a remote IANA schema that is not fetched)
+ok
+

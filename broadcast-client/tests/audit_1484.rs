@@ -46,9 +46,10 @@ fn challenge(line: &str) -> Vec<(String, String)> {
 
 #[test]
 fn action_debug_prints_header_names_never_values() {
-    let config = Config {
-        initial_cookies: vec![("sid".to_string(), COOKIE_SECRET.to_string())],
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = vec![("sid".to_string(), COOKIE_SECRET.to_string())];
+        new_config
     };
     let mut session = open(TS_URL, config);
     session
@@ -122,9 +123,10 @@ fn redirect_without_location_closes_the_connection_once() {
 
 #[test]
 fn redirect_over_the_limit_closes_the_connection_once() {
-    let config = Config {
-        max_redirects: 0,
-        ..Config::default()
+    let config = {
+        let mut new_config = Config::default();
+        new_config.max_redirects = 0;
+        new_config
     };
     let mut session = open(TS_URL, config);
     let first = one(&mut session, 0);
@@ -446,9 +448,10 @@ fn control_characters_in_basic_credentials_are_rejected() {
 #[test]
 fn cookie_name_with_control_character_is_rejected_at_open() {
     for name in ["a\u{1}b", "a\u{7f}b", "a\u{0}b", "a(b", "a\"b"] {
-        let config = Config {
-            initial_cookies: vec![(name.to_string(), "v".to_string())],
-            ..Config::default()
+        let config = {
+            let mut new_config = Config::default();
+            new_config.initial_cookies = vec![(name.to_string(), "v".to_string())];
+            new_config
         };
         let result = Session::open(TS_URL, config, 0);
         assert!(
@@ -456,9 +459,10 @@ fn cookie_name_with_control_character_is_rejected_at_open() {
             "{name:?} accepted"
         );
     }
-    let ok = Config {
-        initial_cookies: vec![("good-name_1".to_string(), "v".to_string())],
-        ..Config::default()
+    let ok = {
+        let mut new_config = Config::default();
+        new_config.initial_cookies = vec![("good-name_1".to_string(), "v".to_string())];
+        new_config
     };
     assert!(Session::open(TS_URL, ok, 0).is_ok());
 }

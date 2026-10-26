@@ -310,9 +310,10 @@ fn live_failing_segment_walks_the_whole_schedule_across_playlist_reloads() {
 }
 
 fn with_cap(cap: u32) -> Config {
-    Config {
-        hls_max_segment_failures: cap,
-        ..hls_config()
+    {
+        let mut new_config = hls_config();
+        new_config.max_segment_failures = cap;
+        new_config
     }
 }
 

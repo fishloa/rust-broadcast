@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Patch xmlns="urn:mpeg:dash:schema:mpd-patch:2020" mpdId="live-x" originalPublishTime="2026-04-01T00:00:00Z" publishTime="2026-04-01T00:00:02Z">
+  <replace sel="/MPD/@publishTime">2026-04-01T00:00:02Z</replace>
+  <add sel="/MPD/Period[@id='p1']/AdaptationSet[@id='1']/SegmentTemplate/SegmentTimeline"><S t="6000" d="2000"/></add>
+</Patch>

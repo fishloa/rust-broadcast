@@ -568,9 +568,10 @@ fn select_audio_out_of_range_and_before_master_error() {
 
     let mut ts = Session::open(
         "http://origin.test/live.ts",
-        Config {
-            kind: SourceKind::TsHttp,
-            ..Config::default()
+        {
+            let mut new_config = Config::default();
+            new_config.kind = SourceKind::TsHttp;
+            new_config
         },
         0,
     )
