@@ -1282,7 +1282,9 @@ impl DashClient {
             let period = &mpd.periods[ni];
             let run = &mut self.periods[pi];
             run.index = ni;
+            let mut kept_audio: Option<Option<RepRef>> = None;
             for (li, lane) in run.lanes.iter_mut().enumerate() {
+                let audio_lane = lane.kind == SetClass::Audio;
                 let Some(ri) = lane.reps.len().checked_sub(1) else {
                     continue;
                 };
@@ -1309,6 +1311,9 @@ impl DashClient {
                     Some((si, rj)) => {
                         rep.at = RepRef::at(ni, si, rj);
                         rep.set_pos = si;
+                        if audio_lane {
+                            kept_audio = Some((!rep.dead).then_some(rep.at));
+                        }
                         if let Some((p, s, r)) = rep.at.resolve(mpd) {
                             rep.candidates = representation_candidates(mpd, p, s, r);
                         }
@@ -1323,6 +1328,9 @@ impl DashClient {
                 .map(|r| r.at)
                 .collect::<Vec<_>>();
             run.selection = selection;
+            if let Some(audio) = kept_audio {
+                run.selection.chosen_audio = audio;
+            }
             for at in chosen {
                 if let Some(pos) = run.selection.variants.iter().position(|v| *v == at) {
                     run.selection.chosen_variant = Some(pos);
