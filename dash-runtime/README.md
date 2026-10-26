@@ -5,7 +5,7 @@ Sans-IO MPEG-DASH (ISO/IEC 23009-1): the MPD model and parser, segment addressin
 [![crates.io](https://img.shields.io/crates/v/dash-runtime.svg)](https://crates.io/crates/dash-runtime)
 [![docs.rs](https://docs.rs/dash-runtime/badge.svg)](https://docs.rs/dash-runtime)
 
-Not yet published: version 0.1.0 is the core (design step W-c in `docs/dash-runtime/DESIGN.md`), the static-presentation client (step W-d1) and the live client (step W-d2). The host adapters (`broadcast-client`, `multimux`) follow in later steps.
+Not yet published: version 0.1.0 is the core (design step W-c in `docs/dash-runtime/DESIGN.md`), the static-presentation client (step W-d1) and the live client (step W-d2). Two hosts are built on it: `broadcast-client`'s DASH source (step W-e) and `multimux`'s `dash_pull` (step W-f), which keeps its tokio loop and media-plane mapping and sets `DashConfig::cross_origin_urls` to `false` unless a route opts in.
 
 ## What it does / what it does not
 

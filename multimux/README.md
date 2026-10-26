@@ -148,7 +148,7 @@ Each route names one ingest transport (`InputSpec`):
 | `ts_http` | MPEG-2 TS over a streaming HTTP GET (chunked/progressive) | optional `auth` |
 | `hls_pull` | Pull a remote (LL-)HLS Media Playlist, via `hls-runtime`'s client | optional `auth` |
 | `srt` | MPEG-2 TS over SRT, caller (dial out) or listener (bind + accept), via `srt-runtime` | track set from the in-band PMT; payload encryption out of scope |
-| `dash_pull` | Pull a remote DASH MPD and its segments | optional `auth` |
+| `dash_pull` | Pull a remote DASH MPD and its segments (every Period; static and dynamic MPDs), via `dash-runtime`'s client | optional `auth`; `allow_cross_origin` (default `false`) |
 | `smooth_pull` | Pull a remote Smooth Streaming manifest and its fragments | optional `auth` |
 | `rtmp` | **Push** ingest: binds a listen port and accepts RTMP publishers (FLV), via `rtmp-runtime` | `app`/`stream_key` filters; concurrent publishers |
 | `file` | A local media file on disk, identified with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); paced to wall clock, including across the loop point; a long asset holds its parsed samples in memory — see the crate CHANGELOG |
@@ -166,6 +166,10 @@ whichever the upstream's own challenge asks for) or `{ "bearer_token":
 URL-userinfo form). A username/password may instead ride the route's own
 URL userinfo (`rtsp://user:pass@host/...`); an explicit `auth` always wins
 over that.
+
+`dash_pull` refuses, by default, any URL its MPD names on another origin than its own (a `BaseURL`, a segment, a `UTCTiming` server), so a remote manifest cannot make a
+server-side pull fetch an internal address. An MPD served from one host with segments on a CDN needs `"allow_cross_origin": true` on the route. A live MPD takes its clock
+from `UTCTiming`, else the host's UTC clock, else the response `Date`.
 
 Codecs: H.264 video + AAC audio (whatever `transmux`'s depayload/demux
 supports — any missing codec/transport capability is a library gap fixed
