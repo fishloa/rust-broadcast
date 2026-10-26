@@ -433,6 +433,9 @@ impl DashClient {
         loop {
             if self.queue.is_empty() {
                 self.fill_queue();
+                if self.queue.is_empty() {
+                    self.drain();
+                }
             }
             let id = self.queue.pop_front()?;
             if let Some(action) = self.emit(id) {

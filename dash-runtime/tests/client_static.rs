@@ -5,7 +5,7 @@
 mod common;
 
 use common::loopback::{
-    Drive, Order, Origin, Run, Sig, assert_matches_oracle, drive, oracle, play, sigs,
+    Drive, Order, Origin, Run, Sig, assert_matches_oracle, drive, oracle, play,
 };
 use dash_runtime::client::{DashConfig, Output};
 
@@ -137,7 +137,7 @@ fn completion_order_and_window_do_not_change_the_samples() {
                 "http://dash.test/timeline-ffmpeg-quirk/manifest.mpd",
                 cfg,
                 &mut Origin::new(),
-                &Drive {
+                &mut Drive {
                     order,
                     ..Drive::default()
                 },
@@ -161,7 +161,7 @@ fn window_zero_behaves_as_one() {
         "http://dash.test/manifest.mpd",
         cfg,
         &mut Origin::new(),
-        &Drive::default(),
+        &mut Drive::default(),
     );
     assert_clean(&run);
     assert_eq!(run.max_segments_outstanding, 1);
@@ -175,7 +175,7 @@ fn the_window_fills_when_the_cap_allows_it() {
         "http://dash.test/timeline-gpac/timeline.mpd",
         cfg,
         &mut Origin::new(),
-        &Drive::default(),
+        &mut Drive::default(),
     );
     assert_clean(&run);
     assert_eq!(run.max_segments_outstanding, 4);

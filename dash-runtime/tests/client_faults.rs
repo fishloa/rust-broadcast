@@ -54,7 +54,7 @@ fn cfg() -> DashConfig {
 
 fn play(url: &str, fault: Fault) -> Run {
     let mut origin = Origin::new().fault(fault);
-    let run = drive(url, cfg(), &mut origin, &Drive::default());
+    let run = drive(url, cfg(), &mut origin, &mut Drive::default());
     assert!(!run.stuck, "the client hung");
     assert!(run.ended ^ run.fatal.is_some(), "no terminal state");
     assert!(
@@ -160,7 +160,7 @@ fn a_cap_of_zero_or_one_makes_the_first_failure_final() {
         let mut c = cfg();
         c.max_segment_failures = cap;
         let mut origin = Origin::new().fault(Fault::always(SEGMENT, FaultKind::Status(503)));
-        let run = drive(FFMPEG, c, &mut origin, &Drive::default());
+        let run = drive(FFMPEG, c, &mut origin, &mut Drive::default());
         assert!(is_segment_fatal(&run.fatal, Some(503)), "cap {cap}");
         assert_eq!(run.requested(SEGMENT), 1, "cap {cap}");
     }
@@ -171,7 +171,7 @@ fn an_unbounded_cap_retries_through_a_long_transient_fault() {
     let mut c = cfg();
     c.max_segment_failures = u32::MAX;
     let mut origin = Origin::new().fault(Fault::times(SEGMENT, FaultKind::Status(503), 30));
-    let run = drive(FFMPEG, c, &mut origin, &Drive::default());
+    let run = drive(FFMPEG, c, &mut origin, &mut Drive::default());
     assert!(run.ended);
     assert_matches_oracle(&run, &ffmpeg_expected());
     assert_eq!(run.requested(SEGMENT), 31);
@@ -263,7 +263,7 @@ fn a_body_over_the_size_cap_is_a_counted_failure() {
     let mut c = cfg();
     c.max_segment_bytes = 1_000;
     let mut origin = Origin::new();
-    let run = drive(FFMPEG, c, &mut origin, &Drive::default());
+    let run = drive(FFMPEG, c, &mut origin, &mut Drive::default());
     assert!(
         matches!(run.fatal, Some(FatalKind::SegmentFetchFailed { .. })),
         "{:?}",
@@ -419,7 +419,7 @@ fn the_mpd_is_never_given_up_on() {
         FFMPEG,
         cfg(),
         &mut origin,
-        &Drive {
+        &mut Drive {
             max_steps: 50,
             ..Drive::default()
         },
@@ -438,7 +438,7 @@ fn a_transient_mpd_fault_recovers() {
         FaultKind::Truncate(200),
     ] {
         let mut origin = Origin::new().fault(Fault::times("manifest.mpd", kind, 3));
-        let run = drive(FFMPEG, cfg(), &mut origin, &Drive::default());
+        let run = drive(FFMPEG, cfg(), &mut origin, &mut Drive::default());
         assert!(run.ended);
         assert_matches_oracle(&run, &ffmpeg_expected());
         assert_eq!(run.requested("manifest.mpd"), 4);

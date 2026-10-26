@@ -199,10 +199,14 @@ pub enum Order {
     Alternate,
 }
 
+pub type Hook = Box<dyn FnMut(&mut DashClient, usize)>;
+
 pub struct Drive {
     pub order: Order,
     pub max_steps: usize,
     pub retry: bool,
+    pub skip_instead: bool,
+    pub hook: Option<Hook>,
 }
 
 impl Default for Drive {
@@ -211,6 +215,8 @@ impl Default for Drive {
             order: Order::Fifo,
             max_steps: 20_000,
             retry: true,
+            skip_instead: false,
+            hook: None,
         }
     }
 }
@@ -251,7 +257,7 @@ impl Run {
     }
 }
 
-pub fn drive(url: &str, cfg: DashConfig, origin: &mut Origin, opts: &Drive) -> Run {
+pub fn drive(url: &str, cfg: DashConfig, origin: &mut Origin, opts: &mut Drive) -> Run {
     let mut client = DashClient::new(url, cfg);
     let mut run = Run {
         outputs: Vec::new(),
@@ -266,7 +272,10 @@ pub fn drive(url: &str, cfg: DashConfig, origin: &mut Origin, opts: &Drive) -> R
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut now = 0u64;
     let mut flip = false;
-    for _ in 0..opts.max_steps {
+    for step in 0..opts.max_steps {
+        if let Some(h) = opts.hook.as_mut() {
+            h(&mut client, step);
+        }
         while let Some(a) = client.poll(now) {
             pending.push_back(a);
         }
@@ -297,7 +306,7 @@ pub fn drive(url: &str, cfg: DashConfig, origin: &mut Origin, opts: &Drive) -> R
         };
         run.requests.push(req.clone());
         let answer = origin.serve(&req);
-        deliver(&mut client, &mut run, &action, answer, now, opts);
+        deliver(&mut client, &mut run, &action, answer, now, &*opts);
         while let Some(o) = client.next_output() {
             note(&mut run, o);
         }
@@ -358,10 +367,12 @@ fn deliver(
         Err(f) => match client.on_failure(now, id, f) {
             Ok(class) => {
                 run.classes.push(class);
-                if let FailureClass::Retry { .. } = class
-                    && opts.retry
-                {
-                    client.retry(now, id);
+                if let FailureClass::Retry { .. } = class {
+                    if opts.skip_instead {
+                        client.skip(now, id);
+                    } else if opts.retry {
+                        client.retry(now, id);
+                    }
                 }
             }
             Err(e) => run.errors.push(e),
@@ -376,10 +387,12 @@ fn deliver(
             if let Err(e) = r {
                 if let Error::Rejected { id, class, .. } = &e {
                     run.classes.push(*class);
-                    if let FailureClass::Retry { .. } = class
-                        && opts.retry
-                    {
-                        client.retry(now, *id);
+                    if let FailureClass::Retry { .. } = class {
+                        if opts.skip_instead {
+                            client.skip(now, *id);
+                        } else if opts.retry {
+                            client.retry(now, *id);
+                        }
                     }
                 }
                 run.errors.push(e);
@@ -393,7 +406,7 @@ pub fn play(mpd: &str, cfg: DashConfig) -> Run {
         &format!("http://{HOST}/{mpd}"),
         cfg,
         &mut Origin::new(),
-        &Drive::default(),
+        &mut Drive::default(),
     )
 }
 

@@ -38,13 +38,17 @@ fn restart_expected() -> Vec<Vec<Sig>> {
     vec![video, audio]
 }
 
-fn run_restart(origin: &mut Origin, drive_opts: &Drive, cfg: DashConfig) -> Run {
+fn run_restart(origin: &mut Origin, drive_opts: &mut Drive, cfg: DashConfig) -> Run {
     drive(RESTART, cfg, origin, drive_opts)
 }
 
 #[test]
 fn restart_periods_play_the_files_that_exist_in_order() {
-    let run = run_restart(&mut Origin::new(), &Drive::default(), DashConfig::default());
+    let run = run_restart(
+        &mut Origin::new(),
+        &mut Drive::default(),
+        DashConfig::default(),
+    );
     assert!(run.errors.is_empty(), "{:?}", run.errors);
     assert!(run.ended && run.fatal.is_none());
     assert_matches_oracle(&run, &restart_expected());
@@ -52,7 +56,11 @@ fn restart_periods_play_the_files_that_exist_in_order() {
 
 #[test]
 fn restart_boundary_is_one_discontinuity_before_the_new_periods_samples() {
-    let run = run_restart(&mut Origin::new(), &Drive::default(), DashConfig::default());
+    let run = run_restart(
+        &mut Origin::new(),
+        &mut Drive::default(),
+        DashConfig::default(),
+    );
     let changes: Vec<_> = run
         .outputs
         .iter()
@@ -127,7 +135,7 @@ fn restart_with_the_window_of_one_and_reverse_completion_is_unchanged() {
         cfg.max_inflight_segments = 1;
         let run = run_restart(
             &mut Origin::new(),
-            &Drive {
+            &mut Drive {
                 order,
                 ..Drive::default()
             },
@@ -140,7 +148,11 @@ fn restart_with_the_window_of_one_and_reverse_completion_is_unchanged() {
 
 #[test]
 fn the_gpac_tail_past_the_media_is_requested_once_and_ends_the_period() {
-    let run = run_restart(&mut Origin::new(), &Drive::default(), DashConfig::default());
+    let run = run_restart(
+        &mut Origin::new(),
+        &mut Drive::default(),
+        DashConfig::default(),
+    );
     for tail in ["p1_dash_track1_4.m4s", "p1_dash_track2_4.m4s"] {
         assert_eq!(run.requested(tail), 1, "{tail}: 404 once, never retried");
     }
@@ -161,7 +173,7 @@ fn a_missing_full_length_last_segment_is_not_a_tail() {
         "p2_dash_track1_3.m4s",
         FaultKind::Status(404),
     ));
-    let run = run_restart(&mut origin, &Drive::default(), cfg);
+    let run = run_restart(&mut origin, &mut Drive::default(), cfg);
     assert!(matches!(
         run.fatal,
         Some(FatalKind::SegmentFetchFailed {
@@ -181,7 +193,7 @@ fn a_missing_middle_segment_is_not_a_tail() {
         "p1_dash_track1_2.m4s",
         FaultKind::Status(404),
     ));
-    let run = run_restart(&mut origin, &Drive::default(), cfg);
+    let run = run_restart(&mut origin, &mut Drive::default(), cfg);
     assert!(matches!(
         run.fatal,
         Some(FatalKind::SegmentFetchFailed { .. })
@@ -208,7 +220,7 @@ fn continuous_periods_join_without_a_discontinuity_or_a_second_init() {
         CONTINUOUS,
         DashConfig::default(),
         &mut Origin::new(),
-        &Drive::default(),
+        &mut Drive::default(),
     );
     assert!(run.errors.is_empty(), "{:?}", run.errors);
     assert!(run.ended && run.fatal.is_none());
@@ -243,7 +255,7 @@ fn without_the_continuity_signal_the_same_boundary_is_a_discontinuity() {
         CONTINUOUS,
         DashConfig::default(),
         &mut origin,
-        &Drive::default(),
+        &mut Drive::default(),
     );
     assert!(run.ended && run.errors.is_empty());
     assert_matches_oracle(&run, &continuous_expected());
@@ -258,7 +270,7 @@ fn continuity_naming_another_period_is_not_continuity() {
         CONTINUOUS,
         DashConfig::default(),
         &mut origin,
-        &Drive::default(),
+        &mut Drive::default(),
     );
     assert_eq!(run.count(|o| matches!(o, Output::Discontinuity)), 1);
 }
@@ -273,7 +285,7 @@ fn continuity_needs_the_same_adaptation_set_id() {
         CONTINUOUS,
         DashConfig::default(),
         &mut origin,
-        &Drive::default(),
+        &mut Drive::default(),
     );
     assert_eq!(run.count(|o| matches!(o, Output::Discontinuity)), 1);
 }
@@ -294,7 +306,7 @@ fn init_identity_ignores_the_query() {
         CONTINUOUS,
         DashConfig::default(),
         &mut origin,
-        &Drive::default(),
+        &mut Drive::default(),
     );
     assert!(run.ended, "{:?}", run.fatal);
     assert_eq!(run.count(|o| matches!(o, Output::Discontinuity)), 0);
@@ -323,7 +335,7 @@ fn continuity_with_a_different_init_url_is_not_continuous() {
         CONTINUOUS,
         DashConfig::default(),
         &mut origin,
-        &Drive::default(),
+        &mut Drive::default(),
     );
     assert!(run.ended, "{:?} {:?}", run.fatal, run.errors);
     assert_matches_oracle(&run, &continuous_expected());
