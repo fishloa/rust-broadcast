@@ -3654,6 +3654,36 @@ mod tests {
     }
 
     #[test]
+    fn dash_pull_refuses_cross_origin_urls_unless_the_route_opts_in() {
+        let route = |extra: &str| {
+            let json = format!(
+                r#"{{ "routes": [ {{ "name": "d", "input": {{ "type": "dash_pull", "url": "https://origin/live/manifest.mpd"{extra} }} }} ] }}"#
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            cfg.validate().unwrap();
+            match &cfg.routes[0].input {
+                InputSpec::DashPull {
+                    allow_cross_origin, ..
+                } => *allow_cross_origin,
+                other => panic!("expected InputSpec::DashPull, got {other:?}"),
+            }
+        };
+        assert!(!route(""), "off unless asked for");
+        assert!(!route(r#", "allow_cross_origin": false"#));
+        assert!(route(r#", "allow_cross_origin": true"#));
+        let debug = format!(
+            "{:?}",
+            InputSpec::DashPull {
+                url: "https://u:p@origin/m.mpd".into(),
+                auth: None,
+                allow_cross_origin: true
+            }
+        );
+        assert!(debug.contains("allow_cross_origin: true"), "{debug}");
+        assert!(!debug.contains(":p@"), "{debug}");
+    }
+
+    #[test]
     fn parses_json_config_with_smooth_pull_input() {
         let json = r#"{
             "routes": [

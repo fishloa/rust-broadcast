@@ -57,6 +57,8 @@ use crate::source::http_auth::{
 };
 use crate::source::{IngestTimeouts, Source};
 
+#[cfg(test)]
+mod differential;
 mod drive;
 #[cfg(test)]
 mod legacy_plan;

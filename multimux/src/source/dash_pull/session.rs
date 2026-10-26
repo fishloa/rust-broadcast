@@ -473,3 +473,418 @@ impl IngestSession for DashIngestSession {
         action
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::Unpackage;
+    use dash_runtime::selection::DropReason;
+    use transmux::media::Fmp4Demux;
+    use transmux::{Sample, TrackId, TrackSpec};
+
+    const AST_UNIX_SECS: i64 = 1_767_225_600;
+    const MICROS: u64 = 1_000_000;
+
+    fn ts(now_us: u64) -> Timestamp {
+        Timestamp::from_nanos(now_us * NANOS_PER_MICRO)
+    }
+
+    fn session() -> DashIngestSession {
+        DashIngestSession::new(Url::parse("http://origin.test/live.mpd").unwrap())
+    }
+
+    fn spec(id: u32, timescale: u32) -> TrackSpec {
+        let init = std::fs::read(test_fixtures::path("dash/init-stream1.m4s")).expect("init");
+        let mut spec = Fmp4Demux::new()
+            .unpackage(init.as_slice())
+            .expect("demux init")
+            .tracks
+            .remove(0)
+            .spec;
+        spec.track_id = TrackId::new(id);
+        spec.timescale = timescale;
+        spec
+    }
+
+    fn sample(dts: i64) -> Sample {
+        Sample::new(vec![0u8], Some(dts), Some(dts), Some(1_000), true)
+    }
+
+    fn events(s: &mut DashIngestSession) -> Vec<SessionEvent> {
+        std::iter::from_fn(|| s.poll()).collect()
+    }
+
+    fn live_mpd() -> String {
+        r#"<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" minimumUpdatePeriod="PT1S" timeShiftBufferDepth="PT30S" suggestedPresentationDelay="PT2S" maxSegmentDuration="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+<Period id="0" start="PT0S"><AdaptationSet mimeType="video/mp4"><Representation id="0" codecs="avc1.4d400d" bandwidth="1000" width="320" height="240"><SegmentTemplate timescale="1000" duration="2000" startNumber="1" initialization="init.m4s" media="seg-$Number$.m4s"/></Representation></AdaptationSet></Period>
+</MPD>"#
+            .to_owned()
+    }
+
+    fn host_utc_us() -> u64 {
+        u64::try_from(AST_UNIX_SECS + 100).unwrap() * MICROS
+    }
+
+    /// A session that accepted a live MPD at `now` 0 and is waiting for its
+    /// first refresh.
+    fn live_session() -> DashIngestSession {
+        let mut s = session();
+        s.set_wall_clock(0, host_utc_us());
+        assert!(matches!(s.poll_transmit(), Some(Action::FetchMpd { .. })));
+        let mpd = live_mpd();
+        s.feed(
+            DashInput::Mpd {
+                body: mpd.as_bytes(),
+                meta: ResponseMeta::at(0),
+            },
+            ts(0),
+        )
+        .expect("a good MPD is accepted");
+        s
+    }
+
+    /// Advance to the next MPD request the core makes, answering nothing else.
+    fn next_mpd_request(s: &mut DashIngestSession, now_us: &mut u64) {
+        for _ in 0..64 {
+            while let Some(action) = s.poll_transmit() {
+                if matches!(action, Action::FetchMpd { .. }) {
+                    return;
+                }
+            }
+            events(s);
+            let wake = s.next_deadline().expect("the core wants to refresh");
+            *now_us = (*now_us).max(wake.as_nanos() / NANOS_PER_MICRO);
+            s.set_now(*now_us);
+        }
+        panic!("the core never asked for an MPD refresh");
+    }
+
+    #[test]
+    fn established_is_queued_with_the_first_accepted_mpd_and_only_then() {
+        let mut s = session();
+        assert!(events(&mut s).is_empty());
+        let mpd = live_mpd();
+        s.set_wall_clock(0, host_utc_us());
+        let _ = s.poll_transmit();
+        s.feed(
+            DashInput::Mpd {
+                body: mpd.as_bytes(),
+                meta: ResponseMeta::at(0),
+            },
+            ts(0),
+        )
+        .unwrap();
+        let got = events(&mut s);
+        assert!(
+            matches!(got.as_slice(), [SessionEvent::Established]),
+            "{got:?}"
+        );
+        assert!(s.mpd_accepted());
+    }
+
+    #[test]
+    fn a_first_mpd_that_does_not_parse_fails_the_attempt() {
+        let mut s = session();
+        let _ = s.poll_transmit();
+        let err = s
+            .feed(
+                DashInput::Mpd {
+                    body: b"<not-an-mpd",
+                    meta: ResponseMeta::at(0),
+                },
+                ts(0),
+            )
+            .expect_err("there is nothing to keep playing");
+        assert!(err.to_string().contains("mpd rejected"), "{err}");
+        assert!(!s.mpd_accepted());
+    }
+
+    #[test]
+    fn rejected_refreshes_are_retried_until_the_eighth_in_a_row() {
+        let mut s = live_session();
+        let mut now = 0u64;
+        for attempt in 1..MAX_MPD_FAILURES {
+            next_mpd_request(&mut s, &mut now);
+            s.feed(
+                DashInput::Mpd {
+                    body: b"<garbage",
+                    meta: ResponseMeta::at(now),
+                },
+                ts(now),
+            )
+            .unwrap_or_else(|e| panic!("rejection {attempt} must not end the attempt: {e}"));
+            let retries = s.take_retries();
+            assert_eq!(
+                retries,
+                [Retry {
+                    target: RetryTarget::Mpd,
+                    attempt
+                }]
+            );
+            s.retry(RetryTarget::Mpd);
+        }
+        next_mpd_request(&mut s, &mut now);
+        let err = s
+            .feed(
+                DashInput::Mpd {
+                    body: b"<garbage",
+                    meta: ResponseMeta::at(now),
+                },
+                ts(now),
+            )
+            .expect_err("the eighth rejection in a row ends the attempt");
+        assert!(err.to_string().contains("mpd rejected"), "{err}");
+    }
+
+    #[test]
+    fn a_good_mpd_between_rejections_resets_the_count() {
+        let mut s = live_session();
+        let mut now = 0u64;
+        let good = live_mpd();
+        for _ in 0..MAX_MPD_FAILURES * 2 {
+            next_mpd_request(&mut s, &mut now);
+            let body: &[u8] = if s.mpd_rejections % 3 == 2 {
+                good.as_bytes()
+            } else {
+                b"<garbage"
+            };
+            s.feed(
+                DashInput::Mpd {
+                    body,
+                    meta: ResponseMeta::at(now),
+                },
+                ts(now),
+            )
+            .expect("never eight in a row");
+            s.take_retries();
+            s.retry(RetryTarget::Mpd);
+        }
+    }
+
+    #[test]
+    fn failed_mpd_refreshes_are_retried_until_the_eighth_in_a_row() {
+        let mut s = live_session();
+        let mut now = 0u64;
+        for attempt in 1..MAX_MPD_FAILURES {
+            next_mpd_request(&mut s, &mut now);
+            s.feed(
+                DashInput::Failed {
+                    target: FetchTarget::Mpd,
+                    failure: Failure::Status(503),
+                },
+                ts(now),
+            )
+            .unwrap_or_else(|e| panic!("failure {attempt} must not end the attempt: {e}"));
+            assert_eq!(
+                s.take_retries(),
+                [Retry {
+                    target: RetryTarget::Mpd,
+                    attempt
+                }]
+            );
+            s.retry(RetryTarget::Mpd);
+        }
+        next_mpd_request(&mut s, &mut now);
+        let err = s
+            .feed(
+                DashInput::Failed {
+                    target: FetchTarget::Mpd,
+                    failure: Failure::Timeout,
+                },
+                ts(now),
+            )
+            .expect_err("the eighth failure in a row ends the attempt");
+        assert!(err.to_string().contains("refresh failed"), "{err}");
+    }
+
+    #[test]
+    fn the_session_clock_never_moves_backwards() {
+        let mut s = session();
+        s.set_now(5_000);
+        s.set_now(1_000);
+        assert_eq!(s.now_us, 5_000);
+        s.feed(
+            DashInput::Failed {
+                target: FetchTarget::Mpd,
+                failure: Failure::Transport,
+            },
+            ts(2_000),
+        )
+        .ok();
+        assert_eq!(s.now_us, 5_000);
+    }
+
+    #[test]
+    fn the_first_track_set_is_a_new_program_and_later_ones_replace_it() {
+        let mut s = session();
+        s.map_output(Output::Tracks(Vec::new()));
+        assert!(
+            events(&mut s).is_empty(),
+            "an empty track set announces nothing"
+        );
+        s.map_output(Output::Tracks(vec![spec(1, 1000)]));
+        s.map_output(Output::Tracks(vec![spec(1, 1000), spec(2, 48_000)]));
+        let got = events(&mut s);
+        assert!(
+            matches!(
+                got.as_slice(),
+                [
+                    SessionEvent::NewProgram { program, tracks: first },
+                    SessionEvent::TracksChanged { program: again, tracks: second },
+                ] if *program == PROGRAM && *again == PROGRAM && first.len() == 1 && second.len() == 2
+            ),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn samples_publish_as_timed_samples_of_the_one_program() {
+        let mut s = session();
+        s.map_output(Output::Tracks(vec![spec(1, 1000)]));
+        s.map_output(Output::Samples {
+            track_id: TrackId::new(1),
+            samples: vec![sample(0), sample(1_000)],
+        });
+        let got = events(&mut s);
+        let samples: Vec<_> = got
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Sample {
+                    program,
+                    track_id,
+                    retention,
+                    sample,
+                } => Some((*program, *track_id, *retention, sample.dts)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            samples,
+            [
+                (PROGRAM, TrackId::new(1), RetentionClass::Timed, Some(0)),
+                (PROGRAM, TrackId::new(1), RetentionClass::Timed, Some(1_000)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_discontinuity_output_stitches_the_samples_that_follow() {
+        let mut s = session();
+        s.map_output(Output::Tracks(vec![spec(1, 1000)]));
+        s.map_output(Output::Samples {
+            track_id: TrackId::new(1),
+            samples: vec![sample(0)],
+        });
+        s.map_output(Output::Discontinuity);
+        s.map_output(Output::Samples {
+            track_id: TrackId::new(1),
+            samples: vec![sample(0)],
+        });
+        let dts: Vec<_> = events(&mut s)
+            .into_iter()
+            .filter_map(|e| match e {
+                SessionEvent::Sample { sample, .. } => sample.dts,
+                _ => None,
+            })
+            .collect();
+        assert_eq!(dts, [0, 1_000]);
+    }
+
+    #[test]
+    fn a_fatal_output_fails_the_next_feed_and_finish_reports_it_once() {
+        let mut s = session();
+        s.map_output(Output::Fatal(FatalKind::ClockUnavailable));
+        assert!(s.failed());
+        let err = s.finish().expect_err("fatal");
+        assert!(err.to_string().contains("UTC clock"), "{err}");
+        assert!(s.finish().is_ok(), "reported once");
+        assert!(!s.failed());
+    }
+
+    #[test]
+    fn protected_content_that_leaves_nothing_to_play_is_an_encrypted_error() {
+        let mut s = session();
+        s.map_output(Output::TrackDropped {
+            period: 0,
+            set: 0,
+            rep: None,
+            cause: DropCause::Selection(DropReason::UnsupportedEncryption),
+        });
+        s.map_output(Output::Fatal(FatalKind::MpdInvalid {
+            reason: "no_playable_representation",
+        }));
+        assert!(
+            matches!(s.finish(), Err(MultimuxError::Encrypted { .. })),
+            "protected content is reported as such"
+        );
+        let mut plain = session();
+        plain.map_output(Output::Fatal(FatalKind::MpdInvalid {
+            reason: "no_playable_representation",
+        }));
+        assert!(matches!(plain.finish(), Err(MultimuxError::Connect { .. })));
+    }
+
+    #[test]
+    fn the_end_of_the_stream_is_reported_once_the_core_says_so() {
+        let mut s = session();
+        assert!(!s.ended());
+        s.map_output(Output::EndOfStream);
+        assert!(s.ended());
+    }
+
+    #[test]
+    fn the_session_has_something_to_drain_while_events_wait() {
+        let mut s = session();
+        assert!(s.next_deadline().is_none());
+        s.map_output(Output::Tracks(vec![spec(1, 1000)]));
+        s.set_now(7_000);
+        assert_eq!(s.next_deadline(), Some(ts(7_000)));
+        events(&mut s);
+        assert!(s.next_deadline().is_none());
+    }
+
+    #[test]
+    fn a_segment_failure_queues_a_retry_naming_its_attempt() {
+        let mut s = live_session();
+        let mut now = 0u64;
+        // Let the core request a segment, then fail it.
+        let mut segment = None;
+        for _ in 0..64 {
+            match s.poll_transmit() {
+                Some(Action::FetchSegment { id, .. }) => {
+                    segment = Some(id);
+                    break;
+                }
+                Some(Action::FetchInit { id, .. }) => {
+                    let init = std::fs::read(test_fixtures::path("dash/init-stream0.m4s")).unwrap();
+                    s.feed(DashInput::Resource { id, body: &init }, ts(now))
+                        .ok();
+                }
+                Some(_) => {}
+                None => {
+                    events(&mut s);
+                    let wake = s.next_deadline().expect("a wake");
+                    now = now.max(wake.as_nanos() / NANOS_PER_MICRO);
+                    s.set_now(now);
+                }
+            }
+        }
+        let id = segment.expect("the core requested a segment");
+        s.feed(
+            DashInput::Failed {
+                target: FetchTarget::Resource(id),
+                failure: Failure::Status(500),
+            },
+            ts(now),
+        )
+        .unwrap();
+        assert_eq!(
+            s.take_retries(),
+            [Retry {
+                target: RetryTarget::Resource(id),
+                attempt: 1
+            }]
+        );
+    }
+}

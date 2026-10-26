@@ -538,3 +538,93 @@ fn the_scanner_itself_bites() {
         "non-ASCII text must not desync the scanner (only the test-mod body removed)"
     );
 }
+
+/// Calls that read a machine clock. `dash_pull` takes every instant from
+/// `crate::clock::HostClock` (design W-f: no `Timestamp::now` or
+/// `SystemTime::now` in the pull path), so none of these may appear in its
+/// production code; the clock seam itself lives in `src/clock.rs`.
+const CLOCK_READS: &[&str] = &[
+    "Instant::now",
+    "SystemTime::now",
+    "Timestamp::now",
+    "UNIX_EPOCH",
+    ".elapsed()",
+];
+
+/// The files of `dir` that are compiled outside `#[cfg(test)]`: every `.rs`
+/// file except those `mod.rs` declares as `#[cfg(test)] mod name;`.
+fn production_files(dir: &Path) -> Vec<(String, String)> {
+    let mut all = Vec::new();
+    rs_files(dir, &mut all);
+    let declaring = fs::read_to_string(dir.join("mod.rs")).expect("mod.rs");
+    let test_only: Vec<String> = declaring
+        .lines()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|w| w[0].trim() == "#[cfg(test)]")
+        .filter_map(|w| {
+            w[1].trim()
+                .strip_prefix("mod ")?
+                .strip_suffix(';')
+                .map(str::to_owned)
+        })
+        .collect();
+    all.into_iter()
+        .filter(|(path, _)| {
+            let stem = Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            !test_only.iter().any(|t| t == stem)
+        })
+        .collect()
+}
+
+fn clock_reads_in(files: &[(String, String)]) -> Vec<String> {
+    let mut hits = Vec::new();
+    for (path, src) in files {
+        for (n, line) in non_test_source(src).lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for needle in CLOCK_READS {
+                if line.contains(needle) {
+                    hits.push(format!("{path}:{}: {needle}", n + 1));
+                }
+            }
+        }
+    }
+    hits
+}
+
+#[test]
+fn dash_pull_reads_no_clock_outside_tests() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/source/dash_pull");
+    let files = production_files(&dir);
+    assert!(
+        files.len() >= 4,
+        "the production files of dash_pull were not found: {:?}",
+        files.iter().map(|(p, _)| p).collect::<Vec<_>>()
+    );
+    let hits = clock_reads_in(&files);
+    assert!(
+        hits.is_empty(),
+        "dash_pull must take time from crate::clock::HostClock, not read it:\n{}",
+        hits.join("\n")
+    );
+}
+
+#[test]
+fn the_clock_guard_bites_on_production_code_only() {
+    let leaky = vec![(
+        "dash_pull/x.rs".to_owned(),
+        "fn a() { let t = std::time::Instant::now(); }\n#[cfg(test)]\nmod tests {\n    fn t() { let _ = std::time::SystemTime::now(); }\n}\n".to_owned(),
+    )];
+    let hits = clock_reads_in(&leaky);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert!(hits[0].contains("Instant::now"));
+    for needle in CLOCK_READS {
+        let one = vec![("f.rs".to_owned(), format!("fn a() {{ {needle}; }}\n"))];
+        assert_eq!(clock_reads_in(&one).len(), 1, "{needle} must be caught");
+    }
+}

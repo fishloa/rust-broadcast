@@ -767,7 +767,7 @@ fn ffmpeg_mpd_with_base_url(base: &str) -> String {
         .expect("fixture")
         .replacen(
             "<Period ",
-            &format!("<BaseURL>{base}/</BaseURL><Period "),
+            &format!(r#"<BaseURL>{base}/</BaseURL><Period "#),
             1,
         )
 }
@@ -901,6 +901,9 @@ struct LiveOrigin {
     mpd_gets: AtomicUsize,
     conditional_hits: AtomicUsize,
     early: AtomicUsize,
+    /// The largest amount, microseconds, by which a request preceded its
+    /// segment's availability.
+    max_early_us: std::sync::atomic::AtomicI64,
     missing: std::sync::OnceLock<u64>,
 }
 
@@ -926,8 +929,7 @@ impl LiveOrigin {
             )
         };
         format!(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="dynamic" availabilityStartTime="{ast}" publishTime="{ast}" minimumUpdatePeriod="PT{mup}S" suggestedPresentationDelay="PT0.4S" timeShiftBufferDepth="PT{tsb}S" maxSegmentDuration="PT0.2S" minBufferTime="PT0.4S">
+            r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="dynamic" availabilityStartTime="{ast}" publishTime="{ast}" minimumUpdatePeriod="PT{mup}S" suggestedPresentationDelay="PT0.4S" timeShiftBufferDepth="PT{tsb}S" maxSegmentDuration="PT0.2S" minBufferTime="PT0.4S">
 {utc}
 <Period id="0" start="PT0S">
 <AdaptationSet id="0" contentType="video" segmentAlignment="true" startWithSAP="1">
@@ -1052,6 +1054,9 @@ async fn live_handler(
     let now = now_unix_us();
     if now < available_from {
         origin.early.fetch_add(1, Ordering::SeqCst);
+        origin
+            .max_early_us
+            .fetch_max(available_from - now, Ordering::SeqCst);
         return reply(
             AxumStatus::from_u16(425).expect("425"),
             AxumStatus::from_u16(425).expect("425").into_response(),
@@ -1110,6 +1115,7 @@ async fn serve_live(shape: LiveShape) -> RunningLive {
         mpd_gets: AtomicUsize::new(0),
         conditional_hits: AtomicUsize::new(0),
         early: AtomicUsize::new(0),
+        max_early_us: std::sync::atomic::AtomicI64::new(0),
         missing: std::sync::OnceLock::new(),
     });
     let app = Router::new()
@@ -1179,7 +1185,7 @@ async fn a_live_presentation_delivers_the_served_segments_byte_exact() {
 /// No segment is requested before the origin says it exists, whatever the host
 /// clock says, as long as the MPD announces a `UTCTiming` source: the ladder
 /// trusts the packager's clock over the host's.
-async fn utc_timing_run(skew_us: i64) -> (Vec<u64>, usize) {
+async fn utc_timing_run(skew_us: i64) -> (Vec<u64>, i64) {
     let live = serve_live(LiveShape::default()).await;
     let mut pull = Pull::start(route(live.url()), SkewedClock::new(skew_us));
     let ended = pull.until(|d| d.video().len() >= 60).await;
@@ -1188,22 +1194,33 @@ async fn utc_timing_run(skew_us: i64) -> (Vec<u64>, usize) {
     assert!(!delivered.video().is_empty());
     (
         live.origin.served(0),
-        live.origin.early.load(Ordering::SeqCst),
+        live.origin.max_early_us.load(Ordering::SeqCst),
     )
 }
+
+/// A `UTCTiming` answer carries milliseconds and the client centres the time
+/// in the exchange, so a request may precede availability by about the round
+/// trip of a loopback socket; the skew under test is a minute.
+const MILLISECOND_CLOCK_TOLERANCE_US: i64 = 50_000;
 
 #[tokio::test]
 async fn a_host_clock_one_minute_fast_never_makes_a_utc_timed_pull_request_early() {
     let (served, early) = utc_timing_run(60_000_000).await;
     assert!(!served.is_empty());
-    assert_eq!(early, 0, "requests before availability: {early}");
+    assert!(
+        early < MILLISECOND_CLOCK_TOLERANCE_US,
+        "requests before availability, by at most {early} us"
+    );
 }
 
 #[tokio::test]
 async fn a_host_clock_one_minute_slow_never_makes_a_utc_timed_pull_request_early() {
     let (served, early) = utc_timing_run(-60_000_000).await;
     assert!(!served.is_empty());
-    assert_eq!(early, 0, "requests before availability: {early}");
+    assert!(
+        early < MILLISECOND_CLOCK_TOLERANCE_US,
+        "requests before availability, by at most {early} us"
+    );
 }
 
 /// Without a `UTCTiming` element the host clock is the best source there is,
@@ -1224,8 +1241,8 @@ async fn without_utc_timing_a_fast_host_clock_requests_segments_early() {
         tokio::time::sleep(POLL).await;
     }
     assert!(
-        live.origin.early.load(Ordering::SeqCst) > 0,
-        "the fast host clock must show as early requests"
+        live.origin.max_early_us.load(Ordering::SeqCst) > 5_000_000,
+        "the fast host clock must show as requests many seconds early"
     );
     assert!(pull.until(|_| true).await.is_none());
     drop(pull.stop());
@@ -1325,8 +1342,12 @@ async fn a_segment_that_never_appears_is_given_up_and_playback_continues() {
     assert!(live.origin.served(0).iter().all(|n| *n != missing));
 }
 
+/// A `Date` header is whole seconds and the client places the true time in the
+/// middle of that second, so a pull timed by it may ask up to this much early.
+const HEAD_DATE_RESOLUTION_US: i64 = 1_200_000;
+
 /// `http-head` is answered with `HEAD` requests whose `Date` is the time, and
-/// a skewed host clock is still never trusted over it.
+/// a host clock a minute fast is still not trusted over it.
 #[tokio::test]
 async fn an_http_head_utc_timing_is_followed_with_head_requests() {
     let live = serve_live(LiveShape {
@@ -1344,7 +1365,12 @@ async fn an_http_head_utc_timing_is_followed_with_head_requests() {
         !time.is_empty() && time.iter().all(|h| h.method == "HEAD"),
         "{time:?}"
     );
-    assert_eq!(live.origin.early.load(Ordering::SeqCst), 0);
+    let early_us = live.origin.max_early_us.load(Ordering::SeqCst);
+    assert!(
+        early_us < HEAD_DATE_RESOLUTION_US,
+        "a `Date` header is whole seconds, so a pull may ask up to a second too soon, \
+         never the minute the host clock is off by: {early_us} us"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -31,8 +31,8 @@
 //! - `InputSpec`, `AuthSpec`, `OutputAuthSpec` (`config`) — data-carrying
 //!   config ADTs (`Rtsp { url, .. }`, `Password { .. }`, `Basic { .. }`, …);
 //!   callers match the typed variant, a static label would be lossy.
-//! - `DashResourceId`, `DashAction` (`source::dash_pull`) — data-carrying
-//!   dispatch/identity ADTs (`Init(RepIndex)`, `FetchSegment { .. }`), same
+//! - `DashInput`, `FetchTarget` (`source::dash_pull`) — data-carrying
+//!   dispatch/identity ADTs (`Resource { id, body }`, `Utc(UtcId)`), same
 //!   reasoning as `InputSpec`.
 //! - `HlsFetchId` (`source::hls_pull`) — data-carrying dispatch ADT
 //!   (`Resource(ResourceId)`), same reasoning.
@@ -66,8 +66,8 @@ const SKIP: &[&str] = &[
     "InputSpec",
     "AuthSpec",
     "OutputAuthSpec",
-    "DashResourceId",
-    "DashAction",
+    "DashInput",
+    "FetchTarget",
     "HlsFetchId",
     "SmoothResourceId",
     "SmoothAction",
