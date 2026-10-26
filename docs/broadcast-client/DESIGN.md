@@ -815,3 +815,19 @@ Every segment failure used to look like attempt 1 because the playlist refetch t
 An init fetch used the 60 s segment timeout, so an init with no response took about nine minutes to go fatal. Init fetches use `request_timeout_us` (20 s, the playlist class; key fetches already had `hls_key_timeout_us`), about three minutes with the default 8 failures.
 
 Tests: `broadcast-client/tests/audit_r8_segments.rs` (every fault kind VOD and live, the schedule across playlist reloads, reset on delivery, the cap table, Retry-After table incl. `u64::MAX`, init stall) and `hls-runtime/tests/segment_failure.rs` (core contract). Every assertion was mutation-checked.
+
+## Config renames (dash-runtime W-a0, Q1 + Q3)
+
+| Old | New |
+|---|---|
+| `hls_backoff_ms` | `backoff_ms` |
+| `hls_backoff_cap_ms` | `backoff_cap_ms` |
+| `hls_max_segment_failures` | `max_segment_failures` |
+| `hls_max_inflight_segments` | `max_inflight_segments` |
+| `hls_request_timeout_us` | `request_timeout_us` |
+| `hls_segment_timeout_us` | `segment_timeout_us` |
+| `max_playlist_bytes` | `max_manifest_bytes` |
+| `DEFAULT_HLS_BACKOFF_MS`, `DEFAULT_HLS_BACKOFF_CAP_MS`, `DEFAULT_HLS_MAX_SEGMENT_FAILURES`, `DEFAULT_HLS_MAX_INFLIGHT_SEGMENTS`, `DEFAULT_HLS_REQUEST_TIMEOUT_US`, `DEFAULT_HLS_SEGMENT_TIMEOUT_US` | same without `HLS_` |
+| `DEFAULT_MAX_PLAYLIST_BYTES` | `DEFAULT_MAX_MANIFEST_BYTES` |
+
+`Error::InvalidConfig { field }` strings follow the new names. `hls_key_timeout_us` and `max_key_*` stay: they are HLS-only. `Config` is `#[non_exhaustive]`: hosts build it with `Config::default()` plus field assignment.
