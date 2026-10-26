@@ -46,6 +46,7 @@ pub struct Fault {
     pub needle: String,
     pub kind: FaultKind,
     pub times: Option<usize>,
+    pub offset: Option<u64>,
 }
 
 impl Fault {
@@ -54,7 +55,13 @@ impl Fault {
             needle: needle.to_owned(),
             kind,
             times: None,
+            offset: None,
         }
+    }
+
+    pub fn at(mut self, offset: u64) -> Self {
+        self.offset = Some(offset);
+        self
     }
 
     pub fn times(needle: &str, kind: FaultKind, times: usize) -> Self {
@@ -62,6 +69,7 @@ impl Fault {
             needle: needle.to_owned(),
             kind,
             times: Some(times),
+            offset: None,
         }
     }
 }
@@ -115,6 +123,9 @@ impl Origin {
         let mut fault = None;
         for f in &mut self.faults {
             if !req.url.contains(&f.needle) {
+                continue;
+            }
+            if f.offset.is_some() && f.offset != req.range.map(|r| r.0) {
                 continue;
             }
             match &mut f.times {
@@ -323,6 +334,9 @@ fn deliver(
         match answer {
             Ok(r) if failure_of(&r).is_none() => {
                 if let Err(e) = client.on_mpd(now, &r.body) {
+                    if matches!(e, Error::Mpd(_)) {
+                        client.retry_mpd(now);
+                    }
                     run.errors.push(e);
                 }
             }
@@ -440,4 +454,12 @@ pub fn assert_matches_oracle(run: &Run, expected_by_track: &[Vec<Sig>]) {
 
 pub fn mpd_text(rel: &str) -> String {
     test_fixtures::read_to_string(&format!("dash/{rel}"))
+}
+
+pub fn fatal_status(run: &Run) -> Option<u16> {
+    match &run.fatal {
+        Some(FatalKind::SegmentFetchFailed { status, .. })
+        | Some(FatalKind::InitFetchFailed { status, .. }) => *status,
+        _ => None,
+    }
 }
