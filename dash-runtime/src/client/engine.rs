@@ -1388,13 +1388,11 @@ impl DashClient {
 
     fn deliver_slots(&mut self, pi: usize) {
         for li in 0..self.periods[pi].lanes.len() {
-            loop {
-                let Some(front) = self.periods[pi].lanes[li].queue.front() else {
-                    break;
-                };
-                if matches!(front.state, SlotState::Issued | SlotState::Held(_)) {
-                    break;
-                }
+            while self.periods[pi].lanes[li]
+                .queue
+                .front()
+                .is_some_and(|f| !matches!(f.state, SlotState::Issued | SlotState::Held(_)))
+            {
                 let Some(slot) = self.periods[pi].lanes[li].queue.pop_front() else {
                     break;
                 };
