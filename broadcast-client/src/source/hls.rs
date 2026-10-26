@@ -18,9 +18,9 @@ use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::redirect;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
+use crate::source::fetch::retry::{Backoff, RetryGate, retry_after_us};
 
 const MICROS_PER_MILLI: u64 = 1_000;
-const MILLIS_PER_SECOND: u64 = 1_000;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const STATUS_OK: u16 = 200;
 const STATUS_PARTIAL_CONTENT: u16 = 206;
@@ -38,9 +38,6 @@ const FIELD_MAX_MANIFEST_BYTES: &str = "max_manifest_bytes";
 const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
 const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
 const REASON_DAMAGED_FRAGMENT: &str = "damaged_fragment";
-const MAX_RETRY_AFTER_SECS: u64 = 60;
-const STATUS_TOO_MANY_REQUESTS: u16 = 429;
-const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
 const DEADLINE_SLACK_FACTOR: usize = 4;
 const DEADLINE_SLACK_FLOOR: usize = 64;
 
@@ -132,8 +129,7 @@ pub(crate) struct HlsSource {
     oversize_reported: BTreeSet<&'static str>,
     playlist_timeout_us: u64,
     segment_timeout_us: u64,
-    backoff_ms: Vec<u64>,
-    backoff_cap_ms: u64,
+    backoff: Backoff,
     max_redirects: u32,
     max_inflight_segments: usize,
     reqs: HashMap<u32, Req>,
@@ -146,7 +142,7 @@ pub(crate) struct HlsSource {
     order: VecDeque<ResourceId>,
     held: HashMap<ResourceId, Vec<u8>>,
     failed: BTreeSet<ResourceId>,
-    gate_until: Option<u64>,
+    gate: RetryGate,
     retry_refetch: Option<(u64, String)>,
     init_retry: bool,
     attempt: u64,
@@ -162,7 +158,6 @@ impl HlsSource {
     pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, role: Role) -> Self {
         let mut client = HlsClient::new(url.as_str());
         client.set_variant_policy(config.variant_policy.clone());
-        let (backoff_ms, backoff_cap_ms) = config.backoff();
         let mut source = Self {
             client,
             max_manifest_bytes: config.max_manifest_bytes,
@@ -186,8 +181,7 @@ impl HlsSource {
             oversize_reported: BTreeSet::new(),
             playlist_timeout_us: config.request_timeout_us,
             segment_timeout_us: config.segment_timeout_us,
-            backoff_ms,
-            backoff_cap_ms,
+            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
             max_redirects: config.max_redirects,
             max_inflight_segments: config.max_inflight_segments.max(1),
             reqs: HashMap::new(),
@@ -200,7 +194,7 @@ impl HlsSource {
             order: VecDeque::new(),
             held: HashMap::new(),
             failed: BTreeSet::new(),
-            gate_until: None,
+            gate: RetryGate::default(),
             retry_refetch: None,
             init_retry: false,
             attempt: 0,
@@ -765,15 +759,6 @@ impl HlsSource {
             || self.reqs.values().any(|r| r.purpose == Purpose::Playlist)
     }
 
-    fn backoff_us(&self, attempt: u64) -> u64 {
-        let idx = usize::try_from(attempt.saturating_sub(1)).unwrap_or(usize::MAX);
-        self.backoff_ms
-            .get(idx)
-            .copied()
-            .unwrap_or(self.backoff_cap_ms)
-            .saturating_mul(MICROS_PER_MILLI)
-    }
-
     fn schedule_retry(&mut self, now: u64, refetch: Option<String>, segment_attempt: Option<u32>) {
         let attempt = match segment_attempt {
             Some(count) => u64::from(count),
@@ -782,11 +767,11 @@ impl HlsSource {
                 self.attempt
             }
         };
-        let wait = self.backoff_us(attempt).max(self.retry_after_us);
+        let wait = self.backoff.delay_us(attempt).max(self.retry_after_us);
         let at = now.saturating_add(wait);
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt }));
-        self.gate_until = Some(self.gate_until.map_or(at, |g| g.max(at)));
+        self.gate.hold_until(at);
         if let Some(url) = refetch
             && self.retry_refetch.is_none()
         {
@@ -859,11 +844,8 @@ impl HlsSource {
             self.issue(Purpose::Playlist, &url, None, now, auth);
         }
         loop {
-            if let Some(g) = self.gate_until {
-                if now < g {
-                    return;
-                }
-                self.gate_until = None;
+            if !self.gate.lifted(now) {
+                return;
             }
             if core::mem::take(&mut self.init_retry) && self.client.retry_init() {
                 self.pump_core();
@@ -893,7 +875,7 @@ impl HlsSource {
                 }
                 HlsAction::WaitMs(ms) => {
                     let at = now.saturating_add(ms.saturating_mul(MICROS_PER_MILLI));
-                    self.gate_until = Some(at);
+                    self.gate.hold_until(at);
                     self.actions.push_back(Action::WakeAt(at));
                 }
                 _ => {}
@@ -989,7 +971,7 @@ impl HlsSource {
         self.held.clear();
         self.failed.clear();
         self.retry_refetch = None;
-        self.gate_until = None;
+        self.gate.clear();
     }
 
     fn remap(&self, id: TrackId) -> TrackId {
@@ -1126,20 +1108,6 @@ impl HlsSource {
             }
         }
     }
-}
-
-fn retry_after_us(status: u16, headers: &[(String, String)]) -> u64 {
-    if status != STATUS_TOO_MANY_REQUESTS && status != STATUS_SERVICE_UNAVAILABLE {
-        return 0;
-    }
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("retry-after"))
-        .and_then(|(_, v)| v.trim().parse::<u64>().ok())
-        .map_or(0, |secs| {
-            secs.min(MAX_RETRY_AFTER_SECS)
-                .saturating_mul(MICROS_PER_MILLI * MILLIS_PER_SECOND)
-        })
 }
 
 fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
