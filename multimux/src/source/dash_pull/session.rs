@@ -584,6 +584,30 @@ mod tests {
     }
 
     #[test]
+    fn a_later_accepted_mpd_does_not_establish_the_session_again() {
+        let mut s = live_session();
+        assert_eq!(events(&mut s).len(), 1, "the first MPD established it");
+        let mut now = 0u64;
+        let good = live_mpd();
+        for _ in 0..3 {
+            next_mpd_request(&mut s, &mut now);
+            s.feed(
+                DashInput::Mpd {
+                    body: good.as_bytes(),
+                    meta: ResponseMeta::at(now),
+                },
+                ts(now),
+            )
+            .unwrap();
+            let again = events(&mut s);
+            assert!(
+                !again.iter().any(|e| matches!(e, SessionEvent::Established)),
+                "{again:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_first_mpd_that_does_not_parse_fails_the_attempt() {
         let mut s = session();
         let _ = s.poll_transmit();

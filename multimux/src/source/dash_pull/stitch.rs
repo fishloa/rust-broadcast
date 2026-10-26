@@ -239,4 +239,36 @@ mod tests {
         st.apply(TrackId::new(1), &mut next);
         assert_eq!(dts_of(&next), [180_000], "2 s at the new 90 kHz scale");
     }
+    #[test]
+    fn the_offset_is_rounded_to_the_nearest_tick_not_truncated() {
+        let mut st = Stitcher::default();
+        st.set_tracks(&[spec(1, 90_000)]);
+        st.apply(TrackId::new(1), &mut [sample(0, 90_001)]);
+        st.discontinuity();
+        let mut next = [sample(0, 1)];
+        st.apply(TrackId::new(1), &mut next);
+        assert_eq!(
+            dts_of(&next),
+            [90_001],
+            "the previous end is 1 000 011 us, which is 90 000.99 ticks"
+        );
+    }
+
+    #[test]
+    fn a_track_with_a_zero_timescale_is_left_alone() {
+        let mut st = Stitcher::default();
+        st.set_tracks(&[spec(1, 0)]);
+        let mut a = [sample(5, 1)];
+        st.discontinuity();
+        st.apply(TrackId::new(1), &mut a);
+        assert_eq!(dts_of(&a), [5]);
+    }
+
+    #[test]
+    fn a_track_nobody_announced_is_left_alone() {
+        let mut st = Stitcher::default();
+        let mut a = [sample(5, 1)];
+        st.apply(TrackId::new(9), &mut a);
+        assert_eq!(dts_of(&a), [5]);
+    }
 }

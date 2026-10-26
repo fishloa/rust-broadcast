@@ -52,8 +52,8 @@ pub(super) trait RouteSink: Send {
     fn finish(&mut self, result: Result<()>) -> Result<()>;
 }
 
-#[derive(Debug)]
-enum Outcome {
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Outcome {
     Body,
     Unchanged,
     Failed(Failure),
@@ -62,15 +62,15 @@ enum Outcome {
 
 /// The scheduler key: which fetch finished and what the exchange measured.
 #[derive(Debug)]
-struct DashFetch {
-    target: FetchTarget,
-    sent_us: u64,
-    received_us: u64,
-    date: Option<String>,
-    etag: Option<String>,
-    last_modified: Option<String>,
-    final_url: Option<String>,
-    outcome: Outcome,
+pub(super) struct DashFetch {
+    pub(super) target: FetchTarget,
+    pub(super) sent_us: u64,
+    pub(super) received_us: u64,
+    pub(super) date: Option<String>,
+    pub(super) etag: Option<String>,
+    pub(super) last_modified: Option<String>,
+    pub(super) final_url: Option<String>,
+    pub(super) outcome: Outcome,
 }
 
 impl DashFetch {
@@ -89,30 +89,30 @@ impl DashFetch {
 }
 
 #[derive(Clone)]
-struct Net {
-    http: HttpClient,
-    credentials: Option<ScopedCredentials>,
-    clock: Arc<dyn HostClock>,
-    read_timeout: Duration,
-    utc_timeout: Duration,
-    mpd_cap: usize,
-    segment_cap: usize,
+pub(super) struct Net {
+    pub(super) http: HttpClient,
+    pub(super) credentials: Option<ScopedCredentials>,
+    pub(super) clock: Arc<dyn HostClock>,
+    pub(super) read_timeout: Duration,
+    pub(super) utc_timeout: Duration,
+    pub(super) mpd_cap: usize,
+    pub(super) segment_cap: usize,
 }
 
-struct Request {
-    target: FetchTarget,
-    method: Method,
-    url: String,
-    byte_range: Option<(u64, u64)>,
-    conditional: Vec<(HeaderName, String)>,
-    with_credentials: bool,
-    what: &'static str,
-    timeout: Duration,
-    cap: usize,
+pub(super) struct Request {
+    pub(super) target: FetchTarget,
+    pub(super) method: Method,
+    pub(super) url: String,
+    pub(super) byte_range: Option<(u64, u64)>,
+    pub(super) conditional: Vec<(HeaderName, String)>,
+    pub(super) with_credentials: bool,
+    pub(super) what: &'static str,
+    pub(super) timeout: Duration,
+    pub(super) cap: usize,
 }
 
 impl Request {
-    fn from_action(action: Action, net: &Net) -> Option<Self> {
+    pub(super) fn from_action(action: Action, net: &Net) -> Option<Self> {
         let resource = |id: ResourceId, url: String, byte_range, what| Request {
             target: FetchTarget::Resource(id),
             method: Method::GET,
@@ -258,7 +258,7 @@ pub(super) fn ranged_body(
     body.get(start..end).map(<[u8]>::to_vec)
 }
 
-async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFetch, FetchResult) {
+pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFetch, FetchResult) {
     let mut fetch = DashFetch::new(req.target, sent_us);
     let response = match send(net, req).await {
         Ok(response) => response,
@@ -327,7 +327,7 @@ async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFetch, FetchRe
     (fetch, FetchResult::Ready(body))
 }
 
-fn spawn_fetch(net: &Net, req: Request) -> PendingFetch<DashFetch> {
+pub(super) fn spawn_fetch(net: &Net, req: Request) -> PendingFetch<DashFetch> {
     let net = net.clone();
     PendingFetch {
         delay: Duration::ZERO,

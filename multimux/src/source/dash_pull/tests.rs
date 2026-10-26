@@ -34,6 +34,9 @@ use crate::error::{MultimuxError, Result};
 use crate::source::IngestTimeouts;
 
 const CEILING: Duration = Duration::from_secs(60);
+/// A static presentation over loopback ends in well under a second; the
+/// ceiling only turns a hang into a failure.
+const STATIC_CEILING: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(20);
 
 fn nz(n: usize) -> NonZeroUsize {
@@ -203,7 +206,7 @@ impl Pull {
 
     /// Run a static presentation to its end.
     async fn finish(mut self) -> (Delivered, Result<()>) {
-        let result = tokio::time::timeout(CEILING, &mut self.task)
+        let result = tokio::time::timeout(STATIC_CEILING, &mut self.task)
             .await
             .expect("a static presentation must end")
             .expect("pull task");
@@ -890,6 +893,7 @@ impl Default for LiveShape {
 struct LiveHit {
     name: String,
     method: String,
+    authorized: bool,
     status: u16,
 }
 
@@ -949,10 +953,11 @@ impl LiveOrigin {
         )
     }
 
-    fn log(&self, name: &str, method: &Method, status: AxumStatus) {
+    fn log(&self, name: &str, method: &Method, authorized: bool, status: AxumStatus) {
         self.hits.lock().expect("lock").push(LiveHit {
             name: name.to_owned(),
             method: method.to_string(),
+            authorized,
             status: status.as_u16(),
         });
     }
@@ -995,8 +1000,9 @@ async fn live_handler(
     method: Method,
     headers: HeaderMap,
 ) -> AxumResponse {
+    let authorized = headers.contains_key(header::AUTHORIZATION);
     let reply = |status: AxumStatus, response: AxumResponse| {
-        origin.log(&name, &method, status);
+        origin.log(&name, &method, authorized, status);
         response
     };
     if name == "time" {
@@ -1373,6 +1379,409 @@ async fn an_http_head_utc_timing_is_followed_with_head_requests() {
     );
 }
 
+/// Credentials go to the origin the MPD came from and to nobody else: the
+/// `UTCTiming` server is named by the MPD, so a request to it carries none,
+/// even when it happens to be on the same origin.
+#[tokio::test]
+async fn utc_timing_requests_carry_no_credentials_but_every_other_request_does() {
+    let live = serve_live(LiveShape::default()).await;
+    let route = route(live.url()).with_auth(Some(broadcast_auth::Credentials::Basic {
+        username: "user".into(),
+        password: "pass".into(),
+    }));
+    let mut pull = Pull::start(route, SkewedClock::new(0));
+    let ended = pull.until(|d| d.video().len() >= 50).await;
+    assert!(ended.is_none(), "{ended:?}");
+    drop(pull.stop());
+    let hits = live.origin.hits.lock().expect("lock").clone();
+    let by = |prefix: &str| -> Vec<bool> {
+        hits.iter()
+            .filter(|h| h.name.starts_with(prefix))
+            .map(|h| h.authorized)
+            .collect()
+    };
+    let time = by("time");
+    assert!(!time.is_empty() && time.iter().all(|a| !a), "{time:?}");
+    for prefix in ["live.mpd", "init-", "seg-"] {
+        let seen = by(prefix);
+        assert!(
+            !seen.is_empty() && seen.iter().all(|a| *a),
+            "{prefix}: {seen:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// One exchange on the wire
+// ---------------------------------------------------------------------------
+
+mod exchange {
+    use super::*;
+    use crate::source::dash_pull::{DashInput, FetchTarget};
+    use axum::body::Body;
+    use axum::response::Redirect;
+    use broadcast_common::Stage;
+    use bytes::Bytes;
+    use dash_runtime::client::{Action, Failure, ResourceId, UtcId};
+    use drive::{DashFetch, Net, Outcome, Request};
+    use media_plane::ingress::IngestSession;
+    use reqwest::Method;
+
+    use crate::source::pull::FetchResult;
+
+    const SMALL_CAP: usize = 100;
+    const BIG_CAP: usize = 1 << 20;
+
+    fn net(read_timeout: Duration, cap: usize) -> Net {
+        Net {
+            http: reqwest::Client::builder()
+                .redirect(crate::source::redirect_policy())
+                .build()
+                .expect("client"),
+            credentials: None,
+            clock: SkewedClock::new(0),
+            read_timeout,
+            utc_timeout: read_timeout,
+            mpd_cap: cap,
+            segment_cap: cap,
+        }
+    }
+
+    fn request(url: String, target: FetchTarget, cap: usize) -> Request {
+        Request {
+            target,
+            method: Method::GET,
+            url,
+            byte_range: None,
+            conditional: Vec::new(),
+            with_credentials: true,
+            what: "test",
+            timeout: Duration::from_secs(5),
+            cap,
+        }
+    }
+
+    async fn serve(app: Router) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        (format!("http://{addr}"), task)
+    }
+
+    async fn run(net: &Net, req: Request) -> (DashFetch, FetchResult) {
+        drive::exchange(net, &req, 0).await
+    }
+
+    fn status_route(status: u16) -> Router {
+        Router::new().route(
+            "/x",
+            get(move || async move {
+                (
+                    AxumStatus::from_u16(status).expect("status"),
+                    "body".to_owned(),
+                )
+            }),
+        )
+    }
+
+    /// A resource id and a `UTCTiming` id as the core hands them out: neither
+    /// can be built outside `dash-runtime`.
+    fn ids() -> (ResourceId, UtcId) {
+        let mut session =
+            DashIngestSession::new(url::Url::parse("http://origin.test/live.mpd").expect("url"));
+        let mpd = format!(
+            "{}",
+            r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" minimumUpdatePeriod="PT1S" timeShiftBufferDepth="PT30S" suggestedPresentationDelay="PT2S" maxSegmentDuration="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+<UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-xsdate:2014" value="http://origin.test/time"/>
+<Period id="0" start="PT0S"><AdaptationSet mimeType="video/mp4"><Representation id="0" codecs="avc1.4d400d" bandwidth="1000" width="320" height="240"><SegmentTemplate timescale="1000" duration="2000" startNumber="1" initialization="init.m4s" media="seg-$Number$.m4s"/></Representation></AdaptationSet></Period>
+</MPD>"#
+        );
+        let _ = session.poll_transmit();
+        session
+            .feed(
+                DashInput::Mpd {
+                    body: mpd.as_bytes(),
+                    meta: dash_runtime::client::ResponseMeta::at(0),
+                },
+                Timestamp::from_nanos(0),
+            )
+            .expect("accepted");
+        let (mut resource, mut utc) = (None, None);
+        for _ in 0..16 {
+            match session.poll_transmit() {
+                Some(Action::FetchInit { id, .. }) => resource = Some(id),
+                Some(Action::FetchUtcTiming { id, .. }) => utc = Some(id),
+                Some(_) => {}
+                None => break,
+            }
+        }
+        (
+            resource.expect("an init request"),
+            utc.expect("a UTCTiming request"),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_304_is_unchanged_for_the_mpd_and_a_failure_for_anything_else() {
+        let (base, server) = serve(status_route(304)).await;
+        let net = net(Duration::from_secs(5), BIG_CAP);
+        let (mpd, _) = run(
+            &net,
+            request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
+        )
+        .await;
+        assert_eq!(mpd.outcome, Outcome::Unchanged);
+        let (resource, _) = ids();
+        let (seg, _) = run(
+            &net,
+            request(
+                format!("{base}/x"),
+                FetchTarget::Resource(resource),
+                BIG_CAP,
+            ),
+        )
+        .await;
+        assert_eq!(seg.outcome, Outcome::Failed(Failure::Status(304)));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_401_is_unauthorized_and_other_statuses_are_counted_failures() {
+        let net = net(Duration::from_secs(5), BIG_CAP);
+        for (status, want) in [
+            (401, Outcome::Unauthorized),
+            (404, Outcome::Failed(Failure::Status(404))),
+            (410, Outcome::Failed(Failure::Status(410))),
+            (425, Outcome::Failed(Failure::Status(425))),
+            (503, Outcome::Failed(Failure::Status(503))),
+        ] {
+            let (base, server) = serve(status_route(status)).await;
+            let (fetch, result) = run(
+                &net,
+                request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
+            )
+            .await;
+            assert_eq!(fetch.outcome, want, "status {status}");
+            assert!(
+                matches!(result, FetchResult::Failed(_)),
+                "status {status} carries an error"
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_401_is_an_authentication_error() {
+        let (base, server) = serve(status_route(401)).await;
+        let net = net(Duration::from_secs(5), BIG_CAP);
+        let (_, result) = run(
+            &net,
+            request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
+        )
+        .await;
+        assert!(
+            matches!(result, FetchResult::Failed(MultimuxError::Auth { .. })),
+            "a refused credential is Auth, not a retryable Connect"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn the_headers_the_core_reads_are_captured_and_a_redirect_is_reported() {
+        let app = Router::new()
+            .route("/a", get(|| async { Redirect::temporary("/b") }))
+            .route(
+                "/b",
+                get(|| async {
+                    let mut response = "mpd".into_response();
+                    let headers = response.headers_mut();
+                    headers.insert(header::ETAG, "\"e1\"".parse().unwrap());
+                    headers.insert(
+                        header::LAST_MODIFIED,
+                        "Mon, 26 Oct 2026 08:39:04 GMT".parse().unwrap(),
+                    );
+                    response
+                }),
+            )
+            .route("/plain", get(|| async { "mpd" }));
+        let (base, server) = serve(app).await;
+        let net = net(Duration::from_secs(5), BIG_CAP);
+        let (fetch, result) = run(
+            &net,
+            request(format!("{base}/a"), FetchTarget::Mpd, BIG_CAP),
+        )
+        .await;
+        assert_eq!(fetch.outcome, Outcome::Body);
+        assert!(matches!(result, FetchResult::Ready(ref b) if b == b"mpd"));
+        assert_eq!(
+            fetch.final_url.as_deref(),
+            Some(format!("{base}/b").as_str())
+        );
+        assert_eq!(fetch.etag.as_deref(), Some("\"e1\""));
+        assert_eq!(
+            fetch.last_modified.as_deref(),
+            Some("Mon, 26 Oct 2026 08:39:04 GMT")
+        );
+        assert!(
+            fetch.date.is_some(),
+            "hyper stamps a Date on every response"
+        );
+        assert!(fetch.received_us >= fetch.sent_us);
+        assert!(fetch.received_us > 0, "read from the injected clock");
+
+        let (plain, _) = run(
+            &net,
+            request(format!("{base}/plain"), FetchTarget::Mpd, BIG_CAP),
+        )
+        .await;
+        assert_eq!(plain.final_url, None, "no redirect, nothing to report");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_body_past_the_cap_is_too_large_and_a_broken_transfer_is_transport() {
+        let app = Router::new()
+            .route("/big", get(|| async { vec![7u8; SMALL_CAP * 10] }))
+            .route(
+                "/cut",
+                get(|| async {
+                    let chunks: Vec<std::result::Result<Bytes, std::io::Error>> = vec![
+                        Ok(Bytes::from_static(&[1u8; 10])),
+                        Err(std::io::Error::other("cut")),
+                    ];
+                    Body::from_stream(futures_util::stream::iter(chunks))
+                }),
+            );
+        let (base, server) = serve(app).await;
+        let net = net(Duration::from_secs(5), SMALL_CAP);
+        let (big, _) = run(
+            &net,
+            request(format!("{base}/big"), FetchTarget::Mpd, SMALL_CAP),
+        )
+        .await;
+        assert_eq!(big.outcome, Outcome::Failed(Failure::TooLarge));
+        let (cut, _) = run(
+            &net,
+            request(format!("{base}/cut"), FetchTarget::Mpd, SMALL_CAP),
+        )
+        .await;
+        assert_eq!(cut.outcome, Outcome::Failed(Failure::Transport));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_is_transport_and_a_silent_server_is_a_timeout() {
+        let net = net(Duration::from_millis(150), BIG_CAP);
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let dead = closed.local_addr().expect("addr");
+        drop(closed);
+        let (refused, _) = run(
+            &net,
+            request(format!("http://{dead}/x"), FetchTarget::Mpd, BIG_CAP),
+        )
+        .await;
+        assert_eq!(refused.outcome, Outcome::Failed(Failure::Transport));
+
+        let silent = Router::new().route(
+            "/x",
+            get(|| async {
+                std::future::pending::<()>().await;
+                ""
+            }),
+        );
+        let (base, server) = serve(silent).await;
+        let mut req = request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP);
+        req.timeout = Duration::from_millis(150);
+        let (fetch, result) = drive::spawn_fetch(&net, req).fut.await;
+        assert_eq!(fetch.outcome, Outcome::Failed(Failure::Timeout));
+        assert!(matches!(result, FetchResult::Failed(_)));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn conditional_headers_and_the_head_method_reach_the_server() {
+        #[derive(Clone, Default)]
+        struct Seen(Arc<Mutex<Vec<(String, Option<String>, bool)>>>);
+        async fn echo(
+            State(seen): State<Seen>,
+            method: Method,
+            headers: HeaderMap,
+        ) -> AxumResponse {
+            seen.0.lock().unwrap().push((
+                method.to_string(),
+                headers
+                    .get(header::IF_NONE_MATCH)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned),
+                headers.contains_key(header::AUTHORIZATION),
+            ));
+            "ok".into_response()
+        }
+        let seen = Seen::default();
+        let app = Router::new()
+            .route("/x", get(echo))
+            .with_state(seen.clone());
+        let (base, server) = serve(app).await;
+        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut conditional = request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP);
+        conditional.conditional = vec![(header::IF_NONE_MATCH, "\"e1\"".to_owned())];
+        run(&net, conditional).await;
+        let (_, utc) = ids();
+        let mut head = request(format!("{base}/x"), FetchTarget::Utc(utc), BIG_CAP);
+        head.method = Method::HEAD;
+        head.with_credentials = false;
+        let (fetch, result) = run(&net, head).await;
+        assert_eq!(fetch.outcome, Outcome::Body);
+        assert!(matches!(result, FetchResult::Ready(ref b) if b.is_empty()));
+        let seen = seen.0.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            [
+                ("GET".to_owned(), Some("\"e1\"".to_owned()), false),
+                ("HEAD".to_owned(), None, false),
+            ]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_ranged_request_asks_for_exactly_the_bytes_it_needs() {
+        #[derive(Clone, Default)]
+        struct Seen(Arc<Mutex<Vec<String>>>);
+        async fn echo(State(seen): State<Seen>, headers: HeaderMap) -> AxumResponse {
+            seen.0.lock().unwrap().push(
+                headers
+                    .get(header::RANGE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_owned(),
+            );
+            vec![9u8; 64].into_response()
+        }
+        let seen = Seen::default();
+        let app = Router::new()
+            .route("/x", get(echo))
+            .with_state(seen.clone());
+        let (base, server) = serve(app).await;
+        let net = net(Duration::from_secs(5), BIG_CAP);
+        let (resource, _) = ids();
+        let mut req = request(
+            format!("{base}/x"),
+            FetchTarget::Resource(resource),
+            BIG_CAP,
+        );
+        req.byte_range = Some((10, 20));
+        let (_, result) = run(&net, req).await;
+        assert!(matches!(result, FetchResult::Ready(ref b) if b.len() == 20));
+        assert_eq!(seen.0.lock().unwrap().as_slice(), ["bytes=10-29"]);
+        server.abort();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Wire helpers
 // ---------------------------------------------------------------------------
@@ -1408,6 +1817,11 @@ fn only_the_requested_part_of_a_ranged_answer_is_accepted() {
         ok(partial, Some((11, 20)), body[10..20].to_vec(), (10, 10)),
         None,
         "Content-Range names another part"
+    );
+    assert_eq!(
+        ok(partial, Some((10, 19)), body[10..21].to_vec(), (10, 10)),
+        None,
+        "a 206 longer than the range is not the range"
     );
     assert_eq!(
         ok(partial, Some((10, 19)), body[10..19].to_vec(), (10, 10)),
