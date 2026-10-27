@@ -1491,13 +1491,10 @@ mod exchange {
     fn ids() -> (ResourceId, UtcId) {
         let mut session =
             DashIngestSession::new(url::Url::parse("http://origin.test/live.mpd").expect("url"));
-        let mpd = format!(
-            "{}",
-            r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" minimumUpdatePeriod="PT1S" timeShiftBufferDepth="PT30S" suggestedPresentationDelay="PT2S" maxSegmentDuration="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+        let mpd = r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" minimumUpdatePeriod="PT1S" timeShiftBufferDepth="PT30S" suggestedPresentationDelay="PT2S" maxSegmentDuration="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
 <UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-xsdate:2014" value="http://origin.test/time"/>
 <Period id="0" start="PT0S"><AdaptationSet mimeType="video/mp4"><Representation id="0" codecs="avc1.4d400d" bandwidth="1000" width="320" height="240"><SegmentTemplate timescale="1000" duration="2000" startNumber="1" initialization="init.m4s" media="seg-$Number$.m4s"/></Representation></AdaptationSet></Period>
-</MPD>"#
-        );
+</MPD>"#.to_string();
         let _ = session.poll_transmit();
         session
             .feed(
@@ -1704,8 +1701,9 @@ mod exchange {
 
     #[tokio::test]
     async fn conditional_headers_and_the_head_method_reach_the_server() {
+        type SeenInner = Arc<Mutex<Vec<(String, Option<String>, bool)>>>;
         #[derive(Clone, Default)]
-        struct Seen(Arc<Mutex<Vec<(String, Option<String>, bool)>>>);
+        struct Seen(SeenInner);
         async fn echo(
             State(seen): State<Seen>,
             method: Method,

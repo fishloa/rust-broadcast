@@ -720,7 +720,7 @@ Ingest RTSP, RTP/UDP, TS over UDP or HTTP, SRT, HLS/DASH/Smooth pull, RTMP push 
 - **Version (in-tree):** 0.13.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime), [`webrtc-runtime`](#webrtc-runtime)
 - **Used by (workspace):** [`multimux-cli`](#multimux-cli)
-- **Links:** [README](../multimux/README.md) · [CHANGELOG](../multimux/CHANGELOG.md) · [crates.io](https://crates.io/crates/multimux) · [docs.rs](https://docs.rs/multimux)
+- **Links:** [README](../multimux/README.md) · [CHANGELOG](../multimux/CHANGELOG.md) · [docs + spec pointer](../multimux/docs/) · [crates.io](https://crates.io/crates/multimux) · [docs.rs](https://docs.rs/multimux)
 
 #### multimux-cli
 
