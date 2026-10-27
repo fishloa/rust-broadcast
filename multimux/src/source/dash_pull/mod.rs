@@ -11,7 +11,7 @@
 //! availability, classifies failures and selects the tracks. This module owns
 //! only what is multimux's:
 //!
-//! - [`session`]: [`DashIngestSession`], the media-plane [`IngestSession`]
+//! - `session`: [`DashIngestSession`], the media-plane [`media_plane::ingress::IngestSession`]
 //!   over the core. It maps outputs onto `SessionEvent`s (one program, tracks
 //!   announced and re-announced, samples), decides what ends a connection
 //!   attempt (the route supervisor reconnects), and hands the drive loop the
@@ -20,7 +20,7 @@
 //! - `drive`: the tokio loop (reqwest, timeouts, byte ranges, conditional MPD
 //!   refreshes, backoff, the host clock anchor).
 //!
-//! Time comes from one seam, [`crate::clock::HostClock`], which the loop reads
+//! Time comes from one seam, `HostClock`, which the loop reads
 //! and hands to the core as arguments; nothing in this module reads a clock.
 //!
 //! # What a route serves
