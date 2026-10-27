@@ -161,7 +161,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        2351,
+        2356,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
@@ -178,6 +178,36 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         "origin/admin.rs",
         1127,
         "admin listener server task; joined/aborted at admin teardown",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        181,
+        "test server task; aborted at test end",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        379,
+        "test server task; aborted at test end",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        650,
+        "test HTTP server task; aborted at test end",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        804,
+        "test HTTP server task; aborted at test end",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        1130,
+        "test HTTP server task; aborted at test end",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        1469,
+        "test HTTP server task; aborted at test end",
     ),
 ];
 

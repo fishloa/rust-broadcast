@@ -20,7 +20,7 @@
 //! URL.
 
 use broadcast_auth::{Authenticator, Credentials, RequestContext};
-use reqwest::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use reqwest::header::{AUTHORIZATION, HeaderName, WWW_AUTHENTICATE};
 use reqwest::{Client, Response, StatusCode};
 use url::Url;
 
@@ -157,6 +157,17 @@ pub(crate) async fn authenticated_get(
     url: &str,
     credentials: Option<&ScopedCredentials>,
 ) -> Result<Response> {
+    authenticated_get_with(client, url, credentials, &[]).await
+}
+
+/// [`authenticated_get`] with extra request headers (a `Range`, a conditional
+/// `If-None-Match`) carried on both the first request and a Digest retry.
+pub(crate) async fn authenticated_get_with(
+    client: &Client,
+    url: &str,
+    credentials: Option<&ScopedCredentials>,
+    extra_headers: &[(HeaderName, String)],
+) -> Result<Response> {
     // Credentials never leave the origin they were configured for.
     let credentials = credentials
         .filter(|scoped| scoped.applies_to(url))
@@ -170,6 +181,9 @@ pub(crate) async fn authenticated_get(
             Some(Credentials::Bearer { token }) => req.bearer_auth(token),
             _ => req,
         };
+        for (name, value) in extra_headers {
+            req = req.header(name, value);
+        }
         req
     };
 
@@ -205,14 +219,13 @@ pub(crate) async fn authenticated_get(
             reason: format!("digest response: {e}"),
         })?;
 
-    client
-        .get(url)
-        .header(AUTHORIZATION, value)
-        .send()
-        .await
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("GET {} (digest retry): {e}", crate::redact::redact_url(url)),
-        })
+    let mut retry = client.get(url).header(AUTHORIZATION, value);
+    for (name, value) in extra_headers {
+        retry = retry.header(name, value);
+    }
+    retry.send().await.map_err(|e| MultimuxError::Connect {
+        reason: format!("GET {} (digest retry): {e}", crate::redact::redact_url(url)),
+    })
 }
 
 /// Whether the response's final URL is on the same origin as the request URL

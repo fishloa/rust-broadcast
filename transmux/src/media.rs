@@ -142,6 +142,8 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             find_top_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let moov = MovieBox::parse(moov_bytes)?;
         let movie_timescale = moov.mvhd.timescale;
+        let trex_defaults: &[crate::init_segment::TrackExtendsBox] =
+            moov.mvex.as_ref().map_or(&[], |m| m.trex.as_slice());
 
         // DEMUX = lenient but loud (media plane step-2 fix wave 1, B2/B3): a
         // track whose sample entry the crate cannot reconstruct into a
@@ -225,7 +227,10 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             let ty = bx.header.box_type.0;
             if &ty == b"moof" {
                 match MovieFragmentBox::parse_body_budgeted(bx.body, &mut zero_width_budget) {
-                    Ok(moof) => pending_moofs.push((offset, moof)),
+                    Ok(mut moof) => {
+                        apply_trex_defaults(&mut moof, trex_defaults);
+                        pending_moofs.push((offset, moof));
+                    }
                     Err(_) => degraded.push(InputDegradation::MalformedUnit {
                         position: offset as u64,
                     }),
@@ -275,6 +280,32 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             degraded,
             degraded_at: Vec::new(),
         })
+    }
+}
+
+/// Fill what a `tfhd` leaves out from the track's `trex` (ISO/IEC 14496-12
+/// §8.8.3, §8.8.7): a sample's duration, size and flags default to the `tfhd`
+/// value, and when that is absent too, to the `trex` of the init movie.
+///
+/// A packager that declares its durations once in `trex` (GPAC does for a
+/// fragment whose samples all last the same) writes `trun` entries with sizes
+/// only; without the `trex` fallback every such sample came out with duration
+/// 0 and the whole fragment at one `dts`. A `trex` size of zero means "not
+/// declared" in practice and is not applied.
+fn apply_trex_defaults(moof: &mut MovieFragmentBox, trex: &[crate::init_segment::TrackExtendsBox]) {
+    for traf in &mut moof.traf {
+        let Some(defaults) = trex.iter().find(|t| t.track_id == traf.tfhd.track_id) else {
+            continue;
+        };
+        let tfhd = &mut traf.tfhd;
+        tfhd.default_sample_duration
+            .get_or_insert(defaults.default_sample_duration);
+        tfhd.default_sample_flags
+            .get_or_insert(defaults.default_sample_flags);
+        if defaults.default_sample_size != 0 {
+            tfhd.default_sample_size
+                .get_or_insert(defaults.default_sample_size);
+        }
     }
 }
 
