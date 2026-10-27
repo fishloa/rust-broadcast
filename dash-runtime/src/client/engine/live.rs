@@ -128,6 +128,9 @@ impl DashClient {
     /// (or first, with [`DashClockPolicy::PreferHost`]); a static one ignores
     /// it.
     pub fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
+        if self.stopped() {
+            return;
+        }
         let sample = UtcSample {
             mono_us: now_us,
             utc_us: unix_i64(i128::from(unix_us)),
@@ -721,6 +724,9 @@ impl DashClient {
     }
 
     fn announce_clock(&mut self) {
+        if self.stopped() {
+            return;
+        }
         let Some(anchor) = self.clock.anchor().copied() else {
             return;
         };
