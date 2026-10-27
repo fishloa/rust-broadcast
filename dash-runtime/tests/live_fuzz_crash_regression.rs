@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 
 use dash_runtime::client::{
-    Action, DashClient, DashConfig, DashClockPolicy, Error, Failure, FailureClass, Output,
+    Action, DashClient, DashClockPolicy, DashConfig, Error, Failure, FailureClass, Output,
     PullLimits, ResourceId, ResponseMeta, UtcResponse,
 };
 
@@ -26,7 +26,14 @@ const MICROS: u64 = 1_000_000;
 const MAX_DONE: usize = 4_096;
 const BASE_URL: &str = "http://example/dash/";
 const MPD_NAME: &str = "stream.mpd";
-const STEPS_US: [u64; 6] = [1_000, 50_000, 500_000, 2 * MICROS, 30 * MICROS, 700 * MICROS];
+const STEPS_US: [u64; 6] = [
+    1_000,
+    50_000,
+    500_000,
+    2 * MICROS,
+    30 * MICROS,
+    700 * MICROS,
+];
 const HTTP_DATES: [&str; 3] = [
     "Mon, 26 Oct 2026 09:18:20 GMT",
     "Thu, 01 Jan 1970 00:00:00 GMT",
@@ -57,7 +64,9 @@ const VIDEO_INIT: &[u8] = include_bytes!("../../fixtures/dash/live-number/init-0
 const AUDIO_INIT: &[u8] = include_bytes!("../../fixtures/dash/live-number/init-1.m4s");
 
 fn name_hash(name: &str) -> usize {
-    name.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(usize::from(b)))
+    name.bytes().fold(0usize, |h, b| {
+        h.wrapping_mul(31).wrapping_add(usize::from(b))
+    })
 }
 
 fn real_body(url: &str, range: Option<(u64, u64)>) -> Option<Vec<u8>> {
@@ -94,7 +103,13 @@ fn arbitrary(rest: &mut &[u8], aux: u8) -> Vec<u8> {
     head.to_vec()
 }
 
-fn answer(real: Option<Vec<u8>>, mode: u8, aux: u8, rest: &mut &[u8], alt: Option<&[u8]>) -> Answer {
+fn answer(
+    real: Option<Vec<u8>>,
+    mode: u8,
+    aux: u8,
+    rest: &mut &[u8],
+    alt: Option<&[u8]>,
+) -> Answer {
     match mode % MODES {
         0..=7 => real.map_or(Answer::Fail(Failure::Status(404)), Answer::Body),
         8 => match real {
@@ -118,9 +133,15 @@ fn answer(real: Option<Vec<u8>>, mode: u8, aux: u8, rest: &mut &[u8], alt: Optio
         13 => Answer::Fail(Failure::Status(425)),
         14 => Answer::Fail(Failure::Status(503)),
         15 => Answer::Fail(Failure::Transport),
-        16 => Answer::Fail(if aux % 2 == 0 { Failure::Timeout } else { Failure::TooLarge }),
+        16 => Answer::Fail(if aux.is_multiple_of(2) {
+            Failure::Timeout
+        } else {
+            Failure::TooLarge
+        }),
         17 => Answer::NotModified,
-        18 => alt.map_or(Answer::Fail(Failure::Status(500)), |b| Answer::Body(b.to_vec())),
+        18 => alt.map_or(Answer::Fail(Failure::Status(500)), |b| {
+            Answer::Body(b.to_vec())
+        }),
         _ => Answer::Fail(Failure::Status(405)),
     }
 }
@@ -199,7 +220,9 @@ fn dash_client_live_crash_regression() {
     let mut now = 0u64;
 
     let give_clock = |client: &mut DashClient, now: u64, skew: i64| {
-        let unix = publish.saturating_add(i64::try_from(now).unwrap_or(0)).saturating_add(skew);
+        let unix = publish
+            .saturating_add(i64::try_from(now).unwrap_or(0))
+            .saturating_add(skew);
         client.set_wall_clock(now, u64::try_from(unix.max(0)).unwrap_or(0));
     };
     match host_mode {
@@ -220,7 +243,10 @@ fn dash_client_live_crash_regression() {
             .iter()
             .filter(|(a, _)| matches!(a, Action::FetchSegment { .. }))
             .count();
-        assert!(segments <= window, "{segments} segment requests, window {window}");
+        assert!(
+            segments <= window,
+            "{segments} segment requests, window {window}"
+        );
         while let Some(o) = client.next_output() {
             assert!(!terminal, "an output after a terminal output");
             match o {
@@ -237,13 +263,13 @@ fn dash_client_live_crash_regression() {
         let wake = client.next_wake();
         let step = STEPS_US[usize::from(jump) % STEPS_US.len()];
         let previous = now;
-        now = if jump % 7 == 0 {
+        now = if jump.is_multiple_of(7) {
             wake.map_or(now, |w| w.max(now))
         } else {
             now.saturating_add(step)
         };
         assert!(now >= previous, "time ran backwards");
-        if mode % MODES == 19 && aux % 4 == 0 {
+        if mode % MODES == 19 && aux.is_multiple_of(4) {
             give_clock(&mut client, now, i64::from(aux) * 1_000_000 - 100_000_000);
         }
         if pending.is_empty() {
@@ -263,10 +289,10 @@ fn dash_client_live_crash_regression() {
                 let reply = answer(Some(mpd.clone()), mode, aux, &mut tail_data, Some(alt));
                 let date = HTTP_DATES[usize::from(aux) % HTTP_DATES.len()];
                 let mut meta = ResponseMeta::new(sent, received);
-                if aux % 3 == 0 {
+                if aux.is_multiple_of(3) {
                     meta = meta.with_date(date).with_etag("\"x\"");
                 }
-                if aux % 11 == 0 {
+                if aux.is_multiple_of(11) {
                     meta = meta.with_final_url("http://example/dash/moved.mpd");
                 }
                 match reply {
@@ -294,8 +320,9 @@ fn dash_client_live_crash_regression() {
                         let body = utc_body(mode, aux, received, publish, &mut tail_data)
                             .unwrap_or_default();
                         let mut resp = UtcResponse::new(sent, received, &body);
-                        if aux % 2 == 0 {
-                            resp = resp.with_date(HTTP_DATES[usize::from(aux / 2) % HTTP_DATES.len()]);
+                        if aux.is_multiple_of(2) {
+                            resp =
+                                resp.with_date(HTTP_DATES[usize::from(aux / 2) % HTTP_DATES.len()]);
                         }
                         let _ = client.on_utc_response(received, id, &resp);
                     }
