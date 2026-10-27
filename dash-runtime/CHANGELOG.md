@@ -18,3 +18,7 @@ All notable changes to dash-runtime will be documented in this file.
 - Tests: the `World` simulation (`tests/common/world.rs`, `synth.rs`, `capture.rs`) with live ladder, refresh, Period, failure, capture, long-run, matrix and soak suites; live mutation table; fuzz target `dash_client_live`; example `play_live`.
 - Dependency on `container-probe` (`segment::media_fragment`/`progressive_movie`).
 - Tests: loopback host over `fixtures/dash/**`, demux-oracle equality for every static fixture, period/continuity/tail behaviour, an 11-fault failure matrix, 48-mutant table; example `play_static`; fuzz target `dash_client_static`.
+
+### Fixed
+- An MPD in which two Periods share a `@id` is rejected as invalid (ISO/IEC 23009-1 5.3.2.2: the identifier is unique in the Media Presentation). Found by the `broadcast-client` fault matrix: a refresh that duplicated the newest Period made the client play that Period's segments again and again. A refresh carrying one is handled like any unparsable refresh (the MPD already held stays in force); a first MPD carrying one is retried.
+- A live segment answered `425` after its availability window closed is expired (`FailureClass::Expired`, the lane skips ahead) instead of being retried at the early-request cadence forever, when the clock is the one the origin announced through `UTCTiming`. A host or `Date` clock keeps the old behaviour, because a `425` is then the evidence that the clock is ahead (a host clock a minute fast still waits and catches up).

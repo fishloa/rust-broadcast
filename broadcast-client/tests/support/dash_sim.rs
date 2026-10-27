@@ -216,6 +216,7 @@ pub struct DashSim {
     wakes: BTreeSet<u64>,
     pub log: Vec<Logged>,
     pub events: Vec<Event>,
+    pub event_times: Vec<u64>,
     pub closes: Vec<u32>,
     pub close_log: Vec<(u32, u64)>,
     pub rtt_us: u64,
@@ -243,6 +244,7 @@ impl DashSim {
             wakes: BTreeSet::new(),
             log: Vec::new(),
             events: Vec::new(),
+            event_times: Vec::new(),
             closes: Vec::new(),
             close_log: Vec::new(),
             rtt_us: 40 * MS,
@@ -274,6 +276,7 @@ impl DashSim {
     fn drain_events(&mut self) {
         while let Some(e) = self.session.next_event() {
             self.events.push(e);
+            self.event_times.push(self.world.elapsed_us);
         }
     }
 

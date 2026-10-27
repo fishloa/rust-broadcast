@@ -79,6 +79,34 @@ fn a_425_is_never_counted_and_retried_at_250ms_doubling_to_one_second() {
 }
 
 #[test]
+fn a_segment_that_stays_425_past_its_window_is_expired_not_retried_forever() {
+    let (mut sim, geo) = sim_with(with_utc(Addressing::Number), START, DashConfig::default());
+    sim.fault = Some(segment_fault("V", 24, 24, 425));
+    sim.run_for(90 * MICROS as u64);
+    no_fatal(&sim);
+    let until = geo
+        .avail_until_us(24)
+        .expect("a bounded availability window");
+    let late: Vec<_> = sim
+        .log
+        .iter()
+        .filter(|l| l.kind == Kind::Segment && l.url.ends_with("/V/25.m4s"))
+        .filter(|l| l.send_utc_us > until + 2 * MICROS)
+        .collect();
+    assert!(
+        late.is_empty(),
+        "{} requests after the window closed",
+        late.len()
+    );
+    assert!(class_count(&sim, |c| matches!(c, FailureClass::Expired)) >= 1);
+    let after = segment_requests(&sim, geo)
+        .iter()
+        .filter(|r| r.rep == "V" && r.idx > 24)
+        .count();
+    assert!(after > 0, "the lane carried on past the refused segment");
+}
+
+#[test]
 fn a_404_inside_the_grace_window_is_early_and_after_it_is_missing() {
     let mut dash = DashConfig::default();
     dash.early_grace_us = 1_000_000;

@@ -251,6 +251,60 @@ def seed_dash_client_live(check_only: bool) -> int:
     return len(blobs)
 
 
+# `dash_session`: 8-byte header (b0: 0 = the fuzz bytes are the MPD, 1..=10 = a compiled-in MPD:
+# four live, two livesim2 pairs, then the static ffmpeg, multi-Period, SegmentList and sidx
+# presentations; b1/b2: length of an arbitrary MPD; b3: window row in bits 0-1, failure cap row in
+# bits 2-3, bit 4 PreferHost, bit 5 pins the origin, bit 6 applies availabilityTimeOffset; b4:
+# resync row, early-grace row, refresh-floor row; b5: host clock mode; b6: timeout rows and the
+# manifest-size row; b7 bit 0: credentials) then 4-byte steering chunks (mode, aux, jump, pick).
+# Modes 0..=7 answer with the real file, 8 truncates, 9 flips a byte, 10 sends arbitrary bytes,
+# 11..=14 are 404/410/425/503, 15 a reset, 16 a reset mid-body, 17 a 304, 18 swaps the MPD, 19 a
+# redirect, 20 a 405; aux bits 2-3 pick the delivery chunk size; jump 0 advances to the session's
+# own next wake; pick 0..=2 are host calls (variant, audio, reconnect).
+DASH_SESSION_MPDS = tuple(range(1, 11))
+DASH_SESSION_STEPS = 96
+DASH_SESSION_KNOBS = 0b0000_0011
+DASH_SESSION_TIMEOUTS = 0x1A
+
+
+def dash_session_scenarios() -> dict[str, bytes]:
+    out: dict[str, bytes] = {}
+    for sel in DASH_SESSION_MPDS:
+        for host in (0, 1, 2):
+            header = bytes([sel, 0, 0, DASH_SESSION_KNOBS, 0, host, DASH_SESSION_TIMEOUTS, 0])
+            clean = b"".join(
+                bytes([0, (n * 4) % 252, 7 if n % 2 else 1, 255 if n % 11 else 0])
+                for n in range(DASH_SESSION_STEPS)
+            )
+            out[f"mpd{sel}_host{host}_clean"] = header + clean
+            damaged = b"".join(
+                bytes([n % 21, n * 5 % 256, n % 7, n % 16]) for n in range(DASH_SESSION_STEPS)
+            )
+            out[f"mpd{sel}_host{host}_damaged"] = header + damaged
+            refresh = b"".join(
+                bytes([18 if n % 4 == 1 else (19 if n % 9 == 4 else 0), n % 6, 7, n % 16])
+                for n in range(DASH_SESSION_STEPS)
+            )
+            out[f"mpd{sel}_host{host}_refresh"] = header + refresh
+            early = b"".join(
+                bytes([13 if n % 3 == 0 else 0, n % 5, 1 if n % 2 else 7, 255])
+                for n in range(DASH_SESSION_STEPS)
+            )
+            out[f"mpd{sel}_host{host}_early"] = header + early
+    return out
+
+
+def seed_dash_session(check_only: bool) -> int:
+    if check_only:
+        return 0
+    out = REPO / "fuzz" / "corpus" / "dash_session"
+    out.mkdir(parents=True, exist_ok=True)
+    blobs = dash_session_scenarios()
+    for name, blob in blobs.items():
+        (out / f"scenario_{name}").write_bytes(blob)
+    return len(blobs)
+
+
 def seed(target: str, sources: tuple[str, ...], check_only: bool) -> tuple[int, list[str]]:
     out = REPO / "fuzz" / "corpus" / target
     if not check_only:
@@ -297,6 +351,9 @@ def main() -> int:
     dash_live = seed_dash_client_live(args.check)
     if not args.check:
         print(f"dash_client_live: {dash_live} scripted scenario seeds")
+    dash_session = seed_dash_session(args.check)
+    if not args.check:
+        print(f"dash_session: {dash_session} scripted scenario seeds")
     for target, patterns in WHOLE_FILE_GLOBS.items():
         count = seed_whole(target, patterns, args.check)
         if not args.check:

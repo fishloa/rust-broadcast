@@ -152,6 +152,11 @@ Both are a capture of ffmpeg's live output mid-run, with `availabilityStartTime`
 The gpac oracle line for these runs with `shift_utc` computed so the player's clock sits 3 s before `publishTime` (the files
 are old; without the shift gpac looks for segments that no longer exist).
 
+### `fuzz/`
+
+`dash_client_live-crash.bin`: the 118-byte libFuzzer crash input for the `dash_client_live` target found in CI on
+2026-10-26. Produced by the fuzz target itself; no third-party content. Licence: MIT OR Apache-2.0 (this repository).
+
 ## Re-verifying
 
 `python3 tools/check-dash-fixtures.py` checks `SHA256SUMS`, XML well-formedness of every `.mpd`/`.mpp`/`.xml`, and that every

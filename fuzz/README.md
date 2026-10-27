@@ -26,6 +26,7 @@ rustup install nightly      # libFuzzer needs nightly rustc
 | `roundtrip`             | parse → serialize → re-parse: asserts serialized bytes are idempotent |
 | `dash_client_live`      | `dash_runtime::client::DashClient` on a dynamic MPD: fixture, damaged or arbitrary MPDs, refreshes swapping in other fixtures, `UTCTiming` answers, host clock calls, time jumps and steered real/damaged/failing segment answers; asserts the request window, monotonic time, no output after a terminal event, bounded bookkeeping |
 | `dash_client_static`    | `dash_runtime::client::DashClient`: arbitrary or fixture MPD plus steered, damaged and failing answers completed in arbitrary order; asserts the request window, no output after a terminal event, bounded requests |
+| `dash_session`          | `broadcast_client::Session` over a DASH URL end to end: fixture, damaged or arbitrary MPDs (static, dynamic, multi-Period, SegmentList, sidx), refreshes swapping in other fixtures, `UTCTiming` answers, host clock calls with skew, real, damaged and failing answers delivered in 1-byte to whole-body chunks in arbitrary order, redirects, `Retry-After` values, reconnects and variant switches; asserts unique live connection ids, no credentials off the origin, wake times in the future, no sample after a fatal error or the end of the stream, bounded requests, silence after `close()` |
 
 ## Running
 

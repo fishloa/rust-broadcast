@@ -443,6 +443,7 @@ impl DashClient {
         }
         self.phase = Phase::Fatal;
         self.queue.clear();
+        self.live = None;
         self.outputs.push_back(Output::Fatal(kind));
     }
 
@@ -1485,6 +1486,7 @@ impl DashClient {
                 if self.any_started {
                     self.outputs.push_back(Output::EndOfStream);
                     self.phase = Phase::Ended;
+                    self.live = None;
                 } else {
                     self.go_fatal(FatalKind::MpdInvalid {
                         reason: "no_playable_representation",

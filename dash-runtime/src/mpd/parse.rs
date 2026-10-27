@@ -1,5 +1,6 @@
 //! MPD element tree to typed model (ISO/IEC 23009-1 clause 5.3, Annex B).
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use transmux::parse_iso8601_duration;
@@ -521,6 +522,15 @@ impl Mpd {
             check_count(periods.len() + 1, limits.max_periods, Limit::Periods)?;
             if let Some(period) = period(p, &mut ctx)? {
                 periods.push(period);
+            }
+        }
+        let mut period_ids = BTreeSet::new();
+        for id in periods.iter().filter_map(|p| p.id.as_deref()) {
+            if !period_ids.insert(id) {
+                return Err(invalid(
+                    "Period@id",
+                    format!("`{id}` names more than one Period"),
+                ));
             }
         }
         let mut utc_timings = Vec::new();

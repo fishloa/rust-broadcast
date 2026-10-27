@@ -621,10 +621,10 @@ A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 dem
 
 #### broadcast-client
 
-Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`), no I/O, std. The DASH clock and configuration surface (`DashConfig`, `Event::ClockSynced`) is in place; the DASH source itself is a later step.
+Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime), DASH (dash-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`) for live DASH, no I/O, std.
 
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
-- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS and RTSP sources.
+- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH and RTSP sources.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtsp-runtime`](#rtsp-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
 - **Used by (workspace):** none

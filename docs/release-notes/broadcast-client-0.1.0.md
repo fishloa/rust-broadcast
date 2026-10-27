@@ -5,7 +5,7 @@ status: DRAFT
 
 _Released 2026-10-24._
 
-Initial release. `broadcast-client` is a generic **sans-IO client session for live and on-demand media**. You give it a URL; it tells you which HTTP requests to make or which TCP connection to open, you feed back what arrived, and it hands you demuxed, join-annotated samples plus every decision a player needs (when to start, pause and resume, when credentials are needed, what was dropped and why). It owns auth, redirects, cookies, retry/backoff, stall handling, demuxing and buffering policy for three sources behind one API: TS-over-HTTP (`tshttp-runtime`), HLS (`hls-runtime`) and RTSP (`rtsp-runtime`). It performs no I/O, reads no clock, spawns no thread. Time is a caller-supplied monotonic `now_us`. The requirements come from the zenith-tv player, which is the first consumer; the policy is implementation-defined (no standard specifies it) and is documented in `docs/broadcast-client/DESIGN.md`.
+Initial release. `broadcast-client` is a generic **sans-IO client session for live and on-demand media**. You give it a URL; it tells you which HTTP requests to make or which TCP connection to open, you feed back what arrived, and it hands you demuxed, join-annotated samples plus every decision a player needs (when to start, pause and resume, when credentials are needed, what was dropped and why). It owns auth, redirects, cookies, retry/backoff, stall handling, demuxing and buffering policy for four sources behind one API: TS-over-HTTP (`tshttp-runtime`), HLS (`hls-runtime`), DASH (`dash-runtime`) and RTSP (`rtsp-runtime`). It performs no I/O, reads no clock, spawns no thread. Time is a caller-supplied monotonic `now_us`. The requirements come from the zenith-tv player, which is the first consumer; the policy is implementation-defined (no standard specifies it) and is documented in `docs/broadcast-client/DESIGN.md`.
 
 ## Quick start
 
@@ -23,12 +23,13 @@ This is the README snippet (it is a doctest, run by `cargo test --doc -p broadca
 
 ## Sources
 
-`Config::kind` selects the source. `SourceKind::Auto` picks RTSP for `rtsp://`/`rtsps://`, HLS for a `.m3u8`/`.m3u` URL path (ASCII case-insensitive) and TS-over-HTTP otherwise.
+`Config::kind` selects the source. `SourceKind::Auto` picks RTSP for `rtsp://`/`rtsps://`, HLS for a `.m3u8`/`.m3u` URL path, DASH for a `.mpd` URL path (all ASCII case-insensitive) and TS-over-HTTP otherwise.
 
 | Source | Backed by | What it does |
 |---|---|---|
 | TS-over-HTTP | `tshttp-runtime` | Live or finite (`Content-Length`) MPEG-TS over HTTP; reconnect with 2/4/8 s then 10 s backoff, start and stall timers, 404/410 reporting, one announced track set per connection |
 | HLS | `hls-runtime`, `broadcast-hls` | Media and master playlists, variant choice, separate audio renditions, TS and fMP4 segments, VOD and live (blocking reload), byte ranges, `AES-128` decryption |
+| DASH | `dash-runtime` | Static (VOD) and dynamic (live) MPDs: `SegmentTemplate`, `SegmentTimeline`, `SegmentList`, `SegmentBase` + `sidx`, multiple Periods, fMP4/CMAF segments, video and audio switching, a clock ladder for live (`UTCTiming`, `Session::set_wall_clock`, the response `Date`), conditional MPD refresh, early/expired/missing segment handling |
 | RTSP | `rtsp-runtime` | SAT>IP tuners and IP cameras: DESCRIBE, SETUP per media, PLAY, RTP/RTCP interleaved over the TCP connection, H.264 + AAC |
 
 ## Feature table
@@ -70,19 +71,20 @@ This is the README snippet (it is a doctest, run by `cargo test --doc -p broadca
 ## Validation
 
 - Public tests (run everywhere): the in-tree suites for the three sources, auth, redirects, cookies, HLS keys, renditions, playout, timeline jumps, the start gate and chunk invariance, plus the lexical no-hand-roll guard, the label-coverage drift guard and the `#[non_exhaustive]` coverage guard.
+- DASH: a fault matrix of 45 fault kinds (transport and status faults, `UTCTiming`, MPD refresh, Period churn, `sidx`, `425`/`Retry-After`, container and host-clock faults) over six request classes and eight presentation shapes, transient and permanent, each cell asserting the fault was applied, with a guard that fails when a fault or request class has no row; the fuzz target `dash_session`; `tests/no_clock_guard.rs`; and `tests/e2e_livesim2.rs`, 30 s of live DASH from DASH-IF livesim2 (pinned v1.15.2) over real HTTP in six shapes (it skips loudly without livesim2 and fails under `REQUIRE_LIVESIM2=1`, which the `dash-e2e` CI job sets). The matrix found two defects in `dash-runtime`, both fixed before release: a Period listed twice made the client replay its segments, and a segment that stayed `425` past its window was retried for the rest of the session.
 - Real captures held in the private fixtures repository (CI checks them out with a read-only deploy key; a missing private fixture fails there): the start-gate and hold tests replay real head-end TS captures at real time.
 
 ## Known limits
 
 - **RTSP carries H.264 and AAC only.** H.265 over RTP is not supported (`transmux` has no RFC 7798 depayloader); an SDP whose only media is H.265 fails with one fatal `UnsupportedCodec`. UDP RTP is not supported.
-- **DASH, SRT, Smooth Streaming and RTMP pull sources are not included.**
+- **SRT, Smooth Streaming and RTMP pull sources are not included.** DASH plays fMP4/CMAF only, at segment granularity (a low-latency MPD plays whole segments and reports `UnsupportedFeature`), with no seeking and no automatic bitrate adaptation; encrypted, WebM, MPEG-2 TS and subtitle sets are dropped with a typed error.
 - **Late audio on live TS.** `Start` waits for a PMT-declared audio or video stream that has no track yet, but only for `start_pending_track_wait_us` (1.5 s) after the first media. Audio that resolves later than that, or a start lead shorter than the audio skew, still produces `Start` then `Pause`; raise the wait or the start lead if your muxes skew audio that far.
-- **`Retry-After` in HTTP-date form is ignored** (the session has no wall clock); the seconds form is honoured, clamped to 60 s.
+- **`Retry-After` in HTTP-date form** is counted from the `set_wall_clock` anchor, else from the response's `Date`, and ignored when neither exists; the seconds form is honoured. Both are clamped to 60 s.
 - HLS subtitle renditions are listed but not fetched; an HLS audio rendition is a separate client, aligned with video by the player on PTS.
 
 ## Dependencies
 
-`broadcast-common` 10.0, `broadcast-auth` 0.5, `transmux` 0.28, `dvb-si` 12.0, `mpeg-ts` 0.6, `buffering-runtime` 0.1, `tshttp-runtime` 0.1, `hls-runtime` 0.10, `broadcast-hls` 0.5, `rtsp-runtime` 0.8 (resolved to the versions of this release wave), plus `sdp-types`, `url`, `percent-encoding`, `http`, `cookie`, `thiserror` and optional `serde`. The crate is `std`; MSRV 1.95.0.
+`broadcast-common` 10.0, `broadcast-auth` 0.5, `transmux` 0.28, `dvb-si` 12.0, `mpeg-ts` 0.6, `buffering-runtime` 0.1, `tshttp-runtime` 0.1, `hls-runtime` 0.10, `dash-runtime` 0.1, `broadcast-hls` 0.5, `rtsp-runtime` 0.8 (resolved to the versions of this release wave), plus `sdp-types`, `url`, `percent-encoding`, `http`, `cookie`, `thiserror` and optional `serde`. The crate is `std`; MSRV 1.95.0.
 
 ## Migration
 

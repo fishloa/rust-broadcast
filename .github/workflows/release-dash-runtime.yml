@@ -1,0 +1,109 @@
+name: Release dash-runtime
+
+# Publishes the dash-runtime crate to crates.io on a `dash-runtime-v*` tag.
+# dash-runtime is versioned and released INDEPENDENTLY (standalone sans-IO
+# crate with its own cadence). CI is the only source of published artifacts —
+# never `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN
+# secret.
+#
+# DEPENDENCY ORDER: dash-runtime depends on broadcast-common and transmux
+# (both already live) and on container-probe's `segment` module, which is
+# unreleased at the time of writing: the container-probe minor that carries it
+# must be live, and dash-runtime's manifest must name it, before this tag is
+# pushed. Downstream, broadcast-client depends on dash-runtime — this must land
+# before that. `docs/crates-index.toml` keeps `crates_io = false` for
+# dash-runtime until the publish succeeds.
+
+on:
+  push:
+    tags: ["dash-runtime-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish dash-runtime to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    # `contents: write` is needed to create the GitHub Release below, and is
+    # the only elevated permission this job holds — `cargo publish`
+    # authenticates with CARGO_REGISTRY_TOKEN, not the GitHub token.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Private fixtures (real-capture tests)
+        uses: ./.github/actions/private-fixtures
+        with:
+          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — dash-runtime tests (all features)
+        run: cargo test -p dash-runtime --all-features --locked
+
+      - name: Gate — dash-runtime clippy
+        run: cargo clippy -p dash-runtime --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — dash-runtime default-feature lib build
+        run: cargo build -p dash-runtime --locked
+
+      - name: Gate — dash-runtime examples build
+        run: cargo build -p dash-runtime --all-features --examples --locked
+
+      - name: Gate — tag matches dash-runtime version
+        run: |
+          TAG="${GITHUB_REF_NAME#dash-runtime-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['dash-runtime'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::dash-runtime is $V but tag is $TAG"; exit 1
+          fi
+
+      # docs/RELEASE-DOCS.md requires a release note per tag, and this workflow
+      # uses it as the GitHub Release body — so a missing one is caught HERE,
+      # before anything reaches crates.io, rather than after the version is
+      # already immutable.
+      - name: Gate — release note exists for this version
+        run: |
+          NOTE="docs/release-notes/dash-runtime-${GITHUB_REF_NAME#dash-runtime-v}.md"
+          if [ ! -s "$NOTE" ]; then
+            echo "::error::$NOTE is missing or empty — see docs/RELEASE-DOCS.md"
+            exit 1
+          fi
+          echo "::notice::release note $NOTE present"
+
+      - name: Publish dash-runtime
+        run: |
+          if out=$(cargo publish -p dash-runtime --locked 2>&1); then
+            echo "$out"; echo "::notice::published dash-runtime"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::dash-runtime already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish dash-runtime"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # docs/RELEASE-DOCS.md section 3: a GitHub Release per tag, body = the
+      # release note. This was a manual step for the first 191 releases and was
+      # missed for 102 tags, so it is automated. Idempotent: an existing
+      # release is left untouched, so re-running after a partial failure is
+      # safe.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${GITHUB_REF_NAME#dash-runtime-v}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::notice::GitHub Release $GITHUB_REF_NAME already exists — leaving it alone"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "dash-runtime $V" \
+              --notes-file "docs/release-notes/dash-runtime-$V.md"
+            echo "::notice::created GitHub Release $GITHUB_REF_NAME"
+          fi
