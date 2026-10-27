@@ -11,7 +11,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use broadcast_hls::{AttrValue, parse_attribute_list, render_attribute_list};
+use broadcast_hls::{AttrValue, parse_attribute_list_strict, render_attribute_list};
 
 /// Which SCTE-35 attribute carries the splice on a DATERANGE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +161,7 @@ impl DateRange {
         };
         // The shared workspace tokenizer (issue #1140 T12): quoted values
         // already have their surrounding `"` stripped.
-        let (map, quoted) = parse_attribute_list(body);
+        let (map, quoted) = parse_attribute_list_strict(body)?;
         if let Some(v) = map.get("ID") {
             dr.id = v.clone();
         } else {
@@ -387,6 +387,24 @@ mod tests {
         assert!(matches!(
             DateRange::parse_tag_line(line).unwrap_err(),
             Error::InvalidDuration { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_tag_line_rejects_malformed_attribute_list_unterminated_quote() {
+        let line = "#EXT-X-DATERANGE:ID=\"x";
+        assert!(matches!(
+            DateRange::parse_tag_line(line).unwrap_err(),
+            Error::HlsAttrValue(broadcast_hls::Error::UnterminatedQuotedString { .. })
+        ));
+    }
+
+    #[test]
+    fn parse_tag_line_rejects_malformed_attribute_list_duplicate_key() {
+        let line = "#EXT-X-DATERANGE:ID=\"x\",ID=\"y\",START-DATE=\"2020-01-01T00:00:00Z\"";
+        assert!(matches!(
+            DateRange::parse_tag_line(line).unwrap_err(),
+            Error::HlsAttrValue(broadcast_hls::Error::DuplicateAttribute { name }) if name == "ID"
         ));
     }
 }
