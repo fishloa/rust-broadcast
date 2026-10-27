@@ -36,10 +36,10 @@ def parse_args():
 
 def is_furniture(line):
     s = line.strip()
-    if not s:
-        return False
     if "\f" in line and s.replace("\f", "").strip() == "":
         return True
+    if not s:
+        return False
     if PAGE_RE.search(s):
         return True
     if RFC_HEADER_RE.match(s):
@@ -82,7 +82,7 @@ def main():
         print(f"spec_extract: source not found: {args.source}", file=sys.stderr)
         return 1
     text = src_path.read_text(encoding="utf-8")
-    lines = text.splitlines()
+    lines = text.split("\n")
     headings = find_headings(lines)
     by_number = {}
     for idx, num, title, depth in headings:

@@ -3,7 +3,7 @@ RFC number: 7798
 Licence: IETF Trust, BCP 78 / RFC 5378 allow reproduction with attribution.
 Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.1 4.2 4.3 4.4.1 4.4.2 4.4.3 4.4.4 4.5 5 6 7.1 --output docs/specs/hevc-rtp/rfc7798-extract.md
 
-## 4.1. RTP Header Usage (specs/rfc7798_rtp_hevc.txt:1108-1232)
+## 4.1. RTP Header Usage (specs/rfc7798_rtp_hevc.txt:1089-1211)
 
 ```text
 4.1.  RTP Header Usage
@@ -30,8 +30,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
                Figure 2: RTP Header According to [RFC3550]
-
-
 
 
 
@@ -96,8 +94,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
    Timestamp: 32 bits
 
       The RTP timestamp is set to the sampling timestamp of the content.
@@ -128,7 +124,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
       the same bitstream.
 ```
 
-## 4.2. Payload Header Usage (specs/rfc7798_rtp_hevc.txt:1233-1260)
+## 4.2. Payload Header Usage (specs/rfc7798_rtp_hevc.txt:1212-1238)
 
 ```text
 4.2.  Payload Header Usage
@@ -146,7 +142,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    losses than less-important NAL units.
 ```
 
-## 4.3. Transmission Modes (specs/rfc7798_rtp_hevc.txt:1261-1317)
+## 4.3. Transmission Modes (specs/rfc7798_rtp_hevc.txt:1239-1294)
 
 ```text
 4.3.  Transmission Modes
@@ -198,7 +194,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
       not imply that multicast must be supported by receivers.
 ```
 
-## 4.4.1. Single NAL Unit Packets (specs/rfc7798_rtp_hevc.txt:1342-1387)
+## 4.4.1. Single NAL Unit Packets (specs/rfc7798_rtp_hevc.txt:1319-1363)
 
 ```text
 4.4.1.  Single NAL Unit Packets
@@ -230,8 +226,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
    The payload header SHOULD be an exact copy of the NAL unit header of
    the contained NAL unit.  However, the Type (i.e., nal_unit_type)
    field MAY be changed, e.g., when it is desirable to handle a CRA
@@ -246,7 +240,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    streams), the DONL field MUST NOT be present.
 ```
 
-## 4.4.2. Aggregation Packets (APs) (specs/rfc7798_rtp_hevc.txt:1388-1631)
+## 4.4.2. Aggregation Packets (APs) (specs/rfc7798_rtp_hevc.txt:1364-1603)
 
 ```text
 4.4.2.  Aggregation Packets (APs)
@@ -282,8 +276,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    to 48.  The value of LayerId MUST be equal to the lowest value of
    LayerId of all the aggregated NAL units.  The value of TID MUST be
    the lowest value of TID of all the aggregated NAL units.
-
-
 
 
 
@@ -344,8 +336,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
    An aggregation unit that is not the first aggregation unit in an AP
    consists of a conditional 8-bit DOND field followed by a 16-bit
    unsigned size information (in network byte order) that indicates the
@@ -386,8 +376,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    Figure 7 presents an example of an AP that contains two aggregation
    units, labeled as 1 and 2 in the figure, without the DONL and DOND
    fields being present.
-
-
 
 
 
@@ -454,8 +442,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
    Figure 8 presents an example of an AP that contains two aggregation
    units, labeled as 1 and 2 in the figure, with the DONL and DOND
    fields being present.
@@ -486,7 +472,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    with the DONL and DOND Fields
 ```
 
-## 4.4.3. Fragmentation Units (specs/rfc7798_rtp_hevc.txt:1632-1773)
+## 4.4.3. Fragmentation Units (specs/rfc7798_rtp_hevc.txt:1604-1742)
 
 ```text
 4.4.3.  Fragmentation Units
@@ -506,8 +492,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
    The RTP timestamp of an RTP packet carrying an FU is set to the NALU-
    time of the fragmented NAL unit.
-
-
 
 
 
@@ -568,8 +552,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
    E: 1 bit
       When set to 1, the E bit indicates the end of a fragmented NAL
       unit, i.e., the last byte of the payload is also the last byte of
@@ -618,7 +600,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    syntax violation.
 ```
 
-## 4.4.4. PACI Packets (specs/rfc7798_rtp_hevc.txt:1774-2007)
+## 4.4.4. PACI Packets (specs/rfc7798_rtp_hevc.txt:1743-1972)
 
 ```text
 4.4.4.  PACI Packets
@@ -663,8 +645,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
                Figure 11: The Structure of a PACI
-
-
 
 
 
@@ -729,8 +709,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
          Informative note: The first two octets of the NAL unit or NAL-
          unit-like structure carried in the PACI payload are not
          included in the PACI payload.  Rather, the respective values
@@ -779,8 +757,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    independent from the need for a payload header extension.  Therefore,
    a sender may place an AP into a PACI, and a receiver must be able to
    handle such a PACI.
-
-
 
 
 
@@ -839,8 +815,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
       3) An implementation that supports the n-th Fn bit for any value
          of n must understand the syntax (though not necessarily the
          semantics) of the fields Fk (with k < n), so as to be able to
@@ -848,7 +822,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
          over them.
 ```
 
-## 4.5. Temporal Scalability Control Information (specs/rfc7798_rtp_hevc.txt:2008-2095)
+## 4.5. Temporal Scalability Control Information (specs/rfc7798_rtp_hevc.txt:1973-2059)
 
 ```text
 4.5.  Temporal Scalability Control Information
@@ -898,8 +872,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
    S (1 bit)
       The S bit MUST be set to 1 if any of the following conditions is
       true and MUST be set to 0 otherwise:
@@ -938,7 +910,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    additional fields, when present, than specified above in the PHES.
 ```
 
-## 5. Packetization Rules (specs/rfc7798_rtp_hevc.txt:2195-2232)
+## 5. Packetization Rules (specs/rfc7798_rtp_hevc.txt:2157-2193)
 
 ```text
 5.  Packetization Rules
@@ -972,13 +944,11 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
    o  For carrying exactly one NAL unit in an RTP packet, a single NAL
       unit packet MUST be used.
 ```
 
-## 6. De-packetization Process (specs/rfc7798_rtp_hevc.txt:2233-2363)
+## 6. De-packetization Process (specs/rfc7798_rtp_hevc.txt:2194-2322)
 
 ```text
 6.  De-packetization Process
@@ -1025,8 +995,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    packetization.  Moreover, receivers should take transmission delay
    jitter into account in the buffering operation, e.g., by additional
    initial buffering before starting of decoding and playback.
-
-
 
 
 
@@ -1086,8 +1054,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
    Initial buffering lasts until condition A (the difference between the
    greatest and smallest AbsDon values of the NAL units in the de-
    packetization buffer is greater than or equal to the value of sprop-
@@ -1109,7 +1075,7 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    AbsDon values.
 ```
 
-## 7.1. Media Type Registration (specs/rfc7798_rtp_hevc.txt:2375-3626)
+## 7.1. Media Type Registration (specs/rfc7798_rtp_hevc.txt:2334-3563)
 
 ```text
 7.1.  Media Type Registration
@@ -1128,8 +1094,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
       profile-space, tier-flag, profile-id, profile-compatibility-
       indicator, interop-constraints, and level-id:
-
-
 
 
 
@@ -1181,8 +1145,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
          profile, tier, level, and constraints indicated by ptlB can
          decode any bitstream that conforms to the profile, tier, level,
          and constraints indicated by ptlA.
-
-
 
 
 
@@ -1244,8 +1206,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
             If the RTP stream is the highest RTP stream, the following
             applies:
 
@@ -1293,8 +1253,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
             o tier-flag = general_tier_flag
             o level-id = general_level_idc
-
-
 
 
 
@@ -1354,8 +1312,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
             o frame_only_constraint_flag =
                  general_frame_only_constraint_flag
 
@@ -1401,8 +1357,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
             bitstream.  These additional profiles are defined by
             profile-space, each set bit of profile-compatibility-
             indicator, and interop-constraints.
-
-
 
 
 
@@ -1464,8 +1418,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
       max-recv-level-id:
 
          This parameter MAY be used to indicate the highest level a
@@ -1511,8 +1463,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
          The value of the parameter is a comma-separated (',') list of
          base64 [RFC4648] representations of the video parameter set NAL
          units as specified in Section 7.3.2.1 of [HEVC].
-
-
 
 
 
@@ -1574,8 +1524,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
             Informative note: Intentionally, no list of applicable or
             inapplicable SEI messages is specified here.  Conveying
             certain SEI messages in sprop-sei may be sensible in some
@@ -1624,8 +1572,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
          max-cpb, max-dpb, max-br, max-tr, max-tc) is present, the
          receiver MUST support all signaled capabilities simultaneously.
          For example, if both max-lsr and max-br are present, the
-
-
 
 
 
@@ -1684,8 +1630,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
          MaxLumaPS value in Table A-1 of [HEVC] for the highest level is
          replaced with the value of max-lps.  Senders MAY use this
          knowledge to send larger pictures at a proportionally lower
@@ -1734,8 +1678,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
             packetization and de-jitter buffers.  The coded picture
             buffer need not be implemented in decoders as specified in
             Annex C of [HEVC], but rather standard-compliant decoders
-
-
 
 
 
@@ -1794,8 +1736,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
             decoded picture buffer stores reconstructed samples.  There
             is no relationship between the size of the decoded picture
             buffer and the buffers used in RTP, especially de-
@@ -1841,8 +1781,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
          When not present, the value of max-br is inferred to be equal
          to the value of MaxBR given in Table A-2 of [HEVC] for the
          highest level.
-
-
 
 
 
@@ -1904,8 +1842,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
          Senders MAY use this knowledge to send pictures utilizing a
          larger number of tile columns than the value allowed by the
          highest level.
@@ -1948,8 +1884,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
          picture rate that is implied by the highest level and, when
          present, one or more of the parameters max-lsr, max-lps, and
          max-br.
-
-
 
 
 
@@ -2014,8 +1948,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
       sprop-depack-buf-bytes:
 
          This parameter signals the required size of the de-
@@ -2056,8 +1988,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
             Informative note: depack-buf-cap indicates the maximum
             possible size of the de-packetization buffer of the receiver
             only, without allowing for network jitter.
-
-
 
 
 
@@ -2124,8 +2054,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
          dec-parallel-cap = "dec-parallel-cap={" cap-point *(","
                             cap-point) "}"
 
@@ -2174,8 +2102,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
          point is valid only for H.265 bitstreams with
          min_spatial_segmentation_idc equal to or greater than spatial-
          seg-idc.
-
-
 
 
 
@@ -2234,8 +2160,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
 
 
 
-
-
          For example, the following parameters express the general
          decoding capability of 720p30 (Level 3.1) plus an additional
          decoding capability of 1080p30 (Level 4) given that the
@@ -2281,8 +2205,6 @@ Command: tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt --sections 4.
    Encoding considerations:
 
       This type is only defined for transfer via RTP (RFC 3550).
-
-
 
 
 

@@ -3,7 +3,7 @@ RFC number: 8216
 Licence: IETF Trust, BCP 78 / RFC 5378 allow reproduction with attribution.
 Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.5 4.3.4.1 4.3.4.2 --output docs/specs/hls/rfc8216-webvtt-extract.md
 
-## 3.5. WebVTT (specs/ietf_rfc8216_hls.txt:437-484)
+## 3.5. WebVTT (specs/ietf_rfc8216_hls.txt:430-476)
 
 ```text
 3.5.  WebVTT
@@ -21,8 +21,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
    time range is outside the Segment period.  A WebVTT Segment MAY
    contain no cues; this indicates that no subtitles are to be displayed
    during that period.
-
-
 
 
 
@@ -53,7 +51,7 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
    cue times have not.
 ```
 
-## 4.3.4.1. EXT-X-MEDIA (specs/ietf_rfc8216_hls.txt:1391-1612)
+## 4.3.4.1. EXT-X-MEDIA (specs/ietf_rfc8216_hls.txt:1367-1584)
 
 ```text
 4.3.4.1.  EXT-X-MEDIA
@@ -88,8 +86,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
       Media Playlist file.  This attribute is OPTIONAL; see
       Section 4.3.4.2.1.  If the TYPE is CLOSED-CAPTIONS, the URI
       attribute MUST NOT be present.
-
-
 
 
 
@@ -148,8 +144,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
 
 
 
-
-
       If the AUTOSELECT attribute is present, its value MUST be YES if
       the value of the DEFAULT attribute is YES.
 
@@ -196,8 +190,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
       "public.accessibility.describes-music-and-sound", and
       "public.easy-to-read" (which indicates that the subtitles have
       been edited for ease of reading).
-
-
 
 
 
@@ -258,8 +250,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
 
 
 
-
-
    Each member in a Group of Renditions MAY have a different sample
    format.  For example, an English Rendition can be encoded with AC-3
    5.1 while a Spanish Rendition is encoded with AAC stereo.  However,
@@ -271,7 +261,7 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
    "ac-3,mp4a.40.2".
 ```
 
-## 4.3.4.2. EXT-X-STREAM-INF (specs/ietf_rfc8216_hls.txt:1613-1843)
+## 4.3.4.2. EXT-X-STREAM-INF (specs/ietf_rfc8216_hls.txt:1585-1811)
 
 ```text
 4.3.4.2.  EXT-X-STREAM-INF
@@ -309,8 +299,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
       Segments in the presentation have been encoded, the BANDWIDTH
       value SHOULD be the BANDWIDTH value of a representative period of
       similar content, encoded using the same settings.
-
-
 
 
 
@@ -372,8 +360,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
 
 
 
-
-
       FRAME-RATE
 
       The value is a decimal-floating-point describing the maximum frame
@@ -421,8 +407,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
       presentation.  See Section 4.3.4.2.1.
 
       The VIDEO attribute is OPTIONAL.
-
-
 
 
 
@@ -477,8 +461,6 @@ Command: tools/spec_extract.py --source specs/ietf_rfc8216_hls.txt --sections 3.
    o  Every alternative Rendition associated with an EXT-X-STREAM-INF
       tag MUST meet the constraints for a Variant Stream described in
       Section 6.2.4.
-
-
 
 
 
