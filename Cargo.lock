@@ -2498,6 +2498,7 @@ dependencies = [
  "broadcast-hls",
  "bytes",
  "container-probe",
+ "dash-runtime",
  "dvb-conformance",
  "dvb-si",
  "flate2",

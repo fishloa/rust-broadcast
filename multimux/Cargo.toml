@@ -48,6 +48,11 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.6", features = ["t
 # 0.5.0 (verified: 0 hits at the hls-runtime-v0.5.0 tag). hls-runtime
 # must publish 0.6.0 before multimux can publish.
 hls-runtime       = { path = "../hls-runtime",   version = "0.9", features = ["std", "tokio"] }
+# DASH-pull policy core (`source::dash_pull`): MPD parsing, segment addressing
+# for every Period and selected AdaptationSet, the UTC clock ladder, live
+# refresh/join/availability and failure classification. `dash_pull` keeps the
+# tokio loop and the media-plane mapping; the core is sans-IO.
+dash-runtime      = { path = "../dash-runtime", version = "0.1" }
 # TS-over-HTTP pull policy core (`source::ts_http`): finite/VOD detection and
 # the post-establishment stall decision; the demuxer stays `ts_program`.
 tshttp-runtime    = { path = "../tshttp-runtime", version = "0.1", default-features = false }

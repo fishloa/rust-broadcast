@@ -100,18 +100,46 @@ pub(crate) async fn read_body_capped(
     cap: usize,
     what: &str,
 ) -> crate::error::Result<Vec<u8>> {
+    read_body_bounded(response, cap)
+        .await
+        .map_err(|e| crate::error::MultimuxError::Connect {
+            reason: match e {
+                BodyError::DeclaredTooLarge(len) => {
+                    format!("{what}: declared body length {len} exceeds the {cap}-byte cap")
+                }
+                BodyError::TooLarge => format!("{what}: body exceeds the {cap}-byte cap"),
+                BodyError::Read(e) => format!("{what} read: {e}"),
+            },
+        })
+}
+
+/// Why [`read_body_bounded`] stopped.
+#[derive(Debug)]
+pub(crate) enum BodyError {
+    /// The declared `Content-Length` is past the cap.
+    DeclaredTooLarge(u64),
+    /// The streamed body reached the cap.
+    TooLarge,
+    /// The transfer failed mid-body.
+    Read(reqwest::Error),
+}
+
+/// [`read_body_capped`] with a typed reason, for a caller that must tell an
+/// oversize body from a broken transfer.
+pub(crate) async fn read_body_bounded(
+    response: reqwest::Response,
+    cap: usize,
+) -> std::result::Result<Vec<u8>, BodyError> {
     use futures_util::StreamExt;
 
     if let Some(len) = response.content_length()
         && len > cap as u64
     {
-        return Err(crate::error::MultimuxError::Connect {
-            reason: format!("{what}: declared body length {len} exceeds the {cap}-byte cap"),
-        });
+        return Err(BodyError::DeclaredTooLarge(len));
     }
     // Pre-size to the declared length (bounded by the cap), so a large body
     // does not grow by repeated doubling whose transient peaks approach
-    // 2× the cap.
+    // 2x the cap.
     let initial = response
         .content_length()
         .and_then(|l| usize::try_from(l).ok())
@@ -120,13 +148,9 @@ pub(crate) async fn read_body_capped(
     let mut stream = response.bytes_stream();
     let mut buf: Vec<u8> = Vec::with_capacity(initial);
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| crate::error::MultimuxError::Connect {
-            reason: format!("{what} read: {e}"),
-        })?;
+        let chunk = chunk.map_err(BodyError::Read)?;
         if buf.len().saturating_add(chunk.len()) > cap {
-            return Err(crate::error::MultimuxError::Connect {
-                reason: format!("{what}: body exceeds the {cap}-byte cap"),
-            });
+            return Err(BodyError::TooLarge);
         }
         buf.extend_from_slice(&chunk);
     }

@@ -155,6 +155,14 @@ pub enum InputSpec {
         /// [`AuthSpec`].
         #[serde(default)]
         auth: Option<AuthSpec>,
+        /// Let the MPD name `BaseURL`, segment and `UTCTiming` URLs on another
+        /// origin (scheme, host, port) than its own. Off by default: a
+        /// server-side pull must not fetch whatever address a remote manifest
+        /// names, so a Representation whose URLs leave the MPD's origin is
+        /// dropped. Turn it on for an MPD served from one host and segments
+        /// from a CDN.
+        #[serde(default)]
+        allow_cross_origin: bool,
     },
     /// Pull a remote Microsoft Smooth Streaming (MS-SSTR) client Manifest
     /// (issue #759) — see [`crate::source::smooth_pull`].
@@ -947,10 +955,15 @@ impl std::fmt::Debug for InputSpec {
                 .field("url", &crate::redact::redact_url(url))
                 .field("auth", auth)
                 .finish(),
-            InputSpec::DashPull { url, auth } => f
+            InputSpec::DashPull {
+                url,
+                auth,
+                allow_cross_origin,
+            } => f
                 .debug_struct("DashPull")
                 .field("url", &crate::redact::redact_url(url))
                 .field("auth", auth)
+                .field("allow_cross_origin", allow_cross_origin)
                 .finish(),
             InputSpec::SmoothPull { url, auth } => f
                 .debug_struct("SmoothPull")
@@ -1058,7 +1071,7 @@ impl InputSpec {
                 validate_http_url(url)?;
                 validate_auth(auth)
             }
-            InputSpec::DashPull { url, auth } => {
+            InputSpec::DashPull { url, auth, .. } => {
                 validate_http_url(url)?;
                 validate_auth(auth)
             }
@@ -3638,6 +3651,36 @@ mod tests {
             other => panic!("expected InputSpec::HlsPull, got {other:?}"),
         }
         cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn dash_pull_refuses_cross_origin_urls_unless_the_route_opts_in() {
+        let route = |extra: &str| {
+            let json = format!(
+                r#"{{ "routes": [ {{ "name": "d", "input": {{ "type": "dash_pull", "url": "https://origin/live/manifest.mpd"{extra} }} }} ] }}"#
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            cfg.validate().unwrap();
+            match &cfg.routes[0].input {
+                InputSpec::DashPull {
+                    allow_cross_origin, ..
+                } => *allow_cross_origin,
+                other => panic!("expected InputSpec::DashPull, got {other:?}"),
+            }
+        };
+        assert!(!route(""), "off unless asked for");
+        assert!(!route(r#", "allow_cross_origin": false"#));
+        assert!(route(r#", "allow_cross_origin": true"#));
+        let debug = format!(
+            "{:?}",
+            InputSpec::DashPull {
+                url: "https://u:p@origin/m.mpd".into(),
+                auth: None,
+                allow_cross_origin: true
+            }
+        );
+        assert!(debug.contains("allow_cross_origin: true"), "{debug}");
+        assert!(!debug.contains(":p@"), "{debug}");
     }
 
     #[test]
