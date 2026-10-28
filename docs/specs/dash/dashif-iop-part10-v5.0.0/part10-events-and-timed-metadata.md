@@ -19,7 +19,7 @@ Related notes elsewhere in the repo (not duplicated here):
 [`mp4-emsg/docs/emsg.md`](../../../../mp4-emsg/docs/README.md#private-spec-transcriptions) (box byte layout),
 [`specs/rules/emsg-rules.md`](../../../../specs/rules/emsg-rules.md) (rules digest),
 [`docs/dashif-ingest/DESIGN.md`](../../../dashif-ingest/DESIGN.md) (ingest-side companion),
-[`transmux/docs/codec/dash-23009-1-2022-ids.md`](../../../../transmux/docs/codec/dash-23009-1-2022-ids.md).
+[`transmux/docs/README.md`](../../../../transmux/README.md).
 
 ## Disagreements with other repo notes and internal oddities
 

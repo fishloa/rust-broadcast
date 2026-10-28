@@ -135,7 +135,7 @@ Depends on `broadcast-common` (traits, CRC-32, `clock33`). Built on top of it:
 
 ## Spec grounding and examples
 
-Syntax and assignment tables are transcribed in [`docs/scte_35.md`](docs/scte_35.md);
+Syntax and assignment tables are transcribed in [`docs/README.md`](docs/README.md);
 every module doc cites the SCTE 35 section, table and tag. Examples
 (`cargo run -p scte35-splice --example <name>`): `parse_splice_insert`,
 `round_trip_and_descriptors`.

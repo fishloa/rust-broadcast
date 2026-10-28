@@ -181,31 +181,31 @@ impl SectionPacketiser {
 
 // ── Default interval constants ────────────────────────────────────────────────
 
-/// dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2 — NIT maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — NIT maximum interval.
 pub const NIT_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2 — BAT maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — BAT maximum interval.
 pub const BAT_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2 — SDT actual maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT actual maximum interval.
 pub const SDT_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
-/// dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2 — SDT other maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT other maximum interval.
 pub const SDT_OTHER_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2 — EIT p/f actual maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — EIT p/f actual maximum interval.
 pub const EIT_PF_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
-/// dvb-si/docs/tr_101_211.md §4.4.1 — EIT p/f other maximum interval (sat/cable;
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1 — EIT p/f other maximum interval (sat/cable;
 /// terrestrial is 20 s per §4.4.2).
 pub const EIT_PF_OTHER_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/tr_101_211.md §4.4.1 — EIT schedule first 8 days maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1 — EIT schedule first 8 days maximum interval.
 pub const EIT_SCHED_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/tr_101_211.md §4.4.1 — EIT schedule beyond 8 days maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1 — EIT schedule beyond 8 days maximum interval.
 pub const EIT_SCHED_EXT_MAX_INTERVAL: Duration = Duration::from_secs(30);
-/// dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2 — TDT maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — TDT maximum interval.
 pub const TDT_MAX_INTERVAL: Duration = Duration::from_secs(30);
-/// dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2 — TOT maximum interval.
+/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — TOT maximum interval.
 pub const TOT_MAX_INTERVAL: Duration = Duration::from_secs(30);
 
-/// dvb-si/docs/ts_101_154_av_coding.md §4.1.7 — PAT maximum interval (shall ≤ 100 ms).
+/// dvb-si/docs/README.md §4.1.7 — PAT maximum interval (shall ≤ 100 ms).
 pub const PAT_MAX_INTERVAL: Duration = Duration::from_millis(100);
-/// dvb-si/docs/ts_101_154_av_coding.md §4.1.7 — PMT maximum interval (shall ≤ 100 ms).
+/// dvb-si/docs/README.md §4.1.7 — PMT maximum interval (shall ≤ 100 ms).
 pub const PMT_MAX_INTERVAL: Duration = Duration::from_millis(100);
 
 /// dvb-si/docs/tables/en_300_468/514-repetition-rates-and-random-access-hand-transcribed.md
@@ -324,42 +324,42 @@ impl SiMux {
 
     /// PAT at [`PAT_MAX_INTERVAL`] on PID 0x0000.
     ///
-    /// Interval cites dvb-si/docs/ts_101_154_av_coding.md §4.1.7.
+    /// Interval cites dvb-si/docs/README.md §4.1.7.
     pub fn upsert_pat(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::PAT, sections, PAT_MAX_INTERVAL);
     }
 
     /// PMT at [`PMT_MAX_INTERVAL`] on the caller-supplied `pid`.
     ///
-    /// Interval cites dvb-si/docs/ts_101_154_av_coding.md §4.1.7.
+    /// Interval cites dvb-si/docs/README.md §4.1.7.
     pub fn upsert_pmt(&mut self, pid: Pid, sections: Vec<u8>) {
         self.upsert(pid, sections, PMT_MAX_INTERVAL);
     }
 
     /// SDT actual at [`SDT_ACTUAL_MAX_INTERVAL`] on PID 0x0011.
     ///
-    /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
+    /// Interval cites dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_sdt_actual(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::SDT_BAT, sections, SDT_ACTUAL_MAX_INTERVAL);
     }
 
     /// NIT at [`NIT_MAX_INTERVAL`] on PID 0x0010.
     ///
-    /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
+    /// Interval cites dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_nit(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::NIT, sections, NIT_MAX_INTERVAL);
     }
 
     /// TDT at [`TDT_MAX_INTERVAL`] on PID 0x0014.
     ///
-    /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
+    /// Interval cites dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_tdt(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::TDT_TOT, sections, TDT_MAX_INTERVAL);
     }
 
     /// TOT at [`TOT_MAX_INTERVAL`] on PID 0x0014.
     ///
-    /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
+    /// Interval cites dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_tot(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::TDT_TOT, sections, TOT_MAX_INTERVAL);
     }

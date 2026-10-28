@@ -24,7 +24,7 @@
 //! typed in [`crate::descriptors::carousel`] (`AnyCarouselDescriptor` /
 //! `parse_carousel_loop`); [`ModuleInfo::user_info`] walks them in that tag
 //! space. See the generated
-//! [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#dsm-cc-data-carousel-etsi-en-301-192-v171-table-48).
+//! [`dvb-si/docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#dsm-cc-data-carousel-etsi-en-301-192-v171-table-48).
 
 pub mod biop;
 pub mod messages;

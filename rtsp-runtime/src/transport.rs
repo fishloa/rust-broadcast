@@ -1,4 +1,4 @@
-//! Typed `Transport` header — RFC 2326 §12.39 (`docs/rfc2326.md`, `docs/transport-header.md`).
+//! Typed `Transport` header — RFC 2326 §12.39 (`rtsp-runtime/docs/rfc2326.md`, `docs/transport-header.md`).
 //!
 //! A full, spec-grounded parser and canonical serializer (owner decision (c): not
 //! `rtsp-types`, whose Transport parser is exact-case and drops parameters). One

@@ -1,6 +1,6 @@
 //! Async `tokio` socket adapter driving the sans-IO ingest server session
 //! over a real `tokio::net::TcpStream` — the Layer-2 adapter (see
-//! [`docs/rtmp.md`](../docs/rtmp.md) § Layer-2 adapter; mirrors the
+//! [`docs/rtmp.md`](../README.md) § Layer-2 adapter; mirrors the
 //! `rtsp_runtime::io` tokio adapter shape in this same workspace).
 //!
 //! [`ServerSession`] never touches a socket: it turns inbound bytes into

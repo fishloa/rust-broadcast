@@ -25,10 +25,10 @@ cited commit.
 | Doc set | Source spec(s) | Oracle | Checks | Verdict | Nits (all fixed) | Audited at commit |
 |---|---|---|---|---|---|---|
 | `st291/docs/` (st_2038.md, anc_packet_291.md) | SMPTE ST 2038:2021; RFC 8331 (ANC) | PDF render + RFC ASCII | 34 | ✅ 0 substantive | — | `7963ed32` |
-| `dvb-vbi/docs/vbi.md` + `dvb-emsg/docs/emsg.md` | ETSI EN 301 775; DASH-IF IOP Part 10 | PDF render | 44 | ✅ 0 substantive | — | `7963ed32` |
+| `dvb-vbi/docs/vbi.md` + `mp4-emsg/docs/README.md` | ETSI EN 301 775; DASH-IF IOP Part 10 | PDF render | 44 | ✅ 0 substantive | — | `7963ed32` |
 | `dvb-simulcrypt/docs/` (message-framing, ecmg-scs, emmg-pdg-mux, parameter-types) | ETSI TS 103 197 V1.5.1 | PDF render | 30 | ✅ 0 substantive | — | `7963ed32` |
 | `dvb-ule/docs/` (sndu, ts-mapping, ext-headers) | RFC 4326; RFC 5163 | RFC ASCII | 37 | ✅ 0 substantive | — | `7963ed32` |
-| `dvb-scte35/docs/dvb_ta/` (das-descriptor, scte35-profiling, …) | ETSI TS 103 752-1 V1.2.1 | PDF render (pp.17,26-28) | 16 | ✅ 0 substantive | das-descriptor.md: `equivalent_segmentation_type` mnemonic `uimsbf`→`bslbf` per Table 1 (spec quirk); note de-swapped | `2916d94f` |
+| `scte35-splice/docs/dvb_ta/` (das-descriptor, scte35-profiling, …) | ETSI TS 103 752-1 V1.2.1 | PDF render (pp.17,26-28) | 16 | ✅ 0 substantive | das-descriptor.md: `equivalent_segmentation_type` mnemonic `uimsbf`→`bslbf` per Table 1 (spec quirk); note de-swapped | `2916d94f` |
 | `dvb-flute/docs/` (lct, alc, flute, norm) | RFC 5651/5775/6726/5740 | RFC ASCII | 38 | ✅ 37 PASS, 1 citation | norm.md: NORM Header-Ext-Types IANA registry §8.5→§8.1.1 (values were correct) | `2916d94f` |
 | `dvb-cc/docs/decode/` (cea708-decode, cea608-decode, cea708-conformance) | ANSI/CTA-708-E S-2023; CTA-608-E S-2019; 47 CFR §79.102 | PDF render + CFR | 56 | ✅ 53 PASS, 2 wording | conformance.md ¶(i) minimum window/pen style 1 not 1–7; ¶(p) edge-type names from CEA-708-E not the CFR text | `2916d94f` |
 
@@ -110,7 +110,7 @@ gap on every new crate, all fixed:
 
 | Target | Key findings (all fixed) | Fix PR |
 |---|---|---|
-| dvb-scte35 `dvb_ta` | 🔴 `DvbDasDescriptor::serialize_into` u8 `descriptor_length` overflow (upid>248) → silent corruption; + TOML drift for `EquivalentSegmentationType`/`TimelineType` | #318 |
+| scte35-splice `dvb_ta` | 🔴 `DvbDasDescriptor::serialize_into` u8 `descriptor_length` overflow (upid>248) → silent corruption; + TOML drift for `EquivalentSegmentationType`/`TimelineType` | #318 |
 | dvb-ule | 🔴 reassembly missing RFC §7.2.1 PP check (corrupt partial); 🔴 `Sndu.type_field` ignored by serialize; +non_exhaustive, label_coverage, typed H-Type, magic-number consts | #321 |
 | dvb-vbi | 🔴 `MonochromeDataField` accepted `n_pixels=0`; +label_coverage, 5 mutation bites, named masks, dispatch drift test | #314 |
 | dvb-smpte2038 | 🔴 serialize silently zero-filled short `user_data_words`; +label_coverage, fixed-bit checks, more mutation bites | #319 |

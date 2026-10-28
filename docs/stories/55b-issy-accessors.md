@@ -7,7 +7,7 @@ on top — no wire/parse changes. Touch only `dvb-bbframe/src/issy.rs` and
 `dvb-bbframe/CHANGELOG.md`. Run the full gate suite; fix until green. Do **not** commit.
 
 ## Source of truth (verbatim, already in-repo)
-`dvb-bbframe/docs/en_302_755_t2.md` → "Annex C — ISSY field coding" (Table C.1 +
+`dvb-bbframe/docs/README.md` → "Annex C — ISSY field coding" (Table C.1 +
 the §8.3 BUFS/TTO semantics), reconstructed verbatim from the EN 302 755 PDF. Use
 it; do not invent. Key facts from it:
 - BUFS unit `[3:2]`: `00`=bits, `01`=Kbits, `10`=Mbits, `11`=8Kbits. The standard
@@ -25,7 +25,7 @@ it; do not invent. Key facts from it:
    - `pub fn bufs_bits(&self) -> Option<u64>` — `Some(bufs as u64 * units.multiplier_bits())` for the `Bufs` variant, else `None`.
    - `pub fn bufs_bytes(&self) -> Option<u64>` — `bufs_bits().map(|b| b / 8)` (documented: integer floor; BUFS is a buffer-size bound).
    - `pub fn tto_t_over_256(&self) -> Option<u64>` — exact, integer: `Some(((tto_m as u64) * 256 + tto_l as u64) << tto_e)` for the `Tto` variant, else `None`. Doc: this is `TTO × 256` in units of the elementary period T (i.e. units of T/256), so the fractional `TTO_L/256` term is preserved exactly without floating point. Consumers divide by 256.0 for T.
-   - Keep these accessors `#[must_use]`, doc-cited to `docs/en_302_755_t2.md` Annex C / EN 302 755 §8.3.
+   - Keep these accessors `#[must_use]`, doc-cited to `dvb-bbframe/docs/README.md` Annex C / EN 302 755 §8.3.
    - (No `set_*` encoders: the physical→mantissa/exponent TTO encoding is lossy, and the wire round-trip is already guaranteed by the existing raw-field serialize. State this in a short doc note on the accessors. Do not add lossy encoders.)
 
 ## Tests (in-module, hand-computed values shown in comments)

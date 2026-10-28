@@ -27,7 +27,7 @@
 - **Create** `transmux/src/rtp_sdp.rs` — P2: `avc_config_from_sprop`, `aac_config_from_fmtp` (fmtp string → codec config). Reuses `rtp::{base64_decode, hex_decode}`.
 - **Create** `transmux/src/rtp_stream.rs` — P1: `RtpStreamDepacketizer` + `RtpStreamTrack`, stateful per-track timing recovery.
 - **Modify** `transmux/src/lib.rs` — `mod rtp_sdp; mod rtp_stream;` + re-exports.
-- **Create** `transmux/docs/rtp-depacketization.md` — RFC 6184/3640 syntax transcription (freely redistributable RFC text).
+- **Create** `transmux/docs/README.md` — RFC 6184/3640 syntax transcription (freely redistributable RFC text).
 - **Create** `transmux/tests/rtp_stream.rs` — TS-round-trip timing/config gate + SDP round-trip gate.
 - **Modify** `transmux/CHANGELOG.md` — `[Unreleased]` additive entry.
 
@@ -1062,16 +1062,16 @@ git commit -m "test(transmux): real-fixture RTP-stream timing+config+SDP round-t
 ### Task 6: Docs, spec transcription, no_std + full gate, CHANGELOG
 
 **Files:**
-- Create: `transmux/docs/rtp-depacketization.md`
+- Create: `transmux/docs/README.md`
 - Modify: `transmux/src/rtp_stream.rs`, `transmux/src/rtp_sdp.rs` (ensure `//!` cite the transcription), `transmux/CHANGELOG.md`
 
 - [ ] **Step 1: Write the RFC transcription**
 
-Create `transmux/docs/rtp-depacketization.md` transcribing the payload-format syntax used: RFC 6184 §5.2 (NAL/STAP-A/FU-A packet structures + the FU header S/E/R bits + nal_unit_type table incl. 5=IDR,7=SPS,8=PPS,24=STAP-A,28=FU-A), §8.1 (`sprop-parameter-sets`), and RFC 3640 §3.2–3.3 (AU-headers-length + AU-header size/index fields, AAC-hbr) + §4.1 (`config` fmtp). RFC text is freely redistributable — quote the relevant field tables. End with a short "transmux mapping" note (which struct/field each maps to).
+Create `transmux/docs/README.md` transcribing the payload-format syntax used: RFC 6184 §5.2 (NAL/STAP-A/FU-A packet structures + the FU header S/E/R bits + nal_unit_type table incl. 5=IDR,7=SPS,8=PPS,24=STAP-A,28=FU-A), §8.1 (`sprop-parameter-sets`), and RFC 3640 §3.2–3.3 (AU-headers-length + AU-header size/index fields, AAC-hbr) + §4.1 (`config` fmtp). RFC text is freely redistributable — quote the relevant field tables. End with a short "transmux mapping" note (which struct/field each maps to).
 
 - [ ] **Step 2: Verify module docs cite it**
 
-Ensure `rtp_stream.rs` and `rtp_sdp.rs` `//!` blocks name the RFC + section and reference `transmux/docs/rtp-depacketization.md`. (Bit-range notation in doc comments must be backticked, e.g. `` `[7:4]` ``.)
+Ensure `rtp_stream.rs` and `rtp_sdp.rs` `//!` blocks name the RFC + section and reference `transmux/docs/README.md`. (Bit-range notation in doc comments must be backticked, e.g. `` `[7:4]` ``.)
 
 - [ ] **Step 3: Update CHANGELOG**
 
@@ -1103,7 +1103,7 @@ Expected: all green. The `--no-default-features` build is the critical one (no_s
 - [ ] **Step 5: Commit**
 
 ```bash
-git add transmux/docs/rtp-depacketization.md transmux/src/rtp_stream.rs transmux/src/rtp_sdp.rs transmux/CHANGELOG.md
+git add transmux/docs/README.md transmux/src/rtp_stream.rs transmux/src/rtp_sdp.rs transmux/CHANGELOG.md
 git commit -m "docs(transmux): RTP depacketization RFC transcription + CHANGELOG (#700)"
 ```
 

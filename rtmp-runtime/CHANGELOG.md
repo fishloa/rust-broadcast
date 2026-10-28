@@ -5,6 +5,8 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Documentation
+- Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 
 ## [0.8.0] - 2026-10-17
 ### Documentation

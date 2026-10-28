@@ -7,7 +7,7 @@ data (`*.toml` registries), free-licence text (IETF/W3C) and own-words notes.
 
 > **The PDFs themselves are now private.** Every spec PDF lives in the private
 > companion repo **`rust-broadcast-specs`** (checked out as a sibling at
-> `../rust-broadcast-specs`), NOT in this repo. `specs/*.pdf` is gitignored
+> ../rust-broadcast-specs), NOT in this repo. `specs/*.pdf` is gitignored
 > here. This keeps redistribution-restricted standards (ISO/IEC, ITU-T, and —
 > conservatively — even the freely-downloadable ETSI/DVB/SCTE deliverables) out
 > of the public tree, and the derived syntax markdown goes with them.
@@ -31,12 +31,12 @@ now lives in `rust-broadcast-specs`.
 | `etsi_ts_102_772_v01.01.01_dvb_mpe_ifec.pdf` | TS 102 772 v1.1.1 — MPE inter-burst FEC | `dvb-si` (MPE-IFEC section 0x7A) |
 | `etsi_en_303_560_v01.01.01_dvb_ttml_fonts.pdf` | EN 303 560 v1.1.1 — TTML subtitling systems | `dvb-si` (downloadable font info 0x7C) |
 | `etsi_ts_102_727_v01.01.01_dvb_mhp.pdf` | TS 102 727 v1.1.1 — Multimedia Home Platform 1.2.2 | `dvb-si` (XAIT_location descriptor 0x7D, §10.17.6) |
-| `etsi_tr_101_202_v01.02.01_dvb_data_broadcasting_guidelines.pdf` | TR 101 202 v1.2.1 — Data broadcasting implementation guidelines | `dvb-si` (`carousel` module — DVB profile semantics; the message byte-syntax itself is ISO/IEC 13818-6, see `dvb-si/docs/iso_13818_6_carousel.md`) |
+| `etsi_tr_101_202_v01.02.01_dvb_data_broadcasting_guidelines.pdf` | TR 101 202 v1.2.1 — Data broadcasting implementation guidelines | `dvb-si` (`carousel` module — DVB profile semantics; the message byte-syntax itself is ISO/IEC 13818-6, see `dvb-si/docs/README.md`) |
 | `etsi_en_302_307_1_v01.04.01_dvb_s2.pdf` | EN 302 307-1 — DVB-S2 | `dvb-bbframe` |
 | `etsi_en_302_307_2_v01.04.01_dvb_s2x.pdf` | EN 302 307-2 — DVB-S2X | `dvb-bbframe` |
 | `etsi_en_302_755_v01.04.01_dvb_t2.pdf` | EN 302 755 v1.4.1 — DVB-T2 | `dvb-bbframe`, `dvb-t2mi` |
 | `etsi_ts_102_773_v01.04.01_dvb_t2_modulator_interface.pdf` | TS 102 773 v1.4.1 — T2-MI | `dvb-t2mi` |
-| `etsi_tr_101_290_v01.04.01_dvb_measurement.pdf` | TR 101 290 v1.4.1 — Measurement guidelines for DVB systems | planned `dvb-conformance` (#57); tables in `dvb-si/docs/tr_101_290.md` |
+| `etsi_tr_101_290_v01.04.01_dvb_measurement.pdf` | TR 101 290 v1.4.1 — Measurement guidelines for DVB systems | planned `dvb-conformance` (#57); tables in `dvb-si/docs/README.md` |
 | `etsi_tr_101_211_v01.09.01_dvb_si_guidelines.pdf` | TR 101 211 v1.9.1 — SI implementation guidelines | `dvb-si` (SI repetition rates — packetiser/SiMux #56, conformance #57) |
 | `ansi_scte_35_2023r1_dpi_cueing.pdf` | ANSI/SCTE 35 2023r1 — Digital Program Insertion Cueing Message | `scte35-splice` (#58); tables in `scte35-splice/docs/tables/scte_35/` |
 | `dvb_a001r18_draft_ts_101_154_v02.07.01_av_coding.pdf` | DVB A001r18 (draft TS 101 154 v2.7.1) — AV coding in broadcast/broadband | `dvb-si` (component/AC-4/audio-preselection semantics, #53) |

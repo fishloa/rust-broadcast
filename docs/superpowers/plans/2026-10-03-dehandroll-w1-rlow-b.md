@@ -46,7 +46,7 @@ The five inputs most likely to bite users that no existing test covers. Each has
 
 1. **Dropping an SRT listener while connections are live, and while none are.** The listener handle going away must free the UDP port when nothing else uses it, and must NOT kill connections it already accepted. Owned by Task 5, step 1.
 2. **An SRT datagram larger than the configured maximum.** UDP truncates silently; a truncated DATA packet used to be parsed as a short valid packet. It must be dropped and counted, never delivered. Owned by Task 3, step 1.
-3. **HLS relative references.** `../seg.m4s`, `./a/../b.m4s`, `//cdn/x`, `?query-only`, a reference containing `://` inside its query, a base with a query and fragment, and a base that is itself relative. Owned by Task 11, step 1.
+3. **HLS relative references.** ../seg.m4s, ./a/../b.m4s, `//cdn/x`, `?query-only`, a reference containing `://` inside its query, a base with a query and fragment, and a base that is itself relative. Owned by Task 11, step 1.
 4. **WHIP/WHEP header strictness.** `If-Match: *`, `If-Match: "*"`, an unquoted ETag, a weak ETag, `Content-Type: application/sdp; charset=utf-8`, a header sent twice, and a non-UTF-8 header value. Owned by Task 9, step 1.
 5. **A caller-supplied clock in webrtc.** A `MediaTransport` built at a `now` far in the past must schedule from that `now`, never from the wall clock; and the SDP fingerprint of a bundled offer must come from the media section, with typed-attribute edge cases (`SHA-256` upper case, colon-less digest, session-level only). Owned by Task 7, step 1 and Task 8, step 1.
 

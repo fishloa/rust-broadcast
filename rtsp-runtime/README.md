@@ -24,7 +24,7 @@ Typical users: IP-camera ingest (`multimux`'s RTSP input), RTSP push to a media 
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| IETF RFC 2326 "Real Time Streaming Protocol" | RFC 2326 (vendored `specs/rfc2326_rtsp.txt`, transcribed in `docs/rfc2326.md`) | Appendix A state machines, §10 methods listed above, §10.12 interleaved framing, §12.37 `Session`, §12.39 `Transport`, §14 authentication, CSeq (§12.17) | Partial | See the methods table below |
+| IETF RFC 2326 "Real Time Streaming Protocol" | RFC 2326 (vendored `specs/rfc2326_rtsp.txt`, transcribed in `rtsp-runtime/docs/rfc2326.md`) | Appendix A state machines, §10 methods listed above, §10.12 interleaved framing, §12.37 `Session`, §12.39 `Transport`, §14 authentication, CSeq (§12.17) | Partial | See the methods table below |
 | IETF RFC 7826 "RTSP 2.0" | RFC 7826 (vendored, not implemented) | n/a | Not implemented | |
 | IETF RFC 7617 / RFC 7616 / RFC 6750 (Basic, Digest, Bearer) | not vendored, unverified here | Client side via `broadcast-auth` | Full | Server side has no authentication |
 | IETF RFC 8866 (SDP) | RFC 8866 (vendored) | Bodies carried opaque | Typed-opaque | Parse with `sdp-types` |

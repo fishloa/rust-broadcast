@@ -2,7 +2,7 @@
 //! the MPEG-2 TS prober ([`container_probe::ts`]).
 //!
 //! Paths are relative to the workspace root; from a test we build them with
-//! [`env!("CARGO_MANIFEST_DIR")`](./env) joined to `../<path>` because fixtures
+//! [`env!("CARGO_MANIFEST_DIR")`] joined to `../<path>` because fixtures
 //! are committed at the workspace's `fixtures/` tree, outside this crate.
 //!
 //! The stride/phase values asserted here were measured from the real files and

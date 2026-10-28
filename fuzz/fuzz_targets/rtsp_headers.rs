@@ -20,7 +20,7 @@ fuzz_target!(|data: &[u8]| {
         // Receive is lenient (any non-empty id without control characters is kept verbatim so
         // it can be echoed back) while emit is strict: an id that would swallow the `;`
         // separator (e.g. a lone `"`) parses but cannot be serialised unambiguously. That
-        // asymmetry is documented (docs/session-header.md) and unit-tested, so the harness
+        // asymmetry is documented (rtsp-runtime/docs/session-header.md) and unit-tested, so the harness
         // accepts exactly `HeaderSerialize` there and holds every other value to the
         // round-trip invariants.
         match a.to_header_value() {

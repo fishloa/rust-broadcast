@@ -7,7 +7,7 @@
 //!
 //! The implemented edition is **ANSI/SCTE 35 2023r1** (the single-document
 //! edition; SCTE has since split the standard into 35-1 / 35-2). Layouts are
-//! transcribed in `scte35-splice/docs/scte_35.md` and cited per module.
+//! transcribed in `scte35-splice/docs/README.md` and cited per module.
 //!
 //! ## What it does / what it does not
 //!

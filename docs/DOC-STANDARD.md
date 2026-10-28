@@ -146,7 +146,7 @@ says it may be deleted.
 |---|---|---|---|---|
 | <ETSI EN 300 468 — DVB Service Information> | <V1.20.1> | <§5 tables, §6 descriptors, Annex A> | <Full / Partial / Typed-opaque / Label-only / Reference> | <what is and is not covered> |
 
-Spec notes and the pointer to the private transcriptions: [`docs/`](docs/).
+Spec notes and the pointer to the private transcriptions: [`docs/`](README.md).
 
 ## Feature flags
 

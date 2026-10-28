@@ -3,7 +3,7 @@
 //! these two header grammars because `rtsp-types` 0.1.3 mis-parses real-world
 //! values (see "rtsp-types gaps" in `docs/transport-header.md`).
 //!
-//! Spec: `docs/rfc2326.md` §15.1 Base Syntax:
+//! Spec: `rtsp-runtime/docs/rfc2326.md` §15.1 Base Syntax:
 //!
 //! ```text
 //! LWS           = [CRLF] 1*( SP | HT )

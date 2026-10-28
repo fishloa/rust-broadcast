@@ -836,7 +836,7 @@ fn try_parse_typed_body(
 
 /// Range-check `value` against a `bits`-wide wire field before it is narrowed
 /// and written, so a value that does not fit is rejected instead of silently
-/// wrapped (see `docs/w3-rules.md`).
+/// wrapped (see `dvb-t2mi/docs/README.md`).
 fn check_bits(value: u64, bits: u32, field: &'static str) -> Result<(), crate::error::Error> {
     broadcast_common::len::fit_bits(value, bits, field)
         .map(|_| ())

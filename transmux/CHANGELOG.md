@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Documentation
+- Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 
 ### Fixed (DASH-pull adoption)
 - **`Fmp4Demux` takes a sample's duration, flags and size from the init movie's `trex` when neither the `trun` nor the `tfhd` gives one** (ISO/IEC 14496-12 section 8.8.7). A packager that declares its sample durations once in `trex` and writes `trun` entries with sizes only (GPAC does for a fragment of equal-length samples) produced samples of duration 0 that all shared the fragment's first `dts`, and, because the flags default of every sample was 0, marked every sample a sync sample. Found by playing GPAC's real multi-Period output (`fixtures/dash/multiperiod-restart/`) through `multimux`'s DASH pull. A `trex` size of 0 is not applied (writers use it for "not declared"). Covered by `tests/fmp4_trex_defaults.rs` on that real fixture.

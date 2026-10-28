@@ -1,9 +1,9 @@
 //! RTMP ingest server session state machine — `connect` → `createStream` →
 //! `publish` (Adobe RTMP 1.0 §7.2, `NetConnection`/`NetStream` commands).
 //!
-//! See [`docs/rtmp.md`](../docs/rtmp.md) §2 (Handshake), §4 (Protocol Control
+//! See [`docs/rtmp.md`](../README.md) §2 (Handshake), §4 (Protocol Control
 //! Messages), §5.3 (User Control Messages), §7 (RTMP Message Types incl.
-//! Command Message), and [`transmux/docs/codec/flv.md`](../../transmux/docs/codec/flv.md)
+//! Command Message), and [`transmux/docs/codec/flv.md`](../../README.md)
 //! (FLV header/tag layout, Adobe FLV v10.1 Annex E) for the wire layouts this
 //! module ties together.
 //!

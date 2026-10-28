@@ -5,6 +5,8 @@ All notable changes to `dvb-ci` are documented here. The format follows
 versioning.
 
 ## [Unreleased]
+### Documentation
+- Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 
 ## [0.10.0] - 2026-10-17
 ### Documentation

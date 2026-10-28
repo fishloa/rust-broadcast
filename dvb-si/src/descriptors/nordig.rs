@@ -9,7 +9,7 @@
 //! of reserved bits)" for both versions, so both defaults are all ones and
 //! parse preserves any value. No archive capture carries a NorDig-scoped
 //! (PDS 0x29) LCD, so there is no real-capture evidence either way; see
-//! `docs/reserved-bits-edition-audit.md` §12.2.
+//! `dvb-si/docs/reserved-bits-edition-audit.md` §12.2.
 //!
 //! v1 (tag 0x83) assigns a 14-bit LCN per service (4 bytes/entry).
 //! v2 (tag 0x87) groups services into named channel-lists with a 10-bit LCN,

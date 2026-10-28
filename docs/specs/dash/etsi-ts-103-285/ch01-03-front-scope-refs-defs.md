@@ -50,7 +50,7 @@ Normative [1]-[50] (some Void: [25], [30], [36]) and informative [i.1]-[i.10]. O
 | [i.1] | DASH-IF IOP v3.0 (informative) |
 
 Note: [1] pins 23009-1:2020 while this workspace transcribes the 2022 5th edition
-(`transmux/docs/codec/dash-23009-1-2022-aspect.md`, `-ids.md`); no clause conflict was checked.
+(`transmux/docs/README.md`, `-ids.md`); no clause conflict was checked.
 
 ## 3 Definitions (pp. 15-19)
 - 3.1 Terms: standard DASH vocabulary (adaptation set, representation, period, segment kinds, SAP, MPD, UTC

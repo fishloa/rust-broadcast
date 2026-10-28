@@ -11,7 +11,7 @@
 use crate::descriptors::DescriptorLoop;
 
 /// Identifier type — ETSI TS 102 323 v1.4.1 §7.3.2.3.3 Table 32
-/// (`docs/ts_102_323_tva.md`, Table 32 — Identifier type).
+/// (`dvb-si/docs/README.md`, Table 32 — Identifier type).
 ///
 /// 2-bit field in the DVB binary locator. Selects what kind of event identifier
 /// field (if any) is present.

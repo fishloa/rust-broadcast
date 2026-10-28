@@ -9,7 +9,7 @@
 //! (no ids are registered for broadcast use — yields U+FFFD). Reserved
 //! selectors (0x08, 0x0C–0x0F, 0x16–0x1E) yield U+FFFD per byte. The
 //! selector → decoder table is generated into
-//! [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#text-en-300-468-annex-a).
+//! [`dvb-si/docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#text-en-300-468-annex-a).
 //! ISO 8859-2 … -15, KS X 1001, GB-2312 and Big5 use `encoding_rs` and need
 //! the `std` feature (without it they decode lossily, raw bytes stay
 //! available); default Latin, ISO 8859-1, UCS-2 and UTF-8 decode without it.

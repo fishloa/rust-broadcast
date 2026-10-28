@@ -6,8 +6,8 @@ files listed. Do **not** commit.
 
 ## Spec sources (read FIRST — cite in code)
 
-- **`dvb-bbframe/docs/en_302_307_1_s2.md`** — ISSY field semantics (DVB-S2).
-- **`dvb-bbframe/docs/en_302_755_t2.md`** — the DVB-T2 ISSY variant + BUFS/TTO
+- **`dvb-bbframe/docs/README.md`** — ISSY field semantics (DVB-S2).
+- **`dvb-bbframe/docs/README.md`** — the DVB-T2 ISSY variant + BUFS/TTO
   scaling. Cite the exact table you implement each accessor from.
 
 ## Existing code to model on (read, reuse, do not duplicate)
@@ -79,8 +79,8 @@ On the `Issy::Signalling` (BUFS/TTO) data add:
   elementary-period units with the documented scaling.
 - `set_bufs_bytes` / `set_tto_*` encoders that round-trip
   (`decode → set → encode → decode` equal; `to_u8`/byte round-trip preserved).
-- Each accessor's doc cites the exact `docs/en_302_307_1_s2.md` /
-  `docs/en_302_755_t2.md` table and clause. **Hand-computed scaling shown in a
+- Each accessor's doc cites the exact `dvb-bbframe/docs/README.md` /
+  `dvb-bbframe/docs/README.md` table and clause. **Hand-computed scaling shown in a
   comment in the test** (no magic numbers outside `#[cfg(test)]`).
 
 ## CHANGELOG (required — keep it current as we go)

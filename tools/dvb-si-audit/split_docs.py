@@ -19,7 +19,7 @@ from pathlib import Path
 from private_docs import docs_dir
 
 ROOT = Path(__file__).resolve().parents[2]
-CRATES = ["dvb-si", "dvb-t2mi", "dvb-scte35", "dvb-bbframe"]
+CRATES = ["dvb-si", "dvb-t2mi", "scte35-splice", "dvb-bbframe"]
 KINDS = ["tables", "descriptors", "enums", "text"]
 
 # Bad slug dirs -> normalized slug (rename/merge).
