@@ -3,13 +3,33 @@ fixtures/container-probe/ts_204_stride_SYNTHETIC.ts: 1x75 2x131
 fixtures/container-probe/ts_midpacket_phase.ts: 1x75 2x131
 fixtures/dash/init-stream0.m4s: 1x0
 fixtures/dash/init-stream1.m4s: 1x0
+fixtures/dash/live-number/init-0.m4s: 1x0
+fixtures/dash/live-number/init-1.m4s: 1x0
+fixtures/dash/live-timeline/init-0.m4s: 1x0
+fixtures/dash/live-timeline/init-1.m4s: 1x0
+fixtures/dash/multiperiod-restart/p1_dash_track1_init.mp4: 1x0
+fixtures/dash/multiperiod-restart/p1_dash_track2_init.mp4: 2x0
+fixtures/dash/multiperiod-restart/p2_dash_track1_init.mp4: 1x0
+fixtures/dash/multiperiod-restart/p2_dash_track2_init.mp4: 2x0
+fixtures/dash/ondemand-gpac-pto-quirk/a_dashinit.mp4: 1x518
+fixtures/dash/ondemand-gpac-pto-quirk/v_dashinit.mp4: 1x293
+fixtures/dash/ondemand-sidx/a_dashinit.mp4: 1x518
+fixtures/dash/ondemand-sidx/v_dashinit.mp4: 1x294
+fixtures/dash/segmentlist/init-0.m4s: 1x0
+fixtures/dash/segmentlist/init-1.m4s: 1x0
+fixtures/dash/timeline-ffmpeg-quirk/init-stream0.m4s: 1x0
+fixtures/dash/timeline-ffmpeg-quirk/init-stream1.m4s: 1x0
+fixtures/dash/timeline-gpac/seg-1-.mp4: 1x0
+fixtures/dash/timeline-gpac/seg-2-.mp4: 1x0
 fixtures/dvb-bbframe/rai-5w-12606v-bbframe.ts:
 fixtures/dvb-bbframe/tnt-5w-12732v-bbframe.ts:
 fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts: 1x294 2x294 3x294 4x294 5x294 6x294 7x294 8x300 9x300 10x300 11x294 12x18 13x21 14x19 15x22 16x19 17x20 18x22 19x19
 fixtures/dvb-t2mi/colombia-capital-t2mi.ts:
+fixtures/dvb-t2mi/two-plp-synthetic.ts:
 fixtures/flv/aac-7_1.flv: 1x11
 fixtures/flv/av.flv: 1x75 2x131
 fixtures/france-tnt-pcr.ts: 1x4 2x1 3x1 4x1 5x1 6x1
+fixtures/hls/cmaf-fmp4/init.mp4: 1x0 2x0
 fixtures/mkv/h264_aac.mkv: 1x75 2x131
 fixtures/mkv/hevc_aac.mkv: 1x15 2x25
 fixtures/mkv/vp9_opus.mkv: 1x50 2x101
@@ -32,6 +52,11 @@ fixtures/mp4/frag/vp9.frag.mp4: 1x12
 fixtures/mp4/frag/vvc.frag.mp4: 1x12
 fixtures/mp4/h264_high.mp4: 1x0
 fixtures/mp4/hevc_main.mp4: 1x0
+fixtures/mp4/hevc_vps_timing.mp4: 1x0
+fixtures/mp4/hevc_vui_field.mp4: 1x0
+fixtures/mp4/hevc_vui_field_hrd.mp4: 1x0
+fixtures/mp4/hevc_vui_hrd.mp4: 1x0
+fixtures/mp4/hevc_vui_ntsc.mp4: 1x0
 fixtures/mp4/llcmaf/ll_chunked.mp4: 1x75 2x131
 fixtures/mp4/noaud/h264_noaud.mp4: 1x15
 fixtures/mp4/noaud/hevc_noaud.mp4: 1x15
@@ -55,6 +80,15 @@ fixtures/ps/h264_ac3.ps: 1x75 2x88
 fixtures/scte35-ssai/dash/A48/init.mp4: 1x0
 fixtures/scte35-ssai/dash/V300/init.mp4: 2x0
 fixtures/scte35-ssai/ts/video_with_scte35_splice_insert.ts: 1x780 2x1
+fixtures/subtitles/gpac/dash/gp_init.mp4: 1x0
+fixtures/subtitles/gpac/stpp_progressive.mp4: 1x0
+fixtures/subtitles/gpac/wvtt_fragmented.mp4: 1x14
+fixtures/subtitles/gpac/wvtt_progressive.mp4: 1x0
+fixtures/subtitles/mp4box/dash/wvtt_init.mp4: 1x0
+fixtures/subtitles/mp4box/stpp_fragmented.mp4: 1x7
+fixtures/subtitles/mp4box/stpp_progressive.mp4: 1x0
+fixtures/subtitles/mp4box/wvtt_fragmented.mp4: 1x14
+fixtures/subtitles/mp4box/wvtt_progressive.mp4: 1x0
 fixtures/teletext/teletext_subtitle_boxed.ts: 1x5
 fixtures/transmux/h264_aac_frag.mp4: 1x50 2x88
 fixtures/transmux/h264_aac_prog.mp4: 1x0 2x0
@@ -101,300 +135,56 @@ fixtures/ts/scte35-unbalanced.ts:
 fixtures/webm/vorbis.webm: 1x45
 fixtures/webm/vp8_opus.webm: 1x25 2x51
 fixtures/webm/vp9_opus.webm: 1x50 2x101
-test-streams/transformers-eia608-h264.ts: 1x401 2x400
-test-streams/tsduck-test/input/test-001.ts: 1x84 2x105 3x105 4x75 5x100 6x4 7x2 8x2 9x2 10x1 11x2 12x2 13x1 14x1 15x116 16x1
-test-streams/tsduck-test/input/test-002.ts: 1x92 2x94 3x93 4x93 5x449 6x5 7x13 8x95 9x4 10x42 11x145 12x19 13x44 14x60 15x43 16x147 17x41 18x148 19x40 20x146 21x43 22x148
-test-streams/tsduck-test/input/test-003.ts:
-test-streams/tsduck-test/input/test-010.ts: 1x56 2x60
-test-streams/tsduck-test/input/test-012.ts: 1x916
-test-streams/tsduck-test/input/test-013.ts:
-test-streams/tsduck-test/input/test-016.ts: 1x698 2x950 3x344 4x875 5x1289 6x1039 7x1291 8x3
-test-streams/tsduck-test/input/test-018.ts: 1x2 2x2 3x2
-test-streams/tsduck-test/input/test-021.ts:
-test-streams/tsduck-test/input/test-023a.ts:
-test-streams/tsduck-test/input/test-023b.ts:
-test-streams/tsduck-test/input/test-023c.ts:
-test-streams/tsduck-test/input/test-024.ts:
-test-streams/tsduck-test/input/test-025.ts: 1x75 2x122
-test-streams/tsduck-test/input/test-026.ts: 1x29 2x30 3x30 4x30 5x1 6x3
-test-streams/tsduck-test/input/test-028.ts: 1x380 2x465
-test-streams/tsduck-test/input/test-030.ts:
-test-streams/tsduck-test/input/test-032.1.ts:
-test-streams/tsduck-test/input/test-032.2.ts:
-test-streams/tsduck-test/input/test-039.ts: 1x388 2x468 3x34 4x468
-test-streams/tsduck-test/input/test-040.ts: 1x239 2x255 3x499 4x248 5x248 6x255 7x249 8x255
-test-streams/tsduck-test/input/test-041.ts:
-test-streams/tsduck-test/input/test-043.pmtvct.ts:
-test-streams/tsduck-test/input/test-043.vctpmt.ts:
-test-streams/tsduck-test/input/test-044.aa.ts:
-test-streams/tsduck-test/input/test-044.pes.ts:
-test-streams/tsduck-test/input/test-049.ts:
-test-streams/tsduck-test/input/test-050.eas1.ts:
-test-streams/tsduck-test/input/test-050.eas2.ts:
-test-streams/tsduck-test/input/test-052.ts:
-test-streams/tsduck-test/input/test-059.ts: 1x153 2x126 3x84 4x126 5x77 6x16 7x16 8x16 9x33 10x15 11x85 12x48 13x60 14x54 15x8 16x7
-test-streams/tsduck-test/input/test-062.ts: 1x27 2x212 3x13 4x10 5x33 6x188 7x16 8x14 9x33 10x35 11x35 12x4 13x9 14x34 15x5
-test-streams/tsduck-test/input/test-064.ts: 1x299 2x417
-test-streams/tsduck-test/input/test-065.m2ts:
-test-streams/tsduck-test/input/test-072.ts: 1x239 2x299
-test-streams/tsduck-test/input/test-074.avc.ts: 1x543 2x486 3x504 4x486 5x497 6x59 7x56 8x56 9x112 10x51
-test-streams/tsduck-test/input/test-074.hevc.ts: 1x1076 2x829
-test-streams/tsduck-test/input/test-074.mpeg2.ts: 1x1408 2x1638
-test-streams/tsduck-test/input/test-076.1.ts:
-test-streams/tsduck-test/input/test-076.2.ts:
-test-streams/tsduck-test/input/test-076.3.ts:
-test-streams/tsduck-test/input/test-084.ts: 1x752 2x1236 3x748 4x6
-test-streams/tsduck-test/input/test-089.ts: 1x368 2x324 3x343 4x330 5x350 6x38 7x38 8x38 9x76 10x34
-test-streams/tsduck-test/input/test-091.ts:
-test-streams/tsduck-test/input/test-092.ts: 1x150 2x138 3x155 4x126 5x126 6x120 7x153 8x138 9x168 10x156 11x151 12x120 13x120 14x151 15x180 16x186 17x180 18x149 19x126 20x15 21x14 22x14 23x15 24x16 25x13 26x15 27x13
-test-streams/tsduck-test/input/test-097.ts:
-test-streams/tsduck-test/input/test-100.1.ts: 1x1
-test-streams/tsduck-test/input/test-100.2.ts: 1x1
-test-streams/tsduck-test/input/test-101.ts: 1x1
-test-streams/tsduck-test/input/test-103.ts:
-test-streams/tsduck-test/input/test-108.ts: 1x33 2x40 3x52 4x48 5x52 6x33 7x50 8x53 9x45 10x33 11x50 12x52 13x39 14x29 15x48 16x54 17x67 18x5 19x65 20x1 21x1 22x1 23x1 24x67 25x67 26x67
-test-streams/tsduck-test/input/test-109.ts:
-test-streams/tsduck-test/input/test-120.ts:
-test-streams/tsduck-test/input/test-125.ts:
-test-streams/tsduck-test/input/test-127.ts:
-test-streams/tsduck-test/input/test-128.ts:
-test-streams/tsduck-test/input/test-134.ts:
-test-streams/tsduck-test/input/test-137.ts: 1x28
-test-streams/tsduck-test/input/test-138.ts:
-test-streams/tsduck-test/input/test-139.ts: 1x5 2x4 3x8
-test-streams/tsduck-test/input/test-142.ts:
-test-streams/tsduck-test/input/test-143.ts:
-test-streams/tsduck-test/input/test-144.ts:
-test-streams/tsduck-test/input/test-145.ts:
-test-streams/tsduck-test/input/test-146.ts: 1x1
-test-streams/tsduck-test/input/test-148.ts: 1x25
-test-streams/tsduck-test/input/test-149.ts: 1x964 2x1602 3x11
-test-streams/tsduck-test/input/test-150.ts: 1x692 2x1104 3x663
-test-streams/tsduck-test/input/test-151.ts: 1x289
-test-streams/tsduck-test/input/test-165.ts:
-test-streams/tsduck-test/input/test-170.ts: 1x99 2x80 3x62 4x62 5x62 6x61 7x3 8x5 9x59 10x31 11x4
-test-streams/tsduck-test/input/test-181.ts:
-test-streams/tsduck-test/input/test-182.1.ts:
-test-streams/tsduck-test/input/test-182.2.ts:
-test-streams/tsduck-test/input/test-182.3.ts:
-test-streams/tsduck-test/input/test-182.4.ts:
-test-streams/tsduck-test/input/test-182.5.ts:
-test-streams/tsduck-test/input/test-182.6.ts:
-test-streams/tsduck-test/input/test-184.ts:
-test-streams/tsduck-test/input/test-186.1.ts:
-test-streams/tsduck-test/input/test-186.2.ts:
-test-streams/tsduck-test/input/test-198.ts: 1x7458
-test-streams/tsduck-test/input/test-202.ts: 1x660
-test-streams/tsduck-test/input/test-203.1.ts:
-test-streams/tsduck-test/input/test-203.2.ts:
-test-streams/tsduck-test/input/test-205.ts: 1x487 2x801 3x39 4x1003 5x34 6x20 7x19
-test-streams/tsduck-test/reference/test-003/test-003.t2mi.extracted.ts: 1x644 2x850 3x50
-test-streams/tsduck-test/reference/test-005/test-005.pack.ts:
-test-streams/tsduck-test/reference/test-006/test-006.pack.ts:
-test-streams/tsduck-test/reference/test-007/test-007.ts: 1x84 2x105 3x105 4x2 5x2 6x2 7x1 8x2 9x2 10x1 11x1 12x114 13x1
-test-streams/tsduck-test/reference/test-008/test-008.ts: 1x1
-test-streams/tsduck-test/reference/test-009/test-009.ts: 1x74 2x95
-test-streams/tsduck-test/reference/test-011/test-011.ts: 1x1 2x1
-test-streams/tsduck-test/reference/test-014/test-014.pack.ts:
-test-streams/tsduck-test/reference/test-015/test-015.pack.ts:
-test-streams/tsduck-test/reference/test-017/test-017.pack.ts:
-test-streams/tsduck-test/reference/test-018/test-018.ts: 1x2 2x2 3x2
-test-streams/tsduck-test/reference/test-020/test-020.ts:
-test-streams/tsduck-test/reference/test-021/test-021.middle.ts:
-test-streams/tsduck-test/reference/test-021/test-021.start.ts:
-test-streams/tsduck-test/reference/test-022/test-022.pack.ts:
-test-streams/tsduck-test/reference/test-023/test-023.1.ts:
-test-streams/tsduck-test/reference/test-023/test-023.2.ts:
-test-streams/tsduck-test/reference/test-024/test-024.out.ts:
-test-streams/tsduck-test/reference/test-026/test-026.atis.ts: 1x1 2x3
-test-streams/tsduck-test/reference/test-026/test-026.cissa.ts: 1x1 2x3
-test-streams/tsduck-test/reference/test-026/test-026.csa.bypid.ts: 1x30 2x30 3x1 4x3
-test-streams/tsduck-test/reference/test-026/test-026.csa.ts: 1x1 2x3
-test-streams/tsduck-test/reference/test-026/test-026.deatis.ts: 1x29 2x30 3x30 4x30 5x1 6x3
-test-streams/tsduck-test/reference/test-026/test-026.decissa.ts: 1x29 2x30 3x30 4x30 5x1 6x3
-test-streams/tsduck-test/reference/test-026/test-026.decsa.bypid.ts: 1x29 2x30 3x30 4x30 5x1 6x3
-test-streams/tsduck-test/reference/test-026/test-026.decsa.ts: 1x29 2x30 3x30 4x30 5x1 6x3
-test-streams/tsduck-test/reference/test-027/test-027.pack.ts:
-test-streams/tsduck-test/reference/test-028/test-028.out.ts: 1x380 2x465 3x17
-test-streams/tsduck-test/reference/test-030/test-030.out.ts:
-test-streams/tsduck-test/reference/test-031/test-031.out.ts: 1x83 2x105 3x105 4x74 5x95 6x2 7x2 8x2 9x1 10x2 11x2 12x1 13x1 14x113 15x71 16x45 17x36 18x1
-test-streams/tsduck-test/reference/test-032/test-032.1.ts:
-test-streams/tsduck-test/reference/test-032/test-032.2.ts:
-test-streams/tsduck-test/reference/test-033/test-033.pack.ts:
-test-streams/tsduck-test/reference/test-034/test-034.1.ts:
-test-streams/tsduck-test/reference/test-034/test-034.2.ts:
-test-streams/tsduck-test/reference/test-034/test-034.3.ts:
-test-streams/tsduck-test/reference/test-034/test-034.4.ts:
-test-streams/tsduck-test/reference/test-035/test-035.decap.pack.ts: 1x60 2x75 3x75 4x60 5x75 6x1
-test-streams/tsduck-test/reference/test-035/test-035.decap.pes1.ts: 1x60 2x75 3x75 4x60 5x75 6x1
-test-streams/tsduck-test/reference/test-035/test-035.decap.pes2.ts: 1x60 2x75 3x75 4x60 5x75 6x1
-test-streams/tsduck-test/reference/test-035/test-035.decap.ts: 1x60 2x75 3x75 4x60 5x75 6x1
-test-streams/tsduck-test/reference/test-035/test-035.encap.pack.ts: 1x60 2x75 3x75 4x1
-test-streams/tsduck-test/reference/test-035/test-035.encap.pes1.ts: 1x60 2x75 3x75 4x1 5x14945
-test-streams/tsduck-test/reference/test-035/test-035.encap.pes2.ts: 1x60 2x75 3x75 4x1 5x14929
-test-streams/tsduck-test/reference/test-035/test-035.encap.ts: 1x60 2x75 3x75 4x1
-test-streams/tsduck-test/reference/test-036/test-036.out.ts: 1x60 2x70
-test-streams/tsduck-test/reference/test-037/test-037.pack.ts:
-test-streams/tsduck-test/reference/test-038/test-038.ts:
-test-streams/tsduck-test/reference/test-039/test-039.atis.ts: 1x34 2x468
-test-streams/tsduck-test/reference/test-039/test-039.clear.ts: 1x388 2x468 3x34 4x468
-test-streams/tsduck-test/reference/test-041/test-041.tsfixcc.1.ts:
-test-streams/tsduck-test/reference/test-041/test-041.tsfixcc.2.ts:
-test-streams/tsduck-test/reference/test-041/test-041.tsp.1.ts:
-test-streams/tsduck-test/reference/test-041/test-041.tsp.2.ts:
-test-streams/tsduck-test/reference/test-042/test-042.pack.ts:
-test-streams/tsduck-test/reference/test-044/test-044.1.ts:
-test-streams/tsduck-test/reference/test-044/test-044.2.ts:
-test-streams/tsduck-test/reference/test-044/test-044.3.ts:
-test-streams/tsduck-test/reference/test-044/test-044.4.ts:
-test-streams/tsduck-test/reference/test-044/test-044.5.ts:
-test-streams/tsduck-test/reference/test-044/test-044.6.ts:
-test-streams/tsduck-test/reference/test-044/test-044.7.ts:
-test-streams/tsduck-test/reference/test-044/test-044.8.ts:
-test-streams/tsduck-test/reference/test-045/test-045.1.ts: 1x92 2x94 3x93 4x93 5x449 6x5 7x13 8x95 9x4 10x42 11x145 12x19 13x44 14x60 15x43 16x147 17x41 18x148 19x40 20x146 21x43 22x148
-test-streams/tsduck-test/reference/test-045/test-045.2.ts: 1x92 2x94 3x93 4x93 5x449 6x5 7x13 8x95 9x4 10x42 11x145 12x19 13x44 14x60 15x43 16x147 17x41 18x148 19x40 20x146 21x43 22x148
-test-streams/tsduck-test/reference/test-045/test-045.3.ts: 1x92 2x94 3x93 4x93 5x449 6x5 7x13 8x95 9x4 10x42 11x145 12x19 13x44 14x60 15x43 16x147 17x41 18x148 19x40 20x146 21x43 22x148
-test-streams/tsduck-test/reference/test-046/test-046.1.ts:
-test-streams/tsduck-test/reference/test-046/test-046.2.ts:
-test-streams/tsduck-test/reference/test-046/test-046.3.ts:
-test-streams/tsduck-test/reference/test-046/test-046.4.ts:
-test-streams/tsduck-test/reference/test-046/test-046.5.ts:
-test-streams/tsduck-test/reference/test-046/test-046.6.ts:
-test-streams/tsduck-test/reference/test-047/test-047.1.ts: 1x39 2x45 3x45 4x31 5x35 6x50
-test-streams/tsduck-test/reference/test-047/test-047.2.ts: 1x39 2x45 3x45 4x32 5x40 6x2 7x2 8x52
-test-streams/tsduck-test/reference/test-049/test-049.in.ts:
-test-streams/tsduck-test/reference/test-049/test-049.out.ts:
-test-streams/tsduck-test/reference/test-049/test-049.tsfixcc.norep.ts:
-test-streams/tsduck-test/reference/test-049/test-049.tsfixcc.rep.ts:
-test-streams/tsduck-test/reference/test-049/test-049.tsp.norep.ts:
-test-streams/tsduck-test/reference/test-049/test-049.tsp.rep.ts:
-test-streams/tsduck-test/reference/test-050/test-050.pack.ts:
-test-streams/tsduck-test/reference/test-053/test-053.pack.ts:
-test-streams/tsduck-test/reference/test-054/test-054.1.ts:
-test-streams/tsduck-test/reference/test-054/test-054.2.ts:
-test-streams/tsduck-test/reference/test-055/test-055.pack.ts:
-test-streams/tsduck-test/reference/test-057/test-057.ts:
-test-streams/tsduck-test/reference/test-058/test-058.ts:
-test-streams/tsduck-test/reference/test-059/test-059.1.ts:
-test-streams/tsduck-test/reference/test-059/test-059.2.ts: 1x78 2x48 3x60 4x54 5x7 6x7
-test-streams/tsduck-test/reference/test-059/test-059.3.ts: 1x81 2x48 3x60 4x54 5x8 6x7
-test-streams/tsduck-test/reference/test-060/test-060.pack.ts:
-test-streams/tsduck-test/reference/test-063/test-063.pack.ts:
-test-streams/tsduck-test/reference/test-066/test-066.2.ts:
-test-streams/tsduck-test/reference/test-066/test-066.3.ts:
-test-streams/tsduck-test/reference/test-067/test-067.pack.ts:
-test-streams/tsduck-test/reference/test-071/test-071.1.ts:
-test-streams/tsduck-test/reference/test-071/test-071.2.ts:
-test-streams/tsduck-test/reference/test-076/test-076.1.ts:
-test-streams/tsduck-test/reference/test-076/test-076.2.ts:
-test-streams/tsduck-test/reference/test-076/test-076.3.ts:
-test-streams/tsduck-test/reference/test-078/test-078.ts:
-test-streams/tsduck-test/reference/test-079/test-079.ts: 1x1
-test-streams/tsduck-test/reference/test-085/test-085.ts:
-test-streams/tsduck-test/reference/test-088/test-088.pcap.ns.ts: 1x53 2x42 3x42 4x42 5x42 6x24 7x53 8x42 9x18 10x36 11x49 12x36 13x56 14x40 15x54 16x42 17x24 18x4 19x5 20x6 21x7 22x4 23x5 24x4 25x4 26x18 27x5 28x6 29x4 30x5 31x9 32x5 33x4 34x5 35x7 36x7
-test-streams/tsduck-test/reference/test-088/test-088.pcap.ts: 1x53 2x42 3x42 4x42 5x42 6x24 7x53 8x42 9x18 10x36 11x49 12x36 13x56 14x40 15x54 16x42 17x24 18x4 19x5 20x6 21x7 22x4 23x5 24x4 25x4 26x18 27x5 28x6 29x4 30x5 31x9 32x5 33x4 34x5 35x7 36x7
-test-streams/tsduck-test/reference/test-088/test-088.pcapng.ts: 1x53 2x42 3x42 4x42 5x42 6x24 7x53 8x42 9x18 10x36 11x49 12x36 13x56 14x40 15x54 16x42 17x24 18x4 19x5 20x6 21x7 22x4 23x5 24x4 25x4 26x18 27x5 28x6 29x4 30x5 31x9 32x5 33x4 34x5 35x7 36x7
-test-streams/tsduck-test/reference/test-089/test-089.000000.ts: 1x99 2x96 3x105 4x90 5x112 6x9 7x10 8x10 9x20 10x7
-test-streams/tsduck-test/reference/test-089/test-089.000001.ts: 1x102 2x78 3x42 4x78 5x35 6x12 7x11 8x11 9x23 10x11
-test-streams/tsduck-test/reference/test-089/test-089.000002.ts: 1x103 2x90 3x112 4x90 5x119 6x9 7x11 8x11 9x20 10x9
-test-streams/tsduck-test/reference/test-089/test-089.000003.ts: 1x64 2x48 3x70 4x60 5x70 6x8 7x6 8x6 9x13 10x6
-test-streams/tsduck-test/reference/test-089/test-089.align-000000.ts: 1x78 2x105 3x78 4x98 5x10 6x10 7x10 8x20 9x9
-test-streams/tsduck-test/reference/test-089/test-089.align-000001.ts: 1x87 2x78 3x98 4x90 5x105 6x10 7x9 8x9 9x18 10x8
-test-streams/tsduck-test/reference/test-089/test-089.event-000000.ts: 1x99 2x96 3x105 4x90 5x112 6x9 7x10 8x10 9x20 10x7
-test-streams/tsduck-test/reference/test-089/test-089.event-000001.ts: 1x102 2x78 3x42 4x78 5x35 6x12 7x11 8x11 9x23 10x11
-test-streams/tsduck-test/reference/test-089/test-089.event-000002.ts: 1x103 2x90 3x112 4x90 5x119 6x9 7x11 8x11 9x20 10x9
-test-streams/tsduck-test/reference/test-089/test-089.event-000003.ts: 1x64 2x48 3x70 4x60 5x70 6x8 7x6 8x6 9x13 10x6
-test-streams/tsduck-test/reference/test-089/test-089.live-000001.ts: 1x102 2x78 3x42 4x78 5x35 6x12 7x11 8x11 9x23 10x11
-test-streams/tsduck-test/reference/test-089/test-089.live-000002.ts: 1x103 2x90 3x112 4x90 5x119 6x9 7x11 8x11 9x20 10x9
-test-streams/tsduck-test/reference/test-089/test-089.live-000003.ts: 1x64 2x48 3x70 4x60 5x70 6x8 7x6 8x6 9x13 10x6
-test-streams/tsduck-test/reference/test-093/test-093.1.ts: 1x148 2x126 3x13
-test-streams/tsduck-test/reference/test-094/test-094.3.ts:
-test-streams/tsduck-test/reference/test-095/test-095.1.ts: 1x60 2x70 3x1
-test-streams/tsduck-test/reference/test-095/test-095.2.ts: 1x60 2x1
-test-streams/tsduck-test/reference/test-095/test-095.3.ts: 1x74 2x95
-test-streams/tsduck-test/reference/test-096/test-096.1.ts: 1x62 2x54 3x60 4x42 5x42 6x42 7x67 8x36 9x54 10x42 11x56 12x42 13x42 14x60 15x66 16x66 17x66 18x59 19x48 20x5 21x5 22x5 23x6 24x6 25x5 26x6 27x5
-test-streams/tsduck-test/reference/test-096/test-096.2.ts: 1x62 2x54 3x60 4x42 5x42 6x42 7x67 8x36 9x54 10x42 11x56 12x42 13x42 14x60 15x66 16x66 17x66 18x59 19x48 20x5 21x5 22x5 23x6 24x6 25x5 26x6 27x5
-test-streams/tsduck-test/reference/test-096/test-096.3.ts: 1x62 2x54 3x60 4x42 5x42 6x42 7x67 8x24 9x54 10x42 11x56 12x42 13x42 14x60 15x66 16x66 17x66 18x59 19x48 20x5 21x5 22x5 23x6 24x6 25x5 26x6 27x5
-test-streams/tsduck-test/reference/test-096/test-096.4.ts: 1x48 2x42 3x50 4x24 5x24 6x24 7x55 8x36 9x42 10x30 11x42 12x24 13x24 14x49 15x48 16x48 17x48 18x51 19x30 20x4 21x4 22x4 23x5 24x5 25x4 26x5 27x4
-test-streams/tsduck-test/reference/test-098/test-098.1.ts:
-test-streams/tsduck-test/reference/test-098/test-098.2.ts:
-test-streams/tsduck-test/reference/test-105/test-105.1.ts:
-test-streams/tsduck-test/reference/test-105/test-105.2.ts:
-test-streams/tsduck-test/reference/test-105/test-105.3.ts:
-test-streams/tsduck-test/reference/test-106/test-106.5.ts:
-test-streams/tsduck-test/reference/test-106/test-106.6.ts:
-test-streams/tsduck-test/reference/test-109/test-109.ts:
-test-streams/tsduck-test/reference/test-112/test-112.1.ts:
-test-streams/tsduck-test/reference/test-112/test-112.2.ts:
-test-streams/tsduck-test/reference/test-115/test-115.pack.ts:
-test-streams/tsduck-test/reference/test-116/test-116.pack.ts:
-test-streams/tsduck-test/reference/test-117/test-117.1.ts:
-test-streams/tsduck-test/reference/test-117/test-117.2.ts:
-test-streams/tsduck-test/reference/test-117/test-117.3.ts:
-test-streams/tsduck-test/reference/test-122/test-122.pack.ts:
-test-streams/tsduck-test/reference/test-124/test-124.ts: 1x150 2x138 3x155 4x126 5x126 6x120 7x153 8x138 9x168 10x156 11x151 12x120 13x120 14x151 15x180 16x186 17x180 18x149 19x126 20x15 21x14 22x14 23x15 24x16 25x13 26x15 27x13
-test-streams/tsduck-test/reference/test-126/test-126.2.ts:
-test-streams/tsduck-test/reference/test-128/test-128.701.ts: 1x156 2x98 3x155 4x155 5x155 6x96 7x155 8x160 9x160 10x160 11x160 12x96 13x152 14x152 15x152 16x156 17x156 18x96 19x160 20x160 21x160 22x193 23x13 24x156 25x8 26x97 27x2 28x6 29x12 30x13 31x193 32x6 33x13
-test-streams/tsduck-test/reference/test-128/test-128.702.ts: 1x99 2x155 3x160 4x155 5x97 6x155 7x155 8x155 9x103 10x155 11x155 12x155 13x124 14x115 15x120 16x120 17x110 18x115 19x115 20x115 21x100 22x155 23x155 24x155 25x192 26x1 27x4 28x192 29x1 30x4 31x4 32x4 33x1 34x4 35x4
-test-streams/tsduck-test/reference/test-132/test-132.ts:
-test-streams/tsduck-test/reference/test-134/test-134.pack.ts:
-test-streams/tsduck-test/reference/test-135/test-135.full.ts: 1x125 2x207 3x122 4x207 5x207 6x123 7x206 8x206 9x207 10x206 11x206 12x207 13x207 14x206 15x125 16x207 17x125 18x207 19x207 20x207 21x117 22x249 23x11 24x250 25x117 26x250 27x116 28x117 29x250 30x117 31x250
-test-streams/tsduck-test/reference/test-135/test-135.partial.ts: 1x39 2x67 3x67 4x43 5x67 6x67 7x66 8x67 9x67 10x66 11x67 12x67 13x39 14x66 15x36 16x67 17x66 18x66 19x40 20x67 21x82 22x3 23x38 24x83 25x38 26x38 27x81 28x38 29x82 30x38 31x82
-test-streams/tsduck-test/reference/test-135/test-135.rtsp.ts: 1x148 2x275
-test-streams/tsduck-test/reference/test-135/test-135.seqwrap.ts: 1x80 2x147
-test-streams/tsduck-test/reference/test-136/test-136.ts:
-test-streams/tsduck-test/reference/test-138/test-138.1.ts: 1x86 2x75 3x4
-test-streams/tsduck-test/reference/test-138/test-138.2.ts:
-test-streams/tsduck-test/reference/test-138/test-138.ext.ts: 1x87 2x75 3x4
-test-streams/tsduck-test/reference/test-147/test-147.ts: 1x234 2x277
-test-streams/tsduck-test/reference/test-149/test-149.ts: 1x214 2x351 3x11
-test-streams/tsduck-test/reference/test-151/test-151.ac3.dvb.ts: 1x248
-test-streams/tsduck-test/reference/test-151/test-151.eac3.dvb.ts: 1x289
-test-streams/tsduck-test/reference/test-153/test-153.cbc.ts:
-test-streams/tsduck-test/reference/test-153/test-153.cts1.ts:
-test-streams/tsduck-test/reference/test-153/test-153.cts2.ts:
-test-streams/tsduck-test/reference/test-153/test-153.cts3.ts:
-test-streams/tsduck-test/reference/test-153/test-153.cts4.ts:
-test-streams/tsduck-test/reference/test-153/test-153.dvs042.ts:
-test-streams/tsduck-test/reference/test-153/test-153.ecb.ts:
-test-streams/tsduck-test/reference/test-156/test-156.pack.ts:
-test-streams/tsduck-test/reference/test-160/test-160.pack.ts:
-test-streams/tsduck-test/reference/test-162/test-162.1.ts:
-test-streams/tsduck-test/reference/test-162/test-162.2.ts:
-test-streams/tsduck-test/reference/test-162/test-162.3.ts:
-test-streams/tsduck-test/reference/test-164/test-164.pack.ts:
-test-streams/tsduck-test/reference/test-166/test-166.pack.ts:
-test-streams/tsduck-test/reference/test-171/test-171.1.ts:
-test-streams/tsduck-test/reference/test-171/test-171.10.ts:
-test-streams/tsduck-test/reference/test-171/test-171.11.ts:
-test-streams/tsduck-test/reference/test-171/test-171.12.ts:
-test-streams/tsduck-test/reference/test-171/test-171.13.ts:
-test-streams/tsduck-test/reference/test-171/test-171.2.ts:
-test-streams/tsduck-test/reference/test-171/test-171.6a.ts:
-test-streams/tsduck-test/reference/test-171/test-171.6b.ts:
-test-streams/tsduck-test/reference/test-171/test-171.7.ts:
-test-streams/tsduck-test/reference/test-171/test-171.8.ts:
-test-streams/tsduck-test/reference/test-171/test-171.9.ts:
-test-streams/tsduck-test/reference/test-176/test-176.1.ts:
-test-streams/tsduck-test/reference/test-176/test-176.2.ts:
-test-streams/tsduck-test/reference/test-177/test-177.pack.ts:
-test-streams/tsduck-test/reference/test-179/test-179.1.pack.ts:
-test-streams/tsduck-test/reference/test-179/test-179.2.pack.ts:
-test-streams/tsduck-test/reference/test-180/test-180.pack.ts:
-test-streams/tsduck-test/reference/test-183/test-183.pack.ts:
-test-streams/tsduck-test/reference/test-185/test-185.pack.ts:
-test-streams/tsduck-test/reference/test-188/test-188.pack.ts:
-test-streams/tsduck-test/reference/test-192/test-192.pack.ts:
-test-streams/tsduck-test/reference/test-201/test-201.pack.ts:
-test-streams/tsduck-test/reference/test-202/test-202.ts: 1x35 2x51 3x30 4x63 5x3
-test-streams/tsduck-test/reference/test-205/test-205.1.ts: 1x290 2x459 3x14 4x580 5x18 6x12 7x11
-test-streams/tsduck-test/reference/test-205/test-205.2.ts: 1x292 2x477 3x14 4x578 5x17 6x12 7x11
-test-streams/tsduck-test/reference/test-205/test-205.3.ts: 1x292 2x477 3x14 4x578 5x17 6x12 7x11
-test-streams/tsduck-test/reference/test-206/test-206.1.ts: 1x118 2x198 3x12 4x248 5x9 6x5 7x5
-test-streams/tsduck-test/reference/test-206/test-206.2.ts: 1x118 2x207 3x13 4x248 5x9 6x5 7x5
-test-streams/tsduck-test/reference/test-206/test-206.3.ts: 1x118 2x207 3x13 4x248 5x9 6x5 7x5
-test-streams/france-tnt-uhf32-si-audio.ts: 1x1560 2x1536 3x1533 4x1518 5x1542 6x569 7x1536 8x1566 9x1540 10x1566 11x1524 12x1542 13x1603 14x143 15x142 16x143 17x142 18x134 19x141 20x63 21x142 22x64 23x139 24x142 25x64 26x225
+test-streams/mpegh/mpegh_cicp_01_baseline_32kbps_cont_2000.ts: 1x3
+test-streams/mpegh/mpegh_cicp_01_baseline_32kbps_multi_5.ts: 1x6
+test-streams/mpegh/mpegh_cicp_01_baseline_32kbps_single.ts: 1x29
+test-streams/mpegh/mpegh_cicp_01_lc_baseline_compatible_32kbps_single.ts: 1x29
+test-streams/mpegh/mpegh_cicp_06_baseline_32kbps_single.ts: 1x29
+test-streams/mpegh/mpegh_cicp_06_lc_baseline_compatible_32kbps_single.ts: 1x29
+test-streams/mpegh/mpegh_cicp_13_baseline_32kbps_single.ts: 1x29
+test-streams/mpegh/mpegh_cicp_13_lc_baseline_compatible_32kbps_single.ts: 1x29
+test-streams/france-tnt-dvbt-20s.ts: 1x186 2x180 3x180 4x175 5x158 6x174 7x174 8x161 9x162 10x168 11x147 12x166 13x168 14x171 15x180 16x180 17x175 18x16 19x15 20x16 21x16 22x15 23x16 24x8 25x16 26x8 27x15 28x16 29x8 30x23
+test-streams/france-tnt-m6-eac3-zenith.ts: 1x47 2x8 3x6 4x3 5x2 6x1 7x2
+test-streams/france-tnt-uhf32-si-audio.ts: 1x702 2x1560 3x1536 4x1533 5x651 6x1518 7x1542 8x569 9x1536 10x1566 11x1540 12x647 13x1566 14x707 15x1524 16x1542 17x1603 18x143 19x142 20x143 21x142 22x134 23x141 24x63 25x142 26x64 27x139 28x142 29x64 30x225
 test-streams/france-tnt-uhf32-video-head-6MB.ts: 1x63 2x54 3x54 4x49 5x47 6x54 7x54 8x49 9x48 10x48 11x42 12x55 13x48 14x55 15x48 16x48 17x56 18x5 19x5 20x5 21x4 22x4 23x4 24x3 25x4 26x3 27x4 28x5 29x3 30x7
 test-streams/france-tnt-uhf32-video-w30MB-10MB.ts: 1x96 2x72 3x78 4x56 5x72 6x72 7x72 8x66 9x72 10x72 11x77 12x67 13x78 14x86 15x66 16x66 17x91 18x8 19x8 20x8 21x8 22x5 23x8 24x4 25x8 26x4 27x9 28x8 29x4 30x9
 test-streams/hotbird-mhp-si.ts: 1x1534 2x30 3x31 4x2059 5x1289 6x1534
 test-streams/hotbird-mhp-video-head-6MB.ts: 1x42 2x42 3x36 4x42 5x42 6x28 7x42 8x42 9x27 10x1 11x46 12x18 13x27
+test-streams/krone-anamorphic-sar-16-11-zenith-tv.ts: 1x728 2x1208
+test-streams/krone-sar-16-11-to-64-45-switch-zenith-tv.ts: 1x301 2x480
+test-streams/melodie-anamorphic-sar-64-45-zenith-tv.ts: 1x739 2x1228
+test-streams/mpegh-cicp01-baseline.ts: 1x29
+test-streams/mpegh-cicp01-lc.ts: 1x29
+test-streams/mpegh-cicp06-lc.ts: 1x29
+test-streams/mpegh-cicp13-baseline.ts: 1x29
+test-streams/orf1-dvbs2-raw-zenith-tv.ts: 1x1471 2x916 3x1224 4x1224 5x1224
+test-streams/orf3-dvbs2-raw-zenith-tv.ts: 1x1493 2x928 3x1244 4x1244 5x1244 6x111
+test-streams/stimmungsgarten-sar-1-1-to-16-11-switch-zenith-tv.ts: 1x327 2x996
+test-streams/stimmungsgarten-sar-16-11-to-1-1-switch-zenith-tv.ts: 1x274 2x996
+test-streams/transformers-eia608-h264.ts: 1x401 2x400
+test-streams/tsduck-test/input/test-002.ts: 1x92 2x94 3x93 4x93 5x449 6x5 7x13 8x95 9x4 10x42 11x145 12x19 13x44 14x60 15x43 16x147 17x41 18x148 19x40 20x146 21x43 22x148
+test-streams/tsduck-test/input/test-012.ts: 1x916
+test-streams/tsduck-test/input/test-016.ts: 1x698 2x950 3x344 4x875 5x1289 6x1039 7x1291 8x3
+test-streams/tsduck-test/input/test-040.ts: 1x239 2x255 3x499 4x248 5x248 6x255 7x249 8x255
+test-streams/tsduck-test/input/test-059.ts: 1x153 2x126 3x84 4x126 5x77 6x16 7x16 8x16 9x33 10x15 11x85 12x48 13x60 14x54 15x8 16x7
+test-streams/tsduck-test/input/test-062.ts: 1x27 2x212 3x13 4x10 5x33 6x188 7x16 8x14 9x33 10x35 11x35 12x4 13x9 14x34 15x5
+test-streams/tsduck-test/input/test-084.ts: 1x752 2x1236 3x748 4x6
+test-streams/tsduck-test/input/test-089.ts: 1x368 2x324 3x343 4x330 5x350 6x38 7x38 8x38 9x76 10x34
+test-streams/tsduck-test/input/test-091.ts:
+test-streams/tsduck-test/input/test-092.ts: 1x150 2x138 3x155 4x126 5x126 6x120 7x153 8x138 9x168 10x156 11x151 12x120 13x120 14x151 15x180 16x186 17x180 18x149 19x126 20x15 21x14 22x14 23x15 24x16 25x13 26x15 27x13
+test-streams/tsduck-test/input/test-108.ts: 1x33 2x40 3x52 4x48 5x52 6x33 7x50 8x53 9x45 10x33 11x50 12x52 13x39 14x29 15x48 16x54 17x67 18x5 19x65 20x1 21x1 22x1 23x1 24x67 25x67 26x67
+test-streams/tsduck-test/input/test-109.ts:
+test-streams/tsduck-test/input/test-120.ts:
+test-streams/tsduck-test/input/test-128.ts:
+test-streams/tsduck-test/input/test-143.ts:
+test-streams/tsduck-test/input/test-149.ts: 1x964 2x1602 3x11
+test-streams/tsduck-test/input/test-170.ts: 1x99 2x80 3x62 4x62 5x62 6x61 7x3 8x5 9x59 10x31 11x4
+test-streams/tsduck-test/input/test-184.ts:
+test-streams/tsduck-test/input/test-205.ts: 1x487 2x801 3x39 4x1003 5x34 6x20 7x19
+test-streams/tsduck-test/reference/test-022/test-022.pack.ts:
+test-streams/tsduck-test/reference/test-060/test-060.pack.ts:
+test-streams/tsduck-test/reference/test-109/test-109.ts:
+test-streams/tsduck-test/reference/test-115/test-115.pack.ts:
+test-streams/tsduck-test/reference/test-124/test-124.ts: 1x150 2x138 3x155 4x126 5x126 6x120 7x153 8x138 9x168 10x156 11x151 12x120 13x120 14x151 15x180 16x186 17x180 18x149 19x126 20x15 21x14 22x14 23x15 24x16 25x13 26x15 27x13
+test-streams/tsduck-test/reference/test-147/test-147.ts: 1x234 2x277
+test-streams/tsduck-test/reference/test-149/test-149.ts: 1x214 2x351 3x11

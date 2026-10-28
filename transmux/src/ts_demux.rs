@@ -1752,6 +1752,16 @@ struct LiveTrack {
     /// The change resolved for the access unit being applied, not yet
     /// attached to its slot.
     display: Option<(Arc<DisplayInfo>, DisplayChangeSet)>,
+    /// Suppress the first display change after a damaged-unit promotion
+    /// (issue G1), since the tracker state was seeded from a partial backlog.
+    suppress_next_display_change: bool,
+    /// Persistent marker that this track was promoted from a damaged access
+    /// unit (issue G1): AFD-only changes are suppressed, since the backlog
+    /// that seeded the tracker may have lacked them.
+    damaged_promotion: bool,
+    /// Skip the first re-probe after a damaged-unit promotion (issue G1), so
+    /// the first intact access unit does not report a spurious config change.
+    skip_next_reprobe: bool,
 }
 
 impl LiveTrack {
@@ -2115,6 +2125,9 @@ struct StreamState {
     /// those replayed from `unattributed`. Zero means the PID has been
     /// completely silent since it was declared ([`SILENT_HEAD_PARKED_BYTES`]).
     payload_packets: u32,
+    /// Whether this PID's probe was resolved from a damaged access unit
+    /// (issue G1), so its initial `DisplayChanged` is suppressed.
+    damaged_promotion: bool,
     /// [`StreamingTsDemux::packet_index`] when this PID was declared, the age
     /// base for [`STUCK_HEAD_INPUT_PACKETS`].
     declared_at_packet: u64,
@@ -3201,6 +3214,73 @@ fn observe_parameter_sets(codec: Codec, data: &[u8], sets: &mut ParameterSets) -
     sets.observe(codec, data)
 }
 
+/// Harvest parameter sets from a damaged H.264/H.265 access unit: count the
+/// invalid ones as `InputDegraded` and, while the track is still probing,
+/// resolve its config from the valid sets so a lossy start does not wait for
+/// the next access unit (issue G1). Damaged slice data is never delivered.
+fn harvest_damaged_au(
+    stream: &mut StreamState,
+    pid: Pid,
+    data: &[u8],
+    events: &mut VecDeque<DemuxEvent>,
+) {
+    if !matches!(stream.codec, Codec::H264 | Codec::Hevc) {
+        return;
+    }
+    let Ok(pes) = PesPacket::parse(data) else {
+        return;
+    };
+    if pes.payload.is_empty() {
+        return;
+    }
+    let data = pes.payload;
+    let track_id = match &stream.track {
+        Some(TrackState::Live(live)) => Some(live.track_id),
+        _ => None,
+    };
+    let _ = track_id;
+    for _ in 0..count_invalid_parameter_sets(stream.codec, data) {
+        events.push_back(DemuxEvent::InputDegraded {
+            track: track_id,
+            kind: InputDegradation::InvalidParameterSet,
+            provenance: EventProvenance {
+                pid: Some(pid),
+                packet_index: None,
+                program_number: None,
+            },
+        });
+    }
+    // Only probing tracks benefit; live tracks are left untouched.
+    if !matches!(stream.track, Some(TrackState::Probing { .. })) {
+        return;
+    }
+
+    let descriptors = stream.descriptors.clone();
+    let Some(track) = stream.track.take() else {
+        stream.track = None;
+        return;
+    };
+    let new_track = match track {
+        TrackState::Probing { mut probe, backlog } => {
+            let resolved = finalize_probe(stream.codec, &descriptors, &mut probe, data);
+            match resolved {
+                Some((config, timescale, kind)) => {
+                    stream.damaged_promotion = true;
+                    TrackState::Parked {
+                        config,
+                        timescale,
+                        kind,
+                        backlog,
+                    }
+                }
+                None => TrackState::Probing { probe, backlog },
+            }
+        }
+        other => other,
+    };
+    stream.track = Some(new_track);
+}
+
 /// Seed a fresh [`ConfigProbe`] with parameter sets already known for the
 /// track, so a re-probe of a single access unit is not blind to an SPS that
 /// arrived in an earlier one (r04-W51).
@@ -3750,11 +3830,37 @@ fn advance_track(
             // `adts_buffer_fullness` routinely read as a 12-bit `0xFFF`
             // syncword) is not a header and would flap the config.
             let skip = carried_frame_remainder(&live, data);
-            let new_config = reprobe_if_config_changed(stream, &mut live, &data[skip..]);
+            let new_config = if live.skip_next_reprobe {
+                let changed =
+                    observe_parameter_sets(stream.codec, &data[skip..], &mut live.parameter_sets);
+                if changed || count_invalid_parameter_sets(stream.codec, &data[skip..]) > 0 {
+                    live.skip_next_reprobe = false;
+                }
+                None
+            } else {
+                reprobe_if_config_changed(stream, &mut live, &data[skip..])
+            };
             // The display geometry the access unit activates (see
             // [`LiveTrack::display`]); it must be decided before the access
             // unit is applied, whether or not its codec config changed.
             let display = live.display(data);
+            if live.suppress_next_display_change {
+                live.display = None;
+                live.suppress_next_display_change = false;
+            }
+            if live.damaged_promotion
+                && let Some((_, changed)) = &live.display
+                && changed.afd
+                && !changed.aspect_ratio
+                && !changed.output_rect
+                && !changed.default_display_rect
+                && !changed.video_signal
+                && !changed.overscan
+                && !changed.bar_data
+                && !changed.initial
+            {
+                live.display = None;
+            }
             let provenance = EventProvenance {
                 pid: Some(pid),
                 packet_index: None,
@@ -5181,17 +5287,27 @@ impl StreamingTsDemux {
             // `discontinuity_indicator` is *not* such evidence on its own —
             // see the rule above.
             let completed_intact = stream.current_pes_intact && !short_of_declared;
-            let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
-                feed_pes_bounded(stream, pid, pusi, payload, &mut self.events)
+            let mut completed_pes = None;
+            if gap_here
+                && !pusi
+                && matches!(stream.codec, Codec::H264 | Codec::Hevc)
+                && matches!(stream.carrier, Carrier::Pes(_))
+            {
+                if let Carrier::Pes(assembler) = &mut stream.carrier
+                    && let Some(bytes) = assembler.flush()
+                {
+                    harvest_damaged_au(stream, pid, &bytes, &mut self.events);
+                }
+                stream.current_pes_intact = false;
+                clear_audio_carry(stream, &mut self.events);
+            } else if matches!(stream.carrier, Carrier::Pes(_)) {
+                completed_pes = feed_pes_bounded(stream, pid, pusi, payload, &mut self.events);
             } else if let Carrier::Section(reasm) = &mut stream.carrier {
                 reasm.feed(payload, pusi);
                 while let Some(s) = reasm.pop_section() {
                     sections.push(s.to_vec());
                 }
-                None
-            } else {
-                None
-            };
+            }
             // `completed_intact` false means dropped, not delivered (r04-W49).
             if completed_pes.is_some() && !completed_intact {
                 // A dropped unit loses its bytes, so an audio frame tail held
@@ -5201,6 +5317,10 @@ impl StreamingTsDemux {
             }
             if completed_intact && let Some(completed) = completed_pes {
                 on_completed_pes(stream, pid, &completed, &mut self.events);
+            } else if let Some(completed) = completed_pes
+                && matches!(stream.codec, Codec::H264 | Codec::Hevc)
+            {
+                harvest_damaged_au(stream, pid, &completed, &mut self.events);
             }
             if gap_here {
                 // Bytes were lost on this PID: whatever frame tail an audio
@@ -5513,6 +5633,7 @@ impl StreamingTsDemux {
             probe_walks: 0,
             probe_walked_len: 0,
             payload_packets: 0,
+            damaged_promotion: false,
             declared_at_packet: self.packet_index,
             unit_released: false,
         };
@@ -5869,6 +5990,9 @@ impl StreamingTsDemux {
                         mpeg2_tracker,
                         pending_config: None,
                         display: None,
+                        suppress_next_display_change: stream.damaged_promotion,
+                        damaged_promotion: stream.damaged_promotion,
+                        skip_next_reprobe: stream.damaged_promotion,
                     };
                     // Geometry-only seed state (active format filled in below from
                     // the first access unit, if any).
@@ -6260,6 +6384,8 @@ impl StreamingTsDemux {
                     && completed.len() < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
                 if stream.current_pes_intact && !short_of_declared {
                     on_completed_pes(stream, pid, &completed, &mut self.events);
+                } else if matches!(stream.codec, Codec::H264 | Codec::Hevc) {
+                    harvest_damaged_au(stream, pid, &completed, &mut self.events);
                 }
             }
         }
