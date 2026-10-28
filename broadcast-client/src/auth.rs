@@ -294,10 +294,14 @@ mod tests {
     #[test]
     fn auth_state_debug_redacts() {
         let origin = Url::parse("http://example/live.ts").unwrap();
-        let mut auth = AuthState::new(origin, vec![]);
+        let mut auth = AuthState::new(
+            origin,
+            vec![("X-Api-Key".to_string(), "HEADERSECRET".to_string())],
+        );
         auth.set_credentials(Credentials::bearer("supersecret-token"));
         let dbg = format!("{:?}", auth);
         assert!(!dbg.contains("supersecret-token"));
+        assert!(!dbg.contains("HEADERSECRET"));
     }
 
     #[test]
