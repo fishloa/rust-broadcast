@@ -3227,6 +3227,12 @@ fn harvest_damaged_au(
     if !matches!(stream.codec, Codec::H264 | Codec::Hevc) {
         return;
     }
+    // A parameter set from a damaged access unit may only seed a track
+    // that is still at its very first access unit: a stray damaged fragment
+    // later in a stream must not promote a phantom track.
+    if stream.probe_aus > 0 || stream.backlog_bytes > 0 {
+        return;
+    }
     let Ok(pes) = PesPacket::parse(data) else {
         return;
     };
@@ -3234,6 +3240,7 @@ fn harvest_damaged_au(
         return;
     }
     let data = pes.payload;
+
     let track_id = match &stream.track {
         Some(TrackState::Live(live)) => Some(live.track_id),
         _ => None,

@@ -1,3 +1,4 @@
+use broadcast_common::Unpackage;
 use transmux::ir::DemuxEvent;
 use transmux::ts_demux::StreamingTsDemux;
 
@@ -144,4 +145,19 @@ fn g1_negative_invalid_sps_ignored_and_counted() {
     // first init should not come from the damaged first AU's invalid SPS:
     // it must be no earlier than the clean stream's first init minus ... just
     // ensure we didn't treat invalid SPS as valid by checking count.
+}
+
+#[test]
+fn g1_audio_only_stray_damaged_video_yields_no_video_track() {
+    let Some(private) = test_fixtures::private_root() else {
+        eprintln!("skipping: no private fixtures");
+        return;
+    };
+    let path = private.join("fixtures/ts/france-tnt-uhf32-si-audio.ts");
+    let Ok(bytes) = std::fs::read(&path) else {
+        eprintln!("skipping: fixture missing");
+        return;
+    };
+    let media = transmux::TsDemux::new().unpackage(&bytes).unwrap();
+    assert_eq!(media.tracks.len(), 26, "phantom video track added");
 }
