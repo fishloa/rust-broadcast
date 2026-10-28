@@ -329,6 +329,27 @@ fn an_equal_msn_restart_with_a_reset_discontinuity_sequence_is_detected() {
     assert_eq!(discontinuities(&mut client), 1);
 }
 
+/// A restart that reuses the same media sequence number must not carry over
+/// state keyed by that number: the segments are fetched again and exactly one
+/// `Discontinuity` is emitted.
+#[test]
+fn a_restart_reusing_an_msn_refetches_and_emits_one_discontinuity() {
+    let t0 = 10 * 3600 * 1000;
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(pdt_playlist(10, 3, t0, 5, "seg", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids(10..13));
+    let _ = drain_outputs(&mut client);
+
+    client
+        .on_playlist(pdt_playlist(10, 3, t0, 0, "seg", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids(10..13));
+    assert_eq!(discontinuities(&mut client), 1);
+}
+
 /// The same numbers and names, but the wall-clock time of a shared segment
 /// jumped: a restart (the media behind the name changed).
 #[test]

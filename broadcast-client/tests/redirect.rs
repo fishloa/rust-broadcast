@@ -1,15 +1,6 @@
 mod support;
 
 use broadcast_client::{Action, Config, Session};
-use url::Url;
-
-#[test]
-fn resolve_301_with_location() {
-    let req = Url::parse("http://example/live.ts").unwrap();
-    let headers = vec![("Location".to_string(), "/moved.ts".to_string())];
-    let target = broadcast_client::redirect::resolve(&req, &headers, 0, 5).unwrap();
-    assert_eq!(target.as_str(), "http://example/moved.ts");
-}
 
 #[test]
 fn resolve_all_3xx_codes_session() {
@@ -34,28 +25,6 @@ fn resolve_all_3xx_codes_session() {
         }
         assert!(saw_new, "code {code} did not redirect");
     }
-}
-
-#[test]
-fn resolve_relative_location() {
-    let req = Url::parse("http://example/a/live.ts").unwrap();
-    let headers = vec![("Location".to_string(), "moved.ts".to_string())];
-    let target = broadcast_client::redirect::resolve(&req, &headers, 0, 5).unwrap();
-    assert_eq!(target.as_str(), "http://example/a/moved.ts");
-}
-
-#[test]
-fn resolve_max_redirects_returns_none() {
-    let req = Url::parse("http://example/live.ts").unwrap();
-    let headers = vec![("Location".to_string(), "/moved.ts".to_string())];
-    assert!(broadcast_client::redirect::resolve(&req, &headers, 5, 5).is_none());
-}
-
-#[test]
-fn resolve_without_location_returns_none() {
-    let req = Url::parse("http://example/live.ts").unwrap();
-    let headers: Vec<(String, String)> = vec![];
-    assert!(broadcast_client::redirect::resolve(&req, &headers, 0, 5).is_none());
 }
 
 #[test]

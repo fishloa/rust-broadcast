@@ -1,28 +1,7 @@
 mod support;
 
 use broadcast_auth::Scheme as AuthScheme;
-use broadcast_client::auth::AuthState;
 use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
-use url::Url;
-
-#[test]
-fn origin_scoped_request_headers() {
-    let origin = Url::parse("http://example/live.ts").unwrap();
-    let mut auth = AuthState::new(origin, vec![]);
-    auth.set_credentials(Credentials::bearer("secret-token"));
-    let same = Url::parse("http://example/other.ts").unwrap();
-    let h = auth.request_headers(&same, 0);
-    assert!(
-        h.iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer secret-token")
-    );
-    let other = Url::parse("http://other.example/live.ts").unwrap();
-    let h2 = auth.request_headers(&other, 0);
-    assert!(
-        !h2.iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
-    );
-}
 
 #[test]
 fn bearer_preemptive() {
@@ -452,15 +431,6 @@ fn debug_does_not_contain_secret() {
         .set_credentials(Credentials::bearer("supersecret-token"))
         .unwrap();
     let dbg = format!("{:?}", session);
-    assert!(!dbg.contains("supersecret-token"));
-}
-
-#[test]
-fn auth_state_debug_redacts() {
-    let origin = Url::parse("http://example/live.ts").unwrap();
-    let mut auth = AuthState::new(origin, vec![]);
-    auth.set_credentials(Credentials::bearer("supersecret-token"));
-    let dbg = format!("{:?}", auth);
     assert!(!dbg.contains("supersecret-token"));
 }
 

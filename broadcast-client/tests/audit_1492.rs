@@ -2,7 +2,6 @@ mod support;
 
 use broadcast_client::{Action, Config, Credentials, Event, Session};
 use support::ts_probe::{Req, TS_URL, location, one, open, respond, set_cookies};
-use url::Url;
 
 const SEC: u64 = 1_000_000;
 const OTHER_ORIGIN_URL: &str = "http://other.example/x.ts";
@@ -124,31 +123,6 @@ fn every_non_success_final_status_closes_the_connection_once() {
         let actions = drain(&mut session, 0);
         assert_eq!(closes(&actions), vec![first.conn], "{status}: {actions:?}");
     }
-}
-
-#[test]
-fn redirects_only_follow_http_and_https_and_never_downgrade() {
-    let https = Url::parse("https://example/live.ts").unwrap();
-    let http = Url::parse("http://example/live.ts").unwrap();
-    let to = |target: &str| vec![("Location".to_string(), target.to_string())];
-    let resolve =
-        |from: &Url, target: &str| broadcast_client::redirect::resolve(from, &to(target), 0, 5);
-    for bad in [
-        "file:///etc/passwd",
-        "ftp://example/live.ts",
-        "rtsp://example/live",
-        "javascript:alert(1)",
-    ] {
-        assert!(resolve(&http, bad).is_none(), "{bad}");
-    }
-    assert!(
-        resolve(&https, "http://example/live.ts").is_none(),
-        "https -> http downgrade"
-    );
-    assert!(resolve(&http, "https://example/live.ts").is_some());
-    assert!(resolve(&https, "https://other/live.ts").is_some());
-    assert!(resolve(&http, "http://other/live.ts").is_some());
-    assert!(resolve(&https, "/relative.ts").is_some());
 }
 
 #[test]

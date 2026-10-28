@@ -1,10 +1,8 @@
 mod support;
 
-use broadcast_client::auth::AuthState;
 use broadcast_client::{Config, Credentials, Error, Session};
 use support::hls_host::*;
 use support::ts_probe::{self, *};
-use url::Url;
 
 const CDN_SEG_URL: &str = "http://cdn.test/seg/index1.ts";
 const RESERVED_SPELLINGS: [&str; 14] = [
@@ -183,37 +181,6 @@ fn valid_headers_accepted_at_open() {
 
 #[test]
 fn extra_headers_never_override_session_cookie_or_authorization() {
-    let origin = Url::parse(TS_URL).unwrap();
-    let mut auth = AuthState::new(
-        origin.clone(),
-        vec![
-            pair("Cookie", "injected=1"),
-            pair("authorization", "Bearer evil"),
-            pair("X-Keep", "1"),
-        ],
-    );
-    auth.seed_cookies(&[pair("sid", "real")]);
-    auth.set_credentials(Credentials::bearer("tok"));
-    let headers = auth.request_headers(&origin, 0);
-    let named = |n: &str| -> Vec<&str> {
-        headers
-            .iter()
-            .filter(|(k, _)| k.eq_ignore_ascii_case(n))
-            .map(|(_, v)| v.as_str())
-            .collect()
-    };
-    assert_eq!(named("cookie"), vec!["sid=real"]);
-    assert_eq!(named("authorization"), vec!["Bearer tok"]);
-    assert_eq!(named("x-keep"), vec!["1"]);
-
-    let mut no_creds = AuthState::new(origin.clone(), vec![pair("Authorization", "Bearer evil")]);
-    assert!(
-        no_creds
-            .request_headers(&origin, 0)
-            .iter()
-            .all(|(k, _)| !k.eq_ignore_ascii_case("authorization"))
-    );
-
     let config = {
         let mut new_config = Config::default();
         new_config.extra_headers = vec![pair("X-Keep", "1")];

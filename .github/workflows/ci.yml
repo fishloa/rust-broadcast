@@ -505,3 +505,9 @@ jobs:
           for c in broadcast-auth buffering-runtime broadcast-hls media-plane hls-runtime tshttp-runtime dash-runtime broadcast-client; do
             cargo check -p "$c" --target ${{ matrix.target }} --locked
           done
+      - name: Forbid tokio/reqwest/mio/rustls in broadcast-client normal deps (issue #1454 R14)
+        run: |
+          if cargo tree -p broadcast-client -e normal --target ${{ matrix.target }} --locked | grep -E '(tokio|reqwest|mio|rustls) v[0-9]'; then
+            echo "forbidden normal dependency found in broadcast-client (issue #1454 R14)" >&2
+            exit 1
+          fi
