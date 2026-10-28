@@ -24,7 +24,7 @@ use crate::error::{Error, Result};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use broadcast_hls::{AttrValue, MediaPlaylist, parse_attribute_list, render_attribute_list};
+use broadcast_hls::{AttrValue, MediaPlaylist, parse_attribute_list_strict, render_attribute_list};
 
 /// `CLASS` value for an Interstitial `EXT-X-DATERANGE` (Appendix D §D.2).
 pub const INTERSTITIAL_CLASS: &str = "com.apple.hls.interstitial";
@@ -175,7 +175,7 @@ impl InterstitialDateRange {
 
         // The shared workspace tokenizer (issue #1140 T12): `attrs` values
         // already have their surrounding `"` stripped for quoted attributes.
-        let (attrs, _quoted) = parse_attribute_list(body);
+        let (attrs, _quoted) = parse_attribute_list_strict(body)?;
 
         let id = attrs.get("ID").cloned();
         let class_ok = attrs.get("CLASS").map(String::as_str) == Some(INTERSTITIAL_CLASS);
@@ -746,5 +746,23 @@ mod tests {
         // The PART-INF header line is not mistaken for a part.
         assert!(out.find("#EXT-X-PART-INF").is_none_or(|i| i < tag), "{out}");
         MediaPlaylist::parse(&out).expect("the spliced LL playlist parses");
+    }
+
+    #[test]
+    fn parse_tag_line_rejects_malformed_attribute_list_unterminated_quote() {
+        let line = "#EXT-X-DATERANGE:ID=\"x";
+        assert!(matches!(
+            InterstitialDateRange::parse_tag_line(line).unwrap_err(),
+            Error::HlsAttrValue(broadcast_hls::Error::UnterminatedQuotedString { .. })
+        ));
+    }
+
+    #[test]
+    fn parse_tag_line_rejects_malformed_attribute_list_duplicate_key() {
+        let line = "#EXT-X-DATERANGE:ID=\"x\",ID=\"y\",CLASS=\"com.apple.hls.interstitial\",START-DATE=\"2020-01-01T00:00:00Z\",X-ASSET-URI=\"http://x/a.m3u8\"";
+        assert!(matches!(
+            InterstitialDateRange::parse_tag_line(line).unwrap_err(),
+            Error::HlsAttrValue(broadcast_hls::Error::DuplicateAttribute { name }) if name == "ID"
+        ));
     }
 }
