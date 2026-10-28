@@ -29,7 +29,7 @@ use listener::bind_tcp;
 const ADMIN_TOKEN: &str = "ts-hls-idr-fallback-admin";
 const HANG_GUARD: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const TARGET_SECS: f64 = 1.0;
+const TARGET_SECS: f64 = 2.0;
 const TS_PACKET: usize = 188;
 const HTTP_CHUNK_PACKETS: usize = 56;
 const HTTP_CHUNK_INTERVAL: Duration = Duration::from_millis(10);

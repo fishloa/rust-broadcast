@@ -1143,6 +1143,7 @@ impl HlsOriginBuilder {
             arrival_clock: self.arrival_clock,
             arrival_origin: Mutex::new(None),
             declared_bandwidth_bps: self.declared_bandwidth_bps,
+            frozen_target_duration_secs: Mutex::new(None),
         })
     }
 }
@@ -1216,6 +1217,11 @@ pub struct HlsOrigin {
     /// Operator-declared peak bitrate (see
     /// [`HlsOriginBuilder::declared_bandwidth_bps`]) — `None` means none.
     declared_bandwidth_bps: Option<u64>,
+    /// Frozen `EXT-X-TARGETDURATION` (seconds, pre-rounding) captured the
+    /// first time a playlist is rendered with at least one segment in the
+    /// window: RFC 8216 §4.3.3.1 forbids the tag changing once published,
+    /// so later (possibly longer) segments never move it. `None` until then.
+    frozen_target_duration_secs: Mutex<Option<f64>>,
 }
 
 impl HlsOrigin {
@@ -1656,9 +1662,6 @@ impl HlsOrigin {
     /// response is to resume from the next segment, not to fabricate the
     /// lost entries' duration/discontinuity data.
     fn drain(&self) {
-        // Nothing published since the last drain: skip both locks. The head
-        // is read *before* draining and stored after, so a segment published
-        // in between just makes the next call drain once more (audit r09-O4).
         let head = self
             .trunk
             .last_closed_segment()
@@ -1915,9 +1918,29 @@ impl HlsOrigin {
         // so a real segment routinely exceeds it — advertising the
         // configured target alone can under-declare. Use whichever is
         // larger, rounded (not the configured value's `ceil()` alone).
-        let target_duration = self
+        // RFC 8216 §4.3.3.1 (MUST): `EXT-X-TARGETDURATION` must not change
+        // once published. Freeze it at the first render that has at least one
+        // segment in the window: later (possibly longer) segments move the
+        // ratchet's `max_segment_duration_secs` but never the published tag.
+        let candidate = self
             .target_duration_secs
             .max(window.max_segment_duration_secs);
+        // RFC 8216 §4.3.3.1 (MUST): once published, `EXT-X-TARGETDURATION`
+        // never changes — even if the window later empties (gap/new run) or a
+        // longer segment arrives. Freeze on the first render that carries at
+        // least one segment; an empty pre-publication render keeps the
+        // running candidate.
+        let target_duration = {
+            let mut frozen = locked(&self.frozen_target_duration_secs);
+            if let Some(existing) = *frozen {
+                existing
+            } else if window.segments.is_empty() {
+                candidate
+            } else {
+                *frozen = Some(candidate);
+                candidate
+            }
+        };
         // `target_duration_secs` is validated finite and positive at build
         // and segment durations come from `Duration`, so this is finite;
         // the clamp makes the float->int conversion exact-or-saturating.
@@ -2242,10 +2265,22 @@ impl HlsOrigin {
             return Err("no iframe entry".to_string());
         };
 
-        // Target duration uses the same rule as the media playlist.
-        let target_duration = self
+        // Target duration uses the same rule as the media playlist, frozen
+        // once published (RFC 8216 §4.3.3.1).
+        let candidate = self
             .target_duration_secs
             .max(window.max_segment_duration_secs);
+        let target_duration = {
+            let mut frozen = locked(&self.frozen_target_duration_secs);
+            if let Some(existing) = *frozen {
+                existing
+            } else if window.segments.is_empty() {
+                candidate
+            } else {
+                *frozen = Some(candidate);
+                candidate
+            }
+        };
         let target_duration = target_duration.round().clamp(0.0, f64::from(u32::MAX)) as u32;
 
         let fmp4 = self.container == Container::Fmp4;
