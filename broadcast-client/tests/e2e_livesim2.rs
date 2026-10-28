@@ -201,7 +201,7 @@ const SHAPES: [Shape; 6] = [
     },
     Shape {
         name: "periods",
-        path: "utc_head/periods_20/testpic_2s/Manifest.mpd",
+        path: "utc_head/periods_20/continuous_1/testpic_2s/Manifest.mpd",
         prefer_host: false,
         strict_availability: false,
         moves_start_time: false,
