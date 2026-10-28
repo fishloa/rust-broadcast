@@ -166,7 +166,7 @@ pub fn sample_from_exchange(
     }
     let half = rtt / 2;
     Ok(UtcSample {
-        mono_us: exchange.sent_us.saturating_add(half),
+        mono_us: exchange.sent_us + half,
         utc_us: server_utc_us,
         uncertainty_us: half.saturating_add(resolution_us),
     })

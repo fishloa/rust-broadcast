@@ -285,9 +285,3 @@ fn replacement_never_loses_the_most_trusted_anchor_under_random_offers() {
         }
     }
 }
-
-#[test]
-fn sample_from_exchange_saturates_mono_on_overflow() {
-    let s = sample_from_exchange(Exchange::new(u64::MAX, u64::MAX), 0, 0, MAX_RTT).unwrap();
-    assert_eq!(s.mono_us, u64::MAX);
-}

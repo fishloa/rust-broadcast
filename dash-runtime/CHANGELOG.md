@@ -4,9 +4,6 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 
-### Fixed
-- `timing::utc_timing::sample_from_exchange`: saturate the exchange midpoint to `u64::MAX` instead of overflowing on extreme inputs.
-
 ### Added
 - Initial core (design step W-c, `docs/dash-runtime/DESIGN.md`), not yet published.
 - `mpd`: consume-only MPD model and bounded namespace-aware parser (`Limits`), attribute inheritance down Period > AdaptationSet > Representation, BaseURL alternates (DVB priority) and URL resolution, descriptors (Role, EssentialProperty, ContentProtection, UTCTiming, `urn:mpeg:dash:urlparam:2014`).
