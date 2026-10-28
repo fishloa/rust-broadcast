@@ -29,19 +29,19 @@ use listener::bind_tcp;
 const ADMIN_TOKEN: &str = "ts-hls-idr-fallback-admin";
 const HANG_GUARD: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const TARGET_SECS: f64 = 2.0;
+const TARGET_SECS: f64 = 1.0;
 const TS_PACKET: usize = 188;
 const HTTP_CHUNK_PACKETS: usize = 56;
 const HTTP_CHUNK_INTERVAL: Duration = Duration::from_millis(10);
 const AUTO_BOUND_SECS: f64 = 6.0;
 const SHORT_BOUND_TARGETS: u32 = 2;
-const PACED_BOUND_TARGETS: u32 = 2;
+const PACED_BOUND_TARGETS: u32 = 5;
 const FRAME_SLACK_SECS: f64 = 0.2;
 const LATE_SLACK_SECS: f64 = 6.0;
 const MIN_SEGMENTS: usize = 2;
 const MOVIE_TIMESCALE: u32 = 90_000;
 const FRANCE2_FIRST_NON_IDR_SYNC: usize = 20;
-const FRANCE2_LOOP_REPS: usize = 8;
+const FRANCE2_LOOP_REPS: usize = 4;
 const GULLI_LOOP_REPS: usize = 3;
 
 fn file_input(path: &Path) -> InputSpec {
@@ -541,7 +541,7 @@ fn config_option_parses_and_rejects_unknown_value() {
 
 const VALIDATOR_WINDOW_SECS: &str = "14";
 const DURATION_MISMATCH_CODE: i64 = -50060;
-const MIN_VALIDATED_SEGMENTS: usize = 2;
+const MIN_VALIDATED_SEGMENTS: usize = 4;
 
 fn collect_codes(value: &serde_json::Value, out: &mut Vec<(i64, String)>) {
     match value {

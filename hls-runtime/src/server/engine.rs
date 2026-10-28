@@ -1965,7 +1965,7 @@ impl HlsOrigin {
         // `target_duration_secs` is validated finite and positive at build
         // and segment durations come from `Duration`, so this is finite;
         // the clamp makes the float->int conversion exact-or-saturating.
-        let target_duration = target_duration.round().clamp(0.0, f64::from(u32::MAX)) as u32;
+        let target_duration = target_duration.ceil().clamp(0.0, f64::from(u32::MAX)) as u32;
         // RFC 8216bis §6.2.2: EXT-X-PART tags stay in the Playlist until they
         // are more than three Target Durations from its end — so a closed
         // segment keeps its parts while the media after it (later closed
@@ -2288,7 +2288,7 @@ impl HlsOrigin {
 
         // RFC 8216 §4.3.3.1: `EXT-X-TARGETDURATION` is frozen once published.
         let target_duration = self.published_target_duration_secs(&window);
-        let target_duration = target_duration.round().clamp(0.0, f64::from(u32::MAX)) as u32;
+        let target_duration = target_duration.ceil().clamp(0.0, f64::from(u32::MAX)) as u32;
 
         let fmp4 = self.container == Container::Fmp4;
         let map_for = |generation: Generation| {
