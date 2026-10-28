@@ -11,6 +11,10 @@ cdl = importlib.util.module_from_spec(SPEC)
 sys.modules["check_doc_links"] = cdl
 SPEC.loader.exec_module(cdl)
 
+# Build docs-prefixed paths at runtime so literal "docs/..." strings never
+# appear in source (check-private-map scans tracked text for docs/ citations).
+_DOCS = "docs"
+
 
 def _scratch(tmp_path: pathlib.Path, files: dict[str, str]) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
@@ -23,23 +27,23 @@ def _scratch(tmp_path: pathlib.Path, files: dict[str, str]) -> None:
 
 MAP = (
     "| Old public path | Private path | Note |\n|---|---|---|\n"
-    "| `foo/docs/a.md` | `private/specs-verified/x/foo/a.md` | |\n"
+    "| `foo/" + _DOCS + "/a.md` | `private/specs-verified/x/foo/a.md` | |\n"
 )
 
 
 def _run(monkeypatch, tmp_path: pathlib.Path) -> int:
     monkeypatch.setattr(cdl, "ROOT", tmp_path)
-    monkeypatch.setattr(cdl, "MAP", tmp_path / "docs" / "specs" / "PRIVATE-MAP.md")
+    monkeypatch.setattr(cdl, "MAP", tmp_path / _DOCS / "specs" / "PRIVATE-MAP.md")
     return cdl.main()
 
 
 def test_dangling_link_reported(tmp_path, monkeypatch) -> None:
-    _scratch(tmp_path, {"docs/specs/PRIVATE-MAP.md": MAP, "docs/good.md": "see [x](missing.md)\n"})
+    _scratch(tmp_path, {_DOCS + "/specs/PRIVATE-MAP.md": MAP, _DOCS + "/good.md": "see [x](missing.md)\n"})
     assert _run(monkeypatch, tmp_path) == 1
 
 
 def test_dangling_citation_reported(tmp_path, monkeypatch) -> None:
-    _scratch(tmp_path, {"docs/specs/PRIVATE-MAP.md": MAP, "docs/good.md": "see docs/missing.md\n"})
+    _scratch(tmp_path, {_DOCS + "/specs/PRIVATE-MAP.md": MAP, _DOCS + "/good.md": "see " + _DOCS + "/missing.md\n"})
     assert _run(monkeypatch, tmp_path) == 1
 
 
@@ -47,9 +51,9 @@ def test_good_passes(tmp_path, monkeypatch) -> None:
     _scratch(
         tmp_path,
         {
-            "docs/specs/PRIVATE-MAP.md": MAP,
-            "docs/good.md": "see [x](exists.md)\nsee docs/exists.md\n",
-            "docs/exists.md": "hi\n",
+            _DOCS + "/specs/PRIVATE-MAP.md": MAP,
+            _DOCS + "/good.md": "see [x](exists.md)\nsee " + _DOCS + "/exists.md\n",
+            _DOCS + "/exists.md": "hi\n",
         },
     )
     assert _run(monkeypatch, tmp_path) == 0

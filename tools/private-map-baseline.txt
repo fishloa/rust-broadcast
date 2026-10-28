@@ -1,6 +1,5 @@
 # Citations that were already dangling before the private move (tools/check-private-map.py check 3).
 # file<TAB>cited path. May only shrink: fix or delete a citation, then delete its line.
-docs/specs/dash/dashif-iop-4.3/dashif-iop-4.3-trickmode.md	../../../docs/specs/dash/23009-1/dash-23009-1-2022-ids.md
 dvb-si/docs/enums/iso_13818_6/biop_object_kind.toml	docs/iso_13818_6_biop.md
 dvb-si/docs/enums/iso_13818_6/biop_tag.toml	docs/iso_13818_6_biop.md
 fixtures/hls/MANIFEST.md	ll-hls-runtime/docs/examples.md
