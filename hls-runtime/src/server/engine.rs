@@ -1227,7 +1227,7 @@ pub struct HlsOrigin {
     /// `EXT-X-TARGETDURATION` after first publication — a conformance
     /// degradation counter (RFC 8216 §4.3.3.1). Incremented once per such
     /// segment at drain time.
-    pub target_duration_violations: AtomicU64,
+    target_duration_violations: AtomicU64,
 }
 
 impl HlsOrigin {
@@ -1657,18 +1657,6 @@ impl HlsOrigin {
     pub fn target_duration_violations(&self) -> u64 {
         self.target_duration_violations.load(Ordering::Relaxed)
     }
-    /// Alias for [`Self::target_duration_violations`].
-    pub fn target_duration_violation_count(&self) -> u64 {
-        self.target_duration_violations()
-    }
-    /// Alias for [`Self::target_duration_violations`].
-    pub fn conformance_degradations(&self) -> u64 {
-        self.target_duration_violations()
-    }
-    /// Alias for [`Self::target_duration_violations`].
-    pub fn conformance_degradation_count(&self) -> u64 {
-        self.target_duration_violations()
-    }
 
     /// The fMP4 init segment bytes, if set.
     pub fn init_bytes(&self) -> Option<Bytes> {
@@ -1901,24 +1889,6 @@ impl HlsOrigin {
             .collect()
     }
 
-    /// Render the LL-HLS media playlist for `track_id` from this origin's
-    /// current `Window` (closed segments) and the `Trunk`'s live edge (open
-    /// segment's parts + preload hint).
-    ///
-    /// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
-    /// be advertised with an `#EXTINF`/URI pair — that segment has no
-    /// fetchable resource yet — it may only appear as trailing `#EXT-X-PART`
-    /// lines. `broadcast_hls::MediaPlaylist::open_segment` is exactly this
-    /// representation: its parts render as trailing `#EXT-X-PART` lines with
-    /// no `#EXTINF`/URI, so the in-progress segment's parts and the
-    /// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both
-    /// rendered by `to_m3u8()` itself — this method only supplies the URI
-    /// scheme (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
-    /// Returns the rendered playlist, or a human-readable reason the
-    /// playlist could not be rendered (a field carrying a character
-    /// forbidden in an HLS quoted-string/URI — audit BH-W7, issue
-    /// #1111; unreachable for this origin, which only ever supplies
-    /// its own generated URIs).
     /// Resolve the `EXT-X-TARGETDURATION` to publish for `window`, freezing
     /// it at the first render that carries at least one segment (RFC 8216
     /// §4.3.3.1): once published it never changes, even as later (possibly
@@ -1938,6 +1908,24 @@ impl HlsOrigin {
         }
     }
 
+    /// Render the LL-HLS media playlist for `track_id` from this origin's
+    /// current `Window` (closed segments) and the `Trunk`'s live edge (open
+    /// segment's parts + preload hint).
+    ///
+    /// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
+    /// be advertised with an `#EXTINF`/URI pair — that segment has no
+    /// fetchable resource yet — it may only appear as trailing `#EXT-X-PART`
+    /// lines. `broadcast_hls::MediaPlaylist::open_segment` is exactly this
+    /// representation: its parts render as trailing `#EXT-X-PART` lines with
+    /// no `#EXTINF`/URI, so the in-progress segment's parts and the
+    /// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both
+    /// rendered by `to_m3u8()` itself — this method only supplies the URI
+    /// scheme (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
+    /// Returns the rendered playlist, or a human-readable reason the
+    /// playlist could not be rendered (a field carrying a character
+    /// forbidden in an HLS quoted-string/URI — audit BH-W7, issue
+    /// #1111; unreachable for this origin, which only ever supplies
+    /// its own generated URIs).
     fn render_playlist(&self, track_id: TrackId) -> core::result::Result<String, String> {
         self.drain();
         // Snapshot the window and release its lock before any `Trunk` call:
