@@ -477,12 +477,7 @@ fn debug_never_prints_cookie_value() {
     let first = one(&mut s, 0);
     ok_with_cookies(&mut s, &first, &["r=RECVSECRET; Path=/"]);
     let session_dbg = format!("{s:?}");
-    let auth = broadcast_client::auth::AuthState::new(
-        url::Url::parse(TS_URL).unwrap(),
-        vec![pair("X-Api-Key", "HEADERSECRET")],
-    );
-    let auth_dbg = format!("{auth:?}");
-    for dbg in [&config_dbg, &session_dbg, &auth_dbg] {
+    for dbg in [&config_dbg, &session_dbg] {
         for secret in ["SEEDSECRET", "RECVSECRET", "HEADERSECRET"] {
             assert!(!dbg.contains(secret), "{secret} leaked in {dbg}");
         }

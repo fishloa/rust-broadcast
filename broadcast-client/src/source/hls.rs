@@ -991,6 +991,7 @@ impl HlsSource {
                     if let Some(kind) = self.skip_error.take() {
                         self.events.push_back(Event::Error { kind, fatal: false });
                     }
+                    self.seg_failures.clear_all();
                     self.events.push_back(Event::Discontinuity);
                 }
                 Output::EndOfStream => self.events.push_back(Event::Status(Status::Ended)),
