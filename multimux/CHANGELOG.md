@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- `stream_in_progress_segment` now serves the streamed whole-segment response with `Content-Type: video/iso.segment` (was `video/mp4`), matching other `.m4s` segments and parts (Apple HLS authoring spec 10.4).
+
 ### Changed (BREAKING: `dash_pull` runs on `dash-runtime`)
 - **`dash_pull` is a host over `dash_runtime::client::DashClient`.** The tokio loop and the media-plane mapping stay; MPD parsing, segment addressing, the UTC clock, refresh, the live join, availability gating, failure classification and track selection are the core's. Every observable difference is listed here and, with the reasons, in `docs/dash-runtime/DESIGN.md` section 12.3.
   - **Clock.** `jiff::Timestamp::now()` is gone from the pull path (a guard test keeps every clock read out of `source::dash_pull`; time comes from one `HostClock` seam). The host UTC clock is anchored at open and every 600 s; for a live MPD the ladder is `UTCTiming` (`direct`, `http-xsdate`, `http-iso`, `http-head`, `http-ntp`) over the host clock over the MPD response `Date`. A dynamic MPD without `availabilityStartTime`, or with no usable clock source, now ends the attempt with a typed error (it used to start at `@startNumber`).

@@ -484,7 +484,7 @@ async fn stream_in_progress_segment(
     let mut response = Response::new(Body::from_stream(body_stream));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static(MP4_CONTENT_TYPE),
+        HeaderValue::from_static(ISO_SEGMENT_CONTENT_TYPE),
     );
     Some(response)
 }
@@ -879,6 +879,11 @@ mod tests {
             resp.status(),
             StatusCode::OK,
             "an in-progress whole-segment request must stream, not 404"
+        );
+        assert_eq!(
+            content_type(&resp),
+            "video/iso.segment",
+            "streamed in-progress segment is an .m4s resource"
         );
         assert_eq!(
             body_bytes(resp).await,

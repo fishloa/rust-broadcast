@@ -169,3 +169,116 @@ async fn master_503_when_published_but_no_segment_and_no_declared_bandwidth() {
         assert_eq!(&body[..], b"bandwidth unknown\n");
     }
 }
+
+#[tokio::test]
+async fn master_ratchets_bandwidth_over_http() {
+    let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+    route.publish_new_program(media_plane::ProgramId(0));
+    let app = app_for(route.clone(), Arc::new(LlHlsOutput::default()));
+
+    // No measured segment yet -> 503 + Retry-After, never a placeholder.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/cam/master.m3u8")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(resp.headers().get(header::RETRY_AFTER).unwrap(), "1");
+
+    // First segment -> 200, BANDWIDTH derived from it.
+    route
+        .add_segment(
+            media_plane::ProgramId(0),
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x21; 8],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 0,
+            },
+        )
+        .expect("add_segment");
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/cam/master.m3u8")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let text = String::from_utf8_lossy(
+        &axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .to_string();
+    assert!(text.contains("BANDWIDTH=16"), "body: {text}");
+
+    // Larger later segment -> ratchets up.
+    route
+        .add_segment(
+            media_plane::ProgramId(0),
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x21; 1_500_000],
+                duration: 1.0,
+                segment_seq: 2,
+                part_count: 0,
+            },
+        )
+        .expect("add_segment");
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/cam/master.m3u8")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let text = String::from_utf8_lossy(
+        &axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .to_string();
+    assert!(text.contains("BANDWIDTH=12000000"), "body: {text}");
+
+    // Smaller later segment -> does not drop.
+    route
+        .add_segment(
+            media_plane::ProgramId(0),
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x21; 10],
+                duration: 3.0,
+                segment_seq: 3,
+                part_count: 0,
+            },
+        )
+        .expect("add_segment");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/cam/master.m3u8")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let text = String::from_utf8_lossy(
+        &axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .to_string();
+    assert!(text.contains("BANDWIDTH=12000000"), "body: {text}");
+}
