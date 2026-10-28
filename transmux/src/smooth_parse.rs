@@ -8,7 +8,7 @@
 //! one reads XML with the shared [`quick_xml::Reader`]-based tokenizer
 //! (crate-private, `std` feature) rather than writing a second one.
 //!
-//! See [`transmux/docs/smooth/ms-sstr.md`](../../docs/smooth/ms-sstr.md) for
+//! See [`transmux/docs/smooth/ms-sstr.md`](../../docs/README.md) for
 //! the full spec transcription this module cites throughout (client Manifest
 //! §2.2.2.x, live attributes §2.2.2.1, `c` timeline §2.2.2.6, URL token
 //! substitution §2.2.4.1).

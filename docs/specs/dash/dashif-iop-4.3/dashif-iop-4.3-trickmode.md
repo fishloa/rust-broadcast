@@ -50,7 +50,7 @@ rendered pages**. Verbatim below (line breaks of the PDF removed).
    v1.4.1, DASH-IF IOP v4.3. It is therefore unverified.
 2. `@value` is "the value of @id attribute of the Adaptation Set to which these trick mode Representations
    belong" — i.e. the id of the **main** AdaptationSet, and (23009-1 Table 5) that id is an unsigned integer
-   (`../../../docs/specs/dash/23009-1/dash-23009-1-2022-ids.md`). Free-form values such as `main-0` reference nothing.
+   (docs/specs/dash/23009-1/dash-23009-1-2022-ids.md). Free-form values such as `main-0` reference nothing.
 3. IOP's clause is a *recommendation* ("it is recommended ... the following is recommended"); with an
    EssentialProperty the client "shall not select" the contained Representations for regular playout.
 4. `@maxPlayoutRate` is signalled "for each Representation" in IOP; ETSI TS 103 285 v1.4.1 §10.6.2.1 says the Representations "will indicate @maxPlayoutRate, and the Adaptation Set

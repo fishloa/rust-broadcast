@@ -199,6 +199,10 @@ jobs:
       # or a citation that is neither on disk nor in the map. Pure Python.
       - name: private spec map is consistent
         run: python3 tools/check-private-map.py
+      # Dangling documentation references (relative links, backticked repo paths,
+      # and docs/... citations) must resolve or be decoded by PRIVATE-MAP.md.
+      - name: doc links are consistent
+        run: python3 tools/check-doc-links.py
       # README dependency snippets (`crate = "x.y"`) must name the epoch the
       # workspace crate is at; they went stale every wave before this gate.
       # Pure Python, no cargo, no network.

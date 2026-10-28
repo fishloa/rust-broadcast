@@ -1,4 +1,4 @@
-//! Typed `Session` header — RFC 2326 §12.37 (`docs/rfc2326.md`, `docs/session-header.md`).
+//! Typed `Session` header — RFC 2326 §12.37 (`rtsp-runtime/docs/rfc2326.md`, `rtsp-runtime/docs/session-header.md`).
 //!
 //! ```text
 //! Session = "Session" ":" session-id [ ";" "timeout" "=" delta-seconds ]
@@ -10,7 +10,7 @@
 //! when absent.
 //!
 //! Lenient on input, canonical on output (the interop table is in
-//! `docs/session-header.md`): LWS around `;` and `=`, case-insensitive parameter
+//! `rtsp-runtime/docs/session-header.md`): LWS around `;` and `=`, case-insensitive parameter
 //! names, a bad or zero `timeout` value keeps the id and falls back to the default (with a
 //! warning, see [`SessionHeader::parse_with_warnings`]), unknown parameters are
 //! preserved. The session id is everything before the first `;` outside a

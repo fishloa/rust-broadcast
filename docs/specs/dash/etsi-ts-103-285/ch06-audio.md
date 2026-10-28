@@ -11,7 +11,7 @@ notes_original_wording: true
 # TS 103 285 - clause 6 (notes): audio
 
 Original-wording notes. Base semantics of Role/Accessibility/Preselection: ISO/IEC 23009-1
-(`transmux/docs/codec/dash-23009-1-2022-ids.md`). Box-level codec notes: `transmux/docs/codec/` (`ac4-dac4.md`,
+(`transmux/docs/README.md`). Box-level codec notes: `transmux/docs/codec/` (`ac4-dac4.md`,
 `mpegh-mhaC.md`, `dts-isobmff-etsi102114.md`, `ac3-eac3-mp4.md`).
 
 ## 6.1 Common rules

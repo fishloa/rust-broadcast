@@ -20,7 +20,7 @@
 //! `declare_tables!` list); [`TableRegistry`] adds private table_ids. The
 //! per-table_id reference with verified clauses, and the table_ids no module
 //! implements yet, is generated into
-//! [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#tables-table_id).
+//! [`dvb-si/docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#tables-table_id).
 //!
 //! # Reserved-bit policy (parse tolerant, serialize re-emits)
 //!

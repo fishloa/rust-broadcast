@@ -25,7 +25,7 @@
 //!
 //! The base is `fixtures/ts/h264_aac.ts` — a real H.264/AVC + AAC MPEG-2 TS
 //! capture (25 fps, 320x240, 3 real keyframes) already used by
-//! [`transmux_hub`](../transmux_hub.rs). No fixture in this workspace carries
+//! [`transmux_hub`](../README.md). No fixture in this workspace carries
 //! a genuine embedded SCTE-35 cue *and* real audio/video content on a matching
 //! PID/timescale profile (the dedicated `fixtures/ts/scte35-*.ts` fixtures are
 //! bare section vectors with no AV payload). Per the issue's option (b), this

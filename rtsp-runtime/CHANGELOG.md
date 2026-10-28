@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Documentation
+- Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Added
 - `ClientSession::redirect_location()`: the `Location` header of the most recent redirection (3xx) response, cleared by any other response (`ClientEvent::Response` carries no headers). Used by `broadcast-client` to follow an RTSP redirect.
 - `ClientSession::content_base()`: the `Content-Base` (else `Content-Location`) of the most recent successful DESCRIBE response, the base for relative `a=control` values (RFC 2326 Appendix C.1.1). `ClientEvent::Response` carries no headers.

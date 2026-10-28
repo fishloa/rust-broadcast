@@ -3,7 +3,7 @@
 These data files are the **source of truth** for the living value→name registries
 that have no fixed vendored ETSI/ISO standard (CA_system_id, private_data_specifier).
 They are copied **verbatim** from [TSDuck](https://github.com/tsduck/tsduck) and
-compiled into lookup functions at build time by `../../build.rs` (issue #141).
+compiled into lookup functions at build time by ../../build.rs (issue #141).
 Editing the data + rebuilding updates the lookups; no code changes needed.
 
 **Do not hand-edit the values.** Re-sync by re-copying the upstream file (and

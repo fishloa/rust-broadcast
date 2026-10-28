@@ -19,8 +19,8 @@ Typical users: `multimux`'s `whip` and `whep` features, a WebRTC test client, an
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| IETF RFC 9725 WHIP | RFC 9725 (vendored `specs/rfc9725_whip.txt`; `docs/whip-rfc9725.md`) | §4 offer POST (201), Trickle ICE and ICE restart PATCH (`application/trickle-ice-sdpfrag`, `If-Match`; a missing `If-Match` is `428`), DELETE, `Link` ICE servers, Bearer | Full for signalling | The server resource enforces content type and entity tags |
-| draft-ietf-wish-whep | -04 (`docs/whep-draft-04.md`; not in the vendored index) | Offer POST, counter-offer (406 then PATCH `application/sdp`), 409 no publisher, PATCH, DELETE | Full for signalling | A draft; later revisions are not tracked |
+| IETF RFC 9725 WHIP | RFC 9725 (vendored `specs/rfc9725_whip.txt`; `webrtc-runtime/docs/whip-rfc9725.md`) | §4 offer POST (201), Trickle ICE and ICE restart PATCH (`application/trickle-ice-sdpfrag`, `If-Match`; a missing `If-Match` is `428`), DELETE, `Link` ICE servers, Bearer | Full for signalling | The server resource enforces content type and entity tags |
+| draft-ietf-wish-whep | -04 (`webrtc-runtime/docs/whep-draft-04.md`; not in the vendored index) | Offer POST, counter-offer (406 then PATCH `application/sdp`), 409 no publisher, PATCH, DELETE | Full for signalling | A draft; later revisions are not tracked |
 | IETF RFC 8840 / RFC 8839 (Trickle ICE SDP fragments) | not vendored, unverified here | Fragment bytes carried opaque | Typed-opaque | |
 | IETF RFC 8445 ICE, RFC 8489 STUN | RFC 8445, RFC 8489 (transcribed in `docs/`) | `media`: host and server-reflexive candidates, connectivity checks, `restart_ice` | Partial | No TURN relay. Verified with RFC 5769 STUN vectors |
 | IETF RFC 5764 DTLS-SRTP, RFC 8122 fingerprints | RFC 5764 (transcribed) | `media`: DTLS handshake, SRTP key export, fingerprint pinning, rekey (`needs_rekey`, `rekey`) | Full for a single flow | Peer must match the SDP `a=fingerprint` |

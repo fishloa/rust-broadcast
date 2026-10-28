@@ -17,7 +17,7 @@
 //! that parameter's already-extracted value. [`rtpmap_clock_rate`] parses the
 //! companion `a=rtpmap` attribute's clock rate.
 //!
-//! See [`transmux/docs/rtp/rtp-payload-formats.md`](../rtp/rtp-payload-formats.md)
+//! See [`transmux/docs/rtp/rtp-payload-formats.md`](../README.md)
 //! for the RFC background and SDP fmtp→CodecConfig mapping specification.
 
 use crate::aac_asc::AudioSpecificConfig;

@@ -441,7 +441,7 @@ broadcast-common is **not** breaking (`hex` delegates). Each wave updates
    lexer; `rtsp-types` stays for message framing, the other headers and
    request/response building. The lexical guard allows exactly that lexer
    (line-pinned). Test vectors: every Transport/Session example in
-   `docs/rfc2326.md`, the probe inputs, interop shapes, malformed-value errors,
+   `rtsp-runtime/docs/rfc2326.md`, the probe inputs, interop shapes, malformed-value errors,
    and a fuzz target (`rtsp_headers`) asserting the round-trip invariants.
 5. **multimux redaction fallback** (`multimux/src/redact.rs`), the
    masking-only scrub for a URL-shaped string the `url` parser REJECTS. A

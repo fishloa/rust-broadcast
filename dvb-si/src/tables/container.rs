@@ -2,7 +2,7 @@
 //!
 //! The container section carries TV-Anytime container data (an MHP object
 //! carousel file fragment, after optional compression). Syntax per "Table 20 —
-//! Container section" (`dvb-si/docs/ts_102_323_tva.md`, §7.3.1.4, PDF p. 36):
+//! Container section" (`dvb-si/docs/README.md`, §7.3.1.4, PDF p. 36):
 //!
 //! ```text
 //! container_section() {

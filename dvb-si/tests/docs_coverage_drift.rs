@@ -1,12 +1,12 @@
 //! Drift guard for the generated coverage documentation.
 //!
-//! `tools/gen-dvbsi-coverage.py` derives `docs/COVERAGE.md`, the "At a
+//! `tools/gen-dvbsi-coverage.py` derives `dvb-si/docs/COVERAGE.md`, the "At a
 //! glance" blocks of `README.md` and the crate-root `//!` docs, and the
 //! spec-transcription index in `docs/README.md` from the crate's
 //! single sources of truth (the `declare_tables!` / `declare_descriptors!` /
 //! `declare_extension_bodies!` / `declare_ait_descriptors!` lists, each
 //! module's spec citation, the `DescriptorRegistry` opt-ins, the `Charset`
-//! enum, the vendored registries) joined with `docs/coverage/allocations.tsv`.
+//! enum, the vendored registries) joined with `dvb-si/docs/coverage/allocations.tsv`.
 //!
 //! This test re-runs the generator in `--check` mode. It fails when a table or
 //! descriptor is added, removed, re-cited or re-scoped without regenerating the

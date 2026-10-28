@@ -17,7 +17,7 @@ use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// SSU `update_type` — ETSI TS 102 006 §7.1 Table 5
-/// (`docs/ts_102_006_ssu.md`, Table 5 — Update_type coding).
+/// (`dvb-si/docs/README.md`, Table 5 — Update_type coding).
 ///
 /// 4-bit field in each OUI entry of the SSU `id_selector`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

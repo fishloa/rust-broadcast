@@ -2,7 +2,7 @@
 //!
 //! `tests/fixtures/m6-single.ts` (French TNT, M6 HbbTV object carousel,
 //! PID 0x00AB) carries a DSI, a DII and DDB sections. These tests pin the
-//! hand-transcribed layouts in `docs/iso_13818_6_carousel.md` against real
+//! hand-transcribed layouts in `dvb-si/docs/README.md` against real
 //! broadcast bytes: DSM-CC section framing → typed DSI/DII/DDB messages →
 //! cross-message invariants (downloadId linkage, DVB transactionId rules,
 //! DII geometry vs DDB block sizes).

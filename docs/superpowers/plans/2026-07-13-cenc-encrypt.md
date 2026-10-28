@@ -59,7 +59,7 @@
   - `CencScheme` re-exported from a shared spot so `media`+both crypto modules share it (move to `cenc_crypto` or `cenc`; re-export at old path to avoid breaking).
 - Consumes: Task 1 `cenc_crypto::{apply_ctr, cbcs_sample, CbcsOp}`.
 
-- [ ] Step 1 (TDD): write `tests/cenc_encrypt.rs` self-round-trip for **cenc**: demux `../fixtures/mp4/cenc.mp4`? No — that's already encrypted. Use cleartext source `../fixtures/ts/h264/main.ts` → `ts_demux` → `Media`; `CencEncryptor.encrypt(cenc cfg)`; then `apply_ctr` with the same IVs to reverse in-place → assert byte-identical to pre-encrypt samples. (Full mux→decrypt round-trip is Task 3/4; this task tests the IR-level cipher+subsample+entry recording only.) Verify it FAILS to compile (types absent).
+- [ ] Step 1 (TDD): write `tests/cenc_encrypt.rs` self-round-trip for **cenc**: demux ../fixtures/mp4/cenc.mp4? No — that's already encrypted. Use cleartext source ../fixtures/ts/h264/main.ts → `ts_demux` → `Media`; `CencEncryptor.encrypt(cenc cfg)`; then `apply_ctr` with the same IVs to reverse in-place → assert byte-identical to pre-encrypt samples. (Full mux→decrypt round-trip is Task 3/4; this task tests the IR-level cipher+subsample+entry recording only.) Verify it FAILS to compile (types absent).
 - [ ] Step 2: Add `media::TrackEncryption` + `Track.encryption`. Build `cenc_encrypt.rs`: subsample map via `nal.rs` (video: clear length-prefix+NAL-header+slice-header, protect slice payload; guard: protected+clear sum == sample len), `WholeSample`: empty subsample map. IV from `IvGen` (Counter: `(base+idx).to_be_bytes()` 8-byte). Build `tenc` from cfg (`default_is_protected=1`, iv_size 8, pattern for cbcs, `default_constant_IV` when iv_size 0). Encrypt via cipher core; push `SampleEncryptionEntry`; set `Track.encryption`.
 - [ ] Step 3: cenc round-trip test PASSES. Add the **cbcs** variant (pattern default 1:9). PASSES.
 - [ ] Step 4: `Explicit` IV path + error tests (IV>16, Explicit count≠samples, missing constant_IV for cbcs iv_size 0). `name()`+`impl_spec_display!` for any new public enum (or SKIP). `--no-default-features` builds (cenc off ⇒ module absent).
@@ -96,7 +96,7 @@
 
 **Interfaces:** Consumes Tasks 2+3 (encrypt + mux); `CencDecryptor::from_fmp4`+`decrypt` (existing).
 
-- [ ] Step 1: full self round-trip per scheme — cleartext `Media` → encrypt → mux CMAF → `CencDecryptor::from_fmp4` + `decrypt(KeyMap)` → byte-identical samples. (Fragmented source: `../fixtures/transmux/h264_aac_frag.mp4`; progressive: `../fixtures/ts/h264/main.ts` via ts→cmaf.)
+- [ ] Step 1: full self round-trip per scheme — cleartext `Media` → encrypt → mux CMAF → `CencDecryptor::from_fmp4` + `decrypt(KeyMap)` → byte-identical samples. (Fragmented source: ../fixtures/transmux/h264_aac_frag.mp4; progressive: ../fixtures/ts/h264/main.ts via ts→cmaf.)
 - [ ] Step 2: golden interop per scheme — write our encrypted CMAF to a temp file, run `mp4decrypt --key <kid_hex>:<key_hex> in out` (skip test cleanly if binary absent, mirroring existing pattern), parse `out`, assert samples byte-identical to cleartext. Fixtures & key material reuse `cenc_fragmented_fixture.rs`.
 - [ ] Step 3: Commit `test(transmux): CENC encrypt e2e round-trip + mp4decrypt interop (#564)`.
 

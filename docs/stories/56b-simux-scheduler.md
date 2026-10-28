@@ -7,18 +7,18 @@ Touch only the files listed. Do **not** commit.
 
 ## Spec sources (read FIRST — ground truth; every default interval MUST cite one)
 
-- **`dvb-si/docs/tr_101_211.md`** → "Repetition rates — satellite and cable"
+- **`dvb-si/docs/text/tr_101_211/README.md`** → "Repetition rates — satellite and cable"
   (§4.4.1) and "… terrestrial" (§4.4.2). The per-SI-table **maximum intervals**:
   NIT 10 s, BAT 10 s, SDT actual 2 s, SDT other 10 s, EIT p/f actual 2 s,
   EIT p/f other 10 s (sat/cable) / 20 s (terrestrial), EIT sched ≤8 d 10 s,
   EIT sched >8 d 30 s, TDT 30 s, TOT 30 s.
-- **`dvb-si/docs/tr_101_290.md`** → "SI repetition-interval limits referenced by
+- **`dvb-si/docs/README.md`** → "SI repetition-interval limits referenced by
   SI_repetition_error" + Table 5.0a (1.3 `PAT_error`, 1.5 `PMT_error`): PAT/PMT/CAT
   conformance ceiling **0,5 s**.
-- **`dvb-si/docs/ts_101_154_av_coding.md`** → "§4.1.7 — Program Specific
+- **`dvb-si/docs/README.md`** → "§4.1.7 — Program Specific
   Information (PSI) repetition": PAT/PMT **shall be ≤ 100 ms** (the tightest
   authoritative mandate; this is the PAT/PMT default).
-- **`dvb-si/docs/en_300_468.md`** → "§5.1.4 — Repetition rates and random access":
+- **`dvb-si/docs/README.md`** → "§5.1.4 — Repetition rates and random access":
   the **25 ms** minimum inter-section interval floor (≤100 Mbit/s TSs).
 
 > There is **no** PAT/PMT/CAT repetition rate in TR 101 211 (DVB SI only) or in
@@ -36,7 +36,7 @@ caller picks (monotonic since start).
 ### 1. Named default-interval constants (each with a one-line cite comment)
 
 ```rust
-// dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2 (maximum intervals)
+// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 (maximum intervals)
 pub const NIT_MAX_INTERVAL:        Duration = Duration::from_secs(10);
 pub const BAT_MAX_INTERVAL:        Duration = Duration::from_secs(10);
 pub const SDT_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
@@ -44,10 +44,10 @@ pub const SDT_OTHER_MAX_INTERVAL:  Duration = Duration::from_secs(10);
 pub const EIT_PF_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
 pub const TDT_MAX_INTERVAL:        Duration = Duration::from_secs(30);
 pub const TOT_MAX_INTERVAL:        Duration = Duration::from_secs(30);
-// dvb-si/docs/ts_101_154_av_coding.md §4.1.7 (PAT/PMT shall be ≤ 100 ms)
+// dvb-si/docs/README.md §4.1.7 (PAT/PMT shall be ≤ 100 ms)
 pub const PAT_MAX_INTERVAL:        Duration = Duration::from_millis(100);
 pub const PMT_MAX_INTERVAL:        Duration = Duration::from_millis(100);
-// dvb-si/docs/en_300_468.md §5.1.4.1 (minimum inter-section interval floor)
+// dvb-si/docs/README.md §5.1.4.1 (minimum inter-section interval floor)
 pub const MIN_SECTION_INTERVAL:    Duration = Duration::from_millis(25);
 ```
 (EIT-other / EIT-schedule constants optional; add them if cheap, each cited.)

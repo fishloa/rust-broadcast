@@ -1,7 +1,7 @@
 //! MPE-IFEC section — ETSI TS 102 772 v1.1.1 §5.2 (table_id 0x7A).
 //!
 //! Carries Inter-burst FEC (IFEC) data for DVB-SH / IP datacast. Syntax per
-//! "Table 2 — MPE-IFEC section" (`dvb-si/docs/ts_102_772_mpe_ifec.md`, §5.2,
+//! "Table 2 — MPE-IFEC section" (`dvb-si/docs/README.md`, §5.2,
 //! PDF p. 17):
 //!
 //! ```text

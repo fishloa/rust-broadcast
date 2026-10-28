@@ -219,7 +219,7 @@ Version-lockstep release with the workspace (#47 T2 emission-time accessors; #50
   ISSY signalling type (`[5:4]=0b10`, the `0xEXXXXX` code range) per EN 302 307-1
   Annex D Table D.1, with `bufstat_bits()` / `bufstat_bytes()` accessors.
   Previously this code range decoded to `SignallingKind::Reserved` (#182).
-- `docs/en_302_755_t2.md` Annex C — Table C.1 (ISSY field coding) transcribed
+- `dvb-bbframe/docs/README.md` Annex C — Table C.1 (ISSY field coding) transcribed
   verbatim from the PDF; the `issy.rs` ISCR/BUFS/TTO decode was verified
   cell-by-cell against it (#183).
 - New `tests/spec_drift.rs` with drift-guard coverage for two code-backing enums

@@ -30,7 +30,7 @@ so it is off by default and worth avoiding unless you need it.
   in-band renegotiation, which the underlying `rtc-dtls` has no API for).
   The old read key is retained for 2 minutes after a rekey so a packet
   reordered across the boundary still decrypts.
-- Spec transcriptions: `docs/whip-rfc9725.md`, `docs/whep-draft-04.md`.
+- Spec transcriptions: `webrtc-runtime/docs/whip-rfc9725.md`, `webrtc-runtime/docs/whep-draft-04.md`.
 - Sans-IO throughout: no bundled tokio/reqwest HTTP client, no async
   runtime dependency in the default build.
 

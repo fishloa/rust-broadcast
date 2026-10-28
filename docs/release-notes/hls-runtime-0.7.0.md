@@ -59,7 +59,7 @@ let b = builder.media_sequence_offset(previous.next_media_sequence());
 
 ### URL resolution and request URLs
 
-- Relative playlist references resolve by RFC 3986 (`url::Url::join`): `..` segments are resolved (`../x.m4s` against `http://h/a/b/p.m3u8` is `http://h/a/x.m4s`; before it was the textual `http://h/a/b/../x.m4s`, defect 7), and a `://` inside a relative reference's query no longer makes it look absolute. Results are normalised (`HTTP://H.Example/X` becomes `http://h.example/X`, spaces percent-encoded, a default port dropped). A relative playlist URL still yields a relative result.
+- Relative playlist references resolve by RFC 3986 (`url::Url::join`): `..` segments are resolved (../x.m4s against `http://h/a/b/p.m3u8` is `http://h/a/x.m4s`; before it was the textual `http://h/a/b/../x.m4s`, defect 7), and a `://` inside a relative reference's query no longer makes it look absolute. Results are normalised (`HTTP://H.Example/X` becomes `http://h.example/X`, spaces percent-encoded, a default port dropped). A relative playlist URL still yields a relative result.
 - `Action::playlist_request_url` builds the query with `query_pairs_mut`, so the `_HLS_msn`/`_HLS_part`/`_HLS_skip` pairs precede a fragment: `...?a=1#f` gives `...?a=1&_HLS_msn=5#f`. The old builder produced `...?a=1#f&_HLS_msn=5`, where the pair was part of the fragment and never sent.
 - `EXT-X-PROGRAM-DATE-TIME` is parsed with `jiff::Timestamp`: a leap second (`23:59:60`) is clamped to `:59`, where the old parser added 60 s to the minute.
 

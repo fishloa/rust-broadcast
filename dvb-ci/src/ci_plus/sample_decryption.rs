@@ -316,7 +316,7 @@ impl<'a> SamplePayload<'a> {
 
     /// Range-check every length/count/PID field before [`Self::write_into`]
     /// writes them, so an oversized value is rejected rather than silently
-    /// wrapped (see `docs/w3-rules.md`).
+    /// wrapped (see `dvb-ci/docs/README.md`).
     fn validate(&self) -> Result<()> {
         match self {
             Self::Ts(records) => {

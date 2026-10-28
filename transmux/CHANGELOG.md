@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Documentation
+- Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 
 ### Fixed (G1)
 - **`StreamingTsDemux` now harvests valid H.264/HEVC parameter sets from a damaged access unit.** A continuity gap or truncated PES used to drop the whole access unit *and* its SPS/PPS(/VPS), so a lossy start waited ~4 MB for the first usable init segment. Valid parameter sets are now taken from the damaged unit (and its config resolved when the track is still probing), while the damaged slice data is still dropped and the unit still counts as `InputDegraded` (invalid parameter sets stay ignored, #1171). `InputDegraded::InvalidParameterSet` is emitted for any rejected set, unchanged.

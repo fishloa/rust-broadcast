@@ -74,7 +74,7 @@ One damaged unit no longer aborts a whole demux (`PsDemux`, `Fmp4Demux`, `WebmDe
 
 * **A video PID that delivers data but never yields an SPS keeps blocking announcement of later tracks until `finish()`** (same as `transmux` 0.26.0); video stays track 1. A declared PID that never delivers any payload packet is stepped over (see the E-AC-3 probe item above), but a video PID that does deliver data is deliberately never stepped over, because reordering it would give video a later track id than audio and break consumers that assume video is track 1 (`ts_hls`, `multimux`). Scrambled video still delivers payload packets and is bounded only by the 4 MiB probe-backlog cap.
 * **Origin-scoped bearer tokens.** `WhipClient` / `WhepPlayer` do not send the bearer token to a session `Location` on another origin (a hostile endpoint must not be able to redirect the token). RFC 9725 section 4.7.1 says the token goes to the session resource, so a deployment whose session URLs live on another origin has to host them on the endpoint's origin; an explicit allow-list is left for a follow-up.
-* **`atsc3` is not part of this wave** (unpublished, abandoned) and `dvb-si` leaves some codes unimplemented where the vendored standards do not determine the syntax (for example AIT `DVB-HTML_application_descriptor` `0x08`); `dvb-si`'s generated `docs/COVERAGE.md` lists every one.
+* **`atsc3` is not part of this wave** (unpublished, abandoned) and `dvb-si` leaves some codes unimplemented where the vendored standards do not determine the syntax (for example AIT `DVB-HTML_application_descriptor` `0x08`); `dvb-si`'s generated `dvb-si/docs/COVERAGE.md` lists every one.
 
 ## Release mechanics (summary)
 

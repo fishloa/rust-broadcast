@@ -11,7 +11,7 @@
 //!
 //! A relative input never resolves to anything but a relative result: RFC 3986
 //! §5.2.4 `remove_dot_segments` drops a `..` that would climb above the root,
-//! so `../../../etc/passwd` is `etc/passwd`, never `/etc/passwd` (a consumer
+//! so ../../../etc/passwd is `etc/passwd`, never `/etc/passwd` (a consumer
 //! that does `local_dir.join(resolved)` must not see an absolute path from an
 //! untrusted MPD). A result is absolute-path (`/x`) only when the MPD itself
 //! wrote an absolute-path reference (`/x`) in the chain or as the reference.

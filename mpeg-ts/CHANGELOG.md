@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Documentation
+- Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 
 ## [0.6.2] - 2026-10-18
 ### Documentation

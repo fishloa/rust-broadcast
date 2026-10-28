@@ -5,7 +5,7 @@
 //! No independent tool or real broadcast capture with a multi-frame-spanning
 //! 708 CCP was available (this crate's own note on `CC-C1`: "the SEI/PES
 //! fixtures are 608-only and synthetic"), so this reuses the CTA-708-E
-//! `DefineWindow` worked example (`cc-data/docs/cea708-decode.md` p.66-67)
+//! `DefineWindow` worked example (`cc-data/docs/decode/cea708-decode.md` p.66-67)
 //! already verified byte-for-byte in
 //! `cc_data::decode::cea708::tests::define_window_worked_example` -- the
 //! same cited spec clause, split across several separate `push_triplets`
