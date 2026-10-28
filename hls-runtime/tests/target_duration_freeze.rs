@@ -89,3 +89,25 @@ fn target_duration_is_frozen_after_first_publication() {
         "EXT-X-TARGETDURATION must not change once published: {second}"
     );
 }
+
+#[test]
+fn longer_later_segment_is_counted_not_readvertised() {
+    let (trunk, w) = trunk_with();
+    let o = origin(&trunk);
+    publish(&w, 1, 1);
+    let first = playlist(&o);
+    assert_eq!(target_duration(&first), 1);
+    assert_eq!(o.target_duration_violations(), 0);
+    publish(&w, 2, 2);
+    let second = playlist(&o);
+    assert_eq!(
+        target_duration(&second),
+        1,
+        "EXT-X-TARGETDURATION must stay frozen: {second}"
+    );
+    assert_eq!(
+        o.target_duration_violations(),
+        1,
+        "a 2x-longer later segment must be counted as a conformance degradation"
+    );
+}

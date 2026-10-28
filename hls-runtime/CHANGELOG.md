@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Changed
-- `EXT-X-TARGETDURATION` is now frozen at the first render that has at least one segment in the window (RFC 8216 §4.3.3.1): once published it never changes, even as later (possibly longer) segments ratchet `max_segment_duration_secs`. Previously it tracked the running maximum and could move between playlist versions.
+- `EXT-X-TARGETDURATION` is now frozen at the first render that has at least one segment in the window (RFC 8216 §4.3.3.1): once published it never changes; longer later segments are counted, not re-advertised. Previously it tracked the running maximum and could move between playlist versions.
 - The structural "is this body media" checks behind `Error::NotMedia` (TS lane lattice, `moof`+`mdat`, progressive `moov`) are now `container-probe::segment::{ts_structure, media_fragment, progressive_movie}` instead of private functions; behaviour is unchanged. New dependency on `container-probe` 0.2 (`no_std`+`alloc`).
 
 ### Added (round-8 audit)
