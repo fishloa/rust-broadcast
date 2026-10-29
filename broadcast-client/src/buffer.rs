@@ -612,11 +612,27 @@ impl Feeder {
                     }
                     RtEvent::Pause {
                         hold_at_27mhz,
+                        reason: rt_reason,
                         track,
                         ..
                     } => {
                         out.push(Event::Buffer(BufferEvent::Pause {
                             hold_at_27mhz,
+                            reason: match rt_reason {
+                                buffering_runtime::Reason::NoData => {
+                                    crate::events::PauseReason::NoData
+                                }
+                                buffering_runtime::Reason::DataArriving => {
+                                    crate::events::PauseReason::DataArriving
+                                }
+                                buffering_runtime::Reason::Discontinuity => {
+                                    crate::events::PauseReason::Discontinuity
+                                }
+                                buffering_runtime::Reason::Reprime => {
+                                    crate::events::PauseReason::Reprime
+                                }
+                                _ => crate::events::PauseReason::NoData,
+                            },
                             starving_track: track,
                         }));
                     }
@@ -637,6 +653,20 @@ impl Feeder {
             .as_ref()
             .map(|c| c.snapshot_memory())
             .unwrap_or_else(|| self.seed.unwrap_or_default())
+    }
+
+    pub(crate) fn buffer_stats(&self) -> crate::events::BufferStats {
+        self.controller
+            .as_ref()
+            .map_or_else(crate::events::BufferStats::default, |c| {
+                let s = c.stats();
+                crate::events::BufferStats {
+                    stalls: s.stalls,
+                    reprimes: s.reprimes,
+                    discontinuities: s.discontinuities,
+                    longest_freeze_us: s.longest_freeze_us,
+                }
+            })
     }
 }
 
@@ -1035,6 +1065,24 @@ mod tests {
             );
             assert!(f.rendered.contains(&video.spec.track_id));
         }
+    }
+
+    #[test]
+    fn a_pcr_discontinuity_while_playing_reports_discontinuity_reason() {
+        let mut r = Rig::new();
+        r.announce(&[VIDEO_ID, AUDIO_A_ID, AUDIO_B_ID]);
+        r.prefill();
+        assert!(r.playing.is_some(), "must be playing before the hint");
+        r.f.hint(r.now, Hint::PcrDiscontinuity);
+        r.collect();
+        assert!(
+            r.events.iter().any(|(_, e)| {
+                matches!(e, BufferEvent::Pause { reason, .. } if *reason == crate::events::PauseReason::Discontinuity)
+            }),
+            "{:?}",
+            r.events
+        );
+        assert_eq!(r.f.buffer_stats().discontinuities, 1);
     }
 
     #[test]

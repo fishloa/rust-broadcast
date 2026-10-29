@@ -3,8 +3,8 @@ mod support;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use broadcast_client::{
-    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, Event, PlayoutConfig, Session, SourceKind,
-    TrackId,
+    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, Event, PauseReason, PlayoutConfig, Session,
+    SourceKind, TrackId,
 };
 use support::hls_host::*;
 use support::renditions::{self, AUDIO_DIR, AUDIO_PLAYLIST_URL, MASTER_URL};
@@ -417,6 +417,7 @@ fn hls_vod_pause_when_position_reaches_end_of_buffered_media_before_end() {
         bufs(&d.events).last().unwrap(),
         &BufferEvent::Pause {
             hold_at_27mhz: last.min_end,
+            reason: PauseReason::DataArriving,
             starving_track: Some(last.limiting.value())
         }
     );
@@ -835,6 +836,7 @@ fn starving_track_is_the_track_with_smallest_end() {
         bufs(&r.d.events).last().unwrap(),
         &BufferEvent::Pause {
             hold_at_27mhz: last.min_end,
+            reason: PauseReason::DataArriving,
             starving_track: Some(r.audio_track)
         }
     );
@@ -1027,6 +1029,7 @@ fn config_knobs_change_leads() {
         bufs(&p.events).last().unwrap(),
         &BufferEvent::Pause {
             hold_at_27mhz: threshold,
+            reason: PauseReason::DataArriving,
             starving_track: Some(last.limiting.value())
         }
     );

@@ -96,6 +96,39 @@ impl Status {
 
 broadcast_common::impl_spec_display!(Status);
 
+/// Why a [`BufferEvent::Pause`] was emitted.
+///
+/// Maps from `buffering_runtime::Reason` (see that crate's controller semantics); `Startup` and any
+/// reason not named here fall back to [`PauseReason::NoData`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PauseReason {
+    /// Lead exhausted and no chunk for `nodata_after_us` (or the source ended/down).
+    NoData,
+    /// Lead exhausted while chunks were still arriving.
+    DataArriving,
+    /// Baseline reset (jitter-detected media-time jump beyond `discontinuity_us`, or a caller
+    /// hint); pauses regardless of lead.
+    Discontinuity,
+    /// Voluntary re-prime.
+    Reprime,
+}
+
+impl PauseReason {
+    /// Spec label for this reason.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NoData => "no data",
+            Self::DataArriving => "data arriving",
+            Self::Discontinuity => "discontinuity",
+            Self::Reprime => "reprime",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(PauseReason);
+
 /// Buffer event mapped from `buffering_runtime::Event`.
 ///
 /// Positions are in the player's sample-time domain: the presentation time stamp of a sample
@@ -120,6 +153,8 @@ pub enum BufferEvent {
     Pause {
         /// Hold position 27 MHz.
         hold_at_27mhz: u64,
+        /// Why the controller paused.
+        reason: PauseReason,
         /// Starving track.
         starving_track: Option<u32>,
     },
@@ -143,6 +178,20 @@ impl BufferEvent {
 }
 
 broadcast_common::impl_spec_display!(BufferEvent);
+
+/// Snapshot of buffering-controller statistics exposed by [`crate::Session::buffer_stats`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BufferStats {
+    /// Underrun pauses (not first fill, discontinuities or re-primes).
+    pub stalls: u32,
+    /// Voluntary re-primes.
+    pub reprimes: u32,
+    /// Baseline resets.
+    pub discontinuities: u32,
+    /// Longest pause (Pause to Resume), microseconds.
+    pub longest_freeze_us: u64,
+}
 
 /// Why a session reported [`Event::Error`].
 #[non_exhaustive]

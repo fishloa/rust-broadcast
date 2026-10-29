@@ -3,10 +3,10 @@ mod support;
 use std::collections::BTreeMap;
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, Event, Hint, Session, Status, TrackId,
+    Action, BufferEvent, BufferInput, Config, Event, Hint, PauseReason, Session, Status, TrackId,
 };
 use buffering_runtime::{
-    BufferController, ControllerConfig, Event as RtEvent, StallMemorySnapshot,
+    BufferController, ControllerConfig, Event as RtEvent, Reason as RtReason, StallMemorySnapshot,
 };
 use support::{read_tf1_bytes, read_tf1_headers};
 use transmux::{DemuxEvent, JoinDecision, LiveJoin, StreamingTsDemux, TrackSpec};
@@ -405,10 +405,22 @@ impl Oracle {
                 },
                 RtEvent::Pause {
                     hold_at_27mhz,
+                    reason: rt_reason,
                     track,
                     ..
                 } => BufferEvent::Pause {
                     hold_at_27mhz,
+                    reason: match rt_reason {
+                        RtReason::NoData => broadcast_client::events::PauseReason::NoData,
+                        RtReason::DataArriving => {
+                            broadcast_client::events::PauseReason::DataArriving
+                        }
+                        RtReason::Discontinuity => {
+                            broadcast_client::events::PauseReason::Discontinuity
+                        }
+                        RtReason::Reprime => broadcast_client::events::PauseReason::Reprime,
+                        _ => broadcast_client::events::PauseReason::NoData,
+                    },
                     starving_track: track,
                 },
                 RtEvent::Resume { media_27mhz, .. } => BufferEvent::Resume {
@@ -632,6 +644,50 @@ fn no_pause_for_steady_delivery() {
         .filter(|l| matches!(l, BufferInput::Tick { pts: Some(_), .. }))
         .count();
     assert!(ticks_with_position > 10);
+}
+
+#[test]
+fn pause_reason_data_arriving_when_chunks_still_arriving() {
+    let bytes = read_tf1_bytes();
+    let from = 1_100 * PACKETS_PER_CHUNK;
+    let no_audio = drop_pid_from(&bytes, AUDIO_PID, from);
+    let h = run_realtime(&no_audio);
+    let first_pause = h
+        .buffer_events()
+        .into_iter()
+        .find(|e| matches!(e, BufferEvent::Pause { .. }))
+        .expect("a pause");
+    assert!(
+        matches!(
+            first_pause,
+            BufferEvent::Pause {
+                reason: PauseReason::DataArriving,
+                ..
+            }
+        ),
+        "{first_pause:?}"
+    );
+}
+
+#[test]
+fn pause_reason_no_data_on_silent_source() {
+    let bytes = read_tf1_bytes();
+    let h = run_gap(&bytes);
+    let first_pause = h
+        .buffer_events()
+        .into_iter()
+        .find(|e| matches!(e, BufferEvent::Pause { .. }))
+        .expect("a pause");
+    assert!(
+        matches!(
+            first_pause,
+            BufferEvent::Pause {
+                reason: PauseReason::NoData,
+                ..
+            }
+        ),
+        "{first_pause:?}"
+    );
 }
 
 fn first_pause_track(bytes: &[u8]) -> Option<u32> {
