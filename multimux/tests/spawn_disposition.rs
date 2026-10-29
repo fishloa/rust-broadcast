@@ -101,12 +101,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        628,
+        636,
         "per-connection task on the listener's TaskTracker (serve_hyper_util reaps finished tasks)",
     ),
     (
         "origin/mod.rs",
-        729,
+        745,
         "per-connection task on the listener's TaskTracker (serve_hyper_util reaps finished tasks)",
     ),
     (
@@ -151,17 +151,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        1613,
+        1638,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",
     ),
     (
         "origin/mod.rs",
-        1789,
+        1814,
         "spawn_following -> follow_trunk; the returned JoinHandle is owned by the caller and dropped on route teardown (async drop cancels)",
     ),
     (
         "origin/mod.rs",
-        2356,
+        2381,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
