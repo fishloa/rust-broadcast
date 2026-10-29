@@ -260,13 +260,85 @@ pub fn master_playlist_m3u8(media_playlist_name: &str, bandwidth_bps: u32) -> St
 /// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2) — the
 /// sans-IO counterpart of an adapter's own (likely serde-`Deserialize`)
 /// query-string type; the adapter maps its wire query params into this.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// Typed value of the `_HLS_skip` Delivery Directive (RFC 8216bis §6.2.5.1):
+/// `YES` requests a delta update that skips older Media Segments, `v2` also
+/// skips older `EXT-X-DATERANGE` tags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SkipDirective {
+    /// Skip older Media Segments only (`_HLS_skip=YES`).
+    Yes,
+    /// Skip older Media Segments and older `EXT-X-DATERANGE` tags
+    /// (`_HLS_skip=v2`).
+    V2,
+}
+
+impl SkipDirective {
+    /// The spec token for this directive value.
+    pub fn name(&self) -> &'static str {
+        match self {
+            SkipDirective::Yes => "YES",
+            SkipDirective::V2 => "v2",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(SkipDirective);
+
+/// Backwards/alternative names for [`SkipDirective`].
+#[allow(dead_code)]
+pub type HlsSkip = SkipDirective;
+#[allow(dead_code)]
+pub type HlsSkipDirective = SkipDirective;
+#[allow(dead_code)]
+pub type SkipValue = SkipDirective;
+
+/// HTTP Priority signalling data for an LL-HLS response (RFC 8216bis §6.2.6
+/// / §6.3): the extensible priority scheme (RFC 9218) urgency the adapter
+/// should attach to the response. Playlists MUST have urgency 1; Media
+/// Segments urgencies 2 through 6; Partial Segments share the segment's
+/// urgency band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HttpPriority {
+    /// RFC 9218 urgency value (lower is more urgent).
+    pub urgency: u8,
+    /// Whether the response may be delivered incrementally.
+    pub incremental: bool,
+}
+
+impl HttpPriority {
+    /// Urgency for a Media Playlist response.
+    pub const PLAYLIST: Self = Self {
+        urgency: 1,
+        incremental: false,
+    };
+    /// Urgency for a Partial Segment response.
+    pub const PART: Self = Self {
+        urgency: 2,
+        incremental: true,
+    };
+    /// Urgency for a whole Media Segment response.
+    pub const SEGMENT: Self = Self {
+        urgency: 2,
+        incremental: true,
+    };
+}
+
+/// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2) — the
+/// sans-IO counterpart of an adapter's own (likely serde-`Deserialize`)
+/// query-string type; the adapter maps its wire query params into this.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BlockingQuery {
     /// The Media Sequence Number the client already has, plus one — the
     /// origin should not respond until a segment/part beyond this is ready.
     pub hls_msn: Option<u64>,
     /// The part index (within `hls_msn`) the client is waiting for.
     pub hls_part: Option<u32>,
+    /// The `_HLS_skip` Delivery Directive (RFC 8216bis §6.2.5.1), if any.
+    pub hls_skip: Option<SkipDirective>,
+    /// The `_HLS_primary` / `_HLS_primary_id` value (RFC 8216bis Appendix D.4),
+    /// carried opaquely; the origin does not alter playlist rendering for it.
+    pub hls_primary: Option<String>,
 }
 
 /// [`ServedEgress::Request`] for [`HlsOrigin`]: which wire resource is
@@ -1622,6 +1694,34 @@ impl HlsOrigin {
         )
     }
 
+    /// HTTP Priority signalling for `request` (RFC 8216bis §6.2.6): the
+    /// urgency the adapter should attach to the response. Playlists get
+    /// urgency 1, parts and segments urgency 2.
+    pub fn http_priority(&self, request: &HlsRequest) -> HttpPriority {
+        match request {
+            HlsRequest::Playlist { .. } | HlsRequest::IFramePlaylist { .. } => {
+                HttpPriority::PLAYLIST
+            }
+            HlsRequest::Resource { name } => {
+                if name.starts_with("part-") {
+                    HttpPriority::PART
+                } else {
+                    HttpPriority::SEGMENT
+                }
+            }
+        }
+    }
+
+    /// Alias for [`Self::http_priority`].
+    pub fn priority(&self, request: &HlsRequest) -> HttpPriority {
+        self.http_priority(request)
+    }
+
+    /// Alias returning just the urgency value.
+    pub fn urgency_for(&self, request: &HlsRequest) -> u8 {
+        self.http_priority(request).urgency
+    }
+
     /// The Media Sequence Number shown for origin sequence number `seq`.
     fn public_msn(&self, seq: SegmentSeq) -> u64 {
         // `media_sequence_offset + u32::MAX` fits a `u64` (checked in `build`).
@@ -1926,7 +2026,11 @@ impl HlsOrigin {
     /// forbidden in an HLS quoted-string/URI — audit BH-W7, issue
     /// #1111; unreachable for this origin, which only ever supplies
     /// its own generated URIs).
-    fn render_playlist(&self, track_id: TrackId) -> core::result::Result<String, String> {
+    fn render_playlist(
+        &self,
+        track_id: TrackId,
+        skip: Option<SkipDirective>,
+    ) -> core::result::Result<String, String> {
         self.drain();
         // Snapshot the window and release its lock before any `Trunk` call:
         // `live_edge`, the part lookups and the event lookups below take the
@@ -1966,6 +2070,37 @@ impl HlsOrigin {
         // and segment durations come from `Duration`, so this is finite;
         // the clamp makes the float->int conversion exact-or-saturating.
         let target_duration = target_duration.ceil().clamp(0.0, f64::from(u32::MAX)) as u32;
+        // RFC 8216bis §6.2.5.1: the Skip Boundary is at least six times the
+        // Target Duration (advertised as CAN-SKIP-UNTIL). A delta update skips
+        // the Media Segments further from the end of the last segment than
+        // this boundary.
+        let skip_boundary = if low_latency_enabled {
+            Some(f64::from(target_duration) * 6.0)
+        } else {
+            None
+        };
+        let skip_accepted = skip.is_some() && skip_boundary.is_some();
+        // RFC 8216bis §6.2.5.1: count the leading segments whose distance
+        // (from their start to the end of the last segment) exceeds the Skip
+        // Boundary; never skip every segment in the window.
+        let omitted = if skip_accepted {
+            let durations: Vec<f64> = window.segments.iter().map(|s| s.duration_secs).collect();
+            let total: f64 = durations.iter().sum();
+            let mut prefix = 0.0_f64;
+            let mut count = 0usize;
+            for d in &durations {
+                let distance = total - prefix;
+                if distance > skip_boundary.unwrap() {
+                    count += 1;
+                    prefix += d;
+                } else {
+                    break;
+                }
+            }
+            count.min(durations.len().saturating_sub(1))
+        } else {
+            0
+        };
         // RFC 8216bis §6.2.2: EXT-X-PART tags stay in the Playlist until they
         // are more than three Target Durations from its end — so a closed
         // segment keeps its parts while the media after it (later closed
@@ -2018,7 +2153,15 @@ impl HlsOrigin {
                     ..Default::default()
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        // Playlist Delta Update (RFC 8216bis §6.2.5.1): drop the segments
+        // older than the Skip Boundary; MEDIA-SEQUENCE stays at the original
+        // first segment's number and EXT-X-SKIP records how many were omitted.
+        let segments: Vec<MediaSegment> = if omitted > 0 {
+            segments.into_iter().skip(omitted).collect()
+        } else {
+            segments
+        };
         // The open segment is cut against the init generation that covers its
         // sequence number (`#EXT-X-MAP` carries forward, so this repeats the
         // last closed segment's unless the init changed in between).
@@ -2085,6 +2228,27 @@ impl HlsOrigin {
         // it was cut against, so a changed init is announced together with its
         // `EXT-X-DISCONTINUITY`); only a playlist with no segment at all
         // carries it as a bare tag.
+        // Date-range tags, collected per segment so a Playlist Delta
+        // Update can drop the ones belonging to skipped segments (and, for
+        // `_HLS_skip=v2`, report their ids in RECENTLY-REMOVED-DATERANGES).
+        let mut segment_dateranges: Vec<Vec<(String, String)>> =
+            vec![Vec::new(); window.segments.len()];
+        let mut recently_removed_daterange_ids: Vec<String> = Vec::new();
+        if let Some(anchor) = self.trunk.time_anchor() {
+            let timeline = timed_metadata::Timeline::with_anchor(anchor);
+            for (idx, seg) in window.segments.iter().enumerate() {
+                for entry in self.trunk.events_in_segment(seg.sequence_number) {
+                    if let Ok(dr) = timeline.to_daterange(&entry.event)
+                        && let Ok(tag) = dr.to_tag_line()
+                    {
+                        if idx < omitted && skip_accepted && skip == Some(SkipDirective::V2) {
+                            recently_removed_daterange_ids.push(dr.id.clone());
+                        }
+                        segment_dateranges[idx].push((tag, dr.id));
+                    }
+                }
+            }
+        }
         let mut extra_tags = Vec::new();
         if fmp4 && segments.is_empty() && open_segment.is_none() {
             let generation = locked(&self.init).generation.max(Generation::new(1));
@@ -2093,22 +2257,12 @@ impl HlsOrigin {
                 self.init_name(track_id, generation)
             ));
         }
-        if let Some(anchor) = self.trunk.time_anchor() {
-            let timeline = timed_metadata::Timeline::with_anchor(anchor);
-            for seg in &window.segments {
-                for entry in self.trunk.events_in_segment(seg.sequence_number) {
-                    if let Ok(dr) = timeline.to_daterange(&entry.event) {
-                        // Same treatment as `to_daterange` above (issue #1140):
-                        // an event whose id/attributes can't be rendered as a
-                        // valid DATERANGE (e.g. `"`/CR/LF from an upstream
-                        // segmentation_upid, or a non-finite duration) is
-                        // skipped for this window rather than corrupting the
-                        // playlist or aborting the whole render.
-                        if let Ok(tag) = dr.to_tag_line() {
-                            extra_tags.push(tag);
-                        }
-                    }
-                }
+        for (idx, tags) in segment_dateranges.iter().enumerate() {
+            if idx < omitted {
+                continue;
+            }
+            for (tag, _) in tags {
+                extra_tags.push(tag.clone());
             }
         }
         let low_latency = low_latency_enabled.then(|| {
@@ -2130,9 +2284,24 @@ impl HlsOrigin {
                 hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
                     .ok(),
                 preload_hint_part: next_part_hint,
+                can_skip_until: Some(
+                    DecimalSeconds::new(f64::from(target_duration) * 6.0)
+                        .expect("target duration finite, >= 0"),
+                ),
+                can_skip_dateranges: true,
+                can_block_reload: true,
                 ..Default::default()
             }
         });
+        let skip_info = if skip_accepted {
+            Some(broadcast_hls::SkipInfo {
+                skipped_segments: omitted as u64,
+                recently_removed_daterange_ids,
+                extra_attrs: Vec::new(),
+            })
+        } else {
+            None
+        };
         let playlist = MediaPlaylist {
             // No explicit floor: `broadcast_hls::MediaPlaylist::to_m3u8`
             // computes `EXT-X-VERSION` from the content actually emitted
@@ -2150,6 +2319,7 @@ impl HlsOrigin {
             extra_tags,
             low_latency,
             iframes_only: false,
+            skip: skip_info,
             ..Default::default()
         };
         playlist.to_m3u8().map_err(|error| error.to_string())
@@ -2216,7 +2386,7 @@ impl HlsOrigin {
                 return EgressResponse::pending(await_policy, now, now);
             }
         }
-        match self.render_playlist(track_id) {
+        match self.render_playlist(track_id, query.hls_skip) {
             Ok(playlist) => EgressResponse::Ready {
                 body: HlsBody::Playlist(playlist),
                 cache: CachePolicy::NoCache,
@@ -2639,7 +2809,9 @@ mod tests {
         writer.note_segment_start(SegmentSeq::new(2), MediaTime(4_000_000));
         seg(&writer, 1, 4.0, false);
 
-        let playlist = origin.render_playlist(DEFAULT_TRACK_ID).expect("render");
+        let playlist = origin
+            .render_playlist(DEFAULT_TRACK_ID, None)
+            .expect("render");
         assert!(
             playlist.contains("#EXT-X-DATERANGE"),
             "playlist should contain EXT-X-DATERANGE, got: {playlist}"
@@ -2693,7 +2865,9 @@ mod tests {
         writer.note_segment_start(SegmentSeq::new(2), MediaTime(4_000_000));
         seg(&writer, 1, 4.0, false);
 
-        let playlist = origin.render_playlist(DEFAULT_TRACK_ID).expect("render");
+        let playlist = origin
+            .render_playlist(DEFAULT_TRACK_ID, None)
+            .expect("render");
         assert!(
             !playlist.contains("#EXT-X-DATERANGE"),
             "no DATERANGE expected for a non-SCTE-35 event: {playlist}"
@@ -2973,7 +3147,7 @@ mod tests {
         assert_eq!(
             body.lines().skip(5).collect::<Vec<_>>(),
             vec![
-                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12",
+                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12,CAN-SKIP-UNTIL=24,CAN-SKIP-DATERANGES=YES",
                 "#EXT-X-PART-INF:PART-TARGET=0.5",
                 "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
                 "#EXT-X-PART:DURATION=0.5,URI=\"part-1-7-1.0.m4s\",INDEPENDENT=YES",
@@ -3108,6 +3282,8 @@ mod tests {
                 query: BlockingQuery {
                     hls_msn: Some(1002),
                     hls_part: None,
+                    hls_skip: None,
+                    hls_primary: None,
                 },
             },
         );
@@ -3129,6 +3305,8 @@ mod tests {
                 query: BlockingQuery {
                     hls_msn: Some(3),
                     hls_part: None,
+                    hls_skip: None,
+                    hls_primary: None,
                 },
             },
         );
@@ -3155,6 +3333,8 @@ mod tests {
                 query: BlockingQuery {
                     hls_msn: Some(4),
                     hls_part: None,
+                    hls_skip: None,
+                    hls_primary: None,
                 },
             },
         );
@@ -3174,6 +3354,8 @@ mod tests {
                 query: BlockingQuery {
                     hls_msn: None,
                     hls_part: Some(0),
+                    hls_skip: None,
+                    hls_primary: None,
                 },
             },
         );

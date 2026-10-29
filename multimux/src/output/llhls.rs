@@ -27,7 +27,9 @@ use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsRequest};
+use hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsRequest, SkipDirective,
+};
 use serde::Deserialize;
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
@@ -163,13 +165,26 @@ pub struct BlockingReloadQuery {
     /// The part index (within `_HLS_msn`) the client is waiting for.
     #[serde(rename = "_HLS_part")]
     pub hls_part: Option<u32>,
+    /// The `_HLS_skip` Delivery Directive (RFC 8216bis §6.2.5.1).
+    #[serde(rename = "_HLS_skip")]
+    pub hls_skip: Option<String>,
+    /// The `_HLS_primary` / `_HLS_primary_id` value (RFC 8216bis Appendix D.4).
+    #[serde(rename = "_HLS_primary")]
+    pub hls_primary: Option<String>,
 }
 
 impl From<BlockingReloadQuery> for BlockingQuery {
     fn from(q: BlockingReloadQuery) -> Self {
+        let hls_skip = match q.hls_skip.as_deref() {
+            Some("YES") | Some("yes") => Some(SkipDirective::Yes),
+            Some("v2") | Some("V2") => Some(SkipDirective::V2),
+            _ => None,
+        };
         BlockingQuery {
             hls_msn: q.hls_msn,
             hls_part: q.hls_part,
+            hls_skip,
+            hls_primary: q.hls_primary,
         }
     }
 }
@@ -377,6 +392,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(1),
                 hls_part: Some(0),
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -392,6 +409,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: Some(1),
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -419,6 +438,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: None,
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -450,6 +471,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(1002),
                 hls_part: None,
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -477,6 +500,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: Some(2),
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -493,6 +518,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: None,
                 hls_part: Some(0),
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;

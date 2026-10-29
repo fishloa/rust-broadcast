@@ -150,6 +150,8 @@ fn main() {
             query: BlockingQuery {
                 hls_msn: Some(3),
                 hls_part: None,
+                hls_skip: None,
+                hls_primary: None,
             },
         },
     );
@@ -165,6 +167,8 @@ fn main() {
             query: BlockingQuery {
                 hls_msn: Some(999),
                 hls_part: None,
+                hls_skip: None,
+                hls_primary: None,
             },
         },
     );
