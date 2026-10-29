@@ -2467,13 +2467,43 @@ impl HlsOrigin {
             })
             .collect();
 
-        let low_latency = if self.part_target_ms.is_some() {
+        let low_latency = if let Some(part_target_ms) = self.part_target_ms {
+            let part_target = DecimalSeconds::new(f64::from(part_target_ms) / 1000.0)
+                .expect("u32 / 1000.0 is finite, >= 0");
+            let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
+                .expect("finite, >= 0 times a positive constant is finite, >= 0");
             Some(broadcast_hls::LowLatencyConfig {
+                part_target: Some(part_target),
+                part_hold_back: Some(part_hold_back),
+                hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
+                    .ok(),
+                can_skip_until: DecimalSeconds::new(
+                    f64::from(target_duration) * SKIP_BOUNDARY_MULTIPLIER,
+                )
+                .ok(),
+                can_skip_dateranges: true,
                 can_block_reload: true,
                 ..Default::default()
             })
         } else {
             None
+        };
+
+        // Rendition report pointing back at the primary media playlist (RFC
+        // 8216bis §4.4.5.4 SHOULD; Apple accepts iframe->media reports).
+        let rendition_reports = if self.part_target_ms.is_some() {
+            let last_closed = self
+                .trunk
+                .last_closed_segment()
+                .unwrap_or(entries[0].0.sequence_number);
+            vec![broadcast_hls::RenditionReport {
+                uri: "media.m3u8".to_string(),
+                last_msn: self.public_msn(last_closed),
+                last_part: None,
+                extra_attrs: Vec::new(),
+            }]
+        } else {
+            Vec::new()
         };
 
         let playlist = MediaPlaylist {
@@ -2486,6 +2516,7 @@ impl HlsOrigin {
             endlist: false,
             extra_tags: Vec::new(),
             low_latency,
+            rendition_reports,
             iframes_only: true,
             ..Default::default()
         };
