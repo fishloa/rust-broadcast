@@ -217,6 +217,8 @@ fn playlist_request(o: &HlsOrigin, msn: u64, part: Option<u32>) -> EgressRespons
             query: BlockingQuery {
                 hls_msn: Some(msn),
                 hls_part: part,
+                hls_skip: None,
+                hls_primary: None,
             },
         },
         now,
@@ -478,7 +480,7 @@ fn media_sequence_offset_continues_the_numbering_everywhere() {
             "#EXT-X-TARGETDURATION:4",
             "#EXT-X-MEDIA-SEQUENCE:1001",
             "#EXT-X-DISCONTINUITY-SEQUENCE:0",
-            "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12",
+            "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12,CAN-SKIP-UNTIL=24,CAN-SKIP-DATERANGES=YES",
             "#EXT-X-PART-INF:PART-TARGET=0.5",
             "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
             "#EXTINF:4,",
@@ -510,6 +512,8 @@ fn media_sequence_offset_continues_the_numbering_everywhere() {
                 query: BlockingQuery {
                     hls_msn: Some(msn),
                     hls_part: part,
+                    hls_skip: None,
+                    hls_primary: None,
                 },
             },
             now,

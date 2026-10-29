@@ -591,6 +591,8 @@ fn iframe_part_is_bad_request() {
             query: BlockingQuery {
                 hls_msn: Some(1),
                 hls_part: Some(0),
+                hls_skip: None,
+                hls_primary: None,
             },
         },
         now,

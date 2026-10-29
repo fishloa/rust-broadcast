@@ -6,6 +6,12 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Playlist Delta Updates (RFC 8216bis §6.2.5.1): `BlockingQuery` now carries a typed `_HLS_skip` directive (`SkipDirective::Yes`/`V2`) and the origin renders an `EXT-X-SKIP` delta update (omitting segments older than the Skip Boundary, `MEDIA-SEQUENCE` unchanged) when `CAN-SKIP-UNTIL` is advertised; ignored otherwise. With `YES` every `EXT-X-DATERANGE` tag stays; `v2` also omits older dateranges and reports them via `RECENTLY-REMOVED-DATERANGES`. The origin now advertises `CAN-SKIP-UNTIL` (6x Target Duration) and `CAN-SKIP-DATERANGES=YES`. `_HLS_primary` is accepted and carried opaquely. `HlsOrigin::http_priority` exposes the RFC 9218 urgency for a request (playlist=1, part/segment=2). `_HLS_skip` is ignored when the playlist has no `CAN-SKIP-UNTIL` or carries `EXT-X-ENDLIST` (this origin never emits ENDLIST).
+
+### Removed
+- Removed the `HlsSkip`/`HlsSkipDirective`/`SkipValue` type aliases and `HlsOrigin::priority`/`urgency_for` methods; use `SkipDirective` and `HlsOrigin::http_priority` instead. `HttpPriority` now keeps a single `SEGMENT` constant for parts and segments.
+
 ### Changed
 - Master playlist `BANDWIDTH` is never fabricated: `HlsOrigin::master_playlist` keeps returning `HlsMasterError::BandwidthUnknown` (hosts map to HTTP 503 with `Retry-After`) until a segment with a measurable duration has been drained or `HlsOriginBuilder::declared_bandwidth_bps` is set; once measured it ratchets up only and never drops on a later smaller segment.
 - `EXT-X-TARGETDURATION` is now frozen at the first render that has at least one segment in the window (RFC 8216 §4.3.3.1): once published it never changes; longer later segments are counted, not re-advertised. Previously it tracked the running maximum and could move between playlist versions.

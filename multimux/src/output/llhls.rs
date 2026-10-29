@@ -27,7 +27,9 @@ use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsRequest};
+use hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsRequest, SkipDirective,
+};
 use serde::Deserialize;
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
@@ -163,13 +165,26 @@ pub struct BlockingReloadQuery {
     /// The part index (within `_HLS_msn`) the client is waiting for.
     #[serde(rename = "_HLS_part")]
     pub hls_part: Option<u32>,
+    /// The `_HLS_skip` Delivery Directive (RFC 8216bis §6.2.5.1).
+    #[serde(rename = "_HLS_skip")]
+    pub hls_skip: Option<String>,
+    /// The `_HLS_primary` / `_HLS_primary_id` value (RFC 8216bis Appendix D.4).
+    #[serde(rename = "_HLS_primary")]
+    pub hls_primary: Option<String>,
 }
 
 impl From<BlockingReloadQuery> for BlockingQuery {
     fn from(q: BlockingReloadQuery) -> Self {
+        let hls_skip = match q.hls_skip.as_deref() {
+            Some("YES") => Some(SkipDirective::Yes),
+            Some("v2") => Some(SkipDirective::V2),
+            _ => None,
+        };
         BlockingQuery {
             hls_msn: q.hls_msn,
             hls_part: q.hls_part,
+            hls_skip,
+            hls_primary: q.hls_primary,
         }
     }
 }
@@ -199,6 +214,7 @@ pub(crate) async fn media_playlist(
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
     };
+    let priority = ll_hls.http_priority(&request);
     let resp = http::resolve_blocking(
         &trunk,
         ll_hls.as_ref(),
@@ -209,12 +225,14 @@ pub(crate) async fn media_playlist(
     .await;
     http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
         HlsBody::Playlist(m) => {
-            ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
+            let mut resp =
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
+                resp.headers_mut().insert("priority", value);
+            }
+            resp
         }
         HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        // `HlsBody` is `#[non_exhaustive]`; a future body variant this
-        // playlist route doesn't understand is treated the same as a
-        // resource body -- not found here.
         _ => StatusCode::NOT_FOUND.into_response(),
     })
 }
@@ -237,6 +255,7 @@ pub(crate) async fn iframe_playlist(
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
     };
+    let priority = ll_hls.http_priority(&request);
     let resp = http::resolve_blocking(
         &trunk,
         ll_hls.as_ref(),
@@ -247,7 +266,12 @@ pub(crate) async fn iframe_playlist(
     .await;
     http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
         HlsBody::Playlist(m) => {
-            ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
+            let mut resp =
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
+                resp.headers_mut().insert("priority", value);
+            }
+            resp
         }
         HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
@@ -358,6 +382,38 @@ mod tests {
         assert!(!body.contains("media.m3u8"), "body: {body}");
     }
 
+    #[test]
+    fn blocking_reload_query_carries_hls_primary() {
+        let q = BlockingReloadQuery {
+            hls_primary: Some("primary-1".to_string()),
+            ..BlockingReloadQuery::default()
+        };
+        let bq: BlockingQuery = q.into();
+        assert_eq!(bq.hls_primary.as_deref(), Some("primary-1"));
+    }
+
+    #[tokio::test]
+    async fn media_playlist_hls_primary_does_not_change_rendered_playlist() {
+        let route = make_route();
+        let base = media_playlist(
+            State(state(route.clone())),
+            Query(BlockingReloadQuery {
+                hls_primary: None,
+                ..BlockingReloadQuery::default()
+            }),
+        )
+        .await;
+        let with_primary = media_playlist(
+            State(state(route)),
+            Query(BlockingReloadQuery {
+                hls_primary: Some("primary-1".to_string()),
+                ..BlockingReloadQuery::default()
+            }),
+        )
+        .await;
+        assert_eq!(body_string(base).await, body_string(with_primary).await);
+    }
+
     #[tokio::test]
     async fn media_playlist_no_query_renders_now() {
         let route = make_route();
@@ -377,6 +433,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(1),
                 hls_part: Some(0),
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -392,6 +450,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: Some(1),
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -419,6 +479,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: None,
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -450,6 +512,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(1002),
                 hls_part: None,
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -477,6 +541,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: Some(2),
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
@@ -493,6 +559,8 @@ mod tests {
             Query(BlockingReloadQuery {
                 hls_msn: None,
                 hls_part: Some(0),
+                hls_skip: None,
+                hls_primary: None,
             }),
         )
         .await;
