@@ -8,7 +8,6 @@ use multimux::output::llhls::LlHlsOutput;
 use multimux::route::RouteHandle;
 use tokio::net::TcpListener;
 
-
 async fn wait_for_port(addr: std::net::SocketAddr) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
