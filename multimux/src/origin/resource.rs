@@ -181,15 +181,18 @@ async fn dynamic_file(
     };
     let trunk = serving.trunk();
     let ll_hls = serving.ll_hls();
+    let request = HlsRequest::Resource { name: file.clone() };
+    let priority = ll_hls.http_priority(&request);
+    let priority_value = header::HeaderValue::from_str(&format!("u={}", priority.urgency)).ok();
     let resp = http::resolve_blocking(
         &trunk,
         ll_hls.as_ref(),
-        HlsRequest::Resource { name: file.clone() },
+        request,
         BLOCKING_RELOAD_TIMEOUT,
         BlockingRequestGuard::new,
     )
     .await;
-    match http::into_response(resp, StatusCode::NOT_FOUND, |body| {
+    let mut resp = match http::into_response(resp, StatusCode::NOT_FOUND, |body| {
         let body = inject_segment_events(&trunk, &file, body);
         resource_body_response(&headers, body, route.container(), &file)
     }) {
@@ -200,12 +203,24 @@ async fn dynamic_file(
             if let Some((track, seq)) = parse_segment_filename(&file)
                 && let Some(resp) = stream_in_progress_segment(serving, track, seq).await
             {
+                let mut resp = resp;
+                if let Some(value) = priority_value.clone() {
+                    resp.headers_mut().insert("priority", value);
+                }
                 return resp;
             }
-            StatusCode::NOT_FOUND.into_response()
+            let mut resp = StatusCode::NOT_FOUND.into_response();
+            if let Some(value) = priority_value.clone() {
+                resp.headers_mut().insert("priority", value);
+            }
+            resp
         }
         resp => resp,
+    };
+    if let Some(value) = priority_value {
+        resp.headers_mut().insert("priority", value);
     }
+    resp
 }
 
 fn resource_body_response(

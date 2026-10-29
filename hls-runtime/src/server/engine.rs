@@ -248,6 +248,10 @@ const PART_HOLD_BACK_MULTIPLIER: f64 = 3.0;
 /// Duration.
 const HOLD_BACK_MULTIPLIER: f64 = 3.0;
 
+/// RFC 8216bis §4.4.3.8: the Skip Boundary is at least six times the Target
+/// Duration (advertised as `CAN-SKIP-UNTIL`).
+const SKIP_BOUNDARY_MULTIPLIER: f64 = 6.0;
+
 /// A minimal single-variant master playlist pointing at `media_playlist_name`
 /// (the caller's configured media-playlist filename — e.g. multimux's
 /// `Config::playlist_name`, defaulting to `"media.m3u8"`) — the same
@@ -257,9 +261,6 @@ pub fn master_playlist_m3u8(media_playlist_name: &str, bandwidth_bps: u32) -> St
     format!("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth_bps}\n{media_playlist_name}\n")
 }
 
-/// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2) — the
-/// sans-IO counterpart of an adapter's own (likely serde-`Deserialize`)
-/// query-string type; the adapter maps its wire query params into this.
 /// Typed value of the `_HLS_skip` Delivery Directive (RFC 8216bis §6.2.5.1):
 /// `YES` requests a delta update that skips older Media Segments, `v2` also
 /// skips older `EXT-X-DATERANGE` tags.
@@ -285,14 +286,6 @@ impl SkipDirective {
 
 broadcast_common::impl_spec_display!(SkipDirective);
 
-/// Backwards/alternative names for [`SkipDirective`].
-#[allow(dead_code)]
-pub type HlsSkip = SkipDirective;
-#[allow(dead_code)]
-pub type HlsSkipDirective = SkipDirective;
-#[allow(dead_code)]
-pub type SkipValue = SkipDirective;
-
 /// HTTP Priority signalling data for an LL-HLS response (RFC 8216bis §6.2.6
 /// / §6.3): the extensible priority scheme (RFC 9218) urgency the adapter
 /// should attach to the response. Playlists MUST have urgency 1; Media
@@ -312,12 +305,7 @@ impl HttpPriority {
         urgency: 1,
         incremental: false,
     };
-    /// Urgency for a Partial Segment response.
-    pub const PART: Self = Self {
-        urgency: 2,
-        incremental: true,
-    };
-    /// Urgency for a whole Media Segment response.
+    /// Urgency for a Partial Segment or whole Media Segment response.
     pub const SEGMENT: Self = Self {
         urgency: 2,
         incremental: true,
@@ -1703,23 +1691,10 @@ impl HlsOrigin {
                 HttpPriority::PLAYLIST
             }
             HlsRequest::Resource { name } => {
-                if name.starts_with("part-") {
-                    HttpPriority::PART
-                } else {
-                    HttpPriority::SEGMENT
-                }
+                let _ = parse_part(name, self.container);
+                HttpPriority::SEGMENT
             }
         }
-    }
-
-    /// Alias for [`Self::http_priority`].
-    pub fn priority(&self, request: &HlsRequest) -> HttpPriority {
-        self.http_priority(request)
-    }
-
-    /// Alias returning just the urgency value.
-    pub fn urgency_for(&self, request: &HlsRequest) -> u8 {
-        self.http_priority(request).urgency
     }
 
     /// The Media Sequence Number shown for origin sequence number `seq`.
@@ -2075,11 +2050,12 @@ impl HlsOrigin {
         // the Media Segments further from the end of the last segment than
         // this boundary.
         let skip_boundary = if low_latency_enabled {
-            Some(f64::from(target_duration) * 6.0)
+            Some(f64::from(target_duration) * SKIP_BOUNDARY_MULTIPLIER)
         } else {
             None
         };
-        let skip_accepted = skip.is_some() && skip_boundary.is_some();
+        let playlist_has_endlist = false;
+        let skip_accepted = skip.is_some() && skip_boundary.is_some() && !playlist_has_endlist;
         // RFC 8216bis §6.2.5.1: count the leading segments whose distance
         // (from their start to the end of the last segment) exceeds the Skip
         // Boundary; never skip every segment in the window.
@@ -2090,7 +2066,7 @@ impl HlsOrigin {
             let mut count = 0usize;
             for d in &durations {
                 let distance = total - prefix;
-                if distance > skip_boundary.unwrap() {
+                if distance > skip_boundary.unwrap_or(f64::INFINITY) {
                     count += 1;
                     prefix += d;
                 } else {
@@ -2258,7 +2234,9 @@ impl HlsOrigin {
             ));
         }
         for (idx, tags) in segment_dateranges.iter().enumerate() {
-            if idx < omitted {
+            // RFC 8216bis §6.2.5.1: only `_HLS_skip=v2` additionally omits
+            // `EXT-X-DATERANGE` tags; with `YES` every daterange stays.
+            if idx < omitted && skip == Some(SkipDirective::V2) {
                 continue;
             }
             for (tag, _) in tags {
@@ -2284,10 +2262,7 @@ impl HlsOrigin {
                 hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
                     .ok(),
                 preload_hint_part: next_part_hint,
-                can_skip_until: Some(
-                    DecimalSeconds::new(f64::from(target_duration) * 6.0)
-                        .expect("target duration finite, >= 0"),
-                ),
+                can_skip_until: skip_boundary.and_then(|b| DecimalSeconds::new(b).ok()),
                 can_skip_dateranges: true,
                 can_block_reload: true,
                 ..Default::default()

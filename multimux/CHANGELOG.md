@@ -5,7 +5,11 @@
 ### Changed
 - HTTP listeners now serve HTTP/2 (RFC 9113) alongside HTTP/1.1 on the same port via hyper-util's auto builder: h2c prior-knowledge connections are accepted, with HTTP/2 keep-alive and concurrent-stream limits applied. HTTP/1.1 clients continue to work unchanged.
 
+### Added
+- LL-HLS origin responses now set the RFC 9218 `Priority: u=<urgency>` response header (`u=1` for playlists, `u=2` for parts and segments).
+
 ### Fixed
+- `_HLS_skip` query parsing now accepts only the exact spec tokens `YES` and `v2`; lowercase variants are ignored (full playlist).
 - `stream_in_progress_segment` now serves the streamed whole-segment response with `Content-Type: video/iso.segment` (was `video/mp4`), matching other `.m4s` segments and parts (Apple HLS authoring spec 10.4).
 
 ### Changed (BREAKING: `dash_pull` runs on `dash-runtime`)

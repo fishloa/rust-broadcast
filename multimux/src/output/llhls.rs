@@ -176,8 +176,8 @@ pub struct BlockingReloadQuery {
 impl From<BlockingReloadQuery> for BlockingQuery {
     fn from(q: BlockingReloadQuery) -> Self {
         let hls_skip = match q.hls_skip.as_deref() {
-            Some("YES") | Some("yes") => Some(SkipDirective::Yes),
-            Some("v2") | Some("V2") => Some(SkipDirective::V2),
+            Some("YES") => Some(SkipDirective::Yes),
+            Some("v2") => Some(SkipDirective::V2),
             _ => None,
         };
         BlockingQuery {
@@ -214,6 +214,7 @@ pub(crate) async fn media_playlist(
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
     };
+    let priority = ll_hls.http_priority(&request);
     let resp = http::resolve_blocking(
         &trunk,
         ll_hls.as_ref(),
@@ -224,12 +225,14 @@ pub(crate) async fn media_playlist(
     .await;
     http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
         HlsBody::Playlist(m) => {
-            ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
+            let mut resp =
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
+                resp.headers_mut().insert("priority", value);
+            }
+            resp
         }
         HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        // `HlsBody` is `#[non_exhaustive]`; a future body variant this
-        // playlist route doesn't understand is treated the same as a
-        // resource body -- not found here.
         _ => StatusCode::NOT_FOUND.into_response(),
     })
 }
@@ -252,6 +255,7 @@ pub(crate) async fn iframe_playlist(
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
     };
+    let priority = ll_hls.http_priority(&request);
     let resp = http::resolve_blocking(
         &trunk,
         ll_hls.as_ref(),
@@ -262,7 +266,12 @@ pub(crate) async fn iframe_playlist(
     .await;
     http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
         HlsBody::Playlist(m) => {
-            ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
+            let mut resp =
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
+                resp.headers_mut().insert("priority", value);
+            }
+            resp
         }
         HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
@@ -371,6 +380,38 @@ mod tests {
         let body = body_string(resp).await;
         assert!(body.contains("index.m3u8"), "body: {body}");
         assert!(!body.contains("media.m3u8"), "body: {body}");
+    }
+
+    #[test]
+    fn blocking_reload_query_carries_hls_primary() {
+        let q = BlockingReloadQuery {
+            hls_primary: Some("primary-1".to_string()),
+            ..BlockingReloadQuery::default()
+        };
+        let bq: BlockingQuery = q.into();
+        assert_eq!(bq.hls_primary.as_deref(), Some("primary-1"));
+    }
+
+    #[tokio::test]
+    async fn media_playlist_hls_primary_does_not_change_rendered_playlist() {
+        let route = make_route();
+        let base = media_playlist(
+            State(state(route.clone())),
+            Query(BlockingReloadQuery {
+                hls_primary: None,
+                ..BlockingReloadQuery::default()
+            }),
+        )
+        .await;
+        let with_primary = media_playlist(
+            State(state(route)),
+            Query(BlockingReloadQuery {
+                hls_primary: Some("primary-1".to_string()),
+                ..BlockingReloadQuery::default()
+            }),
+        )
+        .await;
+        assert_eq!(body_string(base).await, body_string(with_primary).await);
     }
 
     #[tokio::test]

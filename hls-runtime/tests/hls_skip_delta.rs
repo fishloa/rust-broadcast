@@ -12,7 +12,9 @@ use hls_runtime::server::{
 };
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
+use media_plane::trunk::EventAnchor;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
+use timed_metadata::{MediaTime, TimeAnchor};
 use transmux::SegmentMeta;
 
 fn nz(n: usize) -> NonZeroUsize {
@@ -204,4 +206,59 @@ fn bad_skip_value_is_ignored() {
     let delta = render(&origin, None);
     let parsed = MediaPlaylist::parse(&delta).expect("parse");
     assert!(parsed.skip.is_none());
+}
+
+#[test]
+fn skip_yes_keeps_dateranges_v2_drops_them() {
+    let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
+    let splice_bytes: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+
+    for v2 in [false, true] {
+        let (trunk, origin, writer) = make_origin();
+        writer.set_time_anchor(TimeAnchor {
+            pts_90k: 0,
+            utc_epoch_ms: 1_000_000_000_000,
+        });
+        // two dateranges: one in a skipped segment (seg 1), one inside.
+        let mut timeline = timed_metadata::Timeline::new();
+        let ev = timeline.push_scte35(&splice_bytes).unwrap();
+        let tw = trunk.writer().expect("writer");
+        writer.note_segment_start(media_plane::ids::SegmentSeq::new(1), MediaTime(0));
+        tw.publish_event(ev.clone(), EventAnchor::Media(MediaTime(0)));
+        writer.note_segment_start(media_plane::ids::SegmentSeq::new(7), MediaTime(24_000_000));
+        tw.publish_event(ev.clone(), EventAnchor::Media(MediaTime(24_000_000)));
+
+        for s in 1..=8 {
+            seg(&writer, s);
+        }
+
+        let skip = if v2 {
+            Some(SkipDirective::V2)
+        } else {
+            Some(SkipDirective::Yes)
+        };
+        let rendered = render(&origin, skip);
+        let dr_count = rendered.matches("#EXT-X-DATERANGE").count();
+        if v2 {
+            assert_eq!(
+                dr_count, 1,
+                "v2 should keep only the inside daterange: {rendered}"
+            );
+            assert!(
+                rendered.contains(
+                    "#EXT-X-SKIP:SKIPPED-SEGMENTS=2,RECENTLY-REMOVED-DATERANGES=\"2002\""
+                ),
+                "v2 skip line: {rendered}"
+            );
+        } else {
+            assert_eq!(dr_count, 2, "YES should keep both dateranges: {rendered}");
+            assert!(
+                rendered.contains("#EXT-X-SKIP:SKIPPED-SEGMENTS=2\n"),
+                "YES skip line: {rendered}"
+            );
+        }
+    }
 }
