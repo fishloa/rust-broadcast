@@ -379,6 +379,17 @@ pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// rather than parked in the kernel backlog.
 pub const MAX_CONNECTIONS: usize = 1024;
 
+/// HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS advertised to clients on every h2
+/// connection (hyper's own default). Named constant rather than pulled from
+/// `Config`: multimux has no per-stream h2 knob today.
+pub const DEFAULT_H2_MAX_CONCURRENT_STREAMS: u32 = 200;
+
+/// HTTP/2 keep-alive PING interval on every h2 connection.
+pub const H2_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(20);
+
+/// HTTP/2 keep-alive PING acknowledgement timeout on every h2 connection.
+pub const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// How long, once shutdown begins, an already-streaming connection is given
 /// to finish before it is force-closed. Only applies to connections in
 /// flight at shutdown; a long-lived media response is never truncated before
@@ -403,10 +414,8 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 /// because `axum::serve::IncomingStream` cannot be constructed outside axum
 /// (private fields, axum 0.8.9 `serve/mod.rs:424`).
 ///
-/// The origin's listeners are plain HTTP/1 (no h2c/TLS-ALPN upgrade exists in
-/// any `serve*` path), so [`serve_impl`] uses `hyper`'s http1 connection
-/// directly — no HTTP/2 prior-knowledge preface is served, and no h2/fnv
-/// dependency is pulled in.
+/// The origin's listeners are served through hyper-util's auto builder, so
+/// one listener accepts both HTTP/1.1 and h2c prior-knowledge connections.
 pub(crate) async fn serve_hyper_util(
     listener: tokio::net::TcpListener,
     app: axum::Router,
@@ -565,7 +574,6 @@ where
     use std::net::SocketAddr;
     use std::sync::Arc;
 
-    use hyper::server::conn::http1;
     use hyper_util::rt::{TokioIo, TokioTimer};
     use hyper_util::server::graceful::GracefulShutdown;
     use hyper_util::service::TowerToHyperService;
@@ -632,10 +640,19 @@ where
             let local_addr = stream.local_addr().ok();
             let svc = axum::Extension(ConnectInfo(remote_addr as SocketAddr))
                 .layer(axum::Extension(local_addr.map(LocalAddr)).layer(app));
-            let mut builder = http1::Builder::new();
+            let mut builder =
+                hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
             builder
+                .http1()
                 .timer(TokioTimer::new())
-                .header_read_timeout(Some(header_read));
+                .header_read_timeout(Some(header_read))
+                .keep_alive(true);
+            builder
+                .http2()
+                .timer(TokioTimer::new())
+                .max_concurrent_streams(Some(DEFAULT_H2_MAX_CONCURRENT_STREAMS))
+                .keep_alive_interval(Some(H2_KEEP_ALIVE_INTERVAL))
+                .keep_alive_timeout(H2_KEEP_ALIVE_TIMEOUT);
             let io = TokioIo::new(stream);
             let conn = builder.serve_connection(io, TowerToHyperService::new(svc));
             // `watch` signals `graceful_shutdown` on the connection and keeps
@@ -686,7 +703,6 @@ where
 {
     use std::sync::Arc;
 
-    use hyper::server::conn::http1;
     use hyper_util::rt::{TokioIo, TokioTimer};
     use hyper_util::server::graceful::GracefulShutdown;
     use hyper_util::service::TowerToHyperService;
@@ -729,10 +745,19 @@ where
         tasks.spawn(async move {
             let _permit = permit;
             let svc = build(remote_addr).await;
-            let mut builder = http1::Builder::new();
+            let mut builder =
+                hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
             builder
+                .http1()
                 .timer(TokioTimer::new())
-                .header_read_timeout(Some(HEADER_READ_TIMEOUT));
+                .header_read_timeout(Some(HEADER_READ_TIMEOUT))
+                .keep_alive(true);
+            builder
+                .http2()
+                .timer(TokioTimer::new())
+                .max_concurrent_streams(Some(DEFAULT_H2_MAX_CONCURRENT_STREAMS))
+                .keep_alive_interval(Some(H2_KEEP_ALIVE_INTERVAL))
+                .keep_alive_timeout(H2_KEEP_ALIVE_TIMEOUT);
             let io = TokioIo::new(stream);
             let conn = builder.serve_connection(io, TowerToHyperService::new(svc));
             let _ = watcher.watch(conn).await;

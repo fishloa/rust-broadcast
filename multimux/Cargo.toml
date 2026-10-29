@@ -83,13 +83,13 @@ broadcast-auth    = { path = "../broadcast-auth", version = "0.5" }
 sdp-types         = { workspace = true }
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = { workspace = true }
-# Every multimux HTTP listener is served through hyper-util's server builder
-# (`origin::serve_hyper_util`) rather than `axum::serve`, so it can set a
-# header-read timeout, a connection cap, and graceful drain on shutdown
-# (W2a SP2.1) — `axum::serve` sets none of them. The listeners are plain
-# HTTP/1 (no h2c/TLS-ALPN upgrade), so `server-auto`'s http2 half is dropped.
-hyper             = { version = "1", features = ["server", "http1"] }
-hyper-util        = { version = "0.1", features = ["server", "http1", "server-graceful", "tokio", "service"] }
+# Every multimux HTTP listener is served through hyper-util's auto server
+# builder (`origin::serve_hyper_util`) rather than `axum::serve`, so it can
+# set a header-read timeout, a connection cap, and graceful drain on shutdown
+# (W2a SP2.1) — `axum::serve` sets none of them. The auto builder accepts
+# both HTTP/1.1 and h2c prior-knowledge on one listener.
+hyper             = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util        = { version = "0.1", features = ["server", "http1", "http2", "server-auto", "server-graceful", "tokio", "service"] }
 # HTTP-layer resource limits (issue #663 P5, audit-concurrency #3): request
 # timeout + request-body size cap (`tower-http`) and a concurrency bound
 # (`tower::limit`) — see `origin::HttpLimits`/`origin::router`. `util` is
@@ -331,7 +331,7 @@ md-5             = "0.11"
 # for test-only use (`tests/admin_api.rs`, issue #749) — Cargo unifies this
 # into the one `reqwest` dependency only for test builds, never for the
 # library target itself.
-reqwest          = { version = "0.13", default-features = false, features = ["json"] }
+reqwest          = { version = "0.13", default-features = false, features = ["json", "http2"] }
 # An INDEPENDENT SCTE-35 parser (no shared code with `timed-metadata`) so
 # `tests/emsg_mp4box.rs` can decode the `message_data` of an emitted DASH
 # `emsg` back to the source section and prove the bytes are the source's own
