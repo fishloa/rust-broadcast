@@ -716,6 +716,12 @@ impl Session {
         self.buffer.stall_memory()
     }
 
+    /// Buffer controller statistics (stalls, reprimes, discontinuities, longest freeze).
+    #[must_use]
+    pub fn buffer_stats(&self) -> crate::events::BufferStats {
+        self.buffer.buffer_stats()
+    }
+
     /// Terminal close.
     ///
     /// Queued actions other than [`Action::Close`] are dropped and every live connection gets

@@ -147,7 +147,7 @@ New API on `Session`:
 - `Session::on_playback_position(now_us, Option<u64 /*pts 27 MHz*/>)` -> `BufferController::on_tick`.
 - `Session::set_rendered_tracks(&[TrackId])` (player input: which tracks it renders; default = the LOWEST track id of each kind among the announced tracks, see "BC-2 rendered-set history"). Registered with the controller via `register_track` (video track key = its TrackId.0, one controller track per rendered TrackId). Changing the set calls `register_track`/`unregister_track` for the difference.
 - `Session::hint(Hint)` passthrough for the player-owned hints: InputDegraded, InputRecovered, SyncLoss, PcrDiscontinuity.
-- `Config::buffer: buffering_runtime::ControllerConfig` (default = the crate default) and `Session::open_with_memory(.., Option<StallMemorySnapshot>)`/`Session::stall_memory() -> StallMemorySnapshot` so memory survives sessions (zenith seeds it today).
+- `Config::buffer: buffering_runtime::ControllerConfig` (default = the crate default) and `Session::open_with_memory(.., Option<StallMemorySnapshot>)`/`Session::stall_memory() -> StallMemorySnapshot` so memory survives sessions (zenith seeds it today). `BufferEvent::Pause` carries `reason: PauseReason` (`NoData`, `DataArriving`, `Discontinuity`, `Reprime`) mapped from `buffering_runtime::Reason`; `Session::buffer_stats() -> BufferStats` exposes `stalls`, `reprimes`, `discontinuities`, `longest_freeze_us`.
 
 A 206 response to our own plain GET is finite too. Redirect/auth layers are unchanged; headers are
 forwarded to tshttp-runtime for finite detection. `Event::Finite` is mapped from tshttp, and

@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
-use crate::events::{BufferEvent, Event};
+use crate::events::{BufferEvent, Event, PauseReason};
 
 /// Default start lead for VOD sources (HLS with `EXT-X-ENDLIST`, finite TS), microseconds.
 pub const DEFAULT_VOD_START_LEAD_US: u64 = 1_000_000;
@@ -364,6 +364,7 @@ impl Playout {
             self.hold = position;
             self.out.push_back(BufferEvent::Pause {
                 hold_at_27mhz: position,
+                reason: PauseReason::DataArriving,
                 starving_track: Some(track.value()),
             });
         }
@@ -471,6 +472,7 @@ mod tests {
             events,
             vec![BufferEvent::Pause {
                 hold_at_27mhz: ONE_SECOND_TICKS,
+                reason: PauseReason::DataArriving,
                 starving_track: Some(spec.track_id.value()),
             }],
             "pause once, never resume without new media"
@@ -541,6 +543,7 @@ mod tests {
             buffer_events(&mut p),
             vec![BufferEvent::Pause {
                 hold_at_27mhz: 2 * ONE_SECOND_TICKS,
+                reason: PauseReason::DataArriving,
                 starving_track: Some(spec.track_id.value()),
             }]
         );

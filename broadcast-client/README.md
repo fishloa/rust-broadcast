@@ -101,7 +101,9 @@ tracks' media ends decides), at the end of the stream if it ends first; `Pause` 
 position reported with `Session::on_playback_position` reaches `pause_lead_us` (default 0) of the
 buffered media and the stream has not ended; `Resume` once the lead past the held position reaches
 the resume lead, or at once when the stream ends while paused. A position the host reported before
-`Start` is discarded at `Start`: report the position again only after applying `Start.at`. A `Discontinuity`, `rejoin()`,
+`Start` is discarded at `Start`: report the position again only after applying `Start.at`. `BufferEvent::Pause` carries `reason: PauseReason` (`NoData`, `DataArriving`, `Discontinuity`, `Reprime`): live TS-over-HTTP maps `buffering-runtime::Reason` (a silent source gives `NoData`, a lead that exhausts while chunks still arrive gives `DataArriving`, a baseline reset gives `Discontinuity`, a voluntary re-prime gives `Reprime`); playout pauses report `DataArriving`. `Session::buffer_stats()` returns `BufferStats` (`stalls`, `reprimes`, `discontinuities`, `longest_freeze_us`) for the live TS-over-HTTP controller.
+
+A `Discontinuity`, `rejoin()`,
 variant switch or `reconnect()` resets the gate and `Start` fires again from the new timeline. Leads: `vod_start_lead_us` 1 s, live HLS
 `min(3 x EXT-X-TARGETDURATION, live_start_lead_us)` with `live_start_lead_us` 6 s,
 `resume_lead_us` defaults to the start lead and is never less than `pause_lead_us` plus 1 us (a
