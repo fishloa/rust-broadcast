@@ -372,3 +372,31 @@ fn a_tail_that_fails_for_another_reason_is_retried_like_any_segment() {
     );
     assert_matches_oracle(&run, &restart_expected());
 }
+
+#[test]
+fn period_boundary_continuity_signal_controls_discontinuity() {
+    // WITH period-continuity signalling (23009-1 5.3.2.4): no Discontinuity.
+    let run = drive(
+        CONTINUOUS,
+        PullLimits::default(),
+        &mut Origin::new(),
+        &mut Drive::default(),
+    );
+    assert!(run.ended && run.errors.is_empty(), "{:?}", run.fatal);
+    assert_eq!(run.count(|o| matches!(o, Output::Discontinuity)), 0);
+
+    // WITHOUT it: exactly one Discontinuity at the boundary.
+    let mut origin = continuous_origin(|t| {
+        let start = t.find("<SupplementalProperty").unwrap();
+        let end = t[start..].find("/>").unwrap() + start + 2;
+        format!("{}{}", &t[..start], &t[end..])
+    });
+    let run = drive(
+        CONTINUOUS,
+        PullLimits::default(),
+        &mut origin,
+        &mut Drive::default(),
+    );
+    assert!(run.ended && run.errors.is_empty(), "{:?}", run.fatal);
+    assert_eq!(run.count(|o| matches!(o, Output::Discontinuity)), 1);
+}
