@@ -595,6 +595,17 @@ pub enum Event {
         /// HTTP status.
         status: u16,
     },
+    /// The server refused a request (typically `429`/`503`): the session is retrying with the
+    /// server-requested delay. Emitted once per refused attempt alongside [`Status::Reconnecting`].
+    ServerRefused {
+        /// HTTP status.
+        status: u16,
+        /// Server-requested wait, microseconds, if any.
+        retry_after_us: Option<u64>,
+        /// Response body, only when it is `text/plain` (UTF-8 or no charset); control characters
+        /// stripped, trimmed and capped.
+        reason: Option<String>,
+    },
     /// A master playlist was parsed and a variant chosen.
     Variants(hls_runtime::client::MasterSelection),
     /// The active separate-audio selection changed. `index` is the position in the chosen
@@ -691,6 +702,18 @@ impl PartialEq for Event {
             ) => *sa == *sb && *ra == *rb && *oa == *ob && *ma == *mb,
             (Self::AuthRejected { status: a }, Self::AuthRejected { status: b }) => *a == *b,
             (Self::Forbidden { status: a }, Self::Forbidden { status: b }) => *a == *b,
+            (
+                Self::ServerRefused {
+                    status: sa,
+                    retry_after_us: ra,
+                    reason: rra,
+                },
+                Self::ServerRefused {
+                    status: sb,
+                    retry_after_us: rb,
+                    reason: rrb,
+                },
+            ) => *sa == *sb && *ra == *rb && *rra == *rrb,
             (Self::Buffer(a), Self::Buffer(b)) => *a == *b,
             (Self::AvSync(a), Self::AvSync(b)) => *a == *b,
             (Self::Variants(a), Self::Variants(b)) => *a == *b,
@@ -735,6 +758,9 @@ impl PartialEq for Event {
 /// main playlist's track ids, which must stay below this value (a main track at or above it is
 /// dropped with [`ErrorKind::TrackIdReserved`]).
 pub const AUDIO_TRACK_ID_OFFSET: u32 = 1000;
+/// Maximum length of a [`Event::ServerRefused`] reason string, in bytes (cut on a UTF-8
+/// character boundary).
+pub const MAX_SERVER_REFUSED_REASON_BYTES: usize = 256;
 /// Default maximum accepted manifest (playlist) body size.
 pub const DEFAULT_MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 /// Default maximum accepted HLS media resource body size.

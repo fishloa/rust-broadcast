@@ -38,6 +38,7 @@ pub struct TsHttpPolicy {
     expected_bytes: u64,
     received_bytes: u64,
     finite_done: bool,
+    retry_after_ms: u64,
 }
 
 impl TsHttpPolicy {
@@ -65,6 +66,7 @@ impl TsHttpPolicy {
             expected_bytes: 0,
             received_bytes: 0,
             finite_done: false,
+            retry_after_ms: 0,
         };
         c.start_open(now_ms);
         c
@@ -96,6 +98,7 @@ impl TsHttpPolicy {
             self.expected_bytes = expected;
             self.received_bytes = 0;
             self.finite_done = false;
+            self.retry_after_ms = 0;
             if finite && expected == 0 {
                 self.finite_done = true;
             }
@@ -118,6 +121,11 @@ impl TsHttpPolicy {
         } else {
             self.fail_before_playing(now_ms);
         }
+    }
+
+    /// Server-requested retry delay, milliseconds, applied to the next failure.
+    pub fn set_retry_after(&mut self, retry_after_ms: u64) {
+        self.retry_after_ms = retry_after_ms;
     }
 
     fn header_values<'a>(headers: &'a [(String, String)], name: &str) -> alloc::vec::Vec<&'a str> {
@@ -501,6 +509,7 @@ impl TsHttpPolicy {
         self.expected_bytes = 0;
         self.received_bytes = 0;
         self.finite_done = false;
+        self.retry_after_ms = 0;
         self.actions.push_back(Action::Open {
             url: self.url.clone(),
         });
@@ -513,6 +522,8 @@ impl TsHttpPolicy {
         } else {
             self.config.backoff_cap_ms
         };
+        let after = after.max(self.retry_after_ms);
+        self.retry_after_ms = 0;
         self.actions
             .push_back(Action::Reconnect { after_ms: after });
         self.events.push_back(Event::Reconnecting {

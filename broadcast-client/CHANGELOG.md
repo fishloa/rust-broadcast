@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Event::ServerRefused { status, retry_after_us, reason }` and `MAX_SERVER_REFUSED_REASON_BYTES`: host notice emitted once per refused (429/503) attempt, alongside `Status::Reconnecting`, for TS-over-HTTP, HLS and DASH, when the connection ends (or when the retry starts if the host never reports `on_closed`). The refused connection is still closed at the response unless its body can become the reason (`text/plain` UTF-8, not declared empty); then it is closed as soon as the body is complete or the reason cap is captured. `reason` is the response body only for `text/plain` (UTF-8 or no charset), control characters stripped, trimmed and capped at `MAX_SERVER_REFUSED_REASON_BYTES`.
 - RTSP: when the PLAY response carries an `RTP-Info` `rtptime` for every track, the tracks are placed on the common timeline from it and Sender Reports no longer move the offset; `AvSync::RtpInfo` reports it. Without `RTP-Info` the Sender Report rules are unchanged.
+
+### Fixed
+
+- TS-over-HTTP: honour `Retry-After` on 429/503 responses (delta-seconds and HTTP-date, capped at 60 s) via the shared helper, matching HLS and DASH.
 
 ### Changed
 

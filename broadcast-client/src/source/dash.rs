@@ -34,7 +34,7 @@ use crate::source::fetch::body::BodyAcc;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::failures::{Attempts, Verdict, verdict};
-use crate::source::fetch::retry::{Backoff, retry_after_us};
+use crate::source::fetch::retry::{Backoff, RefusedCapture, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 
 const MICROS_PER_MILLI: u64 = 1_000;
@@ -226,6 +226,7 @@ pub(crate) struct DashSource {
     mpd_failures: Attempts,
     mpd_accepted: bool,
     retry_after_us: u64,
+    refused_captures: BTreeMap<u32, RefusedCapture>,
     reqs: HashMap<u32, Req>,
     deadlines: Deadlines<u32>,
     parked: Vec<Req>,
@@ -299,6 +300,7 @@ impl DashSource {
             mpd_failures: Attempts::default(),
             mpd_accepted: false,
             retry_after_us: 0,
+            refused_captures: BTreeMap::new(),
             reqs: HashMap::new(),
             deadlines: Deadlines::new(),
             parked: Vec::new(),
@@ -349,7 +351,11 @@ impl DashSource {
     }
 
     pub(crate) fn conns(&self) -> Vec<u32> {
-        self.reqs.keys().copied().collect()
+        self.reqs
+            .keys()
+            .chain(self.refused_captures.keys())
+            .copied()
+            .collect()
     }
 
     pub(crate) fn is_ended(&self) -> bool {
@@ -530,7 +536,7 @@ impl DashSource {
             req.received_us = now;
             self.deliver_unchanged(&req, now);
         } else {
-            self.actions.push_back(Action::Close { conn });
+            let refused = status == 429 || status == 503;
             if status == STATUS_FORBIDDEN {
                 self.events.push_back(Event::Forbidden { status });
             }
@@ -540,7 +546,19 @@ impl DashSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            self.retry_after_us = retry_after_us(status, headers, now, wall);
+            let ra = retry_after_us(status, headers, now, wall);
+            self.retry_after_us = ra;
+            if refused {
+                let cap = RefusedCapture::new(status, ra, headers);
+                if cap.wants_body() {
+                    self.refused_captures.insert(conn, cap);
+                } else {
+                    self.events.push_back(cap.into_event());
+                    self.actions.push_back(Action::Close { conn });
+                }
+            } else {
+                self.actions.push_back(Action::Close { conn });
+            }
             self.fail(req, now, Failure::Status(status));
             self.retry_after_us = 0;
         }
@@ -551,6 +569,15 @@ impl DashSource {
 
     pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
         if self.fatal {
+            return;
+        }
+        if let Some(cap) = self.refused_captures.get_mut(&conn) {
+            if cap.push(bytes)
+                && let Some(cap) = self.refused_captures.remove(&conn)
+            {
+                self.events.push_back(cap.into_event());
+                self.actions.push_back(Action::Close { conn });
+            }
             return;
         }
         let Some(req) = self.reqs.get_mut(&conn) else {
@@ -588,6 +615,9 @@ impl DashSource {
     ) {
         if self.fatal {
             return;
+        }
+        if let Some(cap) = self.refused_captures.remove(&conn) {
+            self.events.push_back(cap.into_event());
         }
         let Some(mut req) = self.reqs.remove(&conn) else {
             return;
@@ -928,7 +958,15 @@ impl DashSource {
         }
     }
 
+    fn flush_refused(&mut self) {
+        for (conn, cap) in core::mem::take(&mut self.refused_captures) {
+            self.events.push_back(cap.into_event());
+            self.actions.push_back(Action::Close { conn });
+        }
+    }
+
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
+        self.flush_refused();
         let mut headers = auth.request_headers(&req.url, now);
         req.authed = crate::auth::carries_credentials(&headers);
         headers.extend(req.conditional.iter().cloned());
