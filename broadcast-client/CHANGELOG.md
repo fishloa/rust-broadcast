@@ -26,6 +26,7 @@ Initial release. A generic sans-IO client session for live and on-demand media: 
 - RTSP: the buffering controller is now driven (`on_chunk`, tracks, join decision and `on_sample`) through the same private helpers as the TS source, so `BufferEvent::Start` is emitted for RTSP sessions; before, `Session::on_data` returned before feeding the controller.
 - RTSP: AAC samples from a packet that carries several access units no longer share one `pts` with duration 0 (fixed in `transmux`, see its changelog).
 - RTSP: an H.264 SDP without `sprop-parameter-sets` no longer drops the video track; the avcC (SPS, PPS, profile/level, dimensions) is built from the first in-band SPS+PPS, the track is announced only once that config is complete, and samples before it are dropped. Existing behaviour when `sprop-parameter-sets` is present is unchanged.
+- RTSP: a live join mid-GOP on a B-frame stream, and a stall/reconnect early in a track, no longer emit zero-duration samples (fixed in `transmux`, see its changelog); pinned by `tests/rtsp_zero_duration.rs`.
 
 ### Added
 

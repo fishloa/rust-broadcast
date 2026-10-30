@@ -185,7 +185,7 @@ use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeSet, VecDeque};
 use alloc::vec::Vec;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
 
@@ -746,6 +746,14 @@ struct TrackState {
     /// codec config: H.264 SPS VUI timing with `fixed_frame_rate_flag`, or the
     /// AAC `AudioSpecificConfig` frame length. `None` when not declared.
     declared_duration: Option<u32>,
+    /// Set once a wire timestamp has stepped backward (a B-frame reorder). From
+    /// then on `pending` is a reorder window resolved by
+    /// [`RtpStreamDepacketiser::resolve_window`].
+    reordered: bool,
+    /// Presentation timestamps of the reorder window and of recently resolved
+    /// AUs, so an AU's presentation successor is found even when it was sent
+    /// (and resolved) before it. Pruned below the oldest unresolved AU.
+    seen_pts: BTreeSet<u64>,
     /// Smallest positive step seen between consecutive wire timestamps — the
     /// frame-period estimate used as the duration fallback when a step goes
     /// backward (a presentation reorder has no forward delta). `None` until
@@ -850,6 +858,16 @@ fn to_ticks(uw: u64) -> i64 {
     uw.min(i64::MAX as u64) as i64
 }
 
+/// Access units held in a reordered video track's window before the oldest is
+/// resolved. A frame's presentation successor must have arrived by then; a
+/// pyramid reorder presents a frame at most a handful of AUs after it is sent.
+const REORDER_LOOKAHEAD: usize = 6;
+
+/// Hard bound on a reorder window whose oldest AU cannot be given a truthful
+/// duration (no later timestamp, no known frame period): beyond it the oldest
+/// is dropped rather than letting the window grow with the stream.
+const MAX_REORDER_WINDOW: usize = 256;
+
 /// Per-AU duration, in `clock_rate` ticks, that the stream's own config
 /// declares. H.264: the SPS VUI `timing_info` frame period
 /// `2 * num_units_in_tick / time_scale` (ITU-T H.264 §E.2.1); with
@@ -932,6 +950,8 @@ impl RtpStreamDepacketiser {
                         pending: Vec::new(),
                         last_duration: 0,
                         declared_duration,
+                        reordered: false,
+                        seen_pts: BTreeSet::new(),
                         min_positive_step: None,
                         sr_anchor: None,
                         reorder_depth: t.reorder_depth,
@@ -960,6 +980,7 @@ impl RtpStreamDepacketiser {
     /// that learn dimensions from an in-band parameter set after SETUP).
     pub fn set_track_config(&mut self, track_id: TrackId, config: CodecConfig) {
         if let Some((_, st)) = self.tracks.iter_mut().find(|(id, _)| *id == track_id) {
+            st.declared_duration = declared_au_duration(st.kind, &config, st.clock_rate);
             st.config = config;
         }
     }
@@ -1246,7 +1267,9 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
-        if let Some(duration) = known_duration(st) {
+        if st.reordered && st.kind == RtpMediaKind::H264 {
+            Self::resolve_window(st, &mut out, true);
+        } else if let Some(duration) = known_duration(st) {
             for (index, p) in st.pending.drain(..).enumerate() {
                 let offset = u64::from(duration) * index as u64;
                 let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
@@ -1260,6 +1283,56 @@ impl RtpStreamDepacketiser {
             }
         }
         Ok(out)
+    }
+
+    /// Resolve the oldest AUs of a reordered video track's window.
+    ///
+    /// RTP carries presentation time only, so under B-frame reorder the step to
+    /// the next AU *in wire order* is not a frame duration (it can be zero or
+    /// negative). The duration of an AU is its step to the next presentation
+    /// instant, which is the smallest later timestamp seen; an AU
+    /// with no later timestamp takes the frame period (declared, else the
+    /// smallest positive step seen). With neither, the AU stays in the window
+    /// rather than being given an invented duration. `drain_all` (flush)
+    /// resolves every AU the window can resolve instead of keeping a lookahead.
+    fn resolve_window(st: &mut TrackState, out: &mut Vec<Sample>, drain_all: bool) {
+        while !st.pending.is_empty() && (drain_all || st.pending.len() > REORDER_LOOKAHEAD) {
+            let head_ts = st.pending[0].unwrapped_ts;
+            let successor = st
+                .seen_pts
+                .range(head_ts.saturating_add(1)..)
+                .next()
+                .map(|&t| t - head_ts);
+            let period = st.declared_duration.map(u64::from).or_else(|| {
+                st.min_positive_step
+                    .and_then(|p| u64::try_from(p).ok())
+                    .filter(|&p| p > 0)
+            });
+            let Some(duration) = successor
+                .or(period)
+                .and_then(|d| u32::try_from(d).ok())
+                .filter(|&d| d > 0)
+            else {
+                break;
+            };
+            let p = st.pending.remove(0);
+            let ts = to_ticks(p.unwrapped_ts);
+            st.last_duration = duration;
+            if let Some(oldest) = st.pending.iter().map(|p| p.unwrapped_ts).min() {
+                st.seen_pts = st.seen_pts.split_off(&oldest);
+            }
+            out.push(Sample::new(
+                p.data,
+                Some(ts),
+                Some(ts),
+                Some(duration),
+                p.is_sync,
+            ));
+        }
+        if st.pending.len() > MAX_REORDER_WINDOW {
+            let excess = st.pending.len() - MAX_REORDER_WINDOW;
+            st.pending.drain(..excess);
+        }
     }
 
     /// Reassemble the buffered packets into AUs, then for each: unwrap its
@@ -1307,6 +1380,27 @@ impl RtpStreamDepacketiser {
             st.last_unwrapped = Some(unwrapped);
             if st.first_unwrapped.is_none() {
                 st.first_unwrapped = Some(unwrapped);
+            }
+            if st.kind == RtpMediaKind::H264
+                && (st.reordered
+                    || st
+                        .pending
+                        .last()
+                        .is_some_and(|p| unwrapped < p.unwrapped_ts))
+            {
+                if !st.reordered {
+                    st.seen_pts
+                        .extend(st.pending.iter().map(|p| p.unwrapped_ts));
+                }
+                st.reordered = true;
+                st.seen_pts.insert(unwrapped);
+                st.pending.push(PendingAu {
+                    unwrapped_ts: unwrapped,
+                    is_sync: au.is_sync,
+                    data: au.data,
+                });
+                Self::resolve_window(st, out, false);
+                continue;
             }
             let same_packet_group = st.kind == RtpMediaKind::Aac
                 && st
@@ -1560,6 +1654,19 @@ mod tests {
         let out = d.flush(id).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].duration, Some(90_000 / 25));
+    }
+
+    #[test]
+    fn set_track_config_refreshes_the_declared_duration() {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_NO_TIMING), 90_000);
+        d.set_track_config(id, avc_with_sps(SPS_25FPS_FIXED));
+        assert!(
+            d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(d.flush(id).unwrap()[0].duration, Some(3600));
     }
 
     #[test]

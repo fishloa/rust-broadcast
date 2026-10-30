@@ -8,7 +8,7 @@ use transmux::{
     RtpMediaKind, RtpPacketiser, RtpStreamDepacketiser, RtpStreamTrack, TrackId, VIDEO_CLOCK_RATE,
 };
 
-fn video_durations() -> (Vec<(i64, u32)>, Vec<i64>) {
+fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
     let data = std::fs::read(path).expect("h264_aac.ts fixture must exist");
     let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
@@ -37,7 +37,17 @@ fn video_durations() -> (Vec<(i64, u32)>, Vec<i64>) {
         VIDEO_CLOCK_RATE,
     )]);
     let mut samples = Vec::new();
+    let mut au_index = 0usize;
+    let mut last_ts = None;
     for pkt in &stream.packets {
+        let ts = u32::from_be_bytes([pkt.header[4], pkt.header[5], pkt.header[6], pkt.header[7]]);
+        if last_ts.is_some_and(|l| l != ts) {
+            au_index += 1;
+        }
+        last_ts = Some(ts);
+        if au_index < skip_aus {
+            continue;
+        }
         samples.extend(d.push(id, &pkt.as_contiguous()).unwrap());
     }
     samples.extend(d.flush(id).unwrap());
@@ -52,24 +62,41 @@ fn video_durations() -> (Vec<(i64, u32)>, Vec<i64>) {
 
 #[test]
 fn fixture_is_reordered() {
-    let (_, pts) = video_durations();
+    let (_, pts) = video_durations(0);
     assert!(
         pts.windows(2).any(|w| w[1] < w[0]),
         "fixture has no B-frame reorder"
     );
 }
 
+const FRAME: u32 = VIDEO_CLOCK_RATE / 25;
+
 #[test]
-fn reordered_video_never_gets_zero_duration() {
-    let (got, _) = video_durations();
-    let zero: Vec<_> = got
+fn reordered_video_durations_follow_the_presentation_step_not_wire_order() {
+    let (got, _) = video_durations(0);
+    let bad: Vec<_> = got
         .iter()
         .enumerate()
-        .filter(|(_, (_, d))| *d == 0)
+        .skip(1)
+        .filter(|(_, (_, d))| *d != FRAME)
         .collect();
     assert!(
-        zero.is_empty(),
-        "zero-duration samples: {zero:?} of {}",
+        bad.is_empty(),
+        "durations != {FRAME}: {bad:?} of {}",
         got.len()
     );
+}
+
+#[test]
+fn joining_mid_stream_never_gets_zero_duration() {
+    let (_, pts) = video_durations(0);
+    for skip in 0..pts.len().min(40) {
+        let (got, _) = video_durations(skip);
+        let bad: Vec<_> = got
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, d))| *d == 0 || *d % FRAME != 0)
+            .collect();
+        assert!(bad.is_empty(), "join at AU {skip}: bad durations {bad:?}");
+    }
 }
