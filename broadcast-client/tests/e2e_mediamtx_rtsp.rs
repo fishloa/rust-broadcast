@@ -37,6 +37,10 @@ const MIN_SAMPLES: usize = 50;
 const MICROS_PER_NANO_DIVISOR: u128 = 1_000;
 const COMMON_TIMELINE_BOUND_SECONDS: f64 = 0.2;
 const AAC_FRAME_TICKS: i64 = 1024;
+const SR_MIN_LEN: usize = 20;
+const RTCP_PT_SR: u8 = 200;
+const NTP_FRACTION: f64 = 4_294_967_296.0;
+const SR_FAITHFUL_SECONDS: f64 = 0.012;
 
 struct Tool {
     child: Child,
@@ -140,6 +144,7 @@ struct WireArrivals {
     first_ts: std::collections::BTreeMap<u8, u32>,
     idr_starts: std::collections::BTreeMap<u8, Vec<u32>>,
     order: std::collections::BTreeMap<u8, Vec<u32>>,
+    last_sr: std::collections::BTreeMap<u8, (f64, u32)>,
 }
 
 impl WireArrivals {
@@ -160,6 +165,16 @@ impl WireArrivals {
                     .drain(..INTERLEAVED_HEADER + len)
                     .skip(INTERLEAVED_HEADER)
                     .collect();
+                if !channel.is_multiple_of(CHANNELS_PER_TRACK)
+                    && frame.len() >= SR_MIN_LEN
+                    && frame[1] == RTCP_PT_SR
+                {
+                    let word = |at: usize| {
+                        u32::from_be_bytes([frame[at], frame[at + 1], frame[at + 2], frame[at + 3]])
+                    };
+                    let ntp = f64::from(word(8)) + f64::from(word(12)) / NTP_FRACTION;
+                    self.last_sr.insert(channel - 1, (ntp, word(16)));
+                }
                 if channel.is_multiple_of(CHANNELS_PER_TRACK) && frame.len() >= RTP_HEADER_MIN {
                     let ts = u32::from_be_bytes([
                         frame[RTP_TS_OFFSET],
@@ -632,6 +647,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         anchor.insert(tid, key_pts - i64::from(key_rel));
     }
     let mut decode_offsets: Vec<f64> = Vec::new();
+    let mut sr_vs_arrival: std::collections::BTreeMap<bool, Vec<f64>> =
+        std::collections::BTreeMap::new();
+    let mut sr_residual: std::collections::BTreeMap<bool, Vec<f64>> =
+        std::collections::BTreeMap::new();
     for (n, &(tid, pts, _)) in emitted.iter().enumerate() {
         let channel = track_channel[&tid];
         let video = track_is_video[&tid];
@@ -648,6 +667,15 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
             .entry(video)
             .or_default()
             .push(seconds - arrival as f64 / 1e6);
+        let (ntp, sr_ts) = wire.last_sr[&channel];
+        let sr_rel = f64::from(sr_ts.wrapping_sub(wire.first_ts[&channel]) as i32);
+        let scale = f64::from(track_timescale[&tid]);
+        let wall = ntp + (rel as f64 - sr_rel) / scale;
+        sr_residual.entry(video).or_default().push(seconds - wall);
+        sr_vs_arrival
+            .entry(video)
+            .or_default()
+            .push(wall - arrival as f64 / 1e6);
         if video {
             let order = &wire.order[&channel];
             let at = order.partition_point(|&r| i64::from(r) != rel);
@@ -672,6 +700,12 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         "video wire order reorder expectation for {label}"
     );
     let ground = truth.measure(emitted_data.iter().map(|(v, d, p)| (*v, d.as_slice(), *p)));
+    let mkv_ground = mkv_truth.measure(emitted_data.iter().map(|(v, d, p)| (*v, d.as_slice(), *p)));
+    eprintln!(
+        "GROUNDTRUTH_MKV[{label}] offset={:.4} (ts remux: {:.4})",
+        mkv_ground.offset(),
+        ground.offset()
+    );
     eprintln!(
         "GROUNDTRUTH[{label}] audio_median_delta={:.4} video_median_delta={:.4} offset={:.4} (matched a={} v={})",
         ground.audio_median,
@@ -679,6 +713,25 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         ground.offset(),
         ground.audio_matched,
         ground.video_matched
+    );
+    let sr_faithfulness = median(sr_residual.get_mut(&false).expect("audio"))
+        - median(sr_residual.get_mut(&true).expect("video"));
+    eprintln!(
+        "SRFAITHFUL[{label}] emitted-timeline-minus-SR-mapping audio-vs-video={sr_faithfulness:.4}"
+    );
+    assert!(
+        sr_faithfulness.abs() < SR_FAITHFUL_SECONDS,
+        "{label}: the emitted timeline departs from the Sender Report mapping by {sr_faithfulness} s"
+    );
+    let video_sent_early_s =
+        (ground.audio_median - audio_offset) - (ground.video_median - video_offset);
+    eprintln!(
+        "SENDERPACING[{label}] video arrives {video_sent_early_s:.4} s earlier than audio, relative to source pts"
+    );
+    let sr_minus_arrival = median(sr_vs_arrival.get_mut(&false).expect("audio"))
+        - median(sr_vs_arrival.get_mut(&true).expect("video"));
+    eprintln!(
+        "SRARRIVAL[{label}] SR wall minus client arrival, audio-vs-video={sr_minus_arrival:.4}"
     );
     let av_offset_pts = audio_offset - video_offset;
     let av_offset = audio_offset - median(&mut decode_offsets);
