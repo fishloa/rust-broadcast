@@ -410,7 +410,10 @@ impl CodecConfig {
             dc.decoder_specific_info = Some(DecoderSpecificInfo::new(bytes));
         }
         let channel_count = match profile {
-            HeAacProfile::V1 => channel_count,
+            HeAacProfile::V1 => match crate::flv::aac_channel_count(&asc) {
+                crate::flv::AAC_CHANNEL_COUNT_UNKNOWN => channel_count,
+                n => n,
+            },
             HeAacProfile::V2 => HE_AAC_V2_OUTPUT_CHANNELS,
         };
         Ok(CodecConfig::Aac {

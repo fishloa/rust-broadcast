@@ -198,6 +198,7 @@ async fn real_browser_whep_playback_decodes_real_video() {
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
         }],
         prebound,
         ..Config::default()

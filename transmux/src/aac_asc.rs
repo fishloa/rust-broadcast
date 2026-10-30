@@ -895,24 +895,60 @@ impl AudioSpecificConfig {
     /// `extensionSamplingFrequencyIndex`, then the underlying AAC-LC object
     /// type and its `GASpecificConfig`.
     ///
-    /// Fails for a config that is not a plain table-rate AAC-LC ASC (already
-    /// signalling, explicit-rate escape, trailing config bytes) or whose
-    /// doubled rate has no Table 1.10 index.
+    /// A config already in exactly this hierarchical form is re-expressed for
+    /// `profile` (so an explicit v1 can become v2 and back). Fails for any
+    /// other config: not AAC-LC, explicit-rate escape, a non-default
+    /// `GASpecificConfig`, trailing extension data, or a doubled core rate
+    /// with no Table 1.10 index.
     pub fn with_explicit_he_aac(&self, profile: HeAacProfile) -> Result<Self> {
-        if self.audio_object_type != AudioObjectType::AacLc {
+        let raw_aot = self.audio_object_type.raw();
+        let current = match raw_aot {
+            AOT_SBR => Some(HeAacProfile::V1),
+            AOT_PS => Some(HeAacProfile::V2),
+            _ => None,
+        };
+        if let Some(current) = current {
+            let derived = self.with_plain_core().build_explicit_he_aac(current)?;
+            if derived.trailing_top != self.trailing_top || derived.trailing != self.trailing {
+                return Err(Error::InvalidValue {
+                    field: "trailing",
+                    value: self.trailing.len() as u64,
+                    reason: "hierarchical config is not the default AAC-LC form",
+                });
+            }
+        } else if self.audio_object_type != AudioObjectType::AacLc {
             return Err(Error::InvalidValue {
                 field: "audio_object_type",
-                value: u64::from(self.audio_object_type.raw()),
+                value: u64::from(raw_aot),
                 reason: "explicit HE-AAC signalling needs an AAC-LC core",
             });
-        }
-        if !self.trailing.is_empty() || self.trailing_top.is_some_and(|t| t != 0) {
+        } else if !self.trailing.is_empty() || self.trailing_top.is_some_and(|t| t != 0) {
             return Err(Error::InvalidValue {
                 field: "trailing",
                 value: self.trailing.len() as u64,
                 reason: "config already carries GASpecificConfig/extension data",
             });
         }
+        let base = if current.is_some() {
+            self.with_plain_core()
+        } else {
+            self.clone()
+        };
+        base.build_explicit_he_aac(profile)
+    }
+
+    fn with_plain_core(&self) -> Self {
+        Self {
+            audio_object_type: AudioObjectType::AacLc,
+            sampling_frequency_index: self.sampling_frequency_index,
+            sampling_frequency: None,
+            channel_configuration: self.channel_configuration,
+            trailing: Vec::new(),
+            trailing_top: None,
+        }
+    }
+
+    fn build_explicit_he_aac(&self, profile: HeAacProfile) -> Result<Self> {
         let core_hz = self
             .sampling_frequency_index
             .table_hz()

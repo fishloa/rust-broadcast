@@ -184,16 +184,23 @@ fn heaac_fixture_without_signal_stays_implicit() {
 }
 
 #[test]
-fn explicit_he_aac_rejects_configs_it_cannot_express() {
+fn explicit_he_aac_is_rewritable_and_rejects_what_it_cannot_express() {
     let spec = audio_spec(&demux("ts/heaac/heaac_v1_adts.ts"));
-    let once = spec
+    let v1 = spec
         .clone()
         .with_explicit_he_aac(HeAacProfile::V1)
         .expect("first application");
-    assert!(
-        once.with_explicit_he_aac(HeAacProfile::V1).is_err(),
-        "an already explicit config is not re-wrapped"
-    );
+    let v2 = v1
+        .clone()
+        .with_explicit_he_aac(HeAacProfile::V2)
+        .expect("explicit v1 re-expressed as v2");
+    assert_eq!(rfc6381_codec_string(&v2.config).unwrap(), "mp4a.40.29");
+    let back = v2
+        .with_explicit_he_aac(HeAacProfile::V1)
+        .expect("explicit v2 re-expressed as v1");
+    assert_eq!(dsi_bytes(&back), dsi_bytes(&v1));
+    assert_eq!(back.config, v1.config);
+
     let video = demux("ts/h264_aac.ts")
         .tracks
         .iter()
@@ -201,6 +208,24 @@ fn explicit_he_aac_rejects_configs_it_cannot_express() {
         .find(|s| !matches!(s.config, CodecConfig::Aac { .. }))
         .expect("non-AAC track");
     assert!(video.with_explicit_he_aac(HeAacProfile::V1).is_err());
+
+    let asc = asc_in_init(&spec);
+    let mut with_extension = asc.clone();
+    with_extension.trailing = vec![0xAA];
+    assert!(
+        with_extension
+            .with_explicit_he_aac(HeAacProfile::V1)
+            .is_err()
+    );
+
+    let mut odd_hierarchical = asc_in_init(&v1);
+    odd_hierarchical.trailing_top = Some(0);
+    assert!(
+        odd_hierarchical
+            .with_explicit_he_aac(HeAacProfile::V1)
+            .is_err(),
+        "a hierarchical config whose tail is not ours is not silently rewritten"
+    );
 }
 
 #[test]

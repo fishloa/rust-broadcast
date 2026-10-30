@@ -1025,6 +1025,8 @@ pub struct RouteHandle {
     audio_rendition_sources: Vec<crate::config::AudioTrackSelector>,
     /// `NAME`/`LANGUAGE` overrides for detected closed captions (issue #1428).
     closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
+    /// Operator-declared HE-AAC profile per audio track (issue #1428).
+    audio_profiles: Vec<crate::config::AudioProfileOverride>,
     /// Notifies waiters when a new program is published via
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
@@ -1068,6 +1070,7 @@ impl RouteHandle {
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
         }
@@ -1239,6 +1242,20 @@ impl RouteHandle {
     ) -> Self {
         self.closed_caption_overrides = value;
         self
+    }
+
+    /// Declares the HE-AAC profile of audio tracks (issue #1428) — a consuming
+    /// builder; an empty list leaves every track as the source states it.
+    #[must_use]
+    pub fn with_audio_profiles(mut self, value: Vec<crate::config::AudioProfileOverride>) -> Self {
+        self.audio_profiles = value;
+        self
+    }
+
+    /// `tracks` with this route's declared HE-AAC profiles applied
+    /// ([`crate::source::audio_profile::apply`]).
+    pub(crate) fn with_declared_audio_profiles(&self, tracks: Vec<TrackSpec>) -> Vec<TrackSpec> {
+        crate::source::audio_profile::apply(&self.name, &self.audio_profiles, tracks)
     }
 
     pub(crate) fn audio_rendition_sources(&self) -> &[crate::config::AudioTrackSelector] {
@@ -1610,6 +1627,7 @@ impl RouteHandle {
     /// derivation) — the one piece of codec metadata no `Trunk` ring holds. A
     /// no-op (logged) if `program` has not been published yet.
     pub fn set_track_specs(&self, program: ProgramId, specs: Vec<TrackSpec>) {
+        let specs = self.with_declared_audio_profiles(specs);
         match self.serving(program) {
             Some(serving) => {
                 let mapped = crate::source::split_audio::resolve_sources(self, &specs);
