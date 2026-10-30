@@ -389,6 +389,13 @@ const AOT_PS: u8 = 29;
 const SYNC_EXT_SBR: u16 = 0x2B7;
 /// AAC backward-compatible PS sync-extension type (11 bits).
 const SYNC_EXT_PS: u16 = 0x548;
+/// `frameLengthFlag` within the 3-bit `GASpecificConfig` head held in
+/// `trailing_top` (ISO/IEC 14496-3 §4.4.1: frameLengthFlag is its first bit).
+const FRAME_LENGTH_FLAG_MASK: u8 = 0b100;
+/// Samples per AAC frame when `frameLengthFlag` is 0 (ISO/IEC 14496-3 §4.4.1).
+const AAC_FRAME_SAMPLES_1024: u32 = 1024;
+/// Samples per AAC frame when `frameLengthFlag` is 1 (ISO/IEC 14496-3 §4.4.1).
+const AAC_FRAME_SAMPLES_960: u32 = 960;
 /// `samplingFrequencyIndex` escape value (24-bit explicit rate follows).
 const SFI_ESCAPE: u8 = 0x0F;
 
@@ -421,6 +428,34 @@ impl AudioSpecificConfig {
     pub fn effective_sampling_frequency(&self) -> Option<u32> {
         self.sampling_frequency
             .or_else(|| self.sampling_frequency_index.table_hz())
+    }
+
+    /// PCM samples per raw_data_block (one AAC access unit) declared by the
+    /// `GASpecificConfig` `frameLengthFlag` — ISO/IEC 14496-3 §4.4.1: 1024
+    /// when clear, 960 when set. `None` for object types without a
+    /// `GASpecificConfig` this decodes (only AAC main/LC/SSR/LTP are handled),
+    /// when the flag byte is absent, or when explicit HE-AAC SBR/PS signalling
+    /// makes the access-unit span differ from the core frame.
+    pub fn samples_per_frame(&self) -> Option<u32> {
+        if !matches!(
+            self.audio_object_type,
+            AudioObjectType::AacMain
+                | AudioObjectType::AacLc
+                | AudioObjectType::AacSsr
+                | AudioObjectType::AacLtp
+        ) {
+            return None;
+        }
+        let signaling = self.heaac_signaling();
+        if signaling.sbr_present || signaling.ps_present {
+            return None;
+        }
+        let ga_bits = self.trailing_top?;
+        Some(if ga_bits & FRAME_LENGTH_FLAG_MASK != 0 {
+            AAC_FRAME_SAMPLES_960
+        } else {
+            AAC_FRAME_SAMPLES_1024
+        })
     }
 
     /// Run `f` over this ASC's serialized bytes without a heap allocation when

@@ -740,7 +740,12 @@ struct TrackState {
     /// AUs under one RTP timestamp (RFC 3640 §3.2.3.1).
     pending: Vec<PendingAu>,
     /// Last computed duration, reused for the final AU emitted by `flush`.
+    /// Always non-zero once set; `0` means no real duration has been observed.
     last_duration: u32,
+    /// Per-AU duration (in `clock_rate` ticks) declared by the stream's own
+    /// codec config: H.264 SPS VUI timing with `fixed_frame_rate_flag`, or the
+    /// AAC `AudioSpecificConfig` frame length. `None` when not declared.
+    declared_duration: Option<u32>,
     /// Smallest positive step seen between consecutive wire timestamps — the
     /// frame-period estimate used as the duration fallback when a step goes
     /// backward (a presentation reorder has no forward delta). `None` until
@@ -845,26 +850,65 @@ fn to_ticks(uw: u64) -> i64 {
     uw.min(i64::MAX as u64) as i64
 }
 
-/// Duration fallback used when a normal forward delta is unavailable (a
-/// backward presentation step, an aggregated group whose total delta is
-/// smaller than its AU count, or a trailing AU flushed at end of stream /
-/// teardown): prefer the last real per-AU duration, then the smallest
-/// positive step seen so far, then a codec-typical frame duration derived
-/// from the track's kind and clock rate. Always non-zero.
-fn fallback_duration(st: &TrackState) -> u32 {
+/// Per-AU duration, in `clock_rate` ticks, that the stream's own config
+/// declares. H.264: the SPS VUI `timing_info` frame period
+/// `2 * num_units_in_tick / time_scale` (ITU-T H.264 §E.2.1); with
+/// `fixed_frame_rate_flag` 0 it is the stream's nominal period rather than a
+/// constraint, which is still its own declaration and is used only after every
+/// observed duration. AAC: `AudioSpecificConfig::samples_per_frame` scaled from the
+/// ASC sampling rate to the RTP clock rate. `None` when nothing is declared.
+fn declared_au_duration(kind: RtpMediaKind, config: &CodecConfig, clock_rate: u32) -> Option<u32> {
+    let ticks = match (kind, config) {
+        (RtpMediaKind::H264, CodecConfig::Avc { config, .. }) => {
+            let sps = config.config.sps.first()?;
+            let timing = crate::sps::decode_avc_vui_timing(&sps.0).ok().flatten()?;
+            if timing.num_units_in_tick == 0 || timing.time_scale == 0 {
+                return None;
+            }
+            let num =
+                u64::from(clock_rate) * VUI_UNITS_PER_FRAME * u64::from(timing.num_units_in_tick);
+            let den = u64::from(timing.time_scale);
+            (num + den / 2) / den
+        }
+        (RtpMediaKind::Aac, CodecConfig::Aac { esds, .. }) => {
+            let asc =
+                crate::aac_asc::AudioSpecificConfig::parse(esds.decoder_specific_info_data()?)
+                    .ok()?;
+            let rate = u64::from(asc.effective_sampling_frequency()?);
+            if rate == 0 {
+                return None;
+            }
+            let num = u64::from(asc.samples_per_frame()?) * u64::from(clock_rate);
+            (num + rate / 2) / rate
+        }
+        _ => return None,
+    };
+    u32::try_from(ticks).ok().filter(|&d| d > 0)
+}
+
+/// Ticks of the VUI `time_scale` clock per frame: a frame spans two field
+/// ticks (ITU-T H.264 §E.2.1, `time_scale / (2 * num_units_in_tick)`).
+const VUI_UNITS_PER_FRAME: u64 = 2;
+
+/// The truthful per-AU duration for a track, in order: the last real
+/// per-AU duration, the smallest positive timestamp step seen, then the
+/// stream's declared frame timing (AAC prefers the declared frame length to a
+/// step, which spans a whole aggregated packet). `None` when none of these exist; the
+/// caller must then not invent one.
+fn known_duration(st: &TrackState) -> Option<u32> {
     if st.last_duration != 0 {
-        return st.last_duration;
+        return Some(st.last_duration);
+    }
+    if st.kind == RtpMediaKind::Aac && st.declared_duration.is_some() {
+        return st.declared_duration;
     }
     if let Some(p) = st.min_positive_step
+        && let Ok(p) = u32::try_from(p)
         && p > 0
     {
-        return u32::try_from(p).unwrap_or(u32::MAX).max(1);
+        return Some(p);
     }
-    let d = match st.kind {
-        RtpMediaKind::H264 => st.clock_rate / 30,
-        RtpMediaKind::Aac => 1024,
-    };
-    d.max(1)
+    st.declared_duration
 }
 
 impl RtpStreamDepacketiser {
@@ -873,6 +917,7 @@ impl RtpStreamDepacketiser {
         let tracks = tracks
             .into_iter()
             .map(|t| {
+                let declared_duration = declared_au_duration(t.kind, &t.config, t.clock_rate);
                 (
                     t.track_id,
                     TrackState {
@@ -886,6 +931,7 @@ impl RtpStreamDepacketiser {
                         first_unwrapped: None,
                         pending: Vec::new(),
                         last_duration: 0,
+                        declared_duration,
                         min_positive_step: None,
                         sr_anchor: None,
                         reorder_depth: t.reorder_depth,
@@ -1200,15 +1246,19 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
-        // Flush emits the trailing access unit(s) that never saw a
-        // following timestamp. Prefer the last real per-AU duration; when
-        // none is known (stream too short / no positive step yet) fall back
-        // to the codec-typical frame duration so the result is never zero.
-        let duration = fallback_duration(st);
-        out.extend(st.pending.drain(..).map(|p| {
-            let ts = to_ticks(p.unwrapped_ts);
-            Sample::new(p.data, Some(ts), Some(ts), Some(duration), p.is_sync)
-        }));
+        if let Some(duration) = known_duration(st) {
+            for (index, p) in st.pending.drain(..).enumerate() {
+                let offset = u64::from(duration) * index as u64;
+                let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
+                out.push(Sample::new(
+                    p.data,
+                    Some(ts),
+                    Some(ts),
+                    Some(duration),
+                    p.is_sync,
+                ));
+            }
+        }
         Ok(out)
     }
 
@@ -1279,52 +1329,67 @@ impl RtpStreamDepacketiser {
                 // [`crate::rtp::RtpDepacketiser`] path, which sees the whole
                 // stream and can derive the period exactly.
                 let forward = unwrapped.saturating_sub(prev_ts);
-                // A step backward (presentation reorder) has no forward delta
-                // at all; falling back to the smallest positive step seen so
-                // far keeps the duration a real frame period instead of
-                // collapsing to 0, which a container writer would reject as a
-                // zero-duration sample. Before any positive step is known there
-                // is nothing to fall back to, so use the codec-typical frame
-                // duration rather than 0 (durations must never depend on
-                // arrival timing).
-                // A hostile timestamp series can make the running minimum
-                // negative; clamp with a checked conversion rather than an
-                // `as` cast, which would wrap a large negative into a huge
-                // duration.
+                let count = st.pending.len() as u64;
+                // A step backward (presentation reorder) or a repeated
+                // timestamp has no forward delta; fall back to the smallest
+                // positive step seen, then to the declared frame timing. The
+                // running minimum can be negative on a hostile series, so it is
+                // converted with a checked conversion, not an `as` cast.
                 let delta = if forward > 0 {
-                    forward
+                    Some(forward)
                 } else {
                     st.min_positive_step
                         .and_then(|p| u64::try_from(p).ok())
                         .filter(|&p| p > 0)
-                        .unwrap_or(0)
+                        .or_else(|| st.declared_duration.map(|d| u64::from(d) * count))
                 };
-                let delta = if delta == 0 {
-                    u64::from(fallback_duration(st))
-                } else {
-                    delta
-                };
-                let count = st.pending.len() as u64;
-                let count = count.max(1);
-                let each = (delta / count).max(1);
                 let group: Vec<PendingAu> = st.pending.drain(..).collect();
-                for (index, p) in group.into_iter().enumerate() {
-                    let offset = each * index as u64;
-                    let duration = if index as u64 + 1 == count {
-                        delta.saturating_sub(offset).max(1)
-                    } else {
-                        each
-                    };
-                    let duration = u32::try_from(duration).unwrap_or(u32::MAX).max(1);
-                    st.last_duration = duration;
-                    let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
-                    out.push(Sample::new(
-                        p.data,
-                        Some(ts),
-                        Some(ts),
-                        Some(duration),
-                        p.is_sync,
-                    ));
+                // Per-AU share of an aggregated group. When the group's delta
+                // is smaller than its AU count the timestamps cannot resolve
+                // the AUs (a share would be 0 ticks), so each AU takes the last
+                // real per-AU duration or the declared one instead; with
+                // neither the group has no truthful duration and is not
+                // emitted.
+                let share = delta.map(|d| d / count).filter(|&e| e > 0);
+                match (delta, share) {
+                    (Some(delta), Some(each)) => {
+                        for (index, p) in group.into_iter().enumerate() {
+                            let offset = each * index as u64;
+                            let duration = if index as u64 + 1 == count {
+                                delta - offset
+                            } else {
+                                each
+                            };
+                            let duration = u32::try_from(duration).unwrap_or(u32::MAX);
+                            st.last_duration = duration;
+                            let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
+                            out.push(Sample::new(
+                                p.data,
+                                Some(ts),
+                                Some(ts),
+                                Some(duration),
+                                p.is_sync,
+                            ));
+                        }
+                    }
+                    _ => {
+                        let per_au = (st.last_duration != 0)
+                            .then_some(st.last_duration)
+                            .or(st.declared_duration);
+                        if let Some(each) = per_au {
+                            for (index, p) in group.into_iter().enumerate() {
+                                let offset = u64::from(each) * index as u64;
+                                let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
+                                out.push(Sample::new(
+                                    p.data,
+                                    Some(ts),
+                                    Some(ts),
+                                    Some(each),
+                                    p.is_sync,
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             st.pending.push(PendingAu {
@@ -1432,6 +1497,142 @@ mod tests {
             width: 0,
             height: 0,
         }
+    }
+
+    const SPS_25FPS_FIXED: &[u8] = &[
+        0x67, 0x64, 0x00, 0x0D, 0xAC, 0xD9, 0x41, 0x41, 0xFB, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00,
+        0x10, 0x00, 0x00, 0x03, 0x03, 0x20, 0xF1, 0x42, 0x99, 0x60,
+    ];
+    const SPS_NO_TIMING: &[u8] = &[
+        0x67, 0x64, 0x00, 0x0D, 0xAD, 0xC8, 0xBF, 0xFE, 0x03, 0xC1, 0x41, 0xF9,
+    ];
+    const ASC_LC_48K_STEREO_1024: [u8; 2] = [0x11, 0x90];
+    const ASC_LC_48K_STEREO_960: [u8; 2] = [0x11, 0x94];
+
+    fn avc_with_sps(sps: &[u8]) -> CodecConfig {
+        let CodecConfig::Avc {
+            mut config,
+            width,
+            height,
+        } = dummy_avc()
+        else {
+            unreachable!()
+        };
+        config.config.sps = alloc::vec![crate::nalu_types::AvcSps(sps.to_vec())];
+        CodecConfig::Avc {
+            config,
+            width,
+            height,
+        }
+    }
+
+    fn single_track(kind: RtpMediaKind, config: CodecConfig, clock: u32) -> RtpStreamDepacketiser {
+        RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
+            TrackId::new(1),
+            kind,
+            config,
+            clock,
+        )])
+    }
+
+    #[test]
+    fn test_sps_fixtures_declare_what_the_tests_assume() {
+        let t = crate::sps::decode_avc_vui_timing(SPS_25FPS_FIXED)
+            .unwrap()
+            .unwrap();
+        assert!(t.num_units_in_tick == 1 && t.time_scale == 50);
+        assert!(
+            crate::sps::decode_avc_vui_timing(SPS_NO_TIMING)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn flush_after_first_h264_au_uses_sps_vui_frame_period() {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        assert!(
+            d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
+                .unwrap()
+                .is_empty()
+        );
+        let out = d.flush(id).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].duration, Some(90_000 / 25));
+    }
+
+    #[test]
+    fn flush_without_any_known_duration_holds_instead_of_inventing_one() {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_NO_TIMING), 90_000);
+        assert!(
+            d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(d.flush(id).unwrap().is_empty());
+        let out = d.push(id, &vpkt(2, 4000, true, &[0x41, 0xBB])).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].duration, Some(3000));
+    }
+
+    #[test]
+    fn flush_after_first_aac_au_uses_asc_frame_length() {
+        let id = TrackId::new(1);
+        for (asc, expected) in [(ASC_LC_48K_STEREO_1024, 1024), (ASC_LC_48K_STEREO_960, 960)] {
+            let cfg = crate::rtp_sdp::aac_config_from_asc_bytes(asc.to_vec()).unwrap();
+            let mut d = single_track(RtpMediaKind::Aac, cfg, 48_000);
+            assert!(
+                d.push(id, &aac_packet(1, 5000, &[&[1, 2]]))
+                    .unwrap()
+                    .is_empty()
+            );
+            let out = d.flush(id).unwrap();
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].duration, Some(expected));
+        }
+    }
+
+    #[test]
+    fn aggregated_group_with_delta_below_au_count_uses_declared_au_duration() {
+        let id = TrackId::new(1);
+        let cfg =
+            crate::rtp_sdp::aac_config_from_asc_bytes(ASC_LC_48K_STEREO_1024.to_vec()).unwrap();
+        let mut d = single_track(RtpMediaKind::Aac, cfg, 48_000);
+        let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
+        assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
+        assert!(
+            d.push(id, &aac_packet(2, 10_002, &[&[5]]))
+                .unwrap()
+                .is_empty()
+        );
+        let out = d.push(id, &aac_packet(3, 12_000, &[&[6]])).unwrap();
+        let got: Vec<_> = out.iter().map(|s| (s.pts, s.duration)).collect();
+        assert_eq!(
+            got,
+            alloc::vec![
+                (Some(10_000), Some(1024)),
+                (Some(11_024), Some(1024)),
+                (Some(12_048), Some(1024)),
+                (Some(13_072), Some(1024)),
+            ]
+        );
+    }
+
+    #[test]
+    fn aggregated_group_with_delta_below_au_count_and_no_known_duration_is_not_emitted() {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::Aac, dummy_avc(), 48_000);
+        let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
+        assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
+        assert!(
+            d.push(id, &aac_packet(2, 10_002, &[&[5]]))
+                .unwrap()
+                .is_empty()
+        );
+        let out = d.push(id, &aac_packet(3, 12_000, &[&[6]])).unwrap();
+        assert!(out.is_empty());
     }
 
     fn aac_packet(seq: u16, ts: u32, aus: &[&[u8]]) -> Vec<u8> {
