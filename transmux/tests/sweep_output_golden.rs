@@ -302,7 +302,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         &mut bad,
         "rtp-stream",
         fnv1a(no_display_debug(&format!("{samples:?}")).as_bytes()),
-        0x0dec_cfda_9ae3_7ce8,
+        0x22aa_6441_64ff_f57a,
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }

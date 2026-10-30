@@ -149,27 +149,18 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     // Sync points preserved.
     let rec_syncs = recovered.iter().filter(|s| s.flags.is_sync).count();
     assert_eq!(rec_syncs, orig_video_syncs, "keyframe count preserved");
-    // Total duration must match the *transmitted* presentation series, which
-    // is the only timeline RTP carries: each AU's duration is the forward step
-    // to the next AU's wire timestamp, so the sum is the span of that series.
-    // It is NOT the demuxed track's own per-frame duration sum, because the
-    // fixture is a real B-frame encode — its wire timestamps are in
-    // presentation order, so their forward steps are distances to the next
-    // presentation instant rather than frame periods (audit r04-W29; the batch
-    // depacketiser is the path that recovers exact per-frame durations, since
-    // it sees the whole stream).
-    // Literal expectations, read off the fixture's own transmitted timestamp
-    // series (`h264_aac.ts` is 75 access units at 90 kHz): the duration of
-    // each AU is its forward step to the next presentation instant, a
-    // backward step (the fixture is a B-frame encode) falls back to the
-    // smallest positive step seen so far, and the AU still open at end of
-    // stream reuses the last computed duration. The first twelve durations and
-    // the total are asserted as numbers so this test cannot pass by
-    // re-implementing the depacketiser's rule and comparing it with itself.
+    // Literal expectations for `h264_aac.ts` (75 access units at 90 kHz, a
+    // B-frame encode whose wire timestamps are presentation times in decode
+    // order). Each AU's duration is its step to the next presentation
+    // instant, the source's own 3600-tick (25 fps) grid; the one exception is
+    // the first AU, emitted before the first backward step revealed the
+    // reorder, which keeps its forward step (4 frames). The numbers are
+    // asserted literally so this test cannot pass by re-implementing the
+    // depacketiser's rule and comparing it with itself.
     const EXPECTED_FIRST_DURATIONS: [u32; 12] = [
-        14400, 14400, 14400, 7200, 18000, 7200, 7200, 7200, 18000, 7200, 7200, 7200,
+        14400, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600,
     ];
-    const EXPECTED_TOTAL: u64 = 626_400;
+    const EXPECTED_TOTAL: u64 = 280_800;
     let got_durations: Vec<u32> = recovered.iter().map(|s| s.duration.unwrap_or(0)).collect();
     assert_eq!(
         &got_durations[..EXPECTED_FIRST_DURATIONS.len()],
