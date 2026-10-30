@@ -168,14 +168,21 @@ pub enum Container {
     /// Whole MPEG-2 Transport Stream segments (`.ts`), self-initialising
     /// (in-band PAT/PMT) — no `#EXT-X-MAP`, no init segment served.
     MpegTs,
+    /// WebVTT subtitle segments (`.vtt`), each starting with its own WebVTT
+    /// header (RFC 8216 §3.5), so no `#EXT-X-MAP` and no init segment. A
+    /// WebVTT origin never produces Partial Segments; a `low_latency` setting
+    /// only adds `EXT-X-SERVER-CONTROL` (blocking reload) and rendition
+    /// reports (RFC 8216bis Appendix B.1).
+    WebVtt,
 }
 
 impl Container {
-    /// The spec token for this container — `"fmp4"` / `"mpeg-ts"`.
+    /// The spec token for this container — `"fmp4"` / `"mpeg-ts"` / `"webvtt"`.
     pub fn name(&self) -> &'static str {
         match self {
             Container::Fmp4 => "fmp4",
             Container::MpegTs => "mpeg-ts",
+            Container::WebVtt => "webvtt",
         }
     }
 
@@ -185,6 +192,7 @@ impl Container {
         match self {
             Container::Fmp4 => "m4s",
             Container::MpegTs => "ts",
+            Container::WebVtt => "vtt",
         }
     }
 }
@@ -889,6 +897,9 @@ fn segment_bandwidth_bps(len: usize, duration: Duration) -> Option<u64> {
 /// `(instance, seq, idx)`; `instance` is `None` for the legacy form. `None` if it
 /// isn't a part filename in `container`'s extension or a field does not parse.
 fn parse_part(file: &str, container: Container) -> Option<(Option<u64>, u64, PartIndex)> {
+    if container == Container::WebVtt {
+        return None;
+    }
     let suffix = format!(".{}", container.segment_extension());
     let rest = file.strip_prefix("part-")?.strip_suffix(suffix.as_str())?;
     let (names, idx) = rest.rsplit_once('.')?;
@@ -1036,6 +1047,45 @@ pub enum HlsOriginBuildError {
         "HlsOrigin::builder(...).audio_renditions(...): every group must have the same members, differing only in URI and CHANNELS"
     )]
     AudioRenditionGroupsDiffer,
+    /// A subtitle rendition's `name` is empty.
+    #[error("HlsOrigin::builder(...).subtitle_renditions(...): name must be non-empty")]
+    EmptySubtitleRenditionName,
+    /// A subtitle rendition's `language` is empty (Apple HLS Authoring Spec 4.7).
+    #[error("HlsOrigin::builder(...).subtitle_renditions(...): language must be non-empty")]
+    EmptySubtitleRenditionLanguage,
+    /// A subtitle rendition's `uri` is empty.
+    #[error("HlsOrigin::builder(...).subtitle_renditions(...): uri must be non-empty")]
+    EmptySubtitleRenditionUri,
+    /// Two subtitle renditions share a `NAME`.
+    #[error("HlsOrigin::builder(...).subtitle_renditions(...): duplicate NAME")]
+    DuplicateSubtitleRenditionName,
+    /// Two subtitle renditions share a `URI`.
+    #[error("HlsOrigin::builder(...).subtitle_renditions(...): duplicate URI")]
+    DuplicateSubtitleRenditionUri,
+    /// A `DEFAULT=YES` subtitle rendition is not `AUTOSELECT=YES` (RFC 8216 §4.3.4.1.1).
+    #[error(
+        "HlsOrigin::builder(...).subtitle_renditions(...): DEFAULT=YES requires AUTOSELECT=YES"
+    )]
+    SubtitleRenditionDefaultNotAutoselect,
+    /// More than one subtitle rendition is `DEFAULT=YES` (RFC 8216 §4.3.4.1.1).
+    #[error("HlsOrigin::builder(...).subtitle_renditions(...): at most one DEFAULT=YES member")]
+    MultipleDefaultSubtitleRenditions,
+    /// `subtitle_sibling_origins` is non-empty but not one per declared rendition.
+    #[error(
+        "HlsOrigin::builder(...).subtitle_sibling_origins(...): one origin per declared subtitle rendition"
+    )]
+    SubtitleSiblingCountMismatch,
+    /// A subtitle sibling origin is not a [`Container::WebVtt`] origin.
+    #[error(
+        "HlsOrigin::builder(...).subtitle_sibling_origins(...): sibling must be a WebVtt origin"
+    )]
+    SubtitleSiblingNotWebVtt,
+    /// A subtitle sibling's `EXT-X-TARGETDURATION` differs from this origin's
+    /// (Apple HLS Authoring Spec 5.6).
+    #[error(
+        "HlsOrigin::builder(...).subtitle_sibling_origins(...): sibling target duration must equal this origin's"
+    )]
+    SubtitleSiblingTargetDurationMismatch,
     /// A closed-caption override's `instream_id` is not `CC1`..`CC4` or
     /// `SERVICE1`..`SERVICE63`.
     #[error("HlsOrigin::builder(...).closed_caption_overrides(...): invalid INSTREAM-ID")]
@@ -1187,6 +1237,107 @@ pub struct AudioRenditionDecl {
     pub characteristics: Vec<String>,
 }
 
+/// `GROUP-ID` of the `EXT-X-MEDIA TYPE=SUBTITLES` group the master playlist
+/// advertises for declared subtitle renditions.
+pub const SUBTITLES_GROUP_ID: &str = "subs";
+
+/// `CHARACTERISTICS` of a subtitles track for deaf or hard-of-hearing viewers
+/// (Apple HLS Authoring Spec item 4.5).
+const HEARING_IMPAIRED_CHARACTERISTICS: [&str; 2] = [
+    "public.accessibility.transcribes-spoken-dialog",
+    "public.accessibility.describes-music-and-sound",
+];
+
+/// `CODECS` token naming WebVTT subtitles (Apple HLS Authoring Spec item 5.10).
+const WEBVTT_CODEC: &str = "wvtt";
+
+/// A typed declaration of one WebVTT subtitle rendition for a multivariant
+/// playlist (RFC 8216 §4.3.4.1, Apple HLS Authoring Spec items 4.5-4.7, 5.11).
+/// Consumed by [`HlsOriginBuilder::subtitle_renditions`]. All renditions share
+/// the group [`SUBTITLES_GROUP_ID`].
+///
+/// `hearing_impaired` emits the item 4.5 `CHARACTERISTICS` and forces
+/// `AUTOSELECT=YES` (item 4.6); `forced` emits `FORCED=YES` and forces
+/// `AUTOSELECT=YES` (item 5.11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SubtitleRenditionDecl {
+    /// `NAME` of the rendition.
+    pub name: String,
+    /// `LANGUAGE` (BCP 47); required (Apple HLS Authoring Spec item 4.7).
+    pub language: String,
+    /// URI of the subtitle media playlist.
+    pub uri: String,
+    /// `DEFAULT` attribute.
+    pub default: bool,
+    /// `AUTOSELECT` attribute.
+    pub autoselect: bool,
+    /// `FORCED` attribute.
+    pub forced: bool,
+    /// Subtitles for deaf or hard-of-hearing viewers.
+    pub hearing_impaired: bool,
+}
+
+impl SubtitleRenditionDecl {
+    /// A plain subtitle rendition: `DEFAULT=NO`, `AUTOSELECT=YES`, not forced,
+    /// not for the hard of hearing.
+    pub fn new(
+        name: impl Into<String>,
+        language: impl Into<String>,
+        uri: impl Into<String>,
+    ) -> Self {
+        SubtitleRenditionDecl {
+            name: name.into(),
+            language: language.into(),
+            uri: uri.into(),
+            default: false,
+            autoselect: true,
+            forced: false,
+            hearing_impaired: false,
+        }
+    }
+
+    fn effective_autoselect(&self) -> bool {
+        self.autoselect || self.forced || self.hearing_impaired
+    }
+}
+
+/// Validate subtitle rendition declarations (RFC 8216 §4.3.4.1.1; Apple HLS
+/// Authoring Spec item 4.7).
+pub fn validate_subtitle_renditions(
+    decls: &[SubtitleRenditionDecl],
+) -> Result<(), HlsOriginBuildError> {
+    use std::collections::BTreeSet;
+    let mut names = BTreeSet::new();
+    let mut uris = BTreeSet::new();
+    let mut defaults = 0usize;
+    for decl in decls {
+        if decl.name.is_empty() {
+            return Err(HlsOriginBuildError::EmptySubtitleRenditionName);
+        }
+        if decl.language.is_empty() {
+            return Err(HlsOriginBuildError::EmptySubtitleRenditionLanguage);
+        }
+        if decl.uri.is_empty() {
+            return Err(HlsOriginBuildError::EmptySubtitleRenditionUri);
+        }
+        if decl.default && !decl.effective_autoselect() {
+            return Err(HlsOriginBuildError::SubtitleRenditionDefaultNotAutoselect);
+        }
+        if !names.insert(decl.name.as_str()) {
+            return Err(HlsOriginBuildError::DuplicateSubtitleRenditionName);
+        }
+        if !uris.insert(decl.uri.as_str()) {
+            return Err(HlsOriginBuildError::DuplicateSubtitleRenditionUri);
+        }
+        defaults += usize::from(decl.default);
+    }
+    if defaults > 1 {
+        return Err(HlsOriginBuildError::MultipleDefaultSubtitleRenditions);
+    }
+    Ok(())
+}
+
 /// `GROUP-ID` of the `EXT-X-MEDIA TYPE=CLOSED-CAPTIONS` group the master
 /// playlist advertises for detected captions.
 pub const CLOSED_CAPTIONS_GROUP_ID: &str = "cc";
@@ -1272,6 +1423,8 @@ pub struct HlsOriginBuilder {
     declared_bandwidth_bps: Option<u64>,
     audio_renditions: Vec<AudioRenditionDecl>,
     audio_sibling_origins: Vec<Arc<HlsOrigin>>,
+    subtitle_renditions: Vec<SubtitleRenditionDecl>,
+    subtitle_sibling_origins: Vec<Arc<HlsOrigin>>,
     playlist_uri: Option<String>,
     rendition_siblings: Vec<RenditionSibling>,
     closed_captions_none: bool,
@@ -1292,6 +1445,8 @@ impl HlsOriginBuilder {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_sibling_origins: Vec::new(),
+            subtitle_renditions: Vec::new(),
+            subtitle_sibling_origins: Vec::new(),
             playlist_uri: None,
             rendition_siblings: Vec::new(),
             closed_captions_none: false,
@@ -1417,6 +1572,28 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// Declare the WebVTT subtitle renditions this origin's master playlist
+    /// advertises: one `#EXT-X-MEDIA:TYPE=SUBTITLES` per declaration in group
+    /// [`SUBTITLES_GROUP_ID`], placed after the audio renditions, with every
+    /// variant's `SUBTITLES` attribute set and `wvtt` added to its `CODECS`
+    /// (Apple HLS Authoring Spec item 5.10) when `CODECS` is known. Empty by
+    /// default: the master is byte-identical to the pre-existing output.
+    pub fn subtitle_renditions(mut self, subtitle_renditions: Vec<SubtitleRenditionDecl>) -> Self {
+        self.subtitle_renditions = subtitle_renditions;
+        self
+    }
+
+    /// The [`Container::WebVtt`] origins serving the declared subtitle
+    /// renditions, one per declaration in the same order. Checked at
+    /// [`Self::build`]: each must be a `WebVtt` origin whose
+    /// `EXT-X-TARGETDURATION` equals this origin's (Apple HLS Authoring Spec
+    /// item 5.6 — live subtitle playlists must match the other media).
+    /// Subtitle bandwidth is not folded into `BANDWIDTH`.
+    pub fn subtitle_sibling_origins(mut self, origins: Vec<Arc<HlsOrigin>>) -> Self {
+        self.subtitle_sibling_origins = origins;
+        self
+    }
+
     /// URI of this origin's own media playlist, relative to the stream root
     /// (e.g. `"media.m3u8"` or `"audio/a0.m3u8"`). Used to compute the
     /// relative `URI` of [`RenditionSibling`] entries when rendering
@@ -1496,6 +1673,21 @@ impl HlsOriginBuilder {
             validate_audio_renditions_relaxed(&self.audio_renditions)?;
         }
         validate_closed_caption_overrides(&self.closed_caption_overrides)?;
+        validate_subtitle_renditions(&self.subtitle_renditions)?;
+        if !self.subtitle_sibling_origins.is_empty() {
+            if self.subtitle_sibling_origins.len() != self.subtitle_renditions.len() {
+                return Err(HlsOriginBuildError::SubtitleSiblingCountMismatch);
+            }
+            let target = target_duration_secs.ceil();
+            for sibling in &self.subtitle_sibling_origins {
+                if sibling.container != Container::WebVtt {
+                    return Err(HlsOriginBuildError::SubtitleSiblingNotWebVtt);
+                }
+                if sibling.target_duration_secs.ceil() != target {
+                    return Err(HlsOriginBuildError::SubtitleSiblingTargetDurationMismatch);
+                }
+            }
+        }
         let cursor = self.trunk.subscribe_segments();
         Ok(HlsOrigin {
             trunk: self.trunk,
@@ -1519,6 +1711,7 @@ impl HlsOriginBuilder {
             declared_bandwidth_bps: self.declared_bandwidth_bps,
             audio_renditions: self.audio_renditions,
             audio_sibling_origins: self.audio_sibling_origins,
+            subtitle_renditions: self.subtitle_renditions,
             playlist_uri: self
                 .playlist_uri
                 .unwrap_or_else(|| "media.m3u8".to_string()),
@@ -1606,6 +1799,8 @@ pub struct HlsOrigin {
     audio_renditions: Vec<AudioRenditionDecl>,
     /// Sibling audio origins (issue #1428 slice 3).
     audio_sibling_origins: Vec<Arc<HlsOrigin>>,
+    /// Declared WebVTT subtitle renditions.
+    subtitle_renditions: Vec<SubtitleRenditionDecl>,
     /// URI of this origin's own media playlist.
     playlist_uri: String,
     /// Sibling renditions whose live edge this origin reports.
@@ -1953,6 +2148,13 @@ impl HlsOrigin {
             })
             .collect();
         let mut media = dedupe_rendition_names(media);
+        media.extend(self.subtitle_media_renditions());
+        let subtitles_group =
+            (!self.subtitle_renditions.is_empty()).then(|| SUBTITLES_GROUP_ID.to_string());
+        let with_wvtt = |codecs: Option<String>| match (&subtitles_group, codecs) {
+            (Some(_), Some(c)) => Some(format!("{c},{WEBVTT_CODEC}")),
+            (_, c) => c,
+        };
         let detected_captions = locked(&self.detected_closed_captions).clone();
         let caption_media = self.closed_caption_renditions(&detected_captions);
         let captions_advertised = !caption_media.is_empty();
@@ -1987,11 +2189,11 @@ impl HlsOrigin {
             variants.push(Variant {
                 bandwidth: bw,
                 average_bandwidth: avg,
-                codecs: primary_codecs.clone(),
+                codecs: with_wvtt(primary_codecs.clone()),
                 uri: media_playlist_name.to_string(),
                 audio: None,
                 video: None,
-                subtitles: None,
+                subtitles: subtitles_group.clone(),
                 closed_captions,
                 extra_attrs: extra_attrs.clone(),
                 resolution: *locked(&self.resolution),
@@ -2049,11 +2251,11 @@ impl HlsOrigin {
                 variants.push(Variant {
                     bandwidth: group_bw,
                     average_bandwidth: group_avg,
-                    codecs: group_codecs,
+                    codecs: with_wvtt(group_codecs),
                     uri: media_playlist_name.to_string(),
                     audio: Some(group.clone()),
                     video: None,
-                    subtitles: None,
+                    subtitles: subtitles_group.clone(),
                     closed_captions: closed_captions.clone(),
                     extra_attrs: extra_attrs.clone(),
                     resolution: *locked(&self.resolution),
@@ -2108,6 +2310,30 @@ impl HlsOrigin {
             ..Default::default()
         };
         master.to_m3u8().map_err(HlsMasterError::Render)
+    }
+
+    fn subtitle_media_renditions(&self) -> Vec<MediaRendition> {
+        self.subtitle_renditions
+            .iter()
+            .map(|decl| {
+                let mut m = MediaRendition::default();
+                m.media_type = MediaType::Subtitles;
+                m.uri = Some(decl.uri.clone());
+                m.group_id = SUBTITLES_GROUP_ID.to_string();
+                m.language = Some(decl.language.clone());
+                m.name = decl.name.clone();
+                m.default = decl.default;
+                m.autoselect = decl.effective_autoselect();
+                m.forced = decl.forced;
+                if decl.hearing_impaired {
+                    m.characteristics = HEARING_IMPAIRED_CHARACTERISTICS
+                        .iter()
+                        .map(|c| (*c).to_string())
+                        .collect();
+                }
+                m
+            })
+            .collect()
     }
 
     fn closed_caption_renditions(
@@ -2637,7 +2863,8 @@ impl HlsOrigin {
         // trailing-`#EXT-X-PART`-only representation is itself an LL-HLS
         // directive, so it is gated on low latency being enabled, not merely
         // on the Trunk happening to have live parts.
-        let low_latency_enabled = self.part_target_ms.is_some();
+        let low_latency_enabled =
+            self.part_target_ms.is_some() && self.container != Container::WebVtt;
         let has_open_parts = low_latency_enabled && !open_parts.is_empty();
         let ext = self.container.segment_extension();
 
@@ -2861,10 +3088,7 @@ impl HlsOrigin {
                 extra_tags.push(tag.clone());
             }
         }
-        let low_latency = low_latency_enabled.then(|| {
-            let part_target_ms = self
-                .part_target_ms
-                .expect("low_latency_enabled implies Some");
+        let low_latency = self.part_target_ms.map(|part_target_ms| {
             // `part_target_ms: u32` / 1000.0 (issue #1140): always finite
             // and non-negative, as is the product with the positive
             // `PART_HOLD_BACK_MULTIPLIER` constant.
@@ -2873,8 +3097,8 @@ impl HlsOrigin {
             let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
                 .expect("finite, >= 0 times a positive constant is finite, >= 0");
             LowLatencyConfig {
-                part_target: Some(part_target),
-                part_hold_back: Some(part_hold_back),
+                part_target: low_latency_enabled.then_some(part_target),
+                part_hold_back: low_latency_enabled.then_some(part_hold_back),
                 // RFC 8216bis §4.4.3.8: HOLD-BACK MUST be >= 3x the Target
                 // Duration; Apple's validator also requires it in LL mode.
                 hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
