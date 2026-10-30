@@ -397,3 +397,117 @@ fn a_media_presentation_duration_ends_a_dynamic_presentation() {
     sim.run_for(60 * MICROS as u64);
     assert!(sim.client.presentation_ended(), "{:?}", sim.fatal());
 }
+
+#[test]
+fn m2_reset_presentation_drops_cached_init_bytes() {
+    use common::world::{HttpResp, Kind, Outcome};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let mut synth = with_utc(Addressing::Number);
+    synth.with_audio = false;
+    synth.mpd_id = Some("one".into());
+    let (mut sim, _geo, handle) = sim_shared(synth, START, DashConfig::default());
+    let n = Rc::new(Cell::new(0u32));
+    let nc = n.clone();
+    sim.fault = Some(Box::new(move |_req, kind, _| {
+        if *kind == Kind::Init {
+            let i = nc.get();
+            nc.set(i + 1);
+            let bytes = if i == 0 {
+                test_fixtures::read("dash/live-number/init-0.m4s")
+            } else {
+                test_fixtures::read("dash/live-number/init-1.m4s")
+            };
+            return Some(Outcome::Resp(HttpResp::ok(bytes)));
+        }
+        None
+    }));
+    sim.run_for(20 * MICROS as u64);
+    handle.borrow_mut().mpd_id = Some("two".into());
+    sim.run_for(20 * MICROS as u64);
+    no_fatal(&sim);
+    let inits: Vec<&Vec<u8>> = sim
+        .outputs
+        .iter()
+        .filter_map(|o| match o {
+            Output::Init(b) => Some(b),
+            _ => None,
+        })
+        .collect();
+    assert!(inits.len() >= 2, "{:?}", inits.len());
+    let a = test_fixtures::read("dash/live-number/init-0.m4s");
+    let b = test_fixtures::read("dash/live-number/init-1.m4s");
+    assert_eq!(inits[0], &a);
+    assert_eq!(inits[inits.len() - 1], &b);
+}
+
+#[test]
+fn m3b_failed_replan_keeps_old_plan_and_lane_alive() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let mut synth = with_utc(Addressing::TimelineNumber);
+    let good = {
+        let mut p = Synth::new(AST_US, Addressing::TimelineNumber);
+        p.utc_elements = synth.utc_elements.clone();
+        p.mpd_at(AST_US + START)
+    };
+    let bad = good.replace(
+        "r=\"7\"/></SegmentTimeline>",
+        "r=\"7\"/><S t=\"0\" d=\"90000\"/></SegmentTimeline>",
+    );
+    let calls = Rc::new(Cell::new(0u32));
+    let cc = calls.clone();
+    synth.mpd_override = Some(Box::new(move |_| {
+        let c = cc.get();
+        cc.set(c + 1);
+        if c == 1 {
+            Some(bad.clone())
+        } else {
+            Some(good.clone())
+        }
+    }));
+    let (mut sim, _geo) = sim_with(synth, START, DashConfig::default());
+    sim.run_for(30 * MICROS as u64);
+    no_fatal(&sim);
+    assert_eq!(sim.count(|o| matches!(o, Output::TrackDropped { .. })), 0);
+    assert!(sim.samples_per_track().values().any(|n| *n > 0));
+}
+
+#[test]
+fn l3_slow_client_forward_jump_emits_discontinuity() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let mut synth = with_utc(Addressing::TimelineNumber);
+    let good = {
+        let mut p = Synth::new(AST_US, Addressing::TimelineNumber);
+        p.utc_elements = synth.utc_elements.clone();
+        p.mpd_at(AST_US + START)
+    };
+    let shifted = good
+        .replace("startNumber=\"13\"", "startNumber=\"113\"")
+        .replace(
+            "<S t=\"2160000\" d=\"180000\" r=\"7\"/>",
+            "<S t=\"21600000\" d=\"180000\" r=\"7\"/>",
+        )
+        .replace(
+            "<S t=\"1058400\" d=\"88200\" r=\"7\"/>",
+            "<S t=\"10584000\" d=\"88200\" r=\"7\"/>",
+        );
+    let calls = Rc::new(Cell::new(0u32));
+    let cc = calls.clone();
+    let good_c = good.clone();
+    let shifted_c = shifted.clone();
+    synth.mpd_override = Some(Box::new(move |_| {
+        let c = cc.get();
+        cc.set(c + 1);
+        if c >= 5 {
+            Some(shifted_c.clone())
+        } else {
+            Some(good_c.clone())
+        }
+    }));
+    let (mut sim, _geo) = sim_with(synth, START, DashConfig::default());
+    sim.run_for(30 * MICROS as u64);
+    no_fatal(&sim);
+    assert!(sim.count(|o| matches!(o, Output::Discontinuity)) >= 1);
+}
