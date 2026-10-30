@@ -264,6 +264,7 @@ no refresh and no availability gating (A.2: "static is a subset of the same beha
    (audio and video in one init) yields several local tracks and needs no separate pick.
 4. `TrackId`s: 1-based in selection order (video sets then audio) on first encounter of a (media kind, AdaptationSet identity); stable across Periods and Representation switches, so a Period that drops a kind does NOT recycle its id for a different kind (the `Tracks` event re-announces the new `TrackSpec`);
    local `moov` track ids are remapped (every Representation's init typically uses id 1, multimux `dash_pull` "Track id remapping" note).
+   An AdaptationSet's `@id` is part of that identity when it is present: DASH signals Period continuity/connectivity through equal `AdaptationSet@id` across Periods (ISO/IEC 23009-1 5.3.2.4), so a renumbered `@id` denotes a new identity and allocates a fresh id range even when `@lang` and `Role` are unchanged; when `@id` is absent the identity falls back to media kind plus `@lang` and `Role` descriptors.
 
 ### 5.2 MPD refresh (dynamic only)
 
