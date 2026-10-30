@@ -994,17 +994,20 @@ pub enum HlsOriginBuildError {
         "HlsOrigin::builder(...).audio_renditions(...): a group must have exactly one DEFAULT=YES member"
     )]
     AudioRenditionDefaultCount,
-    /// An audio rendition is missing a `LANGUAGE`.
-    #[error("HlsOrigin::builder(...).audio_renditions(...): language must be present")]
-    MissingAudioRenditionLanguage,
+    /// A `DEFAULT=YES` audio rendition is not `AUTOSELECT=YES` (RFC 8216bis §4.4.6.1).
+    #[error("HlsOrigin::builder(...).audio_renditions(...): DEFAULT=YES requires AUTOSELECT=YES")]
+    AudioRenditionDefaultNotAutoselect,
+    /// An audio rendition's `language` is empty.
+    #[error("HlsOrigin::builder(...).audio_renditions(...): language must be non-empty")]
+    EmptyAudioRenditionLanguage,
     /// An audio rendition's `uri` is empty.
     #[error("HlsOrigin::builder(...).audio_renditions(...): uri must be non-empty")]
     EmptyAudioRenditionUri,
-    /// An audio rendition's `uri` equals the media playlist name.
+    /// Audio rendition groups do not all have the same members (RFC 8216bis §4.4.6.1).
     #[error(
-        "HlsOrigin::builder(...).audio_renditions(...): uri must not equal the media playlist name"
+        "HlsOrigin::builder(...).audio_renditions(...): every group must have the same members, differing only in URI and CHANNELS"
     )]
-    AudioRenditionUriEqualsMediaPlaylist,
+    AudioRenditionGroupsDiffer,
 }
 
 /// Error returned by [`HlsOrigin::master_playlist`].
@@ -1032,6 +1035,57 @@ pub enum HlsMasterError {
     AudioRenditionUriEqualsMediaPlaylist,
 }
 
+fn validate_audio_renditions(decls: &[AudioRenditionDecl]) -> Result<(), HlsOriginBuildError> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut groups: BTreeMap<&str, Vec<&AudioRenditionDecl>> = BTreeMap::new();
+    for decl in decls {
+        if decl.group_id.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionGroupId);
+        }
+        if decl.name.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionName);
+        }
+        if decl.language.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionLanguage);
+        }
+        if decl.uri.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionUri);
+        }
+        if decl.default && !decl.autoselect {
+            return Err(HlsOriginBuildError::AudioRenditionDefaultNotAutoselect);
+        }
+        groups.entry(&decl.group_id).or_default().push(decl);
+    }
+    let mut signatures = BTreeSet::new();
+    for members in groups.values() {
+        let mut names = BTreeSet::new();
+        if !members.iter().all(|m| names.insert(m.name.as_str())) {
+            return Err(HlsOriginBuildError::DuplicateAudioRenditionName);
+        }
+        if members.iter().filter(|m| m.default).count() != 1 {
+            return Err(HlsOriginBuildError::AudioRenditionDefaultCount);
+        }
+        let mut signature: Vec<_> = members
+            .iter()
+            .map(|m| {
+                (
+                    m.name.as_str(),
+                    m.language.as_str(),
+                    m.default,
+                    m.autoselect,
+                    m.characteristics.as_slice(),
+                )
+            })
+            .collect();
+        signature.sort();
+        signatures.insert(signature);
+    }
+    if signatures.len() > 1 {
+        return Err(HlsOriginBuildError::AudioRenditionGroupsDiffer);
+    }
+    Ok(())
+}
+
 /// A typed declaration of one audio rendition for a multivariant playlist
 /// (RFC 8216bis §4.4.6.1, Apple HLS authoring spec items 9.5-9.8). Consumed
 /// by [`HlsOriginBuilder::audio_renditions`].
@@ -1042,9 +1096,9 @@ pub struct AudioRenditionDecl {
     pub group_id: String,
     /// `NAME` of the rendition.
     pub name: String,
-    /// `LANGUAGE` of the rendition (absence is invalid; use `"und"` for
+    /// `LANGUAGE` of the rendition; must be non-empty (`"und"` for
     /// undetermined).
-    pub language: Option<String>,
+    pub language: String,
     /// `DEFAULT` attribute.
     pub default: bool,
     /// `AUTOSELECT` attribute.
@@ -1261,51 +1315,7 @@ impl HlsOriginBuilder {
         {
             return Err(HlsOriginBuildError::InvalidDeclaredBandwidth);
         }
-        // Validate audio rendition declarations (issue #1428 slice 1).
-        // Group ids / names non-empty.
-        for decl in &self.audio_renditions {
-            if decl.group_id.is_empty() {
-                return Err(HlsOriginBuildError::EmptyAudioRenditionGroupId);
-            }
-            if decl.name.is_empty() {
-                return Err(HlsOriginBuildError::EmptyAudioRenditionName);
-            }
-            if decl.language.as_deref().is_none_or(str::is_empty) {
-                return Err(HlsOriginBuildError::MissingAudioRenditionLanguage);
-            }
-            if decl.uri.is_empty() {
-                return Err(HlsOriginBuildError::EmptyAudioRenditionUri);
-            }
-        }
-        // NAME unique within a group.
-        {
-            let mut seen: std::collections::BTreeSet<(String, String)> =
-                std::collections::BTreeSet::new();
-            for decl in &self.audio_renditions {
-                if !seen.insert((decl.group_id.clone(), decl.name.clone())) {
-                    return Err(HlsOriginBuildError::DuplicateAudioRenditionName);
-                }
-            }
-        }
-        // Exactly one DEFAULT=YES per group.
-        {
-            let mut groups: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-            let mut defaults: std::collections::BTreeSet<String> =
-                std::collections::BTreeSet::new();
-            for decl in &self.audio_renditions {
-                groups.insert(decl.group_id.clone());
-            }
-            for decl in &self.audio_renditions {
-                if decl.default && !defaults.insert(decl.group_id.clone()) {
-                    return Err(HlsOriginBuildError::AudioRenditionDefaultCount);
-                }
-            }
-            for g in &groups {
-                if !defaults.contains(g) {
-                    return Err(HlsOriginBuildError::AudioRenditionDefaultCount);
-                }
-            }
-        }
+        validate_audio_renditions(&self.audio_renditions)?;
         let cursor = self.trunk.subscribe_segments();
         Ok(HlsOrigin {
             trunk: self.trunk,
@@ -1627,15 +1637,12 @@ impl HlsOrigin {
             extra_attrs.push(range.attr());
         }
 
-        // Render-time check: an audio rendition URI must not collide with the
-        // media playlist name.
         for decl in &self.audio_renditions {
             if decl.uri == media_playlist_name {
                 return Err(HlsMasterError::AudioRenditionUriEqualsMediaPlaylist);
             }
         }
 
-        // Build the EXT-X-MEDIA:TYPE=AUDIO list (issue #1428 slice 1).
         let media: Vec<MediaRendition> = self
             .audio_renditions
             .iter()
@@ -1644,7 +1651,7 @@ impl HlsOrigin {
                 m.media_type = MediaType::Audio;
                 m.uri = Some(decl.uri.clone());
                 m.group_id = decl.group_id.clone();
-                m.language = decl.language.clone();
+                m.language = Some(decl.language.clone());
                 m.name = decl.name.clone();
                 m.default = decl.default;
                 m.autoselect = decl.autoselect;
@@ -1654,7 +1661,6 @@ impl HlsOrigin {
             })
             .collect();
 
-        // Distinct audio groups referenced -> one STREAM-INF per group, same URI.
         let audio_groups: Vec<String> = {
             let mut g: Vec<String> = Vec::new();
             for decl in &self.audio_renditions {
