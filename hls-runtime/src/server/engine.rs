@@ -75,7 +75,7 @@ use media_plane::ids::{PartIndex, SegmentSeq};
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 use transmux::TrackId;
 
@@ -1180,6 +1180,19 @@ pub struct AudioRenditionDecl {
     pub characteristics: Vec<String>,
 }
 
+/// A sibling rendition's origin + the URI of its media playlist, used to
+/// render `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4) into this
+/// origin's media playlist. Stored as a [`Weak`] reference so origins can
+/// refer to each other without forming a reference cycle.
+#[derive(Clone)]
+pub struct RenditionSibling {
+    /// Weak handle to the sibling origin.
+    pub origin: Weak<HlsOrigin>,
+    /// URI of the sibling's media playlist, relative to the same stream root
+    /// as this origin's own playlist.
+    pub playlist_uri: String,
+}
+
 /// Fluent builder for [`HlsOrigin`] (issue #873) — replaces the old
 /// four-positional `HlsOrigin::new` (deleted; this crate is at 0.4.0
 /// unpublished, so there is no compatibility burden), which could not
@@ -1214,6 +1227,8 @@ pub struct HlsOriginBuilder {
     declared_bandwidth_bps: Option<u64>,
     audio_renditions: Vec<AudioRenditionDecl>,
     audio_sibling_origins: Vec<Arc<HlsOrigin>>,
+    playlist_uri: Option<String>,
+    rendition_siblings: Vec<RenditionSibling>,
     closed_captions_none: bool,
 }
 
@@ -1231,6 +1246,8 @@ impl HlsOriginBuilder {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_sibling_origins: Vec::new(),
+            playlist_uri: None,
+            rendition_siblings: Vec::new(),
             closed_captions_none: false,
         }
     }
@@ -1353,6 +1370,24 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// URI of this origin's own media playlist, relative to the stream root
+    /// (e.g. `"media.m3u8"` or `"audio/a0.m3u8"`). Used to compute the
+    /// relative `URI` of [`RenditionSibling`] entries when rendering
+    /// `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4). Defaults to
+    /// `"media.m3u8"` when unset.
+    pub fn playlist_uri(mut self, playlist_uri: impl Into<String>) -> Self {
+        self.playlist_uri = Some(playlist_uri.into());
+        self
+    }
+
+    /// Sibling renditions whose live edge is reported by this origin's media
+    /// playlist (RFC 8216bis §4.4.5.4). Each entry is a weak handle plus the
+    /// sibling's playlist URI. Empty by default.
+    pub fn rendition_siblings(mut self, siblings: Vec<RenditionSibling>) -> Self {
+        self.rendition_siblings = siblings;
+        self
+    }
+
     /// When `true`, emit `CLOSED-CAPTIONS=NONE` on the video variant
     /// (RFC 8216bis §4.4.6.2). Default `false` leaves the attribute omitted,
     /// matching the pre-existing output.
@@ -1429,6 +1464,10 @@ impl HlsOriginBuilder {
             declared_bandwidth_bps: self.declared_bandwidth_bps,
             audio_renditions: self.audio_renditions,
             audio_sibling_origins: self.audio_sibling_origins,
+            playlist_uri: self
+                .playlist_uri
+                .unwrap_or_else(|| "media.m3u8".to_string()),
+            rendition_siblings: Mutex::new(self.rendition_siblings),
             track_specs: Mutex::new(Vec::new()),
             closed_captions_none: self.closed_captions_none,
             frozen_target_duration_secs: Mutex::new(None),
@@ -1510,6 +1549,10 @@ pub struct HlsOrigin {
     audio_renditions: Vec<AudioRenditionDecl>,
     /// Sibling audio origins (issue #1428 slice 3).
     audio_sibling_origins: Vec<Arc<HlsOrigin>>,
+    /// URI of this origin's own media playlist.
+    playlist_uri: String,
+    /// Sibling renditions whose live edge this origin reports.
+    rendition_siblings: Mutex<Vec<RenditionSibling>>,
     /// Stored track specs (issue #1428 slice 3), for audio metadata derivation.
     track_specs: Mutex<Vec<transmux::TrackSpec>>,
     /// Emit `CLOSED-CAPTIONS=NONE` (issue #1428 slice 1).
@@ -2163,6 +2206,37 @@ impl HlsOrigin {
         self.target_duration_violations.load(Ordering::Relaxed)
     }
 
+    /// Replace the sibling renditions whose live edge this origin reports.
+    pub fn set_rendition_siblings(&self, siblings: Vec<RenditionSibling>) {
+        *locked(&self.rendition_siblings) = siblings;
+    }
+
+    /// Snapshot of this origin's current live edge as `(LAST-MSN, LAST-PART)`,
+    /// suitable for an `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4).
+    /// Drains this origin first and queries only this origin's own `Trunk`,
+    /// so callers never hold another origin's lock.
+    pub fn current_live_edge(&self) -> (u64, Option<u64>) {
+        self.drain();
+        let (seq, open_parts) = self.live_edge();
+        if !open_parts.is_empty() {
+            let msn = self.public_msn(seq);
+            let last_part = open_parts.last().map(|p| u64::from(p.part_index.value()));
+            return (msn, last_part);
+        }
+        // Live edge is a closed segment: report its last part (if any) so
+        // the sibling's partial segments are accounted for (RFC 8216bis
+        // §4.4.5.4; Apple's validator requires LAST-PART whenever the
+        // rendition carries partial segments).
+        let last_closed = self
+            .trunk
+            .last_closed_segment()
+            .unwrap_or(SegmentSeq::new(0));
+        let msn = self.public_msn(last_closed);
+        let closed_parts = self.trunk.parts_in_segment(last_closed);
+        let last_part = closed_parts.last().map(|p| u64::from(p.part_index.value()));
+        (msn, last_part)
+    }
+
     /// The fMP4 init segment bytes, if set.
     pub fn init_bytes(&self) -> Option<Bytes> {
         locked(&self.init).current.clone()
@@ -2711,6 +2785,33 @@ impl HlsOrigin {
         } else {
             None
         };
+        // #EXT-X-RENDITION-REPORT for sibling renditions (RFC 8216bis
+        // §4.4.5.4): one per OTHER rendition, snapshotted under each
+        // sibling's own lock at render time.
+        let rendition_reports = if self.part_target_ms.is_some() {
+            let siblings = locked(&self.rendition_siblings).clone();
+            let mut reports = Vec::with_capacity(siblings.len());
+            for sibling in siblings {
+                let Some(origin) = sibling.origin.upgrade() else {
+                    continue;
+                };
+                if sibling.playlist_uri == self.playlist_uri {
+                    continue;
+                }
+                let uri = relative_playlist_uri(&self.playlist_uri, &sibling.playlist_uri);
+                let (last_msn, last_part) = origin.current_live_edge();
+                reports.push(broadcast_hls::RenditionReport {
+                    uri,
+                    last_msn,
+                    last_part,
+                    extra_attrs: Vec::new(),
+                });
+            }
+            reports
+        } else {
+            Vec::new()
+        };
+
         let playlist = MediaPlaylist {
             // No explicit floor: `broadcast_hls::MediaPlaylist::to_m3u8`
             // computes `EXT-X-VERSION` from the content actually emitted
@@ -2729,6 +2830,7 @@ impl HlsOrigin {
             low_latency,
             iframes_only: false,
             skip: skip_info,
+            rendition_reports,
             ..Default::default()
         };
         playlist.to_m3u8().map_err(|error| error.to_string())
@@ -2935,12 +3037,36 @@ impl HlsOrigin {
                 .trunk
                 .last_closed_segment()
                 .unwrap_or(entries[0].0.sequence_number);
-            vec![broadcast_hls::RenditionReport {
+            let mut reports = vec![broadcast_hls::RenditionReport {
                 uri: media_playlist_name.to_string(),
                 last_msn: self.public_msn(last_closed),
                 last_part: None,
                 extra_attrs: Vec::new(),
-            }]
+            }];
+            // Split-audio routes: report each audio sibling rendition as well
+            // (RFC 8216bis §4.4.5.4), keeping the existing iframe->media
+            // report above unchanged.
+            let siblings = locked(&self.rendition_siblings).clone();
+            for sibling in siblings {
+                let Some(origin) = sibling.origin.upgrade() else {
+                    continue;
+                };
+                if sibling.playlist_uri == self.playlist_uri {
+                    continue;
+                }
+                let uri = relative_playlist_uri(
+                    &self.iframe_playlist_name(track_id),
+                    &sibling.playlist_uri,
+                );
+                let (last_msn, last_part) = origin.current_live_edge();
+                reports.push(broadcast_hls::RenditionReport {
+                    uri,
+                    last_msn,
+                    last_part,
+                    extra_attrs: Vec::new(),
+                });
+            }
+            reports
         } else {
             Vec::new()
         };
@@ -3143,6 +3269,34 @@ pub fn bcp47_language(iso639_2: &str) -> Option<String> {
         return Some(t.to_string());
     }
     lang.alpha3_b().map(|b| b.to_string())
+}
+
+/// Relative URI from one playlist to another (RFC 3986 relative reference),
+/// computed over slash-separated path segments. The carrying playlist's own
+/// filename is dropped before differencing, so two playlists in the same
+/// directory resolve to a bare filename.
+fn relative_playlist_uri(from: &str, to: &str) -> String {
+    let from_dir: Vec<&str> = match from.rfind('/') {
+        Some(i) => from[..i].split('/').filter(|s| !s.is_empty()).collect(),
+        None => Vec::new(),
+    };
+    let to_segs: Vec<&str> = to.split('/').filter(|s| !s.is_empty()).collect();
+    let mut common = 0usize;
+    while common < from_dir.len() && common < to_segs.len() && from_dir[common] == to_segs[common] {
+        common += 1;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    parts.extend(std::iter::repeat_n(
+        "..",
+        from_dir.len().saturating_sub(common),
+    ));
+    parts.extend(&to_segs[common..]);
+    if parts.is_empty() {
+        // Same path: emit the target's last segment (or empty).
+        to_segs.last().copied().unwrap_or("").to_string()
+    } else {
+        parts.join("/")
+    }
 }
 
 #[cfg(test)]
