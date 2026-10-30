@@ -2120,11 +2120,12 @@ fn allocate_track_base(
     if n == 0 {
         return 0;
     }
-    if let Some((existing, len)) = track_ids.get(&identity).copied() {
-        if len >= n && !used.iter().any(|&(b, l)| ranges_overlap(existing, n, b, l)) {
-            used.push((existing, n));
-            return existing;
-        }
+    if let Some((existing, len)) = track_ids.get(&identity).copied()
+        && len >= n
+        && !used.iter().any(|&(b, l)| ranges_overlap(existing, n, b, l))
+    {
+        used.push((existing, n));
+        return existing;
     }
     let base = *next_track_id;
     *next_track_id = next_track_id.saturating_add(n);
