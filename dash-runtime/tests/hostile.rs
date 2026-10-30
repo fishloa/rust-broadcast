@@ -135,6 +135,13 @@ fn structure_bounds() {
             ..
         })
     ));
+    let mut loose_elements = Limits::default();
+    loose_elements.max_elements = 200_000;
+    loose_elements.max_timeline_entries = 100_000;
+    assert_eq!(
+        too_large(Mpd::parse_with(wrap(&tl).as_bytes(), &loose_elements)),
+        Limit::TimelineEntries
+    );
     let urls = format!(
         r#"<Period><AdaptationSet><Representation id="r" bandwidth="1"><SegmentList duration="1">{}</SegmentList></Representation></AdaptationSet></Period>"#,
         r#"<SegmentURL media="a"/>"#.repeat(100_001)
@@ -146,6 +153,13 @@ fn structure_bounds() {
             ..
         })
     ));
+    let mut loose_elements = Limits::default();
+    loose_elements.max_elements = 200_000;
+    loose_elements.max_segment_urls = 100_000;
+    assert_eq!(
+        too_large(Mpd::parse_with(wrap(&urls).as_bytes(), &loose_elements)),
+        Limit::SegmentUrls
+    );
 }
 
 #[test]
