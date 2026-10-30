@@ -13,7 +13,9 @@ Initial release. A generic sans-IO client session for live and on-demand media: 
 
 - HLS segment failure counts (`seg_failures`) are cleared on every `Output::Discontinuity`, including a stream restart that reuses a media sequence number, so a still-failing MSN that an origin reuses starts counting again from zero instead of carrying over its previous failure count.
 
-- RTSP: fill `CodecConfig::Avc` width/height from the SPS (sprop-parameter-sets in the SDP fmtp, or the first in-band SPS), re-announcing `Tracks` when dimensions become known; drive the buffering controller for RTSP (on_chunk/on_track_added/on_sample) so `BufferEvent::Start` is emitted, with sample durations derived from RTP timestamps.
+- RTSP: `CodecConfig::Avc` width/height are filled from the SPS with the TS rule (`transmux::avc_sps_dimensions`, cropped output size): from `sprop-parameter-sets` at DESCRIBE, else from the first in-band SPS, which re-announces `Tracks` once with the dimensions. H.265 is not an RTSP codec here, so there is no HEVC counterpart.
+- RTSP: the buffering controller is now driven (`on_chunk`, tracks, join decision and `on_sample`) through the same private helpers as the TS source, so `BufferEvent::Start` is emitted for RTSP sessions; before, `Session::on_data` returned before feeding the controller.
+- RTSP: AAC samples from a packet that carries several access units no longer share one `pts` with duration 0 (fixed in `transmux`, see its changelog).
 
 ### Added
 
