@@ -1562,6 +1562,7 @@ impl HlsOrigin {
                         .map(|t| t.spec)
                         .collect::<Vec<transmux::TrackSpec>>()
                 })
+                .map(|specs| self.with_known_es_info(specs))
                 .and_then(|specs| self.set_track_specs(&specs).ok());
             if derived.is_none() {
                 // A new init that cannot be read must not leave the previous
@@ -1671,15 +1672,28 @@ impl HlsOrigin {
         Ok(())
     }
 
+    /// An init segment carries no PMT `ES_info`; keep what an earlier
+    /// [`Self::set_track_specs`] recorded for the same track so the language
+    /// and role of a split audio rendition survive the init re-derivation.
+    fn with_known_es_info(&self, mut specs: Vec<transmux::TrackSpec>) -> Vec<transmux::TrackSpec> {
+        let known = locked(&self.track_specs);
+        for spec in &mut specs {
+            if !spec.es_info_descriptors.is_empty() {
+                continue;
+            }
+            if let Some(prev) = known.iter().find(|k| k.track_id == spec.track_id) {
+                spec.source_pid = prev.source_pid;
+                spec.es_info_descriptors = prev.es_info_descriptors.clone();
+            }
+        }
+        specs
+    }
+
     /// One `Window` lock, one consistent snapshot: peak bits/sec, total bytes
     /// and total duration (nanoseconds).
     fn window_snapshot(&self) -> (u64, u64, u128) {
         let w = locked(&self.window);
-        (
-            w.peak_bandwidth_bps,
-            w.total_bytes,
-            w.total_duration_nanos,
-        )
+        (w.peak_bandwidth_bps, w.total_bytes, w.total_duration_nanos)
     }
 
     /// The master playlist for this origin, pointing at `media_playlist_name`:
@@ -1862,6 +1876,7 @@ impl HlsOrigin {
                         continue;
                     }
                     if let Some(sib) = self.audio_sibling_origins.get(i) {
+                        sib.drain();
                         let (peak, tb, td) = sib.window_snapshot();
                         audio_peak_max = audio_peak_max.max(peak);
                         if let Some(avg) = average_bandwidth_bps(tb, td) {

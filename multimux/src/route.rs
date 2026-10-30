@@ -637,16 +637,26 @@ impl ProgramServing {
         self.ll_hls.init_bytes()
     }
 
-    fn set_track_specs(&self, specs: Vec<TrackSpec>) {
+    fn set_track_specs(&self, specs: Vec<TrackSpec>, mapped: &[(usize, TrackSpec)]) {
         // The HLS master playlist's `CODECS` comes from the same specs (the
         // only source for a TS-HLS origin, which has no init segment to read).
-        if let Err(error) = self.ll_hls.set_track_specs(&specs) {
+        // With separate audio renditions the primary playlist carries only the
+        // unmapped tracks, so its `CODECS` must not name the mapped audio.
+        let primary = if mapped.is_empty() {
+            specs.clone()
+        } else {
+            crate::source::split_audio::leader_tracks(&specs, mapped)
+        };
+        if let Err(error) = self.ll_hls.set_track_specs(&primary) {
             tracing::warn!(%error, "HLS master CODECS unavailable for these track specs");
         }
-        for serving in &self.audio_rendition_servings {
-            if let Some(spec) = specs.iter().find(|t| t.track_id == serving.track_id)
-                && let Err(error) = serving.origin.set_track_specs(std::slice::from_ref(spec))
-            {
+        for (rendition, source) in mapped {
+            let Some(serving) = self.audio_rendition_servings.get(*rendition) else {
+                continue;
+            };
+            let mut spec = source.clone();
+            spec.track_id = serving.track_id;
+            if let Err(error) = serving.origin.set_track_specs(std::slice::from_ref(&spec)) {
                 tracing::warn!(%error, "audio rendition CODECS unavailable for these track specs");
             }
         }
@@ -1540,7 +1550,10 @@ impl RouteHandle {
     /// no-op (logged) if `program` has not been published yet.
     pub fn set_track_specs(&self, program: ProgramId, specs: Vec<TrackSpec>) {
         match self.serving(program) {
-            Some(serving) => serving.set_track_specs(specs),
+            Some(serving) => {
+                let mapped = crate::source::split_audio::resolve_sources(self, &specs);
+                serving.set_track_specs(specs, &mapped)
+            }
             None => {
                 tracing::warn!(
                     ?program,
