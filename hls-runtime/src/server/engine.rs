@@ -81,8 +81,9 @@ use transmux::TrackId;
 
 use broadcast_common::{Parse, Timestamp, Unpackage};
 use broadcast_hls::{
-    ByteRange, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist,
-    MediaSegment, OpenSegment, PartSpec, Variant, VideoRange,
+    ByteRange, ClosedCaptionsRef, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag,
+    MasterPlaylist, MediaPlaylist, MediaRendition, MediaSegment, MediaType, OpenSegment, PartSpec,
+    Variant, VideoRange,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -979,6 +980,34 @@ pub enum HlsOriginBuildError {
     /// greater than `u32::MAX`.
     #[error("HlsOrigin::builder(...).declared_bandwidth_bps(...) must be > 0 and <= u32::MAX")]
     InvalidDeclaredBandwidth,
+    /// An audio rendition's `group_id` is empty.
+    #[error("HlsOrigin::builder(...).audio_renditions(...): group_id must be non-empty")]
+    EmptyAudioRenditionGroupId,
+    /// An audio rendition's `name` is empty.
+    #[error("HlsOrigin::builder(...).audio_renditions(...): name must be non-empty")]
+    EmptyAudioRenditionName,
+    /// Two audio renditions in one group share a `NAME`.
+    #[error("HlsOrigin::builder(...).audio_renditions(...): duplicate NAME in a group")]
+    DuplicateAudioRenditionName,
+    /// An audio rendition group does not have exactly one `DEFAULT=YES` member.
+    #[error(
+        "HlsOrigin::builder(...).audio_renditions(...): a group must have exactly one DEFAULT=YES member"
+    )]
+    AudioRenditionDefaultCount,
+    /// A `DEFAULT=YES` audio rendition is not `AUTOSELECT=YES` (RFC 8216bis §4.4.6.1).
+    #[error("HlsOrigin::builder(...).audio_renditions(...): DEFAULT=YES requires AUTOSELECT=YES")]
+    AudioRenditionDefaultNotAutoselect,
+    /// An audio rendition's `language` is empty.
+    #[error("HlsOrigin::builder(...).audio_renditions(...): language must be non-empty")]
+    EmptyAudioRenditionLanguage,
+    /// An audio rendition's `uri` is empty.
+    #[error("HlsOrigin::builder(...).audio_renditions(...): uri must be non-empty")]
+    EmptyAudioRenditionUri,
+    /// Audio rendition groups do not all have the same members (RFC 8216bis §4.4.6.1).
+    #[error(
+        "HlsOrigin::builder(...).audio_renditions(...): every group must have the same members, differing only in URI and CHANNELS"
+    )]
+    AudioRenditionGroupsDiffer,
 }
 
 /// Error returned by [`HlsOrigin::master_playlist`].
@@ -1001,6 +1030,85 @@ pub enum HlsMasterError {
     /// character forbidden in an HLS quoted string).
     #[error("master playlist render failed: {0}")]
     Render(broadcast_hls::Error),
+    /// An audio rendition's `uri` equals the media playlist name.
+    #[error("audio rendition uri must not equal the media playlist name")]
+    AudioRenditionUriEqualsMediaPlaylist,
+}
+
+fn validate_audio_renditions(decls: &[AudioRenditionDecl]) -> Result<(), HlsOriginBuildError> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut groups: BTreeMap<&str, Vec<&AudioRenditionDecl>> = BTreeMap::new();
+    for decl in decls {
+        if decl.group_id.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionGroupId);
+        }
+        if decl.name.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionName);
+        }
+        if decl.language.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionLanguage);
+        }
+        if decl.uri.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionUri);
+        }
+        if decl.default && !decl.autoselect {
+            return Err(HlsOriginBuildError::AudioRenditionDefaultNotAutoselect);
+        }
+        groups.entry(&decl.group_id).or_default().push(decl);
+    }
+    let mut signatures = BTreeSet::new();
+    for members in groups.values() {
+        let mut names = BTreeSet::new();
+        if !members.iter().all(|m| names.insert(m.name.as_str())) {
+            return Err(HlsOriginBuildError::DuplicateAudioRenditionName);
+        }
+        if members.iter().filter(|m| m.default).count() != 1 {
+            return Err(HlsOriginBuildError::AudioRenditionDefaultCount);
+        }
+        let mut signature: Vec<_> = members
+            .iter()
+            .map(|m| {
+                (
+                    m.name.as_str(),
+                    m.language.as_str(),
+                    m.default,
+                    m.autoselect,
+                    m.characteristics.as_slice(),
+                )
+            })
+            .collect();
+        signature.sort();
+        signatures.insert(signature);
+    }
+    if signatures.len() > 1 {
+        return Err(HlsOriginBuildError::AudioRenditionGroupsDiffer);
+    }
+    Ok(())
+}
+
+/// A typed declaration of one audio rendition for a multivariant playlist
+/// (RFC 8216bis §4.4.6.1, Apple HLS authoring spec items 9.5-9.8). Consumed
+/// by [`HlsOriginBuilder::audio_renditions`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AudioRenditionDecl {
+    /// `GROUP-ID` of the audio rendition group.
+    pub group_id: String,
+    /// `NAME` of the rendition.
+    pub name: String,
+    /// `LANGUAGE` of the rendition; must be non-empty (`"und"` for
+    /// undetermined).
+    pub language: String,
+    /// `DEFAULT` attribute.
+    pub default: bool,
+    /// `AUTOSELECT` attribute.
+    pub autoselect: bool,
+    /// `CHANNELS` attribute (e.g. `"2"` or `"JOC 3/2.0.2"`).
+    pub channels: Option<String>,
+    /// URI of the audio media playlist.
+    pub uri: String,
+    /// `CHARACTERISTICS` MCTs.
+    pub characteristics: Vec<String>,
 }
 
 /// Fluent builder for [`HlsOrigin`] (issue #873) — replaces the old
@@ -1035,6 +1143,8 @@ pub struct HlsOriginBuilder {
     instance: Option<u64>,
     arrival_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
     declared_bandwidth_bps: Option<u64>,
+    audio_renditions: Vec<AudioRenditionDecl>,
+    closed_captions_none: bool,
 }
 
 impl HlsOriginBuilder {
@@ -1049,6 +1159,8 @@ impl HlsOriginBuilder {
             instance: None,
             arrival_clock: None,
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
+            closed_captions_none: false,
         }
     }
 
@@ -1145,6 +1257,24 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// Declare the audio renditions this origin's master playlist advertises
+    /// (RFC 8216bis §4.4.6.1). Each entry becomes one `#EXT-X-MEDIA:TYPE=AUDIO`
+    /// line, emitted before the variants; the video variant's `AUDIO` attribute
+    /// is set to the entry's `group_id`. Empty by default (no audio
+    /// rendition lines, byte-identical to the pre-existing output).
+    pub fn audio_renditions(mut self, audio_renditions: Vec<AudioRenditionDecl>) -> Self {
+        self.audio_renditions = audio_renditions;
+        self
+    }
+
+    /// When `true`, emit `CLOSED-CAPTIONS=NONE` on the video variant
+    /// (RFC 8216bis §4.4.6.2). Default `false` leaves the attribute omitted,
+    /// matching the pre-existing output.
+    pub fn closed_captions_none(mut self, closed_captions_none: bool) -> Self {
+        self.closed_captions_none = closed_captions_none;
+        self
+    }
+
     /// Build the [`HlsOrigin`], subscribing its one [`SegmentCursor`]
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
@@ -1185,6 +1315,7 @@ impl HlsOriginBuilder {
         {
             return Err(HlsOriginBuildError::InvalidDeclaredBandwidth);
         }
+        validate_audio_renditions(&self.audio_renditions)?;
         let cursor = self.trunk.subscribe_segments();
         Ok(HlsOrigin {
             trunk: self.trunk,
@@ -1206,6 +1337,8 @@ impl HlsOriginBuilder {
             arrival_clock: self.arrival_clock,
             arrival_origin: Mutex::new(None),
             declared_bandwidth_bps: self.declared_bandwidth_bps,
+            audio_renditions: self.audio_renditions,
+            closed_captions_none: self.closed_captions_none,
             frozen_target_duration_secs: Mutex::new(None),
             target_duration_violations: AtomicU64::new(0),
         })
@@ -1281,6 +1414,10 @@ pub struct HlsOrigin {
     /// Operator-declared peak bitrate (see
     /// [`HlsOriginBuilder::declared_bandwidth_bps`]) — `None` means none.
     declared_bandwidth_bps: Option<u64>,
+    /// Declared audio renditions (issue #1428 slice 1).
+    audio_renditions: Vec<AudioRenditionDecl>,
+    /// Emit `CLOSED-CAPTIONS=NONE` (issue #1428 slice 1).
+    closed_captions_none: bool,
     /// Frozen `EXT-X-TARGETDURATION` (seconds, pre-rounding) captured the
     /// first time a playlist is rendered with at least one segment in the
     /// window: RFC 8216 §4.3.3.1 forbids the tag changing once published,
@@ -1499,19 +1636,79 @@ impl HlsOrigin {
         {
             extra_attrs.push(range.attr());
         }
-        let variant = Variant {
-            bandwidth,
-            average_bandwidth,
-            codecs: locked(&self.codecs).clone(),
-            uri: media_playlist_name.to_string(),
-            audio: None,
-            video: None,
-            subtitles: None,
-            closed_captions: None,
-            extra_attrs: extra_attrs.clone(),
-            resolution: *locked(&self.resolution),
-            frame_rate: *locked(&self.frame_rate),
+
+        for decl in &self.audio_renditions {
+            if decl.uri == media_playlist_name {
+                return Err(HlsMasterError::AudioRenditionUriEqualsMediaPlaylist);
+            }
+        }
+
+        let media: Vec<MediaRendition> = self
+            .audio_renditions
+            .iter()
+            .map(|decl| {
+                let mut m = MediaRendition::default();
+                m.media_type = MediaType::Audio;
+                m.uri = Some(decl.uri.clone());
+                m.group_id = decl.group_id.clone();
+                m.language = Some(decl.language.clone());
+                m.name = decl.name.clone();
+                m.default = decl.default;
+                m.autoselect = decl.autoselect;
+                m.channels = decl.channels.clone();
+                m.characteristics = decl.characteristics.clone();
+                m
+            })
+            .collect();
+
+        let audio_groups: Vec<String> = {
+            let mut g: Vec<String> = Vec::new();
+            for decl in &self.audio_renditions {
+                if !g.contains(&decl.group_id) {
+                    g.push(decl.group_id.clone());
+                }
+            }
+            g
         };
+
+        let closed_captions = if self.closed_captions_none {
+            Some(ClosedCaptionsRef::None)
+        } else {
+            None
+        };
+
+        let mut variants: Vec<Variant> = Vec::new();
+        if audio_groups.is_empty() {
+            variants.push(Variant {
+                bandwidth,
+                average_bandwidth,
+                codecs: locked(&self.codecs).clone(),
+                uri: media_playlist_name.to_string(),
+                audio: None,
+                video: None,
+                subtitles: None,
+                closed_captions,
+                extra_attrs: extra_attrs.clone(),
+                resolution: *locked(&self.resolution),
+                frame_rate: *locked(&self.frame_rate),
+            });
+        } else {
+            for group in &audio_groups {
+                variants.push(Variant {
+                    bandwidth,
+                    average_bandwidth,
+                    codecs: locked(&self.codecs).clone(),
+                    uri: media_playlist_name.to_string(),
+                    audio: Some(group.clone()),
+                    video: None,
+                    subtitles: None,
+                    closed_captions: closed_captions.clone(),
+                    extra_attrs: extra_attrs.clone(),
+                    resolution: *locked(&self.resolution),
+                    frame_rate: *locked(&self.frame_rate),
+                });
+            }
+        }
 
         // I-frame variant, only when the I-frame playlist is available.
         let mut iframe_variants: Vec<broadcast_hls::IFrameVariant> = Vec::new();
@@ -1553,8 +1750,8 @@ impl HlsOrigin {
         }
 
         let master = MasterPlaylist {
-            media: vec![],
-            variants: vec![variant],
+            media,
+            variants,
             iframe_variants,
             ..Default::default()
         };

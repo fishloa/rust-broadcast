@@ -119,6 +119,7 @@ fn config_with(
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         }],
         prebound,
         ..Config::default()

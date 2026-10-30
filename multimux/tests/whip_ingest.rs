@@ -205,6 +205,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         }],
         prebound,
         ..Config::default()
@@ -288,6 +289,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         }],
         prebound,
         ..Config::default()

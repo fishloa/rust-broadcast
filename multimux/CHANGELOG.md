@@ -13,6 +13,7 @@
 
 ### Added
 - LL-HLS origin responses now set the RFC 9218 `Priority: u=<urgency>` response header (`u=1` for playlists, `u=2` for parts and segments).
+- Route-level `audio_renditions` config field (serde, default empty) listing audio renditions for the HLS master playlist, plumbed into `HlsOriginBuilder::audio_renditions` (issue #1428 slice 1; audio playlist URIs 404 until split-mux slices land).
 
 ### Fixed
 - I-frame playlist `EXT-X-RENDITION-REPORT` now uses the configured `playlist_name` instead of the hardcoded `"media.m3u8"`.
