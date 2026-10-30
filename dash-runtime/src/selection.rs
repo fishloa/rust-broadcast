@@ -339,6 +339,19 @@ fn is_protected(set: &AdaptationSet) -> bool {
                 .all(|r| !r.content_protections.is_empty()))
 }
 
+fn is_main(set: &AdaptationSet) -> bool {
+    descriptors::roles(&set.roles).any(|r| r == Role::Main)
+}
+
+fn rep_allowed(set: &AdaptationSet, rep: &Representation, policy: &Policy) -> bool {
+    let c = effective_common(set, rep);
+    policy.max_bandwidth.is_none_or(|m| rep.bandwidth <= m)
+        && policy
+            .max_height
+            .is_none_or(|h| c.height.is_none_or(|rh| rh <= h))
+        && codec_allowed(c.codecs.as_deref(), &policy.codec_prefixes)
+}
+
 /// Select for `period_idx` of `mpd`.
 #[must_use]
 pub fn select(mpd: &Mpd, period_idx: usize, policy: &Policy) -> Selection {
@@ -435,45 +448,27 @@ pub fn select(mpd: &Mpd, period_idx: usize, policy: &Policy) -> Selection {
             });
         }
     }
-    let rep_allowed = |si: usize, ri: usize| -> bool {
-        let set = &period.adaptation_sets[si];
-        let rep = &set.representations[ri];
-        let c = effective_common(set, rep);
-        policy.max_bandwidth.is_none_or(|m| rep.bandwidth <= m)
-            && policy
-                .max_height
-                .is_none_or(|h| c.height.is_none_or(|rh| rh <= h))
-            && codec_allowed(c.codecs.as_deref(), &policy.codec_prefixes)
+    let set_has_allowed = |(si, reps): &(usize, Vec<usize>)| -> bool {
+        let set = &period.adaptation_sets[*si];
+        reps.iter()
+            .any(|ri| rep_allowed(set, &set.representations[*ri], policy))
     };
-    let set_has_allowed =
-        |(si, reps): &(usize, Vec<usize>)| -> bool { reps.iter().any(|ri| rep_allowed(*si, *ri)) };
-    let main_video = video_sets.iter().find(|(si, _)| {
-        descriptors::roles(&period.adaptation_sets[*si].roles).any(|r| r == Role::Main)
-    });
+    let main_video = video_sets
+        .iter()
+        .find(|(si, _)| is_main(&period.adaptation_sets[*si]));
     let chosen_video_set = video_sets
         .iter()
         .copied()
         .filter(|x| set_has_allowed(x))
-        .find(|(si, _)| {
-            descriptors::roles(&period.adaptation_sets[*si].roles).any(|r| r == Role::Main)
-        })
+        .find(|(si, _)| is_main(&period.adaptation_sets[*si]))
         .or_else(|| video_sets.iter().copied().find(|x| set_has_allowed(x)))
         .or_else(|| main_video.copied())
         .or_else(|| video_sets.first().copied());
     if let Some((si, reps)) = chosen_video_set {
         let set = &period.adaptation_sets[*si];
-        let allowed = |ri: &usize| -> bool {
-            let rep = &set.representations[*ri];
-            let c = effective_common(set, rep);
-            policy.max_bandwidth.is_none_or(|m| rep.bandwidth <= m)
-                && policy
-                    .max_height
-                    .is_none_or(|h| c.height.is_none_or(|rh| rh <= h))
-                && codec_allowed(c.codecs.as_deref(), &policy.codec_prefixes)
-        };
         let pick = reps
             .iter()
-            .filter(|ri| allowed(ri))
+            .filter(|ri| rep_allowed(set, &set.representations[**ri], policy))
             .max_by_key(|ri| set.representations[**ri].bandwidth)
             .or_else(|| {
                 reps.iter()
@@ -502,7 +497,7 @@ pub fn select(mpd: &Mpd, period_idx: usize, policy: &Policy) -> Selection {
                     rep: *ri,
                 })
                 .collect(),
-            is_main: descriptors::roles(&set.roles).any(|r| r == Role::Main),
+            is_main: is_main(set),
         });
     }
     let secondary = |set: &AdaptationSet| {
@@ -510,15 +505,9 @@ pub fn select(mpd: &Mpd, period_idx: usize, policy: &Policy) -> Selection {
     };
     let audio_set_has_allowed = |a: &AudioSet| -> bool {
         let set = &period.adaptation_sets[a.set];
-        a.reps.iter().any(|r| {
-            let rep = &set.representations[r.rep];
-            let c = effective_common(set, rep);
-            policy.max_bandwidth.is_none_or(|m| rep.bandwidth <= m)
-                && policy
-                    .max_height
-                    .is_none_or(|h| c.height.is_none_or(|rh| rh <= h))
-                && codec_allowed(c.codecs.as_deref(), &policy.codec_prefixes)
-        })
+        a.reps
+            .iter()
+            .any(|r| rep_allowed(set, &set.representations[r.rep], policy))
     };
     let audio_candidates: Vec<&AudioSet> = if out.audio_sets.iter().any(audio_set_has_allowed) {
         out.audio_sets

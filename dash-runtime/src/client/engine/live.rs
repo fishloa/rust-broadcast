@@ -1448,27 +1448,21 @@ impl DashClient {
             let mpd = self.mpd.as_ref().expect("mpd present");
             plan_representation(mpd, at, &self.plan_options())
         };
-        match planned {
-            Ok(p) => {
-                let marker = {
-                    let rep = &mut self.periods[pi].lanes[li].reps[ri];
-                    if rep.joined {
-                        let bound = p.plan.len().unwrap_or(u64::MAX / 2);
-                        rep.next_issue = match rep.last_time {
-                            Some(t) => p.plan.leading_true(bound, |s| s.time_ticks <= t),
-                            None => 0,
-                        };
-                    }
-                    rep.plan = Some(p.plan);
-                    rep.joined && rep.next_issue == 0 && rep.last_time.is_some()
-                };
-                if marker {
-                    push_marker(&mut self.periods[pi].lanes[li]);
+        if let Ok(p) = planned {
+            let marker = {
+                let rep = &mut self.periods[pi].lanes[li].reps[ri];
+                if rep.joined {
+                    let bound = p.plan.len().unwrap_or(u64::MAX / 2);
+                    rep.next_issue = match rep.last_time {
+                        Some(t) => p.plan.leading_true(bound, |s| s.time_ticks <= t),
+                        None => 0,
+                    };
                 }
-            }
-            Err(_) => {
-                // Keep the previous plan so a transiently bad refresh does
-                // not silence the track; the next refresh retries it.
+                rep.plan = Some(p.plan);
+                rep.joined && rep.next_issue == 0 && rep.last_time.is_some()
+            };
+            if marker {
+                push_marker(&mut self.periods[pi].lanes[li]);
             }
         }
     }
