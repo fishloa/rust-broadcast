@@ -145,6 +145,30 @@ pub fn nal_unit_type(codec: NalCodec, nal: &[u8]) -> Option<u8> {
     })
 }
 
+/// Output-rectangle `(width, height)` of an H.264 SPS NAL, clamped to `u16`.
+///
+/// This is the rule the TS demuxer applies to `TrackSpec` dimensions: the
+/// luma size after frame cropping (`decode_avc_sps`), `None` if the SPS does
+/// not decode.
+pub fn avc_sps_dimensions(sps: &[u8]) -> Option<(u16, u16)> {
+    let info = crate::sps::decode_avc_sps(sps).ok()?;
+    Some((
+        info.width.min(u32::from(u16::MAX)) as u16,
+        info.height.min(u32::from(u16::MAX)) as u16,
+    ))
+}
+
+/// Dimensions from the first decodable SPS (type 7) in a 4-byte length-prefixed
+/// H.264 access unit, per [`avc_sps_dimensions`]. `None` if the buffer is
+/// malformed or carries no decodable SPS.
+pub fn avc_access_unit_dimensions(au: &[u8]) -> Option<(u16, u16)> {
+    iter_length_prefixed_nals(au)
+        .ok()?
+        .into_iter()
+        .filter(|nal| nal_unit_type(NalCodec::Avc, nal) == Some(AVC_NAL_SPS))
+        .find_map(avc_sps_dimensions)
+}
+
 /// Whether a single NAL unit is an IDR/IRAP VCL type (a random-access keyframe
 /// slice) for `codec`.
 ///

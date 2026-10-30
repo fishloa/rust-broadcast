@@ -54,9 +54,10 @@
 //!   returns an empty `Vec` and callers keep the v1
 //!   independent-rebase-to-0 behaviour unchanged.
 //! - When an RFC 3640 `AAC-hbr` packet aggregates more than one access unit,
-//!   all AUs in that packet share the RTP timestamp, so non-final AUs get
-//!   `duration = 0`; v1 assumes one AU per packet, which is what transmux's
-//!   own packetiser emits.
+//!   all AUs in that packet share the RTP timestamp (§3.2.3.1: the timestamp
+//!   is the first AU's, the rest follow back to back). Once the next packet's
+//!   timestamp is known, the group's step is divided evenly across its AUs, so
+//!   each gets its own `pts` and a non-zero `duration`.
 //!
 //! # Loss and reorder detection (issue #779)
 //!
@@ -734,9 +735,10 @@ struct TrackState {
     /// timestamp — the anchor [`RtpStreamDepacketiser::sync_start_decode_times`]
     /// measures this track's RTCP SR offset against.
     first_unwrapped: Option<u64>,
-    /// AU awaiting its duration (filled in once the next AU's timestamp is
-    /// known).
-    pending: Option<PendingAu>,
+    /// AUs awaiting their duration (filled in once the next AU's timestamp is
+    /// known). More than one only for an audio packet that aggregates several
+    /// AUs under one RTP timestamp (RFC 3640 §3.2.3.1).
+    pending: Vec<PendingAu>,
     /// Last computed duration, reused for the final AU emitted by `flush`.
     last_duration: u32,
     /// Smallest positive step seen between consecutive wire timestamps — the
@@ -860,7 +862,7 @@ impl RtpStreamDepacketiser {
                         cur_bytes: 0,
                         last_unwrapped: None,
                         first_unwrapped: None,
-                        pending: None,
+                        pending: Vec::new(),
                         last_duration: 0,
                         min_positive_step: None,
                         sr_anchor: None,
@@ -884,6 +886,14 @@ impl RtpStreamDepacketiser {
             .iter()
             .map(|(id, st)| TrackSpec::new(*id, st.clock_rate, st.config.clone()))
             .collect()
+    }
+
+    /// Replace the codec configuration carried for one track (used by callers
+    /// that learn dimensions from an in-band parameter set after SETUP).
+    pub fn set_track_config(&mut self, track_id: TrackId, config: CodecConfig) {
+        if let Some((_, st)) = self.tracks.iter_mut().find(|(id, _)| *id == track_id) {
+            st.config = config;
+        }
     }
 
     fn state(&mut self, track_id: TrackId) -> Option<&mut TrackState> {
@@ -1024,7 +1034,7 @@ impl RtpStreamDepacketiser {
             st.cur_ts = None;
             st.last_unwrapped = None;
             st.first_unwrapped = None;
-            st.pending = None;
+            st.pending.clear();
             for pkt in adm.released {
                 Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
             }
@@ -1168,20 +1178,11 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
-        if let Some(p) = st.pending.take() {
-            // Absolute dts/pts (media plane step 2c): `unwrapped_ts` is the
-            // already-32-bit-unwrapped RTP media clock this depacketiser
-            // maintains (see `unwrap_ts`) — carried into the sample instead of
-            // being discarded.
+        let last_duration = st.last_duration;
+        out.extend(st.pending.drain(..).map(|p| {
             let ts = to_ticks(p.unwrapped_ts);
-            out.push(Sample::new(
-                p.data,
-                Some(ts),
-                Some(ts),
-                Some(st.last_duration),
-                p.is_sync,
-            ));
-        }
+            Sample::new(p.data, Some(ts), Some(ts), Some(last_duration), p.is_sync)
+        }));
         Ok(out)
     }
 
@@ -1231,7 +1232,13 @@ impl RtpStreamDepacketiser {
             if st.first_unwrapped.is_none() {
                 st.first_unwrapped = Some(unwrapped);
             }
-            if let Some(prev) = st.pending.take() {
+            let same_packet_group = st.kind == RtpMediaKind::Aac
+                && st
+                    .pending
+                    .last()
+                    .is_some_and(|p| p.unwrapped_ts == unwrapped);
+            if !same_packet_group && !st.pending.is_empty() {
+                let prev_ts = st.pending[0].unwrapped_ts;
                 // Duration = the *forward* step to this AU's presentation
                 // time. On a stream whose presentation order is its wire order
                 // that is exactly the frame period. On a reordered one it is
@@ -1245,7 +1252,7 @@ impl RtpStreamDepacketiser {
                 // needs exact per-frame durations should take the batch
                 // [`crate::rtp::RtpDepacketiser`] path, which sees the whole
                 // stream and can derive the period exactly.
-                let forward = unwrapped.saturating_sub(prev.unwrapped_ts);
+                let forward = unwrapped.saturating_sub(prev_ts);
                 // A step backward (presentation reorder) has no forward delta
                 // at all; falling back to the smallest positive step seen so
                 // far keeps the duration a real frame period instead of
@@ -1263,18 +1270,29 @@ impl RtpStreamDepacketiser {
                         .and_then(|p| u64::try_from(p).ok())
                         .unwrap_or(0)
                 };
-                let duration = u32::try_from(delta).unwrap_or(u32::MAX);
-                st.last_duration = duration;
-                let ts = to_ticks(prev.unwrapped_ts);
-                out.push(Sample::new(
-                    prev.data,
-                    Some(ts),
-                    Some(ts),
-                    Some(duration),
-                    prev.is_sync,
-                ));
+                let count = st.pending.len() as u64;
+                let each = delta / count;
+                let group: Vec<PendingAu> = st.pending.drain(..).collect();
+                for (index, p) in group.into_iter().enumerate() {
+                    let offset = each * index as u64;
+                    let duration = if index as u64 + 1 == count {
+                        delta - offset
+                    } else {
+                        each
+                    };
+                    let duration = u32::try_from(duration).unwrap_or(u32::MAX);
+                    st.last_duration = duration;
+                    let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
+                    out.push(Sample::new(
+                        p.data,
+                        Some(ts),
+                        Some(ts),
+                        Some(duration),
+                        p.is_sync,
+                    ));
+                }
             }
-            st.pending = Some(PendingAu {
+            st.pending.push(PendingAu {
                 unwrapped_ts: unwrapped,
                 is_sync: au.is_sync,
                 data: au.data,
@@ -1379,6 +1397,51 @@ mod tests {
             width: 0,
             height: 0,
         }
+    }
+
+    fn aac_packet(seq: u16, ts: u32, aus: &[&[u8]]) -> Vec<u8> {
+        let mut p = alloc::vec![0x80u8, 96];
+        p.extend_from_slice(&seq.to_be_bytes());
+        p.extend_from_slice(&ts.to_be_bytes());
+        p.extend_from_slice(&[0, 0, 0, 0]);
+        let headers_bits = (aus.len() * 16) as u16;
+        p.extend_from_slice(&headers_bits.to_be_bytes());
+        for au in aus {
+            p.extend_from_slice(&((au.len() as u16) << 3).to_be_bytes());
+        }
+        for au in aus {
+            p.extend_from_slice(au);
+        }
+        p
+    }
+
+    #[test]
+    fn aggregated_aac_packet_spreads_its_timestamp_over_its_aus() {
+        let id = TrackId::new(2);
+        let mut d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
+            id,
+            RtpMediaKind::Aac,
+            dummy_avc(),
+            48_000,
+        )]);
+        let aus: [&[u8]; 4] = [&[1, 1], &[2, 2], &[3, 3], &[4, 4]];
+        assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
+        assert!(
+            d.push(id, &aac_packet(2, 14_096, &[&[5, 5]]))
+                .unwrap()
+                .is_empty()
+        );
+        let out = d.push(id, &aac_packet(3, 15_120, &[&[6, 6]])).unwrap();
+        let got: Vec<_> = out.iter().map(|s| (s.pts, s.duration)).collect();
+        assert_eq!(
+            got,
+            alloc::vec![
+                (Some(10_000), Some(1024)),
+                (Some(11_024), Some(1024)),
+                (Some(12_048), Some(1024)),
+                (Some(13_072), Some(1024)),
+            ]
+        );
     }
 
     fn vpkt(seq: u16, ts: u32, marker: bool, nal: &[u8]) -> Vec<u8> {

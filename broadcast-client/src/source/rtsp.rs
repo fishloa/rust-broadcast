@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use rtsp_runtime::transport::{LowerTransport, Transport, TransportSpec};
 use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, StatusCode};
-use transmux::{RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample, TrackId};
+use transmux::{CodecConfig, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample, TrackId};
 use tshttp_runtime::{Config as TsConfig, StarveKind};
 use url::{Host, Url};
 
@@ -857,6 +857,7 @@ impl RtspSource {
         }
         let produced = !samples.is_empty();
         for sample in samples {
+            self.maybe_update_avc_dims(track, &sample);
             self.emit_sample(track, sample, now);
         }
         if !produced
@@ -865,6 +866,30 @@ impl RtspSource {
         {
             self.events.push_back(Event::Starved(StarveKind::Data));
             self.starved_data_fired = true;
+        }
+    }
+
+    fn maybe_update_avc_dims(&mut self, track: TrackId, sample: &Sample) {
+        let Some(track_init) = self.tracks.iter_mut().find(|t| t.track_id == track) else {
+            return;
+        };
+        let is_unknown = matches!(
+            &track_init.config,
+            CodecConfig::Avc { width, height, .. } if *width == 0 && *height == 0
+        );
+        if !is_unknown {
+            return;
+        }
+        if let Some((w, h)) = transmux::avc_access_unit_dimensions(&sample.data) {
+            if let CodecConfig::Avc { width, height, .. } = &mut track_init.config {
+                *width = w;
+                *height = h;
+            }
+            let config = track_init.config.clone();
+            if let Some(depa) = &mut self.depa {
+                depa.set_track_config(track, config);
+            }
+            self.tracks_dirty = true;
         }
     }
 

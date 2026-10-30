@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `RtpStreamDepacketiser::set_track_config` replaces a track's codec configuration after SETUP (for dimensions learned from an in-band parameter set).
+- `avc_sps_dimensions` and `avc_access_unit_dimensions`: the cropped output size of an H.264 SPS (the rule the TS demuxer uses for `TrackSpec` dimensions), and the same from the first SPS in a length-prefixed access unit.
+
+### Fixed
+- `RtpStreamDepacketiser`: an RFC 3640 `AAC-hbr` packet aggregating several access units gave all of them the packet's `pts` and every non-final one duration 0. The group's step to the next timestamp is now divided across its AUs.
+
 ### Changed
 - `StreamingTsHlsSegmenter::update_track` (issue #1425) now returns `Result<UpdateTrackOutcome>` (`Changed`/`Unchanged`/`Unknown`; an unknown `track_id` is now `Unknown` rather than an error) instead of `Result<bool>`; discontinuity arming compares typed fields only (audio sample rate / channel count / AudioSpecificConfig bytes; video timescale + display) instead of a `Debug` string of the whole `CodecConfig`, so a codec-config refresh (e.g. new SPS) with unchanged geometry/timing no longer arms a discontinuity. `PartialEq`/`Eq` derived on `CodecConfig` and `TrackSpec`. Breaking change for callers matching on the boolean.
 

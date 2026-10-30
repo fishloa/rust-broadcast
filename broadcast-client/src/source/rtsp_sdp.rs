@@ -179,12 +179,18 @@ fn supported_payload(
     match media.media.as_str() {
         MEDIA_VIDEO if encoding_is(ENCODING_H264) => {
             let avc = avc_config_from_fmtp(fmtp).ok()?;
+            let (width, height) = avc
+                .config
+                .sps
+                .first()
+                .and_then(|sps| transmux::avc_sps_dimensions(&sps.0))
+                .unwrap_or((UNKNOWN_DIMENSION, UNKNOWN_DIMENSION));
             Some((
                 RtpMediaKind::H264,
                 CodecConfig::Avc {
                     config: avc,
-                    width: UNKNOWN_DIMENSION,
-                    height: UNKNOWN_DIMENSION,
+                    width,
+                    height,
                 },
                 clock_rate,
             ))
