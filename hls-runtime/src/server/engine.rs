@@ -1160,9 +1160,10 @@ pub struct AudioRenditionDecl {
     pub name: String,
     /// `LANGUAGE` of the rendition; must be non-empty (`"und"` for
     /// undetermined) unless split-audio derivation is active, which then
-    /// fills it from the track's PMT `ISO_639_language_descriptor`. The
-    /// derived value is the ISO 639-2 three-letter code, which BCP 47
-    /// permits as a language subtag; no 639-2 to 639-1 mapping is applied.
+    /// fills it from the track's PMT `ISO_639_language_descriptor`,
+    /// canonicalised to a BCP 47 (RFC 5646) primary language subtag via
+    /// [`bcp47_language`] (ISO 639-2/B and 639-2/T are mapped to ISO 639-1
+    /// when one exists).
     pub language: String,
     /// `DEFAULT` attribute.
     pub default: bool,
@@ -1783,20 +1784,29 @@ impl HlsOrigin {
                     .as_ref()
                     .map(|m| m.role)
                     .unwrap_or(transmux::AudioRole::Unknown);
-                let derived_lang = meta
+                let derived_iso = meta
                     .as_ref()
                     .and_then(|m| m.languages.first().map(|l| l.language.clone()))
                     .unwrap_or_else(|| "und".to_string());
+                // LANGUAGE must be a BCP 47 tag: canonicalise the ISO 639-2
+                // code from the PMT. NAME keeps the source code as before.
+                let derived_lang =
+                    bcp47_language(&derived_iso).unwrap_or_else(|| "und".to_string());
                 let language = if decl.language.is_empty() {
                     derived_lang.clone()
                 } else {
                     decl.language.clone()
                 };
+                let name_source = if decl.language.is_empty() {
+                    derived_iso.clone()
+                } else {
+                    decl.language.clone()
+                };
                 let name = if decl.name.is_empty() {
                     if role == transmux::AudioRole::AudioDescription {
-                        format!("{} (AD)", language)
+                        format!("{} (AD)", name_source)
                     } else {
-                        language.clone()
+                        name_source.clone()
                     }
                 } else {
                     decl.name.clone()
@@ -3097,6 +3107,42 @@ impl ServedEgress for HlsOrigin {
             HlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
         }
     }
+}
+
+/// Canonicalise an ISO 639-2 language code into a BCP 47 (RFC 5646) primary
+/// language subtag, as required by RFC 8216bis `EXT-X-MEDIA` `LANGUAGE`.
+///
+/// HLS `LANGUAGE` must be an RFC 5646 (BCP 47) language tag; in BCP 47 the
+/// primary subtag is the ISO 639-1 two-letter code when one exists, otherwise
+/// the ISO 639-2/T (== ISO 639-3) three-letter code. ISO 639-2/B
+/// bibliographic codes (`fre`, `ger`, `dut`, `chi`, ...) are not valid BCP 47
+/// subtags and are mapped to their terminology (T) equivalents first.
+///
+/// `qaa`..`qtz` (private use), `und`, `mul`, `mis` and `zxx` pass through
+/// unchanged. Unknown or malformed codes return `None`.
+pub fn bcp47_language(iso639_2: &str) -> Option<String> {
+    let code = iso639_2.trim().to_ascii_lowercase();
+    if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_lowercase()) {
+        return None;
+    }
+    // Private-use range and the reserved singleton codes pass through verbatim.
+    if code == "und" || code == "mul" || code == "mis" || code == "zxx" {
+        return Some(code);
+    }
+    if code.starts_with('q') {
+        let bytes = code.as_bytes();
+        if (b'a'..=b't').contains(&bytes[1]) && bytes[2].is_ascii_lowercase() {
+            return Some(code);
+        }
+    }
+    let lang = iso_639::Language::from_str(&code)?;
+    if let Some(a2) = lang.alpha2() {
+        return Some(a2.to_string());
+    }
+    if let Some(t) = lang.alpha3_t() {
+        return Some(t.to_string());
+    }
+    lang.alpha3_b().map(|b| b.to_string())
 }
 
 #[cfg(test)]
