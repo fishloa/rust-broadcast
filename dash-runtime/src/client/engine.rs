@@ -137,6 +137,7 @@ struct Slot {
 struct Lane {
     kind: SetClass,
     set_id: Option<u64>,
+    identity: String,
     reps: Vec<RepState>,
     queue: VecDeque<Slot>,
     base: u32,
@@ -235,6 +236,8 @@ pub struct DashClient {
     issue: usize,
     deliver: usize,
     next_rep: u32,
+    next_track_id: u32,
+    track_ids: BTreeMap<String, u32>,
     reqs: BTreeMap<ResourceId, ReqInfo>,
     queue: VecDeque<ResourceId>,
     inflight: BTreeSet<ResourceId>,
@@ -356,6 +359,8 @@ impl DashClient {
             issue: 0,
             deliver: 0,
             next_rep: 0,
+            next_track_id: 1,
+            track_ids: BTreeMap::new(),
             reqs: BTreeMap::new(),
             queue: VecDeque::new(),
             inflight: BTreeSet::new(),
@@ -923,12 +928,37 @@ impl DashClient {
             let Some(at) = at else { continue };
             match self.build_rep(at) {
                 Ok(rep) => {
-                    let set_id = at
-                        .resolve(self.mpd.as_ref().expect("mpd present"))
-                        .and_then(|(_, s, _)| s.id);
+                    let resolved = at.resolve(self.mpd.as_ref().expect("mpd present"));
+                    let set_id = resolved.and_then(|(_, s, _)| s.id);
+                    let identity = resolved.map_or_else(
+                        || format!("{:?}", kind),
+                        |(_, s, _)| {
+                            let roles = s
+                                .roles
+                                .iter()
+                                .map(|d| {
+                                    format!(
+                                        "{}={}",
+                                        d.scheme_id_uri,
+                                        d.value.as_deref().unwrap_or("")
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            format!(
+                                "{}|id={:?}|group={:?}|lang={}|roles={}",
+                                kind.name(),
+                                s.id,
+                                s.group,
+                                s.lang.as_deref().unwrap_or(""),
+                                roles
+                            )
+                        },
+                    );
                     run.lanes.push(Lane {
                         kind,
                         set_id,
+                        identity,
                         reps: vec![rep],
                         queue: VecDeque::new(),
                         base: 0,
@@ -1610,16 +1640,33 @@ impl DashClient {
 
     fn start_period(&mut self, pi: usize) {
         self.periods[pi].started = true;
-        let mut base = 1u32;
+        // Stable track ids across Periods: a lane keeps the id it was first
+        // given (keyed by media kind + AdaptationSet identity) instead of
+        // restarting at 1 each Period, so a Period that drops a kind cannot
+        // hand that kind's id to a different kind in a later Period.
+        let mut assignments: Vec<(usize, u32, u32)> = Vec::new();
         for li in 0..self.periods[pi].lanes.len() {
             let n = self.periods[pi].lanes[li]
                 .current()
                 .and_then(|r| self.inits.get(&r.init_key))
                 .map_or(0, |e| u32::try_from(e.specs.len()).unwrap_or(u32::MAX));
+            let identity = self.periods[pi].lanes[li].identity.clone();
+            let base = if n == 0 {
+                0
+            } else if let Some(existing) = self.track_ids.get(&identity).copied() {
+                existing
+            } else {
+                let base = self.next_track_id;
+                self.next_track_id = self.next_track_id.saturating_add(n);
+                self.track_ids.insert(identity, base);
+                base
+            };
+            assignments.push((li, base, n));
+        }
+        for (li, base, n) in assignments {
             let lane = &mut self.periods[pi].lanes[li];
             lane.base = base;
             lane.count = n;
-            base = base.saturating_add(n);
         }
         let notices = std::mem::take(&mut self.periods[pi].notices);
         self.outputs.extend(notices);

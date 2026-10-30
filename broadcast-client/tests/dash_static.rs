@@ -429,3 +429,111 @@ fn close_is_terminal_and_closes_every_connection_in_flight_exactly_once() {
     sim.session.on_data(1, b"x", 0);
     assert!(sim.session.next_event().is_none());
 }
+
+#[test]
+fn bltrackid_dash_period_change_emits_tracks_with_unique_ids() {
+    use broadcast_client::Event;
+    use dash_common::loopback::Origin;
+    use dash_common::world::World;
+    use transmux::CodecConfig;
+
+    let mpd = r#"<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" minBufferTime="PT2.000S" type="static" mediaPresentationDuration="PT0H0M18.000S" maxSegmentDuration="PT0H0M2.021S" profiles="urn:mpeg:dash:profile:full:2011">
+ <Period id="1" duration="PT0H0M6.013S">
+  <AdaptationSet segmentAlignment="true" maxWidth="320" maxHeight="240" maxFrameRate="25" par="4:3" mimeType="video/mp4" startWithSAP="1">
+   <SegmentTemplate media="p1_dash_track1_$Number$.m4s" initialization="p1_dash_track1_init.mp4" timescale="12800" startNumber="1" duration="25600"/>
+   <Representation id="1" codecs="avc1.4D400D" width="320" height="240" frameRate="25" sar="1:1" bandwidth="84313"/>
+  </AdaptationSet>
+  <AdaptationSet segmentAlignment="true" mimeType="audio/mp4" startWithSAP="1">
+   <SegmentTemplate media="p1_dash_track2_$Number$.m4s" initialization="p1_dash_track2_init.mp4" timescale="44100" startNumber="1" duration="88200"/>
+   <Representation id="2" codecs="mp4a.40.2" audioSamplingRate="44100" bandwidth="48523">
+    <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
+   </Representation>
+  </AdaptationSet>
+ </Period>
+ <Period id="2" start="PT0H0M6.000S" duration="PT0H0M6.000S">
+  <AdaptationSet segmentAlignment="true" mimeType="audio/mp4" startWithSAP="1">
+   <SegmentTemplate media="p2_dash_track2_$Number$.m4s" initialization="p2_dash_track2_init.mp4" timescale="44100" startNumber="1" duration="88200"/>
+   <Representation id="4" codecs="mp4a.40.2" audioSamplingRate="44100" bandwidth="48855">
+    <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
+   </Representation>
+  </AdaptationSet>
+ </Period>
+ <Period id="3" start="PT0H0M12.000S" duration="PT0H0M6.000S">
+  <AdaptationSet segmentAlignment="true" maxWidth="320" maxHeight="240" maxFrameRate="25" par="4:3" mimeType="video/mp4" startWithSAP="1">
+   <SegmentTemplate media="p2_dash_track1_$Number$.m4s" initialization="p2_dash_track1_init.mp4" timescale="12800" startNumber="1" duration="25600"/>
+   <Representation id="3" codecs="avc1.4D400D" width="320" height="240" frameRate="25" sar="1:1" bandwidth="115070"/>
+  </AdaptationSet>
+  <AdaptationSet segmentAlignment="true" mimeType="audio/mp4" startWithSAP="1">
+   <SegmentTemplate media="p2_dash_track2_$Number$.m4s" initialization="p2_dash_track2_init.mp4" timescale="44100" startNumber="1" duration="88200"/>
+   <Representation id="4" codecs="mp4a.40.2" audioSamplingRate="44100" bandwidth="48855">
+    <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
+   </Representation>
+  </AdaptationSet>
+ </Period>
+</MPD>
+"#;
+
+    let mut origin = Origin::new();
+    origin = origin.mount("dash.test", "multiperiod-restart");
+    origin = origin.doc("http://dash.test/bltrackid.mpd", mpd.as_bytes().to_vec());
+
+    let mut sim = dash_sim::DashSim::new(
+        "http://dash.test/bltrackid.mpd",
+        broadcast_client::Config::default(),
+        World::new(1_700_000_000 * 1_000_000),
+        Box::new(dash_sim::StaticBackend(origin)),
+    );
+    sim.run_to_terminal(60 * dash_sim::SEC);
+
+    let tracks_events: Vec<&Vec<broadcast_client::TrackSpec>> = sim
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Tracks(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        tracks_events.len() >= 3,
+        "a Period that changes the track set must emit Event::Tracks: got {}",
+        tracks_events.len()
+    );
+
+    let mut video_ids = std::collections::BTreeSet::new();
+    let mut audio_ids = std::collections::BTreeSet::new();
+    for specs in &tracks_events {
+        for spec in *specs {
+            match &spec.config {
+                CodecConfig::Avc { .. } => {
+                    video_ids.insert(spec.track_id.value());
+                }
+                _ => {
+                    audio_ids.insert(spec.track_id.value());
+                }
+            }
+        }
+    }
+    assert_eq!(
+        video_ids.len(),
+        1,
+        "video track id must stay unique per kind"
+    );
+    assert_eq!(
+        audio_ids.len(),
+        1,
+        "audio track id must stay unique per kind"
+    );
+    assert!(
+        video_ids.is_disjoint(&audio_ids),
+        "a track id must not be shared between media kinds"
+    );
+
+    // The audio-only Period must announce only the audio track.
+    assert!(
+        tracks_events
+            .iter()
+            .any(|s| s.len() == 1 && s[0].config.audio_sample_rate().is_some()),
+        "audio-only Period did not emit an audio-only Tracks event"
+    );
+}

@@ -262,7 +262,7 @@ no refresh and no availability gating (A.2: "static is a subset of the same beha
 3. Audio: renditions = selectable audio sets of the Period. Pick: first set whose `@lang` BCP 47 prefix matches `preferred_audio_language` (ASCII case-insensitive) and whose Role is not `commentary`/`description`;
    else Role `main`; else the first. Representation = highest `@bandwidth` the codec policy allows. DASH has no DEFAULT/AUTOSELECT flag, Role `main` plays that part (5.8.5.5 Table 34). A muxed Representation
    (audio and video in one init) yields several local tracks and needs no separate pick.
-4. `TrackId`s: 1-based in selection order (video sets then audio), stable for the life of the selection; a Representation switch inside a set KEEPS the id (the `Tracks` event re-announces the new `TrackSpec`);
+4. `TrackId`s: 1-based in selection order (video sets then audio) on first encounter of a (media kind, AdaptationSet identity); stable across Periods and Representation switches, so a Period that drops a kind does NOT recycle its id for a different kind (the `Tracks` event re-announces the new `TrackSpec`);
    local `moov` track ids are remapped (every Representation's init typically uses id 1, multimux `dash_pull` "Track id remapping" note).
 
 ### 5.2 MPD refresh (dynamic only)

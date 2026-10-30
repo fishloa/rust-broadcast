@@ -4,6 +4,9 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `TrackId` assignment is now stable across Periods: ids are keyed by (media kind, AdaptationSet identity: id/group/lang/role) and allocated on first encounter, so a track that continues keeps its id and a Period that drops a kind does not hand that kind's id to a different kind in a later Period (previously ids restarted at 1 each Period). Visible numeric ids for multi-Period presentations can therefore differ from the previous per-Period numbering; consumers must key state by `TrackId` as announced in `Output::Tracks`, not by position. BREAKING for callers that hard-coded per-Period ids.
+
 ### Added
 - Initial core (design step W-c, `docs/dash-runtime/DESIGN.md`), not yet published.
 - `mpd`: consume-only MPD model and bounded namespace-aware parser (`Limits`), attribute inheritance down Period > AdaptationSet > Representation, BaseURL alternates (DVB priority) and URL resolution, descriptors (Role, EssentialProperty, ContentProtection, UTCTiming, `urn:mpeg:dash:urlparam:2014`).
