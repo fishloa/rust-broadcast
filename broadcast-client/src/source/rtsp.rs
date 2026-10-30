@@ -857,11 +857,6 @@ impl RtspSource {
         }
         let produced = !samples.is_empty();
         for sample in samples {
-            // A video track admitted without `sprop-parameter-sets` has no
-            // avcC yet: build it from the first in-band SPS+PPS and drop the
-            // sample (and every earlier one) until that succeeds, so no
-            // sample is emitted with an unknown config. Matches the TS demux
-            // path, which withholds samples before the first SPS.
             if !self.try_complete_avc_config(track, &sample) {
                 continue;
             }
@@ -914,30 +909,7 @@ impl RtspSource {
         if ready {
             return true;
         }
-        // Collect the SPS/PPS NAL units carried in-band in this access unit.
-        let mut sps: Vec<transmux::AvcSps> = Vec::new();
-        let mut pps: Vec<transmux::AvcPps> = Vec::new();
-        let bytes = &sample.data;
-        let mut off = 0usize;
-        while off.saturating_add(4) <= bytes.len() {
-            let len =
-                u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
-                    as usize;
-            off = off.saturating_add(4);
-            if len == 0 || off.saturating_add(len) > bytes.len() {
-                break;
-            }
-            let nal = &bytes[off..off + len];
-            off = off.saturating_add(len);
-            if nal.is_empty() {
-                continue;
-            }
-            match nal[0] & 0x1f {
-                7 => sps.push(transmux::AvcSps(nal.to_vec())),
-                8 => pps.push(transmux::AvcPps(nal.to_vec())),
-                _ => {}
-            }
-        }
+        let (sps, pps) = transmux::avc_access_unit_parameter_sets(&sample.data);
         if sps.is_empty() || pps.is_empty() {
             return false;
         }
@@ -982,9 +954,7 @@ impl RtspSource {
                 .as_ref()
                 .map(RtpStreamDepacketiser::track_specs)
                 .unwrap_or_default();
-            // Never announce a video track whose avcC is still empty: a
-            // hardware decoder would reject it. Withhold it until the in-band
-            // SPS+PPS has filled it in.
+            // Hardware decoders reject an empty avcC.
             specs.retain(|spec| match &spec.config {
                 CodecConfig::Avc { config, .. } => !config.config.sps.is_empty(),
                 _ => true,

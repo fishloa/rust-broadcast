@@ -169,6 +169,22 @@ pub fn avc_access_unit_dimensions(au: &[u8]) -> Option<(u16, u16)> {
         .find_map(avc_sps_dimensions)
 }
 
+/// The in-band SPS (type 7) and PPS (type 8) NAL units of a 4-byte
+/// length-prefixed H.264 access unit, in order. Empty lists if the buffer is
+/// malformed or carries none.
+pub fn avc_access_unit_parameter_sets(au: &[u8]) -> (Vec<crate::AvcSps>, Vec<crate::AvcPps>) {
+    let mut sps = Vec::new();
+    let mut pps = Vec::new();
+    for nal in iter_length_prefixed_nals(au).unwrap_or_default() {
+        match nal_unit_type(NalCodec::Avc, nal) {
+            Some(AVC_NAL_SPS) => sps.push(crate::AvcSps(nal.to_vec())),
+            Some(AVC_NAL_PPS) => pps.push(crate::AvcPps(nal.to_vec())),
+            _ => {}
+        }
+    }
+    (sps, pps)
+}
+
 /// Whether a single NAL unit is an IDR/IRAP VCL type (a random-access keyframe
 /// slice) for `codec`.
 ///
