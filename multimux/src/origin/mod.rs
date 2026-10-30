@@ -1578,7 +1578,8 @@ async fn serve_with_registry_impl(
                 .with_dvr(route.dvr.clone())
                 .with_program_date_time(config.program_date_time)
                 .with_declared_bandwidth_bps(route.declared_bandwidth_bps)
-                .with_audio_renditions(route.audio_renditions.clone()),
+                .with_audio_renditions(route.audio_renditions.clone())
+                .with_audio_rendition_sources(route.audio_rendition_sources.clone()),
         );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
@@ -4214,6 +4215,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -4249,6 +4251,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -4281,6 +4284,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             bind: "127.0.0.1:0".into(),
             output_auth: Some(crate::config::OutputAuthSpec::Custom {
@@ -4396,6 +4400,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -4648,6 +4653,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             };
             let store = Arc::new(RouteHandle::new(
                 config.target_duration_secs,

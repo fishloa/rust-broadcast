@@ -458,6 +458,20 @@ pub(crate) struct ProgramServing {
     /// absolute-timeline position). Independent per program, since each
     /// program's own timeline starts at zero.
     next_timeline_ns: AtomicU64,
+    /// Sibling audio renditions (issue #1428 slice 2b).
+    pub(crate) audio_rendition_servings: Vec<AudioServing>,
+}
+
+/// One separate audio rendition served from its own sibling `Trunk`/`HlsOrigin`
+/// (issue #1428 slice 2b). `track_id` is the value embedded in the
+/// rendition's init/segment/part filenames, so the shared resource route can
+/// pick the right origin.
+#[derive(Clone)]
+pub struct AudioServing {
+    pub decl: hls_runtime::server::AudioRenditionDecl,
+    pub track_id: transmux::TrackId,
+    pub trunk: std::sync::Arc<Trunk>,
+    pub origin: std::sync::Arc<hls_runtime::server::HlsOrigin>,
 }
 
 impl ProgramServing {
@@ -479,6 +493,7 @@ impl ProgramServing {
         program_date_time: crate::config::ProgramDateTimeSource,
         declared_bandwidth_bps: Option<u64>,
         audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
+        split_audio: bool,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
@@ -496,8 +511,44 @@ impl ProgramServing {
             builder = builder.declared_bandwidth_bps(declared);
         }
         if !audio_renditions.is_empty() {
-            builder = builder.audio_renditions(audio_renditions);
+            builder = builder.audio_renditions(audio_renditions.clone());
         }
+        // Sibling trunks + origins for the split audio renditions (issue #1428
+        // slice 2b). Each carries one audio track's fMP4 and is served by its
+        // own `HlsOrigin`; the primary trunk carries the remaining (video)
+        // tracks.
+        let sibling_decls: &[hls_runtime::server::AudioRenditionDecl] =
+            if split_audio { &audio_renditions } else { &[] };
+        let mut audio_servings = Vec::with_capacity(sibling_decls.len());
+        for (idx, decl) in sibling_decls.iter().enumerate() {
+            let sibling_trunk = Arc::new(Trunk::new(TrunkConfig::new(
+                nz(DEFAULT_TIMED_CAPACITY),
+                nz(DEFAULT_SPARSE_CAPACITY),
+                window_segments,
+                nz(DEFAULT_EVENT_CAPACITY),
+                nz(DEFAULT_PART_CAPACITY),
+            )));
+            let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
+            let mut ab = HlsOrigin::builder(Arc::clone(&sibling_trunk))
+                .target_duration_secs(target_duration_secs)
+                .window_segments(window_segments)
+                .container(Container::Fmp4)
+                .media_sequence_offset(media_sequence_offset);
+            if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
+                ab = ab.program_date_time_arrival(Arc::new(|| {
+                    jiff::Timestamp::now().as_millisecond()
+                }));
+            }
+            ab = ab.low_latency(part_target_ms);
+            let origin = Arc::new(ab.build()?);
+            audio_servings.push(AudioServing {
+                decl: decl.clone(),
+                track_id,
+                trunk: Arc::clone(&sibling_trunk),
+                origin,
+            });
+        }
+
         // `build` rejects a non-finite/non-positive target duration, a zero
         // part target and an offset with no room for u32 — all reachable
         // from caller-supplied numbers, so surfaced, never `expect`ed.
@@ -541,6 +592,7 @@ impl ProgramServing {
             dvr: Mutex::new(dvr),
             segment_writer: Mutex::new(None),
             next_timeline_ns: AtomicU64::new(0),
+            audio_rendition_servings: audio_servings,
         }))
     }
 
@@ -557,6 +609,22 @@ impl ProgramServing {
 
     fn set_init(&self, bytes: impl Into<Bytes>) {
         self.ll_hls.set_init(bytes);
+    }
+
+    pub(crate) fn set_audio_init(&self, index: usize, bytes: impl Into<Bytes>) {
+        if let Some(serving) = self.audio_rendition_servings.get(index) {
+            serving.origin.set_init(bytes);
+        }
+    }
+
+    pub(crate) fn audio_servings(&self) -> &[AudioServing] {
+        &self.audio_rendition_servings
+    }
+
+    pub(crate) fn audio_by_track(&self, track_id: transmux::TrackId) -> Option<&AudioServing> {
+        self.audio_rendition_servings
+            .iter()
+            .find(|s| s.track_id == track_id)
     }
 
     fn init_bytes(&self) -> Option<Bytes> {
@@ -900,6 +968,9 @@ pub struct RouteHandle {
     /// Audio renditions advertised in this route's HLS master playlist
     /// (issue #1428 slice 1).
     audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
+    /// Source track per audio rendition for the opt-in split-mux (issue
+    /// #1428 slice 2b); empty means no split.
+    audio_rendition_sources: Vec<crate::config::AudioTrackSelector>,
     /// Notifies waiters when a new program is published via
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
@@ -941,6 +1012,7 @@ impl RouteHandle {
             program_date_time: crate::config::ProgramDateTimeSource::Off,
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
+            audio_rendition_sources: Vec::new(),
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
         }
@@ -1092,6 +1164,21 @@ impl RouteHandle {
         self
     }
 
+    /// Sets the source audio track of each audio rendition (issue #1428 slice
+    /// 2b), enabling the split-mux when non-empty — a consuming builder.
+    #[must_use]
+    pub fn with_audio_rendition_sources(
+        mut self,
+        value: Vec<crate::config::AudioTrackSelector>,
+    ) -> Self {
+        self.audio_rendition_sources = value;
+        self
+    }
+
+    pub(crate) fn audio_rendition_sources(&self) -> &[crate::config::AudioTrackSelector] {
+        &self.audio_rendition_sources
+    }
+
     /// This route's configured container (see [`Self::with_container`]) —
     /// needed by [`crate::source::segment::drive_program_segmenters`] to pick
     /// the fMP4 (`LlHlsSegmenter`) or classic-TS
@@ -1215,6 +1302,7 @@ impl RouteHandle {
             self.program_date_time,
             self.declared_bandwidth_bps,
             self.audio_renditions.clone(),
+            !self.audio_rendition_sources.is_empty(),
         ) {
             Ok(serving) => serving,
             Err(e) => {
@@ -1396,6 +1484,36 @@ impl RouteHandle {
             Some(serving) => serving.set_init(bytes),
             None => tracing::warn!(?program, "RouteHandle::set_init: program not published yet"),
         }
+    }
+
+    pub fn set_audio_init(&self, program: ProgramId, index: usize, bytes: impl Into<Bytes>) {
+        match self.serving(program) {
+            Some(serving) => serving.set_audio_init(index, bytes),
+            None => tracing::warn!(
+                ?program,
+                "RouteHandle::set_audio_init: program not published yet"
+            ),
+        }
+    }
+
+    /// Sibling audio rendition servings for `program` (issue #1428 slice 2b).
+    pub fn audio_servings(&self, program: ProgramId) -> Vec<AudioServing> {
+        self.serving(program)
+            .map(|s| s.audio_servings().to_vec())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn audio_renditions(&self) -> &[hls_runtime::server::AudioRenditionDecl] {
+        &self.audio_renditions
+    }
+
+    pub(crate) fn audio_servings_for_trunk(&self, trunk: &Trunk) -> Vec<AudioServing> {
+        self.programs
+            .read()
+            .values()
+            .find(|s| std::ptr::eq(std::sync::Arc::as_ptr(&s.trunk), trunk))
+            .map(|s| s.audio_servings().to_vec())
+            .unwrap_or_default()
     }
 
     /// `program`'s fMP4 init segment bytes, if set and if `program` is

@@ -87,6 +87,7 @@ impl LlHlsOutput {
 pub(crate) struct LlHlsState {
     route: Arc<RouteHandle>,
     playlist_name: String,
+    audio_index: Option<usize>,
 }
 
 impl Output for LlHlsOutput {
@@ -101,10 +102,11 @@ impl Output for LlHlsOutput {
     ///   different name).
     fn manifest_routes(&self, route: Arc<RouteHandle>) -> Router {
         let state = LlHlsState {
-            route,
+            route: Arc::clone(&route),
             playlist_name: self.playlist_name.clone(),
+            audio_index: None,
         };
-        Router::new()
+        let mut router = Router::new()
             .route("/master.m3u8", get(master_playlist).options(cors_preflight))
             .route(
                 &format!("/{}", self.playlist_name),
@@ -114,7 +116,32 @@ impl Output for LlHlsOutput {
                 &format!("/{}", IFRAME_PLAYLIST_NAME),
                 get(iframe_playlist).options(cors_preflight),
             )
-            .with_state(state)
+            .with_state(state.clone());
+
+        // Serve one audio media playlist per declared rendition at its
+        // declared URI (issue #1428 slice 2b). Each gets its own state
+        // carrying the rendition index so the handler resolves the sibling
+        // origin.
+        let split = !route.audio_rendition_sources().is_empty();
+        for (idx, decl) in route.audio_renditions().iter().enumerate() {
+            if !split {
+                break;
+            }
+            let uri = decl.uri.clone();
+            if uri.is_empty() {
+                continue;
+            }
+            let st = LlHlsState {
+                route: Arc::clone(&route),
+                playlist_name: self.playlist_name.clone(),
+                audio_index: Some(idx),
+            };
+            router = router.route(
+                &format!("/{}", uri),
+                get(audio_playlist).options(cors_preflight).with_state(st),
+            );
+        }
+        router
     }
 }
 
@@ -237,6 +264,51 @@ pub(crate) async fn media_playlist(
     })
 }
 
+/// `GET /{audio uri}` — the LL-HLS media playlist for one audio rendition
+/// (issue #1428 slice 2b), served from its sibling `HlsOrigin` with blocking
+/// reload support identical to the video playlist.
+pub(crate) async fn audio_playlist(
+    State(state): State<LlHlsState>,
+    Query(q): Query<BlockingReloadQuery>,
+) -> Response {
+    let serving = match http::resolve_route_program(&state.route) {
+        Ok(serving) => serving,
+        Err(resp) => return *resp,
+    };
+    let idx = state.audio_index.unwrap_or(0);
+    let Some(audio) = serving.audio_servings().get(idx) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let trunk = audio.trunk.clone();
+    let origin = audio.origin.clone();
+    let track_id = audio.track_id;
+    let request = HlsRequest::Playlist {
+        track_id,
+        query: q.into(),
+    };
+    let priority = origin.http_priority(&request);
+    let resp = http::resolve_blocking(
+        &trunk,
+        origin.as_ref(),
+        request,
+        BLOCKING_RELOAD_TIMEOUT,
+        BlockingRequestGuard::new,
+    )
+    .await;
+    http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
+        HlsBody::Playlist(m) => {
+            let mut resp =
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
+                resp.headers_mut().insert("priority", value);
+            }
+            resp
+        }
+        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    })
+}
+
 /// `GET /iframe.m3u8` — the LL-HLS I-frame (trick-play) playlist for
 /// [`DEFAULT_TRACK_ID`], blocking on `_HLS_msn` when present (via
 /// [`crate::http::resolve_blocking`]). Carries no parts, so `_HLS_part` is
@@ -338,6 +410,7 @@ mod tests {
         LlHlsState {
             route,
             playlist_name: DEFAULT_PLAYLIST_NAME.to_string(),
+            audio_index: None,
         }
     }
 
@@ -375,6 +448,7 @@ mod tests {
         let resp = master_playlist(State(LlHlsState {
             route,
             playlist_name: "index.m3u8".to_string(),
+            audio_index: None,
         }))
         .await;
         assert_eq!(resp.status(), StatusCode::OK);

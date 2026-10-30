@@ -54,7 +54,7 @@ mod ids;
 pub use engine::{
     AudioRenditionDecl, BlockingQuery, ClosedSegment, Container, DEFAULT_TRACK_ID, HlsBody,
     HlsMasterError, HlsOrigin, HlsOriginBuildError, HlsOriginBuilder, HlsRequest, HttpPriority,
-    IFRAME_SEGMENT_PREFIX, SkipDirective, master_playlist_m3u8,
+    IFRAME_SEGMENT_PREFIX, SkipDirective, master_playlist_m3u8, validate_audio_renditions,
 };
 pub use ids::Generation;
 pub use media_plane::ids::{PartIndex, SegmentSeq};

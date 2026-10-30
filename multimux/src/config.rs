@@ -1482,6 +1482,13 @@ pub struct Route {
     /// split-mux slices land.
     #[serde(default)]
     pub audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
+    /// Opt-in split-mux (issue #1428 slice 2b): when non-empty, one selector
+    /// per `audio_renditions` entry (same order) names the source audio track
+    /// that rendition serves as its own media playlist, and the primary
+    /// (video) playlist stops carrying those tracks. Requires an `llhls`-only
+    /// fMP4 route. Empty by default: output is unchanged.
+    #[serde(default)]
+    pub audio_rendition_sources: Vec<AudioTrackSelector>,
     /// DVR durable segment archive (issue #746). Off by default — set
     /// `"enabled": true` and configure an `archive_root` and at least one
     /// retention limit to enable recording.
@@ -1629,6 +1636,50 @@ fn is_windows_reserved_name(name: &str) -> bool {
 }
 
 impl Route {
+    pub(crate) fn validate_audio_rendition_sources(&self, playlist_name: &str) -> Result<()> {
+        if self.audio_rendition_sources.is_empty() {
+            return Ok(());
+        }
+        let invalid = |reason: String| MultimuxError::ConfigInvalid {
+            field: "audio_rendition_sources",
+            reason,
+        };
+        if self.audio_rendition_sources.len() != self.audio_renditions.len() {
+            return Err(invalid(format!(
+                "needs exactly one selector per audio rendition: {} selectors for {} renditions",
+                self.audio_rendition_sources.len(),
+                self.audio_renditions.len()
+            )));
+        }
+        if self.outputs.iter().any(|k| !matches!(k, OutputKind::LlHls)) {
+            return Err(invalid(
+                "split audio is served by the llhls output only; remove every other output".into(),
+            ));
+        }
+        let mut uris = std::collections::HashSet::new();
+        for decl in &self.audio_renditions {
+            let uri = decl.uri.as_str();
+            let reserved = matches!(uri, "master.m3u8" | "iframe.m3u8") || uri == playlist_name;
+            let unsafe_path = uri.starts_with('/')
+                || uri
+                    .split('/')
+                    .any(|seg| seg.is_empty() || seg == "." || seg == "..");
+            if reserved || unsafe_path || !uris.insert(uri) {
+                return Err(invalid(format!(
+                    "audio rendition uri {uri:?} must be a unique relative path that is not \
+                     master.m3u8, iframe.m3u8 or the media playlist name"
+                )));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        for sel in &self.audio_rendition_sources {
+            if !seen.insert(*sel) {
+                return Err(invalid(format!("duplicate selector {sel:?}")));
+            }
+        }
+        Ok(())
+    }
+
     /// Semantic validation for one route in isolation — no other route's
     /// name is visible here, so the duplicate-name check stays in
     /// [`Config::validate`]'s own loop. Reused by that loop (so every startup
@@ -1637,6 +1688,7 @@ impl Route {
     /// and every route a `POST /admin/reload` would add or restart —
     /// validated before any of them touch the live registry.
     pub(crate) fn validate_standalone(&self, playlist_name: &str) -> Result<()> {
+        self.validate_audio_rendition_sources(playlist_name)?;
         if self.name.is_empty() {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.name",
@@ -1960,6 +2012,32 @@ impl ProgramDateTimeSource {
 }
 
 broadcast_common::impl_spec_display!(ProgramDateTimeSource);
+
+/// Which source audio track feeds a separate audio rendition (issue #1428
+/// slice 2b). `Index` is the zero-based ordinal among the program's
+/// fMP4-muxable audio tracks in the order the source announced them;
+/// `TrackId` is the source track id itself.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioTrackSelector {
+    /// Ordinal among the program's audio tracks.
+    Index(u32),
+    /// Source track id.
+    TrackId(u32),
+}
+
+impl AudioTrackSelector {
+    /// The wire/label string for this selector's kind.
+    pub fn name(&self) -> &'static str {
+        match self {
+            AudioTrackSelector::Index(_) => "index",
+            AudioTrackSelector::TrackId(_) => "track_id",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(AudioTrackSelector);
 
 /// multimux runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
@@ -2365,6 +2443,12 @@ impl Config {
             }
             r.validate_standalone(&self.playlist_name)?;
             r.validate_dvr()?;
+            hls_runtime::server::validate_audio_renditions(&r.audio_renditions).map_err(|e| {
+                MultimuxError::ConfigInvalid {
+                    field: "audio_renditions",
+                    reason: e.to_string(),
+                }
+            })?;
         }
         if !self.allow_open_ingest {
             for r in &self.routes {
@@ -2987,6 +3071,7 @@ mod tests {
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
+                    audio_rendition_sources: Vec::new(),
                 }],
                 request_timeout_secs: bad,
                 ..Config::default()
@@ -3010,6 +3095,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             max_concurrent_requests: 0,
             ..Config::default()
@@ -3032,6 +3118,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             max_request_body_bytes: 0,
             ..Config::default()
@@ -3078,6 +3165,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3112,6 +3200,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3158,6 +3247,7 @@ mod tests {
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
+                    audio_rendition_sources: Vec::new(),
                 }],
                 ..Config::default()
             }
@@ -3232,6 +3322,7 @@ mod tests {
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
+                    audio_rendition_sources: Vec::new(),
                 }],
                 ..Config::default()
             };
@@ -3836,6 +3927,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3859,6 +3951,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3885,6 +3978,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3956,6 +4050,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3977,6 +4072,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3998,6 +4094,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4020,6 +4117,7 @@ mod tests {
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
+            audio_rendition_sources: Vec::new(),
         };
         let debug = format!("{ts_http:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4041,6 +4139,7 @@ mod tests {
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
+            audio_rendition_sources: Vec::new(),
         };
         let debug = format!("{hls_pull:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4066,6 +4165,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4088,6 +4188,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4111,6 +4212,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4134,6 +4236,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4157,6 +4260,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4182,6 +4286,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4204,6 +4309,7 @@ mod tests {
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
+                    audio_rendition_sources: Vec::new(),
                 },
                 Route {
                     name: "x".into(),
@@ -4217,6 +4323,7 @@ mod tests {
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
+                    audio_rendition_sources: Vec::new(),
                 },
             ],
             ..Config::default()
@@ -4280,6 +4387,7 @@ mod tests {
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
+            audio_rendition_sources: Vec::new(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4308,6 +4416,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4341,6 +4450,7 @@ mod tests {
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
+            audio_rendition_sources: Vec::new(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains(&long_sdp), "debug: {debug}");
@@ -4366,6 +4476,7 @@ mod tests {
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
+                audio_rendition_sources: Vec::new(),
             }],
             ..Config::default()
         }

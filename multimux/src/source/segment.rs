@@ -89,10 +89,11 @@ use media_plane::trunk::{
     TryPublishSegmentError,
 };
 use transmux::SegmentMeta;
-use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
+use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartInfo};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
+use super::split_audio::{self, AudioFollower, LEADER_DURATION_HISTORY, LeaderDurations};
 use crate::route::{RouteHandle, TsHlsIdrStatus};
 
 /// One closed segment, normalised across the two segmenter kinds
@@ -196,6 +197,19 @@ impl AnySegmenter {
 
     /// LL-HLS partial segments — always empty for [`AnySegmenter::Ts`], which
     /// has no partial-segment concept at all (see [`AnySegmenter`]'s own doc).
+    fn record_cuts(&mut self) {
+        if let AnySegmenter::Fmp4(seg) = self {
+            seg.record_cuts();
+        }
+    }
+
+    fn take_ready_cut_plans(&mut self) -> Vec<CutPlan> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.take_ready_cut_plans(),
+            AnySegmenter::Ts(_) => Vec::new(),
+        }
+    }
+
     fn take_ready_parts(&mut self) -> Vec<PartInfo> {
         match self {
             AnySegmenter::Fmp4(seg) => seg.take_ready_parts(),
@@ -316,7 +330,7 @@ impl AnySegmenter {
 /// worse than a few seconds. Counting segments alone leaves the 30s deadline
 /// as the one bound that matters for a merely-slow pin, while still
 /// bounding memory for a pin that never advances at all.
-const PENDING_PUBLISH_QUEUE_CAP: usize = 8;
+pub(super) const PENDING_PUBLISH_QUEUE_CAP: usize = 8;
 
 /// How long the oldest entry in [`ProgramSegmenter`]'s pending-publish queue
 /// may wait before this segmenter force-expires whichever
@@ -333,7 +347,7 @@ const PENDING_PUBLISH_MAX_WAIT: Duration = Duration::from_secs(30);
 /// either a live part or a finished segment, in the exact order they were
 /// meant to reach [`SegmentWriter`], so a later segment's parts can never
 /// appear before an earlier segment still stuck in the queue.
-enum PendingPublish {
+pub(super) enum PendingPublish {
     Part(PartEntry),
     Segment(SegmentEntry),
 }
@@ -414,6 +428,11 @@ pub struct ProgramSegmenter {
     /// before the bound still yields its first segment.
     idr_hold: VecDeque<(TrackId, Sample)>,
     idr_hold_bytes: usize,
+    /// Separate audio renditions (issue #1428 slice 2b): one follower per
+    /// mapped audio track, empty unless the route opts into split audio.
+    followers: Vec<AudioFollower>,
+    /// Duration of each recent leader segment, for sizing gap placeholders.
+    leader_durations: LeaderDurations,
 }
 
 /// Most sample payload bytes the IDR-fallback hold keeps (32 MiB). Past it the
@@ -531,6 +550,89 @@ fn gate_opens_on(
     }
 }
 
+/// Drain `pending` into `segment_writer` from the front for as long as items keep
+/// going through, in order; see [`ProgramSegmenter::drain_pending`].
+pub(super) fn drain_publish_queue(
+    segment_writer: &mut SegmentWriter,
+    pending: &mut VecDeque<PendingPublish>,
+    pending_since: &mut Option<Instant>,
+) {
+    loop {
+        let Some(item) = pending.pop_front() else {
+            *pending_since = None;
+            return;
+        };
+        match item {
+            PendingPublish::Part(part) => {
+                segment_writer.publish_part(part);
+                // The front item just published — whatever stall episode
+                // `pending_since` was tracking (if any) is over. Reset it
+                // here, not only when the queue drains empty, so a LATER
+                // item that stalls starts its own fresh clock instead of
+                // inheriting a stale timestamp from an earlier, already-
+                // resolved stall (which would let `PENDING_PUBLISH_MAX_WAIT`
+                // appear to have already elapsed for a stall that just
+                // started).
+                *pending_since = None;
+            }
+            PendingPublish::Segment(entry) => {
+                match segment_writer.try_publish_segment(entry) {
+                    Ok(()) => {
+                        *pending_since = None;
+                    }
+                    Err(TryPublishSegmentError::NonMonotonic(e)) => {
+                        // Should not happen: `try_new`/`apply_track_change`
+                        // seed numbering from `next_sequence_number`. Not a
+                        // reason to tear down the whole session — log and
+                        // drop this one entry, exactly this crate's general
+                        // "a segmentation defect on one program must not
+                        // take the route down" posture.
+                        tracing::error!(
+                            error = %e,
+                            "dropping a segment with a non-monotonic sequence_number"
+                        );
+                        *pending_since = None;
+                    }
+                    Err(TryPublishSegmentError::WouldStall(entry)) => {
+                        pending.push_front(PendingPublish::Segment(entry));
+                        let now = Instant::now();
+                        let since = *pending_since.get_or_insert(now);
+                        let waited_too_long =
+                            now.saturating_duration_since(since) >= PENDING_PUBLISH_MAX_WAIT;
+                        // Segments only — see `PENDING_PUBLISH_QUEUE_CAP`'s
+                        // own doc for why a queued part must not count
+                        // toward this cap.
+                        let queued_segments = pending
+                            .iter()
+                            .filter(|item| matches!(item, PendingPublish::Segment(_)))
+                            .count();
+                        let queue_too_deep = queued_segments >= PENDING_PUBLISH_QUEUE_CAP;
+                        if (waited_too_long || queue_too_deep)
+                            && segment_writer.expire_stalled_pins() > 0
+                        {
+                            // The blocking pin just gave up (Terminated, not
+                            // silently gapped — see `expire_stalled_pins`'s
+                            // own doc): retry immediately rather than
+                            // waiting for the next call.
+                            continue;
+                        }
+                        return;
+                    }
+                    // `TryPublishSegmentError` is `#[non_exhaustive]`: a
+                    // future variant this segmenter has no handling for is
+                    // logged and dropped, the same posture as
+                    // `NonMonotonic` above, rather than silently retried
+                    // forever or panicking.
+                    Err(other) => {
+                        tracing::error!(?other, "dropping a segment: unhandled publish error");
+                        *pending_since = None;
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl ProgramSegmenter {
     /// Attempt to start segmenting `trunk`. `None` if its track set hasn't
     /// landed yet (a `NewProgram` announcement with samples pending is
@@ -564,13 +666,14 @@ impl ProgramSegmenter {
         // `Trunk` this is exactly `1`, matching `with_part_target`'s own
         // default.
         let next_seq = segment_writer.next_sequence_number();
-        let seg = match route_handle.container() {
+        let mapped = if matches!(route_handle.container(), Container::Fmp4) {
+            split_audio::resolve_sources(route_handle, &tracks)
+        } else {
+            Vec::new()
+        };
+        let mut seg = match route_handle.container() {
             Container::Fmp4 => {
-                let muxable: Vec<_> = tracks
-                    .iter()
-                    .filter(|t| t.config.is_muxable_in_bmff())
-                    .cloned()
-                    .collect();
+                let muxable = split_audio::leader_tracks(&tracks, &mapped);
                 if muxable.is_empty() {
                     return None;
                 }
@@ -635,6 +738,16 @@ impl ProgramSegmenter {
                 return None;
             }
         };
+        let followers = split_audio::build_followers(
+            trunk,
+            route_handle,
+            &mapped,
+            target_duration_secs,
+            part_target_ms,
+        );
+        if !followers.is_empty() {
+            seg.record_cuts();
+        }
         Some(ProgramSegmenter {
             // `subscribe_from_backlog`, not `subscribe` (issue #808): the
             // driver's own `feed` call that announced this program's
@@ -667,6 +780,8 @@ impl ProgramSegmenter {
             idr_fallback_active: false,
             idr_hold: VecDeque::new(),
             idr_hold_bytes: 0,
+            followers,
+            leader_durations: LeaderDurations::new(),
         })
     }
 
@@ -701,88 +816,19 @@ impl ProgramSegmenter {
     /// applying, non-blockingly, the exact bound
     /// `SegmentWriter::publish_segment`'s own internal blocking wait uses.
     fn drain_pending(&mut self) {
-        loop {
-            let Some(item) = self.pending.pop_front() else {
-                self.pending_since = None;
-                return;
-            };
-            match item {
-                PendingPublish::Part(part) => {
-                    self.segment_writer.publish_part(part);
-                    // The front item just published — whatever stall episode
-                    // `pending_since` was tracking (if any) is over. Reset it
-                    // here, not only when the queue drains empty, so a LATER
-                    // item that stalls starts its own fresh clock instead of
-                    // inheriting a stale timestamp from an earlier, already-
-                    // resolved stall (which would let `PENDING_PUBLISH_MAX_WAIT`
-                    // appear to have already elapsed for a stall that just
-                    // started).
-                    self.pending_since = None;
-                }
-                PendingPublish::Segment(entry) => {
-                    match self.segment_writer.try_publish_segment(entry) {
-                        Ok(()) => {
-                            self.pending_since = None;
-                        }
-                        Err(TryPublishSegmentError::NonMonotonic(e)) => {
-                            // Should not happen: `try_new`/`apply_track_change`
-                            // seed numbering from `next_sequence_number`. Not a
-                            // reason to tear down the whole session — log and
-                            // drop this one entry, exactly this crate's general
-                            // "a segmentation defect on one program must not
-                            // take the route down" posture.
-                            tracing::error!(
-                                error = %e,
-                                "dropping a segment with a non-monotonic sequence_number"
-                            );
-                            self.pending_since = None;
-                        }
-                        Err(TryPublishSegmentError::WouldStall(entry)) => {
-                            self.pending.push_front(PendingPublish::Segment(entry));
-                            let now = Instant::now();
-                            let since = *self.pending_since.get_or_insert(now);
-                            let waited_too_long =
-                                now.saturating_duration_since(since) >= PENDING_PUBLISH_MAX_WAIT;
-                            // Segments only — see `PENDING_PUBLISH_QUEUE_CAP`'s
-                            // own doc for why a queued part must not count
-                            // toward this cap.
-                            let queued_segments = self
-                                .pending
-                                .iter()
-                                .filter(|item| matches!(item, PendingPublish::Segment(_)))
-                                .count();
-                            let queue_too_deep = queued_segments >= PENDING_PUBLISH_QUEUE_CAP;
-                            if (waited_too_long || queue_too_deep)
-                                && self.segment_writer.expire_stalled_pins() > 0
-                            {
-                                // The blocking pin just gave up (Terminated, not
-                                // silently gapped — see `expire_stalled_pins`'s
-                                // own doc): retry immediately rather than
-                                // waiting for the next call.
-                                continue;
-                            }
-                            return;
-                        }
-                        // `TryPublishSegmentError` is `#[non_exhaustive]`: a
-                        // future variant this segmenter has no handling for is
-                        // logged and dropped, the same posture as
-                        // `NonMonotonic` above, rather than silently retried
-                        // forever or panicking.
-                        Err(other) => {
-                            tracing::error!(?other, "dropping a segment: unhandled publish error");
-                            self.pending_since = None;
-                        }
-                    }
-                }
-            }
-        }
+        drain_publish_queue(
+            &mut self.segment_writer,
+            &mut self.pending,
+            &mut self.pending_since,
+        );
     }
 
     /// The init segment bytes — built once, at construction, stable for the
     /// life of the segmenter (mirrors [`LlHlsSegmenter::init_segment`]'s own
-    /// doc). Always `None` under [`Container::MpegTs`] — see
-    /// [`AnySegmenter::init_segment`].
-    fn init_segment(&self) -> Option<Vec<u8>> {
+    /// doc). Always `None` under [`Container::MpegTs`].
+    /// Callers publish it with [`RouteHandle::set_init`] once the program is
+    /// registered.
+    pub fn init_segment(&self) -> Option<Vec<u8>> {
         self.seg.init_segment()
     }
 
@@ -930,6 +976,14 @@ impl ProgramSegmenter {
     /// Anchor the media timeline on `sample` and push it through the
     /// segmenter.
     fn ingest_sample(&mut self, trunk: &Trunk, track_id: TrackId, sample: Sample) {
+        if let Some(follower) = self
+            .followers
+            .iter_mut()
+            .find(|f| f.source_track_id == track_id)
+        {
+            follower.push(sample, &self.leader_durations);
+            return;
+        }
         // Keep the internal-timeline -> source-90kHz mapping anchored
         // (issue #1083, E): anchor on the first timed sample, and
         // re-anchor on a genuine source-clock discontinuity so a jump
@@ -1126,11 +1180,8 @@ impl ProgramSegmenter {
                     // `try_new` filters them: a Data/Subtitle PID joining a
                     // DVB source mid-stream (a routine PMT version bump) must
                     // not make the rebuild fail (audit r07-C7, #1083).
-                    let muxable: Vec<TrackSpec> = new_tracks
-                        .iter()
-                        .filter(|t| t.config.is_muxable_in_bmff())
-                        .cloned()
-                        .collect();
+                    let mapped = split_audio::resolve_sources(route_handle, &new_tracks);
+                    let muxable = split_audio::leader_tracks(&new_tracks, &mapped);
                     if muxable.is_empty() {
                         tracing::warn!(
                             "mid-stream track-set change left no fMP4-muxable track — \
@@ -1162,7 +1213,11 @@ impl ProgramSegmenter {
                         .map(Into::into)
                         .collect();
                     let (next_seq, current_seg) = old_seg.next_sequence_numbers();
+                    let plans = old_seg.take_ready_cut_plans();
+                    self.note_leader_segments(&segments);
                     self.publish_in_stream_order(parts, segments);
+                    self.feed_followers(plans);
+                    self.finish_followers();
 
                     match LlHlsSegmenter::with_part_target_at(
                         muxable,
@@ -1177,6 +1232,17 @@ impl ProgramSegmenter {
                                 route_handle.set_init(program, init);
                             }
                             self.seg = AnySegmenter::Fmp4(seg);
+                            self.followers.clear();
+                            self.followers = split_audio::build_followers(
+                                trunk,
+                                route_handle,
+                                &mapped,
+                                route_handle.target_duration_secs(),
+                                route_handle.part_target_ms(),
+                            );
+                            if !self.followers.is_empty() {
+                                self.seg.record_cuts();
+                            }
                             // Re-arm the start-gate for the rebuilt track set
                             // (issue #1425): a fresh segmenter must not emit a
                             // segment until the first video sync sample again.
@@ -1274,7 +1340,15 @@ impl ProgramSegmenter {
         if let Err(e) = self.seg.finish() {
             tracing::warn!(error = %e, "driver-backed segmenter flush failed");
         }
-        self.publish_ready()
+        let counts = self.publish_ready();
+        self.finish_followers();
+        counts
+    }
+
+    fn finish_followers(&mut self) {
+        for follower in &mut self.followers {
+            follower.finish(&self.leader_durations);
+        }
     }
 
     /// Retries [`Self::pending`] first (issue #1082 T7: this must happen on
@@ -1288,7 +1362,30 @@ impl ProgramSegmenter {
         self.drain_pending();
         let parts = self.seg.take_ready_parts();
         let segments = self.seg.take_ready_segments();
-        self.publish_in_stream_order(parts, segments)
+        let plans = self.seg.take_ready_cut_plans();
+        self.note_leader_segments(&segments);
+        let counts = self.publish_in_stream_order(parts, segments);
+        self.feed_followers(plans);
+        counts
+    }
+
+    fn note_leader_segments(&mut self, segments: &[ReadySegment]) {
+        if self.followers.is_empty() {
+            return;
+        }
+        for segment in segments {
+            self.leader_durations
+                .insert(segment.segment_seq.value(), segment.duration);
+        }
+        while self.leader_durations.len() > LEADER_DURATION_HISTORY {
+            self.leader_durations.pop_first();
+        }
+    }
+
+    fn feed_followers(&mut self, plans: Vec<CutPlan>) {
+        for follower in &mut self.followers {
+            follower.on_plans(plans.clone(), &self.leader_durations);
+        }
     }
 
     /// Queue one part, converting it to the `Trunk`'s [`PartEntry`] shape.
@@ -2972,6 +3069,8 @@ mod tests {
             idr_fallback_active: false,
             idr_hold: VecDeque::new(),
             idr_hold_bytes: 0,
+            followers: Vec::new(),
+            leader_durations: LeaderDurations::new(),
         }
     }
 

@@ -20,6 +20,7 @@
 ### Added
 - LL-HLS origin responses now set the RFC 9218 `Priority: u=<urgency>` response header (`u=1` for playlists, `u=2` for parts and segments).
 - Route-level `audio_renditions` config field (serde, default empty) listing audio renditions for the HLS master playlist, plumbed into `HlsOriginBuilder::audio_renditions` (issue #1428 slice 1; audio playlist URIs 404 until split-mux slices land).
+- Opt-in split audio (issue #1428 slice 2b): route field `audio_rendition_sources` (one `{"index": n}` or `{"track_id": n}` selector per `audio_renditions` entry, validated in `Config::validate`: matching count, `llhls`-only outputs, unique selectors, unique relative rendition URIs) serves each mapped audio track as its own LL-HLS media playlist at its declared URI, from its own sibling `Trunk`/`HlsOrigin`, while the primary playlist carries only the remaining tracks. Renditions share the primary's media sequence numbers and one timeline origin (the start of the leader's first segment), so audio and video `tfdt` align to within one audio frame; a leader segment with no audio sample is published as an `EXT-X-GAP` segment of the leader's duration. Audio segments and parts are produced one leader segment behind the leader (a leader cut is known only once it has finished); a track appearing mid-stream starts at the next leader cut. Empty by default: output is unchanged.
 
 ### Fixed
 - I-frame playlist `EXT-X-RENDITION-REPORT` now uses the configured `playlist_name` instead of the hardcoded `"media.m3u8"`.

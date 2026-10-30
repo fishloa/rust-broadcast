@@ -1035,7 +1035,8 @@ pub enum HlsMasterError {
     AudioRenditionUriEqualsMediaPlaylist,
 }
 
-fn validate_audio_renditions(decls: &[AudioRenditionDecl]) -> Result<(), HlsOriginBuildError> {
+/// Validate a list of audio rendition declarations (RFC 8216bis §4.4.6.1).
+pub fn validate_audio_renditions(decls: &[AudioRenditionDecl]) -> Result<(), HlsOriginBuildError> {
     use std::collections::{BTreeMap, BTreeSet};
     let mut groups: BTreeMap<&str, Vec<&AudioRenditionDecl>> = BTreeMap::new();
     for decl in decls {
@@ -2326,6 +2327,10 @@ impl HlsOrigin {
                     discontinuous: s.discontinuous,
                     parts,
                     program_date_time,
+                    // A segment published with no media bytes is a gap placeholder
+                    // (issue #1428 slice 2b): it occupies its MSN in the
+                    // playlist without carrying media, so the client skips it.
+                    gap: s.bytes.is_empty(),
                     ..Default::default()
                 }
             })
