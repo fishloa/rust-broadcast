@@ -13,6 +13,8 @@ Initial release. A generic sans-IO client session for live and on-demand media: 
 
 - HLS segment failure counts (`seg_failures`) are cleared on every `Output::Discontinuity`, including a stream restart that reuses a media sequence number, so a still-failing MSN that an origin reuses starts counting again from zero instead of carrying over its previous failure count.
 
+- Playout gate: 33-bit PTS wrap (a sample whose PTS crosses 2^33) now unwraps incrementally via `broadcast_common::clock33::unwrap_delta`, so media end, lead and position comparisons advance monotonically instead of stalling; audio-rendition switches clear the stale audio observation so a not-yet-refetched rendition cannot pin `limiting()` and force a spurious `Pause`.
+
 ### Added
 
 - `Session`: `open`/`open_with_memory`, `poll`/`next_event`, `on_response`/`on_data`/`on_closed`/`on_connected`, `on_playback_position`, `set_credentials`, `cookies`, `reconnect`, `rejoin`, `select_variant`, `select_audio_rendition`, `set_rendered_tracks`/`default_rendered_tracks`, `hint`, `stall_memory`, `close`, and the counters `rtp_loss_count`, `rtp_malformed_count`, `rtcp_packet_count`, `stale_samples_dropped`, `dropped_events`.

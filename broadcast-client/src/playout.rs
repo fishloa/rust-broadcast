@@ -77,6 +77,8 @@ struct TrackInfo {
 #[derive(Debug, Clone, Copy)]
 struct Obs {
     first_pts: u64,
+    last_raw_mod: u64,
+    unwrapped_pts: i64,
     max_pts: i64,
     end: u64,
 }
@@ -199,19 +201,33 @@ impl Playout {
         };
         let dur = i64::from(sample.duration.unwrap_or(0));
         let timescale = info.timescale;
+        let raw = raw_27mhz(pts, timescale);
         let shift = *self
             .origin_shift
-            .get_or_insert_with(|| negative_origin(raw_27mhz(pts, timescale)));
-        let entry = self.obs.entry(track).or_insert(Obs {
+            .get_or_insert_with(|| negative_origin(raw));
+        let raw_mod = pts.rem_euclid(broadcast_common::clock33::WRAP_33BIT as i64) as u64;
+        let is_new = !self.obs.contains_key(&track);
+        let entry = self.obs.entry(track).or_insert_with(|| Obs {
             first_pts: pts_to_27mhz_from(pts, timescale, shift),
+            last_raw_mod: raw_mod,
+            unwrapped_pts: pts,
             max_pts: pts,
             end: 0,
         });
-        entry.max_pts = entry.max_pts.max(pts);
+        if !is_new {
+            let new_unwrapped = broadcast_common::clock33::unwrap_delta(
+                entry.unwrapped_pts as i128,
+                entry.last_raw_mod,
+                raw_mod,
+            ) as i64;
+            entry.unwrapped_pts = new_unwrapped;
+            entry.last_raw_mod = raw_mod;
+            entry.max_pts = entry.max_pts.max(new_unwrapped);
+        }
         let end = match info.kind {
             Kind::Video => pts_to_27mhz_from(entry.max_pts.saturating_add(dur), timescale, shift),
             Kind::Audio | Kind::Other => {
-                pts_to_27mhz_from(pts.saturating_add(dur), timescale, shift)
+                pts_to_27mhz_from(entry.unwrapped_pts.saturating_add(dur), timescale, shift)
             }
         };
         entry.end = match info.kind {
@@ -249,6 +265,18 @@ impl Playout {
         self.paused = false;
         self.position = None;
         self.hold = 0;
+    }
+
+    pub(crate) fn on_audio_rendition_switch(&mut self) {
+        let audio_ids: Vec<TrackId> = self
+            .infos
+            .iter()
+            .filter(|(_, info)| info.kind == Kind::Audio)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in audio_ids {
+            self.obs.remove(&id);
+        }
     }
 
     pub(crate) fn drain(&mut self) -> Vec<Event> {
@@ -611,6 +639,46 @@ mod tests {
             );
             assert!(p.obs.contains_key(&high.track_id));
         }
+    }
+
+    #[test]
+    fn pts_33bit_wrap_advances_end_without_stalling() {
+        use broadcast_common::mux::Unpackage;
+        let data = test_fixtures::read("ts/h264_aac.ts");
+        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let track = media
+            .tracks
+            .into_iter()
+            .find(|t| t.spec.config.is_video())
+            .unwrap();
+        let spec = track.spec;
+        let tmpl = track.samples[0].clone();
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.engage(Source::Vod);
+        p.on_tracks(std::slice::from_ref(&spec));
+        let ts = i64::from(spec.timescale);
+        let wrap: i64 = 1 << 33;
+        let mut s1 = tmpl.clone();
+        s1.pts = Some(wrap - 5 * ts);
+        s1.dts = s1.pts;
+        s1.duration = Some(ts as u32);
+        p.on_sample(spec.track_id, &s1, None);
+        let _ = buffer_events(&mut p);
+        let first_end = p.obs.get(&spec.track_id).unwrap().end;
+        let mut s2 = tmpl.clone();
+        s2.pts = Some(5 * ts);
+        s2.dts = s2.pts;
+        s2.duration = Some(ts as u32);
+        p.on_sample(spec.track_id, &s2, None);
+        let _ = buffer_events(&mut p);
+        let second_end = p.obs.get(&spec.track_id).unwrap().end;
+        assert!(
+            second_end > first_end,
+            "end did not advance across the 33-bit wrap"
+        );
+        p.on_position(Some(first_end));
+        let evs = buffer_events(&mut p);
+        assert!(evs.is_empty(), "spurious pause/resume across wrap: {evs:?}");
     }
 
     const NEGATIVE_SECONDS: i64 = 50_000;
