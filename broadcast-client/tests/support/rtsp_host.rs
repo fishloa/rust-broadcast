@@ -191,6 +191,7 @@ pub struct Server {
     pub play_status: Option<u16>,
     pub options_status: u16,
     pub udp_transport: bool,
+    pub rtp_info: Option<String>,
 }
 
 impl Server {
@@ -212,6 +213,7 @@ impl Server {
             play_status: None,
             options_status: 200,
             udp_transport: false,
+            rtp_info: None,
         }
     }
 
@@ -332,12 +334,13 @@ impl Server {
             },
             PLAY => match self.play_status {
                 Some(status) => respond(rec.cseq, status, Vec::new(), Vec::new()),
-                None => respond(
-                    rec.cseq,
-                    200,
-                    vec![(headers::SESSION, SESSION_ID.to_string())],
-                    Vec::new(),
-                ),
+                None => {
+                    let mut extra = vec![(headers::SESSION, SESSION_ID.to_string())];
+                    if let Some(info) = &self.rtp_info {
+                        extra.push((headers::RTP_INFO, info.clone()));
+                    }
+                    respond(rec.cseq, 200, extra, Vec::new())
+                }
             },
             OPTIONS if self.rotate_options_nonce => self.answer_options_rotating(rec),
             OPTIONS => respond(rec.cseq, self.options_status, Vec::new(), Vec::new()),

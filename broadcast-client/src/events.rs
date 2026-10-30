@@ -84,6 +84,10 @@ pub enum AvSync {
     /// Every track is placed from the NTP to RTP mapping of its RTCP Sender Reports (RFC 3550
     /// 6.4.1), so the inter-track offset is the senders' own.
     SenderReport,
+    /// Every track is placed from the `RTP-Info` header of the PLAY response (RFC 2326 12.33):
+    /// each stream's `rtptime` is the RTP timestamp of the same start instant, so the inter-track
+    /// offset is the server's own and no Sender Report can move it.
+    RtpInfo,
 }
 
 impl AvSync {
@@ -93,6 +97,7 @@ impl AvSync {
         match self {
             Self::Provisional => "provisional",
             Self::SenderReport => "sender-report",
+            Self::RtpInfo => "rtp-info",
         }
     }
 }
