@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Changed
+- Dependency `getrandom` 0.2 -> 0.4 (internal OS-RNG call site: `getrandom::getrandom` -> `getrandom::fill`). No public API exposure.
+### Changed
 - Dependency `webpki-roots` 0.26 -> 1.0.
 
 ### Documentation

@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- Dependency `getrandom` 0.2 -> 0.4 (internal OS-RNG call sites: `getrandom::getrandom` -> `getrandom::fill`). No public API exposure.
+
+### Changed
 - Dependency `parking_lot` 0.12 -> 0.13.
 
 ### Changed

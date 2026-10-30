@@ -739,7 +739,7 @@ where
 /// A `Session` id value from the OS random source (RFC 2326 §3.4).
 fn os_session_id() -> u64 {
     let mut bytes = [0u8; 8];
-    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
+    getrandom::fill(&mut bytes).expect("OS random source unavailable");
     u64::from_ne_bytes(bytes)
 }
 
@@ -929,6 +929,24 @@ mod tls_timeout_tests {
             matches!(r, Err(Error::Timeout { what: "handshake" })),
             "{:?}",
             r.err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::os_session_id;
+
+    #[test]
+    fn os_session_id_varies() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..100 {
+            seen.insert(os_session_id());
+        }
+        assert!(
+            seen.len() > 90,
+            "os_session_id did not vary: {}",
+            seen.len()
         );
     }
 }
