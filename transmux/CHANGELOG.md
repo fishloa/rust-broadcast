@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `RtpStreamDepacketiser`: an RFC 3640 `AAC-hbr` packet aggregating several access units gave all of them the packet's `pts` and every non-final one duration 0. The group's step to the next timestamp is now divided across its AUs.
+- `RtpStreamDepacketiser`: a trailing or flushed access unit (end of stream, stall/reconnect teardown, or a stream too short to establish a frame period) could be emitted with duration 0. Durations now fall back to the last real per-AU duration, then the smallest positive timestamp step seen, then a codec-typical frame duration, so no emitted sample has zero duration; mid-group deltas smaller than the group size are clamped to at least 1.
 
 ### Changed
 - `StreamingTsHlsSegmenter::update_track` (issue #1425) now returns `Result<UpdateTrackOutcome>` (`Changed`/`Unchanged`/`Unknown`; an unknown `track_id` is now `Unknown` rather than an error) instead of `Result<bool>`; discontinuity arming compares typed fields only (audio sample rate / channel count / AudioSpecificConfig bytes; video timescale + display) instead of a `Debug` string of the whole `CodecConfig`, so a codec-config refresh (e.g. new SPS) with unchanged geometry/timing no longer arms a discontinuity. `PartialEq`/`Eq` derived on `CodecConfig` and `TrackSpec`. Breaking change for callers matching on the boolean.

@@ -845,6 +845,28 @@ fn to_ticks(uw: u64) -> i64 {
     uw.min(i64::MAX as u64) as i64
 }
 
+/// Duration fallback used when a normal forward delta is unavailable (a
+/// backward presentation step, an aggregated group whose total delta is
+/// smaller than its AU count, or a trailing AU flushed at end of stream /
+/// teardown): prefer the last real per-AU duration, then the smallest
+/// positive step seen so far, then a codec-typical frame duration derived
+/// from the track's kind and clock rate. Always non-zero.
+fn fallback_duration(st: &TrackState) -> u32 {
+    if st.last_duration != 0 {
+        return st.last_duration;
+    }
+    if let Some(p) = st.min_positive_step
+        && p > 0
+    {
+        return u32::try_from(p).unwrap_or(u32::MAX).max(1);
+    }
+    let d = match st.kind {
+        RtpMediaKind::H264 => st.clock_rate / 30,
+        RtpMediaKind::Aac => 1024,
+    };
+    d.max(1)
+}
+
 impl RtpStreamDepacketiser {
     /// Build a depayloader for the given tracks (kind, config, clock rate).
     pub fn new(tracks: Vec<RtpStreamTrack>) -> Self {
@@ -1178,10 +1200,14 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
-        let last_duration = st.last_duration;
+        // Flush emits the trailing access unit(s) that never saw a
+        // following timestamp. Prefer the last real per-AU duration; when
+        // none is known (stream too short / no positive step yet) fall back
+        // to the codec-typical frame duration so the result is never zero.
+        let duration = fallback_duration(st);
         out.extend(st.pending.drain(..).map(|p| {
             let ts = to_ticks(p.unwrapped_ts);
-            Sample::new(p.data, Some(ts), Some(ts), Some(last_duration), p.is_sync)
+            Sample::new(p.data, Some(ts), Some(ts), Some(duration), p.is_sync)
         }));
         Ok(out)
     }
@@ -1258,7 +1284,9 @@ impl RtpStreamDepacketiser {
                 // far keeps the duration a real frame period instead of
                 // collapsing to 0, which a container writer would reject as a
                 // zero-duration sample. Before any positive step is known there
-                // is nothing to fall back to, and 0 is honest.
+                // is nothing to fall back to, so use the codec-typical frame
+                // duration rather than 0 (durations must never depend on
+                // arrival timing).
                 // A hostile timestamp series can make the running minimum
                 // negative; clamp with a checked conversion rather than an
                 // `as` cast, which would wrap a large negative into a huge
@@ -1268,19 +1296,26 @@ impl RtpStreamDepacketiser {
                 } else {
                     st.min_positive_step
                         .and_then(|p| u64::try_from(p).ok())
+                        .filter(|&p| p > 0)
                         .unwrap_or(0)
                 };
+                let delta = if delta == 0 {
+                    u64::from(fallback_duration(st))
+                } else {
+                    delta
+                };
                 let count = st.pending.len() as u64;
-                let each = delta / count;
+                let count = count.max(1);
+                let each = (delta / count).max(1);
                 let group: Vec<PendingAu> = st.pending.drain(..).collect();
                 for (index, p) in group.into_iter().enumerate() {
                     let offset = each * index as u64;
                     let duration = if index as u64 + 1 == count {
-                        delta - offset
+                        delta.saturating_sub(offset).max(1)
                     } else {
                         each
                     };
-                    let duration = u32::try_from(duration).unwrap_or(u32::MAX);
+                    let duration = u32::try_from(duration).unwrap_or(u32::MAX).max(1);
                     st.last_duration = duration;
                     let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
                     out.push(Sample::new(
