@@ -330,6 +330,12 @@ session's `Send` bytes with `rtsp-types`, answers with SDP built by `sdp-types`,
 `transmux`'s packetiser from the real `fixtures/ts/h264_aac.ts` samples; the oracle is the original samples,
 payload bytes and timestamps). Digest responses are verified by `broadcast-auth`'s own `Verifier`.
 
+### RTSP track clocks and the lead computation
+
+Each RTSP track's RTP timestamps start at an unrelated random base (RFC 3550 5.1), so the feeder cannot treat the tracks as one clock. For an `rtsp(s)://` session `Feeder` sets `independent_clocks`; `shift(track)` then moves every rendered non-video track onto the rendered video track's timeline by the difference of the two tracks' first-sample arrival values, and `conv`/`arm_origin` take the track id to apply it. The shift feeds only the buffer's lead computation (the media-end positions reported to `buffering-runtime` and the origin); sample pts handed to the host are never modified.
+
+Limitation: aligning by first arrival is accurate only to the arrival skew between the first audio and first video sample, so it is a buffering heuristic and not A/V sync. Proper RTSP A/V sync needs RTCP Sender Reports (the NTP to RTP timestamp mapping, RFC 3550 6.4.1), which this source does not yet feed to the depacketiser. Until then the pts the host receives for RTSP audio and video are on unrelated bases and the host cannot align them either.
+
 ## BC-5 playout gate
 
 `Event::Buffer(Start|Pause|Resume)` for the sources the PDV controller does not serve: HLS live, HLS VOD (`EXT-X-ENDLIST` seen) and finite TS (`Event::Finite`). Module `src/playout.rs`; live TS-over-HTTP keeps the BC-2 `buffering-runtime` path unchanged (`Config::buffer`). The gate is deterministic and lead-based: it does not measure jitter, so its events depend only on the delivered samples, the end of stream and the reported playback position, never on chunking or wall-clock time.
