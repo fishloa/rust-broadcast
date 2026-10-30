@@ -54,7 +54,6 @@
 
 use alloc::sync::Arc;
 
-use yoke::trait_hack::YokeTraitHack;
 use yoke::{Yoke, Yokeable};
 
 /// An owned, `'static`, `Send + Sync` bundle of (backing bytes, parsed view).
@@ -117,7 +116,7 @@ impl<Y: for<'a> Yokeable<'a>> Owned<Y> {
 // impl for `Yoke<Y, CloneableCart>`.
 impl<Y: for<'a> Yokeable<'a>> Clone for Owned<Y>
 where
-    for<'a> YokeTraitHack<<Y as Yokeable<'a>>::Output>: Clone,
+    for<'a> <Y as Yokeable<'a>>::Output: Clone,
 {
     fn clone(&self) -> Self {
         Self {
