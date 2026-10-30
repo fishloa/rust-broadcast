@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use common::Rng;
 use dash_runtime::address::timeline::TimelineIndex;
-use dash_runtime::address::{PlanOptions, plan_representation};
+use dash_runtime::address::{AddressError, PlanError, PlanOptions, plan_representation};
 use dash_runtime::mpd::inherit::SegmentInfo;
 use dash_runtime::mpd::{Mpd, PresentationType, SegmentTimeline, TimelineEntry};
 use dash_runtime::selection::RepRef;
@@ -131,8 +131,11 @@ fn compare(path: &Path) -> Option<Compared> {
                 assert_eq!(or.common.codecs, tr.codecs);
                 assert_eq!(or.common.width.or(os.common.width), tr.width);
                 let at = RepRef::at(pi, si, ri);
-                let Ok(planned) = plan_representation(&ours, at, &PlanOptions::default()) else {
-                    continue;
+                let planned = match plan_representation(&ours, at, &PlanOptions::default()) {
+                    Ok(p) => p,
+                    Err(PlanError::Address(AddressError::IndexRequired)) => continue,
+                    Err(PlanError::PeriodUnresolved) => continue,
+                    Err(e) => panic!("{}: plan failed: {e}", path.display()),
                 };
                 let Some(tt) = &tr.segment_template else {
                     continue;

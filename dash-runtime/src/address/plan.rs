@@ -308,7 +308,7 @@ impl SegmentPlan {
                 let cap = if en < m.start_number {
                     0
                 } else {
-                    en - m.start_number + 1
+                    en.saturating_sub(m.start_number).saturating_add(1)
                 };
                 count = Some(count.map_or(cap, |c| c.min(cap)));
             }

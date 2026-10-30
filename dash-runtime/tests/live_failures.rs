@@ -338,3 +338,14 @@ fn garbage_and_truncated_segment_bodies_are_counted_not_delivered() {
     );
     let _ = geo;
 }
+
+#[test]
+fn l4_early_bookkeeping_does_not_leak_after_give_ups() {
+    let mut dash = DashConfig::default();
+    dash.early_grace_us = 500_000;
+    let (mut sim, _geo) = sim_with(with_utc(Addressing::Number), START, dash);
+    sim.fault = Some(segment_fault("V", 23, 23, 404));
+    sim.run_for(80 * MICROS as u64);
+    no_fatal(&sim);
+    assert_eq!(sim.client.state_size().live, 0);
+}

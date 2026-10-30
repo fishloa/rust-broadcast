@@ -1389,6 +1389,9 @@ impl DashClient {
         if matches!(status, Some(STATUS_NOT_FOUND | STATUS_GONE)) && self.is_missing_tail(id) {
             self.inflight.remove(&id);
             self.failures.remove(&id);
+            if let Some(live) = self.live.as_mut() {
+                live.early.remove(&id);
+            }
             self.mark_done(id);
             if let Some(slot) = self.slot_mut(id) {
                 slot.state = SlotState::Skipped { marker: false };
@@ -1443,6 +1446,9 @@ impl DashClient {
             return false;
         }
         self.failures.remove(&id);
+        if let Some(live) = self.live.as_mut() {
+            live.early.remove(&id);
+        }
         self.mark_done(id);
         if let Some(slot) = self.slot_mut(id) {
             slot.state = SlotState::Skipped { marker: true };
