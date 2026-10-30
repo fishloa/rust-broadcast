@@ -150,9 +150,9 @@ impl Sample {
         }
         self.dts = self.dts.map(|t| rescale_ticks(t, from, to));
         self.pts = self.pts.map(|t| rescale_ticks(t, from, to));
-        self.duration = self.duration.map(|d| {
-            u32::try_from(rescale_ticks(i64::from(d), from, to)).unwrap_or(u32::MAX)
-        });
+        self.duration = self
+            .duration
+            .map(|d| u32::try_from(rescale_ticks(i64::from(d), from, to)).unwrap_or(u32::MAX));
         self
     }
 

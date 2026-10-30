@@ -1560,7 +1560,10 @@ fn timescale_moves(trunk: &Trunk, declared: &[TrackSpec]) -> HashMap<TrackId, (u
     declared
         .iter()
         .filter_map(|d| {
-            let from = published.iter().find(|t| t.track_id == d.track_id)?.timescale;
+            let from = published
+                .iter()
+                .find(|t| t.track_id == d.track_id)?
+                .timescale;
             (from != d.timescale && from > 0).then_some((d.track_id, (from, d.timescale)))
         })
         .collect()

@@ -21,8 +21,8 @@ use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
 use transmux::pipeline::{Sample, TrackSpec};
-use transmux::{MovieBox, MovieFragmentBox};
 use transmux::ts_demux::TsDemux;
+use transmux::{MovieBox, MovieFragmentBox};
 
 use multimux::config::{AudioProfile, AudioProfileOverride, AudioTrackSelector, Config};
 use multimux::origin::{AppState, router};
@@ -428,7 +428,10 @@ fn top_level_boxes(bytes: &[u8]) -> Vec<([u8; 4], &[u8])> {
     let mut at = 0;
     while at + BOX_HEADER_LEN <= bytes.len() {
         let size = u32::from_be_bytes(bytes[at..at + 4].try_into().expect("4 bytes")) as usize;
-        assert!(size >= BOX_HEADER_LEN && at + size <= bytes.len(), "box size");
+        assert!(
+            size >= BOX_HEADER_LEN && at + size <= bytes.len(),
+            "box size"
+        );
         let four_cc: [u8; 4] = bytes[at + 4..at + 8].try_into().expect("4 bytes");
         out.push((four_cc, &bytes[at..at + size]));
         at += size;
@@ -491,5 +494,8 @@ async fn heaac_route_init_mdhd_uses_output_rate() {
             }
         }
     }
-    assert!(audio_samples > 0, "first media segment carries audio samples");
+    assert!(
+        audio_samples > 0,
+        "first media segment carries audio samples"
+    );
 }
