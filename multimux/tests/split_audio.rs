@@ -122,6 +122,7 @@ fn feed(
     route: &RouteHandle,
     segmenter: &mut ProgramSegmenter,
     sources: &[&Source],
+    lead_secs: f64,
     keep: &dyn Fn(usize, &Sample) -> bool,
 ) {
     let mut order: Vec<(f64, usize, usize)> = Vec::new();
@@ -134,7 +135,7 @@ fn feed(
                 continue;
             }
             let dts = s.dts.unwrap_or(0);
-            let lead = if src.is_video() { VIDEO_LEAD_SECS } else { 0.0 };
+            let lead = if src.is_video() { lead_secs } else { 0.0 };
             order.push((src.secs(dts) - lead, ti, si));
         }
     }
@@ -160,7 +161,15 @@ fn publish_interleaved(
     sources: &[&Source],
     keep: &dyn Fn(usize, &Sample) -> bool,
 ) {
-    feed(trunk, writer, route, segmenter, sources, keep);
+    feed(
+        trunk,
+        writer,
+        route,
+        segmenter,
+        sources,
+        VIDEO_LEAD_SECS,
+        keep,
+    );
     segmenter.flush();
 }
 
@@ -169,6 +178,7 @@ struct Live {
     writer: media_plane::trunk::TrunkWriter,
     route: Arc<RouteHandle>,
     segmenter: std::sync::Mutex<ProgramSegmenter>,
+    lead_secs: f64,
 }
 
 struct Rig {
@@ -187,6 +197,7 @@ impl Rig {
             &live.route,
             &mut segmenter,
             &refs,
+            live.lead_secs,
             keep,
         );
     }
@@ -210,7 +221,7 @@ fn rig_declared(
     declared: Option<u64>,
     keep: &dyn Fn(usize, &Sample) -> bool,
 ) -> Rig {
-    build_rig(sources, renditions, selectors, declared, keep, true)
+    build_rig(sources, renditions, selectors, declared, keep, None)
 }
 
 fn rig_live(
@@ -225,7 +236,23 @@ fn rig_live(
         selectors,
         Some(DECLARED_BPS),
         keep,
-        false,
+        Some(VIDEO_LEAD_SECS),
+    )
+}
+
+fn rig_live_aligned(
+    sources: &[Source],
+    renditions: Vec<AudioRenditionDecl>,
+    selectors: Vec<AudioTrackSelector>,
+    keep: &dyn Fn(usize, &Sample) -> bool,
+) -> Rig {
+    build_rig(
+        sources,
+        renditions,
+        selectors,
+        Some(DECLARED_BPS),
+        keep,
+        Some(0.0),
     )
 }
 
@@ -235,7 +262,7 @@ fn build_rig(
     selectors: Vec<AudioTrackSelector>,
     declared: Option<u64>,
     keep: &dyn Fn(usize, &Sample) -> bool,
-    finish: bool,
+    live_lead_secs: Option<f64>,
 ) -> Rig {
     let trunk = new_trunk();
     let writer = trunk.writer().expect("trunk writer");
@@ -255,14 +282,22 @@ fn build_rig(
         route.set_init(ProgramId(0), init);
     }
     let refs: Vec<&Source> = sources.iter().collect();
-    if finish {
+    let Some(lead_secs) = live_lead_secs else {
         publish_interleaved(&trunk, &writer, &route, &mut segmenter, &refs, keep);
         return Rig {
             app: app_for(route),
             live: None,
         };
-    }
-    feed(&trunk, &writer, &route, &mut segmenter, &refs, keep);
+    };
+    feed(
+        &trunk,
+        &writer,
+        &route,
+        &mut segmenter,
+        &refs,
+        lead_secs,
+        keep,
+    );
     Rig {
         app: app_for(Arc::clone(&route)),
         live: Some(Live {
@@ -270,6 +305,7 @@ fn build_rig(
             writer,
             route,
             segmenter: std::sync::Mutex::new(segmenter),
+            lead_secs,
         }),
     }
 }
@@ -1410,4 +1446,243 @@ async fn non_split_route_rendition_reports_absent() {
     );
     let media = String::from_utf8(rig.ok("media.m3u8").await).expect("utf8");
     assert!(!media.contains("#EXT-X-RENDITION-REPORT"), "{media}");
+}
+
+const CHECKPOINT_STEP_SECS: f64 = 0.5;
+const BLOCKING_STEP_SECS: f64 = 0.1;
+const BLOCKING_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+const MAX_PART_LAG: usize = 1;
+const TARGET_PART: u64 = 1;
+const WARMUP_SEGMENTS: usize = 2;
+const MIN_CHECKPOINTS: usize = 40;
+
+fn media_range_secs(sources: &[Source]) -> (f64, f64) {
+    let times = sources
+        .iter()
+        .filter(|s| s.is_video() || s.is_audio())
+        .flat_map(|s| s.samples.iter().map(|x| s.secs(x.dts.unwrap_or(0))));
+    times.fold((f64::MAX, f64::MIN), |(lo, hi), t| (lo.min(t), hi.max(t)))
+}
+
+fn parts_of(pl: &MediaPlaylist) -> Vec<(u64, u64)> {
+    let closed = pl.segments.iter().map(|s| s.parts.len());
+    let open = pl.open_segment.iter().map(|o| o.parts.len());
+    closed
+        .chain(open)
+        .enumerate()
+        .flat_map(|(i, n)| (0..n as u64).map(move |p| (pl.media_sequence + i as u64, p)))
+        .collect()
+}
+
+fn window(sources: &[Source], from: f64, to: f64) -> impl Fn(usize, &Sample) -> bool + '_ {
+    move |ti, s| {
+        let t = sources[ti].secs(s.dts.unwrap_or(0));
+        t >= from && t < to
+    }
+}
+
+fn aac_rig_live(sources: &[Source], until: f64) -> Rig {
+    let aac = sources.iter().find(|s| s.is_audio()).expect("audio track");
+    rig_live_aligned(
+        sources,
+        decls(&["eng"]),
+        vec![AudioTrackSelector::TrackId(aac.spec.track_id.value())],
+        &window(sources, f64::MIN, until),
+    )
+}
+
+#[tokio::test]
+async fn split_audio_live_edge_tracks_video_within_one_part_while_publishing() {
+    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let (start, end) = media_range_secs(&sources);
+    let mut at = start + CHECKPOINT_STEP_SECS;
+    let rig = aac_rig_live(&sources, at);
+    let mut checkpoints = 0;
+    let mut hinted = 0;
+    while at < end {
+        let video = rig.playlist("media.m3u8").await;
+        let audio = rig.playlist("audio/a0.m3u8").await;
+        let video_parts = parts_of(&video);
+        if video.segments.len() >= WARMUP_SEGMENTS {
+            let audio_edge = *parts_of(&audio)
+                .last()
+                .unwrap_or_else(|| panic!("audio playlist has no part at {at:.2}s"));
+            let audio_at = video_parts
+                .iter()
+                .position(|p| *p == audio_edge)
+                .unwrap_or_else(|| panic!("audio edge {audio_edge:?} is not a video part"));
+            let lag = video_parts.len() - 1 - audio_at;
+            assert!(
+                lag <= MAX_PART_LAG,
+                "at {at:.2}s audio edge {audio_edge:?} trails video edge {:?} by {lag} parts",
+                video_parts.last()
+            );
+            if audio
+                .open_segment
+                .as_ref()
+                .is_some_and(|o| !o.parts.is_empty())
+            {
+                let hint = audio
+                    .low_latency
+                    .as_ref()
+                    .and_then(|ll| ll.preload_hint_part.as_deref())
+                    .unwrap_or_else(|| panic!("audio playlist has no PRELOAD-HINT at {at:.2}s"));
+                let listed = audio.open_segment.iter().flat_map(|o| &o.parts);
+                assert!(
+                    listed.into_iter().all(|p| p.uri != hint),
+                    "PRELOAD-HINT {hint} names a part already listed"
+                );
+                hinted += 1;
+            }
+            checkpoints += 1;
+        }
+        let next = at + CHECKPOINT_STEP_SECS;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+    }
+    assert!(
+        checkpoints >= MIN_CHECKPOINTS,
+        "only {checkpoints} checkpoints compared"
+    );
+    assert!(
+        hinted > 0,
+        "no checkpoint had an open audio segment to hint"
+    );
+}
+
+#[tokio::test]
+async fn split_audio_blocking_reload_returns_when_the_matching_audio_part_exists() {
+    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let (start, end) = media_range_secs(&sources);
+    let mut at = start + BLOCKING_STEP_SECS;
+    let rig = aac_rig_live(&sources, at);
+    let target = loop {
+        assert!(at < end, "video never reached part 1 of a later segment");
+        let video = rig.playlist("media.m3u8").await;
+        if let Some(&(msn, TARGET_PART)) = parts_of(&video).last()
+            && msn > video.media_sequence
+        {
+            break (msn, TARGET_PART);
+        }
+        let next = at + BLOCKING_STEP_SECS;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+    };
+
+    let reload_path = format!("audio/a0.m3u8?_HLS_msn={}&_HLS_part={}", target.0, target.1);
+    let reload = rig.get(&reload_path);
+    tokio::pin!(reload);
+    assert!(
+        tokio::time::timeout(BLOCKING_POLL, &mut reload)
+            .await
+            .is_err(),
+        "reload for a part that does not exist yet must block"
+    );
+
+    let (status, body) = loop {
+        assert!(at < end, "blocked reload never returned");
+        let next = at + BLOCKING_STEP_SECS;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+        if let Ok(done) = tokio::time::timeout(BLOCKING_POLL, &mut reload).await {
+            break done;
+        }
+    };
+    assert_eq!(status, StatusCode::OK);
+    let text = String::from_utf8(body).expect("utf8");
+    let audio = MediaPlaylist::parse(&text).expect("parse");
+    let audio_parts = parts_of(&audio);
+    assert!(audio_parts.contains(&target), "{text}");
+
+    let video = rig.playlist("media.m3u8").await;
+    let video_parts = parts_of(&video);
+    let target_at = video_parts
+        .iter()
+        .position(|p| *p == target)
+        .expect("target is a video part");
+    let video_lead = video_parts.len() - 1 - target_at;
+    assert_eq!(
+        video_parts.last().map(|p| p.0),
+        Some(target.0),
+        "reload returned only after the video moved on to the next segment"
+    );
+    assert!(
+        video_lead <= 2 * MAX_PART_LAG,
+        "reload returned with video {video_lead} parts past the matching part: the audio part \
+         was held back until a later boundary"
+    );
+
+    rig.publish_more(&sources, &window(&sources, at, end + 1.0));
+    let finished = rig.playlist("media.m3u8").await;
+    let segment = &finished.segments[(target.0 - finished.media_sequence) as usize];
+    let remaining_parts_secs = (target.1 + 3) as f64 * f64::from(PART_TARGET_MS) / 1000.0;
+    assert!(
+        segment.duration.get() >= remaining_parts_secs,
+        "segment {} lasts {}s, too short to tell part-level from segment-level following",
+        target.0,
+        segment.duration.get()
+    );
+}
+
+#[tokio::test]
+async fn split_audio_validator_reports_no_new_part_findings_over_the_muxed_route() {
+    if !validator_available() {
+        eprintln!(
+            "SKIP split_audio_validator_reports_no_new_part_findings_over_the_muxed_route: \
+             `mediastreamvalidator` not on PATH"
+        );
+        return;
+    }
+    let sources = france2();
+    let split = rig(
+        &sources,
+        decls(&["fr", "qad", "qaa"]),
+        index_selectors(3),
+        &|_, _| true,
+    );
+    let muxed = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
+    let is_part_finding = |m: &str| m.to_ascii_lowercase().contains("part");
+    let muxed_part: std::collections::BTreeSet<String> = validator_must_findings(&muxed, 0)
+        .await
+        .into_iter()
+        .map(|(_, m)| m)
+        .filter(|m| is_part_finding(m))
+        .collect();
+    let new_part: Vec<_> = validator_must_findings(&split, 3)
+        .await
+        .into_iter()
+        .filter(|(_, m)| is_part_finding(m) && !muxed_part.contains(m))
+        .collect();
+    assert!(
+        new_part.is_empty(),
+        "level-1 part findings split audio adds over the muxed route: {new_part:?}"
+    );
+}
+
+const NON_SPLIT_PARTS: usize = 18;
+const NON_SPLIT_SEGMENTS: usize = 3;
+const NON_SPLIT_DIGEST: u32 = 2_536_544_045;
+
+#[tokio::test]
+async fn non_split_route_output_is_unchanged() {
+    let sources = by_role(load("ts/h264_aac.ts"));
+    let rig = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
+    let pl = rig.playlist("media.m3u8").await;
+    let mut bytes = rig.ok(&pl.segments[0].map.as_ref().expect("map").uri).await;
+    let mut parts = 0;
+    for seg in &pl.segments {
+        for part in &seg.parts {
+            bytes.extend(rig.ok(&part.uri).await);
+            parts += 1;
+        }
+        bytes.extend(rig.ok(&seg.uri).await);
+    }
+    assert_eq!(
+        (
+            parts,
+            pl.segments.len(),
+            broadcast_common::crc32_mpeg2::compute(&bytes)
+        ),
+        (NON_SPLIT_PARTS, NON_SPLIT_SEGMENTS, NON_SPLIT_DIGEST)
+    );
 }

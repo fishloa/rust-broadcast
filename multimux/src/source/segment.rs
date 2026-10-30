@@ -89,7 +89,7 @@ use media_plane::trunk::{
     TryPublishSegmentError,
 };
 use transmux::SegmentMeta;
-use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartInfo};
+use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
@@ -197,15 +197,15 @@ impl AnySegmenter {
 
     /// LL-HLS partial segments — always empty for [`AnySegmenter::Ts`], which
     /// has no partial-segment concept at all (see [`AnySegmenter`]'s own doc).
-    fn record_cuts(&mut self) {
+    fn record_part_cuts(&mut self) {
         if let AnySegmenter::Fmp4(seg) = self {
-            seg.record_cuts();
+            seg.record_part_cuts();
         }
     }
 
-    fn take_ready_cut_plans(&mut self) -> Vec<CutPlan> {
+    fn take_ready_part_cuts(&mut self) -> Vec<PartCutReady> {
         match self {
-            AnySegmenter::Fmp4(seg) => seg.take_ready_cut_plans(),
+            AnySegmenter::Fmp4(seg) => seg.take_ready_part_cuts(),
             AnySegmenter::Ts(_) => Vec::new(),
         }
     }
@@ -746,7 +746,7 @@ impl ProgramSegmenter {
             part_target_ms,
         );
         if !followers.is_empty() {
-            seg.record_cuts();
+            seg.record_part_cuts();
         }
         Some(ProgramSegmenter {
             // `subscribe_from_backlog`, not `subscribe` (issue #808): the
@@ -1213,10 +1213,10 @@ impl ProgramSegmenter {
                         .map(Into::into)
                         .collect();
                     let (next_seq, current_seg) = old_seg.next_sequence_numbers();
-                    let plans = old_seg.take_ready_cut_plans();
+                    let part_cuts = old_seg.take_ready_part_cuts();
                     self.note_leader_segments(&segments);
                     self.publish_in_stream_order(parts, segments);
-                    self.feed_followers(plans);
+                    self.feed_followers(part_cuts);
                     self.finish_followers();
 
                     match LlHlsSegmenter::with_part_target_at(
@@ -1241,7 +1241,7 @@ impl ProgramSegmenter {
                                 route_handle.part_target_ms(),
                             );
                             if !self.followers.is_empty() {
-                                self.seg.record_cuts();
+                                self.seg.record_part_cuts();
                             }
                             // Re-arm the start-gate for the rebuilt track set
                             // (issue #1425): a fresh segmenter must not emit a
@@ -1362,10 +1362,10 @@ impl ProgramSegmenter {
         self.drain_pending();
         let parts = self.seg.take_ready_parts();
         let segments = self.seg.take_ready_segments();
-        let plans = self.seg.take_ready_cut_plans();
+        let part_cuts = self.seg.take_ready_part_cuts();
         self.note_leader_segments(&segments);
         let counts = self.publish_in_stream_order(parts, segments);
-        self.feed_followers(plans);
+        self.feed_followers(part_cuts);
         counts
     }
 
@@ -1382,9 +1382,12 @@ impl ProgramSegmenter {
         }
     }
 
-    fn feed_followers(&mut self, plans: Vec<CutPlan>) {
+    fn feed_followers(&mut self, cuts: Vec<PartCutReady>) {
+        if cuts.is_empty() {
+            return;
+        }
         for follower in &mut self.followers {
-            follower.on_plans(plans.clone(), &self.leader_durations);
+            follower.on_part_cuts(cuts.clone(), &self.leader_durations);
         }
     }
 

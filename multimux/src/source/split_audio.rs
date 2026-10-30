@@ -13,8 +13,11 @@
 //! must not request it), so the sequence numbers of both playlists stay
 //! contiguous and aligned.
 //!
-//! Follower segments are produced one leader segment behind the leader, since
-//! a leader cut is only known once the leader has finished that segment.
+//! The leader hands out each part boundary as it closes, and a follower cuts
+//! the matching audio part as soon as its audio reaches the next boundary, so
+//! an audio playlist's live edge trails the video's by at most one part
+//! (RFC 8216bis §4.4.4.9: renditions carry matching media sequence numbers and
+//! parts).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -24,7 +27,7 @@ use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk};
 use transmux::SegmentMeta;
 use transmux::TrackId;
-use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartInfo, SegmentInfo};
+use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo, SegmentInfo};
 use transmux::pipeline::{Sample, TrackSpec};
 
 use super::segment::{PendingPublish, drain_publish_queue};
@@ -33,10 +36,10 @@ use crate::route::{AudioServing, RouteHandle};
 
 const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
 
-/// Leader cut plans a follower may hold back waiting for its audio to catch
-/// up with the cut before it closes the segment regardless (an audio track
-/// that went silent must not stall its playlist forever).
-const MAX_QUEUED_PLANS: usize = 2;
+/// Leader part boundaries a follower may hold back waiting for its audio to
+/// catch up with the boundary before it applies them regardless (an audio
+/// track that went silent must not stall its playlist forever).
+const MAX_QUEUED_CUTS: usize = 16;
 
 /// Audio samples buffered before the first leader cut fixes the shared
 /// origin; older ones are dropped.
@@ -147,8 +150,7 @@ pub(super) struct AudioFollower {
     held: VecDeque<Sample>,
     origin: Option<(i64, u32)>,
     timescale: u32,
-    plans: VecDeque<CutPlan>,
-    registered_any: bool,
+    cuts: VecDeque<PartCutReady>,
     newest_dts: Option<i64>,
     next_seq: u32,
     next_timeline_ns: u64,
@@ -194,8 +196,7 @@ impl AudioFollower {
             held: VecDeque::new(),
             origin: None,
             timescale: spec.timescale,
-            plans: VecDeque::new(),
-            registered_any: false,
+            cuts: VecDeque::new(),
             newest_dts: None,
             next_seq,
             next_timeline_ns: 0,
@@ -212,7 +213,7 @@ impl AudioFollower {
             return;
         }
         self.push_now(sample);
-        self.release_plans(false);
+        self.release_cuts(false);
         self.publish_ready(leaders);
     }
 
@@ -225,69 +226,65 @@ impl AudioFollower {
         }
     }
 
-    pub(super) fn on_plans(&mut self, plans: Vec<CutPlan>, leaders: &LeaderDurations) {
-        for plan in plans {
-            if self.origin.is_none() {
-                self.start_timeline(plan);
-            } else {
-                self.plans.push_back(plan);
-            }
-        }
-        self.release_plans(false);
+    pub(super) fn on_part_cuts(&mut self, cuts: Vec<PartCutReady>, leaders: &LeaderDurations) {
+        self.cuts.extend(cuts);
+        self.release_cuts(false);
         self.publish_ready(leaders);
     }
 
-    /// The first leader cut fixes the shared origin and puts the segmenter in
-    /// follower mode before any sample reaches it, so it never cuts on its own.
-    fn start_timeline(&mut self, plan: CutPlan) {
-        let (start, timescale) = (plan.segment_start, plan.timescale);
-        self.next_seq = plan.segment_seq;
-        self.origin = Some((start, timescale));
-        self.seg.set_timeline_origin(start, timescale);
-        self.follow(plan);
-        for sample in std::mem::take(&mut self.held) {
-            let at_or_after = sample
-                .dts
-                .is_some_and(|d| cmp_time(d, self.timescale, start, timescale).is_ge());
-            if at_or_after {
-                self.push_now(sample);
-            }
-        }
+    fn caught_up(&self, cut: &PartCutReady) -> bool {
+        self.newest_dts
+            .is_some_and(|d| cmp_time(d, self.timescale, cut.start_dts, cut.timescale).is_ge())
     }
 
-    fn follow(&mut self, plan: CutPlan) {
-        self.registered_any = true;
-        if let Err(e) = self.seg.follow(plan) {
-            tracing::warn!(error = %e, "audio follower follow failed");
-        }
-    }
-
-    fn caught_up(&self, plan: &CutPlan) -> bool {
-        self.newest_dts.is_some_and(|d| {
-            cmp_time(d, self.timescale, plan.segment_start, plan.timescale).is_ge()
-        })
-    }
-
-    fn release_plans(&mut self, force: bool) {
-        while let Some(front) = self.plans.front() {
+    /// Applies queued leader boundaries once the audio has reached them, so a
+    /// segment is never closed before the audio it will contain has arrived.
+    fn release_cuts(&mut self, force: bool) {
+        while let Some(cut) = self.cuts.front().copied() {
             let ready = force
-                || !self.registered_any
-                || self.caught_up(front)
-                || self.plans.len() > MAX_QUEUED_PLANS;
+                || self.origin.is_none()
+                || self.caught_up(&cut)
+                || self.cuts.len() > MAX_QUEUED_CUTS;
             if !ready {
                 return;
             }
-            let Some(plan) = self.plans.pop_front() else {
-                return;
-            };
-            self.follow(plan);
+            self.cuts.pop_front();
+            self.follow(&cut);
+        }
+    }
+
+    /// The first leader boundary fixes the shared origin and puts the
+    /// segmenter in follower mode before any sample reaches it, so it never
+    /// cuts on its own.
+    fn follow(&mut self, cut: &PartCutReady) {
+        let first = self.origin.is_none();
+        if first {
+            self.next_seq = cut.msn;
+            self.origin = Some((cut.start_dts, cut.timescale));
+            self.seg.set_timeline_origin(cut.start_dts, cut.timescale);
+        }
+        if let Err(e) = self
+            .seg
+            .follow_part(cut.msn, cut.part_index, cut.start_dts, cut.timescale)
+        {
+            tracing::warn!(error = %e, "audio follower follow_part failed");
+        }
+        if first {
+            for sample in std::mem::take(&mut self.held) {
+                let at_or_after = sample.dts.is_some_and(|d| {
+                    cmp_time(d, self.timescale, cut.start_dts, cut.timescale).is_ge()
+                });
+                if at_or_after {
+                    self.push_now(sample);
+                }
+            }
         }
     }
 
     /// Close the trailing segment at end of stream and pad the playlist with
     /// gaps up to the leader's last segment.
     pub(super) fn finish(&mut self, leaders: &LeaderDurations) {
-        self.release_plans(true);
+        self.release_cuts(true);
         if let Err(e) = self.seg.flush() {
             tracing::warn!(error = %e, "audio follower flush failed");
         }

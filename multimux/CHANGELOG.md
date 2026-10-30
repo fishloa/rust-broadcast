@@ -5,6 +5,7 @@
 ### Added
 - Split-audio routes now expose `#EXT-X-RENDITION-REPORT` between sibling renditions (issue #1428 slice 4); Apple `mediastreamvalidator` no longer reports "Missing rendition report".
 - Split-audio routes serve a correct multivariant playlist (issue #1428 slice 3): per-group `CODECS` including the audio codec, `BANDWIDTH`/`AVERAGE-BANDWIDTH` summing video and audio, and `LANGUAGE`/`NAME`/`CHARACTERISTICS`/`CHANNELS` derived from the PMT when the route's `audio_renditions` leave them unset (config values win). `declared_bandwidth_bps` applies to the video part only. The primary playlist's `CODECS` no longer names audio mapped to a separate rendition. Config validation accepts empty `language`/`name` on a route with `audio_rendition_sources`.
+- Split-audio followers now cut audio parts on the leader's part boundaries, so each audio playlist's live edge (MSN, part) tracks video's within one part; blocking reload on an audio part unblocks as soon as the matching audio part is published. Rendition reports show audio LAST-PART equal to video's within one part.
 
 ### Changed
 - Dependency `sdp-types` 0.2 -> 0.3. No public API exposure.
