@@ -1645,10 +1645,6 @@ impl DashClient {
 
     fn start_period(&mut self, pi: usize) {
         self.periods[pi].started = true;
-        // Stable track ids across Periods: a lane keeps the id it was first
-        // given (keyed by media kind + AdaptationSet identity) instead of
-        // restarting at 1 each Period, so a Period that drops a kind cannot
-        // hand that kind's id to a different kind in a later Period.
         let mut assignments: Vec<(usize, u32, u32)> = Vec::new();
         let mut used_ranges: Vec<(u32, u32)> = Vec::new();
         for li in 0..self.periods[pi].lanes.len() {
