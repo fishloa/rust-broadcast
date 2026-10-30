@@ -424,7 +424,7 @@ dependencies = [
  "lru",
  "md-5 0.11.0",
  "percent-encoding",
- "rand 0.8.8",
+ "rand 0.10.3",
  "sha2 0.11.1",
  "subtle",
  "thiserror 2.0.21",
@@ -1234,7 +1234,7 @@ version = "0.4.0"
 dependencies = [
  "criterion",
  "mpeg-ts",
- "rand 0.9.5",
+ "rand 0.10.3",
  "subtle",
  "thiserror 2.0.21",
  "zeroize",

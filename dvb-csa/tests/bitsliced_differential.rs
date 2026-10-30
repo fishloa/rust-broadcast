@@ -17,7 +17,7 @@
 use dvb_csa::bitsliced::{LANES, descramble_batch, scramble_batch};
 use dvb_csa::{ControlWord, descramble, scramble};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 /// Payload lengths worth mixing into a batch.
 ///

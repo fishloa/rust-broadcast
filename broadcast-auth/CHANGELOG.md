@@ -8,6 +8,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - Dependency `lru` 0.18 -> 0.19.
+- Dependency `rand` 0.8 -> 0.10 (internal use only: the per-verifier Digest nonce-signing secret; CSPRNG `rand::random()` / `ThreadRng` unchanged). No public API exposure.
 
 ### Added
 - Typed `WWW-Authenticate` challenge parsing (`challenge::parse_challenges`): `Scheme`, `BearerError`, `Challenge` with RFC 6750 fields and RFC 9728 `resource_metadata` as a validated `url::Url`.

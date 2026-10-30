@@ -24,7 +24,7 @@ thiserror = "2"
 # (`md-5`) to verify against, and generating a fresh server nonce (`rand`).
 base64    = "0.23"
 md-5      = "0.11"
-rand      = "0.8"
+rand      = "0.10"
 # Signed-URL scheme (`signed_url::SignedUrlKeySet`, issue #747): HMAC-SHA256
 # over the canonical `path\nexp\nip` string. `hmac`/`sha2` are already
 # also used by `srt-runtime`'s `crypto` feature (same RustCrypto generation);
