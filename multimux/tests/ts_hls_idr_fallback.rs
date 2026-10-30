@@ -103,6 +103,7 @@ fn route(name: &str, input: InputSpec, fallback: TsHlsIdrFallback) -> Route {
         ts_hls_idr_fallback: fallback,
         declared_bandwidth_bps: None,
         audio_renditions: Vec::new(),
+        audio_rendition_sources: Vec::new(),
     }
 }
 

@@ -610,3 +610,75 @@ fn flush_with_buffered_samples_and_no_plan_is_an_error() {
         Error::InvalidInput("flush: follower has buffered samples but no cut plan")
     );
 }
+
+fn first_tfdt(segment: &[u8]) -> u64 {
+    let mut at = 0;
+    while at + 8 <= segment.len() {
+        let size = u32::from_be_bytes([
+            segment[at],
+            segment[at + 1],
+            segment[at + 2],
+            segment[at + 3],
+        ]) as usize;
+        if &segment[at + 4..at + 8] == b"moof" {
+            let moof =
+                transmux::movie_fragment::MovieFragmentBox::parse_body(&segment[at + 8..at + size])
+                    .unwrap();
+            return moof.traf[0].tfdt.as_ref().unwrap().base_media_decode_time();
+        }
+        at += size;
+    }
+    panic!("no moof");
+}
+
+fn follower_with_origin(origin_frame: i64) -> LlHlsSegmenter {
+    let (audio, movie_ts) = audio_template();
+    let mut f = LlHlsSegmenter::with_part_target(
+        vec![audio.spec.clone()],
+        movie_ts,
+        SEGMENT_TARGET_SECS,
+        PART_TARGET_MS,
+    )
+    .unwrap();
+    f.set_timeline_origin(leader_ticks(origin_frame * AAC_FRAME_TICKS), LEADER_TS);
+    f
+}
+
+#[test]
+fn shared_origin_offsets_the_first_follower_segment_by_its_first_sample() {
+    let (audio, _) = audio_template();
+    let track = audio.spec.track_id;
+    let mut f = follower_with_origin(2);
+    f.follow(plan(1, 2 * 1024)).unwrap();
+    for n in 5..12 {
+        f.push(track, frame(n)).unwrap();
+    }
+    f.flush().unwrap();
+    let segs = f.take_ready_segments();
+    assert_eq!(segs.len(), 1);
+    assert_eq!(first_tfdt(&segs[0].bytes), 3 * AAC_FRAME_TICKS as u64);
+}
+
+#[test]
+fn segment_after_a_silent_leader_segment_restarts_from_its_own_decode_time() {
+    let (audio, _) = audio_template();
+    let track = audio.spec.track_id;
+    let mut f = follower_with_origin(0);
+    f.follow(plan(1, 0)).unwrap();
+    for n in 0..10 {
+        f.push(track, frame(n)).unwrap();
+    }
+    f.follow(plan(2, 10 * 1024)).unwrap();
+    f.follow(plan(3, 20 * 1024)).unwrap();
+    for n in 20..30 {
+        f.push(track, frame(n)).unwrap();
+    }
+    f.flush().unwrap();
+    let segs = f.take_ready_segments();
+    assert_eq!(
+        segs.iter().map(|s| s.segment_seq).collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    assert_eq!(first_tfdt(&segs[0].bytes), 0);
+    assert_eq!(first_tfdt(&segs[1].bytes), 20 * AAC_FRAME_TICKS as u64);
+}

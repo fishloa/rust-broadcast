@@ -179,8 +179,15 @@ async fn dynamic_file(
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
-    let trunk = serving.trunk();
-    let ll_hls = serving.ll_hls();
+    // Route to a sibling audio origin when the filename's leading track id
+    // matches one of them (issue #1428 slice 2b).
+    let (trunk, ll_hls) = if let Some(tid) = track_id_from_filename(&file)
+        && let Some(audio) = serving.audio_by_track(transmux::TrackId::new(tid))
+    {
+        (audio.trunk.clone(), audio.origin.clone())
+    } else {
+        (serving.trunk(), serving.ll_hls())
+    };
     let request = HlsRequest::Resource { name: file.clone() };
     let priority = ll_hls.http_priority(&request);
     let priority_value = header::HeaderValue::from_str(&format!("u={}", priority.urgency)).ok();
@@ -240,6 +247,24 @@ fn resource_body_response(
         // the same as the playlist case above -- not a resource body.
         _ => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// The served track id leading an init/segment/part filename
+/// (`init-{track}-…`, `seg-{track}-…`, `part-{track}-…`, `iframe-seg-{track}-…`),
+/// used to pick the sibling audio origin a split-audio route serves it from.
+fn track_id_from_filename(file: &str) -> Option<u32> {
+    let rest = [
+        "init-",
+        "seg-",
+        "part-",
+        hls_runtime::server::IFRAME_SEGMENT_PREFIX,
+    ]
+    .iter()
+    .find_map(|prefix| file.strip_prefix(prefix))?;
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
 }
 
 /// Parse a whole-segment dynamic filename (`seg-{track}-{seq}.m4s`) into

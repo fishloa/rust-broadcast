@@ -37,6 +37,7 @@ pub mod rtsp;
 pub mod sdp;
 pub mod segment;
 pub mod smooth_pull;
+pub(crate) mod split_audio;
 pub mod srt;
 pub mod ts_http;
 pub mod ts_program;

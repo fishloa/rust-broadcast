@@ -178,6 +178,13 @@ struct TrackState {
     /// Advances `seg_base_decode` past the whole segment at the boundary —
     /// see `part_clock` for why this is a second, independent clock.
     seg_clock: MediaClock,
+    /// Whether the shared-origin offset has been applied to this track's
+    /// first emitted follower segment.
+    origin_applied: bool,
+    /// A follower segment closed with no sample of this track, so the next
+    /// one must restart its `tfdt` from its own first sample's decode time
+    /// rather than continue contiguously.
+    gap_pending: bool,
 }
 
 /// A stateful **Low-Latency HLS** segmenter (RFC 8216bis).
@@ -267,6 +274,7 @@ pub struct LlHlsSegmenter {
     ready: VecDeque<LlHlsStageOutput>,
     /// Follower mode: cut only at externally supplied boundaries.
     external_cuts: bool,
+    timeline_origin: Option<(i64, u32)>,
     /// Leader mode: record the boundaries of every cut into `ready_cuts`.
     record_cuts: bool,
     /// Part boundaries of the segment being built (leader mode).
@@ -353,6 +361,8 @@ impl LlHlsSegmenter {
                 seg_base_decode: 0,
                 part_clock: MediaClock::new(),
                 seg_clock: MediaClock::new(),
+                origin_applied: false,
+                gap_pending: false,
             })
             .collect();
 
@@ -370,6 +380,7 @@ impl LlHlsSegmenter {
             next_part_index: 0,
             ready: VecDeque::new(),
             external_cuts: false,
+            timeline_origin: None,
             record_cuts: false,
             current_cuts: Vec::new(),
             ready_cuts: VecDeque::new(),
@@ -655,8 +666,29 @@ impl LlHlsSegmenter {
             bounds.push(b);
         }
 
+        for (t, b) in self.tracks.iter_mut().zip(&bounds) {
+            if b[nparts] == 0 {
+                t.gap_pending = true;
+            }
+        }
         if bounds.iter().all(|b| b[nparts] == 0) {
             return Ok(());
+        }
+
+        if let Some((origin, origin_ts)) = self.timeline_origin {
+            for (t, b) in self.tracks.iter_mut().zip(&bounds) {
+                if (t.origin_applied && !t.gap_pending) || b[nparts] == 0 {
+                    continue;
+                }
+                t.origin_applied = true;
+                t.gap_pending = false;
+                let first = follower_dts(&t.pending[0]);
+                let offset = i128::from(first) * i128::from(origin_ts)
+                    - i128::from(origin) * i128::from(t.spec.timescale);
+                let ticks = offset / i128::from(origin_ts);
+                t.seg_base_decode = u64::try_from(ticks).unwrap_or(0);
+                t.part_base_decode = t.seg_base_decode;
+            }
         }
 
         let mut cumulative: Vec<Vec<u64>> = Vec::with_capacity(self.tracks.len());
@@ -761,6 +793,20 @@ impl LlHlsSegmenter {
     /// on, the caller must drain the plans or they accumulate.
     pub fn record_cuts(&mut self) {
         self.record_cuts = true;
+    }
+
+    /// Align a follower's timeline with its leader's (issue #1428 slice 2b).
+    ///
+    /// The first segment each track emits in follower mode starts its
+    /// `tfdt` at that track's first sample's decode time minus the origin
+    /// (the leader's first segment start, rescaled into the track's
+    /// timescale, floored at zero; a zero `origin_timescale` is ignored), rather than at zero. Later segments
+    /// continue contiguously from there. A no-op for a segmenter that is not
+    /// following, and never consulted by a leader.
+    pub fn set_timeline_origin(&mut self, origin_dts: i64, origin_timescale: u32) {
+        if origin_timescale != 0 {
+            self.timeline_origin = Some((origin_dts, origin_timescale));
+        }
     }
 
     /// Remove and return the [`CutPlan`] of every segment finished since the
