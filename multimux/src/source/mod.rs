@@ -162,23 +162,27 @@ pub(crate) async fn read_body_bounded(
 /// redirect must never silently move an authenticated fetch onto cleartext.
 /// (Same-host-or-allowlist enforcement is left to the operator's proxy; the
 /// downgrade refusal is the load-bearing, cheap half.)
-pub(crate) fn redirect_policy() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
-        let prev_scheme = attempt
-            .previous()
-            .last()
-            .map(reqwest::Url::scheme)
-            .unwrap_or("");
+pub(crate) fn redirect_policy(allow_cross_origin: bool) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt| {
+        let prev = attempt.previous().last();
+        let prev_scheme = prev.map(reqwest::Url::scheme).unwrap_or("");
+        let prev_host = prev.and_then(reqwest::Url::host_str).unwrap_or("");
+        let next_scheme = attempt.url().scheme();
+        let next_host = attempt.url().host_str().unwrap_or("");
         match redirect_decision(
             attempt.previous().len(),
             prev_scheme,
-            attempt.url().scheme(),
+            prev_host,
+            next_scheme,
+            next_host,
+            allow_cross_origin,
         ) {
             RedirectDecision::Follow => attempt.follow(),
             RedirectDecision::TooMany => attempt.error("too many redirects"),
             RedirectDecision::Downgrade => {
                 attempt.error("refusing an https -> http redirect downgrade")
             }
+            RedirectDecision::CrossOrigin => attempt.error("refusing a cross-origin redirect"),
         }
     })
 }
@@ -190,6 +194,7 @@ enum RedirectDecision {
     Follow,
     TooMany,
     Downgrade,
+    CrossOrigin,
 }
 
 /// Decide whether to follow a redirect: refuse past [`MAX_REDIRECT_HOPS`] and
@@ -198,13 +203,19 @@ enum RedirectDecision {
 fn redirect_decision(
     previous_len: usize,
     prev_scheme: &str,
+    prev_host: &str,
     next_scheme: &str,
+    next_host: &str,
+    allow_cross_origin: bool,
 ) -> RedirectDecision {
     if previous_len >= MAX_REDIRECT_HOPS {
         return RedirectDecision::TooMany;
     }
     if prev_scheme == "https" && next_scheme != "https" {
         return RedirectDecision::Downgrade;
+    }
+    if !allow_cross_origin && (prev_scheme != next_scheme || prev_host != next_host) {
+        return RedirectDecision::CrossOrigin;
     }
     RedirectDecision::Follow
 }
@@ -222,21 +233,21 @@ mod redirect_tests {
     fn redirect_decision_refuses_hops_and_downgrade() {
         use super::{MAX_REDIRECT_HOPS, RedirectDecision, redirect_decision};
         assert_eq!(
-            redirect_decision(0, "https", "https"),
+            redirect_decision(0, "https", "h", "https", "h", true),
             RedirectDecision::Follow
         );
         assert_eq!(
-            redirect_decision(0, "http", "http"),
+            redirect_decision(0, "http", "h", "http", "h", true),
             RedirectDecision::Follow
         );
         // https -> http (and any non-https target) is refused.
         assert_eq!(
-            redirect_decision(0, "https", "http"),
+            redirect_decision(0, "https", "h", "http", "h", true),
             RedirectDecision::Downgrade
         );
         // Too many hops.
         assert_eq!(
-            redirect_decision(MAX_REDIRECT_HOPS, "https", "https"),
+            redirect_decision(MAX_REDIRECT_HOPS, "https", "h", "https", "h", true),
             RedirectDecision::TooMany
         );
     }
@@ -261,7 +272,7 @@ mod redirect_tests {
             axum::serve(listener, app).await.unwrap();
         });
         let client = reqwest::Client::builder()
-            .redirect(redirect_policy())
+            .redirect(redirect_policy(true))
             .build()
             .unwrap();
         let err = client

@@ -1435,7 +1435,7 @@ mod exchange {
     fn net(read_timeout: Duration, cap: usize) -> Net {
         Net {
             http: reqwest::Client::builder()
-                .redirect(crate::source::redirect_policy())
+                .redirect(crate::source::redirect_policy(true))
                 .build()
                 .expect("client"),
             credentials: None,

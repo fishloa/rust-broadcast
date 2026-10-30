@@ -488,7 +488,7 @@ impl DashClient {
         Some(Action::FetchMpd { url, validators })
     }
 
-    fn update_url(&self) -> Option<String> {
+    fn update_url(&mut self) -> Option<String> {
         let live = self.live.as_ref()?;
         let mpd = self.mpd.as_ref()?;
         if let Some(loc) = mpd.locations.first() {
@@ -497,8 +497,19 @@ impl DashClient {
                 Some(b) => b.join(loc).ok().map(|u| u.to_string()),
                 None => Url::parse(loc).ok().map(|u| u.to_string()),
             };
-            if resolved.is_some() {
-                return resolved;
+            if let Some(url) = resolved
+                && let Ok(parsed) = Url::parse(&url)
+                && matches!(parsed.scheme(), "http" | "https")
+            {
+                let pin = !self.dash.cross_origin_urls;
+                let origin_ok = !pin
+                    || self
+                        .doc_url
+                        .as_ref()
+                        .is_none_or(|d| same_origin(d, &parsed));
+                if origin_ok {
+                    return Some(url);
+                }
             }
         }
         live.refresh.redirect_url.clone()
@@ -529,12 +540,20 @@ impl DashClient {
 
     pub(super) fn start_live(&mut self, now_us: u64, bytes: &[u8], meta: &ResponseMeta<'_>) {
         self.live = Some(Live::new(now_us));
-        if let Some(f) = meta.final_url
-            && let Some(l) = self.live.as_mut()
-        {
-            l.refresh.redirect_url = Some(f.to_owned());
-            if let Ok(u) = Url::parse(f) {
-                self.doc_url = Some(u);
+        if let Some(f) = meta.final_url {
+            let parsed = Url::parse(f).ok();
+            let pin = !self.dash.cross_origin_urls;
+            let allow = parsed.as_ref().is_some_and(|u| {
+                matches!(u.scheme(), "http" | "https")
+                    && (!pin || self.doc_url.as_ref().is_none_or(|d| same_origin(d, u)))
+            });
+            if allow {
+                if let Some(l) = self.live.as_mut() {
+                    l.refresh.redirect_url = Some(f.to_owned());
+                }
+                if let Some(u) = parsed {
+                    self.doc_url = Some(u);
+                }
             }
         }
         self.note_exchange(now_us, meta);
@@ -563,9 +582,17 @@ impl DashClient {
             live.refresh.validators.last_modified = Some(m.to_owned());
         }
         if let Some(f) = meta.final_url {
-            live.refresh.redirect_url = Some(f.to_owned());
-            if let Ok(u) = Url::parse(f) {
-                self.doc_url = Some(u);
+            let parsed = Url::parse(f).ok();
+            let pin = !self.dash.cross_origin_urls;
+            let allow = parsed.as_ref().is_some_and(|u| {
+                matches!(u.scheme(), "http" | "https")
+                    && (!pin || self.doc_url.as_ref().is_none_or(|d| same_origin(d, u)))
+            });
+            if allow {
+                live.refresh.redirect_url = Some(f.to_owned());
+                if let Some(u) = parsed {
+                    self.doc_url = Some(u);
+                }
             }
         }
         if let Some(date) = meta.date {
@@ -1329,7 +1356,11 @@ impl DashClient {
                             kept_audio = Some((!rep.dead).then_some(rep.at));
                         }
                         if let Some((p, s, r)) = rep.at.resolve(mpd) {
-                            rep.candidates = representation_candidates(mpd, p, s, r);
+                            rep.candidates = super::filter_candidates(
+                                representation_candidates(mpd, p, s, r),
+                                self.doc_url.as_ref(),
+                                self.dash.cross_origin_urls,
+                            );
                         }
                     }
                     None => vanished.push((pi, li)),

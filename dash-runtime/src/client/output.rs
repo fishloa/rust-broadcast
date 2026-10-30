@@ -6,6 +6,7 @@ use transmux::{Sample, TrackId, TrackSpec};
 
 use super::action::ResourceId;
 use super::error::FatalKind;
+use crate::error::Unsupported;
 use crate::selection::{DropReason, RepRef};
 use crate::timing::clock::ClockSource;
 
@@ -83,6 +84,8 @@ pub enum DropCause {
     UnusableUrl,
     /// A URL left the MPD origin while `cross_origin_urls` is off.
     CrossOrigin,
+    /// A URL used a scheme this client does not fetch.
+    Unsupported(Unsupported),
 }
 
 impl DropCause {
@@ -96,6 +99,7 @@ impl DropCause {
             Self::Addressing(n) => n,
             Self::UnusableUrl => "unusable_url",
             Self::CrossOrigin => "cross_origin",
+            Self::Unsupported(u) => u.name(),
         }
     }
 }

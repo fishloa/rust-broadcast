@@ -190,7 +190,7 @@ pub(crate) async fn open_response(route: &TsHttpRoute) -> Result<(TsHttpStream, 
     let credentials = scope_credentials(credentials, &clean_url);
 
     let client = Client::builder()
-        .redirect(crate::source::redirect_policy())
+        .redirect(crate::source::redirect_policy(true))
         .build()
         .map_err(|e| MultimuxError::Connect {
             reason: format!("reqwest client: {e}"),

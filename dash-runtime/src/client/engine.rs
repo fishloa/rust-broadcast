@@ -19,6 +19,7 @@ use super::meta::ResponseMeta;
 use super::output::{AudioRendition, DropCause, ManifestSelection, Notice, Output, VariantInfo};
 use crate::address::base_index;
 use crate::address::{AddressError, PlanError, PlanOptions, SegmentPlan, plan_representation};
+use crate::error::Unsupported;
 use crate::mpd::descriptors::SCHEME_PERIOD_CONTINUITY;
 use crate::mpd::inherit::{SegmentInfo, effective_common, resolve_segment_info};
 use crate::mpd::model::{ByteRange, Descriptor, Mpd, PresentationType};
@@ -271,6 +272,28 @@ fn same_origin(a: &Url, b: &Url) -> bool {
     a.scheme() == b.scheme()
         && a.host_str() == b.host_str()
         && a.port_or_known_default() == b.port_or_known_default()
+}
+
+pub(crate) fn filter_candidates(
+    candidates: Vec<BaseCandidate>,
+    doc_url: Option<&Url>,
+    cross_origin_urls: bool,
+) -> Vec<BaseCandidate> {
+    if cross_origin_urls {
+        return candidates;
+    }
+    let Some(doc) = doc_url else {
+        return candidates;
+    };
+    candidates
+        .into_iter()
+        .filter(|c| {
+            c.resolve(Some(doc), "")
+                .and_then(|u| Url::parse(&u).ok())
+                .map(|p| same_origin(doc, &p))
+                .unwrap_or(false)
+        })
+        .collect()
 }
 
 fn address_name(e: &AddressError) -> &'static str {
@@ -773,13 +796,18 @@ impl DashClient {
         if media && let Some(q) = &rep.query {
             url = append_query(&url, q);
         }
+        let parsed = Url::parse(&url).map_err(|_| DropCause::UnusableUrl)?;
+        if parsed.scheme() == "data" {
+            return Err(DropCause::Unsupported(Unsupported::DataUrl));
+        }
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(DropCause::UnusableUrl);
+        }
         if !self.dash.cross_origin_urls
             && let Some(doc) = &self.doc_url
+            && !same_origin(doc, &parsed)
         {
-            let parsed = Url::parse(&url).map_err(|_| DropCause::UnusableUrl)?;
-            if !same_origin(doc, &parsed) {
-                return Err(DropCause::CrossOrigin);
-            }
+            return Err(DropCause::CrossOrigin);
         }
         Ok(url)
     }
@@ -794,10 +822,10 @@ impl DashClient {
             match self.resolve(rep, &reference, kind == ReqKind::Segment) {
                 Ok(u) => u,
                 Err(cause) => {
-                    let reason = if cause == DropCause::CrossOrigin {
-                        "cross_origin"
-                    } else {
-                        "unusable_url"
+                    let reason = match cause {
+                        DropCause::CrossOrigin => "cross_origin",
+                        DropCause::Unsupported(u) => u.name(),
+                        _ => "unusable_url",
                     };
                     self.go_fatal(FatalKind::UnsupportedAddressing { reason });
                     return None;
@@ -937,7 +965,14 @@ impl DashClient {
         let (period, set, rep) = at
             .resolve(mpd)
             .ok_or(DropCause::Addressing("no_such_representation"))?;
-        let candidates = representation_candidates(mpd, period, set, rep);
+        let candidates = filter_candidates(
+            representation_candidates(mpd, period, set, rep),
+            self.doc_url.as_ref(),
+            self.dash.cross_origin_urls,
+        );
+        if candidates.is_empty() && !self.dash.cross_origin_urls {
+            return Err(DropCause::CrossOrigin);
+        }
         let query = segment_url_query(mpd, period, set, rep, self.mpd_query.as_deref())
             .map_err(|_| DropCause::UnusableUrl)?;
         let planned = plan_representation(mpd, at, &self.plan_options());
@@ -1111,12 +1146,34 @@ impl DashClient {
             self.go_fatal(fatal);
             return FailureClass::GiveUp;
         }
+        let doc = self.doc_url.clone();
+        let cross = self.dash.cross_origin_urls;
         if let Some(rep) = self.rep_mut(id.rep()) {
             rep.cand_failures += 1;
             if rep.cand_failures >= ROTATE_AFTER_FAILURES && rep.candidates.len() > 1 {
-                rep.cand = (rep.cand + 1) % rep.candidates.len();
-                rep.cand_failures = 0;
-                rotated = true;
+                let len = rep.candidates.len();
+                let mut next = (rep.cand + 1) % len;
+                let mut found = false;
+                for _ in 0..len {
+                    let ok = cross
+                        || doc.as_ref().is_none_or(|d| {
+                            rep.candidates[next]
+                                .resolve(Some(d), "")
+                                .and_then(|u| Url::parse(&u).ok())
+                                .map(|p| same_origin(d, &p))
+                                .unwrap_or(false)
+                        });
+                    if ok {
+                        found = true;
+                        break;
+                    }
+                    next = (next + 1) % len;
+                }
+                if found && next != rep.cand {
+                    rep.cand = next;
+                    rep.cand_failures = 0;
+                    rotated = true;
+                }
             }
         }
         if rotated {
@@ -1748,7 +1805,11 @@ impl DashClient {
         let planned = plan_representation(mpd, at, &PlanOptions::default());
         let (reference, _) = Self::init_reference(mpd, at, &planned)?;
         let (period, set, rep) = at.resolve(mpd)?;
-        let cands = representation_candidates(mpd, period, set, rep);
+        let cands = filter_candidates(
+            representation_candidates(mpd, period, set, rep),
+            self.doc_url.as_ref(),
+            self.dash.cross_origin_urls,
+        );
         cands.first()?.resolve(self.doc_url.as_ref(), &reference)
     }
 

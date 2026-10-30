@@ -303,7 +303,7 @@ mod tests {
 
     fn client() -> Client {
         Client::builder()
-            .redirect(crate::source::redirect_policy())
+            .redirect(crate::source::redirect_policy(true))
             .build()
             .unwrap()
     }
