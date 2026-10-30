@@ -17,7 +17,7 @@ const REJECT_FROM: u8 = (256 / ALPHABET.len() * ALPHABET.len()) as u8;
 fn fill(buf: &mut [u8]) {
     // The OS random source being unavailable is unrecoverable for a secure
     // service: refuse to mint a guessable identifier.
-    getrandom::getrandom(buf).expect("OS random source unavailable");
+    getrandom::fill(buf).expect("OS random source unavailable");
 }
 
 #[cfg(any(feature = "whip", feature = "whep"))]

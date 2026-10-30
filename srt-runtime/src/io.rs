@@ -2656,7 +2656,7 @@ fn unix_time_bucket() -> u32 {
 /// and ISN (SRT-W11). A failing OS source is reported, never panicked on.
 fn random_u64() -> Result<u64> {
     let mut bytes = [0u8; 8];
-    getrandom::getrandom(&mut bytes).map_err(|_| Error::Io {
+    getrandom::fill(&mut bytes).map_err(|_| Error::Io {
         kind: std::io::ErrorKind::Other,
         context: "getrandom",
     })?;
