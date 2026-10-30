@@ -108,6 +108,109 @@ fn spawn_quiet(cmd: &mut Command, dir: &Path) -> Tool {
     Tool { child }
 }
 
+const RTP_TS_OFFSET: usize = 4;
+const RTP_HEADER_MIN: usize = 12;
+const INTERLEAVED_MAGIC: u8 = b'$';
+const INTERLEAVED_HEADER: usize = 4;
+const CHANNELS_PER_TRACK: u8 = 2;
+const NAL_TYPE_MASK: u8 = 0x1f;
+const NAL_IDR: u8 = 5;
+const NAL_FU_A: u8 = 28;
+const FU_START_BIT: u8 = 0x80;
+
+fn starts_idr(payload: &[u8]) -> bool {
+    match payload.first().map(|b| b & NAL_TYPE_MASK) {
+        Some(NAL_IDR) => true,
+        Some(NAL_FU_A) => payload
+            .get(1)
+            .is_some_and(|fu| fu & FU_START_BIT != 0 && fu & NAL_TYPE_MASK == NAL_IDR),
+        _ => false,
+    }
+}
+
+#[derive(Default)]
+struct WireArrivals {
+    pending: Vec<u8>,
+    first_arrival: std::collections::BTreeMap<u8, std::collections::BTreeMap<u32, u64>>,
+    first_ts: std::collections::BTreeMap<u8, u32>,
+    idr_starts: std::collections::BTreeMap<u8, Vec<u32>>,
+}
+
+impl WireArrivals {
+    fn feed(&mut self, bytes: &[u8], now_us: u64) {
+        self.pending.extend_from_slice(bytes);
+        loop {
+            if self.pending.first() == Some(&INTERLEAVED_MAGIC) {
+                if self.pending.len() < INTERLEAVED_HEADER {
+                    return;
+                }
+                let len = usize::from(u16::from_be_bytes([self.pending[2], self.pending[3]]));
+                if self.pending.len() < INTERLEAVED_HEADER + len {
+                    return;
+                }
+                let channel = self.pending[1];
+                let frame: Vec<u8> = self
+                    .pending
+                    .drain(..INTERLEAVED_HEADER + len)
+                    .skip(INTERLEAVED_HEADER)
+                    .collect();
+                if channel.is_multiple_of(CHANNELS_PER_TRACK) && frame.len() >= RTP_HEADER_MIN {
+                    let ts = u32::from_be_bytes([
+                        frame[RTP_TS_OFFSET],
+                        frame[RTP_TS_OFFSET + 1],
+                        frame[RTP_TS_OFFSET + 2],
+                        frame[RTP_TS_OFFSET + 3],
+                    ]);
+                    let base = *self.first_ts.entry(channel).or_insert(ts);
+                    if starts_idr(&frame[RTP_HEADER_MIN..]) {
+                        let idr = self.idr_starts.entry(channel).or_default();
+                        let rel = ts.wrapping_sub(base);
+                        if idr.last() != Some(&rel) {
+                            idr.push(rel);
+                        }
+                    }
+                    self.first_arrival
+                        .entry(channel)
+                        .or_default()
+                        .entry(ts.wrapping_sub(base))
+                        .or_insert(now_us);
+                }
+            } else {
+                let Some(end) = self.pending.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    return;
+                };
+                let head = String::from_utf8_lossy(&self.pending[..end]).to_ascii_lowercase();
+                let body = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if self.pending.len() < end + 4 + body {
+                    return;
+                }
+                self.pending.drain(..end + 4 + body);
+            }
+        }
+    }
+
+    fn has_exact(&self, channel: u8, rel_ticks: i64) -> bool {
+        u32::try_from(rel_ticks).ok().is_some_and(|rel| {
+            self.first_arrival
+                .get(&channel)
+                .is_some_and(|m| m.contains_key(&rel))
+        })
+    }
+
+    fn arrival_of(&self, channel: u8, rel_ticks: i64) -> Option<u64> {
+        let rel = u32::try_from(rel_ticks).ok()?;
+        self.first_arrival
+            .get(&channel)?
+            .range(..=rel)
+            .next_back()
+            .map(|(_, &t)| t)
+    }
+}
+
 fn micros(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_nanos() / MICROS_PER_NANO_DIVISOR).expect("elapsed fits u64")
 }
@@ -194,6 +297,11 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
     let mut sync_states: Vec<(u64, AvSync)> = Vec::new();
     let mut max_pts_seconds: std::collections::BTreeMap<bool, f64> =
         std::collections::BTreeMap::new();
+    let mut wire = WireArrivals::default();
+    let mut track_channel: std::collections::BTreeMap<u32, u8> = std::collections::BTreeMap::new();
+    let mut first_sample_pts: std::collections::BTreeMap<u32, i64> =
+        std::collections::BTreeMap::new();
+    let mut emitted: Vec<(u32, i64, u64)> = Vec::new();
     let mut start_us: Option<u64> = None;
     let mut start_at_27mhz: Option<u64> = None;
     let mut media_end_at_start: Option<std::collections::BTreeMap<u32, u64>> = None;
@@ -242,7 +350,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
                     stream = None;
                     session.on_closed(conn, None, micros(started));
                 }
-                Ok(n) => session.on_data(*conn, &buf[..n], micros(started)),
+                Ok(n) => {
+                    wire.feed(&buf[..n], micros(started));
+                    session.on_data(*conn, &buf[..n], micros(started));
+                }
                 Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
                 Err(e) => panic!("read: {e}"),
             }
@@ -257,7 +368,11 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
                     first_live_us = Some(micros(started));
                 }
                 Event::Tracks(specs) => {
-                    for s in specs {
+                    for (index, s) in specs.iter().enumerate() {
+                        track_channel.insert(
+                            s.track_id.value(),
+                            u8::try_from(index).expect("track index") * CHANNELS_PER_TRACK,
+                        );
                         track_timescale.insert(s.track_id.value(), s.timescale);
                         let is_video = matches!(s.config, transmux::CodecConfig::Avc { .. });
                         track_is_video.insert(s.track_id.value(), is_video);
@@ -284,6 +399,13 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
                     if let Some(pts) = sample.pts {
                         let ts = track_timescale.get(&tid).copied().unwrap_or(1).max(1);
                         let seconds = pts as f64 / f64::from(ts);
+                        first_sample_pts.entry(tid).or_insert(pts);
+                        if sync_states
+                            .last()
+                            .is_some_and(|(_, s)| *s == AvSync::SenderReport)
+                        {
+                            emitted.push((tid, pts, now));
+                        }
                         let slot = max_pts_seconds.entry(is_video).or_insert(seconds);
                         *slot = slot.max(seconds);
                         let dur = i64::from(sample.duration.unwrap_or(0));
@@ -339,10 +461,58 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
         "only {} samples",
         samples.len()
     );
-    let zero = samples
+    let zero_indices: Vec<usize> = samples
         .iter()
-        .filter(|(_, s)| s.duration.unwrap_or(0) == 0)
-        .count();
+        .enumerate()
+        .filter(|(_, (_, s))| s.duration.unwrap_or(0) == 0)
+        .map(|(i, _)| i)
+        .collect();
+    if !zero_indices.is_empty() {
+        eprintln!(
+            "ZERO-DURATION SAMPLES: {} of {}",
+            zero_indices.len(),
+            samples.len()
+        );
+        for &i in &zero_indices {
+            let (tr, s) = &samples[i];
+            let prev = i
+                .checked_sub(1)
+                .map(|j| {
+                    let (ptr, ps) = &samples[j];
+                    format!(
+                        "prev track={} pts={} dts={} dur={:?}",
+                        ptr,
+                        ps.pts.unwrap_or(0),
+                        ps.dts.unwrap_or(0),
+                        ps.duration
+                    )
+                })
+                .unwrap_or_else(|| "prev=none".to_string());
+            let next = samples
+                .get(i + 1)
+                .map(|(ntr, ns)| {
+                    format!(
+                        "next track={} pts={} dts={} dur={:?}",
+                        ntr,
+                        ns.pts.unwrap_or(0),
+                        ns.dts.unwrap_or(0),
+                        ns.duration
+                    )
+                })
+                .unwrap_or_else(|| "next=none".to_string());
+            eprintln!(
+                "  idx={} track={} pts={} dts={} dur={:?} | {} | {}",
+                i,
+                tr,
+                s.pts.unwrap_or(0),
+                s.dts.unwrap_or(0),
+                s.duration,
+                prev,
+                next
+            );
+        }
+    }
+    let zero = zero_indices.len();
     assert_eq!(
         zero,
         0,
@@ -371,17 +541,63 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
         }
         _ => panic!("no first audio and video sample"),
     };
-    let last_gap = max_pts_seconds[&false] - max_pts_seconds[&true];
+    // A/V offset as a player renders it: per sample, its common-timeline pts minus the wall time
+    // its RTP packet arrived (not when the depacketiser emitted it, which a reorder window
+    // delays); the offset is audio's median minus video's.
+    let emission_lag = max_pts_seconds[&false] - max_pts_seconds[&true];
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    let mut offsets: std::collections::BTreeMap<bool, Vec<f64>> = std::collections::BTreeMap::new();
+    let mut anchor: std::collections::BTreeMap<u32, i64> = std::collections::BTreeMap::new();
+    for (&tid, &channel) in &track_channel {
+        if !track_is_video[&tid] {
+            anchor.insert(tid, first_sample_pts[&tid]);
+            continue;
+        }
+        let key_pts = first_video_keyframe_pts.expect("a video keyframe sample");
+        let key_rel = wire.idr_starts[&channel]
+            .iter()
+            .copied()
+            .find(|&cand| {
+                emitted
+                    .iter()
+                    .filter(|(t, _, _)| *t == tid)
+                    .all(|&(_, pts, _)| wire.has_exact(channel, pts - key_pts + i64::from(cand)))
+            })
+            .expect("an IDR packet that maps every emitted video sample to a real RTP timestamp");
+        anchor.insert(tid, key_pts - i64::from(key_rel));
+    }
+    for &(tid, pts, _) in &emitted {
+        let channel = track_channel[&tid];
+        let rel = pts - anchor[&tid];
+        let arrival = wire
+            .arrival_of(channel, rel)
+            .unwrap_or_else(|| panic!("no RTP packet for track {tid} at relative tick {rel}"));
+        let seconds = pts as f64 / f64::from(track_timescale[&tid]);
+        offsets
+            .entry(track_is_video[&tid])
+            .or_default()
+            .push(seconds - arrival as f64 / 1e6);
+    }
+    let audio_offset = median(
+        offsets
+            .get_mut(&false)
+            .expect("audio samples after SR sync"),
+    );
+    let video_offset = median(offsets.get_mut(&true).expect("video samples after SR sync"));
+    let av_offset = audio_offset - video_offset;
     eprintln!(
-        "AVSYNC[{label}] states={sync_states:?} first_audio_minus_first_video_s={first_gap:.4} last_audio_minus_last_video_s={last_gap:.4}"
+        "AVSYNC[{label}] states={sync_states:?} first_audio_minus_first_video_s={first_gap:.4} av_offset_s={av_offset:.4} (median pts-minus-RTP-arrival: audio {audio_offset:.4}, video {video_offset:.4}) emission_lag_s={emission_lag:.4} (info only)"
     );
     assert!(
         first_gap.abs() < COMMON_TIMELINE_BOUND_SECONDS,
         "first audio is {first_gap} s from first video on the common timeline"
     );
     assert!(
-        last_gap.abs() < COMMON_TIMELINE_BOUND_SECONDS,
-        "after {RUN:?} the latest audio is {last_gap} s from the latest video"
+        av_offset.abs() < COMMON_TIMELINE_BOUND_SECONDS,
+        "A/V offset (median audio pts-minus-RTP-packet-arrival minus the same for video, after SenderReport sync) is {av_offset} s"
     );
     let configured_start_lead_us = Config::default().buffer.policy.initial_us;
     let origin_27 = first_video_keyframe_pts.map(|pts| {

@@ -185,7 +185,7 @@ use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
 
@@ -740,7 +740,25 @@ struct TrackState {
     /// AUs under one RTP timestamp (RFC 3640 §3.2.3.1).
     pending: Vec<PendingAu>,
     /// Last computed duration, reused for the final AU emitted by `flush`.
+    /// Always non-zero once set; `0` means no real duration has been observed.
     last_duration: u32,
+    /// Per-AU duration (in `clock_rate` ticks) declared by the stream's own
+    /// codec config: H.264 SPS VUI timing with `fixed_frame_rate_flag`, or the
+    /// AAC `AudioSpecificConfig` frame length. `None` when not declared.
+    declared_duration: Option<u32>,
+    /// Set once a wire timestamp has stepped backward (a B-frame reorder). From
+    /// then on `pending` is a reorder window resolved by
+    /// [`RtpStreamDepacketiser::resolve_window`].
+    reordered: bool,
+    /// Presentation timestamps of the reorder window and of recently resolved
+    /// AUs, so an AU's presentation successor is found even when it was sent
+    /// (and resolved) before it. Pruned below the oldest unresolved AU.
+    seen_pts: BTreeMap<u64, u64>,
+    /// Wire-order index the next AU of this track takes.
+    next_seq: u64,
+    /// Largest number of wire-order positions by which an AU's presentation
+    /// predecessor preceded it so far: the reorder window the track needs.
+    au_window: usize,
     /// Smallest positive step seen between consecutive wire timestamps — the
     /// frame-period estimate used as the duration fallback when a step goes
     /// backward (a presentation reorder has no forward delta). `None` until
@@ -845,12 +863,86 @@ fn to_ticks(uw: u64) -> i64 {
     uw.min(i64::MAX as u64) as i64
 }
 
+/// Cap on how many access units a reordered video track holds waiting for the
+/// presentation successor of its oldest AU, and on the learned `au_window`
+/// (the largest wire-order distance observed between an AU and its
+/// presentation predecessor, used while no frame period is known); a hostile
+/// timestamp series cannot grow either past this.
+const MAX_REORDER_DEPTH: usize = 16;
+
+/// Hard bound on a reorder window whose oldest AU cannot be given a truthful
+/// duration (no later timestamp, no known frame period): beyond it the oldest
+/// is dropped rather than letting the window grow with the stream.
+const MAX_REORDER_WINDOW: usize = 256;
+
+/// Per-AU duration, in `clock_rate` ticks, that the stream's own config
+/// declares. H.264: the SPS VUI `timing_info` frame period
+/// `2 * num_units_in_tick / time_scale` (ITU-T H.264 §E.2.1); with
+/// `fixed_frame_rate_flag` 0 it is the stream's nominal period rather than a
+/// constraint, which is still its own declaration and is used only after every
+/// observed duration. AAC: `AudioSpecificConfig::samples_per_frame` scaled from the
+/// ASC sampling rate to the RTP clock rate. `None` when nothing is declared.
+fn declared_au_duration(kind: RtpMediaKind, config: &CodecConfig, clock_rate: u32) -> Option<u32> {
+    let ticks = match (kind, config) {
+        (RtpMediaKind::H264, CodecConfig::Avc { config, .. }) => {
+            let sps = config.config.sps.first()?;
+            let timing = crate::sps::decode_avc_vui_timing(&sps.0).ok().flatten()?;
+            if timing.num_units_in_tick == 0 || timing.time_scale == 0 {
+                return None;
+            }
+            let num =
+                u64::from(clock_rate) * VUI_UNITS_PER_FRAME * u64::from(timing.num_units_in_tick);
+            let den = u64::from(timing.time_scale);
+            (num + den / 2) / den
+        }
+        (RtpMediaKind::Aac, CodecConfig::Aac { esds, .. }) => {
+            let asc =
+                crate::aac_asc::AudioSpecificConfig::parse(esds.decoder_specific_info_data()?)
+                    .ok()?;
+            let rate = u64::from(asc.effective_sampling_frequency()?);
+            if rate == 0 {
+                return None;
+            }
+            let num = u64::from(asc.samples_per_frame()?) * u64::from(clock_rate);
+            (num + rate / 2) / rate
+        }
+        _ => return None,
+    };
+    u32::try_from(ticks).ok().filter(|&d| d > 0)
+}
+
+/// Ticks of the VUI `time_scale` clock per frame: a frame spans two field
+/// ticks (ITU-T H.264 §E.2.1, `time_scale / (2 * num_units_in_tick)`).
+const VUI_UNITS_PER_FRAME: u64 = 2;
+
+/// The truthful per-AU duration for a track, in order: the last real
+/// per-AU duration, the smallest positive timestamp step seen, then the
+/// stream's declared frame timing (AAC prefers the declared frame length to a
+/// step, which spans a whole aggregated packet). `None` when none of these exist; the
+/// caller must then not invent one.
+fn known_duration(st: &TrackState) -> Option<u32> {
+    if st.last_duration != 0 {
+        return Some(st.last_duration);
+    }
+    if st.kind == RtpMediaKind::Aac && st.declared_duration.is_some() {
+        return st.declared_duration;
+    }
+    if let Some(p) = st.min_positive_step
+        && let Ok(p) = u32::try_from(p)
+        && p > 0
+    {
+        return Some(p);
+    }
+    st.declared_duration
+}
+
 impl RtpStreamDepacketiser {
     /// Build a depayloader for the given tracks (kind, config, clock rate).
     pub fn new(tracks: Vec<RtpStreamTrack>) -> Self {
         let tracks = tracks
             .into_iter()
             .map(|t| {
+                let declared_duration = declared_au_duration(t.kind, &t.config, t.clock_rate);
                 (
                     t.track_id,
                     TrackState {
@@ -864,6 +956,11 @@ impl RtpStreamDepacketiser {
                         first_unwrapped: None,
                         pending: Vec::new(),
                         last_duration: 0,
+                        declared_duration,
+                        reordered: false,
+                        seen_pts: BTreeMap::new(),
+                        next_seq: 0,
+                        au_window: 0,
                         min_positive_step: None,
                         sr_anchor: None,
                         reorder_depth: t.reorder_depth,
@@ -892,6 +989,7 @@ impl RtpStreamDepacketiser {
     /// that learn dimensions from an in-band parameter set after SETUP).
     pub fn set_track_config(&mut self, track_id: TrackId, config: CodecConfig) {
         if let Some((_, st)) = self.tracks.iter_mut().find(|(id, _)| *id == track_id) {
+            st.declared_duration = declared_au_duration(st.kind, &config, st.clock_rate);
             st.config = config;
         }
     }
@@ -1178,12 +1276,96 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
-        let last_duration = st.last_duration;
-        out.extend(st.pending.drain(..).map(|p| {
-            let ts = to_ticks(p.unwrapped_ts);
-            Sample::new(p.data, Some(ts), Some(ts), Some(last_duration), p.is_sync)
-        }));
+        if st.reordered && st.kind == RtpMediaKind::H264 {
+            Self::resolve_window(st, &mut out, true);
+        } else if let Some(duration) = known_duration(st) {
+            for (index, p) in st.pending.drain(..).enumerate() {
+                let offset = u64::from(duration) * index as u64;
+                let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
+                out.push(Sample::new(
+                    p.data,
+                    Some(ts),
+                    Some(ts),
+                    Some(duration),
+                    p.is_sync,
+                ));
+            }
+        }
         Ok(out)
+    }
+
+    /// Resolve the oldest AUs of a reordered video track's window.
+    ///
+    /// RTP carries presentation time only, so under B-frame reorder the step to
+    /// the next AU *in wire order* is not a frame duration (it can be zero or
+    /// negative). The duration of an AU is its step to the next presentation
+    /// instant, which is the smallest later timestamp seen; an AU
+    /// with no later timestamp takes the frame period (declared, else the
+    /// smallest positive step seen). With neither, the AU stays in the window
+    /// rather than being given an invented duration.
+    ///
+    /// The head AU is resolved as soon as its presentation successor is exactly
+    /// one frame period away (nothing can sit between them), so the hold is the
+    /// AU's real reorder distance and a stream without reorder holds nothing. A
+    /// successor that is further away may still be in flight: the head waits
+    /// for it, at most `MAX_REORDER_DEPTH` AUs. With no frame period known yet
+    /// the learned `au_window` decides. `drain_all` (flush) resolves every AU
+    /// the window can resolve.
+    fn resolve_window(st: &mut TrackState, out: &mut Vec<Sample>, drain_all: bool) {
+        while !st.pending.is_empty() {
+            let head_ts = st.pending[0].unwrapped_ts;
+            let successor = st
+                .seen_pts
+                .range(head_ts.saturating_add(1)..)
+                .next()
+                .map(|(&t, _)| t - head_ts);
+            let period = st.declared_duration.map(u64::from).or_else(|| {
+                st.min_positive_step
+                    .and_then(|p| u64::try_from(p).ok())
+                    .filter(|&p| p > 0)
+            });
+            let ready = drain_all
+                || match period {
+                    Some(p) => {
+                        successor.is_some_and(|gap| gap <= p)
+                            || st.pending.len() > MAX_REORDER_DEPTH
+                    }
+                    None => st.pending.len() > st.au_window,
+                };
+            if !ready {
+                break;
+            }
+            let Some(duration) = successor
+                .or(period)
+                .and_then(|d| u32::try_from(d).ok())
+                .filter(|&d| d > 0)
+            else {
+                break;
+            };
+            let p = st.pending.remove(0);
+            let ts = to_ticks(p.unwrapped_ts);
+            st.last_duration = duration;
+            if let Some(oldest) = st.pending.iter().map(|p| p.unwrapped_ts).min() {
+                while st
+                    .seen_pts
+                    .first_key_value()
+                    .is_some_and(|(&t, _)| t < oldest)
+                {
+                    st.seen_pts.pop_first();
+                }
+            }
+            out.push(Sample::new(
+                p.data,
+                Some(ts),
+                Some(ts),
+                Some(duration),
+                p.is_sync,
+            ));
+        }
+        if st.pending.len() > MAX_REORDER_WINDOW {
+            let excess = st.pending.len() - MAX_REORDER_WINDOW;
+            st.pending.drain(..excess);
+        }
     }
 
     /// Reassemble the buffered packets into AUs, then for each: unwrap its
@@ -1232,6 +1414,34 @@ impl RtpStreamDepacketiser {
             if st.first_unwrapped.is_none() {
                 st.first_unwrapped = Some(unwrapped);
             }
+            if st.kind == RtpMediaKind::H264
+                && (st.reordered
+                    || st
+                        .pending
+                        .last()
+                        .is_some_and(|p| unwrapped < p.unwrapped_ts))
+            {
+                if !st.reordered {
+                    let first = st.next_seq - st.pending.len() as u64;
+                    for (i, p) in st.pending.iter().enumerate() {
+                        st.seen_pts.insert(p.unwrapped_ts, first + i as u64);
+                    }
+                }
+                st.reordered = true;
+                if let Some((_, &pred)) = st.seen_pts.range(..unwrapped).next_back() {
+                    let lag = usize::try_from(st.next_seq - pred).unwrap_or(usize::MAX);
+                    st.au_window = st.au_window.max(lag.min(MAX_REORDER_DEPTH));
+                }
+                st.seen_pts.insert(unwrapped, st.next_seq);
+                st.next_seq += 1;
+                st.pending.push(PendingAu {
+                    unwrapped_ts: unwrapped,
+                    is_sync: au.is_sync,
+                    data: au.data,
+                });
+                Self::resolve_window(st, out, false);
+                continue;
+            }
             let same_packet_group = st.kind == RtpMediaKind::Aac
                 && st
                     .pending
@@ -1253,43 +1463,67 @@ impl RtpStreamDepacketiser {
                 // [`crate::rtp::RtpDepacketiser`] path, which sees the whole
                 // stream and can derive the period exactly.
                 let forward = unwrapped.saturating_sub(prev_ts);
-                // A step backward (presentation reorder) has no forward delta
-                // at all; falling back to the smallest positive step seen so
-                // far keeps the duration a real frame period instead of
-                // collapsing to 0, which a container writer would reject as a
-                // zero-duration sample. Before any positive step is known there
-                // is nothing to fall back to, and 0 is honest.
-                // A hostile timestamp series can make the running minimum
-                // negative; clamp with a checked conversion rather than an
-                // `as` cast, which would wrap a large negative into a huge
-                // duration.
+                let count = st.pending.len() as u64;
+                // A step backward (presentation reorder) or a repeated
+                // timestamp has no forward delta; fall back to the smallest
+                // positive step seen, then to the declared frame timing. The
+                // running minimum can be negative on a hostile series, so it is
+                // converted with a checked conversion, not an `as` cast.
                 let delta = if forward > 0 {
-                    forward
+                    Some(forward)
                 } else {
                     st.min_positive_step
                         .and_then(|p| u64::try_from(p).ok())
-                        .unwrap_or(0)
+                        .filter(|&p| p > 0)
+                        .or_else(|| st.declared_duration.map(|d| u64::from(d) * count))
                 };
-                let count = st.pending.len() as u64;
-                let each = delta / count;
                 let group: Vec<PendingAu> = st.pending.drain(..).collect();
-                for (index, p) in group.into_iter().enumerate() {
-                    let offset = each * index as u64;
-                    let duration = if index as u64 + 1 == count {
-                        delta - offset
-                    } else {
-                        each
-                    };
-                    let duration = u32::try_from(duration).unwrap_or(u32::MAX);
-                    st.last_duration = duration;
-                    let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
-                    out.push(Sample::new(
-                        p.data,
-                        Some(ts),
-                        Some(ts),
-                        Some(duration),
-                        p.is_sync,
-                    ));
+                // Per-AU share of an aggregated group. When the group's delta
+                // is smaller than its AU count the timestamps cannot resolve
+                // the AUs (a share would be 0 ticks), so each AU takes the last
+                // real per-AU duration or the declared one instead; with
+                // neither the group has no truthful duration and is not
+                // emitted.
+                let share = delta.map(|d| d / count).filter(|&e| e > 0);
+                match (delta, share) {
+                    (Some(delta), Some(each)) => {
+                        for (index, p) in group.into_iter().enumerate() {
+                            let offset = each * index as u64;
+                            let duration = if index as u64 + 1 == count {
+                                delta - offset
+                            } else {
+                                each
+                            };
+                            let duration = u32::try_from(duration).unwrap_or(u32::MAX);
+                            st.last_duration = duration;
+                            let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
+                            out.push(Sample::new(
+                                p.data,
+                                Some(ts),
+                                Some(ts),
+                                Some(duration),
+                                p.is_sync,
+                            ));
+                        }
+                    }
+                    _ => {
+                        let per_au = (st.last_duration != 0)
+                            .then_some(st.last_duration)
+                            .or(st.declared_duration);
+                        if let Some(each) = per_au {
+                            for (index, p) in group.into_iter().enumerate() {
+                                let offset = u64::from(each) * index as u64;
+                                let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
+                                out.push(Sample::new(
+                                    p.data,
+                                    Some(ts),
+                                    Some(ts),
+                                    Some(each),
+                                    p.is_sync,
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             st.pending.push(PendingAu {
@@ -1297,6 +1531,7 @@ impl RtpStreamDepacketiser {
                 is_sync: au.is_sync,
                 data: au.data,
             });
+            st.next_seq += 1;
         }
         Ok(())
     }
@@ -1397,6 +1632,155 @@ mod tests {
             width: 0,
             height: 0,
         }
+    }
+
+    const SPS_25FPS_FIXED: &[u8] = &[
+        0x67, 0x64, 0x00, 0x0D, 0xAC, 0xD9, 0x41, 0x41, 0xFB, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00,
+        0x10, 0x00, 0x00, 0x03, 0x03, 0x20, 0xF1, 0x42, 0x99, 0x60,
+    ];
+    const SPS_NO_TIMING: &[u8] = &[
+        0x67, 0x64, 0x00, 0x0D, 0xAD, 0xC8, 0xBF, 0xFE, 0x03, 0xC1, 0x41, 0xF9,
+    ];
+    const ASC_LC_48K_STEREO_1024: [u8; 2] = [0x11, 0x90];
+    const ASC_LC_48K_STEREO_960: [u8; 2] = [0x11, 0x94];
+
+    fn avc_with_sps(sps: &[u8]) -> CodecConfig {
+        let CodecConfig::Avc {
+            mut config,
+            width,
+            height,
+        } = dummy_avc()
+        else {
+            unreachable!()
+        };
+        config.config.sps = alloc::vec![crate::nalu_types::AvcSps(sps.to_vec())];
+        CodecConfig::Avc {
+            config,
+            width,
+            height,
+        }
+    }
+
+    fn single_track(kind: RtpMediaKind, config: CodecConfig, clock: u32) -> RtpStreamDepacketiser {
+        RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
+            TrackId::new(1),
+            kind,
+            config,
+            clock,
+        )])
+    }
+
+    #[test]
+    fn test_sps_fixtures_declare_what_the_tests_assume() {
+        let t = crate::sps::decode_avc_vui_timing(SPS_25FPS_FIXED)
+            .unwrap()
+            .unwrap();
+        assert!(t.num_units_in_tick == 1 && t.time_scale == 50);
+        assert!(
+            crate::sps::decode_avc_vui_timing(SPS_NO_TIMING)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn flush_after_first_h264_au_uses_sps_vui_frame_period() {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        assert!(
+            d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
+                .unwrap()
+                .is_empty()
+        );
+        let out = d.flush(id).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].duration, Some(90_000 / 25));
+    }
+
+    #[test]
+    fn set_track_config_refreshes_the_declared_duration() {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_NO_TIMING), 90_000);
+        d.set_track_config(id, avc_with_sps(SPS_25FPS_FIXED));
+        assert!(
+            d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(d.flush(id).unwrap()[0].duration, Some(3600));
+    }
+
+    #[test]
+    fn flush_without_any_known_duration_holds_instead_of_inventing_one() {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_NO_TIMING), 90_000);
+        assert!(
+            d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(d.flush(id).unwrap().is_empty());
+        let out = d.push(id, &vpkt(2, 4000, true, &[0x41, 0xBB])).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].duration, Some(3000));
+    }
+
+    #[test]
+    fn flush_after_first_aac_au_uses_asc_frame_length() {
+        let id = TrackId::new(1);
+        for (asc, expected) in [(ASC_LC_48K_STEREO_1024, 1024), (ASC_LC_48K_STEREO_960, 960)] {
+            let cfg = crate::rtp_sdp::aac_config_from_asc_bytes(asc.to_vec()).unwrap();
+            let mut d = single_track(RtpMediaKind::Aac, cfg, 48_000);
+            assert!(
+                d.push(id, &aac_packet(1, 5000, &[&[1, 2]]))
+                    .unwrap()
+                    .is_empty()
+            );
+            let out = d.flush(id).unwrap();
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].duration, Some(expected));
+        }
+    }
+
+    #[test]
+    fn aggregated_group_with_delta_below_au_count_uses_declared_au_duration() {
+        let id = TrackId::new(1);
+        let cfg =
+            crate::rtp_sdp::aac_config_from_asc_bytes(ASC_LC_48K_STEREO_1024.to_vec()).unwrap();
+        let mut d = single_track(RtpMediaKind::Aac, cfg, 48_000);
+        let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
+        assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
+        assert!(
+            d.push(id, &aac_packet(2, 10_002, &[&[5]]))
+                .unwrap()
+                .is_empty()
+        );
+        let out = d.push(id, &aac_packet(3, 12_000, &[&[6]])).unwrap();
+        let got: Vec<_> = out.iter().map(|s| (s.pts, s.duration)).collect();
+        assert_eq!(
+            got,
+            alloc::vec![
+                (Some(10_000), Some(1024)),
+                (Some(11_024), Some(1024)),
+                (Some(12_048), Some(1024)),
+                (Some(13_072), Some(1024)),
+            ]
+        );
+    }
+
+    #[test]
+    fn aggregated_group_with_delta_below_au_count_and_no_known_duration_is_not_emitted() {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::Aac, dummy_avc(), 48_000);
+        let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
+        assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
+        assert!(
+            d.push(id, &aac_packet(2, 10_002, &[&[5]]))
+                .unwrap()
+                .is_empty()
+        );
+        let out = d.push(id, &aac_packet(3, 12_000, &[&[6]])).unwrap();
+        assert!(out.is_empty());
     }
 
     fn aac_packet(seq: u16, ts: u32, aus: &[&[u8]]) -> Vec<u8> {
@@ -1671,5 +2055,49 @@ mod tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].track_id, TrackId::new(7));
         assert_eq!(specs[0].timescale, 90_000);
+    }
+    fn max_hold_in_aus(presentation_order_of_wire: &[u32]) -> (usize, Vec<(u64, u32)>) {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        let mut emitted = Vec::new();
+        let mut max_hold = 0;
+        for (n, &frame) in presentation_order_of_wire.iter().enumerate() {
+            let nal: &[u8] = if n == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
+            let ts = 1000 + frame * 3600;
+            for s in d.push(id, &vpkt(n as u16, ts, true, nal)).unwrap() {
+                emitted.push((s.pts.unwrap() as u64, s.duration.unwrap()));
+            }
+            max_hold = max_hold.max(n + 1 - emitted.len());
+        }
+        (max_hold, emitted)
+    }
+
+    #[test]
+    fn reorder_window_tracks_the_observed_depth_not_a_fixed_size() {
+        let one_b: Vec<u32> = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13].to_vec();
+        let (hold, emitted) = max_hold_in_aus(&one_b);
+        assert!(hold <= 3, "one B frame held {hold} AUs");
+        assert!(emitted.iter().skip(3).all(|&(_, dur)| dur == 3600));
+
+        let two_b: Vec<u32> = [
+            0, 3, 1, 2, 6, 4, 5, 9, 7, 8, 12, 10, 11, 15, 13, 14, 18, 16, 17,
+        ]
+        .to_vec();
+        let (hold, emitted) = max_hold_in_aus(&two_b);
+        assert!(hold <= 4, "two B frames held {hold} AUs");
+        assert!(emitted.iter().skip(4).all(|&(_, dur)| dur == 3600));
+
+        let none: Vec<u32> = (0..12).collect();
+        assert_eq!(max_hold_in_aus(&none).0, 1);
+    }
+
+    #[test]
+    fn reorder_window_is_capped() {
+        let mut wire = alloc::vec![0u32];
+        for k in (1..40u32).rev() {
+            wire.push(k);
+        }
+        let (hold, _) = max_hold_in_aus(&wire);
+        assert!(hold <= MAX_REORDER_DEPTH + 1, "held {hold}");
     }
 }
