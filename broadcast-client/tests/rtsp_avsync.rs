@@ -9,6 +9,7 @@ use std::process::Command;
 use support::rtsp_host::{
     BASE_URL, Host, MediaFixture, Server, channel_of, interleaved, sender_report_at,
 };
+use support::truth::Truth;
 
 use transmux::rtp::RtpMediaKind;
 use transmux::{CodecConfig, TsDemux};
@@ -80,6 +81,7 @@ struct Outcome {
     discontinuities: usize,
     audio_timescale: f64,
     video_timescale: f64,
+    samples: Vec<(bool, Vec<u8>, f64)>,
 }
 
 fn send_sender_reports(host: &mut Host, lanes: &[Lane], i: usize, skew: f64) {
@@ -168,6 +170,7 @@ fn run_at(fixture: &MediaFixture, skew_seconds: Option<f64>, when: SrAt) -> Outc
         discontinuities: 0,
         audio_timescale: 0.0,
         video_timescale: 0.0,
+        samples: Vec::new(),
     };
     let mut is_video = BTreeMap::new();
     for e in &all {
@@ -185,6 +188,13 @@ fn run_at(fixture: &MediaFixture, skew_seconds: Option<f64>, when: SrAt) -> Outc
             }
             Event::Sample { track, sample, .. } => {
                 let pts = sample.pts.expect("pts") as f64;
+                let scale = if is_video[track] {
+                    out.video_timescale
+                } else {
+                    out.audio_timescale
+                };
+                out.samples
+                    .push((is_video[track], sample.data.to_vec(), pts / scale));
                 if is_video[track] {
                     out.video.push(pts);
                 } else {
@@ -299,7 +309,7 @@ fn the_final_offset_is_the_true_offset_whenever_the_first_sender_report_arrives(
 const GENERATED_SECONDS: &str = "12";
 const GENERATED_LOOPS: &str = "6";
 
-fn three_b_frame_fixture() -> Option<MediaFixture> {
+fn three_b_frame_fixture() -> Option<(MediaFixture, transmux::Media)> {
     let dir = std::env::temp_dir().join(format!("rtsp-avsync-3b-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let out: PathBuf = dir.join("source.ts");
@@ -327,7 +337,7 @@ fn three_b_frame_fixture() -> Option<MediaFixture> {
             let media = TsDemux::new()
                 .unpackage(&data[..])
                 .expect("demux generated");
-            Some(MediaFixture::from_media(&media))
+            Some((MediaFixture::from_media(&media), media))
         }
         _ => None,
     };
@@ -337,7 +347,7 @@ fn three_b_frame_fixture() -> Option<MediaFixture> {
 
 #[test]
 fn a_three_b_frame_two_second_gop_source_lands_on_the_sender_report_timeline() {
-    let Some(fixture) = three_b_frame_fixture() else {
+    let Some((fixture, media)) = three_b_frame_fixture() else {
         assert!(
             std::env::var_os("REQUIRE_MEDIAMTX_E2E").is_none(),
             "ffmpeg with libx264 is required"
@@ -345,6 +355,7 @@ fn a_three_b_frame_two_second_gop_source_lands_on_the_sender_report_timeline() {
         eprintln!("SKIP: ffmpeg with libx264 not available");
         return;
     };
+    let truth = Truth::from_media(&media);
     let video = fixture
         .tracks
         .iter()
@@ -382,6 +393,60 @@ fn a_three_b_frame_two_second_gop_source_lands_on_the_sender_report_timeline() {
             let o = run_at(&fixture, Some(skew), when);
             assert_audio_on_sender_report_timeline(&o, skew);
             assert_monotonic(&o);
+            assert_ground_truth_offset(
+                &o,
+                &truth,
+                skew - truth.source_start_gap(),
+                &format!("3b skew {skew} {when:?}"),
+            );
+        }
+    }
+}
+
+fn assert_ground_truth_offset(o: &Outcome, truth: &Truth, expected: f64, what: &str) {
+    let mut seen = [0usize; 2];
+    let total = [
+        o.samples.iter().filter(|s| !s.0).count(),
+        o.samples.iter().filter(|s| s.0).count(),
+    ];
+    let tail = o.samples.iter().filter(|s| {
+        let k = usize::from(s.0);
+        seen[k] += 1;
+        seen[k] > total[k] * MEASURE_AFTER_NUM / MEASURE_AFTER_DEN
+    });
+    let m = truth.measure(tail.map(|s| (s.0, s.1.as_slice(), s.2)));
+    eprintln!(
+        "GROUNDTRUTH[{what}] audio_median_delta={:.4} video_median_delta={:.4} offset={:.4} expected={expected:.4} (matched a={} v={})",
+        m.audio_median,
+        m.video_median,
+        m.offset(),
+        m.audio_matched,
+        m.video_matched
+    );
+    assert!(
+        (m.offset() - expected).abs() < AAC_FRAME_SECONDS + 0.010,
+        "{what}: ground-truth A/V offset {} s, expected {expected} s",
+        m.offset()
+    );
+}
+
+#[test]
+fn emitted_samples_keep_their_source_audio_video_offset() {
+    let truth = Truth::from_media(&MediaFixture::demux());
+    let fixture = MediaFixture::load();
+    for skew in [
+        0.0,
+        WITHIN_TOLERANCE_SKEW_SECONDS,
+        BEYOND_TOLERANCE_SKEW_SECONDS,
+    ] {
+        for when in [SrAt::BeforeFirstSample, SrAt::Packet(14), SrAt::Third] {
+            let o = run_at(&fixture, Some(skew), when);
+            assert_ground_truth_offset(
+                &o,
+                &truth,
+                skew - truth.source_start_gap(),
+                &format!("fixture skew {skew} {when:?}"),
+            );
         }
     }
 }
