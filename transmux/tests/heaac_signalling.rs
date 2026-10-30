@@ -20,7 +20,8 @@ const MOVIE_TIMESCALE: u32 = 1000;
 const CORE_HZ: u32 = 22_050;
 const OUTPUT_HZ: u32 = 44_100;
 const PROFILE_AND_LEVEL: u8 = 0x58;
-const AAC_TYPE_HE_STEREO: u8 = 0x03;
+const AAC_TYPES_HE_V1: [u8; 8] = [0x01, 0x03, 0x05, 0x40, 0x41, 0x42, 0x47, 0x48];
+const AAC_TYPES_HE_V2: [u8; 6] = [0x43, 0x44, 0x45, 0x46, 0x49, 0x4A];
 const AAC_TYPE_HE_V2_STEREO: u8 = 0x43;
 const AAC_TYPE_HE_OR_V2_SAOC_DE: u8 = 0xA0;
 const ESDS: &[u8; 4] = b"esds";
@@ -137,18 +138,39 @@ fn heaac_v2_override_writes_explicit_ps_asc() {
 
 #[test]
 fn heaac_descriptor_marks_track_he_aac() {
-    let v1 = remux_with_aac_descriptor("ts/heaac/heaac_v1_adts.ts", AAC_TYPE_HE_STEREO);
-    assert_eq!(v1.audio_metadata().he_aac, Some(HeAacProfile::V1));
-    assert_eq!(rfc6381_codec_string(&v1.config).unwrap(), "mp4a.40.5");
-    let asc = asc_in_init(&v1);
-    assert_eq!(asc.extension_sampling_frequency(), Some(OUTPUT_HZ));
-    assert_eq!(asc.core_audio_object_type(), AudioObjectType::AacLc);
-    assert_eq!(dsi_bytes(&v1), V1_ASC);
-
     let v2 = remux_with_aac_descriptor("ts/heaac/heaac_v2_adts.ts", AAC_TYPE_HE_V2_STEREO);
     assert_eq!(v2.audio_metadata().he_aac, Some(HeAacProfile::V2));
     assert_eq!(rfc6381_codec_string(&v2.config).unwrap(), "mp4a.40.29");
+    let asc = asc_in_init(&v2);
+    assert_eq!(asc.audio_object_type.raw(), 29);
+    assert_eq!(asc.extension_sampling_frequency(), Some(OUTPUT_HZ));
+    assert_eq!(asc.core_audio_object_type(), AudioObjectType::AacLc);
     assert_eq!(dsi_bytes(&v2), V2_ASC);
+    for ct in AAC_TYPES_HE_V2 {
+        let spec = remux_with_aac_descriptor("ts/heaac/heaac_v2_adts.ts", ct);
+        assert_eq!(
+            rfc6381_codec_string(&spec.config).unwrap(),
+            "mp4a.40.29",
+            "component_type {ct:#04x}"
+        );
+    }
+}
+
+#[test]
+fn heaac_v1_descriptor_alone_leaves_track_aac_lc() {
+    let plain = dsi_bytes(&audio_spec(&demux("ts/heaac/heaac_v1_adts.ts")));
+    for ct in AAC_TYPES_HE_V1 {
+        let spec = remux_with_aac_descriptor("ts/heaac/heaac_v1_adts.ts", ct);
+        assert_eq!(
+            spec.audio_metadata().he_aac,
+            None,
+            "component_type {ct:#04x}"
+        );
+        assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.2");
+        let asc = asc_in_init(&spec);
+        assert_eq!(asc.audio_object_type, AudioObjectType::AacLc);
+        assert_eq!(dsi_bytes(&spec), plain, "component_type {ct:#04x}");
+    }
 }
 
 #[test]
@@ -156,14 +178,6 @@ fn heaac_descriptor_that_cannot_tell_v1_from_v2_changes_nothing() {
     let spec = remux_with_aac_descriptor("ts/heaac/heaac_v1_adts.ts", AAC_TYPE_HE_OR_V2_SAOC_DE);
     assert_eq!(spec.audio_metadata().he_aac, None);
     assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.2");
-}
-
-#[test]
-fn heaac_descriptor_on_full_rate_lc_stream_changes_nothing() {
-    let spec = remux_with_aac_descriptor("ts/h264_aac.ts", AAC_TYPE_HE_STEREO);
-    assert_eq!(spec.audio_metadata().he_aac, Some(HeAacProfile::V1));
-    assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.2");
-    assert_eq!(spec.config.audio_sample_rate(), Some(44_100));
 }
 
 #[test]

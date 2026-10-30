@@ -12,10 +12,12 @@
 //!   descriptor tag `0x7F`, `descriptor_tag_extension` `0x06`): `mix_type`
 //!   (Table 154), `editorial_classification` (Table 155), optional language.
 //! - DVB `AAC_descriptor` (ETSI EN 300 468 Annex H §H.2.1, tag `0x7C`): its
-//!   `AAC_type` is a Table 26 `component_type` (`stream_content` `0x6`) that
-//!   names HE-AAC (`0x01`, `0x03`, `0x05`, `0x40`..`0x42`, `0x47`, `0x48`) or
-//!   HE-AAC v2 (`0x43`..`0x46`, `0x49`, `0x4A`). `0xA0` ("HE-AAC, or HE-AAC v2
-//!   with SAOC-DE") cannot tell the two apart and is deliberately not mapped.
+//!   `AAC_type` is a Table 26 `component_type` (`stream_content` `0x6`). Only
+//!   the HE-AAC v2 rows (`0x43`..`0x46`, `0x49`, `0x4A`) are acted on: v2 means
+//!   Parametric Stereo, which always rides on SBR. The v1 rows (`0x01`, `0x03`,
+//!   `0x05`, `0x40`..`0x42`, `0x47`, `0x48`, `0xA0`) carry Table 26 note 7,
+//!   which says plain AAC-LC streams must use these same values too, so they do
+//!   not show SBR is present and are deliberately not mapped.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -253,10 +255,10 @@ pub struct AudioMetadata {
     pub supplementary: Option<SupplementaryAudio>,
     /// Derived role (heuristic, see [`AudioRole`]).
     pub role: AudioRole,
-    /// The HE-AAC flavour the PMT `AAC_descriptor` declares (ETSI EN 300 468
-    /// Table 26 `component_type`), `None` when there is no such descriptor or
-    /// its `AAC_type` does not name one. A declaration, not a measurement:
-    /// DVB also uses the HE-AAC component types for plain AAC-LC streams.
+    /// [`HeAacProfile::V2`] when the PMT `AAC_descriptor` declares an HE-AAC v2
+    /// `component_type` (ETSI EN 300 468 Table 26), else `None`. Never `V1`:
+    /// the v1 values are also what plain AAC-LC streams must signal (Table 26
+    /// note 7), so they prove nothing.
     pub he_aac: Option<HeAacProfile>,
 }
 
@@ -317,19 +319,7 @@ impl AudioMetadata {
 }
 
 fn he_aac_of_component_type(ct: AacComponentType) -> Option<HeAacProfile> {
-    if ct.v2 {
-        Some(HeAacProfile::V2)
-    } else if ct.mono
-        || ct.stereo
-        || ct.surround
-        || ct.visually_impaired
-        || ct.hard_of_hearing
-        || ct.supplementary
-    {
-        Some(HeAacProfile::V1)
-    } else {
-        None
-    }
+    ct.v2.then_some(HeAacProfile::V2)
 }
 
 fn derive_role(languages: &[AudioLanguage], sup: Option<&SupplementaryAudio>) -> AudioRole {

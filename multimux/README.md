@@ -505,9 +505,10 @@ A route whose ADTS audio is HE-AAC declares it per track with `audio_profiles`
 sits inside the raw data block, which is never decoded, so without the
 declaration the init's `AudioSpecificConfig` and the `CODECS` say AAC-LC
 (`mp4a.40.2`). With it they carry explicit hierarchical signalling and
-`mp4a.40.5` / `mp4a.40.29`, as Apple's HLS authoring rules require. A PMT
-`AAC_descriptor` naming HE-AAC is honoured without any config for a core rate
-of 24 kHz or below; the declaration wins over it.
+`mp4a.40.5` / `mp4a.40.29`, as Apple's HLS authoring rules require. HE-AAC v1 is reachable only through this declaration: the PMT `AAC_descriptor`
+values for v1 are also what plain AAC-LC streams must signal, so they prove
+nothing. A descriptor naming HE-AAC v2 (which always implies SBR) is honoured
+without config; the declaration wins over it.
 
 ### DVR recording
 
