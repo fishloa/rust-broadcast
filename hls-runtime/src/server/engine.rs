@@ -727,6 +727,21 @@ fn is_video_codec(config: &transmux::CodecConfig) -> bool {
     )
 }
 
+fn channel_count_string(config: &transmux::CodecConfig) -> Option<String> {
+    let n = match config {
+        transmux::CodecConfig::Aac { channel_count, .. }
+        | transmux::CodecConfig::Ac3 { channel_count, .. }
+        | transmux::CodecConfig::Eac3 { channel_count, .. }
+        | transmux::CodecConfig::Opus { channel_count, .. }
+        | transmux::CodecConfig::Flac { channel_count, .. }
+        | transmux::CodecConfig::Ac4 { channel_count, .. }
+        | transmux::CodecConfig::MpegH { channel_count, .. }
+        | transmux::CodecConfig::MpegAudio { channel_count, .. } => *channel_count,
+        _ => return None,
+    };
+    Some(n.to_string())
+}
+
 /// Compute the byte length of the leading I-frame slice of `segment`'s first
 /// video sample, or `None` when the segment cannot back an I-frame playlist
 /// entry (audio-first layout, non-sync first sample, parse failure, or no
@@ -1087,6 +1102,37 @@ pub fn validate_audio_renditions(decls: &[AudioRenditionDecl]) -> Result<(), Hls
     Ok(())
 }
 
+/// Relaxed validation for split-audio routes where `LANGUAGE`/`NAME`/`CHANNELS`
+/// may be left empty to be derived from the sibling audio track at render time
+/// (issue #1428 slice 3). Only structural rules that do not depend on those
+/// fields are enforced.
+pub fn validate_audio_renditions_relaxed(
+    decls: &[AudioRenditionDecl],
+) -> Result<(), HlsOriginBuildError> {
+    use std::collections::BTreeMap;
+    for decl in decls {
+        if decl.group_id.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionGroupId);
+        }
+        if decl.uri.is_empty() {
+            return Err(HlsOriginBuildError::EmptyAudioRenditionUri);
+        }
+        if decl.default && !decl.autoselect {
+            return Err(HlsOriginBuildError::AudioRenditionDefaultNotAutoselect);
+        }
+    }
+    let mut groups: BTreeMap<&str, Vec<&AudioRenditionDecl>> = BTreeMap::new();
+    for decl in decls {
+        groups.entry(&decl.group_id).or_default().push(decl);
+    }
+    for members in groups.values() {
+        if members.iter().filter(|m| m.default).count() != 1 {
+            return Err(HlsOriginBuildError::AudioRenditionDefaultCount);
+        }
+    }
+    Ok(())
+}
+
 /// A typed declaration of one audio rendition for a multivariant playlist
 /// (RFC 8216bis §4.4.6.1, Apple HLS authoring spec items 9.5-9.8). Consumed
 /// by [`HlsOriginBuilder::audio_renditions`].
@@ -1145,6 +1191,7 @@ pub struct HlsOriginBuilder {
     arrival_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
     declared_bandwidth_bps: Option<u64>,
     audio_renditions: Vec<AudioRenditionDecl>,
+    audio_sibling_origins: Vec<Arc<HlsOrigin>>,
     closed_captions_none: bool,
 }
 
@@ -1161,6 +1208,7 @@ impl HlsOriginBuilder {
             arrival_clock: None,
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
+            audio_sibling_origins: Vec::new(),
             closed_captions_none: false,
         }
     }
@@ -1268,6 +1316,16 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// Sibling audio origins (issue #1428 slice 3) whose measured peak/average
+    /// bandwidth and `CODECS` are folded into this (video) origin's
+    /// multivariant playlist for split-audio routes. One per declared
+    /// rendition, in the same order. Empty (the default) keeps the slice 1
+    /// behaviour: declared-only `CODECS`/`BANDWIDTH`.
+    pub fn audio_sibling_origins(mut self, origins: Vec<Arc<HlsOrigin>>) -> Self {
+        self.audio_sibling_origins = origins;
+        self
+    }
+
     /// When `true`, emit `CLOSED-CAPTIONS=NONE` on the video variant
     /// (RFC 8216bis §4.4.6.2). Default `false` leaves the attribute omitted,
     /// matching the pre-existing output.
@@ -1316,7 +1374,11 @@ impl HlsOriginBuilder {
         {
             return Err(HlsOriginBuildError::InvalidDeclaredBandwidth);
         }
-        validate_audio_renditions(&self.audio_renditions)?;
+        if self.audio_sibling_origins.is_empty() {
+            validate_audio_renditions(&self.audio_renditions)?;
+        } else {
+            validate_audio_renditions_relaxed(&self.audio_renditions)?;
+        }
         let cursor = self.trunk.subscribe_segments();
         Ok(HlsOrigin {
             trunk: self.trunk,
@@ -1339,6 +1401,8 @@ impl HlsOriginBuilder {
             arrival_origin: Mutex::new(None),
             declared_bandwidth_bps: self.declared_bandwidth_bps,
             audio_renditions: self.audio_renditions,
+            audio_sibling_origins: self.audio_sibling_origins,
+            track_specs: Mutex::new(Vec::new()),
             closed_captions_none: self.closed_captions_none,
             frozen_target_duration_secs: Mutex::new(None),
             target_duration_violations: AtomicU64::new(0),
@@ -1417,6 +1481,10 @@ pub struct HlsOrigin {
     declared_bandwidth_bps: Option<u64>,
     /// Declared audio renditions (issue #1428 slice 1).
     audio_renditions: Vec<AudioRenditionDecl>,
+    /// Sibling audio origins (issue #1428 slice 3).
+    audio_sibling_origins: Vec<Arc<HlsOrigin>>,
+    /// Stored track specs (issue #1428 slice 3), for audio metadata derivation.
+    track_specs: Mutex<Vec<transmux::TrackSpec>>,
     /// Emit `CLOSED-CAPTIONS=NONE` (issue #1428 slice 1).
     closed_captions_none: bool,
     /// Frozen `EXT-X-TARGETDURATION` (seconds, pre-rounding) captured the
@@ -1478,6 +1546,7 @@ impl HlsOrigin {
                 *locked(&self.resolution) = None;
                 *locked(&self.frame_rate) = None;
                 *locked(&self.video_track_id) = None;
+                *locked(&self.track_specs) = Vec::new();
             }
         }
         // The first segment not yet closed is the first one cut against
@@ -1504,6 +1573,8 @@ impl HlsOrigin {
     pub fn set_track_specs(&self, specs: &[transmux::TrackSpec]) -> Result<(), transmux::Error> {
         let mut ordered: Vec<&transmux::TrackSpec> = specs.iter().collect();
         ordered.sort_by_key(|spec| spec.track_id);
+        let stored_track_specs: Vec<transmux::TrackSpec> =
+            ordered.iter().map(|s| (*s).clone()).collect();
         *locked(&self.video_track_id) = ordered
             .iter()
             .find(|spec| is_video_codec(&spec.config))
@@ -1570,7 +1641,29 @@ impl HlsOrigin {
         *locked(&self.video_range) = video_range;
         *locked(&self.resolution) = resolution;
         *locked(&self.frame_rate) = frame_rate;
+        *locked(&self.track_specs) = stored_track_specs;
         Ok(())
+    }
+
+    /// Snapshot of this origin's measured peak bandwidth (bits/sec).
+    pub fn peak_bandwidth_bps(&self) -> u64 {
+        locked(&self.window).peak_bandwidth_bps
+    }
+
+    /// Snapshot of this origin's window totals, for `AVERAGE-BANDWIDTH`.
+    pub fn window_totals(&self) -> (u64, u128) {
+        let w = locked(&self.window);
+        (w.total_bytes, w.total_duration_nanos)
+    }
+
+    /// This origin's `CODECS` string, if known.
+    pub fn codecs_string(&self) -> Option<String> {
+        locked(&self.codecs).clone()
+    }
+
+    /// This origin's stored track specs.
+    pub fn track_specs(&self) -> Vec<transmux::TrackSpec> {
+        locked(&self.track_specs).clone()
     }
 
     /// The master playlist for this origin, pointing at `media_playlist_name`:
@@ -1614,7 +1707,7 @@ impl HlsOrigin {
         iframe_playlist_name: Option<&str>,
     ) -> Result<String, HlsMasterError> {
         self.drain();
-        let (measured, total_bytes, total_duration_nanos) = {
+        let (video_peak, video_bytes, video_duration) = {
             let window = locked(&self.window);
             (
                 window.peak_bandwidth_bps,
@@ -1623,14 +1716,21 @@ impl HlsOrigin {
             )
         };
         let declared = self.declared_bandwidth_bps.unwrap_or(0);
-        let bandwidth = measured.max(declared);
-        if bandwidth == 0 {
+        let video_part_peak = video_peak.max(declared);
+        // Snapshot each sibling origin separately — never hold two `Window`
+        // locks at once.
+        let sibling_peaks: Vec<u64> = self
+            .audio_sibling_origins
+            .iter()
+            .map(|s| s.peak_bandwidth_bps())
+            .collect();
+        let max_audio_peak_all = sibling_peaks.iter().copied().max().unwrap_or(0);
+        if video_part_peak == 0 && max_audio_peak_all == 0 {
             return Err(HlsMasterError::BandwidthUnknown);
         }
-        let bandwidth = u32::try_from(bandwidth)
-            .map_err(|_| HlsMasterError::BandwidthOverflow { bandwidth })?;
-        let average_bandwidth =
-            average_bandwidth_bps(total_bytes, total_duration_nanos).map(|avg| avg.min(bandwidth));
+        let video_avg = average_bandwidth_bps(video_bytes, video_duration);
+        let has_siblings = !self.audio_sibling_origins.is_empty();
+        let primary_codecs = locked(&self.codecs).clone();
         let mut extra_attrs: Vec<(String, broadcast_hls::AttrValue)> = Vec::new();
         if let Some(range) = *locked(&self.video_range)
             && matches!(range, VideoRange::Hlg | VideoRange::Pq)
@@ -1647,17 +1747,61 @@ impl HlsOrigin {
         let media: Vec<MediaRendition> = self
             .audio_renditions
             .iter()
-            .map(|decl| {
+            .enumerate()
+            .map(|(i, decl)| {
+                let sibling = self.audio_sibling_origins.get(i);
+                let audio_spec = sibling.and_then(|s| {
+                    s.track_specs()
+                        .into_iter()
+                        .find(|t| !is_video_codec(&t.config))
+                });
+                let meta = audio_spec.as_ref().map(|t| t.audio_metadata());
+                let role = meta
+                    .as_ref()
+                    .map(|m| m.role)
+                    .unwrap_or(transmux::AudioRole::Unknown);
+                let derived_lang = meta
+                    .as_ref()
+                    .and_then(|m| m.languages.first().map(|l| l.language.clone()))
+                    .unwrap_or_else(|| "und".to_string());
+                let language = if decl.language.is_empty() {
+                    derived_lang.clone()
+                } else {
+                    decl.language.clone()
+                };
+                let name = if decl.name.is_empty() {
+                    if role == transmux::AudioRole::AudioDescription {
+                        format!("{} (AD)", language)
+                    } else {
+                        language.clone()
+                    }
+                } else {
+                    decl.name.clone()
+                };
+                let characteristics = if decl.characteristics.is_empty() {
+                    if role == transmux::AudioRole::AudioDescription {
+                        vec!["public.accessibility.describes-video".to_string()]
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    decl.characteristics.clone()
+                };
+                let channels = decl.channels.clone().or_else(|| {
+                    audio_spec
+                        .as_ref()
+                        .and_then(|t| channel_count_string(&t.config))
+                });
                 let mut m = MediaRendition::default();
                 m.media_type = MediaType::Audio;
                 m.uri = Some(decl.uri.clone());
                 m.group_id = decl.group_id.clone();
-                m.language = Some(decl.language.clone());
-                m.name = decl.name.clone();
+                m.language = Some(language);
+                m.name = name;
                 m.default = decl.default;
                 m.autoselect = decl.autoselect;
-                m.channels = decl.channels.clone();
-                m.characteristics = decl.characteristics.clone();
+                m.channels = channels;
+                m.characteristics = characteristics;
                 m
             })
             .collect();
@@ -1680,10 +1824,14 @@ impl HlsOrigin {
 
         let mut variants: Vec<Variant> = Vec::new();
         if audio_groups.is_empty() {
+            let bw = video_part_peak;
+            let bw = u32::try_from(bw)
+                .map_err(|_| HlsMasterError::BandwidthOverflow { bandwidth: bw })?;
+            let avg = video_avg.map(|a| a.min(bw));
             variants.push(Variant {
-                bandwidth,
-                average_bandwidth,
-                codecs: locked(&self.codecs).clone(),
+                bandwidth: bw,
+                average_bandwidth: avg,
+                codecs: primary_codecs.clone(),
                 uri: media_playlist_name.to_string(),
                 audio: None,
                 video: None,
@@ -1695,10 +1843,54 @@ impl HlsOrigin {
             });
         } else {
             for group in &audio_groups {
+                // Audio peak/average max over this group's sibling origins.
+                let mut audio_peak_max = 0u64;
+                let mut audio_avg_max = 0u32;
+                let mut audio_codec: Option<String> = None;
+                for (i, decl) in self.audio_renditions.iter().enumerate() {
+                    if decl.group_id != *group {
+                        continue;
+                    }
+                    if let Some(sib) = self.audio_sibling_origins.get(i) {
+                        let (tb, td) = sib.window_totals();
+                        let peak = sib.peak_bandwidth_bps();
+                        audio_peak_max = audio_peak_max.max(peak);
+                        if let Some(avg) = average_bandwidth_bps(tb, td) {
+                            audio_avg_max = audio_avg_max.max(avg);
+                        }
+                        if audio_codec.is_none() {
+                            audio_codec = sib.codecs_string();
+                        }
+                    }
+                }
+                let group_peak = video_part_peak.saturating_add(audio_peak_max);
+                let group_bw =
+                    u32::try_from(group_peak).map_err(|_| HlsMasterError::BandwidthOverflow {
+                        bandwidth: group_peak,
+                    })?;
+                let group_avg_candidate = video_avg.unwrap_or(0) as u64 + u64::from(audio_avg_max);
+                let group_avg = if group_avg_candidate == 0 {
+                    None
+                } else {
+                    Some(
+                        u32::try_from(group_avg_candidate.min(u64::from(group_bw)))
+                            .unwrap_or(group_bw),
+                    )
+                };
+                let group_codecs = if has_siblings {
+                    match (primary_codecs.clone(), audio_codec) {
+                        (Some(v), Some(a)) => Some(format!("{},{}", v, a)),
+                        (Some(v), None) => Some(v),
+                        (None, Some(a)) => Some(a),
+                        _ => None,
+                    }
+                } else {
+                    primary_codecs.clone()
+                };
                 variants.push(Variant {
-                    bandwidth,
-                    average_bandwidth,
-                    codecs: locked(&self.codecs).clone(),
+                    bandwidth: group_bw,
+                    average_bandwidth: group_avg,
+                    codecs: group_codecs,
                     uri: media_playlist_name.to_string(),
                     audio: Some(group.clone()),
                     video: None,

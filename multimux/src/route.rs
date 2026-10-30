@@ -520,6 +520,8 @@ impl ProgramServing {
         let sibling_decls: &[hls_runtime::server::AudioRenditionDecl] =
             if split_audio { &audio_renditions } else { &[] };
         let mut audio_servings = Vec::with_capacity(sibling_decls.len());
+        let mut sibling_origins: Vec<Arc<hls_runtime::server::HlsOrigin>> =
+            Vec::with_capacity(sibling_decls.len());
         for (idx, decl) in sibling_decls.iter().enumerate() {
             let sibling_trunk = Arc::new(Trunk::new(TrunkConfig::new(
                 nz(DEFAULT_TIMED_CAPACITY),
@@ -541,6 +543,7 @@ impl ProgramServing {
             }
             ab = ab.low_latency(part_target_ms);
             let origin = Arc::new(ab.build()?);
+            sibling_origins.push(Arc::clone(&origin));
             audio_servings.push(AudioServing {
                 decl: decl.clone(),
                 track_id,
@@ -549,6 +552,9 @@ impl ProgramServing {
             });
         }
 
+        if !sibling_origins.is_empty() {
+            builder = builder.audio_sibling_origins(sibling_origins);
+        }
         // `build` rejects a non-finite/non-positive target duration, a zero
         // part target and an offset with no room for u32 — all reachable
         // from caller-supplied numbers, so surfaced, never `expect`ed.
@@ -636,6 +642,13 @@ impl ProgramServing {
         // only source for a TS-HLS origin, which has no init segment to read).
         if let Err(error) = self.ll_hls.set_track_specs(&specs) {
             tracing::warn!(%error, "HLS master CODECS unavailable for these track specs");
+        }
+        for serving in &self.audio_rendition_servings {
+            if let Some(spec) = specs.iter().find(|t| t.track_id == serving.track_id)
+                && let Err(error) = serving.origin.set_track_specs(std::slice::from_ref(spec))
+            {
+                tracing::warn!(%error, "audio rendition CODECS unavailable for these track specs");
+            }
         }
         self.dash.set_track_specs(specs);
     }
