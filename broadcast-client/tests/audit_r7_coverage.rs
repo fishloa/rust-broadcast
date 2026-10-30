@@ -6,7 +6,9 @@ mod support;
 
 use std::collections::VecDeque;
 
-use broadcast_client::events::DEFAULT_START_PENDING_TRACK_WAIT_US;
+use broadcast_client::events::{
+    DEFAULT_START_PENDING_TRACK_HARD_CAP_US, DEFAULT_START_PENDING_TRACK_WAIT_US,
+};
 use broadcast_client::{Action, BufferEvent, Config, ErrorKind, Event, Session};
 use broadcast_common::cenc::CencScheme;
 use support::fmp4_split::{group, split};
@@ -574,7 +576,7 @@ fn a_40_stream_pmt_with_a_never_sent_private_audio_still_starts_within_the_wait(
     let first = first.expect("media flowed");
     let start = start.expect("Start must fire, never wait forever");
     assert!(
-        start <= first + 4_000_000 + START_BOUND_AFTER_WAIT_US,
+        start <= first + DEFAULT_START_PENDING_TRACK_HARD_CAP_US + START_BOUND_AFTER_WAIT_US,
         "start {start} us, first sample {first} us"
     );
 }
