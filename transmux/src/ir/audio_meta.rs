@@ -270,13 +270,11 @@ impl AudioMetadata {
         let mut he_aac = None;
         for d in parse_loop(es_info).flatten() {
             match d {
-                AnyDescriptor::Aac(d) => {
-                    if he_aac.is_none() {
-                        he_aac = d
-                            .extension
-                            .and_then(|e| e.decoded_component_type())
-                            .and_then(he_aac_of_component_type);
-                    }
+                AnyDescriptor::Aac(d) if he_aac.is_none() => {
+                    he_aac = d
+                        .extension
+                        .and_then(|e| e.decoded_component_type())
+                        .and_then(he_aac_of_component_type);
                 }
                 AnyDescriptor::Iso639Language(d) => {
                     for e in d.entries {
