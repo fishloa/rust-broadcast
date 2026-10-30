@@ -80,6 +80,7 @@ fn iframe_playlist_text(origin: &HlsOrigin) -> EgressResponse<hls_runtime::serve
         HlsRequest::IFramePlaylist {
             track_id: DEFAULT_TRACK_ID,
             query: BlockingQuery::default(),
+            media_playlist_name: "media.m3u8".to_string(),
         },
         now,
         policy,
@@ -594,6 +595,7 @@ fn iframe_part_is_bad_request() {
                 hls_skip: None,
                 hls_primary: None,
             },
+            media_playlist_name: "media.m3u8".to_string(),
         },
         now,
         policy,
@@ -652,4 +654,84 @@ fn iframe_audio_only_not_found() {
         ))
         .expect("publish");
     assert_eq!(iframe_playlist_text(&origin), EgressResponse::NotFound);
+}
+
+#[test]
+fn iframe_rendition_report_uses_configured_media_playlist_name() {
+    let (trunk, origin, writer) = origin_fmp4();
+    for i in 0..3u32 {
+        let bytes = fixture_bytes(&format!("index{i}.m4s"));
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(bytes),
+                SegmentSeq::new(i + 1),
+                Duration::from_secs(1),
+                Timestamp::from_nanos(0),
+                SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish");
+    }
+    let _ = trunk;
+
+    let text = match origin.resolve(
+        HlsRequest::IFramePlaylist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery::default(),
+            media_playlist_name: "live/main.m3u8".to_string(),
+        },
+        patient().0,
+        patient().1,
+    ) {
+        EgressResponse::Ready {
+            body: hls_runtime::server::HlsBody::Playlist(m),
+            ..
+        } => m,
+        other => panic!("expected iframe playlist, got {other:?}"),
+    };
+    assert!(
+        text.contains("#EXT-X-RENDITION-REPORT:URI=\"live/main.m3u8\""),
+        "playlist: {text}"
+    );
+}
+
+#[test]
+fn iframe_rendition_report_defaults_to_media_m3u8() {
+    let (trunk, origin, writer) = origin_fmp4();
+    for i in 0..3u32 {
+        let bytes = fixture_bytes(&format!("index{i}.m4s"));
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(bytes),
+                SegmentSeq::new(i + 1),
+                Duration::from_secs(1),
+                Timestamp::from_nanos(0),
+                SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish");
+    }
+    let _ = trunk;
+
+    let text = match origin.resolve(
+        HlsRequest::IFramePlaylist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery::default(),
+            media_playlist_name: "media.m3u8".to_string(),
+        },
+        patient().0,
+        patient().1,
+    ) {
+        EgressResponse::Ready {
+            body: hls_runtime::server::HlsBody::Playlist(m),
+            ..
+        } => m,
+        other => panic!("expected iframe playlist, got {other:?}"),
+    };
+    assert!(
+        text.contains("#EXT-X-RENDITION-REPORT:URI=\"media.m3u8\""),
+        "playlist: {text}"
+    );
 }

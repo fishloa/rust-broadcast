@@ -9,6 +9,7 @@
 - LL-HLS origin responses now set the RFC 9218 `Priority: u=<urgency>` response header (`u=1` for playlists, `u=2` for parts and segments).
 
 ### Fixed
+- I-frame playlist `EXT-X-RENDITION-REPORT` now uses the configured `playlist_name` instead of the hardcoded `"media.m3u8"`.
 - `_HLS_skip` query parsing now accepts only the exact spec tokens `YES` and `v2`; lowercase variants are ignored (full playlist).
 - `stream_in_progress_segment` now serves the streamed whole-segment response with `Content-Type: video/iso.segment` (was `video/mp4`), matching other `.m4s` segments and parts (Apple HLS authoring spec 10.4).
 

@@ -254,6 +254,7 @@ pub(crate) async fn iframe_playlist(
     let request = HlsRequest::IFramePlaylist {
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
+        media_playlist_name: state.playlist_name.clone(),
     };
     let priority = ll_hls.http_priority(&request);
     let resp = http::resolve_blocking(
