@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Changed
-- `ProgramSegmenter::apply_track_change` now forwards a changed track spec (audio ASC / sample rate / channels, video frame rate / display parameters) to the running TS-HLS segmenter via `update_track` so it arms `#EXT-X-DISCONTINUITY` instead of rebuilding or ignoring the change (issue #1425).
+- `ProgramSegmenter::apply_track_change` now forwards a changed track spec (audio ASC / sample rate / channels, video frame rate / display parameters) to the running TS-HLS segmenter via `update_track` so it arms `#EXT-X-DISCONTINUITY` instead of rebuilding or ignoring the change (issue #1425). `update_track`'s result is now typed so unchanged re-announces no longer trigger a spurious `add_track` (and its warning).
 
 
 ### Changed

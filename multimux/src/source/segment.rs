@@ -259,26 +259,38 @@ impl AnySegmenter {
     /// arms its `#EXT-X-DISCONTINUITY` machinery via `update_track` instead
     /// of being rebuilt or ignoring the change.
     ///
-    /// Returns `true` when the spec changed and was applied in place.
-    fn update_track(&mut self, spec: &TrackSpec) -> bool {
+    /// Propagate a changed track spec to a running segmenter (issue #1425).
+    ///
+    /// Returns `Ok(Changed)` when a discontinuity-triggering field differed
+    /// and was applied in place, `Ok(Unchanged)` when the spec was identical
+    /// in every triggering field, and `Err` for an unknown track (or a
+    /// container that cannot apply in place, such as fMP4) so the caller can
+    /// fall back to `add_track` / a rebuild.
+    fn update_track(
+        &mut self,
+        spec: &TrackSpec,
+    ) -> Result<transmux::UpdateTrackOutcome, transmux::Error> {
         match self {
-            AnySegmenter::Fmp4(_) => false,
+            AnySegmenter::Fmp4(_) => Err(transmux::Error::InvalidInput(
+                "update_track: not supported for fMP4",
+            )),
             AnySegmenter::Ts(seg) => match seg.update_track(spec.clone()) {
-                Ok(true) => {
-                    tracing::info!(
-                        track_id = %spec.track_id,
-                        "applied changed track config to running TS-HLS segmenter"
-                    );
-                    true
+                Ok(outcome) => {
+                    if matches!(outcome, transmux::UpdateTrackOutcome::Changed) {
+                        tracing::info!(
+                            track_id = %spec.track_id,
+                            "applied changed track config to running TS-HLS segmenter"
+                        );
+                    }
+                    Ok(outcome)
                 }
-                Ok(false) => false,
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
                         track_id = %spec.track_id,
                         "failed to apply changed track config to TS-HLS segmenter"
                     );
-                    false
+                    Err(e)
                 }
             },
         }
@@ -1102,8 +1114,22 @@ impl ProgramSegmenter {
 
         let mut any_admitted = false;
         for spec in &new_specs {
-            if self.seg.update_track(spec) || self.seg.add_track(spec) {
-                any_admitted = true;
+            match self.seg.update_track(spec) {
+                Ok(transmux::UpdateTrackOutcome::Changed) => {
+                    any_admitted = true;
+                }
+                Ok(transmux::UpdateTrackOutcome::Unchanged) => {
+                    // no-op: leave any_admitted false
+                }
+                Ok(_) => {
+                    // non-exhaustive future variant: treat as admitted
+                    any_admitted = true;
+                }
+                Err(_) => {
+                    if self.seg.add_track(spec) {
+                        any_admitted = true;
+                    }
+                }
             }
         }
 
@@ -3200,6 +3226,85 @@ mod tests {
         writer.set_tracks(Vec::new());
         segmenter.apply_track_change(ProgramId(0), &trunk, &route);
         assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+    }
+
+    /// **Issue #1425.** A changed track spec (here a timescale change standing
+    /// in for an audio/video config change) reaches the running TS-HLS
+    /// segmenter through `apply_track_change` and the next playlist carries
+    /// `#EXT-X-DISCONTINUITY`; an unchanged re-announce does not.
+    #[test]
+    fn apply_track_change_ts_changed_spec_arms_discontinuity() {
+        use media_plane::trunk::TrunkConfig;
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
+
+        // Push a first run so a segment closes.
+        for i in 0..45u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        // Changed spec: bump the timescale (a discontinuity trigger).
+        let mut changed = track_spec(TrackId::new(1));
+        changed.timescale = 45_000;
+        writer.set_tracks(vec![changed.clone()]);
+        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+
+        for i in 45..90u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        let AnySegmenter::Ts(ts) = &segmenter.seg else {
+            panic!("ts")
+        };
+        let pl = ts.playlist().expect("playlist");
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "changed spec must arm a discontinuity: {pl}"
+        );
+
+        // Unchanged re-announce: no discontinuity armed.
+        let trunk2 = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer2 = trunk2.writer().expect("first take succeeds");
+        writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route2 = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter2 =
+            ProgramSegmenter::try_new(&trunk2, &route2, 1.0, 250).expect("TS segmenter builds");
+        for i in 0..45u32 {
+            segmenter2
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter2.publish_ready();
+        writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
+        segmenter2.apply_track_change(ProgramId(0), &trunk2, &route2);
+        for i in 45..90u32 {
+            segmenter2
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter2.publish_ready();
+        let AnySegmenter::Ts(ts2) = &segmenter2.seg else {
+            panic!("ts")
+        };
+        let pl2 = ts2.playlist().expect("playlist");
+        assert!(
+            !pl2.contains("#EXT-X-DISCONTINUITY"),
+            "unchanged re-announce must not arm a discontinuity: {pl2}"
+        );
     }
 
     fn pending_sequence_numbers(segmenter: &ProgramSegmenter) -> Vec<u32> {

@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- `StreamingTsHlsSegmenter::update_track(TrackSpec)` (issue #1425): a typed track-config-change entry point. When an audio configuration (AudioSpecificConfig / sample rate / channel layout) or a video frame-rate / display-parameter change differs from the stored spec, the stored spec is replaced and the existing `mark_discontinuity` machinery is armed so the next segment opens with `#EXT-X-DISCONTINUITY`; an unchanged spec is a no-op. Public API addition (no breaking change).
+### Changed
+- `StreamingTsHlsSegmenter::update_track` (issue #1425) now returns `Result<UpdateTrackOutcome>` (`Changed`/`Unchanged`) instead of `Result<bool>`; discontinuity arming compares typed fields only (audio sample rate / channel count / AudioSpecificConfig bytes; video timescale + display) instead of a `Debug` string of the whole `CodecConfig`, so a codec-config refresh (e.g. new SPS) with unchanged geometry/timing no longer arms a discontinuity. `PartialEq`/`Eq` derived on `CodecConfig` and `TrackSpec`. Breaking change for callers matching on the boolean.
 
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).

@@ -101,7 +101,7 @@ pub enum SubtitleSampleEntry {
 }
 
 /// Per-track codec configuration for the initialization segment.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodecConfig {
     /// H.264/AVC video (`avc1` sample entry with an `avcC` config box).
