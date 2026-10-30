@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `RtpStreamDepacketiser::set_track_config` replaces a track's codec configuration after SETUP (for dimensions learned from an in-band parameter set).
 - `avc_sps_dimensions` and `avc_access_unit_dimensions`: the cropped output size of an H.264 SPS (the rule the TS demuxer uses for `TrackSpec` dimensions), and the same from the first SPS in a length-prefixed access unit.
+- `LlHlsSegmenter` follower-cut mode (issue #1428 slice 2a): `CutPlan`/`PartCut` external-cut input and `follow()` so an audio-only segmenter cuts segments and parts where the (video) leader cut, with the leader's sequence numbers; the leader exposes its cuts via `record_cuts()`/`take_ready_cut_plans()` (absolute decode times of the anchor's segment and part starts), leaving `PartInfo`/`SegmentInfo` unchanged. A sample belongs to the segment/part it starts in; boundaries are converted with exact integer ceiling rescale; a segment or part with no follower sample starting in it is not emitted; the pending buffer is bounded.
 
 ### Fixed
 - `RtpStreamDepacketiser`: an RFC 3640 `AAC-hbr` packet aggregating several access units gave all of them the packet's `pts` and every non-final one duration 0. The group's step to the next timestamp is now divided across its AUs.

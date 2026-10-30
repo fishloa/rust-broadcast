@@ -37,6 +37,7 @@
 
 use crate::TrackId;
 use alloc::collections::VecDeque;
+use alloc::vec;
 use alloc::vec::Vec;
 
 use broadcast_common::{Demand, Stage, Timestamp};
@@ -82,6 +83,69 @@ pub struct SegmentInfo {
     pub segment_seq: u32,
     /// Number of parts that made up this segment.
     pub part_count: u32,
+}
+
+/// A typed external-cut plan fed to a follower [`LlHlsSegmenter`] so it cuts
+/// its segments and parts at the leader's boundaries (issue #1428 slice 2a).
+///
+/// One plan describes one leader segment: its media sequence number, its start
+/// decode time in the leader's timescale, and (for LL-HLS) the part boundaries
+/// within it. The follower converts every time with ceiling rounding into its
+/// own tracks' timescales (see [`LlHlsSegmenter::follow`]).
+#[derive(Debug, Clone)]
+pub struct CutPlan {
+    /// Media sequence number of this segment (must match the follower's).
+    pub segment_seq: u32,
+    /// Decode time of the segment's first sample in the leader's timescale.
+    pub segment_start: i64,
+    /// Timescale of [`Self::segment_start`] and of any [`PartCut`] whose own
+    /// timescale is zero.
+    pub timescale: u32,
+    /// Part boundaries within this segment. Empty means "one part for the whole
+    /// segment".
+    pub parts: Vec<PartCut>,
+}
+
+/// One part boundary within a [`CutPlan`].
+#[derive(Debug, Clone)]
+pub struct PartCut {
+    /// Part index within the parent segment.
+    pub part_index: u32,
+    /// Decode time of the part's first sample in the leader's timescale.
+    pub start: i64,
+    /// Timescale of [`Self::start`] (zero inherits the plan's timescale).
+    pub timescale: u32,
+}
+
+impl CutPlan {
+    /// A plan for the leader segment `segment_seq` starting at `segment_start`.
+    pub fn new(segment_seq: u32, segment_start: i64, timescale: u32, parts: Vec<PartCut>) -> Self {
+        Self {
+            segment_seq,
+            segment_start,
+            timescale,
+            parts,
+        }
+    }
+}
+
+impl PartCut {
+    /// A part boundary at `start` (in `timescale`; zero inherits the plan's).
+    pub fn new(part_index: u32, start: i64, timescale: u32) -> Self {
+        Self {
+            part_index,
+            start,
+            timescale,
+        }
+    }
+
+    fn effective_timescale(&self, plan_timescale: u32) -> u32 {
+        if self.timescale == 0 {
+            plan_timescale
+        } else {
+            self.timescale
+        }
+    }
 }
 
 /// Per-track accumulation state for the segment currently being built.
@@ -201,6 +265,16 @@ pub struct LlHlsSegmenter {
     /// (or mix of both) the caller uses, every part and segment is delivered
     /// exactly once.
     ready: VecDeque<LlHlsStageOutput>,
+    /// Follower mode: cut only at externally supplied boundaries.
+    external_cuts: bool,
+    /// Leader mode: record the boundaries of every cut into `ready_cuts`.
+    record_cuts: bool,
+    /// Part boundaries of the segment being built (leader mode).
+    current_cuts: Vec<PartCut>,
+    /// Finished segments' boundaries not yet taken (leader mode).
+    ready_cuts: VecDeque<CutPlan>,
+    /// Plan for the segment currently being built (its start time and parts).
+    current_plan: Option<CutPlan>,
 }
 
 impl LlHlsSegmenter {
@@ -295,6 +369,11 @@ impl LlHlsSegmenter {
             current_segment: 1,
             next_part_index: 0,
             ready: VecDeque::new(),
+            external_cuts: false,
+            record_cuts: false,
+            current_cuts: Vec::new(),
+            ready_cuts: VecDeque::new(),
+            current_plan: None,
         })
     }
 
@@ -389,6 +468,22 @@ impl LlHlsSegmenter {
             .position(|t| t.spec.track_id == track_id)
             .ok_or(Error::InvalidInput("push: unknown track_id"))?;
 
+        if self.external_cuts {
+            if sample.dts.is_none() {
+                return Err(Error::InvalidInput(
+                    "follower segmenter push: sample has no dts",
+                ));
+            }
+            if self.tracks[idx].pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK {
+                return Err(Error::InvalidInput(
+                    "follower segmenter pending buffer full: no boundary received within \
+                     MAX_PENDING_SAMPLES_PER_TRACK samples",
+                ));
+            }
+            self.tracks[idx].pending.push(sample);
+            return Ok(());
+        }
+
         // Segment boundary: anchor keyframe past target → finalize the segment.
         if idx == self.anchor
             && sample.flags.is_sync
@@ -422,16 +517,259 @@ impl LlHlsSegmenter {
         Ok(())
     }
 
-    /// Finalize the trailing segment at end-of-stream. A no-op if nothing is
-    /// buffered. Emits the final part(s) and the whole segment.
+    /// Start (or continue) **follower mode**: this segmenter stops cutting on its
+    /// own and cuts exactly where a leader segmenter cut, so its segments and
+    /// parts carry the leader's sequence numbers and boundaries (RFC 8216bis
+    /// §4.4.4.9 matching Media Sequence Numbers and Parts across Renditions).
+    ///
+    /// Call once per leader segment, in order, as the leader finishes it. The
+    /// call registers `plan` as the segment now being built and closes the
+    /// previously registered one: its segment (and parts) are emitted from the
+    /// buffered samples whose decode time is strictly less than `plan`'s start.
+    /// The last registered segment is closed by [`flush`](Self::flush).
+    ///
+    /// Boundary rule: a sample belongs to the segment (and part) in which it
+    /// *starts*; a sample whose decode time equals a boundary opens the next
+    /// one. Boundaries are converted into each track's timescale with exact
+    /// integer arithmetic, rounded up, which is exact for integer decode times
+    /// (`d < ceil(x)` iff `d < x`). Samples earlier than the first registered
+    /// start join the first segment's first part, so nothing is dropped.
+    ///
+    /// A segment (or part) in which no follower sample starts is not emitted,
+    /// so its sequence number (or part index) is absent from the output; the
+    /// samples around it are unaffected.
     ///
     /// # Errors
-    /// Propagates a part/segment build failure.
+    /// [`Error::InvalidInput`] if a timescale is zero, `plan` does not advance
+    /// the previous plan's sequence number and start, its part starts are not
+    /// non-decreasing, or this segmenter already cut on its own before the
+    /// first `follow` call.
+    pub fn follow(&mut self, plan: CutPlan) -> Result<()> {
+        if plan.timescale == 0 {
+            return Err(Error::InvalidInput("follow: plan timescale must be > 0"));
+        }
+        if self.tracks.iter().any(|t| t.spec.timescale == 0) {
+            return Err(Error::InvalidInput("follow: track timescale must be > 0"));
+        }
+        let mut previous_part: Option<(i64, u32)> = None;
+        for p in &plan.parts {
+            let ts = p.effective_timescale(plan.timescale);
+            if let Some((start, prev_ts)) = previous_part
+                && cmp_time(p.start, ts, start, prev_ts).is_lt()
+            {
+                return Err(Error::InvalidInput(
+                    "follow: part starts must be non-decreasing",
+                ));
+            }
+            previous_part = Some((p.start, ts));
+        }
+        let cut_on_own = !self.ready.is_empty()
+            || self
+                .tracks
+                .iter()
+                .any(|t| t.part_start > 0 || t.seg_base_decode > 0);
+        if !self.external_cuts && cut_on_own {
+            return Err(Error::InvalidInput(
+                "follow: segmenter already cut on its own; call follow before the first cut",
+            ));
+        }
+        if let Some(current) = &self.current_plan
+            && (plan.segment_seq <= current.segment_seq
+                || cmp_time(
+                    plan.segment_start,
+                    plan.timescale,
+                    current.segment_start,
+                    current.timescale,
+                )
+                .is_lt())
+        {
+            return Err(Error::InvalidInput(
+                "follow: plan must advance the previous plan's sequence number and start",
+            ));
+        }
+        self.external_cuts = true;
+        if let Some(current) = self.current_plan.take() {
+            let end = (plan.segment_start, plan.timescale);
+            self.cut_follower_segment(&current, Some(end))?;
+        }
+        self.current_segment = plan.segment_seq;
+        self.current_plan = Some(plan);
+        Ok(())
+    }
+
+    /// Finalize the trailing segment at end-of-stream. A no-op if nothing is
+    /// buffered. Emits the final part(s) and the whole segment. In follower
+    /// mode the registered plan's segment takes every remaining sample.
+    ///
+    /// # Errors
+    /// Propagates a part/segment build failure; in follower mode also
+    /// [`Error::InvalidInput`] if samples are buffered with no registered plan.
     pub fn flush(&mut self) -> Result<()> {
+        if self.external_cuts {
+            return match self.current_plan.take() {
+                Some(current) => self.cut_follower_segment(&current, None),
+                None if self.tracks.iter().any(|t| !t.pending.is_empty()) => Err(
+                    Error::InvalidInput("flush: follower has buffered samples but no cut plan"),
+                ),
+                None => Ok(()),
+            };
+        }
         if self.tracks.iter().any(|t| !t.pending.is_empty()) {
             self.finish_segment()?;
         }
         Ok(())
+    }
+
+    /// Emit the segment described by `plan`: every buffered sample starting
+    /// before `end` (all of them when `end` is `None`), split into parts at
+    /// the plan's part starts.
+    fn cut_follower_segment(&mut self, plan: &CutPlan, end: Option<(i64, u32)>) -> Result<()> {
+        let part_starts: Vec<(u32, i64, u32)> = if plan.parts.is_empty() {
+            vec![(0, plan.segment_start, plan.timescale)]
+        } else {
+            plan.parts
+                .iter()
+                .map(|p| (p.part_index, p.start, p.effective_timescale(plan.timescale)))
+                .collect()
+        };
+        let nparts = part_starts.len();
+
+        // bounds[track][k]..bounds[track][k + 1] is part k's sample range; the
+        // first part also takes samples before its own start.
+        let mut bounds: Vec<Vec<usize>> = Vec::with_capacity(self.tracks.len());
+        for t in &self.tracks {
+            let before = |limit: Option<(i64, u32)>, upto: usize| match limit {
+                Some((value, ts)) => {
+                    let threshold = ceil_rescale(value, ts, t.spec.timescale);
+                    t.pending[..upto].partition_point(|s| follower_dts(s) < threshold)
+                }
+                None => upto,
+            };
+            let split = before(end, t.pending.len());
+            let mut b = Vec::with_capacity(nparts + 1);
+            b.push(0);
+            for &(_, start, ts) in &part_starts[1..] {
+                b.push(before(Some((start, ts)), split));
+            }
+            b.push(split);
+            bounds.push(b);
+        }
+
+        if bounds.iter().all(|b| b[nparts] == 0) {
+            return Ok(());
+        }
+
+        let mut cumulative: Vec<Vec<u64>> = Vec::with_capacity(self.tracks.len());
+        for (t, b) in self.tracks.iter().zip(&bounds) {
+            let mut clock = MediaClock::resumed_at(t.seg_clock.last_dts());
+            let mut cum = Vec::with_capacity(b[nparts] + 1);
+            cum.push(0u64);
+            for s in &t.pending[..b[nparts]] {
+                let last = cum[cum.len() - 1];
+                cum.push(last + clock.tick(s));
+            }
+            cumulative.push(cum);
+        }
+
+        let seg_seq = plan.segment_seq;
+        let mut emitted_parts: u32 = 0;
+        for (k, &(part_index, _, _)) in part_starts.iter().enumerate() {
+            let frags: Vec<FragmentTrackData<'_>> = self
+                .tracks
+                .iter()
+                .enumerate()
+                .filter(|(ti, _)| bounds[*ti][k + 1] > bounds[*ti][k])
+                .map(|(ti, t)| FragmentTrackData {
+                    track_id: t.spec.track_id,
+                    base_media_decode_time: t.seg_base_decode + cumulative[ti][bounds[ti][k]],
+                    samples: &t.pending[bounds[ti][k]..bounds[ti][k + 1]],
+                })
+                .collect();
+            let Some(first) = frags.first() else {
+                continue;
+            };
+            let bytes = build_chunk(self.next_seq, &frags, false)?;
+            self.next_seq += 1;
+            let first_ti = self
+                .tracks
+                .iter()
+                .position(|t| t.spec.track_id == first.track_id)
+                .ok_or(Error::InvalidInput("follow: part track vanished"))?;
+            let independent = first.samples.first().is_some_and(|s| s.flags.is_sync);
+            let duration = span_secs(
+                &self.tracks[first_ti],
+                bounds[first_ti][k],
+                bounds[first_ti][k + 1],
+            );
+            emitted_parts += 1;
+            self.ready.push_back(LlHlsStageOutput::Part(PartInfo {
+                bytes,
+                duration,
+                independent,
+                segment_seq: seg_seq,
+                part_index,
+            }));
+        }
+
+        let seg_frags: Vec<FragmentTrackData<'_>> = self
+            .tracks
+            .iter()
+            .zip(&bounds)
+            .filter(|(_, b)| b[nparts] > 0)
+            .map(|(t, b)| FragmentTrackData {
+                track_id: t.spec.track_id,
+                base_media_decode_time: t.seg_base_decode,
+                samples: &t.pending[..b[nparts]],
+            })
+            .collect();
+        let bytes = crate::pipeline::build_media_segment(self.next_seq, &seg_frags)?;
+        self.next_seq += 1;
+        let first_ti = bounds
+            .iter()
+            .position(|b| b[nparts] > 0)
+            .ok_or(Error::InvalidInput("follow: segment has no track"))?;
+        let duration = span_secs(&self.tracks[first_ti], 0, bounds[first_ti][nparts]);
+        self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
+            bytes,
+            duration,
+            segment_seq: seg_seq,
+            part_count: emitted_parts,
+        }));
+
+        for ((t, b), cum) in self.tracks.iter_mut().zip(&bounds).zip(&cumulative) {
+            let split = b[nparts];
+            if split == 0 {
+                continue;
+            }
+            let mut clock = MediaClock::resumed_at(t.seg_clock.last_dts());
+            for s in &t.pending[..split] {
+                clock.tick(s);
+            }
+            t.pending.drain(..split);
+            t.seg_base_decode += cum[split];
+            t.part_base_decode = t.seg_base_decode;
+            t.part_start = 0;
+            t.seg_clock = clock;
+            t.part_clock = clock;
+        }
+        Ok(())
+    }
+
+    /// Start recording the boundaries of every segment this segmenter cuts, so
+    /// a follower can be fed the same cuts through
+    /// [`take_ready_cut_plans`](Self::take_ready_cut_plans). Off by default; once
+    /// on, the caller must drain the plans or they accumulate.
+    pub fn record_cuts(&mut self) {
+        self.record_cuts = true;
+    }
+
+    /// Remove and return the [`CutPlan`] of every segment finished since the
+    /// last call, in order. Each plan carries the segment's sequence number and
+    /// the absolute decode time of its first anchor-track sample (and of each
+    /// part's), in the anchor track's timescale. Empty unless
+    /// [`record_cuts`](Self::record_cuts) was called.
+    pub fn take_ready_cut_plans(&mut self) -> Vec<CutPlan> {
+        self.ready_cuts.drain(..).collect()
     }
 
     /// Remove and return every part finished since the last call, in order.
@@ -471,6 +809,13 @@ impl LlHlsSegmenter {
     /// Finalize the current segment: flush its remaining un-parted samples as a
     /// final part, emit the whole segment, then open the next segment.
     fn finish_segment(&mut self) -> Result<()> {
+        let segment_start = {
+            let t = &self.tracks[self.anchor];
+            t.pending
+                .first()
+                .and_then(|s| s.dts)
+                .unwrap_or_else(|| ticks_to_i64(t.seg_base_decode))
+        };
         // Any samples buffered since the last part become the segment's final
         // part (also carries trailing non-anchor samples).
         let has_tail = self.tracks.iter().any(|t| t.part_start < t.pending.len());
@@ -505,6 +850,15 @@ impl LlHlsSegmenter {
             segment_seq: self.current_segment,
             part_count: self.next_part_index,
         }));
+        if self.record_cuts {
+            let cuts = core::mem::take(&mut self.current_cuts);
+            self.ready_cuts.push_back(CutPlan::new(
+                self.current_segment,
+                segment_start,
+                self.tracks[self.anchor].spec.timescale,
+                cuts,
+            ));
+        }
 
         // Advance per-track decode times past the whole segment and clear buffers.
         for t in &mut self.tracks {
@@ -530,6 +884,13 @@ impl LlHlsSegmenter {
     /// the segment's last one (RFC 8216bis §4.4.4.9 / audit r05-W27).
     fn emit_part(&mut self, final_part: bool) -> Result<()> {
         let anchor = self.anchor;
+        let part_start = {
+            let t = &self.tracks[anchor];
+            t.pending
+                .get(t.part_start)
+                .and_then(|s| s.dts)
+                .unwrap_or_else(|| ticks_to_i64(t.part_base_decode))
+        };
 
         // The decode span this part may cover, in the *anchor's* timescale: the
         // part target, capped by what the anchor has actually buffered
@@ -654,6 +1015,13 @@ impl LlHlsSegmenter {
             segment_seq: self.current_segment,
             part_index,
         }));
+        if self.record_cuts {
+            self.current_cuts.push(PartCut::new(
+                part_index,
+                part_start,
+                self.tracks[anchor].spec.timescale,
+            ));
+        }
         Ok(())
     }
 }
@@ -771,4 +1139,43 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
     // loop never breaks before the first sample, so a single sample longer than
     // the part target is still carried as its own part and the drain advances.
     end
+}
+fn ticks_to_i64(ticks: u64) -> i64 {
+    i64::try_from(ticks).unwrap_or(i64::MAX)
+}
+
+/// `value` ticks of `from_ts` as ticks of `to_ts`, rounded up, saturating at
+/// the `i64` range. Both timescales must be non-zero.
+fn ceil_rescale(value: i64, from_ts: u32, to_ts: u32) -> i64 {
+    let numerator = i128::from(value) * i128::from(to_ts);
+    let from = i128::from(from_ts);
+    let floor = numerator.div_euclid(from);
+    let ceil = if numerator.rem_euclid(from) == 0 {
+        floor
+    } else {
+        floor + 1
+    };
+    i64::try_from(ceil).unwrap_or(if ceil < 0 { i64::MIN } else { i64::MAX })
+}
+
+/// Exact comparison of `a / a_ts` with `b / b_ts` seconds; timescales non-zero.
+fn cmp_time(a: i64, a_ts: u32, b: i64, b_ts: u32) -> core::cmp::Ordering {
+    (i128::from(a) * i128::from(b_ts)).cmp(&(i128::from(b) * i128::from(a_ts)))
+}
+
+/// Decode time a follower segmenter cuts on; `push` rejects samples without one.
+fn follower_dts(sample: &Sample) -> i64 {
+    sample.dts.unwrap_or(i64::MIN)
+}
+
+/// Duration in seconds of `track.pending[from..to]`.
+fn span_secs(track: &TrackState, from: usize, to: usize) -> f64 {
+    let mut clock = MediaClock::resumed_at(
+        from.checked_sub(1)
+            .and_then(|i| track.pending.get(i))
+            .and_then(|s| s.dts)
+            .or(track.seg_clock.last_dts()),
+    );
+    let ticks: u64 = track.pending[from..to].iter().map(|s| clock.tick(s)).sum();
+    ticks as f64 / f64::from(track.spec.timescale.max(1))
 }
