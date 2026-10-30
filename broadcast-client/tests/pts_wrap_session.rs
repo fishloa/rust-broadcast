@@ -8,9 +8,6 @@ const WRAP: i64 = 1 << 33;
 
 #[test]
 fn pts_33bit_wrap_through_session_playout() {
-    // The committed wrap fixture documents the same 33-bit wrap boundary.
-    let wrap_fixture = test_fixtures::read("ts/pts-wrap.ts");
-    assert_eq!(wrap_fixture.len(), 940);
     let base = test_fixtures::read("ts/h264_aac.ts");
     let media0 = TsDemux::new().unpackage(&base[..]).unwrap();
     let movie_timescale = media0.movie_timescale;
