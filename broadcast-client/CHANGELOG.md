@@ -11,6 +11,7 @@ Initial release. A generic sans-IO client session for live and on-demand media: 
 
 ### Fixed
 
+- RTSP: tracks carry unrelated RTP clock bases, so the buffer aligned audio and video as one clock and an audio track whose base sat behind the video base never delivered, holding `BufferEvent::Start` for the 3 s track-silence timeout. Rendered non-video tracks are now aligned to the video track by first arrival for the lead computation (sample pts are unchanged).
 - HLS segment failure counts (`seg_failures`) are cleared on every `Output::Discontinuity`, including a stream restart that reuses a media sequence number, so a still-failing MSN that an origin reuses starts counting again from zero instead of carrying over its previous failure count.
 
 - RTSP: `CodecConfig::Avc` width/height are filled from the SPS with the TS rule (`transmux::avc_sps_dimensions`, cropped output size): from `sprop-parameter-sets` at DESCRIBE, else from the first in-band SPS, which re-announces `Tracks` once with the dimensions. H.265 is not an RTSP codec here, so there is no HEVC counterpart.
