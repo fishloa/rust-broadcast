@@ -145,7 +145,6 @@ struct WireArrivals {
     idr_starts: std::collections::BTreeMap<u8, Vec<u32>>,
     order: std::collections::BTreeMap<u8, Vec<u32>>,
     last_sr: std::collections::BTreeMap<u8, (f64, u32)>,
-    rtp_info: Option<String>,
 }
 
 impl WireArrivals {
@@ -209,9 +208,6 @@ impl WireArrivals {
                     return;
                 };
                 let head = String::from_utf8_lossy(&self.pending[..end]).to_ascii_lowercase();
-                if head.contains("rtp-info") {
-                    self.rtp_info = Some(head.clone());
-                }
                 let body = head
                     .lines()
                     .find_map(|l| l.strip_prefix("content-length:"))
@@ -725,10 +721,6 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         (ground.audio_median - audio_offset) - (ground.video_median - video_offset);
     eprintln!(
         "SENDERPACING[{label}] video arrives {video_sent_early_s:.4} s earlier than audio, relative to source pts"
-    );
-    eprintln!(
-        "RTPINFO[{label}] {:?} first_ts={:?}",
-        wire.rtp_info, wire.first_ts
     );
     let sr_minus_arrival = median(sr_vs_arrival.get_mut(&false).expect("audio"))
         - median(sr_vs_arrival.get_mut(&true).expect("video"));

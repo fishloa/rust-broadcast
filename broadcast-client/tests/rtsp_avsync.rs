@@ -429,6 +429,15 @@ fn a_three_b_frame_two_second_gop_source_lands_on_the_sender_report_timeline() {
             );
         }
     }
+    assert_scenario(
+        &fixture,
+        &truth,
+        Some(RELAY_SR_BIAS_SECONDS),
+        Some(0.0),
+        0.0,
+        "3b relay",
+    );
+    assert_scenario(&fixture, &truth, Some(0.0), Some(0.0), 0.0, "3b camera");
 }
 
 fn assert_ground_truth_offset(o: &Outcome, truth: &Truth, expected: f64, what: &str) {

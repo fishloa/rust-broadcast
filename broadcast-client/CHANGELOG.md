@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- RTSP: when the PLAY response carries an `RTP-Info` `rtptime` for every track, the tracks are placed on the common timeline from it and Sender Reports no longer move the offset; `AvSync::RtpInfo` reports it. Without `RTP-Info` the Sender Report rules are unchanged.
+
 ### Changed
 
 - Dependency `sdp-types` 0.2 -> 0.3. No public API exposure (used internally and in tests).
