@@ -185,7 +185,7 @@ use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
-use alloc::collections::{BTreeSet, VecDeque};
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
 
@@ -753,7 +753,12 @@ struct TrackState {
     /// Presentation timestamps of the reorder window and of recently resolved
     /// AUs, so an AU's presentation successor is found even when it was sent
     /// (and resolved) before it. Pruned below the oldest unresolved AU.
-    seen_pts: BTreeSet<u64>,
+    seen_pts: BTreeMap<u64, u64>,
+    /// Wire-order index the next AU of this track takes.
+    next_seq: u64,
+    /// Largest number of wire-order positions by which an AU's presentation
+    /// predecessor preceded it so far: the reorder window the track needs.
+    au_window: usize,
     /// Smallest positive step seen between consecutive wire timestamps — the
     /// frame-period estimate used as the duration fallback when a step goes
     /// backward (a presentation reorder has no forward delta). `None` until
@@ -858,10 +863,11 @@ fn to_ticks(uw: u64) -> i64 {
     uw.min(i64::MAX as u64) as i64
 }
 
-/// Access units held in a reordered video track's window before the oldest is
-/// resolved. A frame's presentation successor must have arrived by then; a
-/// pyramid reorder presents a frame at most a handful of AUs after it is sent.
-const REORDER_LOOKAHEAD: usize = 6;
+/// Cap on the learned reorder window of a video track, in access units. The
+/// window is the largest wire-order distance observed between an AU and its
+/// presentation predecessor; a hostile timestamp series cannot grow it past
+/// this.
+const MAX_REORDER_DEPTH: usize = 16;
 
 /// Hard bound on a reorder window whose oldest AU cannot be given a truthful
 /// duration (no later timestamp, no known frame period): beyond it the oldest
@@ -951,7 +957,9 @@ impl RtpStreamDepacketiser {
                         last_duration: 0,
                         declared_duration,
                         reordered: false,
-                        seen_pts: BTreeSet::new(),
+                        seen_pts: BTreeMap::new(),
+                        next_seq: 0,
+                        au_window: 0,
                         min_positive_step: None,
                         sr_anchor: None,
                         reorder_depth: t.reorder_depth,
@@ -1296,13 +1304,13 @@ impl RtpStreamDepacketiser {
     /// rather than being given an invented duration. `drain_all` (flush)
     /// resolves every AU the window can resolve instead of keeping a lookahead.
     fn resolve_window(st: &mut TrackState, out: &mut Vec<Sample>, drain_all: bool) {
-        while !st.pending.is_empty() && (drain_all || st.pending.len() > REORDER_LOOKAHEAD) {
+        while !st.pending.is_empty() && (drain_all || st.pending.len() > st.au_window) {
             let head_ts = st.pending[0].unwrapped_ts;
             let successor = st
                 .seen_pts
                 .range(head_ts.saturating_add(1)..)
                 .next()
-                .map(|&t| t - head_ts);
+                .map(|(&t, _)| t - head_ts);
             let period = st.declared_duration.map(u64::from).or_else(|| {
                 st.min_positive_step
                     .and_then(|p| u64::try_from(p).ok())
@@ -1319,7 +1327,13 @@ impl RtpStreamDepacketiser {
             let ts = to_ticks(p.unwrapped_ts);
             st.last_duration = duration;
             if let Some(oldest) = st.pending.iter().map(|p| p.unwrapped_ts).min() {
-                st.seen_pts = st.seen_pts.split_off(&oldest);
+                while st
+                    .seen_pts
+                    .first_key_value()
+                    .is_some_and(|(&t, _)| t < oldest)
+                {
+                    st.seen_pts.pop_first();
+                }
             }
             out.push(Sample::new(
                 p.data,
@@ -1389,11 +1403,18 @@ impl RtpStreamDepacketiser {
                         .is_some_and(|p| unwrapped < p.unwrapped_ts))
             {
                 if !st.reordered {
-                    st.seen_pts
-                        .extend(st.pending.iter().map(|p| p.unwrapped_ts));
+                    let first = st.next_seq - st.pending.len() as u64;
+                    for (i, p) in st.pending.iter().enumerate() {
+                        st.seen_pts.insert(p.unwrapped_ts, first + i as u64);
+                    }
                 }
                 st.reordered = true;
-                st.seen_pts.insert(unwrapped);
+                if let Some((_, &pred)) = st.seen_pts.range(..unwrapped).next_back() {
+                    let lag = usize::try_from(st.next_seq - pred).unwrap_or(usize::MAX);
+                    st.au_window = st.au_window.max(lag.min(MAX_REORDER_DEPTH));
+                }
+                st.seen_pts.insert(unwrapped, st.next_seq);
+                st.next_seq += 1;
                 st.pending.push(PendingAu {
                     unwrapped_ts: unwrapped,
                     is_sync: au.is_sync,
@@ -1491,6 +1512,7 @@ impl RtpStreamDepacketiser {
                 is_sync: au.is_sync,
                 data: au.data,
             });
+            st.next_seq += 1;
         }
         Ok(())
     }
@@ -2014,5 +2036,49 @@ mod tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].track_id, TrackId::new(7));
         assert_eq!(specs[0].timescale, 90_000);
+    }
+    fn max_hold_in_aus(presentation_order_of_wire: &[u32]) -> (usize, Vec<(u64, u32)>) {
+        let id = TrackId::new(1);
+        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        let mut emitted = Vec::new();
+        let mut max_hold = 0;
+        for (n, &frame) in presentation_order_of_wire.iter().enumerate() {
+            let nal: &[u8] = if n == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
+            let ts = 1000 + frame * 3600;
+            for s in d.push(id, &vpkt(n as u16, ts, true, nal)).unwrap() {
+                emitted.push((s.pts.unwrap() as u64, s.duration.unwrap()));
+            }
+            max_hold = max_hold.max(n + 1 - emitted.len());
+        }
+        (max_hold, emitted)
+    }
+
+    #[test]
+    fn reorder_window_tracks_the_observed_depth_not_a_fixed_size() {
+        let one_b: Vec<u32> = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13].to_vec();
+        let (hold, emitted) = max_hold_in_aus(&one_b);
+        assert!(hold <= 3, "one B frame held {hold} AUs");
+        assert!(emitted.iter().skip(3).all(|&(_, dur)| dur == 3600));
+
+        let two_b: Vec<u32> = [
+            0, 3, 1, 2, 6, 4, 5, 9, 7, 8, 12, 10, 11, 15, 13, 14, 18, 16, 17,
+        ]
+        .to_vec();
+        let (hold, emitted) = max_hold_in_aus(&two_b);
+        assert!(hold <= 4, "two B frames held {hold} AUs");
+        assert!(emitted.iter().skip(4).all(|&(_, dur)| dur == 3600));
+
+        let none: Vec<u32> = (0..12).collect();
+        assert_eq!(max_hold_in_aus(&none).0, 1);
+    }
+
+    #[test]
+    fn reorder_window_is_capped() {
+        let mut wire = alloc::vec![0u32];
+        for k in (1..40u32).rev() {
+            wire.push(k);
+        }
+        let (hold, _) = max_hold_in_aus(&wire);
+        assert!(hold <= MAX_REORDER_DEPTH + 1, "held {hold}");
     }
 }
