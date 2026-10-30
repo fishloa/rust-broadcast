@@ -134,10 +134,19 @@ struct Slot {
     state: SlotState,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct TrackIdentity {
+    kind: SetClass,
+    set_id: Option<u64>,
+    group: Option<u64>,
+    lang: Option<String>,
+    roles: Vec<(String, Option<String>)>,
+}
+
 struct Lane {
     kind: SetClass,
     set_id: Option<u64>,
-    identity: String,
+    identity: TrackIdentity,
     reps: Vec<RepState>,
     queue: VecDeque<Slot>,
     base: u32,
@@ -237,7 +246,7 @@ pub struct DashClient {
     deliver: usize,
     next_rep: u32,
     next_track_id: u32,
-    track_ids: BTreeMap<String, u32>,
+    track_ids: BTreeMap<TrackIdentity, (u32, u32)>,
     reqs: BTreeMap<ResourceId, ReqInfo>,
     queue: VecDeque<ResourceId>,
     inflight: BTreeSet<ResourceId>,
@@ -931,28 +940,23 @@ impl DashClient {
                     let resolved = at.resolve(self.mpd.as_ref().expect("mpd present"));
                     let set_id = resolved.and_then(|(_, s, _)| s.id);
                     let identity = resolved.map_or_else(
-                        || format!("{:?}", kind),
-                        |(_, s, _)| {
-                            let roles = s
+                        || TrackIdentity {
+                            kind,
+                            set_id: None,
+                            group: None,
+                            lang: None,
+                            roles: Vec::new(),
+                        },
+                        |(_, s, _)| TrackIdentity {
+                            kind,
+                            set_id: s.id,
+                            group: s.group,
+                            lang: s.lang.clone(),
+                            roles: s
                                 .roles
                                 .iter()
-                                .map(|d| {
-                                    format!(
-                                        "{}={}",
-                                        d.scheme_id_uri,
-                                        d.value.as_deref().unwrap_or("")
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join(",");
-                            format!(
-                                "{}|id={:?}|group={:?}|lang={}|roles={}",
-                                kind.name(),
-                                s.id,
-                                s.group,
-                                s.lang.as_deref().unwrap_or(""),
-                                roles
-                            )
+                                .map(|d| (d.scheme_id_uri.clone(), d.value.clone()))
+                                .collect(),
                         },
                     );
                     run.lanes.push(Lane {
@@ -1653,12 +1657,12 @@ impl DashClient {
             let identity = self.periods[pi].lanes[li].identity.clone();
             let base = if n == 0 {
                 0
-            } else if let Some(existing) = self.track_ids.get(&identity).copied() {
+            } else if let Some((existing, _)) = self.track_ids.get(&identity).copied() {
                 existing
             } else {
                 let base = self.next_track_id;
                 self.next_track_id = self.next_track_id.saturating_add(n);
-                self.track_ids.insert(identity, base);
+                self.track_ids.insert(identity, (base, n));
                 base
             };
             assignments.push((li, base, n));

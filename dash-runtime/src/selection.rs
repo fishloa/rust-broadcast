@@ -38,7 +38,7 @@ const CODEC_STPP: &str = "stpp";
 const CODEC_WVTT: &str = "wvtt";
 
 /// What a set carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum SetClass {
     /// Video.
