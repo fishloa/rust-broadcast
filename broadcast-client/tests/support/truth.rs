@@ -22,10 +22,8 @@ impl GroundTruth {
 
 #[derive(Default)]
 pub struct Truth {
-    video: HashMap<Vec<u8>, Option<f64>>,
-    audio: HashMap<Vec<u8>, Option<f64>>,
-    first_video: Option<f64>,
-    first_audio: Option<f64>,
+    video: Vec<(Vec<u8>, f64)>,
+    audio: Vec<(Vec<u8>, f64)>,
 }
 
 fn video_key(data: &[u8]) -> Vec<u8> {
@@ -54,12 +52,45 @@ fn median(v: &mut [f64]) -> f64 {
     v[v.len() / 2]
 }
 
+fn candidates(source: &[(Vec<u8>, f64)], emitted: &[(Vec<u8>, f64)]) -> (usize, Vec<f64>) {
+    let mut best = 0;
+    let mut found: Vec<(usize, f64)> = Vec::new();
+    for shift in 0..source.len() {
+        let mut deltas = Vec::new();
+        for (i, (key, pts)) in emitted.iter().enumerate() {
+            if let Some((skey, spts)) = source.get(shift + i)
+                && skey == key
+            {
+                deltas.push(pts - spts);
+            }
+        }
+        if deltas.is_empty() {
+            continue;
+        }
+        best = best.max(deltas.len());
+        found.push((deltas.len(), median(&mut deltas)));
+    }
+    (
+        best,
+        found
+            .into_iter()
+            .filter(|(n, _)| *n == best)
+            .map(|(_, d)| d)
+            .collect(),
+    )
+}
+
 impl Truth {
     pub fn from_media(media: &Media) -> Self {
         let mut truth = Self::default();
         for track in &media.tracks {
             let video = matches!(track.spec.config, CodecConfig::Avc { .. });
             let scale = f64::from(track.spec.timescale);
+            let list = if video {
+                &mut truth.video
+            } else {
+                &mut truth.audio
+            };
             for s in &track.samples {
                 let Some(pts) = s.pts else { continue };
                 let key = if video {
@@ -67,52 +98,48 @@ impl Truth {
                 } else {
                     s.data.to_vec()
                 };
-                let first = if video {
-                    &mut truth.first_video
-                } else {
-                    &mut truth.first_audio
-                };
-                first.get_or_insert(pts as f64 / scale);
-                let map = if video {
-                    &mut truth.video
-                } else {
-                    &mut truth.audio
-                };
-                map.entry(key)
-                    .and_modify(|v| *v = None)
-                    .or_insert(Some(pts as f64 / scale));
+                list.push((key, pts as f64 / scale));
             }
+        }
+        for list in [&mut truth.video, &mut truth.audio] {
+            list.sort_by(|a, b| a.1.total_cmp(&b.1));
         }
         truth
     }
 
     pub fn source_start_gap(&self) -> f64 {
-        self.first_audio.unwrap_or(0.0) - self.first_video.unwrap_or(0.0)
+        self.audio.first().map_or(0.0, |s| s.1) - self.video.first().map_or(0.0, |s| s.1)
     }
 
     pub fn measure<'a>(&self, samples: impl Iterator<Item = (bool, &'a [u8], f64)>) -> GroundTruth {
-        let (mut audio, mut video) = (Vec::new(), Vec::new());
+        let (mut audio, mut video): (Vec<(Vec<u8>, f64)>, Vec<(Vec<u8>, f64)>) =
+            (Vec::new(), Vec::new());
         for (is_video, data, pts) in samples {
-            let (map, key, out) = if is_video {
-                (&self.video, video_key(data), &mut video)
+            if is_video {
+                video.push((video_key(data), pts));
             } else {
-                (&self.audio, data.to_vec(), &mut audio)
-            };
-            if let Some(Some(source)) = map.get(&key) {
-                out.push(pts - source);
+                audio.push((data.to_vec(), pts));
             }
         }
+        for list in [&mut audio, &mut video] {
+            list.sort_by(|a, b| a.1.total_cmp(&b.1));
+        }
+        let (audio_matched, audio_c) = candidates(&self.audio, &audio);
+        let (video_matched, video_c) = candidates(&self.video, &video);
         assert!(
-            !audio.is_empty() && !video.is_empty(),
-            "no emitted sample matched a source access unit (audio {}, video {})",
-            audio.len(),
-            video.len()
+            audio_matched > 0 && video_matched > 0,
+            "no emitted sample matched a source access unit (audio {audio_matched}, video {video_matched})"
         );
+        let (audio_median, video_median) = audio_c
+            .iter()
+            .flat_map(|a| video_c.iter().map(move |v| (*a, *v)))
+            .min_by(|x, y| (x.0 - x.1).abs().total_cmp(&(y.0 - y.1).abs()))
+            .expect("a candidate pair");
         GroundTruth {
-            audio_matched: audio.len(),
-            video_matched: video.len(),
-            audio_median: median(&mut audio),
-            video_median: median(&mut video),
+            audio_matched,
+            video_matched,
+            audio_median,
+            video_median,
         }
     }
 }

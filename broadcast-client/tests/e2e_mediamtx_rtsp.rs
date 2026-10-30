@@ -14,7 +14,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use broadcast_client::{Action, AvSync, BufferEvent, Config, Event, Session, Status};
-use transmux::CodecConfig;
+use broadcast_common::Unpackage;
+use transmux::{CodecConfig, TsDemux};
+
+mod support;
+use support::truth::Truth;
 
 const REQUIRE_ENV: &str = "REQUIRE_MEDIAMTX_E2E";
 const MEDIAMTX: &str = "mediamtx";
@@ -313,6 +317,20 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         bail("ffmpeg could not build the test source (libx264 missing?)");
         return;
     }
+    let truth_ts = dir.0.join("truth.ts");
+    let status = Command::new(&ffmpeg)
+        .args(["-v", "error", "-y", "-i"])
+        .arg(&source)
+        .args(["-c", "copy", "-f", "mpegts"])
+        .arg(&truth_ts)
+        .status()
+        .expect("run ffmpeg remux");
+    assert!(status.success(), "ffmpeg could not remux the source to TS");
+    let truth = Truth::from_media(
+        &TsDemux::new()
+            .unpackage(&fs::read(&truth_ts).expect("read truth.ts")[..])
+            .expect("demux truth.ts"),
+    );
     let mut publisher = Command::new(ffmpeg);
     publisher
         .args(["-v", "error", "-re", "-i"])
@@ -339,6 +357,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         std::collections::BTreeMap::new();
     let mut emitted: Vec<(u32, i64, u64)> = Vec::new();
     let mut emitted_audio_idx: Vec<i64> = Vec::new();
+    let mut emitted_data: Vec<(bool, Vec<u8>, f64)> = Vec::new();
     let mut audio_count: i64 = 0;
     let mut start_us: Option<u64> = None;
     let mut start_at_27mhz: Option<u64> = None;
@@ -446,6 +465,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                             .is_some_and(|(_, s)| *s == AvSync::SenderReport)
                         {
                             emitted.push((tid, pts, now));
+                            emitted_data.push((is_video, sample.data.to_vec(), seconds));
                             emitted_audio_idx.push(if is_video { -1 } else { audio_count - 1 });
                         }
                         let slot = max_pts_seconds.entry(is_video).or_insert(seconds);
@@ -650,6 +670,15 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     assert_eq!(
         reordered, expect_reorder,
         "video wire order reorder expectation for {label}"
+    );
+    let ground = truth.measure(emitted_data.iter().map(|(v, d, p)| (*v, d.as_slice(), *p)));
+    eprintln!(
+        "GROUNDTRUTH[{label}] audio_median_delta={:.4} video_median_delta={:.4} offset={:.4} (matched a={} v={})",
+        ground.audio_median,
+        ground.video_median,
+        ground.offset(),
+        ground.audio_matched,
+        ground.video_matched
     );
     let av_offset_pts = audio_offset - video_offset;
     let av_offset = audio_offset - median(&mut decode_offsets);
