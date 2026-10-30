@@ -200,7 +200,7 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
 38. `timed-metadata-v0.7.0`  
    needs live first: `broadcast-common`, `broadcast-hls`, `cc-data`, `dvb-vbi`, `mp4-emsg`, `scte35-splice`
 39. `transmux-v0.27.0`  
-   needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `container-probe`, `mp4-emsg`, `mpeg-pes`, `mpeg-ps`, `mpeg-ts`, `rtcp-packet`, `rtp-packet`, `scte35-splice`
+   needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `cc-data`, `container-probe`, `mp4-emsg`, `mpeg-pes`, `mpeg-ps`, `mpeg-ts`, `rtcp-packet`, `rtp-packet`, `scte35-splice`
 40. `ts-fix-v0.7.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`
 41. `caption-convert-v0.3.0`  
