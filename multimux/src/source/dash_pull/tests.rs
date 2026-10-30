@@ -1842,3 +1842,161 @@ fn only_the_requested_part_of_a_ranged_answer_is_accepted() {
         "an overflowing range is refused, not wrapped"
     );
 }
+
+/// Cross-Period track ids must not be recycled for a different media kind: a
+/// middle Period carrying only audio must not hand the video track's id to its
+/// audio track, otherwise the `Trunk`/stitcher merge two different tracks under
+/// one id (issue lane/ltrackid).
+#[tokio::test]
+async fn bltrackid_multi_period_audio_only_middle_keeps_track_ids_stable() {
+    let src = test_fixtures::path("dash/multiperiod-restart");
+    let dir = std::env::temp_dir().join("bltrackid-pin");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    for entry in std::fs::read_dir(&src).expect("read src") {
+        let entry = entry.expect("entry");
+        if entry.file_type().expect("ft").is_file() {
+            std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copy");
+        }
+    }
+    let mpd = r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" minBufferTime="PT2.000S" type="static" mediaPresentationDuration="PT0H0M18.000S" maxSegmentDuration="PT0H0M2.021S" profiles="urn:mpeg:dash:profile:full:2011">
+ <Period id="1" duration="PT0H0M6.013S">
+  <AdaptationSet segmentAlignment="true" maxWidth="320" maxHeight="240" maxFrameRate="25" par="4:3" mimeType="video/mp4" startWithSAP="1">
+   <SegmentTemplate media="p1_dash_track1_$Number$.m4s" initialization="p1_dash_track1_init.mp4" timescale="12800" startNumber="1" duration="25600"/>
+   <Representation id="1" codecs="avc1.4D400D" width="320" height="240" frameRate="25" sar="1:1" bandwidth="84313"/>
+  </AdaptationSet>
+  <AdaptationSet segmentAlignment="true" mimeType="audio/mp4" startWithSAP="1">
+   <SegmentTemplate media="p1_dash_track2_$Number$.m4s" initialization="p1_dash_track2_init.mp4" timescale="44100" startNumber="1" duration="88200"/>
+   <Representation id="2" codecs="mp4a.40.2" audioSamplingRate="44100" bandwidth="48523">
+    <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
+   </Representation>
+  </AdaptationSet>
+ </Period>
+ <Period id="2" start="PT0H0M6.000S" duration="PT0H0M6.000S">
+  <AdaptationSet segmentAlignment="true" mimeType="audio/mp4" startWithSAP="1">
+   <SegmentTemplate media="p2_dash_track2_$Number$.m4s" initialization="p2_dash_track2_init.mp4" timescale="44100" startNumber="1" duration="88200"/>
+   <Representation id="4" codecs="mp4a.40.2" audioSamplingRate="44100" bandwidth="48855">
+    <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
+   </Representation>
+  </AdaptationSet>
+ </Period>
+ <Period id="3" start="PT0H0M12.000S" duration="PT0H0M6.000S">
+  <AdaptationSet segmentAlignment="true" maxWidth="320" maxHeight="240" maxFrameRate="25" par="4:3" mimeType="video/mp4" startWithSAP="1">
+   <SegmentTemplate media="p2_dash_track1_$Number$.m4s" initialization="p2_dash_track1_init.mp4" timescale="12800" startNumber="1" duration="25600"/>
+   <Representation id="3" codecs="avc1.4D400D" width="320" height="240" frameRate="25" sar="1:1" bandwidth="115070"/>
+  </AdaptationSet>
+  <AdaptationSet segmentAlignment="true" mimeType="audio/mp4" startWithSAP="1">
+   <SegmentTemplate media="p2_dash_track2_$Number$.m4s" initialization="p2_dash_track2_init.mp4" timescale="44100" startNumber="1" duration="88200"/>
+   <Representation id="4" codecs="mp4a.40.2" audioSamplingRate="44100" bandwidth="48855">
+    <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
+   </Representation>
+  </AdaptationSet>
+ </Period>
+</MPD>
+"#;
+    std::fs::write(dir.join("bltrackid.mpd"), mpd).expect("write mpd");
+
+    let origin = serve_files(dir.clone(), None, None, false).await;
+    let (delivered, result) = Pull::start(route(origin.url("bltrackid.mpd")), SkewedClock::new(0))
+        .finish()
+        .await;
+    result.expect("ends cleanly");
+
+    // Track ids are stable: video is always 1, audio always 2, even though
+    // Period 2 carries audio only.
+    let mut ids_seen: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    for (id, _) in &delivered.samples {
+        ids_seen.insert(id.value());
+    }
+    assert_eq!(ids_seen, std::collections::BTreeSet::from([1u32, 2u32]));
+
+    let video = delivered.video();
+    let audio = delivered.audio();
+    let p1v = expected(
+        "multiperiod-restart/",
+        "p1_dash_track1_init.mp4",
+        &[
+            "p1_dash_track1_1.m4s",
+            "p1_dash_track1_2.m4s",
+            "p1_dash_track1_3.m4s",
+        ],
+    );
+    let p2v = expected(
+        "multiperiod-restart/",
+        "p2_dash_track1_init.mp4",
+        &[
+            "p2_dash_track1_1.m4s",
+            "p2_dash_track1_2.m4s",
+            "p2_dash_track1_3.m4s",
+        ],
+    );
+    let p1a = expected(
+        "multiperiod-restart/",
+        "p1_dash_track2_init.mp4",
+        &[
+            "p1_dash_track2_1.m4s",
+            "p1_dash_track2_2.m4s",
+            "p1_dash_track2_3.m4s",
+        ],
+    );
+    let p2a = expected(
+        "multiperiod-restart/",
+        "p2_dash_track2_init.mp4",
+        &[
+            "p2_dash_track2_1.m4s",
+            "p2_dash_track2_2.m4s",
+            "p2_dash_track2_3.m4s",
+        ],
+    );
+    assert_eq!(video.len(), p1v.len() + p2v.len(), "video sample count");
+    assert_eq!(
+        audio.len(),
+        p1a.len() + p2a.len() + p2a.len(),
+        "audio sample count"
+    );
+
+    // Strictly increasing per output track.
+    for (name, samples) in [("video", &video), ("audio", &audio)] {
+        let dts: Vec<i64> = samples.iter().map(|s| s.dts.expect("dts")).collect();
+        assert!(
+            dts.windows(2).all(|w| w[0] < w[1]),
+            "{name}: stitched timeline not strictly increasing"
+        );
+    }
+
+    // Audio continues across every boundary (it plays in all three Periods).
+    let audio_dts: Vec<i64> = audio.iter().map(|s| s.dts.expect("dts")).collect();
+    let audio_dur: Vec<i64> = audio
+        .iter()
+        .map(|s| i64::from(s.duration.unwrap_or(0)))
+        .collect();
+    for boundary in [p1a.len(), p1a.len() + p2a.len()] {
+        let prev_end = audio_dts[boundary - 1] + audio_dur[boundary - 1];
+        let first = audio_dts[boundary];
+        assert!(
+            first >= prev_end,
+            "audio: Period boundary overlap: {first} < {prev_end}"
+        );
+        // The audio track must be stitched to the end of the preceding
+        // Period's content, not to the stale end of the old video track
+        // (6 s at 44100 = 264600 ticks). Period 2 ends at ~12 s.
+        if boundary == p1a.len() + p2a.len() {
+            assert!(
+                first >= 12 * 44_100,
+                "audio after Period 2 inherited the old video clock: {first} < {}",
+                12 * 44_100
+            );
+        }
+    }
+
+    // Video's Period-3 samples must start after Period 2 (which has no video)
+    // rather than overlapping Period 1.
+    let video_dts: Vec<i64> = video.iter().map(|s| s.dts.expect("dts")).collect();
+    let v_boundary = p1v.len();
+    assert!(
+        video_dts[v_boundary] >= 12 * 12800,
+        "video Period 3 overlapped Period 1: {} < {}",
+        video_dts[v_boundary],
+        12 * 12800
+    );
+}

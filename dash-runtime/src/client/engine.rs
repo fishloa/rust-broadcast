@@ -134,9 +134,19 @@ struct Slot {
     state: SlotState,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct TrackIdentity {
+    kind: SetClass,
+    set_id: Option<u64>,
+    group: Option<u64>,
+    lang: Option<String>,
+    roles: Vec<(String, Option<String>)>,
+}
+
 struct Lane {
     kind: SetClass,
     set_id: Option<u64>,
+    identity: TrackIdentity,
     reps: Vec<RepState>,
     queue: VecDeque<Slot>,
     base: u32,
@@ -205,6 +215,8 @@ pub struct StateSize {
     pub outputs: usize,
     /// Live-only bookkeeping entries (early waits, missing-segment flags).
     pub live: usize,
+    /// Track identities holding an allocated `TrackId` range (current and previous Period only).
+    pub track_identities: usize,
 }
 
 /// The sans-IO DASH client for static and dynamic presentations.
@@ -235,6 +247,9 @@ pub struct DashClient {
     issue: usize,
     deliver: usize,
     next_rep: u32,
+    next_track_id: u32,
+    track_ids: BTreeMap<TrackIdentity, (u32, u32)>,
+    previous_identities: Vec<TrackIdentity>,
     reqs: BTreeMap<ResourceId, ReqInfo>,
     queue: VecDeque<ResourceId>,
     inflight: BTreeSet<ResourceId>,
@@ -356,6 +371,9 @@ impl DashClient {
             issue: 0,
             deliver: 0,
             next_rep: 0,
+            next_track_id: 1,
+            track_ids: BTreeMap::new(),
+            previous_identities: Vec::new(),
             reqs: BTreeMap::new(),
             queue: VecDeque::new(),
             inflight: BTreeSet::new(),
@@ -431,6 +449,7 @@ impl DashClient {
             queued: self.queue.len(),
             outputs: self.outputs.len(),
             live: self.live.as_ref().map_or(0, live::Live::bookkeeping),
+            track_identities: self.track_ids.len(),
         }
     }
 
@@ -923,12 +942,32 @@ impl DashClient {
             let Some(at) = at else { continue };
             match self.build_rep(at) {
                 Ok(rep) => {
-                    let set_id = at
-                        .resolve(self.mpd.as_ref().expect("mpd present"))
-                        .and_then(|(_, s, _)| s.id);
+                    let resolved = at.resolve(self.mpd.as_ref().expect("mpd present"));
+                    let set_id = resolved.and_then(|(_, s, _)| s.id);
+                    let identity = resolved.map_or_else(
+                        || TrackIdentity {
+                            kind,
+                            set_id: None,
+                            group: None,
+                            lang: None,
+                            roles: Vec::new(),
+                        },
+                        |(_, s, _)| TrackIdentity {
+                            kind,
+                            set_id: s.id,
+                            group: s.group,
+                            lang: s.lang.clone(),
+                            roles: s
+                                .roles
+                                .iter()
+                                .map(|d| (d.scheme_id_uri.clone(), d.value.clone()))
+                                .collect(),
+                        },
+                    );
                     run.lanes.push(Lane {
                         kind,
                         set_id,
+                        identity,
                         reps: vec![rep],
                         queue: VecDeque::new(),
                         base: 0,
@@ -1610,17 +1649,38 @@ impl DashClient {
 
     fn start_period(&mut self, pi: usize) {
         self.periods[pi].started = true;
-        let mut base = 1u32;
+        let mut assignments: Vec<(usize, u32, u32)> = Vec::new();
+        let mut used_ranges: Vec<(u32, u32)> = Vec::new();
         for li in 0..self.periods[pi].lanes.len() {
             let n = self.periods[pi].lanes[li]
                 .current()
                 .and_then(|r| self.inits.get(&r.init_key))
                 .map_or(0, |e| u32::try_from(e.specs.len()).unwrap_or(u32::MAX));
+            let identity = self.periods[pi].lanes[li].identity.clone();
+            let base = allocate_track_base(
+                &mut self.track_ids,
+                &mut self.next_track_id,
+                &mut used_ranges,
+                identity,
+                n,
+            );
+            assignments.push((li, base, n));
+        }
+        for (li, base, n) in assignments {
             let lane = &mut self.periods[pi].lanes[li];
             lane.base = base;
             lane.count = n;
-            base = base.saturating_add(n);
         }
+        let current: Vec<TrackIdentity> = self.periods[pi]
+            .lanes
+            .iter()
+            .map(|lane| lane.identity.clone())
+            .collect();
+        prune_track_ids(
+            &mut self.track_ids,
+            current.iter().chain(self.previous_identities.iter()),
+        );
+        self.previous_identities = current;
         let notices = std::mem::take(&mut self.periods[pi].notices);
         self.outputs.extend(notices);
         let live: Vec<usize> = (0..self.periods[pi].lanes.len())
@@ -2056,5 +2116,148 @@ impl DashClient {
         self.periods[pi].issue_done = false;
         self.register_rep(pi, li, ri);
         Ok(())
+    }
+}
+
+fn ranges_overlap(a_base: u32, a_len: u32, b_base: u32, b_len: u32) -> bool {
+    let a_end = a_base.saturating_add(a_len);
+    let b_end = b_base.saturating_add(b_len);
+    a_base < b_end && b_base < a_end
+}
+
+fn allocate_track_base(
+    track_ids: &mut BTreeMap<TrackIdentity, (u32, u32)>,
+    next_track_id: &mut u32,
+    used: &mut Vec<(u32, u32)>,
+    identity: TrackIdentity,
+    n: u32,
+) -> u32 {
+    if n == 0 {
+        return 0;
+    }
+    if let Some((existing, len)) = track_ids.get(&identity).copied()
+        && len >= n
+        && !used.iter().any(|&(b, l)| ranges_overlap(existing, n, b, l))
+    {
+        used.push((existing, n));
+        return existing;
+    }
+    let base = *next_track_id;
+    *next_track_id = next_track_id.saturating_add(n);
+    track_ids.insert(identity, (base, n));
+    used.push((base, n));
+    base
+}
+
+/// Drops identities outside `keep`. `next_track_id` is never lowered, so a
+/// pruned identity that returns gets a fresh range and no id is announced for
+/// two identities. `next_track_id` saturates at `u32::MAX`; at 20 tracks per
+/// Period and one Period every 10 s that takes over 700 years.
+fn prune_track_ids<'a>(
+    track_ids: &mut BTreeMap<TrackIdentity, (u32, u32)>,
+    keep: impl Iterator<Item = &'a TrackIdentity>,
+) {
+    let keep: BTreeSet<&TrackIdentity> = keep.collect();
+    track_ids.retain(|identity, _| keep.contains(identity));
+}
+
+#[cfg(test)]
+mod track_id_allocation_tests {
+    use super::*;
+
+    #[test]
+    fn two_same_identity_lanes_get_unique_bases() {
+        let mut track_ids: BTreeMap<TrackIdentity, (u32, u32)> = BTreeMap::new();
+        let mut next = 1u32;
+        let mut used = Vec::new();
+        let id = TrackIdentity {
+            kind: SetClass::Audio,
+            set_id: None,
+            group: None,
+            lang: Some("en".to_string()),
+            roles: Vec::new(),
+        };
+        let a = allocate_track_base(&mut track_ids, &mut next, &mut used, id.clone(), 1);
+        let b = allocate_track_base(&mut track_ids, &mut next, &mut used, id, 1);
+        assert_ne!(a, b, "duplicate base for two lanes with equal identity");
+    }
+
+    #[test]
+    fn growing_identity_does_not_overlap_neighbor() {
+        let mut track_ids: BTreeMap<TrackIdentity, (u32, u32)> = BTreeMap::new();
+        let mut next = 1u32;
+        let mut used = Vec::new();
+        let a = TrackIdentity {
+            kind: SetClass::Video,
+            set_id: None,
+            group: None,
+            lang: None,
+            roles: Vec::new(),
+        };
+        let b = TrackIdentity {
+            kind: SetClass::Audio,
+            set_id: None,
+            group: None,
+            lang: Some("en".to_string()),
+            roles: Vec::new(),
+        };
+        // Period 1: A has 1 track.
+        let a1 = allocate_track_base(&mut track_ids, &mut next, &mut used, a.clone(), 1);
+        // B allocated in between.
+        let b1 = allocate_track_base(&mut track_ids, &mut next, &mut used, b.clone(), 1);
+        // Period 2: A needs 2 tracks; used reset for the new Period.
+        let mut used2 = Vec::new();
+        let a2 = allocate_track_base(&mut track_ids, &mut next, &mut used2, a.clone(), 2);
+        // All allocated ids unique.
+        let mut ids = std::collections::BTreeSet::new();
+        ids.insert(a1);
+        ids.insert(b1);
+        ids.insert(a2);
+        ids.insert(a2 + 1);
+        assert_eq!(ids.len(), 4, "range overlap or duplicate ids");
+    }
+
+    fn video(set_id: u64) -> TrackIdentity {
+        TrackIdentity {
+            kind: SetClass::Video,
+            set_id: Some(set_id),
+            group: None,
+            lang: None,
+            roles: Vec::new(),
+        }
+    }
+
+    fn audio(set_id: u64) -> TrackIdentity {
+        TrackIdentity {
+            kind: SetClass::Audio,
+            set_id: Some(set_id),
+            group: None,
+            lang: None,
+            roles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn renumbered_periods_keep_the_identity_map_bounded_and_ids_unique_per_kind() {
+        let mut track_ids: BTreeMap<TrackIdentity, (u32, u32)> = BTreeMap::new();
+        let mut next = 1u32;
+        let mut owner: BTreeMap<u32, SetClass> = BTreeMap::new();
+        let mut previous: Vec<TrackIdentity> = Vec::new();
+        let mut peak = 0usize;
+        for period in 0..200u64 {
+            let current = vec![video(period), audio(period)];
+            let mut used = Vec::new();
+            for identity in &current {
+                let base =
+                    allocate_track_base(&mut track_ids, &mut next, &mut used, identity.clone(), 1);
+                let kind = owner.entry(base).or_insert(identity.kind);
+                assert_eq!(*kind, identity.kind, "id {base} announced for two kinds");
+            }
+            prune_track_ids(&mut track_ids, current.iter().chain(previous.iter()));
+            peak = peak.max(track_ids.len());
+            previous = current;
+        }
+        assert!(peak <= 4, "identity map grew to {peak}");
+        assert_eq!(next, 401, "ids must stay monotonic, never recycled");
     }
 }

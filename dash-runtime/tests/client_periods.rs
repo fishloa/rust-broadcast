@@ -400,3 +400,35 @@ fn period_boundary_continuity_signal_controls_discontinuity() {
     assert!(run.ended && run.errors.is_empty(), "{:?}", run.fatal);
     assert_eq!(run.count(|o| matches!(o, Output::Discontinuity)), 1);
 }
+
+#[test]
+fn renumbered_adaptation_set_id_allocates_a_fresh_track_id() {
+    let mut origin = continuous_origin(|t| {
+        let at = t.rfind("<AdaptationSet id=\"1\"").unwrap();
+        format!("{}<AdaptationSet id=\"7\"{}", &t[..at], &t[at + 21..])
+    });
+    let run = drive(
+        CONTINUOUS,
+        PullLimits::default(),
+        &mut origin,
+        &mut Drive::default(),
+    );
+    assert!(run.ended, "{:?}", run.fatal);
+    let tracks: Vec<Vec<u32>> = run
+        .outputs
+        .iter()
+        .filter_map(|o| match o {
+            Output::Tracks(t) => Some(t.iter().map(|s| s.track_id.value()).collect()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        tracks.len() >= 2,
+        "renumbered @id should re-announce Tracks: got {}",
+        tracks.len()
+    );
+    assert_ne!(
+        tracks[0], tracks[1],
+        "renumbered @id must not reuse the previous track id"
+    );
+}
