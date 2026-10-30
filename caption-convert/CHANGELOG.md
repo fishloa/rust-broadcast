@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Added
+- `TeletextToWebVtt::push_pes_data_field` parses a teletext PES data field with `dvb_vbi::DataField` and feeds its EBU teletext data units, plus `take_closed_cues` and `open_cue` for incremental cue output. Cues taken with `take_closed_cues` no longer appear in `cues()` or the `into_*` renderers.
 
 ## [0.3.0] - 2026-10-17
 ### Documentation
