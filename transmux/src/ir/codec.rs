@@ -387,8 +387,9 @@ impl CodecConfig {
     /// becomes `mp4a.40.5` / `mp4a.40.29`. `sample_rate` becomes the SBR
     /// output rate (twice the core rate, as an `mp4a` sample entry of an
     /// explicitly signalled HE-AAC track states it) and a v2 track reports
-    /// two output channels. The track timescale is the caller's to keep: the
-    /// access-unit span of 1024 core-rate samples is unchanged.
+    /// two output channels. The track timescale is not touched here: use
+    /// [`TrackSpec::with_explicit_he_aac`](super::TrackSpec::with_explicit_he_aac)
+    /// (or the [`Track`](super::Track) form) to carry it to the output rate.
     pub fn with_explicit_he_aac(self, profile: HeAacProfile) -> Result<Self> {
         let CodecConfig::Aac {
             mut esds,

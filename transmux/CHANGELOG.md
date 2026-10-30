@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Explicit HE-AAC tracks (`TrackSpec::with_explicit_he_aac`, a DVB `AAC_descriptor` HE-AAC v2 value in the TS demux) now use the output sample rate (twice the core rate) as their media timescale, so every sample duration and timestamp doubles while presentation times are unchanged; `Track::with_explicit_he_aac` and `Sample::rescale_timescale` carry already-cut samples across.
+
 ### Added
 - `caption_detect` (issue #1428): `CaptionDetector` / `DetectedCaption` report which caption streams a video track carries, from A/53 caption data in H.264/HEVC SEI (via `caption_cc_data`) or MPEG-2 picture user data: CEA-608 field 1 / field 2 data (HLS `CC1` / `CC3`) and CEA-708 services 1 to 6 whose window the `cc-data` decoder has defined. Null padding triplets report nothing. New dependency on `cc-data` (with `decode`).
 

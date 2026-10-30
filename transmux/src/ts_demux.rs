@@ -1500,6 +1500,10 @@ enum AudioKind {
 #[derive(Default)]
 struct AudioAnchor {
     seed: Option<AudioAnchorSeed>,
+    /// Track ticks per intrinsic audio sample, `0` meaning `1`: `2` for an
+    /// explicitly signalled HE-AAC track, whose media timescale is the SBR
+    /// output rate while the ADTS frame spans 1024 core-rate samples.
+    duration_scale: u32,
     /// Per-PID cross-PES carry (issue #1160): the unfinished tail of the last
     /// frame of the previous PES payload — bytes that begin a valid frame
     /// header (or a 1..`HEADER_LEN` byte prefix of one) but run past that
@@ -2355,6 +2359,16 @@ fn video_sample_bytes(codec: VideoCodec, au_data: &[u8]) -> (Vec<u8>, bool) {
     }
 }
 
+fn scale_plan_durations(plan: &mut Option<AudioPlan<'_>>, scale: u32) {
+    if scale > 1
+        && let Some(p) = plan
+    {
+        for f in &mut p.frames {
+            f.duration = f.duration.saturating_mul(scale);
+        }
+    }
+}
+
 /// One audio frame resolved by [`plan_audio_frames`].
 struct PlannedFrame<'a> {
     /// Sample bytes to emit; `None` for a frame with no payload after its
@@ -2577,6 +2591,7 @@ fn emit_audio_au(
         // the previous payload): resync on this payload alone.
         plan = plan_audio_frames(kind, au_data, 0);
     }
+    scale_plan_durations(&mut plan, anchor.duration_scale);
     let lead_ticks: i64 = plan.as_ref().map_or(0, |p| {
         p.frames
             .iter()
@@ -2786,7 +2801,9 @@ fn flush_audio_carry(
     let (Some(seed), false) = (anchor.seed, carry.is_empty()) else {
         return;
     };
-    let Some(plan) = plan_audio_frames(kind, &carry, 0) else {
+    let mut plan = plan_audio_frames(kind, &carry, 0);
+    scale_plan_durations(&mut plan, anchor.duration_scale);
+    let Some(plan) = plan else {
         return;
     };
     let mut elapsed = 0i64;
@@ -3666,13 +3683,17 @@ fn finalize_probe(
                     .unwrap_or(config),
                 None => config,
             };
+            let timescale = config.audio_sample_rate().unwrap_or(sample_rate);
             Some((
                 config,
-                sample_rate,
+                timescale,
                 LiveKind::Audio {
-                    sample_rate,
+                    sample_rate: timescale,
                     kind: AudioKind::Aac,
-                    anchor: AudioAnchor::default(),
+                    anchor: AudioAnchor {
+                        duration_scale: timescale / sample_rate.max(1),
+                        ..AudioAnchor::default()
+                    },
                 },
             ))
         }
