@@ -520,6 +520,8 @@ impl ProgramServing {
         let sibling_decls: &[hls_runtime::server::AudioRenditionDecl] =
             if split_audio { &audio_renditions } else { &[] };
         let mut audio_servings = Vec::with_capacity(sibling_decls.len());
+        let mut sibling_origins: Vec<Arc<hls_runtime::server::HlsOrigin>> =
+            Vec::with_capacity(sibling_decls.len());
         for (idx, decl) in sibling_decls.iter().enumerate() {
             let sibling_trunk = Arc::new(Trunk::new(TrunkConfig::new(
                 nz(DEFAULT_TIMED_CAPACITY),
@@ -541,6 +543,7 @@ impl ProgramServing {
             }
             ab = ab.low_latency(part_target_ms);
             let origin = Arc::new(ab.build()?);
+            sibling_origins.push(Arc::clone(&origin));
             audio_servings.push(AudioServing {
                 decl: decl.clone(),
                 track_id,
@@ -549,6 +552,9 @@ impl ProgramServing {
             });
         }
 
+        if !sibling_origins.is_empty() {
+            builder = builder.audio_sibling_origins(sibling_origins);
+        }
         // `build` rejects a non-finite/non-positive target duration, a zero
         // part target and an offset with no room for u32 — all reachable
         // from caller-supplied numbers, so surfaced, never `expect`ed.
@@ -631,11 +637,28 @@ impl ProgramServing {
         self.ll_hls.init_bytes()
     }
 
-    fn set_track_specs(&self, specs: Vec<TrackSpec>) {
+    fn set_track_specs(&self, specs: Vec<TrackSpec>, mapped: &[(usize, TrackSpec)]) {
         // The HLS master playlist's `CODECS` comes from the same specs (the
         // only source for a TS-HLS origin, which has no init segment to read).
-        if let Err(error) = self.ll_hls.set_track_specs(&specs) {
+        // With separate audio renditions the primary playlist carries only the
+        // unmapped tracks, so its `CODECS` must not name the mapped audio.
+        let primary = if mapped.is_empty() {
+            specs.clone()
+        } else {
+            crate::source::split_audio::leader_tracks(&specs, mapped)
+        };
+        if let Err(error) = self.ll_hls.set_track_specs(&primary) {
             tracing::warn!(%error, "HLS master CODECS unavailable for these track specs");
+        }
+        for (rendition, source) in mapped {
+            let Some(serving) = self.audio_rendition_servings.get(*rendition) else {
+                continue;
+            };
+            let mut spec = source.clone();
+            spec.track_id = serving.track_id;
+            if let Err(error) = serving.origin.set_track_specs(std::slice::from_ref(&spec)) {
+                tracing::warn!(%error, "audio rendition CODECS unavailable for these track specs");
+            }
         }
         self.dash.set_track_specs(specs);
     }
@@ -1527,7 +1550,10 @@ impl RouteHandle {
     /// no-op (logged) if `program` has not been published yet.
     pub fn set_track_specs(&self, program: ProgramId, specs: Vec<TrackSpec>) {
         match self.serving(program) {
-            Some(serving) => serving.set_track_specs(specs),
+            Some(serving) => {
+                let mapped = crate::source::split_audio::resolve_sources(self, &specs);
+                serving.set_track_specs(specs, &mapped)
+            }
             None => {
                 tracing::warn!(
                     ?program,

@@ -2443,11 +2443,14 @@ impl Config {
             }
             r.validate_standalone(&self.playlist_name)?;
             r.validate_dvr()?;
-            hls_runtime::server::validate_audio_renditions(&r.audio_renditions).map_err(|e| {
-                MultimuxError::ConfigInvalid {
-                    field: "audio_renditions",
-                    reason: e.to_string(),
-                }
+            let validate = if r.audio_rendition_sources.is_empty() {
+                hls_runtime::server::validate_audio_renditions(&r.audio_renditions)
+            } else {
+                hls_runtime::server::validate_audio_renditions_relaxed(&r.audio_renditions)
+            };
+            validate.map_err(|e| MultimuxError::ConfigInvalid {
+                field: "audio_renditions",
+                reason: e.to_string(),
             })?;
         }
         if !self.allow_open_ingest {

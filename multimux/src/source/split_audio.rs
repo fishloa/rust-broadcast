@@ -52,7 +52,7 @@ pub(super) type LeaderDurations = BTreeMap<u32, f64>;
 /// matches nothing (yet) are skipped with a warning, as is a track already
 /// claimed by an earlier rendition. An empty result also when mapping every
 /// muxable track would leave the leader with nothing to anchor on.
-pub(super) fn resolve_sources(
+pub(crate) fn resolve_sources(
     route: &RouteHandle,
     tracks: &[TrackSpec],
 ) -> Vec<(usize, TrackSpec)> {
@@ -107,7 +107,7 @@ pub(super) fn resolve_sources(
 
 /// The tracks the primary (leader) playlist keeps: every fMP4-muxable track
 /// except those mapped to a separate rendition.
-pub(super) fn leader_tracks(tracks: &[TrackSpec], mapped: &[(usize, TrackSpec)]) -> Vec<TrackSpec> {
+pub(crate) fn leader_tracks(tracks: &[TrackSpec], mapped: &[(usize, TrackSpec)]) -> Vec<TrackSpec> {
     tracks
         .iter()
         .filter(|t| t.config.is_muxable_in_bmff())

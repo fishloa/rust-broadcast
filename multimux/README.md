@@ -488,6 +488,15 @@ exceed 5.0 (the LL-HLS blocking-reload cap) or a legitimate long-poll
 request would be cut off by the HTTP layer before the LL-HLS engine gets a
 chance to resolve it.
 
+With `audio_rendition_sources` set (separate audio renditions, #1428), a
+rendition's `language`, `name`, `characteristics` and `channels` may be left
+empty: they are derived from the stream's PMT (ISO 639-2 language code,
+`public.accessibility.describes-video` for an audio-description track, the
+codec's channel count); values you set win. Each audio group's variant
+advertises `CODECS` with the audio codec and a `BANDWIDTH` of the video peak
+plus the group's largest audio peak; `declared_bandwidth_bps` floors the video
+part only.
+
 ### DVR recording
 
 A route can persist finished segments to disk for catch-up / VOD:

@@ -163,16 +163,29 @@ fn rig(
     selectors: Vec<AudioTrackSelector>,
     keep: &dyn Fn(usize, &Sample) -> bool,
 ) -> Rig {
+    rig_declared(sources, renditions, selectors, Some(DECLARED_BPS), keep)
+}
+
+const DECLARED_BPS: u64 = 16_000_000;
+
+fn rig_declared(
+    sources: &[Source],
+    renditions: Vec<AudioRenditionDecl>,
+    selectors: Vec<AudioTrackSelector>,
+    declared: Option<u64>,
+    keep: &dyn Fn(usize, &Sample) -> bool,
+) -> Rig {
     let trunk = new_trunk();
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
     let route = Arc::new(
         RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_declared_bandwidth_bps(8_000_000)
+            .with_declared_bandwidth_bps(declared)
             .with_audio_renditions(renditions)
             .with_audio_rendition_sources(selectors),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
+    route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
         ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
             .expect("segmenter");
@@ -857,4 +870,275 @@ async fn split_audio_validator_findings() {
         unexpected.is_empty(),
         "level-1 findings split audio introduces over the muxed route: {unexpected:?}"
     );
+}
+
+fn derived_decls(n: usize) -> Vec<AudioRenditionDecl> {
+    (0..n)
+        .map(|i| AudioRenditionDecl {
+            group_id: "aud".into(),
+            default: i == 0,
+            autoselect: true,
+            uri: format!("audio/a{i}.m3u8"),
+            ..AudioRenditionDecl::default()
+        })
+        .collect()
+}
+
+async fn master_of(rig: &Rig) -> (String, broadcast_hls::MasterPlaylist) {
+    let text = String::from_utf8(rig.ok("master.m3u8").await).expect("utf8");
+    let parsed = broadcast_hls::MasterPlaylist::parse(&text)
+        .unwrap_or_else(|e| panic!("master must parse: {e}\n{text}"));
+    (text, parsed)
+}
+
+fn peak_bps(segments: &[(usize, f64)]) -> u64 {
+    segments
+        .iter()
+        .map(|(len, dur)| (*len as f64 * 8.0 / dur).ceil() as u64)
+        .max()
+        .expect("segments")
+}
+
+fn mean_bps(segments: &[(usize, f64)]) -> u64 {
+    let bytes: usize = segments.iter().map(|(l, _)| *l).sum();
+    let secs: f64 = segments.iter().map(|(_, d)| *d).sum();
+    (bytes as f64 * 8.0 / secs).round() as u64
+}
+
+async fn served_segments(rig: &Rig, uri: &str) -> Vec<(usize, f64)> {
+    let playlist = rig.playlist(uri).await;
+    assert!(
+        playlist.segments.len() < WINDOW_SEGMENTS,
+        "no segment evicted, so the origin's cumulative totals equal the served window"
+    );
+    let mut out = Vec::new();
+    for seg in &playlist.segments {
+        if seg.gap {
+            continue;
+        }
+        out.push((rig.ok(&seg.uri).await.len(), seg.duration.get()));
+    }
+    out
+}
+
+fn within(actual: u64, expected: u64, what: &str) {
+    let tolerance = expected / 200;
+    assert!(
+        actual.abs_diff(expected) <= tolerance,
+        "{what}: {actual} vs independently computed {expected} (tolerance {tolerance})"
+    );
+}
+
+#[tokio::test]
+async fn split_master_parses_round_trips_and_lists_one_variant_per_group() {
+    let sources = france2();
+    let rig = rig_declared(
+        &sources,
+        derived_decls(3),
+        index_selectors(3),
+        None,
+        &|_, _| true,
+    );
+    let (text, master) = master_of(&rig).await;
+    assert_eq!(master.media.len(), 3, "{text}");
+    assert_eq!(master.variants.len(), 1, "{text}");
+    assert_eq!(master.variants[0].audio.as_deref(), Some("aud"));
+    let again = master.to_m3u8().expect("serialize");
+    assert_eq!(
+        broadcast_hls::MasterPlaylist::parse(&again).expect("reparse"),
+        master,
+        "parse -> serialize -> parse"
+    );
+}
+
+#[tokio::test]
+async fn split_master_codecs_carry_video_and_audio_codec() {
+    let sources = france2();
+    let rig = rig_declared(
+        &sources,
+        derived_decls(3),
+        index_selectors(3),
+        None,
+        &|_, _| true,
+    );
+    let (text, master) = master_of(&rig).await;
+    let codecs = master.variants[0].codecs.clone().expect("CODECS");
+    let parts: Vec<&str> = codecs.split(',').collect();
+    assert_eq!(parts.len(), 2, "video + one distinct audio codec: {text}");
+    assert!(parts[0].starts_with("avc1."), "{text}");
+    assert_eq!(parts[1], "ec-3", "{text}");
+}
+
+#[tokio::test]
+async fn split_master_bandwidth_is_video_peak_plus_max_audio_peak() {
+    let sources = france2();
+    let rig = rig_declared(
+        &sources,
+        derived_decls(3),
+        index_selectors(3),
+        None,
+        &|_, _| true,
+    );
+    let (text, master) = master_of(&rig).await;
+    let video = served_segments(&rig, "media.m3u8").await;
+    let mut audio_peak = 0;
+    let mut audio_mean = 0;
+    for i in 0..3 {
+        let segs = served_segments(&rig, &format!("audio/a{i}.m3u8")).await;
+        audio_peak = audio_peak.max(peak_bps(&segs));
+        audio_mean = audio_mean.max(mean_bps(&segs));
+    }
+    let variant = &master.variants[0];
+    within(
+        u64::from(variant.bandwidth),
+        peak_bps(&video) + audio_peak,
+        &format!("BANDWIDTH {text}"),
+    );
+    within(
+        u64::from(variant.average_bandwidth.expect("AVERAGE-BANDWIDTH")),
+        mean_bps(&video) + audio_mean,
+        &format!("AVERAGE-BANDWIDTH {text}"),
+    );
+    assert!(
+        u64::from(variant.bandwidth) > peak_bps(&video) + audio_peak / 2,
+        "audio is counted, not just video"
+    );
+}
+
+#[tokio::test]
+async fn split_master_declared_bandwidth_floors_the_video_part_only() {
+    let sources = france2();
+    let rig = rig_declared(
+        &sources,
+        derived_decls(3),
+        index_selectors(3),
+        Some(DECLARED_BPS),
+        &|_, _| true,
+    );
+    let (text, master) = master_of(&rig).await;
+    let video = served_segments(&rig, "media.m3u8").await;
+    assert!(
+        peak_bps(&video) < DECLARED_BPS,
+        "fixture peak under the override"
+    );
+    let mut audio_peak = 0;
+    for i in 0..3 {
+        let segs = served_segments(&rig, &format!("audio/a{i}.m3u8")).await;
+        audio_peak = audio_peak.max(peak_bps(&segs));
+    }
+    within(
+        u64::from(master.variants[0].bandwidth),
+        DECLARED_BPS + audio_peak,
+        &format!("BANDWIDTH {text}"),
+    );
+}
+
+#[tokio::test]
+async fn split_master_derives_language_name_and_audio_description_from_the_pmt() {
+    let sources = france2();
+    let audio: Vec<&Source> = sources.iter().filter(|s| s.is_audio()).collect();
+    let rig = rig_declared(
+        &sources,
+        derived_decls(3),
+        index_selectors(3),
+        None,
+        &|_, _| true,
+    );
+    let (text, master) = master_of(&rig).await;
+    for (i, a) in audio.iter().enumerate() {
+        let meta = a.spec.audio_metadata();
+        let lang = meta.languages[0].language.clone();
+        let media = &master.media[i];
+        assert_eq!(media.language.as_deref(), Some(lang.as_str()), "{text}");
+        let ad = meta.role == transmux::AudioRole::AudioDescription;
+        assert_eq!(
+            media
+                .characteristics
+                .contains(&"public.accessibility.describes-video".to_string()),
+            ad,
+            "{text}"
+        );
+        let expected_name = if ad {
+            format!("{lang} (AD)")
+        } else {
+            lang.clone()
+        };
+        assert_eq!(media.name, expected_name, "{text}");
+        assert!(media.channels.is_some(), "CHANNELS derived: {text}");
+    }
+    let languages: Vec<String> = master
+        .media
+        .iter()
+        .map(|m| m.language.clone().expect("language"))
+        .collect();
+    assert_eq!(
+        languages,
+        ["fre", "qad", "qaa"],
+        "france2 PMT languages: {text}"
+    );
+    assert_eq!(
+        master.media[1].characteristics,
+        ["public.accessibility.describes-video"],
+        "qad is the audio-description track: {text}"
+    );
+    assert!(master.media[0].characteristics.is_empty(), "{text}");
+    assert!(master.media[2].characteristics.is_empty(), "{text}");
+    let names: std::collections::BTreeSet<&str> =
+        master.media.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names.len(), 3, "NAME unique within the group: {text}");
+}
+
+#[tokio::test]
+async fn split_master_config_values_win_over_derived() {
+    let sources = france2();
+    let mut declared = derived_decls(3);
+    declared[1].language = "de".into();
+    declared[1].name = "Deutsch".into();
+    declared[1].characteristics = vec!["public.accessibility.transcribes-spoken-dialog".into()];
+    declared[1].channels = Some("6".into());
+    let rig = rig_declared(&sources, declared, index_selectors(3), None, &|_, _| true);
+    let (text, master) = master_of(&rig).await;
+    let m = &master.media[1];
+    assert_eq!(m.language.as_deref(), Some("de"), "{text}");
+    assert_eq!(m.name, "Deutsch", "{text}");
+    assert_eq!(
+        m.characteristics,
+        ["public.accessibility.transcribes-spoken-dialog"],
+        "{text}"
+    );
+    assert_eq!(m.channels.as_deref(), Some("6"), "{text}");
+    assert_eq!(master.media[0].language.as_deref(), Some("fre"), "{text}");
+}
+
+#[tokio::test]
+async fn split_master_duplicate_derived_names_are_made_unique() {
+    let sources = france2();
+    let selectors = vec![AudioTrackSelector::Index(0), AudioTrackSelector::Index(0)];
+    let rig = rig_declared(&sources, derived_decls(2), selectors, None, &|_, _| true);
+    let (text, master) = master_of(&rig).await;
+    assert_ne!(master.media[0].name, master.media[1].name, "{text}");
+}
+
+#[tokio::test]
+async fn non_split_master_is_unchanged() {
+    let sources = by_role(load("ts/h264_aac.ts"));
+    let plain = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
+    let (text, master) = master_of(&plain).await;
+    assert!(master.media.is_empty(), "{text}");
+    assert_eq!(master.variants.len(), 1, "{text}");
+    let v = &master.variants[0];
+    assert_eq!(u64::from(v.bandwidth), DECLARED_BPS, "{text}");
+    assert!(v.audio.is_none(), "{text}");
+    let codecs = v.codecs.clone().expect("CODECS");
+    assert!(
+        codecs.starts_with("avc1.") && codecs.ends_with(",mp4a.40.2"),
+        "muxed CODECS is the one the route always carried: {text}"
+    );
+
+    let declared_only = rig(&sources, decls(&["eng"]), Vec::new(), &|_, _| true);
+    let (text2, master2) = master_of(&declared_only).await;
+    assert_eq!(master2.media.len(), 1, "{text2}");
+    assert_eq!(master2.media[0].name, "Audio 0", "{text2}");
+    assert_eq!(master2.variants[0].bandwidth, v.bandwidth, "{text2}");
+    assert_eq!(master2.variants[0].codecs, v.codecs, "{text2}");
 }
