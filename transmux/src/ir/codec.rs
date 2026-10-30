@@ -410,6 +410,22 @@ impl CodecConfig {
         }
     }
 
+    pub(crate) fn audio_channel_field(&self) -> Option<u16> {
+        match self {
+            CodecConfig::Aac { channel_count, .. }
+            | CodecConfig::Ac3 { channel_count, .. }
+            | CodecConfig::Eac3 { channel_count, .. }
+            | CodecConfig::Opus { channel_count, .. }
+            | CodecConfig::Flac { channel_count, .. }
+            | CodecConfig::Ac4 { channel_count, .. }
+            | CodecConfig::MpegH { channel_count, .. }
+            | CodecConfig::Dts { channel_count, .. }
+            | CodecConfig::MpegAudio { channel_count, .. } => Some(*channel_count),
+            CodecConfig::Vorbis { channels, .. } => Some(*channels),
+            _ => None,
+        }
+    }
+
     /// Channel count of an audio track **including** the LFE channel (issue
     /// #1162 R2), `None` for a non-audio variant or when the codec config does
     /// not determine one.

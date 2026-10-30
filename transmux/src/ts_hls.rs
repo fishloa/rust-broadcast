@@ -85,23 +85,6 @@ use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
-
-/// Outcome of [`StreamingTsHlsSegmenter::update_track`].
-///
-/// A typed result so callers (and `multimux`'s `apply_track_change`) can
-/// tell an unchanged existing track apart from an unknown one without a
-/// boolean/error collapse.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum UpdateTrackOutcome {
-    /// The spec differed in a discontinuity-triggering field and the
-    /// segmenter armed `mark_discontinuity`.
-    Changed,
-    /// The spec was identical in every discontinuity-triggering field (a
-    /// no-op as far as discontinuity arming goes); the stored spec is still
-    /// refreshed.
-    Unchanged,
-}
 use crate::nal::{NalCodec, access_unit_is_idr};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::segment_cut::SegmentCutPolicy;
@@ -109,6 +92,19 @@ use crate::segmenter::{
     MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
 };
 use crate::ts_mux::{TsContinuity, mux_tracks_at_continuing};
+
+/// Outcome of [`StreamingTsHlsSegmenter::update_track`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UpdateTrackOutcome {
+    /// A discontinuity-triggering field differed; a discontinuity was armed.
+    Changed,
+    /// No discontinuity-triggering field differed; the stored spec was still
+    /// refreshed.
+    Unchanged,
+    /// No track with that `track_id` exists; nothing was modified.
+    Unknown,
+}
 
 /// Default `#EXT-X-VERSION` for a classic (TS-segment) media playlist. Version 3
 /// is the floor for floating-point `#EXTINF` durations (RFC 8216 §7).
@@ -806,31 +802,17 @@ pub struct StreamingTsHlsSegmenter {
     ready: VecDeque<TsSegment>,
 }
 
-/// Audio-only discontinuity trigger: sample rate, channel count, or the
-/// AudioSpecificConfig bytes (AAC `esds` DecoderSpecificInfo) differ.
-fn audio_discontinuity_trigger(
-    old: &crate::pipeline::CodecConfig,
-    new: &crate::pipeline::CodecConfig,
-) -> bool {
-    use crate::pipeline::CodecConfig;
+fn audio_discontinuity_trigger(old: &CodecConfig, new: &CodecConfig) -> bool {
+    if core::mem::discriminant(old) != core::mem::discriminant(new) {
+        return false;
+    }
+    if old.audio_sample_rate() != new.audio_sample_rate()
+        || old.audio_channel_field() != new.audio_channel_field()
+    {
+        return true;
+    }
     match (old, new) {
-        (
-            CodecConfig::Aac {
-                sample_rate: sr1,
-                channel_count: cc1,
-                esds: e1,
-                ..
-            },
-            CodecConfig::Aac {
-                sample_rate: sr2,
-                channel_count: cc2,
-                esds: e2,
-                ..
-            },
-        ) => {
-            if sr1 != sr2 || cc1 != cc2 {
-                return true;
-            }
+        (CodecConfig::Aac { esds: e1, .. }, CodecConfig::Aac { esds: e2, .. }) => {
             let asc = |e: &crate::mp4esds::EsdsBox| {
                 e.es_descriptor
                     .decoder_config
@@ -840,114 +822,6 @@ fn audio_discontinuity_trigger(
             };
             asc(e1) != asc(e2)
         }
-        (
-            CodecConfig::Ac3 {
-                sample_rate: s1,
-                channel_count: c1,
-                ..
-            },
-            CodecConfig::Ac3 {
-                sample_rate: s2,
-                channel_count: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
-        (
-            CodecConfig::Eac3 {
-                sample_rate: s1,
-                channel_count: c1,
-                ..
-            },
-            CodecConfig::Eac3 {
-                sample_rate: s2,
-                channel_count: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
-        (
-            CodecConfig::Opus {
-                sample_rate: s1,
-                channel_count: c1,
-                ..
-            },
-            CodecConfig::Opus {
-                sample_rate: s2,
-                channel_count: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
-        (
-            CodecConfig::Flac {
-                sample_rate: s1,
-                channel_count: c1,
-                ..
-            },
-            CodecConfig::Flac {
-                sample_rate: s2,
-                channel_count: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
-        (
-            CodecConfig::Ac4 {
-                sample_rate: s1,
-                channel_count: c1,
-                ..
-            },
-            CodecConfig::Ac4 {
-                sample_rate: s2,
-                channel_count: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
-        (
-            CodecConfig::MpegH {
-                sample_rate: s1,
-                channel_count: c1,
-                ..
-            },
-            CodecConfig::MpegH {
-                sample_rate: s2,
-                channel_count: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
-        (
-            CodecConfig::Dts {
-                sample_rate: s1,
-                channel_count: c1,
-                ..
-            },
-            CodecConfig::Dts {
-                sample_rate: s2,
-                channel_count: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
-        (
-            CodecConfig::MpegAudio {
-                sample_rate: s1,
-                channel_count: c1,
-                ..
-            },
-            CodecConfig::MpegAudio {
-                sample_rate: s2,
-                channel_count: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
-        (
-            CodecConfig::Vorbis {
-                sample_rate: s1,
-                channels: c1,
-                ..
-            },
-            CodecConfig::Vorbis {
-                sample_rate: s2,
-                channels: c2,
-                ..
-            },
-        ) => s1 != s2 || c1 != c2,
         _ => false,
     }
 }
@@ -1413,67 +1287,27 @@ impl StreamingTsHlsSegmenter {
         Ok(())
     }
 
-    /// Update an existing track's spec mid-stream (issue #1425, Apple HLS
-    /// authoring 2.11 / 8.14).
+    /// Update an existing track's spec mid-stream (issue #1425; RFC 8216
+    /// section 4.3.4.3, Apple HLS Authoring Spec 2.11 / 8.14).
     ///
-    /// A track whose audio sample rate, channel count, or
-    /// AudioSpecificConfig bytes, or whose video frame rate, display
-    /// parameters, or timescale changes mid-stream must open a new segment
-    /// flagged `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.4.3; Apple HLS
-    /// Authoring Spec 2.11 — "Channel layout changes MUST be in conjunction
-    /// with an `EXT-X-DISCONTINUITY` tag" — and 8.14 — "Video frame rate
-    /// changes MUST be marked as a discontinuity using `EXT-X-DISCONTINUITY`
-    /// tags"). The segmenter only learns about such a change through this
-    /// entry point: [`Self::add_track`] is for tracks that did not exist
-    /// before, and a bare `push` carries no config.
+    /// Arms a discontinuity only when audio `sample_rate`, `channel_count` or
+    /// the AAC AudioSpecificConfig bytes change, or the video `timescale` or
+    /// `display` changes. SPS or bitrate-only changes do not. The stored spec
+    /// is always refreshed.
     ///
-    /// The discontinuity-triggering field set is deliberately narrow and
-    /// explicit: audio `sample_rate`, `channel_count`, and the
-    /// AudioSpecificConfig bytes (the AAC `esds` DecoderSpecificInfo); video
-    /// `timescale` (which carries the frame rate) and `display`
-    /// ([`crate::DisplayGeometry`]). It is NOT the whole [`crate::CodecConfig`]:
-    /// a codec-config refresh such as a new SPS, a coded-size change, or a
-    /// bitrate-only change that leaves the above fields untouched does NOT
-    /// arm a discontinuity. RFC 8216 §4.3.4.3 marks a discontinuity for a
-    /// change in the media timeline / decode parameters a client must reset
-    /// on; a parameter-set refresh with unchanged geometry and timing is
-    /// consumed in-band by the decoder and needs no playlist-level boundary,
-    /// and Apple's authoring rules (2.11 / 8.14) mandate discontinuities
-    /// only for channel-layout and frame-rate changes. Arming one on every
-    /// SPS would over-segment the playlist without a client-visible reason.
-    /// The stored spec is always refreshed, so the muxer sees the new
-    /// config; only the discontinuity arming is gated on the field set above.
-    /// An unchanged spec is a no-op (no discontinuity). An unknown
-    /// `track_id` is an error.
-    ///
-    /// Returns [`UpdateTrackOutcome::Changed`] when a discontinuity-triggering
-    /// field differed (and a discontinuity was armed), and
-    /// [`UpdateTrackOutcome::Unchanged`] otherwise. An unknown `track_id` is
-    /// an error.
+    /// An unknown `track_id` returns [`UpdateTrackOutcome::Unknown`]; use
+    /// [`Self::add_track`] for a new track.
     pub fn update_track(&mut self, spec: TrackSpec) -> Result<UpdateTrackOutcome> {
-        let idx = self
+        let Some(idx) = self
             .tracks
             .iter()
             .position(|t| t.spec.track_id == spec.track_id)
-            .ok_or(Error::InvalidInput("update_track: unknown track_id"))?;
+        else {
+            return Ok(UpdateTrackOutcome::Unknown);
+        };
 
         let old = &self.tracks[idx].spec;
 
-        // Discontinuity-triggering fields only (issue #1425). Deliberately
-        // NOT the whole `CodecConfig`: a new SPS / coded size / bitrate that
-        // leaves the audio sample rate + channel count + AudioSpecificConfig
-        // bytes and the video frame rate (timescale) + display parameters
-        // unchanged does not open a discontinuity — RFC 8216 §4.3.4.3 marks
-        // a discontinuity for a change in the media timeline / decode
-        // parameters a client must reset on, and Apple HLS Authoring Spec
-        // 2.11 ("Channel layout changes MUST be in conjunction with an
-        // `EXT-X-DISCONTINUITY` tag") and 8.14 ("Video frame rate changes
-        // MUST be marked as a discontinuity") enumerate exactly those. A
-        // codec-config refresh (e.g. a new SPS carrying the same geometry)
-        // is consumed in-band by the decoder and needs no playlist-level
-        // boundary. AudioSpecificConfig bytes are included because a changed
-        // ASC denotes a different audio codec configuration the decoder must
-        // re-initialise on.
         let discontinuity = old.timescale != spec.timescale
             || old.display != spec.display
             || audio_discontinuity_trigger(&old.config, &spec.config);
