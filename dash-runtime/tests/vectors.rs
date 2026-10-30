@@ -154,6 +154,18 @@ fn start_number_zero_and_one() {
 }
 
 #[test]
+fn end_number_max_does_not_overflow_or_empty() {
+    let m = mpd(
+        r#"type="static" mediaPresentationDuration="PT11S""#,
+        r#"<Period><AdaptationSet mimeType="video/mp4">
+           <SegmentTemplate timescale="1" duration="2" startNumber="0" endNumber="18446744073709551615" media="$Number$.m4s"/>
+           <Representation id="v" bandwidth="1"/></AdaptationSet></Period>"#,
+    );
+    let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
+    assert!(p.plan.len().unwrap_or(0) > 0);
+}
+
+#[test]
 fn end_number_caps_and_a_short_last_segment_is_shortened() {
     let m = mpd(
         r#"type="static" mediaPresentationDuration="PT11S""#,
@@ -321,6 +333,17 @@ fn timeline_numbers_gaps_negative_r_and_n() {
     assert_eq!(ix.index_at_or_before(100), Some(0));
     assert_eq!(ix.index_at_or_before(119), Some(1));
     assert_eq!(ix.index_at_or_before(10_000), Some(2));
+}
+
+#[test]
+fn timeline_tolerates_one_tick_shortfall() {
+    let ix = TimelineIndex::build(
+        &timeline(&[(Some(0), None, 90_000, 9), (Some(899_999), None, 90_000, 0)]),
+        1,
+        None,
+    )
+    .unwrap();
+    assert_eq!(ix.len(), 11);
 }
 
 #[test]
@@ -725,4 +748,40 @@ fn two_periods_may_not_share_an_id() {
         Mpd::parse(no_id.as_bytes()).is_ok(),
         "Periods without an id never collide"
     );
+}
+
+#[test]
+fn sidx_zero_size_reference_is_skipped() {
+    use dash_runtime::address::base_index;
+    use transmux::SegmentIndexBox;
+    use transmux::timing::SidxReference;
+    let sidx = SegmentIndexBox {
+        version: 0,
+        flags: 0,
+        reference_id: 1,
+        timescale: 1,
+        earliest_presentation_time: 0,
+        first_offset: 0,
+        references: vec![
+            SidxReference {
+                reference_type: 0,
+                referenced_size: 0,
+                subsegment_duration: 5,
+                starts_with_sap: 1,
+                sap_type: 0,
+                sap_delta_time: 0,
+            },
+            SidxReference {
+                reference_type: 0,
+                referenced_size: 10,
+                subsegment_duration: 5,
+                starts_with_sap: 1,
+                sap_type: 0,
+                sap_delta_time: 0,
+            },
+        ],
+    };
+    let out = base_index::segments(&sidx, 100).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].range.first, 100);
 }
