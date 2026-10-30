@@ -488,7 +488,7 @@ impl DashClient {
         Some(Action::FetchMpd { url, validators })
     }
 
-    fn update_url(&mut self) -> Option<String> {
+    fn update_url(&self) -> Option<String> {
         let live = self.live.as_ref()?;
         let mpd = self.mpd.as_ref()?;
         if let Some(loc) = mpd.locations.first() {

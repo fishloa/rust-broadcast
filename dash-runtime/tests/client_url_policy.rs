@@ -312,21 +312,31 @@ const DIR: &str = "timeline-ffmpeg-quirk";
 const URL: &str = "http://dash.test/timeline-ffmpeg-quirk/manifest.mpd";
 
 fn failover_text() -> String {
+    failover_text_with("1", "2")
+}
+
+fn failover_text_with(first: &str, second: &str) -> String {
     let t = mpd_text("timeline-ffmpeg-quirk/manifest.mpd").replace(
         "<MPD ",
         "<MPD xmlns:dvb=\"urn:dvb:dash:dash-extensions:2014-1\" ",
     );
     t.replacen(
         "<Period id=\"0\"",
-        "<BaseURL dvb:priority=\"1\" serviceLocation=\"a\">http://dash.test/timeline-ffmpeg-quirk/</BaseURL>\
-         <BaseURL dvb:priority=\"2\" serviceLocation=\"b\">http://b.test/</BaseURL><Period id=\"0\"",
+        &format!(
+            "<BaseURL dvb:priority=\"{first}\" serviceLocation=\"a\">http://dash.test/timeline-ffmpeg-quirk/</BaseURL>\
+             <BaseURL dvb:priority=\"{second}\" serviceLocation=\"b\">http://b.test/</BaseURL><Period id=\"0\""
+        ),
         1,
     )
 }
 
 fn failover_origin() -> Origin {
+    failover_origin_of(failover_text())
+}
+
+fn failover_origin_of(text: String) -> Origin {
     Origin::new()
-        .doc(URL, failover_text().into_bytes())
+        .doc(URL, text.into_bytes())
         .mount("b.test", DIR)
         .fault(Fault::times(
             "dash.test/timeline-ffmpeg-quirk/chunk-stream0-00002",
@@ -371,4 +381,21 @@ fn unpinned_failover_still_rotates_to_the_secondary() {
         2
     );
     assert_eq!(run.requested("b.test/chunk-stream0-00002"), 1);
+}
+
+#[test]
+fn a_foreign_alternate_ranked_first_is_skipped_when_pinned() {
+    let mut origin = failover_origin_of(failover_text_with("2", "1"));
+    let run = drive(
+        URL,
+        PullLimits::default(),
+        &mut origin,
+        &mut Drive {
+            dash: pinned(),
+            ..Drive::default()
+        },
+    );
+    assert!(run.fatal.is_none(), "{:?}", run.fatal);
+    assert!(run.ended);
+    assert_eq!(run.requested("b.test"), 0, "{:?}", run.requests);
 }
