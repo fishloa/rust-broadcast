@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `caption_detect` (issue #1428): `CaptionDetector` / `DetectedCaption` report which caption streams a video track carries, from A/53 caption data in H.264/HEVC SEI (via `caption_cc_data`) or MPEG-2 picture user data: CEA-608 field 1 / field 2 data (HLS `CC1` / `CC3`) and CEA-708 services 1 to 6 whose window the `cc-data` decoder has defined. Null padding triplets report nothing. New dependency on `cc-data` (with `decode`).
+
 ### Changed (BREAKING: `sdp-types` 0.2 -> 0.3)
 - Dependency `sdp-types` 0.2 -> 0.3. Public API exposure: `build_sdp_with_connection` takes `Vec<sdp_types::Media>` (`transmux/src/rtp.rs:856`, re-exported `transmux/src/lib.rs:389`); the `sdp_types::Media` type is therefore part of this crate's public API.
 

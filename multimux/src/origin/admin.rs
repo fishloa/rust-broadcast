@@ -371,6 +371,7 @@ impl RouteRegistry {
             .with_program_date_time(self.ctx.base_config.program_date_time)
             .with_declared_bandwidth_bps(route.declared_bandwidth_bps)
             .with_audio_renditions(route.audio_renditions.clone())
+            .with_closed_caption_overrides(route.closed_caption_overrides.clone())
             .with_audio_rendition_sources(route.audio_rendition_sources.clone()),
         );
         let route_cancel = tokio_util::sync::CancellationToken::new();
@@ -1241,6 +1242,7 @@ mod tests {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
         }
     }
 
@@ -1307,6 +1309,7 @@ mod tests {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
         };
         let err = registry
             .add_route(bad)

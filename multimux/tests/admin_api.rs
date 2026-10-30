@@ -279,6 +279,7 @@ fn instant_route(name: &str) -> Route {
         declared_bandwidth_bps: None,
         audio_renditions: Vec::new(),
         audio_rendition_sources: Vec::new(),
+        closed_caption_overrides: Vec::new(),
     }
 }
 
@@ -300,6 +301,7 @@ fn unreachable_rtsp_route(name: &str, unique: &str) -> Route {
         declared_bandwidth_bps: None,
         audio_renditions: Vec::new(),
         audio_rendition_sources: Vec::new(),
+        closed_caption_overrides: Vec::new(),
     }
 }
 

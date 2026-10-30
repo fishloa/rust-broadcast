@@ -467,6 +467,7 @@ fn file_config(
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
         }],
         ..Config::default()
     };

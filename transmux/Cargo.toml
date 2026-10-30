@@ -37,6 +37,8 @@ mpeg-ps    = { path = "../mpeg-ps",  version = "0.6", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.5", default-features = false }
 rtcp-packet = { path = "../rtcp-packet", version = "0.6", default-features = false }
 bytes      = { version = "1", default-features = false }
+# Caption presence detection (`caption_detect`): `cc_data()` triplets and the 708 service decoder.
+cc-data    = { path = "../cc-data", version = "0.7", default-features = false, features = ["decode"] }
 # Typed PMT ES_info audio metadata (issue #1162 R1): `TrackSpec::audio_metadata`
 # reuses dvb-si's `iso_639_language_descriptor` + `supplementary_audio_descriptor`
 # parsers instead of re-parsing. dvb-si does not depend on transmux (no cycle);
@@ -77,7 +79,7 @@ required-features = ["std"]
 
 [features]
 default = ["std", "serde", "cenc"]
-std    = ["dvb-si/std", "broadcast-common/std", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types"]
+std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types"]
 serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc", "dep:zeroize", "dep:subtle"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)

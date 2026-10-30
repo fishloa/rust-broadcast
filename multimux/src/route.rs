@@ -493,6 +493,7 @@ impl ProgramServing {
         program_date_time: crate::config::ProgramDateTimeSource,
         declared_bandwidth_bps: Option<u64>,
         audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
+        closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
         split_audio: bool,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
@@ -512,6 +513,9 @@ impl ProgramServing {
         }
         if !audio_renditions.is_empty() {
             builder = builder.audio_renditions(audio_renditions.clone());
+        }
+        if !closed_caption_overrides.is_empty() {
+            builder = builder.closed_caption_overrides(closed_caption_overrides);
         }
         builder = builder.playlist_uri("media.m3u8");
         // Sibling trunks + origins for the split audio renditions (issue #1428
@@ -1019,6 +1023,8 @@ pub struct RouteHandle {
     /// Source track per audio rendition for the opt-in split-mux (issue
     /// #1428 slice 2b); empty means no split.
     audio_rendition_sources: Vec<crate::config::AudioTrackSelector>,
+    /// `NAME`/`LANGUAGE` overrides for detected closed captions (issue #1428).
+    closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
     /// Notifies waiters when a new program is published via
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
@@ -1061,6 +1067,7 @@ impl RouteHandle {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
         }
@@ -1223,6 +1230,17 @@ impl RouteHandle {
         self
     }
 
+    /// Sets the `NAME`/`LANGUAGE` overrides applied to detected closed
+    /// captions (issue #1428) — a consuming builder.
+    #[must_use]
+    pub fn with_closed_caption_overrides(
+        mut self,
+        value: Vec<hls_runtime::server::ClosedCaptionDecl>,
+    ) -> Self {
+        self.closed_caption_overrides = value;
+        self
+    }
+
     pub(crate) fn audio_rendition_sources(&self) -> &[crate::config::AudioTrackSelector] {
         &self.audio_rendition_sources
     }
@@ -1350,6 +1368,7 @@ impl RouteHandle {
             self.program_date_time,
             self.declared_bandwidth_bps,
             self.audio_renditions.clone(),
+            self.closed_caption_overrides.clone(),
             !self.audio_rendition_sources.is_empty(),
         ) {
             Ok(serving) => serving,
@@ -1531,6 +1550,23 @@ impl RouteHandle {
         match self.serving(program) {
             Some(serving) => serving.set_init(bytes),
             None => tracing::warn!(?program, "RouteHandle::set_init: program not published yet"),
+        }
+    }
+
+    /// Hand the caption streams detected in `program`'s video to its master
+    /// playlist. `false` when the program is not published yet (the caller
+    /// retries).
+    pub fn note_closed_captions(
+        &self,
+        program: ProgramId,
+        detected: Vec<broadcast_hls::InstreamId>,
+    ) -> bool {
+        match self.serving(program) {
+            Some(serving) => {
+                serving.ll_hls.set_detected_closed_captions(detected);
+                true
+            }
+            None => false,
         }
     }
 

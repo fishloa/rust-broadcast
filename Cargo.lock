@@ -4582,6 +4582,7 @@ dependencies = [
  "broadcast-hls",
  "bytes",
  "cbc",
+ "cc-data",
  "clap",
  "container-probe",
  "criterion",
