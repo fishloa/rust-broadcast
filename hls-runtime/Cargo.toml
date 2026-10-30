@@ -87,6 +87,9 @@ tokio             = { version = "1", features = ["net", "io-util", "rt", "macros
 test-bounded      = { path = "../test-bounded" }
 test-fixtures     = { path = "../test-fixtures" }
 axum              = { workspace = true }
+# `tests/subtitle_renditions.rs` runs the independent `check_hls_playlist`
+# conformance checker over rendered playlists. Path-only: never published.
+media-doctor      = { path = "../media-doctor", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true
