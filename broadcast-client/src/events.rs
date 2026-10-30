@@ -48,6 +48,27 @@ impl SourceKind {
 
 broadcast_common::impl_spec_display!(SourceKind);
 
+/// The kind of a PMT-declared elementary stream a start gate waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum StreamKind {
+    /// A video stream.
+    Video,
+    /// An audio stream.
+    Audio,
+}
+
+impl StreamKind {
+    /// Stable label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Video => "video",
+            Self::Audio => "audio",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(StreamKind);
+
 /// Status values carried by [`Event::Status`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +95,8 @@ pub enum Status {
     NotFound,
     /// Waiting for credentials.
     WaitingForCredentials,
+    /// Waiting for a declared track to resolve before the first `Start`.
+    AwaitingTracks,
     /// Ended.
     Ended,
 }
@@ -89,6 +112,7 @@ impl Status {
             Self::Reconnecting { .. } => "reconnecting",
             Self::NotFound => "not-found",
             Self::WaitingForCredentials => "waiting-for-credentials",
+            Self::AwaitingTracks => "awaiting-tracks",
             Self::Ended => "ended",
         }
     }
@@ -340,6 +364,12 @@ pub enum ErrorKind {
     /// A dynamic MPD needs a UTC clock and there is none: no usable `UTCTiming`, no response
     /// `Date` header, and the host never called [`crate::Session::set_wall_clock`]. Fatal.
     ClockUnavailable,
+    /// A PMT-declared stream never resolved to a track before the start-gate wait expired, so
+    /// the first `Start` went ahead without it. Non-fatal: the stream may still arrive later.
+    PendingTrackUnresolved {
+        /// The kind of stream that never resolved.
+        kind: StreamKind,
+    },
 }
 
 impl ErrorKind {
@@ -366,6 +396,7 @@ impl ErrorKind {
             Self::UnsupportedFeature { .. } => "unsupported_feature",
             Self::LiveEdgeLost => "live_edge_lost",
             Self::ClockUnavailable => "clock_unavailable",
+            Self::PendingTrackUnresolved { .. } => "pending_track_unresolved",
         }
     }
 }
@@ -708,6 +739,9 @@ pub const DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES: usize = 512 * 1024;
 /// covers a skew three times the worst measured and is shorter than the 1.8 s default start
 /// lead, which a declared but never delivering audio PID waits out anyway.
 pub const DEFAULT_START_PENDING_TRACK_WAIT_US: u64 = 1_500_000;
+/// Default cap on the wait above, microseconds, see
+/// [`Config::start_pending_track_hard_cap_us`].
+pub const DEFAULT_START_PENDING_TRACK_HARD_CAP_US: u64 = 4_000_000;
 /// Default cap on events queued for the host, see [`Config::max_queued_events`].
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 
@@ -823,6 +857,15 @@ pub struct Config {
     /// first-frame budget lowers this; any value is accepted and `u64::MAX` waits until the
     /// first `Start`.
     pub start_pending_track_wait_us: u64,
+    /// Live TS-over-HTTP: an extra cap on how long the first `Start` waits for an
+    /// audio stream the PMT declares but that has no announced track yet, on top
+    /// of [`Config::start_pending_track_wait_us`]. The effective wait while such
+    /// an audio stream is still unresolved is the larger of the two, so a
+    /// declared audio track that resolves late (up to this cap) no longer makes
+    /// `Start` fire on video alone and pause shortly after. `0` adds no cap: only
+    /// [`Config::start_pending_track_wait_us`] applies. Any value is accepted and
+    /// `u64::MAX` waits until the first `Start`.
+    pub start_pending_track_hard_cap_us: u64,
     /// DASH-specific knobs (clock ladder, `UTCTiming` timeouts, early-request cadence, MPD refresh
     /// floor); the knobs every segment-pull source shares stay on this struct. A value
     /// [`DashConfig::validate`] rejects fails [`crate::Session::open`] with
@@ -930,6 +973,7 @@ impl Default for Config {
             tracks_hold_max_media_us: DEFAULT_TRACKS_HOLD_MAX_MEDIA_US,
             tracks_hold_max_wall_us: DEFAULT_TRACKS_HOLD_MAX_WALL_US,
             start_pending_track_wait_us: DEFAULT_START_PENDING_TRACK_WAIT_US,
+            start_pending_track_hard_cap_us: DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
             dash: DashConfig::default(),
         }
     }
@@ -975,6 +1019,10 @@ impl core::fmt::Debug for Config {
             .field(
                 "start_pending_track_wait_us",
                 &self.start_pending_track_wait_us,
+            )
+            .field(
+                "start_pending_track_hard_cap_us",
+                &self.start_pending_track_hard_cap_us,
             )
             .field("dash", &self.dash)
             .finish()

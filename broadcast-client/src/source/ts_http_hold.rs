@@ -70,12 +70,7 @@ impl HoldLimits {
 
 const NETWORK_PROGRAM_NUMBER: u16 = 0;
 
-/// The kind of a PMT-declared elementary stream a start gate waits for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum StreamKind {
-    Video,
-    Audio,
-}
+pub(crate) use crate::events::StreamKind;
 
 /// Audio carried as `PesPrivateData` (stream_type 0x06) is identified by its ES_info descriptor
 /// (ETSI TS 101 154 §4.1.6, EN 300 468 Annex D).
