@@ -113,12 +113,27 @@ const RTP_HEADER_MIN: usize = 12;
 const INTERLEAVED_MAGIC: u8 = b'$';
 const INTERLEAVED_HEADER: usize = 4;
 const CHANNELS_PER_TRACK: u8 = 2;
+const NAL_TYPE_MASK: u8 = 0x1f;
+const NAL_IDR: u8 = 5;
+const NAL_FU_A: u8 = 28;
+const FU_START_BIT: u8 = 0x80;
+
+fn starts_idr(payload: &[u8]) -> bool {
+    match payload.first().map(|b| b & NAL_TYPE_MASK) {
+        Some(NAL_IDR) => true,
+        Some(NAL_FU_A) => payload
+            .get(1)
+            .is_some_and(|fu| fu & FU_START_BIT != 0 && fu & NAL_TYPE_MASK == NAL_IDR),
+        _ => false,
+    }
+}
 
 #[derive(Default)]
 struct WireArrivals {
     pending: Vec<u8>,
     first_arrival: std::collections::BTreeMap<u8, std::collections::BTreeMap<u32, u64>>,
     first_ts: std::collections::BTreeMap<u8, u32>,
+    idr_starts: std::collections::BTreeMap<u8, Vec<u32>>,
 }
 
 impl WireArrivals {
@@ -147,6 +162,13 @@ impl WireArrivals {
                         frame[RTP_TS_OFFSET + 3],
                     ]);
                     let base = *self.first_ts.entry(channel).or_insert(ts);
+                    if starts_idr(&frame[RTP_HEADER_MIN..]) {
+                        let idr = self.idr_starts.entry(channel).or_default();
+                        let rel = ts.wrapping_sub(base);
+                        if idr.last() != Some(&rel) {
+                            idr.push(rel);
+                        }
+                    }
                     self.first_arrival
                         .entry(channel)
                         .or_default()
@@ -169,6 +191,14 @@ impl WireArrivals {
                 self.pending.drain(..end + 4 + body);
             }
         }
+    }
+
+    fn has_exact(&self, channel: u8, rel_ticks: i64) -> bool {
+        u32::try_from(rel_ticks).ok().is_some_and(|rel| {
+            self.first_arrival
+                .get(&channel)
+                .is_some_and(|m| m.contains_key(&rel))
+        })
     }
 
     fn arrival_of(&self, channel: u8, rel_ticks: i64) -> Option<u64> {
@@ -520,9 +550,28 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
         v[v.len() / 2]
     };
     let mut offsets: std::collections::BTreeMap<bool, Vec<f64>> = std::collections::BTreeMap::new();
+    let mut anchor: std::collections::BTreeMap<u32, i64> = std::collections::BTreeMap::new();
+    for (&tid, &channel) in &track_channel {
+        if !track_is_video[&tid] {
+            anchor.insert(tid, first_sample_pts[&tid]);
+            continue;
+        }
+        let key_pts = first_video_keyframe_pts.expect("a video keyframe sample");
+        let key_rel = wire.idr_starts[&channel]
+            .iter()
+            .copied()
+            .find(|&cand| {
+                emitted
+                    .iter()
+                    .filter(|(t, _, _)| *t == tid)
+                    .all(|&(_, pts, _)| wire.has_exact(channel, pts - key_pts + i64::from(cand)))
+            })
+            .expect("an IDR packet that maps every emitted video sample to a real RTP timestamp");
+        anchor.insert(tid, key_pts - i64::from(key_rel));
+    }
     for &(tid, pts, _) in &emitted {
         let channel = track_channel[&tid];
-        let rel = pts - first_sample_pts[&tid];
+        let rel = pts - anchor[&tid];
         let arrival = wire
             .arrival_of(channel, rel)
             .unwrap_or_else(|| panic!("no RTP packet for track {tid} at relative tick {rel}"));
