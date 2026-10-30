@@ -131,6 +131,19 @@ pub fn sender_report_frame(channel: u8, ssrc: u32, rtp_timestamp: u32) -> Vec<u8
     interleaved(channel, &buf)
 }
 
+const NTP_FRACTION: f64 = 4_294_967_296.0;
+
+pub fn sender_report_at(channel: u8, ssrc: u32, ntp_seconds: f64, rtp_timestamp: u32) -> Vec<u8> {
+    let whole = ntp_seconds.trunc();
+    let msw = whole as u32;
+    let lsw = ((ntp_seconds - whole) * NTP_FRACTION) as u32;
+    let sr = SenderReport::new(ssrc, msw, lsw, rtp_timestamp, 10, 1000, Vec::new());
+    let mut buf = vec![0u8; sr.serialized_len()];
+    let n = sr.serialize_into(&mut buf).expect("serialize sr");
+    buf.truncate(n);
+    interleaved(channel, &buf)
+}
+
 #[derive(Debug, Clone)]
 pub struct ReqRec {
     pub method: String,

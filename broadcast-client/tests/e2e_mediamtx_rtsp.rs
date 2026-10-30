@@ -13,7 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use broadcast_client::{Action, BufferEvent, Config, Event, Session, Status};
+use broadcast_client::{Action, AvSync, BufferEvent, Config, Event, Session, Status};
 use transmux::CodecConfig;
 
 const REQUIRE_ENV: &str = "REQUIRE_MEDIAMTX_E2E";
@@ -31,6 +31,7 @@ const READ_TIMEOUT: Duration = Duration::from_millis(5);
 const READ_CHUNK: usize = 64 * 1024;
 const MIN_SAMPLES: usize = 50;
 const MICROS_PER_NANO_DIVISOR: u128 = 1_000;
+const COMMON_TIMELINE_BOUND_SECONDS: f64 = 0.2;
 
 struct Tool {
     child: Child,
@@ -190,6 +191,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
     let mut first_video_keyframe_pts: Option<i64> = None;
     let mut first_audio_sample_us: Option<u64> = None;
     let mut first_audio_sample_pts: Option<i64> = None;
+    let mut sync_states: Vec<(u64, AvSync)> = Vec::new();
+    let mut max_pts_seconds: std::collections::BTreeMap<bool, f64> =
+        std::collections::BTreeMap::new();
     let mut start_us: Option<u64> = None;
     let mut start_at_27mhz: Option<u64> = None;
     let mut media_end_at_start: Option<std::collections::BTreeMap<u32, u64>> = None;
@@ -259,6 +263,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
                         track_is_video.insert(s.track_id.value(), is_video);
                     }
                 }
+                Event::AvSync(state) => sync_states.push((micros(started), *state)),
                 Event::Sample { track, sample, .. } => {
                     let tid = track.value();
                     let is_video = track_is_video.get(&tid).copied().unwrap_or(false);
@@ -278,6 +283,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
                     }
                     if let Some(pts) = sample.pts {
                         let ts = track_timescale.get(&tid).copied().unwrap_or(1).max(1);
+                        let seconds = pts as f64 / f64::from(ts);
+                        let slot = max_pts_seconds.entry(is_video).or_insert(seconds);
+                        *slot = slot.max(seconds);
                         let dur = i64::from(sample.duration.unwrap_or(0));
                         let end27 = (i128::from(pts + dur) * i128::from(27_000_000i64)
                             / i128::from(ts)) as u64;
@@ -340,6 +348,40 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
         0,
         "{zero} of {} samples have zero duration",
         samples.len()
+    );
+    let states: Vec<AvSync> = sync_states.iter().map(|(_, s)| *s).collect();
+    assert_eq!(
+        states.last(),
+        Some(&AvSync::SenderReport),
+        "mediamtx sends Sender Reports, the sync state must reach SenderReport: {sync_states:?}"
+    );
+    let first_gap = match (first_audio_sample_pts, first_video_sample_pts) {
+        (Some(a), Some(v)) => {
+            let scale = |is_video: bool| {
+                f64::from(
+                    track_is_video
+                        .iter()
+                        .find(|(_, video)| **video == is_video)
+                        .and_then(|(t, _)| track_timescale.get(t))
+                        .copied()
+                        .expect("track timescale"),
+                )
+            };
+            a as f64 / scale(false) - v as f64 / scale(true)
+        }
+        _ => panic!("no first audio and video sample"),
+    };
+    let last_gap = max_pts_seconds[&false] - max_pts_seconds[&true];
+    eprintln!(
+        "AVSYNC[{label}] states={sync_states:?} first_audio_minus_first_video_s={first_gap:.4} last_audio_minus_last_video_s={last_gap:.4}"
+    );
+    assert!(
+        first_gap.abs() < COMMON_TIMELINE_BOUND_SECONDS,
+        "first audio is {first_gap} s from first video on the common timeline"
+    );
+    assert!(
+        last_gap.abs() < COMMON_TIMELINE_BOUND_SECONDS,
+        "after {RUN:?} the latest audio is {last_gap} s from the latest video"
     );
     let configured_start_lead_us = Config::default().buffer.policy.initial_us;
     let origin_27 = first_video_keyframe_pts.map(|pts| {

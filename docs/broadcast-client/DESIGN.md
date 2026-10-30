@@ -330,11 +330,18 @@ session's `Send` bytes with `rtsp-types`, answers with SDP built by `sdp-types`,
 `transmux`'s packetiser from the real `fixtures/ts/h264_aac.ts` samples; the oracle is the original samples,
 payload bytes and timestamps). Digest responses are verified by `broadcast-auth`'s own `Verifier`.
 
-### RTSP track clocks and the lead computation
+### RTSP track clocks
 
-Each RTSP track's RTP timestamps start at an unrelated random base (RFC 3550 5.1), so the feeder cannot treat the tracks as one clock. For an `rtsp(s)://` session `Feeder` sets `independent_clocks`; `shift(track)` then moves every rendered non-video track onto the rendered video track's timeline by the difference of the two tracks' first-sample arrival values, and `conv`/`arm_origin` take the track id to apply it. The shift feeds only the buffer's lead computation (the media-end positions reported to `buffering-runtime` and the origin); sample pts handed to the host are never modified.
+Each RTSP track's RTP timestamps start at an unrelated random base (RFC 3550 5.1), so the raw sample times of two tracks are not comparable. `source/rtsp_align.rs` (`Aligner`) puts every track on one common timeline before a sample leaves the RTSP source, so the buffer, the playout gate and the host all see aligned pts and dts.
 
-Limitation: aligning by first arrival is accurate only to the arrival skew between the first audio and first video sample, so it is a buffering heuristic and not A/V sync. Proper RTSP A/V sync needs RTCP Sender Reports (the NTP to RTP timestamp mapping, RFC 3550 6.4.1), which this source does not yet feed to the depacketiser. Until then the pts the host receives for RTSP audio and video are on unrelated bases and the host cannot align them either.
+- Anchor: the video track. Its pts/dts are never changed. Every other track gets one tick offset (`delta`, in its own timescale) added to pts and dts. Without a video track the first track to deliver is the anchor. Samples of other tracks wait (at most 256) until the anchor's first sample exists; if it never comes the earliest waiting track becomes the anchor.
+- `AvSync::Provisional`: no Sender Report mapping for the track yet. `delta` lines the track's first sample up with the anchor's first sample, so the error is the arrival skew between those two samples.
+- `AvSync::SenderReport`: the depacketiser has an SR (RFC 3550 6.4.1, NTP time to RTP time) for the anchor and the track. `RtpStreamDepacketiser::sync_start_decode_times` (the only place the NTP arithmetic lives) gives each track's first-sample wall-clock distance from the earliest one; the target `delta` places the track's first sample at the anchor's first pts plus its true wall-clock offset from the anchor's first sample. Every new SR recomputes the target.
+- Switch: forward correction is applied immediately; backward correction is slewed by at most half a sample duration per sample, so per-track pts never go backwards. A correction larger than `SR_SWITCH_TOLERANCE_US` (100 ms, about five AAC frames, near the edge where audio/video offset is read as out of sync) is a real timeline change: `Event::Discontinuity` once, then the new `delta`. The provisional error is the arrival skew, normally a few packet times, so the common case is absorbed silently.
+- Reporting: `Event::AvSync(AvSync)` is per session, emitted before the first sample (`Provisional`, or `SenderReport` when the SRs were already in) and once more when every non-anchor track is on SR timing. A single-track presentation never emits it. The state resets with the connection (a reconnect builds a new depacketiser and new RTP bases).
+- The buffer no longer shifts tracks: the lead is right by construction. `tests/rtsp_clock_offset.rs` guards Start timing against random per-track RTP bases.
+
+Limits: a track that never gets Sender Reports stays Provisional; the tracks' SR NTP clocks are assumed to share a wall clock (RFC 3550 6.4.1 requires it for lip sync).
 
 ## BC-5 playout gate
 

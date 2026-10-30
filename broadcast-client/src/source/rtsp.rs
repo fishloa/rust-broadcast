@@ -19,6 +19,7 @@ use url::{Host, Url};
 use crate::auth::{AuthDecision, AuthState};
 use crate::events::{Action, ErrorKind, Event, Status};
 use crate::redirect;
+use crate::source::rtsp_align::{Aligner, Out};
 use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, parse_tracks};
 
 const SCHEME_RTSPS: &str = "rtsps";
@@ -93,6 +94,8 @@ pub(crate) struct RtspSource {
     reported_drops: BTreeSet<(usize, Option<String>)>,
     aggregate: Option<String>,
     depa: Option<RtpStreamDepacketiser>,
+    aligner: Aligner,
+    pre_sample: Vec<Event>,
     tracks_dirty: bool,
     seen_first_sample: bool,
     stalled: bool,
@@ -166,6 +169,8 @@ impl RtspSource {
             reported_drops: BTreeSet::new(),
             aggregate: None,
             depa: None,
+            aligner: Aligner::default(),
+            pre_sample: Vec::new(),
             tracks_dirty: false,
             seen_first_sample: false,
             stalled: false,
@@ -435,6 +440,8 @@ impl RtspSource {
         self.tracks.clear();
         self.aggregate = None;
         self.depa = None;
+        self.aligner = Aligner::default();
+        self.pre_sample.clear();
         self.tracks_dirty = false;
         self.stalled = false;
         self.next_notice_at = None;
@@ -793,6 +800,19 @@ impl RtspSource {
                 .map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))
                 .collect(),
         ));
+        self.aligner = Aligner::new(
+            &self
+                .tracks
+                .iter()
+                .map(|t| {
+                    (
+                        t.track_id,
+                        matches!(t.config, CodecConfig::Avc { .. }),
+                        t.clock_rate,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
         self.send(Req::Play)
     }
 
@@ -831,6 +851,7 @@ impl RtspSource {
         if is_rtcp {
             self.rtcp_frames = self.rtcp_frames.saturating_add(1);
             depa.push_rtcp(track, data);
+            self.aligner.note_rtcp();
             return;
         }
         self.last_byte_at = now;
@@ -861,7 +882,7 @@ impl RtspSource {
                 continue;
             }
             self.maybe_update_avc_dims(track, &sample);
-            self.emit_sample(track, sample, now);
+            self.align_and_emit(track, sample, now);
         }
         if !produced
             && !self.starved_data_fired
@@ -943,6 +964,19 @@ impl RtspSource {
         true
     }
 
+    fn align_and_emit(&mut self, track: TrackId, sample: Sample, now: u64) {
+        let Some(depa) = self.depa.as_ref() else {
+            self.emit_sample(track, sample, now);
+            return;
+        };
+        for out in self.aligner.push(depa, track, sample) {
+            match out {
+                Out::Sample(track, sample) => self.emit_sample(track, sample, now),
+                Out::Event(event) => self.pre_sample.push(event),
+            }
+        }
+    }
+
     fn emit_sample(&mut self, track: TrackId, sample: Sample, now: u64) {
         if self.discontinuity_pending && !self.seen_first_sample {
             self.discontinuity_pending = false;
@@ -973,6 +1007,7 @@ impl RtspSource {
         self.starved_data_fired = false;
         self.starved_nodata_fired = false;
         self.next_notice_at = None;
+        self.events.extend(self.pre_sample.drain(..));
         self.events.push_back(Event::Sample {
             track,
             sample,
@@ -995,7 +1030,7 @@ impl RtspSource {
             }
         }
         for (id, sample) in flushed {
-            self.emit_sample(id, sample, now);
+            self.align_and_emit(id, sample, now);
         }
     }
 

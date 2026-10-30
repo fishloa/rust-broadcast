@@ -149,7 +149,6 @@ pub(crate) struct Feeder {
     video_end: BTreeMap<TrackId, i64>,
     audio_max_end: BTreeMap<TrackId, i64>,
     first_seen: BTreeMap<TrackId, i64>,
-    independent_clocks: bool,
     video_join_pts_27: Option<u64>,
     origin: Option<i128>,
     last_chunk_us: Option<u64>,
@@ -191,7 +190,6 @@ impl Feeder {
             video_end: BTreeMap::new(),
             audio_max_end: BTreeMap::new(),
             first_seen: BTreeMap::new(),
-            independent_clocks: false,
             video_join_pts_27: None,
             origin: None,
             last_chunk_us: None,
@@ -208,10 +206,6 @@ impl Feeder {
             #[cfg(feature = "test-seams")]
             log: Vec::new(),
         }
-    }
-
-    pub(crate) fn set_independent_clocks(&mut self) {
-        self.independent_clocks = true;
     }
 
     pub(crate) fn set_finite(&mut self) {
@@ -418,38 +412,13 @@ impl Feeder {
         }
     }
 
-    fn shift(&self, t: TrackId) -> i128 {
-        if !self.independent_clocks || self.live_joins.contains_key(&t) {
-            return 0;
-        }
-        let Some(&video) = self
-            .rendered
-            .iter()
-            .find(|v| self.live_joins.contains_key(*v))
-        else {
-            return 0;
-        };
-        let (Some(&v_first), Some(&t_first)) =
-            (self.first_seen.get(&video), self.first_seen.get(&t))
-        else {
-            return 0;
-        };
-        let (Some(v_scale), Some(t_scale)) = (self.timescale_of(video), self.timescale_of(t))
-        else {
-            return 0;
-        };
-        raw_27mhz(v_first, v_scale) - raw_27mhz(t_first, t_scale)
+    fn conv(&self, pts: i64, timescale: u32) -> u64 {
+        pts_to_27mhz_from(pts, timescale, self.origin.unwrap_or(0))
     }
 
-    fn conv(&self, t: TrackId, pts: i64, timescale: u32) -> u64 {
-        let v =
-            (raw_27mhz(pts, timescale) + self.shift(t)).saturating_sub(self.origin.unwrap_or(0));
-        u64::try_from(v).unwrap_or(if v < 0 { 0 } else { u64::MAX })
-    }
-
-    fn arm_origin(&mut self, t: TrackId, pts: i64, timescale: u32) {
+    fn arm_origin(&mut self, pts: i64, timescale: u32) {
         if self.origin.is_none() {
-            self.origin = Some(negative_origin(raw_27mhz(pts, timescale) + self.shift(t)));
+            self.origin = Some(negative_origin(raw_27mhz(pts, timescale)));
         }
     }
 
@@ -461,10 +430,10 @@ impl Feeder {
         let Some(&(pts, timescale)) = self.video_join_at.get(&t) else {
             return;
         };
-        self.arm_origin(t, pts, timescale);
+        self.arm_origin(pts, timescale);
         self.pending_zero.insert(t, (pts, timescale));
         if self.video_join_pts_27.is_none() {
-            self.video_join_pts_27 = Some(self.conv(t, pts, timescale));
+            self.video_join_pts_27 = Some(self.conv(pts, timescale));
         }
     }
 
@@ -472,7 +441,7 @@ impl Feeder {
         let (Some(&end), Some(timescale)) = (self.video_end.get(&t), self.timescale_of(t)) else {
             return;
         };
-        self.pending_ends.insert(t, self.conv(t, end, timescale));
+        self.pending_ends.insert(t, self.conv(end, timescale));
     }
 
     fn queue_audio_end(&mut self, t: TrackId) {
@@ -490,8 +459,8 @@ impl Feeder {
             (true, Some(j)) => Some(j),
         };
         let first = self.first_seen.get(&t).copied().unwrap_or(end);
-        self.arm_origin(t, first, timescale);
-        let end_27 = self.conv(t, end, timescale);
+        self.arm_origin(first, timescale);
+        let end_27 = self.conv(end, timescale);
         if join_pts.is_none_or(|j| end_27 > j) {
             self.pending_ends.insert(t, end_27);
         }
@@ -604,7 +573,7 @@ impl Feeder {
         }
         let zeros = core::mem::take(&mut self.pending_zero);
         for (t, (pts, ts)) in zeros {
-            let end = self.conv(t, pts, ts);
+            let end = self.conv(pts, ts);
             self.report_media(now_us, t, end);
         }
         let ends = core::mem::take(&mut self.pending_ends);
