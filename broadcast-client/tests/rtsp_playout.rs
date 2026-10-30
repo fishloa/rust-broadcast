@@ -1,7 +1,7 @@
 mod support;
 
 use broadcast_client::{BufferEvent, Config, Event};
-use broadcast_common::Unpackage;
+use broadcast_common::{Serialize, Unpackage};
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, Server};
 use transmux::{CodecConfig, TrackSpec, TsDemux};
 
@@ -67,6 +67,19 @@ fn truncate_sprop_sps(sdp: &str) -> String {
     let sps = transmux::rtp::base64_decode(sps_b64).expect("sps b64");
     let truncated = transmux::rtp::base64_encode(&sps[..SPS_HEADER_LEN]);
     format!("{}{truncated},{rest}{}", &sdp[..at], &sdp[end..])
+}
+
+fn strip_sprop(sdp: &str) -> String {
+    let attr = "sprop-parameter-sets=";
+    let start = sdp.find(attr).expect("sprop");
+    let end = sdp[start..]
+        .find(['\r', '\n', ';'])
+        .map(|k| start + k)
+        .unwrap_or(sdp.len());
+    let mut out = String::new();
+    out.push_str(&sdp[..start]);
+    out.push_str(&sdp[end..]);
+    out
 }
 
 fn play(sdp: &str, frames: &[Vec<u8>]) -> Run {
@@ -160,4 +173,92 @@ fn rtsp_samples_carry_positive_durations_once_a_frame_period_is_known() {
         "{zero} of {} samples have zero duration",
         samples.len()
     );
+}
+
+#[test]
+fn rtsp_no_sprop_announces_video_with_inband_avcc() {
+    let fixture = MediaFixture::load();
+    assert!(
+        fixture.sdp.contains(SPROP_ATTRIBUTE),
+        "fixture SDP lacks sprop"
+    );
+    let sdp = strip_sprop(&fixture.sdp);
+    assert!(!sdp.contains(SPROP_ATTRIBUTE), "sprop not stripped");
+    let run = play(&sdp, &fixture.frames());
+    let ref_run = play(&fixture.sdp, &fixture.frames());
+
+    let mut video_cfg = None;
+    for specs in run.tracks() {
+        if let Some((cfg, w, h)) = specs.iter().find_map(|s| match &s.config {
+            CodecConfig::Avc {
+                config,
+                width,
+                height,
+            } if !config.config.sps.is_empty() => Some((config.clone(), *width, *height)),
+            _ => None,
+        }) {
+            video_cfg = Some((cfg, w, h));
+            break;
+        }
+    }
+    let (cfg, w, h) = video_cfg.expect("no ready video track announced");
+    assert!(w > 0 && h > 0, "dims zero");
+    // parse it back with transmux's avcC parser
+    let mut buf = vec![0u8; cfg.serialized_len()];
+    cfg.serialize_into(&mut buf).expect("serialize avcC");
+    let parsed = transmux::AVCConfigurationBox::parse_body(&buf[8..]).expect("parse avcC");
+    assert_eq!(parsed, cfg);
+
+    let mut ref_cfg = None;
+    for specs in ref_run.tracks() {
+        if let Some((cfg, w, h)) = specs.iter().find_map(|s| match &s.config {
+            CodecConfig::Avc {
+                config,
+                width,
+                height,
+            } if !config.config.sps.is_empty() => Some((config.clone(), *width, *height)),
+            _ => None,
+        }) {
+            ref_cfg = Some((cfg, w, h));
+            break;
+        }
+    }
+    let (ref_c, ref_w, ref_h) = ref_cfg.expect("ref video track");
+    assert_eq!(cfg, ref_c);
+    assert_eq!((w, h), (ref_w, ref_h));
+
+    assert!(!run.samples().is_empty(), "no samples flow");
+    assert!(run.start_time().is_some(), "no BufferEvent::Start");
+}
+
+#[test]
+fn rtsp_no_sprop_emits_no_video_sample_before_config_known() {
+    let fixture = MediaFixture::load();
+    let sdp = strip_sprop(&fixture.sdp);
+    let run = play(&sdp, &fixture.frames());
+
+    // find first Tracks announcement carrying a ready (non-empty) video avcC
+    let mut video_track = None;
+    let mut first_ready_idx = None;
+    for (idx, (_, e)) in run.events.iter().enumerate() {
+        if let Event::Tracks(specs) = e
+            && video_track.is_none()
+            && let Some(id) = specs.iter().find_map(|s| match &s.config {
+                CodecConfig::Avc { config, .. } if !config.config.sps.is_empty() => {
+                    Some(s.track_id)
+                }
+                _ => None,
+            })
+        {
+            video_track = Some(id);
+            first_ready_idx = Some(idx);
+        }
+    }
+    let vt = video_track.expect("no ready video track announced");
+    let idx = first_ready_idx.unwrap();
+    let before = run.events[..idx]
+        .iter()
+        .filter(|(_, e)| matches!(e, Event::Sample { track, .. } if *track == vt))
+        .count();
+    assert_eq!(before, 0, "video samples emitted before config known");
 }

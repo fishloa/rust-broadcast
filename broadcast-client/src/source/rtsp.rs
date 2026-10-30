@@ -857,6 +857,14 @@ impl RtspSource {
         }
         let produced = !samples.is_empty();
         for sample in samples {
+            // A video track admitted without `sprop-parameter-sets` has no
+            // avcC yet: build it from the first in-band SPS+PPS and drop the
+            // sample (and every earlier one) until that succeeds, so no
+            // sample is emitted with an unknown config. Matches the TS demux
+            // path, which withholds samples before the first SPS.
+            if !self.try_complete_avc_config(track, &sample) {
+                continue;
+            }
             self.maybe_update_avc_dims(track, &sample);
             self.emit_sample(track, sample, now);
         }
@@ -893,18 +901,97 @@ impl RtspSource {
         }
     }
 
+    fn try_complete_avc_config(&mut self, track: TrackId, sample: &Sample) -> bool {
+        let ready = {
+            let Some(track_init) = self.tracks.iter().find(|t| t.track_id == track) else {
+                return true;
+            };
+            match &track_init.config {
+                CodecConfig::Avc { config, .. } => !config.config.sps.is_empty(),
+                _ => true,
+            }
+        };
+        if ready {
+            return true;
+        }
+        // Collect the SPS/PPS NAL units carried in-band in this access unit.
+        let mut sps: Vec<transmux::AvcSps> = Vec::new();
+        let mut pps: Vec<transmux::AvcPps> = Vec::new();
+        let bytes = &sample.data;
+        let mut off = 0usize;
+        while off.saturating_add(4) <= bytes.len() {
+            let len =
+                u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
+                    as usize;
+            off = off.saturating_add(4);
+            if len == 0 || off.saturating_add(len) > bytes.len() {
+                break;
+            }
+            let nal = &bytes[off..off + len];
+            off = off.saturating_add(len);
+            if nal.is_empty() {
+                continue;
+            }
+            match nal[0] & 0x1f {
+                7 => sps.push(transmux::AvcSps(nal.to_vec())),
+                8 => pps.push(transmux::AvcPps(nal.to_vec())),
+                _ => {}
+            }
+        }
+        if sps.is_empty() || pps.is_empty() {
+            return false;
+        }
+        let Ok(avc) = transmux::avc_config_from_sps_pps(sps, pps) else {
+            return false;
+        };
+        let (width, height) = avc
+            .config
+            .sps
+            .first()
+            .and_then(|s| transmux::avc_sps_dimensions(&s.0))
+            .unwrap_or((0, 0));
+        let Some(track_init) = self.tracks.iter_mut().find(|t| t.track_id == track) else {
+            return false;
+        };
+        if let CodecConfig::Avc {
+            config,
+            width: w,
+            height: h,
+        } = &mut track_init.config
+        {
+            *config = avc;
+            *w = width;
+            *h = height;
+        }
+        let config = track_init.config.clone();
+        if let Some(depa) = &mut self.depa {
+            depa.set_track_config(track, config);
+        }
+        self.tracks_dirty = true;
+        true
+    }
+
     fn emit_sample(&mut self, track: TrackId, sample: Sample, now: u64) {
         if self.discontinuity_pending && !self.seen_first_sample {
             self.discontinuity_pending = false;
             self.events.push_back(Event::Discontinuity);
         }
         if self.tracks_dirty {
-            let specs = self
+            let mut specs = self
                 .depa
                 .as_ref()
                 .map(RtpStreamDepacketiser::track_specs)
                 .unwrap_or_default();
-            self.events.push_back(Event::Tracks(specs));
+            // Never announce a video track whose avcC is still empty: a
+            // hardware decoder would reject it. Withhold it until the in-band
+            // SPS+PPS has filled it in.
+            specs.retain(|spec| match &spec.config {
+                CodecConfig::Avc { config, .. } => !config.config.sps.is_empty(),
+                _ => true,
+            });
+            if !specs.is_empty() {
+                self.events.push_back(Event::Tracks(specs));
+            }
             self.tracks_dirty = false;
         }
         if !self.seen_first_sample {

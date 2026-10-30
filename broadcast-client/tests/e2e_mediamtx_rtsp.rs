@@ -71,7 +71,7 @@ fn free_port() -> u16 {
 fn write_config(dir: &Path, rtsp_port: u16) -> PathBuf {
     let config = format!(
         "logLevel: error\n\
-         api: no\nmetrics: no\npprof: no\nplayback: no\nrtmp: no\nhls: no\nwebrtc: no\nsrt: no\n\
+         api: no\nmetrics: no\npprof: no\nplayback: no\nrtmp: no\nhls: no\nwebrtc: no\nsrt: no\nmoq: no\n\
          rtspTransports: [tcp]\nrtspEncryption: \"no\"\n\
          rtspAddress: 127.0.0.1:{rtsp_port}\n\
          paths:\n  all_others:\n"
