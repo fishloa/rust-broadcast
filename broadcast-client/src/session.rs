@@ -163,6 +163,15 @@ impl Session {
                 target_duration_secs: None,
             });
         }
+        let mut buffer = crate::buffer::Feeder::new(
+            buffer_cfg,
+            seed,
+            start_pending_wait_us,
+            start_pending_hard_cap_us,
+        );
+        if is_rtsp_scheme {
+            buffer.set_independent_clocks();
+        }
         Ok(Self {
             closed: false,
             now_us,
@@ -179,12 +188,7 @@ impl Session {
             ts_wake: None,
             actions: VecDeque::new(),
             events: EventQueue::new(event_cap),
-            buffer: crate::buffer::Feeder::new(
-                buffer_cfg,
-                seed,
-                start_pending_wait_us,
-                start_pending_hard_cap_us,
-            ),
+            buffer,
             playout,
             jump,
             declaration: crate::rendered::Declaration::default(),
