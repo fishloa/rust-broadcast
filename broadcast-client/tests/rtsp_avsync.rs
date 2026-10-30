@@ -30,6 +30,7 @@ const AAC_FRAME_SECONDS: f64 = 1024.0 / 44_100.0;
 const ARRIVAL_SKEW_BOUND_SECONDS: f64 = 0.025;
 const WITHIN_TOLERANCE_SKEW_SECONDS: f64 = 0.060;
 const BEYOND_TOLERANCE_SKEW_SECONDS: f64 = 0.600;
+const RELAY_SR_BIAS_SECONDS: f64 = 0.260;
 
 struct Lane {
     video: bool,
@@ -112,8 +113,35 @@ enum SrAt {
 }
 
 fn run_at(fixture: &MediaFixture, skew_seconds: Option<f64>, when: SrAt) -> Outcome {
+    run_scenario(fixture, skew_seconds, None, when)
+}
+
+fn rtp_info_header(lanes: &[Lane], skew: f64) -> String {
+    lanes
+        .iter()
+        .enumerate()
+        .map(|(n, lane)| {
+            let rtptime = if lane.video {
+                lane.base
+            } else {
+                lane.base.wrapping_sub((skew * AUDIO_RATE) as i32 as u32)
+            };
+            format!("url={BASE_URL}trackID={};seq=1;rtptime={rtptime}", n + 1)
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn run_scenario(
+    fixture: &MediaFixture,
+    skew_seconds: Option<f64>,
+    rtp_info_skew: Option<f64>,
+    when: SrAt,
+) -> Outcome {
     let lanes = lanes(fixture);
-    let mut host = Host::new(BASE_URL, Config::default(), Server::new(&fixture.sdp));
+    let mut server = Server::new(&fixture.sdp);
+    server.rtp_info = rtp_info_skew.map(|skew| rtp_info_header(&lanes, skew));
+    let mut host = Host::new(BASE_URL, Config::default(), server);
     host.connect();
     let longest = lanes.iter().map(|l| l.frames.len()).max().unwrap_or(0);
     let first_video_au_end = lanes
@@ -449,4 +477,90 @@ fn emitted_samples_keep_their_source_audio_video_offset() {
             );
         }
     }
+}
+
+fn assert_scenario(
+    fixture: &MediaFixture,
+    truth: &Truth,
+    sr: Option<f64>,
+    info: Option<f64>,
+    expected_skew: f64,
+    what: &str,
+) {
+    for when in [SrAt::BeforeFirstSample, SrAt::Packet(14), SrAt::Third] {
+        let o = run_scenario(fixture, sr, info, when);
+        assert_audio_on_sender_report_timeline(&o, expected_skew);
+        assert_monotonic(&o);
+        assert_ground_truth_offset(
+            &o,
+            truth,
+            expected_skew - truth.source_start_gap(),
+            &format!("{what} {when:?}"),
+        );
+    }
+}
+
+#[test]
+fn a_camera_with_correct_sender_reports_and_a_matching_rtp_info_is_on_the_true_timeline() {
+    let fixture = MediaFixture::load();
+    let truth = Truth::from_media(&MediaFixture::demux());
+    for skew in [
+        0.0,
+        WITHIN_TOLERANCE_SKEW_SECONDS,
+        BEYOND_TOLERANCE_SKEW_SECONDS,
+    ] {
+        assert_scenario(&fixture, &truth, Some(skew), Some(skew), skew, "camera");
+    }
+}
+
+#[test]
+fn rtp_info_alone_places_the_tracks_on_the_true_timeline() {
+    let fixture = MediaFixture::load();
+    let truth = Truth::from_media(&MediaFixture::demux());
+    for skew in [
+        0.0,
+        WITHIN_TOLERANCE_SKEW_SECONDS,
+        BEYOND_TOLERANCE_SKEW_SECONDS,
+    ] {
+        assert_scenario(&fixture, &truth, None, Some(skew), skew, "rtp-info only");
+    }
+}
+
+#[test]
+fn a_relay_with_biased_sender_reports_follows_the_correct_rtp_info() {
+    let fixture = MediaFixture::load();
+    let truth = Truth::from_media(&MediaFixture::demux());
+    for (sr_bias, true_skew) in [
+        (RELAY_SR_BIAS_SECONDS, 0.0),
+        (RELAY_SR_BIAS_SECONDS, WITHIN_TOLERANCE_SKEW_SECONDS),
+    ] {
+        assert_scenario(
+            &fixture,
+            &truth,
+            Some(true_skew + sr_bias),
+            Some(true_skew),
+            true_skew,
+            "relay",
+        );
+    }
+}
+
+#[test]
+fn rtp_info_reaches_the_rtp_info_sync_state_and_sender_reports_do_not_displace_it() {
+    let fixture = MediaFixture::load();
+    let o = run_scenario(
+        &fixture,
+        Some(RELAY_SR_BIAS_SECONDS),
+        Some(0.0),
+        SrAt::Third,
+    );
+    assert_eq!(o.sync, vec![AvSync::RtpInfo]);
+    assert_eq!(o.discontinuities, 0);
+}
+
+#[test]
+fn biased_sender_reports_alone_are_followed_as_they_are() {
+    let fixture = MediaFixture::load();
+    let o = run_scenario(&fixture, Some(RELAY_SR_BIAS_SECONDS), None, SrAt::Third);
+    assert_audio_on_sender_report_timeline(&o, RELAY_SR_BIAS_SECONDS);
 }
