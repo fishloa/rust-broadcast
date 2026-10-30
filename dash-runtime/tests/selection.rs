@@ -289,3 +289,45 @@ fn unknown_period_selects_nothing() {
     let s = select(&m, 7, &Policy::default());
     assert!(s.variants.is_empty() && s.chosen_variant.is_none());
 }
+
+#[test]
+fn codec_policy_is_applied_across_adaptation_sets() {
+    let m = mpd(&format!(
+        "{}{}",
+        set(
+            r#"contentType="video" mimeType="video/mp4""#,
+            "",
+            &[("hvc", 1_000_000, r#"codecs="hvc1.1.6.L120""#)]
+        ),
+        set(
+            r#"contentType="video" mimeType="video/mp4""#,
+            "",
+            &[("avc", 2_000_000, r#"codecs="avc1.4d401f""#)]
+        ),
+    ));
+    let mut p = Policy::default();
+    p.codec_prefixes = vec!["avc1".to_owned()];
+    let s = select(&m, 0, &p);
+    let idx = s.chosen_variant.unwrap();
+    let rep = s.variants[idx].resolve(&m).unwrap().2.id.clone();
+    assert_eq!(rep, "avc", "chosen video rep should be the avc one");
+
+    let ma = mpd(&format!(
+        "{}{}",
+        set(
+            r#"contentType="audio" mimeType="audio/mp4" lang="en""#,
+            "",
+            &[("ec", 64_000, r#"codecs="ec-3""#)]
+        ),
+        set(
+            r#"contentType="audio" mimeType="audio/mp4" lang="en""#,
+            "",
+            &[("aac", 64_000, r#"codecs="mp4a.40.2""#)]
+        ),
+    ));
+    let mut pa = Policy::default();
+    pa.codec_prefixes = vec!["mp4a".to_owned()];
+    let sa = select(&ma, 0, &pa);
+    let r = sa.chosen_audio.unwrap().resolve(&ma).unwrap().2.id.clone();
+    assert_eq!(r, "aac");
+}
