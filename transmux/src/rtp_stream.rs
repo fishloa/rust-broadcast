@@ -863,10 +863,11 @@ fn to_ticks(uw: u64) -> i64 {
     uw.min(i64::MAX as u64) as i64
 }
 
-/// Cap on the learned reorder window of a video track, in access units. The
-/// window is the largest wire-order distance observed between an AU and its
-/// presentation predecessor; a hostile timestamp series cannot grow it past
-/// this.
+/// Cap on how many access units a reordered video track holds waiting for the
+/// presentation successor of its oldest AU, and on the learned `au_window`
+/// (the largest wire-order distance observed between an AU and its
+/// presentation predecessor, used while no frame period is known); a hostile
+/// timestamp series cannot grow either past this.
 const MAX_REORDER_DEPTH: usize = 16;
 
 /// Hard bound on a reorder window whose oldest AU cannot be given a truthful
@@ -1301,10 +1302,17 @@ impl RtpStreamDepacketiser {
     /// instant, which is the smallest later timestamp seen; an AU
     /// with no later timestamp takes the frame period (declared, else the
     /// smallest positive step seen). With neither, the AU stays in the window
-    /// rather than being given an invented duration. `drain_all` (flush)
-    /// resolves every AU the window can resolve instead of keeping a lookahead.
+    /// rather than being given an invented duration.
+    ///
+    /// The head AU is resolved as soon as its presentation successor is exactly
+    /// one frame period away (nothing can sit between them), so the hold is the
+    /// AU's real reorder distance and a stream without reorder holds nothing. A
+    /// successor that is further away may still be in flight: the head waits
+    /// for it, at most `MAX_REORDER_DEPTH` AUs. With no frame period known yet
+    /// the learned `au_window` decides. `drain_all` (flush) resolves every AU
+    /// the window can resolve.
     fn resolve_window(st: &mut TrackState, out: &mut Vec<Sample>, drain_all: bool) {
-        while !st.pending.is_empty() && (drain_all || st.pending.len() > st.au_window) {
+        while !st.pending.is_empty() {
             let head_ts = st.pending[0].unwrapped_ts;
             let successor = st
                 .seen_pts
@@ -1316,6 +1324,17 @@ impl RtpStreamDepacketiser {
                     .and_then(|p| u64::try_from(p).ok())
                     .filter(|&p| p > 0)
             });
+            let ready = drain_all
+                || match period {
+                    Some(p) => {
+                        successor.is_some_and(|gap| gap <= p)
+                            || st.pending.len() > MAX_REORDER_DEPTH
+                    }
+                    None => st.pending.len() > st.au_window,
+                };
+            if !ready {
+                break;
+            }
             let Some(duration) = successor
                 .or(period)
                 .and_then(|d| u32::try_from(d).ok())
