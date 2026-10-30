@@ -540,21 +540,13 @@ impl DashClient {
 
     pub(super) fn start_live(&mut self, now_us: u64, bytes: &[u8], meta: &ResponseMeta<'_>) {
         self.live = Some(Live::new(now_us));
-        if let Some(f) = meta.final_url {
-            let parsed = Url::parse(f).ok();
-            let pin = !self.dash.cross_origin_urls;
-            let allow = parsed.as_ref().is_some_and(|u| {
-                matches!(u.scheme(), "http" | "https")
-                    && (!pin || self.doc_url.as_ref().is_none_or(|d| same_origin(d, u)))
-            });
-            if allow {
-                if let Some(l) = self.live.as_mut() {
-                    l.refresh.redirect_url = Some(f.to_owned());
-                }
-                if let Some(u) = parsed {
-                    self.doc_url = Some(u);
-                }
+        if let Some(f) = meta.final_url
+            && let Some(u) = self.accept_final_url(f)
+        {
+            if let Some(l) = self.live.as_mut() {
+                l.refresh.redirect_url = Some(u.to_string());
             }
+            self.doc_url = Some(u);
         }
         self.note_exchange(now_us, meta);
         if let Some(l) = self.live.as_mut() {
@@ -571,6 +563,7 @@ impl DashClient {
     }
 
     fn note_exchange(&mut self, now_us: u64, meta: &ResponseMeta<'_>) {
+        let adopted = meta.final_url.and_then(|f| self.accept_final_url(f));
         let Some(live) = self.live.as_mut() else {
             return;
         };
@@ -581,19 +574,9 @@ impl DashClient {
         if let Some(m) = meta.last_modified {
             live.refresh.validators.last_modified = Some(m.to_owned());
         }
-        if let Some(f) = meta.final_url {
-            let parsed = Url::parse(f).ok();
-            let pin = !self.dash.cross_origin_urls;
-            let allow = parsed.as_ref().is_some_and(|u| {
-                matches!(u.scheme(), "http" | "https")
-                    && (!pin || self.doc_url.as_ref().is_none_or(|d| same_origin(d, u)))
-            });
-            if allow {
-                live.refresh.redirect_url = Some(f.to_owned());
-                if let Some(u) = parsed {
-                    self.doc_url = Some(u);
-                }
-            }
+        if let Some(u) = adopted {
+            live.refresh.redirect_url = Some(u.to_string());
+            self.doc_url = Some(u);
         }
         if let Some(date) = meta.date {
             let exch = live.mpd_exchange;

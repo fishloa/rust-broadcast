@@ -568,7 +568,7 @@ impl DashClient {
         if dynamic {
             self.start_live(now_us, bytes, meta);
         } else {
-            if let Some(u) = meta.final_url.and_then(|f| Url::parse(f).ok()) {
+            if let Some(u) = meta.final_url.and_then(|f| self.accept_final_url(f)) {
                 self.doc_url = Some(u);
             }
             self.activate(0);
@@ -810,6 +810,19 @@ impl DashClient {
             return Err(DropCause::CrossOrigin);
         }
         Ok(url)
+    }
+
+    pub(super) fn accept_final_url(&self, final_url: &str) -> Option<Url> {
+        let parsed = Url::parse(final_url).ok()?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return None;
+        }
+        let pinned_elsewhere = !self.dash.cross_origin_urls
+            && self
+                .doc_url
+                .as_ref()
+                .is_some_and(|d| !same_origin(d, &parsed));
+        (!pinned_elsewhere).then_some(parsed)
     }
 
     fn emit(&mut self, id: ResourceId) -> Option<Action> {
