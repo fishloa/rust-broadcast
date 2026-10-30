@@ -1642,6 +1642,7 @@ impl DashClient {
             })
     }
 
+
     fn start_period(&mut self, pi: usize) {
         self.periods[pi].started = true;
         // Stable track ids across Periods: a lane keeps the id it was first
@@ -1649,22 +1650,20 @@ impl DashClient {
         // restarting at 1 each Period, so a Period that drops a kind cannot
         // hand that kind's id to a different kind in a later Period.
         let mut assignments: Vec<(usize, u32, u32)> = Vec::new();
+        let mut used_ranges: Vec<(u32, u32)> = Vec::new();
         for li in 0..self.periods[pi].lanes.len() {
             let n = self.periods[pi].lanes[li]
                 .current()
                 .and_then(|r| self.inits.get(&r.init_key))
                 .map_or(0, |e| u32::try_from(e.specs.len()).unwrap_or(u32::MAX));
             let identity = self.periods[pi].lanes[li].identity.clone();
-            let base = if n == 0 {
-                0
-            } else if let Some((existing, _)) = self.track_ids.get(&identity).copied() {
-                existing
-            } else {
-                let base = self.next_track_id;
-                self.next_track_id = self.next_track_id.saturating_add(n);
-                self.track_ids.insert(identity, (base, n));
-                base
-            };
+            let base = allocate_track_base(
+                &mut self.track_ids,
+                &mut self.next_track_id,
+                &mut used_ranges,
+                identity,
+                n,
+            );
             assignments.push((li, base, n));
         }
         for (li, base, n) in assignments {
@@ -2107,5 +2106,97 @@ impl DashClient {
         self.periods[pi].issue_done = false;
         self.register_rep(pi, li, ri);
         Ok(())
+    }
+}
+
+fn ranges_overlap(a_base: u32, a_len: u32, b_base: u32, b_len: u32) -> bool {
+    let a_end = a_base.saturating_add(a_len);
+    let b_end = b_base.saturating_add(b_len);
+    a_base < b_end && b_base < a_end
+}
+
+fn allocate_track_base(
+    track_ids: &mut BTreeMap<TrackIdentity, (u32, u32)>,
+    next_track_id: &mut u32,
+    used: &mut Vec<(u32, u32)>,
+    identity: TrackIdentity,
+    n: u32,
+) -> u32 {
+    if n == 0 {
+        return 0;
+    }
+    if let Some((existing, len)) = track_ids.get(&identity).copied() {
+        if len >= n && !used.iter().any(|&(b, l)| ranges_overlap(existing, n, b, l)) {
+            used.push((existing, n));
+            return existing;
+        }
+    }
+    let base = *next_track_id;
+    *next_track_id = next_track_id.saturating_add(n);
+    track_ids.insert(identity, (base, n));
+    used.push((base, n));
+    base
+}
+
+
+#[cfg(test)]
+mod bltrackid_collision_tmp {
+    use super::*;
+
+    #[test]
+    fn two_same_identity_lanes_get_unique_bases() {
+        let mut track_ids: BTreeMap<TrackIdentity, (u32, u32)> = BTreeMap::new();
+        let mut next = 1u32;
+        let mut used = Vec::new();
+        let id = TrackIdentity {
+            kind: SetClass::Audio,
+            set_id: None,
+            group: None,
+            lang: Some("en".to_string()),
+            roles: Vec::new(),
+        };
+        let a = allocate_track_base(&mut track_ids, &mut next, &mut used, id.clone(), 1);
+        let b = allocate_track_base(&mut track_ids, &mut next, &mut used, id, 1);
+        assert_ne!(a, b, "duplicate base for two lanes with equal identity");
+    }
+}
+
+#[cfg(test)]
+mod bltrackid_range_tmp {
+    use super::*;
+
+    #[test]
+    fn growing_identity_does_not_overlap_neighbor() {
+        let mut track_ids: BTreeMap<TrackIdentity, (u32, u32)> = BTreeMap::new();
+        let mut next = 1u32;
+        let mut used = Vec::new();
+        let a = TrackIdentity {
+            kind: SetClass::Video,
+            set_id: None,
+            group: None,
+            lang: None,
+            roles: Vec::new(),
+        };
+        let b = TrackIdentity {
+            kind: SetClass::Audio,
+            set_id: None,
+            group: None,
+            lang: Some("en".to_string()),
+            roles: Vec::new(),
+        };
+        // Period 1: A has 1 track.
+        let a1 = allocate_track_base(&mut track_ids, &mut next, &mut used, a.clone(), 1);
+        // B allocated in between.
+        let b1 = allocate_track_base(&mut track_ids, &mut next, &mut used, b.clone(), 1);
+        // Period 2: A needs 2 tracks; used reset for the new Period.
+        let mut used2 = Vec::new();
+        let a2 = allocate_track_base(&mut track_ids, &mut next, &mut used2, a.clone(), 2);
+        // All allocated ids unique.
+        let mut ids = std::collections::BTreeSet::new();
+        ids.insert(a1);
+        ids.insert(b1);
+        ids.insert(a2);
+        ids.insert(a2 + 1);
+        assert_eq!(ids.len(), 4, "range overlap or duplicate ids");
     }
 }
