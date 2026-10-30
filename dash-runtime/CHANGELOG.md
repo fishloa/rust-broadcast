@@ -5,7 +5,7 @@ All notable changes to dash-runtime will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- `TrackId` assignment is now stable across Periods: ids are keyed by (media kind, AdaptationSet identity: id/group/lang/role) and allocated on first encounter, so a track that continues keeps its id and a Period that drops a kind does not hand that kind's id to a different kind in a later Period (previously ids restarted at 1 each Period). Visible numeric ids for multi-Period presentations can therefore differ from the previous per-Period numbering; consumers must key state by `TrackId` as announced in `Output::Tracks`, not by position. BREAKING for callers that hard-coded per-Period ids.
+- `TrackId` assignment is now stable across Periods: ids are keyed by (media kind, AdaptationSet identity: id/group/lang/role) and allocated on first encounter, so a track that continues keeps its id and a Period that drops a kind does not hand that kind's id to a different kind in a later Period (previously ids restarted at 1 each Period). Visible numeric ids for multi-Period presentations can therefore differ from the previous per-Period numbering; consumers must key state by `TrackId` as announced in `Output::Tracks`, not by position. BREAKING for callers that hard-coded per-Period ids. Only the current and previous Period's identities are remembered (`StateSize::track_identities`), so a long live presentation that renumbers AdaptationSet `@id` does not grow state; ids are never recycled, and an identity absent for two Periods gets a fresh id when it returns.
 
 ### Added
 - Initial core (design step W-c, `docs/dash-runtime/DESIGN.md`), not yet published.
