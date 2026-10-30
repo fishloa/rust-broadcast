@@ -1642,7 +1642,6 @@ impl DashClient {
             })
     }
 
-
     fn start_period(&mut self, pi: usize) {
         self.periods[pi].started = true;
         let mut assignments: Vec<(usize, u32, u32)> = Vec::new();
@@ -2133,7 +2132,6 @@ fn allocate_track_base(
     used.push((base, n));
     base
 }
-
 
 #[cfg(test)]
 mod bltrackid_collision_tmp {
