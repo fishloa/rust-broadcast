@@ -380,6 +380,13 @@ impl Session {
             self.now_us = now_us;
             r.on_data(conn, bytes, now_us, &mut self.auth);
             self.flush_rtsp();
+            if !bytes.is_empty() {
+                self.buffer.on_chunk(now_us, bytes.len(), None);
+                let evs = self.buffer.drain();
+                for e in evs {
+                    self.events.push_back(e);
+                }
+            }
             return;
         }
         if let Some(h) = self.adaptive.as_mut() {
@@ -768,13 +775,30 @@ impl Session {
             for e in events {
                 self.screen_passthrough(e);
             }
+            let evs = self.buffer.drain();
+            for e in evs {
+                self.events.push_back(e);
+            }
         }
     }
 
-    fn screen_passthrough(&mut self, e: Event) {
-        match &e {
-            Event::Tracks(specs) => self.jump.on_tracks(specs),
-            Event::Discontinuity => self.jump.clear(),
+    fn screen_passthrough(&mut self, mut e: Event) {
+        match &mut e {
+            Event::Tracks(specs) => {
+                self.jump.on_tracks(specs);
+                self.buffer.retain_tracks(specs);
+                let specs_clone = specs.clone();
+                for spec in &specs_clone {
+                    self.buffer.on_track_added(spec);
+                }
+                let resolution = self.declaration.on_tracks(&specs_clone);
+                self.apply_rendered(resolution);
+            }
+            Event::Discontinuity => {
+                self.jump.clear();
+                self.buffer.rejoin();
+                self.buffer.hint(self.now_us, Hint::Reconnected);
+            }
             Event::Sample {
                 track,
                 sample,
@@ -784,11 +808,17 @@ impl Session {
                     self.stale_dropped = self.stale_dropped.saturating_add(1);
                     return;
                 }
-                if self.jump.is_jump(*track, sample, *join, self.now_us) {
+                let computed_join = self.buffer.join_sample(*track, sample);
+                *join = computed_join;
+                if self.jump.is_jump(*track, sample, computed_join, self.now_us) {
                     self.emit(Event::Discontinuity);
                     self.jump.begin_epoch(*track, sample);
+                    self.buffer.on_demux_discontinuity(self.now_us);
+                    let recomputed = self.buffer.join_sample(*track, sample);
+                    *join = recomputed;
                 }
                 self.jump.record(*track, sample, *join, self.now_us);
+                self.buffer.on_sample(*track, sample, *join);
             }
             _ => {}
         }
