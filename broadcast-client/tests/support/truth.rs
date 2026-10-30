@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use transmux::{CodecConfig, Media};
 
 const NAL_LENGTH_BYTES: usize = 4;
@@ -19,6 +17,8 @@ impl GroundTruth {
         self.audio_median - self.video_median
     }
 }
+
+type Keyed = Vec<(Vec<u8>, f64)>;
 
 #[derive(Default)]
 pub struct Truth {
@@ -112,8 +112,8 @@ impl Truth {
     }
 
     pub fn measure<'a>(&self, samples: impl Iterator<Item = (bool, &'a [u8], f64)>) -> GroundTruth {
-        let (mut audio, mut video): (Vec<(Vec<u8>, f64)>, Vec<(Vec<u8>, f64)>) =
-            (Vec::new(), Vec::new());
+        let mut audio: Keyed = Vec::new();
+        let mut video: Keyed = Vec::new();
         for (is_video, data, pts) in samples {
             if is_video {
                 video.push((video_key(data), pts));

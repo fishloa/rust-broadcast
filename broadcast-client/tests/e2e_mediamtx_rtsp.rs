@@ -700,12 +700,6 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         "video wire order reorder expectation for {label}"
     );
     let ground = truth.measure(emitted_data.iter().map(|(v, d, p)| (*v, d.as_slice(), *p)));
-    let mkv_ground = mkv_truth.measure(emitted_data.iter().map(|(v, d, p)| (*v, d.as_slice(), *p)));
-    eprintln!(
-        "GROUNDTRUTH_MKV[{label}] offset={:.4} (ts remux: {:.4})",
-        mkv_ground.offset(),
-        ground.offset()
-    );
     eprintln!(
         "GROUNDTRUTH[{label}] audio_median_delta={:.4} video_median_delta={:.4} offset={:.4} (matched a={} v={})",
         ground.audio_median,
