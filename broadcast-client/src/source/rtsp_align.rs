@@ -5,6 +5,13 @@
 //! (its sample times pass through unchanged); every other track gets a per-track tick offset
 //! added to its pts and dts.
 //!
+//! When the PLAY response carries an `RTP-Info` `rtptime` for every track (RFC 2326 12.33: each is
+//! the RTP timestamp of the same start instant) that mapping is the offset source
+//! ([`AvSync::RtpInfo`]) and Sender Reports no longer move it: a relay can derive its Sender
+//! Reports from packet arrival, which for reordered video differs from presentation time, and an
+//! `RTP-Info` is the server's statement about the streams' own timestamps. Without it the rules
+//! below apply.
+//!
 //! Before Sender Reports for the tracks are known the offset lines the track's first sample up
 //! with the video track's first sample ([`AvSync::Provisional`]). Once the depacketiser holds a
 //! Sender Report (RFC 3550 6.4.1, NTP time to RTP time) for both tracks the offset comes from
@@ -52,6 +59,7 @@ pub(crate) struct Aligner {
     video: Option<TrackId>,
     lanes: BTreeMap<TrackId, Lane>,
     anchor: Option<(TrackId, i64)>,
+    rtp_info: BTreeMap<TrackId, u32>,
     state: Option<AvSync>,
     held: Vec<(TrackId, Sample)>,
     sr_dirty: bool,
@@ -67,6 +75,10 @@ fn rescale(ticks: i64, from: u32, to: u32) -> i64 {
         (num - half) / den
     };
     i64::try_from(rounded).unwrap_or(if rounded < 0 { i64::MIN } else { i64::MAX })
+}
+
+fn wrapped_gap(rtptime: u32, reference: i64) -> i64 {
+    i64::from(rtptime.wrapping_sub(reference as u32) as i32)
 }
 
 fn ticks_to_us(ticks: i64, timescale: u32) -> i128 {
@@ -95,6 +107,16 @@ impl Aligner {
             video: tracks.iter().find(|t| t.1).map(|t| t.0),
             lanes,
             ..Self::default()
+        }
+    }
+
+    pub(crate) fn note_rtp_info(&mut self, times: &[(TrackId, u32)]) {
+        let complete = self
+            .lanes
+            .keys()
+            .all(|id| times.iter().any(|(t, _)| t == id));
+        if self.active && complete {
+            self.rtp_info = times.iter().copied().collect();
         }
     }
 
@@ -160,6 +182,10 @@ impl Aligner {
         let Some((anchor, anchor_first)) = self.anchor else {
             return;
         };
+        if !self.rtp_info.is_empty() {
+            self.refresh_from_rtp_info(anchor, anchor_first);
+            return;
+        }
         if !self.sr_dirty {
             return;
         }
@@ -194,6 +220,30 @@ impl Aligner {
             );
         }
         self.sr_dirty = !complete;
+    }
+
+    fn refresh_from_rtp_info(&mut self, anchor: TrackId, anchor_first: i64) {
+        let Some((&anchor_rt, anchor_scale)) = self
+            .rtp_info
+            .get(&anchor)
+            .zip(self.lanes.get(&anchor).map(|l| l.timescale))
+        else {
+            return;
+        };
+        let anchor_at_start = anchor_first.saturating_add(wrapped_gap(anchor_rt, anchor_first));
+        for (id, lane) in &mut self.lanes {
+            if *id == anchor || lane.target.is_some() {
+                continue;
+            }
+            let (Some(&rt), Some(first)) = (self.rtp_info.get(id), lane.first_pts) else {
+                continue;
+            };
+            let lane_at_start = first.saturating_add(wrapped_gap(rt, first));
+            lane.target = Some(
+                rescale(anchor_at_start, anchor_scale, lane.timescale)
+                    .saturating_sub(lane_at_start),
+            );
+        }
     }
 
     fn place(&mut self, track: TrackId, mut sample: Sample, out: &mut Vec<Out>) {
@@ -242,6 +292,15 @@ impl Aligner {
     }
 
     fn current_state(&self, anchor: TrackId) -> AvSync {
+        if !self.rtp_info.is_empty()
+            && self
+                .lanes
+                .iter()
+                .filter(|(id, _)| **id != anchor)
+                .all(|(_, l)| l.target.is_some())
+        {
+            return AvSync::RtpInfo;
+        }
         let all = self
             .lanes
             .iter()

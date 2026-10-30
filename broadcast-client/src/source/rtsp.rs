@@ -816,7 +816,26 @@ impl RtspSource {
         self.send(Req::Play)
     }
 
+    fn note_rtp_info(&mut self) {
+        let times: Vec<(TrackId, u32)> = self
+            .client
+            .take_rtp_info()
+            .into_iter()
+            .filter_map(|entry| {
+                let rtptime = entry.rtptime?;
+                let uri = Url::parse(&entry.uri).ok()?;
+                let track = self
+                    .tracks
+                    .iter()
+                    .find(|t| Url::parse(&t.setup_uri).is_ok_and(|u| u == uri))?;
+                Some((track.track_id, rtptime))
+            })
+            .collect();
+        self.aligner.note_rtp_info(&times);
+    }
+
     fn on_play_ok(&mut self, now: u64) {
+        self.note_rtp_info();
         self.phase = Phase::Playing;
         self.redirects = 0;
         self.tracks_dirty = true;
