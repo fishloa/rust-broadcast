@@ -365,6 +365,11 @@ pub(super) enum PendingPublish {
 /// [`crate::source::advance_route`] facade instead.
 pub struct ProgramSegmenter {
     cursor: SampleCursor,
+    /// Per track whose declared timescale differs from the `Trunk`'s (an
+    /// `audio_profiles` HE-AAC override moves it to the output rate): the
+    /// `(trunk, declared)` timescales its samples are re-expressed between
+    /// on their way into the segmenter.
+    timescale_moves: HashMap<TrackId, (u32, u32)>,
     segment_writer: SegmentWriter,
     seg: AnySegmenter,
     /// Cumulative nanoseconds of segment duration published so far by this
@@ -663,6 +668,7 @@ impl ProgramSegmenter {
         if tracks.is_empty() {
             return None;
         }
+        let timescale_moves = timescale_moves(trunk, &tracks);
         let segment_writer = trunk.segment_writer()?;
         // Seeded from `next_sequence_number` rather than the plain
         // `with_part_target` constructor's implicit `1`: this `Trunk` may
@@ -757,6 +763,7 @@ impl ProgramSegmenter {
             seg.record_part_cuts();
         }
         Some(ProgramSegmenter {
+            timescale_moves,
             // `subscribe_from_backlog`, not `subscribe` (issue #808): the
             // driver's own `feed` call that announced this program's
             // `NewProgram` routinely carries its first samples too (a
@@ -1015,6 +1022,7 @@ impl ProgramSegmenter {
             .iter_mut()
             .find(|f| f.source_track_id == track_id)
         {
+            let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
             follower.push(sample, &self.leader_durations);
             return;
         }
@@ -1074,6 +1082,7 @@ impl ProgramSegmenter {
                 a.last_timescale = timescale;
             }
         }
+        let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
         if let Err(e) = self.seg.push(track_id, sample) {
             tracing::warn!(error = %e, "driver-backed segmenter push failed");
         }
@@ -1167,6 +1176,7 @@ impl ProgramSegmenter {
         route_handle: &RouteHandle,
     ) {
         let new_tracks = route_handle.with_declared_audio_profiles(trunk.tracks().to_vec());
+        self.timescale_moves = timescale_moves(trunk, &new_tracks);
         tracing::info!(
             generation = trunk.track_generation(),
             track_count = new_tracks.len(),
@@ -1532,6 +1542,28 @@ impl ProgramSegmenter {
         }
         (parts_published, segments_published)
     }
+}
+
+fn in_declared_timescale(
+    moves: &HashMap<TrackId, (u32, u32)>,
+    track_id: TrackId,
+    sample: Sample,
+) -> Sample {
+    match moves.get(&track_id) {
+        Some(&(from, to)) => sample.rescale_timescale(from, to),
+        None => sample,
+    }
+}
+
+fn timescale_moves(trunk: &Trunk, declared: &[TrackSpec]) -> HashMap<TrackId, (u32, u32)> {
+    let published = trunk.tracks();
+    declared
+        .iter()
+        .filter_map(|d| {
+            let from = published.iter().find(|t| t.track_id == d.track_id)?.timescale;
+            (from != d.timescale && from > 0).then_some((d.track_id, (from, d.timescale)))
+        })
+        .collect()
 }
 
 /// Rescale a timestamp in `timescale` ticks to the trunk event ring's fixed

@@ -14,12 +14,14 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use broadcast_common::Parse;
 use broadcast_common::mux::Unpackage;
 use broadcast_hls::{MasterPlaylist, MediaPlaylist};
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
 use transmux::pipeline::{Sample, TrackSpec};
+use transmux::{MovieBox, MovieFragmentBox};
 use transmux::ts_demux::TsDemux;
 
 use multimux::config::{AudioProfile, AudioProfileOverride, AudioTrackSelector, Config};
@@ -39,6 +41,10 @@ const DECLARED_BPS: u64 = 4_000_000;
 const V1_FIXTURE: &str = "ts/heaac/heaac_v1_adts.ts";
 const V2_FIXTURE: &str = "ts/heaac/heaac_v2_adts.ts";
 const V1_ASC: [u8; 4] = [0x2B, 0x92, 0x08, 0x00];
+const OUTPUT_HZ: u32 = 44_100;
+const AAC_FRAME_OUTPUT_TICKS: u32 = 2048;
+const BOX_HEADER_LEN: usize = 8;
+const HANDLER_SOUND: [u8; 4] = *b"soun";
 const V2_ASC: [u8; 4] = [0xEB, 0x8A, 0x08, 0x00];
 
 struct Source {
@@ -415,4 +421,75 @@ async fn heaac_override_validator_reports_no_sbr_or_codecs_finding() {
         new_must.is_empty(),
         "level-1 findings the override adds over the implicit route: {new_must:?}"
     );
+}
+
+fn top_level_boxes(bytes: &[u8]) -> Vec<([u8; 4], &[u8])> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at + BOX_HEADER_LEN <= bytes.len() {
+        let size = u32::from_be_bytes(bytes[at..at + 4].try_into().expect("4 bytes")) as usize;
+        assert!(size >= BOX_HEADER_LEN && at + size <= bytes.len(), "box size");
+        let four_cc: [u8; 4] = bytes[at + 4..at + 8].try_into().expect("4 bytes");
+        out.push((four_cc, &bytes[at..at + size]));
+        at += size;
+    }
+    out
+}
+
+#[tokio::test]
+async fn heaac_route_init_mdhd_uses_output_rate() {
+    let app = route_app(V1_FIXTURE, declared(AudioProfile::HeAac));
+    let init = init_bytes(&app).await;
+    let moov_bytes = top_level_boxes(&init)
+        .into_iter()
+        .find(|(cc, _)| cc == b"moov")
+        .expect("moov")
+        .1;
+    let moov = MovieBox::parse(moov_bytes).expect("moov parses");
+    let audio = moov
+        .tracks
+        .iter()
+        .find(|t| {
+            t.mdia
+                .as_ref()
+                .and_then(|m| m.hdlr.as_ref())
+                .is_some_and(|h| h.handler_type == HANDLER_SOUND)
+        })
+        .expect("audio trak");
+    let mdhd = audio
+        .mdia
+        .as_ref()
+        .and_then(|m| m.mdhd.as_ref())
+        .expect("mdhd");
+    assert_eq!(mdhd.timescale, OUTPUT_HZ);
+    let audio_id = audio.tkhd.track_id;
+
+    let text = String::from_utf8(ok(&app, "media.m3u8").await).expect("utf8");
+    let playlist = MediaPlaylist::parse(&text).expect("media playlist parses");
+    let segment = ok(&app, &playlist.segments[0].uri).await;
+    let trex_default = moov
+        .mvex
+        .as_ref()
+        .and_then(|m| m.trex.iter().find(|t| t.track_id == audio_id))
+        .map(|t| t.default_sample_duration);
+    let mut audio_samples = 0usize;
+    for (_, moof_bytes) in top_level_boxes(&segment)
+        .into_iter()
+        .filter(|(cc, _)| cc == b"moof")
+    {
+        let moof = MovieFragmentBox::parse_body(&moof_bytes[BOX_HEADER_LEN..]).expect("moof");
+        for traf in moof.traf.iter().filter(|t| t.tfhd.track_id == audio_id) {
+            for run in &traf.trun {
+                for sample in &run.samples {
+                    let duration = sample
+                        .sample_duration
+                        .or(traf.tfhd.default_sample_duration)
+                        .or(trex_default);
+                    assert_eq!(duration, Some(AAC_FRAME_OUTPUT_TICKS));
+                    audio_samples += 1;
+                }
+            }
+        }
+    }
+    assert!(audio_samples > 0, "first media segment carries audio samples");
 }
