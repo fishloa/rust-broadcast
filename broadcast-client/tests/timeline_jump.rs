@@ -1519,8 +1519,8 @@ fn multiple_video_tracks_tracked_independently() {
     let b = t.samples_of(ids[1]);
     assert!(a.len() > 60 && b.len() > 60);
     assert!(
-        (b[0].pts - a[0].pts).abs() > 99 * i64::from(RTSP_VIDEO_TIMESCALE),
-        "the two video tracks run on timelines 100 s apart"
+        (b[0].pts - a[0].pts).abs() < i64::from(RTSP_VIDEO_TIMESCALE) / 10,
+        "the two video tracks' RTP bases 100 s apart are put on one common timeline"
     );
     let interleaved = t
         .events

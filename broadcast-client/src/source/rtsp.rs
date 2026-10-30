@@ -964,24 +964,14 @@ impl RtspSource {
         true
     }
 
-    fn align_and_emit(&mut self, track: TrackId, sample: Sample, now: u64) {
-        let Some(depa) = self.depa.as_ref() else {
-            self.emit_sample(track, sample, now);
-            return;
-        };
-        for out in self.aligner.push(depa, track, sample) {
-            match out {
-                Out::Sample(track, sample) => self.emit_sample(track, sample, now),
-                Out::Event(event) => self.pre_sample.push(event),
-            }
-        }
-    }
-
-    fn emit_sample(&mut self, track: TrackId, sample: Sample, now: u64) {
+    fn announce_discontinuity(&mut self) {
         if self.discontinuity_pending && !self.seen_first_sample {
             self.discontinuity_pending = false;
             self.events.push_back(Event::Discontinuity);
         }
+    }
+
+    fn announce_tracks(&mut self) {
         if self.tracks_dirty {
             let mut specs = self
                 .depa
@@ -998,6 +988,26 @@ impl RtspSource {
             }
             self.tracks_dirty = false;
         }
+    }
+
+    fn align_and_emit(&mut self, track: TrackId, sample: Sample, now: u64) {
+        self.announce_discontinuity();
+        self.announce_tracks();
+        let Some(depa) = self.depa.as_ref() else {
+            self.emit_sample(track, sample, now);
+            return;
+        };
+        for out in self.aligner.push(depa, track, sample) {
+            match out {
+                Out::Sample(track, sample) => self.emit_sample(track, sample, now),
+                Out::Event(event) => self.pre_sample.push(event),
+            }
+        }
+    }
+
+    fn emit_sample(&mut self, track: TrackId, sample: Sample, now: u64) {
+        self.announce_discontinuity();
+        self.announce_tracks();
         if !self.seen_first_sample {
             self.events.push_back(Event::Status(Status::Live));
             self.seen_first_sample = true;

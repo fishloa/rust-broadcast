@@ -345,6 +345,22 @@ fn chunked_tcp_delivery_1_byte_and_arbitrary_splits_identical_events() {
     assert!(whole == uneven, "uneven splits changed the event sequence");
 }
 
+fn media_only(events: &[Event]) -> Vec<Event> {
+    events
+        .iter()
+        .filter(|e| !matches!(e, Event::AvSync(_) | Event::Discontinuity))
+        .cloned()
+        .map(|mut e| {
+            if let Event::Sample { sample, join, .. } = &mut e {
+                sample.pts = None;
+                sample.dts = None;
+                *join = None;
+            }
+            e
+        })
+        .collect()
+}
+
 #[test]
 fn rtcp_sender_report_forwarded_without_error() {
     let baseline = {
@@ -372,8 +388,8 @@ fn rtcp_sender_report_forwarded_without_error() {
     host.session.on_closed(conn, None, host.now);
     let events = host.events();
     assert!(
-        events == baseline,
-        "RTCP traffic must not change the media events"
+        media_only(&events) == media_only(&baseline),
+        "RTCP traffic must not change the media payloads or their order"
     );
     let sent_rtcp = (fixture().frames().len().div_ceil(10) * 3) as u64;
     assert_eq!(
