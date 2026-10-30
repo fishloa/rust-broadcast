@@ -51,7 +51,7 @@ pub(super) struct Refresh {
 }
 
 #[derive(Default, Clone, Copy)]
-struct Early {
+pub(super) struct Early {
     attempts: u32,
     retry_at: Option<u64>,
 }
@@ -62,7 +62,7 @@ pub(super) struct Live {
     next_resync_us: Option<u64>,
     last_forced_resync_us: Option<u64>,
     pub(super) refresh: Refresh,
-    early: BTreeMap<ResourceId, Early>,
+    pub(super) early: BTreeMap<ResourceId, Early>,
     missing_seen: BTreeSet<RepId>,
     announced_clock: Option<ClockSource>,
     wake_utc: Option<i128>,
@@ -1117,6 +1117,9 @@ impl DashClient {
     ) -> FailureClass {
         self.inflight.remove(&id);
         self.failures.remove(&id);
+        if let Some(live) = self.live.as_mut() {
+            live.early.remove(&id);
+        }
         self.mark_done(id);
         if let Some(slot) = self.slot_mut(id) {
             slot.state = SlotState::Skipped { marker: true };
@@ -1447,26 +1450,25 @@ impl DashClient {
         };
         match planned {
             Ok(p) => {
-                let rep = &mut self.periods[pi].lanes[li].reps[ri];
-                if rep.joined {
-                    let bound = p.plan.len().unwrap_or(u64::MAX / 2);
-                    rep.next_issue = match rep.last_time {
-                        Some(t) => p.plan.leading_true(bound, |s| s.time_ticks <= t),
-                        None => 0,
-                    };
+                let marker = {
+                    let rep = &mut self.periods[pi].lanes[li].reps[ri];
+                    if rep.joined {
+                        let bound = p.plan.len().unwrap_or(u64::MAX / 2);
+                        rep.next_issue = match rep.last_time {
+                            Some(t) => p.plan.leading_true(bound, |s| s.time_ticks <= t),
+                            None => 0,
+                        };
+                    }
+                    rep.plan = Some(p.plan);
+                    rep.joined && rep.next_issue == 0 && rep.last_time.is_some()
+                };
+                if marker {
+                    push_marker(&mut self.periods[pi].lanes[li]);
                 }
-                rep.plan = Some(p.plan);
             }
-            Err(e) => {
-                let rep = &mut self.periods[pi].lanes[li].reps[ri];
-                rep.dead = true;
-                let index = self.periods[pi].index;
-                self.outputs.push_back(Output::TrackDropped {
-                    period: index,
-                    set: at.set,
-                    rep: Some(at.rep),
-                    cause: DropCause::Addressing(plan_error_name(&e)),
-                });
+            Err(_) => {
+                // Keep the previous plan so a transiently bad refresh does
+                // not silence the track; the next refresh retries it.
             }
         }
     }
