@@ -69,6 +69,35 @@ impl StreamKind {
 }
 broadcast_common::impl_spec_display!(StreamKind);
 
+/// How the tracks of an RTSP session are placed on one common timeline, carried by
+/// [`Event::AvSync`].
+///
+/// Each RTSP track's RTP timestamps start at an unrelated random base (RFC 3550 5.1), so the
+/// source maps every track onto the video track's timeline (video sample times are unchanged).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AvSync {
+    /// No RTCP Sender Report mapping is available for every track yet: each non-video track is
+    /// placed so its first sample lines up with the video track's first sample, which is accurate
+    /// only to the arrival skew between those two samples.
+    Provisional,
+    /// Every track is placed from the NTP to RTP mapping of its RTCP Sender Reports (RFC 3550
+    /// 6.4.1), so the inter-track offset is the senders' own.
+    SenderReport,
+}
+
+impl AvSync {
+    /// Stable label.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Provisional => "provisional",
+            Self::SenderReport => "sender-report",
+        }
+    }
+}
+broadcast_common::impl_spec_display!(AvSync);
+
 /// Status values carried by [`Event::Status`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -589,6 +618,12 @@ pub enum Event {
         /// Half-width of the error bar, microseconds.
         uncertainty_us: u64,
     },
+    /// RTSP only: how the tracks are placed on the common timeline, see [`AvSync`]. Emitted once
+    /// per connection before the first sample is delivered (`Provisional`, or
+    /// `SenderReport` when the Sender Reports were already in), and again with `SenderReport` when
+    /// the mapping from Sender Reports takes over. It is never emitted for a single-track
+    /// presentation or for a non-RTSP source.
+    AvSync(AvSync),
     /// A condition the player should tell the user about. `fatal` means the session will not
     /// recover by itself: it has closed its connections and goes silent, so the player shows a
     /// message and does not retry. Non-fatal errors are emitted once per kind until a success
@@ -652,6 +687,7 @@ impl PartialEq for Event {
             (Self::AuthRejected { status: a }, Self::AuthRejected { status: b }) => *a == *b,
             (Self::Forbidden { status: a }, Self::Forbidden { status: b }) => *a == *b,
             (Self::Buffer(a), Self::Buffer(b)) => *a == *b,
+            (Self::AvSync(a), Self::AvSync(b)) => *a == *b,
             (Self::Variants(a), Self::Variants(b)) => *a == *b,
             (
                 Self::AudioRendition {

@@ -13,8 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release. A generic sans-IO client session for live and on-demand media: the host performs only transport I/O (HTTP requests, or a TCP connection for RTSP) and reports what happened; the session owns auth, redirects, cookies, reconnect/retry, demuxing and buffering decisions. Time is a caller-supplied monotonic `now_us`. Design: `docs/broadcast-client/DESIGN.md`.
 
+### Added
+
+- `AvSync` (`Provisional`, `SenderReport`) and `Event::AvSync`: how an RTSP session places its tracks on the common timeline, reported before the first sample and again when the Sender Report mapping takes over.
+
 ### Fixed
 
+- RTSP: tracks carry unrelated RTP clock bases (RFC 3550 5.1), so the sample pts of audio and video were on unrelated timelines and a host could not sync them. Every track's sample pts and dts are now on one common timeline, the video track's own (video times are unchanged): from the first sample of each track until RTCP Sender Reports (RFC 3550 6.4.1) are known for the tracks, then from the Sender Reports' NTP to RTP mapping. The switch never moves a track backwards (a forward step is applied at once, a backward step is slewed) and a correction above 100 ms is reported as one `Event::Discontinuity`. This replaces the buffer-only first-arrival shift, which is removed.
 - HLS segment failure counts (`seg_failures`) are cleared on every `Output::Discontinuity`, including a stream restart that reuses a media sequence number, so a still-failing MSN that an origin reuses starts counting again from zero instead of carrying over its previous failure count.
 
 - RTSP: `CodecConfig::Avc` width/height are filled from the SPS with the TS rule (`transmux::avc_sps_dimensions`, cropped output size): from `sprop-parameter-sets` at DESCRIBE, else from the first in-band SPS, which re-announces `Tracks` once with the dimensions. H.265 is not an RTSP codec here, so there is no HEVC counterpart.
