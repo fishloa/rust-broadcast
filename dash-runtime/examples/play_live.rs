@@ -2,7 +2,8 @@
 //! simulated clock, and print what a host receives: the clock the client
 //! settled on, the join, the samples and the requests it made.
 //!
-//! The "network" is `file:` URLs read with `std::fs`; a segment answers `404`
+//! The "network" is a synthetic `http://fixtures.invalid/` origin backed by the
+//! MPD's directory and read with `std::fs`; a segment answers `404`
 //! until the instant the MPD says it exists, computed here from the plan. The
 //! clock is the simulation's: `--skew-ms` is how far the host's wall clock is
 //! from true time (the client is told with `set_wall_clock`), `--seconds`
@@ -17,7 +18,7 @@
 //! ```
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use dash_runtime::address::{PlanOptions, plan_representation};
 use dash_runtime::client::{
@@ -25,6 +26,7 @@ use dash_runtime::client::{
 };
 use dash_runtime::mpd::Mpd;
 use dash_runtime::selection::RepRef;
+use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use url::Url;
 
 const DEFAULT_MPD: &str = "../fixtures/dash/live-number/live.mpd";
@@ -32,6 +34,25 @@ const DEFAULT_SECONDS: u64 = 3;
 const START_AFTER_PUBLISH_US: i64 = 300_000;
 const MICROS: u64 = 1_000_000;
 const RTT_US: u64 = 40_000;
+const ORIGIN: &str = "http://fixtures.invalid";
+
+fn origin_path(root: &Path, url: &str) -> Option<PathBuf> {
+    let url = Url::parse(url).ok()?;
+    if url.scheme() != "http" || url.host_str() != Some("fixtures.invalid") {
+        return None;
+    }
+    let mut path = root.to_path_buf();
+    for segment in url.path_segments()? {
+        let segment = percent_decode_str(segment).decode_utf8().ok()?;
+        if segment.is_empty() || segment == "." || segment == ".." || segment.contains(['/', '\\'])
+        {
+            return None;
+        }
+        path.push(&*segment);
+    }
+    Some(path)
+}
+
 const MAX_STEPS: usize = 200_000;
 
 struct Args {
@@ -74,11 +95,8 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-fn read(url: &str) -> Result<Vec<u8>, Failure> {
-    let path = Url::parse(url)
-        .ok()
-        .and_then(|u| u.to_file_path().ok())
-        .ok_or(Failure::Status(404))?;
+fn read(root: &Path, url: &str) -> Result<Vec<u8>, Failure> {
+    let path = origin_path(root, url).ok_or(Failure::Status(404))?;
     std::fs::read(path).map_err(|_| Failure::Status(404))
 }
 
@@ -110,7 +128,18 @@ fn availability(mpd: &Mpd, base: &Url) -> BTreeMap<String, i64> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
     let path = std::fs::canonicalize(&args.mpd)?;
-    let url = Url::from_file_path(&path).map_err(|()| "MPD path is not absolute")?;
+    let root = path
+        .parent()
+        .ok_or("MPD path has no directory")?
+        .to_path_buf();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("MPD file name is not UTF-8")?;
+    let url = Url::parse(&format!(
+        "{ORIGIN}/{}",
+        utf8_percent_encode(name, NON_ALPHANUMERIC)
+    ))?;
     let mpd = Mpd::parse(&std::fs::read(&path)?)?;
     let publish = mpd.publish_time_us.ok_or("the MPD has no publishTime")?;
     let avail = availability(&mpd, &url);
@@ -174,7 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let body = if too_early {
             Err(Failure::Status(404))
         } else {
-            read(action.url())
+            read(&root, action.url())
         };
         match (action.id(), body) {
             (None, Ok(b)) => {

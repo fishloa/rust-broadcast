@@ -162,25 +162,37 @@ pub(crate) async fn read_body_bounded(
 /// redirect must never silently move an authenticated fetch onto cleartext.
 /// (Same-host-or-allowlist enforcement is left to the operator's proxy; the
 /// downgrade refusal is the load-bearing, cheap half.)
-pub(crate) fn redirect_policy() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
-        let prev_scheme = attempt
-            .previous()
-            .last()
-            .map(reqwest::Url::scheme)
-            .unwrap_or("");
+pub(crate) fn redirect_policy(allow_cross_origin: bool) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt| {
+        let prev = attempt.previous().last();
+        let prev_scheme = prev.map(reqwest::Url::scheme).unwrap_or("");
+        let prev_authority = prev.map(authority_key).unwrap_or_default();
+        let next_scheme = attempt.url().scheme();
+        let next_authority = authority_key(attempt.url());
         match redirect_decision(
             attempt.previous().len(),
             prev_scheme,
-            attempt.url().scheme(),
+            &prev_authority,
+            next_scheme,
+            &next_authority,
+            allow_cross_origin,
         ) {
             RedirectDecision::Follow => attempt.follow(),
             RedirectDecision::TooMany => attempt.error("too many redirects"),
             RedirectDecision::Downgrade => {
                 attempt.error("refusing an https -> http redirect downgrade")
             }
+            RedirectDecision::CrossOrigin => attempt.error("refusing a cross-origin redirect"),
         }
     })
+}
+
+fn authority_key(url: &reqwest::Url) -> String {
+    format!(
+        "{}:{}",
+        url.host_str().unwrap_or(""),
+        url.port_or_known_default().unwrap_or(0)
+    )
 }
 
 /// The pure redirect decision, extracted so it can be tested without a real
@@ -190,6 +202,7 @@ enum RedirectDecision {
     Follow,
     TooMany,
     Downgrade,
+    CrossOrigin,
 }
 
 /// Decide whether to follow a redirect: refuse past [`MAX_REDIRECT_HOPS`] and
@@ -198,13 +211,19 @@ enum RedirectDecision {
 fn redirect_decision(
     previous_len: usize,
     prev_scheme: &str,
+    prev_authority: &str,
     next_scheme: &str,
+    next_authority: &str,
+    allow_cross_origin: bool,
 ) -> RedirectDecision {
     if previous_len >= MAX_REDIRECT_HOPS {
         return RedirectDecision::TooMany;
     }
     if prev_scheme == "https" && next_scheme != "https" {
         return RedirectDecision::Downgrade;
+    }
+    if !allow_cross_origin && (prev_scheme != next_scheme || prev_authority != next_authority) {
+        return RedirectDecision::CrossOrigin;
     }
     RedirectDecision::Follow
 }
@@ -222,21 +241,21 @@ mod redirect_tests {
     fn redirect_decision_refuses_hops_and_downgrade() {
         use super::{MAX_REDIRECT_HOPS, RedirectDecision, redirect_decision};
         assert_eq!(
-            redirect_decision(0, "https", "https"),
+            redirect_decision(0, "https", "h", "https", "h", true),
             RedirectDecision::Follow
         );
         assert_eq!(
-            redirect_decision(0, "http", "http"),
+            redirect_decision(0, "http", "h", "http", "h", true),
             RedirectDecision::Follow
         );
         // https -> http (and any non-https target) is refused.
         assert_eq!(
-            redirect_decision(0, "https", "http"),
+            redirect_decision(0, "https", "h", "http", "h", true),
             RedirectDecision::Downgrade
         );
         // Too many hops.
         assert_eq!(
-            redirect_decision(MAX_REDIRECT_HOPS, "https", "https"),
+            redirect_decision(MAX_REDIRECT_HOPS, "https", "h", "https", "h", true),
             RedirectDecision::TooMany
         );
     }
@@ -244,6 +263,92 @@ mod redirect_tests {
     /// W16: the pull-source HTTP client follows at most 3 redirects and
     /// refuses an https→http downgrade — both exercised against a real
     /// loopback server.
+    #[test]
+    fn redirect_decision_pins_scheme_host_and_port_when_cross_origin_is_off() {
+        use super::{MAX_REDIRECT_HOPS, RedirectDecision, redirect_decision};
+        let d = |ps, pa, ns, na, allow| redirect_decision(0, ps, pa, ns, na, allow);
+        assert_eq!(
+            d("http", "a:80", "http", "a:80", false),
+            RedirectDecision::Follow
+        );
+        assert_eq!(
+            d("http", "a:80", "http", "b:80", false),
+            RedirectDecision::CrossOrigin
+        );
+        assert_eq!(
+            d("http", "a:80", "http", "a:81", false),
+            RedirectDecision::CrossOrigin
+        );
+        assert_eq!(
+            d("http", "a:80", "https", "a:443", false),
+            RedirectDecision::CrossOrigin
+        );
+        assert_eq!(
+            d("http", "a:80", "http", "b:80", true),
+            RedirectDecision::Follow
+        );
+        assert_eq!(
+            d("http", "a:80", "http", "a:81", true),
+            RedirectDecision::Follow
+        );
+        for allow in [true, false] {
+            assert_eq!(
+                d("https", "a:443", "http", "a:443", allow),
+                RedirectDecision::Downgrade
+            );
+            assert_eq!(
+                redirect_decision(MAX_REDIRECT_HOPS, "http", "a:80", "http", "a:80", allow),
+                RedirectDecision::TooMany
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn redirect_policy_follows_same_origin_and_refuses_cross_origin_when_pinned() {
+        use axum::Router;
+        use axum::response::Redirect;
+        use axum::routing::get;
+
+        async fn spawn(app: Router) -> std::net::SocketAddr {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            addr
+        }
+        let other = spawn(Router::new().route("/final", get(|| async { "other" }))).await;
+        let cross = format!("http://{other}/final");
+        let app = Router::new()
+            .route("/final", get(|| async { "home" }))
+            .route("/same", get(|| async { Redirect::to("/final") }))
+            .route(
+                "/cross",
+                get(move || {
+                    let cross = cross.clone();
+                    async move { Redirect::to(&cross) }
+                }),
+            );
+        let home = spawn(app).await;
+        for (allow, path, body) in [
+            (false, "same", Some("home")),
+            (false, "cross", None),
+            (true, "same", Some("home")),
+            (true, "cross", Some("other")),
+        ] {
+            let client = reqwest::Client::builder()
+                .redirect(redirect_policy(allow))
+                .build()
+                .unwrap();
+            let got = client.get(format!("http://{home}/{path}")).send().await;
+            match (body, got) {
+                (Some(want), Ok(r)) => assert_eq!(r.text().await.unwrap(), want, "{allow} {path}"),
+                (None, Err(e)) => assert!(e.is_redirect(), "{allow} {path}: {e}"),
+                (want, got) => panic!("{allow} {path}: {want:?} vs {got:?}"),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn redirect_policy_limits_hops_and_refuses_downgrade() {
         use axum::Router;
@@ -261,7 +366,7 @@ mod redirect_tests {
             axum::serve(listener, app).await.unwrap();
         });
         let client = reqwest::Client::builder()
-            .redirect(redirect_policy())
+            .redirect(redirect_policy(true))
             .build()
             .unwrap();
         let err = client

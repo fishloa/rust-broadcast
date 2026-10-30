@@ -1039,7 +1039,7 @@ fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<Scop
     let clean_url = strip_userinfo(&parsed)?;
     let credentials = scope_credentials(credentials, &clean_url);
     let http = HttpClient::builder()
-        .redirect(crate::source::redirect_policy())
+        .redirect(crate::source::redirect_policy(true))
         .build()
         .map_err(|e| MultimuxError::Connect {
             reason: format!("reqwest client: {e}"),
