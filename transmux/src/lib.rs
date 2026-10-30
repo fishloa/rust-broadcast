@@ -358,8 +358,8 @@ pub use mpegh::{
 };
 pub use nal::{
     NalCodec, access_unit_is_idr, access_unit_is_keyframe, access_unit_is_rap,
-    avc_access_unit_dimensions, avc_sps_dimensions, caption_cc_data, is_idr_nal, is_keyframe_nal,
-    nal_unit_type, recovery_point_sei,
+    avc_access_unit_dimensions, avc_access_unit_parameter_sets, avc_sps_dimensions,
+    caption_cc_data, is_idr_nal, is_keyframe_nal, nal_unit_type, recovery_point_sei,
 };
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};

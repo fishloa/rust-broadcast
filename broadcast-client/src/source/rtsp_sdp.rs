@@ -79,7 +79,7 @@ pub(crate) fn parse_tracks(
             skip(&mut skipped);
             continue;
         }
-        let Some((kind, config, clock_rate)) = supported(media) else {
+        let Some((kind, config, clock_rate, _ready)) = supported(media) else {
             skip(&mut skipped);
             continue;
         };
@@ -155,7 +155,7 @@ fn attribute_of_payload<'a>(media: &'a Media, name: &str, payload_type: &str) ->
         .find(|value| value.split_whitespace().next() == Some(payload_type))
 }
 
-fn supported(media: &Media) -> Option<(RtpMediaKind, CodecConfig, u32)> {
+fn supported(media: &Media) -> Option<(RtpMediaKind, CodecConfig, u32, bool)> {
     media
         .fmt
         .split_whitespace()
@@ -165,7 +165,7 @@ fn supported(media: &Media) -> Option<(RtpMediaKind, CodecConfig, u32)> {
 fn supported_payload(
     media: &Media,
     payload_type: &str,
-) -> Option<(RtpMediaKind, CodecConfig, u32)> {
+) -> Option<(RtpMediaKind, CodecConfig, u32, bool)> {
     let fmtp = attribute_of_payload(media, "fmtp", payload_type)?;
     let rtpmap = attribute_of_payload(media, "rtpmap", payload_type);
     let clock_rate = rtpmap
@@ -178,27 +178,62 @@ fn supported_payload(
     };
     match media.media.as_str() {
         MEDIA_VIDEO if encoding_is(ENCODING_H264) => {
-            let avc = avc_config_from_fmtp(fmtp).ok()?;
-            let (width, height) = avc
-                .config
-                .sps
-                .first()
-                .and_then(|sps| transmux::avc_sps_dimensions(&sps.0))
-                .unwrap_or((UNKNOWN_DIMENSION, UNKNOWN_DIMENSION));
-            Some((
-                RtpMediaKind::H264,
-                CodecConfig::Avc {
-                    config: avc,
-                    width,
-                    height,
-                },
-                clock_rate,
-            ))
+            if let Ok(avc) = avc_config_from_fmtp(fmtp) {
+                let (width, height) = avc
+                    .config
+                    .sps
+                    .first()
+                    .and_then(|sps| transmux::avc_sps_dimensions(&sps.0))
+                    .unwrap_or((UNKNOWN_DIMENSION, UNKNOWN_DIMENSION));
+                Some((
+                    RtpMediaKind::H264,
+                    CodecConfig::Avc {
+                        config: avc,
+                        width,
+                        height,
+                    },
+                    clock_rate,
+                    true,
+                ))
+            } else if transmux::fmtp_param(fmtp, "sprop-parameter-sets").is_none() {
+                // RFC 6184 permits the parameter sets to be carried in-band, so
+                // an SDP that omits `sprop-parameter-sets` is still playable:
+                // accept the track with an empty (not-yet-known) avcC and fill
+                // it in from the first in-band SPS+PPS. The track is not
+                // announced until that happens (see the RTSP source).
+                Some((
+                    RtpMediaKind::H264,
+                    CodecConfig::Avc {
+                        config: transmux::AVCConfigurationBox::new(
+                            transmux::AVCDecoderConfigurationRecord {
+                                configuration_version: 1,
+                                profile_indication: 0,
+                                profile_compatibility: 0,
+                                level_indication: 0,
+                                length_size_minus_one: 3,
+                                sps: Vec::new(),
+                                pps: Vec::new(),
+                                chroma_format: None,
+                                bit_depth_luma_minus8: None,
+                                bit_depth_chroma_minus8: None,
+                                sps_ext: Vec::new(),
+                            },
+                        ),
+                        width: UNKNOWN_DIMENSION,
+                        height: UNKNOWN_DIMENSION,
+                    },
+                    clock_rate,
+                    false,
+                ))
+            } else {
+                None
+            }
         }
         MEDIA_AUDIO if encoding_is(ENCODING_AAC) => Some((
             RtpMediaKind::Aac,
             aac_config_from_fmtp(fmtp).ok()?,
             clock_rate,
+            true,
         )),
         _ => None,
     }

@@ -857,6 +857,9 @@ impl RtspSource {
         }
         let produced = !samples.is_empty();
         for sample in samples {
+            if !self.try_complete_avc_config(track, &sample) {
+                continue;
+            }
             self.maybe_update_avc_dims(track, &sample);
             self.emit_sample(track, sample, now);
         }
@@ -893,18 +896,72 @@ impl RtspSource {
         }
     }
 
+    fn try_complete_avc_config(&mut self, track: TrackId, sample: &Sample) -> bool {
+        let ready = {
+            let Some(track_init) = self.tracks.iter().find(|t| t.track_id == track) else {
+                return true;
+            };
+            match &track_init.config {
+                CodecConfig::Avc { config, .. } => !config.config.sps.is_empty(),
+                _ => true,
+            }
+        };
+        if ready {
+            return true;
+        }
+        let (sps, pps) = transmux::avc_access_unit_parameter_sets(&sample.data);
+        if sps.is_empty() || pps.is_empty() {
+            return false;
+        }
+        let Ok(avc) = transmux::avc_config_from_sps_pps(sps, pps) else {
+            return false;
+        };
+        let (width, height) = avc
+            .config
+            .sps
+            .first()
+            .and_then(|s| transmux::avc_sps_dimensions(&s.0))
+            .unwrap_or((0, 0));
+        let Some(track_init) = self.tracks.iter_mut().find(|t| t.track_id == track) else {
+            return false;
+        };
+        if let CodecConfig::Avc {
+            config,
+            width: w,
+            height: h,
+        } = &mut track_init.config
+        {
+            *config = avc;
+            *w = width;
+            *h = height;
+        }
+        let config = track_init.config.clone();
+        if let Some(depa) = &mut self.depa {
+            depa.set_track_config(track, config);
+        }
+        self.tracks_dirty = true;
+        true
+    }
+
     fn emit_sample(&mut self, track: TrackId, sample: Sample, now: u64) {
         if self.discontinuity_pending && !self.seen_first_sample {
             self.discontinuity_pending = false;
             self.events.push_back(Event::Discontinuity);
         }
         if self.tracks_dirty {
-            let specs = self
+            let mut specs = self
                 .depa
                 .as_ref()
                 .map(RtpStreamDepacketiser::track_specs)
                 .unwrap_or_default();
-            self.events.push_back(Event::Tracks(specs));
+            // Hardware decoders reject an empty avcC.
+            specs.retain(|spec| match &spec.config {
+                CodecConfig::Avc { config, .. } => !config.config.sps.is_empty(),
+                _ => true,
+            });
+            if !specs.is_empty() {
+                self.events.push_back(Event::Tracks(specs));
+            }
             self.tracks_dirty = false;
         }
         if !self.seen_first_sample {
