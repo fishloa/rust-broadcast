@@ -1476,6 +1476,12 @@ pub struct Route {
     /// measurable segment exists. Must be `> 0` and `<= u32::MAX` when set.
     #[serde(default)]
     pub declared_bandwidth_bps: Option<u64>,
+    /// Audio renditions advertised in this route's HLS master playlist
+    /// (issue #1428 slice 1). Empty by default (no audio rendition lines).
+    /// Staged rollout/testing only: the audio playlist URIs 404 until the
+    /// split-mux slices land.
+    #[serde(default)]
+    pub audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
     /// DVR durable segment archive (issue #746). Off by default — set
     /// `"enabled": true` and configure an `archive_root` and at least one
     /// retention limit to enable recording.
@@ -2980,6 +2986,7 @@ mod tests {
                     ts_hls_cut: Default::default(),
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
+                    audio_renditions: Vec::new(),
                 }],
                 request_timeout_secs: bad,
                 ..Config::default()
@@ -3002,6 +3009,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             max_concurrent_requests: 0,
             ..Config::default()
@@ -3023,6 +3031,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             max_request_body_bytes: 0,
             ..Config::default()
@@ -3068,6 +3077,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3101,6 +3111,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3146,6 +3157,7 @@ mod tests {
                     ts_hls_cut: Default::default(),
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
+                    audio_renditions: Vec::new(),
                 }],
                 ..Config::default()
             }
@@ -3219,6 +3231,7 @@ mod tests {
                     ts_hls_cut: Default::default(),
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
+                    audio_renditions: Vec::new(),
                 }],
                 ..Config::default()
             };
@@ -3822,6 +3835,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3844,6 +3858,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3869,6 +3884,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3939,6 +3955,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3959,6 +3976,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3979,6 +3997,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4000,6 +4019,7 @@ mod tests {
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         };
         let debug = format!("{ts_http:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4020,6 +4040,7 @@ mod tests {
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         };
         let debug = format!("{hls_pull:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4044,6 +4065,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4065,6 +4087,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4087,6 +4110,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4109,6 +4133,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4131,6 +4156,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4155,6 +4181,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4176,6 +4203,7 @@ mod tests {
                     ts_hls_cut: Default::default(),
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
+                    audio_renditions: Vec::new(),
                 },
                 Route {
                     name: "x".into(),
@@ -4188,6 +4216,7 @@ mod tests {
                     ts_hls_cut: Default::default(),
                     ts_hls_idr_fallback: Default::default(),
                     declared_bandwidth_bps: None,
+                    audio_renditions: Vec::new(),
                 },
             ],
             ..Config::default()
@@ -4250,6 +4279,7 @@ mod tests {
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4277,6 +4307,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4309,6 +4340,7 @@ mod tests {
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains(&long_sdp), "debug: {debug}");
@@ -4333,6 +4365,7 @@ mod tests {
                 ts_hls_cut: Default::default(),
                 ts_hls_idr_fallback: Default::default(),
                 declared_bandwidth_bps: None,
+                audio_renditions: Vec::new(),
             }],
             ..Config::default()
         }

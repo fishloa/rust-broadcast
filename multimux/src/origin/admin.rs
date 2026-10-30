@@ -369,7 +369,8 @@ impl RouteRegistry {
             // the admin-API (`POST /admin/routes`/reload) equivalent.
             .with_dvr(route.dvr.clone())
             .with_program_date_time(self.ctx.base_config.program_date_time)
-            .with_declared_bandwidth_bps(route.declared_bandwidth_bps),
+            .with_declared_bandwidth_bps(route.declared_bandwidth_bps)
+            .with_audio_renditions(route.audio_renditions.clone()),
         );
         let route_cancel = tokio_util::sync::CancellationToken::new();
         // Spawn the FALLIBLE ingest task first (audit run 7, A2): it is the
@@ -1237,6 +1238,7 @@ mod tests {
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         }
     }
 
@@ -1301,6 +1303,7 @@ mod tests {
             ts_hls_cut: Default::default(),
             ts_hls_idr_fallback: Default::default(),
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
         };
         let err = registry
             .add_route(bad)

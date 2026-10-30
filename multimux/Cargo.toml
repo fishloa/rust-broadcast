@@ -47,7 +47,7 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.6", features = ["t
 # `HlsOrigin::closed_segments()`, which do not exist in the published
 # 0.5.0 (verified: 0 hits at the hls-runtime-v0.5.0 tag). hls-runtime
 # must publish 0.6.0 before multimux can publish.
-hls-runtime       = { path = "../hls-runtime",   version = "0.9", features = ["std", "tokio"] }
+hls-runtime       = { path = "../hls-runtime",   version = "0.9", features = ["std", "tokio", "serde"] }
 # DASH-pull policy core (`source::dash_pull`): MPD parsing, segment addressing
 # for every Period and selected AdaptationSet, the UTC clock ladder, live
 # refresh/join/availability and failure classification. `dash_pull` keeps the

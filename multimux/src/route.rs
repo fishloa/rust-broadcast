@@ -478,6 +478,7 @@ impl ProgramServing {
         media_sequence_offset: u64,
         program_date_time: crate::config::ProgramDateTimeSource,
         declared_bandwidth_bps: Option<u64>,
+        audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
@@ -493,6 +494,9 @@ impl ProgramServing {
         }
         if let Some(declared) = declared_bandwidth_bps {
             builder = builder.declared_bandwidth_bps(declared);
+        }
+        if !audio_renditions.is_empty() {
+            builder = builder.audio_renditions(audio_renditions);
         }
         // `build` rejects a non-finite/non-positive target duration, a zero
         // part target and an offset with no room for u32 — all reachable
@@ -893,6 +897,9 @@ pub struct RouteHandle {
     /// master playlist (see [`HlsOriginBuilder::declared_bandwidth_bps`]).
     /// `None` means none.
     declared_bandwidth_bps: Option<u64>,
+    /// Audio renditions advertised in this route's HLS master playlist
+    /// (issue #1428 slice 1).
+    audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
     /// Notifies waiters when a new program is published via
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
@@ -933,6 +940,7 @@ impl RouteHandle {
             archive_floor: 0,
             program_date_time: crate::config::ProgramDateTimeSource::Off,
             declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
         }
@@ -1073,6 +1081,17 @@ impl RouteHandle {
         self
     }
 
+    /// Sets this route's audio renditions (issue #1428 slice 1) — a consuming
+    /// builder, chained onto [`Self::new`] like [`Self::with_declared_bandwidth_bps`].
+    #[must_use]
+    pub fn with_audio_renditions(
+        mut self,
+        value: Vec<hls_runtime::server::AudioRenditionDecl>,
+    ) -> Self {
+        self.audio_renditions = value;
+        self
+    }
+
     /// This route's configured container (see [`Self::with_container`]) —
     /// needed by [`crate::source::segment::drive_program_segmenters`] to pick
     /// the fMP4 (`LlHlsSegmenter`) or classic-TS
@@ -1195,6 +1214,7 @@ impl RouteHandle {
             media_sequence_offset,
             self.program_date_time,
             self.declared_bandwidth_bps,
+            self.audio_renditions.clone(),
         ) {
             Ok(serving) => serving,
             Err(e) => {
