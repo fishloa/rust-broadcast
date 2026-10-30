@@ -125,6 +125,94 @@ fn every_non_success_final_status_closes_the_connection_once() {
     }
 }
 
+fn refused_with_body(
+    session: &mut Session,
+    status: u16,
+    headers: &[(String, String)],
+) -> (Req, Vec<Action>) {
+    let first = one(session, 0);
+    respond(session, &first, status, headers);
+    let at_response = drain(session, 0);
+    (first, at_response)
+}
+
+fn text_plain(len: usize) -> Vec<(String, String)> {
+    vec![
+        ("Content-Type".to_string(), "text/plain".to_string()),
+        ("Content-Length".to_string(), len.to_string()),
+    ]
+}
+
+#[test]
+fn a_refused_response_that_needs_no_body_closes_at_the_response() {
+    for status in [429u16, 503] {
+        let mut session = open(TS_URL, Config::default());
+        let json = vec![("Content-Type".to_string(), "application/json".to_string())];
+        let (first, actions) = refused_with_body(&mut session, status, &json);
+        assert_eq!(closes(&actions), vec![first.conn], "{status}: {actions:?}");
+
+        let mut session = open(TS_URL, Config::default());
+        let (first, actions) = refused_with_body(&mut session, status, &text_plain(0));
+        assert_eq!(
+            closes(&actions),
+            vec![first.conn],
+            "{status} empty: {actions:?}"
+        );
+    }
+}
+
+#[test]
+fn a_refused_text_plain_response_closes_once_its_body_is_complete() {
+    for status in [429u16, 503] {
+        let body = b"busy now";
+        let mut session = open(TS_URL, Config::default());
+        let (first, at_response) = refused_with_body(&mut session, status, &text_plain(body.len()));
+        assert!(closes(&at_response).is_empty(), "{status}: {at_response:?}");
+        session.on_data(first.conn, &body[..3], 1);
+        assert!(closes(&drain(&mut session, 1)).is_empty());
+        session.on_data(first.conn, &body[3..], 2);
+        let after = drain(&mut session, 2);
+        assert_eq!(closes(&after), vec![first.conn], "{status}: {after:?}");
+        session.on_closed(first.conn, None, 3);
+        assert!(
+            closes(&drain(&mut session, 3)).is_empty(),
+            "exactly one Close"
+        );
+    }
+}
+
+#[test]
+fn a_refused_text_plain_response_without_a_length_closes_when_the_host_ends_it() {
+    let mut session = open(TS_URL, Config::default());
+    let headers = vec![("Content-Type".to_string(), "text/plain".to_string())];
+    let (first, at_response) = refused_with_body(&mut session, 503, &headers);
+    assert!(closes(&at_response).is_empty());
+    session.on_data(first.conn, b"busy", 1);
+    session.on_closed(first.conn, None, 2);
+    assert!(
+        closes(&drain(&mut session, 2)).is_empty(),
+        "the host already closed it"
+    );
+}
+
+#[test]
+fn a_refused_text_plain_body_longer_than_the_cap_closes_when_the_cap_is_reached() {
+    let cap = broadcast_client::MAX_SERVER_REFUSED_REASON_BYTES;
+    let mut session = open(TS_URL, Config::default());
+    let (first, at_response) = refused_with_body(&mut session, 503, &text_plain(cap * 10));
+    assert!(closes(&at_response).is_empty());
+    session.on_data(first.conn, &vec![b'x'; cap - 1], 1);
+    assert!(closes(&drain(&mut session, 1)).is_empty());
+    session.on_data(first.conn, b"x", 2);
+    let after = drain(&mut session, 2);
+    assert_eq!(closes(&after), vec![first.conn], "{after:?}");
+    session.on_data(first.conn, &vec![b'x'; cap], 3);
+    assert!(
+        closes(&drain(&mut session, 3)).is_empty(),
+        "exactly one Close"
+    );
+}
+
 #[test]
 fn a_redirect_to_a_non_http_scheme_is_a_connect_failure_with_no_new_request() {
     let mut session = open(TS_URL, Config::default());

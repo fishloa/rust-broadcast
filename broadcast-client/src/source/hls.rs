@@ -1,7 +1,7 @@
 //! Adapter over [`hls_runtime::client::HlsClient`]: per-request connection table, bounded body
 //! accumulation, timeouts, retry backoff, and Output-to-Event mapping.
 
-use alloc::collections::{BTreeSet, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use std::collections::HashMap;
@@ -20,7 +20,7 @@ use crate::source::fetch::body::BodyAcc;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
-use crate::source::fetch::retry::{Backoff, RetryGate, retry_after_us};
+use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
 
@@ -143,6 +143,7 @@ pub(crate) struct HlsSource {
     window: Window<ResourceId>,
     gate: RetryGate,
     retry_refetch: Option<(u64, String)>,
+    refused_captures: BTreeMap<u32, RefusedCapture>,
     init_retry: bool,
     attempt: Attempts,
     established: bool,
@@ -193,6 +194,7 @@ impl HlsSource {
             window: Window::new(config.max_inflight_segments),
             gate: RetryGate::default(),
             retry_refetch: None,
+            refused_captures: BTreeMap::new(),
             init_retry: false,
             attempt: Attempts::default(),
             established: false,
@@ -215,11 +217,15 @@ impl HlsSource {
     }
 
     pub(crate) fn conns(&self) -> Vec<u32> {
-        self.reqs.keys().copied().collect()
+        self.reqs
+            .keys()
+            .chain(self.refused_captures.keys())
+            .copied()
+            .collect()
     }
 
     pub(crate) fn owns(&self, conn: u32) -> bool {
-        self.reqs.contains_key(&conn)
+        self.reqs.contains_key(&conn) || self.refused_captures.contains_key(&conn)
     }
 
     pub(crate) fn endlist_seen(&self) -> bool {
@@ -358,7 +364,7 @@ impl HlsSource {
             }
             self.reqs.insert(conn, req);
         } else {
-            self.actions.push_back(Action::Close { conn });
+            let refused = status == 429 || status == 503;
             if status == STATUS_FORBIDDEN {
                 self.events.push_back(Event::Forbidden { status });
             }
@@ -368,7 +374,19 @@ impl HlsSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            self.retry_after_us = retry_after_us(status, headers, now, wall);
+            let ra = retry_after_us(status, headers, now, wall);
+            self.retry_after_us = ra;
+            if refused {
+                let cap = RefusedCapture::new(status, ra, headers);
+                if cap.wants_body() {
+                    self.refused_captures.insert(conn, cap);
+                } else {
+                    self.events.push_back(cap.into_event());
+                    self.actions.push_back(Action::Close { conn });
+                }
+            } else {
+                self.actions.push_back(Action::Close { conn });
+            }
             self.fail_status(req, now, Some(status));
             self.retry_after_us = 0;
         }
@@ -379,6 +397,15 @@ impl HlsSource {
 
     pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
         if self.fatal {
+            return;
+        }
+        if let Some(cap) = self.refused_captures.get_mut(&conn) {
+            if cap.push(bytes)
+                && let Some(cap) = self.refused_captures.remove(&conn)
+            {
+                self.events.push_back(cap.into_event());
+                self.actions.push_back(Action::Close { conn });
+            }
             return;
         }
         let Some(req) = self.reqs.get_mut(&conn) else {
@@ -416,6 +443,9 @@ impl HlsSource {
     ) {
         if self.fatal {
             return;
+        }
+        if let Some(cap) = self.refused_captures.remove(&conn) {
+            self.events.push_back(cap.into_event());
         }
         let Some(req) = self.reqs.remove(&conn) else {
             return;
@@ -819,7 +849,15 @@ impl HlsSource {
         }
     }
 
+    fn flush_refused(&mut self) {
+        for (conn, cap) in core::mem::take(&mut self.refused_captures) {
+            self.events.push_back(cap.into_event());
+            self.actions.push_back(Action::Close { conn });
+        }
+    }
+
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
+        self.flush_refused();
         let headers = auth.request_headers(&req.url, now);
         req.authed = crate::auth::carries_credentials(&headers);
         req.started_us = now;

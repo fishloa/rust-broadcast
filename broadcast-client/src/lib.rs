@@ -30,7 +30,7 @@ pub use dash_runtime::timing::clock::ClockSource;
 pub use error::{Error, TransportError};
 pub use events::{
     AUDIO_TRACK_ID_OFFSET, Action, AvSync, BufferEvent, BufferStats, Config, ErrorKind, Event,
-    PauseReason, SourceKind, Status, StreamKind,
+    MAX_SERVER_REFUSED_REASON_BYTES, PauseReason, SourceKind, Status, StreamKind,
 };
 pub use playout::PlayoutConfig;
 pub use session::Session;

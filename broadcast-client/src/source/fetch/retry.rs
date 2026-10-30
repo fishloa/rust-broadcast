@@ -1,7 +1,11 @@
 //! Retry pacing: the backoff schedule, the server-requested `Retry-After`, and the gate that holds
 //! the request queue until a backoff has elapsed.
 
+use alloc::string::String;
 use alloc::vec::Vec;
+
+use crate::Event;
+use crate::events::MAX_SERVER_REFUSED_REASON_BYTES;
 
 use dash_runtime::timing::datetime::parse_http_date;
 
@@ -119,6 +123,120 @@ impl RetryGate {
     pub(crate) fn clear(&mut self) {
         self.until = None;
     }
+}
+
+/// Whether `content_type` names `text/plain` with a UTF-8 (or absent) charset.
+fn is_text_plain_utf8(content_type: &str) -> bool {
+    let mut parts = content_type.split(';');
+    let media = parts.next().unwrap_or("").trim();
+    if !media.eq_ignore_ascii_case("text/plain") {
+        return false;
+    }
+    for param in parts {
+        let param = param.trim();
+        if param.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = param.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("charset") {
+            let charset = value.trim().trim_matches('"').trim();
+            if !charset.eq_ignore_ascii_case("utf-8") {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// A refused (429/503) response being captured so its body can become the reason of the
+/// [`Event::ServerRefused`] emitted when the connection closes.
+#[derive(Debug)]
+pub(crate) struct RefusedCapture {
+    status: u16,
+    retry_after_us: u64,
+    content_type: Option<String>,
+    declared_len: Option<u64>,
+    received: u64,
+    body: Vec<u8>,
+}
+
+impl RefusedCapture {
+    pub(crate) fn new(status: u16, retry_after_us: u64, headers: &[(String, String)]) -> Self {
+        let content_type = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.clone());
+        Self {
+            status,
+            retry_after_us,
+            content_type,
+            declared_len: headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, v)| v.trim().parse().ok()),
+            received: 0,
+            body: Vec::new(),
+        }
+    }
+
+    /// Whether any body byte can still become the reason: a `text/plain` UTF-8 body that is not
+    /// declared empty.
+    pub(crate) fn wants_body(&self) -> bool {
+        self.declared_len != Some(0) && self.content_type.as_deref().is_some_and(is_text_plain_utf8)
+    }
+
+    /// Append body bytes; `true` once the whole body or the reason cap has been captured and the
+    /// connection can be dropped.
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> bool {
+        let room = MAX_SERVER_REFUSED_REASON_BYTES.saturating_sub(self.body.len());
+        let take = bytes.len().min(room);
+        self.body.extend_from_slice(&bytes[..take]);
+        self.received = self.received.saturating_add(bytes.len() as u64);
+        self.body.len() >= MAX_SERVER_REFUSED_REASON_BYTES
+            || self.declared_len.is_some_and(|d| self.received >= d)
+    }
+
+    pub(crate) fn into_event(self) -> Event {
+        Event::ServerRefused {
+            status: self.status,
+            retry_after_us: (self.retry_after_us > 0).then_some(self.retry_after_us),
+            reason: sanitize_refused_reason(self.content_type.as_deref(), &self.body),
+        }
+    }
+}
+
+fn sanitize_refused_reason(content_type: Option<&str>, body: &[u8]) -> Option<String> {
+    let content_type = content_type?;
+    if !is_text_plain_utf8(content_type) {
+        return None;
+    }
+    let body = match core::str::from_utf8(body) {
+        Err(e) if e.error_len().is_none() => &body[..e.valid_up_to()],
+        _ => body,
+    };
+    let text = String::from_utf8_lossy(body);
+    let mut out = String::with_capacity(text.len().min(MAX_SERVER_REFUSED_REASON_BYTES));
+    for ch in text.chars() {
+        if !ch.is_control() {
+            out.push(ch);
+        }
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let capped = if trimmed.len() <= MAX_SERVER_REFUSED_REASON_BYTES {
+        trimmed.to_string()
+    } else {
+        let mut end = MAX_SERVER_REFUSED_REASON_BYTES;
+        while end > 0 && !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        trimmed[..end].to_string()
+    };
+    Some(capped)
 }
 
 #[cfg(test)]

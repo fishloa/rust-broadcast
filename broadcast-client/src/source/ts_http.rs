@@ -11,6 +11,7 @@ use tshttp_runtime::{Config as TsConfig, TsHttpClient};
 
 use mpeg_ts::pid::Pid;
 
+use crate::source::fetch::retry::{RefusedCapture, retry_after_us};
 use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US, StreamKind};
 use crate::{Event, Status};
 
@@ -57,6 +58,7 @@ pub struct TsHttpSource {
     hold: Option<HoldState>,
     held: VecDeque<Item>,
     hold_limits: HoldLimits,
+    refused: Option<RefusedCapture>,
 }
 
 impl TsHttpSource {
@@ -82,6 +84,7 @@ impl TsHttpSource {
             hold: None,
             held: VecDeque::new(),
             hold_limits: HoldLimits::from_config(&crate::events::Config::default()),
+            refused: None,
         }
     }
 
@@ -285,8 +288,32 @@ impl TsHttpSource {
     /// Response callback.
     pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now_us: u64) {
         self.now_us = now_us;
+        let retry_after = retry_after_us(status, headers, now_us, None);
+        self.refused = (status == 429 || status == 503)
+            .then(|| RefusedCapture::new(status, retry_after, headers));
+        self.ts.set_retry_after(retry_after / 1000);
         self.ts.on_response(status, headers, now_us / 1000);
         self.drain_ts_events();
+    }
+
+    /// Body bytes of a refused response; `true` once enough was captured to drop the connection.
+    pub fn on_refused_body(&mut self, bytes: &[u8], now_us: u64) -> bool {
+        self.now_us = now_us;
+        self.refused.as_mut().is_some_and(|r| r.push(bytes))
+    }
+
+    /// Whether the refused response's body can still become the reason.
+    pub fn refused_wants_body(&self) -> bool {
+        self.refused
+            .as_ref()
+            .is_some_and(RefusedCapture::wants_body)
+    }
+
+    /// Emit the pending [`Event::ServerRefused`] with the body captured so far.
+    pub fn flush_refused(&mut self) {
+        if let Some(r) = self.refused.take() {
+            self.push(r.into_event());
+        }
     }
 
     /// Data callback.
@@ -357,6 +384,7 @@ impl TsHttpSource {
                 self.push(Event::Status(Status::Ended));
             }
             tshttp_runtime::Event::Connected => {
+                self.refused = None;
                 self.release_hold();
                 self.declared = Some(DeclaredStreams::new());
                 self.expected.clear();

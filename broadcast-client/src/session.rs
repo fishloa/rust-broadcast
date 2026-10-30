@@ -3,7 +3,7 @@
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use percent_encoding::percent_decode_str;
 use url::Url;
@@ -69,6 +69,7 @@ pub struct Session {
     next_conn: u32,
     live_conn: Option<u32>,
     known_conns: HashMap<u32, Url>,
+    refused_conns: HashSet<u32>,
     conn_auth: HashMap<u32, ConnAuth>,
     ts_wake: Option<u64>,
     actions: VecDeque<Action>,
@@ -175,6 +176,7 @@ impl Session {
             next_conn: FIRST_CONN_ID,
             live_conn: None,
             known_conns: HashMap::new(),
+            refused_conns: HashSet::new(),
             conn_auth: HashMap::new(),
             ts_wake: None,
             actions: VecDeque::new(),
@@ -371,9 +373,19 @@ impl Session {
             if self.live_conn == Some(conn) {
                 self.live_conn = None;
             }
-            self.actions.push_back(Action::Close { conn });
+            if status != 429 && status != 503 {
+                self.actions.push_back(Action::Close { conn });
+            }
         }
         self.source.on_response(status, headers, self.now_us);
+        if status == 429 || status == 503 {
+            if self.source.refused_wants_body() {
+                self.refused_conns.insert(conn);
+            } else {
+                self.source.flush_refused();
+                self.actions.push_back(Action::Close { conn });
+            }
+        }
         self.drain_source();
     }
 
@@ -401,10 +413,17 @@ impl Session {
             self.flush_adaptive();
             return;
         }
-        if !self.known_conns.contains_key(&conn) {
+        if self.refused_conns.contains(&conn) {
+            self.now_us = now_us;
+            if self.source.on_refused_body(bytes, now_us) {
+                self.refused_conns.remove(&conn);
+                self.source.flush_refused();
+                self.actions.push_back(Action::Close { conn });
+                self.drain_source();
+            }
             return;
         }
-        if self.live_conn != Some(conn) {
+        if !self.known_conns.contains_key(&conn) {
             return;
         }
         self.now_us = now_us;
@@ -435,6 +454,12 @@ impl Session {
             self.now_us = now_us;
             h.on_closed(conn, error.as_deref(), now_us, &mut self.auth);
             self.flush_adaptive();
+            return;
+        }
+        if self.refused_conns.remove(&conn) {
+            self.now_us = now_us;
+            self.source.flush_refused();
+            self.drain_source();
             return;
         }
         if !self.known_conns.contains_key(&conn) {
@@ -757,6 +782,7 @@ impl Session {
             }
         }
         let mut live: Vec<u32> = self.known_conns.keys().copied().collect();
+        live.extend(self.refused_conns.iter().copied());
         if let Some(h) = self.adaptive.as_ref() {
             live.extend(h.conns());
         }
@@ -770,6 +796,7 @@ impl Session {
             self.actions.extend(r.take_actions());
         }
         self.known_conns.clear();
+        self.refused_conns.clear();
         self.conn_auth.clear();
         self.live_conn = None;
         self.events.clear();
@@ -934,6 +961,14 @@ impl Session {
         id
     }
 
+    fn close_refused_conns(&mut self) {
+        let mut conns: Vec<u32> = self.refused_conns.drain().collect();
+        conns.sort_unstable();
+        for conn in conns {
+            self.actions.push_back(Action::Close { conn });
+        }
+    }
+
     fn fail_connect(&mut self, conn: u32) {
         self.known_conns.remove(&conn);
         self.conn_auth.remove(&conn);
@@ -1032,6 +1067,8 @@ impl Session {
         match a {
             TsAction::Open { .. } => {
                 self.redirect_count = 0;
+                self.close_refused_conns();
+                self.source.flush_refused();
                 let target = self.source.url().clone();
                 let conn = self.alloc_conn(target.clone());
                 let headers = self.auth.request_headers(&target, self.now_us);

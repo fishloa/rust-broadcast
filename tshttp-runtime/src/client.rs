@@ -71,6 +71,12 @@ impl TsHttpClient {
         self.policy.on_response(status, headers, now_ms);
     }
 
+    /// Server-requested retry delay (from a `Retry-After` header) in milliseconds, to be applied
+    /// to the next failed response. Call before [`Self::on_response`].
+    pub fn set_retry_after(&mut self, retry_after_ms: u64) {
+        self.policy.set_retry_after(retry_after_ms);
+    }
+
     /// Feed body bytes (T5, T14).
     pub fn feed(&mut self, chunk: &[u8], now_ms: u64) {
         if chunk.is_empty() || !self.policy.accepts_bytes() {
