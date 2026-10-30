@@ -102,7 +102,10 @@ fn play(sdp: &str, frames: &[Vec<u8>]) -> Run {
 #[test]
 fn rtsp_dims_come_from_sprop_parameter_sets() {
     let fixture = MediaFixture::load();
-    assert!(fixture.sdp.contains(SPROP_ATTRIBUTE), "fixture SDP lacks sprop");
+    assert!(
+        fixture.sdp.contains(SPROP_ATTRIBUTE),
+        "fixture SDP lacks sprop"
+    );
     let run = play(&fixture.sdp, &fixture.frames());
     let tracks = run.tracks();
     let first = tracks.first().expect("Tracks announced");
@@ -151,5 +154,10 @@ fn rtsp_samples_carry_positive_durations_once_a_frame_period_is_known() {
         .iter()
         .filter(|s| s.duration.unwrap_or(0) == 0)
         .count();
-    assert_eq!(zero, 0, "{zero} of {} samples have zero duration", samples.len());
+    assert_eq!(
+        zero,
+        0,
+        "{zero} of {} samples have zero duration",
+        samples.len()
+    );
 }
