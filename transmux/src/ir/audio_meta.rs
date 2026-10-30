@@ -27,7 +27,7 @@ use dvb_si::descriptors::any::{AnyDescriptor, parse_loop};
 use dvb_si::descriptors::extension::ExtensionBody;
 use dvb_si::descriptors::iso_639_language::AudioType as DvbAudioType;
 
-use super::TrackSpec;
+use super::{Track, TrackSpec};
 use crate::aac_asc::HeAacProfile;
 
 /// Language code France 2 / TF1 use for their audio-description track.
@@ -355,9 +355,16 @@ fn derive_role(languages: &[AudioLanguage], sup: Option<&SupplementaryAudio>) ->
 impl TrackSpec {
     /// This track with its AAC-LC config rewritten as explicit HE-AAC
     /// signalling ([`CodecConfig::with_explicit_he_aac`](super::CodecConfig::with_explicit_he_aac)).
-    /// The track id, timescale, PID and descriptor loop are unchanged.
+    /// The media timescale becomes the SBR output rate (twice the core rate),
+    /// as Apple's encoder writes it in `mdhd` and `mp4a`; samples already cut
+    /// against this spec must follow with [`Track::with_explicit_he_aac`] or
+    /// [`Sample::rescale_timescale`](super::Sample::rescale_timescale). The
+    /// track id, PID and descriptor loop are unchanged.
     pub fn with_explicit_he_aac(mut self, profile: HeAacProfile) -> crate::error::Result<Self> {
         self.config = self.config.with_explicit_he_aac(profile)?;
+        if let Some(output_hz) = self.config.audio_sample_rate() {
+            self.timescale = output_hz;
+        }
         Ok(self)
     }
 
@@ -367,5 +374,30 @@ impl TrackSpec {
     /// or a loop carrying none of those descriptors.
     pub fn audio_metadata(&self) -> AudioMetadata {
         AudioMetadata::from_es_info(&self.es_info_descriptors)
+    }
+}
+
+impl Track {
+    /// [`TrackSpec::with_explicit_he_aac`] applied to the track, with every
+    /// sample's `dts`/`pts`/`duration` and `start_decode_time` re-expressed
+    /// in the new media timescale so no presentation time moves.
+    pub fn with_explicit_he_aac(mut self, profile: HeAacProfile) -> crate::error::Result<Self> {
+        let from = self.spec.timescale;
+        self.spec = self.spec.with_explicit_he_aac(profile)?;
+        let to = self.spec.timescale;
+        if from != to {
+            self.samples = self
+                .samples
+                .into_iter()
+                .map(|s| s.rescale_timescale(from, to))
+                .collect();
+            self.start_decode_time = u64::try_from(super::sample::rescale_ticks(
+                i64::try_from(self.start_decode_time).unwrap_or(i64::MAX),
+                from,
+                to,
+            ))
+            .unwrap_or(u64::MAX);
+        }
+        Ok(self)
     }
 }
