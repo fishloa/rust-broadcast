@@ -3124,6 +3124,7 @@ mod tests {
                 .expect("valid placeholder TS segmenter"),
         );
         ProgramSegmenter {
+            timescale_moves: HashMap::new(),
             cursor: trunk.subscribe_from_backlog(),
             segment_writer,
             seg,
