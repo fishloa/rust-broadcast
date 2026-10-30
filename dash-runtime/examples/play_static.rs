@@ -2,8 +2,9 @@
 //! host would receive: the selection, the tracks, per-track sample counts and
 //! durations, Period changes and discontinuities.
 //!
-//! The "network" is `file:` URLs read with `std::fs` (byte ranges honoured),
-//! so the example runs against any fixture directory with no server.
+//! The "network" is a synthetic `http://fixtures.invalid/` origin backed by the
+//! MPD's directory and read with `std::fs` (byte ranges honoured), so the
+//! example runs against any fixture directory with no server.
 //!
 //! # Usage
 //!
@@ -14,14 +15,34 @@
 //! ```
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
 };
+use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use url::Url;
 
 const DEFAULT_MPD: &str = "../fixtures/dash/timeline-gpac/timeline.mpd";
+const ORIGIN: &str = "http://fixtures.invalid";
+
+fn origin_path(root: &Path, url: &str) -> Option<PathBuf> {
+    let url = Url::parse(url).ok()?;
+    if url.scheme() != "http" || url.host_str() != Some("fixtures.invalid") {
+        return None;
+    }
+    let mut path = root.to_path_buf();
+    for segment in url.path_segments()? {
+        let segment = percent_decode_str(segment).decode_utf8().ok()?;
+        if segment.is_empty() || segment == "." || segment == ".." || segment.contains(['/', '\\'])
+        {
+            return None;
+        }
+        path.push(&*segment);
+    }
+    Some(path)
+}
+
 const MAX_STEPS: usize = 100_000;
 const MICROS: f64 = 1_000_000.0;
 
@@ -56,11 +77,8 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-fn read(url: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>, Failure> {
-    let path = Url::parse(url)
-        .ok()
-        .and_then(|u| u.to_file_path().ok())
-        .ok_or(Failure::Status(404))?;
+fn read(root: &Path, url: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>, Failure> {
+    let path = origin_path(root, url).ok_or(Failure::Status(404))?;
     let bytes = std::fs::read(path).map_err(|_| Failure::Status(404))?;
     match range {
         None => Ok(bytes),
@@ -78,11 +96,19 @@ fn read(url: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>, Failure> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
     let path = std::fs::canonicalize(&args.mpd)?;
-    let url = Url::from_file_path(&path).map_err(|()| "MPD path is not absolute")?;
+    let root = path
+        .parent()
+        .ok_or("MPD path has no directory")?
+        .to_path_buf();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("MPD file name is not UTF-8")?;
+    let url = format!("{ORIGIN}/{}", utf8_percent_encode(name, NON_ALPHANUMERIC));
     let mut config = PullLimits::default();
     config.max_inflight_segments = args.window;
     config.validate()?;
-    let mut client = DashClient::new(url.as_str(), DashConfig::default(), config);
+    let mut client = DashClient::new(&url, DashConfig::default(), config);
 
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut samples: BTreeMap<u32, (usize, f64)> = BTreeMap::new();
@@ -147,11 +173,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         now += 1_000;
         let outcome: Result<(), Error> = match action.id() {
-            None => match read(action.url(), None) {
+            None => match read(&root, action.url(), None) {
                 Ok(body) => client.on_mpd(now, &body),
                 Err(_) => return Err("the MPD could not be read".into()),
             },
-            Some(id) => match read(action.url(), action.byte_range()) {
+            Some(id) => match read(&root, action.url(), action.byte_range()) {
                 Ok(body) => match id {
                     ResourceId::Init { .. } => client.on_init(now, id, &body),
                     ResourceId::Index { .. } => client.on_index(now, id, &body),

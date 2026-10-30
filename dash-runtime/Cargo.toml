@@ -26,7 +26,8 @@ jiff             = { version = "0.2", default-features = false, features = ["std
 thiserror        = "2"
 
 [dev-dependencies]
-test-fixtures = { path = "../test-fixtures" }
+test-fixtures     = { path = "../test-fixtures" }
+percent-encoding = "2"
 
 [lints]
 workspace = true

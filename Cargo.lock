@@ -1048,6 +1048,7 @@ dependencies = [
  "broadcast-common",
  "container-probe",
  "jiff",
+ "percent-encoding",
  "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
