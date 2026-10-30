@@ -682,3 +682,186 @@ fn segment_after_a_silent_leader_segment_restarts_from_its_own_decode_time() {
     assert_eq!(first_tfdt(&segs[0].bytes), 0);
     assert_eq!(first_tfdt(&segs[1].bytes), 20 * AAC_FRAME_TICKS as u64);
 }
+
+#[test]
+fn incremental_part_cuts_match_whole_segment() {
+    let ir = demux("ts/h264_aac.ts");
+    let video = ir
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video track");
+    let audio = ir
+        .tracks
+        .iter()
+        .find(|t| t.spec.config.audio_sample_rate().is_some())
+        .expect("audio track");
+    let new_segmenter = |track: &Track| {
+        LlHlsSegmenter::with_part_target(
+            vec![track.spec.clone()],
+            ir.movie_timescale,
+            SEGMENT_TARGET_SECS,
+            PART_TARGET_MS,
+        )
+        .unwrap()
+    };
+
+    let mut leader = new_segmenter(video);
+    leader.record_cuts();
+    leader.record_part_cuts();
+    for s in &video.samples {
+        leader.push(video.spec.track_id, s.clone()).unwrap();
+    }
+    leader.flush().unwrap();
+    let part_cuts = leader.take_ready_part_cuts();
+    let plans = leader.take_ready_cut_plans();
+    assert!(plans.len() >= 2, "need several leader segments");
+
+    let mut incremental = new_segmenter(audio);
+    let mut next_sample = 0;
+    let mut incremental_parts: Vec<PartInfo> = Vec::new();
+    for cut in &part_cuts {
+        while let Some(sample) = audio.samples.get(next_sample)
+            && sample
+                .dts
+                .is_some_and(|d| !opens_next(d, audio.spec.timescale, cut.start_dts, cut.timescale))
+        {
+            incremental
+                .push(audio.spec.track_id, sample.clone())
+                .unwrap();
+            next_sample += 1;
+        }
+        incremental
+            .follow_part(cut.msn, cut.part_index, cut.start_dts, cut.timescale)
+            .unwrap();
+        incremental_parts.extend(incremental.take_ready_parts());
+    }
+    let parts_before_flush = incremental_parts.len();
+    assert!(
+        parts_before_flush > 0,
+        "parts must be emitted while cuts are still arriving, not only at flush"
+    );
+    for sample in &audio.samples[next_sample..] {
+        incremental
+            .push(audio.spec.track_id, sample.clone())
+            .unwrap();
+    }
+    incremental.flush().unwrap();
+
+    let mut whole = new_segmenter(audio);
+    whole.follow(plans[0].clone()).unwrap();
+    for s in &audio.samples {
+        whole.push(audio.spec.track_id, s.clone()).unwrap();
+    }
+    for plan in &plans[1..] {
+        whole.follow(plan.clone()).unwrap();
+    }
+    whole.flush().unwrap();
+
+    let whole_parts = whole.take_ready_parts();
+    let whole_segs = whole.take_ready_segments();
+    incremental_parts.extend(incremental.take_ready_parts());
+    let incremental_segs = incremental.take_ready_segments();
+    assert_eq!(incremental_parts.len(), whole_parts.len());
+    for (a, b) in incremental_parts.iter().zip(&whole_parts) {
+        assert_eq!((a.segment_seq, a.part_index), (b.segment_seq, b.part_index));
+        assert_eq!(a.duration, b.duration);
+        assert_eq!(a.independent, b.independent);
+        assert_eq!(mdat_payload(&a.bytes), mdat_payload(&b.bytes));
+    }
+    assert_eq!(incremental_segs.len(), whole_segs.len());
+    for (a, b) in incremental_segs.iter().zip(&whole_segs) {
+        assert_eq!(a.segment_seq, b.segment_seq);
+        assert_eq!(a.part_count, b.part_count);
+        assert_eq!(a.duration, b.duration);
+        assert_eq!(mdat_payload(&a.bytes), mdat_payload(&b.bytes));
+    }
+}
+
+fn part_follower() -> LlHlsSegmenter {
+    let (audio, movie_ts) = audio_template();
+    LlHlsSegmenter::with_part_target(
+        vec![audio.spec],
+        movie_ts,
+        SEGMENT_TARGET_SECS,
+        PART_TARGET_MS,
+    )
+    .unwrap()
+}
+
+#[test]
+fn follow_part_holds_a_part_until_a_sample_reaches_the_next_boundary() {
+    let mut f = part_follower();
+    let track_id = audio_template().0.spec.track_id;
+    f.follow_part(1, 0, 0, LEADER_TS).unwrap();
+    f.follow_part(1, 1, leader_ticks(4 * 1024), LEADER_TS)
+        .unwrap();
+    for n in 0..4 {
+        f.push(track_id, frame(n)).unwrap();
+    }
+    assert!(
+        f.take_ready_parts().is_empty(),
+        "no sample starts at or after the boundary yet"
+    );
+    f.push(track_id, frame(4)).unwrap();
+    let parts = f.take_ready_parts();
+    assert_eq!(parts.len(), 1);
+    assert_eq!((parts[0].segment_seq, parts[0].part_index), (1, 0));
+    assert_eq!(mdat_payload(&parts[0].bytes), payload_of(0..4));
+}
+
+#[test]
+fn follow_part_closes_the_previous_segment_at_the_new_boundary() {
+    let mut f = part_follower();
+    let track_id = audio_template().0.spec.track_id;
+    f.follow_part(1, 0, 0, LEADER_TS).unwrap();
+    for n in 0..8 {
+        f.push(track_id, frame(n)).unwrap();
+    }
+    f.follow_part(2, 0, leader_ticks(6 * 1024), LEADER_TS)
+        .unwrap();
+    let segs = f.take_ready_segments();
+    assert_eq!(segs.len(), 1);
+    assert_eq!(segs[0].segment_seq, 1);
+    assert_eq!(segs[0].part_count, 1);
+    assert_eq!(mdat_payload(&segs[0].bytes), payload_of(0..6));
+    f.flush().unwrap();
+    let segs = f.take_ready_segments();
+    assert_eq!(mdat_payload(&segs[0].bytes), payload_of(6..8));
+}
+
+#[test]
+fn follow_part_rejects_invalid_boundaries_with_typed_errors() {
+    let mut f = part_follower();
+    assert!(matches!(
+        f.follow_part(1, 0, 0, 0),
+        Err(Error::InvalidInput(_))
+    ));
+    f.follow_part(2, 0, leader_ticks(8 * 1024), LEADER_TS)
+        .unwrap();
+    assert!(matches!(
+        f.follow_part(1, 0, leader_ticks(16 * 1024), LEADER_TS),
+        Err(Error::InvalidInput(_))
+    ));
+    assert!(matches!(
+        f.follow_part(2, 1, leader_ticks(4 * 1024), LEADER_TS),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn follow_part_buffer_overflow_is_a_typed_error() {
+    let mut f = part_follower();
+    let track_id = audio_template().0.spec.track_id;
+    f.follow_part(1, 0, 0, LEADER_TS).unwrap();
+    f.follow_part(1, 1, leader_ticks(1 << 40), LEADER_TS)
+        .unwrap();
+    let mut result = Ok(());
+    for n in 0..=MAX_PENDING_SAMPLES_PER_TRACK as i64 {
+        result = f.push(track_id, frame(n));
+        if result.is_err() {
+            break;
+        }
+    }
+    assert!(matches!(result, Err(Error::InvalidInput(_))));
+}
