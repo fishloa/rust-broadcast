@@ -66,7 +66,7 @@ mod writer;
 
 pub use cue::Cue;
 #[cfg(feature = "teletext")]
-pub use cue::TeletextCueExtractor;
+pub use cue::{OpenCue, TeletextCueExtractor};
 #[cfg(feature = "cc-data")]
 pub use cue::{Cea608CueExtractor, Cea708CueExtractor};
 pub use text::{

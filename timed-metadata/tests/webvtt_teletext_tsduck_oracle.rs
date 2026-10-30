@@ -38,7 +38,7 @@
 #![cfg(feature = "teletext")]
 
 use broadcast_common::Unpackage;
-use dvb_vbi::TeletextDataField;
+use dvb_vbi::{DataField, DataUnitPayload, TeletextDataField};
 use std::fs;
 use std::path::{Path, PathBuf};
 use timed_metadata::webvtt::TeletextCueExtractor;
@@ -54,34 +54,6 @@ fn fixtures_dir() -> PathBuf {
 /// Teletext PID declared in the fixture's PMT (`teletext_descriptor`, tag
 /// `0x56`, `teletext_type` `0x02` subtitle page, magazine 8 / page `0x88`).
 const TELETEXT_PID: u16 = 0x0101;
-
-/// Walk one PES payload's `PES_data_field` (EN 300 472 §4.3: `data_identifier`
-/// plus one or more `data_unit()`s) and return every 44-byte Teletext wire
-/// field (`data_unit_id` `0x02`/`0x03`, `data_unit_length` `0x2C`).
-fn teletext_wire_fields(pes_payload: &[u8]) -> Vec<[u8; 44]> {
-    let mut out = Vec::new();
-    let Some((&data_identifier, mut rest)) = pes_payload.split_first() else {
-        return out;
-    };
-    if !(0x10..=0x1F).contains(&data_identifier) {
-        return out;
-    }
-    while rest.len() >= 2 {
-        let unit_id = rest[0];
-        let unit_len = rest[1] as usize;
-        rest = &rest[2..];
-        if unit_len > rest.len() {
-            break;
-        }
-        if unit_len == 44 && matches!(unit_id, 0x02 | 0x03) {
-            let mut field = [0u8; 44];
-            field.copy_from_slice(&rest[..44]);
-            out.push(field);
-        }
-        rest = &rest[unit_len..];
-    }
-    out
-}
 
 /// Demux the committed real TS through `transmux::TsDemux` (independent of
 /// the hand-written frame list `webvtt_teletext_fixture.rs` uses) and decode
@@ -108,9 +80,14 @@ fn decode_via_this_crate(ts_bytes: &[u8]) -> Vec<timed_metadata::webvtt::Cue> {
             .expect("every demuxed Teletext PES sample carries a PTS")
             .max(0) as u64;
         last_pts = pts;
-        let fields: Vec<TeletextDataField> = teletext_wire_fields(&sample.data)
+        let fields: Vec<TeletextDataField> = DataField::parse(&sample.data)
+            .expect("valid Teletext PES data field")
+            .data_units
             .into_iter()
-            .map(|w| TeletextDataField::parse(&w).expect("valid 44-byte Teletext wire field"))
+            .filter_map(|u| match u.payload {
+                DataUnitPayload::Teletext(t) => Some(t),
+                _ => None,
+            })
             .collect();
         ex.push_frame(pts, &fields);
     }

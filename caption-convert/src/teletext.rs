@@ -10,8 +10,8 @@
 
 use crate::error::Error;
 use alloc::vec::Vec;
-use dvb_vbi::TeletextDataField;
-use timed_metadata::webvtt::TeletextCueExtractor;
+use dvb_vbi::{DataField, DataUnitId, DataUnitPayload, TeletextDataField};
+use timed_metadata::webvtt::{Cue, OpenCue, TeletextCueExtractor};
 
 /// Converts a single `(magazine, page)` EBU Teletext subtitle page to
 /// WebVTT/SRT.
@@ -52,6 +52,53 @@ impl TeletextToWebVtt {
             .collect::<Result<_, _>>()?;
         self.extractor.push_frame(pts_90k, &fields);
         Ok(())
+    }
+
+    /// Feed one teletext PES `data_field` (ETSI EN 301 775 §4.4.1: a
+    /// `data_identifier` then data units), parsed with [`DataField`]; every
+    /// EBU teletext data unit (subtitle and non-subtitle) is fed to the
+    /// extractor, tagged with the raw 33-bit `pts_90k`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::DvbVbi`] if the data field fails to parse.
+    pub fn push_pes_data_field(
+        &mut self,
+        pts_90k: u64,
+        pes_data_field: &[u8],
+    ) -> Result<(), Error> {
+        let field = DataField::parse(pes_data_field)?;
+        let fields: Vec<TeletextDataField> = field
+            .data_units
+            .into_iter()
+            .filter_map(|unit| match unit.payload {
+                DataUnitPayload::Teletext(t)
+                    if matches!(
+                        unit.id,
+                        DataUnitId::EbuTeletextNonSubtitle | DataUnitId::EbuTeletextSubtitle
+                    ) =>
+                {
+                    Some(t)
+                }
+                _ => None,
+            })
+            .collect();
+        self.extractor.push_frame(pts_90k, &fields);
+        Ok(())
+    }
+
+    /// Remove and return every cue whose end is already known, in start-time
+    /// order, each exactly once. Cues taken here no longer appear in
+    /// [`cues`](Self::cues), [`into_cues`](Self::into_cues),
+    /// [`into_webvtt`](Self::into_webvtt) or [`into_srt`](Self::into_srt).
+    pub fn take_closed_cues(&mut self) -> Vec<Cue> {
+        self.extractor.take_closed_cues()
+    }
+
+    /// The cue currently on screen, if any, without removing it.
+    #[must_use]
+    pub fn open_cue(&self) -> Option<OpenCue> {
+        self.extractor.open_cue()
     }
 
     converter_tail!();
