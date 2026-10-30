@@ -498,6 +498,18 @@ advertises `CODECS` with the audio codec and a `BANDWIDTH` of the video peak
 plus the group's largest audio peak; `declared_bandwidth_bps` floors the video
 part only.
 
+A route whose ADTS audio is HE-AAC declares it per track with `audio_profiles`
+(#1428): `"audio_profiles": [{"track": {"index": 0}, "audio_profile": "he-aac"}]`
+(`"he-aac-v2"` for SBR+PS; `track` takes `index` or `track_id` like
+`audio_rendition_sources`). ADTS carries only the AAC-LC core and the SBR data
+sits inside the raw data block, which is never decoded, so without the
+declaration the init's `AudioSpecificConfig` and the `CODECS` say AAC-LC
+(`mp4a.40.2`). With it they carry explicit hierarchical signalling and
+`mp4a.40.5` / `mp4a.40.29`, as Apple's HLS authoring rules require. HE-AAC v1 is reachable only through this declaration: the PMT `AAC_descriptor`
+values for v1 are also what plain AAC-LC streams must signal, so they prove
+nothing. A descriptor naming HE-AAC v2 (which always implies SBR) is honoured
+without config; the declaration wins over it.
+
 ### DVR recording
 
 A route can persist finished segments to disk for catch-up / VOD:

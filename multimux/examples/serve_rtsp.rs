@@ -74,6 +74,7 @@ async fn main() {
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
         }],
         ..Config::default()
     };

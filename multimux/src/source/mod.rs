@@ -24,6 +24,7 @@
 //! `http_auth` is shared auth glue for the HTTP-based sources (issue #663
 //! P3c).
 
+pub(crate) mod audio_profile;
 pub mod dash_pull;
 pub mod dashif_ingest;
 pub(crate) mod driver;

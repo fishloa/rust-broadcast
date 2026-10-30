@@ -659,7 +659,7 @@ impl ProgramSegmenter {
         target_duration_secs: f64,
         part_target_ms: u32,
     ) -> Option<Self> {
-        let tracks = trunk.tracks();
+        let tracks = route_handle.with_declared_audio_profiles(trunk.tracks().to_vec());
         if tracks.is_empty() {
             return None;
         }
@@ -1166,7 +1166,7 @@ impl ProgramSegmenter {
         trunk: &Trunk,
         route_handle: &RouteHandle,
     ) {
-        let new_tracks = trunk.tracks();
+        let new_tracks = route_handle.with_declared_audio_profiles(trunk.tracks().to_vec());
         tracing::info!(
             generation = trunk.track_generation(),
             track_count = new_tracks.len(),

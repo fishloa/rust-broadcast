@@ -3653,13 +3653,21 @@ fn finalize_probe(
                 )),
                 Some(SLConfigDescriptor::predefined_two()),
             ));
+            let config = CodecConfig::Aac {
+                esds,
+                channel_count,
+                sample_rate,
+                sample_size: AUDIO_SAMPLE_SIZE_BITS,
+            };
+            let config = match crate::AudioMetadata::from_es_info(descriptors).he_aac {
+                Some(profile) => config
+                    .clone()
+                    .with_explicit_he_aac(profile)
+                    .unwrap_or(config),
+                None => config,
+            };
             Some((
-                CodecConfig::Aac {
-                    esds,
-                    channel_count,
-                    sample_rate,
-                    sample_size: AUDIO_SAMPLE_SIZE_BITS,
-                },
+                config,
                 sample_rate,
                 LiveKind::Audio {
                     sample_rate,

@@ -1497,6 +1497,11 @@ pub struct Route {
     /// stream the video does not carry.
     #[serde(default)]
     pub closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
+    /// Per-track HE-AAC declarations (issue #1428): an ADTS audio track named
+    /// here gets explicit SBR / SBR+PS signalling in its fMP4 init and HLS
+    /// `CODECS`, whatever the PMT says. Empty by default: output is unchanged.
+    #[serde(default)]
+    pub audio_profiles: Vec<AudioProfileOverride>,
     /// DVR durable segment archive (issue #746). Off by default — set
     /// `"enabled": true` and configure an `archive_root` and at least one
     /// retention limit to enable recording.
@@ -1644,6 +1649,19 @@ fn is_windows_reserved_name(name: &str) -> bool {
 }
 
 impl Route {
+    fn validate_audio_profiles(&self) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        for decl in &self.audio_profiles {
+            if !seen.insert(decl.track) {
+                return Err(MultimuxError::ConfigInvalid {
+                    field: "audio_profiles",
+                    reason: format!("duplicate track selector {:?}", decl.track),
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_audio_rendition_sources(&self, playlist_name: &str) -> Result<()> {
         if self.audio_rendition_sources.is_empty() {
             return Ok(());
@@ -1697,6 +1715,7 @@ impl Route {
     /// validated before any of them touch the live registry.
     pub(crate) fn validate_standalone(&self, playlist_name: &str) -> Result<()> {
         self.validate_audio_rendition_sources(playlist_name)?;
+        self.validate_audio_profiles()?;
         if self.name.is_empty() {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.name",
@@ -2046,6 +2065,52 @@ impl AudioTrackSelector {
 }
 
 broadcast_common::impl_spec_display!(AudioTrackSelector);
+
+/// HE-AAC flavour an operator declares for one audio track of an ADTS source
+/// (issue #1428). The ADTS header states only the AAC-LC core, so transmux
+/// cannot tell HE-AAC from plain AAC-LC without decoding; this states it
+/// instead, and the track's `AudioSpecificConfig` and `CODECS` then carry
+/// explicit SBR (`mp4a.40.5`) or SBR+PS (`mp4a.40.29`) signalling, as Apple's
+/// HLS authoring rules require.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioProfile {
+    /// HE-AAC v1: AAC-LC core + SBR.
+    HeAac,
+    /// HE-AAC v2: AAC-LC core + SBR + Parametric Stereo.
+    HeAacV2,
+}
+
+impl AudioProfile {
+    /// The wire/label string (the config value).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AudioProfile::HeAac => "he-aac",
+            AudioProfile::HeAacV2 => "he-aac-v2",
+        }
+    }
+
+    pub(crate) fn he_aac(self) -> transmux::HeAacProfile {
+        match self {
+            AudioProfile::HeAac => transmux::HeAacProfile::V1,
+            AudioProfile::HeAacV2 => transmux::HeAacProfile::V2,
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(AudioProfile);
+
+/// One per-track [`AudioProfile`] declaration of a [`Route`]: `track` picks
+/// the audio track exactly as an `audio_rendition_sources` entry does. An
+/// override beats whatever the PMT `AAC_descriptor` says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub struct AudioProfileOverride {
+    /// The audio track the profile applies to.
+    pub track: AudioTrackSelector,
+    /// The declared profile.
+    pub audio_profile: AudioProfile,
+}
 
 /// multimux runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
@@ -3089,6 +3154,7 @@ mod tests {
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
+                    audio_profiles: Vec::new(),
                 }],
                 request_timeout_secs: bad,
                 ..Config::default()
@@ -3114,6 +3180,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             max_concurrent_requests: 0,
             ..Config::default()
@@ -3138,6 +3205,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             max_request_body_bytes: 0,
             ..Config::default()
@@ -3186,6 +3254,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3222,6 +3291,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3270,6 +3340,7 @@ mod tests {
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
+                    audio_profiles: Vec::new(),
                 }],
                 ..Config::default()
             }
@@ -3346,6 +3417,7 @@ mod tests {
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
+                    audio_profiles: Vec::new(),
                 }],
                 ..Config::default()
             };
@@ -3952,6 +4024,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3977,6 +4050,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4005,6 +4079,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4078,6 +4153,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4101,6 +4177,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4124,6 +4201,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4148,6 +4226,7 @@ mod tests {
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
         };
         let debug = format!("{ts_http:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4171,6 +4250,7 @@ mod tests {
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
         };
         let debug = format!("{hls_pull:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4198,6 +4278,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4222,6 +4303,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4247,6 +4329,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4272,6 +4355,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4297,6 +4381,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4324,6 +4409,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4348,6 +4434,7 @@ mod tests {
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
+                    audio_profiles: Vec::new(),
                 },
                 Route {
                     name: "x".into(),
@@ -4363,6 +4450,7 @@ mod tests {
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
+                    audio_profiles: Vec::new(),
                 },
             ],
             ..Config::default()
@@ -4428,6 +4516,7 @@ mod tests {
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4458,6 +4547,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4493,6 +4583,7 @@ mod tests {
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains(&long_sdp), "debug: {debug}");
@@ -4520,6 +4611,7 @@ mod tests {
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
+                audio_profiles: Vec::new(),
             }],
             ..Config::default()
         }
