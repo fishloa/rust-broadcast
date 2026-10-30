@@ -93,18 +93,21 @@ fn pts_33bit_wrap_through_session_playout() {
             }
         }
     }
-    // No stall: no Pause buffer events.
+    // No spurious Pause/Resume across the wrap.
     for e in &evs {
         if let Event::Buffer(BufferEvent::Pause { .. }) = e {
             panic!("unexpected stall/pause during wrap: {e:?}");
         }
+        if let Event::Buffer(BufferEvent::Resume { .. }) = e {
+            panic!("unexpected resume during wrap: {e:?}");
+        }
     }
-    // Start emitted.
-    assert!(
-        evs.iter()
-            .any(|e| matches!(e, Event::Buffer(BufferEvent::Start { .. }))),
-        "no Start emitted"
-    );
+    // Start emitted exactly once.
+    let starts = evs
+        .iter()
+        .filter(|e| matches!(e, Event::Buffer(BufferEvent::Start { .. })))
+        .count();
+    assert_eq!(starts, 1, "Start not emitted exactly once: {evs:?}");
     // At least one sample after wrap.
     assert!(saw_wrap, "no sample at/after wrap boundary");
 }

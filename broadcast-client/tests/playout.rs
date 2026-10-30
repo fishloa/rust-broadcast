@@ -1130,3 +1130,54 @@ fn start_emitted_once_until_pause() {
     assert_eq!(names(&d.events), vec!["start", "pause", "resume"]);
     assert!(d.events.iter().any(is_ended));
 }
+
+const AUDIO2_DIR: &str = "http://origin.test/hls/a2";
+const AUDIO2_PLAYLIST_URL: &str = "http://origin.test/hls/a2/index.m3u8";
+
+#[test]
+fn playout_audio_rendition_switch_does_not_pin_stale_audio_obs() {
+    use std::collections::HashMap;
+    let f = renditions::fixture();
+    let mut bodies = HashMap::new();
+    let master = "#EXTM3U
+        #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"English\",LANGUAGE=\"en\",DEFAULT=YES,AUTOSELECT=YES,URI=\"a/index.m3u8\"\n        #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"Deutsch\",LANGUAGE=\"de-DE\",DEFAULT=NO,AUTOSELECT=YES,URI=\"a2/index.m3u8\"\n        #EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO=\"aud\"\n        v/index.m3u8\n";
+    bodies.insert(MASTER_URL.to_string(), master.as_bytes().to_vec());
+    let video = f
+        .video
+        .bodies(renditions::VIDEO_DIR, renditions::VIDEO_PLAYLIST_URL);
+    let audio = f.audio.bodies(AUDIO_DIR, AUDIO_PLAYLIST_URL);
+    let audio2 = f.audio.bodies(AUDIO2_DIR, AUDIO2_PLAYLIST_URL);
+    let withheld: Vec<String> = audio2
+        .keys()
+        .filter(|u| u.as_str() != AUDIO2_PLAYLIST_URL)
+        .cloned()
+        .collect();
+    bodies.extend(video);
+    bodies.extend(audio);
+    bodies.extend(audio2);
+
+    let audio_track = f.audio_stream_track_id.value() + AUDIO_TRACK_ID_OFFSET;
+    let mut r = Drv::new(MASTER_URL, cfg(PlayoutConfig::default()), bodies);
+    r.session
+        .set_rendered_tracks(&[tid(VIDEO), tid(audio_track)]);
+
+    // Serve everything except the new rendition's segments.
+    let withheld_refs: Vec<&str> = withheld.iter().map(String::as_str).collect();
+    r.serve_all_except(&withheld_refs);
+
+    // Switch to the other audio rendition mid-play; its segments are not served.
+    r.session.select_audio_rendition(Some(1)).expect("switch");
+    r.pump();
+
+    // Advance playback position to the old audio end; must not spuriously pause
+    // because the stale audio observation was cleared.
+    let list = nb(&r.events);
+    let last = lead_points(&list, &[VIDEO, audio_track]).pop().unwrap();
+    r.pos(Some(last.min_end));
+    let evs = bufs(&r.events);
+    assert_eq!(
+        names(&r.events),
+        vec!["start"],
+        "buffer event sequence changed across audio rendition switch: {evs:?}"
+    );
+}

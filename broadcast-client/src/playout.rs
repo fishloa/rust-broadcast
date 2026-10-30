@@ -613,5 +613,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn unwrapped_pts_beyond_33bit_behaves_normally() {
+        let (spec, samples) = audio_track();
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.engage(Source::Vod);
+        p.on_tracks(std::slice::from_ref(&spec));
+        let ts = i64::from(spec.timescale);
+        let base: i64 = 1 << 33;
+        let mut s1 = samples[0].clone();
+        s1.pts = Some(base + 5 * ts);
+        s1.dts = s1.pts;
+        s1.duration = Some(spec.timescale);
+        p.on_sample(spec.track_id, &s1, None);
+        let evs = buffer_events(&mut p);
+        assert!(
+            evs.iter().any(|e| matches!(e, BufferEvent::Start { .. })),
+            "Start not emitted for already-unwrapped PTS beyond 2^33: {evs:?}"
+        );
+        let first_end = p.obs.get(&spec.track_id).unwrap().end;
+        let mut s2 = samples[0].clone();
+        s2.pts = Some(base + 6 * ts);
+        s2.dts = s2.pts;
+        s2.duration = Some(spec.timescale);
+        p.on_sample(spec.track_id, &s2, None);
+        let _ = buffer_events(&mut p);
+        let second_end = p.obs.get(&spec.track_id).unwrap().end;
+        assert!(
+            second_end > first_end,
+            "end did not advance for already-unwrapped PTS beyond 2^33: {first_end} -> {second_end}"
+        );
+    }
+
     const NEGATIVE_SECONDS: i64 = 50_000;
 }
