@@ -16,7 +16,7 @@
 - `_HLS_skip` query parsing now accepts only the exact spec tokens `YES` and `v2`; lowercase variants are ignored (full playlist).
 - `stream_in_progress_segment` now serves the streamed whole-segment response with `Content-Type: video/iso.segment` (was `video/mp4`), matching other `.m4s` segments and parts (Apple HLS authoring spec 10.4).
 
-- `redirect_policy` now refuses cross-origin redirect hops when `allow_cross_origin` is false, in addition to the existing hop cap and https->http downgrade refusal.
+- The `dash_pull` HTTP client now refuses a redirect to another origin (scheme, host or port) unless the route sets `allow_cross_origin` (default off), in addition to the hop cap and the https->http downgrade refusal; the DASH core pins the same origin for MPD-derived URLs. `hls_pull`, `ts_http` and `smooth_pull` have no such setting and keep following cross-origin redirects.
 
 ### Changed (BREAKING: `dash_pull` runs on `dash-runtime`)
 - **`dash_pull` is a host over `dash_runtime::client::DashClient`.** The tokio loop and the media-plane mapping stay; MPD parsing, segment addressing, the UTC clock, refresh, the live join, availability gating, failure classification and track selection are the core's. Every observable difference is listed here and, with the reasons, in `docs/dash-runtime/DESIGN.md` section 12.3.
