@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- Dependency `sdp-types` 0.2 -> 0.3. No public API exposure.
+
+### Changed
 - Dependency `getrandom` 0.2 -> 0.4 (internal OS-RNG call sites: `getrandom::getrandom` -> `getrandom::fill`). No public API exposure.
 
 ### Changed
