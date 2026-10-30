@@ -8,6 +8,8 @@ use transmux::{CodecConfig, TrackSpec, TsDemux};
 const FRAME_STEP_US: u64 = 10_000;
 const IDLE_STEPS: usize = 200;
 const START_BOUND_US: u64 = 5_000_000;
+const AVC_NAL_SPS: u8 = 7;
+const AVC_NAL_PPS: u8 = 8;
 const SPROP_ATTRIBUTE: &str = "sprop-parameter-sets=";
 
 struct Run {
@@ -231,9 +233,35 @@ fn rtsp_no_sprop_announces_video_with_inband_avcc() {
     assert!(run.start_time().is_some(), "no BufferEvent::Start");
 }
 
+fn without_param_sets(sample: &transmux::Sample) -> transmux::Sample {
+    let mut out = sample.clone();
+    let mut data = Vec::new();
+    for nal in transmux::iter_length_prefixed_nals(&sample.data).expect("length-prefixed au") {
+        if matches!(
+            transmux::nal_unit_type(transmux::NalCodec::Avc, nal),
+            Some(AVC_NAL_SPS | AVC_NAL_PPS)
+        ) {
+            continue;
+        }
+        data.extend_from_slice(&u32::try_from(nal.len()).expect("nal len").to_be_bytes());
+        data.extend_from_slice(nal);
+    }
+    assert!(data.len() < sample.data.len(), "no parameter sets stripped");
+    out.data = data.into();
+    out
+}
+
 #[test]
 fn rtsp_no_sprop_emits_no_video_sample_before_config_known() {
-    let fixture = MediaFixture::load();
+    let mut media = MediaFixture::demux();
+    let video = media
+        .tracks
+        .iter_mut()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video track");
+    let leading = without_param_sets(&video.samples[0]);
+    video.samples.insert(0, leading);
+    let fixture = MediaFixture::from_media(&media);
     let sdp = strip_sprop(&fixture.sdp);
     let run = play(&sdp, &fixture.frames());
 
@@ -260,5 +288,11 @@ fn rtsp_no_sprop_emits_no_video_sample_before_config_known() {
         .iter()
         .filter(|(_, e)| matches!(e, Event::Sample { track, .. } if *track == vt))
         .count();
+    let total = run
+        .events
+        .iter()
+        .filter(|(_, e)| matches!(e, Event::Sample { track, .. } if *track == vt))
+        .count();
+    assert!(total > 0, "no video samples flow");
     assert_eq!(before, 0, "video samples emitted before config known");
 }
