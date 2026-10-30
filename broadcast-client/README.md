@@ -224,7 +224,13 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   `tracks_hold_max_media_us`) to disable the hold and take tracks as each stream resolves.
   After the first media, `Start` also waits for a PMT-declared audio/video stream that has no track yet, at most
   `Config::start_pending_track_wait_us` (default 1.5 s; `0` starts on the tracks announced so far, which can
-  flap `Start` then `Pause` when audio arrives late; `u64::MAX` waits until the first `Start`). With a start lead
+  flap `Start` then `Pause` when audio arrives late; `u64::MAX` waits until the first `Start`) and
+  `Config::start_pending_track_hard_cap_us` (default 4 s; `0` adds no cap, so only
+  `start_pending_track_wait_us` applies): the effective wait while a PMT-declared audio stream is still
+  unresolved is the larger of the two, so a late-resolving audio track no longer makes `Start` fire on
+  video alone. While the first `Start` is held the session emits `Status::AwaitingTracks` once, and when the
+  wait expires with audio still unresolved it emits a one-shot, non-fatal
+  `ErrorKind::PendingTrackUnresolved { kind: StreamKind::Audio }`. With a start lead
   below the default 1.8 s (zenith-tv: 0.5 s) and a first-frame budget to protect, 0.5 s to 1 s covers the measured
   audio resolution gaps (0.16 s to 0.48 s of media) at a bounded cost; `0` gives the earliest `Start`.
   `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds the input limit.

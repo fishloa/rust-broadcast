@@ -8,8 +8,10 @@ use buffering_runtime::{
 };
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
-use crate::events::{BufferEvent, Event};
+use crate::events::{BufferEvent, ErrorKind, Event, Status, StreamKind};
 use crate::join::VideoJoin;
+
+const SILENCE_MARGIN_US: u64 = 500_000;
 
 /// One input the session fed to the buffering controller.
 #[cfg(feature = "test-seams")]
@@ -155,6 +157,11 @@ pub(crate) struct Feeder {
     started: bool,
     first_media_us: Option<u64>,
     start_pending_track_wait_us: u64,
+    start_pending_track_hard_cap_us: u64,
+    pending_events: Vec<Event>,
+    cap_notice_emitted: bool,
+    holding: bool,
+    audio_pending: bool,
     #[cfg(feature = "test-seams")]
     pub(crate) log: Vec<BufferInput>,
 }
@@ -164,6 +171,7 @@ impl Feeder {
         config: ControllerConfig,
         seed: Option<StallMemorySnapshot>,
         start_pending_track_wait_us: u64,
+        start_pending_track_hard_cap_us: u64,
     ) -> Self {
         Self {
             config,
@@ -190,6 +198,11 @@ impl Feeder {
             started: false,
             first_media_us: None,
             start_pending_track_wait_us,
+            start_pending_track_hard_cap_us,
+            pending_events: Vec::new(),
+            cap_notice_emitted: false,
+            holding: false,
+            audio_pending: false,
             #[cfg(feature = "test-seams")]
             log: Vec::new(),
         }
@@ -222,17 +235,45 @@ impl Feeder {
     /// controller waits for it like for any registered track that has not delivered. The
     /// placeholder is registered with the first media report, so a stream whose tracks all resolve
     /// before any media never shows it to the controller.
-    pub(crate) fn set_expecting(&mut self, now_us: u64, expecting: bool) {
+    pub(crate) fn set_expecting(&mut self, now_us: u64, expecting: bool, audio_pending: bool) {
         self.expecting = expecting;
+        self.audio_pending = audio_pending;
         self.sync_pending(now_us);
     }
 
+    fn effective_wait_us(&self) -> u64 {
+        if self.audio_pending {
+            self.start_pending_track_wait_us
+                .max(self.start_pending_track_hard_cap_us)
+        } else {
+            self.start_pending_track_wait_us
+        }
+    }
+
     fn sync_pending(&mut self, now_us: u64) {
-        let want = self.expecting
+        let effective = self.effective_wait_us();
+        let waited = self.first_media_us.map(|f| now_us.saturating_sub(f));
+        let want = self.expecting && !self.started && waited.is_some_and(|w| w < effective);
+        if want && !self.holding {
+            self.pending_events
+                .push(Event::Status(Status::AwaitingTracks));
+        }
+        if !want
+            && self.holding
+            && self.expecting
+            && self.audio_pending
             && !self.started
-            && self
-                .first_media_us
-                .is_some_and(|f| now_us.saturating_sub(f) < self.start_pending_track_wait_us);
+            && !self.cap_notice_emitted
+        {
+            self.cap_notice_emitted = true;
+            self.pending_events.push(Event::Error {
+                kind: ErrorKind::PendingTrackUnresolved {
+                    kind: StreamKind::Audio,
+                },
+                fatal: false,
+            });
+        }
+        self.holding = want;
         let Some(c) = &mut self.controller else {
             return;
         };
@@ -500,12 +541,22 @@ impl Feeder {
         }
     }
 
+    fn controller_config(&self) -> ControllerConfig {
+        let mut cfg = self.config;
+        let floor = self
+            .start_pending_track_wait_us
+            .max(self.start_pending_track_hard_cap_us)
+            .saturating_add(SILENCE_MARGIN_US);
+        cfg.track_silence_timeout_us = cfg.track_silence_timeout_us.max(floor);
+        cfg
+    }
+
     fn ensure_controller(&mut self) {
         if self.finite {
             return;
         }
         if self.controller.is_none()
-            && let Ok(mut c) = BufferController::new(self.config, self.seed.take())
+            && let Ok(mut c) = BufferController::new(self.controller_config(), self.seed.take())
         {
             for t in &self.rendered {
                 c.register_track(t.value());
@@ -645,6 +696,9 @@ impl Feeder {
                 }
             }
         }
+        if !self.pending_events.is_empty() {
+            out.append(&mut self.pending_events);
+        }
         out
     }
 
@@ -707,6 +761,7 @@ mod tests {
             ControllerConfig::default(),
             None,
             crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
+            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
         )
     }
 

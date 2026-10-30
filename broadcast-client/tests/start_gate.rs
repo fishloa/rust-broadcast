@@ -2,7 +2,9 @@ mod support;
 
 use std::collections::BTreeMap;
 
-use broadcast_client::{Action, BufferEvent, Config, Event, Session, TrackId};
+use broadcast_client::{
+    Action, BufferEvent, Config, ErrorKind, Event, Session, Status, StreamKind, TrackId,
+};
 use support::replay::{TS_PACKET, bitrate_bps, open_live};
 
 const CHUNK: usize = 4096;
@@ -135,6 +137,7 @@ fn config_with_lead(hold: Hold, len: usize, start_lead_us: u64) -> Config {
         }
     };
     cfg.buffer.policy.initial_us = start_lead_us;
+    cfg.start_pending_track_hard_cap_us = 0;
     cfg
 }
 
@@ -158,6 +161,8 @@ pub struct Outcome {
     pub tracks_at_us: Option<u64>,
     pub first_sample_us: Option<u64>,
     pub rendered: Vec<u32>,
+    pub awaiting_at_us: Vec<u64>,
+    pub notices: Vec<(u64, StreamKind)>,
 }
 
 impl Outcome {
@@ -234,6 +239,14 @@ pub fn run(bytes: &[u8], cfg: Config, declare: Declare) -> Outcome {
                         let e = ends.entry(track.value()).or_insert(0);
                         *e = (*e).max(end);
                     }
+                }
+                Event::Status(Status::AwaitingTracks) => out.awaiting_at_us.push(now),
+                Event::Error {
+                    kind: ErrorKind::PendingTrackUnresolved { kind },
+                    fatal,
+                } => {
+                    assert!(!fatal, "the pending-track notice is non-fatal");
+                    out.notices.push((now, kind));
                 }
                 Event::Buffer(b) => {
                     let (what, pos) = match &b {
@@ -539,6 +552,7 @@ fn cfg_wait(len: usize, lead_us: u64, wait_us: u64) -> Config {
     cfg.tracks_hold_quiet_input_bytes = len / 2;
     cfg.tracks_hold_max_input_bytes = len;
     cfg.start_pending_track_wait_us = wait_us;
+    cfg.start_pending_track_hard_cap_us = 0;
     cfg
 }
 
@@ -623,4 +637,167 @@ fn the_extreme_waits_validate_and_run() {
         let o = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, wait), Declare::Default);
         assert!(o.start_us().is_some(), "wait {wait}");
     }
+}
+
+const CAP_US: u64 = 4_000_000;
+const AFTER_CAP_BOUND_US: u64 = 700_000;
+const LATE_AUDIO_SKEWS_MS: [usize; 2] = [2_000, 3_000];
+const BEYOND_CAP_SKEW_MS: usize = 5_000;
+const LONG_WAIT_US: u64 = 6_000_000;
+const AFTER_WAIT_BOUND_US: u64 = 800_000;
+
+fn gulp_skewed(skew_ms: usize) -> Option<Vec<u8>> {
+    let c = &CAPTURES[0];
+    let b = bytes_for(c, Hold::Early)?;
+    let per_s = (bitrate_bps(&b) / 8 / TS_PACKET as u64) as usize;
+    Some(delay_audio(&b, c.audio_pid, per_s * skew_ms / 1000))
+}
+
+fn gulp_without_audio() -> Option<Vec<u8>> {
+    let c = &CAPTURES[0];
+    let b = bytes_for(c, Hold::Early)?;
+    Some(
+        b.chunks(TS_PACKET)
+            .filter(|p| pid_of(p) != c.audio_pid)
+            .flatten()
+            .copied()
+            .collect(),
+    )
+}
+
+#[test]
+fn the_default_hard_cap_is_the_documented_one() {
+    assert_eq!(Config::default().start_pending_track_hard_cap_us, CAP_US);
+}
+
+#[test]
+fn audio_resolving_within_the_hard_cap_gives_one_start_with_both_tracks_and_no_flap() {
+    for skew in LATE_AUDIO_SKEWS_MS {
+        let Some(b) = gulp_skewed(skew) else {
+            return;
+        };
+        for declare in BOTH {
+            let o = run(&b, Config::default(), declare);
+            let why = describe(&CAPTURES[0], Hold::Early, declare, skew, &o);
+            let starts = o
+                .marks
+                .iter()
+                .filter(|m| m.what == Transition::Start)
+                .count();
+            assert_eq!(starts, 1, "{why}");
+            let start = o.marks.iter().find(|m| m.what == Transition::Start);
+            assert_eq!(start.map(|m| m.leads_ms.len()), Some(2), "{why}");
+            assert!(o.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
+            assert!(o.notices.is_empty(), "{why}");
+        }
+    }
+}
+
+#[test]
+fn audio_beyond_the_hard_cap_starts_on_video_at_the_cap_and_reports_it_once() {
+    let Some(b) = gulp_skewed(BEYOND_CAP_SKEW_MS) else {
+        return;
+    };
+    for declare in BOTH {
+        let o = run(&b, Config::default(), declare);
+        let why = describe(&CAPTURES[0], Hold::Early, declare, BEYOND_CAP_SKEW_MS, &o);
+        let first = o.first_sample_us.expect(&why);
+        let start = o.marks.iter().find(|m| m.what == Transition::Start);
+        let at = start.expect(&why).at_us;
+        assert_eq!(start.unwrap().leads_ms.len(), 1, "video alone: {why}");
+        assert!(at >= first + CAP_US - AFTER_CAP_BOUND_US, "{at}: {why}");
+        assert!(at <= first + CAP_US + AFTER_CAP_BOUND_US, "{at}: {why}");
+        assert_eq!(o.notices.len(), 1, "{why}");
+        assert_eq!(o.notices[0].1, StreamKind::Audio, "{why}");
+        assert!(o.notices[0].0 <= at, "notice precedes the Start: {why}");
+        assert!(o.flap_within(FLAP_WINDOW_US).is_some(), "{why}");
+    }
+}
+
+#[test]
+fn a_declared_audio_that_never_arrives_starts_at_the_cap_and_reports_it_once() {
+    let Some(b) = gulp_without_audio() else {
+        return;
+    };
+    for declare in BOTH {
+        let o = run(&b, Config::default(), declare);
+        let why = describe(&CAPTURES[0], Hold::Early, declare, 0, &o);
+        let first = o.first_sample_us.expect(&why);
+        let at = o.start_us().expect(&why);
+        assert!(at <= first + CAP_US + AFTER_CAP_BOUND_US, "{at}: {why}");
+        assert_eq!(o.notices.len(), 1, "{why}");
+        assert_eq!(o.notices[0].1, StreamKind::Audio, "{why}");
+        assert!(o.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
+    }
+}
+
+#[test]
+fn a_zero_hard_cap_reproduces_the_wait_alone() {
+    let Some(b) = gulp_without_audio() else {
+        return;
+    };
+    let mut capped_off = Config::default();
+    capped_off.start_pending_track_hard_cap_us = 0;
+    let off = run(&b, capped_off, Declare::Default);
+    let on = run(&b, Config::default(), Declare::Default);
+    let first = off.first_sample_us.expect("media");
+    let off_at = off.start_us().expect("started without cap");
+    let on_at = on.start_us().expect("started with cap");
+    assert!(
+        off_at <= first + DEFAULT_WAIT_US + AFTER_CAP_BOUND_US,
+        "{off_at}"
+    );
+    assert!(
+        on_at >= off_at + (CAP_US - DEFAULT_WAIT_US) / 2,
+        "{off_at} {on_at}"
+    );
+    assert_eq!(off.notices.len(), 1);
+}
+
+#[test]
+fn awaiting_tracks_is_emitted_once_per_hold_and_not_without_one() {
+    let Some(zero) = gulp_skewed(0) else {
+        return;
+    };
+    let late = gulp_skewed(LATE_AUDIO_SKEWS_MS[0]).unwrap();
+    let never = gulp_without_audio().unwrap();
+    for declare in BOTH {
+        let o = run(&zero, Config::default(), declare);
+        assert!(
+            o.awaiting_at_us.is_empty(),
+            "audio resolved before the first media: {:?}",
+            o.awaiting_at_us
+        );
+        assert!(o.notices.is_empty());
+        for b in [&late, &never] {
+            let o = run(b, Config::default(), declare);
+            assert_eq!(o.awaiting_at_us.len(), 1, "{:?}", o.awaiting_at_us);
+            let start = o.start_us().expect("started");
+            assert!(o.awaiting_at_us[0] <= start);
+        }
+    }
+}
+
+#[test]
+fn a_long_wait_is_not_cut_short_by_the_controller_silence_timeout() {
+    let Some(b) = gulp_without_audio() else {
+        return;
+    };
+    let silence = Config::default().buffer.track_silence_timeout_us;
+    assert!(silence < LONG_WAIT_US, "{silence}");
+    let o = run(
+        &b,
+        cfg_wait(b.len(), FLAP_LEAD_US, LONG_WAIT_US),
+        Declare::Default,
+    );
+    let first = o.first_sample_us.expect("media");
+    let at = o.start_us().expect("started");
+    assert!(
+        at >= first + LONG_WAIT_US,
+        "start {at} us, first {first} us"
+    );
+    assert!(
+        at <= first + LONG_WAIT_US + AFTER_WAIT_BOUND_US,
+        "start {at} us"
+    );
 }

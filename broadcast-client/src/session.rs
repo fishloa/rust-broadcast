@@ -125,6 +125,7 @@ impl Session {
         config.validate()?;
         let buffer_cfg = config.buffer;
         let start_pending_wait_us = config.start_pending_track_wait_us;
+        let start_pending_hard_cap_us = config.start_pending_track_hard_cap_us;
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
         let mut playout = Playout::new(config.playout);
@@ -178,7 +179,12 @@ impl Session {
             ts_wake: None,
             actions: VecDeque::new(),
             events: EventQueue::new(event_cap),
-            buffer: crate::buffer::Feeder::new(buffer_cfg, seed, start_pending_wait_us),
+            buffer: crate::buffer::Feeder::new(
+                buffer_cfg,
+                seed,
+                start_pending_wait_us,
+                start_pending_hard_cap_us,
+            ),
             playout,
             jump,
             declaration: crate::rendered::Declaration::default(),
@@ -650,8 +656,10 @@ impl Session {
             StreamKind::Video => !self.buffer.has_video(),
             StreamKind::Audio => !self.buffer.has_audio(),
         });
+        let audio_pending = missing.contains(&StreamKind::Audio) && !self.buffer.has_audio();
         let rendered = !self.buffer.rendered_explicit() || self.declaration.has_pending();
-        self.buffer.set_expecting(self.now_us, absent && rendered);
+        self.buffer
+            .set_expecting(self.now_us, absent && rendered, audio_pending);
     }
 
     fn apply_rendered(&mut self, resolution: crate::rendered::Resolution) {
