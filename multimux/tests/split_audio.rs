@@ -116,7 +116,7 @@ const WINDOWS_USIZE: usize = WINDOW_SEGMENTS;
 
 /// Publish `plan` samples (`(time key, track index)` order) into `trunk`,
 /// pumping every [`PUMP_EVERY`] samples, then flush.
-fn publish_interleaved(
+fn feed(
     trunk: &Arc<Trunk>,
     writer: &media_plane::trunk::TrunkWriter,
     route: &RouteHandle,
@@ -150,11 +150,46 @@ fn publish_interleaved(
         }
     }
     segmenter.pump(ProgramId(0), trunk, route);
+}
+
+fn publish_interleaved(
+    trunk: &Arc<Trunk>,
+    writer: &media_plane::trunk::TrunkWriter,
+    route: &RouteHandle,
+    segmenter: &mut ProgramSegmenter,
+    sources: &[&Source],
+    keep: &dyn Fn(usize, &Sample) -> bool,
+) {
+    feed(trunk, writer, route, segmenter, sources, keep);
     segmenter.flush();
+}
+
+struct Live {
+    trunk: Arc<Trunk>,
+    writer: media_plane::trunk::TrunkWriter,
+    route: Arc<RouteHandle>,
+    segmenter: std::sync::Mutex<ProgramSegmenter>,
 }
 
 struct Rig {
     app: Router,
+    live: Option<Live>,
+}
+
+impl Rig {
+    fn publish_more(&self, sources: &[Source], keep: &dyn Fn(usize, &Sample) -> bool) {
+        let live = self.live.as_ref().expect("live rig");
+        let refs: Vec<&Source> = sources.iter().collect();
+        let mut segmenter = live.segmenter.lock().expect("segmenter");
+        feed(
+            &live.trunk,
+            &live.writer,
+            &live.route,
+            &mut segmenter,
+            &refs,
+            keep,
+        );
+    }
 }
 
 fn rig(
@@ -175,6 +210,33 @@ fn rig_declared(
     declared: Option<u64>,
     keep: &dyn Fn(usize, &Sample) -> bool,
 ) -> Rig {
+    build_rig(sources, renditions, selectors, declared, keep, true)
+}
+
+fn rig_live(
+    sources: &[Source],
+    renditions: Vec<AudioRenditionDecl>,
+    selectors: Vec<AudioTrackSelector>,
+    keep: &dyn Fn(usize, &Sample) -> bool,
+) -> Rig {
+    build_rig(
+        sources,
+        renditions,
+        selectors,
+        Some(DECLARED_BPS),
+        keep,
+        false,
+    )
+}
+
+fn build_rig(
+    sources: &[Source],
+    renditions: Vec<AudioRenditionDecl>,
+    selectors: Vec<AudioTrackSelector>,
+    declared: Option<u64>,
+    keep: &dyn Fn(usize, &Sample) -> bool,
+    finish: bool,
+) -> Rig {
     let trunk = new_trunk();
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
@@ -193,9 +255,22 @@ fn rig_declared(
         route.set_init(ProgramId(0), init);
     }
     let refs: Vec<&Source> = sources.iter().collect();
-    publish_interleaved(&trunk, &writer, &route, &mut segmenter, &refs, keep);
+    if finish {
+        publish_interleaved(&trunk, &writer, &route, &mut segmenter, &refs, keep);
+        return Rig {
+            app: app_for(route),
+            live: None,
+        };
+    }
+    feed(&trunk, &writer, &route, &mut segmenter, &refs, keep);
     Rig {
-        app: app_for(route),
+        app: app_for(Arc::clone(&route)),
+        live: Some(Live {
+            trunk,
+            writer,
+            route,
+            segmenter: std::sync::Mutex::new(segmenter),
+        }),
     }
 }
 
@@ -636,6 +711,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
 
     let rig = Rig {
         app: app_for(route),
+        live: None,
     };
     let video = rig.playlist("media.m3u8").await;
     let late = rig.playlist("audio/a1.m3u8").await;
@@ -801,8 +877,7 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
     let _ = test_bounded::output_bounded(&mut cmd, Duration::from_secs(60)).expect("run validator");
     let json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report).expect("report")).expect("json");
-    let _ = fs::remove_dir_all(&scratch);
-
+    eprintln!("SCRATCH={}", scratch.display());
     let mut findings = Vec::new();
     collect_findings(&json, "$", &mut findings);
     for f in &findings {
@@ -819,11 +894,8 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
 }
 
 /// Level-1 (MUST) validator messages split audio adds over the muxed route,
-/// each knowingly left open:
-/// - "Missing rendition report": the video playlist carries no
-///   `EXT-X-RENDITION-REPORT` for the audio renditions (RFC 8216bis §4.4.5.4);
-///   sibling-origin rendition reports are the follow-up slice of #1428.
-const KNOWN_SPLIT_ONLY: &[&str] = &["Missing rendition report"];
+/// each knowingly left open. (slice 4 closed the rendition-report gap.)
+const KNOWN_SPLIT_ONLY: &[&str] = &[];
 
 /// The validator insists a file exists for an `EXT-X-GAP` segment, although
 /// RFC 8216 §4.3.2.7 says a gap segment carries no media and clients should
@@ -866,6 +938,13 @@ async fn split_audio_validator_findings() {
             !tolerated
         })
         .collect();
+    assert!(
+        !split_findings
+            .iter()
+            .any(|(_, m)| m.contains("Missing rendition report")
+                || m.contains("No rendition reports")),
+        "rendition report finding present: {split_findings:?}"
+    );
     assert!(
         !split_findings
             .iter()
@@ -1152,4 +1231,183 @@ async fn non_split_master_is_unchanged() {
     assert_eq!(master2.media[0].name, "Audio 0", "{text2}");
     assert_eq!(master2.variants[0].bandwidth, v.bandwidth, "{text2}");
     assert_eq!(master2.variants[0].codecs, v.codecs, "{text2}");
+}
+
+#[tokio::test]
+async fn split_audio_each_playlist_carries_rendition_reports() {
+    let sources = france2();
+    let rig = rig(
+        &sources,
+        decls(&["fre", "qad", "qaa"]),
+        index_selectors(3),
+        &|_, _| true,
+    );
+    let n_audio = 3usize;
+    let n_reports = n_audio; // video + n_audio renditions -> n_audio reports
+    // video playlist
+    let pl = rig.playlist("media.m3u8").await;
+    assert_eq!(pl.rendition_reports.len(), n_reports);
+    let uris: std::collections::BTreeSet<String> =
+        pl.rendition_reports.iter().map(|r| r.uri.clone()).collect();
+    assert_eq!(
+        uris,
+        ["audio/a0.m3u8", "audio/a1.m3u8", "audio/a2.m3u8"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    );
+    // each audio playlist
+    for i in 0..n_audio {
+        let path = format!("audio/a{i}.m3u8");
+        let pl = rig.playlist(&path).await;
+        assert_eq!(pl.rendition_reports.len(), n_reports, "{path}");
+        let uris: std::collections::BTreeSet<String> =
+            pl.rendition_reports.iter().map(|r| r.uri.clone()).collect();
+        let mut expected = std::collections::BTreeSet::new();
+        expected.insert("../media.m3u8".to_string());
+        for j in 0..n_audio {
+            if j != i {
+                expected.insert(format!("a{j}.m3u8"));
+            }
+        }
+        assert_eq!(uris, expected, "{path}");
+    }
+}
+
+fn served_edge(pl: &MediaPlaylist) -> (u64, Option<u64>) {
+    let closed = pl.media_sequence + pl.segments.len() as u64;
+    match &pl.open_segment {
+        Some(open) if !open.parts.is_empty() => (closed, Some(open.parts.len() as u64 - 1)),
+        _ => {
+            let last_parts = pl.segments.last().map_or(0, |s| s.parts.len());
+            (closed - 1, (last_parts > 0).then(|| last_parts as u64 - 1))
+        }
+    }
+}
+
+fn cut_secs(sources: &[Source], nth_sync: usize) -> f64 {
+    let video = &sources[0];
+    let s = video
+        .samples
+        .iter()
+        .filter(|s| s.flags.is_sync)
+        .nth(nth_sync)
+        .expect("enough video keyframes");
+    video.secs(s.dts.unwrap_or(0))
+}
+
+async fn assert_reports_match_served_edges(rig: &Rig, n_audio: usize) {
+    let mut paths = vec!["media.m3u8".to_string()];
+    paths.extend((0..n_audio).map(|i| format!("audio/a{i}.m3u8")));
+    let mut edges = Vec::new();
+    for path in &paths {
+        edges.push(served_edge(&rig.playlist(path).await));
+    }
+    for (i, path) in paths.iter().enumerate() {
+        let pl = rig.playlist(path).await;
+        assert_eq!(pl.rendition_reports.len(), paths.len() - 1, "{path}");
+        for (j, other) in paths.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let from = path.rfind('/').map_or("", |k| &path[..=k]);
+            let want_uri = other
+                .strip_prefix(from)
+                .unwrap_or(&format!("../{other}"))
+                .to_string();
+            let report = pl
+                .rendition_reports
+                .iter()
+                .find(|r| r.uri == want_uri)
+                .unwrap_or_else(|| panic!("{path} lacks report for {want_uri}"));
+            assert_eq!(
+                (report.last_msn, report.last_part),
+                edges[j],
+                "{path} reports {other}'s edge"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn split_audio_rendition_report_matches_sibling_live_edge() {
+    let sources = france2();
+    let cut = cut_secs(&sources, 1);
+    let rig = rig_live(
+        &sources,
+        decls(&["fre", "qad", "qaa"]),
+        index_selectors(3),
+        &|ti, s| sources[ti].secs(s.dts.unwrap_or(0)) < cut,
+    );
+    assert_reports_match_served_edges(&rig, 3).await;
+    let before = served_edge(&rig.playlist("media.m3u8").await);
+
+    rig.publish_more(&sources, &|ti, s| {
+        sources[ti].secs(s.dts.unwrap_or(0)) >= cut
+    });
+    let after = served_edge(&rig.playlist("media.m3u8").await);
+    assert_ne!(before, after, "publishing more moved the video live edge");
+    assert_reports_match_served_edges(&rig, 3).await;
+    let pl = rig.playlist("audio/a0.m3u8").await;
+    let video_report = pl
+        .rendition_reports
+        .iter()
+        .find(|r| r.uri == "../media.m3u8")
+        .expect("video report");
+    assert_eq!((video_report.last_msn, video_report.last_part), after);
+}
+
+#[tokio::test]
+async fn split_audio_delta_playlist_keeps_rendition_reports() {
+    let sources = france2();
+    let rig = rig(
+        &sources,
+        decls(&["fre", "qad", "qaa"]),
+        index_selectors(3),
+        &|_, _| true,
+    );
+    let text = String::from_utf8(rig.ok("media.m3u8?_HLS_skip=YES").await).expect("utf8");
+    let pl = MediaPlaylist::parse(&text).expect("parse delta");
+    assert!(pl.skip.is_some(), "delta skip info present");
+    assert_eq!(pl.rendition_reports.len(), 3, "{text}");
+}
+
+#[tokio::test]
+async fn split_audio_blocking_reload_audio_reports_current() {
+    let sources = france2();
+    let rig = rig(
+        &sources,
+        decls(&["fre", "qad", "qaa"]),
+        index_selectors(3),
+        &|_, _| true,
+    );
+    let (status, body) = rig.get("audio/a0.m3u8?_HLS_msn=2").await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let text = String::from_utf8(body).expect("utf8");
+    let pl = MediaPlaylist::parse(&text).expect("parse");
+    assert_eq!(pl.rendition_reports.len(), 3, "{text}");
+    let video = served_edge(&rig.playlist("media.m3u8").await);
+    let report = pl
+        .rendition_reports
+        .iter()
+        .find(|r| r.uri == "../media.m3u8")
+        .expect("video report");
+    assert_eq!((report.last_msn, report.last_part), video, "{text}");
+}
+
+#[tokio::test]
+async fn non_split_route_rendition_reports_absent() {
+    let sources = by_role(load("ts/h264_aac.ts"));
+    let rig = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
+    let pl = rig.playlist("media.m3u8").await;
+    assert!(pl.rendition_reports.is_empty());
+    let text = String::from_utf8(rig.ok("iframe.m3u8").await).expect("utf8");
+    assert!(text.contains("#EXT-X-RENDITION-REPORT:URI=\"media.m3u8\""));
+    assert_eq!(
+        text.matches("#EXT-X-RENDITION-REPORT").count(),
+        1,
+        "iframe playlist keeps exactly its media report: {text}"
+    );
+    let media = String::from_utf8(rig.ok("media.m3u8").await).expect("utf8");
+    assert!(!media.contains("#EXT-X-RENDITION-REPORT"), "{media}");
 }

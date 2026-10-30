@@ -513,6 +513,7 @@ impl ProgramServing {
         if !audio_renditions.is_empty() {
             builder = builder.audio_renditions(audio_renditions.clone());
         }
+        builder = builder.playlist_uri("media.m3u8");
         // Sibling trunks + origins for the split audio renditions (issue #1428
         // slice 2b). Each carries one audio track's fMP4 and is served by its
         // own `HlsOrigin`; the primary trunk carries the remaining (video)
@@ -542,6 +543,7 @@ impl ProgramServing {
                 }));
             }
             ab = ab.low_latency(part_target_ms);
+            ab = ab.playlist_uri(decl.uri.clone());
             let origin = Arc::new(ab.build()?);
             sibling_origins.push(Arc::clone(&origin));
             audio_servings.push(AudioServing {
@@ -559,6 +561,29 @@ impl ProgramServing {
         // part target and an offset with no room for u32 — all reachable
         // from caller-supplied numbers, so surfaced, never `expect`ed.
         let ll_hls = Arc::new(builder.build()?);
+
+        // Wire rendition-report siblings (RFC 8216bis §4.4.5.4): every
+        // origin reports every OTHER rendition's live edge.
+        {
+            use hls_runtime::server::RenditionSibling;
+            let mut entries: Vec<(Arc<hls_runtime::server::HlsOrigin>, String)> = Vec::new();
+            entries.push((Arc::clone(&ll_hls), "media.m3u8".to_string()));
+            for serving in &audio_servings {
+                entries.push((Arc::clone(&serving.origin), serving.decl.uri.clone()));
+            }
+            for (origin, self_uri) in &entries {
+                let siblings: Vec<RenditionSibling> = entries
+                    .iter()
+                    .filter(|(_, uri)| uri != self_uri)
+                    .map(|(o, uri)| RenditionSibling {
+                        origin: Arc::downgrade(o),
+                        playlist_uri: uri.clone(),
+                    })
+                    .collect();
+                origin.set_rendition_siblings(siblings);
+            }
+        }
+
         let dash = Arc::new(DashState::new(&trunk, window_segments));
 
         let ext = match container {
