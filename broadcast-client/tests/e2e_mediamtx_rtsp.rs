@@ -139,7 +139,7 @@ impl WireArrivals {
                     .drain(..INTERLEAVED_HEADER + len)
                     .skip(INTERLEAVED_HEADER)
                     .collect();
-                if channel % CHANNELS_PER_TRACK == 0 && frame.len() >= RTP_HEADER_MIN {
+                if channel.is_multiple_of(CHANNELS_PER_TRACK) && frame.len() >= RTP_HEADER_MIN {
                     let ts = u32::from_be_bytes([
                         frame[RTP_TS_OFFSET],
                         frame[RTP_TS_OFFSET + 1],
