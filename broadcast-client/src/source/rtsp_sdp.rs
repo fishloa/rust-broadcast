@@ -179,12 +179,28 @@ fn supported_payload(
     match media.media.as_str() {
         MEDIA_VIDEO if encoding_is(ENCODING_H264) => {
             let avc = avc_config_from_fmtp(fmtp).ok()?;
+            // Fill coded dimensions from the SPS carried in sprop-parameter-sets,
+            // exactly as the TS path does (transmux::sps::decode_avc_sps). A
+            // stream without sprop (or an undecodable SPS) keeps 0 and is
+            // filled later from the first in-band SPS.
+            let (width, height) = avc
+                .config
+                .sps
+                .first()
+                .and_then(|sps| transmux::sps::decode_avc_sps(&sps.0).ok())
+                .map(|info| {
+                    (
+                        info.width.min(u16::MAX as u32) as u16,
+                        info.height.min(u16::MAX as u32) as u16,
+                    )
+                })
+                .unwrap_or((UNKNOWN_DIMENSION, UNKNOWN_DIMENSION));
             Some((
                 RtpMediaKind::H264,
                 CodecConfig::Avc {
                     config: avc,
-                    width: UNKNOWN_DIMENSION,
-                    height: UNKNOWN_DIMENSION,
+                    width,
+                    height,
                 },
                 clock_rate,
             ))

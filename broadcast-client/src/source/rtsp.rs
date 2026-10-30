@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use rtsp_runtime::transport::{LowerTransport, Transport, TransportSpec};
 use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, StatusCode};
-use transmux::{RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample, TrackId};
+use transmux::{CodecConfig, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample, TrackId};
 use tshttp_runtime::{Config as TsConfig, StarveKind};
 use url::{Host, Url};
 
@@ -857,6 +857,7 @@ impl RtspSource {
         }
         let produced = !samples.is_empty();
         for sample in samples {
+            self.maybe_update_avc_dims(track, &sample);
             self.emit_sample(track, sample, now);
         }
         if !produced
@@ -865,6 +866,52 @@ impl RtspSource {
         {
             self.events.push_back(Event::Starved(StarveKind::Data));
             self.starved_data_fired = true;
+        }
+    }
+
+    fn maybe_update_avc_dims(&mut self, track: TrackId, sample: &Sample) {
+        let Some(track_init) = self.tracks.iter_mut().find(|t| t.track_id == track) else {
+            return;
+        };
+        let is_unknown = matches!(
+            &track_init.config,
+            CodecConfig::Avc { width, height, .. } if *width == 0 && *height == 0
+        );
+        if !is_unknown {
+            return;
+        }
+        let mut found = None;
+        let bytes = &sample.data;
+        let mut off = 0usize;
+        while off.saturating_add(4) <= bytes.len() {
+            let len = u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
+                as usize;
+            off = off.saturating_add(4);
+            if len == 0 || off.saturating_add(len) > bytes.len() {
+                break;
+            }
+            let nal = &bytes[off..off + len];
+            off = off.saturating_add(len);
+            if !nal.is_empty() && (nal[0] & 0x1f) == 7
+                && let Ok(info) = transmux::sps::decode_avc_sps(nal)
+            {
+                found = Some((
+                    info.width.min(u16::MAX as u32) as u16,
+                    info.height.min(u16::MAX as u32) as u16,
+                ));
+                break;
+            }
+        }
+        if let Some((w, h)) = found {
+            if let CodecConfig::Avc { width, height, .. } = &mut track_init.config {
+                *width = w;
+                *height = h;
+            }
+            let config = track_init.config.clone();
+            if let Some(depa) = &mut self.depa {
+                depa.set_track_config(track, config);
+            }
+            self.tracks_dirty = true;
         }
     }
 

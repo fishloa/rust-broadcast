@@ -886,6 +886,14 @@ impl RtpStreamDepacketiser {
             .collect()
     }
 
+    /// Replace the codec configuration carried for one track (used by callers
+    /// that learn dimensions from an in-band parameter set after SETUP).
+    pub fn set_track_config(&mut self, track_id: TrackId, config: CodecConfig) {
+        if let Some((_, st)) = self.tracks.iter_mut().find(|(id, _)| *id == track_id) {
+            st.config = config;
+        }
+    }
+
     fn state(&mut self, track_id: TrackId) -> Option<&mut TrackState> {
         self.tracks
             .iter_mut()
