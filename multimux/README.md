@@ -167,9 +167,25 @@ URL-userinfo form). A username/password may instead ride the route's own
 URL userinfo (`rtsp://user:pass@host/...`); an explicit `auth` always wins
 over that.
 
-`dash_pull` refuses, by default, any URL its MPD names on another origin than its own (a `BaseURL`, a segment, a `UTCTiming` server), so a remote manifest cannot make a
-server-side pull fetch an internal address. An MPD served from one host with segments on a CDN needs `"allow_cross_origin": true` on the route. A live MPD takes its clock
-from `UTCTiming`, else the host's UTC clock, else the response `Date`.
+`dash_pull` refuses, by default, any URL its MPD names that leaves the MPD's own
+origin: cross-origin redirects of the HTTP client (a change of scheme, host or
+port), and MPD-derived URLs on another origin (`BaseURL`, segment URLs, a
+`<Location>` redirect, `UTCTiming`, and the MPD's `final_url` after a
+redirect). This is a server-side request forgery guard: a hostile or compromised
+remote manifest could otherwise make the origin fetch an internal address such
+as a cloud metadata endpoint. Refused representations are dropped; if none
+remain the attempt ends. An MPD served from one host whose segments live on a
+CDN host needs `"allow_cross_origin": true` on the route:
+
+```json
+{ "name": "cdn", "input": { "type": "dash_pull",
+  "url": "https://origin.example/manifest.mpd", "allow_cross_origin": true },
+  "outputs": ["llhls"] }
+```
+
+`hls_pull`, `ts_http` and `smooth_pull` have no such flag and follow redirects
+as before. A live MPD takes its clock from `UTCTiming`, else the host's UTC
+clock, else the response `Date`.
 
 Codecs: H.264 video + AAC audio (whatever `transmux`'s depayload/demux
 supports — any missing codec/transport capability is a library gap fixed
