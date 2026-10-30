@@ -49,6 +49,13 @@ pub struct TimelineIndex {
     total: u64,
 }
 
+/// Tolerance, in `@timescale` ticks, applied to a declared `@t` that falls
+/// slightly below the computed end of the previous run: DASH 5.3.9.6.1
+/// requires `@t` to be at least that end, but nominal durations on the last
+/// Segment of a run can overshoot the real boundary by one tick, so a
+/// one-tick shortfall is trusted rather than rejected.
+const TIMELINE_T_TOLERANCE_TICKS: u64 = 1;
+
 impl TimelineIndex {
     /// Build the run table.
     ///
@@ -74,7 +81,7 @@ impl TimelineIndex {
         let mut total: u64 = 0;
         for (i, s) in entries.iter().enumerate() {
             if let Some(t) = s.t {
-                if t < time {
+                if time.saturating_sub(t) > TIMELINE_T_TOLERANCE_TICKS {
                     return Err(AddressError::TimelineNotIncreasing { t, floor: time });
                 }
                 time = t;
@@ -93,7 +100,7 @@ impl TimelineIndex {
             } else {
                 let next_t = entries.get(i + 1).and_then(|n| n.t);
                 if let Some(next_t) = next_t
-                    && next_t <= time
+                    && time.saturating_sub(next_t) > TIMELINE_T_TOLERANCE_TICKS
                 {
                     return Err(AddressError::TimelineNotIncreasing {
                         t: next_t,
