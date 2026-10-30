@@ -71,6 +71,18 @@ struct Pending {
     auth_retried: bool,
 }
 
+/// One stream's entry of a PLAY response `RTP-Info` header (RFC 2326 12.33).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RtpInfoEntry {
+    /// The stream's URL.
+    pub uri: String,
+    /// Sequence number of the first packet of the stream, when given.
+    pub seq: Option<u16>,
+    /// RTP timestamp corresponding to the start time in the `Range` header, when given.
+    pub rtptime: Option<u32>,
+}
+
 /// An event produced by [`ClientSession::handle_data`].
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +175,7 @@ pub struct ClientSession {
     content_base: Option<String>,
     /// `Location` of the most recent redirection (3xx) response, cleared by any other response.
     redirect_location: Option<String>,
+    rtp_info: Vec<RtpInfoEntry>,
 }
 
 impl Default for ClientSession {
@@ -195,6 +208,7 @@ impl ClientSession {
             last_challenge: None,
             content_base: None,
             redirect_location: None,
+            rtp_info: Vec::new(),
         }
     }
 
@@ -331,6 +345,12 @@ impl ClientSession {
     /// The transport negotiated in the SETUP response, if any.
     pub fn negotiated_transport(&self) -> Option<&Transport> {
         self.negotiated_transport.as_ref()
+    }
+
+    /// Takes the `RTP-Info` entries (RFC 2326 12.33) of the most recent successful PLAY response,
+    /// leaving none behind. Empty when the response carried no usable `RTP-Info`.
+    pub fn take_rtp_info(&mut self) -> Vec<RtpInfoEntry> {
+        core::mem::take(&mut self.rtp_info)
     }
 
     /// Takes the transport negotiated by the most recent SETUP response, leaving none behind, so
@@ -660,6 +680,26 @@ impl ClientSession {
                     self.negotiated_transport = Some(Transport::parse(t)?);
                 }
 
+                if pending.method == Method::Play && status.is_success() {
+                    self.rtp_info = response
+                        .typed_header::<headers::RtpInfos>()
+                        .ok()
+                        .flatten()
+                        .and_then(|infos| infos.try_into_v1().ok())
+                        .map(|infos| match infos {
+                            headers::RtpInfos::V1(list) => list
+                                .into_iter()
+                                .map(|i| RtpInfoEntry {
+                                    uri: i.uri.to_string(),
+                                    seq: i.seq,
+                                    rtptime: i.rtptime,
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        })
+                        .unwrap_or_default();
+                }
+
                 self.redirect_location = status
                     .is_redirection()
                     .then(|| header_value(response.header(&headers::LOCATION)))
@@ -963,6 +1003,28 @@ mod tests {
             c.take_negotiated_transport().is_none(),
             "a reply without Transport negotiates nothing"
         );
+    }
+
+    #[test]
+    fn take_rtp_info_returns_the_play_response_entries_once() {
+        let mut c = ClientSession::new();
+        setup_request(&mut c);
+        feed(
+            &mut c,
+            "RTSP/1.0 200 OK\nCSeq: 1\nSession: A1\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\n\n",
+        );
+        c.play("rtsp://h/s").unwrap();
+        feed(
+            &mut c,
+            "RTSP/1.0 200 OK\nCSeq: 2\nSession: A1\nRTP-Info: url=rtsp://h/s/t1;seq=7;rtptime=100,url=rtsp://h/s/t2;seq=9;rtptime=4294967295\n\n",
+        );
+        let info = c.take_rtp_info();
+        assert_eq!(info.len(), 2);
+        assert_eq!(info[0].uri, "rtsp://h/s/t1");
+        assert_eq!(info[0].seq, Some(7));
+        assert_eq!(info[0].rtptime, Some(100));
+        assert_eq!(info[1].rtptime, Some(u32::MAX));
+        assert!(c.take_rtp_info().is_empty(), "taken once");
     }
 
     // Regression (audit run-09 W5): one unknown/duplicate CSeq in a batch of
