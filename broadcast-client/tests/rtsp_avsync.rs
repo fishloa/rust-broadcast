@@ -3,11 +3,15 @@ mod support;
 use std::collections::BTreeMap;
 
 use broadcast_client::{AvSync, Config, Event};
+use broadcast_common::Unpackage;
+use std::path::PathBuf;
+use std::process::Command;
 use support::rtsp_host::{
     BASE_URL, Host, MediaFixture, Server, channel_of, interleaved, sender_report_at,
 };
-use transmux::CodecConfig;
+
 use transmux::rtp::RtpMediaKind;
+use transmux::{CodecConfig, TsDemux};
 
 const FRAME_STEP_US: u64 = 10_000;
 const RTP_TIMESTAMP_AT: usize = 4;
@@ -94,7 +98,7 @@ fn send_sender_reports(host: &mut Host, lanes: &[Lane], i: usize, skew: f64) {
 }
 
 fn run(skew_seconds: Option<f64>) -> Outcome {
-    run_at(skew_seconds, SrAt::Third)
+    run_at(&MediaFixture::load(), skew_seconds, SrAt::Third)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -105,9 +109,8 @@ enum SrAt {
     AfterFirstVideoAu,
 }
 
-fn run_at(skew_seconds: Option<f64>, when: SrAt) -> Outcome {
-    let fixture = MediaFixture::load();
-    let lanes = lanes(&fixture);
+fn run_at(fixture: &MediaFixture, skew_seconds: Option<f64>, when: SrAt) -> Outcome {
+    let lanes = lanes(fixture);
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&fixture.sdp));
     host.connect();
     let longest = lanes.iter().map(|l| l.frames.len()).max().unwrap_or(0);
@@ -271,6 +274,7 @@ fn the_sync_state_goes_provisional_then_sender_report() {
 
 #[test]
 fn the_final_offset_is_the_true_offset_whenever_the_first_sender_report_arrives() {
+    let fixture = MediaFixture::load();
     let whens = [
         SrAt::BeforeFirstSample,
         SrAt::Packet(3),
@@ -285,8 +289,97 @@ fn the_final_offset_is_the_true_offset_whenever_the_first_sender_report_arrives(
         BEYOND_TOLERANCE_SKEW_SECONDS,
     ] {
         for when in whens {
-            let o = run_at(Some(skew), when);
-            eprintln!("skew {skew} when {when:?}");
+            let o = run_at(&fixture, Some(skew), when);
+            assert_audio_on_sender_report_timeline(&o, skew);
+            assert_monotonic(&o);
+        }
+    }
+}
+
+const GENERATED_SECONDS: &str = "12";
+const GENERATED_LOOPS: &str = "6";
+
+fn three_b_frame_fixture() -> Option<MediaFixture> {
+    let dir = std::env::temp_dir().join(format!("rtsp-avsync-3b-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let out: PathBuf = dir.join("source.ts");
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-stream_loop", GENERATED_LOOPS, "-i"])
+        .arg(test_fixtures::path("ts/h264_aac.ts"))
+        .args(["-t", GENERATED_SECONDS])
+        .args(["-c:v", "libx264", "-preset", "veryfast", "-bf", "3"])
+        .args(["-b_strategy", "0", "-g", "50", "-keyint_min", "50"])
+        .args([
+            "-sc_threshold",
+            "0",
+            "-r",
+            "25",
+            "-c:a",
+            "aac",
+            "-f",
+            "mpegts",
+        ])
+        .arg(&out)
+        .status();
+    let fixture = match status {
+        Ok(s) if s.success() => {
+            let data = std::fs::read(&out).expect("read generated source");
+            let media = TsDemux::new()
+                .unpackage(&data[..])
+                .expect("demux generated");
+            Some(MediaFixture::from_media(&media))
+        }
+        _ => None,
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    fixture
+}
+
+#[test]
+fn a_three_b_frame_two_second_gop_source_lands_on_the_sender_report_timeline() {
+    let Some(fixture) = three_b_frame_fixture() else {
+        assert!(
+            std::env::var_os("REQUIRE_MEDIAMTX_E2E").is_none(),
+            "ffmpeg with libx264 is required"
+        );
+        eprintln!("SKIP: ffmpeg with libx264 not available");
+        return;
+    };
+    let video = fixture
+        .tracks
+        .iter()
+        .find(|t| t.kind == RtpMediaKind::H264)
+        .expect("video");
+    let ts: Vec<u32> = video
+        .packets
+        .iter()
+        .map(|p| {
+            u32::from_be_bytes(
+                p[RTP_TIMESTAMP_AT..RTP_TIMESTAMP_AT + RTP_TIMESTAMP_LEN]
+                    .try_into()
+                    .expect("ts"),
+            )
+        })
+        .collect();
+    assert!(
+        ts.windows(2)
+            .any(|w| w[1].wrapping_sub(w[0]) > u32::MAX / 2),
+        "the generated video must carry reordered (B-frame) timestamps"
+    );
+    let whens = [
+        SrAt::BeforeFirstSample,
+        SrAt::Packet(3),
+        SrAt::Packet(14),
+        SrAt::AfterFirstVideoAu,
+        SrAt::Third,
+    ];
+    for skew in [
+        0.0,
+        WITHIN_TOLERANCE_SKEW_SECONDS,
+        BEYOND_TOLERANCE_SKEW_SECONDS,
+    ] {
+        for when in whens {
+            let o = run_at(&fixture, Some(skew), when);
             assert_audio_on_sender_report_timeline(&o, skew);
             assert_monotonic(&o);
         }
