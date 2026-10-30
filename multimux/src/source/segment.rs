@@ -75,7 +75,7 @@
 //! all) is the addressing question `crate::route`'s own module doc records
 //! options for.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use transmux::TrackId;
@@ -92,6 +92,7 @@ use transmux::SegmentMeta;
 use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
+use transmux::{CaptionDetector, DetectedCaption};
 
 use super::split_audio::{self, AudioFollower, LEADER_DURATION_HISTORY, LeaderDurations};
 use crate::route::{RouteHandle, TsHlsIdrStatus};
@@ -433,6 +434,13 @@ pub struct ProgramSegmenter {
     followers: Vec<AudioFollower>,
     /// Duration of each recent leader segment, for sizing gap placeholders.
     leader_durations: LeaderDurations,
+    /// Per-track caption detectors (`None` for a track whose codec has no
+    /// caption carriage), built lazily and dropped on a track-set change.
+    caption_detectors: HashMap<TrackId, Option<CaptionDetector>>,
+    /// Every caption stream this segmenter has seen, across track changes.
+    captions_seen: BTreeSet<DetectedCaption>,
+    /// `captions_seen` has grown since it was last handed to the route.
+    captions_unreported: bool,
 }
 
 /// Most sample payload bytes the IDR-fallback hold keeps (32 MiB). Past it the
@@ -782,6 +790,9 @@ impl ProgramSegmenter {
             idr_hold_bytes: 0,
             followers,
             leader_durations: LeaderDurations::new(),
+            caption_detectors: HashMap::new(),
+            captions_seen: BTreeSet::new(),
+            captions_unreported: false,
         })
     }
 
@@ -854,10 +865,12 @@ impl ProgramSegmenter {
         if current_gen > self.track_generation {
             self.apply_track_change(program, trunk, route_handle);
             self.track_generation = current_gen;
+            self.caption_detectors.clear();
         }
 
         while let Some(item) = self.cursor.poll() {
             if let SampleCursorItem::Timed { track_id, sample } = item {
+                self.observe_captions(trunk, track_id, &sample.data);
                 // Start-gate (Apple authoring 7.4 MUST: segments start on a
                 // sync/IDR picture, issue #1425): for a program whose track set
                 // contains a video track, drop every timed sample until the
@@ -970,7 +983,28 @@ impl ProgramSegmenter {
             // own reference test, which only ever matches
             // `SampleCursorItem::Timed`.
         }
+        if self.captions_unreported {
+            let detected = self.captions_seen.iter().map(DetectedCaption::instream_id);
+            self.captions_unreported =
+                !route_handle.note_closed_captions(program, detected.collect());
+        }
         self.publish_ready()
+    }
+
+    fn observe_captions(&mut self, trunk: &Trunk, track_id: TrackId, data: &[u8]) {
+        let detector = self.caption_detectors.entry(track_id).or_insert_with(|| {
+            trunk
+                .tracks()
+                .iter()
+                .find(|t| t.track_id == track_id)
+                .and_then(|t| CaptionDetector::for_config(&t.config))
+        });
+        if let Some(detector) = detector
+            && detector.observe(data)
+        {
+            self.captions_seen.extend(detector.detected());
+            self.captions_unreported = true;
+        }
     }
 
     /// Anchor the media timeline on `sample` and push it through the
@@ -3074,6 +3108,9 @@ mod tests {
             idr_hold_bytes: 0,
             followers: Vec::new(),
             leader_durations: LeaderDurations::new(),
+            caption_detectors: HashMap::new(),
+            captions_seen: BTreeSet::new(),
+            captions_unreported: false,
         }
     }
 

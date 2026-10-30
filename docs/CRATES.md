@@ -340,7 +340,7 @@ Parses the `cc_data()` structure carried in MPEG-2/AVC/HEVC picture user data in
 - **Cargo description:** Closed-caption cc_data() carriage (CEA-608/708), per ETSI TS 101 154 Table B.9.
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`caption-convert`](#caption-convert), [`timed-metadata`](#timed-metadata)
+- **Used by (workspace):** [`caption-convert`](#caption-convert), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../cc-data/README.md) · [CHANGELOG](../cc-data/CHANGELOG.md) · [docs + spec pointer](../cc-data/docs/) · [crates.io](https://crates.io/crates/cc-data) · [docs.rs](https://docs.rs/cc-data)
 
 #### dvb-subtitle
@@ -479,7 +479,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Standards:** ISO/IEC 14496-12 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.27.7 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`tshttp-runtime`](#tshttp-runtime)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [docs + spec pointer](../transmux/docs/) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
@@ -1059,6 +1059,7 @@ flowchart BT
   timed_metadata --> mp4_emsg
   timed_metadata --> scte35_splice
   transmux --> broadcast_hls
+  transmux --> cc_data
   transmux --> container_probe
   transmux --> dvb_si
   transmux --> mp4_emsg

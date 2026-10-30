@@ -99,6 +99,7 @@ fn route_config(bind: SocketAddr, mpd: String, allow_cross_origin: bool) -> Conf
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
         }],
         ..Config::default()
     }

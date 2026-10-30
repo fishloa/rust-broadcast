@@ -1489,6 +1489,14 @@ pub struct Route {
     /// fMP4 route. Empty by default: output is unchanged.
     #[serde(default)]
     pub audio_rendition_sources: Vec<AudioTrackSelector>,
+    /// Per-`INSTREAM-ID` `NAME`/`LANGUAGE` overrides for the closed captions
+    /// (CEA-608/708) the route's video is seen to carry (issue #1428). Empty
+    /// by default: a detected stream is advertised with `NAME` = its
+    /// `INSTREAM-ID` and no `LANGUAGE` (the bitstream has none; set it here
+    /// to meet Apple authoring rule 4.4). An override never advertises a
+    /// stream the video does not carry.
+    #[serde(default)]
+    pub closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
     /// DVR durable segment archive (issue #746). Off by default — set
     /// `"enabled": true` and configure an `archive_root` and at least one
     /// retention limit to enable recording.
@@ -2452,6 +2460,11 @@ impl Config {
                 field: "audio_renditions",
                 reason: e.to_string(),
             })?;
+            hls_runtime::server::validate_closed_caption_overrides(&r.closed_caption_overrides)
+                .map_err(|e| MultimuxError::ConfigInvalid {
+                    field: "closed_caption_overrides",
+                    reason: e.to_string(),
+                })?;
         }
         if !self.allow_open_ingest {
             for r in &self.routes {
@@ -3075,6 +3088,7 @@ mod tests {
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
+                    closed_caption_overrides: Vec::new(),
                 }],
                 request_timeout_secs: bad,
                 ..Config::default()
@@ -3099,6 +3113,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             max_concurrent_requests: 0,
             ..Config::default()
@@ -3122,6 +3137,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             max_request_body_bytes: 0,
             ..Config::default()
@@ -3169,6 +3185,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3204,6 +3221,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3251,6 +3269,7 @@ mod tests {
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
+                    closed_caption_overrides: Vec::new(),
                 }],
                 ..Config::default()
             }
@@ -3326,6 +3345,7 @@ mod tests {
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
+                    closed_caption_overrides: Vec::new(),
                 }],
                 ..Config::default()
             };
@@ -3931,6 +3951,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3955,6 +3976,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -3982,6 +4004,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4054,6 +4077,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4076,6 +4100,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4098,6 +4123,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4121,6 +4147,7 @@ mod tests {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
         };
         let debug = format!("{ts_http:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4143,6 +4170,7 @@ mod tests {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
         };
         let debug = format!("{hls_pull:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4169,6 +4197,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4192,6 +4221,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4216,6 +4246,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4240,6 +4271,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4264,6 +4296,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4290,6 +4323,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4313,6 +4347,7 @@ mod tests {
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
+                    closed_caption_overrides: Vec::new(),
                 },
                 Route {
                     name: "x".into(),
@@ -4327,6 +4362,7 @@ mod tests {
                     declared_bandwidth_bps: None,
                     audio_renditions: Vec::new(),
                     audio_rendition_sources: Vec::new(),
+                    closed_caption_overrides: Vec::new(),
                 },
             ],
             ..Config::default()
@@ -4391,6 +4427,7 @@ mod tests {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4420,6 +4457,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         };
@@ -4454,6 +4492,7 @@ mod tests {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains(&long_sdp), "debug: {debug}");
@@ -4480,6 +4519,7 @@ mod tests {
                 declared_bandwidth_bps: None,
                 audio_renditions: Vec::new(),
                 audio_rendition_sources: Vec::new(),
+                closed_caption_overrides: Vec::new(),
             }],
             ..Config::default()
         }

@@ -1036,6 +1036,13 @@ pub enum HlsOriginBuildError {
         "HlsOrigin::builder(...).audio_renditions(...): every group must have the same members, differing only in URI and CHANNELS"
     )]
     AudioRenditionGroupsDiffer,
+    /// A closed-caption override's `instream_id` is not `CC1`..`CC4` or
+    /// `SERVICE1`..`SERVICE63`.
+    #[error("HlsOrigin::builder(...).closed_caption_overrides(...): invalid INSTREAM-ID")]
+    InvalidClosedCaptionInstreamId,
+    /// Two closed-caption overrides name the same `INSTREAM-ID`.
+    #[error("HlsOrigin::builder(...).closed_caption_overrides(...): duplicate INSTREAM-ID")]
+    DuplicateClosedCaptionInstreamId,
 }
 
 /// Error returned by [`HlsOrigin::master_playlist`].
@@ -1180,6 +1187,44 @@ pub struct AudioRenditionDecl {
     pub characteristics: Vec<String>,
 }
 
+/// `GROUP-ID` of the `EXT-X-MEDIA TYPE=CLOSED-CAPTIONS` group the master
+/// playlist advertises for detected captions.
+pub const CLOSED_CAPTIONS_GROUP_ID: &str = "cc";
+/// Operator override of how one detected caption stream is advertised
+/// (RFC 8216bis §4.4.6.1, Apple HLS authoring spec item 4.4). It never makes
+/// a stream appear: a stream is advertised only once the video is seen to
+/// carry it. Consumed by [`HlsOriginBuilder::closed_caption_overrides`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ClosedCaptionDecl {
+    /// The `INSTREAM-ID` this override applies to: `"CC1"`..`"CC4"` or
+    /// `"SERVICE1"`..`"SERVICE63"`.
+    pub instream_id: String,
+    /// `NAME`; empty keeps the default, the `INSTREAM-ID` itself.
+    pub name: String,
+    /// `LANGUAGE` (BCP 47); empty omits the attribute. The bitstream carries
+    /// no language, and Apple's `mediastreamvalidator` flags the placeholder
+    /// `"und"` as an unrecognised subtag, so none is invented; Apple's
+    /// authoring rule 4.4 asks for one, which is what this field is for.
+    pub language: String,
+}
+
+/// Validate closed-caption overrides: well-formed, unique `INSTREAM-ID`s.
+pub fn validate_closed_caption_overrides(
+    decls: &[ClosedCaptionDecl],
+) -> Result<(), HlsOriginBuildError> {
+    let mut seen: Vec<broadcast_hls::InstreamId> = Vec::new();
+    for decl in decls {
+        let id = broadcast_hls::InstreamId::parse_closed_captions(&decl.instream_id)
+            .map_err(|_| HlsOriginBuildError::InvalidClosedCaptionInstreamId)?;
+        if seen.contains(&id) {
+            return Err(HlsOriginBuildError::DuplicateClosedCaptionInstreamId);
+        }
+        seen.push(id);
+    }
+    Ok(())
+}
+
 /// A sibling rendition's origin + the URI of its media playlist, used to
 /// render `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4) into this
 /// origin's media playlist. Stored as a [`Weak`] reference so origins can
@@ -1230,6 +1275,7 @@ pub struct HlsOriginBuilder {
     playlist_uri: Option<String>,
     rendition_siblings: Vec<RenditionSibling>,
     closed_captions_none: bool,
+    closed_caption_overrides: Vec<ClosedCaptionDecl>,
 }
 
 impl HlsOriginBuilder {
@@ -1249,6 +1295,7 @@ impl HlsOriginBuilder {
             playlist_uri: None,
             rendition_siblings: Vec::new(),
             closed_captions_none: false,
+            closed_caption_overrides: Vec::new(),
         }
     }
 
@@ -1396,6 +1443,13 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// Override `NAME`/`LANGUAGE` of detected caption streams (see
+    /// [`ClosedCaptionDecl`]). Empty by default.
+    pub fn closed_caption_overrides(mut self, overrides: Vec<ClosedCaptionDecl>) -> Self {
+        self.closed_caption_overrides = overrides;
+        self
+    }
+
     /// Build the [`HlsOrigin`], subscribing its one [`SegmentCursor`]
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
@@ -1441,6 +1495,7 @@ impl HlsOriginBuilder {
         } else {
             validate_audio_renditions_relaxed(&self.audio_renditions)?;
         }
+        validate_closed_caption_overrides(&self.closed_caption_overrides)?;
         let cursor = self.trunk.subscribe_segments();
         Ok(HlsOrigin {
             trunk: self.trunk,
@@ -1470,6 +1525,8 @@ impl HlsOriginBuilder {
             rendition_siblings: Mutex::new(self.rendition_siblings),
             track_specs: Mutex::new(Vec::new()),
             closed_captions_none: self.closed_captions_none,
+            closed_caption_overrides: self.closed_caption_overrides,
+            detected_closed_captions: Mutex::new(Vec::new()),
             frozen_target_duration_secs: Mutex::new(None),
             target_duration_violations: AtomicU64::new(0),
         })
@@ -1557,6 +1614,10 @@ pub struct HlsOrigin {
     track_specs: Mutex<Vec<transmux::TrackSpec>>,
     /// Emit `CLOSED-CAPTIONS=NONE` (issue #1428 slice 1).
     closed_captions_none: bool,
+    closed_caption_overrides: Vec<ClosedCaptionDecl>,
+    /// Caption streams the video has been seen to carry, in advertising
+    /// order. Taken alone (never while `window` or `codecs` is held).
+    detected_closed_captions: Mutex<Vec<broadcast_hls::InstreamId>>,
     /// Frozen `EXT-X-TARGETDURATION` (seconds, pre-rounding) captured the
     /// first time a playlist is rendered with at least one segment in the
     /// window: RFC 8216 §4.3.3.1 forbids the tag changing once published,
@@ -1740,6 +1801,16 @@ impl HlsOrigin {
         (w.peak_bandwidth_bps, w.total_bytes, w.total_duration_nanos)
     }
 
+    /// Record the caption streams the video is now known to carry. The next
+    /// master playlist advertises exactly these, one
+    /// `EXT-X-MEDIA TYPE=CLOSED-CAPTIONS` per stream in group
+    /// [`CLOSED_CAPTIONS_GROUP_ID`], and every variant references the group.
+    /// Until this is called with a non-empty list the master claims no
+    /// captions.
+    pub fn set_detected_closed_captions(&self, detected: Vec<broadcast_hls::InstreamId>) {
+        *locked(&self.detected_closed_captions) = detected;
+    }
+
     /// The master playlist for this origin, pointing at `media_playlist_name`:
     /// one `#EXT-X-STREAM-INF` whose `BANDWIDTH` is the highest segment
     /// bitrate this origin has published (RFC 8216 §4.3.4.2: an upper bound
@@ -1881,7 +1952,11 @@ impl HlsOrigin {
                 m
             })
             .collect();
-        let media = dedupe_rendition_names(media);
+        let mut media = dedupe_rendition_names(media);
+        let detected_captions = locked(&self.detected_closed_captions).clone();
+        let caption_media = self.closed_caption_renditions(&detected_captions);
+        let captions_advertised = !caption_media.is_empty();
+        media.extend(caption_media);
 
         let audio_groups: Vec<String> = {
             let mut g: Vec<String> = Vec::new();
@@ -1893,7 +1968,11 @@ impl HlsOrigin {
             g
         };
 
-        let closed_captions = if self.closed_captions_none {
+        let closed_captions = if captions_advertised {
+            Some(ClosedCaptionsRef::Group(
+                CLOSED_CAPTIONS_GROUP_ID.to_string(),
+            ))
+        } else if self.closed_captions_none {
             Some(ClosedCaptionsRef::None)
         } else {
             None
@@ -2029,6 +2108,37 @@ impl HlsOrigin {
             ..Default::default()
         };
         master.to_m3u8().map_err(HlsMasterError::Render)
+    }
+
+    fn closed_caption_renditions(
+        &self,
+        detected: &[broadcast_hls::InstreamId],
+    ) -> Vec<MediaRendition> {
+        let renditions = detected
+            .iter()
+            .map(|id| {
+                let rendered = id.render();
+                let declared = self.closed_caption_overrides.iter().find(|d| {
+                    broadcast_hls::InstreamId::parse_closed_captions(&d.instream_id).as_ref()
+                        == Ok(id)
+                });
+                let pick = |value: Option<&String>, default: &str| match value {
+                    Some(v) if !v.is_empty() => v.clone(),
+                    _ => default.to_string(),
+                };
+                let mut m = MediaRendition::default();
+                m.media_type = MediaType::ClosedCaptions;
+                m.group_id = CLOSED_CAPTIONS_GROUP_ID.to_string();
+                m.name = pick(declared.map(|d| &d.name), &rendered);
+                m.language = declared
+                    .map(|d| d.language.clone())
+                    .filter(|l| !l.is_empty());
+                m.autoselect = false;
+                m.instream_id = Some(id.clone());
+                m
+            })
+            .collect();
+        dedupe_rendition_names(renditions)
     }
 
     fn iframe_playlist_available(&self) -> bool {
