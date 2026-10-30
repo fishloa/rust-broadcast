@@ -1175,8 +1175,9 @@ fn playout_audio_rendition_switch_does_not_pin_stale_audio_obs() {
     let last = lead_points(&list, &[VIDEO, audio_track]).pop().unwrap();
     r.pos(Some(last.min_end));
     let evs = bufs(&r.events);
-    assert!(
-        !evs.iter().any(|e| matches!(e, BufferEvent::Pause { .. })),
-        "spurious pause after rendition switch: {evs:?}"
+    assert_eq!(
+        names(&r.events),
+        vec!["start"],
+        "buffer event sequence changed across audio rendition switch: {evs:?}"
     );
 }

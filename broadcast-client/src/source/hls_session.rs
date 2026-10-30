@@ -97,10 +97,6 @@ impl HlsSession {
         }
     }
 
-    pub(crate) fn audio_url(&self) -> Option<String> {
-        self.audio.as_ref().map(|a| a.url.clone())
-    }
-
     pub(crate) fn take_actions(&mut self) -> VecDeque<Action> {
         core::mem::take(&mut self.actions)
     }

@@ -134,13 +134,6 @@ impl Adaptive {
         }
     }
 
-    pub(crate) fn audio_url(&self) -> Option<String> {
-        match self {
-            Self::Hls(s) => s.audio_url(),
-            Self::Dash(_) => None,
-        }
-    }
-
     pub(crate) fn variant_switch_restarts_playout(&self) -> bool {
         matches!(self, Self::Hls(_))
     }

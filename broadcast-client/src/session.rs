@@ -607,13 +607,7 @@ impl Session {
         if self.closed {
             return Ok(());
         }
-        let old_audio_url = h.audio_url();
         h.select_audio(index, self.now_us, &mut self.auth)?;
-        let new_audio_url = h.audio_url();
-        let switched = old_audio_url != new_audio_url;
-        if switched {
-            self.playout.on_audio_rendition_switch();
-        }
         self.flush_adaptive();
         Ok(())
     }
