@@ -252,6 +252,37 @@ impl AnySegmenter {
             },
         }
     }
+
+    /// Propagate a changed track spec to a running segmenter (issue #1425):
+    /// when the audio config / sample rate / channels or the video frame
+    /// rate / display parameters change mid-stream, the TS-HLS segmenter
+    /// arms its `#EXT-X-DISCONTINUITY` machinery via `update_track` instead
+    /// of being rebuilt or ignoring the change.
+    ///
+    /// Returns `true` when the spec changed and was applied in place.
+    fn update_track(&mut self, spec: &TrackSpec) -> bool {
+        match self {
+            AnySegmenter::Fmp4(_) => false,
+            AnySegmenter::Ts(seg) => match seg.update_track(spec.clone()) {
+                Ok(true) => {
+                    tracing::info!(
+                        track_id = %spec.track_id,
+                        "applied changed track config to running TS-HLS segmenter"
+                    );
+                    true
+                }
+                Ok(false) => false,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        track_id = %spec.track_id,
+                        "failed to apply changed track config to TS-HLS segmenter"
+                    );
+                    false
+                }
+            },
+        }
+    }
 }
 
 /// One program's segmenting state: a [`SampleCursor`] on its driver-minted
@@ -1071,7 +1102,7 @@ impl ProgramSegmenter {
 
         let mut any_admitted = false;
         for spec in &new_specs {
-            if self.seg.add_track(spec) {
+            if self.seg.update_track(spec) || self.seg.add_track(spec) {
                 any_admitted = true;
             }
         }

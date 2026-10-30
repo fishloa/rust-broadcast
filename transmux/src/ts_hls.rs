@@ -1250,6 +1250,51 @@ impl StreamingTsHlsSegmenter {
         Ok(())
     }
 
+    /// Update an existing track's spec mid-stream (issue #1425, Apple HLS
+    /// authoring 2.11 / 8.14).
+    ///
+    /// A track whose audio configuration (AudioSpecificConfig / sample rate /
+    /// channel layout) or video frame rate / display parameters changes
+    /// mid-stream must open a new segment flagged `#EXT-X-DISCONTINUITY`
+    /// (RFC 8216 §4.3.4.3). The segmenter only learns about such a change
+    /// through this entry point: [`Self::add_track`] is for tracks that did
+    /// not exist before, and a bare `push` carries no config.
+    ///
+    /// When the new spec differs from the stored one in a field that affects
+    /// the media timeline (audio codec config / sample rate / channels, video
+    /// frame rate / display geometry / timescale), the stored spec is
+    /// replaced and the existing [`Self::mark_discontinuity`] machinery is
+    /// invoked so the *next* cut is flagged discontinuous — no second
+    /// mechanism. An unchanged spec is a no-op (no discontinuity). An
+    /// unknown `track_id` is an error.
+    ///
+    /// Returns `Ok(true)` when the spec changed (and a discontinuity was
+    /// armed), `Ok(false)` when it was identical to the stored one.
+    pub fn update_track(&mut self, spec: TrackSpec) -> Result<bool> {
+        let idx = self
+            .tracks
+            .iter()
+            .position(|t| t.spec.track_id == spec.track_id)
+            .ok_or(Error::InvalidInput("update_track: unknown track_id"))?;
+
+        let old = &self.tracks[idx].spec;
+        let changed = old.timescale != spec.timescale
+            || old.display != spec.display
+            || format!("{:?}", old.config) != format!("{:?}", spec.config);
+
+        if changed {
+            let old_timescale = self.tracks[idx].spec.timescale;
+            self.tracks[idx].spec = spec;
+            if idx == self.anchor && self.tracks[idx].spec.timescale != old_timescale {
+                self.target_ticks =
+                    target_ticks_for(self.target_secs, self.tracks[self.anchor].spec.timescale);
+            }
+            self.mark_discontinuity();
+        }
+
+        Ok(changed)
+    }
+
     /// The current rolling media playlist: at most [`window`](Self::new)
     /// segments (the most recently cut), with `#EXT-X-MEDIA-SEQUENCE`
     /// advanced past every segment that has rolled out of the window and

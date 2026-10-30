@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+- `StreamingTsHlsSegmenter::update_track(TrackSpec)` (issue #1425): a typed track-config-change entry point. When an audio configuration (AudioSpecificConfig / sample rate / channel layout) or a video frame-rate / display-parameter change differs from the stored spec, the stored spec is replaced and the existing `mark_discontinuity` machinery is armed so the next segment opens with `#EXT-X-DISCONTINUITY`; an unchanged spec is a no-op. Public API addition (no breaking change).
+
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 
