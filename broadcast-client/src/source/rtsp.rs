@@ -884,15 +884,17 @@ impl RtspSource {
         let bytes = &sample.data;
         let mut off = 0usize;
         while off.saturating_add(4) <= bytes.len() {
-            let len = u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
-                as usize;
+            let len =
+                u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
+                    as usize;
             off = off.saturating_add(4);
             if len == 0 || off.saturating_add(len) > bytes.len() {
                 break;
             }
             let nal = &bytes[off..off + len];
             off = off.saturating_add(len);
-            if !nal.is_empty() && (nal[0] & 0x1f) == 7
+            if !nal.is_empty()
+                && (nal[0] & 0x1f) == 7
                 && let Ok(info) = transmux::sps::decode_avc_sps(nal)
             {
                 found = Some((

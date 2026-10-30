@@ -810,7 +810,10 @@ impl Session {
                 }
                 let computed_join = self.buffer.join_sample(*track, sample);
                 *join = computed_join;
-                if self.jump.is_jump(*track, sample, computed_join, self.now_us) {
+                if self
+                    .jump
+                    .is_jump(*track, sample, computed_join, self.now_us)
+                {
                     self.emit(Event::Discontinuity);
                     self.jump.begin_epoch(*track, sample);
                     self.buffer.on_demux_discontinuity(self.now_us);
