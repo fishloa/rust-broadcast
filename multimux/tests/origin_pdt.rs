@@ -421,7 +421,6 @@ async fn pdt_validator_clean() {
     collect(&json, "$", &mut findings);
     const KNOWN_1429: &[&str] = &[
         "No rendition reports in low-latency playlist",
-        "Missing EXT-X-PART-INF tag",
         "Missing server control attribute",
     ];
     for f in &findings {
