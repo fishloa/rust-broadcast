@@ -128,3 +128,22 @@ fn own_digest_challenge_parses_as_one_challenge() {
     assert_eq!(param(&c, "algorithm").as_deref(), Some("MD5"));
     assert_eq!(param(&c, "nonce").unwrap().len(), 96); // 48 raw bytes, hex
 }
+
+#[test]
+fn own_digest_nonces_are_unique_and_correct_length() {
+    let v = Verifier::new(
+        Credentials::Digest {
+            username: "admin".into(),
+            password: "12345".into(),
+        },
+        "cameras",
+    );
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..64 {
+        let header = v.challenge();
+        let c = parse_one(&header);
+        let nonce = param(&c, "nonce").expect("nonce param");
+        assert_eq!(nonce.len(), 96, "nonce must be 48 raw bytes hex-encoded");
+        assert!(seen.insert(nonce), "duplicate nonce issued");
+    }
+}

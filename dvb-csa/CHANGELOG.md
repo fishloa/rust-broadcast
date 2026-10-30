@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Dev-dependency `rand` 0.9 -> 0.10 (bitsliced differential test only; not in public API).
+
 ## [0.4.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs rewritten to the workspace documentation standard: what the crate does and does not do, a standards-supported table (edition, scope, status), feature flags, a doctested quick start, and related crates.
