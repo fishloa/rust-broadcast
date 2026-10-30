@@ -339,10 +339,58 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
         "only {} samples",
         samples.len()
     );
-    let zero = samples
+    let zero_indices: Vec<usize> = samples
         .iter()
-        .filter(|(_, s)| s.duration.unwrap_or(0) == 0)
-        .count();
+        .enumerate()
+        .filter(|(_, (_, s))| s.duration.unwrap_or(0) == 0)
+        .map(|(i, _)| i)
+        .collect();
+    if !zero_indices.is_empty() {
+        eprintln!(
+            "ZERO-DURATION SAMPLES: {} of {}",
+            zero_indices.len(),
+            samples.len()
+        );
+        for &i in &zero_indices {
+            let (tr, s) = &samples[i];
+            let prev = i
+                .checked_sub(1)
+                .map(|j| {
+                    let (ptr, ps) = &samples[j];
+                    format!(
+                        "prev track={} pts={} dts={} dur={:?}",
+                        ptr,
+                        ps.pts.unwrap_or(0),
+                        ps.dts.unwrap_or(0),
+                        ps.duration
+                    )
+                })
+                .unwrap_or_else(|| "prev=none".to_string());
+            let next = samples
+                .get(i + 1)
+                .map(|(ntr, ns)| {
+                    format!(
+                        "next track={} pts={} dts={} dur={:?}",
+                        ntr,
+                        ns.pts.unwrap_or(0),
+                        ns.dts.unwrap_or(0),
+                        ns.duration
+                    )
+                })
+                .unwrap_or_else(|| "next=none".to_string());
+            eprintln!(
+                "  idx={} track={} pts={} dts={} dur={:?} | {} | {}",
+                i,
+                tr,
+                s.pts.unwrap_or(0),
+                s.dts.unwrap_or(0),
+                s.duration,
+                prev,
+                next
+            );
+        }
+    }
+    let zero = zero_indices.len();
     assert_eq!(
         zero,
         0,

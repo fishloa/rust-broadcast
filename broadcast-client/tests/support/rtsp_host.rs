@@ -414,6 +414,7 @@ pub struct Host {
     pub history: Vec<Event>,
     pub chunking: Chunking,
     pub silent: bool,
+    pub recorded: Vec<u8>,
     cycle_pos: usize,
 }
 
@@ -429,6 +430,7 @@ impl Host {
             history: Vec::new(),
             chunking: Chunking::Whole,
             silent: false,
+            recorded: Vec::new(),
             cycle_pos: 0,
         }
     }
@@ -473,6 +475,7 @@ impl Host {
     }
 
     pub fn deliver(&mut self, bytes: &[u8]) {
+        self.recorded.extend_from_slice(bytes);
         let conn = self.conn.expect("a live connection");
         match self.chunking.clone() {
             Chunking::Whole => self.session.on_data(conn, bytes, self.now),
