@@ -22,6 +22,7 @@ const FFMPEG: &str = "ffmpeg";
 const FIXTURE: &str = "ts/h264_aac.ts";
 const STREAM_PATH: &str = "live";
 const READY_DEADLINE: Duration = Duration::from_secs(10);
+static SERVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const PUBLISHER_WARMUP: Duration = Duration::from_secs(4);
 const SOURCE_LOOPS: &str = "12";
 const SOURCE_SECONDS: &str = "30";
@@ -137,6 +138,9 @@ fn rtsp_session_starts_on_a_two_second_gop_source() {
 }
 
 fn run_case(label: &str, reencode_video: Option<&[&str]>) {
+    let _serial = SERVER_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (Some(mediamtx), Some(ffmpeg)) = (on_path(MEDIAMTX), on_path(FFMPEG)) else {
         bail("mediamtx and ffmpeg must both be on PATH");
         return;
