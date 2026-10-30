@@ -1485,7 +1485,7 @@ impl DashClient {
         self.outstanding = 0;
         self.rep_loc.clear();
         self.prev = None;
-        self.inits.retain(|_, e| e.state == InitState::Ready);
+        self.inits.clear();
         if let Some(live) = self.live.as_mut() {
             live.early.clear();
             live.missing_seen.clear();
