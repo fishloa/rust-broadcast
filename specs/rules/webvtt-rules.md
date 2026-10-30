@@ -53,13 +53,18 @@ to the MPEG-2 TS (PES) timeline shared with the audio/video segments:
 
 ```
 WEBVTT
-X-TIMESTAMP-MAP=MPEGTS:<n>,LOCAL:<webvtt-timestamp>
+X-TIMESTAMP-MAP=LOCAL:<cue time>,MPEGTS:<MPEG-2 time>
 ```
 
-- `MPEGTS:<n>` — a 33-bit 90 kHz MPEG-2 TS timestamp (the PES PTS of the point
-  mapped by `LOCAL:`), modulo 2^33.
-- `LOCAL:<ts>` — the WebVTT timestamp (`(hh:)?mm:ss.ttt`) that corresponds to
-  that MPEGTS value; conventionally `00:00:00.000`.
+Order and example per RFC 8216 section 3.5
+(`X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:900000`). The 8216bis draft
+(`specs/ietf_draft_pantos_hls_rfc8216bis.txt` line 542) uses the same order and
+calls the value `<media time>`.
+
+- `LOCAL:<cue time>` — the WebVTT timestamp (`(hh:)?mm:ss.ttt`) that corresponds
+  to that MPEGTS value; conventionally `00:00:00.000`.
+- `MPEGTS:<MPEG-2 time>` — a 33-bit 90 kHz MPEG-2 TS timestamp (the PES PTS of
+  the point mapped by `LOCAL:`), modulo 2^33.
 - A cue's absolute presentation time = its WebVTT time − LOCAL + (MPEGTS / 90000).
   Emit one `X-TIMESTAMP-MAP` per segment; cue times inside the segment stay on
   the WebVTT-local clock. Segmentation is aligned to the media segment
