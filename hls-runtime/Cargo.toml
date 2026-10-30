@@ -28,6 +28,9 @@ timed-metadata    = { path = "../timed-metadata", version = "0.7", default-featu
 # shared `segment` checks (the DASH client uses the same ones).
 container-probe   = { path = "../container-probe", version = "0.2", default-features = false }
 thiserror         = { version = "2", default-features = false }
+# ISO 639 code tables (alpha-2/alpha-3 B and T) for canonicalising HLS
+# LANGUAGE tags to BCP 47. Pulled in only by the `std` feature.
+iso-639          = { version = "0.1", optional = true, default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `std` feature: `server::engine::HlsOrigin` renders
 # from a `media_plane::Trunk` (plan step 4) — the shared sample/segment/
@@ -64,7 +67,7 @@ default = ["std"]
 # feature exists only to match the workspace's `no_std`-capable-core convention
 # (verified by the `--no-default-features` gate) and to let `transmux/std`
 # follow along when a caller does want `std`.
-std = ["broadcast-common/std", "thiserror/std", "transmux/std", "broadcast-hls/std", "media-plane/std", "dep:bytes", "url/std", "jiff/std", "serde?/std"]
+std = ["broadcast-common/std", "thiserror/std", "transmux/std", "broadcast-hls/std", "media-plane/std", "dep:bytes", "dep:iso-639", "url/std", "jiff/std", "serde?/std"]
 # Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
 serde = ["dep:serde"]
 # `TokioClient` (issue #717 slice 5): an async shell driving the sans-IO

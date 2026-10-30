@@ -1734,6 +1734,7 @@ dependencies = [
  "bytes",
  "container-probe",
  "headers",
+ "iso-639",
  "jiff",
  "media-plane",
  "reqwest",
@@ -2064,6 +2065,12 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "iso-639"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad7d3f647f560b2e5c7d7da6d9326223893247feb3e086a388a14654683aa2f2"
 
 [[package]]
 name = "itertools"

@@ -490,7 +490,8 @@ chance to resolve it.
 
 With `audio_rendition_sources` set (separate audio renditions, #1428), a
 rendition's `language`, `name`, `characteristics` and `channels` may be left
-empty: they are derived from the stream's PMT (ISO 639-2 language code,
+empty: they are derived from the stream's PMT (ISO 639-2 language code, canonicalised to a
+BCP 47 language tag for `LANGUAGE`,
 `public.accessibility.describes-video` for an audio-description track, the
 codec's channel count); values you set win. Each audio group's variant
 advertises `CODECS` with the audio codec and a `BANDWIDTH` of the video peak

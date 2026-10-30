@@ -11,5 +11,9 @@ pub mod client;
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod server;
 
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub use server::bcp47_language;
+
 /// The RFC this crate's client behaviour implements against.
 pub const SPEC: &str = "RFC 8216bis (HTTP Live Streaming 2nd Edition, draft-pantos-hls-rfc8216bis)";

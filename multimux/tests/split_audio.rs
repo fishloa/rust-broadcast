@@ -839,7 +839,7 @@ async fn split_audio_validator_findings() {
     let sources = france2();
     let split = rig(
         &sources,
-        decls(&["fre", "qad", "qaa"]),
+        decls(&["fr", "qad", "qaa"]),
         index_selectors(3),
         &|_, _| true,
     );
@@ -866,6 +866,12 @@ async fn split_audio_validator_findings() {
             !tolerated
         })
         .collect();
+    assert!(
+        !split_findings
+            .iter()
+            .any(|(_, m)| m.contains("Non-canonical language subtag")),
+        "non-canonical language subtag reported: {split_findings:?}"
+    );
     assert!(
         unexpected.is_empty(),
         "level-1 findings split audio introduces over the muxed route: {unexpected:?}"
@@ -1048,8 +1054,13 @@ async fn split_master_derives_language_name_and_audio_description_from_the_pmt()
     for (i, a) in audio.iter().enumerate() {
         let meta = a.spec.audio_metadata();
         let lang = meta.languages[0].language.clone();
+        let expected_language = hls_runtime::bcp47_language(&lang).unwrap_or_else(|| lang.clone());
         let media = &master.media[i];
-        assert_eq!(media.language.as_deref(), Some(lang.as_str()), "{text}");
+        assert_eq!(
+            media.language.as_deref(),
+            Some(expected_language.as_str()),
+            "{text}"
+        );
         let ad = meta.role == transmux::AudioRole::AudioDescription;
         assert_eq!(
             media
@@ -1073,7 +1084,7 @@ async fn split_master_derives_language_name_and_audio_description_from_the_pmt()
         .collect();
     assert_eq!(
         languages,
-        ["fre", "qad", "qaa"],
+        ["fr", "qad", "qaa"],
         "france2 PMT languages: {text}"
     );
     assert_eq!(
@@ -1107,7 +1118,7 @@ async fn split_master_config_values_win_over_derived() {
         "{text}"
     );
     assert_eq!(m.channels.as_deref(), Some("6"), "{text}");
-    assert_eq!(master.media[0].language.as_deref(), Some("fre"), "{text}");
+    assert_eq!(master.media[0].language.as_deref(), Some("fr"), "{text}");
 }
 
 #[tokio::test]
