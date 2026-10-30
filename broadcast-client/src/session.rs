@@ -26,7 +26,7 @@ use crate::source::rtsp::RtspSource;
 use crate::source::ts_http::TsHttpSource;
 use crate::source::ts_http_hold::{HoldLimits, StreamKind};
 use crate::timeline::JumpDetector;
-use transmux::TrackId;
+use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use tshttp_runtime::Action as TsAction;
 
@@ -786,46 +786,57 @@ impl Session {
         match &mut e {
             Event::Tracks(specs) => {
                 self.jump.on_tracks(specs);
-                self.buffer.retain_tracks(specs);
-                let specs_clone = specs.clone();
-                for spec in &specs_clone {
-                    self.buffer.on_track_added(spec);
-                }
-                let resolution = self.declaration.on_tracks(&specs_clone);
+                self.buffer_tracks(specs);
+                let resolution = self.declaration.on_tracks(specs);
                 self.apply_rendered(resolution);
             }
             Event::Discontinuity => {
                 self.jump.clear();
-                self.buffer.rejoin();
-                self.buffer.hint(self.now_us, Hint::Reconnected);
+                self.buffer_reconnected();
             }
             Event::Sample {
                 track,
                 sample,
                 join,
-            } => {
-                if !self.jump.screen(*track, sample) {
-                    self.stale_dropped = self.stale_dropped.saturating_add(1);
-                    return;
-                }
-                let computed_join = self.buffer.join_sample(*track, sample);
-                *join = computed_join;
-                if self
-                    .jump
-                    .is_jump(*track, sample, computed_join, self.now_us)
-                {
-                    self.emit(Event::Discontinuity);
-                    self.jump.begin_epoch(*track, sample);
-                    self.buffer.on_demux_discontinuity(self.now_us);
-                    let recomputed = self.buffer.join_sample(*track, sample);
-                    *join = recomputed;
-                }
-                self.jump.record(*track, sample, *join, self.now_us);
-                self.buffer.on_sample(*track, sample, *join);
-            }
+            } => match self.buffer_sample(*track, sample) {
+                Some(j) => *join = j,
+                None => return,
+            },
             _ => {}
         }
         self.events.push_back(e);
+    }
+
+    fn buffer_tracks(&mut self, specs: &[TrackSpec]) {
+        self.buffer.retain_tracks(specs);
+        for spec in specs {
+            self.buffer.on_track_added(spec);
+        }
+    }
+
+    fn buffer_reconnected(&mut self) {
+        self.buffer.rejoin();
+        self.buffer.hint(self.now_us, Hint::Reconnected);
+    }
+
+    fn buffer_sample(&mut self, track: TrackId, sample: &Sample) -> Option<Option<JoinDecision>> {
+        if !self.jump.screen(track, sample) {
+            self.stale_dropped = self.stale_dropped.saturating_add(1);
+            return None;
+        }
+        let mut join = self.buffer.join_sample(track, sample);
+        if self.jump.is_jump(track, sample, join, self.now_us) {
+            let handled = self.jump.already_handled();
+            self.emit(Event::Discontinuity);
+            self.jump.begin_epoch(track, sample);
+            if !handled {
+                self.buffer.on_demux_discontinuity(self.now_us);
+                join = self.buffer.join_sample(track, sample);
+            }
+        }
+        self.jump.record(track, sample, join, self.now_us);
+        self.buffer.on_sample(track, sample, join);
+        Some(join)
     }
 
     fn flush_adaptive(&mut self) {
@@ -955,29 +966,13 @@ impl Session {
                     self.emit(e);
                 }
                 Event::Tracks(specs) => {
-                    self.buffer.retain_tracks(&specs);
-                    for spec in &specs {
-                        self.buffer.on_track_added(spec);
-                    }
+                    self.buffer_tracks(&specs);
                     self.emit(Event::Tracks(specs));
                 }
                 Event::Sample { track, sample, .. } => {
-                    if !self.jump.screen(track, &sample) {
-                        self.stale_dropped = self.stale_dropped.saturating_add(1);
+                    let Some(join) = self.buffer_sample(track, &sample) else {
                         continue;
-                    }
-                    let mut join = self.buffer.join_sample(track, &sample);
-                    if self.jump.is_jump(track, &sample, join, self.now_us) {
-                        let handled = self.jump.already_handled();
-                        self.emit(Event::Discontinuity);
-                        self.jump.begin_epoch(track, &sample);
-                        if !handled {
-                            self.buffer.on_demux_discontinuity(self.now_us);
-                            join = self.buffer.join_sample(track, &sample);
-                        }
-                    }
-                    self.jump.record(track, &sample, join, self.now_us);
-                    self.buffer.on_sample(track, &sample, join);
+                    };
                     self.emit(Event::Sample {
                         track,
                         sample,
@@ -985,8 +980,7 @@ impl Session {
                     });
                 }
                 Event::Discontinuity => {
-                    self.buffer.rejoin();
-                    self.buffer.hint(self.now_us, Hint::Reconnected);
+                    self.buffer_reconnected();
                     self.emit(e);
                 }
                 other => {
