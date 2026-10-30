@@ -23,7 +23,7 @@ base64     = { version = "0.23", default-features = false, features = ["alloc"] 
 jiff       = { version = "0.2", default-features = false, features = ["std"], optional = true }
 # BaseURL / URL-reference resolution (SP3, `base_url`): WHATWG `Url::join`. `std`-only.
 url        = { version = "2", optional = true }
-# RTP SDP generation (SP4): `Session::write`. `sdp-types` 0.2 is `std`-only, so SDP generation is `std`-only; tests/rtp.rs also uses its parser as an oracle.
+# RTP SDP generation (SP4): `Session::write`. `sdp-types` 0.3 is `std`-only (no `no_std`/`alloc` feature), so SDP generation is `std`-only; tests/rtp.rs also uses its parser as an oracle.
 sdp-types  = { workspace = true, optional = true }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters

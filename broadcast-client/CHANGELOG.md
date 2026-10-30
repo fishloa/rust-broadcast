@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dependency `sdp-types` 0.2 -> 0.3. No public API exposure (used internally and in tests).
+
 Initial release. A generic sans-IO client session for live and on-demand media: the host performs only transport I/O (HTTP requests, or a TCP connection for RTSP) and reports what happened; the session owns auth, redirects, cookies, reconnect/retry, demuxing and buffering decisions. Time is a caller-supplied monotonic `now_us`. Design: `docs/broadcast-client/DESIGN.md`.
 
 ### Fixed

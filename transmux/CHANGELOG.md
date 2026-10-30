@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING: `sdp-types` 0.2 -> 0.3)
+- Dependency `sdp-types` 0.2 -> 0.3. Public API exposure: `build_sdp_with_connection` takes `Vec<sdp_types::Media>` (`transmux/src/rtp.rs:856`, re-exported `transmux/src/lib.rs:389`); the `sdp_types::Media` type is therefore part of this crate's public API.
+
 ### Added
 - `RtpStreamDepacketiser::set_track_config` replaces a track's codec configuration after SETUP (for dimensions learned from an in-band parameter set).
 - `avc_sps_dimensions` and `avc_access_unit_dimensions`: the cropped output size of an H.264 SPS (the rule the TS demuxer uses for `TrackSpec` dimensions), and the same from the first SPS in a length-prefixed access unit.
