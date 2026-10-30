@@ -567,6 +567,7 @@ dependencies = [
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
+ "transmux",
 ]
 
 [[package]]
