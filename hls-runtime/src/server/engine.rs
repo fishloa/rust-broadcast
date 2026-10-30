@@ -727,6 +727,19 @@ fn is_video_codec(config: &transmux::CodecConfig) -> bool {
     )
 }
 
+fn dedupe_rendition_names(mut media: Vec<MediaRendition>) -> Vec<MediaRendition> {
+    let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    for m in &mut media {
+        let base = m.name.clone();
+        let mut n = 1u32;
+        while !seen.insert((m.group_id.clone(), m.name.clone())) {
+            n += 1;
+            m.name = format!("{base} ({n})");
+        }
+    }
+    media
+}
+
 fn channel_count_string(config: &transmux::CodecConfig) -> Option<String> {
     let n = match config {
         transmux::CodecConfig::Aac { channel_count, .. }
@@ -1141,20 +1154,28 @@ pub fn validate_audio_renditions_relaxed(
 pub struct AudioRenditionDecl {
     /// `GROUP-ID` of the audio rendition group.
     pub group_id: String,
-    /// `NAME` of the rendition.
+    /// `NAME` of the rendition. On a split-audio route it may be left empty
+    /// and is then derived from the track (the language, plus ` (AD)` for an
+    /// audio-description track), made unique within its group.
     pub name: String,
     /// `LANGUAGE` of the rendition; must be non-empty (`"und"` for
-    /// undetermined).
+    /// undetermined) unless split-audio derivation is active, which then
+    /// fills it from the track's PMT `ISO_639_language_descriptor`. The
+    /// derived value is the ISO 639-2 three-letter code, which BCP 47
+    /// permits as a language subtag; no 639-2 to 639-1 mapping is applied.
     pub language: String,
     /// `DEFAULT` attribute.
     pub default: bool,
     /// `AUTOSELECT` attribute.
     pub autoselect: bool,
-    /// `CHANNELS` attribute (e.g. `"2"` or `"JOC 3/2.0.2"`).
+    /// `CHANNELS` attribute (e.g. `"2"` or `"JOC 3/2.0.2"`). `None` on a
+    /// split-audio route derives the codec config's channel count.
     pub channels: Option<String>,
     /// URI of the audio media playlist.
     pub uri: String,
-    /// `CHARACTERISTICS` MCTs.
+    /// `CHARACTERISTICS` MCTs. Empty on a split-audio route derives
+    /// `public.accessibility.describes-video` for an audio-description
+    /// track; a non-empty value always wins.
     pub characteristics: Vec<String>,
 }
 
@@ -1319,7 +1340,12 @@ impl HlsOriginBuilder {
     /// Sibling audio origins (issue #1428 slice 3) whose measured peak/average
     /// bandwidth and `CODECS` are folded into this (video) origin's
     /// multivariant playlist for split-audio routes. One per declared
-    /// rendition, in the same order. Empty (the default) keeps the slice 1
+    /// rendition, in the same order. Each group's `EXT-X-STREAM-INF` carries
+    /// `BANDWIDTH` = video peak + the group's largest audio peak and
+    /// `AVERAGE-BANDWIDTH` likewise over averages (Apple authoring items
+    /// 9.13/9.14); `CODECS` is the video codec plus the group's distinct audio
+    /// codecs. [`HlsOriginBuilder::declared_bandwidth_bps`] floors the video
+    /// part only, never the audio part. Empty (the default) keeps the slice 1
     /// behaviour: declared-only `CODECS`/`BANDWIDTH`.
     pub fn audio_sibling_origins(mut self, origins: Vec<Arc<HlsOrigin>>) -> Self {
         self.audio_sibling_origins = origins;
@@ -1645,25 +1671,15 @@ impl HlsOrigin {
         Ok(())
     }
 
-    /// Snapshot of this origin's measured peak bandwidth (bits/sec).
-    pub fn peak_bandwidth_bps(&self) -> u64 {
-        locked(&self.window).peak_bandwidth_bps
-    }
-
-    /// Snapshot of this origin's window totals, for `AVERAGE-BANDWIDTH`.
-    pub fn window_totals(&self) -> (u64, u128) {
+    /// One `Window` lock, one consistent snapshot: peak bits/sec, total bytes
+    /// and total duration (nanoseconds).
+    fn window_snapshot(&self) -> (u64, u64, u128) {
         let w = locked(&self.window);
-        (w.total_bytes, w.total_duration_nanos)
-    }
-
-    /// This origin's `CODECS` string, if known.
-    pub fn codecs_string(&self) -> Option<String> {
-        locked(&self.codecs).clone()
-    }
-
-    /// This origin's stored track specs.
-    pub fn track_specs(&self) -> Vec<transmux::TrackSpec> {
-        locked(&self.track_specs).clone()
+        (
+            w.peak_bandwidth_bps,
+            w.total_bytes,
+            w.total_duration_nanos,
+        )
     }
 
     /// The master playlist for this origin, pointing at `media_playlist_name`:
@@ -1717,15 +1733,7 @@ impl HlsOrigin {
         };
         let declared = self.declared_bandwidth_bps.unwrap_or(0);
         let video_part_peak = video_peak.max(declared);
-        // Snapshot each sibling origin separately — never hold two `Window`
-        // locks at once.
-        let sibling_peaks: Vec<u64> = self
-            .audio_sibling_origins
-            .iter()
-            .map(|s| s.peak_bandwidth_bps())
-            .collect();
-        let max_audio_peak_all = sibling_peaks.iter().copied().max().unwrap_or(0);
-        if video_part_peak == 0 && max_audio_peak_all == 0 {
+        if video_part_peak == 0 {
             return Err(HlsMasterError::BandwidthUnknown);
         }
         let video_avg = average_bandwidth_bps(video_bytes, video_duration);
@@ -1751,9 +1759,10 @@ impl HlsOrigin {
             .map(|(i, decl)| {
                 let sibling = self.audio_sibling_origins.get(i);
                 let audio_spec = sibling.and_then(|s| {
-                    s.track_specs()
-                        .into_iter()
+                    locked(&s.track_specs)
+                        .iter()
                         .find(|t| !is_video_codec(&t.config))
+                        .cloned()
                 });
                 let meta = audio_spec.as_ref().map(|t| t.audio_metadata());
                 let role = meta
@@ -1805,6 +1814,7 @@ impl HlsOrigin {
                 m
             })
             .collect();
+        let media = dedupe_rendition_names(media);
 
         let audio_groups: Vec<String> = {
             let mut g: Vec<String> = Vec::new();
@@ -1846,20 +1856,21 @@ impl HlsOrigin {
                 // Audio peak/average max over this group's sibling origins.
                 let mut audio_peak_max = 0u64;
                 let mut audio_avg_max = 0u32;
-                let mut audio_codec: Option<String> = None;
+                let mut audio_codecs: Vec<String> = Vec::new();
                 for (i, decl) in self.audio_renditions.iter().enumerate() {
                     if decl.group_id != *group {
                         continue;
                     }
                     if let Some(sib) = self.audio_sibling_origins.get(i) {
-                        let (tb, td) = sib.window_totals();
-                        let peak = sib.peak_bandwidth_bps();
+                        let (peak, tb, td) = sib.window_snapshot();
                         audio_peak_max = audio_peak_max.max(peak);
                         if let Some(avg) = average_bandwidth_bps(tb, td) {
                             audio_avg_max = audio_avg_max.max(avg);
                         }
-                        if audio_codec.is_none() {
-                            audio_codec = sib.codecs_string();
+                        if let Some(codec) = locked(&sib.codecs).clone()
+                            && !audio_codecs.contains(&codec)
+                        {
+                            audio_codecs.push(codec);
                         }
                     }
                 }
@@ -1878,11 +1889,12 @@ impl HlsOrigin {
                     )
                 };
                 let group_codecs = if has_siblings {
-                    match (primary_codecs.clone(), audio_codec) {
-                        (Some(v), Some(a)) => Some(format!("{},{}", v, a)),
-                        (Some(v), None) => Some(v),
-                        (None, Some(a)) => Some(a),
-                        _ => None,
+                    let mut all: Vec<String> = primary_codecs.iter().cloned().collect();
+                    all.extend(audio_codecs);
+                    if all.is_empty() {
+                        None
+                    } else {
+                        Some(all.join(","))
                     }
                 } else {
                     primary_codecs.clone()
