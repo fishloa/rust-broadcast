@@ -65,6 +65,9 @@ pub fn segments(sidx: &SegmentIndexBox, anchor: u64) -> Result<Vec<IndexedSegmen
         if r.reference_type == REFERENCE_TYPE_SIDX {
             return Err(AddressError::Unsupported(Unsupported::HierarchicalSidx));
         }
+        if r.referenced_size == 0 {
+            continue;
+        }
         let size = u64::from(r.referenced_size);
         let last = offset
             .checked_add(size)
