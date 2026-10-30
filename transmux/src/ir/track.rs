@@ -10,7 +10,7 @@ use mpeg_ts::pid::Pid;
 use super::{CodecConfig, DisplayGeometry, ProgramNumber, Sample, TrackId};
 
 /// A track's identity + codec config, used to build the init segment.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TrackSpec {
     /// Track ID (1-based, unique within the movie).

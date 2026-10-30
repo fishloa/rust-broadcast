@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- `ProgramSegmenter::apply_track_change` now forwards a changed track spec (audio ASC / sample rate / channels, video frame rate / display parameters) to the running TS-HLS segmenter via `update_track` so it arms `#EXT-X-DISCONTINUITY` instead of rebuilding or ignoring the change (issue #1425). `update_track`'s result is now typed so an unknown (new) track is admitted via `add_track` without a spurious warning.
+
+### Changed
 - HTTP listeners now serve HTTP/2 (RFC 9113) alongside HTTP/1.1 on the same port via hyper-util's auto builder: h2c prior-knowledge connections are accepted, with HTTP/2 keep-alive and concurrent-stream limits applied. HTTP/1.1 clients continue to work unchanged.
 
 ### Added

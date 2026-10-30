@@ -252,6 +252,36 @@ impl AnySegmenter {
             },
         }
     }
+
+    /// Apply a changed track spec in place (issue #1425). fMP4 cannot, and
+    /// reports `Unknown` so the caller keeps its rebuild path.
+    fn update_track(
+        &mut self,
+        spec: &TrackSpec,
+    ) -> Result<transmux::UpdateTrackOutcome, transmux::Error> {
+        match self {
+            AnySegmenter::Fmp4(_) => Ok(transmux::UpdateTrackOutcome::Unknown),
+            AnySegmenter::Ts(seg) => match seg.update_track(spec.clone()) {
+                Ok(outcome) => {
+                    if matches!(outcome, transmux::UpdateTrackOutcome::Changed) {
+                        tracing::info!(
+                            track_id = %spec.track_id,
+                            "applied changed track config to running TS-HLS segmenter"
+                        );
+                    }
+                    Ok(outcome)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        track_id = %spec.track_id,
+                        "failed to apply changed track config to TS-HLS segmenter"
+                    );
+                    Err(e)
+                }
+            },
+        }
+    }
 }
 
 /// One program's segmenting state: a [`SampleCursor`] on its driver-minted
@@ -1071,8 +1101,15 @@ impl ProgramSegmenter {
 
         let mut any_admitted = false;
         for spec in &new_specs {
-            if self.seg.add_track(spec) {
-                any_admitted = true;
+            match self.seg.update_track(spec) {
+                Ok(transmux::UpdateTrackOutcome::Unchanged) => {}
+                Ok(transmux::UpdateTrackOutcome::Unknown) => {
+                    any_admitted |= self.seg.add_track(spec);
+                }
+                Ok(_) => any_admitted = true,
+                Err(_) => {
+                    any_admitted |= self.seg.add_track(spec);
+                }
             }
         }
 
@@ -3169,6 +3206,179 @@ mod tests {
         writer.set_tracks(Vec::new());
         segmenter.apply_track_change(ProgramId(0), &trunk, &route);
         assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+    }
+
+    /// **Issue #1425.** A changed track spec (here a timescale change standing
+    /// in for an audio/video config change) reaches the running TS-HLS
+    /// segmenter through `apply_track_change` and the next playlist carries
+    /// `#EXT-X-DISCONTINUITY`; an unchanged re-announce does not.
+    #[test]
+    fn apply_track_change_ts_changed_spec_arms_discontinuity() {
+        use media_plane::trunk::TrunkConfig;
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
+
+        // Push a first run so a segment closes.
+        for i in 0..45u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        // Changed spec: bump the timescale (a discontinuity trigger).
+        let mut changed = track_spec(TrackId::new(1));
+        changed.timescale = 45_000;
+        writer.set_tracks(vec![changed.clone()]);
+        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+
+        for i in 45..90u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        let AnySegmenter::Ts(ts) = &segmenter.seg else {
+            panic!("ts")
+        };
+        let pl = ts.playlist().expect("playlist");
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "changed spec must arm a discontinuity: {pl}"
+        );
+
+        // Unchanged re-announce: no discontinuity armed.
+        let trunk2 = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer2 = trunk2.writer().expect("first take succeeds");
+        writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route2 = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter2 =
+            ProgramSegmenter::try_new(&trunk2, &route2, 1.0, 250).expect("TS segmenter builds");
+        for i in 0..45u32 {
+            segmenter2
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter2.publish_ready();
+        writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
+        segmenter2.apply_track_change(ProgramId(0), &trunk2, &route2);
+        for i in 45..90u32 {
+            segmenter2
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter2.publish_ready();
+        let AnySegmenter::Ts(ts2) = &segmenter2.seg else {
+            panic!("ts")
+        };
+        let pl2 = ts2.playlist().expect("playlist");
+        assert!(
+            !pl2.contains("#EXT-X-DISCONTINUITY"),
+            "unchanged re-announce must not arm a discontinuity: {pl2}"
+        );
+    }
+
+    fn aac_track_spec(track_id: TrackId) -> TrackSpec {
+        use broadcast_common::Unpackage;
+        let ts = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/ts/h264_aac.ts"
+        ))
+        .expect("h264_aac.ts fixture must exist");
+        let media = transmux::TsDemux::new().unpackage(&ts).expect("demux TS");
+        let mut spec = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+            .expect("fixture has an AAC track")
+            .spec
+            .clone();
+        spec.track_id = track_id;
+        spec
+    }
+
+    fn ts_playlist_after_respec(initial: Vec<TrackSpec>, respec: Vec<TrackSpec>) -> String {
+        use media_plane::trunk::TrunkConfig;
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(initial);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
+        for i in 0..45u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+        writer.set_tracks(respec);
+        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        for i in 45..90u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+        let AnySegmenter::Ts(ts) = &segmenter.seg else {
+            panic!("ts")
+        };
+        ts.playlist().expect("playlist")
+    }
+
+    /// **Issue #1425.** An AAC sample-rate or channel-count change reaches the
+    /// running TS-HLS segmenter through `apply_track_change` and arms
+    /// `#EXT-X-DISCONTINUITY`; an unchanged re-announce does not.
+    #[test]
+    fn apply_track_change_ts_aac_config_change_arms_discontinuity() {
+        let video = track_spec(TrackId::new(1));
+        let audio = aac_track_spec(TrackId::new(2));
+
+        let unchanged = ts_playlist_after_respec(
+            vec![video.clone(), audio.clone()],
+            vec![video.clone(), audio.clone()],
+        );
+        assert!(
+            !unchanged.contains("#EXT-X-DISCONTINUITY"),
+            "unchanged AAC re-announce must not arm a discontinuity: {unchanged}"
+        );
+
+        let mut rate = audio.clone();
+        if let CodecConfig::Aac { sample_rate, .. } = &mut rate.config {
+            *sample_rate = if *sample_rate == 48_000 {
+                44_100
+            } else {
+                48_000
+            };
+        }
+        let pl = ts_playlist_after_respec(
+            vec![video.clone(), audio.clone()],
+            vec![video.clone(), rate],
+        );
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "AAC sample_rate change must arm a discontinuity: {pl}"
+        );
+
+        let mut chans = audio.clone();
+        if let CodecConfig::Aac { channel_count, .. } = &mut chans.config {
+            *channel_count = if *channel_count == 2 { 1 } else { 2 };
+        }
+        let pl = ts_playlist_after_respec(vec![video.clone(), audio], vec![video, chans]);
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "AAC channel_count change must arm a discontinuity: {pl}"
+        );
     }
 
     fn pending_sequence_numbers(segmenter: &ProgramSegmenter) -> Vec<u32> {

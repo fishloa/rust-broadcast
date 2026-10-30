@@ -101,7 +101,7 @@ pub enum SubtitleSampleEntry {
 }
 
 /// Per-track codec configuration for the initialization segment.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodecConfig {
     /// H.264/AVC video (`avc1` sample entry with an `avcC` config box).
@@ -406,6 +406,22 @@ impl CodecConfig {
             | CodecConfig::Dts { sample_rate, .. }
             | CodecConfig::MpegAudio { sample_rate, .. }
             | CodecConfig::Vorbis { sample_rate, .. } => Some(*sample_rate),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn audio_channel_field(&self) -> Option<u16> {
+        match self {
+            CodecConfig::Aac { channel_count, .. }
+            | CodecConfig::Ac3 { channel_count, .. }
+            | CodecConfig::Eac3 { channel_count, .. }
+            | CodecConfig::Opus { channel_count, .. }
+            | CodecConfig::Flac { channel_count, .. }
+            | CodecConfig::Ac4 { channel_count, .. }
+            | CodecConfig::MpegH { channel_count, .. }
+            | CodecConfig::Dts { channel_count, .. }
+            | CodecConfig::MpegAudio { channel_count, .. } => Some(*channel_count),
+            CodecConfig::Vorbis { channels, .. } => Some(*channels),
             _ => None,
         }
     }

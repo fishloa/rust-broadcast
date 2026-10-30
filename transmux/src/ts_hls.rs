@@ -93,6 +93,19 @@ use crate::segmenter::{
 };
 use crate::ts_mux::{TsContinuity, mux_tracks_at_continuing};
 
+/// Outcome of [`StreamingTsHlsSegmenter::update_track`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UpdateTrackOutcome {
+    /// A discontinuity-triggering field differed; a discontinuity was armed.
+    Changed,
+    /// No discontinuity-triggering field differed; the stored spec was still
+    /// refreshed.
+    Unchanged,
+    /// No track with that `track_id` exists; nothing was modified.
+    Unknown,
+}
+
 /// Default `#EXT-X-VERSION` for a classic (TS-segment) media playlist. Version 3
 /// is the floor for floating-point `#EXTINF` durations (RFC 8216 §7).
 const DEFAULT_HLS_VERSION: u8 = 3;
@@ -789,6 +802,30 @@ pub struct StreamingTsHlsSegmenter {
     ready: VecDeque<TsSegment>,
 }
 
+fn audio_discontinuity_trigger(old: &CodecConfig, new: &CodecConfig) -> bool {
+    if core::mem::discriminant(old) != core::mem::discriminant(new) {
+        return false;
+    }
+    if old.audio_sample_rate() != new.audio_sample_rate()
+        || old.audio_channel_field() != new.audio_channel_field()
+    {
+        return true;
+    }
+    match (old, new) {
+        (CodecConfig::Aac { esds: e1, .. }, CodecConfig::Aac { esds: e2, .. }) => {
+            let asc = |e: &crate::mp4esds::EsdsBox| {
+                e.es_descriptor
+                    .decoder_config
+                    .as_ref()
+                    .and_then(|dc| dc.decoder_specific_info.as_ref())
+                    .map(|d| d.data.clone())
+            };
+            asc(e1) != asc(e2)
+        }
+        _ => false,
+    }
+}
+
 impl StreamingTsHlsSegmenter {
     /// Create a streaming segmenter for `tracks`, cutting segments roughly
     /// every `target_secs` seconds (clamped to at least 1) on the anchor
@@ -1248,6 +1285,45 @@ impl StreamingTsHlsSegmenter {
         }
 
         Ok(())
+    }
+
+    /// Update an existing track's spec mid-stream (issue #1425; RFC 8216
+    /// section 4.3.4.3, Apple HLS Authoring Spec 2.11 / 8.14).
+    ///
+    /// Arms a discontinuity only when audio `sample_rate`, `channel_count` or
+    /// the AAC AudioSpecificConfig bytes change, or the video `timescale` or
+    /// `display` changes. SPS or bitrate-only changes do not. The stored spec
+    /// is always refreshed.
+    ///
+    /// An unknown `track_id` returns [`UpdateTrackOutcome::Unknown`]; use
+    /// [`Self::add_track`] for a new track.
+    pub fn update_track(&mut self, spec: TrackSpec) -> Result<UpdateTrackOutcome> {
+        let Some(idx) = self
+            .tracks
+            .iter()
+            .position(|t| t.spec.track_id == spec.track_id)
+        else {
+            return Ok(UpdateTrackOutcome::Unknown);
+        };
+
+        let old = &self.tracks[idx].spec;
+
+        let discontinuity = old.timescale != spec.timescale
+            || old.display != spec.display
+            || audio_discontinuity_trigger(&old.config, &spec.config);
+
+        let old_timescale = self.tracks[idx].spec.timescale;
+        self.tracks[idx].spec = spec;
+        if discontinuity {
+            if idx == self.anchor && self.tracks[idx].spec.timescale != old_timescale {
+                self.target_ticks =
+                    target_ticks_for(self.target_secs, self.tracks[self.anchor].spec.timescale);
+            }
+            self.mark_discontinuity();
+            Ok(UpdateTrackOutcome::Changed)
+        } else {
+            Ok(UpdateTrackOutcome::Unchanged)
+        }
     }
 
     /// The current rolling media playlist: at most [`window`](Self::new)
