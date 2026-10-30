@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Dependency `parking_lot` 0.12 -> 0.13.
+
 ### Added
 - `Trunk::segment_start_time(&self, seq) -> Option<MediaTime>` — reported start of a segment on the 90 kHz source clock (issue #1423 B1); `None` when never reported or evicted from the bounded table.
 

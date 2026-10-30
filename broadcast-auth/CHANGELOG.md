@@ -6,6 +6,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Dependency `lru` 0.18 -> 0.19.
+
 ### Added
 - Typed `WWW-Authenticate` challenge parsing (`challenge::parse_challenges`): `Scheme`, `BearerError`, `Challenge` with RFC 6750 fields and RFC 9728 `resource_metadata` as a validated `url::Url`.
 - `challenge::ParsedChallenges` and `challenge::MAX_CHALLENGES` (16); `Error::TooManyChallenges`.

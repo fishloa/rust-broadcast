@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- Dependency `parking_lot` 0.12 -> 0.13.
+
+### Changed
 - `ProgramSegmenter::apply_track_change` now forwards a changed track spec (audio ASC / sample rate / channels, video frame rate / display parameters) to the running TS-HLS segmenter via `update_track` so it arms `#EXT-X-DISCONTINUITY` instead of rebuilding or ignoring the change (issue #1425). `update_track`'s result is now typed so an unknown (new) track is admitted via `add_track` without a spurious warning.
 
 ### Changed

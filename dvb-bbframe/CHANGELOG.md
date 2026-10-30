@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Dependency `yoke` 0.7 -> 0.8.
 
 ## [12.0.0] - 2026-10-17
 ### Documentation

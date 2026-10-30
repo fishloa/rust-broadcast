@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Dependency `yoke` 0.7 -> 0.8.
+
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 

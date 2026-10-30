@@ -5,6 +5,9 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Dependency `webpki-roots` 0.26 -> 1.0.
+
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Added
