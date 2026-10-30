@@ -98,6 +98,7 @@ fn iframe_playlist_text(origin: &HlsOrigin) -> String {
         HlsRequest::IFramePlaylist {
             track_id: DEFAULT_TRACK_ID,
             query: BlockingQuery::default(),
+            media_playlist_name: "media.m3u8".to_string(),
         },
         now,
         policy,

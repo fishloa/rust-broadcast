@@ -357,6 +357,9 @@ pub enum HlsRequest {
         track_id: TrackId,
         /// The blocking-reload query parameters, if any.
         query: BlockingQuery,
+        /// Filename of the primary (media) playlist this I-frame playlist's
+        /// `#EXT-X-RENDITION-REPORT` points at (RFC 8216bis §4.4.5.4).
+        media_playlist_name: String,
     },
 }
 
@@ -2379,6 +2382,7 @@ impl HlsOrigin {
         &self,
         track_id: TrackId,
         query: BlockingQuery,
+        media_playlist_name: String,
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<HlsBody> {
@@ -2407,7 +2411,7 @@ impl HlsOrigin {
                 return EgressResponse::pending(await_policy, now, now);
             }
         }
-        match self.render_iframe_playlist(track_id) {
+        match self.render_iframe_playlist(track_id, &media_playlist_name) {
             Ok(playlist) => EgressResponse::Ready {
                 body: HlsBody::Playlist(playlist),
                 cache: CachePolicy::NoCache,
@@ -2417,7 +2421,11 @@ impl HlsOrigin {
     }
 
     /// Render the I-frame trick-play playlist for `track_id`.
-    fn render_iframe_playlist(&self, track_id: TrackId) -> core::result::Result<String, String> {
+    fn render_iframe_playlist(
+        &self,
+        track_id: TrackId,
+        media_playlist_name: &str,
+    ) -> core::result::Result<String, String> {
         self.drain();
         if self.container != Container::Fmp4 {
             return Err("not fmp4".to_string());
@@ -2497,7 +2505,7 @@ impl HlsOrigin {
                 .last_closed_segment()
                 .unwrap_or(entries[0].0.sequence_number);
             vec![broadcast_hls::RenditionReport {
-                uri: "media.m3u8".to_string(),
+                uri: media_playlist_name.to_string(),
                 last_msn: self.public_msn(last_closed),
                 last_part: None,
                 extra_attrs: Vec::new(),
@@ -2654,9 +2662,17 @@ impl ServedEgress for HlsOrigin {
             HlsRequest::Playlist { track_id, query } => {
                 self.resolve_playlist(track_id, query, now, await_policy)
             }
-            HlsRequest::IFramePlaylist { track_id, query } => {
-                self.resolve_iframe_playlist(track_id, query, now, await_policy)
-            }
+            HlsRequest::IFramePlaylist {
+                track_id,
+                query,
+                media_playlist_name,
+            } => self.resolve_iframe_playlist(
+                track_id,
+                query,
+                media_playlist_name,
+                now,
+                await_policy,
+            ),
             HlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
         }
     }

@@ -818,3 +818,30 @@ async fn iframe_scte35_emsg_shift() {
 
     let _ = trunk;
 }
+
+#[tokio::test]
+async fn iframe_rendition_report_uses_configured_playlist_name() {
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
+    feed_via_segmenter(&store, vec![video_track_spec()], video_batches());
+
+    let mut streams = HashMap::new();
+    streams.insert(
+        "cam".to_string(),
+        (
+            store.clone(),
+            vec![Arc::new(LlHlsOutput::new("live/main.m3u8")) as Arc<dyn Output>],
+        ),
+    );
+    let app = router(Arc::new(AppState::new(streams)));
+
+    let resp = app.clone().oneshot(get("/cam/iframe.m3u8")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let playlist = body_string(resp).await;
+    assert!(
+        playlist.contains("#EXT-X-RENDITION-REPORT:URI=\"live/main.m3u8\""),
+        "playlist: {playlist}"
+    );
+}
