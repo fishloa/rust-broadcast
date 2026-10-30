@@ -32,6 +32,7 @@ const READ_CHUNK: usize = 64 * 1024;
 const MIN_SAMPLES: usize = 50;
 const MICROS_PER_NANO_DIVISOR: u128 = 1_000;
 const COMMON_TIMELINE_BOUND_SECONDS: f64 = 0.2;
+const AAC_FRAME_TICKS: i64 = 1024;
 
 struct Tool {
     child: Child,
@@ -134,6 +135,10 @@ struct WireArrivals {
     first_arrival: std::collections::BTreeMap<u8, std::collections::BTreeMap<u32, u64>>,
     first_ts: std::collections::BTreeMap<u8, u32>,
     idr_starts: std::collections::BTreeMap<u8, Vec<u32>>,
+    srs: Vec<(u8, u64, f64, u32)>,
+    order: std::collections::BTreeMap<u8, Vec<u32>>,
+    last_ts: std::collections::BTreeMap<u8, u32>,
+    sr_last: Vec<(u8, u64, u32, u32)>,
 }
 
 impl WireArrivals {
@@ -154,6 +159,19 @@ impl WireArrivals {
                     .drain(..INTERLEAVED_HEADER + len)
                     .skip(INTERLEAVED_HEADER)
                     .collect();
+                if !channel.is_multiple_of(CHANNELS_PER_TRACK)
+                    && frame.len() >= 20
+                    && frame[1] == 200
+                {
+                    let msw = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
+                    let lsw = u32::from_be_bytes([frame[12], frame[13], frame[14], frame[15]]);
+                    let rts = u32::from_be_bytes([frame[16], frame[17], frame[18], frame[19]]);
+                    let ntp = f64::from(msw) + f64::from(lsw) / 4_294_967_296.0;
+                    self.srs.push((channel - 1, now_us, ntp, rts));
+                    if let Some(&l) = self.last_ts.get(&(channel - 1)) {
+                        self.sr_last.push((channel - 1, now_us, l, rts));
+                    }
+                }
                 if channel.is_multiple_of(CHANNELS_PER_TRACK) && frame.len() >= RTP_HEADER_MIN {
                     let ts = u32::from_be_bytes([
                         frame[RTP_TS_OFFSET],
@@ -161,7 +179,15 @@ impl WireArrivals {
                         frame[RTP_TS_OFFSET + 2],
                         frame[RTP_TS_OFFSET + 3],
                     ]);
+                    self.last_ts.insert(channel, ts);
                     let base = *self.first_ts.entry(channel).or_insert(ts);
+                    {
+                        let o = self.order.entry(channel).or_default();
+                        let rel = ts.wrapping_sub(base);
+                        if o.last() != Some(&rel) {
+                            o.push(rel);
+                        }
+                    }
                     if starts_idr(&frame[RTP_HEADER_MIN..]) {
                         let idr = self.idr_starts.entry(channel).or_default();
                         let rel = ts.wrapping_sub(base);
@@ -217,7 +243,7 @@ fn micros(start: Instant) -> u64 {
 
 #[test]
 fn rtsp_session_plays_a_real_mediamtx_stream_with_dims_and_buffer_start() {
-    run_case("fixture-1s-gop", None);
+    run_case("fixture-1s-gop", None, true);
 }
 
 #[test]
@@ -238,10 +264,37 @@ fn rtsp_session_starts_on_a_two_second_gop_source() {
             "-r",
             "25",
         ]),
+        false,
     );
 }
 
-fn run_case(label: &str, reencode_video: Option<&[&str]>) {
+#[test]
+fn rtsp_session_aligns_a_three_b_frame_two_second_gop_source() {
+    run_case(
+        "reencoded-2s-gop-3b",
+        Some(&[
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-bf",
+            "3",
+            "-b_strategy",
+            "0",
+            "-g",
+            "50",
+            "-keyint_min",
+            "50",
+            "-sc_threshold",
+            "0",
+            "-r",
+            "25",
+        ]),
+        true,
+    );
+}
+
+fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) {
     let _serial = SERVER_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -302,6 +355,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
     let mut first_sample_pts: std::collections::BTreeMap<u32, i64> =
         std::collections::BTreeMap::new();
     let mut emitted: Vec<(u32, i64, u64)> = Vec::new();
+    let mut emitted_dts: Vec<(u32, i64, i64, u64)> = Vec::new();
+    let mut emitted_audio_idx: Vec<i64> = Vec::new();
+    let mut audio_count: i64 = 0;
     let mut start_us: Option<u64> = None;
     let mut start_at_27mhz: Option<u64> = None;
     let mut media_end_at_start: Option<std::collections::BTreeMap<u32, u64>> = None;
@@ -383,6 +439,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
                     let tid = track.value();
                     let is_video = track_is_video.get(&tid).copied().unwrap_or(false);
                     let now = micros(started);
+                    if !is_video && sample.pts.is_some() {
+                        audio_count += 1;
+                    }
                     if is_video {
                         if first_video_sample_us.is_none() {
                             first_video_sample_us = Some(now);
@@ -405,6 +464,8 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
                             .is_some_and(|(_, s)| *s == AvSync::SenderReport)
                         {
                             emitted.push((tid, pts, now));
+                            emitted_dts.push((tid, pts, sample.dts.unwrap_or(pts), now));
+                            emitted_audio_idx.push(if is_video { -1 } else { audio_count - 1 });
                         }
                         let slot = max_pts_seconds.entry(is_video).or_insert(seconds);
                         *slot = slot.max(seconds);
@@ -569,17 +630,34 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
             .expect("an IDR packet that maps every emitted video sample to a real RTP timestamp");
         anchor.insert(tid, key_pts - i64::from(key_rel));
     }
-    for &(tid, pts, _) in &emitted {
+    let mut decode_offsets: Vec<f64> = Vec::new();
+    for (n, &(tid, pts, _)) in emitted.iter().enumerate() {
         let channel = track_channel[&tid];
-        let rel = pts - anchor[&tid];
+        let video = track_is_video[&tid];
+        let rel = if video {
+            pts - anchor[&tid]
+        } else {
+            emitted_audio_idx[n] * AAC_FRAME_TICKS
+        };
         let arrival = wire
             .arrival_of(channel, rel)
             .unwrap_or_else(|| panic!("no RTP packet for track {tid} at relative tick {rel}"));
         let seconds = pts as f64 / f64::from(track_timescale[&tid]);
         offsets
-            .entry(track_is_video[&tid])
+            .entry(video)
             .or_default()
             .push(seconds - arrival as f64 / 1e6);
+        if video {
+            let order = &wire.order[&channel];
+            let at = order.partition_point(|&r| i64::from(r) != rel);
+            let decode_rel = order[at..]
+                .iter()
+                .map(|&r| i64::from(r))
+                .min()
+                .unwrap_or(rel);
+            let dts_seconds = (pts - (rel - decode_rel)) as f64 / f64::from(track_timescale[&tid]);
+            decode_offsets.push(dts_seconds - arrival as f64 / 1e6);
+        }
     }
     let audio_offset = median(
         offsets
@@ -587,9 +665,128 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>) {
             .expect("audio samples after SR sync"),
     );
     let video_offset = median(offsets.get_mut(&true).expect("video samples after SR sync"));
-    let av_offset = audio_offset - video_offset;
+    let reordered = wire.order[&0].windows(2).any(|w| w[1] < w[0]);
+    assert_eq!(
+        reordered, expect_reorder,
+        "video wire order reorder expectation for {label}"
+    );
+    let av_offset_pts = audio_offset - video_offset;
+    let av_offset = audio_offset - median(&mut decode_offsets);
+    {
+        let mut per: std::collections::BTreeMap<u8, Vec<(u64, f64)>> =
+            std::collections::BTreeMap::new();
+        for &(ch, at, ntp, rts) in &wire.srs {
+            let tid = track_channel
+                .iter()
+                .find(|(_, c)| **c == ch)
+                .map(|(t, _)| *t)
+                .unwrap();
+            let rate = f64::from(track_timescale[&tid]);
+            let base = wire.first_ts[&ch];
+            let rel = f64::from(rts.wrapping_sub(base)) / rate;
+            per.entry(ch).or_default().push((at, ntp - rel));
+        }
+        for (ch, v) in &per {
+            let line: Vec<String> = v
+                .iter()
+                .map(|(at, st)| format!("{}ms:{:.4}", at / 1000, st - 3_900_000_000.0f64.min(*st)))
+                .collect();
+            eprintln!(
+                "SRDBG[{label}] ch{ch} start_wall(ntp-based) {}",
+                line.join(" ")
+            );
+        }
+        eprintln!(
+            "SRDBG[{label}] first_video_sample_pts={:?} wire_first_video_ts={:?} diff_ticks={:?} first_key_pts={:?}",
+            first_video_sample_pts,
+            wire.first_ts.get(&0),
+            first_video_sample_pts
+                .zip(wire.first_ts.get(&0))
+                .map(|(p, w)| p - i64::from(*w)),
+            first_video_keyframe_pts,
+        );
+        let anchor_v_dbg = track_is_video
+            .iter()
+            .find(|(_, v)| **v)
+            .map(|(t, _)| anchor[t])
+            .unwrap();
+        {
+            let mut last: Option<(i64, i64)> = None;
+            for (tid, pts, _, at) in &emitted_dts {
+                if !track_is_video[tid] {
+                    if let Some((lp, ld)) = last {
+                        let step = pts - lp;
+                        if (step - ld).abs() > 400 || ld == 0 {
+                            eprintln!(
+                                "SRDBG[{label}] audio pts jump at {}ms step_ticks={} dur_ticks={}",
+                                at / 1000,
+                                step,
+                                ld
+                            );
+                        }
+                    }
+                    last = Some((*pts, 1024));
+                }
+            }
+            let a: Vec<f64> = emitted_dts
+                .iter()
+                .filter(|e| !track_is_video[&e.0])
+                .map(|e| e.1 as f64 / 44100.0)
+                .collect();
+            let v: Vec<f64> = emitted_dts
+                .iter()
+                .filter(|e| track_is_video[&e.0])
+                .map(|e| e.1 as f64 / 90000.0)
+                .collect();
+            eprintln!(
+                "SRDBG[{label}] first emitted-after-SR audio pts {:.4} video pts {:.4} (n {} {}) disc_events={}",
+                a[0],
+                v[0],
+                a.len(),
+                v.len(),
+                events
+                    .iter()
+                    .filter(|e| matches!(e, Event::Discontinuity))
+                    .count()
+            );
+        }
+        let mut cts_by_rel: std::collections::BTreeMap<i64, i64> =
+            std::collections::BTreeMap::new();
+        for (tid, pts, dts, _) in &emitted_dts {
+            if track_is_video[tid] {
+                cts_by_rel.insert(*pts - anchor_v_dbg, *pts - *dts);
+            }
+        }
+        for &(ch, at, last, rts) in &wire.sr_last {
+            if ch == 0 {
+                let base = wire.first_ts[&0];
+                let lrel = i64::from(last.wrapping_sub(base));
+                let cts = cts_by_rel.range(..=lrel).next_back().map(|(r, c)| (*r, *c));
+                eprintln!(
+                    "SRDBG[{label}] video SR at {}ms last_wire_rel={} sr_rts_minus_last={} cts_of_last={:?}",
+                    at / 1000,
+                    lrel,
+                    i64::from(rts.wrapping_sub(last)),
+                    cts
+                );
+            }
+        }
+        if let Some(v) = {
+            let mut c: Vec<i64> = cts_by_rel.values().copied().collect();
+            c.sort();
+            c.get(c.len() / 2).copied()
+        } {
+            eprintln!("SRDBG[{label}] median_cts_ticks={v}");
+        }
+        for (ch, m) in &wire.first_arrival {
+            eprintln!(
+                "SRDBG[{label}] ch{ch} first_arrival_us {:?}",
+                m.iter().next()
+            );
+        }
+    }
     eprintln!(
-        "AVSYNC[{label}] states={sync_states:?} first_audio_minus_first_video_s={first_gap:.4} av_offset_s={av_offset:.4} (median pts-minus-RTP-arrival: audio {audio_offset:.4}, video {video_offset:.4}) emission_lag_s={emission_lag:.4} (info only)"
+        "AVSYNC[{label}] states={sync_states:?} first_audio_minus_first_video_s={first_gap:.4} av_offset_s={av_offset:.4} av_offset_by_video_pts_s={av_offset_pts:.4} (median pts-minus-RTP-arrival: audio {audio_offset:.4}, video {video_offset:.4}) emission_lag_s={emission_lag:.4} (info only)"
     );
     assert!(
         first_gap.abs() < COMMON_TIMELINE_BOUND_SECONDS,

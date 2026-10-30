@@ -78,15 +78,61 @@ struct Outcome {
     video_timescale: f64,
 }
 
+fn send_sender_reports(host: &mut Host, lanes: &[Lane], i: usize, skew: f64) {
+    for lane in lanes {
+        let ts = lane.packet_ts[i.min(lane.packet_ts.len() - 1)];
+        let rel = f64::from(ts.wrapping_sub(lane.base));
+        let (rate, offset) = if lane.video {
+            (VIDEO_RATE, 0.0)
+        } else {
+            (AUDIO_RATE, skew)
+        };
+        let wall = WALL_ORIGIN_SECONDS + rel / rate + offset;
+        host.deliver(&sender_report_at(lane.channel + 1, SR_SSRC, wall, ts));
+        host.drain();
+    }
+}
+
 fn run(skew_seconds: Option<f64>) -> Outcome {
+    run_at(skew_seconds, SrAt::Third)
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SrAt {
+    Third,
+    BeforeFirstSample,
+    Packet(usize),
+    AfterFirstVideoAu,
+}
+
+fn run_at(skew_seconds: Option<f64>, when: SrAt) -> Outcome {
     let fixture = MediaFixture::load();
     let lanes = lanes(&fixture);
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&fixture.sdp));
     host.connect();
     let longest = lanes.iter().map(|l| l.frames.len()).max().unwrap_or(0);
-    let sr_at = longest / SR_AFTER_DIVISOR;
+    let first_video_au_end = lanes
+        .iter()
+        .find(|l| l.video)
+        .map(|l| {
+            l.packet_ts
+                .iter()
+                .take_while(|t| **t == l.packet_ts[0])
+                .count()
+        })
+        .unwrap_or(0);
+    let sr_at = match when {
+        SrAt::Third => longest / SR_AFTER_DIVISOR,
+        SrAt::BeforeFirstSample => 0,
+        SrAt::Packet(n) => n,
+        SrAt::AfterFirstVideoAu => first_video_au_end,
+    };
+    let before_media = matches!(when, SrAt::BeforeFirstSample);
     let mut all = Vec::new();
     for i in 0..longest {
+        if let (Some(skew), true, true) = (skew_seconds, before_media, i == 0) {
+            send_sender_reports(&mut host, &lanes, 0, skew);
+        }
         for lane in &lanes {
             if let Some(frame) = lane.frames.get(i) {
                 host.now += FRAME_STEP_US;
@@ -94,22 +140,12 @@ fn run(skew_seconds: Option<f64>) -> Outcome {
                 host.drain();
             }
         }
-        if let (Some(skew), true) = (skew_seconds, i == sr_at) {
-            for lane in &lanes {
-                let ts = lane.packet_ts[i.min(lane.packet_ts.len() - 1)];
-                let rel = f64::from(ts.wrapping_sub(lane.base));
-                let (rate, offset) = if lane.video {
-                    (VIDEO_RATE, 0.0)
-                } else {
-                    (AUDIO_RATE, skew)
-                };
-                let wall = WALL_ORIGIN_SECONDS + rel / rate + offset;
-                host.deliver(&sender_report_at(lane.channel + 1, SR_SSRC, wall, ts));
-                host.drain();
-            }
+        if let (Some(skew), false, true) = (skew_seconds, before_media, i == sr_at) {
+            send_sender_reports(&mut host, &lanes, i, skew);
         }
         all.extend(host.events());
     }
+
     let audio_lane = lanes.iter().find(|l| !l.video).expect("audio lane");
     let mut distinct = Vec::new();
     for ts in &audio_lane.packet_ts {
@@ -231,4 +267,28 @@ fn the_sync_state_goes_provisional_then_sender_report() {
     let expected = vec![AvSync::Provisional, AvSync::SenderReport];
     assert_eq!(run(Some(WITHIN_TOLERANCE_SKEW_SECONDS)).sync, expected);
     assert_eq!(run(Some(BEYOND_TOLERANCE_SKEW_SECONDS)).sync, expected);
+}
+
+#[test]
+fn the_final_offset_is_the_true_offset_whenever_the_first_sender_report_arrives() {
+    let whens = [
+        SrAt::BeforeFirstSample,
+        SrAt::Packet(3),
+        SrAt::Packet(14),
+        SrAt::AfterFirstVideoAu,
+        SrAt::Third,
+    ];
+    for skew in [
+        0.0,
+        WITHIN_TOLERANCE_SKEW_SECONDS,
+        -WITHIN_TOLERANCE_SKEW_SECONDS,
+        BEYOND_TOLERANCE_SKEW_SECONDS,
+    ] {
+        for when in whens {
+            let o = run_at(Some(skew), when);
+            eprintln!("skew {skew} when {when:?}");
+            assert_audio_on_sender_report_timeline(&o, skew);
+            assert_monotonic(&o);
+        }
+    }
 }
