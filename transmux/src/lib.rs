@@ -246,8 +246,8 @@ mod wire_cursor;
 pub(crate) mod xml_chars;
 
 pub use aac_asc::{
-    AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacSignaling,
-    SamplingFrequencyIndex, build_adts_header, parse_adts_header,
+    AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
+    HeAacSignaling, SamplingFrequencyIndex, build_adts_header, parse_adts_header,
 };
 pub use ac3::{Ac3SpecificBox, Ac3SyncframeInfo, Ec3SpecificBox, Ec3Substream, Ec3SyncframeInfo};
 pub use ac4::{AC4_FOURCC, Ac4SpecificBox, DAC4_FOURCC};

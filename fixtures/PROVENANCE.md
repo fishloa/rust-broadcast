@@ -35,6 +35,12 @@ material lives in the private `private/` git submodule, never here.
 
 The negative-`S@r` vector (DASH-IF test-assets `dash264/TestCases/1c/qualcomm/1/MultiRate.mpd`) has no stated licence and is **not** committed; `multimux`'s test of it reads `private/fixtures/dash/qualcomm-multirate-1c-1.mpd` (private repo) and skips loudly when `private/` is not checked out.
 
+## HE-AAC in TS fixtures (`fixtures/ts/heaac/heaac_v{1,2}_adts.ts`)
+
+| File | Source | Date | Licence |
+|---|---|---|---|
+| `heaac_v1_adts.ts`, `heaac_v2_adts.ts` | Audio of `fixtures/ts/h264_aac.ts` (this workspace's own capture) re-encoded to HE-AAC / HE-AAC v2 with the macOS AudioToolbox encoder (`ffmpeg -c:a aac_at -profile:a 4|28`), video stream-copied. Exact commands and ffprobe evidence in `fixtures/ts/GENERATE.md`. Issue #1428. | 2026 | Own work — MIT OR Apache-2.0 |
+
 ## Smooth Streaming segment fixture (`fixtures/ts/h264_aac_40s.ts`)
 
 | File | Source | Date | Licence |

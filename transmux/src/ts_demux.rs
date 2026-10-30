@@ -2970,6 +2970,22 @@ fn push_live_au(
     }
 }
 
+/// Highest ADTS (core) sampling rate at which a PMT `AAC_descriptor` HE-AAC
+/// declaration is acted on. DVB uses the HE-AAC `component_type`s (EN 300 468
+/// Table 26) for plain AAC-LC streams too, and SBR doubles the core rate, so an
+/// LC stream whose ADTS rate is above this cannot be an SBR core of a
+/// broadcast output rate and is left exactly as the ADTS header states it.
+const HE_AAC_CORE_RATE_MAX_HZ: u32 = 24_000;
+
+/// The HE-AAC flavour the PMT `AAC_descriptor` in `es_info` declares, when the
+/// ADTS core rate `core_hz` is one an SBR core can have.
+fn declared_he_aac(es_info: &[u8], core_hz: u32) -> Option<crate::HeAacProfile> {
+    if core_hz > HE_AAC_CORE_RATE_MAX_HZ {
+        return None;
+    }
+    crate::AudioMetadata::from_es_info(es_info).he_aac
+}
+
 /// Track a live track's in-band codec-configuration **content**, access unit by
 /// access unit, returning the new config when that content actually changes
 /// (r04-W51).
@@ -3653,13 +3669,21 @@ fn finalize_probe(
                 )),
                 Some(SLConfigDescriptor::predefined_two()),
             ));
+            let config = CodecConfig::Aac {
+                esds,
+                channel_count,
+                sample_rate,
+                sample_size: AUDIO_SAMPLE_SIZE_BITS,
+            };
+            let config = match declared_he_aac(descriptors, sample_rate) {
+                Some(profile) => config
+                    .clone()
+                    .with_explicit_he_aac(profile)
+                    .unwrap_or(config),
+                None => config,
+            };
             Some((
-                CodecConfig::Aac {
-                    esds,
-                    channel_count,
-                    sample_rate,
-                    sample_size: AUDIO_SAMPLE_SIZE_BITS,
-                },
+                config,
                 sample_rate,
                 LiveKind::Audio {
                     sample_rate,

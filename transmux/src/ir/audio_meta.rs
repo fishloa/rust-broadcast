@@ -11,15 +11,22 @@
 //! - DVB `supplementary_audio_descriptor` (ETSI EN 300 468 §6.4.11, extension
 //!   descriptor tag `0x7F`, `descriptor_tag_extension` `0x06`): `mix_type`
 //!   (Table 154), `editorial_classification` (Table 155), optional language.
+//! - DVB `AAC_descriptor` (ETSI EN 300 468 Annex H §H.2.1, tag `0x7C`): its
+//!   `AAC_type` is a Table 26 `component_type` (`stream_content` `0x6`) that
+//!   names HE-AAC (`0x01`, `0x03`, `0x05`, `0x40`..`0x42`, `0x47`, `0x48`) or
+//!   HE-AAC v2 (`0x43`..`0x46`, `0x49`, `0x4A`). `0xA0` ("HE-AAC, or HE-AAC v2
+//!   with SAOC-DE") cannot tell the two apart and is deliberately not mapped.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use dvb_si::descriptors::aac::AacComponentType;
 use dvb_si::descriptors::any::{AnyDescriptor, parse_loop};
 use dvb_si::descriptors::extension::ExtensionBody;
 use dvb_si::descriptors::iso_639_language::AudioType as DvbAudioType;
 
 use super::TrackSpec;
+use crate::aac_asc::HeAacProfile;
 
 /// Language code France 2 / TF1 use for their audio-description track.
 const LANG_AUDIO_DESCRIPTION: &str = "qad";
@@ -246,6 +253,11 @@ pub struct AudioMetadata {
     pub supplementary: Option<SupplementaryAudio>,
     /// Derived role (heuristic, see [`AudioRole`]).
     pub role: AudioRole,
+    /// The HE-AAC flavour the PMT `AAC_descriptor` declares (ETSI EN 300 468
+    /// Table 26 `component_type`), `None` when there is no such descriptor or
+    /// its `AAC_type` does not name one. A declaration, not a measurement:
+    /// DVB also uses the HE-AAC component types for plain AAC-LC streams.
+    pub he_aac: Option<HeAacProfile>,
 }
 
 impl AudioMetadata {
@@ -255,8 +267,17 @@ impl AudioMetadata {
     pub fn from_es_info(es_info: &[u8]) -> Self {
         let mut languages = Vec::new();
         let mut supplementary = None;
+        let mut he_aac = None;
         for d in parse_loop(es_info).flatten() {
             match d {
+                AnyDescriptor::Aac(d) => {
+                    if he_aac.is_none() {
+                        he_aac = d
+                            .extension
+                            .and_then(|e| e.decoded_component_type())
+                            .and_then(he_aac_of_component_type);
+                    }
+                }
                 AnyDescriptor::Iso639Language(d) => {
                     for e in d.entries {
                         languages.push(AudioLanguage {
@@ -292,7 +313,24 @@ impl AudioMetadata {
             languages,
             supplementary,
             role,
+            he_aac,
         }
+    }
+}
+
+fn he_aac_of_component_type(ct: AacComponentType) -> Option<HeAacProfile> {
+    if ct.v2 {
+        Some(HeAacProfile::V2)
+    } else if ct.mono
+        || ct.stereo
+        || ct.surround
+        || ct.visually_impaired
+        || ct.hard_of_hearing
+        || ct.supplementary
+    {
+        Some(HeAacProfile::V1)
+    } else {
+        None
     }
 }
 
@@ -327,6 +365,14 @@ fn derive_role(languages: &[AudioLanguage], sup: Option<&SupplementaryAudio>) ->
 }
 
 impl TrackSpec {
+    /// This track with its AAC-LC config rewritten as explicit HE-AAC
+    /// signalling ([`CodecConfig::with_explicit_he_aac`](super::CodecConfig::with_explicit_he_aac)).
+    /// The track id, timescale, PID and descriptor loop are unchanged.
+    pub fn with_explicit_he_aac(mut self, profile: HeAacProfile) -> crate::error::Result<Self> {
+        self.config = self.config.with_explicit_he_aac(profile)?;
+        Ok(self)
+    }
+
     /// Typed audio metadata decoded from [`Self::es_info_descriptors`]
     /// (language(s), `audio_type`, supplementary-audio signalling, derived
     /// [`AudioRole`]). Empty with [`AudioRole::Unknown`] for a non-TS source

@@ -5,14 +5,18 @@
 
 use alloc::vec::Vec;
 
+use broadcast_common::Serialize;
+
+use crate::aac_asc::HeAacProfile;
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::ac4::Ac4SpecificBox;
 use crate::av1::Av1ConfigurationBox;
 use crate::avc_config::AVCConfigurationBox;
 use crate::dts::DtsSpecificBox;
+use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
 use crate::hevc_config::HEVCConfigurationBox;
-use crate::mp4esds::EsdsBox;
+use crate::mp4esds::{DecoderSpecificInfo, EsdsBox};
 use crate::opus::OpusSpecificBox;
 use crate::vp9::Vp9ConfigurationBox;
 use crate::vvc_config::VvcConfigurationBox;
@@ -372,7 +376,51 @@ pub enum CodecConfig {
     },
 }
 
+/// Output channels of HE-AAC v2: Parametric Stereo upmixes the mono core
+/// (ISO/IEC 14496-3 §8.6.4).
+const HE_AAC_V2_OUTPUT_CHANNELS: u16 = 2;
+
 impl CodecConfig {
+    /// Rewrite an AAC-LC `CodecConfig::Aac` as explicit hierarchical HE-AAC
+    /// (see [`AudioSpecificConfig::with_explicit_he_aac`](crate::AudioSpecificConfig::with_explicit_he_aac)):
+    /// the `esds` carries the explicit-signalling ASC, so the RFC 6381 string
+    /// becomes `mp4a.40.5` / `mp4a.40.29`. `sample_rate` becomes the SBR
+    /// output rate (twice the core rate, as an `mp4a` sample entry of an
+    /// explicitly signalled HE-AAC track states it) and a v2 track reports
+    /// two output channels. The track timescale is the caller's to keep: the
+    /// access-unit span of 1024 core-rate samples is unchanged.
+    pub fn with_explicit_he_aac(self, profile: HeAacProfile) -> Result<Self> {
+        let CodecConfig::Aac {
+            mut esds,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } = self
+        else {
+            return Err(Error::UnsupportedCodec {
+                codec: "explicit HE-AAC signalling needs an AAC track",
+            });
+        };
+        let asc = esds
+            .audio_specific_config()?
+            .with_explicit_he_aac(profile)?;
+        let bytes = asc.try_to_bytes()?;
+        let sample_rate = asc.extension_sampling_frequency().unwrap_or(sample_rate);
+        if let Some(dc) = esds.es_descriptor.decoder_config.as_mut() {
+            dc.decoder_specific_info = Some(DecoderSpecificInfo::new(bytes));
+        }
+        let channel_count = match profile {
+            HeAacProfile::V1 => channel_count,
+            HeAacProfile::V2 => HE_AAC_V2_OUTPUT_CHANNELS,
+        };
+        Ok(CodecConfig::Aac {
+            esds,
+            channel_count,
+            sample_rate,
+            sample_size,
+        })
+    }
+
     pub(crate) fn is_audio(&self) -> bool {
         matches!(
             self,

@@ -826,6 +826,161 @@ impl AudioSpecificConfig {
     }
 }
 
+/// HE-AAC flavour to signal explicitly in an `AudioSpecificConfig`: the
+/// hierarchical SBR (`audioObjectType` 5, HE-AAC v1) or PS (`audioObjectType`
+/// 29, HE-AAC v2) form of ISO/IEC 14496-3 §1.6.2, which Apple's HLS authoring
+/// rules require for HE-AAC in fMP4 instead of an implicit ADTS-derived config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum HeAacProfile {
+    /// HE-AAC v1: AAC-LC core + SBR.
+    V1,
+    /// HE-AAC v2: AAC-LC core + SBR + Parametric Stereo.
+    V2,
+}
+
+impl HeAacProfile {
+    /// The `audioObjectType` that opens the hierarchical ASC for this profile.
+    pub fn audio_object_type(self) -> u8 {
+        match self {
+            Self::V1 => AOT_SBR,
+            Self::V2 => AOT_PS,
+        }
+    }
+
+    /// Spec-token label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::V1 => "HE-AAC v1 (SBR)",
+            Self::V2 => "HE-AAC v2 (SBR+PS)",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(HeAacProfile);
+
+/// Extension rate is the core rate times this (SBR doubles the output rate,
+/// ISO/IEC 14496-3 §4.6.18).
+const SBR_RATE_FACTOR: u32 = 2;
+/// Highest raw `samplingFrequencyIndex` that names a table rate (Table 1.10).
+const SFI_TABLE_LAST: u8 = 0x0C;
+/// Core `audioObjectType` of an AAC-LC stream (Table 1.1).
+const AOT_AAC_LC: u8 = 2;
+/// Width of `audioObjectType` in the ASC.
+const AOT_BITS: u32 = 5;
+/// Width of the `GASpecificConfig` head (frameLengthFlag, dependsOnCoreCoder,
+/// extensionFlag) that follows the core object type.
+const GA_HEAD_BITS: u32 = 3;
+/// Width of `samplingFrequencyIndex`.
+const SFI_BITS: u32 = 4;
+/// Width of `channelConfiguration`.
+const CHANNEL_CONFIG_BITS: usize = 4;
+/// Width of an explicit `samplingFrequency` escape value.
+const SFI_ESCAPE_BITS: usize = 24;
+/// Bits of the hierarchical tail that share the byte holding the fixed
+/// `channelConfiguration` field.
+const TAIL_BITS_IN_SHARED_BYTE: u32 = 3;
+/// Width of the hierarchical tail after `channelConfiguration`.
+const TAIL_BITS: u32 = SFI_BITS + AOT_BITS + GA_HEAD_BITS;
+/// Bits of the tail that follow the shared byte.
+const TAIL_SPILL_BITS: u32 = TAIL_BITS - TAIL_BITS_IN_SHARED_BYTE;
+/// Bits in the two bytes the spill is left-aligned into.
+const SPILL_FIELD_BITS: u32 = 16;
+
+impl AudioSpecificConfig {
+    /// Re-express an AAC-LC config as explicit hierarchical HE-AAC signalling
+    /// (ISO/IEC 14496-3 §1.6.2): `audioObjectType` 5 (v1) or 29 (v2), the
+    /// core rate in `samplingFrequencyIndex`, twice that rate in
+    /// `extensionSamplingFrequencyIndex`, then the underlying AAC-LC object
+    /// type and its `GASpecificConfig`.
+    ///
+    /// Fails for a config that is not a plain table-rate AAC-LC ASC (already
+    /// signalling, explicit-rate escape, trailing config bytes) or whose
+    /// doubled rate has no Table 1.10 index.
+    pub fn with_explicit_he_aac(&self, profile: HeAacProfile) -> Result<Self> {
+        if self.audio_object_type != AudioObjectType::AacLc {
+            return Err(Error::InvalidValue {
+                field: "audio_object_type",
+                value: u64::from(self.audio_object_type.raw()),
+                reason: "explicit HE-AAC signalling needs an AAC-LC core",
+            });
+        }
+        if !self.trailing.is_empty() || self.trailing_top.is_some_and(|t| t != 0) {
+            return Err(Error::InvalidValue {
+                field: "trailing",
+                value: self.trailing.len() as u64,
+                reason: "config already carries GASpecificConfig/extension data",
+            });
+        }
+        let core_hz = self
+            .sampling_frequency_index
+            .table_hz()
+            .ok_or(Error::InvalidValue {
+                field: "sampling_frequency_index",
+                value: u64::from(self.sampling_frequency_index.raw()),
+                reason: "core rate is not a Table 1.10 rate",
+            })?;
+        let ext_hz = core_hz.saturating_mul(SBR_RATE_FACTOR);
+        let ext_index = extension_index_for(ext_hz).ok_or(Error::InvalidValue {
+            field: "extension_sampling_frequency_index",
+            value: u64::from(ext_hz),
+            reason: "doubled core rate has no Table 1.10 index",
+        })?;
+        let tail = (u16::from(ext_index.raw()) << (AOT_BITS + GA_HEAD_BITS))
+            | (u16::from(AOT_AAC_LC) << GA_HEAD_BITS);
+        let top = (tail >> TAIL_SPILL_BITS) as u8;
+        let spill_mask = (1u16 << TAIL_SPILL_BITS) - 1;
+        let spill = ((tail & spill_mask) << (SPILL_FIELD_BITS - TAIL_SPILL_BITS)).to_be_bytes();
+        Ok(Self {
+            audio_object_type: AudioObjectType::from(profile.audio_object_type()),
+            sampling_frequency_index: self.sampling_frequency_index,
+            sampling_frequency: None,
+            channel_configuration: self.channel_configuration,
+            trailing: spill.to_vec(),
+            trailing_top: Some(top),
+        })
+    }
+
+    /// The underlying codec's object type: for hierarchical HE-AAC signalling
+    /// (`audioObjectType` 5/29 first) the one that follows the extension rate
+    /// (normally AAC-LC), otherwise [`Self::audio_object_type`].
+    pub fn core_audio_object_type(&self) -> AudioObjectType {
+        self.with_serialized(detect_heaac_core)
+            .map_or(self.audio_object_type, |(aot, _, _)| {
+                AudioObjectType::from(aot)
+            })
+    }
+
+    /// The explicit SBR output rate in Hz declared by a hierarchical
+    /// (`audioObjectType` 5/29) config; `None` otherwise.
+    pub fn extension_sampling_frequency(&self) -> Option<u32> {
+        self.with_serialized(|bytes| {
+            let mut bit = 0usize;
+            let aot = asc_get_aot(bytes, &mut bit)?;
+            if aot != AOT_SBR && aot != AOT_PS {
+                return None;
+            }
+            let sfi = asc_read_bits(bytes, &mut bit, SFI_BITS as usize)? as u8;
+            if sfi == SFI_ESCAPE {
+                asc_read_bits(bytes, &mut bit, SFI_ESCAPE_BITS)?;
+            }
+            asc_read_bits(bytes, &mut bit, CHANNEL_CONFIG_BITS)?;
+            let esfi = asc_read_bits(bytes, &mut bit, SFI_BITS as usize)? as u8;
+            if esfi == SFI_ESCAPE {
+                return asc_read_bits(bytes, &mut bit, SFI_ESCAPE_BITS);
+            }
+            SamplingFrequencyIndex::from(esfi).table_hz()
+        })
+    }
+}
+
+fn extension_index_for(hz: u32) -> Option<SamplingFrequencyIndex> {
+    (0..=SFI_TABLE_LAST)
+        .map(SamplingFrequencyIndex::from)
+        .find(|i| i.table_hz() == Some(hz))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
