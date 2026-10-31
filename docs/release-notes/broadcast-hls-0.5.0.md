@@ -2,6 +2,8 @@
 
 _Released 2026-10-31._
 
+Breaking minor. `MediaPlaylist` and `MasterPlaylist` parsing is stricter (malformed attribute lists and out-of-range values are errors rather than silently accepted), several public structs gain fields, and `Error` gains variants. Struct literals must add the new fields or use `..Default::default()`, and exhaustive matches on `Error` need a wildcard arm. The details below list every field and variant. Dependents `timed-metadata`, `ssai-runtime`, `transmux`, `hls-runtime`, `media-doctor`, `multimux` and `broadcast-client` move to 0.5 in the same wave.
+
 ### Added
 - Test pinning `SUPPLEMENTAL-CODECS` (carried in `extra_attrs`) as a quoted string through render and parse.
 - `SUPPLEMENTAL-CODECS` round-trip test also covers the HDR10+ `/cdm4` brand (issue #1428).

@@ -2,6 +2,8 @@
 
 _Released 2026-10-31._
 
+Breaking minor. Migration: `build_sdp_with_connection` takes `sdp_types` 0.3 media (move your own `sdp-types` dependency to 0.3), `TrickModeAdaptationSet` ids are `u32`, `StreamingTsHlsSegmenter::update_track` returns an outcome enum, HEVC codec strings and explicit HE-AAC timescales change output, and `DoviVideoStreamDescriptor` is no longer `Copy`. New: HDR10 static metadata, HDR10+ dynamic metadata and Dolby Vision signalling, a DTS-correct RTP stream depacketiser for B-frame video, and LL-HLS follower/part-level cuts.
+
 ### Changed (BREAKING: epoch)
 - Builds against new caret epochs of workspace siblings (`broadcast-hls` 0.4 -> 0.5). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.
 

@@ -2,6 +2,8 @@
 
 _Released 2026-10-31._
 
+Breaking minor. The `HlsSkip`/`HlsSkipDirective`/`SkipValue` aliases and `HlsOrigin::priority`/`urgency_for` are removed (use `SkipDirective` and `HlsOrigin::http_priority`). New in this release: HDR10, HLG, Dolby Vision and HDR10+ multivariant signalling, WebVTT subtitle renditions including low-latency partial segments, and LL-HLS part-target fixes; segment-structure checks now come from `container-probe` 0.2.1.
+
 ### Changed (BREAKING: epoch)
 - Builds against new caret epochs of workspace siblings (`broadcast-hls` 0.4 -> 0.5, `transmux` 0.27 -> 0.28, `timed-metadata` 0.7 -> 0.8, `media-plane` 0.7 -> 0.8, `container-probe` 0.2 -> 0.2.1 (minimum: segment-structure checks moved here)). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.
 ### Breaking
