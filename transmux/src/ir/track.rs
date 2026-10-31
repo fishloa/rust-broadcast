@@ -11,7 +11,7 @@ use super::{CodecConfig, DisplayGeometry, ProgramNumber, Sample, TrackId};
 use crate::hdr::HdrStaticMetadata;
 
 /// A track's identity + codec config, used to build the init segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TrackSpec {
     /// Track ID (1-based, unique within the movie).
@@ -45,6 +45,23 @@ pub struct TrackSpec {
     /// `clli` boxes of an fMP4 sample entry. `None` when the stream carries
     /// neither message.
     pub hdr: Option<HdrStaticMetadata>,
+}
+
+impl core::fmt::Debug for TrackSpec {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("TrackSpec");
+        d.field("track_id", &self.track_id)
+            .field("timescale", &self.timescale)
+            .field("config", &self.config)
+            .field("source_pid", &self.source_pid)
+            .field("es_info_descriptors", &self.es_info_descriptors)
+            .field("program_number", &self.program_number)
+            .field("display", &self.display);
+        if let Some(hdr) = &self.hdr {
+            d.field("hdr", hdr);
+        }
+        d.finish()
+    }
 }
 
 impl TrackSpec {
