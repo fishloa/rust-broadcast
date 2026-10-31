@@ -2010,6 +2010,48 @@ pub(crate) fn decode_ptl(
 mod tests {
     use super::*;
 
+    const X264_PYRAMID_SPS: [u8; 25] = [
+        0x67, 0x64, 0x00, 0x1e, 0xac, 0xd9, 0x40, 0xa0, 0x2f, 0xf9, 0x61, 0x00, 0x00, 0x03, 0x00,
+        0x01, 0x00, 0x00, 0x03, 0x00, 0x32, 0x0f, 0x16, 0x2d, 0x96,
+    ];
+    const X264_NO_PYRAMID_SPS: [u8; 25] = [
+        0x67, 0x64, 0x00, 0x1e, 0xac, 0xd1, 0x00, 0xa0, 0x2f, 0xf9, 0x61, 0x00, 0x00, 0x03, 0x00,
+        0x01, 0x00, 0x00, 0x03, 0x00, 0x32, 0x0f, 0x16, 0x2d, 0x12,
+    ];
+    const X264_NO_B_SPS: [u8; 25] = [
+        0x67, 0x64, 0x00, 0x1e, 0xac, 0xb2, 0x01, 0x40, 0x5f, 0xf2, 0xc2, 0x00, 0x00, 0x03, 0x00,
+        0x02, 0x00, 0x00, 0x03, 0x00, 0x64, 0x1e, 0x2c, 0x5c, 0x90,
+    ];
+
+    #[test]
+    fn reorder_depth_is_read_from_real_x264_sps() {
+        let depth = |sps: &[u8]| decode_avc_reorder_depth(sps).unwrap();
+        assert_eq!(depth(&X264_PYRAMID_SPS).max_num_reorder_frames, Some(2));
+        assert_eq!(depth(&X264_NO_PYRAMID_SPS).max_num_reorder_frames, Some(1));
+        assert_eq!(depth(&X264_NO_B_SPS).max_num_reorder_frames, Some(0));
+        assert_eq!(depth(&X264_PYRAMID_SPS).depth(), Some(2));
+        assert!(depth(&X264_PYRAMID_SPS).max_dec_frame_buffering >= Some(2));
+    }
+
+    #[test]
+    fn reorder_depth_inference_follows_the_profile() {
+        let none = |profile_idc, constraint_flags| AvcReorderDepth {
+            profile_idc,
+            constraint_flags,
+            max_num_reorder_frames: None,
+            max_dec_frame_buffering: None,
+        };
+        assert_eq!(none(66, 0x00).depth(), Some(0));
+        assert_eq!(none(100, 0x10).depth(), Some(0));
+        assert_eq!(none(100, 0x00).depth(), None);
+        assert_eq!(none(77, 0x10).depth(), None);
+        let declared = AvcReorderDepth {
+            max_num_reorder_frames: Some(3),
+            ..none(100, 0x10)
+        };
+        assert_eq!(declared.depth(), Some(3));
+    }
+
     #[test]
     fn rfc6381_avc1_baseline() {
         assert_eq!(rfc6381_avc1(66, 0xC0, 13), "avc1.42C00D");
