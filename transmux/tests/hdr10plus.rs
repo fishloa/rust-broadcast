@@ -8,10 +8,10 @@
 //! Spec inputs: `private/specs-verified/smpte/hdr10plus/`.
 #![cfg(feature = "std")]
 
-use broadcast_common::mux::Unpackage;
+use broadcast_common::mux::{Package, Unpackage};
 use broadcast_common::{Parse, Serialize};
 use transmux::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
-use transmux::ir::CodecConfig;
+use transmux::ir::{CodecConfig, Media};
 use transmux::ts_demux::TsDemux;
 use transmux::{
     AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
@@ -423,4 +423,86 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
         })
         .collect();
     assert!(too_many_points.try_to_bytes().is_err());
+}
+
+fn hevc_track(media: &Media) -> &transmux::ir::Track {
+    media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
+        .expect("HEVC track")
+}
+
+fn seis_in_display_order(media: &Media) -> Vec<Vec<u8>> {
+    let mut samples: Vec<_> = hevc_track(media).samples.iter().collect();
+    samples.sort_by_key(|s| s.pts);
+    samples
+        .iter()
+        .flat_map(|s| {
+            iter_length_prefixed_nals(&s.data)
+                .unwrap()
+                .into_iter()
+                .filter(|n| Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(n))
+                .map(<[u8]>::to_vec)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn source_media() -> Option<(Media, Vec<Vec<u8>>)> {
+    let ts = test_fixtures::require_bytes(TS, "hdr10plus")?;
+    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let seis = seis_in_display_order(&media);
+    assert_eq!(seis.len(), FRAMES);
+    Some((media, seis))
+}
+
+#[test]
+fn track_flag_is_set_from_the_first_access_unit_alongside_hdr10_static_metadata() {
+    let Some((media, _)) = source_media() else { return };
+    let spec = &hevc_track(&media).spec;
+    assert!(spec.hdr10plus);
+    let hdr = spec.hdr.expect("HDR10 static metadata");
+    assert_eq!(hdr.content_light_level.unwrap().max_content_light_level, 1000);
+    assert!(hdr.mastering_display.is_some());
+}
+
+#[test]
+fn track_flag_is_clear_for_streams_without_hdr10plus() {
+    for fixture in ["hdr10/meridian-hdr10-60f.ts", "ts/hevc/main10.ts"] {
+        let Some(bytes) = test_fixtures::require_bytes(fixture, "hdr10plus") else {
+            continue;
+        };
+        let media = TsDemux::new().unpackage(&bytes).expect("demux");
+        assert!(!hevc_track(&media).spec.hdr10plus, "{fixture}");
+    }
+}
+
+#[test]
+fn fmp4_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
+    let Some((media, source)) = source_media() else { return };
+    let bytes = transmux::CmafMux::default().package(&media).expect("cmaf");
+    let back = transmux::media::Fmp4Demux::default().unpackage(&bytes).expect("fmp4 demux");
+    assert_eq!(seis_in_display_order(&back).len(), FRAMES);
+    assert_eq!(seis_in_display_order(&back), source);
+    assert!(hevc_track(&back).spec.hdr10plus);
+}
+
+#[test]
+fn ts_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
+    let Some((media, source)) = source_media() else { return };
+    let bytes = transmux::ts_mux::TsMux::default().package(&media).expect("ts mux");
+    let back = TsDemux::new().unpackage(&bytes).expect("ts demux");
+    assert_eq!(seis_in_display_order(&back).len(), FRAMES);
+    assert_eq!(seis_in_display_order(&back), source);
+    assert!(hevc_track(&back).spec.hdr10plus);
+}
+
+#[test]
+fn ts_hls_segments_keep_every_sei_byte_identical() {
+    let Some((media, source)) = source_media() else { return };
+    let out = transmux::ts_hls::TsHlsPackager::default().package(&media).expect("ts hls");
+    let joined: Vec<u8> = out.segments.concat();
+    let back = TsDemux::new().unpackage(&joined).expect("ts demux");
+    assert_eq!(seis_in_display_order(&back), source);
 }
