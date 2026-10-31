@@ -65,15 +65,6 @@ const VALIDATOR_BIN: &str = "/usr/local/bin/mediastreamvalidator";
 const VALIDATOR_DEADLINE: Duration = Duration::from_secs(60);
 const VALIDATOR_TARGET_SECS: &str = "5";
 const MUST_LEVEL: i64 = 1;
-/// What Apple's validator says of a low-latency playlist that carries no
-/// partial segments, which is what a WebVTT subtitle playlist is today: it
-/// wants `EXT-X-PART-INF` and the part-related `EXT-X-SERVER-CONTROL`
-/// attributes in every playlist of a low-latency stream. These are the only
-/// findings the subtitle playlists add.
-const LL_TAGS_OF_PARTLESS_PLAYLIST: [&str; 2] = [
-    "Missing EXT-X-PART-INF tag",
-    "Missing server control attribute",
-];
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -509,6 +500,49 @@ async fn subtitle_playlist_matches_video_segments() {
 }
 
 #[tokio::test]
+async fn subtitle_and_video_playlists_share_server_control() {
+    let Some(rig) = teletext_rig(true, "subtitle_and_video_playlists_share_server_control") else {
+        return;
+    };
+    let (_, video) = rig.playlist("media.m3u8").await;
+    let video_control = video.low_latency.expect("video playlist is low-latency");
+    assert!(video_control.can_block_reload);
+    assert!(video_control.can_skip_until.is_some());
+    assert!(video_control.part_hold_back.is_some());
+    let (_, iframe) = rig.playlist("iframe.m3u8").await;
+    let iframe_control = iframe.low_latency.expect("iframe playlist is low-latency");
+    assert_eq!(iframe_control.can_skip_until, video_control.can_skip_until);
+    for hearing_impaired in [false, true] {
+        let uri = rig.subtitle_uri(hearing_impaired).await;
+        let (text, subs) = rig.playlist(&uri).await;
+        let control = subs.low_latency.expect("subtitle playlist is low-latency");
+        assert_eq!(
+            control.can_block_reload, video_control.can_block_reload,
+            "{uri}"
+        );
+        assert_eq!(
+            control.part_hold_back, video_control.part_hold_back,
+            "{uri}"
+        );
+        assert_eq!(control.hold_back, video_control.hold_back, "{uri}");
+        assert_eq!(
+            control.can_skip_until, video_control.can_skip_until,
+            "{uri}"
+        );
+        assert_eq!(
+            control.can_skip_dateranges, video_control.can_skip_dateranges,
+            "{uri}"
+        );
+        assert_eq!(
+            control.sc_extra_attrs, video_control.sc_extra_attrs,
+            "{uri}"
+        );
+        assert!(!text.contains("#EXT-X-PART:"), "{uri}:\n{text}");
+        assert!(!text.contains("#EXT-X-PRELOAD-HINT"), "{uri}:\n{text}");
+    }
+}
+
+#[tokio::test]
 async fn every_segment_has_webvtt_header_and_timestamp_map() {
     let Some(rig) = teletext_rig(true, "every_segment_has_webvtt_header_and_timestamp_map") else {
         return;
@@ -920,10 +954,21 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         "validator findings about subtitles: {about_subtitles:?}"
     );
     let baseline: BTreeSet<&(i64, String)> = without.iter().collect();
+    let video_findings: BTreeSet<&str> = without
+        .iter()
+        .filter_map(|(_, m)| m.strip_prefix("$/variants[0]"))
+        .collect();
     let new: Vec<_> = with
         .iter()
         .filter(|f| !baseline.contains(f))
-        .filter(|(_, m)| !LL_TAGS_OF_PARTLESS_PLAYLIST.iter().any(|k| m.ends_with(k)))
+        .filter(|(_, m)| {
+            let on_subtitle_playlist =
+                !m.starts_with("$/variants[0]") && !m.starts_with("$/variants[1]");
+            let same_as_video = m
+                .split_once(']')
+                .is_some_and(|(_, rest)| video_findings.contains(rest));
+            !(on_subtitle_playlist && same_as_video)
+        })
         .collect();
     assert!(new.is_empty(), "findings the subtitles introduced: {new:?}");
 }

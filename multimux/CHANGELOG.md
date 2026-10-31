@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The WebVTT subtitle playlists of a low-latency route now carry the same `EXT-X-SERVER-CONTROL` attributes and values as the video playlist (RFC 8216bis section 6.2.4) plus `EXT-X-PART-INF`, so Apple's `mediastreamvalidator` no longer reports "Missing EXT-X-PART-INF tag" or "Missing server control attribute" three times on them (issue #1589). They still have no partial segments.
 
 ### Changed
 - Route `audio_profiles` HE-AAC tracks now use the output sample rate as their media timescale (`mdhd` 44100 for a 22050 Hz core, 2048-tick AAC frames) in every fMP4 output.

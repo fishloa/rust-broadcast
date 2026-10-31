@@ -845,10 +845,16 @@ pub struct LowLatencyConfig {
 impl LowLatencyConfig {
     /// The `PART-HOLD-BACK` value actually rendered: at least
     /// `3 × part_target` per RFC 8216bis §4.4.3.8, even if
-    /// [`Self::part_hold_back`] is smaller. `None` when [`Self::part_target`]
-    /// is `None` (no part target to compute a floor from — audit BH-W3).
+    /// [`Self::part_hold_back`] is smaller. When [`Self::part_target`] is
+    /// `None` there is no floor to compute, so [`Self::part_hold_back`] is
+    /// returned as given: a playlist without Partial Segments may still carry
+    /// the attribute so its `#EXT-X-SERVER-CONTROL` equals the other Media
+    /// Playlists' (RFC 8216bis §6.2.4).
     pub fn effective_part_hold_back(&self) -> Option<DecimalSeconds> {
-        let floor = 3.0 * self.part_target?.get();
+        let Some(part_target) = self.part_target else {
+            return self.part_hold_back;
+        };
+        let floor = 3.0 * part_target.get();
         // `floor` and `self.part_hold_back.get()` are both finite and
         // non-negative, so their max is too.
         Some(DecimalSeconds::new_unchecked(
@@ -5619,6 +5625,23 @@ mod tests {
             preload_hint_part: None,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn server_control_without_part_target_keeps_part_hold_back() {
+        let pl = MediaPlaylist {
+            target_duration: 4,
+            low_latency: Some(LowLatencyConfig {
+                part_target: None,
+                part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
+                hold_back: Some(DecimalSeconds::new(12.0).unwrap()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = pl.to_m3u8().unwrap();
+        assert!(out.contains("PART-HOLD-BACK=1.5"), "{out}");
+        assert!(!out.contains("#EXT-X-PART-INF"), "{out}");
     }
 
     #[test]
