@@ -34,7 +34,7 @@
 //! | DSM-CC carousel | **12** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree |
 //! | Registries | **171** CA_system_id and **174** private_data_specifier names (TSDuck data, build-time) |
 //! | Standards | **19** standards / families — see the table below |
-//! | Known gaps | **7** allocated codes not yet typed — listed in [`docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#not-implemented) |
+//! | Known gaps | **7** allocated codes not yet typed — listed in `private/specs-verified/dvb/dvb-si/COVERAGE.md` (private repo) |
 //!
 //! ### Standards supported
 //!
