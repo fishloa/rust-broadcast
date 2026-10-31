@@ -497,6 +497,7 @@ pub(crate) fn subtitle_playlist_uri(slot: usize) -> String {
 #[derive(Clone)]
 pub struct SubtitleServing {
     pub decl: hls_runtime::server::SubtitleRenditionDecl,
+    pub identity: String,
     pub track_id: transmux::TrackId,
     pub trunk: std::sync::Arc<Trunk>,
     pub origin: std::sync::Arc<hls_runtime::server::HlsOrigin>,
@@ -729,11 +730,12 @@ impl ProgramServing {
     pub(crate) fn declare_subtitles(
         &self,
         decls: &[hls_runtime::server::SubtitleRenditionDecl],
+        identities: &[String],
     ) -> Option<Vec<SubtitleServing>> {
         let mut servings = self.subtitle_servings.lock();
         if !servings.is_empty() {
-            let declared: Vec<_> = servings.iter().map(|s| &s.decl).collect();
-            if declared.iter().copied().ne(decls.iter()) {
+            let declared: Vec<_> = servings.iter().map(|s| &s.identity).collect();
+            if declared.iter().copied().ne(identities.iter()) {
                 tracing::warn!(
                     route = %self.route_name,
                     "subtitle renditions already declared for this program; keeping them"
@@ -741,12 +743,15 @@ impl ProgramServing {
             }
             return Some(servings.clone());
         }
-        if decls.is_empty() || decls.len() > MAX_SUBTITLE_RENDITIONS {
+        if decls.is_empty()
+            || decls.len() > MAX_SUBTITLE_RENDITIONS
+            || decls.len() != identities.len()
+        {
             return None;
         }
         let params = self.sibling_params;
         let mut built = Vec::with_capacity(decls.len());
-        for (slot, decl) in decls.iter().enumerate() {
+        for (slot, (decl, identity)) in decls.iter().zip(identities).enumerate() {
             let trunk = Trunk::new(TrunkConfig::new(
                 nz(DEFAULT_TIMED_CAPACITY),
                 nz(DEFAULT_SPARSE_CAPACITY),
@@ -776,6 +781,7 @@ impl ProgramServing {
             let slot_id = u32::try_from(slot).unwrap_or(u32::MAX);
             built.push(SubtitleServing {
                 decl: decl.clone(),
+                identity: identity.clone(),
                 track_id: transmux::TrackId::new(SUBTITLE_TRACK_BASE.saturating_add(slot_id)),
                 trunk,
                 origin,
@@ -1747,6 +1753,16 @@ impl RouteHandle {
         }
     }
 
+    pub(crate) fn set_part_target_ms(&self, program: ProgramId, ms: u32) -> bool {
+        match self.serving(program) {
+            Some(serving) => {
+                serving.ll_hls.set_part_target_ms(ms);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn set_audio_init(&self, program: ProgramId, index: usize, bytes: impl Into<Bytes>) {
         match self.serving(program) {
             Some(serving) => serving.set_audio_init(index, bytes),
@@ -1772,12 +1788,13 @@ impl RouteHandle {
     }
 
     /// Declares the subtitle renditions of the program served from `trunk`
-    /// and returns their servings, in `decls` order (see
+    /// and returns their servings, in the order first declared (see
     /// `ProgramServing::declare_subtitles`).
     pub(crate) fn declare_subtitles_for_trunk(
         &self,
         trunk: &Trunk,
         decls: &[hls_runtime::server::SubtitleRenditionDecl],
+        identities: &[String],
     ) -> Option<Vec<SubtitleServing>> {
         let serving = self
             .programs
@@ -1785,7 +1802,7 @@ impl RouteHandle {
             .values()
             .find(|s| std::ptr::eq(std::sync::Arc::as_ptr(&s.trunk), trunk))
             .cloned()?;
-        serving.declare_subtitles(decls)
+        serving.declare_subtitles(decls, identities)
     }
 
     pub(crate) fn audio_renditions(&self) -> &[hls_runtime::server::AudioRenditionDecl] {

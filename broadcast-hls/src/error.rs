@@ -12,7 +12,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// No longer `Eq` (only `PartialEq`): [`Error::InvalidDecimalSeconds`]/
 /// [`Error::InvalidSignedDecimalSeconds`] carry the offending `f64`, which
 /// has no `Eq` impl (NaN != NaN).
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error, PartialEq, Clone)]
 #[non_exhaustive]
 pub enum Error {
     /// An HLS playlist (`.m3u8`, RFC 8216bis) tag could not be parsed —

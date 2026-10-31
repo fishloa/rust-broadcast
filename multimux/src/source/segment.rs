@@ -171,6 +171,13 @@ impl AnySegmenter {
     /// for fMP4, `StreamingTsHlsSegmenter::finish` for classic TS (same job,
     /// different name: see that method's own doc for why it is not named
     /// `flush` there).
+    fn part_target_ms(&self) -> Option<u32> {
+        match self {
+            AnySegmenter::Fmp4(seg) => Some(seg.part_target_ms()),
+            AnySegmenter::Ts(_) => None,
+        }
+    }
+
     fn finish(&mut self) -> transmux::Result<()> {
         match self {
             AnySegmenter::Fmp4(seg) => seg.flush(),
@@ -450,6 +457,8 @@ pub struct ProgramSegmenter {
     captions_seen: BTreeSet<DetectedCaption>,
     /// `captions_seen` has grown since it was last handed to the route.
     captions_unreported: bool,
+    /// The leader's `PART-TARGET` last handed to the route's origin.
+    part_target_published: Option<u32>,
 }
 
 /// Most sample payload bytes the IDR-fallback hold keeps (32 MiB). Past it the
@@ -810,6 +819,7 @@ impl ProgramSegmenter {
             caption_detectors: HashMap::new(),
             captions_seen: BTreeSet::new(),
             captions_unreported: false,
+            part_target_published: None,
         })
     }
 
@@ -1019,7 +1029,17 @@ impl ProgramSegmenter {
             self.captions_unreported =
                 !route_handle.note_closed_captions(program, detected.collect());
         }
+        self.publish_part_target(program, route_handle);
         self.publish_ready()
+    }
+
+    fn publish_part_target(&mut self, program: ProgramId, route_handle: &RouteHandle) {
+        let Some(ms) = self.seg.part_target_ms() else {
+            return;
+        };
+        if self.part_target_published != Some(ms) && route_handle.set_part_target_ms(program, ms) {
+            self.part_target_published = Some(ms);
+        }
     }
 
     fn observe_captions(&mut self, trunk: &Trunk, track_id: TrackId, data: &[u8]) {
@@ -1301,6 +1321,7 @@ impl ProgramSegmenter {
                                 route_handle.set_init(program, init);
                             }
                             self.seg = AnySegmenter::Fmp4(seg);
+                            self.part_target_published = None;
                             self.followers.clear();
                             self.followers = split_audio::build_followers(
                                 trunk,
@@ -3202,6 +3223,7 @@ mod tests {
             caption_detectors: HashMap::new(),
             captions_seen: BTreeSet::new(),
             captions_unreported: false,
+            part_target_published: None,
         }
     }
 

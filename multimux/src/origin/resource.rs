@@ -1630,12 +1630,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn range_last_less_than_first_is_416() {
-        // RFC 9110 §14.2 permits a server to either ignore an invalid
-        // range-spec (answer 200) or reject it (416); §14.1.1's
-        // byte-range-spec requires first-byte-pos <= last-byte-pos, so
-        // `bytes=5-3` is not a satisfiable range-spec. This implementation
-        // rejects it as unsatisfiable (416) rather than ignoring it.
+    async fn range_last_less_than_first_is_ignored() {
+        // RFC 9110 §14.1.1: first-pos <= last-pos is required, and §14.2: an
+        // invalid Range is ignored, so the full body is served with 200.
         let route = range_route();
         let resp = dynamic_file(
             State(route),
@@ -1643,14 +1640,11 @@ mod tests {
             Path("seg-1-1.m4s".to_string()),
         )
         .await;
-        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
-        assert_eq!(
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(
             resp.headers()
                 .get(axum::http::header::CONTENT_RANGE)
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "bytes */100"
+                .is_none()
         );
     }
 

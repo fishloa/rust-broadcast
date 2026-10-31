@@ -323,6 +323,17 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
 
     let (start_bound, end_bound) = collected[0];
 
+    // An invalid byte-range-spec (last-pos < first-pos, or neither bound) is
+    // ignored, not unsatisfiable (RFC 9110 §14.1.1, §14.2).
+    let invalid_spec = match (start_bound, end_bound) {
+        (Bound::Included(a), Bound::Included(b)) => a > b,
+        (Bound::Unbounded, Bound::Unbounded) => true,
+        _ => false,
+    };
+    if invalid_spec {
+        return full_response(bytes);
+    }
+
     let first = match start_bound {
         Bound::Included(x) => x,
         Bound::Excluded(x) => x.saturating_add(1),
@@ -370,4 +381,28 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
     );
     headers::HeaderMapExt::typed_insert(resp.headers_mut(), headers::AcceptRanges::bytes());
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status_for(range: &str) -> StatusCode {
+        let mut h = HeaderMap::new();
+        h.insert(axum::http::header::RANGE, range.parse().unwrap());
+        range_response(&h, Bytes::from_static(b"0123456789"), "video/mp4").status()
+    }
+
+    #[test]
+    fn invalid_byte_range_specs_are_ignored_not_416() {
+        assert_eq!(status_for("bytes=5-3"), StatusCode::OK);
+        assert_eq!(status_for("bytes=-"), StatusCode::OK);
+    }
+
+    #[test]
+    fn valid_and_unsatisfiable_ranges_keep_their_status() {
+        assert_eq!(status_for("bytes=3-5"), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(status_for("bytes=-3"), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(status_for("bytes=20-30"), StatusCode::RANGE_NOT_SATISFIABLE);
+    }
 }

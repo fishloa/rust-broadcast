@@ -400,6 +400,8 @@ async fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_output() {
     );
 }
 
+const PART_FLOOR_FINDING: &str = "at least 85% of PART-TARGET";
+
 const ISSUE_1602_FINDINGS: [&str; 2] = [
     "Playlist vs segment duration mismatch",
     "Playlist vs partial segment duration mismatch",
@@ -474,6 +476,12 @@ async fn mediastreamvalidator_reports_no_hdr10plus_specific_finding() {
     for c in &comments {
         eprintln!("VALIDATOR hdr10plus: {c}");
     }
+    for c in baseline.iter().chain(&comments) {
+        assert!(
+            !c.contains(PART_FLOOR_FINDING),
+            "validator reports the 85% part floor: {c}"
+        );
+    }
     let issue_1602 = has_b_frame_reordering(HDR10PLUS);
     let only: Vec<_> = comments
         .iter()
@@ -484,4 +492,60 @@ async fn mediastreamvalidator_reports_no_hdr10plus_specific_finding() {
         only.is_empty(),
         "findings beyond the SDR/HDR10 baseline: {only:?}"
     );
+}
+
+#[tokio::test]
+async fn parts_at_23_976_fps_sit_on_the_frame_grid() {
+    if test_fixtures::require(HDR10PLUS, "hdr10plus_route").is_none() {
+        return;
+    }
+    let text = String::from_utf8(ok(&route_app(HDR10PLUS), "media.m3u8").await).expect("utf8");
+    let value = |tag: &str, key: &str| -> f64 {
+        let line = text
+            .lines()
+            .find(|l| l.starts_with(tag))
+            .unwrap_or_else(|| panic!("{tag} missing:\n{text}"));
+        let start = line.find(key).expect(key) + key.len();
+        line[start..]
+            .split(',')
+            .next()
+            .and_then(|v| v.parse().ok())
+            .expect("number")
+    };
+    let target = value("#EXT-X-PART-INF:", "PART-TARGET=");
+    let hold_back = value("#EXT-X-SERVER-CONTROL:", "PART-HOLD-BACK=");
+    assert!(target > 0.2, "200 ms holds 4.8 frames; got {target}");
+    assert!(hold_back >= 3.0 * target - 1e-9, "{hold_back} vs {target}");
+    let mut segments: Vec<Vec<(f64, bool)>> = vec![Vec::new()];
+    for line in text.lines() {
+        if line.starts_with("#EXT-X-PART:") {
+            let start = line.find("DURATION=").expect("duration") + "DURATION=".len();
+            let duration: f64 = line[start..]
+                .split(',')
+                .next()
+                .and_then(|v| v.parse().ok())
+                .expect("number");
+            let exempt = line.contains("INDEPENDENT=YES") || line.contains("GAP=YES");
+            segments
+                .last_mut()
+                .expect("segment")
+                .push((duration, exempt));
+        } else if line.starts_with("#EXTINF") {
+            segments.push(Vec::new());
+        }
+    }
+    let mut checked = 0;
+    for parts in &segments {
+        for (i, (duration, exempt)) in parts.iter().enumerate() {
+            assert!(*duration <= target + 1e-9, "{duration} > {target}");
+            if i + 1 < parts.len() && !exempt {
+                assert!(
+                    *duration >= 0.85 * target - 1e-9,
+                    "{duration} < 85% of {target}"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 10, "only {checked} non-terminal parts checked");
 }

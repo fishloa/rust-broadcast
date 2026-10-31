@@ -851,7 +851,7 @@ fn long_segment_parts_stay_within_part_target() {
         LlHlsSegmenter::with_part_target(vec![video_track(), audio_track()], 6000, 6.0, 334)
             .unwrap();
 
-    const N_VID: usize = 150; // 6 s at 25 fps
+    const N_VID: usize = 155; // ends off a part boundary, so the tail holds anchor time
     const N_AUD: usize = 281; // ~6 s of 1024-sample frames
     const AUD_DUR: u32 = 1024;
 
@@ -1054,4 +1054,157 @@ fn lagging_audio_never_makes_a_zero_duration_part() {
             s.duration
         );
     }
+}
+
+// ===========================================================================
+// Issue #1621 — parts on the video frame grid meet the 85% floor
+// ===========================================================================
+
+const CLOCK_90K: u64 = 90_000;
+
+fn frame_ticks(rate_num: u64, rate_den: u64, count: usize) -> Vec<u32> {
+    let boundary = |i: u64| (i * CLOCK_90K * rate_den + rate_num / 2) / rate_num;
+    (0..count as u64)
+        .map(|i| (boundary(i + 1) - boundary(i)) as u32)
+        .collect()
+}
+
+fn cut_parts(
+    rate_num: u64,
+    rate_den: u64,
+    durations: Option<Vec<u32>>,
+    seconds: u64,
+) -> (u32, Vec<transmux::ll_hls::PartInfo>) {
+    const TARGET_MS: u32 = 200;
+    const SEGMENT_SECS: f64 = 2.0;
+    let frames = (seconds * rate_num / rate_den) as usize;
+    let durations = durations.unwrap_or_else(|| frame_ticks(rate_num, rate_den, frames));
+    let gop = (SEGMENT_SECS * rate_num as f64 / rate_den as f64).round() as usize;
+    let mut seg =
+        LlHlsSegmenter::with_part_target(vec![video_track()], 1000, SEGMENT_SECS, TARGET_MS)
+            .unwrap();
+    for (i, d) in durations.iter().enumerate() {
+        let sample = Sample::new(vec![0u8; 16], None, None, Some(*d), i % gop == 0);
+        seg.push(TrackId::new(1), sample).unwrap();
+    }
+    seg.flush().unwrap();
+    (seg.part_target_ms(), seg.take_ready_parts())
+}
+
+fn non_terminal(parts: &[transmux::ll_hls::PartInfo]) -> Vec<&transmux::ll_hls::PartInfo> {
+    parts
+        .iter()
+        .enumerate()
+        .filter(|(i, p)| {
+            parts
+                .get(i + 1)
+                .is_some_and(|next| next.segment_seq == p.segment_seq)
+        })
+        .map(|(_, p)| p)
+        .collect()
+}
+
+const FRAME_RATES: [(u64, u64, u32); 6] = [
+    (24_000, 1001, 209),
+    (25, 1, 200),
+    (30_000, 1001, 201),
+    (30, 1, 200),
+    (50, 1, 200),
+    (60_000, 1001, 200),
+];
+
+#[test]
+fn non_terminal_parts_are_within_85_to_100_percent_of_part_target() {
+    for (num, den, expected_ms) in FRAME_RATES {
+        let (target_ms, parts) = cut_parts(num, den, None, 12);
+        let target = f64::from(target_ms) / 1000.0;
+        assert_eq!(target_ms, expected_ms, "{num}/{den} part target");
+        let inner = non_terminal(&parts);
+        assert!(inner.len() > 20, "{num}/{den}: too few parts");
+        for p in &parts {
+            assert!(
+                p.duration <= target + 1e-9,
+                "{num}/{den}: part {} of segment {} lasts {} > target {target}",
+                p.part_index,
+                p.segment_seq,
+                p.duration
+            );
+        }
+        for p in inner {
+            assert!(
+                p.duration >= 0.85 * target - 1e-9,
+                "{num}/{den}: non-terminal part {} of segment {} lasts {} < 85% of {target}",
+                p.part_index,
+                p.segment_seq,
+                p.duration
+            );
+        }
+    }
+}
+
+#[test]
+fn variable_frame_duration_keeps_the_configured_part_target() {
+    let durations: Vec<u32> = (0..300)
+        .map(|i| if i % 2 == 0 { 2000 } else { 4000 })
+        .collect();
+    let (target_ms, parts) = cut_parts(30, 1, Some(durations), 10);
+    assert_eq!(target_ms, 200);
+    assert!(parts.iter().all(|p| p.duration <= 0.2 + 1e-9));
+    assert!(parts.len() <= 100, "{} parts for 10 s", parts.len());
+}
+
+#[test]
+fn samples_without_durations_keep_the_configured_part_target() {
+    let mut seg = LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 2.0, 200).unwrap();
+    for i in 0..40u8 {
+        let sample = Sample::new(vec![0u8; 16], None, None, None, i == 0);
+        seg.push(TrackId::new(1), sample).unwrap();
+    }
+    assert_eq!(seg.part_target_ms(), 200);
+}
+
+#[test]
+fn jittered_frame_timestamps_still_land_parts_within_the_band() {
+    let durations: Vec<u32> = (0..288)
+        .map(|i| if matches!(i % 4, 0 | 3) { 3690 } else { 3780 })
+        .collect();
+    let (target_ms, parts) = cut_parts(24_000, 1001, Some(durations), 12);
+    let target = f64::from(target_ms) / 1000.0;
+    assert!(
+        target_ms > 200,
+        "the 200 ms target must be raised to whole frames"
+    );
+    let inner = non_terminal(&parts);
+    assert!(inner.len() > 20);
+    for p in &parts {
+        assert!(p.duration <= target + 1e-9, "{} > {target}", p.duration);
+    }
+    for p in inner {
+        assert!(
+            p.duration >= 0.85 * target - 1e-9,
+            "{} < 85% of {target}",
+            p.duration
+        );
+    }
+}
+
+#[test]
+fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
+    let durations = frame_ticks(24_000, 1001, 120);
+    let mut seg = LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 60.0, 200).unwrap();
+    let mut cut_at = Vec::new();
+    for (i, d) in durations.iter().enumerate() {
+        let sample = Sample::new(vec![0u8; 16], None, None, Some(*d), i == 0);
+        seg.push(TrackId::new(1), sample).unwrap();
+        if !seg.take_ready_parts().is_empty() {
+            cut_at.push(i);
+        }
+    }
+    let gaps: Vec<usize> = cut_at[1..].windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.len() > 10);
+    assert!(gaps.iter().all(|g| *g == 5), "{cut_at:?}");
+    assert!(
+        cut_at[2..].iter().all(|i| i % 5 == 4),
+        "a part must be cut on its fifth frame, not the sixth: {cut_at:?}"
+    );
 }

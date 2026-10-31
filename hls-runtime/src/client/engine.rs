@@ -761,7 +761,12 @@ impl HlsClient {
             return Err(self.request_full_playlist(&playlist));
         }
         self.full_reload_requested = false;
-        let segment_keys = playlist.segment_keys()?;
+        let segment_keys = playlist.segment_key_results()?;
+        if let Some(Err(e)) = segment_keys.first()
+            && segment_keys.iter().all(|r| r.is_err())
+        {
+            return Err(Error::PlaylistParse(e.clone()));
+        }
         let open_key = if playlist.open_segment.is_some() {
             playlist.open_segment_key()?
         } else {
@@ -816,7 +821,15 @@ impl HlsClient {
                 first_error.get_or_insert(e);
                 continue;
             }
-            let key = segment_keys.get(i).and_then(Option::as_ref);
+            let key = match segment_keys.get(i) {
+                Some(Ok(key)) => key.as_ref(),
+                Some(Err(e)) => {
+                    self.skip_segment(msn, seg)?;
+                    first_error.get_or_insert(Error::PlaylistParse(e.clone()));
+                    continue;
+                }
+                None => None,
+            };
             match self.process_closed_segment(msn, seg, key, playlist.iframes_only) {
                 Ok(()) => {}
                 Err(e @ Error::UnsupportedEncryption { .. }) => {

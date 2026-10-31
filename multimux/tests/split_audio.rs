@@ -509,6 +509,71 @@ fn france2() -> Vec<Source> {
     by_role(load("ts/france2.ts"))
 }
 
+async fn assert_part_timing(rig: &Rig, uris: &[&str]) {
+    let mut server_controls = Vec::new();
+    let mut hold_backs = Vec::new();
+    let mut target_durations: Vec<String> = Vec::new();
+    let mut max_target = 0.0f64;
+    for uri in uris {
+        let text = String::from_utf8(rig.ok(uri).await).expect("utf8 playlist");
+        server_controls.push(
+            text.lines()
+                .find(|l| l.starts_with("#EXT-X-SERVER-CONTROL:"))
+                .unwrap_or_else(|| panic!("{uri}: no SERVER-CONTROL"))
+                .to_string(),
+        );
+        target_durations.push(
+            text.lines()
+                .find(|l| l.starts_with("#EXT-X-TARGETDURATION:"))
+                .unwrap_or_else(|| panic!("{uri}: no TARGETDURATION"))
+                .to_string(),
+        );
+        let playlist = rig.playlist(uri).await;
+        let low = playlist.low_latency.expect("low-latency playlist");
+        let target = low.part_target.expect("PART-TARGET").get();
+        max_target = max_target.max(target);
+        hold_backs.push(low.part_hold_back.expect("PART-HOLD-BACK").get());
+        let mut checked = 0;
+        for seg in &playlist.segments {
+            let last = seg.parts.len().saturating_sub(1);
+            for (i, part) in seg.parts.iter().enumerate() {
+                let d = part.duration.get();
+                assert!(
+                    d <= target + 1e-9,
+                    "{uri}: part {d} exceeds PART-TARGET {target}"
+                );
+                if i < last && !part.gap && !part.independent {
+                    assert!(
+                        d >= 0.85 * target - 1e-9,
+                        "{uri}: non-terminal part {d} below 85% of PART-TARGET {target}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(
+            checked > 0 || *uri != "media.m3u8",
+            "{uri}: no non-terminal part was checked"
+        );
+    }
+    assert!(
+        target_durations.iter().all(|t| *t == target_durations[0]),
+        "TARGETDURATION must be identical: {target_durations:?}"
+    );
+    for control in &server_controls {
+        assert_eq!(
+            control, &server_controls[0],
+            "SERVER-CONTROL must be identical"
+        );
+    }
+    for hold in hold_backs {
+        assert!(
+            hold >= 3.0 * max_target - 1e-9,
+            "PART-HOLD-BACK {hold} below 3x the largest PART-TARGET {max_target}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn split_audio_france2_three_renditions_align_with_video() {
     let sources = france2();
@@ -541,6 +606,17 @@ async fn split_audio_france2_three_renditions_align_with_video() {
     assert_eq!(trak_count(&video_init), 1, "primary init is video only");
     assert!(video_init.windows(4).any(|w| w == b"vide"));
 
+    assert_part_timing(
+        &rig,
+        &[
+            "media.m3u8",
+            "audio/a0.m3u8",
+            "audio/a1.m3u8",
+            "audio/a2.m3u8",
+        ],
+    )
+    .await;
+
     for (i, a) in audio.iter().enumerate() {
         let gaps =
             check_rendition(&rig, &video_playlist, video, a, &format!("audio/a{i}.m3u8")).await;
@@ -549,6 +625,58 @@ async fn split_audio_france2_three_renditions_align_with_video() {
             "continuous audio must not gap more than a trailing segment: {gaps:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
+    let Some(hevc) =
+        test_fixtures::require_bytes("hdr10plus/tos-256x144-hdr10plus.ts", "split_audio")
+    else {
+        return;
+    };
+    let media = TsDemux::new().unpackage(&hevc).expect("demux fixture");
+    let video = media
+        .tracks
+        .into_iter()
+        .find(|t| t.spec.config.is_video())
+        .map(|t| Source {
+            spec: t.spec,
+            samples: t
+                .samples
+                .into_iter()
+                .map(|mut s| {
+                    s.dts = s.dts.or(s.pts);
+                    s
+                })
+                .collect(),
+        })
+        .expect("video track");
+    let mut audio = by_role(load("ts/h264_aac.ts"))
+        .into_iter()
+        .find(Source::is_audio)
+        .expect("audio track");
+    let video_start = video
+        .samples
+        .iter()
+        .filter_map(|s| s.dts)
+        .min()
+        .expect("dts");
+    let audio_start = audio
+        .samples
+        .iter()
+        .filter_map(|s| s.dts)
+        .min()
+        .expect("dts");
+    let shift = video_start * i64::from(audio.spec.timescale) / i64::from(video.spec.timescale)
+        - audio_start;
+    for s in &mut audio.samples {
+        s.dts = s.dts.map(|d| d + shift);
+        s.pts = s.pts.map(|p| p + shift);
+    }
+    audio.spec.track_id = transmux::TrackId::new(video.spec.track_id.value() + 1);
+    let sources = vec![video, audio];
+    let rig = rig(&sources, decls(&["eng"]), index_selectors(1), &|_, _| true);
+    assert_part_timing(&rig, &["media.m3u8", "audio/a0.m3u8"]).await;
 }
 
 #[tokio::test]
