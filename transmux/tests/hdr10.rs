@@ -109,7 +109,10 @@ fn detects_pq_bt2020_and_exact_static_metadata() {
     let hdr = spec.hdr.expect("hdr static metadata");
     let m = hdr.mastering_display.expect("mastering display");
     let xy = |x, y| ChromaticityXy { x, y };
-    assert_eq!(m.display_primaries, [xy(13250, 34500), xy(7500, 3000), xy(34000, 16000)]);
+    assert_eq!(
+        m.display_primaries,
+        [xy(13250, 34500), xy(7500, 3000), xy(34000, 16000)]
+    );
     assert_eq!(m.white_point, xy(15635, 16450));
     assert_eq!(m.max_display_mastering_luminance, 10_000_000);
     assert_eq!(m.min_display_mastering_luminance, 1);
@@ -128,7 +131,11 @@ fn init_segment_boxes_equal_the_gpac_written_boxes() {
     let ours = sample_entry_children(&init);
     let theirs = sample_entry_children(&gpac);
     for fourcc in [COLR, MDCV, CLLI] {
-        assert_eq!(payload(&ours, fourcc), payload(&theirs, fourcc), "{fourcc:?}");
+        assert_eq!(
+            payload(&ours, fourcc),
+            payload(&theirs, fourcc),
+            "{fourcc:?}"
+        );
     }
     let order: Vec<[u8; 4]> = ours.iter().map(|(t, _)| *t).collect();
     let pos = |f: [u8; 4]| order.iter().position(|t| *t == f).unwrap();
@@ -148,7 +155,9 @@ fn init_segment_round_trips_through_the_fmp4_demuxer() {
         .retain(|a| a.nal_unit_type != transmux::hdr::HEVC_PREFIX_SEI_NUT);
     assert!(HdrStaticMetadata::from_hevc_record(&config.config).is_none());
     let init = build_init_segment(&[boxes_only], 1000).expect("init");
-    let media = transmux::Fmp4Demux::new().unpackage(&init).expect("fmp4 demux");
+    let media = transmux::Fmp4Demux::new()
+        .unpackage(&init)
+        .expect("fmp4 demux");
     assert_eq!(media.tracks[0].spec.hdr, spec.hdr);
     assert!(spec.hdr.is_some());
 }
@@ -162,7 +171,10 @@ fn non_hdr_stream_gets_no_static_metadata_boxes() {
     assert_eq!(spec.hdr, None);
     let init = build_init_segment(&[spec], 1000).expect("init");
     let boxes = sample_entry_children(&init);
-    assert!(boxes.iter().all(|(t, _)| *t != MDCV && *t != CLLI), "{boxes:?}");
+    assert!(
+        boxes.iter().all(|(t, _)| *t != MDCV && *t != CLLI),
+        "{boxes:?}"
+    );
 }
 
 #[test]

@@ -228,7 +228,10 @@ async fn hdr10_route_master_says_video_range_pq_and_main10_codecs() {
     let master = MasterPlaylist::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     assert!(text.contains("VIDEO-RANGE=PQ"), "{text}");
     let codecs = master.variants[0].codecs.clone().expect("CODECS");
-    assert!(codecs.starts_with("hvc1.2.4.L"), "Main 10 from the SPS: {codecs}");
+    assert!(
+        codecs.starts_with("hvc1.2.4.L"),
+        "Main 10 from the SPS: {codecs}"
+    );
 }
 
 #[tokio::test]
@@ -238,7 +241,10 @@ async fn sdr_hevc_route_master_has_no_hdr_video_range() {
     }
     let app = route_app(SDR_FIXTURE);
     let text = master_text(&app).await;
-    assert!(!text.contains("VIDEO-RANGE=PQ") && !text.contains("VIDEO-RANGE=HLG"), "{text}");
+    assert!(
+        !text.contains("VIDEO-RANGE=PQ") && !text.contains("VIDEO-RANGE=HLG"),
+        "{text}"
+    );
     let init = init_bytes(&app).await;
     assert!(!contains(&init, b"mdcv") && !contains(&init, b"clli"));
 }
@@ -260,7 +266,9 @@ async fn ffprobe_reads_mastering_display_and_content_light_level() {
         return;
     }
     if !tool_available("ffprobe", "-version") {
-        eprintln!("SKIP ffprobe_reads_mastering_display_and_content_light_level: ffprobe not on PATH");
+        eprintln!(
+            "SKIP ffprobe_reads_mastering_display_and_content_light_level: ffprobe not on PATH"
+        );
         return;
     }
     let app = route_app(HDR_FIXTURE);
@@ -280,7 +288,14 @@ async fn ffprobe_reads_mastering_display_and_content_light_level() {
     let file = dir.join("joined.mp4");
     std::fs::write(&file, joined).unwrap();
     let out = std::process::Command::new("ffprobe")
-        .args(["-v", "error", "-show_streams", "-show_frames", "-read_intervals", "%+#1"])
+        .args([
+            "-v",
+            "error",
+            "-show_streams",
+            "-show_frames",
+            "-read_intervals",
+            "%+#1",
+        ])
         .arg(&file)
         .output()
         .expect("ffprobe");
@@ -295,7 +310,10 @@ async fn ffprobe_reads_mastering_display_and_content_light_level() {
         "max_luminance=10000000/10000",
         "min_luminance=1/10000",
     ] {
-        assert!(text.contains(needle), "ffprobe output lacks {needle}:\n{text}");
+        assert!(
+            text.contains(needle),
+            "ffprobe output lacks {needle}:\n{text}"
+        );
     }
 }
 
@@ -321,7 +339,13 @@ async fn gpac_dumps_the_mdcv_and_clli_boxes() {
         .expect("MP4Box");
     let xml = std::fs::read_to_string(dir.join("init_info.xml"))
         .unwrap_or_else(|_| String::from_utf8_lossy(&out.stdout).to_string());
-    for needle in ["MasteringDisplayColourVolumeBox", "ContentLightLevelBox", "13250", "34500", "10000000"] {
+    for needle in [
+        "MasteringDisplayColourVolumeBox",
+        "ContentLightLevelBox",
+        "13250",
+        "34500",
+        "10000000",
+    ] {
         assert!(xml.contains(needle), "MP4Box -diso lacks {needle}:\n{xml}");
     }
 }
@@ -369,7 +393,9 @@ async fn mediastreamvalidator_reports_no_hdr_specific_finding() {
         return;
     }
     if !tool_available("mediastreamvalidator", "--version") {
-        eprintln!("SKIP mediastreamvalidator_reports_no_hdr_specific_finding: mediastreamvalidator not on PATH");
+        eprintln!(
+            "SKIP mediastreamvalidator_reports_no_hdr_specific_finding: mediastreamvalidator not on PATH"
+        );
         return;
     }
     let hdr = validator_comments(HDR_FIXTURE, "hdr10-validator").await;
@@ -381,5 +407,8 @@ async fn mediastreamvalidator_reports_no_hdr_specific_finding() {
         eprintln!("VALIDATOR sdr: {c}");
     }
     let only_hdr: Vec<_> = hdr.iter().filter(|c| !sdr.contains(c)).collect();
-    assert!(only_hdr.is_empty(), "findings only the HDR10 route has: {only_hdr:?}");
+    assert!(
+        only_hdr.is_empty(),
+        "findings only the HDR10 route has: {only_hdr:?}"
+    );
 }

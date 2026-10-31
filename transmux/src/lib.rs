@@ -427,6 +427,7 @@ pub use smooth::{
 // field); reach it via `transmux::smooth_parse::StreamType`.
 #[cfg(feature = "std")]
 pub use base_url::{resolve as resolve_url_reference, resolve_chain as resolve_base_url_chain};
+pub use hdr::{ChromaticityXy, ContentLightLevel, HdrStaticMetadata, MasteringDisplayColourVolume};
 #[cfg(feature = "std")]
 pub use smooth_parse::{
     C, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN, QualityLevel, SmoothManifest,
@@ -459,7 +460,6 @@ pub use ts_mux::{DEFAULT_PSI_INTERVAL_MS, StreamingTsMux, TsContinuity, TsMux};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
-pub use hdr::{ChromaticityXy, ContentLightLevel, HdrStaticMetadata, MasteringDisplayColourVolume};
 pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 pub use vp9::{VP09_FOURCC, VPCC_FOURCC, Vp9ConfigurationBox, Vp9SampleEntry};
 pub use vvc_config::{

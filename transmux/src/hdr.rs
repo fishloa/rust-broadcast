@@ -286,7 +286,10 @@ mod tests {
     #[test]
     fn mdcv_round_trips_and_decodes() {
         let m = MasteringDisplayColourVolume::parse(&MDCV_BODY).unwrap();
-        assert_eq!(m.display_primaries[0], ChromaticityXy { x: 13250, y: 34500 });
+        assert_eq!(
+            m.display_primaries[0],
+            ChromaticityXy { x: 13250, y: 34500 }
+        );
         assert_eq!(m.white_point, ChromaticityXy { x: 15635, y: 16450 });
         assert_eq!(m.max_display_mastering_luminance, 10_000_000);
         assert_eq!(m.min_display_mastering_luminance, 1);
@@ -325,8 +328,14 @@ mod tests {
         nal.push(0x80);
         let mut m = HdrStaticMetadata::default();
         m.absorb_hevc_sei_nal(&nal);
-        assert_eq!(m.mastering_display.unwrap().try_to_bytes().unwrap(), MDCV_BODY);
-        assert_eq!(m.content_light_level.unwrap().try_to_bytes().unwrap(), CLLI_BODY);
+        assert_eq!(
+            m.mastering_display.unwrap().try_to_bytes().unwrap(),
+            MDCV_BODY
+        );
+        assert_eq!(
+            m.content_light_level.unwrap().try_to_bytes().unwrap(),
+            CLLI_BODY
+        );
         assert!(HdrStaticMetadata::hevc_sei_nal_carries_hdr(&nal));
     }
 
