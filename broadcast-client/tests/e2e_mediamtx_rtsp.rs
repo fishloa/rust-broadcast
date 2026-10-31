@@ -643,7 +643,33 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     .filter(|(t, _, _)| *t == tid)
                     .all(|&(_, pts, _)| wire.has_exact(channel, pts - key_pts + i64::from(cand)))
             })
-            .expect("an IDR packet that maps every emitted video sample to a real RTP timestamp");
+            .unwrap_or_else(|| {
+                let video: Vec<i64> = emitted
+                    .iter()
+                    .filter(|(t, _, _)| *t == tid)
+                    .map(|&(_, pts, _)| pts)
+                    .collect();
+                let idr = &wire.idr_starts[&channel];
+                let report: Vec<String> = idr
+                    .iter()
+                    .take(6)
+                    .map(|&cand| {
+                        let misses: Vec<i64> = video
+                            .iter()
+                            .map(|pts| pts - key_pts + i64::from(cand))
+                            .filter(|rel| !wire.has_exact(channel, *rel))
+                            .take(4)
+                            .collect();
+                        format!("cand={cand} misses(first4)={misses:?}")
+                    })
+                    .collect();
+                panic!(
+                    "no IDR maps every emitted video sample to a real RTP timestamp: key_pts={key_pts} emitted_video={} first_emitted={:?} idr_count={} {report:?}",
+                    video.len(),
+                    video.iter().take(5).collect::<Vec<_>>(),
+                    idr.len()
+                )
+            });
         anchor.insert(tid, key_pts - i64::from(key_rel));
     }
     let mut decode_offsets: Vec<f64> = Vec::new();
