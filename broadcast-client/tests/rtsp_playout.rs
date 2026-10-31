@@ -84,6 +84,14 @@ fn strip_sprop(sdp: &str) -> String {
     out
 }
 
+fn strip_video_fmtp(sdp: &str) -> String {
+    let kept: Vec<&str> = sdp
+        .split("\r\n")
+        .filter(|line| !(line.starts_with("a=fmtp:") && line.contains("packetization-mode")))
+        .collect();
+    kept.join("\r\n")
+}
+
 fn play(sdp: &str, frames: &[Vec<u8>]) -> Run {
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(sdp));
     host.connect();
@@ -295,4 +303,24 @@ fn rtsp_no_sprop_emits_no_video_sample_before_config_known() {
         .count();
     assert!(total > 0, "no video samples flow");
     assert_eq!(before, 0, "video samples emitted before config known");
+}
+
+#[test]
+fn rtsp_h264_track_without_fmtp_plays_with_inband_parameter_sets() {
+    let fixture = MediaFixture::load();
+    let sdp = strip_video_fmtp(&fixture.sdp);
+    assert!(
+        sdp.len() < fixture.sdp.len(),
+        "video fmtp not stripped from {:?}",
+        fixture.sdp
+    );
+    let run = play(&sdp, &fixture.frames());
+    let ready = run.tracks().into_iter().any(|specs| {
+        specs.iter().any(|s| {
+            matches!(&s.config, CodecConfig::Avc { config, width, height }
+                if !config.config.sps.is_empty() && *width > 0 && *height > 0)
+        })
+    });
+    assert!(ready, "no ready video track announced without fmtp");
+    assert!(!run.samples().is_empty(), "no samples flow");
 }
