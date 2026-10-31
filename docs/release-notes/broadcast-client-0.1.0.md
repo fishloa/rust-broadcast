@@ -114,7 +114,7 @@ A resumed `206` that carries no `Content-Length` (chunked or close-delimited) is
 
 ## Dependencies
 
-`broadcast-common` 10.0, `broadcast-auth` 0.5, `transmux` 0.28, `dvb-si` 12.0, `mpeg-ts` 0.6, `buffering-runtime` 0.1, `tshttp-runtime` 0.1, `hls-runtime` 0.10, `dash-runtime` 0.1, `broadcast-hls` 0.5, `rtsp-runtime` 0.8 (resolved to the versions of this release wave), plus `sdp-types`, `url`, `percent-encoding`, `http`, `cookie`, `thiserror` and optional `serde`. The crate is `std` in practice: the `std` feature exists for the dependency features it forwards, but the HLS and DASH sources need `std`, so `--no-default-features` does not give a `no_std` build. The `__test-seams` feature is for the in-tree tests only and is not published API (docs.rs builds without it). MSRV 1.95.0.
+`broadcast-common` 10.0, `broadcast-auth` 0.5, `transmux` 0.28, `dvb-si` 12.0, `mpeg-ts` 0.6, `buffering-runtime` 0.1, `tshttp-runtime` 0.1, `hls-runtime` 0.10, `dash-runtime` 0.1, `broadcast-hls` 0.5, `rtsp-runtime` 0.8 (resolved to the versions of this release wave), plus `sdp-types`, `url`, `percent-encoding`, `http`, `cookie`, `thiserror` and optional `serde`. The crate is `std` only and has no `std` feature: it enables `std` on its workspace dependencies unconditionally. Its only feature is the optional `serde`. The `__test-seams` feature is for the in-tree tests only and is not published API (docs.rs builds without it). MSRV 1.95.0.
 
 ## Migration
 

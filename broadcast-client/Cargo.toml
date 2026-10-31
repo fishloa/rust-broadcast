@@ -17,13 +17,13 @@ features = ["serde"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common  = { path = "../broadcast-common", version = "10.0", default-features = false }
+broadcast-common  = { path = "../broadcast-common", version = "10.0", default-features = false, features = ["std"] }
 broadcast-auth     = { path = "../broadcast-auth", version = "0.5" }
-transmux           = { path = "../transmux", version = "0.27", default-features = false }
-dvb-si             = { path = "../dvb-si", version = "12.0", default-features = false, features = ["ts"] }
-mpeg-ts            = { path = "../mpeg-ts", version = "0.6", default-features = false }
-buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-features = false }
-tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
+transmux           = { path = "../transmux", version = "0.27", default-features = false, features = ["std"] }
+dvb-si             = { path = "../dvb-si", version = "12.0", default-features = false, features = ["ts", "std"] }
+mpeg-ts            = { path = "../mpeg-ts", version = "0.6", default-features = false, features = ["std"] }
+buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-features = false, features = ["std"] }
+tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false, features = ["std"] }
 hls-runtime        = { path = "../hls-runtime", version = "0.9" }
 dash-runtime       = { path = "../dash-runtime", version = "0.1" }
 broadcast-hls      = { path = "../broadcast-hls", version = "0.4" }
@@ -52,9 +52,7 @@ test-bounded = { path = "../test-bounded" }
 reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
 
 [features]
-default = ["std"]
-std = ["broadcast-common/std", "transmux/std", "dvb-si/std", "mpeg-ts/std", "tshttp-runtime/std", "buffering-runtime/std", "serde?/std"]
-serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
+serde = ["dep:serde", "serde/std", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
 
 __test-seams = []
 
