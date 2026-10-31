@@ -558,7 +558,10 @@ mod tests {
         bytes[6] = 0xA5;
         bytes[23] = 0xFF;
         let r = DoviDecoderConfigurationRecord::parse(&bytes).unwrap();
-        assert_eq!(r.bl_signal_compatibility_id, DoviBlSignalCompatibilityId::Hdr10);
+        assert_eq!(
+            r.bl_signal_compatibility_id,
+            DoviBlSignalCompatibilityId::Hdr10
+        );
         assert_eq!(r.try_to_bytes().unwrap(), bytes);
         assert_eq!(r.reserved[0], 0x05);
     }
@@ -582,7 +585,10 @@ mod tests {
         let single = [0x01, 0x00, 0x10, 0x1D, 0x1F];
         let d = DoviVideoStreamDescriptor::parse(&single).unwrap();
         assert_eq!(d.reserved, 0xF);
-        assert_eq!(d.record.bl_signal_compatibility_id, DoviBlSignalCompatibilityId::Hdr10);
+        assert_eq!(
+            d.record.bl_signal_compatibility_id,
+            DoviBlSignalCompatibilityId::Hdr10
+        );
         assert_eq!(d.try_to_bytes().unwrap(), single);
     }
 

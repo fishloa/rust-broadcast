@@ -332,6 +332,26 @@ async fn p84_master_has_hlg_base_codecs_supplemental_dvh1_db4h_and_hlg() {
 }
 
 #[tokio::test]
+async fn every_video_variant_carries_the_measured_frame_rate() {
+    for (fixture, expected) in [
+        (P81, "24.000"),
+        (P5, "24.000"),
+        (P84, "30.000"),
+        (HLG, "24.000"),
+    ] {
+        if test_fixtures::require(fixture, "dovi_route").is_none() {
+            continue;
+        }
+        let text = master_text(&route_app(fixture)).await;
+        assert_eq!(
+            attribute(&text, "FRAME-RATE").as_deref(),
+            Some(expected),
+            "{fixture}\n{text}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn non_dolby_vision_routes_have_no_supplemental_codecs() {
     for fixture in [HDR10, HLG, SDR] {
         if test_fixtures::require(fixture, "dovi_route").is_none() {
@@ -465,6 +485,18 @@ async fn gpac_dumps_the_dolby_vision_configuration_box() {
     }
 }
 
+const ISSUE_1602_FINDINGS: [&str; 2] = [
+    "Playlist vs segment duration mismatch",
+    "Playlist vs partial segment duration mismatch",
+];
+
+fn has_b_frame_reordering(fixture: &str) -> bool {
+    load(fixture)
+        .iter()
+        .flat_map(|s| s.samples.iter())
+        .any(|s| s.pts != s.dts)
+}
+
 async fn validator_comments(app: Router, name: &str) -> Vec<String> {
     let dir = scratch(name);
     dump_route(&app, &dir).await;
@@ -525,18 +557,20 @@ async fn mediastreamvalidator_reports_no_dolby_vision_specific_finding() {
         if test_fixtures::require(fixture, "dovi_route").is_none() {
             continue;
         }
-        baseline.extend(
-            validator_comments(
-                route_app_from(without_dovi(load(fixture))),
-                &format!("{name}-control"),
-            )
-            .await,
-        );
         let comments = validator_comments(route_app(fixture), name).await;
         for c in &comments {
             eprintln!("VALIDATOR {name}: {c}");
         }
-        let only: Vec<_> = comments.iter().filter(|c| !baseline.contains(c)).collect();
+        assert!(
+            !comments.iter().any(|c| c.contains("FRAME-RATE")),
+            "{fixture}: {comments:?}"
+        );
+        let issue_1602 = has_b_frame_reordering(fixture);
+        let only: Vec<_> = comments
+            .iter()
+            .filter(|c| !baseline.contains(c))
+            .filter(|c| !(issue_1602 && ISSUE_1602_FINDINGS.contains(&c.as_str())))
+            .collect();
         assert!(
             only.is_empty(),
             "{fixture}: findings beyond the SDR/HDR10/HLG baseline: {only:?}"

@@ -328,7 +328,9 @@ const NONZERO_RESERVED_DESCRIPTOR: [u8; 5] = [0x01, 0x00, 0x10, 0x1D, 0x1F];
 
 #[test]
 fn descriptor_with_reserved_bits_set_still_signals_dolby_vision() {
-    let Some(media) = ts_media(P81_TS) else { return };
+    let Some(media) = ts_media(P81_TS) else {
+        return;
+    };
     let mut es_info = vec![DESCRIPTOR_TAG, NONZERO_RESERVED_DESCRIPTOR.len() as u8];
     es_info.extend_from_slice(&NONZERO_RESERVED_DESCRIPTOR);
     let spec = video(&media)
@@ -344,7 +346,9 @@ fn descriptor_with_reserved_bits_set_still_signals_dolby_vision() {
 
 #[test]
 fn record_reserved_bits_survive_an_init_segment_round_trip() {
-    let Some(media) = ts_media(P81_TS) else { return };
+    let Some(media) = ts_media(P81_TS) else {
+        return;
+    };
     let mut spec = video(&media).spec.clone();
     let mut record = spec.dovi.expect("dovi");
     record.reserved[0] = 0x0A;
