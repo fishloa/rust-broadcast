@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- HDR10 routes (issue #1428): an HEVC HDR10 MPEG-TS input now yields an fMP4 init with `colr` + `mdcv` + `clli` and a multivariant playlist with `VIDEO-RANGE=PQ` (HLG: `HLG`; SDR stays omitted), with `CODECS` taken from the real SPS (`hvc1.2.4.L153.90`, via the `transmux` codec-string fix). Pinned by `tests/hdr10_route.rs` against `private/fixtures/hdr10/meridian-hdr10-60f.ts`, with ffprobe, GPAC `MP4Box -diso` and Apple `mediastreamvalidator` as external oracles (they skip when absent); the ffprobe check strips all in-band SEI so only the boxes can supply the values.
 - WebVTT subtitle renditions on a low-latency route now publish real partial segments (issue #1592). Each subtitle part is cut where the video part is cut and has the same duration, and is a complete WebVTT document: the `WEBVTT` line, the same `X-TIMESTAMP-MAP` as the segments and the cues displayed during that part. The subtitle playlist lists `EXT-X-PART-INF`, `EXT-X-PART` and `EXT-X-PRELOAD-HINT` like the video playlist, and blocking reload with `_HLS_msn` and `_HLS_part` waits for the requested subtitle part.
 
 ### Fixed
