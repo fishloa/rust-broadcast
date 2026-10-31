@@ -1150,6 +1150,7 @@ fn variable_frame_duration_keeps_the_configured_part_target() {
     let (target_ms, parts) = cut_parts(30, 1, Some(durations), 10);
     assert_eq!(target_ms, 200);
     assert!(parts.iter().all(|p| p.duration <= 0.2 + 1e-9));
+    assert!(parts.len() <= 100, "{} parts for 10 s", parts.len());
 }
 
 #[test]
