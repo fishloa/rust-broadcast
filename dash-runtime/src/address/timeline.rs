@@ -80,6 +80,9 @@ impl TimelineIndex {
         let mut number = start_number;
         let mut total: u64 = 0;
         for (i, s) in entries.iter().enumerate() {
+            if s.d == 0 {
+                return Err(AddressError::ZeroSegmentDuration);
+            }
             if let Some(t) = s.t {
                 if time.saturating_sub(t) > TIMELINE_T_TOLERANCE_TICKS {
                     return Err(AddressError::TimelineNotIncreasing { t, floor: time });
