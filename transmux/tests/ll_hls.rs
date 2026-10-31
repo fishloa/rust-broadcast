@@ -1202,4 +1202,8 @@ fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
     let gaps: Vec<usize> = cut_at[1..].windows(2).map(|w| w[1] - w[0]).collect();
     assert!(gaps.len() > 10);
     assert!(gaps.iter().all(|g| *g == 5), "{cut_at:?}");
+    assert!(
+        cut_at[2..].iter().all(|i| i % 5 == 4),
+        "a part must be cut on its fifth frame, not the sixth: {cut_at:?}"
+    );
 }
