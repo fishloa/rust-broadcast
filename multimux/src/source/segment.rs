@@ -95,7 +95,7 @@ use transmux::ts_hls::StreamingTsHlsSegmenter;
 use transmux::{CaptionDetector, DetectedCaption};
 
 use super::split_audio::{self, AudioFollower, LEADER_DURATION_HISTORY, LeaderDurations};
-use super::split_subtitle::{self, SubtitleFollower};
+use super::split_subtitle::{self, LeaderPart, SubtitleFollower};
 use crate::route::{RouteHandle, TsHlsIdrStatus};
 
 /// One closed segment, normalised across the two segmenter kinds
@@ -764,7 +764,7 @@ impl ProgramSegmenter {
             part_target_ms,
         );
         let subtitle_followers = if matches!(route_handle.container(), Container::Fmp4) {
-            split_subtitle::build_followers(route_handle, trunk, &tracks, target_duration_secs)
+            split_subtitle::build_followers(route_handle, trunk, &tracks)
         } else {
             Vec::new()
         };
@@ -897,7 +897,7 @@ impl ProgramSegmenter {
                         .iter_mut()
                         .filter(|f| f.source_track_id == track_id)
                     {
-                        follower.push(&sample, &self.leader_durations);
+                        follower.push(&sample);
                     }
                     continue;
                 }
@@ -1283,8 +1283,9 @@ impl ProgramSegmenter {
                     let (next_seq, current_seg) = old_seg.next_sequence_numbers();
                     let part_cuts = old_seg.take_ready_part_cuts();
                     self.note_leader_segments(&segments);
+                    let leader_parts = self.leader_parts(&part_cuts, &parts);
                     self.publish_in_stream_order(parts, segments);
-                    self.feed_followers(part_cuts);
+                    self.feed_followers(part_cuts, &leader_parts);
                     self.finish_followers();
 
                     match LlHlsSegmenter::with_part_target_at(
@@ -1309,12 +1310,8 @@ impl ProgramSegmenter {
                                 route_handle.part_target_ms(),
                             );
                             self.subtitle_followers.clear();
-                            self.subtitle_followers = split_subtitle::build_followers(
-                                route_handle,
-                                trunk,
-                                &new_tracks,
-                                route_handle.target_duration_secs(),
-                            );
+                            self.subtitle_followers =
+                                split_subtitle::build_followers(route_handle, trunk, &new_tracks);
                             if !self.followers.is_empty() || !self.subtitle_followers.is_empty() {
                                 self.seg.record_part_cuts();
                             }
@@ -1442,8 +1439,9 @@ impl ProgramSegmenter {
         let segments = self.seg.take_ready_segments();
         let part_cuts = self.seg.take_ready_part_cuts();
         self.note_leader_segments(&segments);
+        let leader_parts = self.leader_parts(&part_cuts, &parts);
         let counts = self.publish_in_stream_order(parts, segments);
-        self.feed_followers(part_cuts);
+        self.feed_followers(part_cuts, &leader_parts);
         counts
     }
 
@@ -1460,9 +1458,28 @@ impl ProgramSegmenter {
         }
     }
 
-    fn feed_followers(&mut self, cuts: Vec<PartCutReady>) {
+    /// The cuts paired with the duration the leader's own part has, for the
+    /// subtitle followers: their parts carry the video playlist's durations.
+    fn leader_parts(&self, cuts: &[PartCutReady], parts: &[PartInfo]) -> Vec<LeaderPart> {
+        if self.subtitle_followers.is_empty() {
+            return Vec::new();
+        }
+        cuts.iter()
+            .filter_map(|cut| {
+                let part = parts
+                    .iter()
+                    .find(|p| p.segment_seq == cut.msn && p.part_index == cut.part_index)?;
+                Some(LeaderPart {
+                    cut: *cut,
+                    duration_secs: part.duration,
+                })
+            })
+            .collect()
+    }
+
+    fn feed_followers(&mut self, cuts: Vec<PartCutReady>, leader_parts: &[LeaderPart]) {
         for follower in &mut self.subtitle_followers {
-            follower.on_part_cuts(&cuts, &self.leader_durations);
+            follower.on_part_cuts(leader_parts, &self.leader_durations);
         }
         if cuts.is_empty() {
             return;

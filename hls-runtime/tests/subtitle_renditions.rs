@@ -367,7 +367,10 @@ fn webvtt_part_resource_is_served_and_awaited() {
     let text = playlist_text(&origin);
     let uri = text
         .lines()
-        .find_map(|l| l.strip_prefix("#EXT-X-PART:").and_then(|a| a.split("URI=\"").nth(1)))
+        .find_map(|l| {
+            l.strip_prefix("#EXT-X-PART:")
+                .and_then(|a| a.split("URI=\"").nth(1))
+        })
         .and_then(|u| u.split('"').next())
         .expect("part uri")
         .to_string();
