@@ -233,6 +233,7 @@ fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> 
 fn avc_hevc_display_extra_boxes(
     display: Option<&crate::ir::DisplayGeometry>,
     hdr: Option<&crate::hdr::HdrStaticMetadata>,
+    dovi: Option<&crate::dovi::DoviDecoderConfigurationRecord>,
 ) -> Result<Vec<crate::sample_entries::OpaqueBox>> {
     let mut extra_boxes = Vec::new();
     if let Some(display) = display {
@@ -242,6 +243,12 @@ fn avc_hevc_display_extra_boxes(
         for (box_type, data) in hdr.sample_entry_boxes()? {
             extra_boxes.push(crate::sample_entries::OpaqueBox { box_type, data });
         }
+    }
+    if let Some(dovi) = dovi {
+        extra_boxes.push(crate::sample_entries::OpaqueBox {
+            box_type: dovi.box_fourcc(),
+            data: dovi.try_to_bytes()?,
+        });
     }
     Ok(extra_boxes)
 }
@@ -624,7 +631,11 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 codec_type: *b"avc1",
                 visual,
                 config: config.clone(),
-                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref(), t.hdr.as_ref())?,
+                extra_boxes: avc_hevc_display_extra_boxes(
+                    t.display.as_ref(),
+                    t.hdr.as_ref(),
+                    None,
+                )?,
             });
             (
                 entry,
@@ -652,13 +663,26 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 height: *height,
                 ..VisualSampleEntryFields::default()
             };
-            // Always emit `hvc1` (parameter sets in the sample entry) —
-            // ISO/IEC 14496-15:2017 §8.4.1.
+            // `hvc1` (parameter sets in the sample entry) — ISO/IEC
+            // 14496-15:2017 §8.4.1; `dvh1` for a Dolby Vision base layer that
+            // is not SDR/HDR compliant
+            // (private/specs-verified/dolby/vision/dolby-vision-streams-in-isobmff-v2.0-2017-12.md 8.1.2).
+            let dovi = t.dovi.as_ref().filter(|d| d.is_single_layer());
+            let codec_type = match dovi.map(|d| d.sample_entry_kind()) {
+                Some(crate::dovi::DoviSampleEntryKind::DolbyVisionEntry) => {
+                    crate::dovi::DVH1_FOURCC
+                }
+                _ => *b"hvc1",
+            };
             let entry = SampleEntryVariant::Hevc1(HEVCSampleEntry {
-                codec_type: *b"hvc1",
+                codec_type,
                 visual,
                 config: config.clone(),
-                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref(), t.hdr.as_ref())?,
+                extra_boxes: avc_hevc_display_extra_boxes(
+                    t.display.as_ref(),
+                    t.hdr.as_ref(),
+                    dovi,
+                )?,
             });
             (
                 entry,
