@@ -16,7 +16,7 @@ id3v2) and own-words notes. Moved files are byte-identical to their former publi
   private target is missing.
 - Never copy standards text into a public file to make a citation resolvable; write an own-words note instead.
 
-1222 rows. A row marked "split" means the public file of the same path still exists and keeps only its
+1231 rows. A row marked "split" means the public file of the same path still exists and keeps only its
 own-words part. Pages whose old path is `dvb-si/docs/tables/en_300_743/...` share one private copy with
 `dvb-subtitle`.
 
@@ -26,8 +26,16 @@ own-words part. Pages whose old path is `dvb-si/docs/tables/en_300_743/...` shar
 | `atsc3/docs/a331-mmt.md` | `private/specs-verified/atsc/atsc3/a331-mmt.md` |  |
 | `atsc3/docs/a331-route.md` | `private/specs-verified/atsc/atsc3/a331-route.md` |  |
 | `atsc3/docs/a331-signalling.md` | `private/specs-verified/atsc/atsc3/a331-signalling.md` |  |
+| `broadcast-hls/docs/examples.md` | `private/specs-verified/hls/ietf/rfc8216bis-examples.md` |  |
+| `broadcast-hls/docs/ext-x-key.md` | `private/specs-verified/hls/ietf/rfc8216-ext-x-key.md` |  |
 | `broadcast-hls/docs/iframe-playlists.md` | `private/specs-verified/hls/broadcast-hls/iframe-playlists.md` |  |
+| `broadcast-hls/docs/interstitials.md` | `private/specs-verified/hls/ietf/rfc8216bis-interstitials.md` |  |
+| `broadcast-hls/docs/low-latency.md` | `private/specs-verified/hls/ietf/rfc8216bis-low-latency.md` |  |
+| `broadcast-hls/docs/media-segment-formats.md` | `private/specs-verified/hls/ietf/rfc8216bis-media-segment-formats.md` |  |
 | `broadcast-hls/docs/multivariant-attribute-rules.md` | `private/specs-verified/hls/broadcast-hls/multivariant-attribute-rules.md` |  |
+| `broadcast-hls/docs/playlist-tags.md` | `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md` |  |
+| `broadcast-hls/docs/server-requirements.md` | `private/specs-verified/hls/ietf/rfc8216bis-server-requirements.md` |  |
+| `broadcast-hls/docs/version-compatibility.md` | `private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md` |  |
 | `broadcast-loudness/docs/bs1770-algorithm.md` | `private/specs-verified/loudness/broadcast-loudness/bs1770-algorithm.md` |  |
 | `broadcast-loudness/docs/r128-metering.md` | `private/specs-verified/loudness/broadcast-loudness/r128-metering.md` |  |
 | `broadcast-loudness/docs/r128-targets.md` | `private/specs-verified/loudness/broadcast-loudness/r128-targets.md` |  |
@@ -39,6 +47,7 @@ own-words part. Pages whose old path is `dvb-si/docs/tables/en_300_743/...` shar
 | `cpix/docs/cpix-2.3-dashif.md` | `private/specs-verified/dash/cpix/cpix-2.3-dashif.md` |  |
 | `cpix/docs/speke-api.md` | `private/specs-verified/dash/cpix/speke-api.md` |  |
 | `docs/display-geometry/SPEC-NOTES.md` | `private/specs-verified/mpeg/display-geometry/SPEC-NOTES.md` | split: the public file keeps its own-words part; this is the full original |
+| `docs/specs/hls/rfc8216-webvtt-extract.md` | `private/specs-verified/hls/ietf/rfc8216-webvtt-extract.md` |  |
 | `docs/specs/transmux/box-order.md` | `private/specs-verified/mpeg/isobmff/box-order.md` |  |
 | `docs/specs/transmux/codec-config.md` | `private/specs-verified/mpeg/isobmff/codec-config.md` |  |
 | `docs/specs/transmux/edit-and-sampletable.md` | `private/specs-verified/mpeg/isobmff/edit-and-sampletable.md` |  |

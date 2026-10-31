@@ -87,7 +87,6 @@ def test_unknown_section_exits_nonzero(tmp_path: Path) -> None:
 
 EXTRACTS = [
     ("docs/specs/hevc-rtp/rfc7798-extract.md", "specs/rfc7798_rtp_hevc.txt"),
-    ("docs/specs/hls/rfc8216-webvtt-extract.md", "specs/ietf_rfc8216_hls.txt"),
 ]
 
 
