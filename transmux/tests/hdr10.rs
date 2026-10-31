@@ -10,7 +10,7 @@
 use broadcast_common::Unpackage;
 use transmux::ir::{CodecConfig, TrackSpec};
 use transmux::ts_demux::TsDemux;
-use transmux::{ChromaticityXy, build_init_segment};
+use transmux::{ChromaticityXy, HdrStaticMetadata, build_init_segment};
 
 const TS: &str = "hdr10/meridian-hdr10-60f.ts";
 const GPAC_MP4: &str = "hdr10/meridian-hdr10-60f-hvc1-mdcv-clli.mp4";
@@ -138,10 +138,19 @@ fn init_segment_boxes_equal_the_gpac_written_boxes() {
 #[test]
 fn init_segment_round_trips_through_the_fmp4_demuxer() {
     let Some(spec) = hdr_spec() else { return };
-    let init = build_init_segment(&[spec.clone()], 1000).expect("init");
+    let mut boxes_only = spec.clone();
+    let CodecConfig::Hevc { config, .. } = &mut boxes_only.config else {
+        panic!("HEVC track");
+    };
+    config
+        .config
+        .arrays
+        .retain(|a| a.nal_unit_type != transmux::hdr::HEVC_PREFIX_SEI_NUT);
+    assert!(HdrStaticMetadata::from_hevc_record(&config.config).is_none());
+    let init = build_init_segment(&[boxes_only], 1000).expect("init");
     let media = transmux::Fmp4Demux::new().unpackage(&init).expect("fmp4 demux");
-    let back = &media.tracks[0].spec;
-    assert_eq!(back.hdr, spec.hdr);
+    assert_eq!(media.tracks[0].spec.hdr, spec.hdr);
+    assert!(spec.hdr.is_some());
 }
 
 #[test]
