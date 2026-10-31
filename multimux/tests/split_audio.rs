@@ -1683,9 +1683,11 @@ async fn split_audio_validator_reports_no_new_part_findings_over_the_muxed_route
     );
 }
 
-const NON_SPLIT_PARTS: usize = 18;
+// Issue #1597: the former 18 parts included one `DURATION=0` part per segment
+// (the audio left at each cut), which is now merged into the part before it.
+const NON_SPLIT_PARTS: usize = 15;
 const NON_SPLIT_SEGMENTS: usize = 3;
-const NON_SPLIT_DIGEST: u32 = 2_536_544_045;
+const NON_SPLIT_DIGEST: u32 = 1_674_747_859;
 
 #[tokio::test]
 async fn non_split_route_output_is_unchanged() {
