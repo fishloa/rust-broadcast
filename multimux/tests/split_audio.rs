@@ -324,6 +324,7 @@ fn app_for(route: Arc<RouteHandle>) -> Router {
 
 impl Rig {
     async fn get(&self, path: &str) -> (StatusCode, Vec<u8>) {
+        let path = path.trim_start_matches("../");
         let resp = self
             .app
             .clone()
@@ -853,6 +854,22 @@ fn validator_available() -> bool {
         .unwrap_or(false)
 }
 
+fn resolve_against(playlist: &str, uri: &str) -> String {
+    let mut dir: Vec<&str> = playlist
+        .rsplit_once('/')
+        .map_or("", |(d, _)| d)
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut rest = uri;
+    while let Some(up) = rest.strip_prefix("../") {
+        dir.pop();
+        rest = up;
+    }
+    dir.push(rest);
+    dir.join("/")
+}
+
 /// Mirrors every playlist and resource of `rig` into a temp dir and runs
 /// Apple's `mediastreamvalidator` over its `master.m3u8`; returns the
 /// level-1 (MUST) findings as `(path, message)`.
@@ -881,16 +898,17 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
         if name.ends_with("master.m3u8") {
             continue;
         }
+        let resolve = |uri: &str| resolve_against(name, uri);
         for line in String::from_utf8(body).expect("utf8").lines() {
             if let Some(start) = line.find("URI=\"") {
                 let rest = &line[start + 5..];
                 if let Some(end) = rest.find('"') {
-                    uris.insert(rest[..end].to_string());
+                    uris.insert(resolve(&rest[..end]));
                 }
             }
             let t = line.trim();
             if !t.is_empty() && !t.starts_with('#') {
-                uris.insert(t.to_string());
+                uris.insert(resolve(t));
             }
         }
     }
@@ -1758,4 +1776,58 @@ async fn split_audio_playlists_never_list_a_zero_duration_part_and_always_hint()
         at = next;
     }
     assert!(polls > 200, "only {polls} polls");
+}
+
+#[tokio::test]
+async fn audio_playlist_resource_uris_resolve_from_the_playlist_directory() {
+    let sources = france2();
+    let rig = rig(
+        &sources,
+        decls(&["fr", "qad", "qaa"]),
+        index_selectors(3),
+        &|_, _| true,
+    );
+    for i in 0..3 {
+        let playlist_uri = format!("audio/a{i}.m3u8");
+        let text = String::from_utf8(rig.ok(&playlist_uri).await).expect("utf8");
+        let mut checked = 0;
+        let mut after_gap = false;
+        for line in text.lines() {
+            if line.starts_with("#EXT-X-PRELOAD-HINT") {
+                continue;
+            }
+            let gap_marker = line == "#EXT-X-GAP";
+            let uri = if let Some(at) = line.find("URI=\"") {
+                let rest = &line[at + 5..];
+                &rest[..rest.find('"').expect("closing quote")]
+            } else if !line.starts_with('#') && !line.is_empty() {
+                line
+            } else {
+                after_gap |= gap_marker;
+                continue;
+            };
+            let gap_segment = after_gap && !line.starts_with('#');
+            if !line.starts_with('#') {
+                after_gap = false;
+            }
+            if uri.ends_with(".m3u8") {
+                continue;
+            }
+            let resolved = resolve_against(&playlist_uri, uri);
+            assert!(
+                !resolved.starts_with("audio/"),
+                "{playlist_uri}: {uri} resolves under audio/, where nothing is served"
+            );
+            let (status, _) = rig.get(&resolved).await;
+            assert!(
+                status == StatusCode::OK || (gap_segment && status == StatusCode::NOT_FOUND),
+                "{playlist_uri}: {uri} -> {resolved} is {status}"
+            );
+            checked += 1;
+        }
+        assert!(
+            checked > 5,
+            "{playlist_uri}: only {checked} resources checked"
+        );
+    }
 }
