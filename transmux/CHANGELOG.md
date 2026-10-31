@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `PartInfo::independent` is now true when a part contains a sync sample of the anchor track, wherever it sits in the part, instead of only when its first sample is one (RFC 8216bis section 4.4.4.9: `INDEPENDENT=YES` when the Partial Segment contains an independent frame). Apple `mediastreamvalidator` reported the old behaviour as 'Partial segments that contain a sync frame SHOULD be marked INDEPENDENT' (issue #1599).
 - `LlHlsSegmenter` no longer emits a Partial Segment in which the anchor track contributes no time (issue #1597). When audio or teletext lagged the video, the part that drained the last video sample before the next keyframe left only that lagging audio for the segment's final part, which reached the playlist as `EXT-X-PART:DURATION=0`. A part that would drain every anchor sample of a segment already long enough to close is now held until the next anchor sample, so the keyframe's cut merges it with the lagging samples into one final part (the part target is not exceeded, and the parts again add up to the segment duration, which Apple's validator also checks). A part whose anchor span is zero is skipped; its samples stay in the segment. No sample is dropped.
 
 ### Changed
