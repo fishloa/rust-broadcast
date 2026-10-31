@@ -3345,10 +3345,14 @@ impl HlsOrigin {
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<HlsBody> {
-        // An I-frame playlist has no parts, so any `_HLS_part` is meaningless.
-        if query.hls_part.is_some() {
+        // RFC 8216bis §6.2.5.2: `_HLS_part` without `_HLS_msn` MUST be a Bad
+        // Request. With `_HLS_msn` it is legitimate on a playlist without
+        // Partial Segments (Apple's validator sends `_HLS_msn=M&_HLS_part=N`
+        // to the I-frame playlist): a Part Index past the parent's final part
+        // is treated as Part 0 of the next parent, so it waits on the MSN only.
+        if query.hls_part.is_some() && query.hls_msn.is_none() {
             return EgressResponse::BadRequest {
-                reason: "_HLS_part is not valid on an I-frame playlist",
+                reason: "_HLS_part without _HLS_msn is meaningless",
             };
         }
         if let Some(msn) = query.hls_msn {
