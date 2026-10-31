@@ -363,3 +363,43 @@ fn record_reserved_bits_survive_an_init_segment_round_trip() {
     let back = Fmp4Demux::new().unpackage(&init).expect("fmp4 demux");
     assert_eq!(back.tracks[0].spec.dovi, Some(record));
 }
+
+fn codecs_attrs(mpd: &str) -> Vec<String> {
+    mpd.split("codecs=\"")
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn p5_dash_codecs_name_the_dvh1_sample_entry() {
+    let Some(media) = ts_media(P5_TS) else {
+        return;
+    };
+    let spec = &video(&media).spec;
+    let record = spec.dovi.as_ref().expect("p5 record");
+    let expected = format!("dvh1.05.{:02}", record.level);
+    assert_eq!(
+        transmux::rfc6381_track_codec_string(spec).unwrap(),
+        expected
+    );
+    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    assert!(
+        codecs_attrs(&mpd).contains(&expected),
+        "DASH codecs {:?} must contain {expected}",
+        codecs_attrs(&mpd)
+    );
+    let mut ll = transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
+        .unwrap();
+    let ll_mpd = ll.package(&media).unwrap();
+    assert!(codecs_attrs(&ll_mpd).contains(&expected));
+}
+
+#[test]
+fn p81_dash_codecs_stay_hvc1() {
+    let Some(media) = ts_media(P81_TS) else {
+        return;
+    };
+    let codec = transmux::rfc6381_track_codec_string(&video(&media).spec).unwrap();
+    assert!(codec.starts_with("hvc1."), "{codec}");
+}

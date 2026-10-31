@@ -221,6 +221,25 @@ impl HdrStaticMetadata {
         }
     }
 
+    /// A prefix SEI NAL unit holding only the declarative `mdcv` / `clli`
+    /// messages (ISO/IEC 14496-15 restricts the `hvcC` SEI array to
+    /// declarative messages); `None` when empty.
+    pub fn to_hevc_declarative_sei_nal(&self) -> Result<Option<Vec<u8>>> {
+        let mut payloads: Vec<(u32, Vec<u8>)> = Vec::new();
+        if let Some(m) = &self.mastering_display {
+            payloads.push((SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, m.try_to_bytes()?));
+        }
+        if let Some(c) = &self.content_light_level {
+            payloads.push((SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, c.try_to_bytes()?));
+        }
+        if payloads.is_empty() {
+            return Ok(None);
+        }
+        let messages: Vec<(u32, &[u8])> =
+            payloads.iter().map(|(t, p)| (*t, p.as_slice())).collect();
+        Ok(Some(crate::nal::hevc_prefix_sei_nal(&messages)))
+    }
+
     /// Whether a prefix SEI NAL unit carries either HDR static message.
     pub fn hevc_sei_nal_carries_hdr(nal: &[u8]) -> bool {
         let mut m = Self::default();
@@ -343,5 +362,36 @@ mod tests {
     fn unrelated_sei_is_ignored() {
         let nal = [HEVC_PREFIX_SEI_NUT << 1, 1, 5, 1, 0xAA, 0x80];
         assert!(!HdrStaticMetadata::hevc_sei_nal_carries_hdr(&nal));
+    }
+
+    #[test]
+    fn declarative_sei_nal_drops_other_messages() {
+        let mdcv = [0x11u8; MDCV_PAYLOAD_LEN];
+        let clli = [0x03, 0xE8, 0x01, 0x90];
+        let other = [0xA5u8; 6];
+        let bundled = crate::nal::hevc_prefix_sei_nal(&[
+            (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &mdcv),
+            (4, &other),
+            (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &clli),
+        ]);
+        let mut m = HdrStaticMetadata::default();
+        m.absorb_hevc_sei_nal(&bundled);
+        assert!(m.mastering_display.is_some() && m.content_light_level.is_some());
+        let rebuilt = m.to_hevc_declarative_sei_nal().unwrap().unwrap();
+        let types: Vec<u32> = crate::nal::sei_messages(&rebuilt[HEVC_NAL_HEADER_LEN..])
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert_eq!(
+            types,
+            [
+                SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME,
+                SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO
+            ]
+        );
+        assert!(HdrStaticMetadata::default()
+            .to_hevc_declarative_sei_nal()
+            .unwrap()
+            .is_none());
     }
 }

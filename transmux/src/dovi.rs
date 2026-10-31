@@ -14,9 +14,9 @@
 //! - Profile IDs, compatibility IDs, level IDs, codec-string form:
 //!   `private/specs-verified/dolby/vision/dolby-vision-profiles-levels-v1.3.2-2019-09.md`
 //!   Tables 1-3.
-//! - HLS `SUPPLEMENTAL-CODECS` brands and `VIDEO-RANGE` pairing:
-//!   `private/specs-verified/hls/apple/hls-authoring-spec.md`, "The
-//!   SUPPLEMENTAL-CODECS attribute".
+//!
+//! HLS `SUPPLEMENTAL-CODECS` brands and `VIDEO-RANGE` pairing are not
+//! implemented here; `hls-runtime` consumes this module for them.
 //!
 //! Not covered (no verified source text in the private spec set): the `dvwC`
 //! box and profile 10, the RPU payload syntax, the EL configuration boxes
@@ -33,6 +33,8 @@ pub const DVCC_FOURCC: [u8; 4] = *b"dvcC";
 pub const DVVC_FOURCC: [u8; 4] = *b"dvvC";
 /// FourCC of the Dolby Vision HEVC sample entry over `hvc1`.
 pub const DVH1_FOURCC: [u8; 4] = *b"dvh1";
+/// FourCC of the Dolby Vision AVC sample entry over `avc1`.
+pub const DVA1_FOURCC: [u8; 4] = *b"dva1";
 /// FourCC of the Dolby Vision HEVC sample entry over `hev1`.
 pub const DVHE_FOURCC: [u8; 4] = *b"dvhe";
 
@@ -48,6 +50,7 @@ pub const MAX_DVCC_PROFILE: u8 = 7;
 /// Dolby Vision profile 9 is the only AVC-based profile of Table 1; profiles
 /// 4, 5, 7 and 8 are HEVC.
 pub const AVC_PROFILE: u8 = 9;
+const HEVC_PROFILES: [u8; 4] = [4, 5, 7, 8];
 
 /// `DOVIDecoderConfigurationRecord` length in bytes (ISOBMFF spec 3.2).
 pub const DOVI_RECORD_LEN: usize = 24;
@@ -81,7 +84,9 @@ pub enum DoviBlSignalCompatibilityId {
     Hlg,
     /// 6: Ultra HD Blu-ray HDR compatible.
     UhdBdHdr,
-    /// Any other 4-bit value.
+    /// Any other 4-bit value. Build it through [`Self::from_code`]: a defined
+    /// code wrapped here serializes unchanged but parses back as its named
+    /// variant.
     Reserved(u8),
 }
 
@@ -240,7 +245,23 @@ impl DoviDecoderConfigurationRecord {
 
     /// HEVC-based profile (Table 1 profiles 4, 5, 7, 8).
     pub fn is_hevc_profile(&self) -> bool {
-        self.profile != AVC_PROFILE && self.profile >= 4
+        HEVC_PROFILES.contains(&self.profile)
+    }
+
+    /// AVC-based profile (Table 1 profile 9).
+    pub fn is_avc_profile(&self) -> bool {
+        self.profile == AVC_PROFILE
+    }
+
+    /// Whether an HEVC track carrying this record is written with the
+    /// `dvh1` Dolby Vision sample entry (ISOBMFF spec 8.1.2) and therefore
+    /// announced as `dvh1.PP.LL` in DASH `codecs`
+    /// (`private/specs-verified/dolby/vision/dolby-vision-streams-in-mpeg-dash-v2.0-2018-11.md`
+    /// 4.3.2).
+    pub fn uses_dolby_hevc_entry(&self) -> bool {
+        self.is_single_layer()
+            && self.is_hevc_profile()
+            && self.sample_entry_kind() == DoviSampleEntryKind::DolbyVisionEntry
     }
 
     /// Sample entry choice per ISOBMFF spec 8.1.1 / 8.1.2.
@@ -263,10 +284,24 @@ impl DoviDecoderConfigurationRecord {
             .find_map(|(_, body)| Self::parse(body).ok())
     }
 
-    /// Dolby Vision codec string `dvh1.PP.LL` (profiles-levels spec 2.3;
-    /// profile then level, two decimal digits each).
-    pub fn codec_string(&self) -> String {
-        alloc::format!("dvh1.{:02}.{:02}", self.profile, self.level)
+    /// Dolby Vision codec string `dvh1.PP.LL` for an HEVC profile or
+    /// `dva1.PP.LL` for the AVC profile (profiles-levels spec Table 1 and the
+    /// codec_type table, profile then level, two decimal digits each); `None`
+    /// for a profile the verified text does not define.
+    pub fn codec_string(&self) -> Option<String> {
+        let fourcc = if self.is_hevc_profile() {
+            DVH1_FOURCC
+        } else if self.is_avc_profile() {
+            DVA1_FOURCC
+        } else {
+            return None;
+        };
+        Some(alloc::format!(
+            "{}.{:02}.{:02}",
+            core::str::from_utf8(&fourcc).ok()?,
+            self.profile,
+            self.level
+        ))
     }
 }
 
@@ -356,7 +391,7 @@ impl Serialize for DoviDecoderConfigurationRecord {
 
 /// `DOVI_video_stream_descriptor` body (TS spec Table 3-2), without the
 /// leading `descriptor_tag` / `descriptor_length`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DoviVideoStreamDescriptor {
     /// The configuration carried by the descriptor.
     pub record: DoviDecoderConfigurationRecord,
@@ -368,6 +403,10 @@ pub struct DoviVideoStreamDescriptor {
     /// The 4 reserved bits closing the descriptor, captured on parse and
     /// re-emitted verbatim.
     pub reserved: u8,
+    /// Bytes after the defined syntax within `descriptor_length`, preserved
+    /// verbatim (TS spec Table 3-2 `descriptor_length` counts every byte
+    /// following the length field).
+    pub extension: Vec<u8>,
 }
 
 impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
@@ -398,12 +437,12 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
             dependency_reserved = (raw & ((1 << PID_SHIFT) - 1)) as u8;
             (Some(raw >> PID_SHIFT), 6)
         };
-        if bytes.len() != tail + 1 {
-            return Err(invalid(
-                "DOVI_video_stream_descriptor",
-                bytes.len() as u64,
-                "length does not match the defined syntax",
-            ));
+        if bytes.len() < tail + 1 {
+            return Err(Error::BufferTooShort {
+                need: tail + 1,
+                have: bytes.len(),
+                what: "DOVI_video_stream_descriptor",
+            });
         }
         Ok(Self {
             record: unpack_config_word(
@@ -416,6 +455,7 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
             dependency_pid,
             dependency_reserved,
             reserved: bytes[tail] & CCID_MASK,
+            extension: bytes[tail + 1..].to_vec(),
         })
     }
 }
@@ -430,6 +470,7 @@ impl Serialize for DoviVideoStreamDescriptor {
             } else {
                 TS_DESCRIPTOR_DEPENDENCY_LEN
             }
+            + self.extension.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -483,6 +524,7 @@ impl Serialize for DoviVideoStreamDescriptor {
             ));
         }
         buf[tail] = (ccid << CCID_SHIFT) | self.reserved;
+        buf[tail + 1..need].copy_from_slice(&self.extension);
         Ok(need)
     }
 }
@@ -548,7 +590,7 @@ mod tests {
         assert_eq!(r.level, 3);
         assert_eq!(r.try_to_bytes().unwrap(), P81_RECORD);
         assert_eq!(r.box_fourcc(), DVVC_FOURCC);
-        assert_eq!(r.codec_string(), "dvh1.08.03");
+        assert_eq!(r.codec_string().as_deref(), Some("dvh1.08.03"));
     }
 
     #[test]
@@ -609,6 +651,7 @@ mod tests {
             dependency_pid: Some(0x1234),
             dependency_reserved: 0,
             reserved: 0,
+            extension: Vec::new(),
         };
         let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 7);
@@ -630,12 +673,56 @@ mod tests {
         };
         let back = DoviDecoderConfigurationRecord::parse(&r.try_to_bytes().unwrap()).unwrap();
         assert_eq!(back, r);
-        assert_eq!(back.codec_string(), "dvh1.08.07");
+        assert_eq!(back.codec_string().as_deref(), Some("dvh1.08.07"));
     }
 
     #[test]
     fn compatibility_id_labels() {
         assert_eq!(DoviBlSignalCompatibilityId::from_code(4).name(), "HLG");
         assert_eq!(DoviBlSignalCompatibilityId::Reserved(9).code(), 9);
+    }
+
+    #[test]
+    fn profile_classification_is_table_1_only() {
+        let mut r = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        for (profile, hevc, avc) in [
+            (4, true, false),
+            (5, true, false),
+            (7, true, false),
+            (8, true, false),
+            (9, false, true),
+            (6, false, false),
+            (10, false, false),
+            (20, false, false),
+        ] {
+            r.profile = profile;
+            assert_eq!(r.is_hevc_profile(), hevc, "profile {profile}");
+            assert_eq!(r.is_avc_profile(), avc, "profile {profile}");
+        }
+    }
+
+    #[test]
+    fn codec_string_follows_profile_family() {
+        let mut r = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        r.profile = 5;
+        r.level = 3;
+        assert_eq!(r.codec_string().as_deref(), Some("dvh1.05.03"));
+        r.profile = 9;
+        r.level = 4;
+        assert_eq!(r.codec_string().as_deref(), Some("dva1.09.04"));
+        r.profile = 10;
+        assert_eq!(r.codec_string(), None);
+    }
+
+    #[test]
+    fn descriptor_extension_bytes_are_tolerated_and_preserved() {
+        let body = [0x01, 0x00, 0x10, 0x1D, 0x10, 0xAA, 0xBB];
+        let d = DoviVideoStreamDescriptor::parse(&body).unwrap();
+        assert_eq!(d.extension, [0xAA, 0xBB]);
+        assert_eq!(d.record.profile, 8);
+        assert_eq!(d.try_to_bytes().unwrap(), body);
+        let mut es_info = alloc::vec![DOVI_VIDEO_STREAM_DESCRIPTOR_TAG, body.len() as u8];
+        es_info.extend_from_slice(&body);
+        assert!(find_video_stream_descriptor(&es_info).is_some());
     }
 }

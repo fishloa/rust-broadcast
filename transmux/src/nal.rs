@@ -351,6 +351,46 @@ pub fn recovery_point_sei(nal: &[u8]) -> bool {
 /// `rbsp_trailing_bits()` as one byte when byte-aligned: stop bit then zeros
 /// (H.264 §7.3.2.11).
 const SEI_RBSP_TRAILING_BYTE: u8 = 0x80;
+const SEI_SIZE_ESCAPE_BYTE: u8 = 0xFF;
+const HEVC_PREFIX_SEI_LAYER_ZERO_TID_PLUS1: u8 = 1;
+const EMULATION_PREVENTION_BYTE: u8 = 0x03;
+const EMULATION_ZERO_RUN: usize = 2;
+
+/// An HEVC prefix SEI NAL unit (2-byte header, the given `(payloadType,
+/// payload)` messages, `rbsp_trailing_bits`, emulation prevention applied) —
+/// ITU-T H.265 §7.3.5 / §7.4.2.
+pub(crate) fn hevc_prefix_sei_nal(messages: &[(u32, &[u8])]) -> Vec<u8> {
+    let mut rbsp = Vec::new();
+    for (payload_type, payload) in messages {
+        let mut remaining = *payload_type as usize;
+        while remaining >= usize::from(SEI_SIZE_ESCAPE_BYTE) {
+            rbsp.push(SEI_SIZE_ESCAPE_BYTE);
+            remaining -= usize::from(SEI_SIZE_ESCAPE_BYTE);
+        }
+        rbsp.push(remaining as u8);
+        let mut remaining = payload.len();
+        while remaining >= usize::from(SEI_SIZE_ESCAPE_BYTE) {
+            rbsp.push(SEI_SIZE_ESCAPE_BYTE);
+            remaining -= usize::from(SEI_SIZE_ESCAPE_BYTE);
+        }
+        rbsp.push(remaining as u8);
+        rbsp.extend_from_slice(payload);
+    }
+    rbsp.push(SEI_RBSP_TRAILING_BYTE);
+    let mut nal = Vec::with_capacity(rbsp.len() + 4);
+    nal.push(crate::hdr::HEVC_PREFIX_SEI_NUT << HEVC_NAL_TYPE_SHIFT);
+    nal.push(HEVC_PREFIX_SEI_LAYER_ZERO_TID_PLUS1);
+    let mut zeros = 0usize;
+    for b in rbsp {
+        if zeros >= EMULATION_ZERO_RUN && b <= EMULATION_PREVENTION_BYTE {
+            nal.push(EMULATION_PREVENTION_BYTE);
+            zeros = 0;
+        }
+        zeros = if b == 0 { zeros + 1 } else { 0 };
+        nal.push(b);
+    }
+    nal
+}
 
 /// Read one `payloadType`/`payloadSize` varint at `*pos` of `rbsp`.
 fn sei_varint(rbsp: &[u8], pos: &mut usize) -> Option<u32> {

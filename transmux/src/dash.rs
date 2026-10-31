@@ -96,7 +96,7 @@ use core::time::Duration;
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
-use crate::pipeline::CodecConfig;
+use crate::pipeline::{CodecConfig, TrackSpec};
 use crate::sps::rfc6381_avc1;
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
@@ -534,6 +534,30 @@ pub fn rfc6381_codec_string(config: &CodecConfig) -> Result<String> {
     DashPackager::codec_string(config)
 }
 
+/// The RFC 6381 codec string of a whole track: [`rfc6381_codec_string`], except
+/// that an HEVC track written with the `dvh1` Dolby Vision sample entry
+/// (single layer, non-cross-compatible base layer, i.e. profile 5) yields
+/// `dvh1.PP.LL`, as the Dolby DASH specification requires
+/// (`private/specs-verified/dolby/vision/dolby-vision-streams-in-mpeg-dash-v2.0-2018-11.md`
+/// 4.3.2: sample entry `dvh1` -> `codecs="dvh1.05.LL"`) — the very value
+/// [`DashPackager`] / [`LlDashPackager`] write into `Representation@codecs`.
+///
+/// Cross-compatible Dolby Vision (profile 8.x) keeps an `hvc1` sample entry and
+/// its plain HEVC string; the DASH packagers do not announce its Dolby Vision
+/// layer.
+///
+/// # Errors
+/// As [`rfc6381_codec_string`].
+pub fn rfc6381_track_codec_string(spec: &TrackSpec) -> Result<String> {
+    if matches!(spec.config, CodecConfig::Hevc { .. })
+        && let Some(dv) = spec.dovi.as_ref().filter(|d| d.uses_dolby_hevc_entry())
+        && let Some(codec) = dv.codec_string()
+    {
+        return Ok(codec);
+    }
+    DashPackager::codec_string(&spec.config)
+}
+
 impl DashPackager {
     /// Build a packager with a specific `profiles` attribute.
     pub fn with_profiles(profiles: impl Into<String>) -> Self {
@@ -623,7 +647,7 @@ impl DashPackager {
         .max(1);
 
         let kind = MediaKind::of(config);
-        let codecs = Self::codec_string(config)?;
+        let codecs = rfc6381_track_codec_string(&track.spec)?;
 
         let segment_durations = self
             .segments
