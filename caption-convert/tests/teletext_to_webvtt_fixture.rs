@@ -84,8 +84,8 @@ fn srt_output_contains_expected_text() {
 }
 
 /// Bite test (odd parity): corrupt one data bit of the fixture's row-20
-/// "HELLO WORLD" packet's 'H' byte (wire offset 4 = header_byte(1) +
-/// framing_code(1) + txt_data_block[2], the same offset
+/// "HELLO WORLD" packet's 'H' byte (wire offset 6 = header_byte(1) +
+/// framing_code(1) + txt_data_block[4], after the two Start Box cells, the same offset
 /// `timed-metadata`'s own #666 fixture test uses). Odd parity only
 /// *detects* errors (ETSI EN 300 706 §8.1), so the corrupted character must
 /// decode as the replacement character, not silently as 'H' or anything
@@ -94,7 +94,7 @@ fn srt_output_contains_expected_text() {
 #[test]
 fn mutation_bite_parity_corruption_yields_replacement_char() {
     let mut frames = load_frames();
-    frames[1].1[4] ^= 0x01;
+    frames[1].1[6] ^= 0x01;
 
     let mutated_vtt = convert_frames(&frames).into_webvtt();
     assert!(

@@ -101,8 +101,9 @@ fn webvtt_output_contains_expected_text() {
 }
 
 /// Mutation bite (odd parity): corrupt one data bit of the fixture's row-20
-/// "HELLO WORLD" packet (byte offset 4 of the wire = the 3rd
-/// `txt_data_block` byte = the 'H' character's parity-protected byte).
+/// "HELLO WORLD" packet (byte offset 6 of the wire = the 5th
+/// `txt_data_block` byte = the 'H' character's parity-protected byte, after
+/// the two Start Box cells).
 /// Odd parity only *detects* errors (ETSI EN 300 706 §8.1), so the corrupted
 /// character must decode as the replacement character, not silently as some
 /// other letter or the original 'H' — proving the FEC decode is real, not a
@@ -110,9 +111,10 @@ fn webvtt_output_contains_expected_text() {
 #[test]
 fn mutation_bite_parity_corruption_yields_replacement_char() {
     let mut frames = load_frames();
-    // frames[1] is the row-20 "HELLO WORLD" packet; wire offset 4 = the
-    // header_byte(1) + framing_code(1) + txt_data_block[2] (first text byte).
-    frames[1].1[4] ^= 0x01;
+    // frames[1] is the row-20 "HELLO WORLD" packet; wire offset 6 = the
+    // header_byte(1) + framing_code(1) + txt_data_block[4] (the 'H', after the
+    // two Start Box cells).
+    frames[1].1[6] ^= 0x01;
 
     let mut ex = TeletextCueExtractor::new(8, 0x88);
     for (pts, bytes) in &frames {

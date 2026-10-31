@@ -149,9 +149,12 @@ mod tests {
         let mut row1 = [0u8; 42];
         row1[0] = hamming(1 << 3); // magazine 8, Y bit0 = 1 (row 1)
         row1[1] = hamming(0);
-        row1[2] = parity(b'H');
-        row1[3] = parity(b'I');
-        for b in row1.iter_mut().skip(4) {
+        row1[2] = parity(0x0B); // Start Box, doubled
+        row1[3] = parity(0x0B);
+        row1[4] = parity(b'H');
+        row1[5] = parity(b'I');
+        row1[6] = parity(0x0A); // End Box
+        for b in row1.iter_mut().skip(7) {
             *b = parity(0x20);
         }
 

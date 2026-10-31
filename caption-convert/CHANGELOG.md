@@ -6,6 +6,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 ### Added
 - `TeletextToWebVtt::push_pes_data_field` parses a teletext PES data field with `dvb_vbi::DataField` and feeds its EBU teletext data units, plus `take_closed_cues` and `open_cue` for incremental cue output. Cues taken with `take_closed_cues` no longer appear in `cues()` or the `into_*` renderers.
 
+### Fixed
+- Teletext to WebVTT/SRT conversion now uses the page's national option (French, German, Italian and the others) and only the boxed subtitle text, so cues no longer carry "#" or "\\" for accented letters or leading spaces. Covered by a real-capture comparison against TSDuck's SRT text for `test-012.ts` (#1585).
+
 ## [0.3.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs restructured: explicit what-it-does / does-not (DVB bitmap not converted to text), standards table, full conversion matrix including WebVTT <-> SRT, feature table, compiled quick-start doctest.

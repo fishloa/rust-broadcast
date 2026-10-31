@@ -12,7 +12,7 @@
 //! `fixtures/teletext/README.md` for the exact commands) and asserts this
 //! crate's decode of the *same* TS bytes agrees.
 //!
-//! ## Two documented, deliberate differences from TSDuck's own output
+//! ## One documented, deliberate difference from TSDuck's own output
 //!
 //! - **Text only, not timing.** TSDuck's `showTimestamp`/`hideTimestamp` are
 //!   derived from its own `pidDuration()` PTS-tracking, which samples the
@@ -21,20 +21,12 @@
 //!   `TimeTrackerDemux::feedPacket`), not the header's own PTS. That is a
 //!   different, TSDuck-internal timing model from this crate's `MediaTime`
 //!   (which is exactly the fed `pts_90k`), so times are not asserted here.
-//! - **A single leading space per line.** The fixture's two subtitle rows are
-//!   wrapped in EN 300 706's Start Box (`0x0B`)/End Box (`0x0A`) spacing
-//!   attributes (clause 12.2), the real-world convention that marks which
-//!   part of a Level-1 Teletext page is boxed subtitle text. TSDuck's SRT
-//!   extraction specifically looks for this box pair and **excludes** the
-//!   marker characters from the extracted line
-//!   (`tsTeletextDemux.cpp::processTeletextPage`, `colStart`/`colStop`). This
-//!   crate's Teletext decoder does not implement boxed-subtitle detection
-//!   (documented gap, `webvtt::teletext` module docs: "no styling"); it
-//!   treats every spacing-attribute control code `< 0x20`, Start/End Box
-//!   included, as a literal space (`latin_g0_char`). The Start Box therefore
-//!   survives as a single leading space (the End Box's trailing space is
-//!   absorbed by `trim_end`). Stripped explicitly below, with this comment
-//!   as the record of why.
+//!
+//! The fixture's two subtitle rows are wrapped in EN 300 706's Start Box
+//! (`0x0B`)/End Box (`0x0A`) spacing attributes (clause 12.2); both TSDuck
+//! (`tsTeletextDemux.cpp::processTeletextPage`, `colStart`/`colStop`) and
+//! this crate display only the text inside the box, so the lines are compared
+//! exactly.
 #![cfg(feature = "teletext")]
 
 use broadcast_common::Unpackage;
@@ -121,12 +113,7 @@ fn matches_tsduck_teletext_plugin_oracle() {
     // before the closing/erase header), not a 1:1 cue count.
     let final_cue_text = &cues.last().unwrap().text;
 
-    // Strip the single leading space each line inherits from the Start Box
-    // marker (see module doc above); TSDuck excludes the marker entirely.
-    let got: Vec<&str> = final_cue_text
-        .lines()
-        .map(|l| l.strip_prefix(' ').unwrap_or(l))
-        .collect();
+    let got: Vec<&str> = final_cue_text.lines().collect();
     let want = oracle_srt_text_lines(&oracle_srt);
     assert_eq!(
         got, want,
