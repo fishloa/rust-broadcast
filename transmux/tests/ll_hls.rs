@@ -268,6 +268,27 @@ fn independent_flag_tracks_sync_first_sample() {
     );
 }
 
+#[test]
+fn part_with_a_mid_part_sync_sample_is_independent() {
+    let mut seg = LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 1.0, 334).unwrap();
+    for i in 0..30u8 {
+        seg.push(TrackId::new(1), vsample(i == 0 || i == 15, i))
+            .unwrap();
+    }
+    seg.push(TrackId::new(1), vsample(true, 200)).unwrap();
+    seg.flush().unwrap();
+
+    let parts = seg.take_ready_parts();
+    let seg1: Vec<_> = parts.iter().filter(|p| p.segment_seq == 1).collect();
+    assert_eq!(seg1.len(), 3);
+    assert!(seg1[0].independent, "part 0 starts on a keyframe");
+    assert!(
+        seg1[1].independent,
+        "part 1 holds the sync sample at AU 15 (RFC 8216bis 4.4.4.9: contains an independent frame)"
+    );
+    assert!(!seg1[2].independent, "part 2 has no sync sample");
+}
+
 // ===========================================================================
 // Test 3 — playlist directive text bites (opt-in)
 // ===========================================================================

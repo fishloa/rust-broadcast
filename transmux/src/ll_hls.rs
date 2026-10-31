@@ -21,7 +21,7 @@
 //! exactly the coded samples, decode order, and per-track decode timeline of the
 //! whole-segment [`crate::build_media_segment`] output** — parts split, they never
 //! lose, duplicate, or reorder a sample. A part is marked
-//! [`PartInfo::independent`] when its first sample is a sync sample
+//! [`PartInfo::independent`] when it contains a sync sample
 //! (`INDEPENDENT=YES` in the playlist, RFC 8216bis §4.4.4.9).
 //!
 //! Segment boundaries stay keyframe-aligned (each segment's first part begins on
@@ -61,8 +61,8 @@ pub struct PartInfo {
     /// Part duration in seconds (the anchor track's buffered duration for this
     /// part) — the `#EXT-X-PART:DURATION` value.
     pub duration: f64,
-    /// `true` when this part's first anchor-track sample is a sync sample, so it
-    /// begins with an independently decodable frame (`INDEPENDENT=YES`).
+    /// `true` when this part contains a sync sample of the anchor track
+    /// (`INDEPENDENT=YES`, RFC 8216bis §4.4.4.9), wherever it sits in the part.
     pub independent: bool,
     /// 1-based sequence number of the parent segment this part belongs to.
     pub segment_seq: u32,
@@ -823,8 +823,7 @@ impl LlHlsSegmenter {
         self.next_seq += 1;
         let independent = frags
             .first()
-            .and_then(|f| f.samples.first())
-            .is_some_and(|s| s.flags.is_sync);
+            .is_some_and(|f| f.samples.iter().any(|s| s.flags.is_sync));
         let first_ti = active
             .iter()
             .position(|&a| a)
@@ -996,7 +995,7 @@ impl LlHlsSegmenter {
                 .iter()
                 .position(|t| t.spec.track_id == first.track_id)
                 .ok_or(Error::InvalidInput("follow: part track vanished"))?;
-            let independent = first.samples.first().is_some_and(|s| s.flags.is_sync);
+            let independent = first.samples.iter().any(|s| s.flags.is_sync);
             let duration = span_secs(
                 &self.tracks[first_ti],
                 bounds[first_ti][k],
@@ -1319,13 +1318,14 @@ impl LlHlsSegmenter {
             return Ok(());
         }
 
-        // Independence: the part's first anchor sample is a sync sample.
+        // RFC 8216bis section 4.4.4.9: `INDEPENDENT=YES` when the part
+        // *contains* an independent frame, wherever it sits in the part.
+        // Only the samples drained into this part count: the buffer holds
+        // the whole segment.
         let anchor_state = &self.tracks[anchor];
-        let independent = anchor_state
-            .pending
-            .get(anchor_state.part_start)
-            .map(|s| s.flags.is_sync)
-            .unwrap_or(false);
+        let independent = anchor_state.pending[anchor_state.part_start..take_ends[anchor]]
+            .iter()
+            .any(|s| s.flags.is_sync);
 
         // Part duration = the anchor's decoded span actually drained into this
         // part (`take_ends[anchor] - part_start` samples), not the whole

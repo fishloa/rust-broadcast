@@ -2478,6 +2478,35 @@ impl HlsOrigin {
         )
     }
 
+    /// Playlist-relative reference to a resource served at the stream root:
+    /// a playlist in a subdirectory (`audio/a0.m3u8`) must climb back to it
+    /// (RFC 8216bis §4.1, URIs resolve against the playlist's URI).
+    fn root_relative(&self, name: String) -> String {
+        let depth = self.playlist_uri.rfind('/').map_or(0, |i| {
+            self.playlist_uri[..i]
+                .split('/')
+                .filter(|s| !s.is_empty())
+                .count()
+        });
+        format!("{}{name}", "../".repeat(depth))
+    }
+
+    fn init_uri(&self, track_id: TrackId, generation: Generation) -> String {
+        self.root_relative(self.init_name(track_id, generation))
+    }
+
+    fn segment_uri(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> String {
+        self.root_relative(self.segment_name(track_id, seq, ext))
+    }
+
+    fn iframe_segment_uri(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> String {
+        self.root_relative(self.iframe_segment_name(track_id, seq, ext))
+    }
+
+    fn part_uri(&self, track_id: TrackId, seq: SegmentSeq, idx: PartIndex, ext: &str) -> String {
+        self.root_relative(self.part_name(track_id, seq, idx, ext))
+    }
+
     /// The offset added to every Media Sequence Number this origin shows (see
     /// [`HlsOriginBuilder::media_sequence_offset`]): the number in a segment's
     /// URI/playlist is this plus its origin sequence number
@@ -2809,7 +2838,7 @@ impl HlsOrigin {
         by_index
             .values()
             .map(|p| PartSpec {
-                uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
+                uri: self.part_uri(track_id, p.segment_number, p.part_index, ext),
                 // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
                 duration: DecimalSeconds::new(p.duration.as_secs_f64())
                     .expect("Duration::as_secs_f64 is finite, >= 0"),
@@ -2957,7 +2986,7 @@ impl HlsOrigin {
         let fmp4 = self.container == Container::Fmp4;
         let map_for = |generation: Generation| {
             fmp4.then(|| MapTag {
-                uri: self.init_name(track_id, generation),
+                uri: self.init_uri(track_id, generation),
                 byte_range: None,
                 extra_attrs: Vec::new(),
             })
@@ -2973,7 +3002,7 @@ impl HlsOrigin {
                 let program_date_time = self.segment_pdt(s.sequence_number, s.start_ns);
                 MediaSegment {
                     map: map_for(s.init_gen),
-                    uri: self.segment_name(track_id, s.sequence_number, ext),
+                    uri: self.segment_uri(track_id, s.sequence_number, ext),
                     // `duration_secs` is always `Duration::as_secs_f64()`
                     // (issue #1140): a `std::time::Duration` can never be
                     // negative or non-finite.
@@ -3007,7 +3036,7 @@ impl HlsOrigin {
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
-                        uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
+                        uri: self.part_uri(track_id, p.segment_number, p.part_index, ext),
                         // `p.duration` is a `std::time::Duration`: always
                         // finite and non-negative (issue #1140).
                         duration: DecimalSeconds::new(p.duration.as_secs_f64())
@@ -3056,9 +3085,9 @@ impl HlsOrigin {
                 .max()
                 .map(PartIndex::saturating_next)
                 .unwrap_or(PartIndex::new(0));
-            Some(self.part_name(track_id, open_seq, next_idx, ext))
+            Some(self.part_uri(track_id, open_seq, next_idx, ext))
         } else if low_latency_enabled && any_closed_parts {
-            Some(self.part_name(track_id, open_seq.saturating_next(), PartIndex::new(0), ext))
+            Some(self.part_uri(track_id, open_seq.saturating_next(), PartIndex::new(0), ext))
         } else {
             None
         };
@@ -3101,7 +3130,7 @@ impl HlsOrigin {
             let generation = locked(&self.init).generation.max(Generation::new(1));
             extra_tags.push(format!(
                 "#EXT-X-MAP:URI=\"{}\"",
-                self.init_name(track_id, generation)
+                self.init_uri(track_id, generation)
             ));
         }
         for (idx, tags) in segment_dateranges.iter().enumerate() {
@@ -3339,7 +3368,7 @@ impl HlsOrigin {
         let fmp4 = self.container == Container::Fmp4;
         let map_for = |generation: Generation| {
             fmp4.then(|| MapTag {
-                uri: self.init_name(track_id, generation),
+                uri: self.init_uri(track_id, generation),
                 byte_range: None,
                 extra_attrs: Vec::new(),
             })
@@ -3351,7 +3380,7 @@ impl HlsOrigin {
             .iter()
             .map(|(s, len)| MediaSegment {
                 map: map_for(s.init_gen),
-                uri: self.iframe_segment_name(
+                uri: self.iframe_segment_uri(
                     track_id,
                     s.sequence_number,
                     self.container.segment_extension(),
