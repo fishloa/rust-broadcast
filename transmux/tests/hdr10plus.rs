@@ -632,3 +632,189 @@ fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_ts_output() {
     assert_eq!(control_text.matches("[FRAME]").count(), FRAMES);
     assert_eq!(control_text.matches(FFPROBE_SIDE_DATA).count(), 0);
 }
+
+struct Bits {
+    bytes: Vec<u8>,
+    used: usize,
+}
+
+impl Bits {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            used: 0,
+        }
+    }
+
+    fn put(&mut self, value: u64, width: usize) -> &mut Self {
+        assert!(
+            width == 64 || value < (1 << width),
+            "{value} wider than {width}"
+        );
+        for shift in (0..width).rev() {
+            if self.used.is_multiple_of(8) {
+                self.bytes.push(0);
+            }
+            let bit = ((value >> shift) & 1) as u8;
+            *self.bytes.last_mut().unwrap() |= bit << (7 - self.used % 8);
+            self.used += 1;
+        }
+        self
+    }
+
+    fn window_color_volume(&mut self, seed: u64) -> &mut Self {
+        self.put(100 + seed, 17)
+            .put(200 + seed, 17)
+            .put(300 + seed, 17);
+        self.put(400 + seed, 17);
+        self.put(2, 4);
+        self.put(1, 7).put(1000 + seed, 17);
+        self.put(99, 7).put(131071, 17);
+        self.put(777 + seed, 10)
+    }
+}
+
+fn payload_with(bits: Bits) -> Vec<u8> {
+    let mut out = vec![0xB5, 0x00, 0x3C, 0x00, 0x01, 0x04, 0x01];
+    out.extend_from_slice(&bits.bytes);
+    out
+}
+
+#[test]
+fn a_payload_assembled_independently_field_by_field_decodes_to_those_fields() {
+    let mut b = Bits::new();
+    b.put(1, 2);
+    b.put(1000, 27);
+    b.put(1, 1).put(2, 5).put(3, 5);
+    for v in [0, 1, 2, 3, 14, 15] {
+        b.put(v, 4);
+    }
+    b.window_color_volume(0);
+    b.put(1, 1).put(1, 5).put(2, 5).put(9, 4).put(15, 4);
+    b.put(1, 1)
+        .put(4095, 12)
+        .put(1234, 12)
+        .put(2, 4)
+        .put(1023, 10)
+        .put(5, 10);
+    b.put(1, 1).put(63, 6);
+    let bytes = payload_with(b);
+    let meta = Hdr10PlusMetadata::parse(&bytes).unwrap();
+    assert_eq!(meta.targeted_system_display_maximum_luminance, 1000);
+    let lut = meta
+        .targeted_system_display_actual_peak_luminance
+        .as_ref()
+        .unwrap();
+    assert_eq!((lut.rows, lut.columns), (2, 3));
+    assert_eq!(lut.values, [0, 1, 2, 3, 14, 15]);
+    let w = &meta.primary_window;
+    assert_eq!(w.max_scl, [100, 200, 300]);
+    assert_eq!(w.average_max_rgb, 400);
+    assert_eq!(
+        (
+            w.distribution_max_rgb[0].percentage,
+            w.distribution_max_rgb[0].percentile
+        ),
+        (1, 1000)
+    );
+    assert_eq!(
+        (
+            w.distribution_max_rgb[1].percentage,
+            w.distribution_max_rgb[1].percentile
+        ),
+        (99, 131071)
+    );
+    assert_eq!(w.fraction_bright_pixels, 777);
+    let mastering = meta
+        .mastering_display_actual_peak_luminance
+        .as_ref()
+        .unwrap();
+    assert_eq!((mastering.rows, mastering.columns), (1, 2));
+    assert_eq!(mastering.values, [9, 15]);
+    let tone = w.tone_mapping.as_ref().unwrap();
+    assert_eq!((tone.knee_point_x, tone.knee_point_y), (4095, 1234));
+    assert_eq!(tone.anchors, [1023, 5]);
+    assert_eq!(w.color_saturation_weight, Some(63));
+    assert_eq!(meta.try_to_bytes().unwrap(), bytes);
+}
+
+#[test]
+fn a_three_window_payload_assembled_independently_decodes_to_those_fields() {
+    let mut b = Bits::new();
+    b.put(3, 2);
+    for base in [10u64, 20] {
+        for v in 0..6 {
+            b.put(base + v, 16);
+        }
+        b.put(90 + base, 8);
+        b.put(1000 + base, 16)
+            .put(2000 + base, 16)
+            .put(3000 + base, 16);
+        b.put(base % 2, 1);
+    }
+    b.put(5, 27).put(0, 1);
+    b.window_color_volume(0)
+        .window_color_volume(1)
+        .window_color_volume(2);
+    b.put(0, 1);
+    b.put(0, 1).put(0, 1);
+    b.put(1, 1).put(0, 12).put(0, 12).put(0, 4).put(0, 1);
+    b.put(0, 1).put(1, 1).put(8, 6);
+    let bytes = payload_with(b);
+    let meta = Hdr10PlusMetadata::parse(&bytes).unwrap();
+    assert_eq!(meta.num_windows(), 3);
+    let first = &meta.additional_windows[0].region;
+    assert_eq!(
+        (
+            first.upper_left_corner_x,
+            first.upper_left_corner_y,
+            first.lower_right_corner_x,
+            first.lower_right_corner_y,
+            first.center_of_ellipse_x,
+            first.center_of_ellipse_y,
+            first.rotation_angle,
+            first.semimajor_axis_internal_ellipse,
+            first.semimajor_axis_external_ellipse,
+            first.semiminor_axis_external_ellipse,
+        ),
+        (10, 11, 12, 13, 14, 15, 100, 1010, 2010, 3010)
+    );
+    assert_eq!(
+        first.overlap_process_option,
+        OverlapProcessOption::WeightedAverage
+    );
+    let second = &meta.additional_windows[1].region;
+    assert_eq!(second.semiminor_axis_external_ellipse, 3020);
+    assert_eq!(
+        second.overlap_process_option,
+        OverlapProcessOption::WeightedAverage
+    );
+    assert_eq!(
+        meta.additional_windows[1].color_volume.max_scl,
+        [102, 202, 302]
+    );
+    assert_eq!(
+        meta.additional_windows[0]
+            .color_volume
+            .fraction_bright_pixels,
+        778
+    );
+    assert!(meta.primary_window.tone_mapping.is_none());
+    assert_eq!(
+        meta.additional_windows[0]
+            .color_volume
+            .tone_mapping
+            .as_ref()
+            .unwrap()
+            .anchors
+            .len(),
+        0
+    );
+    assert_eq!(
+        meta.additional_windows[1]
+            .color_volume
+            .color_saturation_weight,
+        Some(8)
+    );
+    assert_eq!(meta.try_to_bytes().unwrap(), bytes);
+}
