@@ -24,17 +24,16 @@
 //!   re-derives it.
 //! - `is_sync` comes straight from the reassembled access unit
 //!   (IDR detection for video; always `true` for audio).
-//! - `dts == pts`, i.e. a zero composition offset — **v1 assumes low-delay
-//!   H.264 with no B-frame reorder**: RTP carries only a presentation
-//!   timestamp on the wire (RFC 6184 §5.1's sampling time), so reconstructing
-//!   a separate DTS (and therefore a non-zero composition offset) when
-//!   B-frames are present is future work. That assumption is **reported when
-//!   it fails** — a wire timestamp earlier than a previous one raises
-//!   [`RtpLossEvent::NonMonotonicTimestamp`] (audit r04-W29), because RTP
-//!   carries no decode time to fall back on. A consumer needing real
-//!   per-frame durations or a decode-ordered timeline should use the
-//!   single-shot [`crate::rtp::RtpDepacketiser`] path, which holds the whole
-//!   stream and therefore knows the frame period exactly.
+//! - **Video `dts`** is derived, not copied: RTP carries only a presentation
+//!   timestamp on the wire (RFC 6184 §5.1's sampling time) and delivers access
+//!   units in decoding order, so with B-frames the wire timestamps step
+//!   backward. `dts` is the presentation-ordered timestamp grid shifted by the
+//!   codec's reorder depth, giving `dts` strictly increasing and `dts <= pts`
+//!   on every sample; a stream without reorder keeps `dts == pts`. The rule,
+//!   its spec basis (ITU-T H.264 §E.2.1 `max_num_reorder_frames`) and its
+//!   latency are specified in [`crate::rtp_dts`]. The reorder itself is still
+//!   reported — a wire timestamp earlier than a previous one raises
+//!   [`RtpLossEvent::NonMonotonicTimestamp`] (audit r04-W29).
 //! - Each track independently rebases its first unwrapped timestamp to
 //!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
 //!   from `track_specs` + emitted samples) **unless** an RTCP Sender Report
@@ -303,14 +302,11 @@ pub enum RtpLossEvent {
     ///
     /// RTP carries exactly one timestamp per access unit and it is the
     /// *sampling/presentation* time (RFC 6184 §5.1 for H.264, RFC 3640 §3.3.1
-    /// for AAC), so the wire alone cannot supply an independent decode time:
-    /// this depacketiser emits `dts == pts` (the documented low-delay model),
-    /// and a reordered source therefore yields `dts` values that step
-    /// backward. That is not a defect in the reassembly — the samples are
-    /// correct and in presentation order — but a consumer that requires
-    /// decode-ordered `dts` (a progressive-file or fragment writer) must know
-    /// it cannot use it as one. Reported once per occurrence so a caller can
-    /// count or route it.
+    /// for AAC), so the wire alone cannot supply an independent decode time.
+    /// The video `dts` is derived from the reorder depth ([`crate::rtp_dts`]),
+    /// so a reordered source still yields a monotonic `dts`; this event reports
+    /// that the wire order is not presentation order. Reported once per
+    /// occurrence so a caller can count or route it.
     NonMonotonicTimestamp {
         /// The track this occurred on.
         track_id: TrackId,

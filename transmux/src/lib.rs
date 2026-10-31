@@ -214,7 +214,7 @@ pub mod repackage;
 pub mod rtcp;
 pub mod rtmp;
 pub mod rtp;
-mod rtp_dts;
+pub mod rtp_dts;
 pub mod rtp_sdp;
 pub mod rtp_stream;
 #[cfg(feature = "sample-aes")]

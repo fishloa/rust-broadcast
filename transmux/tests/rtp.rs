@@ -826,18 +826,22 @@ fn streaming_depacketiser_reports_reordered_timestamps() {
         pts, expected,
         "emitted pts must be the wire sampling timestamps, in wire order"
     );
-    // The streaming path keeps the documented low-delay model (`dts == pts`)
-    // and reports the reorder instead of guessing a decode timeline — it
-    // cannot know the frame period from a live stream the way the batch path
-    // can (which derives it from the whole AU set). A consumer that needs a
-    // decode-ordered timeline must therefore check for
-    // `NonMonotonicTimestamp`; that is precisely why it is reported.
-    for s in &samples {
-        assert_eq!(
-            s.pts, s.dts,
-            "the streaming path's documented model: dts == pts, with reorder              reported rather than guessed"
-        );
-    }
+    // The streaming path derives a decode timeline from the reorder depth
+    // (see `transmux::rtp_stream`): dts strictly increasing, never after pts,
+    // and the reorder is still reported.
+    let dts: Vec<i64> = samples.iter().map(|s| s.dts.expect("timed")).collect();
+    assert!(
+        dts.windows(2).all(|w| w[0] < w[1]),
+        "dts must be strictly increasing"
+    );
+    assert!(
+        samples.iter().all(|s| s.dts <= s.pts),
+        "dts must never exceed pts"
+    );
+    assert!(
+        samples.iter().any(|s| s.dts < s.pts),
+        "a reordered stream must have a positive composition offset"
+    );
 }
 
 // ── Test 4e: loss and RFC 3640 AU fragmentation (audit r04-W31) ─────────────
