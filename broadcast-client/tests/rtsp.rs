@@ -21,7 +21,7 @@ const STALL_NOTICE: u64 = 5 * SEC;
 const STALL_RECONNECT: u64 = 30 * SEC;
 const START_TIMEOUT: u64 = 15 * SEC;
 const BACKOFF_SECS: [u64; 6] = [2, 4, 8, 10, 10, 10];
-const SOME_FRAMES: usize = 30;
+const SOME_FRAMES: usize = 60;
 const SLOW_SESSION_TIMEOUT: u32 = 100_000;
 const MIN_RECONNECT: u64 = SEC;
 
