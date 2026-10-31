@@ -509,9 +509,10 @@ fn france2() -> Vec<Source> {
     by_role(load("ts/france2.ts"))
 }
 
-async fn assert_part_timing(rig: &Rig, uris: &[&str], full_server_control: bool) {
+async fn assert_part_timing(rig: &Rig, uris: &[&str]) {
     let mut server_controls = Vec::new();
     let mut hold_backs = Vec::new();
+    let mut target_durations: Vec<String> = Vec::new();
     let mut max_target = 0.0f64;
     for uri in uris {
         let text = String::from_utf8(rig.ok(uri).await).expect("utf8 playlist");
@@ -519,6 +520,12 @@ async fn assert_part_timing(rig: &Rig, uris: &[&str], full_server_control: bool)
             text.lines()
                 .find(|l| l.starts_with("#EXT-X-SERVER-CONTROL:"))
                 .unwrap_or_else(|| panic!("{uri}: no SERVER-CONTROL"))
+                .to_string(),
+        );
+        target_durations.push(
+            text.lines()
+                .find(|l| l.starts_with("#EXT-X-TARGETDURATION:"))
+                .unwrap_or_else(|| panic!("{uri}: no TARGETDURATION"))
                 .to_string(),
         );
         let playlist = rig.playlist(uri).await;
@@ -549,20 +556,13 @@ async fn assert_part_timing(rig: &Rig, uris: &[&str], full_server_control: bool)
             "{uri}: no non-terminal part was checked"
         );
     }
-    let comparable = |line: &String| -> String {
-        if full_server_control {
-            return line.clone();
-        }
-        line.trim_start_matches("#EXT-X-SERVER-CONTROL:")
-            .split(',')
-            .filter(|a| a.starts_with("PART-HOLD-BACK=") || a.starts_with("CAN-BLOCK-RELOAD="))
-            .collect::<Vec<_>>()
-            .join(",")
-    };
+    assert!(
+        target_durations.iter().all(|t| *t == target_durations[0]),
+        "TARGETDURATION must be identical: {target_durations:?}"
+    );
     for control in &server_controls {
         assert_eq!(
-            comparable(control),
-            comparable(&server_controls[0]),
+            control, &server_controls[0],
             "SERVER-CONTROL must be identical"
         );
     }
@@ -614,7 +614,6 @@ async fn split_audio_france2_three_renditions_align_with_video() {
             "audio/a1.m3u8",
             "audio/a2.m3u8",
         ],
-        true,
     )
     .await;
 
@@ -677,7 +676,7 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
     audio.spec.track_id = transmux::TrackId::new(video.spec.track_id.value() + 1);
     let sources = vec![video, audio];
     let rig = rig(&sources, decls(&["eng"]), index_selectors(1), &|_, _| true);
-    assert_part_timing(&rig, &["media.m3u8", "audio/a0.m3u8"], false).await;
+    assert_part_timing(&rig, &["media.m3u8", "audio/a0.m3u8"]).await;
 }
 
 #[tokio::test]

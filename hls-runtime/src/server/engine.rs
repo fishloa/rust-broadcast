@@ -3119,14 +3119,33 @@ impl HlsOrigin {
             .collect()
     }
 
+    /// This origin's own `EXT-X-TARGETDURATION` before sibling renditions are
+    /// considered: the frozen value once published. Every Media Playlist of a
+    /// Multivariant Playlist carries the same `EXT-X-SERVER-CONTROL`
+    /// attributes (RFC 8216bis §6.2.4), and `HOLD-BACK` and `CAN-SKIP-UNTIL`
+    /// are multiples of the Target Duration, so renditions share the largest.
+    fn target_duration_candidate_secs(&self) -> f64 {
+        let own = self
+            .target_duration_secs
+            .max(locked(&self.window).max_segment_duration_secs);
+        (*locked(&self.frozen_target_duration_secs)).unwrap_or(own)
+    }
+
     /// Resolve the `EXT-X-TARGETDURATION` to publish for `window`, freezing
     /// it at the first render that carries at least one segment (RFC 8216
     /// §4.3.3.1): once published it never changes, even as later (possibly
     /// longer) segments ratchet `max_segment_duration_secs`.
     fn published_target_duration_secs(&self, window: &WindowView) -> f64 {
+        let siblings = locked(&self.rendition_siblings).clone();
+        let sibling_target = siblings
+            .iter()
+            .filter_map(|s| s.origin.upgrade())
+            .map(|o| o.target_duration_candidate_secs())
+            .fold(0.0, f64::max);
         let candidate = self
             .target_duration_secs
-            .max(window.max_segment_duration_secs);
+            .max(window.max_segment_duration_secs)
+            .max(sibling_target);
         let mut frozen = locked(&self.frozen_target_duration_secs);
         if let Some(existing) = *frozen {
             existing
