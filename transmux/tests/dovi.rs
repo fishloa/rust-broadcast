@@ -395,6 +395,69 @@ fn p5_dash_codecs_name_the_dvh1_sample_entry() {
     assert!(codecs_attrs(&ll_mpd).contains(&expected));
 }
 
+fn adaptation_set_codecs(mpd: &str) -> Vec<Vec<String>> {
+    mpd.split("<AdaptationSet")
+        .skip(1)
+        .map(|set| {
+            let set = set.split("</AdaptationSet>").next().unwrap();
+            codecs_attrs(set)
+        })
+        .collect()
+}
+
+fn assert_companion_dolby_set(
+    fixture: &str,
+    record_codec: impl Fn(&DoviDecoderConfigurationRecord) -> String,
+) {
+    let Some(media) = ts_media(fixture) else {
+        return;
+    };
+    let spec = &video(&media).spec;
+    let dv = record_codec(spec.dovi.as_ref().unwrap());
+    let base = transmux::rfc6381_track_codec_string(spec).unwrap();
+    assert!(base.starts_with("hvc1."), "{base}");
+    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let video_sets: Vec<_> = adaptation_set_codecs(&mpd)
+        .into_iter()
+        .filter(|c| {
+            c.iter()
+                .any(|x| x.starts_with("hvc1.") || x.starts_with("dvh1."))
+        })
+        .collect();
+    assert_eq!(
+        video_sets,
+        vec![vec![base.clone()], vec![dv.clone()]],
+        "{mpd}"
+    );
+    let mut ll =
+        transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z").unwrap();
+    let ll_mpd = ll.package(&media).unwrap();
+    assert!(adaptation_set_codecs(&ll_mpd).contains(&vec![dv]));
+}
+
+#[test]
+fn p81_dash_announces_the_base_codec_and_a_companion_dvh1_set() {
+    assert_companion_dolby_set(P81_TS, |r| format!("dvh1.08.{:02}", r.level));
+}
+
+#[test]
+fn p84_dash_announces_the_base_codec_and_a_companion_dvh1_set() {
+    assert_companion_dolby_set(P84_TS, |r| format!("dvh1.08.{:02}", r.level));
+}
+
+#[test]
+fn p5_dash_has_no_companion_set() {
+    let Some(media) = ts_media(P5_TS) else {
+        return;
+    };
+    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let n = adaptation_set_codecs(&mpd)
+        .iter()
+        .filter(|c| c.iter().any(|x| x.starts_with("dvh1.")))
+        .count();
+    assert_eq!(n, 1);
+}
+
 #[test]
 fn p81_dash_codecs_stay_hvc1() {
     let Some(media) = ts_media(P81_TS) else {

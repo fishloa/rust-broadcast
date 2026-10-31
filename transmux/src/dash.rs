@@ -485,6 +485,7 @@ impl Default for DashPackager {
 }
 
 /// Derived per-track presentation parameters resolved from a [`CodecConfig`].
+#[derive(Clone)]
 struct ReprInfo {
     id: String,
     kind: MediaKind,
@@ -514,6 +515,9 @@ struct ReprInfo {
     frame_rate: Option<String>,
     /// The HEVC track carries HDR10+ (ST 2094-40) dynamic metadata.
     hdr10plus: bool,
+    /// `dvh1.PP.LL` of a backward-compatible single-layer Dolby Vision HEVC
+    /// track (profile 8.x), announced in a companion `AdaptationSet`.
+    dolby_vision_codecs: Option<String>,
     // Audio parameters.
     audio_sampling_rate: Option<u32>,
     audio_channels: Option<u16>,
@@ -534,6 +538,23 @@ pub fn rfc6381_codec_string(config: &CodecConfig) -> Result<String> {
     DashPackager::codec_string(config)
 }
 
+/// The `dvh1.PP.LL` value of the companion Dolby Vision `AdaptationSet` of a
+/// backward-compatible single-layer HEVC track: the Dolby DASH specification
+/// (`private/specs-verified/dolby/vision/dolby-vision-streams-in-mpeg-dash-v2.0-2018-11.md`
+/// 4.2.3 and example 4.3.1) lists the base-layer codec in one `AdaptationSet`
+/// and the Dolby Vision codec of the same media in a separate one.
+fn dolby_vision_companion_codecs(spec: &TrackSpec) -> Option<String> {
+    let dv = spec.dovi.as_ref()?;
+    if !matches!(spec.config, CodecConfig::Hevc { .. })
+        || !dv.is_single_layer()
+        || !dv.is_hevc_profile()
+        || !dv.is_base_layer_compatible()
+    {
+        return None;
+    }
+    dv.codec_string()
+}
+
 /// The RFC 6381 codec string of a whole track: [`rfc6381_codec_string`], except
 /// that an HEVC track written with the `dvh1` Dolby Vision sample entry
 /// (single layer, non-cross-compatible base layer, i.e. profile 5) yields
@@ -543,8 +564,8 @@ pub fn rfc6381_codec_string(config: &CodecConfig) -> Result<String> {
 /// [`DashPackager`] / `LlDashPackager` write into `Representation@codecs`.
 ///
 /// Cross-compatible Dolby Vision (profile 8.x) keeps an `hvc1` sample entry and
-/// its plain HEVC string; the DASH packagers do not announce its Dolby Vision
-/// layer.
+/// its plain HEVC string here; the DASH packagers announce its `dvh1.PP.LL`
+/// codec in a companion `AdaptationSet` over the same Representation.
 ///
 /// # Errors
 /// As [`rfc6381_codec_string`].
@@ -685,6 +706,7 @@ impl DashPackager {
             sar: None,
             frame_rate: None,
             hdr10plus: track.spec.hdr10plus && matches!(config, CodecConfig::Hevc { .. }),
+            dolby_vision_codecs: dolby_vision_companion_codecs(&track.spec),
             audio_sampling_rate: None,
             audio_channels: None,
         };
@@ -905,6 +927,27 @@ impl DashPackager {
                 };
                 regular_ids.push(id);
                 self.write_adaptation_set(w, kind, &group, &id.to_string());
+                let dolby: Vec<ReprInfo> = group
+                    .iter()
+                    .filter_map(|r| {
+                        r.dolby_vision_codecs.as_ref().map(|codecs| ReprInfo {
+                            codecs: codecs.clone(),
+                            ..(*r).clone()
+                        })
+                    })
+                    .collect();
+                if !dolby.is_empty() {
+                    let dolby_id = loop {
+                        let candidate = next_id;
+                        next_id += 1;
+                        if self.trick_mode.as_ref().is_none_or(|tm| tm.id != candidate) {
+                            break candidate;
+                        }
+                    };
+                    regular_ids.push(dolby_id);
+                    let refs: Vec<&ReprInfo> = dolby.iter().collect();
+                    self.write_adaptation_set(w, kind, &refs, &dolby_id.to_string());
+                }
             }
         }
 
