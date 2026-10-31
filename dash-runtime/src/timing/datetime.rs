@@ -2,7 +2,7 @@
 //!
 //! The accepted `xs:dateTime` subset is project policy, recorded with its
 //! rationale and the full accept/reject table in
-//! `docs/specs/dash/xs-datetime-subset.md` (W3C XML Schema Part 2, 3.2.7;
+//! `private/specs-verified/dash/docs-specs/xs-datetime-subset.md` (W3C XML Schema Part 2, 3.2.7;
 //! ISO/IEC 23009-1 5.8.5.7 `DIRECT-VALUE`). Calendar arithmetic is jiff's;
 //! nothing here reads a clock.
 

@@ -7,7 +7,7 @@
 //! [`crate::limits::MAX_TIMELINE_SEGMENTS`] so index arithmetic cannot
 //! overflow.
 //!
-//! Rules (5.3.9.6.1, restated in `docs/specs/dash/23009-1`):
+//! Rules (5.3.9.6.1, restated in `private/specs-verified/dash/docs-specs/23009-1/05-3-9-6-segment-timeline.md`):
 //! `@t` is absolute and never smaller than the previous run's end; absent, a
 //! run starts where the previous ended (the first at 0); `@n` restarts the
 //! numbering; `@r >= 0` gives `r + 1` segments; a negative `@r` repeats up to

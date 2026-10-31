@@ -1,4 +1,4 @@
-//! The accept/reject table of `docs/specs/dash/xs-datetime-subset.md`, whose
+//! The accept/reject table of `private/specs-verified/dash/docs-specs/xs-datetime-subset.md`, whose
 //! instants were hand-checked against an independent calendar implementation.
 
 use dash_runtime::timing::datetime::{
