@@ -209,6 +209,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         }],
         prebound,
         ..Config::default()
@@ -296,6 +297,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         }],
         prebound,
         ..Config::default()

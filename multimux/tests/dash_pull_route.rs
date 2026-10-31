@@ -101,6 +101,7 @@ fn route_config(bind: SocketAddr, mpd: String, allow_cross_origin: bool) -> Conf
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         }],
         ..Config::default()
     }

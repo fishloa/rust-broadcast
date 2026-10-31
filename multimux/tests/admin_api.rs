@@ -281,6 +281,7 @@ fn instant_route(name: &str) -> Route {
         audio_rendition_sources: Vec::new(),
         closed_caption_overrides: Vec::new(),
         audio_profiles: Vec::new(),
+        subtitles: true,
     }
 }
 
@@ -304,6 +305,7 @@ fn unreachable_rtsp_route(name: &str, unique: &str) -> Route {
         audio_rendition_sources: Vec::new(),
         closed_caption_overrides: Vec::new(),
         audio_profiles: Vec::new(),
+        subtitles: true,
     }
 }
 

@@ -151,6 +151,7 @@ fn route_config(bind: SocketAddr, upstream: String) -> Config {
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         }],
         ..Config::default()
     }

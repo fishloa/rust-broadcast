@@ -460,6 +460,46 @@ pub(crate) struct ProgramServing {
     next_timeline_ns: AtomicU64,
     /// Sibling audio renditions (issue #1428 slice 2b).
     pub(crate) audio_rendition_servings: Vec<AudioServing>,
+    /// Sibling WebVTT subtitle renditions, declared once the stream shows its
+    /// teletext subtitle pages (issue #1428).
+    subtitle_servings: Mutex<Vec<SubtitleServing>>,
+    /// What a sibling origin needs to match this program's primary.
+    sibling_params: SiblingParams,
+}
+
+/// The primary origin's settings every sibling origin repeats.
+#[derive(Clone, Copy)]
+struct SiblingParams {
+    target_duration_secs: f64,
+    part_target_ms: u32,
+    window_segments: NonZeroUsize,
+    media_sequence_offset: u64,
+    program_date_time: crate::config::ProgramDateTimeSource,
+}
+
+/// Slots a program can serve subtitle renditions in. The media playlist
+/// routes are fixed per slot (`subs-{slot}.m3u8`), so the set of subtitle
+/// renditions can be learned from the stream after the router is built.
+pub(crate) const MAX_SUBTITLE_RENDITIONS: usize = 8;
+
+/// First `track_id` embedded in the segment filenames of a subtitle sibling
+/// (slot `n` uses `SUBTITLE_TRACK_BASE + n`), clear of the primary's and the
+/// audio siblings' ids.
+const SUBTITLE_TRACK_BASE: u32 = 1000;
+
+/// Relative URI of the media playlist of subtitle `slot`.
+pub(crate) fn subtitle_playlist_uri(slot: usize) -> String {
+    format!("subs-{slot}.m3u8")
+}
+
+/// One WebVTT subtitle rendition served from its own sibling `Trunk` and
+/// `HlsOrigin` (issue #1428).
+#[derive(Clone)]
+pub struct SubtitleServing {
+    pub decl: hls_runtime::server::SubtitleRenditionDecl,
+    pub track_id: transmux::TrackId,
+    pub trunk: std::sync::Arc<Trunk>,
+    pub origin: std::sync::Arc<hls_runtime::server::HlsOrigin>,
 }
 
 /// One separate audio rendition served from its own sibling `Trunk`/`HlsOrigin`
@@ -472,6 +512,27 @@ pub struct AudioServing {
     pub track_id: transmux::TrackId,
     pub trunk: std::sync::Arc<Trunk>,
     pub origin: std::sync::Arc<hls_runtime::server::HlsOrigin>,
+}
+
+/// Wire rendition-report siblings (RFC 8216bis §4.4.5.4): every origin
+/// reports every OTHER rendition's live edge. `others` are the siblings of the
+/// primary, each with its media playlist URI.
+fn wire_rendition_siblings(primary: &Arc<HlsOrigin>, others: &[(Arc<HlsOrigin>, String)]) {
+    use hls_runtime::server::RenditionSibling;
+    let mut entries: Vec<(Arc<HlsOrigin>, String)> = Vec::with_capacity(others.len() + 1);
+    entries.push((Arc::clone(primary), "media.m3u8".to_string()));
+    entries.extend(others.iter().cloned());
+    for (origin, self_uri) in &entries {
+        let siblings: Vec<RenditionSibling> = entries
+            .iter()
+            .filter(|(_, uri)| uri != self_uri)
+            .map(|(o, uri)| RenditionSibling {
+                origin: Arc::downgrade(o),
+                playlist_uri: uri.clone(),
+            })
+            .collect();
+        origin.set_rendition_siblings(siblings);
+    }
 }
 
 impl ProgramServing {
@@ -566,27 +627,11 @@ impl ProgramServing {
         // from caller-supplied numbers, so surfaced, never `expect`ed.
         let ll_hls = Arc::new(builder.build()?);
 
-        // Wire rendition-report siblings (RFC 8216bis §4.4.5.4): every
-        // origin reports every OTHER rendition's live edge.
-        {
-            use hls_runtime::server::RenditionSibling;
-            let mut entries: Vec<(Arc<hls_runtime::server::HlsOrigin>, String)> = Vec::new();
-            entries.push((Arc::clone(&ll_hls), "media.m3u8".to_string()));
-            for serving in &audio_servings {
-                entries.push((Arc::clone(&serving.origin), serving.decl.uri.clone()));
-            }
-            for (origin, self_uri) in &entries {
-                let siblings: Vec<RenditionSibling> = entries
-                    .iter()
-                    .filter(|(_, uri)| uri != self_uri)
-                    .map(|(o, uri)| RenditionSibling {
-                        origin: Arc::downgrade(o),
-                        playlist_uri: uri.clone(),
-                    })
-                    .collect();
-                origin.set_rendition_siblings(siblings);
-            }
-        }
+        let audio_entries: Vec<(Arc<HlsOrigin>, String)> = audio_servings
+            .iter()
+            .map(|a| (Arc::clone(&a.origin), a.decl.uri.clone()))
+            .collect();
+        wire_rendition_siblings(&ll_hls, &audio_entries);
 
         let dash = Arc::new(DashState::new(&trunk, window_segments));
 
@@ -628,6 +673,14 @@ impl ProgramServing {
             segment_writer: Mutex::new(None),
             next_timeline_ns: AtomicU64::new(0),
             audio_rendition_servings: audio_servings,
+            subtitle_servings: Mutex::new(Vec::new()),
+            sibling_params: SiblingParams {
+                target_duration_secs,
+                part_target_ms,
+                window_segments,
+                media_sequence_offset,
+                program_date_time,
+            },
         }))
     }
 
@@ -654,6 +707,97 @@ impl ProgramServing {
 
     pub(crate) fn audio_servings(&self) -> &[AudioServing] {
         &self.audio_rendition_servings
+    }
+
+    pub(crate) fn subtitle_servings(&self) -> Vec<SubtitleServing> {
+        self.subtitle_servings.lock().clone()
+    }
+
+    pub(crate) fn subtitle_by_track(&self, track_id: transmux::TrackId) -> Option<SubtitleServing> {
+        self.subtitle_servings
+            .lock()
+            .iter()
+            .find(|s| s.track_id == track_id)
+            .cloned()
+    }
+
+    /// Builds the sibling `Trunk`/`HlsOrigin` of each declaration (once: a
+    /// later call returns the servings already built), points the primary's
+    /// master playlist at them and wires rendition reports between every
+    /// origin. `None` when a sibling cannot be built or the declarations are
+    /// invalid.
+    pub(crate) fn declare_subtitles(
+        &self,
+        decls: &[hls_runtime::server::SubtitleRenditionDecl],
+    ) -> Option<Vec<SubtitleServing>> {
+        let mut servings = self.subtitle_servings.lock();
+        if !servings.is_empty() {
+            let declared: Vec<_> = servings.iter().map(|s| &s.decl).collect();
+            if declared.iter().copied().ne(decls.iter()) {
+                tracing::warn!(
+                    route = %self.route_name,
+                    "subtitle renditions already declared for this program; keeping them"
+                );
+            }
+            return Some(servings.clone());
+        }
+        if decls.is_empty() || decls.len() > MAX_SUBTITLE_RENDITIONS {
+            return None;
+        }
+        let params = self.sibling_params;
+        let mut built = Vec::with_capacity(decls.len());
+        for (slot, decl) in decls.iter().enumerate() {
+            let trunk = Trunk::new(TrunkConfig::new(
+                nz(DEFAULT_TIMED_CAPACITY),
+                nz(DEFAULT_SPARSE_CAPACITY),
+                params.window_segments,
+                nz(DEFAULT_EVENT_CAPACITY),
+                nz(DEFAULT_PART_CAPACITY),
+            ));
+            let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
+                .target_duration_secs(params.target_duration_secs)
+                .window_segments(params.window_segments)
+                .container(Container::WebVtt)
+                .media_sequence_offset(params.media_sequence_offset)
+                .low_latency(params.part_target_ms)
+                .playlist_uri(decl.uri.clone());
+            if params.program_date_time == crate::config::ProgramDateTimeSource::Arrival {
+                builder = builder.program_date_time_arrival(Arc::new(|| {
+                    jiff::Timestamp::now().as_millisecond()
+                }));
+            }
+            let origin = match builder.build() {
+                Ok(origin) => Arc::new(origin),
+                Err(error) => {
+                    tracing::warn!(%error, "subtitle rendition origin build failed");
+                    return None;
+                }
+            };
+            let slot_id = u32::try_from(slot).unwrap_or(u32::MAX);
+            built.push(SubtitleServing {
+                decl: decl.clone(),
+                track_id: transmux::TrackId::new(SUBTITLE_TRACK_BASE.saturating_add(slot_id)),
+                trunk,
+                origin,
+            });
+        }
+        if let Err(error) = self.ll_hls.set_subtitle_renditions(decls.to_vec()) {
+            tracing::warn!(%error, "subtitle renditions rejected by the master playlist");
+            return None;
+        }
+        let mut others: Vec<(Arc<HlsOrigin>, String)> = self
+            .audio_rendition_servings
+            .iter()
+            .map(|a| (Arc::clone(&a.origin), a.decl.uri.clone()))
+            .collect();
+        others.extend(
+            built
+                .iter()
+                .map(|s| (Arc::clone(&s.origin), s.decl.uri.clone())),
+        );
+        wire_rendition_siblings(&self.ll_hls, &others);
+        *servings = built.clone();
+        Some(built)
     }
 
     pub(crate) fn audio_by_track(&self, track_id: transmux::TrackId) -> Option<&AudioServing> {
@@ -1027,6 +1171,8 @@ pub struct RouteHandle {
     closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
     /// Operator-declared HE-AAC profile per audio track (issue #1428).
     audio_profiles: Vec<crate::config::AudioProfileOverride>,
+    /// Serve teletext subtitle pages as WebVTT renditions (issue #1428).
+    subtitles: bool,
     /// Notifies waiters when a new program is published via
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
@@ -1071,6 +1217,7 @@ impl RouteHandle {
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
         }
@@ -1242,6 +1389,19 @@ impl RouteHandle {
     ) -> Self {
         self.closed_caption_overrides = value;
         self
+    }
+
+    /// Turns the WebVTT subtitle renditions built from a stream's teletext
+    /// subtitle pages on or off (issue #1428; on by default) — a consuming
+    /// builder.
+    #[must_use]
+    pub fn with_subtitles(mut self, value: bool) -> Self {
+        self.subtitles = value;
+        self
+    }
+
+    pub(crate) fn subtitles_enabled(&self) -> bool {
+        self.subtitles
     }
 
     /// Declares the HE-AAC profile of audio tracks (issue #1428) — a consuming
@@ -1602,6 +1762,30 @@ impl RouteHandle {
         self.serving(program)
             .map(|s| s.audio_servings().to_vec())
             .unwrap_or_default()
+    }
+
+    /// Sibling subtitle rendition servings for `program` (issue #1428).
+    pub fn subtitle_servings(&self, program: ProgramId) -> Vec<SubtitleServing> {
+        self.serving(program)
+            .map(|s| s.subtitle_servings())
+            .unwrap_or_default()
+    }
+
+    /// Declares the subtitle renditions of the program served from `trunk`
+    /// and returns their servings, in `decls` order (see
+    /// `ProgramServing::declare_subtitles`).
+    pub(crate) fn declare_subtitles_for_trunk(
+        &self,
+        trunk: &Trunk,
+        decls: &[hls_runtime::server::SubtitleRenditionDecl],
+    ) -> Option<Vec<SubtitleServing>> {
+        let serving = self
+            .programs
+            .read()
+            .values()
+            .find(|s| std::ptr::eq(std::sync::Arc::as_ptr(&s.trunk), trunk))
+            .cloned()?;
+        serving.declare_subtitles(decls)
     }
 
     pub(crate) fn audio_renditions(&self) -> &[hls_runtime::server::AudioRenditionDecl] {

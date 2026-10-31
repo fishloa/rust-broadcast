@@ -197,6 +197,10 @@ mpeg-ts           = { path = "../mpeg-ts", version = "0.6" }
 # `media-plane` alone cannot be named inside a pattern match (edition 2024
 # requires it be declared), hence the direct dependency.
 timed-metadata    = { path = "../timed-metadata", version = "0.7", default-features = false }
+# Teletext subtitle pages -> WebVTT cues (`source::split_subtitle`, issue
+# #1428): the PES data-field decoder and cue extractor behind the SUBTITLES
+# renditions, not re-implemented here.
+caption-convert   = { path = "../caption-convert", version = "0.3", default-features = false, features = ["std", "teletext"] }
 
 [features]
 # `tls` is default-on: `rtsps://` sources should work out of the box. It pulls

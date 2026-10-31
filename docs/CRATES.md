@@ -395,7 +395,7 @@ Converts between caption formats using the decoders already in the workspace rat
 - **Cargo description:** Convert CEA-608/708 and EBU Teletext captions to WebVTT, and WebVTT <-> SRT. DVB bitmap subtitles and TTML/IMSC conversion are documented gaps (see crate docs), never silently degraded.
 - **Version (in-tree):** 0.3.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`cc-data`](#cc-data), [`dvb-vbi`](#dvb-vbi), [`timed-metadata`](#timed-metadata)
-- **Used by (workspace):** none
+- **Used by (workspace):** [`multimux`](#multimux)
 - **Links:** [README](../caption-convert/README.md) · [CHANGELOG](../caption-convert/CHANGELOG.md) · [crates.io](https://crates.io/crates/caption-convert) · [docs.rs](https://docs.rs/caption-convert)
 
 ### Metadata and ad-insertion signalling
@@ -718,7 +718,7 @@ Ingest RTSP, RTP/UDP, TS over UDP or HTTP, SRT, HLS/DASH/Smooth pull, RTMP push 
 - **Standards:** Composes the live and container crates (RTSP, RTP, SRT, RTMP, HLS, DASH, Smooth, WHIP/WHEP)
 - **Cargo description:** Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP/file), multi-output (LL-HLS/DASH/LL-DASH/Smooth/TS-HLS/catch-up + SRT/RTMP/RTSP push) just-in-time repackaging HTTP origin (library: tokio + axum), with shared output auth and an external scheme plugin registry.
 - **Version (in-tree):** 0.13.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime), [`webrtc-runtime`](#webrtc-runtime)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`caption-convert`](#caption-convert), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime), [`webrtc-runtime`](#webrtc-runtime)
 - **Used by (workspace):** [`multimux-cli`](#multimux-cli)
 - **Links:** [README](../multimux/README.md) · [CHANGELOG](../multimux/CHANGELOG.md) · [docs + spec pointer](../multimux/docs/) · [crates.io](https://crates.io/crates/multimux) · [docs.rs](https://docs.rs/multimux)
 
@@ -1027,6 +1027,7 @@ flowchart BT
   mpeg_pes --> broadcast_common
   mpeg_ps --> mpeg_pes
   mpeg_ts --> broadcast_common
+  multimux --> caption_convert
   multimux --> dash_runtime
   multimux --> hls_runtime
   multimux --> rtmp_runtime

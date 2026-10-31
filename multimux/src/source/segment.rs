@@ -95,6 +95,7 @@ use transmux::ts_hls::StreamingTsHlsSegmenter;
 use transmux::{CaptionDetector, DetectedCaption};
 
 use super::split_audio::{self, AudioFollower, LEADER_DURATION_HISTORY, LeaderDurations};
+use super::split_subtitle::{self, SubtitleFollower};
 use crate::route::{RouteHandle, TsHlsIdrStatus};
 
 /// One closed segment, normalised across the two segmenter kinds
@@ -437,6 +438,9 @@ pub struct ProgramSegmenter {
     /// Separate audio renditions (issue #1428 slice 2b): one follower per
     /// mapped audio track, empty unless the route opts into split audio.
     followers: Vec<AudioFollower>,
+    /// WebVTT subtitle renditions built from teletext subtitle pages (issue
+    /// #1428): one follower per declared page.
+    subtitle_followers: Vec<SubtitleFollower>,
     /// Duration of each recent leader segment, for sizing gap placeholders.
     leader_durations: LeaderDurations,
     /// Per-track caption detectors (`None` for a track whose codec has no
@@ -759,7 +763,12 @@ impl ProgramSegmenter {
             target_duration_secs,
             part_target_ms,
         );
-        if !followers.is_empty() {
+        let subtitle_followers = if matches!(route_handle.container(), Container::Fmp4) {
+            split_subtitle::build_followers(route_handle, trunk, &tracks, target_duration_secs)
+        } else {
+            Vec::new()
+        };
+        if !followers.is_empty() || !subtitle_followers.is_empty() {
             seg.record_part_cuts();
         }
         Some(ProgramSegmenter {
@@ -796,6 +805,7 @@ impl ProgramSegmenter {
             idr_hold: VecDeque::new(),
             idr_hold_bytes: 0,
             followers,
+            subtitle_followers,
             leader_durations: LeaderDurations::new(),
             caption_detectors: HashMap::new(),
             captions_seen: BTreeSet::new(),
@@ -877,6 +887,20 @@ impl ProgramSegmenter {
 
         while let Some(item) = self.cursor.poll() {
             if let SampleCursorItem::Timed { track_id, sample } = item {
+                if self
+                    .subtitle_followers
+                    .iter()
+                    .any(|f| f.source_track_id == track_id)
+                {
+                    for follower in self
+                        .subtitle_followers
+                        .iter_mut()
+                        .filter(|f| f.source_track_id == track_id)
+                    {
+                        follower.push(&sample, &self.leader_durations);
+                    }
+                    continue;
+                }
                 self.observe_captions(trunk, track_id, &sample.data);
                 // Start-gate (Apple authoring 7.4 MUST: segments start on a
                 // sync/IDR picture, issue #1425): for a program whose track set
@@ -1284,7 +1308,14 @@ impl ProgramSegmenter {
                                 route_handle.target_duration_secs(),
                                 route_handle.part_target_ms(),
                             );
-                            if !self.followers.is_empty() {
+                            self.subtitle_followers.clear();
+                            self.subtitle_followers = split_subtitle::build_followers(
+                                route_handle,
+                                trunk,
+                                &new_tracks,
+                                route_handle.target_duration_secs(),
+                            );
+                            if !self.followers.is_empty() || !self.subtitle_followers.is_empty() {
                                 self.seg.record_part_cuts();
                             }
                             // Re-arm the start-gate for the rebuilt track set
@@ -1393,6 +1424,9 @@ impl ProgramSegmenter {
         for follower in &mut self.followers {
             follower.finish(&self.leader_durations);
         }
+        for follower in &mut self.subtitle_followers {
+            follower.finish(&self.leader_durations);
+        }
     }
 
     /// Retries [`Self::pending`] first (issue #1082 T7: this must happen on
@@ -1414,7 +1448,7 @@ impl ProgramSegmenter {
     }
 
     fn note_leader_segments(&mut self, segments: &[ReadySegment]) {
-        if self.followers.is_empty() {
+        if self.followers.is_empty() && self.subtitle_followers.is_empty() {
             return;
         }
         for segment in segments {
@@ -1427,6 +1461,9 @@ impl ProgramSegmenter {
     }
 
     fn feed_followers(&mut self, cuts: Vec<PartCutReady>) {
+        for follower in &mut self.subtitle_followers {
+            follower.on_part_cuts(&cuts, &self.leader_durations);
+        }
         if cuts.is_empty() {
             return;
         }
@@ -3143,6 +3180,7 @@ mod tests {
             idr_hold: VecDeque::new(),
             idr_hold_bytes: 0,
             followers: Vec::new(),
+            subtitle_followers: Vec::new(),
             leader_durations: LeaderDurations::new(),
             caption_detectors: HashMap::new(),
             captions_seen: BTreeSet::new(),

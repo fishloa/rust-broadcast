@@ -190,6 +190,7 @@ fn build_config(cli: Cli) -> Result<Config> {
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         }],
         ..Config::default()
     };

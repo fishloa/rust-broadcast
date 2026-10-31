@@ -2544,6 +2544,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-hls",
  "bytes",
+ "caption-convert",
  "container-probe",
  "dash-runtime",
  "dvb-conformance",
