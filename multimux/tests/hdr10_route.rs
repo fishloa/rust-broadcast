@@ -43,6 +43,49 @@ struct Source {
     samples: Vec<Sample>,
 }
 
+const NAL_LENGTH_PREFIX: usize = 4;
+const HEVC_NAL_TYPE_SHIFT: u8 = 1;
+const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
+
+fn strip_sei_nals(data: &[u8]) -> (Vec<u8>, usize) {
+    let mut out = Vec::with_capacity(data.len());
+    let mut removed = 0;
+    let mut at = 0;
+    while at + NAL_LENGTH_PREFIX <= data.len() {
+        let len = u32::from_be_bytes(data[at..at + NAL_LENGTH_PREFIX].try_into().unwrap()) as usize;
+        let end = at + NAL_LENGTH_PREFIX + len;
+        let nal_type = (data[at + NAL_LENGTH_PREFIX] >> HEVC_NAL_TYPE_SHIFT) & HEVC_NAL_TYPE_MASK;
+        if nal_type == transmux::hdr::HEVC_PREFIX_SEI_NUT {
+            removed += 1;
+        } else {
+            out.extend_from_slice(&data[at..end]);
+        }
+        at = end;
+    }
+    (out, removed)
+}
+
+fn without_in_band_sei(mut sources: Vec<Source>) -> Vec<Source> {
+    for src in &mut sources {
+        let transmux::CodecConfig::Hevc { config, .. } = &mut src.spec.config else {
+            continue;
+        };
+        assert!(src.spec.hdr.is_some());
+        config
+            .config
+            .arrays
+            .retain(|a| a.nal_unit_type != transmux::hdr::HEVC_PREFIX_SEI_NUT);
+        let mut removed = 0;
+        for sample in &mut src.samples {
+            let (data, n) = strip_sei_nals(&sample.data);
+            removed += n;
+            sample.data = data.into();
+        }
+        assert!(removed > 0, "the fixture carries in-band SEI to strip");
+    }
+    sources
+}
+
 fn load(fixture: &str) -> Vec<Source> {
     let bytes = test_fixtures::require_bytes(fixture, "hdr10_route").expect("fixture");
     let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
@@ -75,7 +118,10 @@ fn new_trunk() -> Arc<Trunk> {
 }
 
 fn route_app(fixture: &str) -> Router {
-    let sources = load(fixture);
+    route_app_from(load(fixture))
+}
+
+fn route_app_from(sources: Vec<Source>) -> Router {
     let trunk = new_trunk();
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
@@ -271,7 +317,7 @@ async fn ffprobe_reads_mastering_display_and_content_light_level() {
         );
         return;
     }
-    let app = route_app(HDR_FIXTURE);
+    let app = route_app_from(without_in_band_sei(load(HDR_FIXTURE)));
     let dir = scratch("hdr10-ffprobe");
     dump_route(&app, &dir).await;
     let media = std::fs::read_to_string(dir.join("media.m3u8")).unwrap();
