@@ -158,7 +158,7 @@ pub struct AvcSpsInfo {
 /// (as returned by [`iter_annexb_nals`](crate::iter_annexb_nals)).
 /// The NAL header byte is skipped; decoding starts at the next byte.
 pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
-    decode_avc_sps_inner(sps_bytes).map(|(info, _, _, _)| info)
+    decode_avc_sps_inner(sps_bytes).map(|(info, _, _, _, _)| info)
 }
 
 /// The SPS fields a slice-header parser needs (ITU-T H.264 §7.3.3 reads
@@ -200,14 +200,63 @@ pub struct AvcPicTimingLayout {
     pub delay_bits: Option<(u8, u8)>,
 }
 
+/// The reorder facts of an H.264 SPS: `max_num_reorder_frames` and
+/// `max_dec_frame_buffering` from the VUI `bitstream_restriction` (ITU-T H.264
+/// §E.1.1 / §E.2.1), plus the profile fields §E.2.1 and §A.2.1 condition the
+/// inference on. See [`AvcReorderDepth::depth`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AvcReorderDepth {
+    /// `profile_idc`.
+    pub profile_idc: u8,
+    /// The SPS constraint-flags byte (`constraint_set0..5` in `[7:2]`).
+    pub constraint_flags: u8,
+    /// `max_num_reorder_frames`, `None` unless `bitstream_restriction_flag` is 1.
+    pub max_num_reorder_frames: Option<u32>,
+    /// `max_dec_frame_buffering`, `None` unless `bitstream_restriction_flag` is 1.
+    pub max_dec_frame_buffering: Option<u32>,
+}
+
+/// `profile_idc` of the Baseline profile, which carries only I and P slices
+/// (ITU-T H.264 §A.2.1).
+const PROFILE_BASELINE: u8 = 66;
+/// `profile_idc` values whose `constraint_set3_flag` marks an intra-only
+/// profile and infers `max_num_reorder_frames` 0 (ITU-T H.264 §E.2.1).
+const INTRA_PROFILES: [u8; 6] = [44, 86, 100, 110, 122, 244];
+/// `constraint_set3_flag` within the constraint-flags byte (MSB-first
+/// `constraint_set0_flag`, ITU-T H.264 §7.3.2.1.1).
+const CONSTRAINT_SET3_MASK: u8 = 0x10;
+
+impl AvcReorderDepth {
+    /// The reorder depth the SPS itself fixes, in frames: the declared
+    /// `max_num_reorder_frames`, else 0 where the standard infers or forces it
+    /// (§E.2.1 for the intra profiles with `constraint_set3_flag`, §A.2.1 for
+    /// Baseline, which has no B slices). `None` means nothing bounds it short of
+    /// `MaxDpbFrames`, so the caller must observe the stream.
+    pub fn depth(&self) -> Option<u32> {
+        if let Some(n) = self.max_num_reorder_frames {
+            return Some(n);
+        }
+        let intra = INTRA_PROFILES.contains(&self.profile_idc)
+            && self.constraint_flags & CONSTRAINT_SET3_MASK != 0;
+        (intra || self.profile_idc == PROFILE_BASELINE).then_some(0)
+    }
+}
+
+/// Decode the [`AvcReorderDepth`] of an H.264 SPS NAL unit (1-byte NAL header
+/// included).
+pub fn decode_avc_reorder_depth(sps_bytes: &[u8]) -> Result<AvcReorderDepth> {
+    decode_avc_sps_inner(sps_bytes).map(|(_, _, _, _, r)| r)
+}
+
 /// Decode only the VUI timing facts ([`AvcVuiTiming`]) from an H.264 SPS NAL
 /// unit (1-byte NAL header included).
 pub fn decode_avc_vui_timing(sps_bytes: &[u8]) -> Result<Option<AvcVuiTiming>> {
-    decode_avc_sps_inner(sps_bytes).map(|(_, _, _, t)| t)
+    decode_avc_sps_inner(sps_bytes).map(|(_, _, _, t, _)| t)
 }
 /// H.264 SPS NAL unit (1-byte NAL header included).
 pub fn decode_avc_slice_sps(sps_bytes: &[u8]) -> Result<AvcSliceSps> {
-    decode_avc_sps_inner(sps_bytes).map(|(_, s, _, _)| s)
+    decode_avc_sps_inner(sps_bytes).map(|(_, s, _, _, _)| s)
 }
 
 /// The display-relevant facts of an SPS that [`AvcSpsInfo`]/[`HevcSpsInfo`]
@@ -242,7 +291,7 @@ pub(crate) struct DisplayFacts {
 /// Decode the [`DisplayFacts`] of an H.264 SPS NAL unit (1-byte NAL header
 /// included).
 pub(crate) fn decode_avc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts> {
-    decode_avc_sps_inner(sps_bytes).map(|(_, _, d, _)| d)
+    decode_avc_sps_inner(sps_bytes).map(|(_, _, d, _, _)| d)
 }
 
 /// Decode the [`DisplayFacts`] of an H.265 SPS NAL unit (2-byte NAL header
@@ -253,7 +302,13 @@ pub(crate) fn decode_hevc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts
 
 fn decode_avc_sps_inner(
     sps_bytes: &[u8],
-) -> Result<(AvcSpsInfo, AvcSliceSps, DisplayFacts, Option<AvcVuiTiming>)> {
+) -> Result<(
+    AvcSpsInfo,
+    AvcSliceSps,
+    DisplayFacts,
+    Option<AvcVuiTiming>,
+    AvcReorderDepth,
+)> {
     if sps_bytes.len() < 4 {
         return Err(Error::BufferTooShort {
             need: 4,
@@ -489,6 +544,12 @@ fn decode_avc_sps_inner(
         },
         display,
         avc_vui_timing,
+        AvcReorderDepth {
+            profile_idc,
+            constraint_flags,
+            max_num_reorder_frames: vui.restriction.map(|(reorder, _)| reorder),
+            max_dec_frame_buffering: vui.restriction.map(|(_, buffering)| buffering),
+        },
     ))
 }
 
@@ -509,6 +570,7 @@ struct AvcVuiFacts {
     /// `fixed_frame_rate_flag` from VUI timing_info (inferred 0 when absent).
     fixed_frame_rate: bool,
     pic_timing: Option<AvcPicTimingLayout>,
+    restriction: Option<(u32, u32)>,
 }
 
 /// Walk the H.264 VUI syntax (ITU-T H.264 §E.1.1) in order through
@@ -679,12 +741,24 @@ fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::err
         // CpbDpbDelaysPresentFlag (§E.2.1) is 1 when either HRD is present.
         // When both are, the spec does not say which one sizes the SEI fields;
         // read pic_struct only if they agree.
-        let delay_bits = match (nal_hrd, vcl_hrd) {
-            (Some(a), Some(b)) if a != b => return Ok(()),
-            (Some(a), _) | (None, Some(a)) => Some(a),
-            (None, None) => None,
+        facts.pic_timing = match (nal_hrd, vcl_hrd) {
+            (Some(a), Some(b)) if a != b => None,
+            (Some(a), _) | (None, Some(a)) => Some(AvcPicTimingLayout {
+                delay_bits: Some(a),
+            }),
+            (None, None) => Some(AvcPicTimingLayout { delay_bits: None }),
         };
-        facts.pic_timing = Some(AvcPicTimingLayout { delay_bits });
+    }
+    if r.read_flag("bitstream_restriction_flag")? {
+        let _ = r.read_flag("motion_vectors_over_pic_boundaries_flag")?;
+        let _ = r.read_ue("max_bytes_per_pic_denom")?;
+        let _ = r.read_ue("max_bits_per_mb_denom")?;
+        let _ = r.read_ue("log2_max_mv_length_horizontal")?;
+        let _ = r.read_ue("log2_max_mv_length_vertical")?;
+        let reorder = r.read_ue("max_num_reorder_frames")?;
+        let buffering = r.read_ue("max_dec_frame_buffering")?;
+        let clamp = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        facts.restriction = Some((clamp(reorder), clamp(buffering)));
     }
     Ok(())
 }
@@ -1935,6 +2009,48 @@ pub(crate) fn decode_ptl(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const X264_PYRAMID_SPS: [u8; 25] = [
+        0x67, 0x64, 0x00, 0x1e, 0xac, 0xd9, 0x40, 0xa0, 0x2f, 0xf9, 0x61, 0x00, 0x00, 0x03, 0x00,
+        0x01, 0x00, 0x00, 0x03, 0x00, 0x32, 0x0f, 0x16, 0x2d, 0x96,
+    ];
+    const X264_NO_PYRAMID_SPS: [u8; 25] = [
+        0x67, 0x64, 0x00, 0x1e, 0xac, 0xd1, 0x00, 0xa0, 0x2f, 0xf9, 0x61, 0x00, 0x00, 0x03, 0x00,
+        0x01, 0x00, 0x00, 0x03, 0x00, 0x32, 0x0f, 0x16, 0x2d, 0x12,
+    ];
+    const X264_NO_B_SPS: [u8; 25] = [
+        0x67, 0x64, 0x00, 0x1e, 0xac, 0xb2, 0x01, 0x40, 0x5f, 0xf2, 0xc2, 0x00, 0x00, 0x03, 0x00,
+        0x02, 0x00, 0x00, 0x03, 0x00, 0x64, 0x1e, 0x2c, 0x5c, 0x90,
+    ];
+
+    #[test]
+    fn reorder_depth_is_read_from_real_x264_sps() {
+        let depth = |sps: &[u8]| decode_avc_reorder_depth(sps).unwrap();
+        assert_eq!(depth(&X264_PYRAMID_SPS).max_num_reorder_frames, Some(2));
+        assert_eq!(depth(&X264_NO_PYRAMID_SPS).max_num_reorder_frames, Some(1));
+        assert_eq!(depth(&X264_NO_B_SPS).max_num_reorder_frames, Some(0));
+        assert_eq!(depth(&X264_PYRAMID_SPS).depth(), Some(2));
+        assert!(depth(&X264_PYRAMID_SPS).max_dec_frame_buffering >= Some(2));
+    }
+
+    #[test]
+    fn reorder_depth_inference_follows_the_profile() {
+        let none = |profile_idc, constraint_flags| AvcReorderDepth {
+            profile_idc,
+            constraint_flags,
+            max_num_reorder_frames: None,
+            max_dec_frame_buffering: None,
+        };
+        assert_eq!(none(66, 0x00).depth(), Some(0));
+        assert_eq!(none(100, 0x10).depth(), Some(0));
+        assert_eq!(none(100, 0x00).depth(), None);
+        assert_eq!(none(77, 0x10).depth(), None);
+        let declared = AvcReorderDepth {
+            max_num_reorder_frames: Some(3),
+            ..none(100, 0x10)
+        };
+        assert_eq!(declared.depth(), Some(3));
+    }
 
     #[test]
     fn rfc6381_avc1_baseline() {

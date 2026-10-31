@@ -326,7 +326,7 @@ fn a_zero_backoff_entry_is_floored_at_one_millisecond() {
 fn a_connection_that_played_briefly_waits_out_the_minimum_reconnect_interval() {
     let mut host = connected(BASE_URL, quiet_config(), Server::new(&fixture().sdp));
     let frames = fixture().frames();
-    host.deliver_all(&frames[..30]);
+    host.deliver_all(&frames[..60]);
     assert!(!samples_of(&host.events()).is_empty());
     let played_for = 100 * MS;
     host.now = played_for;

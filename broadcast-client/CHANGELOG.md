@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RTSP H.264 video samples carry a monotonic DTS no later than the PTS when the stream has B-frames (issue #1611; the derivation lives in `transmux::RtpStreamDepacketiser`). They used to carry `dts == pts` in decoding order, so a player releasing frames up to each sample's DTS output them out of order and estimated the frame rate from DTS steps as 6-8 fps instead of 25. Streams without B-frames are unchanged.
 - TS-over-HTTP: honour `Retry-After` on 429/503 responses (delta-seconds and HTTP-date, capped at 60 s) via the shared helper, matching HLS and DASH.
 
 ### Changed

@@ -11,7 +11,7 @@ use support::rtsp_host::{
 const REDIRECT_TARGET: &str = "rtsp://other.test:8554/live2/";
 const TLS_TARGET: &str = "rtsps://other.test/live2/";
 const HTTP_TARGET: &str = "http://other.test/live2/";
-const SOME_FRAMES: usize = 30;
+const SOME_FRAMES: usize = 60;
 const REALM: &str = "cam";
 const USER: &str = "admin";
 const PASSWORD: &str = "s3cret";

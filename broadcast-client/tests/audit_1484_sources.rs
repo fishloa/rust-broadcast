@@ -466,7 +466,7 @@ fn rtsp_wake_only_host_sees_stall_notice_and_stall_reconnect() {
     let mut host = RtspHost::new(BASE_URL, Config::default(), server);
     host.connect();
     host.advance_to(RTSP_SEC);
-    host.deliver_all(&fixture.frames()[..30]);
+    host.deliver_all(&fixture.frames()[..60]);
     host.events();
     let connects_before = rtsp_connects(&host.actions).len();
     let mut stalled = false;
