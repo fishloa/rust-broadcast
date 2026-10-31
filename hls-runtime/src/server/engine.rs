@@ -409,6 +409,9 @@ struct WindowSegment {
     /// segments (e.g. multimux's DVR archive, issue #900), without that
     /// caller needing a second cursor of its own just to learn it.
     start_ns: u64,
+    /// Mean video frame rate of this segment in millihertz, measured when the
+    /// stream's SPS carries no VUI timing; `None` when not measurable.
+    video_millihertz: Option<u32>,
 }
 
 /// One closed segment's identity/metadata as tracked by this origin's
@@ -507,10 +510,6 @@ struct Window {
     /// window eviction — the denominator of an I-frame variant's
     /// `AVERAGE-BANDWIDTH`.
     iframe_total_duration_nanos: u128,
-    /// Highest per-segment mean video frame rate (millihertz) over every
-    /// drained segment, surviving window eviction: the measured frame rate
-    /// used when the stream's SPS carries no VUI timing.
-    video_millihertz: u32,
     /// Cumulative count of discontinuities that have rolled off the front of
     /// the window — RFC 8216 §4.3.3.3's `#EXT-X-DISCONTINUITY-SEQUENCE`.
     /// Incremented exactly once per **evicted** entry whose
@@ -536,7 +535,6 @@ impl Window {
             iframe_peak_bandwidth_bps: 0,
             iframe_total_bytes: 0,
             iframe_total_duration_nanos: 0,
-            video_millihertz: 0,
             discontinuity_sequence: 0,
             gap_pending: false,
         }
@@ -548,8 +546,11 @@ impl Window {
         self.gap_pending = true;
     }
 
-    fn note_video_rate(&mut self, millihertz: u32) {
-        self.video_millihertz = self.video_millihertz.max(millihertz);
+    fn max_video_millihertz(&self) -> Option<u32> {
+        self.segments
+            .iter()
+            .filter_map(|segment| segment.video_millihertz)
+            .max()
     }
 
     /// Drop every window entry (they roll off the front, so their
@@ -573,7 +574,13 @@ impl Window {
     /// lost segments, starts a new run: the old entries are cleared and the
     /// entry is marked discontinuous (RFC 8216 §4.3.4.3) rather than being
     /// appended under a wrong implied number.
-    fn push(&mut self, entry: SegmentEntry, init_gen: Generation, iframe_len: Option<u64>) {
+    fn push(
+        &mut self,
+        entry: SegmentEntry,
+        init_gen: Generation,
+        iframe_len: Option<u64>,
+        video_millihertz: Option<u32>,
+    ) {
         let follows = self
             .segments
             .back()
@@ -642,6 +649,7 @@ impl Window {
             discontinuous,
             start_ns: entry.timeline_position.as_nanos(),
             iframe_len,
+            video_millihertz,
         });
     }
 
@@ -739,6 +747,8 @@ const DV_BRAND_HDR10: &str = "db1p";
 /// Brand for an HLG-compatible base layer (id 4), same table.
 const DV_BRAND_HLG: &str = "db4h";
 const MILLIHERTZ_PER_HZ: u128 = 1000;
+
+const MIN_SAMPLES_FOR_RATE: u64 = 2;
 const SUPPLEMENTAL_CODECS_ATTR: &str = "SUPPLEMENTAL-CODECS";
 
 /// How a Dolby Vision video track is announced in the multivariant playlist.
@@ -869,7 +879,7 @@ fn first_moof(segment: &[u8]) -> Option<(usize, transmux::movie_fragment::MovieF
 /// Mean video frame rate of one segment in millihertz, rounded to three
 /// decimal places (RFC 8216bis section 4.4.6.2): `samples * timescale / ticks`.
 fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: u32) -> Option<u32> {
-    if samples == 0 || ticks == 0 || timescale == 0 {
+    if samples < MIN_SAMPLES_FOR_RATE || ticks == 0 || timescale == 0 {
         return None;
     }
     let ticks = u128::from(ticks);
@@ -2899,10 +2909,7 @@ impl HlsOrigin {
                         }
                     }
                     let seg_duration = entry.duration;
-                    window.push(entry, init_gen, iframe_len);
-                    if let Some(millihertz) = video_rate {
-                        window.note_video_rate(millihertz);
-                    }
+                    window.push(entry, init_gen, iframe_len, video_rate);
                     if let Some(frozen) = *locked(&self.frozen_target_duration_secs)
                         && seg_duration.as_secs_f64().round() > frozen.round()
                     {
@@ -2918,7 +2925,7 @@ impl HlsOrigin {
 
     /// `FRAME-RATE` of the video variants: the SPS VUI timing rate when the
     /// stream signals one, else the highest per-segment mean rate measured over
-    /// the drained segments (fMP4 `trun` durations, or MPEG-TS DTS deltas). For
+    /// the segments currently in the playlist window (fMP4 `trun` durations, or MPEG-TS DTS deltas). For
     /// a constant-rate stream that mean is the rate; for a variable-rate one it
     /// is the maximum, as the attribute requires, and a single long gap lowers
     /// only its own segment. Apple HLS
@@ -2929,10 +2936,7 @@ impl HlsOrigin {
         if let Some(signalled) = *locked(&self.frame_rate) {
             return Some(signalled);
         }
-        let millihertz = locked(&self.window).video_millihertz;
-        if millihertz == 0 {
-            return None;
-        }
+        let millihertz = locked(&self.window).max_video_millihertz()?;
         Some(FrameRate::from_millihertz(millihertz))
     }
 

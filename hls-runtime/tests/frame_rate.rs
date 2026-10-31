@@ -326,3 +326,131 @@ fn mediastreamvalidator_reports_no_missing_frame_rate_on_the_measured_ts_variant
     );
     assert!(!text.contains("FRAME-RATE"), "{text}");
 }
+
+const NORMAL_SAMPLES: usize = 30;
+const NORMAL_TICKS: u32 = 3000;
+const GLITCH_TICKS: u32 = 60;
+const SINGLE_SAMPLE_TICKS: u32 = 6000;
+const GLITCH_MILLIHERTZ: u32 = 1_500_000;
+
+fn video_piece(
+    tracks: &[transmux::Track],
+    samples: usize,
+    ticks: u32,
+) -> (Vec<TrackSpec>, Vec<(Vec<u8>, f64)>) {
+    let track = &tracks[0];
+    let specs = vec![track.spec.clone()];
+    let mut segmenter = transmux::ts_hls::StreamingTsHlsSegmenter::new(
+        specs.clone(),
+        SEGMENT_TARGET_SECS,
+        usize::MAX,
+    )
+    .expect("segmenter");
+    for sample in track.samples.iter().take(samples) {
+        let mut sample = sample.clone();
+        sample.duration = Some(ticks);
+        segmenter.push(track.spec.track_id, sample).expect("push");
+    }
+    segmenter.finish().expect("finish");
+    let cut: Vec<_> = segmenter
+        .take_ready()
+        .into_iter()
+        .map(|segment| (segment.bytes, segment.duration))
+        .collect();
+    (specs, cut)
+}
+
+struct Feed {
+    origin: HlsOrigin,
+    writer: media_plane::trunk::SegmentWriter,
+    next: u32,
+}
+
+impl Feed {
+    fn new(specs: &[TrackSpec]) -> Feed {
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(64), nz(8), nz(64)));
+        let writer = trunk.segment_writer().expect("segment writer");
+        let origin = HlsOrigin::builder(trunk)
+            .container(Container::MpegTs)
+            .target_duration_secs(2.0)
+            .window_segments(nz(3))
+            .instance(7)
+            .declared_bandwidth_bps(5_000_000)
+            .build()
+            .expect("build");
+        origin.set_track_specs(specs).expect("specs");
+        Feed {
+            origin,
+            writer,
+            next: 1,
+        }
+    }
+
+    fn publish(&mut self, piece: &[(Vec<u8>, f64)]) {
+        for (bytes, duration) in piece {
+            self.writer
+                .publish_segment(SegmentEntry::new(
+                    Bytes::from(bytes.clone()),
+                    SegmentSeq::new(self.next),
+                    Duration::from_secs_f64(*duration),
+                    broadcast_common::Timestamp::from_nanos(u64::from(self.next) * NANOS_PER_SEC),
+                    transmux::SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .expect("monotonic");
+            self.next += 1;
+        }
+    }
+
+    fn rate(&self) -> Option<broadcast_hls::FrameRate> {
+        ts_master_frame_rate(&self.origin)
+    }
+}
+
+#[test]
+fn glitch_segment_is_reported_only_while_it_is_in_the_window() {
+    let Some(tracks) = ts_fixture_tracks(IPHONE_30FPS, true) else {
+        return;
+    };
+    let (specs, normal) = video_piece(&tracks, NORMAL_SAMPLES, NORMAL_TICKS);
+    let (_, glitch) = video_piece(&tracks, NORMAL_SAMPLES, GLITCH_TICKS);
+    assert_eq!(normal.len(), 1);
+    assert_eq!(glitch.len(), 1);
+    let mut feed = Feed::new(&specs);
+    feed.publish(&normal);
+    feed.publish(&glitch);
+    feed.publish(&normal);
+    assert_eq!(
+        feed.rate(),
+        Some(broadcast_hls::FrameRate::from_millihertz(GLITCH_MILLIHERTZ))
+    );
+    feed.publish(&normal);
+    assert_eq!(
+        feed.rate(),
+        Some(broadcast_hls::FrameRate::from_millihertz(GLITCH_MILLIHERTZ))
+    );
+    feed.publish(&normal);
+    assert_eq!(
+        feed.rate(),
+        Some(broadcast_hls::FrameRate::from_millihertz(30_000))
+    );
+}
+
+#[test]
+fn single_sample_segment_does_not_set_the_frame_rate() {
+    let Some(tracks) = ts_fixture_tracks(IPHONE_30FPS, true) else {
+        return;
+    };
+    let (specs, normal) = video_piece(&tracks, NORMAL_SAMPLES, NORMAL_TICKS);
+    let (_, single) = video_piece(&tracks, 1, SINGLE_SAMPLE_TICKS);
+    assert_eq!(single.len(), 1);
+    let mut feed = Feed::new(&specs);
+    feed.publish(&single);
+    assert_eq!(feed.rate(), None);
+    feed.publish(&normal);
+    assert_eq!(
+        feed.rate(),
+        Some(broadcast_hls::FrameRate::from_millihertz(30_000))
+    );
+}
