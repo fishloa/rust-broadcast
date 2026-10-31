@@ -480,6 +480,7 @@ dependencies = [
  "jiff",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -1186,6 +1187,7 @@ dependencies = [
  "num_enum",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
  "yoke",
 ]
@@ -3624,6 +3626,7 @@ dependencies = [
  "sdp-types",
  "serde",
  "subtle",
+ "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",

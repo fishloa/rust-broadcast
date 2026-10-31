@@ -25,6 +25,7 @@ yoke       = { workspace = true, optional = true, features = ["derive"] }
 [dev-dependencies]
 serde_json = { workspace = true }
 criterion  = { workspace = true, features = ["html_reports"] }
+test-fixtures = { path = "../test-fixtures" }
 
 [[bench]]
 name    = "bbframe_hot_paths"

@@ -12,6 +12,13 @@ use std::collections::BTreeSet;
 // ── tiny TOML parser ─────────────────────────────────────────────────────────
 
 /// Parse the spec_tables TOML format, returning `(value, variant, spec)`.
+fn spec_toml(rel: &str) -> Option<String> {
+    test_fixtures::spec_string(
+        &format!("dvb/dvb-bbframe/enums/{rel}"),
+        "dvb-bbframe spec_drift",
+    )
+}
+
 fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
     let mut results = Vec::new();
     let mut cur_value: Option<u8> = None;
@@ -75,7 +82,10 @@ fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
 
 #[test]
 fn ts_gs_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_302_755/ts_gs.toml");
+    let Some(toml) = spec_toml("en_302_755/ts_gs.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -111,7 +121,10 @@ fn ts_gs_toml_matches_enum() {
 
 #[test]
 fn bufs_unit_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_302_755/bufs_unit.toml");
+    let Some(toml) = spec_toml("en_302_755/bufs_unit.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries

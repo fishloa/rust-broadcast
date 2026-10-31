@@ -2,7 +2,7 @@
 //!
 //! When RTSP is carried over TCP, media (RTP) and control (RTCP) packets may be
 //! interleaved with RTSP messages on the same connection, each wrapped in a
-//! 4-byte framing prefix, per [`docs/interleaved-framing.md`](../docs/interleaved-framing.md):
+//! 4-byte framing prefix, per `docs/interleaved-framing.md`:
 //!
 //! ```text
 //! | '$' (0x24) | channel id | length (u16 big-endian) | payload (length bytes) |

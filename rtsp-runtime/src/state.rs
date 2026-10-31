@@ -1,7 +1,7 @@
 //! RTSP session state machine — RFC 2326 Appendix A.
 //!
 //! Implements the client (§A.1) and server (§A.2) transition tables exactly as
-//! transcribed in [`docs/state-machines.md`](../docs/state-machines.md). State
+//! transcribed in `docs/state-machines.md`. State
 //! is tracked per session object (stream URL + session id); this module models
 //! a single object's state.
 //!
