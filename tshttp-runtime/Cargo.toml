@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
-transmux        = { path = "../transmux", version = "0.27", default-features = false }
+transmux        = { path = "../transmux", version = "0.28", default-features = false }
 serde           = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [dev-dependencies]

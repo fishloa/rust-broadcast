@@ -1,6 +1,6 @@
 [package]
 name         = "timed-metadata"
-version      = "0.7.0"
+version      = "0.8.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -21,7 +21,7 @@ broadcast-common    = { path = "../broadcast-common",    version = "10.0", defau
 # The shared HLS attribute-list tokenizer/renderer (issue #1140 T12):
 # `daterange.rs` used to carry its own copy of the quoted-comma splitter and
 # hand-format `,NAME="VALUE"` with no validation of interpolated content.
-broadcast-hls = { path = "../broadcast-hls", version = "0.4", default-features = false }
+broadcast-hls = { path = "../broadcast-hls", version = "0.5", default-features = false }
 cc-data       = { path = "../cc-data",       version = "0.7", default-features = false, optional = true }
 dvb-vbi       = { path = "../dvb-vbi",       version = "0.5", default-features = false, optional = true }
 thiserror     = { version = "2", default-features = false }

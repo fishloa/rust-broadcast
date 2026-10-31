@@ -18,16 +18,16 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common  = { path = "../broadcast-common", version = "10.0", default-features = false }
-broadcast-auth     = { path = "../broadcast-auth", version = "0.5" }
-transmux           = { path = "../transmux", version = "0.27", default-features = false }
+broadcast-auth     = { path = "../broadcast-auth", version = "0.5.1" }
+transmux           = { path = "../transmux", version = "0.28", default-features = false }
 dvb-si             = { path = "../dvb-si", version = "12.0", default-features = false, features = ["ts"] }
 mpeg-ts            = { path = "../mpeg-ts", version = "0.6", default-features = false }
 buffering-runtime  = { path = "../buffering-runtime", version = "0.1", default-features = false }
 tshttp-runtime     = { path = "../tshttp-runtime", version = "0.1", default-features = false }
-hls-runtime        = { path = "../hls-runtime", version = "0.9" }
+hls-runtime        = { path = "../hls-runtime", version = "0.10" }
 dash-runtime       = { path = "../dash-runtime", version = "0.1" }
-broadcast-hls      = { path = "../broadcast-hls", version = "0.4" }
-rtsp-runtime       = { path = "../rtsp-runtime", version = "0.8", default-features = false }
+broadcast-hls      = { path = "../broadcast-hls", version = "0.5" }
+rtsp-runtime       = { path = "../rtsp-runtime", version = "0.8.1", default-features = false }
 sdp-types          = { workspace = true }
 url                = "2"
 percent-encoding   = "2"
@@ -41,9 +41,9 @@ serde              = { version = "1", default-features = false, optional = true,
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
 buffering-runtime = { path = "../buffering-runtime", version = "0.1" }
-transmux = { path = "../transmux", version = "0.27" }
-broadcast-auth = { path = "../broadcast-auth", version = "0.5" }
-rtsp-runtime = { path = "../rtsp-runtime", version = "0.8", default-features = false }
+transmux = { path = "../transmux", version = "0.28" }
+broadcast-auth = { path = "../broadcast-auth", version = "0.5.1" }
+rtsp-runtime = { path = "../rtsp-runtime", version = "0.8.1", default-features = false }
 sdp-types = { workspace = true }
 rtsp-types = "0.1"
 url = "2"

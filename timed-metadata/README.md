@@ -11,7 +11,7 @@ independently versioned.
 
 ```toml
 [dependencies]
-timed-metadata = "0.7"
+timed-metadata = "0.8"
 ```
 
 ## What it does / what it does not
