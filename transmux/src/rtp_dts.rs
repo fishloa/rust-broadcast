@@ -46,6 +46,18 @@
 //!   spec's own inference (`MaxDpbFrames`, up to 16) is deliberately not used,
 //!   because it would hold 16 frames for a stream that has no reorder.
 //!
+//! # Field-coded video
+//!
+//! `max_num_reorder_frames` counts frames, complementary field pairs and
+//! non-paired fields (H.264 §E.2.1,
+//! `private/specs-verified/mpeg/transmux/codec/h264-vui-bitstream-restriction.md`),
+//! while each coded field of a PAFF stream is its own access unit with its own
+//! RTP timestamp. This derivation counts access units, so a declared `N`
+//! understates the depth of field-coded content: the first violation raises
+//! [`crate::rtp_stream::RtpLossEvent::ReorderDepthExceeded`], `N` grows, and
+//! until it has grown enough some samples carry `DTS > PTS`. The `DTS` stays
+//! strictly increasing throughout. Field pairs are not merged.
+//!
 //! # Failure handling
 //!
 //! A frame whose presentation time is earlier than a decode timestamp already
@@ -408,5 +420,22 @@ mod tests {
         assert!(exceeded.is_empty());
         assert_invariants(&out);
         assert_eq!(out[0].dts, Some(1_000_000 - 2 * D));
+    }
+
+    #[test]
+    fn field_coded_stream_understates_depth_but_keeps_dts_strictly_increasing() {
+        let frame_order = [0i64, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11];
+        let wire: Vec<i64> = frame_order
+            .iter()
+            .flat_map(|f| [f * D, f * D + D / 2])
+            .collect();
+        let (out, exceeded) = run(Some(1), &wire, true);
+        assert_eq!(out.len(), wire.len());
+        assert!(!exceeded.is_empty(), "declared frame depth 1 is too small");
+        assert!(exceeded.iter().all(|e| e.depth >= 2));
+        for w in out.windows(2) {
+            assert!(w[0].dts < w[1].dts);
+        }
+        assert!(out.iter().any(|s| s.dts > s.pts));
     }
 }

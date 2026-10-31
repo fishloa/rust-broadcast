@@ -890,7 +890,9 @@ impl RtspSource {
         while let Some(event) = depa.poll_loss_event() {
             if matches!(
                 event,
-                RtpLossEvent::SequenceGap { .. } | RtpLossEvent::DamagedAccessUnit { .. }
+                RtpLossEvent::SequenceGap { .. }
+                    | RtpLossEvent::DamagedAccessUnit { .. }
+                    | RtpLossEvent::DroppedAccessUnit { .. }
             ) {
                 self.loss_events = self.loss_events.saturating_add(1);
             }

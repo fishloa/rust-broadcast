@@ -332,6 +332,17 @@ pub enum RtpLossEvent {
         /// The `dts` it was given.
         dts: i64,
     },
+    /// A fully reassembled access unit was discarded without being emitted:
+    /// the reorder window overflowed [`MAX_REORDER_WINDOW`] AUs whose duration
+    /// could not be resolved, or a sequence resync found held AUs for which no
+    /// duration is known. One event per discarded AU, oldest first.
+    DroppedAccessUnit {
+        /// The track this occurred on.
+        track_id: TrackId,
+        /// The discarded AU's unwrapped presentation timestamp, in the track's
+        /// clock (the same unit as [`crate::ir::Sample::pts`]).
+        pts: i64,
+    },
 }
 
 // `RtpLossEvent` is a data-carrying ADT (each variant is a distinct
@@ -1163,8 +1174,11 @@ impl RtpStreamDepacketiser {
     /// missing a fragment.
     ///
     /// A **resync** (RFC 3550 §A.1: the source's sequence numbering moved,
-    /// e.g. an RTSP seek or a restart that kept its SSRC) drops the
-    /// in-progress AU and re-establishes the timestamp origin, because the
+    /// e.g. an RTSP seek or a restart that kept its SSRC) first emits every
+    /// complete AU the reorder window still holds (those whose duration cannot
+    /// be resolved are reported as [`RtpLossEvent::DroppedAccessUnit`]), then
+    /// drops the in-progress AU and re-establishes the timestamp origin and
+    /// the reorder state, because the
     /// RTP timestamp clock is unrelated across the seam (§5.1 — the origin
     /// is random per source instance). No `SequenceGap` is raised: nothing
     /// was lost, the sender simply renumbered.
@@ -1192,13 +1206,25 @@ impl RtpStreamDepacketiser {
             // continuous timeline instead of inheriting a delta computed
             // across the discontinuity (`unwrap_ts` cannot know the two
             // runs' clocks are unrelated — RFC 3550 §5.1).
+            let mut held = Vec::new();
+            Self::drain_pending(st, loss_events, track_id, &mut held);
+            for p in st.pending.drain(..) {
+                loss_events.push_back(RtpLossEvent::DroppedAccessUnit {
+                    track_id,
+                    pts: to_ticks(p.unwrapped_ts),
+                });
+            }
             st.cur_pkts.clear();
             st.cur_bytes = 0;
             st.cur_ts = None;
             st.last_unwrapped = None;
             st.first_unwrapped = None;
-            st.pending.clear();
-            let mut flushed = derive_dts(st, loss_events, track_id, Vec::new(), true);
+            st.reordered = false;
+            st.seen_pts.clear();
+            st.next_seq = 0;
+            st.au_window = 0;
+            st.min_positive_step = None;
+            let mut flushed = derive_dts(st, loss_events, track_id, held, true);
             for pkt in adm.released {
                 Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
             }
@@ -1343,8 +1369,18 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
+        Self::drain_pending(st, loss_events, track_id, &mut out);
+        Ok(derive_dts(st, loss_events, track_id, out, true))
+    }
+
+    fn drain_pending(
+        st: &mut TrackState,
+        loss_events: &mut VecDeque<RtpLossEvent>,
+        track_id: TrackId,
+        out: &mut Vec<Sample>,
+    ) {
         if st.reordered && st.kind == RtpMediaKind::H264 {
-            Self::resolve_window(st, &mut out, true);
+            Self::resolve_window(st, loss_events, track_id, out, true);
         } else if let Some(duration) = known_duration(st) {
             for (index, p) in st.pending.drain(..).enumerate() {
                 let offset = u64::from(duration) * index as u64;
@@ -1358,7 +1394,6 @@ impl RtpStreamDepacketiser {
                 ));
             }
         }
-        Ok(derive_dts(st, loss_events, track_id, out, true))
     }
 
     /// Resolve the oldest AUs of a reordered video track's window.
@@ -1378,7 +1413,13 @@ impl RtpStreamDepacketiser {
     /// for it, at most `MAX_REORDER_DEPTH` AUs. With no frame period known yet
     /// the learned `au_window` decides. `drain_all` (flush) resolves every AU
     /// the window can resolve.
-    fn resolve_window(st: &mut TrackState, out: &mut Vec<Sample>, drain_all: bool) {
+    fn resolve_window(
+        st: &mut TrackState,
+        loss_events: &mut VecDeque<RtpLossEvent>,
+        track_id: TrackId,
+        out: &mut Vec<Sample>,
+        drain_all: bool,
+    ) {
         while !st.pending.is_empty() {
             let head_ts = st.pending[0].unwrapped_ts;
             let successor = st
@@ -1431,7 +1472,12 @@ impl RtpStreamDepacketiser {
         }
         if st.pending.len() > MAX_REORDER_WINDOW {
             let excess = st.pending.len() - MAX_REORDER_WINDOW;
-            st.pending.drain(..excess);
+            for p in st.pending.drain(..excess) {
+                loss_events.push_back(RtpLossEvent::DroppedAccessUnit {
+                    track_id,
+                    pts: to_ticks(p.unwrapped_ts),
+                });
+            }
         }
     }
 
@@ -1506,7 +1552,7 @@ impl RtpStreamDepacketiser {
                     is_sync: au.is_sync,
                     data: au.data,
                 });
-                Self::resolve_window(st, out, false);
+                Self::resolve_window(st, loss_events, track_id, out, false);
                 continue;
             }
             let same_packet_group = st.kind == RtpMediaKind::Aac
