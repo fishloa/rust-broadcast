@@ -947,14 +947,29 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
         .collect()
 }
 
-/// Level-1 (MUST) validator messages split audio adds over the muxed route,
-/// each knowingly left open. (slice 4 closed the rendition-report gap.)
-const KNOWN_SPLIT_ONLY: &[&str] = &[];
+const FIXTURE_INTERLACED: &str = "Interlaced video detected - Must be progressive";
 
-/// The validator insists a file exists for an `EXT-X-GAP` segment, although
-/// RFC 8216 §4.3.2.7 says a gap segment carries no media and clients should
-/// not load it. Only tolerated when the audio playlist really has a gap.
-const GAP_FILE_FINDING: &str = "Media file does not exist at the specified path.";
+/// Level-1 validator messages the france2 split route is known to produce,
+/// each with the issue or fixture property behind it. Every entry must still
+/// be reported (the assertion below), so a fixed one cannot linger here.
+const TOLERATED: &[(&str, &str)] = &[
+    (
+        FIXTURE_INTERLACED,
+        "france2 is an interlaced 1080i capture; no issue",
+    ),
+    (
+        "Missing server control attribute",
+        "#1594: reported on the I-frame playlist for any server-control value, cleared only by dropping the tag (RFC 8216bis 6.2.4 requires it) or adding a part (4.4.4.9 says I-frame playlists SHOULD NOT have parts)",
+    ),
+    (
+        "Playlist vs partial segment duration mismatch",
+        "#1602: validator measures part duration from presentation times of a B-frame stream",
+    ),
+    (
+        "Framerate change without discontinuity tag detected",
+        "#1602: the fixture ends mid-GOP, so the last segment's presentation span is not its decode span",
+    ),
+];
 
 #[tokio::test]
 async fn split_audio_validator_findings() {
@@ -970,45 +985,29 @@ async fn split_audio_validator_findings() {
         &|_, _| true,
     );
     let split_findings = validator_must_findings(&split, 3).await;
-    let mut has_gap = false;
-    for i in 0..3 {
-        let text = String::from_utf8(split.ok(&format!("audio/a{i}.m3u8")).await).expect("utf8");
-        has_gap |= text.contains("#EXT-X-GAP");
-    }
-
-    let muxed = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
-    let muxed_messages: std::collections::BTreeSet<String> = validator_must_findings(&muxed, 0)
-        .await
-        .into_iter()
-        .map(|(_, m)| m)
-        .collect();
 
     let unexpected: Vec<_> = split_findings
         .iter()
-        .filter(|(_, m)| {
-            let tolerated = KNOWN_SPLIT_ONLY.contains(&m.as_str())
-                || muxed_messages.contains(m)
-                || (has_gap && m == GAP_FILE_FINDING);
-            !tolerated
-        })
+        .filter(|(_, m)| !TOLERATED.iter().any(|(known, _)| known == m))
         .collect();
     assert!(
-        !split_findings
-            .iter()
-            .any(|(_, m)| m.contains("Missing rendition report")
-                || m.contains("No rendition reports")),
-        "rendition report finding present: {split_findings:?}"
-    );
-    assert!(
-        !split_findings
-            .iter()
-            .any(|(_, m)| m.contains("Non-canonical language subtag")),
-        "non-canonical language subtag reported: {split_findings:?}"
-    );
-    assert!(
         unexpected.is_empty(),
-        "level-1 findings split audio introduces over the muxed route: {unexpected:?}"
+        "level-1 findings outside the tolerated list: {unexpected:?}"
     );
+    for (known, why) in TOLERATED {
+        assert!(
+            split_findings.iter().any(|(_, m)| m == known),
+            "tolerated finding {known:?} ({why}) no longer reported: remove it from TOLERATED"
+        );
+    }
+    for (path, message) in &split_findings {
+        assert!(
+            !path.contains("variants[2]")
+                && !path.contains("variants[3]")
+                && !path.contains("variants[4]"),
+            "audio playlist finding {message:?} at {path}"
+        );
+    }
 }
 
 fn derived_decls(n: usize) -> Vec<AudioRenditionDecl> {
@@ -1666,41 +1665,6 @@ async fn split_audio_blocking_reload_returns_when_the_matching_audio_part_exists
     );
 }
 
-#[tokio::test]
-async fn split_audio_validator_reports_no_new_part_findings_over_the_muxed_route() {
-    if !validator_available() {
-        eprintln!(
-            "SKIP split_audio_validator_reports_no_new_part_findings_over_the_muxed_route: \
-             `mediastreamvalidator` not on PATH"
-        );
-        return;
-    }
-    let sources = france2();
-    let split = rig(
-        &sources,
-        decls(&["fr", "qad", "qaa"]),
-        index_selectors(3),
-        &|_, _| true,
-    );
-    let muxed = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
-    let is_part_finding = |m: &str| m.to_ascii_lowercase().contains("part");
-    let muxed_part: std::collections::BTreeSet<String> = validator_must_findings(&muxed, 0)
-        .await
-        .into_iter()
-        .map(|(_, m)| m)
-        .filter(|m| is_part_finding(m))
-        .collect();
-    let new_part: Vec<_> = validator_must_findings(&split, 3)
-        .await
-        .into_iter()
-        .filter(|(_, m)| is_part_finding(m) && !muxed_part.contains(m))
-        .collect();
-    assert!(
-        new_part.is_empty(),
-        "level-1 part findings split audio adds over the muxed route: {new_part:?}"
-    );
-}
-
 // Issue #1597: the former 18 parts included one `DURATION=0` part per segment
 // (the audio left at each cut), which is now merged into the part before it.
 const NON_SPLIT_PARTS: usize = 15;
@@ -1881,7 +1845,7 @@ const EAC3_FRAME_SECS: f64 = 1536.0 / 48_000.0;
 /// Target Duration. An audio part holds whole frames, so it may overshoot the
 /// video part boundary by less than one frame, but audio that precedes the
 /// shared origin (arriving after the first cut fixed it) must not be packed
-/// into the first part.
+/// into the first part. The remaining overshoot is issue #1603.
 #[tokio::test]
 async fn audio_parts_stay_within_one_frame_of_the_part_target() {
     let sources = france2();
@@ -1906,4 +1870,51 @@ async fn audio_parts_stay_within_one_frame_of_the_part_target() {
             );
         }
     }
+}
+
+fn trun_secs(part: &[u8], timescale: f64) -> f64 {
+    let moof = child(part, b"moof").expect("moof");
+    let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
+    let traf = moof.traf.first().expect("traf");
+    let default = traf.tfhd.default_sample_duration;
+    let ticks: u64 = traf
+        .trun
+        .iter()
+        .flat_map(|t| t.samples.iter())
+        .map(|s| u64::from(s.sample_duration.or(default).expect("sample duration")))
+        .sum();
+    ticks as f64 / timescale
+}
+
+/// Pins the premise of issue #1602: each declared video part DURATION is the
+/// sum of its trun sample durations, and the parts of a segment sum to its
+/// EXTINF, so the validator's part-duration finding is not a playlist error.
+#[tokio::test]
+async fn declared_video_part_durations_equal_the_trun_sums() {
+    let sources = france2();
+    let rig = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
+    let pl = rig.playlist("media.m3u8").await;
+    let mut checked = 0;
+    for seg in &pl.segments {
+        let mut declared = 0.0;
+        for part in &seg.parts {
+            let bytes = rig.ok(&part.uri).await;
+            let actual = trun_secs(&bytes, 90_000.0);
+            assert!(
+                (actual - part.duration.get()).abs() < 1e-6,
+                "{}: declared {} but trun sums to {actual}",
+                part.uri,
+                part.duration.get()
+            );
+            declared += part.duration.get();
+            checked += 1;
+        }
+        assert!(
+            (declared - seg.duration.get()).abs() < 1e-6,
+            "{}: parts sum to {declared}, EXTINF {}",
+            seg.uri,
+            seg.duration.get()
+        );
+    }
+    assert!(checked >= 10, "only {checked} parts checked");
 }

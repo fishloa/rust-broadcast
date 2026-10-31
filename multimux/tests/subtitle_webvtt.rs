@@ -68,8 +68,12 @@ const MUST_LEVEL: i64 = 1;
 /// Property of the interlaced real captures the rig uses (`rai-gulp-8MB.ts`,
 /// `transformers-eia608-h264.ts`), not of the origin; no issue.
 const KNOWN_INTERLACED_FIXTURE: &str = "Interlaced video detected - Must be progressive";
-/// Issue #1594: reported on the I-frame playlist although it carries the same
-/// HOLD-BACK as the media playlist.
+/// Issue #1594: the validator reports this on a playlist without EXT-X-PART
+/// (here the I-frame playlist) whenever the primary playlist has parts, for
+/// any EXT-X-SERVER-CONTROL value; dropping the tag silences it and so does a
+/// part tag. RFC 8216bis section 6.2.4 requires every Media Playlist to carry
+/// the same EXT-X-SERVER-CONTROL, and section 4.4.4.9 says I-frame playlists
+/// SHOULD NOT use Partial Segments.
 const KNOWN_MISSING_HOLD_BACK_1594: &str = "Missing server control attribute";
 /// Issue #1595: fires on a low-latency playlist with no sibling rendition to
 /// report, which RFC 8216bis Appendix B.1 allows; reporting the I-frame
