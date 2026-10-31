@@ -62,12 +62,6 @@ pub const T35_HEADER_V1: [u8; T35_HEADER_LEN] = [
 
 const BITS_PER_BYTE: u32 = 8;
 const HEVC_NAL_HEADER_LEN: usize = 2;
-const HEVC_NAL_TYPE_SHIFT: u8 = 1;
-const HEVC_PREFIX_SEI_LAYER_ZERO_TID_PLUS1: u8 = 1;
-const SEI_RBSP_TRAILING_BYTE: u8 = 0x80;
-const SEI_SIZE_ESCAPE_BYTE: u8 = 0xFF;
-const EMULATION_PREVENTION_BYTE: u8 = 0x03;
-const EMULATION_ZERO_RUN: usize = 2;
 const NAL_LENGTH_PREFIX_LEN: usize = 4;
 
 const NUM_WINDOWS_BITS: u32 = 2;
@@ -689,7 +683,12 @@ impl Hdr10PlusMetadata {
         while at + NAL_LENGTH_PREFIX_LEN <= sample.len() {
             let mut len = [0u8; NAL_LENGTH_PREFIX_LEN];
             len.copy_from_slice(&sample[at..at + NAL_LENGTH_PREFIX_LEN]);
-            let end = at + NAL_LENGTH_PREFIX_LEN + u32::from_be_bytes(len) as usize;
+            let Some(end) = usize::try_from(u32::from_be_bytes(len))
+                .ok()
+                .and_then(|n| n.checked_add(at + NAL_LENGTH_PREFIX_LEN))
+            else {
+                return false;
+            };
             let Some(nal) = sample.get(at + NAL_LENGTH_PREFIX_LEN..end) else {
                 return false;
             };
@@ -706,29 +705,10 @@ impl Hdr10PlusMetadata {
     /// this metadata.
     pub fn to_hevc_prefix_sei_nal(&self) -> Result<Vec<u8>> {
         let payload = self.try_to_bytes()?;
-        let mut rbsp = Vec::with_capacity(payload.len() + 4);
-        rbsp.push(SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35 as u8);
-        let mut remaining = payload.len();
-        while remaining >= usize::from(SEI_SIZE_ESCAPE_BYTE) {
-            rbsp.push(SEI_SIZE_ESCAPE_BYTE);
-            remaining -= usize::from(SEI_SIZE_ESCAPE_BYTE);
-        }
-        rbsp.push(remaining as u8);
-        rbsp.extend_from_slice(&payload);
-        rbsp.push(SEI_RBSP_TRAILING_BYTE);
-        let mut nal = Vec::with_capacity(rbsp.len() + HEVC_NAL_HEADER_LEN + 2);
-        nal.push(crate::hdr::HEVC_PREFIX_SEI_NUT << HEVC_NAL_TYPE_SHIFT);
-        nal.push(HEVC_PREFIX_SEI_LAYER_ZERO_TID_PLUS1);
-        let mut zeros = 0usize;
-        for b in rbsp {
-            if zeros >= EMULATION_ZERO_RUN && b <= EMULATION_PREVENTION_BYTE {
-                nal.push(EMULATION_PREVENTION_BYTE);
-                zeros = 0;
-            }
-            zeros = if b == 0 { zeros + 1 } else { 0 };
-            nal.push(b);
-        }
-        Ok(nal)
+        Ok(crate::nal::hevc_prefix_sei_nal(&[(
+            SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
+            &payload,
+        )]))
     }
 }
 
@@ -826,7 +806,13 @@ impl<'a> Parse<'a> for Hdr10PlusMetadata {
         let alignment_padding = read(&mut r, pad as u32, "alignment padding")? as u8;
 
         let mut transforms = transforms.into_iter();
-        let primary_window = transforms.next().expect("num_windows >= 1");
+        let Some(primary_window) = transforms.next() else {
+            return Err(Error::InvalidValue {
+                field: "num_windows",
+                value: 0,
+                reason: "at least one window is required",
+            });
+        };
         let additional_windows = regions
             .into_iter()
             .zip(transforms)

@@ -814,18 +814,17 @@ fn confirmed_backward_seek_resyncs_and_delivers_a_long_run() {
     }
 
     let (recovered, events) = run_seqs(&pairs);
-    // Exactly: the pre-seek run's first three AUs (bytes 0..2), then the new
-    // run's first packet discarded arming `bad_seq` (byte 4, i.e. run index
-    // 0) and every following packet of it delivered. The pre-seek AU open at
-    // the seam (byte 3) is dropped.
+    // Exactly: the pre-seek run's four AUs (bytes 0..3), then the new run's
+    // first packet discarded arming `bad_seq` (byte 4, i.e. run index 0) and
+    // every following packet of it delivered.
     assert_eq!(
         recovered.len(),
-        3 + (RUN as usize - 1),
+        4 + (RUN as usize - 1),
         "the whole new run must be delivered, got {}",
         recovered.len()
     );
     // Spot-check identity at the wrap: the run crosses 65535 -> 0.
-    let first_new = 3;
+    let first_new = 4;
     assert_eq!(
         recovered[first_new].as_ref(),
         [0x00, 0x00, 0x00, 0x02, 0x41, 5u8],
@@ -838,11 +837,10 @@ fn confirmed_backward_seek_resyncs_and_delivers_a_long_run() {
     );
     assert_eq!(
         recovered[first_new - 1].as_ref(),
-        [0x00, 0x00, 0x00, 0x02, 0x41, 2u8],
-        "the last pre-seek AU delivered is the third packet's"
+        [0x00, 0x00, 0x00, 0x02, 0x41, 3u8],
+        "the last pre-seek AU delivered is the fourth packet's"
     );
-    // The pre-seek AU open at the seam (index 3) is dropped: the delivered
-    // prefix is the first three packets only. (A `contains` check on its byte
+    // The delivered prefix is the pre-seek packets only. (A `contains` check on its byte
     // would not mean anything here — the identifying byte is the packet index
     // modulo 256, so 3 recurs later in a 70 000-packet run.)
     assert_eq!(
@@ -851,8 +849,9 @@ fn confirmed_backward_seek_resyncs_and_delivers_a_long_run() {
             vec![0x00u8, 0x00, 0x00, 0x02, 0x41, 0],
             vec![0x00u8, 0x00, 0x00, 0x02, 0x41, 1],
             vec![0x00u8, 0x00, 0x00, 0x02, 0x41, 2],
+            vec![0x00u8, 0x00, 0x00, 0x02, 0x41, 3],
         ][..],
-        "only the pre-seek packets with known durations are delivered"
+        "every pre-seek AU is delivered, the held seam AU included"
     );
     // Delivery continues across the 16-bit wrap: the identifying byte is the
     // packet index modulo 256, so at index `first_new + k` of the output the
@@ -917,20 +916,18 @@ fn a_second_seek_after_a_first_resyncs_too() {
     }
 
     let (recovered, events) = run_seqs(&pairs);
-    // Exactly: run 1's packets whose duration is known (indices 0..4), then
+    // Exactly: run 1's packets (indices 0..5, the seam AU included), then
     // seek 1's arming packet dropped (index 6) and the rest delivered
-    // (7..24), then seek 2's arming packet dropped (index 25) and the rest
-    // delivered (27..45). The AUs open at each seam (index 5, and between 24
-    // and 25) are dropped by the resync.
-    let expected: Vec<Vec<u8>> = (0..5u8)
-        .chain(7..25u8)
+    // (7..25, seam AU included), then seek 2's arming packet dropped
+    // (index 26) and the rest delivered (27..45).
+    let expected: Vec<Vec<u8>> = (0..6u8)
+        .chain(7..26u8)
         .chain(27..46u8)
         .map(|b| vec![0x00, 0x00, 0x00, 0x02, 0x41, b])
         .collect();
     assert_eq!(
         recovered, expected,
-        "both post-seek runs must be delivered, with only the arming packets \
-         and the seam AUs dropped"
+        "both post-seek runs must be delivered, with only the arming packets dropped"
     );
     let loss: Vec<RtpLossEvent> = events
         .iter()
@@ -960,18 +957,16 @@ fn confirmed_forward_jump_restarts_the_source() {
     }
 
     let (recovered, events) = run_seqs(&pairs);
-    // Exactly: the pre-jump run's AUs whose durations were known (bytes 0..4),
-    // the first new-run packet discarded while §A.1's `bad_seq` armed (byte 6),
-    // and then every following packet of the restarted run (bytes 7..17). The
-    // pre-jump AU still open at the seam (byte 5) is dropped, as a resync
-    // always drops the access unit straddling it.
-    let expected: Vec<Vec<u8>> = (0..5u8)
+    // Exactly: every pre-jump AU (bytes 0..5, the held seam AU flushed), the
+    // first new-run packet discarded while §A.1's `bad_seq` armed (byte 6),
+    // and then every following packet of the restarted run (bytes 7..17).
+    let expected: Vec<Vec<u8>> = (0..6u8)
         .chain(7..18u8)
         .map(|b| vec![0x00, 0x00, 0x00, 0x02, 0x41, b])
         .collect();
     assert_eq!(
         recovered, expected,
-        "the restarted run must be delivered with only the arming packet and          the seam-straddling AU dropped"
+        "the restarted run must be delivered with only the arming packet dropped"
     );
     let loss: Vec<RtpLossEvent> = events
         .iter()
@@ -1058,4 +1053,98 @@ fn a1_constants_match_the_rfc() {
         RTP_SEQ_MOD > u32::from(MAX_MISORDER),
         "MAX_MISORDER must be far below the 16-bit space, or the wild-jump          bound could not be represented"
     );
+}
+
+fn dropped_pts(events: &[RtpLossEvent]) -> Vec<i64> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            RtpLossEvent::DroppedAccessUnit { pts, .. } => Some(*pts),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn resync_accounts_for_every_held_reorder_window_au() {
+    const PRE_SEEK_TS: [u32; 9] = [
+        0, 12_000, 6_000, 3_000, 9_000, 24_000, 18_000, 15_000, 21_000,
+    ];
+    const SEEK_ORIGIN: u32 = 1_000_000;
+    let mut pairs: Vec<(u16, u32)> = PRE_SEEK_TS
+        .iter()
+        .enumerate()
+        .map(|(k, &ts)| (1000 + k as u16, ts))
+        .collect();
+    pairs.extend((0u16..4).map(|k| (k, SEEK_ORIGIN + 3000 * u32::from(k))));
+
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        TrackId::new(1),
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        90_000,
+    )]);
+    let mut pts = Vec::new();
+    for (i, &(seq, ts)) in pairs.iter().enumerate() {
+        for s in d.push(TrackId::new(1), &seq_pkt(seq, ts, i as u8)).unwrap() {
+            pts.push(s.pts.unwrap());
+        }
+    }
+    let mut events = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    let completed_before_seek = PRE_SEEK_TS.len();
+    let emitted_before_seek = pts.iter().filter(|&&p| p < i64::from(SEEK_ORIGIN)).count();
+    let dropped = dropped_pts(&events);
+    assert_eq!(
+        emitted_before_seek + dropped.len(),
+        completed_before_seek,
+        "emitted {emitted_before_seek}, dropped {dropped:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RtpLossEvent::NonMonotonicTimestamp { .. })),
+        "the stream must have exercised the reorder window"
+    );
+}
+
+#[test]
+fn reorder_window_overflow_reports_every_dropped_au() {
+    const AUS: u32 = 300;
+    const WINDOW: usize = 256;
+    const START_TS: u32 = 2_000_000;
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        TrackId::new(1),
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        90_000,
+    )]);
+    let mut emitted_before_flush = 0usize;
+    for k in 0..AUS {
+        emitted_before_flush += d
+            .push(
+                TrackId::new(1),
+                &seq_pkt(k as u16, START_TS - 1000 * k, k as u8),
+            )
+            .unwrap()
+            .len();
+    }
+    let mut events = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    let emitted = d.flush(TrackId::new(1)).unwrap().len() + emitted_before_flush;
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    let dropped = dropped_pts(&events);
+    assert!(!dropped.is_empty(), "the window overflowed {WINDOW}");
+    assert_eq!(
+        dropped[0],
+        i64::from(START_TS),
+        "oldest AU is dropped first"
+    );
+    assert_eq!(emitted + dropped.len(), AUS as usize);
 }

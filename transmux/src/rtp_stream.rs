@@ -185,6 +185,7 @@ use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
 use crate::rtp_dts::DtsDeriver;
+use crate::slice_header::{AvcParamSets, AvcPicture};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
@@ -331,6 +332,17 @@ pub enum RtpLossEvent {
         pts: i64,
         /// The `dts` it was given.
         dts: i64,
+    },
+    /// A fully reassembled access unit was discarded without being emitted:
+    /// the reorder window overflowed the 256-AU bound on AUs whose duration
+    /// could not be resolved, or a sequence resync found held AUs for which no
+    /// duration is known. One event per discarded AU, oldest first.
+    DroppedAccessUnit {
+        /// The track this occurred on.
+        track_id: TrackId,
+        /// The discarded AU's unwrapped presentation timestamp, in the track's
+        /// clock (the same unit as [`crate::ir::Sample::pts`]).
+        pts: i64,
     },
 }
 
@@ -788,6 +800,9 @@ struct TrackState {
     seq: SeqState,
     /// Decode-timestamp derivation for video (see [`crate::rtp_dts`]).
     dts: DtsDeriver,
+    /// SPS/PPS known for this track (config plus in-band), to read
+    /// `field_pic_flag` from slice headers.
+    param_sets: AvcParamSets,
 }
 
 /// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
@@ -940,6 +955,26 @@ fn declared_reorder_depth(kind: RtpMediaKind, config: &CodecConfig) -> Option<us
     }
 }
 
+fn seed_param_sets(param_sets: &mut AvcParamSets, config: &CodecConfig) {
+    if let CodecConfig::Avc { config, .. } = config {
+        for nal in config
+            .config
+            .sps
+            .iter()
+            .map(|n| &n.0)
+            .chain(config.config.pps.iter().map(|n| &n.0))
+        {
+            param_sets.observe_nal(nal);
+        }
+    }
+}
+
+fn sample_is_field_picture(param_sets: &mut AvcParamSets, sample: &Sample) -> bool {
+    crate::annexb::iter_length_prefixed_nals(&sample.data)
+        .map(|nals| matches!(param_sets.classify_nals(nals), AvcPicture::Field(_)))
+        .unwrap_or(false)
+}
+
 /// Run a track's freshly emitted samples through its decode-timestamp
 /// derivation (video only; see [`crate::rtp_dts`]).
 fn derive_dts(
@@ -956,6 +991,9 @@ fn derive_dts(
     let mut out = Vec::with_capacity(raw.len());
     let mut exceeded = Vec::new();
     for s in raw {
+        if sample_is_field_picture(&mut st.param_sets, &s) {
+            st.dts.declare_field_coded();
+        }
         st.dts.feed(s, period, &mut out, &mut exceeded);
     }
     if finish {
@@ -1005,6 +1043,8 @@ impl RtpStreamDepacketiser {
             .map(|t| {
                 let declared_duration = declared_au_duration(t.kind, &t.config, t.clock_rate);
                 let reorder_depth = declared_reorder_depth(t.kind, &t.config);
+                let mut param_sets = AvcParamSets::new();
+                seed_param_sets(&mut param_sets, &t.config);
                 (
                     t.track_id,
                     TrackState {
@@ -1028,6 +1068,7 @@ impl RtpStreamDepacketiser {
                         reorder_depth: t.reorder_depth,
                         seq: SeqState::default(),
                         dts: DtsDeriver::new(reorder_depth),
+                        param_sets,
                     },
                 )
             })
@@ -1055,6 +1096,7 @@ impl RtpStreamDepacketiser {
             st.declared_duration = declared_au_duration(st.kind, &config, st.clock_rate);
             st.dts
                 .set_declared(declared_reorder_depth(st.kind, &config));
+            seed_param_sets(&mut st.param_sets, &config);
             st.config = config;
         }
     }
@@ -1163,8 +1205,11 @@ impl RtpStreamDepacketiser {
     /// missing a fragment.
     ///
     /// A **resync** (RFC 3550 §A.1: the source's sequence numbering moved,
-    /// e.g. an RTSP seek or a restart that kept its SSRC) drops the
-    /// in-progress AU and re-establishes the timestamp origin, because the
+    /// e.g. an RTSP seek or a restart that kept its SSRC) first emits every
+    /// complete AU the reorder window still holds (those whose duration cannot
+    /// be resolved are reported as [`RtpLossEvent::DroppedAccessUnit`]), then
+    /// drops the in-progress AU and re-establishes the timestamp origin and
+    /// the reorder state, because the
     /// RTP timestamp clock is unrelated across the seam (§5.1 — the origin
     /// is random per source instance). No `SequenceGap` is raised: nothing
     /// was lost, the sender simply renumbered.
@@ -1192,13 +1237,25 @@ impl RtpStreamDepacketiser {
             // continuous timeline instead of inheriting a delta computed
             // across the discontinuity (`unwrap_ts` cannot know the two
             // runs' clocks are unrelated — RFC 3550 §5.1).
+            let mut held = Vec::new();
+            Self::drain_pending(st, loss_events, track_id, &mut held);
+            for p in st.pending.drain(..) {
+                loss_events.push_back(RtpLossEvent::DroppedAccessUnit {
+                    track_id,
+                    pts: to_ticks(p.unwrapped_ts),
+                });
+            }
             st.cur_pkts.clear();
             st.cur_bytes = 0;
             st.cur_ts = None;
             st.last_unwrapped = None;
             st.first_unwrapped = None;
-            st.pending.clear();
-            let mut flushed = derive_dts(st, loss_events, track_id, Vec::new(), true);
+            st.reordered = false;
+            st.seen_pts.clear();
+            st.next_seq = 0;
+            st.au_window = 0;
+            st.min_positive_step = None;
+            let mut flushed = derive_dts(st, loss_events, track_id, held, true);
             for pkt in adm.released {
                 Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
             }
@@ -1343,8 +1400,18 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
+        Self::drain_pending(st, loss_events, track_id, &mut out);
+        Ok(derive_dts(st, loss_events, track_id, out, true))
+    }
+
+    fn drain_pending(
+        st: &mut TrackState,
+        loss_events: &mut VecDeque<RtpLossEvent>,
+        track_id: TrackId,
+        out: &mut Vec<Sample>,
+    ) {
         if st.reordered && st.kind == RtpMediaKind::H264 {
-            Self::resolve_window(st, &mut out, true);
+            Self::resolve_window(st, loss_events, track_id, out, true);
         } else if let Some(duration) = known_duration(st) {
             for (index, p) in st.pending.drain(..).enumerate() {
                 let offset = u64::from(duration) * index as u64;
@@ -1358,7 +1425,6 @@ impl RtpStreamDepacketiser {
                 ));
             }
         }
-        Ok(derive_dts(st, loss_events, track_id, out, true))
     }
 
     /// Resolve the oldest AUs of a reordered video track's window.
@@ -1378,7 +1444,13 @@ impl RtpStreamDepacketiser {
     /// for it, at most `MAX_REORDER_DEPTH` AUs. With no frame period known yet
     /// the learned `au_window` decides. `drain_all` (flush) resolves every AU
     /// the window can resolve.
-    fn resolve_window(st: &mut TrackState, out: &mut Vec<Sample>, drain_all: bool) {
+    fn resolve_window(
+        st: &mut TrackState,
+        loss_events: &mut VecDeque<RtpLossEvent>,
+        track_id: TrackId,
+        out: &mut Vec<Sample>,
+        drain_all: bool,
+    ) {
         while !st.pending.is_empty() {
             let head_ts = st.pending[0].unwrapped_ts;
             let successor = st
@@ -1431,7 +1503,12 @@ impl RtpStreamDepacketiser {
         }
         if st.pending.len() > MAX_REORDER_WINDOW {
             let excess = st.pending.len() - MAX_REORDER_WINDOW;
-            st.pending.drain(..excess);
+            for p in st.pending.drain(..excess) {
+                loss_events.push_back(RtpLossEvent::DroppedAccessUnit {
+                    track_id,
+                    pts: to_ticks(p.unwrapped_ts),
+                });
+            }
         }
     }
 
@@ -1506,7 +1583,7 @@ impl RtpStreamDepacketiser {
                     is_sync: au.is_sync,
                     data: au.data,
                 });
-                Self::resolve_window(st, out, false);
+                Self::resolve_window(st, loss_events, track_id, out, false);
                 continue;
             }
             let same_packet_group = st.kind == RtpMediaKind::Aac
