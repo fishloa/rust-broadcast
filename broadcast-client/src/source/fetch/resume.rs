@@ -272,6 +272,10 @@ impl<K: PartialEq> Stash<K> {
         (parked.url == url && parked.byte_range == byte_range).then_some(parked)
     }
 
+    pub(crate) fn discard(&mut self, key: &K) {
+        self.items.retain(|(k, _)| k != key);
+    }
+
     pub(crate) fn clear(&mut self) {
         self.items.clear();
     }
@@ -503,6 +507,17 @@ mod tests {
         stash.put(1u8, parked("http://a/x"));
         assert!(stash.take(&1, "http://a/x", None).is_some());
         assert!(stash.take(&1, "http://a/x", None).is_none());
+    }
+
+    #[test]
+    fn a_discarded_prefix_is_gone_and_others_stay() {
+        let mut stash = Stash::new();
+        stash.put(1u8, parked("http://a/x"));
+        stash.put(2u8, parked("http://a/y"));
+        stash.discard(&1);
+        assert_eq!(stash.len(), 1);
+        assert!(stash.take(&1, "http://a/x", None).is_none());
+        assert!(stash.take(&2, "http://a/y", None).is_some());
     }
 
     #[test]
