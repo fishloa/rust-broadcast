@@ -24,17 +24,16 @@
 //!   re-derives it.
 //! - `is_sync` comes straight from the reassembled access unit
 //!   (IDR detection for video; always `true` for audio).
-//! - `dts == pts`, i.e. a zero composition offset — **v1 assumes low-delay
-//!   H.264 with no B-frame reorder**: RTP carries only a presentation
-//!   timestamp on the wire (RFC 6184 §5.1's sampling time), so reconstructing
-//!   a separate DTS (and therefore a non-zero composition offset) when
-//!   B-frames are present is future work. That assumption is **reported when
-//!   it fails** — a wire timestamp earlier than a previous one raises
-//!   [`RtpLossEvent::NonMonotonicTimestamp`] (audit r04-W29), because RTP
-//!   carries no decode time to fall back on. A consumer needing real
-//!   per-frame durations or a decode-ordered timeline should use the
-//!   single-shot [`crate::rtp::RtpDepacketiser`] path, which holds the whole
-//!   stream and therefore knows the frame period exactly.
+//! - **Video `dts`** is derived, not copied: RTP carries only a presentation
+//!   timestamp on the wire (RFC 6184 §5.1's sampling time) and delivers access
+//!   units in decoding order, so with B-frames the wire timestamps step
+//!   backward. `dts` is the presentation-ordered timestamp grid shifted by the
+//!   codec's reorder depth, giving `dts` strictly increasing and `dts <= pts`
+//!   on every sample; a stream without reorder keeps `dts == pts`. The rule,
+//!   its spec basis (ITU-T H.264 §E.2.1 `max_num_reorder_frames`) and its
+//!   latency are specified in [`crate::rtp_dts`]. The reorder itself is still
+//!   reported — a wire timestamp earlier than a previous one raises
+//!   [`RtpLossEvent::NonMonotonicTimestamp`] (audit r04-W29).
 //! - Each track independently rebases its first unwrapped timestamp to
 //!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
 //!   from `track_specs` + emitted samples) **unless** an RTCP Sender Report
@@ -185,6 +184,7 @@ use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
+use crate::rtp_dts::DtsDeriver;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
@@ -302,14 +302,11 @@ pub enum RtpLossEvent {
     ///
     /// RTP carries exactly one timestamp per access unit and it is the
     /// *sampling/presentation* time (RFC 6184 §5.1 for H.264, RFC 3640 §3.3.1
-    /// for AAC), so the wire alone cannot supply an independent decode time:
-    /// this depacketiser emits `dts == pts` (the documented low-delay model),
-    /// and a reordered source therefore yields `dts` values that step
-    /// backward. That is not a defect in the reassembly — the samples are
-    /// correct and in presentation order — but a consumer that requires
-    /// decode-ordered `dts` (a progressive-file or fragment writer) must know
-    /// it cannot use it as one. Reported once per occurrence so a caller can
-    /// count or route it.
+    /// for AAC), so the wire alone cannot supply an independent decode time.
+    /// The video `dts` is derived from the reorder depth ([`crate::rtp_dts`]),
+    /// so a reordered source still yields a monotonic `dts`; this event reports
+    /// that the wire order is not presentation order. Reported once per
+    /// occurrence so a caller can count or route it.
     NonMonotonicTimestamp {
         /// The track this occurred on.
         track_id: TrackId,
@@ -318,6 +315,22 @@ pub enum RtpLossEvent {
         previous_pts: i64,
         /// This access unit's, which is earlier.
         pts: i64,
+    },
+    /// An access unit's presentation time was earlier than a decode timestamp
+    /// already issued, so the assumed reorder depth was too small (a declared
+    /// `max_num_reorder_frames` the stream violates, or reordering deeper than
+    /// the start-of-stream probe saw). The sample keeps a strictly increasing
+    /// `dts`, which therefore exceeds its `pts`; the depth grows so later
+    /// samples recover. See [`crate::rtp_dts`].
+    ReorderDepthExceeded {
+        /// The track this occurred on.
+        track_id: TrackId,
+        /// The reorder depth now in force, in frames.
+        depth: usize,
+        /// The offending sample's presentation timestamp, in the track's clock.
+        pts: i64,
+        /// The `dts` it was given.
+        dts: i64,
     },
 }
 
@@ -773,6 +786,8 @@ struct TrackState {
     /// RFC 3550 §5.1 sequence-number tracking state (issue #779) — see the
     /// module docs' "Loss and reorder detection" section.
     seq: SeqState,
+    /// Decode-timestamp derivation for video (see [`crate::rtp_dts`]).
+    dts: DtsDeriver,
 }
 
 /// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
@@ -868,7 +883,7 @@ fn to_ticks(uw: u64) -> i64 {
 /// (the largest wire-order distance observed between an AU and its
 /// presentation predecessor, used while no frame period is known); a hostile
 /// timestamp series cannot grow either past this.
-const MAX_REORDER_DEPTH: usize = 16;
+pub(crate) const MAX_REORDER_DEPTH: usize = 16;
 
 /// Hard bound on a reorder window whose oldest AU cannot be given a truthful
 /// duration (no later timestamp, no known frame period): beyond it the oldest
@@ -911,6 +926,52 @@ fn declared_au_duration(kind: RtpMediaKind, config: &CodecConfig, clock_rate: u3
     u32::try_from(ticks).ok().filter(|&d| d > 0)
 }
 
+/// Reorder depth, in frames, that the stream's own H.264 SPS fixes
+/// (`max_num_reorder_frames`, or the ITU-T H.264 §E.2.1 / §A.2.1 inference), or
+/// `None` when it must be observed. Audio never reorders.
+fn declared_reorder_depth(kind: RtpMediaKind, config: &CodecConfig) -> Option<usize> {
+    match (kind, config) {
+        (RtpMediaKind::H264, CodecConfig::Avc { config, .. }) => {
+            let sps = config.config.sps.first()?;
+            let depth = crate::sps::decode_avc_reorder_depth(&sps.0).ok()?.depth()?;
+            usize::try_from(depth).ok()
+        }
+        _ => None,
+    }
+}
+
+/// Run a track's freshly emitted samples through its decode-timestamp
+/// derivation (video only; see [`crate::rtp_dts`]).
+fn derive_dts(
+    st: &mut TrackState,
+    loss_events: &mut VecDeque<RtpLossEvent>,
+    track_id: TrackId,
+    raw: Vec<Sample>,
+    finish: bool,
+) -> Vec<Sample> {
+    if st.kind != RtpMediaKind::H264 {
+        return raw;
+    }
+    let period = known_duration(st).map(i64::from);
+    let mut out = Vec::with_capacity(raw.len());
+    let mut exceeded = Vec::new();
+    for s in raw {
+        st.dts.feed(s, period, &mut out, &mut exceeded);
+    }
+    if finish {
+        st.dts.finish(period, &mut out, &mut exceeded);
+    }
+    for e in exceeded {
+        loss_events.push_back(RtpLossEvent::ReorderDepthExceeded {
+            track_id,
+            depth: e.depth,
+            pts: e.pts,
+            dts: e.dts,
+        });
+    }
+    out
+}
+
 /// Ticks of the VUI `time_scale` clock per frame: a frame spans two field
 /// ticks (ITU-T H.264 §E.2.1, `time_scale / (2 * num_units_in_tick)`).
 const VUI_UNITS_PER_FRAME: u64 = 2;
@@ -943,6 +1004,7 @@ impl RtpStreamDepacketiser {
             .into_iter()
             .map(|t| {
                 let declared_duration = declared_au_duration(t.kind, &t.config, t.clock_rate);
+                let reorder_depth = declared_reorder_depth(t.kind, &t.config);
                 (
                     t.track_id,
                     TrackState {
@@ -965,6 +1027,7 @@ impl RtpStreamDepacketiser {
                         sr_anchor: None,
                         reorder_depth: t.reorder_depth,
                         seq: SeqState::default(),
+                        dts: DtsDeriver::new(reorder_depth),
                     },
                 )
             })
@@ -990,6 +1053,8 @@ impl RtpStreamDepacketiser {
     pub fn set_track_config(&mut self, track_id: TrackId, config: CodecConfig) {
         if let Some((_, st)) = self.tracks.iter_mut().find(|(id, _)| *id == track_id) {
             st.declared_duration = declared_au_duration(st.kind, &config, st.clock_rate);
+            st.dts
+                .set_declared(declared_reorder_depth(st.kind, &config));
             st.config = config;
         }
     }
@@ -1133,10 +1198,12 @@ impl RtpStreamDepacketiser {
             st.last_unwrapped = None;
             st.first_unwrapped = None;
             st.pending.clear();
+            let mut flushed = derive_dts(st, loss_events, track_id, Vec::new(), true);
             for pkt in adm.released {
                 Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
             }
-            return Ok(out);
+            flushed.extend(derive_dts(st, loss_events, track_id, out, false));
+            return Ok(flushed);
         }
         if let Some((expected, got)) = adm.gap {
             // The AU under construction, if any, is now known-incomplete:
@@ -1155,7 +1222,7 @@ impl RtpStreamDepacketiser {
         for pkt in adm.released {
             Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
         }
-        Ok(out)
+        Ok(derive_dts(st, loss_events, track_id, out, false))
     }
 
     /// The original single-packet accumulation logic (RTP timestamp /
@@ -1291,7 +1358,7 @@ impl RtpStreamDepacketiser {
                 ));
             }
         }
-        Ok(out)
+        Ok(derive_dts(st, loss_events, track_id, out, true))
     }
 
     /// Resolve the oldest AUs of a reordered video track's window.
@@ -1661,6 +1728,12 @@ mod tests {
         }
     }
 
+    fn declare_reorder_depth(d: &mut RtpStreamDepacketiser, depth: usize) {
+        for (_, st) in &mut d.tracks {
+            st.dts = DtsDeriver::new(Some(depth));
+        }
+    }
+
     fn single_track(kind: RtpMediaKind, config: CodecConfig, clock: u32) -> RtpStreamDepacketiser {
         RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
             TrackId::new(1),
@@ -1845,6 +1918,7 @@ mod tests {
             dummy_avc(),
             90_000,
         )]);
+        declare_reorder_depth(&mut d, 0);
 
         // AU0 @1000 (IDR), AU1 @4000 (non-IDR), AU2 @7000 (non-IDR). 3000-tick spacing.
         let idr = [0x65u8, 0xAA];
@@ -1976,6 +2050,7 @@ mod tests {
             dummy_avc(),
             90_000,
         )]);
+        declare_reorder_depth(&mut d, 0);
 
         // Each fragment carries ~2 KiB of filler; MAX_AU_BUFFER_BYTES (4 MiB)
         // must trip well before we'd reach an unreasonable iteration count —
@@ -2056,9 +2131,13 @@ mod tests {
         assert_eq!(specs[0].track_id, TrackId::new(7));
         assert_eq!(specs[0].timescale, 90_000);
     }
-    fn max_hold_in_aus(presentation_order_of_wire: &[u32]) -> (usize, Vec<(u64, u32)>) {
+    fn max_hold_in_aus(
+        presentation_order_of_wire: &[u32],
+        depth: usize,
+    ) -> (usize, Vec<(u64, u32)>) {
         let id = TrackId::new(1);
         let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        declare_reorder_depth(&mut d, depth);
         let mut emitted = Vec::new();
         let mut max_hold = 0;
         for (n, &frame) in presentation_order_of_wire.iter().enumerate() {
@@ -2074,21 +2153,23 @@ mod tests {
 
     #[test]
     fn reorder_window_tracks_the_observed_depth_not_a_fixed_size() {
+        // The bounds are the duration window plus, once at the start of the
+        // run, the `depth` samples the DTS derivation holds for its anchor.
         let one_b: Vec<u32> = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13].to_vec();
-        let (hold, emitted) = max_hold_in_aus(&one_b);
-        assert!(hold <= 3, "one B frame held {hold} AUs");
+        let (hold, emitted) = max_hold_in_aus(&one_b, 1);
+        assert!(hold <= 3 + 1, "one B frame held {hold} AUs");
         assert!(emitted.iter().skip(3).all(|&(_, dur)| dur == 3600));
 
         let two_b: Vec<u32> = [
             0, 3, 1, 2, 6, 4, 5, 9, 7, 8, 12, 10, 11, 15, 13, 14, 18, 16, 17,
         ]
         .to_vec();
-        let (hold, emitted) = max_hold_in_aus(&two_b);
-        assert!(hold <= 4, "two B frames held {hold} AUs");
+        let (hold, emitted) = max_hold_in_aus(&two_b, 2);
+        assert!(hold <= 4 + 2, "two B frames held {hold} AUs");
         assert!(emitted.iter().skip(4).all(|&(_, dur)| dur == 3600));
 
         let none: Vec<u32> = (0..12).collect();
-        assert_eq!(max_hold_in_aus(&none).0, 1);
+        assert_eq!(max_hold_in_aus(&none, 0).0, 1);
     }
 
     #[test]
@@ -2097,7 +2178,7 @@ mod tests {
         for k in (1..40u32).rev() {
             wire.push(k);
         }
-        let (hold, _) = max_hold_in_aus(&wire);
+        let (hold, _) = max_hold_in_aus(&wire, 0);
         assert!(hold <= MAX_REORDER_DEPTH + 1, "held {hold}");
     }
 }

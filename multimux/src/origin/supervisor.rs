@@ -1062,10 +1062,15 @@ mod tests {
             .collect()
     }
 
+    /// The schedule yields `raw * uniform[0.5, 1.0)` in nanoseconds, so the
+    /// true delay is in `[raw/2, raw)`. The paused tokio clock rounds every
+    /// deadline up to a whole millisecond (`deadline_to_tick`), so a true
+    /// 999.97 ms delay is observed as exactly 1 s: the observed band is the
+    /// closed `[raw/2, raw]`.
     fn assert_in_band(delay: Duration, raw: Duration, what: &str) {
         assert!(
-            delay >= raw / 2 && delay < raw,
-            "{what}: delay {delay:?} outside [{:?}, {raw:?})",
+            delay >= raw / 2 && delay <= raw,
+            "{what}: delay {delay:?} outside [{:?}, {raw:?}]",
             raw / 2
         );
     }

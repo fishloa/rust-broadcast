@@ -14,12 +14,14 @@ use url::Url;
 
 use crate::auth::{AuthDecision, AuthState};
 use crate::error::Error;
-use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
+use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::redirect;
 use crate::source::fetch::body::BodyAcc;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
+use crate::source::fetch::inactivity::Inactivity;
+use crate::source::fetch::resume::{Basis, HeadOutcome, Parked, Stash, accept_head};
 use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
@@ -31,6 +33,7 @@ const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_GONE: u16 = 410;
+const STATUS_RANGE_NOT_SATISFIABLE: u16 = 416;
 
 const METHOD_GET: &str = "GET";
 
@@ -62,6 +65,12 @@ struct Timeouts {
     key_us: u64,
 }
 
+impl Purpose {
+    fn is_media(self) -> bool {
+        !matches!(self, Self::Playlist)
+    }
+}
+
 impl Timeouts {
     fn of(&self, purpose: Purpose) -> u64 {
         match purpose {
@@ -89,7 +98,10 @@ struct Req {
     stale_replayed: bool,
     lease: Option<ConnLease>,
     started_us: u64,
+    last_activity_us: u64,
     responded_ok: bool,
+    basis: Option<Basis>,
+    resume_from: Option<u64>,
     body: BodyAcc,
 }
 
@@ -109,7 +121,10 @@ impl Req {
             stale_replayed: false,
             lease: None,
             started_us: 0,
+            last_activity_us: 0,
             responded_ok: false,
+            basis: None,
+            resume_from: None,
             body: BodyAcc::new(body_limit),
         }
     }
@@ -138,6 +153,8 @@ pub(crate) struct HlsSource {
     max_redirects: u32,
     reqs: HashMap<u32, Req>,
     deadlines: Deadlines<u32>,
+    inactivity: Inactivity,
+    stash: Stash<Purpose>,
     parked: Vec<Req>,
     lanes: Lanes<HlsAction>,
     window: Window<ResourceId>,
@@ -189,6 +206,8 @@ impl HlsSource {
             max_redirects: config.max_redirects,
             reqs: HashMap::new(),
             deadlines: Deadlines::new(),
+            inactivity: Inactivity::new(config.segment_inactivity_timeout_us),
+            stash: Stash::new(),
             parked: Vec::new(),
             lanes: Lanes::new(),
             window: Window::new(config.max_inflight_segments),
@@ -349,20 +368,40 @@ impl HlsSource {
                 }
             }
         } else if (200..300).contains(&status) {
-            if !req.body.accept(status, headers, req.byte_range) {
-                self.actions.push_back(Action::Close { conn });
-                self.fail_status(req, now, Some(status));
-                if !auth.is_waiting() {
-                    self.advance(now, auth);
+            match accept_head(
+                &mut req.body,
+                &mut req.basis,
+                &mut req.resume_from,
+                status,
+                headers,
+                req.byte_range,
+            ) {
+                HeadOutcome::Refused => {
+                    self.actions.push_back(Action::Close { conn });
+                    self.fail_status(req, now, Some(status));
+                    if !auth.is_waiting() {
+                        self.advance(now, auth);
+                    }
+                    return;
                 }
-                return;
+                HeadOutcome::Fallback => {
+                    self.actions.push_back(Action::Close { conn });
+                    self.send(req, auth, now);
+                }
+                HeadOutcome::Accepted => {
+                    req.responded_ok = true;
+                    req.last_activity_us = now;
+                    if !self.established {
+                        self.established = true;
+                        self.events.push_back(Event::Status(Status::Establishing));
+                    }
+                    self.reqs.insert(conn, req);
+                }
             }
-            req.responded_ok = true;
-            if !self.established {
-                self.established = true;
-                self.events.push_back(Event::Status(Status::Establishing));
-            }
-            self.reqs.insert(conn, req);
+        } else if status == STATUS_RANGE_NOT_SATISFIABLE && req.resume_from.is_some() {
+            self.actions.push_back(Action::Close { conn });
+            req.resume_from = None;
+            self.send(req, auth, now);
         } else {
             let refused = status == 429 || status == 503;
             if status == STATUS_FORBIDDEN {
@@ -414,6 +453,7 @@ impl HlsSource {
         if !req.responded_ok || bytes.is_empty() {
             return;
         }
+        req.last_activity_us = now;
         let field = oversize_field(req.purpose);
         if req.body.push(bytes).is_err() {
             if let Some(field) = field
@@ -765,6 +805,50 @@ impl HlsSource {
                 self.fail(req, now);
             }
         }
+        self.expire_inactive(now);
+    }
+
+    fn expire_inactive(&mut self, now: u64) {
+        let reqs = &self.reqs;
+        let expired = self
+            .inactivity
+            .expire(now, |conn| reqs.get(&conn).map(|r| r.last_activity_us));
+        for at in expired.wakes {
+            self.actions.push_back(Action::WakeAt(at));
+        }
+        for conn in expired.stalled {
+            if let Some(req) = self.reqs.remove(&conn) {
+                self.stalled(req, conn, now);
+            }
+        }
+    }
+
+    fn stalled(&mut self, mut req: Req, conn: u32, now: u64) {
+        let received = u64::try_from(req.body.len()).unwrap_or(u64::MAX);
+        let kept = (req.responded_ok || req.resume_from.is_some())
+            .then(|| req.basis.take())
+            .flatten()
+            .filter(|basis| basis.request_headers(received).is_some());
+        let resume = if kept.is_some() {
+            ResumeMode::Range
+        } else {
+            ResumeMode::Full
+        };
+        if let Some(basis) = kept {
+            self.stash.put(
+                req.purpose,
+                Parked {
+                    url: req.original_url.clone(),
+                    byte_range: req.byte_range,
+                    body: core::mem::replace(&mut req.body, BodyAcc::new(0)),
+                    basis,
+                },
+            );
+        }
+        self.events
+            .push_back(Event::Status(Status::RequestStalled { resume }));
+        self.actions.push_back(Action::Close { conn });
+        self.fail(req, now);
     }
 
     fn next_action(&mut self) -> Option<HlsAction> {
@@ -835,11 +919,15 @@ impl HlsSource {
             self.window.issue(id);
         }
         match Url::parse(url) {
-            Ok(parsed) => self.send(
-                Req::new(purpose, parsed, byte_range, self.body_limit(purpose)),
-                auth,
-                now,
-            ),
+            Ok(parsed) => {
+                let mut req = Req::new(purpose, parsed, byte_range, self.body_limit(purpose));
+                if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
+                    req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
+                    req.body = parked.body;
+                    req.basis = Some(parked.basis);
+                }
+                self.send(req, auth, now);
+            }
             Err(_) => {
                 if let Purpose::Resource(id) = purpose {
                     self.window.fail(id);
@@ -858,11 +946,23 @@ impl HlsSource {
 
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
-        let headers = auth.request_headers(&req.url, now);
+        let mut headers = auth.request_headers(&req.url, now);
         req.authed = crate::auth::carries_credentials(&headers);
         req.started_us = now;
+        req.last_activity_us = now;
         req.responded_ok = false;
-        req.body.reset();
+        let resume = req
+            .resume_from
+            .zip(req.basis.as_ref())
+            .and_then(|(received, basis)| basis.request_headers(received));
+        match &resume {
+            Some(resume) => headers.extend(resume.iter().cloned()),
+            None => {
+                req.resume_from = None;
+                req.basis = None;
+                req.body.reset();
+            }
+        }
         let lease = self.conn_alloc.lease();
         let conn = lease.id();
         req.lease = Some(lease);
@@ -872,11 +972,16 @@ impl HlsSource {
             method: METHOD_GET.to_string(),
             url: req.url.to_string(),
             headers,
-            byte_range: req.byte_range,
+            byte_range: req.byte_range.filter(|_| resume.is_none()),
         });
         self.actions
             .push_back(Action::WakeAt(now.saturating_add(timeout)));
         let deadline = now.checked_add(timeout);
+        if req.purpose.is_media()
+            && let Some(at) = self.inactivity.arm(conn, now)
+        {
+            self.actions.push_back(Action::WakeAt(at));
+        }
         self.reqs.insert(conn, req);
         if let Some(deadline) = deadline {
             self.deadlines.arm(conn, deadline);
@@ -886,6 +991,13 @@ impl HlsSource {
             self.reqs
                 .iter()
                 .filter_map(|(conn, r)| r.deadline(timeouts).map(|d| (d, *conn)))
+        });
+        let reqs = &self.reqs;
+        self.inactivity.compact(|| {
+            reqs.iter()
+                .filter(|(_, r)| r.purpose.is_media())
+                .map(|(conn, r)| (*conn, r.last_activity_us))
+                .collect()
         });
     }
 
@@ -897,6 +1009,8 @@ impl HlsSource {
         }
         self.reqs.clear();
         self.deadlines.clear();
+        self.inactivity.clear();
+        self.stash.clear();
         self.parked.clear();
         self.lanes.clear();
         self.window.clear();

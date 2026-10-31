@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Config::segment_inactivity_timeout_us` (default 10 s, validated non-zero), `Status::RequestStalled { resume }` and `ResumeMode`: a media-class request of a segment-pull source (HLS segment, part, initialization section and key; DASH init, index and segment) that receives neither its response head nor a body byte for that long is closed and requested again on the `backoff_ms` schedule, counted as a failure of that resource. When the first response was a `200` with `Accept-Ranges: bytes` or a `206`, with a strong validator (a strong `ETag`, else a `Last-Modified` at least a second older than `Date`) and no `Content-Encoding`, the retry sends `Range` and `If-Range` for the missing bytes (inside the original range for a DASH `mediaRange` or HLS `BYTERANGE`) and a `206` whose `Content-Range` continues the prefix extends it; a `200` replaces the prefix, any other answer falls back to one immediate full request. Playlists, manifests and `UTCTiming` are exempt. A resuming `Action::HttpRequest` carries its own `Range` and `If-Range` headers and a `byte_range` of `None`.
 - `Event::ServerRefused { status, retry_after_us, reason }` and `MAX_SERVER_REFUSED_REASON_BYTES`: host notice emitted once per refused (429/503) attempt, alongside `Status::Reconnecting`, for TS-over-HTTP, HLS and DASH, when the connection ends (or when the retry starts if the host never reports `on_closed`). The refused connection is still closed at the response unless its body can become the reason (`text/plain` UTF-8, not declared empty); then it is closed as soon as the body is complete or the reason cap is captured. `reason` is the response body only for `text/plain` (UTF-8 or no charset), control characters stripped, trimmed and capped at `MAX_SERVER_REFUSED_REASON_BYTES`.
 - RTSP: when the PLAY response carries an `RTP-Info` `rtptime` for every track, the tracks are placed on the common timeline from it and Sender Reports no longer move the offset; `AvSync::RtpInfo` reports it. Without `RTP-Info` the Sender Report rules are unchanged.
 
 ### Fixed
 
+- RTSP H.264 video samples carry a monotonic DTS no later than the PTS when the stream has B-frames (issue #1611; the derivation lives in `transmux::RtpStreamDepacketiser`). They used to carry `dts == pts` in decoding order, so a player releasing frames up to each sample's DTS output them out of order and estimated the frame rate from DTS steps as 6-8 fps instead of 25. Streams without B-frames are unchanged.
 - TS-over-HTTP: honour `Retry-After` on 429/503 responses (delta-seconds and HTTP-date, capped at 60 s) via the shared helper, matching HLS and DASH.
 
 ### Changed

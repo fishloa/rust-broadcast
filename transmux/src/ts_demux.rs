@@ -1776,6 +1776,8 @@ struct LiveTrack {
     /// Skip the first re-probe after a damaged-unit promotion (issue G1), so
     /// the first intact access unit does not report a spurious config change.
     skip_next_reprobe: bool,
+    /// Whether the first access unit carried an HDR10+ T.35 prefix SEI.
+    hdr10plus: bool,
 }
 
 impl LiveTrack {
@@ -3939,7 +3941,8 @@ fn advance_track(
                 live.config = config;
                 live.timescale = timescale;
                 let updated = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
-                    .with_source(pid, stream.descriptors.clone());
+                    .with_source(pid, stream.descriptors.clone())
+                    .with_hdr10plus(live.hdr10plus);
                 // Video is emitted one access unit behind ([`advance_one_behind`]):
                 // an event raised while filling this access unit belongs to
                 // it and is released (after the previous access unit's
@@ -5956,7 +5959,8 @@ impl StreamingTsDemux {
             stream.descriptors = descriptors.clone();
             if let Some(TrackState::Live(live)) = stream.track.as_ref() {
                 let spec = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
-                    .with_source(es_pid, descriptors);
+                    .with_source(es_pid, descriptors)
+                    .with_hdr10plus(live.hdr10plus);
                 self.events.push_back(DemuxEvent::TrackUpdated(spec));
             }
         }
@@ -6019,8 +6023,15 @@ impl StreamingTsDemux {
                     // derives it from `samples[0].dts` instead (media plane
                     // step 2c invariant: the two are always equal), so no
                     // anchor value needs computing here at all.
+                    let hdr10plus = matches!(config, CodecConfig::Hevc { .. })
+                        && backlog.first().is_some_and(|au| {
+                            crate::hdr10plus::Hdr10PlusMetadata::annexb_access_unit_carries_hdr10plus(
+                                &au.data,
+                            )
+                        });
                     let spec = TrackSpec::new(track_id, timescale, config.clone())
-                        .with_source(next_pid, stream.descriptors.clone());
+                        .with_source(next_pid, stream.descriptors.clone())
+                        .with_hdr10plus(hdr10plus);
                     // Look up the program_number for this ES PID via its
                     // declaring PMT.
                     let program_number = self
@@ -6062,6 +6073,7 @@ impl StreamingTsDemux {
                         suppress_next_display_change: stream.damaged_promotion,
                         damaged_promotion: stream.damaged_promotion,
                         skip_next_reprobe: stream.damaged_promotion,
+                        hdr10plus,
                     };
                     // Geometry-only seed state (active format filled in below from
                     // the first access unit, if any).

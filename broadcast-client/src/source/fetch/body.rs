@@ -83,6 +83,17 @@ impl BodyAcc {
         }
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Declares how many bytes the rest of a resumed transfer carries, so the truncation check
+    /// covers the prefix kept from the earlier attempt plus the suffix.
+    pub(crate) fn expect_suffix(&mut self, suffix_len: Option<u64>) {
+        let kept = u64::try_from(self.bytes.len()).unwrap_or(u64::MAX);
+        self.expected_len = suffix_len.map(|n| n.saturating_add(kept));
+    }
+
     pub(crate) fn push(&mut self, bytes: &[u8]) -> Result<(), Oversize> {
         if self.bytes.len().saturating_add(bytes.len()) > self.limit {
             return Err(Oversize);
