@@ -430,3 +430,21 @@ fn nothing_changes_when_no_request_stalls() {
         "no resume without a stall"
     );
 }
+
+#[test]
+fn a_manifest_request_is_exempt_and_only_the_request_timeout_bounds_it() {
+    struct HangMpd;
+    impl Backend for HangMpd {
+        fn serve(&mut self, _: i64, _: &Logged) -> Answer {
+            Answer::Hang
+        }
+    }
+    let mut sim = sim(MPD, Box::new(HangMpd));
+    sim.run_for(config().request_timeout_us - SEC);
+    assert!(
+        sim.closes.is_empty(),
+        "silent for longer than the inactivity timeout"
+    );
+    sim.run_for(2 * SEC);
+    assert_eq!(sim.closes.len(), 1, "closed by the request timeout");
+}
