@@ -840,7 +840,7 @@ fn reconnect_resets_attempt_counter_after_playing() {
 
 #[test]
 fn session_timeout_header_parsed_from_setup() {
-    for (declared, keepalive_secs) in [(120u32, 60u64), (4, 5), (20_000, 3_600)] {
+    for (declared, keepalive_secs) in [(120u32, 60u64), (4, 2), (2, 1), (20_000, 3_600)] {
         let mut s = server();
         s.session_timeout = Some(declared);
         let mut host = connected(quiet_config(), s);
@@ -848,6 +848,21 @@ fn session_timeout_header_parsed_from_setup() {
             options_at(&mut host, keepalive_secs * SEC),
             1,
             "Session timeout={declared} gives a {keepalive_secs} s keepalive"
+        );
+    }
+}
+
+#[test]
+fn keepalive_is_strictly_before_a_short_session_timeout() {
+    for declared in [1u32, 2, 3, 4, 9] {
+        let mut s = server();
+        s.session_timeout = Some(declared);
+        let mut host = connected(quiet_config(), s);
+        let expiry = u64::from(declared) * SEC;
+        host.advance_to(expiry - 1);
+        assert!(
+            host.server.count(OPTIONS) >= 1,
+            "Session timeout={declared}: no keepalive before expiry"
         );
     }
 }
