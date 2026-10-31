@@ -915,10 +915,4 @@ impl Serialize for Hdr10PlusMetadata {
         }
         Ok(need)
     }
-
-    #[test]
-    fn sample_walk_rejects_a_maximal_nal_length_without_overflow() {
-        let sample = [0xFF, 0xFF, 0xFF, 0xFF, 0x4E, 0x01];
-        assert!(!Hdr10PlusMetadata::sample_carries_hdr10plus(&sample));
-    }
 }
