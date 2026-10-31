@@ -185,3 +185,126 @@ fn codec_string_is_main10_with_decimal_level_from_the_real_sps() {
     };
     assert_eq!(config.config.rfc6381(), "hvc1.2.4.L153.90");
 }
+
+const SEI_PREFIX_NUT: u8 = 39;
+const SEI_MDCV: u8 = 137;
+const SEI_CLLI: u8 = 144;
+const SEI_T35: u8 = 4;
+const SEI_TRAILING: u8 = 0x80;
+const HEVC_SEI_HEADER: [u8; 2] = [SEI_PREFIX_NUT << 1, 1];
+
+fn escape(rbsp: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut zeros = 0;
+    for &b in rbsp {
+        if zeros >= 2 && b <= 3 {
+            out.push(3);
+            zeros = 0;
+        }
+        zeros = if b == 0 { zeros + 1 } else { 0 };
+        out.push(b);
+    }
+    out
+}
+
+fn nal_type(nal: &[u8]) -> u8 {
+    (nal[0] >> 1) & 0x3F
+}
+
+fn unescape(nal: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut zeros = 0;
+    for &b in nal {
+        if zeros >= 2 && b == 3 {
+            zeros = 0;
+            continue;
+        }
+        zeros = if b == 0 { zeros + 1 } else { 0 };
+        out.push(b);
+    }
+    out
+}
+
+fn sei_message_types(nal: &[u8]) -> Vec<u8> {
+    let nal = unescape(nal);
+    let mut types = Vec::new();
+    let mut at = 2;
+    while at + 1 < nal.len() && nal[at] != SEI_TRAILING {
+        types.push(nal[at]);
+        at += 2 + usize::from(nal[at + 1]);
+    }
+    types
+}
+
+#[test]
+fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
+    use broadcast_common::Package;
+    let Some(bytes) = test_fixtures::require_bytes(TS, "hdr10") else {
+        return;
+    };
+    let mut media = TsDemux::new().unpackage(&bytes[..]).expect("demux");
+    let idx = media
+        .tracks
+        .iter()
+        .position(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
+        .unwrap();
+    let hdr = media.tracks[idx].spec.hdr.clone().expect("hdr");
+    let mdcv = broadcast_common::Serialize::try_to_bytes(&hdr.mastering_display.unwrap()).unwrap();
+    let clli =
+        broadcast_common::Serialize::try_to_bytes(&hdr.content_light_level.unwrap()).unwrap();
+    let other = [0xB5u8, 0x00, 0x3C, 0x00, 0x01, 0x04];
+
+    let mut rbsp = Vec::new();
+    for (t, p) in [
+        (SEI_MDCV, &mdcv[..]),
+        (SEI_T35, &other[..]),
+        (SEI_CLLI, &clli[..]),
+    ] {
+        rbsp.push(t);
+        rbsp.push(p.len() as u8);
+        rbsp.extend_from_slice(p);
+    }
+    rbsp.push(SEI_TRAILING);
+    let mut bundled = HEVC_SEI_HEADER.to_vec();
+    bundled.extend(escape(&rbsp));
+
+    let track = &mut media.tracks[idx];
+    for (i, s) in track.samples.iter_mut().enumerate() {
+        let mut out = Vec::new();
+        let mut push = |nal: &[u8]| {
+            out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+            out.extend_from_slice(nal);
+        };
+        if i == 0 {
+            push(&bundled);
+        }
+        for nal in transmux::annexb::iter_length_prefixed_nals(&s.data).unwrap() {
+            if nal_type(nal) != SEI_PREFIX_NUT {
+                push(nal);
+            }
+        }
+        s.data = out.into();
+    }
+    let ts = transmux::TsMux::new().package(&media).expect("mux");
+    let spec = video_track(&ts);
+    let CodecConfig::Hevc { config, .. } = &spec.config else {
+        unreachable!()
+    };
+    let sei: Vec<&Vec<u8>> = config
+        .config
+        .arrays
+        .iter()
+        .filter(|a| a.nal_unit_type == SEI_PREFIX_NUT)
+        .flat_map(|a| a.nalus.iter().map(|n| &n.0))
+        .collect();
+    assert_eq!(sei.len(), 1);
+    assert_eq!(sei_message_types(sei[0]), [SEI_MDCV, SEI_CLLI]);
+    assert_eq!(
+        spec.hdr
+            .expect("hdr")
+            .content_light_level
+            .unwrap()
+            .max_content_light_level,
+        1000
+    );
+}
