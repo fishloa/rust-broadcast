@@ -5,7 +5,7 @@
 ## [12.0.1] - 2026-10-31
 
 ### Changed
-- Dependency/epoch bump only (follows dvb-si); no functional change.
+- Lockstep release with `dvb-si` 12.0.1; no functional changes.
 
 ## [12.0.0] - 2026-10-17
 ### Documentation
