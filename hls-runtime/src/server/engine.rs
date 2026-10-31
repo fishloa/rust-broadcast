@@ -756,6 +756,11 @@ const TRANSFER_PQ: u8 = 16;
 const MILLIHERTZ_PER_HZ: u128 = 1000;
 
 const MIN_SAMPLES_FOR_RATE: u64 = 2;
+
+/// Implementation-defined sanity cap (not a spec limit): a per-segment
+/// measurement above this is broken timing, not a frame rate, and is dropped
+/// so one bad segment cannot advertise it in `FRAME-RATE`.
+const MAX_PLAUSIBLE_FRAME_RATE_MILLIHERTZ: u32 = 300 * 1000;
 const SUPPLEMENTAL_CODECS_ATTR: &str = "SUPPLEMENTAL-CODECS";
 
 /// How a Dolby Vision video track is announced in the multivariant playlist.
@@ -919,7 +924,9 @@ fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: u32) -> Op
     let ticks = u128::from(ticks);
     let millihertz =
         (u128::from(samples) * u128::from(timescale) * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
-    u32::try_from(millihertz).ok()
+    u32::try_from(millihertz)
+        .ok()
+        .filter(|mh| *mh <= MAX_PLAUSIBLE_FRAME_RATE_MILLIHERTZ)
 }
 
 /// Mean video frame rate of an fMP4 `segment` from its `trun` durations, or
@@ -3988,6 +3995,19 @@ mod tests {
             Some(30_000)
         );
         assert_eq!(super::segment_frame_rate_millihertz(2, 0, 90_000), None);
+    }
+
+    #[test]
+    fn a_segment_with_broken_timing_does_not_yield_an_implausible_frame_rate() {
+        assert_eq!(super::segment_frame_rate_millihertz(2, 1, 90_000), None);
+        assert_eq!(
+            super::segment_frame_rate_millihertz(300, 90_000, 90_000),
+            Some(300_000)
+        );
+        assert_eq!(
+            super::segment_frame_rate_millihertz(301, 90_000, 90_000),
+            None
+        );
     }
 
     use super::*;
