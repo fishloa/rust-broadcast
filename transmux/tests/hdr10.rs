@@ -14,7 +14,7 @@ use transmux::{ChromaticityXy, build_init_segment};
 
 const TS: &str = "hdr10/meridian-hdr10-60f.ts";
 const GPAC_MP4: &str = "hdr10/meridian-hdr10-60f-hvc1-mdcv-clli.mp4";
-const NO_HDR_TS: &str = "ts/stimmungsgarten-sar-16-11-to-1-1-switch-zenith-tv.ts";
+const NO_HDR_TS: &str = "ts/hevc/main10.ts";
 
 const COLR: [u8; 4] = *b"colr";
 const MDCV: [u8; 4] = *b"mdcv";
