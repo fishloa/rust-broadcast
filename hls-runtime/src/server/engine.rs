@@ -507,11 +507,10 @@ struct Window {
     /// window eviction — the denominator of an I-frame variant's
     /// `AVERAGE-BANDWIDTH`.
     iframe_total_duration_nanos: u128,
-    /// Cumulative count of video samples in every drained fMP4 segment, and
-    /// their summed duration in the video track's timescale ticks: the
-    /// measured frame rate used when the stream's SPS carries no VUI timing.
-    video_samples: u64,
-    video_ticks: u64,
+    /// Highest per-segment mean video frame rate (millihertz) over every
+    /// drained segment, surviving window eviction: the measured frame rate
+    /// used when the stream's SPS carries no VUI timing.
+    video_millihertz: u32,
     /// Cumulative count of discontinuities that have rolled off the front of
     /// the window — RFC 8216 §4.3.3.3's `#EXT-X-DISCONTINUITY-SEQUENCE`.
     /// Incremented exactly once per **evicted** entry whose
@@ -537,8 +536,7 @@ impl Window {
             iframe_peak_bandwidth_bps: 0,
             iframe_total_bytes: 0,
             iframe_total_duration_nanos: 0,
-            video_samples: 0,
-            video_ticks: 0,
+            video_millihertz: 0,
             discontinuity_sequence: 0,
             gap_pending: false,
         }
@@ -550,9 +548,8 @@ impl Window {
         self.gap_pending = true;
     }
 
-    fn note_video_timing(&mut self, samples: u64, ticks: u64) {
-        self.video_samples = self.video_samples.saturating_add(samples);
-        self.video_ticks = self.video_ticks.saturating_add(ticks);
+    fn note_video_rate(&mut self, millihertz: u32) {
+        self.video_millihertz = self.video_millihertz.max(millihertz);
     }
 
     /// Drop every window entry (they roll off the front, so their
@@ -869,20 +866,50 @@ fn first_moof(segment: &[u8]) -> Option<(usize, transmux::movie_fragment::MovieF
     Some((moof_off, moof))
 }
 
-/// Number of video samples and their summed `trun` duration (track timescale
-/// ticks) in `segment`, or `None` when the segment cannot be parsed or holds no
-/// video samples.
-fn compute_video_timing(segment: &[u8], video_track_id: TrackId) -> Option<(u64, u64)> {
+/// Mean video frame rate of one segment in millihertz, rounded to three
+/// decimal places (RFC 8216bis section 4.4.6.2): `samples * timescale / ticks`.
+fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: u32) -> Option<u32> {
+    if samples == 0 || ticks == 0 || timescale == 0 {
+        return None;
+    }
+    let ticks = u128::from(ticks);
+    let millihertz = (u128::from(samples) * u128::from(timescale) * MILLIHERTZ_PER_HZ + ticks / 2)
+        / ticks;
+    u32::try_from(millihertz).ok()
+}
+
+/// Mean video frame rate of an fMP4 `segment` from its `trun` durations, or
+/// `None` when the segment cannot be parsed or holds no video samples.
+fn fmp4_video_rate(segment: &[u8], video_track_id: TrackId, timescale: u32) -> Option<u32> {
     let (moof_off, moof) = first_moof(segment)?;
     let mdats = transmux::frag_offsets::mdat_ranges(segment);
     let samples =
         transmux::frag_offsets::sample_ranges_in(segment, &mdats, moof_off, &moof, video_track_id)
             .ok()?;
-    if samples.is_empty() {
-        return None;
-    }
     let ticks: u64 = samples.iter().map(|r| u64::from(r.duration)).sum();
-    Some((u64::try_from(samples.len()).ok()?, ticks))
+    segment_frame_rate_millihertz(u64::try_from(samples.len()).ok()?, ticks, timescale)
+}
+
+/// Mean video frame rate of a self-initialising MPEG-TS `segment` from the
+/// demuxed video samples' DTS deltas (PTS when a sample has no DTS), which
+/// `TsDemux` unwraps through `broadcast_common::clock33`.
+fn ts_video_rate(segment: &[u8]) -> Option<u32> {
+    let media = transmux::ts_demux::TsDemux::new().demux(segment).ok()?;
+    let track = media
+        .tracks
+        .iter()
+        .find(|track| is_video_codec(&track.spec.config))?;
+    let ticks: u64 = track
+        .samples
+        .iter()
+        .filter_map(|sample| sample.duration)
+        .map(u64::from)
+        .sum();
+    segment_frame_rate_millihertz(
+        u64::try_from(track.samples.len()).ok()?,
+        ticks,
+        track.spec.timescale,
+    )
 }
 
 /// Compute the byte length of the leading I-frame slice of `segment`'s first
@@ -2814,20 +2841,35 @@ impl HlsOrigin {
         drop(cursor);
 
         enum Prepared {
-            Segment(SegmentEntry, Generation, Option<u64>, Option<(u64, u64)>),
+            Segment(SegmentEntry, Generation, Option<u64>, Option<u32>),
             Gap,
         }
         let video_track_id = *locked(&self.video_track_id);
+        let signalled_rate = locked(&self.frame_rate).is_some();
+        let video_timescale = locked(&self.track_specs)
+            .iter()
+            .find(|spec| is_video_codec(&spec.config))
+            .map(|spec| spec.timescale);
         let mut prepared = Vec::with_capacity(polled.len());
         for item in polled {
             match item {
                 SegmentCursorItem::Segment(entry) => {
                     let iframe_len = video_track_id
                         .and_then(|track_id| compute_iframe_len(&entry.bytes, track_id));
-                    let video_timing = video_track_id
-                        .and_then(|track_id| compute_video_timing(&entry.bytes, track_id));
+                    let video_rate = if signalled_rate {
+                        None
+                    } else {
+                        match self.container {
+                            Container::MpegTs => ts_video_rate(&entry.bytes),
+                            _ => video_track_id.zip(video_timescale).and_then(
+                                |(track_id, timescale)| {
+                                    fmp4_video_rate(&entry.bytes, track_id, timescale)
+                                },
+                            ),
+                        }
+                    };
                     let init_gen = locked(&self.init).generation_for(entry.sequence_number);
-                    prepared.push(Prepared::Segment(entry, init_gen, iframe_len, video_timing));
+                    prepared.push(Prepared::Segment(entry, init_gen, iframe_len, video_rate));
                 }
                 // `Lagged`/`Gap`/anything newer: segments were lost, so the
                 // next one does not follow the window's contents.
@@ -2838,7 +2880,7 @@ impl HlsOrigin {
         let mut window = locked(&self.window);
         for item in prepared {
             match item {
-                Prepared::Segment(entry, init_gen, iframe_len, video_timing) => {
+                Prepared::Segment(entry, init_gen, iframe_len, video_rate) => {
                     // Record the arrival origin exactly once, the first time a
                     // segment drains into the window while an arrival clock is
                     // configured. "this segment ended about now, so it started
@@ -2858,8 +2900,8 @@ impl HlsOrigin {
                     }
                     let seg_duration = entry.duration;
                     window.push(entry, init_gen, iframe_len);
-                    if let Some((samples, ticks)) = video_timing {
-                        window.note_video_timing(samples, ticks);
+                    if let Some(millihertz) = video_rate {
+                        window.note_video_rate(millihertz);
                     }
                     if let Some(frozen) = *locked(&self.frozen_target_duration_secs)
                         && seg_duration.as_secs_f64().round() > frozen.round()
@@ -2875,8 +2917,11 @@ impl HlsOrigin {
     }
 
     /// `FRAME-RATE` of the video variants: the SPS VUI timing rate when the
-    /// stream signals one, else the rate measured over the drained fMP4
-    /// segments (`samples * timescale / summed trun duration`). Apple HLS
+    /// stream signals one, else the highest per-segment mean rate measured over
+    /// the drained segments (fMP4 `trun` durations, or MPEG-TS DTS deltas). For
+    /// a constant-rate stream that mean is the rate; for a variable-rate one it
+    /// is the maximum, as the attribute requires, and a single long gap lowers
+    /// only its own segment. Apple HLS
     /// authoring spec item 9.15 requires it on every `EXT-X-STREAM-INF` with
     /// video, and RFC 8216bis section 4.4.6.2 defines it as the maximum frame
     /// rate of the variant's video.
@@ -2884,22 +2929,11 @@ impl HlsOrigin {
         if let Some(signalled) = *locked(&self.frame_rate) {
             return Some(signalled);
         }
-        let timescale = locked(&self.track_specs)
-            .iter()
-            .find(|spec| is_video_codec(&spec.config))
-            .map(|spec| u128::from(spec.timescale))?;
-        let (samples, ticks) = {
-            let window = locked(&self.window);
-            (
-                u128::from(window.video_samples),
-                u128::from(window.video_ticks),
-            )
-        };
-        if samples == 0 || ticks == 0 {
+        let millihertz = locked(&self.window).video_millihertz;
+        if millihertz == 0 {
             return None;
         }
-        let millihertz = (samples * timescale * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
-        Some(FrameRate::from_millihertz(u32::try_from(millihertz).ok()?))
+        Some(FrameRate::from_millihertz(millihertz))
     }
 
     /// What `render_playlist` needs from the window, copied out so the window
