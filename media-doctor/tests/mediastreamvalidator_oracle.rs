@@ -193,7 +193,7 @@ impl std::fmt::Display for Finding {
 /// that a static fixture file will never produce).
 fn run_validator(dir: &Path, entry: &str, parse_only: bool, timeout_secs: u32) -> Vec<Finding> {
     // The JSON output path (`-O`) is deliberately OUTSIDE `dir`: for the
-    // calibration test `dir` is the committed `fixtures/hls/spec/` tree, and
+    // calibration test `dir` is the private `fixtures/hls/spec/` tree, and
     // writing scratch output into a source directory would dirty a fixture
     // tree the test run itself doesn't own. Unique per call (a monotonic
     // counter) since `cargo test` runs test functions concurrently by
@@ -401,7 +401,9 @@ const SPEC_FIXTURES: &[&str] = &[
 fn spec_fixtures_calibrate() {
     skip_unless_validator_available!();
 
-    let spec_dir = repo_fixture("fixtures/hls/spec");
+    let Some(spec_dir) = test_fixtures::require("hls/spec", "mediastreamvalidator_oracle") else {
+        return;
+    };
 
     for name in SPEC_FIXTURES {
         // `-t 5`: 9.2 is a "live" playlist (no `#EXT-X-ENDLIST`) per the RFC

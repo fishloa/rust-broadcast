@@ -31,7 +31,7 @@ Licence: project licence (MIT OR Apache-2.0), same as all in-repo source.
 
 ---
 
-## Tier 1 — spec test vectors (`fixtures/hls/spec/`)
+## Tier 1 — spec test vectors (private repo: `private/fixtures/hls/spec/`)
 
 Source: `ll-hls-runtime/docs/examples.md`, itself a verbatim transcription
 (commit `a07124ae`, 2026-08-01, issue #867) of §9 "Playlist Examples" from
@@ -39,11 +39,7 @@ Source: `ll-hls-runtime/docs/examples.md`, itself a verbatim transcription
 source lines 4608–5023 of `specs/ietf_draft_pantos_hls_rfc8216bis.txt`.
 Extraction/commit date into this fixture tree: 2026-08-02.
 
-Licence/redistribution: IETF Internet-Drafts are governed by
-[BCP 78](https://www.rfc-editor.org/info/bcp78) — freely reproducible in
-full without modification (which these are, modulo the transcription's own
-documented whitespace normalization — see `examples.md` header). This is
-example/illustrative text, not the operative spec text.
+Licence/redistribution: the draft forbids modification and derivative works, so these files are spec text and live only in the private repo (`private/fixtures/hls/spec/`, with its own `PROVENANCE.md`); tests load them through `test_fixtures` and skip loudly when private is absent.
 
 These are **authoritative**: written by the spec's own authors. If our
 parser disagrees with one, our parser is wrong (subject to the two

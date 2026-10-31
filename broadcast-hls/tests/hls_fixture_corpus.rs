@@ -112,8 +112,25 @@ struct Case {
     expect: Expect,
 }
 
+/// A `spec/` fixture lives in the private repo (draft text); `None` after a loud skip.
+fn read_spec(rel_path: &str) -> Option<String> {
+    let rel = format!("hls/{rel_path}");
+    let path = test_fixtures::require(&rel, "hls_fixture_corpus")?;
+    Some(
+        fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", path.display())),
+    )
+}
+
 fn assert_case(case: &Case) {
-    let text = read_fixture(case.path);
+    let text = if case.path.starts_with("spec/") {
+        let Some(t) = read_spec(case.path) else {
+            return;
+        };
+        t
+    } else {
+        read_fixture(case.path)
+    };
     match (case.kind, &case.expect) {
         (Kind::Media, Expect::Ok) => {
             let parsed = MediaPlaylist::parse(&text)
@@ -264,7 +281,9 @@ fn spec_examples_parse_as_expected() {
 /// silently going unparsed-and-unchecked forever.
 #[test]
 fn spec_dir_has_no_untested_m3u8_fixtures() {
-    let dir = fixtures_hls_root().join("spec");
+    let Some(dir) = test_fixtures::require("hls/spec", "hls_fixture_corpus") else {
+        return;
+    };
     let mut on_disk: Vec<String> = fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()))
         .map(|entry| {
@@ -286,7 +305,7 @@ fn spec_dir_has_no_untested_m3u8_fixtures() {
 
     assert_eq!(
         on_disk, expected,
-        "fixtures/hls/spec/*.m3u8 on disk must exactly match SPEC_CASES in this test"
+        "private/fixtures/hls/spec/*.m3u8 on disk must exactly match SPEC_CASES in this test"
     );
 }
 

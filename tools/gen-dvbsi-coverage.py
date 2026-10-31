@@ -3,7 +3,7 @@
 
 Outputs (all deterministic — same inputs, byte-identical output):
 
-* ``dvb-si/docs/COVERAGE.md`` — the full coverage reference: every table_id,
+* ``private/specs-verified/dvb/dvb-si/COVERAGE.md`` — the full coverage reference: every table_id,
   descriptor tag, descriptor_tag_extension, MPEG-2 extension tag, AIT / INT /
   UNT / DII / RNT scoped descriptor, private (PDS-scoped) descriptor, DSM-CC
   carousel message, Annex A text charset, plus the honest "Not implemented"
@@ -13,7 +13,7 @@ Outputs (all deterministic — same inputs, byte-identical output):
 * the ``<!-- BEGIN GENERATED: dvb-si-at-a-glance -->`` block in the crate-root
   ``//!`` docs of ``dvb-si/src/lib.rs``, and
 * the ``<!-- BEGIN GENERATED: dvb-si-docs-index -->`` block in
-  ``dvb-si/docs/README.md`` (the spec-transcription index).
+  ``private/specs-verified/dvb/dvb-si/README.md`` (the spec-transcription index).
 
 Inputs ("what the code implements" — read lexically, never hand-typed):
 
@@ -27,7 +27,7 @@ Inputs ("what the code implements" — read lexically, never hand-typed):
   the ``DescriptorRegistry::with_*`` opt-ins, the ``Charset`` enum, and the
   vendored TSDuck registries (``dvb-si/registries/*.names``).
 
-and ("what the standards define"): ``dvb-si/docs/coverage/allocations.tsv``,
+and ("what the standards define"): ``private/specs-verified/dvb/dvb-si/coverage/allocations.tsv``,
 the hand-transcribed allocation lists every "Not implemented" row comes from.
 
 Usage::
@@ -43,6 +43,7 @@ regenerating the docs.
 from __future__ import annotations
 
 import difflib
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -51,10 +52,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CRATE = ROOT / "dvb-si"
 SRC = CRATE / "src"
-COVERAGE = CRATE / "docs" / "COVERAGE.md"
+def _private_root() -> Path:
+    env = os.environ.get("RUST_BROADCAST_PRIVATE")
+    if env and (Path(env) / "specs-verified").is_dir():
+        return Path(env)
+    return ROOT / "private"
+
+
+PRIVATE_DOCS = _private_root() / "specs-verified" / "dvb" / "dvb-si"
+COVERAGE = PRIVATE_DOCS / "COVERAGE.md"
 README = CRATE / "README.md"
 LIB = SRC / "lib.rs"
-ALLOCATIONS = CRATE / "docs" / "coverage" / "allocations.tsv"
+ALLOCATIONS = PRIVATE_DOCS / "coverage" / "allocations.tsv"
 
 BEGIN = "<!-- BEGIN GENERATED: dvb-si-at-a-glance (tools/gen-dvbsi-coverage.py) -->"
 END = "<!-- END GENERATED: dvb-si-at-a-glance -->"
@@ -83,7 +92,12 @@ def read(path: Path) -> str:
 
 
 def rel(path: Path) -> str:
-    return path.relative_to(CRATE).as_posix()
+    for base in (CRATE, ROOT):
+        try:
+            return path.relative_to(base).as_posix()
+        except ValueError:
+            pass
+    return path.as_posix()
 
 
 def macro_body(text: str, name: str, path: Path) -> str:
@@ -643,7 +657,7 @@ SPEC_KINDS = [
     ("enums", "Coded-value tables (with `.toml` drift guards)"),
     ("text", "Prose references"),
 ]
-DOCS_INDEX = CRATE / "docs" / "README.md"
+DOCS_INDEX = PRIVATE_DOCS / "README.md"
 INDEX_BEGIN = "<!-- BEGIN GENERATED: dvb-si-docs-index (tools/gen-dvbsi-coverage.py) -->"
 INDEX_END = "<!-- END GENERATED: dvb-si-docs-index -->"
 
@@ -675,7 +689,7 @@ SPEC_INDEX = {
 
 def render_docs_index() -> list[str]:
     for kind in SPEC_INDEX:
-        base = CRATE / "docs" / kind
+        base = PRIVATE_DOCS / kind
         for d in sorted(p.name for p in base.iterdir() if p.is_dir()) if base.is_dir() else []:
             if d not in SPEC_INDEX[kind]:
                 raise GenError(f"docs/{kind}/{d}/ exists but is missing from SPEC_INDEX (tools/gen-dvbsi-coverage.py)")
@@ -978,7 +992,7 @@ def at_a_glance_rows(c: dict) -> list[tuple[str, str]]:
         ("DSM-CC carousel", f"**{c['carousel']}** layers: section framing, DSI/DII/DDB, module reassembly, BIOP object carousel, carousel file tree"),
         ("Registries", f"**{c['cas']}** CA_system_id and **{c['pds']}** private_data_specifier names (TSDuck data, build-time)"),
         ("Standards", f"**{c['standards']}** standards / families — see the table below"),
-        ("Known gaps", f"**{c['not_impl']}** allocated codes not yet typed — listed in [`docs/COVERAGE.md`]({REPO_BLOB}docs/COVERAGE.md#not-implemented)"),
+        ("Known gaps", f"**{c['not_impl']}** allocated codes not yet typed — listed in `private/specs-verified/dvb/dvb-si/COVERAGE.md` (private repo)"),
     ]
 
 
@@ -1342,6 +1356,12 @@ def outputs(m: Model) -> dict[Path, str]:
 
 def main(argv: list[str]) -> int:
     check = "--check" in argv[1:]
+    if os.environ.get("SKIP_PRIVATE_FIXTURES") == "1" or not ALLOCATIONS.is_file():
+        if os.environ.get("REQUIRE_PRIVATE_FIXTURES") == "1" and os.environ.get("SKIP_PRIVATE_FIXTURES") != "1":
+            print(f"gen-dvbsi-coverage: {rel(ALLOCATIONS)} missing but REQUIRE_PRIVATE_FIXTURES=1", file=sys.stderr)
+            return 2
+        print(f"gen-dvbsi-coverage: SKIPPED - {rel(ALLOCATIONS)} unavailable (private repo not checked out or SKIP_PRIVATE_FIXTURES=1)")
+        return 0
     try:
         m = build()
         bad = citation_mismatches(m)

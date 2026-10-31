@@ -107,7 +107,7 @@ def test_prepare_restores_the_cache_before_a_miss_conditional_checkout():
     for step in (restore[0], save[0]):
         with_ = step.get("with") or {}
         assert with_.get("path") == "private-fixtures"
-        assert with_.get("key") == f"private-fixtures-v2-{KEY}"
+        assert with_.get("key") == f"private-fixtures-v3-{KEY}"
     miss = str(restore[0]["with"].get("fail-on-cache-miss"))
     assert miss.startswith("${{") and miss.endswith("}}"), "must be an expression, not a literal string"
     assert "'use'" in miss, "only `use` fails on a miss; a prepare miss means clone it"
@@ -126,7 +126,7 @@ def test_use_restore_fails_on_a_cache_miss():
     assert str(with_.get("fail-on-cache-miss")) == "${{ inputs.mode == 'use' }}", (
         "a `use` cache miss is a job-ordering bug and must fail, never silently skip"
     )
-    assert with_.get("key") == f"private-fixtures-v2-{KEY}"
+    assert with_.get("key") == f"private-fixtures-v3-{KEY}"
     assert with_.get("path") == "private-fixtures"
     assert "mode" in doc["inputs"] and doc["inputs"]["mode"].get("default") == "checkout"
     assert {"enabled", "sha"} <= set(doc["outputs"])

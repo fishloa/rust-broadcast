@@ -237,6 +237,53 @@ pub fn require(rel: &str, who: &str) -> Option<PathBuf> {
     }
 }
 
+/// `private/specs-verified/<rel>` (spec text, notes and registries moved out of
+/// the public tree): `Some(path)` when present, `None` after a loud `SKIPPED`
+/// line when the private repo is not checked out or the private tier is disabled.
+///
+/// # Panics
+/// If the private repo is checked out but `rel` is missing from it, or when
+/// [`REQUIRE_PRIVATE_ENV`] is `1` and the private repo is unavailable.
+#[must_use]
+pub fn spec(rel: &str, who: &str) -> Option<PathBuf> {
+    if flag_set(std::env::var_os(SKIP_PRIVATE_ENV).as_deref()) {
+        eprintln!(
+            "{who}: SKIPPED - private spec `{rel}`: the private tier is disabled by \
+             {SKIP_PRIVATE_ENV}=1"
+        );
+        return None;
+    }
+    match private_root() {
+        None if flag_set(std::env::var_os(REQUIRE_PRIVATE_ENV).as_deref()) => panic!(
+            "{who}: private spec `{rel}` unavailable but {REQUIRE_PRIVATE_ENV}=1 (CI has the \
+             deploy key, so the private checkout must exist - a skip here would hide the test)"
+        ),
+        None => {
+            eprintln!(
+                "{who}: SKIPPED - private spec `{rel}` unavailable: the private repo is not \
+                 checked out (git submodule update --init private, or set {PRIVATE_ENV})"
+            );
+            None
+        }
+        Some(root) => {
+            let p = root.join("specs-verified").join(rel);
+            assert!(
+                p.exists(),
+                "{who}: private spec `{rel}` missing at {}",
+                p.display()
+            );
+            Some(p)
+        }
+    }
+}
+
+/// UTF-8 text of [`spec`]`(rel, who)`, or `None` on a loud skip.
+#[must_use]
+pub fn spec_string(rel: &str, who: &str) -> Option<String> {
+    let p = spec(rel, who)?;
+    Some(std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{who}: read {}: {e}", p.display())))
+}
+
 /// Locate `rel` (e.g. `input/test-002.ts`, `reference/test-147/test-147.ts`) in
 /// the pinned `tsduck-test` clone (`.test-streams/tsduck-test`) or the
 /// `private/fixtures/tsduck/` mirror. Same skip/panic contract as [`require`].

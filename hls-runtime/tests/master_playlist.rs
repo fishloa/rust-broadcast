@@ -146,7 +146,12 @@ fn policy_tie_picks_first_in_playlist_order() {
 fn master_exposes_audio_renditions_with_resolved_urls() {
     let master_url = "http://example.com/9.6-multivariant-alternative-audio.m3u8";
     let mut client = HlsClient::new(master_url);
-    let bytes = test_fixtures::read("hls/spec/9.6-multivariant-alternative-audio.m3u8");
+    let Some(bytes) = test_fixtures::require_bytes(
+        "hls/spec/9.6-multivariant-alternative-audio.m3u8",
+        "hls-runtime master_playlist",
+    ) else {
+        return;
+    };
     client.on_playlist(&bytes).expect("master parses");
     let sel = match client.next_output().unwrap() {
         Output::Master(s) => s,
@@ -203,7 +208,12 @@ fn relative_and_absolute_variant_uris_resolve_against_master_url() {
 
     // absolute (9.4)
     let mut client = HlsClient::new("http://base/playlist.m3u8");
-    let bytes = test_fixtures::read("hls/spec/9.4-multivariant-playlist.m3u8");
+    let Some(bytes) = test_fixtures::require_bytes(
+        "hls/spec/9.4-multivariant-playlist.m3u8",
+        "hls-runtime master_playlist",
+    ) else {
+        return;
+    };
     client.on_playlist(&bytes).expect("master parses");
     let sel = match client.next_output().unwrap() {
         Output::Master(s) => s,
@@ -252,7 +262,12 @@ fn select_variant_out_of_range_and_before_master_error() {
 #[test]
 fn media_playlist_input_unchanged() {
     let mut client = HlsClient::new("http://example.com/media.m3u8");
-    let bytes = test_fixtures::read("hls/spec/9.1-simple-media-playlist.m3u8");
+    let Some(bytes) = test_fixtures::require_bytes(
+        "hls/spec/9.1-simple-media-playlist.m3u8",
+        "hls-runtime master_playlist",
+    ) else {
+        return;
+    };
     client.on_playlist(&bytes).expect("media parses");
     assert!(!matches!(client.next_output(), Some(Output::Master(_))));
 }

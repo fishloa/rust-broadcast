@@ -2,7 +2,7 @@
 
 Status: design rev 2, 2026-10-22 (rev 1 reviewed against the code by an independent reader; 18 findings folded in).
 Spec basis (page-verified transcriptions, committed first): [`broadcast-hls/docs/iframe-playlists.md`](../../broadcast-hls/docs/README.md#private-spec-transcriptions)
-cited as **T§n**, and [`http-range-requests.md`](http-range-requests.md) (RFC 9110 range requests) cited as **H§n**.
+cited as **T§n**, and `http-range-requests.md` (RFC 9110 range requests) cited as **H§n**.
 Apple authoring 6.1: *I-frame playlists MUST be provided to support scrubbing and scanning UI.*
 
 ## 1. Decisions (the owner may overturn D1, D2, D6)

@@ -46,6 +46,10 @@ use std::collections::{BTreeMap, BTreeSet};
 /// - blank lines and `#`-comment lines are skipped
 /// - `[[entry]]` starts a new record
 /// - `key = 0xNN` / `key = "..."` lines populate the record
+fn spec_toml(rel: &str) -> Option<String> {
+    test_fixtures::spec_string(&format!("dvb/dvb-si/enums/{rel}"), "dvb-si spec_drift")
+}
+
 fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
     let mut results = Vec::new();
     let mut cur_value: Option<u8> = None;
@@ -110,7 +114,10 @@ fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
 
 #[test]
 fn table_id_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/table_id.toml");
+    let Some(toml) = spec_toml("en_300_468/table_id.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     // build set from TOML
@@ -148,7 +155,10 @@ fn table_id_toml_matches_enum() {
 
 #[test]
 fn descriptor_tag_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/descriptor_tag.toml");
+    let Some(toml) = spec_toml("en_300_468/descriptor_tag.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -184,7 +194,10 @@ fn descriptor_tag_toml_matches_enum() {
 
 #[test]
 fn stream_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/iso_13818_1/stream_type.toml");
+    let Some(toml) = spec_toml("iso_13818_1/stream_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     // build TOML set and the value→spec map for the name check
@@ -239,7 +252,10 @@ fn stream_type_toml_matches_enum() {
 
 #[test]
 fn service_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/service_type.toml");
+    let Some(toml) = spec_toml("en_300_468/service_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -274,7 +290,10 @@ fn service_type_toml_matches_enum() {
 
 #[test]
 fn subtitling_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/subtitling_type.toml");
+    let Some(toml) = spec_toml("en_300_468/subtitling_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -309,7 +328,10 @@ fn subtitling_type_toml_matches_enum() {
 
 #[test]
 fn teletext_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/teletext_type.toml");
+    let Some(toml) = spec_toml("en_300_468/teletext_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -344,7 +366,10 @@ fn teletext_type_toml_matches_enum() {
 
 #[test]
 fn linkage_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/linkage_type.toml");
+    let Some(toml) = spec_toml("en_300_468/linkage_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -383,7 +408,10 @@ fn linkage_type_toml_matches_enum() {
 
 #[test]
 fn audio_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/iso_13818_1/audio_type.toml");
+    let Some(toml) = spec_toml("iso_13818_1/audio_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -419,7 +447,10 @@ fn audio_type_toml_matches_enum() {
 
 #[test]
 fn announcement_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/announcement_type.toml");
+    let Some(toml) = spec_toml("en_300_468/announcement_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -454,7 +485,10 @@ fn announcement_type_toml_matches_enum() {
 
 #[test]
 fn alignment_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/iso_13818_1/alignment_type.toml");
+    let Some(toml) = spec_toml("iso_13818_1/alignment_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -489,7 +523,10 @@ fn alignment_type_toml_matches_enum() {
 
 #[test]
 fn ac3_service_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/ac3_service_type.toml");
+    let Some(toml) = spec_toml("en_300_468/ac3_service_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -526,7 +563,10 @@ fn ac3_service_type_toml_matches_enum() {
 
 #[test]
 fn ac4_channel_mode_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/ac4_channel_mode.toml");
+    let Some(toml) = spec_toml("en_300_468/ac4_channel_mode.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -561,7 +601,10 @@ fn ac4_channel_mode_toml_matches_enum() {
 
 #[test]
 fn crid_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_323/crid_type.toml");
+    let Some(toml) = spec_toml("ts_102_323/crid_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -596,7 +639,10 @@ fn crid_type_toml_matches_enum() {
 
 #[test]
 fn control_remote_access_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/control_remote_access.toml");
+    let Some(toml) = spec_toml("en_300_468/control_remote_access.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -632,7 +678,10 @@ fn control_remote_access_toml_matches_enum() {
 
 #[test]
 fn scrambling_mode_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/scrambling_mode.toml");
+    let Some(toml) = spec_toml("en_300_468/scrambling_mode.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -667,7 +716,10 @@ fn scrambling_mode_toml_matches_enum() {
 
 #[test]
 fn polarization_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/polarization.toml");
+    let Some(toml) = spec_toml("en_300_468/polarization.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -700,7 +752,10 @@ fn polarization_toml_matches_enum() {
 
 #[test]
 fn fec_outer_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/fec_outer.toml");
+    let Some(toml) = spec_toml("en_300_468/fec_outer.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -737,7 +792,10 @@ fn fec_outer_toml_matches_enum() {
 
 #[test]
 fn ts_gs_mode_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/ts_gs_mode.toml");
+    let Some(toml) = spec_toml("en_300_468/ts_gs_mode.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -772,7 +830,10 @@ fn ts_gs_mode_toml_matches_enum() {
 
 #[test]
 fn s2x_mode_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/s2x_mode.toml");
+    let Some(toml) = spec_toml("en_300_468/s2x_mode.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -807,7 +868,10 @@ fn s2x_mode_toml_matches_enum() {
 
 #[test]
 fn t2_siso_miso_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/t2_siso_miso.toml");
+    let Some(toml) = spec_toml("en_300_468/t2_siso_miso.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -842,7 +906,10 @@ fn t2_siso_miso_toml_matches_enum() {
 
 #[test]
 fn sh_diversity_mode_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/sh_diversity_mode.toml");
+    let Some(toml) = spec_toml("en_300_468/sh_diversity_mode.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -877,7 +944,10 @@ fn sh_diversity_mode_toml_matches_enum() {
 
 #[test]
 fn c2_tuning_frequency_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/c2_tuning_frequency_type.toml");
+    let Some(toml) = spec_toml("en_300_468/c2_tuning_frequency_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -912,7 +982,10 @@ fn c2_tuning_frequency_type_toml_matches_enum() {
 
 #[test]
 fn uri_linkage_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_101_162/uri_linkage_type.toml");
+    let Some(toml) = spec_toml("ts_101_162/uri_linkage_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -947,7 +1020,10 @@ fn uri_linkage_type_toml_matches_enum() {
 
 #[test]
 fn extension_tag_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/extension_tag.toml");
+    let Some(toml) = spec_toml("en_300_468/extension_tag.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1006,7 +1082,10 @@ fn extension_tag_toml_matches_enum() {
 
 #[test]
 fn running_status_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_300_468/running_status.toml");
+    let Some(toml) = spec_toml("en_300_468/running_status.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1042,7 +1121,10 @@ fn running_status_toml_matches_enum() {
 
 #[test]
 fn int_action_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/en_301_192/int_action_type.toml");
+    let Some(toml) = spec_toml("en_301_192/int_action_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1077,7 +1159,10 @@ fn int_action_type_toml_matches_enum() {
 
 #[test]
 fn unt_action_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_006/unt_action_type.toml");
+    let Some(toml) = spec_toml("ts_102_006/unt_action_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1115,7 +1200,10 @@ fn unt_action_type_toml_matches_enum() {
 
 #[test]
 fn control_code_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_809/control_code.toml");
+    let Some(toml) = spec_toml("ts_102_809/control_code.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1150,7 +1238,10 @@ fn control_code_toml_matches_enum() {
 
 #[test]
 fn reference_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_809/reference_type.toml");
+    let Some(toml) = spec_toml("ts_102_809/reference_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1186,7 +1277,10 @@ fn reference_type_toml_matches_enum() {
 
 #[test]
 fn crid_authority_policy_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_323/crid_authority_policy.toml");
+    let Some(toml) = spec_toml("ts_102_323/crid_authority_policy.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1219,7 +1313,10 @@ fn crid_authority_policy_toml_matches_enum() {
 
 #[test]
 fn link_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_323/link_type.toml");
+    let Some(toml) = spec_toml("ts_102_323/link_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1255,7 +1352,10 @@ fn link_type_toml_matches_enum() {
 
 #[test]
 fn descriptor_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_006/descriptor_type.toml");
+    let Some(toml) = spec_toml("ts_102_006/descriptor_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1296,7 +1396,10 @@ fn descriptor_type_toml_matches_enum() {
 
 #[test]
 fn tva_running_status_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_323/tva_running_status.toml");
+    let Some(toml) = spec_toml("ts_102_323/tva_running_status.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -1396,7 +1499,10 @@ fn biop_tag_toml_matches_consts() {
     };
     use std::collections::BTreeMap;
 
-    let toml = include_str!("../docs/enums/iso_13818_6/biop_tag.toml");
+    let Some(toml) = spec_toml("iso_13818_6/biop_tag.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_biop_tag_entries(toml);
 
     // Build TOML map: variant -> value
@@ -1439,7 +1545,10 @@ fn biop_object_kind_toml_matches_enum() {
     use dvb_si::carousel::biop::ObjectKind;
     use std::collections::BTreeSet;
 
-    let toml = include_str!("../docs/enums/iso_13818_6/biop_object_kind.toml");
+    let Some(toml) = spec_toml("iso_13818_6/biop_object_kind.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
 
     // Parse entries: value is the 3-char alias string (without NUL)
     let mut toml_set: BTreeSet<(String, String)> = BTreeSet::new();
@@ -1514,7 +1623,10 @@ macro_rules! scoped_enum_drift {
     ($test:ident, $ty:ty, $toml:literal, $span:expr, $count:expr, [$($skip:pat),*]) => {
         #[test]
         fn $test() {
-            let entries = parse_entries(include_str!($toml));
+            let Some(toml) = spec_toml($toml) else {
+                return;
+            };
+            let entries = parse_entries(&toml);
             let toml_set: BTreeSet<(u8, String)> =
                 entries.iter().map(|(v, var, _)| (*v, var.clone())).collect();
             let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
@@ -1540,7 +1652,7 @@ macro_rules! scoped_enum_drift {
 scoped_enum_drift!(
     modulation_system_type_toml_matches_enum,
     dvb_si::descriptors::int::ModulationSystemType,
-    "../docs/enums/en_301_192/modulation_system_type.toml",
+    "en_301_192/modulation_system_type.toml",
     256,
     5,
     [dvb_si::descriptors::int::ModulationSystemType::Reserved(_)]
@@ -1548,7 +1660,7 @@ scoped_enum_drift!(
 scoped_enum_drift!(
     isp_access_mode_toml_matches_enum,
     dvb_si::descriptors::int::IspAccessMode,
-    "../docs/enums/en_301_192/isp_access_mode.toml",
+    "en_301_192/isp_access_mode.toml",
     256,
     2,
     [dvb_si::descriptors::int::IspAccessMode::Reserved(_)]
@@ -1556,7 +1668,7 @@ scoped_enum_drift!(
 scoped_enum_drift!(
     update_flag_toml_matches_enum,
     dvb_si::descriptors::unt::UpdateFlag,
-    "../docs/enums/ts_102_006/update_flag.toml",
+    "ts_102_006/update_flag.toml",
     4,
     2,
     [dvb_si::descriptors::unt::UpdateFlag::Reserved(_)]
@@ -1564,7 +1676,7 @@ scoped_enum_drift!(
 scoped_enum_drift!(
     update_method_toml_matches_enum,
     dvb_si::descriptors::unt::UpdateMethod,
-    "../docs/enums/ts_102_006/update_method.toml",
+    "ts_102_006/update_method.toml",
     16,
     3,
     [
@@ -1575,7 +1687,7 @@ scoped_enum_drift!(
 scoped_enum_drift!(
     time_unit_toml_matches_enum,
     dvb_si::descriptors::unt::TimeUnit,
-    "../docs/enums/ts_102_006/time_unit.toml",
+    "ts_102_006/time_unit.toml",
     4,
     4,
     []

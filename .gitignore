@@ -4,8 +4,7 @@ target/
 # Non-redistributable vendored spec PDFs + test media live in the PRIVATE git
 # submodule `private/` (repo: rust-broadcast-private) — `private/specs/*.pdf`,
 # `private/fixtures/…`. Never manually copied into the public tree. The public
-# `specs/` dir keeps only freely-redistributable text specs (RFCs, etc.) +
-# manifests; extracted-syntax markdown stays public in each crate's docs/.
+# public tree carries no spec material at all (see docs/specs/PRIVATE-MAP.md).
 # Guard against accidentally dropping a PDF straight into public specs/:
 specs/*.pdf
 tools/dvb-si-audit/.venv/

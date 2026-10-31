@@ -29,6 +29,7 @@ jiff       = { version = "0.2", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+test-fixtures = { path = "../test-fixtures" }
 
 [features]
 default = ["std"]

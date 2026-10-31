@@ -150,8 +150,8 @@ on `scte35-splice` and `mp4-emsg` for the real-fixture tests. Media splicing is
 
 ## Spec references
 
-- HLS Interstitials: draft-pantos-hls-rfc8216bis Appendix D, transcribed at
-  [`broadcast-hls/docs/interstitials.md`](../broadcast-hls/docs/interstitials.md).
+- HLS Interstitials: draft-pantos-hls-rfc8216bis Appendix D, transcribed in the private
+  repo (`private/specs-verified/hls/ietf/rfc8216bis-interstitials.md`, see `docs/specs/PRIVATE-MAP.md`).
 - SCTE-35 `splice_insert()` / segmentation: ANSI/SCTE 35 2023r1, transcribed at
   [`scte35-splice/docs/`](../scte35-splice/docs/).
 

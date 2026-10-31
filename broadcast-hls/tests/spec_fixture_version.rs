@@ -38,13 +38,12 @@ use std::fs;
 
 use broadcast_hls::{MasterPlaylist, MediaPlaylist};
 
-fn read_spec_fixture(name: &str) -> String {
-    let path = format!(
-        "{}/../fixtures/hls/spec/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        name
-    );
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read spec fixture {path}: {e}"))
+fn read_spec_fixture(name: &str) -> Option<String> {
+    let path = test_fixtures::require(&format!("hls/spec/{name}"), "spec_fixture_version")?;
+    Some(
+        fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read spec fixture {}: {e}", path.display())),
+    )
 }
 
 /// The `EXT-X-VERSION` the spec authors wrote into the fixture, read
@@ -89,7 +88,9 @@ const SPEC_MULTIVARIANT_PLAYLISTS: &[&str] = &[
 #[test]
 fn spec_media_playlist_computed_version_matches_the_authors_declaration() {
     for name in SPEC_MEDIA_PLAYLISTS {
-        let text = read_spec_fixture(name);
+        let Some(text) = read_spec_fixture(name) else {
+            return;
+        };
         let pl = MediaPlaylist::parse(&text)
             .unwrap_or_else(|e| panic!("spec fixture {name} must parse: {e}"));
         assert_eq!(
@@ -105,7 +106,9 @@ fn spec_media_playlist_computed_version_matches_the_authors_declaration() {
 #[test]
 fn spec_multivariant_playlist_computed_version_matches_the_authors_declaration() {
     for name in SPEC_MULTIVARIANT_PLAYLISTS {
-        let text = read_spec_fixture(name);
+        let Some(text) = read_spec_fixture(name) else {
+            return;
+        };
         let pl = MasterPlaylist::parse(&text)
             .unwrap_or_else(|e| panic!("spec fixture {name} must parse: {e}"));
         assert_eq!(
@@ -126,7 +129,9 @@ fn spec_multivariant_playlist_computed_version_matches_the_authors_declaration()
 #[test]
 fn spec_media_fixtures_actually_declare_a_version_to_compare_against() {
     for name in SPEC_MEDIA_PLAYLISTS {
-        let text = read_spec_fixture(name);
+        let Some(text) = read_spec_fixture(name) else {
+            return;
+        };
         assert_eq!(
             declared_version(&text),
             Some(3),
@@ -143,7 +148,9 @@ fn spec_media_fixtures_actually_declare_a_version_to_compare_against() {
 #[test]
 fn spec_multivariant_fixtures_are_genuinely_untagged() {
     for name in SPEC_MULTIVARIANT_PLAYLISTS {
-        let text = read_spec_fixture(name);
+        let Some(text) = read_spec_fixture(name) else {
+            return;
+        };
         assert_eq!(
             declared_version(&text),
             None,
@@ -162,7 +169,9 @@ fn abridged_spec_fixtures_do_not_parse_because_the_rfc_elides_them() {
         "9.10-daterange-scte35.m3u8",
         "9.11-low-latency-playlist.m3u8",
     ] {
-        let text = read_spec_fixture(name);
+        let Some(text) = read_spec_fixture(name) else {
+            return;
+        };
         assert!(
             text.lines().any(|l| l.trim() == "..."),
             "{name} is excluded on the grounds that the RFC abridges it with \
