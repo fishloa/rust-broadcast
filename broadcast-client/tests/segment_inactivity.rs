@@ -302,11 +302,13 @@ impl Origin {
     }
 }
 
+type ViewOf = dyn Fn(&Req) -> (usize, usize);
+
 struct Scenario {
     file: Vec<u8>,
     playlist: Vec<u8>,
     target: Box<dyn Fn(&Req) -> bool>,
-    view: Box<dyn Fn(&Req) -> (usize, usize)>,
+    view: Box<ViewOf>,
     origin: Origin,
     sent: usize,
 }
@@ -861,5 +863,5 @@ fn a_stalled_init_section_is_closed_and_refetched_whole_when_it_never_answered()
         init_reqs[1].header("range"),
         Some(format!("bytes=10-{}", init.len() - 1).as_str())
     );
-    assert!(drive.samples().len() > 0);
+    assert!(!drive.samples().is_empty());
 }
