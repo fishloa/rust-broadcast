@@ -1,9 +1,6 @@
----
-status: DRAFT
----
 # tshttp-runtime 0.1.0
 
-_Released 2026-10-24._
+_Released 2026-10-31._
 
 Initial release. `tshttp-runtime` is a **sans-IO TS-over-HTTP pull session client**: the policy a player needs to keep a live MPEG-TS HTTP stream running, with none of the I/O. The host (URLSession, tokio, anything) opens the connection and feeds back what happened; the crate decides when to open, wait, abort, reconnect and tell the user, and demuxes the bytes through `transmux::StreamingTsDemux`. It reads no clock (time is a caller-supplied monotonic millisecond count), spawns nothing and is `no_std` + `alloc`. The requirements and defaults come from the zenith-tv player (shipped on Apple TV); the policy is implementation-defined, not specified by any standard, and the full transition table is in `docs/tshttp-runtime/DESIGN.md`. It is the TS-over-HTTP source underneath `broadcast-client`.
 

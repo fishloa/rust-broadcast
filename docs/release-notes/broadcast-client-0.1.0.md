@@ -1,9 +1,6 @@
----
-status: DRAFT
----
 # broadcast-client 0.1.0
 
-_Released 2026-10-24._
+_Released 2026-10-31._
 
 Initial release. `broadcast-client` is a generic **sans-IO client session for live and on-demand media**. You give it a URL; it tells you which HTTP requests to make or which TCP connection to open, you feed back what arrived, and it hands you demuxed, join-annotated samples plus every decision a player needs (when to start, pause and resume, when credentials are needed, what was dropped and why). It owns auth, redirects, cookies, retry/backoff, stall handling, demuxing and buffering policy for four sources behind one API: TS-over-HTTP (`tshttp-runtime`), HLS (`hls-runtime`), DASH (`dash-runtime`) and RTSP (`rtsp-runtime`). It performs no I/O, reads no clock, spawns no thread. Time is a caller-supplied monotonic `now_us`. The requirements come from the zenith-tv player, which is the first consumer; the policy is implementation-defined (no standard specifies it) and is documented in `docs/broadcast-client/DESIGN.md`.
 
