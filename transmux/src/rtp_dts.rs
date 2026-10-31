@@ -352,7 +352,7 @@ mod tests {
         for (i, &p) in wire.iter().enumerate() {
             d.feed(sample(p), Some(D), &mut out, &mut exceeded);
             let pending = i + 1 - out.len();
-            assert!(pending < PROBE_AUS, "held {pending} after {} feeds", i + 1);
+            assert!(pending < 8, "held {pending} after {} feeds", i + 1);
         }
         assert!(out.iter().all(|s| s.dts == s.pts));
     }
