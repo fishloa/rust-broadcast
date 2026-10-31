@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `FRAME-RATE` on every video variant of an fMP4 origin whose SPS carries no VUI timing (Apple HLS authoring spec item 9.15): measured from the drained segments as video samples over summed `trun` duration, in the video track's timescale. A VUI-signalled rate still wins. MPEG-TS-container origins still omit it when there is no VUI timing.
 - Dolby Vision multivariant signalling (issue #1428): a single-layer HEVC Dolby Vision track gets `CODECS` plus `SUPPLEMENTAL-CODECS` and `VIDEO-RANGE` per the Apple HLS authoring spec: profile 8.1 `hvc1...` + `dvh1.08.LL/db1p` + PQ, profile 8.4 `hvc1...` + `dvh1.08.LL/db4h` + HLG, profile 5 `dvh1.05.LL` + PQ. Other compatibility ids are not signalled.
 ### Fixed
 - A playlist served from a subdirectory (a split-audio rendition at `audio/a0.m3u8`) now references the init, segment and part resources, which sit at the stream root, as `../name`. Its bare names resolved to `audio/name`, which nothing serves, so a client following RFC 3986 could not load a single audio resource (issue #1599; Apple `mediastreamvalidator` reported it as 'Media file does not exist').
