@@ -38,6 +38,8 @@ const WRONG_FP: &str = "sha-256 \
 11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:\
 11:11:11:11:11:11:11";
 
+const WALL_DEADLINE: Duration = Duration::from_secs(20);
+
 /// RFC 5764 §5.1.2's DTLS first-byte band, used here only to count that a
 /// handshake was genuinely attempted (rather than ICE stalling).
 fn is_dtls_datagram(bytes: &[u8]) -> bool {
@@ -125,6 +127,12 @@ fn pump(
     let t0 = Instant::now();
     let mut now = t0;
     while now - t0 <= budget {
+        assert!(
+            t0.elapsed() < WALL_DEADLINE,
+            "pump made no virtual-time progress for {WALL_DEADLINE:?} of wall time: \
+             the two transports are exchanging datagrams endlessly ({pumped_dtls} DTLS datagrams so far)",
+            pumped_dtls = pumped.dtls_a_to_b + pumped.dtls_b_to_a
+        );
         let mut progressed = false;
         while let Some(dgram) = a.poll_transmit() {
             if is_dtls_datagram(&dgram.bytes) {

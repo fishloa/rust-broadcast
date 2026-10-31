@@ -1171,10 +1171,17 @@ impl MediaTransport {
         if self.selected_pair_addr != Some(peer) {
             return Ok(());
         }
-        let dtls_events = self
-            .dtls
-            .read(now, peer, None::<EcnCodepoint>, BytesMut::from(data))
-            .map_err(|e| Error::Media(format!("dtls read: {e}")))?;
+        let dtls_events =
+            match self
+                .dtls
+                .read(now, peer, None::<EcnCodepoint>, BytesMut::from(data))
+            {
+                Ok(events) => events,
+                Err(e) => {
+                    self.dtls.stop(now, peer);
+                    return Err(Error::Media(format!("dtls read: {e}")));
+                }
+            };
         for ev in dtls_events {
             match ev {
                 EndpointEvent::HandshakeComplete => {
