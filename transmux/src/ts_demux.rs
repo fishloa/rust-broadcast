@@ -604,6 +604,13 @@ impl Codec {
         ) {
             return self;
         }
+        if stream_type == STREAM_TYPE_PES_PRIVATE
+            && crate::dovi::has_registration_descriptor(descriptors)
+            && let Some(d) = crate::dovi::find_video_stream_descriptor(descriptors)
+            && d.record.is_hevc_profile()
+        {
+            return Codec::Hevc;
+        }
         let mut off = 0usize;
         while off + 2 <= descriptors.len() {
             let tag = descriptors[off];
