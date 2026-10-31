@@ -2167,8 +2167,8 @@ impl HlsOrigin {
             .collect();
         let mut media = dedupe_rendition_names(media);
         media.extend(self.subtitle_media_renditions());
-        let subtitles_group = (!locked(&self.subtitle_renditions).is_empty())
-            .then(|| SUBTITLES_GROUP_ID.to_string());
+        let subtitles_group =
+            (!locked(&self.subtitle_renditions).is_empty()).then(|| SUBTITLES_GROUP_ID.to_string());
         let with_wvtt = |codecs: Option<String>| match (&subtitles_group, codecs) {
             (Some(_), Some(c)) => Some(format!("{c},{WEBVTT_CODEC}")),
             (_, c) => c,

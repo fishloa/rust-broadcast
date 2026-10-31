@@ -389,7 +389,7 @@ impl<D: CueDecoder> Core<D> {
 
     fn complete(&self, end: i64) -> bool {
         self.newest_local.is_some_and(|n| n >= end)
-            && !self.open_cue().is_some_and(|(start, _)| start < end)
+            && self.open_cue().is_none_or(|(start, _)| start >= end)
     }
 
     fn publish(&mut self, finishing: bool, leaders: &LeaderDurations) -> Vec<ReadySegment> {

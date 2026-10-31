@@ -39,7 +39,6 @@ const PART_TARGET_MS: u32 = 200;
 const WINDOW_SEGMENTS: usize = 64;
 const RING: usize = 1 << 16;
 const SIDE_RINGS: usize = 64;
-const PUMP_EVERY: usize = 1;
 const TELETEXT_MUX_DELAY_SECS: f64 = 0.3;
 const DECLARED_BPS: u64 = 16_000_000;
 const STREAM: &str = "cam";
@@ -147,14 +146,12 @@ fn build_from(media: transmux::Media, subtitles: bool) -> Rig {
         }
     }
     order.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for (n, (_, ti, si)) in order.into_iter().enumerate() {
+    for (_, ti, si) in order {
         let track = &media.tracks[ti];
         let mut sample = track.samples[si].clone();
         sample.dts = sample.dts.or(sample.pts);
         writer.publish(track.spec.track_id, RetentionClass::Timed, sample);
-        if n % PUMP_EVERY == 0 {
-            segmenter.pump(ProgramId(0), &trunk, &route);
-        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
     }
     segmenter.pump(ProgramId(0), &trunk, &route);
     segmenter.flush();
