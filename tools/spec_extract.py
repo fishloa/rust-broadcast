@@ -2,9 +2,9 @@
 """Extract verbatim sections from an RFC plain-text file into Markdown.
 
 Usage:
-  python3 tools/spec_extract.py --source specs/rfc7798_rtp_hevc.txt \\
+  python3 tools/spec_extract.py --source private/specs-verified/ietf/specs/rfc7798_rtp_hevc.txt \\
       --sections 4.1 4.2 4.3 4.4.1 4.4.2 4.4.3 4.4.4 4.5 5 6 7.1 \\
-      --output docs/specs/hevc-rtp/rfc7798-extract.md
+      --output private/specs-verified/rtp/hevc-rtp/rfc7798-extract.md
 """
 
 import argparse

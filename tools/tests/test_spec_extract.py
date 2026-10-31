@@ -5,13 +5,22 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "spec_extract.py"
-SOURCE = ROOT / "specs" / "ietf_rfc8216_hls.txt"
+PRIVATE_SPECS = ROOT / "private" / "specs-verified"
+SOURCE = PRIVATE_SPECS / "ietf" / "specs" / "ietf_rfc8216_hls.txt"
 SECTION = "3.5"
 
 
+def _need(path: Path) -> None:
+    if not path.is_file():
+        pytest.skip(f"private spec text not checked out: {path.relative_to(ROOT)}")
+
+
 def _run(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess:
+    _need(SOURCE)
     out = tmp_path / "out.md"
     cmd = [sys.executable, str(SCRIPT), "--source", str(SOURCE.relative_to(ROOT)), "--sections", SECTION, "--output", str(out), *extra]
     # run from ROOT so relative source resolves
@@ -32,6 +41,7 @@ def _furniture(line: str) -> bool:
 
 
 def _section_lines():
+    _need(SOURCE)
     lines = SOURCE.read_text(encoding="utf-8").split("\n")
     heading_re = re.compile(r"^(\d+(?:\.\d+)*)\.\s{2,}\S")
     heads = [(i, m.group(1)) for i, line in enumerate(lines) for m in [heading_re.match(line)] if m]
@@ -79,6 +89,7 @@ def test_page_furniture_never_appears(tmp_path: Path) -> None:
 
 
 def test_unknown_section_exits_nonzero(tmp_path: Path) -> None:
+    _need(SOURCE)
     out = tmp_path / "out.md"
     cmd = [sys.executable, str(SCRIPT), "--source", str(SOURCE.relative_to(ROOT)), "--sections", "99.99", "--output", str(out)]
     res = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
@@ -86,7 +97,8 @@ def test_unknown_section_exits_nonzero(tmp_path: Path) -> None:
 
 
 EXTRACTS = [
-    ("docs/specs/hevc-rtp/rfc7798-extract.md", "specs/rfc7798_rtp_hevc.txt"),
+    ("private/specs-verified/rtp/hevc-rtp/rfc7798-extract.md", "specs/rfc7798_rtp_hevc.txt"),
+    ("private/specs-verified/hls/ietf/rfc8216-webvtt-extract.md", "specs/ietf_rfc8216_hls.txt"),
 ]
 
 
@@ -122,12 +134,12 @@ def _parse_extract(path: Path):
 def test_every_committed_extract_section_matches_source() -> None:
     for extract_rel, _ in EXTRACTS:
         extract_path = ROOT / extract_rel
-        assert extract_path.is_file()
+        _need(extract_path)
         sections = _parse_extract(extract_path)
         assert sections, f"no sections in {extract_rel}"
         for title_part, source_rel, start, end, body_lines in sections:
-            src_path = ROOT / source_rel
-            assert src_path.is_file()
+            src_path = PRIVATE_SPECS / "ietf" / source_rel
+            _need(src_path)
             src_lines = src_path.read_text(encoding="utf-8").split("\n")
             assert 1 <= start <= end <= len(src_lines), (source_rel, start, end, len(src_lines))
             cited = src_lines[start - 1:end]
