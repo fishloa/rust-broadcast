@@ -3,6 +3,7 @@
 
 use rtmp_runtime::client::ClientConfig;
 use rtmp_runtime::server::{ServerConfig, ServerEvent, ServerSession};
+#[cfg(feature = "tokio")]
 use rtmp_runtime::target::RtmpTarget;
 
 const KEY: &str = "sk-live-4f9a1c77-top-secret";
@@ -36,12 +37,16 @@ fn publish_event_debug_hides_the_stream_key() {
 }
 
 #[test]
-fn client_config_and_target_debug_hide_the_stream_key() {
+fn client_config_debug_hides_the_stream_key() {
     let mut cfg = ClientConfig::default();
     cfg.stream_key = KEY.to_string();
     let text = format!("{cfg:?}");
     assert!(!text.contains(KEY), "{text}");
+}
 
+#[cfg(feature = "tokio")]
+#[test]
+fn target_debug_hides_the_stream_key() {
     let target = RtmpTarget::parse(&format!("rtmp://ingest.example.com/live/{KEY}")).unwrap();
     assert!(target.stream_key.contains(KEY));
     let text = format!("{target:?}");
