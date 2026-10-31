@@ -1141,6 +1141,10 @@ fn reorder_window_overflow_reports_every_dropped_au() {
     }
     let dropped = dropped_pts(&events);
     assert!(!dropped.is_empty(), "the window overflowed {WINDOW}");
-    assert_eq!(dropped[0], i64::from(START_TS), "oldest AU is dropped first");
+    assert_eq!(
+        dropped[0],
+        i64::from(START_TS),
+        "oldest AU is dropped first"
+    );
     assert_eq!(emitted + dropped.len(), AUS as usize);
 }

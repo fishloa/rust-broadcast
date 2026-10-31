@@ -389,8 +389,8 @@ fn p5_dash_codecs_name_the_dvh1_sample_entry() {
         "DASH codecs {:?} must contain {expected}",
         codecs_attrs(&mpd)
     );
-    let mut ll = transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
-        .unwrap();
+    let mut ll =
+        transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z").unwrap();
     let ll_mpd = ll.package(&media).unwrap();
     assert!(codecs_attrs(&ll_mpd).contains(&expected));
 }

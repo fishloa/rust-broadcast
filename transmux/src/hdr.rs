@@ -227,7 +227,10 @@ impl HdrStaticMetadata {
     pub fn to_hevc_declarative_sei_nal(&self) -> Result<Option<Vec<u8>>> {
         let mut payloads: Vec<(u32, Vec<u8>)> = Vec::new();
         if let Some(m) = &self.mastering_display {
-            payloads.push((SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, m.try_to_bytes()?));
+            payloads.push((
+                SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME,
+                m.try_to_bytes()?,
+            ));
         }
         if let Some(c) = &self.content_light_level {
             payloads.push((SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, c.try_to_bytes()?));
@@ -389,9 +392,11 @@ mod tests {
                 SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO
             ]
         );
-        assert!(HdrStaticMetadata::default()
-            .to_hevc_declarative_sei_nal()
-            .unwrap()
-            .is_none());
+        assert!(
+            HdrStaticMetadata::default()
+                .to_hevc_declarative_sei_nal()
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -11625,7 +11625,8 @@ pub(crate) mod tests {
     #[test]
     fn dovi_hevc_reclassification_needs_base_layer_and_hevc_profile() {
         let classify = |es: &[u8]| {
-            Codec::Data(STREAM_TYPE_PES_PRIVATE).refine_with_descriptors(STREAM_TYPE_PES_PRIVATE, es)
+            Codec::Data(STREAM_TYPE_PES_PRIVATE)
+                .refine_with_descriptors(STREAM_TYPE_PES_PRIVATE, es)
         };
         let bl_rpu = 0b101;
         assert_eq!(classify(&dovi_es_info(8, bl_rpu, None)), Codec::Hevc);
