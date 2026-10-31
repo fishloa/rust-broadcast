@@ -722,6 +722,58 @@ impl InitStore {
 
 /// Whether a codec config is a video codec (mirrors
 /// `transmux::CodecConfig::is_video`, which is crate-private).
+/// `SUPPLEMENTAL-CODECS` compatibility brand of a Dolby Vision stream whose
+/// base layer is HDR10 (`dv_bl_signal_compatibility_id` 1)
+/// (`private/specs-verified/hls/apple/hls-authoring-spec.md`, "The
+/// SUPPLEMENTAL-CODECS attribute").
+const DV_BRAND_HDR10: &str = "db1p";
+/// Brand for an HLG-compatible base layer (id 4), same table.
+const DV_BRAND_HLG: &str = "db4h";
+const SUPPLEMENTAL_CODECS_ATTR: &str = "SUPPLEMENTAL-CODECS";
+
+/// How a Dolby Vision video track is announced in the multivariant playlist.
+struct DolbyVisionHls {
+    codecs: String,
+    supplemental_codecs: Option<String>,
+    video_range: VideoRange,
+}
+
+/// Apple HLS authoring spec "The SUPPLEMENTAL-CODECS attribute": a
+/// compatible base layer keeps its own codec string in `CODECS` and names the
+/// Dolby Vision codec plus brand in `SUPPLEMENTAL-CODECS`, with `VIDEO-RANGE`
+/// matching the brand (HDR10 base: PQ, HLG base: HLG). A base layer that is not
+/// SDR/HDR compliant (id 0, profile 5) is announced as `dvh1.PP.LL` in `CODECS`
+/// with `VIDEO-RANGE=PQ`
+/// (`private/specs-verified/dolby/vision/dolby-vision-streams-in-hls-v2.0-2018-11.md`
+/// section 3 examples). Other compatibility ids have no brand in the verified
+/// text and are not signalled.
+fn dolby_vision_hls(spec: &transmux::TrackSpec) -> Option<DolbyVisionHls> {
+    use transmux::DoviBlSignalCompatibilityId as Ccid;
+    let record = spec.dovi.as_ref()?;
+    if !record.is_single_layer() || !record.is_hevc_profile() {
+        return None;
+    }
+    let dv = record.codec_string();
+    match record.bl_signal_compatibility_id {
+        Ccid::None => Some(DolbyVisionHls {
+            codecs: dv,
+            supplemental_codecs: None,
+            video_range: VideoRange::Pq,
+        }),
+        Ccid::Hdr10 => Some(DolbyVisionHls {
+            codecs: transmux::rfc6381_codec_string(&spec.config).ok()?,
+            supplemental_codecs: Some(format!("{dv}/{DV_BRAND_HDR10}")),
+            video_range: VideoRange::Pq,
+        }),
+        Ccid::Hlg => Some(DolbyVisionHls {
+            codecs: transmux::rfc6381_codec_string(&spec.config).ok()?,
+            supplemental_codecs: Some(format!("{dv}/{DV_BRAND_HLG}")),
+            video_range: VideoRange::Hlg,
+        }),
+        _ => None,
+    }
+}
+
 fn is_video_codec(config: &transmux::CodecConfig) -> bool {
     matches!(
         config,
@@ -1695,6 +1747,7 @@ impl HlsOriginBuilder {
             codecs: Mutex::new(None),
             video_codecs: Mutex::new(None),
             video_range: Mutex::new(None),
+            supplemental_codecs: Mutex::new(None),
             resolution: Mutex::new(None),
             frame_rate: Mutex::new(None),
             video_track_id: Mutex::new(None),
@@ -1757,6 +1810,9 @@ pub struct HlsOrigin {
     /// `None` = unknown / SDR, so the attribute is omitted rather than
     /// invented (RFC 8216bis §4.4.6.2).
     video_range: Mutex<Option<VideoRange>>,
+    /// `SUPPLEMENTAL-CODECS` for the master playlist variants: the Dolby
+    /// Vision codec and brand of a compatible-base-layer track.
+    supplemental_codecs: Mutex<Option<String>>,
     resolution: Mutex<Option<(u32, u32)>>,
     /// `FRAME-RATE` for the master playlist, derived as the maximum across
     /// all video tracks. Emitted only when an H.264 track's SPS carries VUI
@@ -1871,6 +1927,7 @@ impl HlsOrigin {
                 *locked(&self.codecs) = None;
                 *locked(&self.video_codecs) = None;
                 *locked(&self.video_range) = None;
+                *locked(&self.supplemental_codecs) = None;
                 *locked(&self.resolution) = None;
                 *locked(&self.frame_rate) = None;
                 *locked(&self.video_track_id) = None;
@@ -1921,19 +1978,40 @@ impl HlsOrigin {
         let mut resolution: Option<(u32, u32)> = None;
         let mut resolution_decided = false;
         let mut frame_rate: Option<FrameRate> = None;
+        let mut supplemental_codecs: Option<String> = None;
         for spec in ordered {
+            let dolby_vision = if !video_codecs_decided && is_video_codec(&spec.config) {
+                dolby_vision_hls(spec)
+            } else {
+                None
+            };
             match transmux::rfc6381_codec_string(&spec.config) {
-                Ok(codec) => codecs.push(codec),
+                Ok(codec) => codecs.push(
+                    dolby_vision
+                        .as_ref()
+                        .map_or(codec, |dv| dv.codecs.clone()),
+                ),
                 Err(transmux::Error::UnsupportedCodec { .. }) => {}
                 Err(other) => return Err(other),
             }
             if !video_codecs_decided && is_video_codec(&spec.config) {
                 match transmux::rfc6381_codec_string(&spec.config) {
-                    Ok(codec) => video_codecs = Some(codec),
+                    Ok(codec) => {
+                        video_codecs = Some(
+                            dolby_vision
+                                .as_ref()
+                                .map_or(codec, |dv| dv.codecs.clone()),
+                        )
+                    }
                     Err(transmux::Error::UnsupportedCodec { .. }) => {}
                     Err(other) => return Err(other),
                 }
                 video_codecs_decided = true;
+                if let Some(dv) = dolby_vision {
+                    supplemental_codecs = dv.supplemental_codecs;
+                    video_range = Some(dv.video_range);
+                    video_range_decided = true;
+                }
             }
             if !video_range_decided
                 && let Some(display) = &spec.display
@@ -1967,6 +2045,7 @@ impl HlsOrigin {
         *locked(&self.codecs) = (!codecs.is_empty()).then(|| codecs.join(","));
         *locked(&self.video_codecs) = video_codecs;
         *locked(&self.video_range) = video_range;
+        *locked(&self.supplemental_codecs) = supplemental_codecs;
         *locked(&self.resolution) = resolution;
         *locked(&self.frame_rate) = frame_rate;
         *locked(&self.track_specs) = stored_track_specs;
@@ -2087,6 +2166,13 @@ impl HlsOrigin {
             && matches!(range, VideoRange::Hlg | VideoRange::Pq)
         {
             extra_attrs.push(range.attr());
+        }
+        if let Some(supplemental) = locked(&self.supplemental_codecs).clone() {
+            extra_attrs.push((
+                String::from(SUPPLEMENTAL_CODECS_ATTR),
+                broadcast_hls::AttrValue::for_attr(SUPPLEMENTAL_CODECS_ATTR, supplemental)
+                    .map_err(HlsMasterError::Render)?,
+            ));
         }
 
         for decl in &self.audio_renditions {
