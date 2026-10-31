@@ -322,3 +322,40 @@ fn record_bytes_round_trip() {
         r
     );
 }
+
+const DESCRIPTOR_TAG: u8 = 0xB0;
+const NONZERO_RESERVED_DESCRIPTOR: [u8; 5] = [0x01, 0x00, 0x10, 0x1D, 0x1F];
+
+#[test]
+fn descriptor_with_reserved_bits_set_still_signals_dolby_vision() {
+    let Some(media) = ts_media(P81_TS) else { return };
+    let mut es_info = vec![DESCRIPTOR_TAG, NONZERO_RESERVED_DESCRIPTOR.len() as u8];
+    es_info.extend_from_slice(&NONZERO_RESERVED_DESCRIPTOR);
+    let spec = video(&media)
+        .spec
+        .clone()
+        .with_source(mpeg_ts::pid::Pid::new(0x65), es_info);
+    expect_p81(spec.dovi.expect("dovi despite non-zero reserved bits"));
+    let init = build_init_segment(&[spec], 1000).expect("init");
+    let (fourcc, boxes) = sample_entry(&init);
+    assert_eq!(fourcc, *b"hvc1");
+    assert!(payload(&boxes, DVVC_FOURCC).is_some());
+}
+
+#[test]
+fn record_reserved_bits_survive_an_init_segment_round_trip() {
+    let Some(media) = ts_media(P81_TS) else { return };
+    let mut spec = video(&media).spec.clone();
+    let mut record = spec.dovi.expect("dovi");
+    record.reserved[0] = 0x0A;
+    record.reserved[3] = 0x5A;
+    spec.dovi = Some(record);
+    let init = build_init_segment(&[spec], 1000).expect("init");
+    let (_, boxes) = sample_entry(&init);
+    assert_eq!(
+        payload(&boxes, DVVC_FOURCC).expect("dvvC"),
+        record.try_to_bytes().unwrap()
+    );
+    let back = Fmp4Demux::new().unpackage(&init).expect("fmp4 demux");
+    assert_eq!(back.tracks[0].spec.dovi, Some(record));
+}

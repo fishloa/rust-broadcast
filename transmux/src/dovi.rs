@@ -167,7 +167,18 @@ pub struct DoviDecoderConfigurationRecord {
     pub bl_present: bool,
     /// `dv_bl_signal_compatibility_id`.
     pub bl_signal_compatibility_id: DoviBlSignalCompatibilityId,
+    /// The 28 + 128 reserved bits of the record, captured on parse and
+    /// re-emitted verbatim: byte 0 holds the low nibble that shares a byte with
+    /// `dv_bl_signal_compatibility_id`, bytes 1.. the rest. A hand-built record
+    /// uses [`DOVI_RESERVED_ZERO`], the spec value.
+    pub reserved: [u8; DOVI_RESERVED_LEN],
 }
+
+/// Length of [`DoviDecoderConfigurationRecord::reserved`].
+pub const DOVI_RESERVED_LEN: usize = DOVI_RECORD_LEN - RESERVED_OFFSET;
+/// The reserved bits as the spec defines them.
+pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN];
+const RESERVED_OFFSET: usize = 4;
 
 fn invalid(field: &'static str, value: u64, reason: &'static str) -> Error {
     Error::InvalidValue {
@@ -190,6 +201,7 @@ fn unpack_config_word(
     version_minor: u8,
     word: u16,
     ccid: u8,
+    reserved: [u8; DOVI_RESERVED_LEN],
 ) -> DoviDecoderConfigurationRecord {
     DoviDecoderConfigurationRecord {
         version_major,
@@ -200,6 +212,7 @@ fn unpack_config_word(
         el_present: word & EL_FLAG != 0,
         bl_present: word & BL_FLAG != 0,
         bl_signal_compatibility_id: DoviBlSignalCompatibilityId::from_code(ccid),
+        reserved,
     }
 }
 
@@ -276,18 +289,15 @@ impl<'a> Parse<'a> for DoviDecoderConfigurationRecord {
             ));
         }
         let word = u16::from_be_bytes([bytes[2], bytes[3]]);
-        if bytes[4] & CCID_MASK != 0 || bytes[5..].iter().any(|b| *b != 0) {
-            return Err(invalid(
-                "DOVIDecoderConfigurationRecord.reserved",
-                u64::from(bytes[4] & CCID_MASK),
-                "reserved bits must be zero",
-            ));
-        }
+        let mut reserved = [0u8; DOVI_RESERVED_LEN];
+        reserved.copy_from_slice(&bytes[RESERVED_OFFSET..]);
+        reserved[0] &= CCID_MASK;
         Ok(unpack_config_word(
             bytes[0],
             bytes[1],
             word,
             bytes[4] >> CCID_SHIFT,
+            reserved,
         ))
     }
 }
@@ -328,11 +338,18 @@ impl Serialize for DoviDecoderConfigurationRecord {
                 "does not fit 4 bits",
             ));
         }
-        buf[..DOVI_RECORD_LEN].fill(0);
+        if self.reserved[0] & !CCID_MASK != 0 {
+            return Err(invalid(
+                "DOVIDecoderConfigurationRecord.reserved",
+                u64::from(self.reserved[0]),
+                "the first reserved byte holds only 4 bits",
+            ));
+        }
         buf[0] = self.version_major;
         buf[1] = self.version_minor;
         buf[2..4].copy_from_slice(&pack_config_word(self).to_be_bytes());
-        buf[4] = ccid << CCID_SHIFT;
+        buf[RESERVED_OFFSET..DOVI_RECORD_LEN].copy_from_slice(&self.reserved);
+        buf[4] |= ccid << CCID_SHIFT;
         Ok(DOVI_RECORD_LEN)
     }
 }
@@ -345,6 +362,12 @@ pub struct DoviVideoStreamDescriptor {
     pub record: DoviDecoderConfigurationRecord,
     /// `dependency_pid`, present exactly when `bl_present_flag` is 0.
     pub dependency_pid: Option<u16>,
+    /// The 3 reserved bits after `dependency_pid` (0 when absent), captured
+    /// on parse and re-emitted verbatim.
+    pub dependency_reserved: u8,
+    /// The 4 reserved bits closing the descriptor, captured on parse and
+    /// re-emitted verbatim.
+    pub reserved: u8,
 }
 
 impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
@@ -360,6 +383,7 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
         }
         let word = u16::from_be_bytes([bytes[2], bytes[3]]);
         let bl_present = word & BL_FLAG != 0;
+        let mut dependency_reserved = 0u8;
         let (dependency_pid, tail) = if bl_present {
             (None, 4)
         } else {
@@ -371,13 +395,7 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
                 });
             }
             let raw = u16::from_be_bytes([bytes[4], bytes[5]]);
-            if raw & ((1 << PID_SHIFT) - 1) != 0 {
-                return Err(invalid(
-                    "DOVI_video_stream_descriptor.reserved",
-                    u64::from(raw & ((1 << PID_SHIFT) - 1)),
-                    "reserved bits must be zero",
-                ));
-            }
+            dependency_reserved = (raw & ((1 << PID_SHIFT) - 1)) as u8;
             (Some(raw >> PID_SHIFT), 6)
         };
         if bytes.len() != tail + 1 {
@@ -387,16 +405,17 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
                 "length does not match the defined syntax",
             ));
         }
-        if bytes[tail] & CCID_MASK != 0 {
-            return Err(invalid(
-                "DOVI_video_stream_descriptor.reserved",
-                u64::from(bytes[tail] & CCID_MASK),
-                "reserved bits must be zero",
-            ));
-        }
         Ok(Self {
-            record: unpack_config_word(bytes[0], bytes[1], word, bytes[tail] >> CCID_SHIFT),
+            record: unpack_config_word(
+                bytes[0],
+                bytes[1],
+                word,
+                bytes[tail] >> CCID_SHIFT,
+                DOVI_RESERVED_ZERO,
+            ),
             dependency_pid,
+            dependency_reserved,
+            reserved: bytes[tail] & CCID_MASK,
         })
     }
 }
@@ -436,7 +455,16 @@ impl Serialize for DoviVideoStreamDescriptor {
         let tail = match (self.record.bl_present, self.dependency_pid) {
             (true, None) => 4,
             (false, Some(pid)) if pid <= PID_MAX => {
-                buf[4..6].copy_from_slice(&(pid << PID_SHIFT).to_be_bytes());
+                if self.dependency_reserved >= 1 << PID_SHIFT {
+                    return Err(invalid(
+                        "dependency_reserved",
+                        u64::from(self.dependency_reserved),
+                        "does not fit 3 bits",
+                    ));
+                }
+                buf[4..6].copy_from_slice(
+                    &((pid << PID_SHIFT) | u16::from(self.dependency_reserved)).to_be_bytes(),
+                );
                 6
             }
             _ => {
@@ -447,7 +475,14 @@ impl Serialize for DoviVideoStreamDescriptor {
                 ));
             }
         };
-        buf[tail] = ccid << CCID_SHIFT;
+        if self.reserved > CCID_MASK {
+            return Err(invalid(
+                "DOVI_video_stream_descriptor.reserved",
+                u64::from(self.reserved),
+                "does not fit 4 bits",
+            ));
+        }
+        buf[tail] = (ccid << CCID_SHIFT) | self.reserved;
         Ok(need)
     }
 }
@@ -517,14 +552,38 @@ mod tests {
     }
 
     #[test]
-    fn reserved_bits_and_lengths_are_rejected() {
-        let mut bad = P81_RECORD;
-        bad[4] |= 1;
-        assert!(DoviDecoderConfigurationRecord::parse(&bad).is_err());
-        let mut bad = P81_RECORD;
-        bad[23] = 1;
-        assert!(DoviDecoderConfigurationRecord::parse(&bad).is_err());
+    fn reserved_bits_are_preserved_byte_exact() {
+        let mut bytes = P81_RECORD;
+        bytes[4] |= 0x05;
+        bytes[6] = 0xA5;
+        bytes[23] = 0xFF;
+        let r = DoviDecoderConfigurationRecord::parse(&bytes).unwrap();
+        assert_eq!(r.bl_signal_compatibility_id, DoviBlSignalCompatibilityId::Hdr10);
+        assert_eq!(r.try_to_bytes().unwrap(), bytes);
+        assert_eq!(r.reserved[0], 0x05);
+    }
+
+    #[test]
+    fn lengths_are_rejected() {
         assert!(DoviDecoderConfigurationRecord::parse(&P81_RECORD[..23]).is_err());
+        let mut long = P81_RECORD.to_vec();
+        long.push(0);
+        assert!(DoviDecoderConfigurationRecord::parse(&long).is_err());
+    }
+
+    #[test]
+    fn descriptor_reserved_bits_are_preserved_byte_exact() {
+        let with_pid = [0x01, 0x00, 0x0E, 0x1A, 0x12, 0x37, 0x4B];
+        let d = DoviVideoStreamDescriptor::parse(&with_pid).unwrap();
+        assert_eq!(d.dependency_pid, Some(0x246));
+        assert_eq!(d.dependency_reserved, 0x7);
+        assert_eq!(d.reserved, 0xB);
+        assert_eq!(d.try_to_bytes().unwrap(), with_pid);
+        let single = [0x01, 0x00, 0x10, 0x1D, 0x1F];
+        let d = DoviVideoStreamDescriptor::parse(&single).unwrap();
+        assert_eq!(d.reserved, 0xF);
+        assert_eq!(d.record.bl_signal_compatibility_id, DoviBlSignalCompatibilityId::Hdr10);
+        assert_eq!(d.try_to_bytes().unwrap(), single);
     }
 
     #[test]
@@ -539,8 +598,11 @@ mod tests {
                 el_present: true,
                 bl_present: false,
                 bl_signal_compatibility_id: DoviBlSignalCompatibilityId::UhdBdHdr,
+                reserved: DOVI_RESERVED_ZERO,
             },
             dependency_pid: Some(0x1234),
+            dependency_reserved: 0,
+            reserved: 0,
         };
         let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 7);
@@ -558,6 +620,7 @@ mod tests {
             el_present: false,
             bl_present: true,
             bl_signal_compatibility_id: DoviBlSignalCompatibilityId::Hlg,
+            reserved: DOVI_RESERVED_ZERO,
         };
         let back = DoviDecoderConfigurationRecord::parse(&r.try_to_bytes().unwrap()).unwrap();
         assert_eq!(back, r);
