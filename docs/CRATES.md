@@ -171,7 +171,7 @@ One credentials model and one challenge-response helper for clients, plus one se
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
-- **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · docs + spec pointer · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
+- **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [docs + spec pointer](../broadcast-auth/docs/) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
 
 #### broadcast-common
 
@@ -256,7 +256,7 @@ The largest crate: parse and build every allocated EN 300 468 table and descript
 - **Version (in-tree):** 12.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvb-ci`](#dvb-ci), [`dvb-ci-runtime`](#dvb-ci-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-stream`](#dvb-stream), [`dvb-tools`](#dvb-tools), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
-- **Links:** [README](../dvb-si/README.md) · [CHANGELOG](../dvb-si/CHANGELOG.md) · docs + spec pointer · [crates.io](https://crates.io/crates/dvb-si) · [docs.rs](https://docs.rs/dvb-si)
+- **Links:** [README](../dvb-si/README.md) · [CHANGELOG](../dvb-si/CHANGELOG.md) · [docs + spec pointer](../dvb-si/docs/) · [crates.io](https://crates.io/crates/dvb-si) · [docs.rs](https://docs.rs/dvb-si)
 
 #### dvb-t2mi
 
@@ -374,7 +374,7 @@ Parses TTML2 documents into typed structures and validates them, as a separate p
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../ttml-subtitle/README.md) · [CHANGELOG](../ttml-subtitle/CHANGELOG.md) · docs + spec pointer · [crates.io](https://crates.io/crates/ttml-subtitle) · [docs.rs](https://docs.rs/ttml-subtitle)
+- **Links:** [README](../ttml-subtitle/README.md) · [CHANGELOG](../ttml-subtitle/CHANGELOG.md) · [docs + spec pointer](../ttml-subtitle/docs/) · [crates.io](https://crates.io/crates/ttml-subtitle) · [docs.rs](https://docs.rs/ttml-subtitle)
 
 #### st291
 
@@ -507,7 +507,7 @@ Typed, symmetric parse and serialize for every RFC 3550 RTCP packet type and the
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`rist-runtime`](#rist-runtime), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
-- **Links:** [README](../rtcp-packet/README.md) · [CHANGELOG](../rtcp-packet/CHANGELOG.md) · docs + spec pointer · [crates.io](https://crates.io/crates/rtcp-packet) · [docs.rs](https://docs.rs/rtcp-packet)
+- **Links:** [README](../rtcp-packet/README.md) · [CHANGELOG](../rtcp-packet/CHANGELOG.md) · [docs + spec pointer](../rtcp-packet/docs/) · [crates.io](https://crates.io/crates/rtcp-packet) · [docs.rs](https://docs.rs/rtcp-packet)
 
 #### rtmp-runtime
 
@@ -540,7 +540,7 @@ Driveable client and server state machines with CSeq correlation, Transport nego
 - **Version (in-tree):** 0.8.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
-- **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · docs + spec pointer · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
+- **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [docs + spec pointer](../rtsp-runtime/docs/) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
 
 #### srt-runtime
 
@@ -584,7 +584,7 @@ WHIP ingest and WHEP egress session establishment as state machines over `http` 
 - **Version (in-tree):** 0.4.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`multimux`](#multimux)
-- **Links:** [README](../webrtc-runtime/README.md) · [CHANGELOG](../webrtc-runtime/CHANGELOG.md) · docs + spec pointer · [crates.io](https://crates.io/crates/webrtc-runtime) · [docs.rs](https://docs.rs/webrtc-runtime)
+- **Links:** [README](../webrtc-runtime/README.md) · [CHANGELOG](../webrtc-runtime/CHANGELOG.md) · [docs + spec pointer](../webrtc-runtime/docs/) · [crates.io](https://crates.io/crates/webrtc-runtime) · [docs.rs](https://docs.rs/webrtc-runtime)
 
 #### dash-runtime
 
@@ -816,7 +816,7 @@ LCT headers with flag-driven field sizing, header-extension chains, ALC and FEC 
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`atsc3-route`](#atsc3-route)
-- **Links:** [README](../rmt-flute/README.md) · [CHANGELOG](../rmt-flute/CHANGELOG.md) · docs + spec pointer · [crates.io](https://crates.io/crates/rmt-flute) · [docs.rs](https://docs.rs/rmt-flute)
+- **Links:** [README](../rmt-flute/README.md) · [CHANGELOG](../rmt-flute/CHANGELOG.md) · [docs + spec pointer](../rmt-flute/docs/) · [crates.io](https://crates.io/crates/rmt-flute) · [docs.rs](https://docs.rs/rmt-flute)
 
 #### ule
 
@@ -827,7 +827,7 @@ Encapsulates and decapsulates network-layer PDUs as SNDUs (with optional destina
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../ule/README.md) · [CHANGELOG](../ule/CHANGELOG.md) · docs + spec pointer · [crates.io](https://crates.io/crates/ule) · [docs.rs](https://docs.rs/ule)
+- **Links:** [README](../ule/README.md) · [CHANGELOG](../ule/CHANGELOG.md) · [docs + spec pointer](../ule/docs/) · [crates.io](https://crates.io/crates/ule) · [docs.rs](https://docs.rs/ule)
 
 #### atsc3-route
 

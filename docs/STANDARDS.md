@@ -4,7 +4,7 @@ Every standard the workspace implements or relies on, which crate implements
 it, which edition, how completely, and where the spec transcription lives. For
 the per-crate view see [CRATES.md](CRATES.md).
 
-**Transcription locations.** The spec transcriptions the rows below name (`<crate>/docs/...`) are verbatim standards text and now live only in the private companion repo, under `private/specs-verified/<family>/<crate>/...`. Each crate's `docs/README.md` points there, and [`specs/PRIVATE-MAP.md`](specs/PRIVATE-MAP.md) maps every old public path to its private path. Data files (`docs/enums/**/*.toml`) and IETF/W3C text stay public.
+**Transcription locations.** All spec material the rows below name (`<crate>/docs/...`, `specs/...`: transcriptions, notes, registries, RFC/IETF/W3C texts) now lives only in the private companion repo, under `private/specs-verified/<family>/<crate>/...`. Each crate's `docs/README.md` points there, and [`specs/PRIVATE-MAP.md`](specs/PRIVATE-MAP.md) maps every old public path to its private path.
 
 **How this table was built.** Each row comes from the implementing crate's
 module docs (the `//!` citation the code carries), its spec transcription
@@ -26,10 +26,8 @@ change a crate's coverage, update its row here in the same PR.
 | **Reference** | Used for constants, validation or semantics, not implemented as a wire format. |
 | **Not implemented** | Transcribed or planned, but no code. |
 
-**Where transcriptions live.** "Transcription" paths are relative to the
-repository root and are public. The spec PDFs themselves and some converted
-Markdown are in the private `private/` submodule (maintainers only); those are
-marked *private*.
+**Where transcriptions live.** "Transcription" paths are the old public
+paths; every one of them is private-only now and is decoded by `docs/specs/PRIVATE-MAP.md`.
 
 ## ETSI / DVB
 

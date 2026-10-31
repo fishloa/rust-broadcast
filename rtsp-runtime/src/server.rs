@@ -2,10 +2,10 @@
 //!
 //! [`ServerSession`] is sans-IO: [`ServerSession::handle_request`] parses an
 //! inbound request, validates it against the §A.2 server state table (see
-//! [`docs/state-machines.md`](../docs/state-machines.md)), and returns the
+//! `docs/state-machines.md`), and returns the
 //! serialized response bytes plus typed [`ServerEvent`]s. A method not valid in
 //! the current state yields a `455 Method Not Valid In This State`
-//! (see [`docs/methods-and-status.md`](../docs/methods-and-status.md)); state
+//! (see `docs/methods-and-status.md`); state
 //! advances only when a `2xx` is actually sent.
 //!
 //! On `SETUP` the server allocates a `Session` id (if none yet) from the

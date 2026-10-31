@@ -1,7 +1,7 @@
 //! Authentication wiring — RFC 2326 §14 (RTSP reuses HTTP auth).
 //!
 //! RTSP shares HTTP's Basic and Digest schemes verbatim (RFC 2326 §16); see
-//! [`docs/auth.md`](../docs/auth.md). The [`Credentials`] model and the
+//! `docs/auth.md`. The [`Credentials`] model and the
 //! challenge-parsing/response-computation logic now live in the shared
 //! [`broadcast_auth`] crate — re-exported here so `rtsp-runtime` callers keep
 //! using `rtsp_runtime::Credentials`/`Authenticator` unchanged. This crate
