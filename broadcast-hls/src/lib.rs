@@ -1404,16 +1404,13 @@ impl KeyState {
             if key.method != EncryptionMethod::None && key.uri.is_none() {
                 return Err(Error::KeyWithoutUri { method: key.method });
             }
-            let applies = key.method != EncryptionMethod::None;
-            if key_format_of(&key) == KEYFORMAT_IDENTITY {
-                self.identity = applies.then_some(key);
+            if key.method == EncryptionMethod::None {
+                self.identity = None;
+                self.others.clear();
+            } else if key_format_of(&key) == KEYFORMAT_IDENTITY {
+                self.identity = Some(key);
             } else {
-                let format = key_format_of(&key).to_string();
-                if applies {
-                    self.others.insert(format, key);
-                } else {
-                    self.others.remove(&format);
-                }
+                self.others.insert(key_format_of(&key).to_string(), key);
             }
         }
         Ok(())
@@ -1435,9 +1432,10 @@ impl KeyState {
 impl MediaPlaylist {
     /// The `#EXT-X-KEY` in effect for each closed segment (RFC 8216
     /// §4.3.2.4): a tag applies to the segment it precedes and every later
-    /// segment until the next `#EXT-X-KEY` with the same `KEYFORMAT`. Only
-    /// the `identity` `KEYFORMAT` (absent means identity) participates;
-    /// `METHOD=NONE` yields `None`.
+    /// segment until the next `#EXT-X-KEY` with the same `KEYFORMAT` or a
+    /// `METHOD` of `NONE` (RFC 8216bis §4.4.4.4), which ends every key
+    /// format. Only the `identity` `KEYFORMAT` (absent means identity)
+    /// participates; `METHOD=NONE` yields `None`.
     ///
     /// # Errors
     /// [`Error::KeyWithoutUri`] for a non-`NONE` key with no `URI`;
@@ -1445,11 +1443,23 @@ impl MediaPlaylist {
     /// non-identity key formats apply; [`Error::HlsParse`] for a malformed
     /// `#EXT-X-KEY`.
     pub fn segment_keys(&self) -> Result<Vec<Option<MediaKey>>> {
+        self.segment_key_results()?.into_iter().collect()
+    }
+
+    /// Like [`Self::segment_keys`], but a segment to which only
+    /// non-identity key formats apply yields its own
+    /// [`Error::UnsupportedKeyFormat`] entry instead of failing the whole
+    /// playlist, so the clear segments after a `METHOD=NONE` stay usable.
+    ///
+    /// # Errors
+    /// [`Error::KeyWithoutUri`] or [`Error::HlsParse`] for a malformed
+    /// `#EXT-X-KEY`, which no segment can be resolved around.
+    pub fn segment_key_results(&self) -> Result<Vec<Result<Option<MediaKey>>>> {
         let mut state = KeyState::default();
         let mut keys = Vec::with_capacity(self.segments.len());
         for seg in &self.segments {
             state.apply_tags(&seg.pre_tags)?;
-            keys.push(state.effective()?);
+            keys.push(state.effective());
         }
         Ok(keys)
     }
