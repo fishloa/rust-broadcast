@@ -41,7 +41,7 @@
 //!   wait for `P(0)`, which is the minimum of the first `N + 1`. That is `N`
 //!   frame periods once per run.
 //! - `N` not declared (no `bitstream_restriction`): the first
-//!   [`PROBE_AUS`] samples are held while `N` is measured as the largest
+//!   `PROBE_AUS` (8) samples are held while `N` is measured as the largest
 //!   count of earlier-decoded frames with a later presentation time; the
 //!   spec's own inference (`MaxDpbFrames`, up to 16) is deliberately not used,
 //!   because it would hold 16 frames for a stream that has no reorder.
@@ -52,7 +52,7 @@
 //! issued means the assumed `N` was too small (a declared bound that the
 //! stream violates, or reordering deeper than the probe saw). The sample keeps
 //! a strictly increasing `DTS` (previous plus one tick, which exceeds its
-//! `PTS`), `N` grows by one up to [`MAX_REORDER_DEPTH`], and the event is
+//! `PTS`), `N` grows by one up to `MAX_REORDER_DEPTH` (16), and the event is
 //! returned for the caller to report. Packet loss needs no special case: a
 //! missing access unit is absent from the sorted set, so every rank shifts
 //! together and both invariants still hold.
