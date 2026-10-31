@@ -1,5 +1,6 @@
 """Tests for tools/spec_extract.py."""
 
+import os
 import re
 import subprocess
 import sys
@@ -9,20 +10,27 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "spec_extract.py"
-PRIVATE_SPECS = ROOT / "private" / "specs-verified"
+def _private_specs() -> Path:
+    env = os.environ.get("RUST_BROADCAST_PRIVATE")
+    if env and (Path(env) / "specs-verified").is_dir():
+        return Path(env) / "specs-verified"
+    return ROOT / "private" / "specs-verified"
+
+
+PRIVATE_SPECS = _private_specs()
 SOURCE = PRIVATE_SPECS / "ietf" / "specs" / "ietf_rfc8216_hls.txt"
 SECTION = "3.5"
 
 
 def _need(path: Path) -> None:
     if not path.is_file():
-        pytest.skip(f"private spec text not checked out: {path.relative_to(ROOT)}")
+        pytest.skip(f"private spec text not checked out: {path}")
 
 
 def _run(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess:
     _need(SOURCE)
     out = tmp_path / "out.md"
-    cmd = [sys.executable, str(SCRIPT), "--source", str(SOURCE.relative_to(ROOT)), "--sections", SECTION, "--output", str(out), *extra]
+    cmd = [sys.executable, str(SCRIPT), "--source", str(SOURCE), "--sections", SECTION, "--output", str(out), *extra]
     # run from ROOT so relative source resolves
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
 
@@ -91,14 +99,14 @@ def test_page_furniture_never_appears(tmp_path: Path) -> None:
 def test_unknown_section_exits_nonzero(tmp_path: Path) -> None:
     _need(SOURCE)
     out = tmp_path / "out.md"
-    cmd = [sys.executable, str(SCRIPT), "--source", str(SOURCE.relative_to(ROOT)), "--sections", "99.99", "--output", str(out)]
+    cmd = [sys.executable, str(SCRIPT), "--source", str(SOURCE), "--sections", "99.99", "--output", str(out)]
     res = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     assert res.returncode != 0
 
 
 EXTRACTS = [
-    ("private/specs-verified/rtp/hevc-rtp/rfc7798-extract.md", "specs/rfc7798_rtp_hevc.txt"),
-    ("private/specs-verified/hls/ietf/rfc8216-webvtt-extract.md", "specs/ietf_rfc8216_hls.txt"),
+    ("rtp/hevc-rtp/rfc7798-extract.md", "specs/rfc7798_rtp_hevc.txt"),
+    ("hls/ietf/rfc8216-webvtt-extract.md", "specs/ietf_rfc8216_hls.txt"),
 ]
 
 
@@ -133,7 +141,7 @@ def _parse_extract(path: Path):
 
 def test_every_committed_extract_section_matches_source() -> None:
     for extract_rel, _ in EXTRACTS:
-        extract_path = ROOT / extract_rel
+        extract_path = PRIVATE_SPECS / extract_rel
         _need(extract_path)
         sections = _parse_extract(extract_path)
         assert sections, f"no sections in {extract_rel}"

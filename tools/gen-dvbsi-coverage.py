@@ -52,7 +52,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CRATE = ROOT / "dvb-si"
 SRC = CRATE / "src"
-PRIVATE_DOCS = ROOT / "private" / "specs-verified" / "dvb" / "dvb-si"
+def _private_root() -> Path:
+    env = os.environ.get("RUST_BROADCAST_PRIVATE")
+    if env and (Path(env) / "specs-verified").is_dir():
+        return Path(env)
+    return ROOT / "private"
+
+
+PRIVATE_DOCS = _private_root() / "specs-verified" / "dvb" / "dvb-si"
 COVERAGE = PRIVATE_DOCS / "COVERAGE.md"
 README = CRATE / "README.md"
 LIB = SRC / "lib.rs"
@@ -85,10 +92,12 @@ def read(path: Path) -> str:
 
 
 def rel(path: Path) -> str:
-    try:
-        return path.relative_to(CRATE).as_posix()
-    except ValueError:
-        return path.relative_to(ROOT).as_posix()
+    for base in (CRATE, ROOT):
+        try:
+            return path.relative_to(base).as_posix()
+        except ValueError:
+            pass
+    return path.as_posix()
 
 
 def macro_body(text: str, name: str, path: Path) -> str:
