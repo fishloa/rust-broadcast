@@ -1,7 +1,7 @@
 # dvb-si-audit — spec table extraction
 
 Deterministic, rule-based (no LLM) extraction of ETSI table syntax from the
-vendored PDFs in [`../../specs/`](../../specs/), used to generate the per-crate
+vendored PDFs in `../../specs/`, used to generate the per-crate
 `docs/` spec references.
 
 ## Pipeline

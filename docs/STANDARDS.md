@@ -8,8 +8,8 @@ the per-crate view see [CRATES.md](CRATES.md).
 
 **How this table was built.** Each row comes from the implementing crate's
 module docs (the `//!` citation the code carries), its spec transcription
-header, or the vendored spec lists ([`specs/README.md`](../specs/README.md),
-[`CHINESE-STANDARDS.md`](CHINESE-STANDARDS.md)). Nothing is inferred from the
+header, or the vendored spec lists (`specs/README.md`,
+`CHINESE-STANDARDS.md`). Nothing is inferred from the
 standard's name. Where the edition is not stated in the code or its
 transcription, the row says **unverified** rather than guessing. When you
 change a crate's coverage, update its row here in the same PR.
@@ -166,7 +166,7 @@ marked *private*.
 ## Chinese broadcast and AVS standards
 
 Acquisition, edition tracking and the discrepancies between sources are in
-[CHINESE-STANDARDS.md](CHINESE-STANDARDS.md). The PDFs and their Markdown are
+CHINESE-STANDARDS.md. The PDFs and their Markdown are
 private.
 
 | Standard | Title | Edition implemented | Crate(s) | Status | Transcription | Notes |
