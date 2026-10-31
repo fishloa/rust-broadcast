@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-10-31
 ### Added
 - `TeletextCueExtractor::take_closed_cues` removes and returns every cue whose end is known, and `open_cue` reports the cue on screen as the new `#[non_exhaustive]` `OpenCue`. Taken cues no longer appear in `cues()` or `into_cues()`.
 - `NationalOption` gains `Polish`, `Rumanian`, `Turkish`, `SerbianCroatianSlovenian`, `Estonian` and `LettishLithuanian`, so every row of EN 300 706 Table 36 can be addressed. A page header's C12-C14 bits still select only the seven Level 1 options.

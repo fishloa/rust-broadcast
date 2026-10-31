@@ -4,6 +4,7 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-31
 ### Changed
 - Dependency `sdp-types` 0.2 -> 0.3 (optional, `media` feature; used internally; no public API exposure).
 

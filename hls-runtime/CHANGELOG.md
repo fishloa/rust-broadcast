@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-10-31
 ### Breaking
 - Removed the `HlsSkip`/`HlsSkipDirective`/`SkipValue` type aliases and `HlsOrigin::priority`/`urgency_for` methods; use `SkipDirective` and `HlsOrigin::http_priority` instead. `HttpPriority` now keeps a single `SEGMENT` constant for parts and segments.
 - A response the core rejects no longer ends the session: it is counted in `TokioClientStats::rejected_responses`, exposed as `TokioClient::last_rejection()` and retried with backoff; sixteen rounds in a row without output end it. New `TokioClientConfig::max_body_bytes` (default 256 MiB, `with_max_body_bytes`) bounds every body; `TokioError::BodyTooLarge` (not retried). **Breaking for struct-literal construction:** `TokioClientConfig` and `TokioClientStats` gained a field.

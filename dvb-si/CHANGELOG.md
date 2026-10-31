@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [12.0.1] - 2026-10-31
 ### Changed
 - Dependency `yoke` 0.7 -> 0.8 (BREAKING: `Owned<Y>` bound uses `yoke::Yokeable`).
 

@@ -6,6 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-31
 ### Changed
 - Dependency `lru` 0.18 -> 0.19.
 - Dependency `rand` 0.8 -> 0.10 (internal use only: the per-verifier Digest nonce-signing secret; CSPRNG `rand::random()` / `ThreadRng` unchanged). No public API exposure.

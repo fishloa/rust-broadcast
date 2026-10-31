@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.14.0] - 2026-10-31
 ### Added
 - `tests/hdr10plus_route.rs`: HDR10+ over a route fed the Tears of Steel TS fixture (issue #1428): `SUPPLEMENTAL-CODECS` `/cdm4` + `VIDEO-RANGE=PQ`, all 259 HDR10+ SEI byte-identical in the served fMP4, ffprobe HDR10+ side data on every frame, and `mediastreamvalidator` findings equal to the same stream without the SEI.
 - Dolby Vision profile 5, 8.1 and 8.4 routes (issue #1428): the fMP4 init carries `dvcC`/`dvvC` (and `dvh1` for profile 5) and the multivariant playlist carries the Dolby Vision `CODECS`/`SUPPLEMENTAL-CODECS`/`VIDEO-RANGE`; RPU NAL units pass through unchanged.
