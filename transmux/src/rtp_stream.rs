@@ -1732,6 +1732,12 @@ mod tests {
         }
     }
 
+    fn declare_reorder_depth(d: &mut RtpStreamDepacketiser, depth: usize) {
+        for (_, st) in &mut d.tracks {
+            st.dts = DtsDeriver::new(Some(depth));
+        }
+    }
+
     fn single_track(kind: RtpMediaKind, config: CodecConfig, clock: u32) -> RtpStreamDepacketiser {
         RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
             TrackId::new(1),
@@ -1916,6 +1922,7 @@ mod tests {
             dummy_avc(),
             90_000,
         )]);
+        declare_reorder_depth(&mut d, 0);
 
         // AU0 @1000 (IDR), AU1 @4000 (non-IDR), AU2 @7000 (non-IDR). 3000-tick spacing.
         let idr = [0x65u8, 0xAA];
@@ -2047,6 +2054,7 @@ mod tests {
             dummy_avc(),
             90_000,
         )]);
+        declare_reorder_depth(&mut d, 0);
 
         // Each fragment carries ~2 KiB of filler; MAX_AU_BUFFER_BYTES (4 MiB)
         // must trip well before we'd reach an unreasonable iteration count —
@@ -2127,9 +2135,13 @@ mod tests {
         assert_eq!(specs[0].track_id, TrackId::new(7));
         assert_eq!(specs[0].timescale, 90_000);
     }
-    fn max_hold_in_aus(presentation_order_of_wire: &[u32]) -> (usize, Vec<(u64, u32)>) {
+    fn max_hold_in_aus(
+        presentation_order_of_wire: &[u32],
+        depth: usize,
+    ) -> (usize, Vec<(u64, u32)>) {
         let id = TrackId::new(1);
         let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        declare_reorder_depth(&mut d, depth);
         let mut emitted = Vec::new();
         let mut max_hold = 0;
         for (n, &frame) in presentation_order_of_wire.iter().enumerate() {
@@ -2145,21 +2157,23 @@ mod tests {
 
     #[test]
     fn reorder_window_tracks_the_observed_depth_not_a_fixed_size() {
+        // The bounds are the duration window plus, once at the start of the
+        // run, the `depth` samples the DTS derivation holds for its anchor.
         let one_b: Vec<u32> = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13].to_vec();
-        let (hold, emitted) = max_hold_in_aus(&one_b);
-        assert!(hold <= 3, "one B frame held {hold} AUs");
+        let (hold, emitted) = max_hold_in_aus(&one_b, 1);
+        assert!(hold <= 3 + 1, "one B frame held {hold} AUs");
         assert!(emitted.iter().skip(3).all(|&(_, dur)| dur == 3600));
 
         let two_b: Vec<u32> = [
             0, 3, 1, 2, 6, 4, 5, 9, 7, 8, 12, 10, 11, 15, 13, 14, 18, 16, 17,
         ]
         .to_vec();
-        let (hold, emitted) = max_hold_in_aus(&two_b);
-        assert!(hold <= 4, "two B frames held {hold} AUs");
+        let (hold, emitted) = max_hold_in_aus(&two_b, 2);
+        assert!(hold <= 4 + 2, "two B frames held {hold} AUs");
         assert!(emitted.iter().skip(4).all(|&(_, dur)| dur == 3600));
 
         let none: Vec<u32> = (0..12).collect();
-        assert_eq!(max_hold_in_aus(&none).0, 1);
+        assert_eq!(max_hold_in_aus(&none, 0).0, 1);
     }
 
     #[test]
@@ -2168,7 +2182,7 @@ mod tests {
         for k in (1..40u32).rev() {
             wire.push(k);
         }
-        let (hold, _) = max_hold_in_aus(&wire);
+        let (hold, _) = max_hold_in_aus(&wire, 0);
         assert!(hold <= MAX_REORDER_DEPTH + 1, "held {hold}");
     }
 }
