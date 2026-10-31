@@ -3390,17 +3390,24 @@ impl HlsOrigin {
             None
         };
 
-        // Rendition report pointing back at the primary media playlist (RFC
-        // 8216bis §4.4.5.4 SHOULD; Apple accepts iframe->media reports).
+        // RFC 8216bis Appendix B.1: "Each Media Playlist MUST contain one
+        // EXT-X-RENDITION-REPORT tag for each Media Playlist (Rendition) in the
+        // Multivariant Playlist, except for the Media Playlist to which the
+        // EXT-X-RENDITION-REPORT tag is being added, and Playlists that
+        // contain the EXT-X-I-FRAMES-ONLY tag." This I-frame playlist is a
+        // Media Playlist, so it reports the primary media playlist, with the
+        // media playlist's own live edge (section 4.4.5.4: LAST-MSN is the
+        // last Partial Segment's Media Sequence Number and LAST-PART is
+        // "REQUIRED if the Rendition contains a Partial Segment").
+        // The reverse, a media playlist reporting this I-frame playlist, is
+        // only a SHOULD, and Apple's validator rejects it as "Unknown
+        // rendition report" (issue #1595).
         let rendition_reports = if self.part_target_ms.is_some() {
-            let last_closed = self
-                .trunk
-                .last_closed_segment()
-                .unwrap_or(entries[0].0.sequence_number);
+            let (last_msn, last_part) = self.current_live_edge();
             let mut reports = vec![broadcast_hls::RenditionReport {
                 uri: media_playlist_name.to_string(),
-                last_msn: self.public_msn(last_closed),
-                last_part: None,
+                last_msn,
+                last_part,
                 extra_attrs: Vec::new(),
             }];
             // Split-audio routes: report each audio sibling rendition as well

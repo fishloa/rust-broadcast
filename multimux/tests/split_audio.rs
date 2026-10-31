@@ -1431,21 +1431,45 @@ async fn split_audio_blocking_reload_audio_reports_current() {
     assert_eq!((report.last_msn, report.last_part), video, "{text}");
 }
 
+/// Issue #1595. RFC 8216bis Appendix B.1: a Media Playlist reports every
+/// other Media Playlist except those with EXT-X-I-FRAMES-ONLY, so on a plain
+/// route (one media playlist, one I-frame playlist) the media playlist carries
+/// no report, and the I-frame playlist (itself a Media Playlist) carries
+/// exactly the report for the media playlist, at the media playlist's own live
+/// edge with LAST-PART (section 4.4.5.4). Reporting the I-frame playlist from
+/// the media playlist is only a SHOULD, and Apple's validator rejects it as an
+/// unknown rendition report.
 #[tokio::test]
-async fn non_split_route_rendition_reports_absent() {
-    let sources = by_role(load("ts/h264_aac.ts"));
-    let rig = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
-    let pl = rig.playlist("media.m3u8").await;
-    assert!(pl.rendition_reports.is_empty());
-    let text = String::from_utf8(rig.ok("iframe.m3u8").await).expect("utf8");
-    assert!(text.contains("#EXT-X-RENDITION-REPORT:URI=\"media.m3u8\""));
-    assert_eq!(
-        text.matches("#EXT-X-RENDITION-REPORT").count(),
-        1,
-        "iframe playlist keeps exactly its media report: {text}"
+async fn non_split_route_reports_follow_appendix_b1() {
+    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let (start, end) = media_range_secs(&sources);
+    let mut at = start + 4.0;
+    let rig = rig_live_aligned(
+        &sources,
+        Vec::new(),
+        Vec::new(),
+        &window(&sources, f64::MIN, at),
     );
-    let media = String::from_utf8(rig.ok("media.m3u8").await).expect("utf8");
-    assert!(!media.contains("#EXT-X-RENDITION-REPORT"), "{media}");
+    let mut checked = 0;
+    while at < end - 1.0 && checked < 12 {
+        let media = rig.playlist("media.m3u8").await;
+        assert!(media.rendition_reports.is_empty(), "{media:?}");
+        let iframe = rig.playlist("iframe.m3u8").await;
+        assert_eq!(iframe.rendition_reports.len(), 1, "{iframe:?}");
+        let report = &iframe.rendition_reports[0];
+        assert_eq!(report.uri, "media.m3u8");
+        let edge = served_edge(&media);
+        assert_eq!((report.last_msn, report.last_part), edge, "at {at:.2}s");
+        assert!(
+            report.last_part.is_some(),
+            "the media playlist carries partial segments, so LAST-PART is required"
+        );
+        checked += 1;
+        let next = at + 0.7;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+    }
+    assert!(checked >= 10, "only {checked} checkpoints");
 }
 
 const CHECKPOINT_STEP_SECS: f64 = 0.5;
