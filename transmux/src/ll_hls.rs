@@ -1308,7 +1308,30 @@ impl LlHlsSegmenter {
                 .map(|s| clock.tick(s))
                 .sum()
         };
-        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
+        let part_secs = if anchor_span_ticks > 0 {
+            anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.max(1) as f64
+        } else {
+            // The anchor drained nothing: an earlier part already took its last
+            // sample and only another track (audio, teletext) still has samples
+            // to flush at the segment cut. RFC 8216bis section 4.4.4.9: the
+            // final Partial Segment of a Parent Segment may be shorter than 85%
+            // of the Part Target Duration, but `DURATION` is the duration of
+            // the Partial Segment and a playlist must not advertise a Partial
+            // Segment of zero duration, so report the span of the media it does
+            // carry rather than the anchor's empty span.
+            self.tracks
+                .iter()
+                .zip(&take_ends)
+                .map(|(t, &end)| {
+                    let clock = &mut MediaClock::resumed_at(t.part_clock.last_dts());
+                    let ticks: u64 = t.pending[t.part_start..end]
+                        .iter()
+                        .map(|s| clock.tick(s))
+                        .sum();
+                    ticks as f64 / t.spec.timescale.max(1) as f64
+                })
+                .fold(0.0, f64::max)
+        };
 
         let seq = self.next_seq;
         let part_bytes = {

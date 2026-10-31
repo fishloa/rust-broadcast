@@ -1236,3 +1236,72 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         .collect();
     assert!(new.is_empty(), "findings the subtitles introduced: {new:?}");
 }
+
+fn zero_duration_parts(playlist: &MediaPlaylist) -> Vec<String> {
+    playlist
+        .segments
+        .iter()
+        .flat_map(|s| s.parts.iter())
+        .chain(playlist.open_segment.iter().flat_map(|o| o.parts.iter()))
+        .filter(|p| p.duration.get() <= 0.0)
+        .map(|p| p.uri.clone())
+        .collect()
+}
+
+/// Issue #1597. RFC 8216bis section 4.4.4.9: an `EXT-X-PART` `DURATION` is the
+/// duration of the Partial Segment, and Apple's validator rejects a partial
+/// segment without positive duration. Polls every playlist of a low-latency
+/// route with subtitles after each few samples, so a part cut with no span is
+/// caught at the moment it appears.
+#[tokio::test]
+async fn no_playlist_ever_lists_a_zero_duration_part() {
+    let who = "no_playlist_ever_lists_a_zero_duration_part";
+    let teletext = test_fixtures::tsduck(TELETEXT_FIXTURE, who)
+        .map(|p| std::fs::read(p).expect("read teletext fixture"));
+    let (Some(teletext), Some(video)) =
+        (teletext, test_fixtures::require_bytes(VIDEO_FIXTURE, who))
+    else {
+        return;
+    };
+    let mut driver = start_rig(compose(&video, &teletext), true);
+    let subs = [
+        driver.rig.subtitle_uri(false).await,
+        driver.rig.subtitle_uri(true).await,
+    ];
+    let mut polls = 0usize;
+    let mut parts_seen = 0usize;
+    while driver.next < driver.order.len() {
+        driver.feed(3);
+        polls += 1;
+        for name in ["media.m3u8", subs[0].as_str(), subs[1].as_str()] {
+            let (_, playlist) = driver.rig.playlist(name).await;
+            let zero = zero_duration_parts(&playlist);
+            assert!(
+                zero.is_empty(),
+                "{name} lists zero-duration parts {zero:?} after {polls} polls"
+            );
+            let has_parts = playlist.segments.iter().any(|s| !s.parts.is_empty())
+                || playlist
+                    .open_segment
+                    .as_ref()
+                    .is_some_and(|o| !o.parts.is_empty());
+            assert!(
+                !has_parts
+                    || playlist
+                        .low_latency
+                        .as_ref()
+                        .is_some_and(|ll| ll.preload_hint_part.is_some()),
+                "{name} has EXT-X-PART but no EXT-X-PRELOAD-HINT after {polls} polls"
+            );
+            parts_seen += playlist
+                .open_segment
+                .iter()
+                .map(|o| o.parts.len())
+                .sum::<usize>();
+        }
+    }
+    assert!(
+        polls > 200 && parts_seen > 100,
+        "polls={polls} parts={parts_seen}"
+    );
+}

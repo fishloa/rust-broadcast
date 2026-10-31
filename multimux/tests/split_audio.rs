@@ -1686,3 +1686,50 @@ async fn non_split_route_output_is_unchanged() {
         (NON_SPLIT_PARTS, NON_SPLIT_SEGMENTS, NON_SPLIT_DIGEST)
     );
 }
+
+fn all_parts(pl: &MediaPlaylist) -> Vec<&broadcast_hls::PartSpec> {
+    pl.segments
+        .iter()
+        .flat_map(|s| s.parts.iter())
+        .chain(pl.open_segment.iter().flat_map(|o| o.parts.iter()))
+        .collect()
+}
+
+/// Issue #1597 and #1577 on a split-audio route. RFC 8216bis section 4.4.4.9:
+/// every EXT-X-PART has a positive DURATION; Appendix B.1: a playlist with an
+/// EXT-X-PART and no EXT-X-ENDLIST has an EXT-X-PRELOAD-HINT. Checked on the
+/// video and the audio playlist at every step of a live feed.
+#[tokio::test]
+async fn split_audio_playlists_never_list_a_zero_duration_part_and_always_hint() {
+    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let (start, end) = media_range_secs(&sources);
+    let mut at = start + BLOCKING_STEP_SECS;
+    let rig = aac_rig_live(&sources, at);
+    let mut polls = 0usize;
+    while at < end {
+        for name in ["media.m3u8", "audio/a0.m3u8"] {
+            let pl = rig.playlist(name).await;
+            let parts = all_parts(&pl);
+            for part in &parts {
+                assert!(
+                    part.duration.get() > 0.0,
+                    "{name} lists {} with zero duration at {at:.2}s",
+                    part.uri
+                );
+            }
+            if !parts.is_empty() {
+                assert!(
+                    pl.low_latency
+                        .as_ref()
+                        .is_some_and(|ll| ll.preload_hint_part.is_some()),
+                    "{name} has EXT-X-PART but no EXT-X-PRELOAD-HINT at {at:.2}s"
+                );
+            }
+        }
+        polls += 1;
+        let next = at + BLOCKING_STEP_SECS;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+    }
+    assert!(polls > 200, "only {polls} polls");
+}

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `LlHlsSegmenter` no longer reports a final Partial Segment of zero duration (issue #1597). When the anchor track had already drained its last sample into an earlier part and only another track (audio, teletext) had samples left at the segment cut, `PartInfo::duration` was the anchor's empty span, so `EXT-X-PART:DURATION=0` reached the playlist. It now reports the span of the media the part carries; no sample is dropped. RFC 8216bis section 4.4.4.9 exempts the final Partial Segment from the 85% minimum, not from having a duration.
+
 ### Changed
 - Explicit HE-AAC tracks (`TrackSpec::with_explicit_he_aac`, a DVB `AAC_descriptor` HE-AAC v2 value in the TS demux) now use the output sample rate (twice the core rate) as their media timescale, so every sample duration and timestamp doubles while presentation times are unchanged; `Track::with_explicit_he_aac` and `Sample::rescale_timescale` carry already-cut samples across.
 
