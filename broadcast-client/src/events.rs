@@ -133,6 +133,13 @@ pub enum Status {
     AwaitingTracks,
     /// Ended.
     Ended,
+    /// A media-class request of a segment-pull source received no response head and no body
+    /// byte for [`Config::segment_inactivity_timeout_us`]; the client closed it and will
+    /// request it again on the retry schedule, a [`Status::Reconnecting`] follows.
+    RequestStalled {
+        /// How the new request will get the resource.
+        resume: ResumeMode,
+    },
 }
 
 impl Status {
@@ -148,11 +155,38 @@ impl Status {
             Self::WaitingForCredentials => "waiting-for-credentials",
             Self::AwaitingTracks => "awaiting-tracks",
             Self::Ended => "ended",
+            Self::RequestStalled { .. } => "request-stalled",
         }
     }
 }
 
 broadcast_common::impl_spec_display!(Status);
+
+/// How a request closed for inactivity is asked for again, carried by
+/// [`Status::RequestStalled`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeMode {
+    /// The retry sends `Range` and `If-Range` (RFC 9110 14.2, 13.1.5) for the bytes not yet
+    /// received: the first response was a `200` or `206` with a strong validator and the
+    /// received prefix is kept.
+    Range,
+    /// The retry asks for the whole resource and the received prefix is dropped.
+    Full,
+}
+
+impl ResumeMode {
+    /// Spec label for this mode.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Range => "range",
+            Self::Full => "full",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ResumeMode);
 
 /// Why a [`BufferEvent::Pause`] was emitted.
 ///
@@ -452,7 +486,9 @@ pub enum Action {
         method: String,
         /// URL to request.
         url: String,
-        /// Headers to send.
+        /// Headers to send. A request resuming a transfer closed for inactivity (see
+        /// [`Config::segment_inactivity_timeout_us`]) carries its own `Range` and `If-Range`
+        /// headers here and a `byte_range` of `None`; send them as given.
         headers: Vec<(String, String)>,
         /// Optional byte range as `(offset, length)`, not `(start, end)`: the host builds the
         /// `Range: bytes=offset-(offset+length-1)` header itself.
@@ -769,6 +805,12 @@ pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_REQUEST_TIMEOUT_US: u64 = 20_000_000;
 /// Default per-request timeout for HLS media resources, microseconds.
 pub const DEFAULT_SEGMENT_TIMEOUT_US: u64 = 60_000_000;
+/// Default inactivity timeout of a media-class request, microseconds, see
+/// [`Config::segment_inactivity_timeout_us`]. One 6 s target duration (the longest Apple
+/// recommends) plus the first-byte wait of a just-in-time packaging origin stays under it, while
+/// it is a sixth of [`DEFAULT_SEGMENT_TIMEOUT_US`] and half of [`DEFAULT_REQUEST_TIMEOUT_US`], so
+/// a stalled transfer is recovered long before the whole-request deadline.
+pub const DEFAULT_SEGMENT_INACTIVITY_TIMEOUT_US: u64 = 10_000_000;
 /// Default per-request timeout for HLS key requests, microseconds.
 pub const DEFAULT_HLS_KEY_TIMEOUT_US: u64 = 20_000_000;
 /// Default maximum accepted HLS key response body size.
@@ -848,6 +890,18 @@ pub struct Config {
     pub request_timeout_us: u64,
     /// Segment-pull sources: media resource request timeout, microseconds; must be non-zero.
     pub segment_timeout_us: u64,
+    /// Segment-pull sources: inactivity timeout of one media-class request (HLS segment, part,
+    /// initialization section and key; DASH init, index and segment), microseconds; must be
+    /// non-zero. A request that receives neither its response head nor a body byte for this long
+    /// is closed ([`Action::Close`]), [`Status::RequestStalled`] is emitted and the resource is
+    /// requested again on the [`Config::backoff_ms`] schedule, counted as a failure of that
+    /// resource. When the first response was a `200` (with `Accept-Ranges: bytes`) or `206` with
+    /// a strong validator, the new request is a `Range` request with `If-Range` for the missing
+    /// bytes (RFC 9110 14.2, 13.1.5) and the received prefix is kept; otherwise the whole
+    /// resource is fetched again. Manifests, playlists and `UTCTiming` requests are exempt: a
+    /// blocking playlist reload legitimately holds its response, and only
+    /// [`Config::request_timeout_us`] bounds them. The whole-request timeouts still apply.
+    pub segment_inactivity_timeout_us: u64,
     /// Segment-pull sources: retry backoff per attempt, milliseconds; an entry of `0` is treated as `1`.
     pub backoff_ms: Vec<u64>,
     /// Segment-pull sources: retry backoff after `backoff_ms` is exhausted, milliseconds; `0` is treated as `1`.
@@ -962,6 +1016,9 @@ impl Config {
         if self.segment_timeout_us == 0 {
             return invalid("segment_timeout_us");
         }
+        if self.segment_inactivity_timeout_us == 0 {
+            return invalid("segment_inactivity_timeout_us");
+        }
         if self.hls_key_timeout_us == 0 {
             return invalid("hls_key_timeout_us");
         }
@@ -1024,6 +1081,7 @@ impl Default for Config {
             max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
             request_timeout_us: DEFAULT_REQUEST_TIMEOUT_US,
             segment_timeout_us: DEFAULT_SEGMENT_TIMEOUT_US,
+            segment_inactivity_timeout_us: DEFAULT_SEGMENT_INACTIVITY_TIMEOUT_US,
             backoff_ms: DEFAULT_BACKOFF_MS.to_vec(),
             backoff_cap_ms: DEFAULT_BACKOFF_CAP_MS,
             max_inflight_segments: DEFAULT_MAX_INFLIGHT_SEGMENTS,
@@ -1062,6 +1120,10 @@ impl core::fmt::Debug for Config {
             .field("max_segment_bytes", &self.max_segment_bytes)
             .field("request_timeout_us", &self.request_timeout_us)
             .field("segment_timeout_us", &self.segment_timeout_us)
+            .field(
+                "segment_inactivity_timeout_us",
+                &self.segment_inactivity_timeout_us,
+            )
             .field("backoff_ms", &self.backoff_ms)
             .field("backoff_cap_ms", &self.backoff_cap_ms)
             .field("max_inflight_segments", &self.max_inflight_segments)

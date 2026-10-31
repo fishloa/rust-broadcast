@@ -124,6 +124,7 @@ faults! {
     SidxSizeMismatch => "sxsize",
     SidxWrongBox => "sxbox",
     RangeIgnored => "rng200",
+    StallResume => "stallr",
     InitFtypOnly => "ftyp",
     MediaNoMoof => "nomoof",
 }
@@ -182,7 +183,7 @@ impl F {
             | F::MpdRepVanishes => REFRESH_ONLY,
             F::PeriodOldestRemoved | F::PeriodNewestDropped | F::PeriodDuplicated => BOUNDARY_ONLY,
             F::SidxSizeMismatch | F::SidxWrongBox => INDEX_ONLY,
-            F::RangeIgnored => RANGED,
+            F::RangeIgnored | F::StallResume => RANGED,
             F::InitFtypOnly => INIT_ONLY,
             F::MediaNoMoof => MEDIA_ONLY,
         }
@@ -551,6 +552,7 @@ fn apply(
             true
         })?,
         F::RangeIgnored => return None,
+        F::StallResume => super::dash_sim::stall_after(&good, half)?,
         F::InitFtypOnly => edit_bytes(&good, |b| {
             let Some(size) = b
                 .get(..4)
