@@ -9,21 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Test pinning `SUPPLEMENTAL-CODECS` (carried in `extra_attrs`) as a quoted string through render and parse.
 - `SUPPLEMENTAL-CODECS` round-trip test also covers the HDR10+ `/cdm4` brand (issue #1428).
-
-### Fixed
-- `LowLatencyConfig::effective_part_hold_back` returns `part_hold_back` as given when `part_target` is `None`, so a playlist without `EXT-X-PART-INF` can still render `PART-HOLD-BACK` in its `EXT-X-SERVER-CONTROL`. It used to return `None` and the attribute was silently dropped (issue #1589).
-### Added
 - `MediaPlaylist::segment_keys` and `MediaPlaylist::open_segment_key`: the `#EXT-X-KEY` in effect for each closed segment / the open segment per RFC 8216 §4.3.2.4 (carry-forward until the next tag of the same `KEYFORMAT`, `METHOD=NONE` resets, only `identity` participates), returned as the new `MediaKey` type alias (`SessionKey`), with `KEYFORMAT_IDENTITY`. New typed errors `Error::KeyWithoutUri` and `Error::UnsupportedKeyFormat`.
 - `MasterPlaylist::media: Vec<MediaRendition>` for `#EXT-X-MEDIA` (RFC 8216bis §4.4.6.1), with typed `MediaType`, `InstreamId`, `ClosedCaptionsRef` and a validated `MediaRendition` struct (`media_type`, `uri`, `group_id`, `language`, `assoc_language`, `name`, `stable_rendition_id`, `default`, `autoselect`, `forced`, `instream_id`, `bit_depth`, `sample_rate`, `characteristics`, `channels`, `extra_attrs`). Rendered before variants; `#EXT-X-MEDIA` lines are no longer retained in `extra_tags`.
 - `Variant::audio`/`video`/`subtitles: Option<String>` (GROUP-ID) and `Variant::closed_captions: Option<ClosedCaptionsRef>` for the `AUDIO`/`VIDEO`/`SUBTITLES`/`CLOSED-CAPTIONS` attributes of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2); these are no longer retained in `extra_attrs`.
 - `MediaPlaylist::always_emit_discontinuity_sequence: bool` (default `false`). Serializer emits `#EXT-X-DISCONTINUITY-SEQUENCE:<n>` when `discontinuity_sequence > 0 || always_emit_discontinuity_sequence`; parse sets it `true` when the tag is present, so `#EXT-X-DISCONTINUITY-SEQUENCE:0` round-trips byte-stably (Apple authoring 8.17).
 - `MediaSegment::program_date_time: Option<ProgramDateTime>` and `OpenSegment::program_date_time: Option<ProgramDateTime>` for `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.6). `ProgramDateTime` is a `Copy` newtype over a millisecond-precision UTC `jiff::Timestamp` with `parse(&str)` (ISO 8601 / RFC 3339, offsets and zone-less-as-UTC) and canonical render `YYYY-MM-DDThh:mm:ss.SSSZ`. The tag is no longer retained in `pre_tags`.
-
 - `Variant::frame_rate: Option<FrameRate>` for the `FRAME-RATE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2; Apple HLS Authoring Specification item 9.15). `FrameRate` is a small `Copy` newtype over millihertz with `from_millihertz(u32)`/`millihertz()`; it parses as `decimal-floating-point` (rounded half-up to three decimals) and renders as `<int>.<3 digits>` after `RESOLUTION`. An absent attribute renders nothing and parses as `None`. It is no longer retained in `extra_attrs`.
-
 - `Variant::average_bandwidth: Option<u32>` for the `AVERAGE-BANDWIDTH` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2; Apple HLS Authoring Specification item 9.14). It parses as a `decimal-integer` (a non-integer is `Error::HlsParse`, like `BANDWIDTH`), is no longer retained in `extra_attrs`, and renders right after `BANDWIDTH`; an absent attribute renders nothing and parses as `None`.
-
 - `IFrameVariant::average_bandwidth: Option<u32>` for the `AVERAGE-BANDWIDTH` attribute of `#EXT-X-I-FRAME-STREAM-INF` (RFC 8216bis §4.4.6.2). It parses as a `decimal-integer` (a non-integer is `Error::HlsParse`, like `BANDWIDTH`), is no longer retained in `extra_attrs`, and renders right after `BANDWIDTH`; an absent attribute renders nothing and parses as `None`.
+- `VideoRange` enum (`Sdr`/`Hlg`/`Pq`) with `name()`, `from_transfer_characteristics(u8)` and `attr()` for the `VIDEO-RANGE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2), derived from a track's VUI transfer characteristics.
+- `MediaPlaylist::segment_key_results`: like `segment_keys`, but a segment covered only by a non-identity `KEYFORMAT` yields its own `Error::UnsupportedKeyFormat` entry instead of failing the whole playlist. `Error` now derives `Clone`.
+
+### Fixed
+- `LowLatencyConfig::effective_part_hold_back` returns `part_hold_back` as given when `part_target` is `None`, so a playlist without `EXT-X-PART-INF` can still render `PART-HOLD-BACK` in its `EXT-X-SERVER-CONTROL`. It used to return `None` and the attribute was silently dropped (issue #1589).
+- `METHOD=NONE` in `#EXT-X-KEY` now ends every `KEYFORMAT`, not only `identity` (RFC 8216bis §4.4.4.4: a key applies until the next `EXT-X-KEY` "with the same KEYFORMAT attribute or a METHOD of NONE"), so clear segments after a FairPlay/Widevine key no longer make `segment_keys` fail.
+- A missing `AUTOSELECT` on `#EXT-X-MEDIA` parses as `NO` (RFC 8216bis §4.4.6.1) instead of taking the value of `DEFAULT`, and a `DEFAULT=YES` rendition without `AUTOSELECT` round-trips without gaining `AUTOSELECT=YES`.
+- `FRAME-RATE` accepts a `decimal-floating-point` with any number of fraction digits (RFC 8216bis §4.2); a fraction of 39 or more digits was rejected.
+- `#EXT-X-KEY:METHOD=NONE` with any other attribute is rejected (RFC 8216bis §4.4.4.4: "other attributes MUST NOT be present").
 
 ### Changed (BREAKING)
 - Audit #1485 items 17-19, all as new typed `Error` variants: `InstreamId::parse_closed_captions` uses a strict grammar (`CC1`..`CC4`, `SERVICE1`..`SERVICE63`; no sign, no leading zero) and returns `Error::InvalidInstreamId`; `MasterPlaylist::to_m3u8` rejects an out-of-range `Cc`/`Service` and a form that does not match the `TYPE` (`Error::InstreamIdTypeMismatch`); Rendition Group rules (RFC 8216bis §4.4.6.1.1) are enforced on parse and render (`Error::DuplicateDefaultInGroup`, `Error::DuplicateNameInGroup`); `DEFAULT`/`AUTOSELECT`/`FORCED` accept only the exact tokens `YES`/`NO` (`Error::InvalidYesNo`); `IV` requires the `0x`/`0X` prefix (`Error::InvalidIv`, was `HlsParse`).
@@ -33,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `IFrameVariant` gained a public field `average_bandwidth`, so every `IFrameVariant { .. }` struct literal outside this crate must add `average_bandwidth` (or use `..Default::default()`). The held `AVERAGE-BANDWIDTH` value that used to appear in `IFrameVariant::extra_attrs` for a parsed playlist is now the typed field.
 - `Variant` gained another public field `frame_rate`, so every `Variant { .. }` struct literal outside this crate must add `frame_rate` (or use `..Default::default()`). The held `FRAME-RATE` value that used to appear in `Variant::extra_attrs` for a parsed playlist is now the typed field.
 - `MasterPlaylist` gained `media: Vec<MediaRendition>` and `Variant` gained `audio`/`video`/`subtitles`/`closed_captions`, so every struct literal outside this crate must add those fields (or use `..Default::default()`). `#EXT-X-MEDIA` lines and the `AUDIO`/`VIDEO`/`SUBTITLES`/`CLOSED-CAPTIONS` attributes are now typed fields rather than `extra_tags` entries.
-- `VideoRange` enum (`Sdr`/`Hlg`/`Pq`) with `name()`, `from_transfer_characteristics(u8)` and `attr()` for the `VIDEO-RANGE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2), derived from a track's VUI transfer characteristics.
 
 ## [0.4.0] - 2026-10-17
 ### Documentation
