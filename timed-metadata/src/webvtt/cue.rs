@@ -271,12 +271,13 @@ impl Cea708CueExtractor {
 /// `dvb-vbi` deliberately does not decode EN 300 706 (a large, separate spec
 /// covering FEC, character sets, and page composition — not carriage; see its
 /// own module docs). This crate owns that decode
-/// (`crate::webvtt::teletext`): Hamming-8/4 + odd-parity FEC, the English
-/// Latin G0 national option table, and basic Level-1 page composition
-/// (header + rows 1-24). See `crate::webvtt::teletext` module docs for the
-/// full list of documented losses (no enhancement packets, no styling, no
-/// sub-code-based multi-page selection, only the English national option's
-/// character substitutions).
+/// (`crate::webvtt::teletext`): Hamming-8/4 + odd-parity FEC, the Latin G0
+/// national option tables, and basic Level-1 page composition
+/// (header + rows 1-24), with every Table 36 national option selected by the
+/// page header's C12-C14 bits and, on C5/C6 pages, only the text inside a
+/// Start Box / End Box pair displayed. See `crate::webvtt::teletext` module
+/// docs for the full list of documented losses (no enhancement packets, no
+/// styling, no sub-code-based multi-page selection).
 ///
 /// Tracks a single `(magazine, page)` — the caller supplies these (typically
 /// known from the carrying service's SI, e.g. a DVB VBI/teletext descriptor's
@@ -319,9 +320,12 @@ impl Cea708CueExtractor {
 /// let mut row1 = [0u8; 42];
 /// row1[0] = hamming(0 | (1 << 3)); // magazine 8, Y bit0 = 1 (row 1)
 /// row1[1] = hamming(0);            // Y bits 1..4 = 0
-/// row1[2] = parity(b'H');
-/// row1[3] = parity(b'I');
-/// for b in row1.iter_mut().skip(4) { *b = parity(0x20); }
+/// row1[2] = parity(0x0B); // Start Box, doubled
+/// row1[3] = parity(0x0B);
+/// row1[4] = parity(b'H');
+/// row1[5] = parity(b'I');
+/// row1[6] = parity(0x0A); // End Box
+/// for b in row1.iter_mut().skip(7) { *b = parity(0x20); }
 ///
 /// // EN 300 706 transmits each byte LSB-first, so a real wire capture (what
 /// // `TeletextDataField` carries) is the bit-reversal of these

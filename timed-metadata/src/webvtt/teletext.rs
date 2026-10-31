@@ -168,6 +168,20 @@ pub enum NationalOption {
     PortugueseSpanish,
     /// `110` — Czech/Slovak.
     CzechSlovak,
+    /// Polish (Table 36). Not selectable by C12-C14 at Level 1 (Table 32
+    /// places it in a later group), kept so every Table 36 row is addressable.
+    Polish,
+    /// Rumanian (Table 36); not selectable by C12-C14 at Level 1.
+    Rumanian,
+    /// Turkish (Table 36); not selectable by C12-C14 at Level 1.
+    Turkish,
+    /// Serbian/Croatian/Slovenian (Table 36); not selectable by C12-C14 at
+    /// Level 1.
+    SerbianCroatianSlovenian,
+    /// Estonian (Table 36); not selectable by C12-C14 at Level 1.
+    Estonian,
+    /// Lettish/Lithuanian (Table 36); not selectable by C12-C14 at Level 1.
+    LettishLithuanian,
     /// `111` — reserved (Table 32's first group defines no option here); the
     /// raw 3-bit value is retained.
     Reserved(u8),
@@ -200,6 +214,12 @@ impl NationalOption {
             NationalOption::French => "French",
             NationalOption::PortugueseSpanish => "Portuguese/Spanish",
             NationalOption::CzechSlovak => "Czech/Slovak",
+            NationalOption::Polish => "Polish",
+            NationalOption::Rumanian => "Rumanian",
+            NationalOption::Turkish => "Turkish",
+            NationalOption::SerbianCroatianSlovenian => "Serbian/Croatian/Slovenian",
+            NationalOption::Estonian => "Estonian",
+            NationalOption::LettishLithuanian => "Lettish/Lithuanian",
             NationalOption::Reserved(_) => "reserved",
         }
     }
@@ -207,59 +227,107 @@ impl NationalOption {
 broadcast_common::impl_spec_display!(NationalOption, Reserved);
 
 /// Decode one Latin G0 (Table 35) code position (`0x20`-`0x7F`) to its
-/// display character, applying English (Table 36) national-option
-/// substitutions at the 13 reserved positions when `option` is
-/// [`NationalOption::English`] (verified against the ETSI EN 300 706 PDF's
-/// Table 35/36 glyph charts — these are rendered as images in the spec, not
-/// extractable text, so they were read visually; see
-/// `docs/teletext-subtitles.md`).
+/// display character, applying the Table 36 national-option substitution of
+/// `option` at the 13 reserved positions. The glyph chart is an image in the
+/// spec; the reading is recorded in
+/// `private/specs-verified/dvb/timed-metadata/teletext-national-options.md`.
 ///
-/// Codes below `0x20` are Level-1 spacing attributes (clause 12.2: colour,
-/// flash, height, box mode, …) — not decoded to a glyph; rendered as a space
-/// (this crate's lossy-first-pass philosophy, matching the `cc-data`
-/// extractors' documented styling losses). Code `0x7F` is the Level-1
-/// "reserved position" full block (Table 35 note 4); rendered as `'\u{2588}'`
-/// (FULL BLOCK).
+/// Codes below `0x20` are Level-1 spacing attributes (clause 12.2); each
+/// occupies a character cell displayed as a SPACE, so they decode to a space
+/// here (the box attributes are interpreted by the row renderer, not here).
+/// Code `0x7F` is the Level-1 "reserved position" full block (Table 35
+/// note 4), rendered as `'\u{2588}'` (FULL BLOCK). A [`NationalOption::Reserved`]
+/// option substitutes nothing and yields the base ASCII glyph.
 #[must_use]
 pub fn latin_g0_char(code: u8, option: NationalOption) -> char {
-    let code = code & 0x7F;
-    if code < 0x20 {
+    let code = code & CODE_MASK_7BIT;
+    if code < FIRST_GRAPHIC_CODE {
         return ' ';
     }
-    if code == 0x7F {
+    if code == FULL_BLOCK_CODE {
         return '\u{2588}';
     }
-    if option == NationalOption::English
-        && let Some(c) = english_substitution(code)
+    if let Some(subset) = national_subset(option)
+        && let Some(slot) = NATIONAL_POSITIONS.iter().position(|&p| p == code)
     {
-        return c;
+        return subset[slot];
     }
-    // Base Latin G0 / International Reference Version: identical to ASCII
-    // at every position outside the 13 reserved ones.
     code as char
 }
 
-/// The English (Table 36) substitution for one of Table 35's 13 reserved
-/// code positions, or `None` if `code` is not one of them (in which case the
-/// base ASCII/IRV glyph applies).
-fn english_substitution(code: u8) -> Option<char> {
-    Some(match code {
-        0x23 => '£', // POUND SIGN
-        0x24 => '$', // DOLLAR SIGN (unchanged from base for English)
-        0x40 => '@', // COMMERCIAL AT (unchanged from base for English)
-        0x5B => '←', // LEFTWARDS ARROW
-        0x5C => '½', // VULGAR FRACTION ONE HALF
-        0x5D => '→', // RIGHTWARDS ARROW
-        0x5E => '↑', // UPWARDS ARROW
-        0x5F => '#', // NUMBER SIGN
-        0x60 => '―', // HORIZONTAL BAR (glyph is a plain horizontal
-        // rule in the spec's bitmap chart; U+2015 is this crate's choice of
-        // Unicode codepoint for it — a judgment call, see module docs)
-        0x7B => '¼', // VULGAR FRACTION ONE QUARTER
-        0x7C => '‖', // DOUBLE VERTICAL LINE
-        0x7D => '¾', // VULGAR FRACTION THREE QUARTERS
-        0x7E => '÷', // DIVISION SIGN
-        _ => return None,
+const CODE_MASK_7BIT: u8 = 0x7F;
+const FIRST_GRAPHIC_CODE: u8 = 0x20;
+const FULL_BLOCK_CODE: u8 = 0x7F;
+
+/// Spacing attribute 0/A, End Box (EN 300 706 clause 12.2, Table 26).
+const END_BOX: u8 = 0x0A;
+/// Spacing attribute 0/B, Start Box (EN 300 706 clause 12.2, Table 26).
+const START_BOX: u8 = 0x0B;
+
+/// The 13 Table 35 code positions a national option replaces, in the column
+/// order of Table 36 (2/3 2/4 4/0 5/B 5/C 5/D 5/E 5/F 6/0 7/B 7/C 7/D 7/E).
+const NATIONAL_POSITIONS: [u8; 13] = [
+    0x23, 0x24, 0x40, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x7B, 0x7C, 0x7D, 0x7E,
+];
+
+type NationalSubset = [char; 13];
+
+const CZECH_SLOVAK: NationalSubset = [
+    '#', 'ů', 'č', 'ť', 'ž', 'ý', 'í', 'ř', 'é', 'á', 'ě', 'ú', 'š',
+];
+const ENGLISH: NationalSubset = [
+    '£', '$', '@', '←', '½', '→', '↑', '#', '\u{2015}', '¼', '\u{2016}', '¾', '÷',
+];
+const ESTONIAN: NationalSubset = [
+    '#', 'õ', 'Š', 'Ä', 'Ö', 'Ž', 'Ü', 'Õ', 'š', 'ä', 'ö', 'ž', 'ü',
+];
+const FRENCH: NationalSubset = [
+    'é', 'ï', 'à', 'ë', 'ê', 'ù', 'î', '#', 'è', 'â', 'ô', 'û', 'ç',
+];
+const GERMAN: NationalSubset = [
+    '#', '$', '§', 'Ä', 'Ö', 'Ü', '^', '_', '°', 'ä', 'ö', 'ü', 'ß',
+];
+const ITALIAN: NationalSubset = [
+    '£', '$', 'é', '°', 'ç', '→', '↑', '#', 'ù', 'à', 'ò', 'è', 'ì',
+];
+const LETTISH_LITHUANIAN: NationalSubset = [
+    '#', '$', 'Š', 'ė', 'ę', 'Ž', 'č', 'ū', 'š', 'ą', 'ų', 'ž', 'į',
+];
+const POLISH: NationalSubset = [
+    '#', 'ń', 'ą', 'Ż', 'Ś', 'Ł', 'ć', 'ó', 'ę', 'ż', 'ś', 'ł', 'ź',
+];
+const PORTUGUESE_SPANISH: NationalSubset = [
+    'ç', '$', '¡', 'á', 'é', 'í', 'ó', 'ú', '¿', 'ü', 'ñ', 'è', 'à',
+];
+const RUMANIAN: NationalSubset = [
+    '#', '¤', 'Ţ', 'Â', 'Ş', 'Ă', 'Î', 'ı', 'ţ', 'â', 'ş', 'ă', 'î',
+];
+const SERBIAN_CROATIAN_SLOVENIAN: NationalSubset = [
+    '#', 'Ë', 'Č', 'Ć', 'Ž', 'Đ', 'Š', 'ë', 'č', 'ć', 'ž', 'đ', 'š',
+];
+const SWEDISH_FINNISH_HUNGARIAN: NationalSubset = [
+    '#', '¤', 'É', 'Ä', 'Ö', 'Å', 'Ü', '_', 'é', 'ä', 'ö', 'å', 'ü',
+];
+const TURKISH: NationalSubset = [
+    '\u{20BA}', 'ğ', 'İ', 'Ş', 'Ö', 'Ç', 'Ü', 'Ğ', 'ı', 'ş', 'ö', 'ç', 'ü',
+];
+
+fn national_subset(option: NationalOption) -> Option<&'static NationalSubset> {
+    Some(match option {
+        NationalOption::English => &ENGLISH,
+        NationalOption::German => &GERMAN,
+        NationalOption::SwedishFinnishHungarian => &SWEDISH_FINNISH_HUNGARIAN,
+        NationalOption::Italian => &ITALIAN,
+        NationalOption::French => &FRENCH,
+        NationalOption::PortugueseSpanish => &PORTUGUESE_SPANISH,
+        NationalOption::CzechSlovak => &CZECH_SLOVAK,
+        NationalOption::Polish => &POLISH,
+        NationalOption::Rumanian => &RUMANIAN,
+        NationalOption::Turkish => &TURKISH,
+        NationalOption::SerbianCroatianSlovenian => &SERBIAN_CROATIAN_SLOVENIAN,
+        NationalOption::Estonian => &ESTONIAN,
+        NationalOption::LettishLithuanian => &LETTISH_LITHUANIAN,
+        NationalOption::Reserved(_) => return None,
     })
 }
 
@@ -376,20 +444,58 @@ impl PageHeader {
     }
 }
 
-/// Decode a display row's 40 odd-parity payload bytes
-/// (`txt_data_block[2..42]`) to text, applying `option`'s character
-/// substitutions. A byte that fails its parity check (undetectable which bit
-/// is wrong — odd parity has no correction capability, §8.1) is rendered as
-/// `'\u{FFFD}'` (REPLACEMENT CHARACTER).
-fn decode_row_text(txt_data_block: &[u8; 42], option: NationalOption) -> String {
-    let mut s = String::with_capacity(40);
-    for &b in &txt_data_block[2..42] {
-        match decode_odd_parity(b) {
-            Some(code) => s.push(latin_g0_char(code, option)),
-            None => s.push('\u{FFFD}'),
-        }
+const ROW_LEN: usize = 40;
+const DISPLAY_ROWS: usize = 24;
+const ROW_PAYLOAD_START: usize = 2;
+
+/// One display row's 40 columns after odd-parity decode (§8.1): `Some` holds
+/// the 7-bit code, `None` a byte that failed its parity check.
+type RowCodes = [Option<u8>; ROW_LEN];
+
+fn decode_row_codes(txt_data_block: &[u8; 42]) -> RowCodes {
+    let mut codes = [None; ROW_LEN];
+    for (slot, &b) in codes
+        .iter_mut()
+        .zip(&txt_data_block[ROW_PAYLOAD_START..ROW_PAYLOAD_START + ROW_LEN])
+    {
+        *slot = decode_odd_parity(b);
     }
-    s
+    codes
+}
+
+fn push_code(out: &mut String, code: Option<u8>, option: NationalOption) {
+    match code {
+        Some(code) => out.push(latin_g0_char(code, option)),
+        None => out.push('\u{FFFD}'),
+    }
+}
+
+/// Render one row. On a boxed (C5 newsflash / C6 subtitle) page only the
+/// columns after a Start Box and before the next End Box are displayed
+/// (clause 12.2, Table 26, attributes 0/A and 0/B: "characters outside this
+/// area are not displayed"; both reset at the start of a row); the two
+/// attribute cells and the padding at the box edges are not text and are
+/// trimmed. On any other page the whole row is rendered, trailing spaces
+/// trimmed.
+fn render_row(codes: &RowCodes, option: NationalOption, boxed_page: bool) -> String {
+    let mut out = String::with_capacity(ROW_LEN);
+    if boxed_page {
+        let mut in_box = false;
+        for &code in codes {
+            match code {
+                Some(START_BOX) => in_box = true,
+                Some(END_BOX) => in_box = false,
+                _ if in_box => push_code(&mut out, code, option),
+                _ => {}
+            }
+        }
+        out.trim().into()
+    } else {
+        for &code in codes {
+            push_code(&mut out, code, option);
+        }
+        out.trim_end().into()
+    }
 }
 
 /// Accumulates one tracked `(magazine, page)`'s row packets into display
@@ -405,9 +511,10 @@ pub(crate) struct PageAssembler {
     /// page was last headed, per §7.2.1.
     active: bool,
     inhibited: bool,
+    boxed_page: bool,
     national_option: NationalOption,
     /// Index `0` = row 1 .. index `23` = row 24.
-    rows: [String; 24],
+    rows: [Option<RowCodes>; DISPLAY_ROWS],
 }
 
 impl PageAssembler {
@@ -417,8 +524,9 @@ impl PageAssembler {
             page,
             active: false,
             inhibited: false,
+            boxed_page: false,
             national_option: NationalOption::English,
-            rows: core::array::from_fn(|_| String::new()),
+            rows: [None; DISPLAY_ROWS],
         }
     }
 
@@ -443,32 +551,32 @@ impl PageAssembler {
             self.active = header.page == self.page;
             if self.active {
                 if header.erase_page {
-                    for row in &mut self.rows {
-                        row.clear();
-                    }
+                    self.rows = [None; DISPLAY_ROWS];
                 }
                 self.inhibited = header.inhibit_display;
+                self.boxed_page = header.subtitle || header.newsflash;
                 self.national_option = header.national_option;
             }
             return;
         }
-        if !self.active || addr.row > 24 {
+        if !self.active || usize::from(addr.row) > DISPLAY_ROWS {
             return;
         }
-        self.rows[(addr.row - 1) as usize] = decode_row_text(block, self.national_option);
+        self.rows[usize::from(addr.row) - 1] = Some(decode_row_codes(block));
     }
 
-    /// The currently displayed subtitle text: non-empty, trailing-space
-    /// trimmed rows 1-24, in row order, joined with `\n`. Empty if the page
+    /// The currently displayed subtitle text: non-empty rows 1-24 as rendered
+    /// by [`render_row`], in row order, joined with `\n`. Empty if the page
     /// is currently inhibited (C10) or no row is non-empty.
     pub(crate) fn display_text(&self) -> String {
         if self.inhibited {
             return String::new();
         }
-        let lines: Vec<&str> = self
+        let lines: Vec<String> = self
             .rows
             .iter()
-            .map(|r| r.trim_end())
+            .flatten()
+            .map(|codes| render_row(codes, self.national_option, self.boxed_page))
             .filter(|r| !r.is_empty())
             .collect();
         lines.join("\n")
@@ -478,6 +586,7 @@ impl PageAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn hamming_8_4_round_trips_all_16_nibbles() {
@@ -607,10 +716,82 @@ mod tests {
     }
 
     #[test]
-    fn latin_g0_non_english_falls_back_to_base_at_reserved_positions() {
-        // Documented gap: German substitutions are not implemented, so the
-        // base ASCII glyph is returned instead (not the German '§' etc).
-        assert_eq!(latin_g0_char(0x24, NationalOption::German), '$');
+    fn latin_g0_reserved_option_substitutes_nothing() {
+        assert_eq!(latin_g0_char(0x24, NationalOption::Reserved(7)), '$');
+        assert_eq!(latin_g0_char(0x5B, NationalOption::Reserved(7)), '[');
+    }
+
+    #[test]
+    fn latin_g0_other_rows_of_table_36() {
+        let row = |option| -> String {
+            NATIONAL_POSITIONS
+                .iter()
+                .map(|&c| latin_g0_char(c, option))
+                .collect()
+        };
+        assert_eq!(row(NationalOption::German), "#$§ÄÖÜ^_°äöüß");
+        assert_eq!(row(NationalOption::Italian), "£$é°ç→↑#ùàòèì");
+        assert_eq!(row(NationalOption::PortugueseSpanish), "ç$¡áéíóú¿üñèà");
+        assert_eq!(row(NationalOption::Turkish), "\u{20BA}ğİŞÖÇÜĞışöçü");
+    }
+
+    #[test]
+    fn latin_g0_french_row_of_table_36() {
+        let got: String = NATIONAL_POSITIONS
+            .iter()
+            .map(|&c| latin_g0_char(c, NationalOption::French))
+            .collect();
+        assert_eq!(got, "éïàëêùî#èâôûç");
+    }
+
+    #[test]
+    fn page_assembler_applies_the_header_national_option() {
+        let mut asm = PageAssembler::new(8, 0x88);
+        asm.push(&field_from_block(
+            build_header_block(8, 0x88, true, true, false, NationalOption::French),
+            0,
+        ));
+        let row = [
+            START_BOX, START_BOX, b'd', 0x23, b'p', b'a', b's', b's', b'e', b'r', END_BOX,
+        ];
+        asm.push(&field_from_block(build_row_bytes(8, 20, &row), 20));
+        assert_eq!(asm.display_text(), "dépasser");
+    }
+
+    #[test]
+    fn boxed_page_shows_only_text_between_start_box_and_end_box() {
+        let mut asm = PageAssembler::new(8, 0x88);
+        asm.push(&field_from_block(
+            build_header_block(8, 0x88, true, true, false, NationalOption::English),
+            0,
+        ));
+        let mut row = vec![b' ', b' ', b' ', b'x', START_BOX, START_BOX, b' '];
+        row.extend_from_slice(b"Hi there");
+        row.extend_from_slice(&[b' ', END_BOX, END_BOX, b'y', b'z']);
+        asm.push(&field_from_block(build_row_bytes(8, 20, &row), 20));
+        assert_eq!(asm.display_text(), "Hi there");
+    }
+
+    #[test]
+    fn row_without_start_box_is_not_displayed_on_a_boxed_page() {
+        let mut asm = PageAssembler::new(8, 0x88);
+        asm.push(&field_from_block(
+            build_header_block(8, 0x88, true, true, false, NationalOption::English),
+            0,
+        ));
+        asm.push(&field_from_block(build_row_block(8, 20, "outside"), 20));
+        assert_eq!(asm.display_text(), "");
+    }
+
+    #[test]
+    fn box_attributes_are_ignored_on_a_page_that_is_not_boxed() {
+        let mut asm = PageAssembler::new(8, 0x88);
+        asm.push(&field_from_block(
+            build_header_block(8, 0x88, true, false, false, NationalOption::English),
+            0,
+        ));
+        asm.push(&field_from_block(build_row_block(8, 20, "plain"), 20));
+        assert_eq!(asm.display_text(), "plain");
     }
 
     #[test]
@@ -672,12 +853,12 @@ mod tests {
         assert!(asm.active);
 
         // Row 20: "HI"
-        let row_block = build_row_block(8, 20, "HI");
+        let row_block = build_boxed_row(8, 20, "HI");
         asm.push(&field_from_block(row_block, 20));
         assert_eq!(asm.display_text(), "HI");
 
         // A row for a DIFFERENT magazine must be ignored.
-        let other_mag_row = build_row_block(1, 21, "IGNORED");
+        let other_mag_row = build_boxed_row(1, 21, "IGNORED");
         asm.push(&field_from_block(other_mag_row, 21));
         assert_eq!(
             asm.display_text(),
@@ -690,7 +871,7 @@ mod tests {
             build_header_block(8, 0x01, true, false, false, NationalOption::English);
         asm.push(&field_from_block(other_page_header, 0));
         assert!(!asm.active);
-        let row_after_switch = build_row_block(8, 21, "SHOULD NOT APPEAR");
+        let row_after_switch = build_boxed_row(8, 21, "SHOULD NOT APPEAR");
         asm.push(&field_from_block(row_after_switch, 21));
         assert_eq!(
             asm.display_text(),
@@ -711,7 +892,7 @@ mod tests {
             build_header_block(8, 0x88, true, true, false, NationalOption::English),
             0,
         ));
-        asm.push(&field_from_block(build_row_block(8, 20, "HELLO"), 20));
+        asm.push(&field_from_block(build_boxed_row(8, 20, "HELLO"), 20));
         assert_eq!(asm.display_text(), "HELLO");
 
         // A header with C10 (inhibit_display) set, but C4 (erase) NOT set,
@@ -726,9 +907,8 @@ mod tests {
             "",
             "inhibit_display must blank the text"
         );
-        assert_eq!(
-            asm.rows[19].trim_end(),
-            "HELLO",
+        assert!(
+            asm.rows[19].is_some(),
             "inhibit_display must not clear the underlying row buffer"
         );
     }
@@ -770,6 +950,7 @@ mod tests {
             NationalOption::PortugueseSpanish => 5,
             NationalOption::CzechSlovak => 6,
             NationalOption::Reserved(v) => v,
+            other => panic!("{other} has no Level 1 header encoding"),
         };
         let c12 = (opt_bits >> 2) & 1;
         let c13 = (opt_bits >> 1) & 1;
@@ -795,6 +976,30 @@ mod tests {
         for i in 0..40usize {
             let ch = bytes.get(i).copied().unwrap_or(b' ');
             b[2 + i] = encode_odd_parity(ch & 0x7F);
+        }
+        b
+    }
+
+    /// A row whose text is wrapped in the doubled Start Box / End Box pair a
+    /// subtitle page carries.
+    pub(super) fn build_boxed_row(magazine: u8, row: u8, text: &str) -> [u8; 42] {
+        let mut codes = vec![START_BOX, START_BOX];
+        codes.extend_from_slice(text.as_bytes());
+        codes.extend_from_slice(&[END_BOX, END_BOX]);
+        build_row_bytes(magazine, row, &codes)
+    }
+
+    /// Like [`build_row_block`] but from raw 7-bit codes, so spacing
+    /// attributes can be placed in the row.
+    pub(super) fn build_row_bytes(magazine: u8, row: u8, codes: &[u8]) -> [u8; 42] {
+        assert!((1..=24).contains(&row));
+        let mut b = [0u8; 42];
+        let mag_field = if magazine == 8 { 0 } else { magazine };
+        b[0] = encode_hamming_8_4(mag_field | ((row & 1) << 3));
+        b[1] = encode_hamming_8_4(row >> 1);
+        for i in 0..40usize {
+            let code = codes.get(i).copied().unwrap_or(b' ');
+            b[2 + i] = encode_odd_parity(code & 0x7F);
         }
         b
     }

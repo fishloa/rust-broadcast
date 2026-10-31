@@ -92,3 +92,38 @@ fn open_cue_is_reported_while_text_is_on_screen() {
     assert_eq!(open.start_pts_90k, first.start.0);
     assert_eq!(open.text, first.text);
 }
+
+fn normalise_text(text: &str) -> String {
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn reference_texts() -> Option<Vec<String>> {
+    let path = test_fixtures::tsduck("reference/test-012/test-012.srt", WHO)?;
+    let srt = std::fs::read_to_string(path)
+        .expect("read reference SRT")
+        .replace("\r\n", "\n");
+    Some(
+        srt.split("\n\n")
+            .filter(|block| !block.trim().is_empty())
+            .map(|block| {
+                let text: Vec<&str> = block.lines().skip(2).collect();
+                normalise_text(&text.join("\n"))
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn cue_text_matches_tsduck_reference() {
+    let (Some(samples), Some(want)) = (samples(), reference_texts()) else {
+        return;
+    };
+    let got: Vec<String> = whole_stream(&samples)
+        .iter()
+        .map(|c| normalise_text(&c.text))
+        .collect();
+    assert_eq!(got, want);
+}

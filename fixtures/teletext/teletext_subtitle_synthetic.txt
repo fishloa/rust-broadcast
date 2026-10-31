@@ -26,12 +26,18 @@
 # (header_byte + framing_code + 42-byte txt_data_block; this is exactly
 # dvb_vbi::TeletextDataField::parse's expected input format.)
 #
+# REGENERATED for issue #1585: rows 20 and 22 are now wrapped in the doubled
+# Start Box (0x0B) / End Box (0x0A) pair a real subtitle page carries (EN 300
+# 706 clause 12.2, Table 26); on a C6 page the characters outside a box are not
+# displayed, so the previous unboxed rows were not valid subtitle content.
+# Only the two row packets changed, by re-encoding their 40 payload columns.
+#
 # Plan: magazine 8 (packet magazine field 0), page 0x88 ("888"), C6 Subtitle
 # and C4 Erase Page set. Header (erase) at pts=0 establishes an empty page;
 # row 20 "HELLO WORLD" at pts=3000; row 22 "THIS IS A TEST" at pts=6000
 # (two-row subtitle now showing); a second header (erase, same page) at
 # pts=30000 clears the page (subtitle disappears -> cue closes).
 0 e7e4a8a80b0ba80ba80ba8a80404040404040404040404040404040404040404040404040404040404040404
-3000 e7e4a83113a23232f204eaf24a32230404040404040404040404040404040404040404040404040404040404
-6000 e7e4a8d92a1392cb0492cb0483042aa2cb2a0404040404040404040404040404040404040404040404040404
+3000 e7e4a831d0d013a23232f204eaf24a3223515104040404040404040404040404040404040404040404040404
+6000 e7e4a8d9d0d02a1392cb0492cb0483042aa2cb2a515104040404040404040404040404040404040404040404
 30000 e7e4a8a80b0ba80ba80ba8a80404040404040404040404040404040404040404040404040404040404040404
