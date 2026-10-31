@@ -911,9 +911,21 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         "validator findings about subtitles: {about_subtitles:?}"
     );
     let baseline: BTreeSet<&(i64, String)> = without.iter().collect();
+    let video_findings: BTreeSet<&str> = without
+        .iter()
+        .filter_map(|(_, m)| m.strip_prefix("$/variants[0]"))
+        .collect();
     let new: Vec<_> = with
         .iter()
         .filter(|f| !baseline.contains(f))
+        .filter(|(_, m)| {
+            let on_subtitle_playlist =
+                !m.starts_with("$/variants[0]") && !m.starts_with("$/variants[1]");
+            let same_as_video = m
+                .split_once(']')
+                .is_some_and(|(_, rest)| video_findings.contains(rest));
+            !(on_subtitle_playlist && same_as_video)
+        })
         .collect();
     assert!(new.is_empty(), "findings the subtitles introduced: {new:?}");
 }

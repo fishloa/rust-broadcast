@@ -3115,7 +3115,12 @@ impl HlsOrigin {
             let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
                 .expect("finite, >= 0 times a positive constant is finite, >= 0");
             LowLatencyConfig {
-                part_target: renders_parts.then_some(part_target),
+                // RFC 8216bis §4.4.3.7 makes EXT-X-PART-INF REQUIRED only when
+                // a playlist has EXT-X-PART tags, and a WebVTT playlist has
+                // none. It is rendered anyway, with the primary's PART-TARGET,
+                // because Apple's mediastreamvalidator reports "Missing
+                // EXT-X-PART-INF tag" on a low-latency playlist without it.
+                part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),
                 // RFC 8216bis §4.4.3.8: HOLD-BACK MUST be >= 3x the Target
                 // Duration; Apple's validator also requires it in LL mode.
@@ -3379,6 +3384,11 @@ impl HlsOrigin {
             let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
                 .expect("finite, >= 0 times a positive constant is finite, >= 0");
             Some(broadcast_hls::LowLatencyConfig {
+                // RFC 8216bis §4.4.3.7 makes EXT-X-PART-INF REQUIRED only when
+                // a playlist has EXT-X-PART tags, and a WebVTT playlist has
+                // none. It is rendered anyway, with the primary's PART-TARGET,
+                // because Apple's mediastreamvalidator reports "Missing
+                // EXT-X-PART-INF tag" on a low-latency playlist without it.
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),
                 hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
