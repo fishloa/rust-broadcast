@@ -220,7 +220,7 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
 48. `hls-runtime-v0.9.0`  
    needs live first: `broadcast-auth`, `broadcast-common`, `broadcast-hls`, `container-probe`, `media-plane`, `timed-metadata`, `transmux`
 49. `multimux-v0.13.0`  
-   needs live first: `v12.0.0`, `broadcast-auth`, `broadcast-common`, `broadcast-hls`, `container-probe`, `hls-runtime`, `media-doctor`, `media-plane`, `mpeg-ts`, `rtmp-runtime`, `rtp-packet`, `rtsp-runtime`, `scte35-splice`, `srt-runtime`, `timed-metadata`, `transmux`, `webrtc-runtime`
+   needs live first: `v12.0.0`, `broadcast-auth`, `broadcast-common`, `broadcast-hls`, `caption-convert`, `container-probe`, `hls-runtime`, `media-doctor`, `media-plane`, `mpeg-ts`, `rtmp-runtime`, `rtp-packet`, `rtsp-runtime`, `scte35-splice`, `srt-runtime`, `timed-metadata`, `transmux`, `webrtc-runtime`
 50. `multimux-cli-v0.11.0`  
    needs live first: `multimux`
 
