@@ -940,6 +940,10 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
             f.0, f.1, f.2
         );
     }
+    assert!(
+        !findings.iter().any(|f| f.2.contains("exceeds PART-TARGET")),
+        "a Partial Segment exceeds its PART-TARGET (issue #1603)"
+    );
     findings
         .into_iter()
         .filter(|f| f.1 <= 1)
@@ -1839,15 +1843,25 @@ async fn split_audio_playlists_share_target_duration_and_server_control_while_pu
     assert!(compared > 300, "only {compared} comparisons");
 }
 
-const EAC3_FRAME_SECS: f64 = 1536.0 / 48_000.0;
+fn attr_secs(text: &str, tag: &str, attr: &str) -> f64 {
+    let line = directive(text, tag).unwrap_or_else(|| panic!("no {tag}"));
+    let key = format!("{attr}=");
+    let value = line
+        .split([':', ','])
+        .find_map(|f| f.strip_prefix(key.as_str()))
+        .unwrap_or_else(|| panic!("no {attr} in {line}"));
+    value.parse().expect("decimal seconds")
+}
 
 /// RFC 8216bis section 4.4.4.9: a Partial Segment lasts at most the Part
-/// Target Duration. An audio part holds whole frames, so it may overshoot the
-/// video part boundary by less than one frame, but audio that precedes the
-/// shared origin (arriving after the first cut fixed it) must not be packed
-/// into the first part. The remaining overshoot is issue #1603.
+/// Target Duration; section 4.4.3.8: with differing Part Target Durations
+/// PART-HOLD-BACK is at least three times the maximum; section 6.2.4: every
+/// Media Playlist carries the same EXT-X-SERVER-CONTROL. Audio frames do not
+/// divide the video part target, so the audio playlists carry their own
+/// PART-TARGET (a whole number of frames) and the hold-back follows the
+/// largest. Issue #1603.
 #[tokio::test]
-async fn audio_parts_stay_within_one_frame_of_the_part_target() {
+async fn every_part_is_within_its_own_playlists_part_target() {
     let sources = france2();
     let rig = rig(
         &sources,
@@ -1855,20 +1869,44 @@ async fn audio_parts_stay_within_one_frame_of_the_part_target() {
         index_selectors(3),
         &|_, _| true,
     );
-    let limit = f64::from(PART_TARGET_MS) / 1000.0 + EAC3_FRAME_SECS;
-    for i in 0..3 {
-        let name = format!("audio/a{i}.m3u8");
-        let pl = rig.playlist(&name).await;
+    let mut names = vec!["media.m3u8".to_string()];
+    names.extend((0..3).map(|i| format!("audio/a{i}.m3u8")));
+    let mut texts = Vec::new();
+    for name in &names {
+        texts.push(String::from_utf8(rig.ok(name).await).expect("utf8"));
+    }
+    let targets: Vec<f64> = texts
+        .iter()
+        .map(|t| attr_secs(t, "#EXT-X-PART-INF", "PART-TARGET"))
+        .collect();
+    let largest = targets.iter().copied().fold(0.0, f64::max);
+    assert!(
+        targets[1..].iter().all(|t| *t > targets[0]),
+        "audio part targets {targets:?} should exceed the video's"
+    );
+    for (i, name) in names.iter().enumerate() {
+        let pl = rig.playlist(name).await;
         let parts = all_parts(&pl);
         assert!(parts.len() > 5, "{name}: {} parts", parts.len());
         for part in parts {
             assert!(
-                part.duration.get() <= limit + 1e-9,
-                "{name}: {} lasts {}s, over the {limit}s bound",
+                part.duration.get() <= targets[i] + 1e-9,
+                "{name}: {} lasts {}s, over its PART-TARGET {}s",
                 part.uri,
-                part.duration.get()
+                part.duration.get(),
+                targets[i]
             );
         }
+        let hold = attr_secs(&texts[i], "#EXT-X-SERVER-CONTROL", "PART-HOLD-BACK");
+        assert!(
+            hold + 1e-9 >= 3.0 * largest,
+            "{name}: PART-HOLD-BACK {hold} under 3 x {largest}"
+        );
+        assert_eq!(
+            directive(&texts[0], "#EXT-X-SERVER-CONTROL"),
+            directive(&texts[i], "#EXT-X-SERVER-CONTROL"),
+            "{name}: EXT-X-SERVER-CONTROL differs from media.m3u8"
+        );
     }
 }
 

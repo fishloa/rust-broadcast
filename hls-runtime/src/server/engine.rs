@@ -74,7 +74,7 @@ use super::ids::Generation;
 use media_plane::ids::{PartIndex, SegmentSeq};
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 use transmux::TrackId;
@@ -1701,6 +1701,7 @@ impl HlsOriginBuilder {
             target_duration_secs,
             container: self.container,
             part_target_ms: self.part_target_ms,
+            part_target_override_ms: AtomicU32::new(0),
             media_sequence_offset: self.media_sequence_offset,
             instance: self.instance.unwrap_or_else(next_instance_token),
             arrival_clock: self.arrival_clock,
@@ -1773,6 +1774,9 @@ pub struct HlsOrigin {
     /// `#EXT-X-PRELOAD-HINT` at all, orthogonal to [`Self::container`] (issue
     /// #873).
     part_target_ms: Option<u32>,
+    /// Raises this origin's own `PART-TARGET` above `part_target_ms` (`0` =
+    /// no override); see [`Self::set_part_target_ms`].
+    part_target_override_ms: AtomicU32,
     /// Added to every shown Media Sequence Number (see
     /// [`HlsOriginBuilder::media_sequence_offset`]); validated at build so
     /// `offset + u32::MAX` fits a `u64`.
@@ -2570,7 +2574,7 @@ impl HlsOrigin {
     /// when that is under one second, else three. Zero when this origin is
     /// not low-latency.
     fn advance_part_limit(&self) -> u64 {
-        match self.part_target_ms {
+        match self.effective_part_target_ms() {
             None | Some(0) => 0,
             Some(ms) if u64::from(ms) < MILLIS_PER_SEC => {
                 (ADVANCE_PART_LIMIT_NUMERATOR * MILLIS_PER_SEC).div_ceil(u64::from(ms))
@@ -2584,6 +2588,46 @@ impl HlsOrigin {
     /// degradation count (RFC 8216 §4.3.3.1).
     pub fn target_duration_violations(&self) -> u64 {
         self.target_duration_violations.load(Ordering::Relaxed)
+    }
+
+    /// Raise this origin's `PART-TARGET` to `ms` when that exceeds the
+    /// configured part target. An audio rendition whose frames do not divide
+    /// the part target needs a Part Target Duration of a whole number of
+    /// frames, because RFC 8216bis §4.4.4.9 requires every Partial Segment to
+    /// be no longer than it. Has no effect on a classic-HLS origin.
+    pub fn set_part_target_ms(&self, ms: u32) {
+        self.part_target_override_ms.store(ms, Ordering::Relaxed);
+    }
+
+    fn effective_part_target_ms(&self) -> Option<u32> {
+        self.part_target_ms
+            .map(|base| base.max(self.part_target_override_ms.load(Ordering::Relaxed)))
+    }
+
+    /// The largest Part Target Duration across this origin and its sibling
+    /// renditions: the `PART-HOLD-BACK` every playlist carries is three
+    /// times it (RFC 8216bis §4.4.3.8, §6.2.4).
+    fn max_part_target_ms(&self) -> Option<u32> {
+        let own = self.effective_part_target_ms()?;
+        let siblings = locked(&self.rendition_siblings).clone();
+        Some(
+            siblings
+                .iter()
+                .filter_map(|s| s.origin.upgrade())
+                .filter_map(|o| o.effective_part_target_ms())
+                .fold(own, u32::max),
+        )
+    }
+
+    fn part_timing(&self) -> Option<(DecimalSeconds, DecimalSeconds)> {
+        let part_target = self.effective_part_target_ms()?;
+        let hold_basis = self.max_part_target_ms().unwrap_or(part_target);
+        let part_target = DecimalSeconds::new(f64::from(part_target) / 1000.0)
+            .expect("u32 / 1000.0 is finite, >= 0");
+        let part_hold_back =
+            DecimalSeconds::new(f64::from(hold_basis) / 1000.0 * PART_HOLD_BACK_MULTIPLIER)
+                .expect("finite, >= 0 times a positive constant is finite, >= 0");
+        Some((part_target, part_hold_back))
     }
 
     /// Replace the sibling renditions whose live edge this origin reports.
@@ -3143,14 +3187,7 @@ impl HlsOrigin {
                 extra_tags.push(tag.clone());
             }
         }
-        let low_latency = self.part_target_ms.map(|part_target_ms| {
-            // `part_target_ms: u32` / 1000.0 (issue #1140): always finite
-            // and non-negative, as is the product with the positive
-            // `PART_HOLD_BACK_MULTIPLIER` constant.
-            let part_target = DecimalSeconds::new(f64::from(part_target_ms) / 1000.0)
-                .expect("u32 / 1000.0 is finite, >= 0");
-            let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
-                .expect("finite, >= 0 times a positive constant is finite, >= 0");
+        let low_latency = self.part_timing().map(|(part_target, part_hold_back)| {
             LowLatencyConfig {
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),
@@ -3397,11 +3434,7 @@ impl HlsOrigin {
             })
             .collect();
 
-        let low_latency = if let Some(part_target_ms) = self.part_target_ms {
-            let part_target = DecimalSeconds::new(f64::from(part_target_ms) / 1000.0)
-                .expect("u32 / 1000.0 is finite, >= 0");
-            let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
-                .expect("finite, >= 0 times a positive constant is finite, >= 0");
+        let low_latency = if let Some((part_target, part_hold_back)) = self.part_timing() {
             Some(broadcast_hls::LowLatencyConfig {
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),

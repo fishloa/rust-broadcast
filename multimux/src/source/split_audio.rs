@@ -20,6 +20,7 @@
 //! parts).
 
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use broadcast_common::Timestamp;
@@ -33,6 +34,9 @@ use transmux::pipeline::{Sample, TrackSpec};
 use super::segment::{PendingPublish, drain_publish_queue};
 use crate::config::AudioTrackSelector;
 use crate::route::{AudioServing, RouteHandle};
+use hls_runtime::server::HlsOrigin;
+
+const MILLIS_PER_SEC: u128 = 1_000;
 
 const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
 
@@ -155,6 +159,21 @@ pub(super) struct AudioFollower {
     next_seq: u32,
     next_timeline_ns: u64,
     target_duration_secs: f64,
+    part_target_ms: u32,
+    part_target_sized: bool,
+    origin_handle: Arc<HlsOrigin>,
+}
+
+fn part_target_for_frame_ms(part_target_ms: u32, frame_ticks: u32, timescale: u32) -> Option<u32> {
+    if frame_ticks == 0 || timescale == 0 {
+        return None;
+    }
+    let ticks = u128::from(frame_ticks);
+    let scale = u128::from(timescale);
+    let target_ticks = u128::from(part_target_ms) * scale;
+    let frames = target_ticks.div_ceil(ticks * MILLIS_PER_SEC).max(1);
+    let millis = (frames * ticks * MILLIS_PER_SEC).div_ceil(scale);
+    u32::try_from(millis).ok()
 }
 
 impl AudioFollower {
@@ -201,10 +220,28 @@ impl AudioFollower {
             next_seq,
             next_timeline_ns: 0,
             target_duration_secs,
+            part_target_ms,
+            part_target_sized: false,
+            origin_handle: Arc::clone(&serving.origin),
         })
     }
 
+    fn size_part_target(&mut self, sample: &Sample) {
+        if self.part_target_sized {
+            return;
+        }
+        let Some(frame_ticks) = sample.duration else {
+            return;
+        };
+        self.part_target_sized = true;
+        if let Some(ms) = part_target_for_frame_ms(self.part_target_ms, frame_ticks, self.timescale)
+        {
+            self.origin_handle.set_part_target_ms(ms);
+        }
+    }
+
     pub(super) fn push(&mut self, sample: Sample, leaders: &LeaderDurations) {
+        self.size_part_target(&sample);
         if self.precedes_origin(&sample) {
             return;
         }
@@ -378,4 +415,18 @@ impl AudioFollower {
 
 fn cmp_time(a: i64, a_ts: u32, b: i64, b_ts: u32) -> std::cmp::Ordering {
     (i128::from(a) * i128::from(b_ts)).cmp(&(i128::from(b) * i128::from(a_ts)))
+}
+
+#[cfg(test)]
+mod part_target_tests {
+    use super::part_target_for_frame_ms;
+
+    #[test]
+    fn rounds_up_to_whole_frames() {
+        assert_eq!(part_target_for_frame_ms(200, 1536, 48_000), Some(224));
+        assert_eq!(part_target_for_frame_ms(200, 1024, 48_000), Some(214));
+        assert_eq!(part_target_for_frame_ms(200, 960, 48_000), Some(200));
+        assert_eq!(part_target_for_frame_ms(10, 1536, 48_000), Some(32));
+        assert_eq!(part_target_for_frame_ms(200, 0, 48_000), None);
+    }
 }
