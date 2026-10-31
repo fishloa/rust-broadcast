@@ -57,6 +57,9 @@ pub enum AddressError {
         /// The expected number.
         expected: u64,
     },
+    /// An `S` with `@d` of zero cannot time a segment (5.3.9.6.1).
+    #[error("S@d is zero")]
+    ZeroSegmentDuration,
     /// The timeline describes more segments than the bound allows.
     #[error("timeline describes at least {count_hint} segments")]
     TimelineTooLong {

@@ -656,11 +656,16 @@ impl HlsSource {
             .collect();
         for id in failed {
             if !requested.contains(&id) {
-                self.window.retire(&id);
+                self.retire_resource(id);
                 self.seg_failures.clear(&id);
                 self.seg_retry.remove(&id);
             }
         }
+    }
+
+    fn retire_resource(&mut self, id: ResourceId) {
+        self.window.retire(&id);
+        self.stash.discard(&Purpose::Resource(id));
     }
 
     fn client_failed(&mut self, purpose: Purpose) {
@@ -758,7 +763,7 @@ impl HlsSource {
             return;
         }
         self.skip_error = Some(kind);
-        self.window.retire(&id);
+        self.retire_resource(id);
         self.seg_retry.remove(&id);
         self.client.skip_resource(id);
         self.pump_core();
@@ -1219,6 +1224,62 @@ mod tests {
         let auth = AuthState::new(url.clone(), Vec::new());
         let source = HlsSource::new(&url, &Config::default(), ConnAlloc::new(), Role::Main);
         (source, auth, url)
+    }
+
+    fn parked_prefix(url: &Url) -> Parked {
+        let headers = [
+            ("ETag".to_string(), "\"v1\"".to_string()),
+            ("Accept-Ranges".to_string(), "bytes".to_string()),
+            ("Content-Length".to_string(), "100".to_string()),
+        ];
+        let mut body = BodyAcc::new(MAX_TEST_BODY);
+        body.push(&[0u8; 10]).unwrap();
+        Parked {
+            url: url.to_string(),
+            byte_range: None,
+            body,
+            basis: Basis::of(200, &headers).unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_failed_segment_that_left_the_window_drops_its_parked_prefix() {
+        let (mut source, _auth, url) = source_with_auth();
+        let id = ResourceId::Part { msn: 7, part: 0 };
+        let neighbour = ResourceId::Part { msn: 8, part: 0 };
+        source.stash.put(Purpose::Resource(id), parked_prefix(&url));
+        source
+            .stash
+            .put(Purpose::Resource(neighbour), parked_prefix(&url));
+        source.window.fail(id);
+        source.purge_unrequested();
+        assert!(
+            source
+                .stash
+                .take(&Purpose::Resource(id), url.as_str(), None)
+                .is_none()
+        );
+        assert!(
+            source
+                .stash
+                .take(&Purpose::Resource(neighbour), url.as_str(), None)
+                .is_some(),
+            "only the abandoned resource is dropped"
+        );
+    }
+
+    #[test]
+    fn a_given_up_segment_drops_its_parked_prefix() {
+        let (mut source, _auth, url) = source_with_auth();
+        let id = ResourceId::Part { msn: 7, part: 0 };
+        source.stash.put(Purpose::Resource(id), parked_prefix(&url));
+        source.give_up_segment(id, None, 0);
+        assert!(
+            source
+                .stash
+                .take(&Purpose::Resource(id), url.as_str(), None)
+                .is_none()
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
@@ -20,7 +21,7 @@ pub mod source;
 pub mod timeline;
 
 pub use broadcast_auth::Credentials;
-#[cfg(feature = "test-seams")]
+#[cfg(feature = "__test-seams")]
 #[doc(hidden)]
 pub use buffer::BufferInput;
 pub use buffering_runtime::Hint;

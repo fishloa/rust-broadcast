@@ -6,9 +6,10 @@
 //! **Spec:** ISO/IEC 23009-1:2022 (clause 5.3 MPD, 5.3.9 Segment information,
 //! 5.6 BaseURL, 5.8.5.7 UTCTiming, Annex A client behaviour, Annex I URL
 //! parameters), DASH-IF IOP v4.3 (live timing) and ETSI TS 103 285 (BaseURL
-//! priority). Own-words notes and the verified page references are in
-//! `docs/specs/dash/` of the repository; decisions where the standard
-//! contradicts itself are in `docs/dash-runtime/DESIGN.md` section 11.
+//! priority). The verified page references are in the private spec
+//! repository (`private/specs-verified/dash/docs-specs/`); decisions where
+//! the standard contradicts itself are in `docs/dash-runtime/DESIGN.md`
+//! section 11.
 //!
 //! Nothing here does I/O or reads a clock. Every instant is an argument; the
 //! caller fetches the MPD, the `sidx` and the segments, times its own
@@ -21,7 +22,7 @@
 //! | [`timing`] | [`timing::clock::UtcClock`], `UTCTiming` sampling, `xs:dateTime` / HTTP `Date` / NTP readers, PeriodStart, availability and live-edge arithmetic |
 //! | [`client`] | [`client::config::DashConfig`]: the DASH knobs of a client session (clock ladder, early-request cadence, refresh floor) |
 //! | [`selection`] | Pure choice of AdaptationSet and Representation by role, language, codec and bandwidth |
-//! | [`client`] | [`client::DashClient`]: plays static and dynamic MPDs to ordered `Fmp4Demux` samples, with typed failure classes, Period continuity and an origin pin (design steps W-d1, W-d2) |
+//! | [`client`] | [`client::DashClient`]: plays static and dynamic MPDs to ordered `Fmp4Demux` samples, with typed failure classes, Period continuity and an origin pin |
 //!
 //! # Format policy
 //!
@@ -36,7 +37,7 @@
 //! The client plays static and dynamic MPDs: a dynamic one gets a clock
 //! (`UTCTiming`, the host clock via `DashClient::set_wall_clock`, or the MPD
 //! response `Date`), a join near the live edge, availability gating and MPD
-//! refresh (design step W-d2).
+//! refresh.
 //!
 //! The core handles: static and dynamic MPDs, `SegmentTemplate` (`$Number$`, `$Time$`,
 //! `$Bandwidth$`, `$RepresentationID$`), `SegmentTimeline`, `SegmentList`,

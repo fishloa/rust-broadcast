@@ -745,7 +745,7 @@ impl Session {
     }
 
     /// Inputs fed to the buffering controller so far.
-    #[cfg(feature = "test-seams")]
+    #[cfg(feature = "__test-seams")]
     #[doc(hidden)]
     pub fn buffer_input_log(&self) -> &[crate::BufferInput] {
         &self.buffer.log
@@ -1273,7 +1273,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "test-seams")]
+    #[cfg(feature = "__test-seams")]
     fn pcr_hints(session: &Session) -> usize {
         session
             .buffer_input_log()
@@ -1290,7 +1290,7 @@ mod tests {
             .count()
     }
 
-    #[cfg(feature = "test-seams")]
+    #[cfg(feature = "__test-seams")]
     #[test]
     fn a_pcr_discontinuity_coinciding_with_a_jump_hints_and_rearms_once() {
         use broadcast_common::Unpackage;

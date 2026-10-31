@@ -46,8 +46,15 @@ stall_reconnect_ms 30000, backoff_ms `[2000,4000,8000]`, backoff_cap_ms 10000, m
 
 ## Transitions
 
-See DESIGN.md: T1 Idle->Open, T2 2xx->Connected/Awaiting, T3 404/410->NotFound+backoff,
+The full table is [`docs/tshttp-runtime/DESIGN.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/tshttp-runtime/DESIGN.md):
+T1 Idle->Open, T2 2xx->Connected/Awaiting, T3 404/410->NotFound+backoff,
 T4 other/error->backoff, T5 first Sample->Playing, T6 start timeout->Abort+backoff,
 T7 eof/error before sample->backoff, T8 playing eof/error->Reconnect 0, T9 failure backoff,
 T10 backoff due->Open, T11 stall notice, T12 stall reconnect, T13 reconnect(), T14 Starved(Data),
-T15 Starved(NoData).
+T15 Starved(NoData), T16-T19 finite resources (`Finite`, completion, `Ended`, truncated transfer),
+T20 start timeout while Opening (no response headers).
+
+## Server-requested delay
+
+`set_retry_after(ms)` raises the next reconnect wait after a failed response to at least the
+server's `Retry-After`; it is consumed by that failure and cleared by a successful response.

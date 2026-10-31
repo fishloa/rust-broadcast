@@ -32,8 +32,8 @@ This is the README snippet (a `no_run` doctest). `examples/live_loop.rs` replays
 
 | Piece | Provided |
 |---|---|
-| `TsHttpClient` | `poll`, `on_response`, `feed`, `on_eof`, `on_error`, `reconnect`, `poll_timeout`, `next_deadline`, `poll_event`: the policy core plus a `StreamingTsDemux` |
-| `TsHttpPolicy` | The demux-free core for a host that demuxes elsewhere: `on_response`, `on_bytes(len, now, sampled)`, `on_sample`, `on_eof`, `on_error`, `reconnect`, `poll_timeout`; the same `Action`/`Event` stream, never `Event::Demux`. `tests/policy_core.rs` drives both over a real fixture and requires identical decisions |
+| `TsHttpClient` | `poll`, `on_response`, `feed`, `on_eof`, `on_error`, `reconnect`, `set_retry_after`, `poll_timeout`, `next_deadline`, `poll_event`: the policy core plus a `StreamingTsDemux` |
+| `TsHttpPolicy` | The demux-free core for a host that demuxes elsewhere: `on_response`, `on_bytes(len, now, sampled)`, `on_sample`, `on_eof`, `on_error`, `reconnect`, `set_retry_after`, `poll_timeout`; the same `Action`/`Event` stream, never `Event::Demux`. `tests/policy_core.rs` drives both over a real fixture and requires identical decisions |
 | `Action` | `Open { url }`, `Reconnect { after_ms }`, `Abort` |
 | `Event` | `Demux(DemuxEvent)`, `StallNotice { secs }`, `Starved(StarveKind::{Data, NoData})`, `NotFound { status }`, `Connected`, `Finite { expected_bytes }`, `Ended`, `Reconnecting { attempt }` |
 | `Config` | `start_timeout_ms` 15 000, `stall_notice_ms` 5 000, `stall_reconnect_ms` 30 000, `backoff_ms` `[2000, 4000, 8000]`, `backoff_cap_ms` 10 000, `min_reconnect_interval_ms` 1 000; `validate()` / `ConfigError`, `clamped()` |
@@ -45,6 +45,7 @@ This is the README snippet (a `no_run` doctest). `examples/live_loop.rs` replays
 - **No reconnect spin.** A server that sends one sample and closes cannot make the client loop: `min_reconnect_interval_ms` spaces opens after a short played-then-ended connection, while a long-lived stream still reconnects with no delay. A zero backoff entry is rejected by `Config::validate` and raised to 1 ms by `clamped()`, which `TsHttpClient::new` applies.
 - **Dead connections are detected.** The start timer runs from `Open`, so a server that accepts but never sends headers is aborted after `start_timeout_ms`; no first sample within it aborts too. A stall notice follows `stall_notice_ms` without bytes, repeating once per second, and `stall_reconnect_ms` aborts and reconnects.
 - **Starvation is typed.** `Starved(Data)` (bytes arriving, no sample) and `Starved(NoData)` (no bytes) are distinct, once per episode.
+- **A server can slow the client down.** `set_retry_after(ms)` raises the next reconnect wait after a failed response to at least that long (a 429/503 `Retry-After`; `broadcast-client` converts the header, caps it at 60 s and reports it as `Event::ServerRefused`). It is consumed by that failure and cleared by a successful response.
 - **404/410 are reported** as `NotFound { status }` and then retried on the backoff schedule.
 - **Finite resources end.** A `2xx` with `Content-Length` (or a `206` whose `Content-Range` is consistent) emits `Finite { expected_bytes }` and, once all bytes arrive and the body ends, `Ended`; a truncated transfer is a failure, not an end. A `206` whose last byte is not below the total, or any `Content-Encoding` other than identity, is treated as live.
 - **Deadlines are honest.** `next_deadline` never returns a time in the past, so a host that sleeps until it does not busy-loop.
@@ -57,7 +58,7 @@ This is the README snippet (a `no_run` doctest). `examples/live_loop.rs` replays
 
 ## Validation
 
-Public state-machine tests for every transition of the design table (`tests/transitions.rs`, `timers.rs`, `vod.rs`, `policy.rs`), audit regressions (`tests/audit_*`), a real-capture run over the committed `ts/h264_aac.ts` fixture (`tests/vod_real.rs`), a run over a live TV capture (`tests/real_stream.rs`) held in the private fixtures repository (CI checks it out with a read-only deploy key and fails on a missing fixture; a source checkout without it skips loudly), the policy-core equivalence test, and the label-coverage, `#[non_exhaustive]` and no-hand-roll guards.
+Named HTTP statuses and header names are constants in the policy core (the `http` crate needs `std`, this crate is `no_std`). Public state-machine tests for every transition of the design table (`tests/transitions.rs`, `timers.rs`, `vod.rs`, `policy.rs`), audit regressions (`tests/audit_*`), a real-capture run over the committed `ts/h264_aac.ts` fixture (`tests/vod_real.rs`), a run over a live TV capture (`tests/real_stream.rs`) held in the private fixtures repository (CI checks it out with a read-only deploy key and fails on a missing fixture; a source checkout without it skips loudly), the policy-core equivalence test, and the label-coverage, `#[non_exhaustive]` and no-hand-roll guards.
 
 ## Dependencies
 

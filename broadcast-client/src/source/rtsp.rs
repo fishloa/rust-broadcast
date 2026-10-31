@@ -38,7 +38,6 @@ const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const KEEPALIVE_DEFAULT_US: u64 = 30 * US_PER_SEC;
-const KEEPALIVE_MIN_US: u64 = 5 * US_PER_SEC;
 const KEEPALIVE_MAX_US: u64 = 3_600 * US_PER_SEC;
 const KEEPALIVE_DIVISOR: u64 = 2;
 const CHALLENGE_HEADER: &str = "WWW-Authenticate";
@@ -120,11 +119,20 @@ fn control_uri<'a>(aggregate: Option<&'a str>, request_uri: &'a str) -> &'a str 
     aggregate.unwrap_or(request_uri)
 }
 
+fn effective_port(url: &Url) -> u16 {
+    url.port().unwrap_or(if url.scheme() == SCHEME_RTSPS {
+        RTSPS_DEFAULT_PORT
+    } else {
+        RTSP_DEFAULT_PORT
+    })
+}
+
 fn keepalive_interval_for(declared_secs: Option<u64>) -> u64 {
     match declared_secs {
-        Some(secs) => (secs.saturating_mul(US_PER_SEC) / KEEPALIVE_DIVISOR)
-            .clamp(KEEPALIVE_MIN_US, KEEPALIVE_MAX_US),
-        None => KEEPALIVE_DEFAULT_US,
+        Some(secs) if secs > 0 => {
+            (secs.saturating_mul(US_PER_SEC) / KEEPALIVE_DIVISOR).min(KEEPALIVE_MAX_US)
+        }
+        _ => KEEPALIVE_DEFAULT_US,
     }
 }
 
@@ -638,7 +646,7 @@ impl RtspSource {
         self.uri = url.to_string();
         self.credentials_in_scope = url.scheme() == self.original_url.scheme()
             && url.host() == self.original_url.host()
-            && url.port_or_known_default() == self.original_url.port_or_known_default();
+            && effective_port(&url) == effective_port(&self.original_url);
         self.request_url = url;
     }
 

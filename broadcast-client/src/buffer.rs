@@ -14,7 +14,7 @@ use crate::join::VideoJoin;
 const SILENCE_MARGIN_US: u64 = 500_000;
 
 /// One input the session fed to the buffering controller.
-#[cfg(feature = "test-seams")]
+#[cfg(feature = "__test-seams")]
 #[doc(hidden)]
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +57,7 @@ pub enum BufferInput {
     Unregister(u32),
 }
 
-#[cfg(feature = "test-seams")]
+#[cfg(feature = "__test-seams")]
 impl BufferInput {
     /// Spec label.
     #[must_use]
@@ -73,12 +73,12 @@ impl BufferInput {
     }
 }
 
-#[cfg(feature = "test-seams")]
+#[cfg(feature = "__test-seams")]
 broadcast_common::impl_spec_display!(BufferInput);
 
 macro_rules! rec {
     ($s:expr, $e:expr) => {
-        #[cfg(feature = "test-seams")]
+        #[cfg(feature = "__test-seams")]
         {
             $s.log.push($e);
         }
@@ -162,7 +162,7 @@ pub(crate) struct Feeder {
     cap_notice_emitted: bool,
     holding: bool,
     audio_pending: bool,
-    #[cfg(feature = "test-seams")]
+    #[cfg(feature = "__test-seams")]
     pub(crate) log: Vec<BufferInput>,
 }
 
@@ -203,7 +203,7 @@ impl Feeder {
             cap_notice_emitted: false,
             holding: false,
             audio_pending: false,
-            #[cfg(feature = "test-seams")]
+            #[cfg(feature = "__test-seams")]
             log: Vec::new(),
         }
     }

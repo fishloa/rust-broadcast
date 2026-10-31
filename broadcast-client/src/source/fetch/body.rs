@@ -7,11 +7,13 @@
 
 use alloc::vec::Vec;
 
+use headers::{ContentRange, HeaderMapExt};
+
+use super::resume::map_of;
+
 const STATUS_OK: u16 = 200;
 const STATUS_PARTIAL_CONTENT: u16 = 206;
 const HEADER_CONTENT_LENGTH: &str = "content-length";
-const HEADER_CONTENT_RANGE: &str = "content-range";
-const CONTENT_RANGE_UNIT: &str = "bytes ";
 
 /// The body would exceed its cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +58,12 @@ impl BodyAcc {
         self.expected_len = headers
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(HEADER_CONTENT_LENGTH))
-            .and_then(|(_, v)| v.trim().parse::<u64>().ok());
+            .and_then(|(_, v)| v.trim().parse::<u64>().ok())
+            .or_else(|| {
+                (status == STATUS_PARTIAL_CONTENT)
+                    .then(|| content_range_len(headers))
+                    .flatten()
+            });
         true
     }
 
@@ -134,20 +141,23 @@ impl BodyAcc {
     }
 }
 
+pub(crate) fn content_range_bytes(headers: &[(String, String)]) -> Option<(u64, u64)> {
+    map_of(headers)
+        .typed_get::<ContentRange>()?
+        .bytes_range()
+        .filter(|(first, last)| first <= last)
+}
+
+pub(crate) fn content_range_len(headers: &[(String, String)]) -> Option<u64> {
+    let (first, last) = content_range_bytes(headers)?;
+    (last - first).checked_add(1)
+}
+
 pub(crate) fn content_range_is(headers: &[(String, String)], start: u64, len: u64) -> bool {
     let Some(last) = len.checked_sub(1).and_then(|l| start.checked_add(l)) else {
         return false;
     };
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(HEADER_CONTENT_RANGE))
-        .and_then(|(_, v)| v.trim().strip_prefix(CONTENT_RANGE_UNIT))
-        .and_then(|v| v.split_once('/'))
-        .and_then(|(range, _total)| range.split_once('-'))
-        .is_some_and(|(a, b)| {
-            a.trim().parse::<u64>().ok() == Some(start)
-                && b.trim().parse::<u64>().ok() == Some(last)
-        })
+    content_range_bytes(headers) == Some((start, last))
 }
 
 #[cfg(test)]
@@ -219,6 +229,20 @@ mod tests {
             !BodyAcc::new(1).accept(206, &[], range),
             "no Content-Range at all"
         );
+    }
+
+    #[test]
+    fn a_206_without_content_length_is_truncated_by_its_content_range() {
+        let mut body = BodyAcc::new(2_000);
+        assert!(body.accept(
+            206,
+            &h(&[("Content-Range", "bytes 500-599/9000")]),
+            Some((500, 100))
+        ));
+        body.push(&[0u8; 99]).unwrap();
+        assert!(body.is_truncated());
+        body.push(&[0u8; 1]).unwrap();
+        assert!(!body.is_truncated());
     }
 
     #[test]
