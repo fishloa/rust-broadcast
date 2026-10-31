@@ -13,7 +13,7 @@ rust-version.workspace = true
 exclude = ["fuzz/**"]
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["serde"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
@@ -56,27 +56,27 @@ default = ["std"]
 std = ["broadcast-common/std", "transmux/std", "dvb-si/std", "mpeg-ts/std", "tshttp-runtime/std", "buffering-runtime/std", "serde?/std"]
 serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
 
-test-seams = []
+__test-seams = []
 
 [[test]]
 name = "buffer"
-required-features = ["test-seams"]
+required-features = ["__test-seams"]
 
 [[test]]
 name = "playout"
-required-features = ["test-seams"]
+required-features = ["__test-seams"]
 
 [[test]]
 name = "timeline_jump"
-required-features = ["test-seams"]
+required-features = ["__test-seams"]
 
 [[test]]
 name = "audit_1498_live"
-required-features = ["test-seams"]
+required-features = ["__test-seams"]
 
 [[test]]
 name = "r6_ts_tracks"
-required-features = ["test-seams"]
+required-features = ["__test-seams"]
 
 [[example]]
 name = "live_loop"

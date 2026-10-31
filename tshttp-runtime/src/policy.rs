@@ -6,6 +6,16 @@ use crate::events::{Action, Event, StarveKind};
 
 const STALL_NOTICE_REPEAT_MS: u64 = 1_000;
 const IDENTITY_CODING: &str = "identity";
+// RFC 9110 14.1 range unit, 14.4 Content-Range; `http` requires std, so this no_std crate names its own.
+const RANGE_UNIT_BYTES: &str = "bytes";
+const HEADER_CONTENT_ENCODING: &str = "content-encoding";
+const HEADER_CONTENT_LENGTH: &str = "content-length";
+const HEADER_CONTENT_RANGE: &str = "content-range";
+const STATUS_OK: u16 = 200;
+const STATUS_PARTIAL_CONTENT: u16 = 206;
+const STATUS_NOT_FOUND: u16 = 404;
+const STATUS_GONE: u16 = 410;
+const STATUS_SUCCESS_CLASS: core::ops::Range<u16> = 200..300;
 
 #[derive(Debug, Clone, Copy)]
 enum Phase {
@@ -91,7 +101,7 @@ impl TsHttpPolicy {
             Phase::Opening { open_at } => open_at,
             _ => self.open_at,
         };
-        if (200..300).contains(&status) {
+        if STATUS_SUCCESS_CLASS.contains(&status) {
             let finite = Self::detect_finite(status, headers);
             let expected = Self::expected_bytes(status, headers);
             self.finite = finite;
@@ -115,7 +125,7 @@ impl TsHttpPolicy {
             self.starved_nodata_fired = false;
             self.first_notice_at = None;
             self.next_notice_at = None;
-        } else if status == 404 || status == 410 {
+        } else if status == STATUS_NOT_FOUND || status == STATUS_GONE {
             self.events.push_back(Event::NotFound { status });
             self.fail_before_playing(now_ms);
         } else {
@@ -151,7 +161,7 @@ impl TsHttpPolicy {
     }
 
     fn is_identity_coded(headers: &[(String, String)]) -> bool {
-        Self::header_values(headers, "content-encoding")
+        Self::header_values(headers, HEADER_CONTENT_ENCODING)
             .iter()
             .flat_map(|v| v.split(','))
             .map(str::trim)
@@ -163,8 +173,8 @@ impl TsHttpPolicy {
         if !Self::is_identity_coded(headers) {
             return (false, 0);
         }
-        if status == 200 {
-            let vals = Self::header_values(headers, "content-length");
+        if status == STATUS_OK {
+            let vals = Self::header_values(headers, HEADER_CONTENT_LENGTH);
             if vals.is_empty() {
                 return (false, 0);
             }
@@ -179,8 +189,8 @@ impl TsHttpPolicy {
                 return (false, 0);
             }
             (true, parsed[0])
-        } else if status == 206 {
-            let vals = Self::header_values(headers, "content-range");
+        } else if status == STATUS_PARTIAL_CONTENT {
+            let vals = Self::header_values(headers, HEADER_CONTENT_RANGE);
             if vals.is_empty() {
                 return (false, 0);
             }
@@ -189,7 +199,7 @@ impl TsHttpPolicy {
             if vals.iter().any(|x| x.trim() != v0) {
                 return (false, 0);
             }
-            let Some(rest) = v0.strip_prefix("bytes") else {
+            let Some(rest) = v0.strip_prefix(RANGE_UNIT_BYTES) else {
                 return (false, 0);
             };
             let rest = rest.trim_start();

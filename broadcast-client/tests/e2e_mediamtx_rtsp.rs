@@ -767,7 +767,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         origin_27,
         samples.len(),
     );
-    #[cfg(feature = "test-seams")]
+    #[cfg(feature = "__test-seams")]
     print_lead_series(label, &session);
     eprintln!(
         "e2e: {w}x{h}, {} samples, 0 with zero duration, Start emitted",
@@ -775,7 +775,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     );
 }
 
-#[cfg(feature = "test-seams")]
+#[cfg(feature = "__test-seams")]
 fn print_lead_series(label: &str, session: &Session) {
     use broadcast_client::BufferInput;
     use std::collections::BTreeMap;

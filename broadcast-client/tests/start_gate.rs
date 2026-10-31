@@ -320,7 +320,7 @@ pub fn run(bytes: &[u8], cfg: Config, declare: Declare) -> Outcome {
             }
         }
     }
-    #[cfg(feature = "test-seams")]
+    #[cfg(feature = "__test-seams")]
     if std::env::var("DUMP").is_ok() {
         for l in s
             .buffer_input_log()
