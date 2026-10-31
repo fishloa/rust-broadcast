@@ -5283,12 +5283,12 @@ mod tests {
     #[test]
     fn window_restarts_on_a_repeated_or_decreasing_sequence_number() {
         let mut w = Window::new(nz(6));
-        w.push(window_entry(5, 0xA5, false), Generation::new(1), None);
-        w.push(window_entry(6, 0xA6, true), Generation::new(1), None);
+        w.push(window_entry(5, 0xA5, false), Generation::new(1), None, None);
+        w.push(window_entry(6, 0xA6, true), Generation::new(1), None, None);
         assert_eq!(window_seqs(&w), vec![(5, false), (6, true)]);
 
         // Decrease: 3 after 6.
-        w.push(window_entry(3, 0xB3, false), Generation::new(1), None);
+        w.push(window_entry(3, 0xB3, false), Generation::new(1), None, None);
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
@@ -5300,7 +5300,7 @@ mod tests {
         assert_eq!(w.bytes_of(SegmentSeq::new(6)), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
-        w.push(window_entry(3, 0xC3, false), Generation::new(1), None);
+        w.push(window_entry(3, 0xC3, false), Generation::new(1), None, None);
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         assert_eq!(
             w.bytes_of(SegmentSeq::new(3)),
@@ -5317,13 +5317,24 @@ mod tests {
             window_entry(u32::MAX - 1, 1, false),
             Generation::new(1),
             None,
+            None,
         );
-        w.push(window_entry(u32::MAX, 2, false), Generation::new(1), None);
+        w.push(
+            window_entry(u32::MAX, 2, false),
+            Generation::new(1),
+            None,
+            None,
+        );
         assert_eq!(
             window_seqs(&w),
             vec![(u32::MAX - 1, false), (u32::MAX, false)]
         );
-        w.push(window_entry(u32::MAX, 3, false), Generation::new(1), None);
+        w.push(
+            window_entry(u32::MAX, 3, false),
+            Generation::new(1),
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(u32::MAX, true)]);
         assert_eq!(
             w.bytes_of(SegmentSeq::new(u32::MAX)),
@@ -5335,7 +5346,7 @@ mod tests {
     fn window_capacity_is_never_below_three_segments() {
         let mut w = Window::new(nz(1));
         for seq in 1..=5 {
-            w.push(window_entry(seq, 0, false), Generation::new(1), None);
+            w.push(window_entry(seq, 0, false), Generation::new(1), None, None);
         }
         assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
     }
@@ -5390,7 +5401,12 @@ mod tests {
     fn bytes_of_addresses_exactly_the_matching_entry() {
         let mut w = Window::new(nz(6));
         for (seq, tag) in [(5u32, 0x15u8), (6, 0x16), (7, 0x17)] {
-            w.push(window_entry(seq, tag, false), Generation::new(1), None);
+            w.push(
+                window_entry(seq, tag, false),
+                Generation::new(1),
+                None,
+                None,
+            );
         }
         assert_eq!(
             w.bytes_of(SegmentSeq::new(5)),
