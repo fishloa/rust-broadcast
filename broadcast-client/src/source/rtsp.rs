@@ -120,6 +120,14 @@ fn control_uri<'a>(aggregate: Option<&'a str>, request_uri: &'a str) -> &'a str 
     aggregate.unwrap_or(request_uri)
 }
 
+fn effective_port(url: &Url) -> u16 {
+    url.port().unwrap_or(if url.scheme() == SCHEME_RTSPS {
+        RTSPS_DEFAULT_PORT
+    } else {
+        RTSP_DEFAULT_PORT
+    })
+}
+
 fn keepalive_interval_for(declared_secs: Option<u64>) -> u64 {
     match declared_secs {
         Some(secs) => (secs.saturating_mul(US_PER_SEC) / KEEPALIVE_DIVISOR)
@@ -638,7 +646,7 @@ impl RtspSource {
         self.uri = url.to_string();
         self.credentials_in_scope = url.scheme() == self.original_url.scheme()
             && url.host() == self.original_url.host()
-            && url.port_or_known_default() == self.original_url.port_or_known_default();
+            && effective_port(&url) == effective_port(&self.original_url);
         self.request_url = url;
     }
 
