@@ -1037,9 +1037,7 @@ impl ProgramSegmenter {
         let Some(ms) = self.seg.part_target_ms() else {
             return;
         };
-        if self.part_target_published != Some(ms)
-            && route_handle.set_part_target_ms(program, ms)
-        {
+        if self.part_target_published != Some(ms) && route_handle.set_part_target_ms(program, ms) {
             self.part_target_published = Some(ms);
         }
     }

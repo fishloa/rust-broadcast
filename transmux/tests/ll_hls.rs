@@ -1186,3 +1186,20 @@ fn jittered_frame_timestamps_still_land_parts_within_the_band() {
         );
     }
 }
+
+#[test]
+fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
+    let durations = frame_ticks(24_000, 1001, 120);
+    let mut seg = LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 60.0, 200).unwrap();
+    let mut cut_at = Vec::new();
+    for (i, d) in durations.iter().enumerate() {
+        let sample = Sample::new(vec![0u8; 16], None, None, Some(*d), i == 0);
+        seg.push(TrackId::new(1), sample).unwrap();
+        if !seg.take_ready_parts().is_empty() {
+            cut_at.push(i);
+        }
+    }
+    let gaps: Vec<usize> = cut_at[1..].windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.len() > 10);
+    assert!(gaps.iter().all(|g| *g == 5), "{cut_at:?}");
+}
