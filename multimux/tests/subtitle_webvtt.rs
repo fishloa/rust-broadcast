@@ -39,7 +39,8 @@ const PART_TARGET_MS: u32 = 200;
 const WINDOW_SEGMENTS: usize = 64;
 const RING: usize = 1 << 16;
 const SIDE_RINGS: usize = 64;
-const PUMP_EVERY: usize = 64;
+const PUMP_EVERY: usize = 1;
+const TELETEXT_MUX_DELAY_SECS: f64 = 0.3;
 const DECLARED_BPS: u64 = 16_000_000;
 const STREAM: &str = "cam";
 const TELETEXT_FIXTURE: &str = "input/test-012.ts";
@@ -57,6 +58,8 @@ const HEARING_IMPAIRED: [&str; 2] = [
 ];
 const TICKS_PER_MS: i64 = 90;
 const WEBVTT_ROUNDING_MS: f64 = 1.0;
+const HOLD_MARGIN_SECS: f64 = 0.2;
+const CLAMP_TOLERANCE_SECS: f64 = 0.06;
 const TICKS_PER_SEC: f64 = 90_000.0;
 const EXTINF_TOLERANCE_SECS: f64 = 0.001;
 const VALIDATOR_BIN: &str = "/usr/local/bin/mediastreamvalidator";
@@ -68,8 +71,10 @@ const MUST_LEVEL: i64 = 1;
 /// wants `EXT-X-PART-INF` and the part-related `EXT-X-SERVER-CONTROL`
 /// attributes in every playlist of a low-latency stream. These are the only
 /// findings the subtitle playlists add.
-const LL_TAGS_OF_PARTLESS_PLAYLIST: [&str; 2] =
-    ["Missing EXT-X-PART-INF tag", "Missing server control attribute"];
+const LL_TAGS_OF_PARTLESS_PLAYLIST: [&str; 2] = [
+    "Missing EXT-X-PART-INF tag",
+    "Missing server control attribute",
+];
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -133,7 +138,12 @@ fn build_from(media: transmux::Media, subtitles: bool) -> Rig {
     for (ti, track) in media.tracks.iter().enumerate() {
         for (si, s) in track.samples.iter().enumerate() {
             let at = s.dts.or(s.pts).unwrap_or(0);
-            order.push((at as f64 / f64::from(track.spec.timescale), ti, si));
+            let delay = if matches!(track.spec.config, CodecConfig::Data { .. }) {
+                TELETEXT_MUX_DELAY_SECS
+            } else {
+                0.0
+            };
+            order.push((at as f64 / f64::from(track.spec.timescale) + delay, ti, si));
         }
     }
     order.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -233,7 +243,9 @@ impl Rig {
             .into_iter()
             .find(|m| is_hearing_impaired(m) == hearing_impaired)
             .and_then(|m| m.uri.clone())
-            .unwrap_or_else(|| panic!("no subtitle rendition (hearing_impaired={hearing_impaired})"))
+            .unwrap_or_else(|| {
+                panic!("no subtitle rendition (hearing_impaired={hearing_impaired})")
+            })
     }
 }
 
@@ -285,7 +297,11 @@ fn parse_vtt(body: &str) -> Vtt {
         .unwrap_or_else(|| panic!("X-TIMESTAMP-MAP LOCAL first, then MPEGTS: {map:?}"))
         .parse::<u64>()
         .expect("MPEGTS is a decimal number");
-    assert_eq!(lines.next(), Some(""), "blank line ends the header:\n{body}");
+    assert_eq!(
+        lines.next(),
+        Some(""),
+        "blank line ends the header:\n{body}"
+    );
     let rest: Vec<&str> = lines.collect();
     let mut cues = Vec::new();
     for block in rest.split(|l| l.is_empty()).filter(|b| !b.is_empty()) {
@@ -430,7 +446,10 @@ async fn master_declares_teletext_subtitle_renditions() {
         .find(|m| is_hearing_impaired(m))
         .unwrap_or_else(|| panic!("no hearing-impaired rendition (page 888):\n{text}"));
     assert_eq!(sdh.language.as_deref(), Some("fr"));
-    assert!(sdh.autoselect, "AUTOSELECT=YES on the SDH rendition:\n{text}");
+    assert!(
+        sdh.autoselect,
+        "AUTOSELECT=YES on the SDH rendition:\n{text}"
+    );
     assert_ne!(sdh.name, plain.name, "NAME unique in the group");
     assert!(sdh.name.ends_with("(SDH)"), "{}", sdh.name);
     assert!(subs.iter().all(|m| !m.default), "DEFAULT=NO:\n{text}");
@@ -452,7 +471,11 @@ async fn master_declares_teletext_subtitle_renditions() {
 
     let mut report = Report::new();
     check_hls_playlist(&text, &mut report);
-    assert!(report.is_empty(), "master findings: {:?}", report.findings());
+    assert!(
+        report.is_empty(),
+        "master findings: {:?}",
+        report.findings()
+    );
 }
 
 #[tokio::test]
@@ -498,7 +521,11 @@ async fn every_segment_has_webvtt_header_and_timestamp_map() {
         let (_, subs) = rig.playlist(&uri).await;
         let segments = fetch_vtt_segments(&rig, &subs).await;
         let maps: BTreeSet<u64> = segments.iter().map(|s| s.mpegts).collect();
-        assert_eq!(maps.len(), 1, "{uri}: one MPEGTS for every segment: {maps:?}");
+        assert_eq!(
+            maps.len(),
+            1,
+            "{uri}: one MPEGTS for every segment: {maps:?}"
+        );
     }
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
@@ -639,18 +666,31 @@ async fn all_cues_are_delivered_once_with_full_display_times() {
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
     let mut copies: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
-    for segment in fetch_vtt_segments(&rig, &subs).await {
+    let mut first_copy_segment_end: BTreeMap<String, f64> = BTreeMap::new();
+    let mut segment_end_secs = map.tfdt_secs;
+    let mut longest_segment_secs: f64 = 0.0;
+    let vtts = fetch_vtt_segments(&rig, &subs).await;
+    for (segment, entry) in vtts.iter().zip(&subs.segments) {
+        segment_end_secs += entry.duration.get();
+        longest_segment_secs = longest_segment_secs.max(entry.duration.get());
         for cue in &segment.cues {
+            first_copy_segment_end
+                .entry(cue.text.clone())
+                .or_insert(segment_end_secs);
             copies.entry(cue.text.clone()).or_default().push((
-                presented_secs(&segment, cue.start_ms),
-                presented_secs(&segment, cue.end_ms),
+                presented_secs(segment, cue.start_ms),
+                presented_secs(segment, cue.end_ms),
             ));
         }
     }
     let mut delivered: Vec<(String, f64, f64)> = Vec::new();
     for (text, cues) in &copies {
         let starts: BTreeSet<i64> = cues.iter().map(|c| (c.0 * 1000.0).round() as i64).collect();
-        assert_eq!(starts.len(), 1, "{text:?} keeps its start in every segment: {cues:?}");
+        assert_eq!(
+            starts.len(),
+            1,
+            "{text:?} keeps its start in every segment: {cues:?}"
+        );
         let end = cues.iter().map(|c| c.1).fold(f64::MIN, f64::max);
         delivered.push((text.clone(), cues[0].0, end));
     }
@@ -659,6 +699,32 @@ async fn all_cues_are_delivered_once_with_full_display_times() {
     let got_text: Vec<&str> = delivered.iter().map(|c| c.0.as_str()).collect();
     let want_text: Vec<&str> = reference.iter().map(|c| c.text.as_str()).collect();
     assert_eq!(got_text, want_text);
+
+    for (got, want) in delivered.iter().zip(&reference).take(reference.len() - 1) {
+        let first_end = copies[&got.0][0].1;
+        let segment_end = first_copy_segment_end[&got.0];
+        let real_end = map.reference_secs(want.end_ms);
+        if real_end
+            <= segment_end + TARGET_DURATION_SECS - TELETEXT_MUX_DELAY_SECS - HOLD_MARGIN_SECS
+        {
+            assert!(
+                (first_end - real_end).abs() * 1000.0 <= map.tolerance_ms,
+                "{:?}: closed {:.3}s after the end of its first segment, within the hold, so the \
+                 first copy must carry the real end {real_end:.3}s, not {first_end:.3}s",
+                want.text,
+                real_end - segment_end
+            );
+        } else if real_end
+            >= segment_end + TARGET_DURATION_SECS + longest_segment_secs + HOLD_MARGIN_SECS
+        {
+            assert!(
+                (first_end - segment_end).abs() <= CLAMP_TOLERANCE_SECS,
+                "{:?}: still open past the hold, so the first copy ends at its segment end \
+                 {segment_end:.3}s, not {first_end:.3}s",
+                want.text
+            );
+        }
+    }
 
     let last = reference.len() - 1;
     for (i, (got, want)) in delivered.iter().zip(&reference).enumerate() {

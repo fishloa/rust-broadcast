@@ -338,9 +338,10 @@ impl<D: CueDecoder> Core<D> {
             let origin_dts = *self.origin_dts.get_or_insert_with(|| {
                 let origin = (cut.start_dts, cut.timescale);
                 self.origin_raw = Some(
-                    u64::try_from(rescale_90k(cut.start_dts, cut.timescale).rem_euclid(
-                        i64::try_from(clock33::WRAP_33BIT).unwrap_or(i64::MAX),
-                    ))
+                    u64::try_from(
+                        rescale_90k(cut.start_dts, cut.timescale)
+                            .rem_euclid(i64::try_from(clock33::WRAP_33BIT).unwrap_or(i64::MAX)),
+                    )
                     .unwrap_or(0),
                 );
                 origin
@@ -448,9 +449,8 @@ impl<D: CueDecoder> Core<D> {
             });
         }
         cues.sort_by_key(|c| c.start.0);
-        let mut body = format!(
-            "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{MPEGTS_AT_ORIGIN}\n\n"
-        );
+        let mut body =
+            format!("WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{MPEGTS_AT_ORIGIN}\n\n");
         for cue in &cues {
             body.push_str(&cue_block(cue));
             body.push('\n');
@@ -738,7 +738,9 @@ mod tests {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
         assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
-        core.decoder.closed.push(cue(1_000, 90_000, "a < b & c > d"));
+        core.decoder
+            .closed
+            .push(cue(1_000, 90_000, "a < b & c > d"));
         assert!(core.push_sample(190_000, &[], &leaders).is_empty());
         let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
         assert!(ready[0].body.contains("a &lt; b &amp; c &gt; d"));

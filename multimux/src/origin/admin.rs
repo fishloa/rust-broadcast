@@ -374,7 +374,7 @@ impl RouteRegistry {
             .with_closed_caption_overrides(route.closed_caption_overrides.clone())
             .with_audio_rendition_sources(route.audio_rendition_sources.clone())
             .with_audio_profiles(route.audio_profiles.clone())
-                .with_subtitles(route.subtitles),
+            .with_subtitles(route.subtitles),
         );
         let route_cancel = tokio_util::sync::CancellationToken::new();
         // Spawn the FALLIBLE ingest task first (audit run 7, A2): it is the
