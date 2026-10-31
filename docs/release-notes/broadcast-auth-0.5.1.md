@@ -10,9 +10,9 @@ _Released 2026-10-31._
 - Typed `WWW-Authenticate` challenge parsing (`challenge::parse_challenges`): `Scheme`, `BearerError`, `Challenge` with RFC 6750 fields and RFC 9728 `resource_metadata` as a validated `url::Url`.
 - `challenge::ParsedChallenges` and `challenge::MAX_CHALLENGES` (16); `Error::TooManyChallenges`.
 
-### Changed (BREAKING)
-- `challenge::parse_challenges` now returns `ParsedChallenges { challenges, errors }` instead of `Result<Vec<Challenge>>`: a malformed challenge, a duplicate parameter or a bad `resource_metadata` no longer discards the valid challenges around it. More than 16 challenges in one call records `Error::TooManyChallenges` and ignores the rest. The `token68` form (`Bearer abc123==`) stays unsupported by `http-auth` and is reported in `errors`.
-- `resource_metadata` must be an absolute `https` URL (RFC 9728 §3); `http:`, `file:` and `javascript:` are `Error::InvalidResourceMetadata`.
+### Added (continued: behaviour of the new `challenge` module)
+- `challenge::parse_challenges` returns `ParsedChallenges { challenges, errors }`: a malformed challenge, a duplicate parameter or a bad `resource_metadata` no longer discards the valid challenges around it. More than 16 challenges in one call records `Error::TooManyChallenges` and ignores the rest. The `token68` form (`Bearer abc123==`) stays unsupported by `http-auth` and is reported in `errors`.
+- A `resource_metadata` must be an absolute `https` URL (RFC 9728 §3); `http:`, `file:` and `javascript:` are `Error::InvalidResourceMetadata`.
 
 ---
 

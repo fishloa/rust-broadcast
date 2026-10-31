@@ -2,8 +2,8 @@
 
 _Released 2026-10-31._
 
-### Changed
-- Dependency/epoch bump only (follows dvb-conformance, timed-metadata, media-plane, media-doctor); no functional change.
+### Changed (BREAKING: epoch)
+- Builds against new caret epochs of workspace siblings (`timed-metadata` 0.7 -> 0.8, `media-plane` 0.7 -> 0.8, `media-doctor` 0.11 -> 0.12). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.
 
 ---
 

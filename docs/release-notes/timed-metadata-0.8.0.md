@@ -2,6 +2,8 @@
 
 _Released 2026-10-31._
 
+### Changed (BREAKING: epoch)
+- Builds against new caret epochs of workspace siblings (`broadcast-hls` 0.4 -> 0.5). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.
 ### Added
 - `TeletextCueExtractor::take_closed_cues` removes and returns every cue whose end is known, and `open_cue` reports the cue on screen as the new `#[non_exhaustive]` `OpenCue`. Taken cues no longer appear in `cues()` or `into_cues()`.
 - `NationalOption` gains `Polish`, `Rumanian`, `Turkish`, `SerbianCroatianSlovenian`, `Estonian` and `LettishLithuanian`, so every row of EN 300 706 Table 36 can be addressed. A page header's C12-C14 bits still select only the seven Level 1 options.
