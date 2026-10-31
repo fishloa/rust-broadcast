@@ -128,8 +128,8 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 fn ts_origin_fed_with(
     tracks: Vec<transmux::Track>,
-    keep: impl Fn(usize, i64) -> bool,
-) -> (HlsOrigin, Arc<Trunk>) {
+    shape: impl Fn(usize, i64, &mut transmux::Sample) -> bool,
+) -> (HlsOrigin, Vec<(Vec<u8>, f64)>) {
     let specs: Vec<TrackSpec> = tracks.iter().map(|t| t.spec.clone()).collect();
     let mut segmenter = transmux::ts_hls::StreamingTsHlsSegmenter::new(
         specs.clone(),
@@ -142,8 +142,9 @@ fn ts_origin_fed_with(
         let scale = f64::from(track.spec.timescale);
         for (i, sample) in track.samples.iter().enumerate() {
             let dts = sample.dts.or(sample.pts).expect("timed sample");
-            if keep(i, dts) {
-                timeline.push((dts as f64 / scale, track.spec.track_id, sample.clone()));
+            let mut sample = sample.clone();
+            if shape(i, dts, &mut sample) {
+                timeline.push((dts as f64 / scale, track.spec.track_id, sample));
             }
         }
     }
@@ -165,7 +166,9 @@ fn ts_origin_fed_with(
         .expect("build");
     origin.set_track_specs(&specs).expect("specs");
     let mut start = 0u64;
+    let mut published = Vec::new();
     for (n, segment) in segmenter.take_ready().into_iter().enumerate() {
+        published.push((segment.bytes.clone(), segment.duration));
         let duration = Duration::from_secs_f64(segment.duration);
         writer
             .publish_segment(SegmentEntry::new(
@@ -180,7 +183,7 @@ fn ts_origin_fed_with(
             .expect("monotonic");
         start += (segment.duration * NANOS_PER_SEC as f64) as u64;
     }
-    (origin, trunk)
+    (origin, published)
 }
 
 fn ts_fixture_tracks(fixture: &str, video_only: bool) -> Option<Vec<transmux::Track>> {
@@ -196,7 +199,10 @@ fn ts_fixture_tracks(fixture: &str, video_only: bool) -> Option<Vec<transmux::Tr
 }
 
 fn ts_master_frame_rate(origin: &HlsOrigin) -> Option<broadcast_hls::FrameRate> {
-    MasterPlaylist::parse(&render(origin)).expect("parse master").variants[0].frame_rate
+    MasterPlaylist::parse(&render(origin))
+        .expect("parse master")
+        .variants[0]
+        .frame_rate
 }
 
 #[test]
@@ -211,7 +217,7 @@ fn ts_origin_without_vui_timing_measures_frame_rate_from_dts_deltas() {
         ts_master_frame_rate(&origin)
     };
     assert_eq!(signalled_none, None, "fixture must carry no VUI timing");
-    let (origin, _trunk) = ts_origin_fed_with(tracks, |_, _| true);
+    let (origin, _segments) = ts_origin_fed_with(tracks, |_, _, _| true);
     assert_eq!(
         ts_master_frame_rate(&origin),
         Some(broadcast_hls::FrameRate::from_millihertz(30_000))
@@ -220,11 +226,10 @@ fn ts_origin_without_vui_timing_measures_frame_rate_from_dts_deltas() {
 
 #[test]
 fn ts_origin_with_vui_timing_keeps_the_signalled_frame_rate() {
-    let Some(tracks) = ts_fixture_tracks("hlg/sollevante-hlg-derived-1080p24-10s.ts", false)
-    else {
+    let Some(tracks) = ts_fixture_tracks("hlg/sollevante-hlg-derived-1080p24-10s.ts", false) else {
         return;
     };
-    let (origin, _trunk) = ts_origin_fed_with(tracks, |_, _| true);
+    let (origin, _segments) = ts_origin_fed_with(tracks, |_, _, _| true);
     assert_eq!(
         ts_master_frame_rate(&origin),
         Some(broadcast_hls::FrameRate::from_millihertz(24_000))
@@ -239,9 +244,85 @@ fn variable_frame_rate_reports_the_maximum_not_the_overall_mean() {
     let first = tracks[0].samples.first().and_then(|s| s.dts).unwrap();
     let last = tracks[0].samples.last().and_then(|s| s.dts).unwrap();
     let midpoint = first + (last - first) / 2;
-    let (origin, _trunk) = ts_origin_fed_with(tracks, |i, dts| dts < midpoint || i % 2 == 0);
+    let (origin, _segments) = ts_origin_fed_with(tracks, |i, dts, sample| {
+        if dts < midpoint {
+            return true;
+        }
+        sample.duration = sample.duration.map(|d| d * 2);
+        i % 2 == 0
+    });
     assert_eq!(
         ts_master_frame_rate(&origin),
         Some(broadcast_hls::FrameRate::from_millihertz(30_000))
     );
+}
+
+#[test]
+fn every_video_variant_on_a_ts_origin_carries_frame_rate() {
+    for (fixture, expected) in [
+        ("dolby-vision/sollevante-dv-p8.1-1080p24-10s.ts", 24_000),
+        ("dolby-vision/sollevante-dv-p5-1080p24-10s.ts", 24_000),
+        (IPHONE_30FPS, 30_000),
+        ("hlg/sollevante-hlg-derived-1080p24-10s.ts", 24_000),
+    ] {
+        let Some(tracks) = ts_fixture_tracks(fixture, false) else {
+            continue;
+        };
+        let (origin, _segments) = ts_origin_fed_with(tracks, |_, _, _| true);
+        assert_eq!(
+            ts_master_frame_rate(&origin),
+            Some(broadcast_hls::FrameRate::from_millihertz(expected)),
+            "{fixture}"
+        );
+    }
+}
+
+fn tool_available(tool: &str, arg: &str) -> bool {
+    std::process::Command::new(tool)
+        .arg(arg)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn mediastreamvalidator_reports_no_missing_frame_rate_on_the_measured_ts_variant() {
+    if !tool_available("mediastreamvalidator", "--version") {
+        eprintln!(
+            "SKIP mediastreamvalidator_reports_no_missing_frame_rate_on_the_measured_ts_variant: mediastreamvalidator not on PATH"
+        );
+        return;
+    }
+    let Some(tracks) = ts_fixture_tracks(IPHONE_30FPS, false) else {
+        return;
+    };
+    let (origin, segments) = ts_origin_fed_with(tracks, |_, _, _| true);
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../target")
+        .join("ts-frame-rate-validator");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("master.m3u8"), render(&origin)).unwrap();
+    let mut media = String::from(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n",
+    );
+    for (n, (bytes, duration)) in segments.iter().enumerate() {
+        media.push_str(&format!("#EXTINF:{duration:.3},\nseg{n}.ts\n"));
+        std::fs::write(dir.join(format!("seg{n}.ts")), bytes).unwrap();
+    }
+    media.push_str("#EXT-X-ENDLIST\n");
+    std::fs::write(dir.join("media.m3u8"), media).unwrap();
+    let report = dir.join("report.json");
+    let mut cmd = std::process::Command::new("mediastreamvalidator");
+    cmd.current_dir(&dir)
+        .args(["--quiet", "-t", "5", "-O"])
+        .arg(&report)
+        .arg("master.m3u8");
+    test_bounded::output_bounded(&mut cmd, Duration::from_secs(35)).expect("run validator");
+    let text = std::fs::read_to_string(&report).expect("validator report");
+    eprintln!(
+        "VALIDATOR mentions FRAME-RATE: {}",
+        text.contains("FRAME-RATE")
+    );
+    assert!(!text.contains("FRAME-RATE"), "{text}");
 }

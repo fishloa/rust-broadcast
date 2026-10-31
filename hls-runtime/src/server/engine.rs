@@ -873,8 +873,8 @@ fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: u32) -> Op
         return None;
     }
     let ticks = u128::from(ticks);
-    let millihertz = (u128::from(samples) * u128::from(timescale) * MILLIHERTZ_PER_HZ + ticks / 2)
-        / ticks;
+    let millihertz =
+        (u128::from(samples) * u128::from(timescale) * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
     u32::try_from(millihertz).ok()
 }
 
