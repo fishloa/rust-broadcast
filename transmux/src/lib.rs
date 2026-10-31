@@ -214,6 +214,7 @@ pub mod repackage;
 pub mod rtcp;
 pub mod rtmp;
 pub mod rtp;
+mod rtp_dts;
 pub mod rtp_sdp;
 pub mod rtp_stream;
 #[cfg(feature = "sample-aes")]
@@ -435,9 +436,9 @@ pub use smooth_parse::{
 };
 pub use splice::{SplicePoint, SpliceResult, concat, snap_to_preceding_sync, splice_insert};
 pub use sps::{
-    AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming, decode_avc_sps,
-    decode_avc_vui_timing, decode_hevc_sps, decode_hevc_vps_timing, decode_hevc_vui_timing,
-    rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a,
+    AvcReorderDepth, AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming,
+    decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing, decode_hevc_sps,
+    decode_hevc_vps_timing, decode_hevc_vui_timing, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a,
 };
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,

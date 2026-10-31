@@ -185,6 +185,7 @@ use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
+use crate::rtp_dts::DtsDeriver;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
@@ -318,6 +319,22 @@ pub enum RtpLossEvent {
         previous_pts: i64,
         /// This access unit's, which is earlier.
         pts: i64,
+    },
+    /// An access unit's presentation time was earlier than a decode timestamp
+    /// already issued, so the assumed reorder depth was too small (a declared
+    /// `max_num_reorder_frames` the stream violates, or reordering deeper than
+    /// the start-of-stream probe saw). The sample keeps a strictly increasing
+    /// `dts`, which therefore exceeds its `pts`; the depth grows so later
+    /// samples recover. See [`crate::rtp_dts`].
+    ReorderDepthExceeded {
+        /// The track this occurred on.
+        track_id: TrackId,
+        /// The reorder depth now in force, in frames.
+        depth: usize,
+        /// The offending sample's presentation timestamp, in the track's clock.
+        pts: i64,
+        /// The `dts` it was given.
+        dts: i64,
     },
 }
 
@@ -773,6 +790,8 @@ struct TrackState {
     /// RFC 3550 §5.1 sequence-number tracking state (issue #779) — see the
     /// module docs' "Loss and reorder detection" section.
     seq: SeqState,
+    /// Decode-timestamp derivation for video (see [`crate::rtp_dts`]).
+    dts: DtsDeriver,
 }
 
 /// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
@@ -868,7 +887,7 @@ fn to_ticks(uw: u64) -> i64 {
 /// (the largest wire-order distance observed between an AU and its
 /// presentation predecessor, used while no frame period is known); a hostile
 /// timestamp series cannot grow either past this.
-const MAX_REORDER_DEPTH: usize = 16;
+pub(crate) const MAX_REORDER_DEPTH: usize = 16;
 
 /// Hard bound on a reorder window whose oldest AU cannot be given a truthful
 /// duration (no later timestamp, no known frame period): beyond it the oldest
@@ -911,6 +930,52 @@ fn declared_au_duration(kind: RtpMediaKind, config: &CodecConfig, clock_rate: u3
     u32::try_from(ticks).ok().filter(|&d| d > 0)
 }
 
+/// Reorder depth, in frames, that the stream's own H.264 SPS fixes
+/// (`max_num_reorder_frames`, or the ITU-T H.264 §E.2.1 / §A.2.1 inference), or
+/// `None` when it must be observed. Audio never reorders.
+fn declared_reorder_depth(kind: RtpMediaKind, config: &CodecConfig) -> Option<usize> {
+    match (kind, config) {
+        (RtpMediaKind::H264, CodecConfig::Avc { config, .. }) => {
+            let sps = config.config.sps.first()?;
+            let depth = crate::sps::decode_avc_reorder_depth(&sps.0).ok()?.depth()?;
+            usize::try_from(depth).ok()
+        }
+        _ => None,
+    }
+}
+
+/// Run a track's freshly emitted samples through its decode-timestamp
+/// derivation (video only; see [`crate::rtp_dts`]).
+fn derive_dts(
+    st: &mut TrackState,
+    loss_events: &mut VecDeque<RtpLossEvent>,
+    track_id: TrackId,
+    raw: Vec<Sample>,
+    finish: bool,
+) -> Vec<Sample> {
+    if st.kind != RtpMediaKind::H264 {
+        return raw;
+    }
+    let period = known_duration(st).map(i64::from);
+    let mut out = Vec::with_capacity(raw.len());
+    let mut exceeded = Vec::new();
+    for s in raw {
+        st.dts.feed(s, period, &mut out, &mut exceeded);
+    }
+    if finish {
+        st.dts.finish(period, &mut out, &mut exceeded);
+    }
+    for e in exceeded {
+        loss_events.push_back(RtpLossEvent::ReorderDepthExceeded {
+            track_id,
+            depth: e.depth,
+            pts: e.pts,
+            dts: e.dts,
+        });
+    }
+    out
+}
+
 /// Ticks of the VUI `time_scale` clock per frame: a frame spans two field
 /// ticks (ITU-T H.264 §E.2.1, `time_scale / (2 * num_units_in_tick)`).
 const VUI_UNITS_PER_FRAME: u64 = 2;
@@ -943,6 +1008,7 @@ impl RtpStreamDepacketiser {
             .into_iter()
             .map(|t| {
                 let declared_duration = declared_au_duration(t.kind, &t.config, t.clock_rate);
+                let reorder_depth = declared_reorder_depth(t.kind, &t.config);
                 (
                     t.track_id,
                     TrackState {
@@ -965,6 +1031,7 @@ impl RtpStreamDepacketiser {
                         sr_anchor: None,
                         reorder_depth: t.reorder_depth,
                         seq: SeqState::default(),
+                        dts: DtsDeriver::new(reorder_depth),
                     },
                 )
             })
@@ -990,6 +1057,8 @@ impl RtpStreamDepacketiser {
     pub fn set_track_config(&mut self, track_id: TrackId, config: CodecConfig) {
         if let Some((_, st)) = self.tracks.iter_mut().find(|(id, _)| *id == track_id) {
             st.declared_duration = declared_au_duration(st.kind, &config, st.clock_rate);
+            st.dts
+                .set_declared(declared_reorder_depth(st.kind, &config));
             st.config = config;
         }
     }
@@ -1133,10 +1202,12 @@ impl RtpStreamDepacketiser {
             st.last_unwrapped = None;
             st.first_unwrapped = None;
             st.pending.clear();
+            let mut flushed = derive_dts(st, loss_events, track_id, Vec::new(), true);
             for pkt in adm.released {
                 Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
             }
-            return Ok(out);
+            flushed.extend(derive_dts(st, loss_events, track_id, out, false));
+            return Ok(flushed);
         }
         if let Some((expected, got)) = adm.gap {
             // The AU under construction, if any, is now known-incomplete:
@@ -1155,7 +1226,7 @@ impl RtpStreamDepacketiser {
         for pkt in adm.released {
             Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
         }
-        Ok(out)
+        Ok(derive_dts(st, loss_events, track_id, out, false))
     }
 
     /// The original single-packet accumulation logic (RTP timestamp /
@@ -1291,7 +1362,7 @@ impl RtpStreamDepacketiser {
                 ));
             }
         }
-        Ok(out)
+        Ok(derive_dts(st, loss_events, track_id, out, true))
     }
 
     /// Resolve the oldest AUs of a reordered video track's window.
