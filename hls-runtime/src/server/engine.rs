@@ -1711,7 +1711,7 @@ impl HlsOriginBuilder {
             declared_bandwidth_bps: self.declared_bandwidth_bps,
             audio_renditions: self.audio_renditions,
             audio_sibling_origins: self.audio_sibling_origins,
-            subtitle_renditions: self.subtitle_renditions,
+            subtitle_renditions: Mutex::new(self.subtitle_renditions),
             playlist_uri: self
                 .playlist_uri
                 .unwrap_or_else(|| "media.m3u8".to_string()),
@@ -1800,7 +1800,7 @@ pub struct HlsOrigin {
     /// Sibling audio origins (issue #1428 slice 3).
     audio_sibling_origins: Vec<Arc<HlsOrigin>>,
     /// Declared WebVTT subtitle renditions.
-    subtitle_renditions: Vec<SubtitleRenditionDecl>,
+    subtitle_renditions: Mutex<Vec<SubtitleRenditionDecl>>,
     /// URI of this origin's own media playlist.
     playlist_uri: String,
     /// Sibling renditions whose live edge this origin reports.
@@ -2006,6 +2006,24 @@ impl HlsOrigin {
         *locked(&self.detected_closed_captions) = detected;
     }
 
+    /// Replace the declared WebVTT subtitle renditions after construction, for
+    /// a host that learns them only once the stream is seen (for example from
+    /// a teletext descriptor). The next master playlist advertises exactly
+    /// these in group [`SUBTITLES_GROUP_ID`]; an empty list removes the group.
+    ///
+    /// # Errors
+    /// The same [`HlsOriginBuildError`] variants as
+    /// [`HlsOriginBuilder::subtitle_renditions`] at `build()`; the previous
+    /// declarations are kept on error.
+    pub fn set_subtitle_renditions(
+        &self,
+        decls: Vec<SubtitleRenditionDecl>,
+    ) -> Result<(), HlsOriginBuildError> {
+        validate_subtitle_renditions(&decls)?;
+        *locked(&self.subtitle_renditions) = decls;
+        Ok(())
+    }
+
     /// The master playlist for this origin, pointing at `media_playlist_name`:
     /// one `#EXT-X-STREAM-INF` whose `BANDWIDTH` is the highest segment
     /// bitrate this origin has published (RFC 8216 §4.3.4.2: an upper bound
@@ -2149,8 +2167,8 @@ impl HlsOrigin {
             .collect();
         let mut media = dedupe_rendition_names(media);
         media.extend(self.subtitle_media_renditions());
-        let subtitles_group =
-            (!self.subtitle_renditions.is_empty()).then(|| SUBTITLES_GROUP_ID.to_string());
+        let subtitles_group = (!locked(&self.subtitle_renditions).is_empty())
+            .then(|| SUBTITLES_GROUP_ID.to_string());
         let with_wvtt = |codecs: Option<String>| match (&subtitles_group, codecs) {
             (Some(_), Some(c)) => Some(format!("{c},{WEBVTT_CODEC}")),
             (_, c) => c,
@@ -2313,7 +2331,7 @@ impl HlsOrigin {
     }
 
     fn subtitle_media_renditions(&self) -> Vec<MediaRendition> {
-        self.subtitle_renditions
+        locked(&self.subtitle_renditions)
             .iter()
             .map(|decl| {
                 let mut m = MediaRendition::default();

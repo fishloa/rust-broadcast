@@ -123,6 +123,7 @@ fn config_with(
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         }],
         prebound,
         ..Config::default()

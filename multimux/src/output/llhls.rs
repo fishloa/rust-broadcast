@@ -35,7 +35,7 @@ use serde::Deserialize;
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::origin::resource::{BlockingRequestGuard, cors_preflight};
 use crate::output::{Output, OutputKind};
-use crate::route::RouteHandle;
+use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, subtitle_playlist_uri};
 
 const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 
@@ -88,6 +88,7 @@ pub(crate) struct LlHlsState {
     route: Arc<RouteHandle>,
     playlist_name: String,
     audio_index: Option<usize>,
+    subtitle_slot: Option<usize>,
 }
 
 impl Output for LlHlsOutput {
@@ -105,6 +106,7 @@ impl Output for LlHlsOutput {
             route: Arc::clone(&route),
             playlist_name: self.playlist_name.clone(),
             audio_index: None,
+            subtitle_slot: None,
         };
         let mut router = Router::new()
             .route("/master.m3u8", get(master_playlist).options(cors_preflight))
@@ -135,11 +137,32 @@ impl Output for LlHlsOutput {
                 route: Arc::clone(&route),
                 playlist_name: self.playlist_name.clone(),
                 audio_index: Some(idx),
+                subtitle_slot: None,
             };
             router = router.route(
                 &format!("/{}", uri),
                 get(audio_playlist).options(cors_preflight).with_state(st),
             );
+        }
+
+        // One route per subtitle slot (issue #1428): the renditions are
+        // learned from the stream, after this router exists, so the slots'
+        // URIs are fixed and an unused slot answers 404.
+        if route.subtitles_enabled() && route.container() == hls_runtime::server::Container::Fmp4 {
+            for slot in 0..MAX_SUBTITLE_RENDITIONS {
+                let st = LlHlsState {
+                    route: Arc::clone(&route),
+                    playlist_name: self.playlist_name.clone(),
+                    audio_index: None,
+                    subtitle_slot: Some(slot),
+                };
+                router = router.route(
+                    &format!("/{}", subtitle_playlist_uri(slot)),
+                    get(subtitle_playlist)
+                        .options(cors_preflight)
+                        .with_state(st),
+                );
+            }
         }
         router
     }
@@ -279,16 +302,39 @@ pub(crate) async fn audio_playlist(
     let Some(audio) = serving.audio_servings().get(idx) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let trunk = audio.trunk.clone();
-    let origin = audio.origin.clone();
-    let track_id = audio.track_id;
+    sibling_playlist(&audio.trunk, &audio.origin, audio.track_id, q).await
+}
+
+/// `GET /subs-{slot}.m3u8` — the WebVTT media playlist of one subtitle
+/// rendition (issue #1428), 404 until the stream has shown that page.
+pub(crate) async fn subtitle_playlist(
+    State(state): State<LlHlsState>,
+    Query(q): Query<BlockingReloadQuery>,
+) -> Response {
+    let serving = match http::resolve_route_program(&state.route) {
+        Ok(serving) => serving,
+        Err(resp) => return *resp,
+    };
+    let slot = state.subtitle_slot.unwrap_or(0);
+    let Some(subtitle) = serving.subtitle_servings().into_iter().nth(slot) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    sibling_playlist(&subtitle.trunk, &subtitle.origin, subtitle.track_id, q).await
+}
+
+async fn sibling_playlist(
+    trunk: &Arc<media_plane::Trunk>,
+    origin: &Arc<hls_runtime::server::HlsOrigin>,
+    track_id: transmux::TrackId,
+    q: BlockingReloadQuery,
+) -> Response {
     let request = HlsRequest::Playlist {
         track_id,
         query: q.into(),
     };
     let priority = origin.http_priority(&request);
     let resp = http::resolve_blocking(
-        &trunk,
+        trunk,
         origin.as_ref(),
         request,
         BLOCKING_RELOAD_TIMEOUT,
@@ -411,6 +457,7 @@ mod tests {
             route,
             playlist_name: DEFAULT_PLAYLIST_NAME.to_string(),
             audio_index: None,
+            subtitle_slot: None,
         }
     }
 
@@ -449,6 +496,7 @@ mod tests {
             route,
             playlist_name: "index.m3u8".to_string(),
             audio_index: None,
+            subtitle_slot: None,
         }))
         .await;
         assert_eq!(resp.status(), StatusCode::OK);

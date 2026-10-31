@@ -18,6 +18,11 @@ fn default_outputs() -> Vec<OutputKind> {
     vec![OutputKind::LlHls]
 }
 
+/// Default [`Route::subtitles`]: on.
+fn default_subtitles() -> bool {
+    true
+}
+
 /// Default [`InputSpec::File::loop_file`] when a config omits the field:
 /// restart from the beginning at EOF (`true`), matching `default_outputs`.
 fn default_file_loop() -> bool {
@@ -1502,6 +1507,15 @@ pub struct Route {
     /// `CODECS`, whatever the PMT says. Empty by default: output is unchanged.
     #[serde(default)]
     pub audio_profiles: Vec<AudioProfileOverride>,
+    /// Serve the teletext subtitle pages of the route's input as WebVTT
+    /// `EXT-X-MEDIA TYPE=SUBTITLES` renditions (issue #1428): one per page the
+    /// PMT's teletext descriptor lists as a subtitle page or a subtitle page
+    /// for hearing impaired people, on a route whose primary output is fMP4.
+    /// On by default; `false` leaves the master playlist and the segments as
+    /// they were without subtitles. A route with no teletext is unaffected
+    /// either way.
+    #[serde(default = "default_subtitles")]
+    pub subtitles: bool,
     /// DVR durable segment archive (issue #746). Off by default — set
     /// `"enabled": true` and configure an `archive_root` and at least one
     /// retention limit to enable recording.
@@ -3155,6 +3169,7 @@ mod tests {
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
                     audio_profiles: Vec::new(),
+                    subtitles: true,
                 }],
                 request_timeout_secs: bad,
                 ..Config::default()
@@ -3181,6 +3196,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             max_concurrent_requests: 0,
             ..Config::default()
@@ -3206,6 +3222,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             max_request_body_bytes: 0,
             ..Config::default()
@@ -3255,6 +3272,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -3292,6 +3310,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -3341,6 +3360,7 @@ mod tests {
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
                     audio_profiles: Vec::new(),
+                    subtitles: true,
                 }],
                 ..Config::default()
             }
@@ -3418,6 +3438,7 @@ mod tests {
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
                     audio_profiles: Vec::new(),
+                    subtitles: true,
                 }],
                 ..Config::default()
             };
@@ -4025,6 +4046,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4051,6 +4073,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4080,6 +4103,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4154,6 +4178,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4178,6 +4203,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4202,6 +4228,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4227,6 +4254,7 @@ mod tests {
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         };
         let debug = format!("{ts_http:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4251,6 +4279,7 @@ mod tests {
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         };
         let debug = format!("{hls_pull:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4279,6 +4308,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4304,6 +4334,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4330,6 +4361,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4356,6 +4388,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4382,6 +4415,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4410,6 +4444,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4435,6 +4470,7 @@ mod tests {
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
                     audio_profiles: Vec::new(),
+                    subtitles: true,
                 },
                 Route {
                     name: "x".into(),
@@ -4451,6 +4487,7 @@ mod tests {
                     audio_rendition_sources: Vec::new(),
                     closed_caption_overrides: Vec::new(),
                     audio_profiles: Vec::new(),
+                    subtitles: true,
                 },
             ],
             ..Config::default()
@@ -4517,6 +4554,7 @@ mod tests {
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -4548,6 +4586,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         };
@@ -4584,6 +4623,7 @@ mod tests {
             audio_rendition_sources: Vec::new(),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
+            subtitles: true,
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains(&long_sdp), "debug: {debug}");
@@ -4612,6 +4652,7 @@ mod tests {
                 audio_rendition_sources: Vec::new(),
                 closed_caption_overrides: Vec::new(),
                 audio_profiles: Vec::new(),
+                subtitles: true,
             }],
             ..Config::default()
         }

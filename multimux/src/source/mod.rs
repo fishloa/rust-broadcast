@@ -39,6 +39,7 @@ pub mod sdp;
 pub mod segment;
 pub mod smooth_pull;
 pub(crate) mod split_audio;
+pub(crate) mod split_subtitle;
 pub mod srt;
 pub mod ts_http;
 pub mod ts_program;

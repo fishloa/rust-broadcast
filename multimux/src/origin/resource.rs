@@ -72,6 +72,10 @@ pub(crate) const TS_CONTENT_TYPE: &str = "video/mp2t";
 /// extension (Apple HLS authoring spec 10.4: `video/iso.segment`).
 pub(crate) const ISO_SEGMENT_CONTENT_TYPE: &str = "video/iso.segment";
 
+/// `Content-Type` for a WebVTT subtitle segment (`.vtt`), RFC 8216 §3.5 /
+/// the `text/vtt` registration of W3C WebVTT.
+pub(crate) const WEBVTT_CONTENT_TYPE: &str = "text/vtt";
+
 /// The `Content-Type` a resource body must be served with, chosen from the
 /// route's container AND the requested resource name (Apple HLS authoring
 /// spec 10.4): MPEG-2 TS segments (`.ts`) are `video/mp2t`; fragmented-MP4
@@ -88,6 +92,7 @@ pub(crate) fn resource_content_type(
 ) -> &'static str {
     match container {
         hls_runtime::server::Container::MpegTs => TS_CONTENT_TYPE,
+        hls_runtime::server::Container::WebVtt => WEBVTT_CONTENT_TYPE,
         _ if name.ends_with(".m4s") => ISO_SEGMENT_CONTENT_TYPE,
         _ => MP4_CONTENT_TYPE,
     }
@@ -181,10 +186,16 @@ async fn dynamic_file(
     };
     // Route to a sibling audio origin when the filename's leading track id
     // matches one of them (issue #1428 slice 2b).
+    let mut container = route.container();
     let (trunk, ll_hls) = if let Some(tid) = track_id_from_filename(&file)
         && let Some(audio) = serving.audio_by_track(transmux::TrackId::new(tid))
     {
         (audio.trunk.clone(), audio.origin.clone())
+    } else if let Some(tid) = track_id_from_filename(&file)
+        && let Some(subtitle) = serving.subtitle_by_track(transmux::TrackId::new(tid))
+    {
+        container = hls_runtime::server::Container::WebVtt;
+        (subtitle.trunk, subtitle.origin)
     } else {
         (serving.trunk(), serving.ll_hls())
     };
@@ -201,7 +212,7 @@ async fn dynamic_file(
     .await;
     let mut resp = match http::into_response(resp, StatusCode::NOT_FOUND, |body| {
         let body = inject_segment_events(&trunk, &file, body);
-        resource_body_response(&headers, body, route.container(), &file)
+        resource_body_response(&headers, body, container, &file)
     }) {
         // A resource that resolved NotFound might still be a whole-segment
         // filename the chunked-transfer path (issue #721) can serve while
