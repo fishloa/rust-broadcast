@@ -120,11 +120,18 @@ impl ReconnectSchedule {
     /// the result is always in `[raw/2, raw) ⊆ [min/2, max)`.
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         let raw = self.raw_delay_for_attempt(attempt);
-        let factor = JITTER_LOW + (1.0 - JITTER_LOW) * f64::from(self.next_unit());
-        // `raw` is at most `max`, so `raw * factor < max` always; the `min`
-        // guards a `raw` of zero.
-        raw.mul_f64(factor).max(self.min / 2)
+        equal_jitter(raw, self.next_unit()).max(self.min / 2)
     }
+}
+
+/// `raw * (JITTER_LOW + (1 - JITTER_LOW) * unit)`, strictly below `raw`.
+/// `mul_f64` rounds to the nearest nanosecond, so a top-of-band draw on a
+/// small `raw` would round up to `raw` itself; the clamp keeps the band
+/// half-open.
+fn equal_jitter(raw: Duration, unit: f32) -> Duration {
+    let factor = JITTER_LOW + (1.0 - JITTER_LOW) * f64::from(unit);
+    raw.mul_f64(factor)
+        .min(raw.saturating_sub(Duration::from_nanos(1)))
 }
 
 impl Clone for ReconnectSchedule {
@@ -185,3 +192,22 @@ fn random_seed() -> u64 {
 /// without touching the iterator (matching the pre-SP1.5
 /// `MAX_BACKOFF_EXPONENT` short-circuit).
 const MAX_ATTEMPT_INDEX: u32 = 30;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_largest_draw_stays_strictly_below_raw() {
+        let largest = (UNIT_FRACTION_SCALE - 1) as f32 / UNIT_FRACTION_SCALE as f32;
+        for raw in [
+            Duration::from_millis(1),
+            Duration::from_millis(10),
+            Duration::from_secs(1),
+            Duration::from_secs(30),
+        ] {
+            let d = equal_jitter(raw, largest);
+            assert!(d < raw && d >= raw / 2, "raw {raw:?}: got {d:?}");
+        }
+    }
+}
