@@ -3612,18 +3612,15 @@ mod tests {
                 .expect("every reload request must complete within the guard")
                 .expect("join")
                 .expect("request completes");
+            let retry_after = resp.headers().contains_key(reqwest::header::RETRY_AFTER);
             match resp.status() {
-                reqwest::StatusCode::SERVICE_UNAVAILABLE => {
-                    assert!(
-                        resp.headers().contains_key(reqwest::header::RETRY_AFTER),
-                        "a shed 503 must carry Retry-After"
-                    );
-                    shed += 1;
-                }
+                reqwest::StatusCode::SERVICE_UNAVAILABLE if retry_after => shed += 1,
                 // A parked reload that never sees the requested segment
-                // falls back to a normal response (a 404 here, or a 200 if
-                // a segment arrived) — neither is a shed.
-                reqwest::StatusCode::OK | reqwest::StatusCode::NOT_FOUND => ok += 1,
+                // answers 503 once the blocking cap passes (RFC 8216bis
+                // 6.2.5.2: "SHOULD return Service Unavailable"), but without
+                // the Retry-After a shed carries - so it is not a shed - or a
+                // 200 if a segment arrived.
+                reqwest::StatusCode::OK | reqwest::StatusCode::SERVICE_UNAVAILABLE => ok += 1,
                 other => panic!("unexpected status {other}"),
             }
         }

@@ -424,6 +424,83 @@ async fn iframe_part_query_rejected() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// RFC 8216bis section 6.2.5.2: `_HLS_part` with `_HLS_msn` is a valid
+/// blocking reload even on a playlist without Partial Segments; only
+/// `_HLS_part` alone is a Bad Request. Apple's validator sends
+/// `_HLS_msn=M&_HLS_part=N` to the I-frame playlist.
+#[tokio::test]
+async fn iframe_msn_with_part_query_served() {
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
+    feed_via_segmenter(&store, vec![video_track_spec()], video_batches());
+    let mut streams = HashMap::new();
+    streams.insert(
+        "cam".to_string(),
+        (
+            store.clone(),
+            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+        ),
+    );
+    let app = router(Arc::new(AppState::new(streams)));
+    let resp = app
+        .oneshot(get("/cam/iframe.m3u8?_HLS_msn=1&_HLS_part=0"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(body_string(resp).await.contains("EXT-X-I-FRAMES-ONLY"));
+}
+
+/// RFC 8216bis section 6.2.5.2: "A Server that cannot provide the requested
+/// Playlist after blocking for more than three Target Durations SHOULD
+/// return Service Unavailable, such as HTTP 503." A blocking reload that the
+/// stream never satisfies answers 503 on the media and I-frame playlists,
+/// not 404.
+#[tokio::test]
+async fn blocking_reload_timeout_is_503() {
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
+    feed_via_segmenter(&store, vec![video_track_spec()], video_batches());
+    let mut streams = HashMap::new();
+    streams.insert(
+        "cam".to_string(),
+        (
+            store.clone(),
+            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+        ),
+    );
+    let app = router(Arc::new(AppState::new(streams)));
+    let iframe = body_string(app.clone().oneshot(get("/cam/iframe.m3u8")).await.unwrap()).await;
+    let first: u64 = iframe
+        .lines()
+        .find_map(|l| l.strip_prefix("#EXT-X-MEDIA-SEQUENCE:"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let last_closed = first + iframe.matches("#EXTINF").count() as u64 - 1;
+
+    let iframe_resp = app.clone().oneshot(get(&format!(
+        "/cam/iframe.m3u8?_HLS_msn={}",
+        last_closed + 1
+    )));
+    let media_resp = app.clone().oneshot(get(&format!(
+        "/cam/media.m3u8?_HLS_msn={}",
+        last_closed + 2
+    )));
+    let (iframe_resp, media_resp) = tokio::join!(iframe_resp, media_resp);
+    assert_eq!(
+        iframe_resp.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        media_resp.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+}
+
 #[tokio::test]
 async fn ts_hls_no_iframe() {
     let store = Arc::new(

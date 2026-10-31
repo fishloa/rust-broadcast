@@ -265,7 +265,7 @@ pub(crate) async fn media_playlist(
         query: q.into(),
     };
     let priority = ll_hls.http_priority(&request);
-    let resp = http::resolve_blocking(
+    let (resp, timed_out) = http::resolve_blocking_timed(
         &trunk,
         ll_hls.as_ref(),
         request,
@@ -273,18 +273,23 @@ pub(crate) async fn media_playlist(
         BlockingRequestGuard::new,
     )
     .await;
-    http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
-        HlsBody::Playlist(m) => {
-            let mut resp =
-                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
-            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
-                resp.headers_mut().insert("priority", value);
+    http::into_response(
+        resp,
+        http::playlist_not_found_status(timed_out),
+        |body| match body {
+            HlsBody::Playlist(m) => {
+                let mut resp =
+                    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+                if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency))
+                {
+                    resp.headers_mut().insert("priority", value);
+                }
+                resp
             }
-            resp
-        }
-        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        _ => StatusCode::NOT_FOUND.into_response(),
-    })
+            HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+            _ => StatusCode::NOT_FOUND.into_response(),
+        },
+    )
 }
 
 /// `GET /{audio uri}` — the LL-HLS media playlist for one audio rendition
@@ -333,7 +338,7 @@ async fn sibling_playlist(
         query: q.into(),
     };
     let priority = origin.http_priority(&request);
-    let resp = http::resolve_blocking(
+    let (resp, timed_out) = http::resolve_blocking_timed(
         trunk,
         origin.as_ref(),
         request,
@@ -341,18 +346,23 @@ async fn sibling_playlist(
         BlockingRequestGuard::new,
     )
     .await;
-    http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
-        HlsBody::Playlist(m) => {
-            let mut resp =
-                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
-            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
-                resp.headers_mut().insert("priority", value);
+    http::into_response(
+        resp,
+        http::playlist_not_found_status(timed_out),
+        |body| match body {
+            HlsBody::Playlist(m) => {
+                let mut resp =
+                    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+                if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency))
+                {
+                    resp.headers_mut().insert("priority", value);
+                }
+                resp
             }
-            resp
-        }
-        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        _ => StatusCode::NOT_FOUND.into_response(),
-    })
+            HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+            _ => StatusCode::NOT_FOUND.into_response(),
+        },
+    )
 }
 
 /// `GET /iframe.m3u8` — the LL-HLS I-frame (trick-play) playlist for
@@ -375,7 +385,7 @@ pub(crate) async fn iframe_playlist(
         media_playlist_name: state.playlist_name.clone(),
     };
     let priority = ll_hls.http_priority(&request);
-    let resp = http::resolve_blocking(
+    let (resp, timed_out) = http::resolve_blocking_timed(
         &trunk,
         ll_hls.as_ref(),
         request,
@@ -383,18 +393,23 @@ pub(crate) async fn iframe_playlist(
         BlockingRequestGuard::new,
     )
     .await;
-    http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
-        HlsBody::Playlist(m) => {
-            let mut resp =
-                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
-            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
-                resp.headers_mut().insert("priority", value);
+    http::into_response(
+        resp,
+        http::playlist_not_found_status(timed_out),
+        |body| match body {
+            HlsBody::Playlist(m) => {
+                let mut resp =
+                    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+                if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency))
+                {
+                    resp.headers_mut().insert("priority", value);
+                }
+                resp
             }
-            resp
-        }
-        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        _ => StatusCode::NOT_FOUND.into_response(),
-    })
+            HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+            _ => StatusCode::NOT_FOUND.into_response(),
+        },
+    )
 }
 
 #[cfg(test)]
