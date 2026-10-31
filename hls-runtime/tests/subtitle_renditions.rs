@@ -18,8 +18,8 @@ use hls_runtime::server::{
 use media_doctor::{Report, check_hls_playlist};
 use media_plane::ServedEgress;
 use media_plane::egress::{AwaitPolicy, EgressResponse};
-use media_plane::ids::SegmentSeq;
-use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
+use media_plane::ids::{PartIndex, SegmentSeq};
+use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, SegmentMeta,
     TrackId, TrackSpec,
@@ -301,8 +301,20 @@ fn w_ts(w: &SegmentWriter, seq: u32) {
     .expect("monotonic sequence number");
 }
 
+fn publish_vtt_part(w: &SegmentWriter, seq: u32, idx: u32) {
+    w.publish_part(PartEntry::new(
+        Bytes::from(format!(
+            "WEBVTT\n\n00:00:00.000 --> 00:00:00.500\npart {seq}.{idx}\n"
+        )),
+        SegmentSeq::new(seq),
+        PartIndex::new(idx),
+        Duration::from_millis(500),
+        false,
+    ));
+}
+
 #[test]
-fn low_latency_webvtt_origin_has_no_parts_but_blocks_on_media_sequence() {
+fn low_latency_webvtt_origin_renders_parts_and_blocks_on_media_sequence() {
     let trunk = new_trunk();
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
         .container(Container::WebVtt)
@@ -314,24 +326,67 @@ fn low_latency_webvtt_origin_has_no_parts_but_blocks_on_media_sequence() {
         .expect("builds");
     let writer = trunk.segment_writer().expect("writer");
     publish_vtt(&writer, 1);
+    publish_vtt_part(&writer, 2, 0);
+    publish_vtt_part(&writer, 2, 1);
     let text = playlist_text(&origin);
-    assert!(!text.contains("#EXT-X-PART:"), "{text}");
-    assert!(!text.contains("EXT-X-PRELOAD-HINT"), "{text}");
+    assert!(text.contains("#EXT-X-PART-INF:PART-TARGET=0.5"), "{text}");
+    assert_eq!(text.matches("#EXT-X-PART:").count(), 2, "{text}");
+    assert!(text.contains("part-"), "{text}");
+    assert!(text.contains("#EXT-X-PRELOAD-HINT"), "{text}");
     assert!(text.contains("CAN-BLOCK-RELOAD=YES"), "{text}");
 
     let query = BlockingQuery {
         hls_msn: Some(2),
+        hls_part: Some(2),
         ..Default::default()
     };
     assert!(matches!(
         playlist_of(&origin, query.clone()),
         EgressResponse::Await { .. }
     ));
-    publish_vtt(&writer, 2);
+    publish_vtt_part(&writer, 2, 2);
     assert!(matches!(
-        playlist_of(&origin, query.clone()),
+        playlist_of(&origin, query),
         EgressResponse::Ready { .. }
     ));
+}
+
+#[test]
+fn webvtt_part_resource_is_served_and_awaited() {
+    let trunk = new_trunk();
+    let origin = HlsOrigin::builder(Arc::clone(&trunk))
+        .container(Container::WebVtt)
+        .target_duration_secs(TARGET_SECS)
+        .window_segments(nz(4))
+        .low_latency(500)
+        .instance(9)
+        .build()
+        .expect("builds");
+    let writer = trunk.segment_writer().expect("writer");
+    publish_vtt_part(&writer, 1, 0);
+    let text = playlist_text(&origin);
+    let uri = text
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("#EXT-X-PART:")
+                .and_then(|a| a.split("URI=\"").nth(1))
+        })
+        .and_then(|u| u.split('"').next())
+        .expect("part uri")
+        .to_string();
+    assert!(uri.ends_with(".vtt"), "{uri}");
+    let fetch = |name: &str| {
+        origin.resolve(
+            HlsRequest::Resource {
+                name: name.to_string(),
+            },
+            Timestamp::from_nanos(1),
+            AwaitPolicy::new(Timestamp::from_nanos(60_000_000_000)),
+        )
+    };
+    assert!(matches!(fetch(&uri), EgressResponse::Ready { .. }));
+    let next = uri.replace(".0.vtt", ".1.vtt");
+    assert!(matches!(fetch(&next), EgressResponse::Await { .. }));
 }
 
 fn ll_origin(container: Container, trunk: &Arc<Trunk>) -> HlsOrigin {
@@ -387,7 +442,7 @@ fn webvtt_server_control_equals_primary_server_control() {
 }
 
 #[test]
-fn webvtt_playlist_honours_skip_and_treats_a_part_index_as_the_next_segment() {
+fn webvtt_playlist_honours_skip() {
     let trunk = new_trunk();
     let origin = ll_origin(Container::WebVtt, &trunk);
     let writer = trunk.segment_writer().expect("writer");
@@ -411,21 +466,6 @@ fn webvtt_playlist_honours_skip_and_treats_a_part_index_as_the_next_segment() {
         skipped.contains("#EXT-X-SKIP:SKIPPED-SEGMENTS="),
         "{skipped}"
     );
-
-    let beyond = BlockingQuery {
-        hls_msn: Some(8),
-        hls_part: Some(0),
-        ..Default::default()
-    };
-    assert!(matches!(
-        playlist_of(&origin, beyond.clone()),
-        EgressResponse::Await { .. }
-    ));
-    publish_vtt(&writer, 9);
-    assert!(matches!(
-        playlist_of(&origin, beyond),
-        EgressResponse::Ready { .. }
-    ));
 }
 
 #[test]

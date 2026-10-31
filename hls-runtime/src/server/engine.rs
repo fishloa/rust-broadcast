@@ -169,10 +169,10 @@ pub enum Container {
     /// (in-band PAT/PMT) — no `#EXT-X-MAP`, no init segment served.
     MpegTs,
     /// WebVTT subtitle segments (`.vtt`), each starting with its own WebVTT
-    /// header (RFC 8216 §3.5), so no `#EXT-X-MAP` and no init segment. A
-    /// WebVTT origin never produces Partial Segments; a `low_latency` setting
-    /// only adds `EXT-X-SERVER-CONTROL` (blocking reload) and rendition
-    /// reports (RFC 8216bis Appendix B.1).
+    /// header (RFC 8216 §3.5), so no `#EXT-X-MAP` and no init segment. With a
+    /// `low_latency` setting a WebVTT origin serves Partial Segments exactly
+    /// like the other containers: each part is itself a complete WebVTT
+    /// document (RFC 8216bis §3.1.4).
     WebVtt,
 }
 
@@ -897,9 +897,6 @@ fn segment_bandwidth_bps(len: usize, duration: Duration) -> Option<u64> {
 /// `(instance, seq, idx)`; `instance` is `None` for the legacy form. `None` if it
 /// isn't a part filename in `container`'s extension or a field does not parse.
 fn parse_part(file: &str, container: Container) -> Option<(Option<u64>, u64, PartIndex)> {
-    if container == Container::WebVtt {
-        return None;
-    }
     let suffix = format!(".{}", container.segment_extension());
     let rest = file.strip_prefix("part-")?.strip_suffix(suffix.as_str())?;
     let (names, idx) = rest.rsplit_once('.')?;
@@ -2882,8 +2879,7 @@ impl HlsOrigin {
         // directive, so it is gated on low latency being enabled, not merely
         // on the Trunk happening to have live parts.
         let low_latency_enabled = self.part_target_ms.is_some();
-        let renders_parts = low_latency_enabled && self.container != Container::WebVtt;
-        let has_open_parts = renders_parts && !open_parts.is_empty();
+        let has_open_parts = low_latency_enabled && !open_parts.is_empty();
         let ext = self.container.segment_extension();
 
         let media_sequence = window
@@ -2948,7 +2944,7 @@ impl HlsOrigin {
         };
         let mut closed_parts: Vec<Vec<PartSpec>> = Vec::with_capacity(window.segments.len());
         for s in window.segments.iter().rev() {
-            let keep = renders_parts && behind_secs <= retention_secs;
+            let keep = low_latency_enabled && behind_secs <= retention_secs;
             closed_parts.push(if keep {
                 self.resident_part_specs(track_id, s.sequence_number, ext)
             } else {
@@ -3115,11 +3111,6 @@ impl HlsOrigin {
             let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
                 .expect("finite, >= 0 times a positive constant is finite, >= 0");
             LowLatencyConfig {
-                // RFC 8216bis §4.4.3.7 makes EXT-X-PART-INF REQUIRED only when
-                // a playlist has EXT-X-PART tags, and a WebVTT playlist has
-                // none. It is rendered anyway, with the primary's PART-TARGET,
-                // because Apple's mediastreamvalidator reports "Missing
-                // EXT-X-PART-INF tag" on a low-latency playlist without it.
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),
                 // RFC 8216bis §4.4.3.8: HOLD-BACK MUST be >= 3x the Target
@@ -3205,19 +3196,6 @@ impl HlsOrigin {
                 reason: "_HLS_part without _HLS_msn is meaningless",
             };
         }
-        // RFC 8216bis §6.2.5.2: a Part Index greater than that of the final
-        // Partial Segment of the Parent Segment is a request for Part Index 0
-        // of the following Parent Segment. A WebVTT playlist has no Partial
-        // Segments, so every Part Index is past the final one.
-        let query = if self.container == Container::WebVtt && query.hls_part.is_some() {
-            BlockingQuery {
-                hls_msn: query.hls_msn.map(|msn| msn.saturating_add(1)),
-                hls_part: None,
-                ..query
-            }
-        } else {
-            query
-        };
         if let Some(msn) = query.hls_msn {
             let (in_progress_seg, live_parts) = self.live_edge();
             let in_progress = self.public_msn(in_progress_seg);
@@ -3384,11 +3362,6 @@ impl HlsOrigin {
             let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
                 .expect("finite, >= 0 times a positive constant is finite, >= 0");
             Some(broadcast_hls::LowLatencyConfig {
-                // RFC 8216bis §4.4.3.7 makes EXT-X-PART-INF REQUIRED only when
-                // a playlist has EXT-X-PART tags, and a WebVTT playlist has
-                // none. It is rendered anyway, with the primary's PART-TARGET,
-                // because Apple's mediastreamvalidator reports "Missing
-                // EXT-X-PART-INF tag" on a low-latency playlist without it.
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),
                 hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)

@@ -1,10 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- WebVTT subtitle renditions on a low-latency route now publish real partial segments (issue #1592). Each subtitle part is cut where the video part is cut and has the same duration, and is a complete WebVTT document: the `WEBVTT` line, the same `X-TIMESTAMP-MAP` as the segments and the cues displayed during that part. The subtitle playlist lists `EXT-X-PART-INF`, `EXT-X-PART` and `EXT-X-PRELOAD-HINT` like the video playlist, and blocking reload with `_HLS_msn` and `_HLS_part` waits for the requested subtitle part.
+
 ### Fixed
-- The WebVTT subtitle playlists of a low-latency route now carry the same `EXT-X-SERVER-CONTROL` attributes and values as the video playlist (RFC 8216bis section 6.2.4) plus `EXT-X-PART-INF`, so Apple's `mediastreamvalidator` no longer reports "Missing EXT-X-PART-INF tag" or "Missing server control attribute" three times on them (issue #1589). They still have no partial segments.
+- The WebVTT subtitle playlists of a low-latency route now carry the same `EXT-X-SERVER-CONTROL` attributes and values as the video playlist (RFC 8216bis section 6.2.4) plus `EXT-X-PART-INF`, so Apple's `mediastreamvalidator` no longer reports "Missing EXT-X-PART-INF tag" or "Missing server control attribute" three times on them (issue #1589).
 
 ### Changed
+- The subtitle followers no longer hold a segment back for up to one target duration waiting for its open cues to close. A segment or part is published at the video cut. A cue that is still on screen at that moment is written with its end clamped to the end of the part or segment and written again, with its original start, in each following part and segment until it closes, when its real end is used (RFC 8216bis section 3.1.4). A cue whose closing teletext data arrives after the part or segment that contains its real end was published keeps the clamped end in that copy.
 - Route `audio_profiles` HE-AAC tracks now use the output sample rate as their media timescale (`mdhd` 44100 for a 22050 Hz core, 2048-tick AAC frames) in every fMP4 output.
 
 ### Added

@@ -21,17 +21,20 @@
 //! use), so cue time `t` is the cue's PTS minus that origin and
 //! `LOCAL 0` is output time `0` ([`MPEGTS_AT_ORIGIN`]).
 //!
-//! # Hold-back
+//! # Partial segments and open cues
 //!
-//! Segment N is published when every cue overlapping it has closed, or once
-//! the leader's media time has passed the end of N by one target duration,
-//! whichever comes first. A cue still open at that deadline is written into N
-//! with N's end as its end; the next segment writes it again with its
-//! original start, and so on until it closes. Every cue is written with its
-//! own start and end, whatever part of it falls outside the segment (RFC 8216
-//! §3.5). "Every cue overlapping N has closed" is only known once the
-//! teletext PES clock has reached the end of N, so a PID that sends nothing
-//! holds each segment until its deadline.
+//! On a low-latency route every subtitle rendition publishes Partial Segments
+//! cut exactly where the leader cut its own, and the parent segment when the
+//! leader closes its segment. Nothing is held back: a part or segment is
+//! published at the leader's cut with the cues the decoder has by then.
+//!
+//! Each part is a complete WebVTT document with the same header and
+//! `X-TIMESTAMP-MAP` as the segments, holding the cues displayed during its
+//! time range (RFC 8216bis §3.1.4). A cue that has closed is written with its
+//! own start and end whatever part of it falls outside the range. A cue still
+//! on screen has no end yet, so it is written with its end clamped to the end
+//! of the range, and again, with its original start, in every following part
+//! and segment until it closes, when its real end is used.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -42,8 +45,8 @@ use caption_convert::{Cue, MediaTime, TeletextToWebVtt, cue_block};
 use dvb_si::descriptors::teletext::{TeletextEntry, TeletextType};
 use dvb_si::descriptors::{AnyDescriptor, parse_loop};
 use hls_runtime::server::{SubtitleRenditionDecl, bcp47_language};
-use media_plane::ids::SegmentSeq;
-use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk};
+use media_plane::ids::{PartIndex, SegmentSeq};
+use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk};
 use transmux::SegmentMeta;
 use transmux::TrackId;
 use transmux::ll_hls::PartCutReady;
@@ -212,19 +215,18 @@ pub(super) fn build_followers(
     route: &RouteHandle,
     trunk: &Trunk,
     tracks: &[TrackSpec],
-    target_duration_secs: f64,
 ) -> Vec<SubtitleFollower> {
     resolve(route, trunk, tracks)
         .into_iter()
         .filter_map(|(page, serving)| {
             let spec = tracks.iter().find(|t| t.track_id == page.source_track)?;
-            SubtitleFollower::try_new(&page, spec.timescale, &serving, target_duration_secs)
+            SubtitleFollower::try_new(&page, spec.timescale, &serving)
         })
         .collect()
 }
 
 /// What turns teletext PES data fields into cues. The real decoder is
-/// [`TeletextToWebVtt`]; the seam lets the hold-back policy be driven by
+/// [`TeletextToWebVtt`]; the seam lets the cue bookkeeping be driven by
 /// scripted cues.
 trait CueDecoder {
     fn push(&mut self, pts_33: u64, data: &[u8]);
@@ -265,8 +267,26 @@ struct ReadySegment {
     body: String,
 }
 
-/// Cue bookkeeping and the hold-back policy, in 90 kHz ticks relative to the
-/// timeline origin ("local" ticks).
+struct ReadyPart {
+    msn: u32,
+    part_index: u32,
+    duration_secs: f64,
+    body: String,
+}
+
+enum Ready {
+    Part(ReadyPart),
+    Segment(ReadySegment),
+}
+
+/// A part the leader has cut, with the duration its own playlist lists.
+pub(super) struct LeaderPart {
+    pub(super) cut: PartCutReady,
+    pub(super) duration_secs: f64,
+}
+
+/// Cue bookkeeping and the part and segment ranges, in 90 kHz ticks relative
+/// to the timeline origin ("local" ticks).
 struct Core<D: CueDecoder> {
     decoder: D,
     origin_raw: Option<u64>,
@@ -274,10 +294,7 @@ struct Core<D: CueDecoder> {
     spans: BTreeMap<u32, Span>,
     next_msn: Option<u32>,
     closed: Vec<Cue>,
-    newest_local: Option<i64>,
-    newest_raw: Option<u64>,
     edge: i64,
-    target_ticks: i64,
 }
 
 fn rescale_90k(value: i64, timescale: u32) -> i64 {
@@ -290,7 +307,7 @@ fn to_media_time(local: i64) -> MediaTime {
 }
 
 impl<D: CueDecoder> Core<D> {
-    fn new(decoder: D, target_duration_secs: f64) -> Self {
+    fn new(decoder: D) -> Self {
         Core {
             decoder,
             origin_raw: None,
@@ -298,10 +315,7 @@ impl<D: CueDecoder> Core<D> {
             spans: BTreeMap::new(),
             next_msn: None,
             closed: Vec::new(),
-            newest_local: None,
-            newest_raw: None,
             edge: 0,
-            target_ticks: (target_duration_secs * PTS_HZ as f64) as i64,
         }
     }
 
@@ -320,51 +334,62 @@ impl<D: CueDecoder> Core<D> {
         clock33::add_signed(self.origin_raw.unwrap_or(0), local)
     }
 
-    fn push_sample(
-        &mut self,
-        pts_33: u64,
-        data: &[u8],
-        leaders: &LeaderDurations,
-    ) -> Vec<ReadySegment> {
+    fn push_sample(&mut self, pts_33: u64, data: &[u8]) {
         self.decoder.push(pts_33, data);
         self.closed.extend(self.decoder.take_closed());
-        self.newest_raw = Some(pts_33);
-        self.newest_local = self.origin_raw.map(|_| self.local_of(pts_33));
-        self.publish(false, leaders)
     }
 
-    fn on_cuts(&mut self, cuts: &[PartCutReady], leaders: &LeaderDurations) -> Vec<ReadySegment> {
-        for cut in cuts {
-            let origin_dts = *self.origin_dts.get_or_insert_with(|| {
-                let origin = (cut.start_dts, cut.timescale);
-                self.origin_raw = Some(
-                    u64::try_from(
-                        rescale_90k(cut.start_dts, cut.timescale)
-                            .rem_euclid(i64::try_from(clock33::WRAP_33BIT).unwrap_or(i64::MAX)),
-                    )
-                    .unwrap_or(0),
-                );
-                origin
-            });
-            let local = rescale_90k(cut.start_dts - origin_dts.0, cut.timescale);
-            self.edge = self.edge.max(local);
-            self.spans.entry(cut.msn).or_insert(Span {
-                start: local,
-                end: None,
-            });
-            if let Some(previous) = cut.msn.checked_sub(1)
-                && let Some(span) = self.spans.get_mut(&previous)
-                && span.end.is_none()
-                && cut.part_index == 0
-            {
-                span.end = Some(local);
-            }
-            self.next_msn.get_or_insert(cut.msn);
+    fn note_cut(&mut self, cut: &PartCutReady) -> i64 {
+        let origin_dts = *self.origin_dts.get_or_insert_with(|| {
+            let origin = (cut.start_dts, cut.timescale);
+            self.origin_raw = Some(
+                u64::try_from(
+                    rescale_90k(cut.start_dts, cut.timescale)
+                        .rem_euclid(i64::try_from(clock33::WRAP_33BIT).unwrap_or(i64::MAX)),
+                )
+                .unwrap_or(0),
+            );
+            origin
+        });
+        let local = rescale_90k(cut.start_dts - origin_dts.0, cut.timescale);
+        self.edge = self.edge.max(local);
+        self.spans.entry(cut.msn).or_insert(Span {
+            start: local,
+            end: None,
+        });
+        if let Some(previous) = cut.msn.checked_sub(1)
+            && let Some(span) = self.spans.get_mut(&previous)
+            && span.end.is_none()
+            && cut.part_index == 0
+        {
+            span.end = Some(local);
         }
-        if self.newest_local.is_none() {
-            self.newest_local = self.newest_raw.map(|raw| self.local_of(raw));
+        self.next_msn.get_or_insert(cut.msn);
+        local
+    }
+
+    /// Publishes the part of every cut in `parts`, and each segment as soon
+    /// as the leader has closed it, in the order the leader produced them:
+    /// a segment never follows a part of a later segment.
+    fn on_parts(&mut self, parts: &[LeaderPart], leaders: &LeaderDurations) -> Vec<Ready> {
+        let mut ready = Vec::new();
+        for part in parts {
+            let start = self.note_cut(&part.cut);
+            self.close_spans(leaders);
+            self.publish_segments(Some(part.cut.msn), leaders, &mut ready);
+            let ticks = ((part.duration_secs * PTS_HZ as f64).round() as i64).max(1);
+            let end = start.saturating_add(ticks);
+            self.edge = self.edge.max(end);
+            ready.push(Ready::Part(ReadyPart {
+                msn: part.cut.msn,
+                part_index: part.cut.part_index,
+                duration_secs: part.duration_secs,
+                body: self.render(start, end),
+            }));
         }
-        self.publish(false, leaders)
+        self.close_spans(leaders);
+        self.publish_segments(None, leaders, &mut ready);
+        ready
     }
 
     fn close_spans(&mut self, leaders: &LeaderDurations) {
@@ -387,33 +412,25 @@ impl<D: CueDecoder> Core<D> {
             .map(|(start, text)| (self.local_of(start), text))
     }
 
-    fn complete(&self, end: i64) -> bool {
-        self.newest_local.is_some_and(|n| n >= end)
-            && self.open_cue().is_none_or(|(start, _)| start >= end)
-    }
-
-    fn publish(&mut self, finishing: bool, leaders: &LeaderDurations) -> Vec<ReadySegment> {
-        self.close_spans(leaders);
-        let mut ready = Vec::new();
+    fn publish_segments(
+        &mut self,
+        before: Option<u32>,
+        leaders: &LeaderDurations,
+        ready: &mut Vec<Ready>,
+    ) {
         while let Some(msn) = self.next_msn
+            && before.is_none_or(|b| msn < b)
             && let Some(span) = self.spans.get(&msn).copied()
             && let Some(end) = span.end
         {
-            let released = finishing
-                || self.complete(end)
-                || self.edge >= end.saturating_add(self.target_ticks);
-            if !released {
-                break;
-            }
-            let duration_secs = leaders
-                .get(&msn)
-                .copied()
-                .unwrap_or((end - span.start) as f64 / PTS_HZ as f64);
-            ready.push(ReadySegment {
+            ready.push(Ready::Segment(ReadySegment {
                 msn,
-                duration_secs,
+                duration_secs: leaders
+                    .get(&msn)
+                    .copied()
+                    .unwrap_or((end - span.start) as f64 / PTS_HZ as f64),
                 body: self.render(span.start, end),
-            });
+            }));
             self.spans.remove(&msn);
             self.next_msn = Some(msn.saturating_add(1));
             let boundary = end;
@@ -423,9 +440,16 @@ impl<D: CueDecoder> Core<D> {
                 .collect();
             self.closed = retained;
         }
-        ready
     }
 
+    /// The WebVTT document for the range `start..end`.
+    ///
+    /// RFC 8216bis §3.1.4: a cue that has closed keeps its full start and end
+    /// even where it extends outside the range. A cue still on screen has no
+    /// known end, which is the live case the section allows ("the cue time
+    /// range in each Segment MAY be limited to the WebVTT time range covered
+    /// by the Segment"), so its end is clamped to `end`; it is written again
+    /// with the same start in each later range until it closes.
     fn render(&self, start: i64, end: i64) -> String {
         let mut cues: Vec<Cue> = Vec::new();
         for cue in &self.closed {
@@ -458,12 +482,14 @@ impl<D: CueDecoder> Core<D> {
         body
     }
 
-    fn finish(&mut self, leaders: &LeaderDurations) -> Vec<ReadySegment> {
+    fn finish(&mut self, leaders: &LeaderDurations) -> Vec<Ready> {
         self.close_spans(leaders);
         let end_raw = self.raw_of_local(self.edge);
         self.decoder.finalize(end_raw);
         self.closed.extend(self.decoder.take_closed());
-        self.publish(true, leaders)
+        let mut ready = Vec::new();
+        self.publish_segments(None, leaders, &mut ready);
+        ready
     }
 }
 
@@ -479,20 +505,12 @@ pub(super) struct SubtitleFollower {
 }
 
 impl SubtitleFollower {
-    fn try_new(
-        page: &TeletextPage,
-        timescale: u32,
-        serving: &SubtitleServing,
-        target_duration_secs: f64,
-    ) -> Option<Self> {
+    fn try_new(page: &TeletextPage, timescale: u32, serving: &SubtitleServing) -> Option<Self> {
         let writer = serving.trunk.segment_writer()?;
         Some(SubtitleFollower {
             source_track_id: page.source_track,
             timescale,
-            core: Core::new(
-                TeletextToWebVtt::new(page.magazine, page.page),
-                target_duration_secs,
-            ),
+            core: Core::new(TeletextToWebVtt::new(page.magazine, page.page)),
             writer,
             pending: VecDeque::new(),
             pending_since: None,
@@ -500,18 +518,17 @@ impl SubtitleFollower {
         })
     }
 
-    pub(super) fn push(&mut self, sample: &Sample, leaders: &LeaderDurations) {
+    pub(super) fn push(&mut self, sample: &Sample) {
         let Some(pts) = sample.pts.or(sample.dts) else {
             return;
         };
         let wrap = i64::try_from(clock33::WRAP_33BIT).unwrap_or(i64::MAX);
         let pts_33 = u64::try_from(rescale_90k(pts, self.timescale).rem_euclid(wrap)).unwrap_or(0);
-        let ready = self.core.push_sample(pts_33, &sample.data, leaders);
-        self.queue(ready);
+        self.core.push_sample(pts_33, &sample.data);
     }
 
-    pub(super) fn on_part_cuts(&mut self, cuts: &[PartCutReady], leaders: &LeaderDurations) {
-        let ready = self.core.on_cuts(cuts, leaders);
+    pub(super) fn on_part_cuts(&mut self, parts: &[LeaderPart], leaders: &LeaderDurations) {
+        let ready = self.core.on_parts(parts, leaders);
         self.queue(ready);
     }
 
@@ -520,22 +537,35 @@ impl SubtitleFollower {
         self.queue(ready);
     }
 
-    fn queue(&mut self, ready: Vec<ReadySegment>) {
-        for segment in ready {
-            let start_ns = self.next_timeline_ns;
-            self.next_timeline_ns = self
-                .next_timeline_ns
-                .saturating_add((segment.duration_secs * NANOS_PER_SEC_F64) as u64);
-            self.pending
-                .push_back(PendingPublish::Segment(SegmentEntry::new(
-                    segment.body.into_bytes(),
-                    SegmentSeq::new(segment.msn),
-                    Duration::from_secs_f64(segment.duration_secs),
-                    Timestamp::from_nanos(start_ns),
-                    SegmentMeta {
-                        discontinuous: false,
-                    },
-                )));
+    fn queue(&mut self, ready: Vec<Ready>) {
+        for item in ready {
+            match item {
+                Ready::Part(part) => {
+                    self.pending.push_back(PendingPublish::Part(PartEntry::new(
+                        part.body.into_bytes(),
+                        SegmentSeq::new(part.msn),
+                        PartIndex::new(part.part_index),
+                        Duration::from_secs_f64(part.duration_secs),
+                        true,
+                    )));
+                }
+                Ready::Segment(segment) => {
+                    let start_ns = self.next_timeline_ns;
+                    self.next_timeline_ns = self
+                        .next_timeline_ns
+                        .saturating_add((segment.duration_secs * NANOS_PER_SEC_F64) as u64);
+                    self.pending
+                        .push_back(PendingPublish::Segment(SegmentEntry::new(
+                            segment.body.into_bytes(),
+                            SegmentSeq::new(segment.msn),
+                            Duration::from_secs_f64(segment.duration_secs),
+                            Timestamp::from_nanos(start_ns),
+                            SegmentMeta {
+                                discontinuous: false,
+                            },
+                        )));
+                }
+            }
         }
         drain_publish_queue(&mut self.writer, &mut self.pending, &mut self.pending_since);
     }
@@ -546,7 +576,9 @@ mod tests {
     use super::*;
 
     const TARGET_SECS: f64 = 2.0;
+    const PART_SECS: f64 = 0.5;
     const SEG_TICKS: i64 = 180_000;
+    const PART_TICKS: i64 = 45_000;
 
     #[derive(Default)]
     struct Scripted {
@@ -565,33 +597,60 @@ mod tests {
         fn finalize(&mut self, _end_pts_33: u64) {}
     }
 
-    fn cut(msn: u32, start_dts: i64) -> PartCutReady {
-        PartCutReady {
-            msn,
-            part_index: 0,
-            start_dts,
-            timescale: 90_000,
+    fn part(msn: u32, part_index: u32, start_dts: i64) -> LeaderPart {
+        LeaderPart {
+            cut: PartCutReady {
+                msn,
+                part_index,
+                start_dts,
+                timescale: 90_000,
+            },
+            duration_secs: PART_SECS,
         }
     }
 
     fn core() -> Core<Scripted> {
-        Core::new(Scripted::default(), TARGET_SECS)
+        Core::new(Scripted::default())
     }
 
-    /// The leader closes segment `msn` and cuts the first part of the next
-    /// one at `next_start`.
-    fn next_segment(
+    fn segments(ready: &[Ready]) -> Vec<&ReadySegment> {
+        ready
+            .iter()
+            .filter_map(|r| match r {
+                Ready::Segment(s) => Some(s),
+                Ready::Part(_) => None,
+            })
+            .collect()
+    }
+
+    fn parts(ready: &[Ready]) -> Vec<&ReadyPart> {
+        ready
+            .iter()
+            .filter_map(|r| match r {
+                Ready::Part(p) => Some(p),
+                Ready::Segment(_) => None,
+            })
+            .collect()
+    }
+
+    fn msns(ready: &[Ready]) -> Vec<u32> {
+        segments(ready).iter().map(|s| s.msn).collect()
+    }
+
+    fn four_parts(msn: u32, first_start: i64) -> Vec<LeaderPart> {
+        (0..4)
+            .map(|i| part(msn, i, first_start + i64::from(i) * PART_TICKS))
+            .collect()
+    }
+
+    /// The leader closes segment `msn`; the next segment's first part follows.
+    fn close_segment(
         core: &mut Core<Scripted>,
         leaders: &mut LeaderDurations,
         msn: u32,
-        next_start: i64,
-    ) -> Vec<ReadySegment> {
+    ) -> Vec<Ready> {
         leaders.insert(msn, TARGET_SECS);
-        core.on_cuts(&[cut(msn + 1, next_start)], leaders)
-    }
-
-    fn msns(ready: &[ReadySegment]) -> Vec<u32> {
-        ready.iter().map(|s| s.msn).collect()
+        core.on_parts(&[], leaders)
     }
 
     fn cue(start: u64, end: u64, text: &str) -> Cue {
@@ -602,110 +661,155 @@ mod tests {
         }
     }
 
-    #[test]
-    fn held_segment_is_released_after_one_target_duration() {
-        let mut core = core();
-        let mut leaders = LeaderDurations::new();
-        assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
-        core.decoder.open = Some((100_000, "hello".into()));
-        assert!(core.push_sample(190_000, &[], &leaders).is_empty());
-
-        let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
-        assert!(
-            ready.is_empty(),
-            "segment 1 is held while its cue is open: {:?}",
-            msns(&ready)
-        );
-        assert!(core.push_sample(370_000, &[], &leaders).is_empty());
-
-        let ready = next_segment(&mut core, &mut leaders, 2, 2 * SEG_TICKS);
-        assert_eq!(msns(&ready), [1], "published at the deadline");
-        assert!(
-            ready[0]
-                .body
-                .contains("00:00:01.111 --> 00:00:02.000\nhello"),
-            "cue end clamped to the segment end:\n{}",
-            ready[0].body
-        );
-        assert!(
-            ready[0]
-                .body
-                .starts_with("WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n")
-        );
-
-        let ready = next_segment(&mut core, &mut leaders, 3, 3 * SEG_TICKS);
-        assert_eq!(msns(&ready), [2]);
-        assert!(
-            ready[0]
-                .body
-                .contains("00:00:01.111 --> 00:00:04.000\nhello"),
-            "the next segment repeats the cue with its original start:\n{}",
-            ready[0].body
-        );
-    }
+    const HEADER: &str = "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n";
 
     #[test]
-    fn held_segment_is_released_when_the_open_cue_closes() {
+    fn open_cue_is_clamped_and_repeated_with_its_original_start() {
         let mut core = core();
-        let mut leaders = LeaderDurations::new();
-        assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
-        core.decoder.open = Some((100_000, "hello".into()));
-        assert!(core.push_sample(190_000, &[], &leaders).is_empty());
-        assert!(next_segment(&mut core, &mut leaders, 1, SEG_TICKS).is_empty());
+        let leaders = LeaderDurations::new();
+        core.decoder.open = Some((10_000, "hello".into()));
+
+        let ready = core.on_parts(&[part(1, 0, 0)], &leaders);
+        let first = parts(&ready);
+        assert_eq!(first.len(), 1);
+        assert!(first[0].body.starts_with(HEADER), "{}", first[0].body);
+        assert!(
+            first[0]
+                .body
+                .contains("00:00:00.111 --> 00:00:00.500\nhello"),
+            "first part ends the open cue at the part end:\n{}",
+            first[0].body
+        );
+
+        let ready = core.on_parts(&[part(1, 1, PART_TICKS)], &leaders);
+        assert!(
+            parts(&ready)[0]
+                .body
+                .contains("00:00:00.111 --> 00:00:01.000\nhello"),
+            "second part repeats it with the same start, ending at its own end:\n{}",
+            parts(&ready)[0].body
+        );
 
         core.decoder.open = None;
-        core.decoder.closed.push(cue(100_000, 250_000, "hello"));
-        let ready = core.push_sample(250_000, &[], &leaders);
-        assert_eq!(
-            msns(&ready),
-            [1],
-            "published at the close, before the deadline"
-        );
+        core.decoder.closed.push(cue(10_000, 120_000, "hello"));
+        core.push_sample(0, &[]);
+        let ready = core.on_parts(&[part(1, 2, 2 * PART_TICKS)], &leaders);
         assert!(
-            ready[0]
+            parts(&ready)[0]
                 .body
-                .contains("00:00:01.111 --> 00:00:02.777\nhello"),
-            "the real end time is written:\n{}",
-            ready[0].body
+                .contains("00:00:00.111 --> 00:00:01.333\nhello"),
+            "third part carries the real end:\n{}",
+            parts(&ready)[0].body
         );
     }
 
     #[test]
-    fn a_segment_without_cues_is_still_published() {
+    fn a_part_without_cues_is_a_complete_document() {
+        let mut core = core();
+        let ready = core.on_parts(&[part(1, 0, 0)], &LeaderDurations::new());
+        assert_eq!(parts(&ready)[0].body, HEADER);
+        assert!((parts(&ready)[0].duration_secs - PART_SECS).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_segment_is_published_when_the_leader_closes_it() {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
-        assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
-        assert!(core.push_sample(100_000, &[], &leaders).is_empty());
-        let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
-        assert!(ready.is_empty(), "nothing proves the span is complete yet");
-        let ready = core.push_sample(190_000, &[], &leaders);
+        let ready = core.on_parts(&four_parts(1, 0), &leaders);
+        assert!(segments(&ready).is_empty(), "the leader has not closed it");
+        assert_eq!(parts(&ready).len(), 4);
+        let ready = close_segment(&mut core, &mut leaders, 1);
         assert_eq!(msns(&ready), [1]);
-        assert_eq!(
-            ready[0].body,
-            "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n"
+        assert_eq!(segments(&ready)[0].body, HEADER);
+        assert!((segments(&ready)[0].duration_secs - TARGET_SECS).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parts_of_a_segment_precede_the_segment_and_follow_the_previous_one() {
+        let mut core = core();
+        let mut leaders = LeaderDurations::new();
+        core.on_parts(&four_parts(1, 0), &leaders);
+        leaders.insert(1, TARGET_SECS);
+        let ready = core.on_parts(&[part(2, 0, SEG_TICKS)], &leaders);
+        let order: Vec<(char, u32)> = ready
+            .iter()
+            .map(|r| match r {
+                Ready::Segment(s) => ('s', s.msn),
+                Ready::Part(p) => ('p', p.msn),
+            })
+            .collect();
+        assert_eq!(order, [('s', 1), ('p', 2)]);
+    }
+
+    #[test]
+    fn segment_with_an_open_cue_is_clamped_and_the_next_segment_repeats_it() {
+        let mut core = core();
+        let mut leaders = LeaderDurations::new();
+        core.decoder.open = Some((100_000, "hello".into()));
+        core.on_parts(&four_parts(1, 0), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, 1);
+        assert!(
+            segments(&ready)[0]
+                .body
+                .contains("00:00:01.111 --> 00:00:02.000\nhello"),
+            "{}",
+            segments(&ready)[0].body
         );
-        assert!((ready[0].duration_secs - TARGET_SECS).abs() < 1e-9);
+        core.on_parts(&four_parts(2, SEG_TICKS), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, 2);
+        assert!(
+            segments(&ready)[0]
+                .body
+                .contains("00:00:01.111 --> 00:00:04.000\nhello"),
+            "{}",
+            segments(&ready)[0].body
+        );
+    }
+
+    #[test]
+    fn a_segment_carries_cues_that_closed_during_its_earlier_parts() {
+        let mut core = core();
+        let mut leaders = LeaderDurations::new();
+        core.on_parts(&[part(1, 0, 0), part(1, 1, PART_TICKS)], &leaders);
+        core.decoder.closed.push(cue(1_000, 20_000, "early"));
+        core.push_sample(30_000, &[]);
+        core.on_parts(
+            &[part(1, 2, 2 * PART_TICKS), part(1, 3, 3 * PART_TICKS)],
+            &leaders,
+        );
+        let ready = close_segment(&mut core, &mut leaders, 1);
+        assert!(
+            segments(&ready)[0]
+                .body
+                .contains("00:00:00.011 --> 00:00:00.222\nearly"),
+            "{}",
+            segments(&ready)[0].body
+        );
     }
 
     #[test]
     fn a_closed_cue_crossing_the_boundary_keeps_its_full_display_time() {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
-        assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
         core.decoder.closed.push(cue(150_000, 250_000, "across"));
-        assert!(core.push_sample(260_000, &[], &leaders).is_empty());
-        let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
+        core.push_sample(0, &[]);
+        core.on_parts(&four_parts(1, 0), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, 1);
         assert_eq!(msns(&ready), [1]);
         assert!(
-            ready[0]
+            segments(&ready)[0]
                 .body
                 .contains("00:00:01.666 --> 00:00:02.777\nacross")
         );
-        assert!(next_segment(&mut core, &mut leaders, 2, 2 * SEG_TICKS).is_empty());
-        let ready = core.push_sample(370_000, &[], &leaders);
-        assert_eq!(msns(&ready), [2]);
+        let ready = core.on_parts(&four_parts(2, SEG_TICKS), &leaders);
         assert!(
-            ready[0]
+            parts(&ready)[0]
+                .body
+                .contains("00:00:01.666 --> 00:00:02.777\nacross")
+        );
+        let ready = close_segment(&mut core, &mut leaders, 2);
+        assert!(
+            segments(&ready)[0]
                 .body
                 .contains("00:00:01.666 --> 00:00:02.777\nacross")
         );
@@ -716,18 +820,15 @@ mod tests {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
         let origin: i64 = 1_000_000;
-        assert!(core.on_cuts(&[cut(1, origin)], &leaders).is_empty());
         core.decoder
             .closed
             .push(cue(origin as u64 - 90_000, origin as u64 + 45_000, "early"));
-        assert!(
-            core.push_sample(origin as u64 + 190_000, &[], &leaders)
-                .is_empty()
-        );
-        let ready = next_segment(&mut core, &mut leaders, 1, origin + SEG_TICKS);
+        core.push_sample(0, &[]);
+        core.on_parts(&four_parts(1, origin), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, 1);
         assert_eq!(msns(&ready), [1]);
         assert!(
-            ready[0]
+            segments(&ready)[0]
                 .body
                 .contains("00:00:00.000 --> 00:00:00.500\nearly")
         );
@@ -737,13 +838,13 @@ mod tests {
     fn cue_text_is_escaped() {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
-        assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
         core.decoder
             .closed
             .push(cue(1_000, 90_000, "a < b & c > d"));
-        assert!(core.push_sample(190_000, &[], &leaders).is_empty());
-        let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
-        assert!(ready[0].body.contains("a &lt; b &amp; c &gt; d"));
+        core.push_sample(0, &[]);
+        core.on_parts(&four_parts(1, 0), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, 1);
+        assert!(segments(&ready)[0].body.contains("a &lt; b &amp; c &gt; d"));
     }
 
     #[test]
