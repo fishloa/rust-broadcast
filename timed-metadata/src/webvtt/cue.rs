@@ -26,6 +26,19 @@ pub struct Cue {
     pub text: String,
 }
 
+/// The cue currently on screen: its start and text, not yet closed by an
+/// erase or replace.
+#[cfg(feature = "teletext")]
+#[cfg_attr(docsrs, doc(cfg(feature = "teletext")))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct OpenCue {
+    /// Wrap-unrolled start in 90 kHz ticks, the same timeline as [`Cue::start`].
+    pub start_pts_90k: u64,
+    /// Display text, as [`Cue::text`].
+    pub text: String,
+}
+
 /// Shared diff-based boundary tracker used by the 608, 708, and Teletext
 /// extractors: unrolls the 33-bit PTS and turns "displayed text changed"
 /// transitions into completed [`Cue`]s.
@@ -65,6 +78,14 @@ impl DiffState {
         if !text.is_empty() {
             self.open = Some((ticks, text));
         }
+    }
+
+    #[cfg(feature = "teletext")]
+    fn open_cue(&self) -> Option<OpenCue> {
+        self.open.as_ref().map(|(start, text)| OpenCue {
+            start_pts_90k: *start,
+            text: text.clone(),
+        })
     }
 
     /// Close any still-open cue at end of stream (or a channel/service reset).
@@ -359,7 +380,21 @@ impl TeletextCueExtractor {
         self.state.finalize(ticks, &mut self.cues);
     }
 
-    /// The cues extracted so far, in order.
+    /// Remove and return every cue whose end is already known, in start-time
+    /// order. Each cue is returned exactly once; cues taken here no longer
+    /// appear in [`cues`](Self::cues) or [`into_cues`](Self::into_cues).
+    pub fn take_closed_cues(&mut self) -> Vec<Cue> {
+        core::mem::take(&mut self.cues)
+    }
+
+    /// The cue currently on screen, if any, without removing it.
+    #[must_use]
+    pub fn open_cue(&self) -> Option<OpenCue> {
+        self.state.open_cue()
+    }
+
+    /// The cues extracted so far, in order, excluding any already taken with
+    /// [`take_closed_cues`](Self::take_closed_cues).
     #[must_use]
     pub fn cues(&self) -> &[Cue] {
         &self.cues

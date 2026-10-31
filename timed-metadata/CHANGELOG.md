@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Added
+- `TeletextCueExtractor::take_closed_cues` removes and returns every cue whose end is known, and `open_cue` reports the cue on screen as the new `#[non_exhaustive]` `OpenCue`. Taken cues no longer appear in `cues()` or `into_cues()`.
 ### Changed
 - `DateRange::parse_tag_line` now propagates malformed attribute-list errors from `broadcast_hls::parse_attribute_list_strict` (unterminated quoted-string, duplicate attribute name) as `Error::HlsAttrValue` instead of silently half-parsing them (#1485 R15).
 
