@@ -155,3 +155,12 @@ fn non_hdr_stream_gets_no_static_metadata_boxes() {
     let boxes = sample_entry_children(&init);
     assert!(boxes.iter().all(|(t, _)| *t != MDCV && *t != CLLI), "{boxes:?}");
 }
+
+#[test]
+fn codec_string_is_main10_with_decimal_level_from_the_real_sps() {
+    let Some(spec) = hdr_spec() else { return };
+    let CodecConfig::Hevc { config, .. } = &spec.config else {
+        panic!("HEVC track");
+    };
+    assert_eq!(config.config.rfc6381(), "hvc1.2.4.L153.90");
+}

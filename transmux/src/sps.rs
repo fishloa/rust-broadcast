@@ -1743,24 +1743,36 @@ fn hex_char(nibble: u8) -> char {
     }
 }
 
-/// Build RFC 6381 `hvc1.…` codec string (H.265 §3.3).
-///
-/// Per RFC 6381 §3.3:
-/// `hvc1.<profile_space><profile_idc>.<compat>.<tier><level>[.<constraint>…]`
+const HVC1_CODEC_STRING_CAPACITY: usize = 48;
+
+/// `general_profile_space` 1..=3 as the codec-string prefix letters.
+const HEVC_PROFILE_SPACE_LETTERS: [char; 3] = ['A', 'B', 'C'];
+
+/// Build the `hvc1.…` codec string of ISO/IEC 14496-15 (the HEVC registration
+/// under RFC 6381): `hvc1.<space letter><profile_idc>.<compat>.<tier><level>
+/// [.<constraint byte>…]`, where `general_profile_idc` and `general_level_idc`
+/// are decimal, `<compat>` is the bit-reversed 32-bit compatibility word in hex
+/// without leading zeros, and trailing zero constraint bytes are dropped (the
+/// grammar, with the corrigendum applied, as restated in ETSI TS 103 285
+/// §5.2.2, `private/specs-verified/dash/docs-specs/etsi-ts-103-285/ch05-video.md`).
 pub fn rfc6381_hvc1(info: &HevcSpsInfo) -> String {
-    let mut s = String::with_capacity(48);
+    let mut s = String::with_capacity(HVC1_CODEC_STRING_CAPACITY);
     s.push_str("hvc1.");
-
-    let profile_byte = (info.general_profile_space << 5) | info.general_profile_idc;
-    write_hex_byte(&mut s, profile_byte);
-
+    if let Some(letter) = usize::from(info.general_profile_space)
+        .checked_sub(1)
+        .and_then(|i| HEVC_PROFILE_SPACE_LETTERS.get(i))
+    {
+        s.push(*letter);
+    }
+    s.push_str(&alloc::format!("{}", info.general_profile_idc));
     s.push('.');
-    write_compat_flags(&mut s, info.general_profile_compatibility_flags);
-
+    s.push_str(&alloc::format!(
+        "{:X}",
+        info.general_profile_compatibility_flags.reverse_bits()
+    ));
     s.push('.');
-    let tier_char = if info.general_tier_flag { 'H' } else { 'L' };
-    s.push(tier_char);
-    write_hex_byte(&mut s, info.general_level_idc);
+    s.push(if info.general_tier_flag { 'H' } else { 'L' });
+    s.push_str(&alloc::format!("{}", info.general_level_idc));
 
     let constraints = info.general_constraint_indicator_flags;
     let bytes: [u8; 6] = [
@@ -1784,30 +1796,6 @@ pub fn rfc6381_hvc1(info: &HevcSpsInfo) -> String {
     }
 
     s
-}
-
-/// Write the reversed-bit compatibility flags as hex, dropping trailing zeros.
-fn write_compat_flags(s: &mut String, flags: u32) {
-    let reversed = flags.reverse_bits();
-    let mut hex = [0u8; 8];
-    let mut v = reversed;
-    for i in (0..8).rev() {
-        let nib = (v & 0xF) as u8;
-        hex[i] = if nib < 10 {
-            b'0' + nib
-        } else {
-            b'A' + (nib - 10)
-        };
-        v >>= 4;
-    }
-    let end = (0..8)
-        .rev()
-        .find(|&i| hex[i] != b'0')
-        .map(|i| i + 1)
-        .unwrap_or(1);
-    for &b in &hex[..end] {
-        s.push(b as char);
-    }
 }
 
 /// Build the RFC 6381 `vvc1.…` codec string for H.266/VVC.
