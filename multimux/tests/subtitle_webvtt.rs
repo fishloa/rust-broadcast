@@ -500,6 +500,49 @@ async fn subtitle_playlist_matches_video_segments() {
 }
 
 #[tokio::test]
+async fn subtitle_and_video_playlists_share_server_control() {
+    let Some(rig) = teletext_rig(true, "subtitle_and_video_playlists_share_server_control") else {
+        return;
+    };
+    let (_, video) = rig.playlist("media.m3u8").await;
+    let video_control = video.low_latency.expect("video playlist is low-latency");
+    assert!(video_control.can_block_reload);
+    assert!(video_control.can_skip_until.is_some());
+    assert!(video_control.part_hold_back.is_some());
+    let (_, iframe) = rig.playlist("iframe.m3u8").await;
+    let iframe_control = iframe.low_latency.expect("iframe playlist is low-latency");
+    assert_eq!(iframe_control.can_skip_until, video_control.can_skip_until);
+    for hearing_impaired in [false, true] {
+        let uri = rig.subtitle_uri(hearing_impaired).await;
+        let (text, subs) = rig.playlist(&uri).await;
+        let control = subs.low_latency.expect("subtitle playlist is low-latency");
+        assert_eq!(
+            control.can_block_reload, video_control.can_block_reload,
+            "{uri}"
+        );
+        assert_eq!(
+            control.part_hold_back, video_control.part_hold_back,
+            "{uri}"
+        );
+        assert_eq!(control.hold_back, video_control.hold_back, "{uri}");
+        assert_eq!(
+            control.can_skip_until, video_control.can_skip_until,
+            "{uri}"
+        );
+        assert_eq!(
+            control.can_skip_dateranges, video_control.can_skip_dateranges,
+            "{uri}"
+        );
+        assert_eq!(
+            control.sc_extra_attrs, video_control.sc_extra_attrs,
+            "{uri}"
+        );
+        assert!(!text.contains("#EXT-X-PART:"), "{uri}:\n{text}");
+        assert!(!text.contains("#EXT-X-PRELOAD-HINT"), "{uri}:\n{text}");
+    }
+}
+
+#[tokio::test]
 async fn every_segment_has_webvtt_header_and_timestamp_map() {
     let Some(rig) = teletext_rig(true, "every_segment_has_webvtt_header_and_timestamp_map") else {
         return;

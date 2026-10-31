@@ -315,7 +315,7 @@ fn low_latency_webvtt_origin_has_no_parts_but_blocks_on_media_sequence() {
     let writer = trunk.segment_writer().expect("writer");
     publish_vtt(&writer, 1);
     let text = playlist_text(&origin);
-    assert!(!text.contains("EXT-X-PART"), "{text}");
+    assert!(!text.contains("#EXT-X-PART:"), "{text}");
     assert!(!text.contains("EXT-X-PRELOAD-HINT"), "{text}");
     assert!(text.contains("CAN-BLOCK-RELOAD=YES"), "{text}");
 
@@ -330,6 +330,100 @@ fn low_latency_webvtt_origin_has_no_parts_but_blocks_on_media_sequence() {
     publish_vtt(&writer, 2);
     assert!(matches!(
         playlist_of(&origin, query.clone()),
+        EgressResponse::Ready { .. }
+    ));
+}
+
+fn ll_origin(container: Container, trunk: &Arc<Trunk>) -> HlsOrigin {
+    let origin = HlsOrigin::builder(Arc::clone(trunk))
+        .container(container)
+        .target_duration_secs(TARGET_SECS)
+        .window_segments(nz(8))
+        .low_latency(500)
+        .instance(9)
+        .build()
+        .expect("builds");
+    if container != Container::WebVtt {
+        origin.set_track_specs(&[avc_spec()]).expect("track specs");
+    }
+    origin
+}
+
+fn server_control_of(text: &str) -> broadcast_hls::LowLatencyConfig {
+    broadcast_hls::MediaPlaylist::parse(text)
+        .unwrap_or_else(|e| panic!("{e}: {text}"))
+        .low_latency
+        .unwrap_or_else(|| panic!("no low-latency tags: {text}"))
+}
+
+#[test]
+fn webvtt_server_control_equals_primary_server_control() {
+    let primary_trunk = new_trunk();
+    let primary = ll_origin(Container::MpegTs, &primary_trunk);
+    let vtt_trunk = new_trunk();
+    let vtt = ll_origin(Container::WebVtt, &vtt_trunk);
+    let primary_writer = primary_trunk.segment_writer().expect("writer");
+    let vtt_writer = vtt_trunk.segment_writer().expect("writer");
+    for seq in 1..=8 {
+        publish_vtt(&primary_writer, seq);
+        publish_vtt(&vtt_writer, seq);
+    }
+
+    let primary_text = playlist_text(&primary);
+    let vtt_text = playlist_text(&vtt);
+    let a = server_control_of(&primary_text);
+    let b = server_control_of(&vtt_text);
+    assert!(a.can_block_reload && a.can_skip_until.is_some() && a.part_hold_back.is_some());
+    assert_eq!(a.can_block_reload, b.can_block_reload);
+    assert_eq!(a.part_hold_back, b.part_hold_back);
+    assert_eq!(a.hold_back, b.hold_back);
+    assert_eq!(a.can_skip_until, b.can_skip_until);
+    assert_eq!(a.can_skip_dateranges, b.can_skip_dateranges);
+    assert_eq!(a.sc_extra_attrs, b.sc_extra_attrs);
+    assert_eq!(a.part_target, b.part_target);
+
+    assert!(!vtt_text.contains("#EXT-X-PART:"), "{vtt_text}");
+    assert!(!vtt_text.contains("EXT-X-PRELOAD-HINT"), "{vtt_text}");
+}
+
+#[test]
+fn webvtt_playlist_honours_skip_and_treats_a_part_index_as_the_next_segment() {
+    let trunk = new_trunk();
+    let origin = ll_origin(Container::WebVtt, &trunk);
+    let writer = trunk.segment_writer().expect("writer");
+    for seq in 1..=8 {
+        publish_vtt(&writer, seq);
+    }
+    let skipped = match playlist_of(
+        &origin,
+        BlockingQuery {
+            hls_skip: Some(hls_runtime::server::SkipDirective::Yes),
+            ..Default::default()
+        },
+    ) {
+        EgressResponse::Ready {
+            body: HlsBody::Playlist(text),
+            ..
+        } => text,
+        other => panic!("expected a playlist, got {other:?}"),
+    };
+    assert!(
+        skipped.contains("#EXT-X-SKIP:SKIPPED-SEGMENTS="),
+        "{skipped}"
+    );
+
+    let beyond = BlockingQuery {
+        hls_msn: Some(8),
+        hls_part: Some(0),
+        ..Default::default()
+    };
+    assert!(matches!(
+        playlist_of(&origin, beyond.clone()),
+        EgressResponse::Await { .. }
+    ));
+    publish_vtt(&writer, 9);
+    assert!(matches!(
+        playlist_of(&origin, beyond),
         EgressResponse::Ready { .. }
     ));
 }

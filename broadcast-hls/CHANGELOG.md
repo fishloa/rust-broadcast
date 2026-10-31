@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `LowLatencyConfig::effective_part_hold_back` returns `part_hold_back` as given when `part_target` is `None`, so a playlist without `EXT-X-PART-INF` can still render `PART-HOLD-BACK` in its `EXT-X-SERVER-CONTROL`. It used to return `None` and the attribute was silently dropped (issue #1589).
 ### Added
 - `MediaPlaylist::segment_keys` and `MediaPlaylist::open_segment_key`: the `#EXT-X-KEY` in effect for each closed segment / the open segment per RFC 8216 §4.3.2.4 (carry-forward until the next tag of the same `KEYFORMAT`, `METHOD=NONE` resets, only `identity` participates), returned as the new `MediaKey` type alias (`SessionKey`), with `KEYFORMAT_IDENTITY`. New typed errors `Error::KeyWithoutUri` and `Error::UnsupportedKeyFormat`.
 - `MasterPlaylist::media: Vec<MediaRendition>` for `#EXT-X-MEDIA` (RFC 8216bis §4.4.6.1), with typed `MediaType`, `InstreamId`, `ClosedCaptionsRef` and a validated `MediaRendition` struct (`media_type`, `uri`, `group_id`, `language`, `assoc_language`, `name`, `stable_rendition_id`, `default`, `autoselect`, `forced`, `instream_id`, `bit_depth`, `sample_rate`, `characteristics`, `channels`, `extra_attrs`). Rendered before variants; `#EXT-X-MEDIA` lines are no longer retained in `extra_tags`.

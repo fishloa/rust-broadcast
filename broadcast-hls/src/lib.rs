@@ -5628,6 +5628,23 @@ mod tests {
     }
 
     #[test]
+    fn server_control_without_part_target_keeps_part_hold_back() {
+        let pl = MediaPlaylist {
+            target_duration: 4,
+            low_latency: Some(LowLatencyConfig {
+                part_target: None,
+                part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
+                hold_back: Some(DecimalSeconds::new(12.0).unwrap()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = pl.to_m3u8().unwrap();
+        assert!(out.contains("PART-HOLD-BACK=1.5"), "{out}");
+        assert!(!out.contains("#EXT-X-PART-INF"), "{out}");
+    }
+
+    #[test]
     fn ll_hls_renders_server_control_part_inf_and_parts() {
         let pl = MediaPlaylist {
             version: 9,
