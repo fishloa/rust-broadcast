@@ -1737,6 +1737,7 @@ dependencies = [
  "headers",
  "iso-639",
  "jiff",
+ "media-doctor",
  "media-plane",
  "reqwest",
  "serde",
