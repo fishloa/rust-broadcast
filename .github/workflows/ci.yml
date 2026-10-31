@@ -178,6 +178,37 @@ jobs:
         timeout-minutes: 15
         run: cargo test -p broadcast-client --all-features --locked --test e2e_livesim2 -- --nocapture
 
+  # The independent RTSP wire oracle for broadcast-client: a Session plays
+  # `fixtures/ts/h264_aac.ts` published by ffmpeg through mediamtx over RTSP/TCP
+  # on loopback. mediamtx is MIT licensed (Copyright (c) 2019 aler9), fetched
+  # as the pinned release tarball with its published sha256 and never
+  # redistributed. REQUIRE_MEDIAMTX_E2E=1 makes a missing tool a hard failure
+  # here; the same test skips loudly on a machine without them.
+  rtsp-e2e:
+    name: rtsp e2e (mediamtx v1.21.1)
+    runs-on: ubuntu-latest
+    env:
+      MEDIAMTX_VERSION: v1.21.1
+      MEDIAMTX_SHA256: 653abc672a3e693f8d3b2717752492fdcfb8072291ec108d03d3dd857411b0ee
+      REQUIRE_MEDIAMTX_E2E: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install mediamtx (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          ARCHIVE="mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "${RUNNER_TEMP}/${ARCHIVE}" "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/${ARCHIVE}"
+          echo "${MEDIAMTX_SHA256}  ${RUNNER_TEMP}/${ARCHIVE}" | sha256sum --check
+          mkdir -p "${RUNNER_TEMP}/mediamtx-bin"
+          tar -xzf "${RUNNER_TEMP}/${ARCHIVE}" -C "${RUNNER_TEMP}/mediamtx-bin" mediamtx
+          echo "${RUNNER_TEMP}/mediamtx-bin" >> "$GITHUB_PATH"
+      - name: Play a real mediamtx RTSP stream
+        timeout-minutes: 15
+        run: cargo test -p broadcast-client --all-features --locked --test e2e_mediamtx_rtsp -- --nocapture
+
   lint:
     name: clippy
     runs-on: ubuntu-latest
