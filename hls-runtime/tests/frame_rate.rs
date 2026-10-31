@@ -331,7 +331,6 @@ const NORMAL_SAMPLES: usize = 30;
 const NORMAL_TICKS: u32 = 3000;
 const GLITCH_TICKS: u32 = 60;
 const SINGLE_SAMPLE_TICKS: u32 = 6000;
-const GLITCH_MILLIHERTZ: u32 = 1_500_000;
 
 fn video_piece(
     tracks: &[transmux::Track],
@@ -409,7 +408,7 @@ impl Feed {
 }
 
 #[test]
-fn glitch_segment_is_reported_only_while_it_is_in_the_window() {
+fn implausible_glitch_segment_is_never_reported() {
     let Some(tracks) = ts_fixture_tracks(IPHONE_30FPS, true) else {
         return;
     };
@@ -421,20 +420,12 @@ fn glitch_segment_is_reported_only_while_it_is_in_the_window() {
     feed.publish(&normal);
     feed.publish(&glitch);
     feed.publish(&normal);
-    assert_eq!(
-        feed.rate(),
-        Some(broadcast_hls::FrameRate::from_millihertz(GLITCH_MILLIHERTZ))
-    );
+    let thirty = Some(broadcast_hls::FrameRate::from_millihertz(30_000));
+    assert_eq!(feed.rate(), thirty);
     feed.publish(&normal);
-    assert_eq!(
-        feed.rate(),
-        Some(broadcast_hls::FrameRate::from_millihertz(GLITCH_MILLIHERTZ))
-    );
+    assert_eq!(feed.rate(), thirty);
     feed.publish(&normal);
-    assert_eq!(
-        feed.rate(),
-        Some(broadcast_hls::FrameRate::from_millihertz(30_000))
-    );
+    assert_eq!(feed.rate(), thirty);
 }
 
 #[test]

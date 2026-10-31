@@ -762,6 +762,11 @@ impl HlsClient {
         }
         self.full_reload_requested = false;
         let segment_keys = playlist.segment_key_results()?;
+        if let Some(Err(e)) = segment_keys.first()
+            && segment_keys.iter().all(|r| r.is_err())
+        {
+            return Err(Error::PlaylistParse(e.clone()));
+        }
         let open_key = if playlist.open_segment.is_some() {
             playlist.open_segment_key()?
         } else {
