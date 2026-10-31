@@ -540,7 +540,7 @@ pub fn rfc6381_codec_string(config: &CodecConfig) -> Result<String> {
 /// `dvh1.PP.LL`, as the Dolby DASH specification requires
 /// (`private/specs-verified/dolby/vision/dolby-vision-streams-in-mpeg-dash-v2.0-2018-11.md`
 /// 4.3.2: sample entry `dvh1` -> `codecs="dvh1.05.LL"`) — the very value
-/// [`DashPackager`] / [`LlDashPackager`] write into `Representation@codecs`.
+/// [`DashPackager`] / `LlDashPackager` write into `Representation@codecs`.
 ///
 /// Cross-compatible Dolby Vision (profile 8.x) keeps an `hvc1` sample entry and
 /// its plain HEVC string; the DASH packagers do not announce its Dolby Vision

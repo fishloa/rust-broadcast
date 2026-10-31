@@ -333,7 +333,7 @@ pub enum RtpLossEvent {
         dts: i64,
     },
     /// A fully reassembled access unit was discarded without being emitted:
-    /// the reorder window overflowed [`MAX_REORDER_WINDOW`] AUs whose duration
+    /// the reorder window overflowed the 256-AU bound on AUs whose duration
     /// could not be resolved, or a sequence resync found held AUs for which no
     /// duration is known. One event per discarded AU, oldest first.
     DroppedAccessUnit {
