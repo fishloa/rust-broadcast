@@ -1,7 +1,7 @@
 # dvb-si-audit — spec table extraction
 
 Deterministic, rule-based (no LLM) extraction of ETSI table syntax from the
-vendored PDFs in `../../specs/`, used to generate the per-crate
+vendored PDFs in `private/specs/` (the private submodule), used to generate the per-crate
 `docs/` spec references.
 
 ## Pipeline
@@ -13,7 +13,7 @@ vendored PDFs in `../../specs/`, used to generate the per-crate
    tall-column-separator PDFs and the 2025 full-grid EN 300 468 PDF.
    ```bash
    ./setup.sh   # one-time: .venv + pdfplumber
-   .venv/bin/python extract_tables.py --pdf ../../specs/etsi_en_300_468_v01.19.01_dvb_si.pdf --out out/si --md
+   .venv/bin/python extract_tables.py --pdf ../../private/specs/etsi_en_300_468_v01.19.01_dvb_si.pdf --out out/si --md
    ```
 2. **`render_docs.py`** — renders one clean reference markdown per spec from the
    extracted JSON (title, contents index, every table verbatim).
