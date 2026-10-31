@@ -1274,23 +1274,33 @@ impl LlHlsSegmenter {
         let Some(grid) = self.frame_probe.observe(elapsed) else {
             return;
         };
-        let floor_frames = self.part_target_ticks / grid.longest;
+        let spread = grid.longest - grid.shortest;
+        let hi = grid.longest + spread;
+        let lo = grid.shortest.saturating_sub(spread);
+        if lo == 0 || lo * PERCENT_SCALE < hi * PART_MIN_PERCENT {
+            return;
+        }
+        let floor_frames = self.part_target_ticks / hi;
         if floor_frames >= 1
-            && floor_frames * grid.shortest * PERCENT_SCALE
-                >= self.part_target_ticks * PART_MIN_PERCENT
+            && floor_frames * lo * PERCENT_SCALE >= self.part_target_ticks * PART_MIN_PERCENT
         {
-            self.part_trigger_ticks = floor_frames * grid.shortest;
+            if (floor_frames - 1) * hi < floor_frames * lo {
+                self.part_trigger_ticks = floor_frames * lo;
+            }
+            return;
+        }
+        let frames = self.part_target_ticks.div_ceil(hi).max(1);
+        if (frames - 1) * hi >= frames * lo {
             return;
         }
         let timescale = u64::from(self.tracks[self.anchor].spec.timescale.max(1));
-        let frames = self.part_target_ticks.div_ceil(grid.longest).max(1);
-        let ms = (frames * grid.longest * MILLIS_PER_SEC).div_ceil(timescale);
+        let ms = (frames * hi * MILLIS_PER_SEC).div_ceil(timescale);
         let Ok(ms) = u32::try_from(ms) else {
             return;
         };
         self.part_target_ms = ms;
         self.part_target_ticks = u64::from(ms) * timescale / MILLIS_PER_SEC;
-        self.part_trigger_ticks = frames * grid.shortest;
+        self.part_trigger_ticks = frames * lo;
     }
 
     /// Whether emitting a part now would drain every anchor sample of a segment
@@ -1601,16 +1611,11 @@ const PERCENT_SCALE: u64 = 100;
 const PART_MIN_PERCENT: u64 = 85;
 
 /// Anchor frames measured before the frame grid is trusted.
-const FRAME_PROBE_FRAMES: u32 = 4;
+const FRAME_PROBE_FRAMES: u32 = 8;
 
 /// Anchor samples examined for those frames before the measurement is
 /// abandoned (a stream whose samples carry no usable duration).
-const FRAME_PROBE_GIVE_UP: u32 = 8;
-
-/// Largest difference, in ticks, between the longest and shortest measured
-/// frame for the stream to count as constant frame rate. A rational rate such
-/// as 24000/1001 fps at 90 kHz alternates between two adjacent tick values.
-const FRAME_PROBE_MAX_SPREAD_TICKS: u64 = 1;
+const FRAME_PROBE_GIVE_UP: u32 = 16;
 
 #[derive(Debug, Clone, Copy)]
 struct FrameGrid {
@@ -1655,8 +1660,7 @@ impl FrameProbe {
         }
         if frames >= FRAME_PROBE_FRAMES {
             *self = Self::Done;
-            return (longest - shortest <= FRAME_PROBE_MAX_SPREAD_TICKS)
-                .then_some(FrameGrid { shortest, longest });
+            return Some(FrameGrid { shortest, longest });
         }
         if seen >= FRAME_PROBE_GIVE_UP {
             *self = Self::Done;

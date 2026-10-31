@@ -1747,6 +1747,16 @@ impl RouteHandle {
         }
     }
 
+    pub(crate) fn set_part_target_ms(&self, program: ProgramId, ms: u32) -> bool {
+        match self.serving(program) {
+            Some(serving) => {
+                serving.ll_hls.set_part_target_ms(ms);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn set_audio_init(&self, program: ProgramId, index: usize, bytes: impl Into<Bytes>) {
         match self.serving(program) {
             Some(serving) => serving.set_audio_init(index, bytes),

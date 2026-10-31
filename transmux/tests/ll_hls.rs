@@ -1161,3 +1161,28 @@ fn samples_without_durations_keep_the_configured_part_target() {
     }
     assert_eq!(seg.part_target_ms(), 200);
 }
+
+#[test]
+fn jittered_frame_timestamps_still_land_parts_within_the_band() {
+    let durations: Vec<u32> = (0..288)
+        .map(|i| if matches!(i % 4, 0 | 3) { 3690 } else { 3780 })
+        .collect();
+    let (target_ms, parts) = cut_parts(24_000, 1001, Some(durations), 12);
+    let target = f64::from(target_ms) / 1000.0;
+    assert!(
+        target_ms > 200,
+        "the 200 ms target must be raised to whole frames"
+    );
+    let inner = non_terminal(&parts);
+    assert!(inner.len() > 20);
+    for p in &parts {
+        assert!(p.duration <= target + 1e-9, "{} > {target}", p.duration);
+    }
+    for p in inner {
+        assert!(
+            p.duration >= 0.85 * target - 1e-9,
+            "{} < 85% of {target}",
+            p.duration
+        );
+    }
+}

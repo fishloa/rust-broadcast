@@ -400,6 +400,8 @@ async fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_output() {
     );
 }
 
+const PART_FLOOR_FINDING: &str = "at least 85% of PART-TARGET";
+
 const ISSUE_1602_FINDINGS: [&str; 2] = [
     "Playlist vs segment duration mismatch",
     "Playlist vs partial segment duration mismatch",
@@ -473,6 +475,12 @@ async fn mediastreamvalidator_reports_no_hdr10plus_specific_finding() {
     let comments = validator_comments(route_app(HDR10PLUS), "hdr10plus-val").await;
     for c in &comments {
         eprintln!("VALIDATOR hdr10plus: {c}");
+    }
+    for c in baseline.iter().chain(&comments) {
+        assert!(
+            !c.contains(PART_FLOOR_FINDING),
+            "validator reports the 85% part floor: {c}"
+        );
     }
     let issue_1602 = has_b_frame_reordering(HDR10PLUS);
     let only: Vec<_> = comments
