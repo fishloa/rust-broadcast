@@ -167,7 +167,7 @@ pub(crate) async fn media_playlist(
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
     };
-    let resp = http::resolve_blocking(
+    let (resp, timed_out) = http::resolve_blocking_timed(
         &trunk,
         ll_hls.as_ref(),
         request,
@@ -175,16 +175,20 @@ pub(crate) async fn media_playlist(
         BlockingRequestGuard::new,
     )
     .await;
-    http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
-        HlsBody::Playlist(m) => {
-            ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
-        }
-        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        // `HlsBody` is `#[non_exhaustive]`; a future body variant this
-        // playlist route doesn't understand is treated the same as a
-        // resource body -- not found here.
-        _ => StatusCode::NOT_FOUND.into_response(),
-    })
+    http::into_response(
+        resp,
+        http::playlist_not_found_status(timed_out),
+        |body| match body {
+            HlsBody::Playlist(m) => {
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
+            }
+            HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+            // `HlsBody` is `#[non_exhaustive]`; a future body variant this
+            // playlist route doesn't understand is treated the same as a
+            // resource body -- not found here.
+            _ => StatusCode::NOT_FOUND.into_response(),
+        },
+    )
 }
 
 #[cfg(test)]
