@@ -263,6 +263,13 @@ pub struct LlHlsSegmenter {
     target_ticks: u64,
     /// Target part duration in the *anchor track's* media timescale.
     part_target_ticks: u64,
+    /// `part_target_ticks` expressed in whole milliseconds, as advertised.
+    part_target_ms: u32,
+    /// Anchor span at which a part is cut: the part target until the frame
+    /// grid is sized, then the shortest span a whole number of frames can have.
+    part_trigger_ticks: u64,
+    /// Where the anchor's frame duration measurement stands.
+    frame_probe: FrameProbe,
     /// Buffered duration of the whole current segment on the anchor (ticks).
     anchor_seg_dur: u64,
     /// Buffered duration since the last part flush on the anchor (ticks).
@@ -402,6 +409,9 @@ impl LlHlsSegmenter {
             anchor,
             target_ticks,
             part_target_ticks,
+            part_target_ms,
+            part_trigger_ticks: part_target_ticks,
+            frame_probe: FrameProbe::default(),
             anchor_seg_dur: 0,
             anchor_part_dur: 0,
             anchor_clock: MediaClock::new(),
@@ -434,6 +444,19 @@ impl LlHlsSegmenter {
         // into `inf`/`NaN` rendered straight into `#EXT-X-PART-INF` (audit
         // finding #5).
         self.part_target_ticks as f64 / self.tracks[self.anchor].spec.timescale.max(1) as f64
+    }
+
+    /// The part target in whole milliseconds, the value to advertise as
+    /// `#EXT-X-PART-INF:PART-TARGET`. It starts as the configured target and,
+    /// once the anchor's constant frame duration has been measured from its
+    /// first samples, is raised to a whole number of frames when needed (RFC 8216bis
+    /// §4.4.4.9: every non-terminal Partial Segment lasts between 85% and
+    /// 100% of the Part Target Duration, which a frame grid that does not
+    /// divide the target cannot satisfy). A configured target whose whole-frame
+    /// floor already lies within that band is kept. A variable or unmeasurable frame
+    /// duration leaves the configured target in force.
+    pub fn part_target_ms(&self) -> u32 {
+        self.part_target_ms
     }
 
     /// The `(next_seq, current_segment)` pair this segmenter would give the
@@ -553,6 +576,7 @@ impl LlHlsSegmenter {
             let elapsed = self.anchor_clock.tick(&sample);
             self.anchor_seg_dur += elapsed;
             self.anchor_part_dur += elapsed;
+            self.observe_frame(elapsed);
         }
         self.tracks[idx].pending.push(sample);
 
@@ -563,7 +587,10 @@ impl LlHlsSegmenter {
         // Duration"), leaving the crossing sample for the next part. This holds
         // past the segment target too: a segment waiting for its next keyframe
         // keeps cutting parts, so its final part is only the short remainder.
-        if idx == self.anchor && self.anchor_part_dur >= self.part_target_ticks {
+        if idx == self.anchor
+            && !self.frame_probe.is_measuring()
+            && self.anchor_part_dur >= self.part_trigger_ticks
+        {
             if self.would_end_with_empty_anchor_tail() {
                 self.part_deferred = true;
             } else {
@@ -1243,6 +1270,39 @@ impl LlHlsSegmenter {
         Ok(())
     }
 
+    fn observe_frame(&mut self, elapsed: u64) {
+        let Some(grid) = self.frame_probe.observe(elapsed) else {
+            return;
+        };
+        let spread = grid.longest - grid.shortest;
+        let hi = grid.longest + spread;
+        let lo = grid.shortest.saturating_sub(spread);
+        if lo == 0 || lo * PERCENT_SCALE < hi * PART_MIN_PERCENT {
+            return;
+        }
+        let floor_frames = self.part_target_ticks / hi;
+        if floor_frames >= 1
+            && floor_frames * lo * PERCENT_SCALE >= self.part_target_ticks * PART_MIN_PERCENT
+        {
+            if (floor_frames - 1) * hi < floor_frames * lo {
+                self.part_trigger_ticks = floor_frames * lo;
+            }
+            return;
+        }
+        let frames = self.part_target_ticks.div_ceil(hi).max(1);
+        if (frames - 1) * hi >= frames * lo {
+            return;
+        }
+        let timescale = u64::from(self.tracks[self.anchor].spec.timescale.max(1));
+        let ms = (frames * hi * MILLIS_PER_SEC).div_ceil(timescale);
+        let Ok(ms) = u32::try_from(ms) else {
+            return;
+        };
+        self.part_target_ms = ms;
+        self.part_target_ticks = u64::from(ms) * timescale / MILLIS_PER_SEC;
+        self.part_trigger_ticks = frames * lo;
+    }
+
     /// Whether emitting a part now would drain every anchor sample of a segment
     /// that is already long enough to close at its next keyframe. If that
     /// keyframe is the very next anchor sample, the segment's final part would
@@ -1542,6 +1602,80 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
     // the part target is still carried as its own part and the drain advances.
     end
 }
+const MILLIS_PER_SEC: u64 = 1000;
+
+const PERCENT_SCALE: u64 = 100;
+
+/// RFC 8216bis §4.4.4.9: a non-terminal Partial Segment lasts at least this
+/// percentage of the Part Target Duration.
+const PART_MIN_PERCENT: u64 = 85;
+
+/// Anchor frames measured before the frame grid is trusted.
+const FRAME_PROBE_FRAMES: u32 = 8;
+
+/// Anchor samples examined for those frames before the measurement is
+/// abandoned (a stream whose samples carry no usable duration).
+const FRAME_PROBE_GIVE_UP: u32 = 16;
+
+#[derive(Debug, Clone, Copy)]
+struct FrameGrid {
+    shortest: u64,
+    longest: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum FrameProbe {
+    #[default]
+    Idle,
+    Measuring {
+        seen: u32,
+        frames: u32,
+        shortest: u64,
+        longest: u64,
+    },
+    Done,
+}
+
+impl FrameProbe {
+    fn is_measuring(&self) -> bool {
+        matches!(self, Self::Idle | Self::Measuring { .. })
+    }
+
+    fn observe(&mut self, elapsed: u64) -> Option<FrameGrid> {
+        let (mut seen, mut frames, mut shortest, mut longest) = match *self {
+            Self::Idle => (0, 0, u64::MAX, 0),
+            Self::Measuring {
+                seen,
+                frames,
+                shortest,
+                longest,
+            } => (seen, frames, shortest, longest),
+            Self::Done => return None,
+        };
+        seen += 1;
+        if elapsed > 0 {
+            frames += 1;
+            shortest = shortest.min(elapsed);
+            longest = longest.max(elapsed);
+        }
+        if frames >= FRAME_PROBE_FRAMES {
+            *self = Self::Done;
+            return Some(FrameGrid { shortest, longest });
+        }
+        if seen >= FRAME_PROBE_GIVE_UP {
+            *self = Self::Done;
+            return None;
+        }
+        *self = Self::Measuring {
+            seen,
+            frames,
+            shortest,
+            longest,
+        };
+        None
+    }
+}
+
 fn ticks_to_i64(ticks: u64) -> i64 {
     i64::try_from(ticks).unwrap_or(i64::MAX)
 }
