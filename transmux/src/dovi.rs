@@ -461,8 +461,9 @@ pub fn find_video_stream_descriptor(es_info: &[u8]) -> Option<DoviVideoStreamDes
 
 /// Whether an ES_info loop carries the DOVI registration descriptor.
 pub fn has_registration_descriptor(es_info: &[u8]) -> bool {
-    descriptor_bodies(es_info)
-        .any(|(tag, body)| tag == REGISTRATION_DESCRIPTOR_TAG && body.starts_with(&DOVI_FORMAT_IDENTIFIER))
+    descriptor_bodies(es_info).any(|(tag, body)| {
+        tag == REGISTRATION_DESCRIPTOR_TAG && body.starts_with(&DOVI_FORMAT_IDENTIFIER)
+    })
 }
 
 fn descriptor_bodies(es_info: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {

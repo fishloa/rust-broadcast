@@ -119,8 +119,8 @@ impl TrackSpec {
     pub fn with_source(mut self, source_pid: Pid, es_info_descriptors: Vec<u8>) -> Self {
         self.source_pid = Some(source_pid);
         if matches!(self.config, CodecConfig::Hevc { .. }) {
-            self.dovi = crate::dovi::find_video_stream_descriptor(&es_info_descriptors)
-                .map(|d| d.record);
+            self.dovi =
+                crate::dovi::find_video_stream_descriptor(&es_info_descriptors).map(|d| d.record);
         }
         self.es_info_descriptors = es_info_descriptors;
         self

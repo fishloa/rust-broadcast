@@ -178,6 +178,7 @@ pub mod dash;
 #[cfg(feature = "std")]
 pub mod dash_parse;
 pub(crate) mod display_track;
+pub mod dovi;
 pub mod drm;
 pub mod dts;
 pub mod error;
@@ -186,7 +187,6 @@ pub mod flv;
 pub mod flv_stream;
 pub mod frag_offsets;
 pub mod h262;
-pub mod dovi;
 pub mod hdr;
 pub mod hevc_config;
 pub mod init_segment;

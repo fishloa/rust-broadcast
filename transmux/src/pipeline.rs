@@ -631,7 +631,11 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 codec_type: *b"avc1",
                 visual,
                 config: config.clone(),
-                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref(), t.hdr.as_ref(), None)?,
+                extra_boxes: avc_hevc_display_extra_boxes(
+                    t.display.as_ref(),
+                    t.hdr.as_ref(),
+                    None,
+                )?,
             });
             (
                 entry,
