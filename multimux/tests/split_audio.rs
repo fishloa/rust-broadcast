@@ -324,6 +324,7 @@ fn app_for(route: Arc<RouteHandle>) -> Router {
 
 impl Rig {
     async fn get(&self, path: &str) -> (StatusCode, Vec<u8>) {
+        let path = path.trim_start_matches("../");
         let resp = self
             .app
             .clone()
@@ -853,6 +854,22 @@ fn validator_available() -> bool {
         .unwrap_or(false)
 }
 
+fn resolve_against(playlist: &str, uri: &str) -> String {
+    let mut dir: Vec<&str> = playlist
+        .rsplit_once('/')
+        .map_or("", |(d, _)| d)
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut rest = uri;
+    while let Some(up) = rest.strip_prefix("../") {
+        dir.pop();
+        rest = up;
+    }
+    dir.push(rest);
+    dir.join("/")
+}
+
 /// Mirrors every playlist and resource of `rig` into a temp dir and runs
 /// Apple's `mediastreamvalidator` over its `master.m3u8`; returns the
 /// level-1 (MUST) findings as `(path, message)`.
@@ -881,16 +898,17 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
         if name.ends_with("master.m3u8") {
             continue;
         }
+        let resolve = |uri: &str| resolve_against(name, uri);
         for line in String::from_utf8(body).expect("utf8").lines() {
             if let Some(start) = line.find("URI=\"") {
                 let rest = &line[start + 5..];
                 if let Some(end) = rest.find('"') {
-                    uris.insert(rest[..end].to_string());
+                    uris.insert(resolve(&rest[..end]));
                 }
             }
             let t = line.trim();
             if !t.is_empty() && !t.starts_with('#') {
-                uris.insert(t.to_string());
+                uris.insert(resolve(t));
             }
         }
     }
@@ -922,6 +940,10 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
             f.0, f.1, f.2
         );
     }
+    assert!(
+        !findings.iter().any(|f| f.2.contains("exceeds PART-TARGET")),
+        "a Partial Segment exceeds its PART-TARGET (issue #1603)"
+    );
     findings
         .into_iter()
         .filter(|f| f.1 <= 1)
@@ -929,14 +951,29 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
         .collect()
 }
 
-/// Level-1 (MUST) validator messages split audio adds over the muxed route,
-/// each knowingly left open. (slice 4 closed the rendition-report gap.)
-const KNOWN_SPLIT_ONLY: &[&str] = &[];
+const FIXTURE_INTERLACED: &str = "Interlaced video detected - Must be progressive";
 
-/// The validator insists a file exists for an `EXT-X-GAP` segment, although
-/// RFC 8216 §4.3.2.7 says a gap segment carries no media and clients should
-/// not load it. Only tolerated when the audio playlist really has a gap.
-const GAP_FILE_FINDING: &str = "Media file does not exist at the specified path.";
+/// Level-1 validator messages the france2 split route is known to produce,
+/// each with the issue or fixture property behind it. Every entry must still
+/// be reported (the assertion below), so a fixed one cannot linger here.
+const TOLERATED: &[(&str, &str)] = &[
+    (
+        FIXTURE_INTERLACED,
+        "france2 is an interlaced 1080i capture; no issue",
+    ),
+    (
+        "Missing server control attribute",
+        "#1594: reported on the I-frame playlist for any server-control value, cleared only by dropping the tag (RFC 8216bis 6.2.4 requires it) or adding a part (4.4.4.9 says I-frame playlists SHOULD NOT have parts)",
+    ),
+    (
+        "Playlist vs partial segment duration mismatch",
+        "#1602: validator measures part duration from presentation times of a B-frame stream",
+    ),
+    (
+        "Framerate change without discontinuity tag detected",
+        "#1602: the fixture ends mid-GOP, so the last segment's presentation span is not its decode span",
+    ),
+];
 
 #[tokio::test]
 async fn split_audio_validator_findings() {
@@ -952,45 +989,29 @@ async fn split_audio_validator_findings() {
         &|_, _| true,
     );
     let split_findings = validator_must_findings(&split, 3).await;
-    let mut has_gap = false;
-    for i in 0..3 {
-        let text = String::from_utf8(split.ok(&format!("audio/a{i}.m3u8")).await).expect("utf8");
-        has_gap |= text.contains("#EXT-X-GAP");
-    }
-
-    let muxed = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
-    let muxed_messages: std::collections::BTreeSet<String> = validator_must_findings(&muxed, 0)
-        .await
-        .into_iter()
-        .map(|(_, m)| m)
-        .collect();
 
     let unexpected: Vec<_> = split_findings
         .iter()
-        .filter(|(_, m)| {
-            let tolerated = KNOWN_SPLIT_ONLY.contains(&m.as_str())
-                || muxed_messages.contains(m)
-                || (has_gap && m == GAP_FILE_FINDING);
-            !tolerated
-        })
+        .filter(|(_, m)| !TOLERATED.iter().any(|(known, _)| known == m))
         .collect();
     assert!(
-        !split_findings
-            .iter()
-            .any(|(_, m)| m.contains("Missing rendition report")
-                || m.contains("No rendition reports")),
-        "rendition report finding present: {split_findings:?}"
-    );
-    assert!(
-        !split_findings
-            .iter()
-            .any(|(_, m)| m.contains("Non-canonical language subtag")),
-        "non-canonical language subtag reported: {split_findings:?}"
-    );
-    assert!(
         unexpected.is_empty(),
-        "level-1 findings split audio introduces over the muxed route: {unexpected:?}"
+        "level-1 findings outside the tolerated list: {unexpected:?}"
     );
+    for (known, why) in TOLERATED {
+        assert!(
+            split_findings.iter().any(|(_, m)| m == known),
+            "tolerated finding {known:?} ({why}) no longer reported: remove it from TOLERATED"
+        );
+    }
+    for (path, message) in &split_findings {
+        assert!(
+            !path.contains("variants[2]")
+                && !path.contains("variants[3]")
+                && !path.contains("variants[4]"),
+            "audio playlist finding {message:?} at {path}"
+        );
+    }
 }
 
 fn derived_decls(n: usize) -> Vec<AudioRenditionDecl> {
@@ -1648,41 +1669,6 @@ async fn split_audio_blocking_reload_returns_when_the_matching_audio_part_exists
     );
 }
 
-#[tokio::test]
-async fn split_audio_validator_reports_no_new_part_findings_over_the_muxed_route() {
-    if !validator_available() {
-        eprintln!(
-            "SKIP split_audio_validator_reports_no_new_part_findings_over_the_muxed_route: \
-             `mediastreamvalidator` not on PATH"
-        );
-        return;
-    }
-    let sources = france2();
-    let split = rig(
-        &sources,
-        decls(&["fr", "qad", "qaa"]),
-        index_selectors(3),
-        &|_, _| true,
-    );
-    let muxed = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
-    let is_part_finding = |m: &str| m.to_ascii_lowercase().contains("part");
-    let muxed_part: std::collections::BTreeSet<String> = validator_must_findings(&muxed, 0)
-        .await
-        .into_iter()
-        .map(|(_, m)| m)
-        .filter(|m| is_part_finding(m))
-        .collect();
-    let new_part: Vec<_> = validator_must_findings(&split, 3)
-        .await
-        .into_iter()
-        .filter(|(_, m)| is_part_finding(m) && !muxed_part.contains(m))
-        .collect();
-    assert!(
-        new_part.is_empty(),
-        "level-1 part findings split audio adds over the muxed route: {new_part:?}"
-    );
-}
-
 // Issue #1597: the former 18 parts included one `DURATION=0` part per segment
 // (the audio left at each cut), which is now merged into the part before it.
 const NON_SPLIT_PARTS: usize = 15;
@@ -1758,4 +1744,215 @@ async fn split_audio_playlists_never_list_a_zero_duration_part_and_always_hint()
         at = next;
     }
     assert!(polls > 200, "only {polls} polls");
+}
+
+#[tokio::test]
+async fn audio_playlist_resource_uris_resolve_from_the_playlist_directory() {
+    let sources = france2();
+    let rig = rig(
+        &sources,
+        decls(&["fr", "qad", "qaa"]),
+        index_selectors(3),
+        &|_, _| true,
+    );
+    for i in 0..3 {
+        let playlist_uri = format!("audio/a{i}.m3u8");
+        let text = String::from_utf8(rig.ok(&playlist_uri).await).expect("utf8");
+        let mut checked = 0;
+        let mut after_gap = false;
+        for line in text.lines() {
+            if line.starts_with("#EXT-X-PRELOAD-HINT") {
+                continue;
+            }
+            let gap_marker = line == "#EXT-X-GAP";
+            let uri = if let Some(at) = line.find("URI=\"") {
+                let rest = &line[at + 5..];
+                &rest[..rest.find('"').expect("closing quote")]
+            } else if !line.starts_with('#') && !line.is_empty() {
+                line
+            } else {
+                after_gap |= gap_marker;
+                continue;
+            };
+            let gap_segment = after_gap && !line.starts_with('#');
+            if !line.starts_with('#') {
+                after_gap = false;
+            }
+            if uri.ends_with(".m3u8") {
+                continue;
+            }
+            let resolved = resolve_against(&playlist_uri, uri);
+            assert!(
+                !resolved.starts_with("audio/"),
+                "{playlist_uri}: {uri} resolves under audio/, where nothing is served"
+            );
+            let (status, _) = rig.get(&resolved).await;
+            assert!(
+                status == StatusCode::OK || (gap_segment && status == StatusCode::NOT_FOUND),
+                "{playlist_uri}: {uri} -> {resolved} is {status}"
+            );
+            checked += 1;
+        }
+        assert!(
+            checked > 5,
+            "{playlist_uri}: only {checked} resources checked"
+        );
+    }
+}
+
+fn directive(text: &str, tag: &str) -> Option<String> {
+    text.lines()
+        .find(|l| l.starts_with(tag))
+        .map(|l| l.to_string())
+}
+
+/// RFC 8216bis section 6.2.4: every Media Playlist of a Multivariant Playlist
+/// has the same Target Duration, and if any carries EXT-X-SERVER-CONTROL all
+/// carry the same attributes and values. Checked at every step of a live feed.
+#[tokio::test]
+async fn split_audio_playlists_share_target_duration_and_server_control_while_publishing() {
+    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let (start, end) = media_range_secs(&sources);
+    let mut at = start + BLOCKING_STEP_SECS;
+    let rig = aac_rig_live(&sources, at);
+    let mut compared = 0usize;
+    while at < end {
+        let media = String::from_utf8(rig.ok("media.m3u8").await).expect("utf8");
+        let mut others = vec![(
+            "audio/a0.m3u8",
+            String::from_utf8(rig.ok("audio/a0.m3u8").await).expect("utf8"),
+        )];
+        let (status, body) = rig.get("iframe.m3u8").await;
+        if status == StatusCode::OK {
+            others.push(("iframe.m3u8", String::from_utf8(body).expect("utf8")));
+        }
+        for (name, text) in &others {
+            for tag in ["#EXT-X-TARGETDURATION", "#EXT-X-SERVER-CONTROL"] {
+                assert_eq!(
+                    directive(&media, tag),
+                    directive(text, tag),
+                    "{name} differs from media.m3u8 in {tag} at {at:.2}s"
+                );
+            }
+            compared += 1;
+        }
+        let next = at + BLOCKING_STEP_SECS;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+    }
+    assert!(compared > 300, "only {compared} comparisons");
+}
+
+fn attr_secs(text: &str, tag: &str, attr: &str) -> f64 {
+    let line = directive(text, tag).unwrap_or_else(|| panic!("no {tag}"));
+    let key = format!("{attr}=");
+    let value = line
+        .split([':', ','])
+        .find_map(|f| f.strip_prefix(key.as_str()))
+        .unwrap_or_else(|| panic!("no {attr} in {line}"));
+    value.parse().expect("decimal seconds")
+}
+
+/// RFC 8216bis section 4.4.4.9: a Partial Segment lasts at most the Part
+/// Target Duration; section 4.4.3.8: with differing Part Target Durations
+/// PART-HOLD-BACK is at least three times the maximum; section 6.2.4: every
+/// Media Playlist carries the same EXT-X-SERVER-CONTROL. Audio frames do not
+/// divide the video part target, so the audio playlists carry their own
+/// PART-TARGET (a whole number of frames) and the hold-back follows the
+/// largest. Issue #1603.
+#[tokio::test]
+async fn every_part_is_within_its_own_playlists_part_target() {
+    let sources = france2();
+    let rig = rig(
+        &sources,
+        decls(&["fr", "qad", "qaa"]),
+        index_selectors(3),
+        &|_, _| true,
+    );
+    let mut names = vec!["media.m3u8".to_string()];
+    names.extend((0..3).map(|i| format!("audio/a{i}.m3u8")));
+    let mut texts = Vec::new();
+    for name in &names {
+        texts.push(String::from_utf8(rig.ok(name).await).expect("utf8"));
+    }
+    let targets: Vec<f64> = texts
+        .iter()
+        .map(|t| attr_secs(t, "#EXT-X-PART-INF", "PART-TARGET"))
+        .collect();
+    let largest = targets.iter().copied().fold(0.0, f64::max);
+    assert!(
+        targets[1..].iter().all(|t| *t > targets[0]),
+        "audio part targets {targets:?} should exceed the video's"
+    );
+    for (i, name) in names.iter().enumerate() {
+        let pl = rig.playlist(name).await;
+        let parts = all_parts(&pl);
+        assert!(parts.len() > 5, "{name}: {} parts", parts.len());
+        for part in parts {
+            assert!(
+                part.duration.get() <= targets[i] + 1e-9,
+                "{name}: {} lasts {}s, over its PART-TARGET {}s",
+                part.uri,
+                part.duration.get(),
+                targets[i]
+            );
+        }
+        let hold = attr_secs(&texts[i], "#EXT-X-SERVER-CONTROL", "PART-HOLD-BACK");
+        assert!(
+            hold + 1e-9 >= 3.0 * largest,
+            "{name}: PART-HOLD-BACK {hold} under 3 x {largest}"
+        );
+        assert_eq!(
+            directive(&texts[0], "#EXT-X-SERVER-CONTROL"),
+            directive(&texts[i], "#EXT-X-SERVER-CONTROL"),
+            "{name}: EXT-X-SERVER-CONTROL differs from media.m3u8"
+        );
+    }
+}
+
+fn trun_secs(part: &[u8], timescale: f64) -> f64 {
+    let moof = child(part, b"moof").expect("moof");
+    let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
+    let traf = moof.traf.first().expect("traf");
+    let default = traf.tfhd.default_sample_duration;
+    let ticks: u64 = traf
+        .trun
+        .iter()
+        .flat_map(|t| t.samples.iter())
+        .map(|s| u64::from(s.sample_duration.or(default).expect("sample duration")))
+        .sum();
+    ticks as f64 / timescale
+}
+
+/// Pins the premise of issue #1602: each declared video part DURATION is the
+/// sum of its trun sample durations, and the parts of a segment sum to its
+/// EXTINF, so the validator's part-duration finding is not a playlist error.
+#[tokio::test]
+async fn declared_video_part_durations_equal_the_trun_sums() {
+    let sources = france2();
+    let rig = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
+    let pl = rig.playlist("media.m3u8").await;
+    let mut checked = 0;
+    for seg in &pl.segments {
+        let mut declared = 0.0;
+        for part in &seg.parts {
+            let bytes = rig.ok(&part.uri).await;
+            let actual = trun_secs(&bytes, 90_000.0);
+            assert!(
+                (actual - part.duration.get()).abs() < 1e-6,
+                "{}: declared {} but trun sums to {actual}",
+                part.uri,
+                part.duration.get()
+            );
+            declared += part.duration.get();
+            checked += 1;
+        }
+        assert!(
+            (declared - seg.duration.get()).abs() < 1e-6,
+            "{}: parts sum to {declared}, EXTINF {}",
+            seg.uri,
+            seg.duration.get()
+        );
+    }
+    assert!(checked >= 10, "only {checked} parts checked");
 }

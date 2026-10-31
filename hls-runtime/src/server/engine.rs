@@ -74,7 +74,7 @@ use super::ids::Generation;
 use media_plane::ids::{PartIndex, SegmentSeq};
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 use transmux::TrackId;
@@ -1701,6 +1701,7 @@ impl HlsOriginBuilder {
             target_duration_secs,
             container: self.container,
             part_target_ms: self.part_target_ms,
+            part_target_override_ms: AtomicU32::new(0),
             media_sequence_offset: self.media_sequence_offset,
             instance: self.instance.unwrap_or_else(next_instance_token),
             arrival_clock: self.arrival_clock,
@@ -1773,6 +1774,9 @@ pub struct HlsOrigin {
     /// `#EXT-X-PRELOAD-HINT` at all, orthogonal to [`Self::container`] (issue
     /// #873).
     part_target_ms: Option<u32>,
+    /// Raises this origin's own `PART-TARGET` above `part_target_ms` (`0` =
+    /// no override); see [`Self::set_part_target_ms`].
+    part_target_override_ms: AtomicU32,
     /// Added to every shown Media Sequence Number (see
     /// [`HlsOriginBuilder::media_sequence_offset`]); validated at build so
     /// `offset + u32::MAX` fits a `u64`.
@@ -2478,6 +2482,35 @@ impl HlsOrigin {
         )
     }
 
+    /// Playlist-relative reference to a resource served at the stream root:
+    /// a playlist in a subdirectory (`audio/a0.m3u8`) must climb back to it
+    /// (RFC 8216bis §4.1, URIs resolve against the playlist's URI).
+    fn root_relative(&self, name: String) -> String {
+        let depth = self.playlist_uri.rfind('/').map_or(0, |i| {
+            self.playlist_uri[..i]
+                .split('/')
+                .filter(|s| !s.is_empty())
+                .count()
+        });
+        format!("{}{name}", "../".repeat(depth))
+    }
+
+    fn init_uri(&self, track_id: TrackId, generation: Generation) -> String {
+        self.root_relative(self.init_name(track_id, generation))
+    }
+
+    fn segment_uri(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> String {
+        self.root_relative(self.segment_name(track_id, seq, ext))
+    }
+
+    fn iframe_segment_uri(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> String {
+        self.root_relative(self.iframe_segment_name(track_id, seq, ext))
+    }
+
+    fn part_uri(&self, track_id: TrackId, seq: SegmentSeq, idx: PartIndex, ext: &str) -> String {
+        self.root_relative(self.part_name(track_id, seq, idx, ext))
+    }
+
     /// The offset added to every Media Sequence Number this origin shows (see
     /// [`HlsOriginBuilder::media_sequence_offset`]): the number in a segment's
     /// URI/playlist is this plus its origin sequence number
@@ -2541,7 +2574,7 @@ impl HlsOrigin {
     /// when that is under one second, else three. Zero when this origin is
     /// not low-latency.
     fn advance_part_limit(&self) -> u64 {
-        match self.part_target_ms {
+        match self.effective_part_target_ms() {
             None | Some(0) => 0,
             Some(ms) if u64::from(ms) < MILLIS_PER_SEC => {
                 (ADVANCE_PART_LIMIT_NUMERATOR * MILLIS_PER_SEC).div_ceil(u64::from(ms))
@@ -2555,6 +2588,46 @@ impl HlsOrigin {
     /// degradation count (RFC 8216 §4.3.3.1).
     pub fn target_duration_violations(&self) -> u64 {
         self.target_duration_violations.load(Ordering::Relaxed)
+    }
+
+    /// Raise this origin's `PART-TARGET` to `ms` when that exceeds the
+    /// configured part target. An audio rendition whose frames do not divide
+    /// the part target needs a Part Target Duration of a whole number of
+    /// frames, because RFC 8216bis §4.4.4.9 requires every Partial Segment to
+    /// be no longer than it. Has no effect on a classic-HLS origin.
+    pub fn set_part_target_ms(&self, ms: u32) {
+        self.part_target_override_ms.store(ms, Ordering::Relaxed);
+    }
+
+    fn effective_part_target_ms(&self) -> Option<u32> {
+        self.part_target_ms
+            .map(|base| base.max(self.part_target_override_ms.load(Ordering::Relaxed)))
+    }
+
+    /// The largest Part Target Duration across this origin and its sibling
+    /// renditions: the `PART-HOLD-BACK` every playlist carries is three
+    /// times it (RFC 8216bis §4.4.3.8, §6.2.4).
+    fn max_part_target_ms(&self) -> Option<u32> {
+        let own = self.effective_part_target_ms()?;
+        let siblings = locked(&self.rendition_siblings).clone();
+        Some(
+            siblings
+                .iter()
+                .filter_map(|s| s.origin.upgrade())
+                .filter_map(|o| o.effective_part_target_ms())
+                .fold(own, u32::max),
+        )
+    }
+
+    fn part_timing(&self) -> Option<(DecimalSeconds, DecimalSeconds)> {
+        let part_target = self.effective_part_target_ms()?;
+        let hold_basis = self.max_part_target_ms().unwrap_or(part_target);
+        let part_target = DecimalSeconds::new(f64::from(part_target) / 1000.0)
+            .expect("u32 / 1000.0 is finite, >= 0");
+        let part_hold_back =
+            DecimalSeconds::new(f64::from(hold_basis) / 1000.0 * PART_HOLD_BACK_MULTIPLIER)
+                .expect("finite, >= 0 times a positive constant is finite, >= 0");
+        Some((part_target, part_hold_back))
     }
 
     /// Replace the sibling renditions whose live edge this origin reports.
@@ -2809,7 +2882,7 @@ impl HlsOrigin {
         by_index
             .values()
             .map(|p| PartSpec {
-                uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
+                uri: self.part_uri(track_id, p.segment_number, p.part_index, ext),
                 // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
                 duration: DecimalSeconds::new(p.duration.as_secs_f64())
                     .expect("Duration::as_secs_f64 is finite, >= 0"),
@@ -2957,7 +3030,7 @@ impl HlsOrigin {
         let fmp4 = self.container == Container::Fmp4;
         let map_for = |generation: Generation| {
             fmp4.then(|| MapTag {
-                uri: self.init_name(track_id, generation),
+                uri: self.init_uri(track_id, generation),
                 byte_range: None,
                 extra_attrs: Vec::new(),
             })
@@ -2973,7 +3046,7 @@ impl HlsOrigin {
                 let program_date_time = self.segment_pdt(s.sequence_number, s.start_ns);
                 MediaSegment {
                     map: map_for(s.init_gen),
-                    uri: self.segment_name(track_id, s.sequence_number, ext),
+                    uri: self.segment_uri(track_id, s.sequence_number, ext),
                     // `duration_secs` is always `Duration::as_secs_f64()`
                     // (issue #1140): a `std::time::Duration` can never be
                     // negative or non-finite.
@@ -3007,7 +3080,7 @@ impl HlsOrigin {
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
-                        uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
+                        uri: self.part_uri(track_id, p.segment_number, p.part_index, ext),
                         // `p.duration` is a `std::time::Duration`: always
                         // finite and non-negative (issue #1140).
                         duration: DecimalSeconds::new(p.duration.as_secs_f64())
@@ -3056,9 +3129,9 @@ impl HlsOrigin {
                 .max()
                 .map(PartIndex::saturating_next)
                 .unwrap_or(PartIndex::new(0));
-            Some(self.part_name(track_id, open_seq, next_idx, ext))
+            Some(self.part_uri(track_id, open_seq, next_idx, ext))
         } else if low_latency_enabled && any_closed_parts {
-            Some(self.part_name(track_id, open_seq.saturating_next(), PartIndex::new(0), ext))
+            Some(self.part_uri(track_id, open_seq.saturating_next(), PartIndex::new(0), ext))
         } else {
             None
         };
@@ -3101,7 +3174,7 @@ impl HlsOrigin {
             let generation = locked(&self.init).generation.max(Generation::new(1));
             extra_tags.push(format!(
                 "#EXT-X-MAP:URI=\"{}\"",
-                self.init_name(track_id, generation)
+                self.init_uri(track_id, generation)
             ));
         }
         for (idx, tags) in segment_dateranges.iter().enumerate() {
@@ -3114,14 +3187,7 @@ impl HlsOrigin {
                 extra_tags.push(tag.clone());
             }
         }
-        let low_latency = self.part_target_ms.map(|part_target_ms| {
-            // `part_target_ms: u32` / 1000.0 (issue #1140): always finite
-            // and non-negative, as is the product with the positive
-            // `PART_HOLD_BACK_MULTIPLIER` constant.
-            let part_target = DecimalSeconds::new(f64::from(part_target_ms) / 1000.0)
-                .expect("u32 / 1000.0 is finite, >= 0");
-            let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
-                .expect("finite, >= 0 times a positive constant is finite, >= 0");
+        let low_latency = self.part_timing().map(|(part_target, part_hold_back)| {
             LowLatencyConfig {
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),
@@ -3339,7 +3405,7 @@ impl HlsOrigin {
         let fmp4 = self.container == Container::Fmp4;
         let map_for = |generation: Generation| {
             fmp4.then(|| MapTag {
-                uri: self.init_name(track_id, generation),
+                uri: self.init_uri(track_id, generation),
                 byte_range: None,
                 extra_attrs: Vec::new(),
             })
@@ -3351,7 +3417,7 @@ impl HlsOrigin {
             .iter()
             .map(|(s, len)| MediaSegment {
                 map: map_for(s.init_gen),
-                uri: self.iframe_segment_name(
+                uri: self.iframe_segment_uri(
                     track_id,
                     s.sequence_number,
                     self.container.segment_extension(),
@@ -3368,11 +3434,7 @@ impl HlsOrigin {
             })
             .collect();
 
-        let low_latency = if let Some(part_target_ms) = self.part_target_ms {
-            let part_target = DecimalSeconds::new(f64::from(part_target_ms) / 1000.0)
-                .expect("u32 / 1000.0 is finite, >= 0");
-            let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
-                .expect("finite, >= 0 times a positive constant is finite, >= 0");
+        let low_latency = if let Some((part_target, part_hold_back)) = self.part_timing() {
             Some(broadcast_hls::LowLatencyConfig {
                 part_target: Some(part_target),
                 part_hold_back: Some(part_hold_back),

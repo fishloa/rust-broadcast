@@ -424,8 +424,12 @@ async fn pdt_validator_clean() {
         // media playlist to report (RFC 8216bis Appendix B.1); a report for the
         // I-frame playlist is rejected as "Unknown rendition report".
         ("No rendition reports in low-latency playlist", "#1595"),
-        // Issue #1594: reported on the I-frame playlist, which carries the same
-        // HOLD-BACK as the media playlist.
+        // Issue #1594: the validator reports this on a playlist without
+        // EXT-X-PART (here the I-frame playlist) whenever the primary has
+        // parts, for any EXT-X-SERVER-CONTROL value; dropping the tag silences
+        // it and so does a part tag. RFC 8216bis section 6.2.4 requires every
+        // Media Playlist to carry the same EXT-X-SERVER-CONTROL, and section
+        // 4.4.4.9 says I-frame playlists SHOULD NOT use Partial Segments.
         ("Missing server control attribute", "#1594"),
     ];
     for f in &findings {
