@@ -3920,6 +3920,16 @@ fn relative_playlist_uri(from: &str, to: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_segment_with_fewer_than_two_samples_has_no_measurable_frame_rate() {
+        assert_eq!(super::segment_frame_rate_millihertz(1, 6000, 90_000), None);
+        assert_eq!(
+            super::segment_frame_rate_millihertz(2, 6000, 90_000),
+            Some(30_000)
+        );
+        assert_eq!(super::segment_frame_rate_millihertz(2, 0, 90_000), None);
+    }
+
     use super::*;
     use media_plane::trunk::{EventAnchor, TrunkConfig};
     use std::time::{Duration, Instant};
