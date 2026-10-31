@@ -205,6 +205,9 @@ impl AudioFollower {
     }
 
     pub(super) fn push(&mut self, sample: Sample, leaders: &LeaderDurations) {
+        if self.precedes_origin(&sample) {
+            return;
+        }
         if self.origin.is_none() {
             if self.held.len() >= MAX_HELD_SAMPLES {
                 self.held.pop_front();
@@ -215,6 +218,15 @@ impl AudioFollower {
         self.push_now(sample);
         self.release_cuts(false);
         self.publish_ready(leaders);
+    }
+
+    fn precedes_origin(&self, sample: &Sample) -> bool {
+        match (self.origin, sample.dts) {
+            (Some((origin, origin_ts)), Some(dts)) => {
+                cmp_time(dts, self.timescale, origin, origin_ts).is_lt()
+            }
+            _ => false,
+        }
     }
 
     fn push_now(&mut self, sample: Sample) {

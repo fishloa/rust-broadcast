@@ -1831,3 +1831,79 @@ async fn audio_playlist_resource_uris_resolve_from_the_playlist_directory() {
         );
     }
 }
+
+fn directive(text: &str, tag: &str) -> Option<String> {
+    text.lines()
+        .find(|l| l.starts_with(tag))
+        .map(|l| l.to_string())
+}
+
+/// RFC 8216bis section 6.2.4: every Media Playlist of a Multivariant Playlist
+/// has the same Target Duration, and if any carries EXT-X-SERVER-CONTROL all
+/// carry the same attributes and values. Checked at every step of a live feed.
+#[tokio::test]
+async fn split_audio_playlists_share_target_duration_and_server_control_while_publishing() {
+    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let (start, end) = media_range_secs(&sources);
+    let mut at = start + BLOCKING_STEP_SECS;
+    let rig = aac_rig_live(&sources, at);
+    let mut compared = 0usize;
+    while at < end {
+        let media = String::from_utf8(rig.ok("media.m3u8").await).expect("utf8");
+        let mut others = vec![(
+            "audio/a0.m3u8",
+            String::from_utf8(rig.ok("audio/a0.m3u8").await).expect("utf8"),
+        )];
+        let (status, body) = rig.get("iframe.m3u8").await;
+        if status == StatusCode::OK {
+            others.push(("iframe.m3u8", String::from_utf8(body).expect("utf8")));
+        }
+        for (name, text) in &others {
+            for tag in ["#EXT-X-TARGETDURATION", "#EXT-X-SERVER-CONTROL"] {
+                assert_eq!(
+                    directive(&media, tag),
+                    directive(text, tag),
+                    "{name} differs from media.m3u8 in {tag} at {at:.2}s"
+                );
+            }
+            compared += 1;
+        }
+        let next = at + BLOCKING_STEP_SECS;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+    }
+    assert!(compared > 300, "only {compared} comparisons");
+}
+
+const EAC3_FRAME_SECS: f64 = 1536.0 / 48_000.0;
+
+/// RFC 8216bis section 4.4.4.9: a Partial Segment lasts at most the Part
+/// Target Duration. An audio part holds whole frames, so it may overshoot the
+/// video part boundary by less than one frame, but audio that precedes the
+/// shared origin (arriving after the first cut fixed it) must not be packed
+/// into the first part.
+#[tokio::test]
+async fn audio_parts_stay_within_one_frame_of_the_part_target() {
+    let sources = france2();
+    let rig = rig(
+        &sources,
+        decls(&["fr", "qad", "qaa"]),
+        index_selectors(3),
+        &|_, _| true,
+    );
+    let limit = f64::from(PART_TARGET_MS) / 1000.0 + EAC3_FRAME_SECS;
+    for i in 0..3 {
+        let name = format!("audio/a{i}.m3u8");
+        let pl = rig.playlist(&name).await;
+        let parts = all_parts(&pl);
+        assert!(parts.len() > 5, "{name}: {} parts", parts.len());
+        for part in parts {
+            assert!(
+                part.duration.get() <= limit + 1e-9,
+                "{name}: {} lasts {}s, over the {limit}s bound",
+                part.uri,
+                part.duration.get()
+            );
+        }
+    }
+}
