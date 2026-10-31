@@ -31,6 +31,7 @@ const BOX_HEADER: usize = 8;
 const VISUAL_ENTRY_PREFIX: usize = 78;
 const STSD_PREFIX: usize = 8;
 const CONTAINERS: [[u8; 4]; 6] = [*b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"stsd"];
+type EntryBoxes = Vec<([u8; 4], Vec<u8>)>;
 const MAX_MP4: usize = 64 * 1024 * 1024;
 
 fn ts_media(fixture: &str) -> Option<Media> {
@@ -59,7 +60,7 @@ fn children(mut data: &[u8]) -> Vec<([u8; 4], &[u8])> {
     out
 }
 
-fn sample_entry(file: &[u8]) -> ([u8; 4], Vec<([u8; 4], Vec<u8>)>) {
+fn sample_entry(file: &[u8]) -> ([u8; 4], EntryBoxes) {
     let mut level = children(file);
     for container in CONTAINERS {
         let body = level
@@ -208,13 +209,13 @@ fn non_dolby_vision_streams_carry_no_record() {
     assert!(payload(&boxes, DVCC_FOURCC).is_none() && payload(&boxes, DVVC_FOURCC).is_none());
 }
 
-fn init_for(fixture: &str) -> Option<([u8; 4], Vec<([u8; 4], Vec<u8>)>)> {
+fn init_for(fixture: &str) -> Option<([u8; 4], EntryBoxes)> {
     let media = ts_media(fixture)?;
     let init = build_init_segment(&[video(&media).spec.clone()], 1000).expect("init");
     Some(sample_entry(&init))
 }
 
-fn fixture_entry(fixture: &str) -> Option<([u8; 4], Vec<([u8; 4], Vec<u8>)>)> {
+fn fixture_entry(fixture: &str) -> Option<([u8; 4], EntryBoxes)> {
     let bytes = test_fixtures::require_bytes(fixture, "dovi")?;
     Some(sample_entry(&bytes))
 }

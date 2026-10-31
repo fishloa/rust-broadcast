@@ -1986,22 +1986,17 @@ impl HlsOrigin {
                 None
             };
             match transmux::rfc6381_codec_string(&spec.config) {
-                Ok(codec) => codecs.push(
-                    dolby_vision
-                        .as_ref()
-                        .map_or(codec, |dv| dv.codecs.clone()),
-                ),
+                Ok(codec) => {
+                    codecs.push(dolby_vision.as_ref().map_or(codec, |dv| dv.codecs.clone()))
+                }
                 Err(transmux::Error::UnsupportedCodec { .. }) => {}
                 Err(other) => return Err(other),
             }
             if !video_codecs_decided && is_video_codec(&spec.config) {
                 match transmux::rfc6381_codec_string(&spec.config) {
                     Ok(codec) => {
-                        video_codecs = Some(
-                            dolby_vision
-                                .as_ref()
-                                .map_or(codec, |dv| dv.codecs.clone()),
-                        )
+                        video_codecs =
+                            Some(dolby_vision.as_ref().map_or(codec, |dv| dv.codecs.clone()))
                     }
                     Err(transmux::Error::UnsupportedCodec { .. }) => {}
                     Err(other) => return Err(other),
