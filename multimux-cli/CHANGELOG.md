@@ -4,6 +4,10 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- The single-route quick start now sets the new `multimux` route fields explicitly (`ts_hls_cut`, `ts_hls_idr_fallback`, `declared_bandwidth_bps`, `audio_renditions`, `audio_rendition_sources`, `closed_caption_overrides`, `audio_profiles`, `subtitles`) at their `multimux` defaults, so the CLI builds against the new route model. No new flag; no change for `--config` routes.
+- Quick-start routes have `subtitles: true`, so DVB teletext subtitle pages are published as WebVTT renditions (`multimux` #1588).
+
 ## [0.11.0] - 2026-10-17
 ### Documentation
 - README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).

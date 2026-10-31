@@ -18,6 +18,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `challenge::parse_challenges` now returns `ParsedChallenges { challenges, errors }` instead of `Result<Vec<Challenge>>`: a malformed challenge, a duplicate parameter or a bad `resource_metadata` no longer discards the valid challenges around it. More than 16 challenges in one call records `Error::TooManyChallenges` and ignores the rest. The `token68` form (`Bearer abc123==`) stays unsupported by `http-auth` and is reported in `errors`.
 - `resource_metadata` must be an absolute `https` URL (RFC 9728 §3); `http:`, `file:` and `javascript:` are `Error::InvalidResourceMetadata`.
 
+## [0.5.0] - 2026-10-17
 ### Documentation
 - README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
 
