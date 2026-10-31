@@ -144,3 +144,45 @@ fn keys_survive_parse_render_parse() {
     assert_eq!(keys, again.segment_keys().unwrap());
     assert!(keys[0].is_some() && keys[2].is_some() && keys[3].is_none());
 }
+
+#[test]
+fn method_none_ends_a_non_identity_key_format() {
+    let p = MediaPlaylist::parse(&playlist(&[
+        (&[FAIRPLAY], "a.ts"),
+        (&[KEY_NONE], "b.ts"),
+        (&[], "c.ts"),
+    ]))
+    .unwrap();
+    let r = p.segment_key_results().unwrap();
+    assert_eq!(
+        r[0],
+        Err(Error::UnsupportedKeyFormat {
+            keyformat: "com.apple.streamingkeydelivery".to_string()
+        })
+    );
+    assert_eq!(r[1], Ok(None));
+    assert_eq!(r[2], Ok(None));
+}
+
+#[test]
+fn method_none_after_fairplay_leaves_following_segments_clear() {
+    let p = MediaPlaylist::parse(&playlist(&[
+        (&[FAIRPLAY, KEY_A], "a.ts"),
+        (&[KEY_NONE], "b.ts"),
+        (&[], "c.ts"),
+    ]))
+    .unwrap();
+    let keys = p.segment_keys().unwrap();
+    assert!(keys[0].is_some());
+    assert_eq!(&keys[1..], &[None, None]);
+}
+
+#[test]
+fn clear_segments_after_fairplay_key_do_not_error() {
+    let text = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n\
+#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://k\",KEYFORMAT=\"com.apple.streamingkeydelivery\",KEYFORMATVERSIONS=\"1\"\n\
+#EXTINF:4,\na.ts\n#EXT-X-KEY:METHOD=NONE\n#EXTINF:4,\nb.ts\n#EXT-X-ENDLIST\n";
+    let p = MediaPlaylist::parse(text).unwrap();
+    let r = p.segment_key_results().unwrap();
+    assert_eq!(r[1], Ok(None));
+}

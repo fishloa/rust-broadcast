@@ -83,6 +83,15 @@ impl TeletextPage {
     fn number(&self) -> String {
         format!("{}{:02X}", self.magazine, self.page)
     }
+
+    fn identity(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.number(),
+            self.language,
+            if self.hearing_impaired { "sdh" } else { "std" }
+        )
+    }
 }
 
 fn is_subtitle(entry: &TeletextEntry) -> Option<bool> {
@@ -183,6 +192,8 @@ pub(crate) fn declarations(pages: &[TeletextPage]) -> Vec<SubtitleRenditionDecl>
                 subtitle_playlist_uri(slot),
             );
             decl.hearing_impaired = page.hearing_impaired;
+            let repeats_earlier = base[..slot].contains(&base[slot]);
+            decl.autoselect = !repeats_earlier;
             decl
         })
         .collect()
@@ -204,10 +215,33 @@ pub(crate) fn resolve(
         return Vec::new();
     }
     let decls = declarations(&pages);
-    let Some(servings) = route.declare_subtitles_for_trunk(trunk, &decls) else {
+    let identities: Vec<String> = pages.iter().map(TeletextPage::identity).collect();
+    let Some(servings) = route.declare_subtitles_for_trunk(trunk, &decls, &identities) else {
         return Vec::new();
     };
-    pages.into_iter().zip(servings).collect()
+    let mut taken = vec![false; servings.len()];
+    let mut paired = Vec::new();
+    for page in pages {
+        let identity = page.identity();
+        let slot = servings
+            .iter()
+            .enumerate()
+            .find(|(i, s)| !taken[*i] && s.identity == identity)
+            .map(|(i, _)| i);
+        match slot {
+            Some(i) => {
+                taken[i] = true;
+                paired.push((page, servings[i].clone()));
+            }
+            None => tracing::warn!(
+                route = route.name(),
+                page = %page.number(),
+                language = %page.language,
+                "teletext subtitle page has no declared rendition; not served"
+            ),
+        }
+    }
+    paired
 }
 
 /// Builds one follower per declared page.
@@ -866,5 +900,141 @@ mod tests {
         let clash = declarations(&[page("fr", false, 0x89), page("fr", false, 0x90)]);
         assert_eq!(clash[0].name, "fr 889");
         assert_eq!(clash[1].name, "fr 890");
+    }
+
+    const TELETEXT_FIXTURE: &str = "input/test-012.ts";
+
+    fn teletext_track() -> Option<TrackSpec> {
+        use broadcast_common::mux::Unpackage;
+        let path = test_fixtures::tsduck(TELETEXT_FIXTURE, "split_subtitle track change")?;
+        let bytes = std::fs::read(path).expect("read teletext fixture");
+        let media = transmux::ts_demux::TsDemux::new()
+            .unpackage(&bytes)
+            .expect("demux fixture");
+        media
+            .tracks
+            .into_iter()
+            .map(|t| t.spec)
+            .find(|spec| matches!(spec.config, CodecConfig::Data { .. }))
+    }
+
+    fn with_entries(base: &TrackSpec, entries: Vec<TeletextEntry>) -> TrackSpec {
+        use broadcast_common::Serialize;
+        let descriptor = dvb_si::descriptors::teletext::TeletextDescriptor { entries };
+        let mut bytes = vec![0u8; descriptor.serialized_len()];
+        descriptor.serialize_into(&mut bytes).expect("serialize");
+        let mut spec = base.clone();
+        spec.es_info_descriptors = bytes;
+        spec
+    }
+
+    fn fixture_entries(spec: &TrackSpec) -> Vec<TeletextEntry> {
+        parse_loop(&spec.es_info_descriptors)
+            .flatten()
+            .find_map(|d| match d {
+                AnyDescriptor::Teletext(t) => Some(t.entries),
+                _ => None,
+            })
+            .expect("fixture teletext descriptor")
+    }
+
+    fn rig() -> (RouteHandle, std::sync::Arc<Trunk>) {
+        use media_plane::trunk::TrunkConfig;
+        use std::num::NonZeroUsize;
+        let nz = |n| NonZeroUsize::new(n).expect("non-zero");
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let route = RouteHandle::new(2.0, 500, 4).with_subtitles(true);
+        route.publish_program(media_plane::ProgramId(0), std::sync::Arc::clone(&trunk));
+        (route, trunk)
+    }
+
+    fn served(pairs: &[(TeletextPage, SubtitleServing)]) -> Vec<(String, bool, String)> {
+        pairs
+            .iter()
+            .map(|(page, serving)| {
+                (
+                    page.number(),
+                    serving.decl.hearing_impaired,
+                    serving.decl.uri.clone(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_track_change_matches_pages_to_renditions_by_identity() {
+        let Some(base) = teletext_track() else {
+            return;
+        };
+        let entries = fixture_entries(&base);
+        assert_eq!(entries.len(), 2, "fixture lists an SDH and a plain page");
+        let (route, trunk) = rig();
+
+        let first = resolve(&route, &trunk, &[with_entries(&base, entries.clone())]);
+        let initial = served(&first);
+        assert_eq!(
+            initial,
+            [
+                ("888".to_string(), true, "subs-0.m3u8".to_string()),
+                ("889".to_string(), false, "subs-1.m3u8".to_string()),
+            ]
+        );
+
+        let reordered = vec![entries[1], entries[0]];
+        let after_reorder = resolve(&route, &trunk, &[with_entries(&base, reordered)]);
+        let mut by_page = served(&after_reorder);
+        by_page.sort();
+        assert_eq!(by_page, initial);
+
+        let dropped = vec![entries[1]];
+        let after_drop = resolve(&route, &trunk, &[with_entries(&base, dropped)]);
+        assert_eq!(
+            served(&after_drop),
+            [("889".to_string(), false, "subs-1.m3u8".to_string())]
+        );
+
+        let mut extra = entries[1];
+        extra.page_number = 0x90;
+        let after_add = resolve(
+            &route,
+            &trunk,
+            &[with_entries(&base, vec![entries[0], extra, entries[1]])],
+        );
+        assert_eq!(
+            served(&after_add),
+            [
+                ("888".to_string(), true, "subs-0.m3u8".to_string()),
+                ("889".to_string(), false, "subs-1.m3u8".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_page_that_changes_language_is_not_served_under_the_old_rendition() {
+        let Some(base) = teletext_track() else {
+            return;
+        };
+        let entries = fixture_entries(&base);
+        let (route, trunk) = rig();
+        resolve(&route, &trunk, &[with_entries(&base, entries.clone())]);
+        let mut german = entries[1];
+        german.language_code = dvb_si::text::LangCode(*b"deu");
+        let after = resolve(&route, &trunk, &[with_entries(&base, vec![german])]);
+        assert!(served(&after).is_empty());
+    }
+
+    #[test]
+    fn a_later_page_repeating_a_language_is_not_autoselect() {
+        let page = |sdh: bool, page: u8| TeletextPage {
+            source_track: TrackId::new(1),
+            language: "fr".into(),
+            hearing_impaired: sdh,
+            magazine: 8,
+            page,
+        };
+        let decls = declarations(&[page(false, 0x89), page(false, 0x90), page(true, 0x91)]);
+        assert!(decls[0].autoselect);
+        assert!(!decls[1].autoselect);
+        assert!(decls[2].autoselect);
     }
 }
