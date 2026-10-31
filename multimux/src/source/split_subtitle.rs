@@ -574,12 +574,20 @@ mod tests {
         }
     }
 
-    fn leaders(upto: u32) -> LeaderDurations {
-        (1..=upto).map(|n| (n, TARGET_SECS)).collect()
-    }
-
     fn core() -> Core<Scripted> {
         Core::new(Scripted::default(), TARGET_SECS)
+    }
+
+    /// The leader closes segment `msn` and cuts the first part of the next
+    /// one at `next_start`.
+    fn next_segment(
+        core: &mut Core<Scripted>,
+        leaders: &mut LeaderDurations,
+        msn: u32,
+        next_start: i64,
+    ) -> Vec<ReadySegment> {
+        leaders.insert(msn, TARGET_SECS);
+        core.on_cuts(&[cut(msn + 1, next_start)], leaders)
     }
 
     fn msns(ready: &[ReadySegment]) -> Vec<u32> {
@@ -594,19 +602,15 @@ mod tests {
         }
     }
 
-    fn cue_start_of(core: &Core<Scripted>) -> u64 {
-        core.decoder.open.as_ref().expect("open cue").0
-    }
-
     #[test]
     fn held_segment_is_released_after_one_target_duration() {
         let mut core = core();
-        let leaders = leaders(4);
+        let mut leaders = LeaderDurations::new();
         assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
         core.decoder.open = Some((100_000, "hello".into()));
         assert!(core.push_sample(190_000, &[], &leaders).is_empty());
 
-        let ready = core.on_cuts(&[cut(2, SEG_TICKS)], &leaders);
+        let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
         assert!(
             ready.is_empty(),
             "segment 1 is held while its cue is open: {:?}",
@@ -614,20 +618,13 @@ mod tests {
         );
         assert!(core.push_sample(370_000, &[], &leaders).is_empty());
 
-        let ready = core.on_cuts(&[cut(3, 2 * SEG_TICKS)], &leaders);
+        let ready = next_segment(&mut core, &mut leaders, 2, 2 * SEG_TICKS);
         assert_eq!(msns(&ready), [1], "published at the deadline");
         assert!(
-            ready[0].body.contains("00:00:01.111 --> 00:00:02.000\nhello"),
+            ready[0]
+                .body
+                .contains("00:00:01.111 --> 00:00:02.000\nhello"),
             "cue end clamped to the segment end:\n{}",
-            ready[0].body
-        );
-        assert_eq!(cue_start_of(&core), 100_000);
-
-        let ready = core.on_cuts(&[cut(4, 3 * SEG_TICKS)], &leaders);
-        assert_eq!(msns(&ready), [2]);
-        assert!(
-            ready[0].body.contains("00:00:01.111 --> 00:00:04.000\nhello"),
-            "the next segment repeats the cue with its original start:\n{}",
             ready[0].body
         );
         assert!(
@@ -635,23 +632,39 @@ mod tests {
                 .body
                 .starts_with("WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n")
         );
+
+        let ready = next_segment(&mut core, &mut leaders, 3, 3 * SEG_TICKS);
+        assert_eq!(msns(&ready), [2]);
+        assert!(
+            ready[0]
+                .body
+                .contains("00:00:01.111 --> 00:00:04.000\nhello"),
+            "the next segment repeats the cue with its original start:\n{}",
+            ready[0].body
+        );
     }
 
     #[test]
     fn held_segment_is_released_when_the_open_cue_closes() {
         let mut core = core();
-        let leaders = leaders(4);
+        let mut leaders = LeaderDurations::new();
         assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
         core.decoder.open = Some((100_000, "hello".into()));
         assert!(core.push_sample(190_000, &[], &leaders).is_empty());
-        assert!(core.on_cuts(&[cut(2, SEG_TICKS)], &leaders).is_empty());
+        assert!(next_segment(&mut core, &mut leaders, 1, SEG_TICKS).is_empty());
 
         core.decoder.open = None;
         core.decoder.closed.push(cue(100_000, 250_000, "hello"));
         let ready = core.push_sample(250_000, &[], &leaders);
-        assert_eq!(msns(&ready), [1], "published at the close, before the deadline");
+        assert_eq!(
+            msns(&ready),
+            [1],
+            "published at the close, before the deadline"
+        );
         assert!(
-            ready[0].body.contains("00:00:01.111 --> 00:00:02.777\nhello"),
+            ready[0]
+                .body
+                .contains("00:00:01.111 --> 00:00:02.777\nhello"),
             "the real end time is written:\n{}",
             ready[0].body
         );
@@ -660,10 +673,10 @@ mod tests {
     #[test]
     fn a_segment_without_cues_is_still_published() {
         let mut core = core();
-        let leaders = leaders(2);
+        let mut leaders = LeaderDurations::new();
         assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
         assert!(core.push_sample(100_000, &[], &leaders).is_empty());
-        let ready = core.on_cuts(&[cut(2, SEG_TICKS)], &leaders);
+        let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
         assert!(ready.is_empty(), "nothing proves the span is complete yet");
         let ready = core.push_sample(190_000, &[], &leaders);
         assert_eq!(msns(&ready), [1]);
@@ -671,38 +684,64 @@ mod tests {
             ready[0].body,
             "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n"
         );
+        assert!((ready[0].duration_secs - TARGET_SECS).abs() < 1e-9);
     }
 
     #[test]
     fn a_closed_cue_crossing_the_boundary_keeps_its_full_display_time() {
         let mut core = core();
-        let leaders = leaders(3);
+        let mut leaders = LeaderDurations::new();
         assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
         core.decoder.closed.push(cue(150_000, 250_000, "across"));
         assert!(core.push_sample(260_000, &[], &leaders).is_empty());
-        let ready = core.on_cuts(&[cut(2, SEG_TICKS)], &leaders);
+        let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
         assert_eq!(msns(&ready), [1]);
-        assert!(ready[0].body.contains("00:00:01.666 --> 00:00:02.777\nacross"));
-        let ready = core.on_cuts(&[cut(3, 2 * SEG_TICKS)], &leaders);
-        assert!(ready.is_empty());
+        assert!(
+            ready[0]
+                .body
+                .contains("00:00:01.666 --> 00:00:02.777\nacross")
+        );
+        assert!(next_segment(&mut core, &mut leaders, 2, 2 * SEG_TICKS).is_empty());
         let ready = core.push_sample(370_000, &[], &leaders);
         assert_eq!(msns(&ready), [2]);
-        assert!(ready[0].body.contains("00:00:01.666 --> 00:00:02.777\nacross"));
+        assert!(
+            ready[0]
+                .body
+                .contains("00:00:01.666 --> 00:00:02.777\nacross")
+        );
     }
 
     #[test]
     fn a_cue_before_the_origin_starts_at_zero() {
         let mut core = core();
-        let leaders = leaders(2);
-        let origin = 1_000_000;
+        let mut leaders = LeaderDurations::new();
+        let origin: i64 = 1_000_000;
         assert!(core.on_cuts(&[cut(1, origin)], &leaders).is_empty());
         core.decoder
             .closed
             .push(cue(origin as u64 - 90_000, origin as u64 + 45_000, "early"));
-        assert!(core.push_sample(origin as u64 + 190_000, &[], &leaders).is_empty());
-        let ready = core.on_cuts(&[cut(2, origin + SEG_TICKS)], &leaders);
+        assert!(
+            core.push_sample(origin as u64 + 190_000, &[], &leaders)
+                .is_empty()
+        );
+        let ready = next_segment(&mut core, &mut leaders, 1, origin + SEG_TICKS);
         assert_eq!(msns(&ready), [1]);
-        assert!(ready[0].body.contains("00:00:00.000 --> 00:00:00.500\nearly"));
+        assert!(
+            ready[0]
+                .body
+                .contains("00:00:00.000 --> 00:00:00.500\nearly")
+        );
+    }
+
+    #[test]
+    fn cue_text_is_escaped() {
+        let mut core = core();
+        let mut leaders = LeaderDurations::new();
+        assert!(core.on_cuts(&[cut(1, 0)], &leaders).is_empty());
+        core.decoder.closed.push(cue(1_000, 90_000, "a < b & c > d"));
+        assert!(core.push_sample(190_000, &[], &leaders).is_empty());
+        let ready = next_segment(&mut core, &mut leaders, 1, SEG_TICKS);
+        assert!(ready[0].body.contains("a &lt; b &amp; c &gt; d"));
     }
 
     #[test]
