@@ -107,7 +107,7 @@ test-streams/tsduck-test/input/test-002.ts: 1x92 2x94 3x93 4x93 5x449 6x5 7x13 8
 test-streams/tsduck-test/input/test-003.ts:
 test-streams/tsduck-test/input/test-010.ts: 1x56 2x60
 test-streams/tsduck-test/input/test-012.ts: 1x916
-test-streams/tsduck-test/input/test-013.ts:
+test-streams/tsduck-test/input/test-013.ts: 1x31494
 test-streams/tsduck-test/input/test-016.ts: 1x698 2x950 3x344 4x875 5x1289 6x1039 7x1291 8x3
 test-streams/tsduck-test/input/test-018.ts: 1x2 2x2 3x2
 test-streams/tsduck-test/input/test-021.ts:
@@ -298,7 +298,7 @@ test-streams/tsduck-test/reference/test-089/test-089.000000.ts: 1x99 2x96 3x105 
 test-streams/tsduck-test/reference/test-089/test-089.000001.ts: 1x102 2x78 3x42 4x78 5x35 6x12 7x11 8x11 9x23 10x11
 test-streams/tsduck-test/reference/test-089/test-089.000002.ts: 1x103 2x90 3x112 4x90 5x119 6x9 7x11 8x11 9x20 10x9
 test-streams/tsduck-test/reference/test-089/test-089.000003.ts: 1x64 2x48 3x70 4x60 5x70 6x8 7x6 8x6 9x13 10x6
-test-streams/tsduck-test/reference/test-089/test-089.align-000000.ts: 1x78 2x105 3x78 4x98 5x10 6x10 7x10 8x20 9x9
+test-streams/tsduck-test/reference/test-089/test-089.align-000000.ts: 1x102 2x78 3x105 4x78 5x98 6x10 7x10 8x10 9x20 10x9
 test-streams/tsduck-test/reference/test-089/test-089.align-000001.ts: 1x87 2x78 3x98 4x90 5x105 6x10 7x9 8x9 9x18 10x8
 test-streams/tsduck-test/reference/test-089/test-089.event-000000.ts: 1x99 2x96 3x105 4x90 5x112 6x9 7x10 8x10 9x20 10x7
 test-streams/tsduck-test/reference/test-089/test-089.event-000001.ts: 1x102 2x78 3x42 4x78 5x35 6x12 7x11 8x11 9x23 10x11

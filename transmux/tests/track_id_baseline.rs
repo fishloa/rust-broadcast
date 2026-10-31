@@ -15,6 +15,16 @@
 //!   swallow that frame; an AC-3-shaped candidate is now judged by its AC-3 CRC
 //!   and rejected. Plain AC-3 PIDs (stream_type 0x81 / AC-3 descriptor) are
 //!   unaffected (`audio_pes_straddle::sintel_plain_ac3_stays_ac3_*`).
+//! - `tsduck-test/input/test-013.ts` `(none)` -> `1x31494` and
+//!   `tsduck-test/reference/test-089/test-089.align-000000.ts` gains a new first track
+//!   (`1x102`, every later id +1) since #1326 (#1579). test-013's PMT declares AVC video
+//!   0x425, audio 0x426 and teletext 0x428; the capture carries data only on 0x428, and
+//!   the absent video head used to hold back every later track until `finish()`, so the
+//!   teletext track was never emitted. test-089 `align-000000` opens on an IDR and
+//!   carries 1920x1080 H.264 on PID 0x140 (ffprobe agrees), which the 512-AU skip used
+//!   to step over and drop; a video head now blocks until it resolves, so it is track 1.
+//!   Both are real PMT-declared elementary streams (ISO/IEC 13818-1 Table 2-33,
+//!   `elementary_PID`). Both captures are mirrored in `private/fixtures/tsduck/`.
 //!
 //! Regenerate (only for an intentional behaviour change):
 //! `TRACK_ID_BLESS=1 cargo test -p transmux --all-features --test track_id_baseline`
