@@ -52,11 +52,13 @@
 //! non-paired fields (H.264 §E.2.1,
 //! `private/specs-verified/mpeg/transmux/codec/h264-vui-bitstream-restriction.md`),
 //! while each coded field of a PAFF stream is its own access unit with its own
-//! RTP timestamp. This derivation counts access units, so a declared `N`
-//! understates the depth of field-coded content: the first violation raises
-//! [`crate::rtp_stream::RtpLossEvent::ReorderDepthExceeded`], `N` grows, and
-//! until it has grown enough some samples carry `DTS > PTS`. The `DTS` stays
-//! strictly increasing throughout. Field pairs are not merged.
+//! RTP timestamp (RFC 6184 §5.1 conveys one timestamp per coded picture). The
+//! derivation counts access units, so once a slice header with
+//! `field_pic_flag` = 1 is seen
+//! (`private/specs-verified/mpeg/transmux/codec/h264-slice-header.md`) a
+//! declared `N` frames is widened to `2N + 1` access units: up to `N` units of
+//! two fields each precede and follow any picture, plus its own sibling field
+//! when the pair is displayed in the opposite order to its decoding.
 //!
 //! # Failure handling
 //!
@@ -77,6 +79,12 @@ pub(crate) use crate::rtp_stream::MAX_REORDER_DEPTH;
 
 pub(crate) const PROBE_AUS: usize = 8;
 
+const AUS_PER_FIELD_PAIR: usize = 2;
+
+fn field_coded_depth(frames: usize) -> usize {
+    (frames * AUS_PER_FIELD_PAIR + 1).min(MAX_REORDER_DEPTH)
+}
+
 pub(crate) struct DepthExceeded {
     pub(crate) depth: usize,
     pub(crate) pts: i64,
@@ -90,6 +98,7 @@ pub(crate) struct DtsDeriver {
     window: Vec<i64>,
     last_dts: Option<i64>,
     anchored: bool,
+    field_coded: bool,
 }
 
 impl DtsDeriver {
@@ -101,12 +110,30 @@ impl DtsDeriver {
             window: Vec::new(),
             last_dts: None,
             anchored: false,
+            field_coded: false,
+        }
+    }
+
+    pub(crate) fn declare_field_coded(&mut self) {
+        if self.field_coded {
+            return;
+        }
+        self.field_coded = true;
+        if let Some(depth) = self.depth {
+            self.depth = Some(field_coded_depth(depth));
         }
     }
 
     pub(crate) fn set_declared(&mut self, declared: Option<usize>) {
         if self.seen == 0 && self.held.is_empty() {
-            self.depth = declared.map(|n| n.min(MAX_REORDER_DEPTH));
+            self.depth = declared.map(|n| {
+                let n = n.min(MAX_REORDER_DEPTH);
+                if self.field_coded {
+                    field_coded_depth(n)
+                } else {
+                    n
+                }
+            });
         }
     }
 
@@ -423,19 +450,22 @@ mod tests {
     }
 
     #[test]
-    fn field_coded_stream_understates_depth_but_keeps_dts_strictly_increasing() {
+    fn field_coded_stream_keeps_dts_at_or_below_pts_without_exceeding_depth() {
         let frame_order = [0i64, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11];
         let wire: Vec<i64> = frame_order
             .iter()
             .flat_map(|f| [f * D, f * D + D / 2])
             .collect();
-        let (out, exceeded) = run(Some(1), &wire, true);
-        assert_eq!(out.len(), wire.len());
-        assert!(!exceeded.is_empty(), "declared frame depth 1 is too small");
-        assert!(exceeded.iter().all(|e| e.depth >= 2));
-        for w in out.windows(2) {
-            assert!(w[0].dts < w[1].dts);
+        let mut d = DtsDeriver::new(Some(1));
+        d.declare_field_coded();
+        let mut out = Vec::new();
+        let mut exceeded = Vec::new();
+        for &p in &wire {
+            d.feed(sample(p), Some(D / 2), &mut out, &mut exceeded);
         }
-        assert!(out.iter().any(|s| s.dts > s.pts));
+        d.finish(Some(D / 2), &mut out, &mut exceeded);
+        assert_eq!(out.len(), wire.len());
+        assert!(exceeded.is_empty());
+        assert_invariants(&out);
     }
 }

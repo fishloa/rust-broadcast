@@ -248,7 +248,7 @@ fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
         .iter()
         .position(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
         .unwrap();
-    let hdr = media.tracks[idx].spec.hdr.clone().expect("hdr");
+    let hdr = media.tracks[idx].spec.hdr.expect("hdr");
     let mdcv = broadcast_common::Serialize::try_to_bytes(&hdr.mastering_display.unwrap()).unwrap();
     let clli =
         broadcast_common::Serialize::try_to_bytes(&hdr.content_light_level.unwrap()).unwrap();

@@ -185,6 +185,7 @@ use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
 use crate::rtp_dts::DtsDeriver;
+use crate::slice_header::{AvcParamSets, AvcPicture};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
@@ -799,6 +800,9 @@ struct TrackState {
     seq: SeqState,
     /// Decode-timestamp derivation for video (see [`crate::rtp_dts`]).
     dts: DtsDeriver,
+    /// SPS/PPS known for this track (config plus in-band), to read
+    /// `field_pic_flag` from slice headers.
+    param_sets: AvcParamSets,
 }
 
 /// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
@@ -951,6 +955,26 @@ fn declared_reorder_depth(kind: RtpMediaKind, config: &CodecConfig) -> Option<us
     }
 }
 
+fn seed_param_sets(param_sets: &mut AvcParamSets, config: &CodecConfig) {
+    if let CodecConfig::Avc { config, .. } = config {
+        for nal in config
+            .config
+            .sps
+            .iter()
+            .map(|n| &n.0)
+            .chain(config.config.pps.iter().map(|n| &n.0))
+        {
+            param_sets.observe_nal(nal);
+        }
+    }
+}
+
+fn sample_is_field_picture(param_sets: &mut AvcParamSets, sample: &Sample) -> bool {
+    crate::annexb::iter_length_prefixed_nals(&sample.data)
+        .map(|nals| matches!(param_sets.classify_nals(nals), AvcPicture::Field(_)))
+        .unwrap_or(false)
+}
+
 /// Run a track's freshly emitted samples through its decode-timestamp
 /// derivation (video only; see [`crate::rtp_dts`]).
 fn derive_dts(
@@ -967,6 +991,9 @@ fn derive_dts(
     let mut out = Vec::with_capacity(raw.len());
     let mut exceeded = Vec::new();
     for s in raw {
+        if sample_is_field_picture(&mut st.param_sets, &s) {
+            st.dts.declare_field_coded();
+        }
         st.dts.feed(s, period, &mut out, &mut exceeded);
     }
     if finish {
@@ -1016,6 +1043,8 @@ impl RtpStreamDepacketiser {
             .map(|t| {
                 let declared_duration = declared_au_duration(t.kind, &t.config, t.clock_rate);
                 let reorder_depth = declared_reorder_depth(t.kind, &t.config);
+                let mut param_sets = AvcParamSets::new();
+                seed_param_sets(&mut param_sets, &t.config);
                 (
                     t.track_id,
                     TrackState {
@@ -1039,6 +1068,7 @@ impl RtpStreamDepacketiser {
                         reorder_depth: t.reorder_depth,
                         seq: SeqState::default(),
                         dts: DtsDeriver::new(reorder_depth),
+                        param_sets,
                     },
                 )
             })
@@ -1066,6 +1096,7 @@ impl RtpStreamDepacketiser {
             st.declared_duration = declared_au_duration(st.kind, &config, st.clock_rate);
             st.dts
                 .set_declared(declared_reorder_depth(st.kind, &config));
+            seed_param_sets(&mut st.param_sets, &config);
             st.config = config;
         }
     }
