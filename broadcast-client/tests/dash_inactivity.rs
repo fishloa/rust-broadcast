@@ -91,9 +91,21 @@ impl Backend for Stall {
             return stall_after(&good, sent).expect("a 200 or 206 to stall");
         }
         match (resume, self.resumed, good) {
-            (true, Resumed::NewValidator, Answer::Full { status, mut headers, body }) => {
+            (
+                true,
+                Resumed::NewValidator,
+                Answer::Full {
+                    status,
+                    mut headers,
+                    body,
+                },
+            ) => {
                 headers.push(("ETag".into(), "\"sim-v2\"".into()));
-                Answer::Full { status, headers, body }
+                Answer::Full {
+                    status,
+                    headers,
+                    body,
+                }
             }
             (true, Resumed::ContentRangeOffByOne, Answer::Full { body, .. }) => {
                 let range = req.header("range").unwrap();
@@ -135,7 +147,10 @@ fn baseline(mpd: &str) -> DashSim {
 
 fn assert_same_media(got: &DashSim, want: &DashSim) {
     let (got, want) = (got.samples(), want.samples());
-    assert_eq!(got.keys().collect::<Vec<_>>(), want.keys().collect::<Vec<_>>());
+    assert_eq!(
+        got.keys().collect::<Vec<_>>(),
+        want.keys().collect::<Vec<_>>()
+    );
     for (track, want) in &want {
         let have = &got[track];
         assert_eq!(
@@ -244,7 +259,10 @@ fn an_origin_that_ignores_ranges_has_its_whole_body_used_once() {
     assert_same_media(&got, &want);
     let requests = media_requests(&got, SEGMENT);
     assert_eq!(requests.len(), 2);
-    assert!(header(requests[1], "range").is_some(), "the resume was asked for");
+    assert!(
+        header(requests[1], "range").is_some(),
+        "the resume was asked for"
+    );
     assert_eq!(requests[1].status, Some(200));
     assert_eq!(stall_modes(&got), vec![ResumeMode::Range]);
 }

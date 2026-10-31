@@ -18,13 +18,16 @@ fn the_default_config_opens() {
 #[test]
 fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
     type Mutate = fn(&mut Config);
-    let cases: [(&str, Mutate); 10] = [
+    let cases: [(&str, Mutate); 11] = [
         ("max_queued_events", |c| c.max_queued_events = 0),
         ("max_manifest_bytes", |c| c.max_manifest_bytes = 0),
         ("max_segment_bytes", |c| c.max_segment_bytes = 0),
         ("max_key_bytes", |c| c.max_key_bytes = 0),
         ("request_timeout_us", |c| c.request_timeout_us = 0),
         ("segment_timeout_us", |c| c.segment_timeout_us = 0),
+        ("segment_inactivity_timeout_us", |c| {
+            c.segment_inactivity_timeout_us = 0;
+        }),
         ("hls_key_timeout_us", |c| c.hls_key_timeout_us = 0),
         ("buffer", |c| c.buffer.track_silence_timeout_us = 0),
         ("timeline_jump.backward_us", |c| {
@@ -57,6 +60,7 @@ fn the_smallest_valid_values_open() {
         new_config.max_key_bytes = 1;
         new_config.request_timeout_us = 1;
         new_config.segment_timeout_us = 1;
+        new_config.segment_inactivity_timeout_us = 1;
         new_config.hls_key_timeout_us = 1;
         new_config.timeline_jump = Some(TimelineJumpConfig {
             backward_us: 1,
