@@ -188,6 +188,7 @@ pub mod flv_stream;
 pub mod frag_offsets;
 pub mod h262;
 pub mod hdr;
+pub mod hdr10plus;
 pub mod hevc_config;
 pub mod init_segment;
 pub mod interlace;
@@ -434,6 +435,10 @@ pub use dovi::{
     DoviVideoStreamDescriptor,
 };
 pub use hdr::{ChromaticityXy, ContentLightLevel, HdrStaticMetadata, MasteringDisplayColourVolume};
+pub use hdr10plus::{
+    AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
+    Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
+};
 #[cfg(feature = "std")]
 pub use smooth_parse::{
     C, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN, QualityLevel, SmoothManifest,

@@ -741,6 +741,13 @@ impl InitStore {
 const DV_BRAND_HDR10: &str = "db1p";
 /// Brand for an HLG-compatible base layer (id 4), same table.
 const DV_BRAND_HLG: &str = "db4h";
+/// `SUPPLEMENTAL-CODECS` compatibility brand announcing HDR10+ dynamic
+/// metadata (`private/specs-verified/hls/apple/hls-authoring-spec.md`, "The
+/// SUPPLEMENTAL-CODECS attribute": "You can indicate the presence of HDR10+
+/// metadata by adding a brand of 'cdm4'").
+const HDR10PLUS_BRAND: &str = "cdm4";
+/// ITU-T H.273 `transfer_characteristics` of SMPTE ST 2084 (PQ).
+const TRANSFER_PQ: u8 = 16;
 const MILLIHERTZ_PER_HZ: u128 = 1000;
 const SUPPLEMENTAL_CODECS_ATTR: &str = "SUPPLEMENTAL-CODECS";
 
@@ -785,6 +792,33 @@ fn dolby_vision_hls(spec: &transmux::TrackSpec) -> Option<DolbyVisionHls> {
         }),
         _ => None,
     }
+}
+
+/// `SUPPLEMENTAL-CODECS` value of an HDR10+ HEVC track: the track's own HEVC
+/// codec string plus the `cdm4` brand. Apple prints this form only for AV1
+/// (`av01.0.05M.10.0.112/cdm4`); applying the same rule to HEVC
+/// (`hvc1.2.4.L153.B0/cdm4`) is an INFERENCE from the rule, not an Apple
+/// example (`private/specs-verified/smpte/hdr10plus/hdr10plus-manifest-signalling.md`).
+/// Only a PQ stream is announced, since HDR10+ rides on an HDR10 base layer
+/// and HLS has no separate `VIDEO-RANGE` value for it.
+fn hdr10plus_supplemental_codecs(spec: &transmux::TrackSpec) -> Option<String> {
+    if !spec.hdr10plus || !matches!(spec.config, transmux::CodecConfig::Hevc { .. }) {
+        return None;
+    }
+    let transfer = spec
+        .display
+        .as_ref()?
+        .video_signal
+        .as_ref()?
+        .colour
+        .as_ref()?
+        .transfer
+        .code();
+    if transfer != TRANSFER_PQ {
+        return None;
+    }
+    let codec = transmux::rfc6381_codec_string(&spec.config).ok()?;
+    Some(format!("{codec}/{HDR10PLUS_BRAND}"))
 }
 
 fn is_video_codec(config: &transmux::CodecConfig) -> bool {
@@ -2040,6 +2074,8 @@ impl HlsOrigin {
                     supplemental_codecs = dv.supplemental_codecs;
                     video_range = Some(dv.video_range);
                     video_range_decided = true;
+                } else {
+                    supplemental_codecs = hdr10plus_supplemental_codecs(spec);
                 }
             }
             if !video_range_decided
@@ -2081,12 +2117,17 @@ impl HlsOrigin {
         Ok(())
     }
 
-    /// An init segment carries no PMT `ES_info`; keep what an earlier
+    /// An init segment carries no PMT `ES_info` and no HDR10+ marker (the
+    /// dynamic metadata lives in the samples); keep what an earlier
     /// [`Self::set_track_specs`] recorded for the same track so the language
-    /// and role of a split audio rendition survive the init re-derivation.
+    /// and role of a split audio rendition and the HDR10+ flag survive the init
+    /// re-derivation.
     fn with_known_es_info(&self, mut specs: Vec<transmux::TrackSpec>) -> Vec<transmux::TrackSpec> {
         let known = locked(&self.track_specs);
         for spec in &mut specs {
+            if let Some(prev) = known.iter().find(|k| k.track_id == spec.track_id) {
+                spec.hdr10plus |= prev.hdr10plus;
+            }
             if !spec.es_info_descriptors.is_empty() {
                 continue;
             }

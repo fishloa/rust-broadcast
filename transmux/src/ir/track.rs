@@ -51,6 +51,10 @@ pub struct TrackSpec {
     /// ([`TrackSpec::with_source`]) or from the `dvcC` / `dvvC` box of an fMP4
     /// sample entry. `None` for a stream that does not announce Dolby Vision.
     pub dovi: Option<DoviDecoderConfigurationRecord>,
+    /// Whether the first access unit of an HEVC track carries an HDR10+
+    /// (SMPTE ST 2094-40) T.35 prefix SEI, so the track holds dynamic
+    /// metadata on top of any [`hdr`](Self::hdr) static metadata.
+    pub hdr10plus: bool,
 }
 
 impl core::fmt::Debug for TrackSpec {
@@ -68,6 +72,9 @@ impl core::fmt::Debug for TrackSpec {
         }
         if let Some(dovi) = &self.dovi {
             d.field("dovi", dovi);
+        }
+        if self.hdr10plus {
+            d.field("hdr10plus", &self.hdr10plus);
         }
         d.finish()
     }
@@ -92,12 +99,19 @@ impl TrackSpec {
             display,
             hdr,
             dovi: None,
+            hdr10plus: false,
         }
     }
 
     /// Replace the auto-derived [`hdr`](Self::hdr).
     pub fn with_hdr(mut self, hdr: Option<HdrStaticMetadata>) -> Self {
         self.hdr = hdr;
+        self
+    }
+
+    /// Set whether the track carries HDR10+ dynamic metadata.
+    pub fn with_hdr10plus(mut self, hdr10plus: bool) -> Self {
+        self.hdr10plus = hdr10plus;
         self
     }
 

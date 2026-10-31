@@ -262,6 +262,11 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 if b.in_band {
                     tag_fmp4_inband_display(&mut b);
                 }
+                if matches!(b.spec.config, CodecConfig::Hevc { .. }) {
+                    b.spec.hdr10plus = b.samples.first().is_some_and(|s| {
+                        crate::hdr10plus::Hdr10PlusMetadata::sample_carries_hdr10plus(&s.data)
+                    });
+                }
                 Ok(Track {
                     spec: b.spec,
                     samples: b.samples,

@@ -121,6 +121,19 @@ const AUDIO_CHANNEL_SCHEME: &str = "urn:mpeg:dash:23003:3:audio_channel_configur
 /// `AdaptationSet` identified by `value`.
 pub const TRICKMODE_SCHEME: &str = "http://dashif.org/guidelines/trickmode";
 
+/// `schemeIdUri` of the DASH-IF HDR dynamic-metadata `SupplementalProperty`
+/// (`private/specs-verified/dash/dashif-iop-4.3/ch10-uhd-extensions.md` 10.3.2.4).
+pub const HDR_METADATA_SCHEME: &str = "http://dashif.org/metadata/hdr";
+/// `@value` of [`HDR_METADATA_SCHEME`] for SMPTE ST 2094-40 (HDR10+).
+pub const HDR_METADATA_SMPTE2094_40: &str = "SMPTE2094-40";
+/// `schemeIdUri` of the DVB-DASH HDR dynamic-mapping `SupplementalProperty`
+/// (ETSI TS 103 285, `private/specs-verified/dash/etsi-ts-103-285/ch05-video.md`).
+pub const DVB_HDR_DMI_SCHEME: &str = "urn:dvb:dash:hdr-dmi";
+/// `@value` of [`DVB_HDR_DMI_SCHEME`] for ST 2094-40 (TS 101 154 L.3.3.10.4.4).
+pub const DVB_HDR_DMI_ST2094_40: &str = "ST2094-40";
+/// Common prefix of the DVB-DASH profile URNs (`...:2014`, `...:2017`).
+pub const DVB_DASH_PROFILE_PREFIX: &str = "urn:dvb:dash:profile:dvb-dash:";
+
 /// MIME type carried on a video `AdaptationSet` (`video/mp4`).
 const MIME_VIDEO: &str = "video/mp4";
 /// MIME type carried on an audio `AdaptationSet` (`audio/mp4`).
@@ -499,6 +512,8 @@ struct ReprInfo {
     /// reduced. `None` when unknown (no VUI / unspecified idc) — no `@sar`.
     sar: Option<(u32, u32)>,
     frame_rate: Option<String>,
+    /// The HEVC track carries HDR10+ (ST 2094-40) dynamic metadata.
+    hdr10plus: bool,
     // Audio parameters.
     audio_sampling_rate: Option<u32>,
     audio_channels: Option<u16>,
@@ -645,6 +660,7 @@ impl DashPackager {
             height: None,
             sar: None,
             frame_rate: None,
+            hdr10plus: track.spec.hdr10plus && matches!(config, CodecConfig::Hevc { .. }),
             audio_sampling_rate: None,
             audio_channels: None,
         };
@@ -956,6 +972,35 @@ impl DashPackager {
                     ies_attrs.push(("value", v.clone()));
                 }
                 empty(w, "InbandEventStream", &ies_attrs);
+            }
+        }
+
+        // HDR10+ (ST 2094-40): DVB-DASH requires the dynamic metadata in all
+        // frames of all Representations of a set that signals it
+        // (ETSI TS 103 285 clause 5), so it is announced only when every
+        // Representation carries it.
+        if kind == MediaKind::Video && !set.is_empty() && set.iter().all(|r| r.hdr10plus) {
+            empty(
+                w,
+                "SupplementalProperty",
+                &[
+                    ("schemeIdUri", HDR_METADATA_SCHEME.to_string()),
+                    ("value", HDR_METADATA_SMPTE2094_40.to_string()),
+                ],
+            );
+            if self
+                .profiles
+                .split(',')
+                .any(|p| p.trim().starts_with(DVB_DASH_PROFILE_PREFIX))
+            {
+                empty(
+                    w,
+                    "SupplementalProperty",
+                    &[
+                        ("schemeIdUri", DVB_HDR_DMI_SCHEME.to_string()),
+                        ("value", DVB_HDR_DMI_ST2094_40.to_string()),
+                    ],
+                );
             }
         }
 
