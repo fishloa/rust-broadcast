@@ -607,6 +607,7 @@ impl Codec {
         if stream_type == STREAM_TYPE_PES_PRIVATE
             && crate::dovi::has_registration_descriptor(descriptors)
             && let Some(d) = crate::dovi::find_video_stream_descriptor(descriptors)
+            && d.record.bl_present
             && d.record.is_hevc_profile()
         {
             return Codec::Hevc;
@@ -3514,8 +3515,11 @@ fn finalize_probe(
                         }
                         let mut with = have;
                         with.absorb_hevc_sei_nal(nal);
-                        if with != have {
-                            hdr_sei.push(nal.to_vec());
+                        if with != have
+                            && let Ok(Some(declarative)) = with.to_hevc_declarative_sei_nal()
+                        {
+                            hdr_sei.clear();
+                            hdr_sei.push(declarative);
                         }
                     }
                     _ => {}
@@ -11601,6 +11605,41 @@ pub(crate) mod tests {
             Codec::Data(STREAM_TYPE_PES_PRIVATE)
                 .refine_with_descriptors(STREAM_TYPE_PES_PRIVATE, &subtitle_desc),
             Codec::Data(STREAM_TYPE_PES_PRIVATE)
+        );
+    }
+
+    fn dovi_es_info(profile_word: u16, flags: u16, dependency: Option<u16>) -> Vec<u8> {
+        let mut es = vec![0x05, 4, b'D', b'O', b'V', b'I'];
+        let mut body = vec![1u8, 0];
+        body.extend_from_slice(&((profile_word << 9) | flags).to_be_bytes());
+        if let Some(pid) = dependency {
+            body.extend_from_slice(&(pid << 3).to_be_bytes());
+        }
+        body.push(0x10);
+        es.push(crate::dovi::DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
+        es.push(body.len() as u8);
+        es.extend_from_slice(&body);
+        es
+    }
+
+    #[test]
+    fn dovi_hevc_reclassification_needs_base_layer_and_hevc_profile() {
+        let classify = |es: &[u8]| {
+            Codec::Data(STREAM_TYPE_PES_PRIVATE)
+                .refine_with_descriptors(STREAM_TYPE_PES_PRIVATE, es)
+        };
+        let bl_rpu = 0b101;
+        assert_eq!(classify(&dovi_es_info(8, bl_rpu, None)), Codec::Hevc);
+        assert_eq!(
+            classify(&dovi_es_info(10, bl_rpu, None)),
+            Codec::Data(STREAM_TYPE_PES_PRIVATE),
+            "profile 10 is not HEVC"
+        );
+        let el_rpu_only = 0b110;
+        assert_eq!(
+            classify(&dovi_es_info(7, el_rpu_only, Some(0x101))),
+            Codec::Data(STREAM_TYPE_PES_PRIVATE),
+            "an EL-only PID is not a standalone HEVC track"
         );
     }
 

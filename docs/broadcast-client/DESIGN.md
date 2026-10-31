@@ -275,7 +275,7 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
   aggregate control URL (RFC 2326 C.1.1), resolved the same way against the base (a foreign-authority one is
   ignored): PLAY, the keepalive OPTIONS and TEARDOWN use it instead of the request URL when present. Of the
   payload types a media line lists, the first whose own `a=rtpmap` and `a=fmtp` (matched by payload type)
-  describe H.264 or AAC is the one played, so a `rtx` payload type listed first does not hide the real one. An absolute control whose
+  describe H.264 or AAC is the one played (an H.264 payload type named by `a=rtpmap` with no `a=fmtp` is playable, its parameter sets being taken in-band, RFC 6184), so a `rtx` payload type listed first does not hide the real one. An absolute control whose
   scheme, host or port differs from the connection's skips that section. A media section the client cannot
   play (other than H.264 video and AAC audio, a missing or unusable fmtp) is skipped; an SDP with no playable
   section left, or unparsable SDP, is a failure. At most 16 sections are played (later ones are ignored).
@@ -290,8 +290,8 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
   (`Session::rtp_loss_count`) and the stream continues (`NonMonotonicTimestamp` is B-frame reordering, not
   loss, and is not counted). When a connection ends after PLAY the depayloader is flushed so the last access
   units are delivered.
-- Keepalive: `OPTIONS` on the aggregate control URL (else the request URI) at half the `Session` header's `timeout` clamped to 5 s..3600 s,
-  default 30 s, armed at the PLAY reply and re-armed at each send, driven by `poll(now_us)`. Any reply to it
+- Keepalive: `OPTIONS` on the aggregate control URL (else the request URI) at half the `Session` header's `timeout` capped at 3600 s (no floor: a floor could land at or after the server's expiry),
+  default 30 s (also for `timeout=0`), armed at the PLAY reply and re-armed at each send, driven by `poll(now_us)`. Any reply to it
   is ignored (405/501 are common); a reply while playing resets the auth replay budget, so keepalive
   challenges with rotating Digest nonces never exhaust it. `close()` sends `TEARDOWN` (only when a session id exists) and then
   `Close { conn }`; the same TEARDOWN-then-Close is used when the session aborts a connection itself (stall

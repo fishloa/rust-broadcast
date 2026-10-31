@@ -9,6 +9,8 @@ use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::rtpmap_clock_rate;
 use transmux::{TrackId, aac_config_from_fmtp, avc_config_from_fmtp};
 
+const AVC_CONFIGURATION_VERSION: u8 = 1;
+const AVC_LENGTH_SIZE_MINUS_ONE: u8 = 3;
 const UNKNOWN_DIMENSION: u16 = 0;
 const DEFAULT_CLOCK_RATE_HZ: u32 = 90_000;
 const CHANNEL_STEP: usize = 2;
@@ -162,11 +164,31 @@ fn supported(media: &Media) -> Option<(RtpMediaKind, CodecConfig, u32, bool)> {
         .find_map(|payload_type| supported_payload(media, payload_type))
 }
 
+fn pending_avc_config() -> CodecConfig {
+    CodecConfig::Avc {
+        config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
+            configuration_version: AVC_CONFIGURATION_VERSION,
+            profile_indication: 0,
+            profile_compatibility: 0,
+            level_indication: 0,
+            length_size_minus_one: AVC_LENGTH_SIZE_MINUS_ONE,
+            sps: Vec::new(),
+            pps: Vec::new(),
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: Vec::new(),
+        }),
+        width: UNKNOWN_DIMENSION,
+        height: UNKNOWN_DIMENSION,
+    }
+}
+
 fn supported_payload(
     media: &Media,
     payload_type: &str,
 ) -> Option<(RtpMediaKind, CodecConfig, u32, bool)> {
-    let fmtp = attribute_of_payload(media, "fmtp", payload_type)?;
+    let fmtp = attribute_of_payload(media, "fmtp", payload_type);
     let rtpmap = attribute_of_payload(media, "rtpmap", payload_type);
     let clock_rate = rtpmap
         .and_then(rtpmap_clock_rate)
@@ -178,6 +200,11 @@ fn supported_payload(
     };
     match media.media.as_str() {
         MEDIA_VIDEO if encoding_is(ENCODING_H264) => {
+            let Some(fmtp) = fmtp else {
+                let named_h264 = rtpmap.and_then(encoding_name).is_some();
+                return named_h264
+                    .then(|| (RtpMediaKind::H264, pending_avc_config(), clock_rate, false));
+            };
             if let Ok(avc) = avc_config_from_fmtp(fmtp) {
                 let (width, height) = avc
                     .config
@@ -196,42 +223,14 @@ fn supported_payload(
                     true,
                 ))
             } else if transmux::fmtp_param(fmtp, "sprop-parameter-sets").is_none() {
-                // RFC 6184 permits the parameter sets to be carried in-band, so
-                // an SDP that omits `sprop-parameter-sets` is still playable:
-                // accept the track with an empty (not-yet-known) avcC and fill
-                // it in from the first in-band SPS+PPS. The track is not
-                // announced until that happens (see the RTSP source).
-                Some((
-                    RtpMediaKind::H264,
-                    CodecConfig::Avc {
-                        config: transmux::AVCConfigurationBox::new(
-                            transmux::AVCDecoderConfigurationRecord {
-                                configuration_version: 1,
-                                profile_indication: 0,
-                                profile_compatibility: 0,
-                                level_indication: 0,
-                                length_size_minus_one: 3,
-                                sps: Vec::new(),
-                                pps: Vec::new(),
-                                chroma_format: None,
-                                bit_depth_luma_minus8: None,
-                                bit_depth_chroma_minus8: None,
-                                sps_ext: Vec::new(),
-                            },
-                        ),
-                        width: UNKNOWN_DIMENSION,
-                        height: UNKNOWN_DIMENSION,
-                    },
-                    clock_rate,
-                    false,
-                ))
+                Some((RtpMediaKind::H264, pending_avc_config(), clock_rate, false))
             } else {
                 None
             }
         }
         MEDIA_AUDIO if encoding_is(ENCODING_AAC) => Some((
             RtpMediaKind::Aac,
-            aac_config_from_fmtp(fmtp).ok()?,
+            aac_config_from_fmtp(fmtp?).ok()?,
             clock_rate,
             true,
         )),

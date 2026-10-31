@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RTSP: an H.264 track whose SDP has no `a=fmtp` line (RFC 6184 makes every parameter optional) plays, taking its parameter sets in-band like an `fmtp` without `sprop-parameter-sets`; it used to make DESCRIBE fail with nothing playable and reconnect forever.
+- RTSP: credentials survive a redirect that only differs by the default port (`rtsp://cam/` to `rtsp://cam:554/`, `rtsps` 322) instead of being dropped and failing with 401.
+- RTSP: the keepalive is sent at half the server's session timeout with no 5 s floor, so a `timeout=4` session is polled at 2 s, strictly before expiry; `timeout=0` is treated as undeclared.
+- A resumed `206` without `Content-Length`, and any ranged `206` without one, is held to the length its `Content-Range` states, so a clean close that falls short is a failed fetch rather than a truncated segment.
+- The received prefix of a stalled segment request is dropped when the segment is given up, leaves the live window or is no longer retried, so parked partial downloads cannot accumulate.
+- One typed `Content-Range` parser (the `headers` crate) serves both the byte-range check and the resume logic.
 - RTSP H.264 video samples carry a monotonic DTS no later than the PTS when the stream has B-frames (issue #1611; the derivation lives in `transmux::RtpStreamDepacketiser`). They used to carry `dts == pts` in decoding order, so a player releasing frames up to each sample's DTS output them out of order and estimated the frame rate from DTS steps as 6-8 fps instead of 25. Streams without B-frames are unchanged.
 - TS-over-HTTP: honour `Retry-After` on 429/503 responses (delta-seconds and HTTP-date, capped at 60 s) via the shared helper, matching HLS and DASH.
 
@@ -63,7 +69,7 @@ Initial release. A generic sans-IO client session for live and on-demand media: 
 - `Retry-After` in HTTP-date form (RFC 9110 5.6.7, all three forms) is honoured, counted from the `set_wall_clock` anchor, else from the response's `Date` header, clamped to 60 s; a delta-seconds value beyond `u64` is now clamped instead of ignored, and a signed value (`+5`) is no longer accepted as delta-seconds.
 - Chunking invariance: the `Sample` sequence and the position of every `Discontinuity` are identical for every read size.
 - Bounded event queue: transient `Status`/`Starved` coalesce, then the oldest `Sample`s are dropped (counted, each burst leaving one `Discontinuity`); tracks, errors, buffer events and terminal statuses are never dropped.
-- Optional `serde` feature (`broadcast-common`, `transmux`, `tshttp-runtime`, `buffering-runtime`); `test-seams` feature for the in-tree tests (not public API).
+- Optional `serde` feature (`broadcast-common`, `transmux`, `tshttp-runtime`, `buffering-runtime`); `__test-seams` feature for the in-tree tests (not public API; excluded from the docs.rs feature set).
 - Examples `live_loop` and `auth_wait`; lexical no-hand-roll guard, label-coverage drift guard and `#[non_exhaustive]` coverage guard.
 - DASH verification (design step W-g): a table-driven fault matrix (`tests/dash_matrix.rs`) of 45 fault kinds over six request classes (MPD, MPD refresh, MPD at a Period boundary, UTCTiming, init, `sidx` index, media segment) and eight presentation shapes (static timeline, template, list and on-demand `sidx`; live `$Number$`, timeline, `HEAD` UTC and multi-Period), transient and permanent, each cell asserting the fault was applied, plus host-clock skew and step faults and an alternate-BaseURL refusal; an exhaustiveness guard that fails when a fault kind or request class has no row; the fuzz target `dash_session` (a whole `Session` over DASH); `tests/no_clock_guard.rs` (no clock reads in the DASH path, `broadcast-client` and `dash-runtime` sources); and `tests/e2e_livesim2.rs`, 30 s of live DASH from DASH-IF livesim2 (pinned v1.15.2) over real HTTP in six shapes. The end-to-end skips loudly when livesim2 is absent and fails under `REQUIRE_LIVESIM2=1`, which the `dash-e2e` CI job sets.
 

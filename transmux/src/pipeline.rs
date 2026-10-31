@@ -668,11 +668,10 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             // is not SDR/HDR compliant
             // (private/specs-verified/dolby/vision/dolby-vision-streams-in-isobmff-v2.0-2017-12.md 8.1.2).
             let dovi = t.dovi.as_ref().filter(|d| d.is_single_layer());
-            let codec_type = match dovi.map(|d| d.sample_entry_kind()) {
-                Some(crate::dovi::DoviSampleEntryKind::DolbyVisionEntry) => {
-                    crate::dovi::DVH1_FOURCC
-                }
-                _ => *b"hvc1",
+            let codec_type = if dovi.is_some_and(|d| d.uses_dolby_hevc_entry()) {
+                crate::dovi::DVH1_FOURCC
+            } else {
+                *b"hvc1"
             };
             let entry = SampleEntryVariant::Hevc1(HEVCSampleEntry {
                 codec_type,

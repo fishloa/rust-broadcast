@@ -237,6 +237,44 @@ fn a_same_host_redirect_keeps_the_credentials() {
     assert!(redirected.header("authorization").is_some());
 }
 
+fn redirect_keeps_credentials(start: &str, target: &str) {
+    let verifier = Verifier::new(
+        AuthCredentials::Basic {
+            username: USER.to_string(),
+            password: PASSWORD.to_string(),
+        },
+        REALM,
+    );
+    let mut server = redirecting(302, target);
+    server.auth = Some(verifier);
+    let mut host = Host::new(start, Config::default(), server);
+    host.session
+        .set_credentials(Credentials::new(USER, PASSWORD))
+        .unwrap();
+    host.connect();
+    serve_normally(&mut host);
+    finish_connect(&mut host);
+    let redirected = host
+        .server
+        .log
+        .iter()
+        .rfind(|r| r.method == DESCRIBE)
+        .unwrap();
+    assert_eq!(redirected.uri, target);
+    assert!(
+        redirected.header("authorization").is_some(),
+        "{start} -> {target} is the same authority, credentials must follow"
+    );
+}
+
+#[test]
+fn a_redirect_between_implicit_and_explicit_default_port_keeps_the_credentials() {
+    redirect_keeps_credentials("rtsp://cam.test/live/", "rtsp://cam.test:554/live2/");
+    redirect_keeps_credentials("rtsp://cam.test:554/live/", "rtsp://cam.test/live2/");
+    redirect_keeps_credentials("rtsps://cam.test/live/", "rtsps://cam.test:322/live2/");
+    redirect_keeps_credentials("rtsps://cam.test:322/live/", "rtsps://cam.test/live2/");
+}
+
 #[test]
 fn a_connection_that_never_produced_media_is_not_a_discontinuity() {
     let mut server = Server::new(&fixture().sdp);

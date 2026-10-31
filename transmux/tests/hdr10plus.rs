@@ -818,3 +818,11 @@ fn a_three_window_payload_assembled_independently_decodes_to_those_fields() {
     );
     assert_eq!(meta.try_to_bytes().unwrap(), bytes);
 }
+
+#[test]
+fn sample_walk_rejects_a_maximal_nal_length_without_overflow() {
+    let sample = [0xFF, 0xFF, 0xFF, 0xFF, 0x4E, 0x01];
+    assert!(!transmux::Hdr10PlusMetadata::sample_carries_hdr10plus(
+        &sample
+    ));
+}

@@ -38,13 +38,17 @@ This is a README snippet. `examples/play_static.rs` and `examples/play_live.rs` 
 - **Every clock has a fallback and a failure.** `UTCTiming`, then the host clock, then the MPD response `Date`; no source at all is a typed fatal `ClockUnavailable`.
 - **Refuses what it cannot play.** Encrypted, MPEG-2 TS, WebM, subtitle and trick-mode sets are `TrackDropped`; a progressive MP4 served as a segment is fatal; with `cross_origin_urls = false` no URL the MPD derives may leave the MPD's origin.
 - **Bounded state.** A day of live playback leaves every internal collection at a constant size.
+- **Stable track identity.** `TrackId`s are keyed by media kind and AdaptationSet identity (`@id`, group, language, role) and allocated on first encounter, so a track that continues across Periods keeps its id and a Period that drops a kind never hands that id to a different kind later; ids are never recycled. Hosts must key state by the `TrackId` announced in `Output::Tracks`, not by position. Only the current and previous Period's identities are remembered (`StateSize::track_identities`), so a live presentation that renumbers AdaptationSet ids does not grow state.
+- **The origin pin covers the MPD's own redirects.** With `cross_origin_urls = false`, an MPD `<Location>` and the redirect `final_url` the host reports are adopted only when they stay on the MPD's origin (scheme, host, port), and never when the scheme is not `http`/`https`; a refused value falls back to the original MPD URL, so a hostile MPD cannot steer every refresh to a link-local address. BaseURL alternates on a foreign origin are dropped from the candidate list rather than failing over onto them, and `file:`/`data:` init, index and media URLs drop the Representation (`DropCause::UnusableUrl`, `Unsupported::DataUrl`).
+- **Live recovery.** A reset presentation refetches its init bytes, a transiently invalid timeline does not silence a track, a timeline `@t` one tick below the nominal end of the previous run is trusted, codec policy is chosen across AdaptationSets, a replan marks forward jumps with a `Discontinuity`, and early-segment bookkeeping is released when a segment is given up, skipped or ends a Period.
+- **Hand-built timelines cannot divide by zero.** `S@d = 0` is a typed `AddressError::ZeroSegmentDuration` from `TimelineIndex::build`, whether it came from the parser (already refused) or from a `TimelineEntry::new(0)` built in code.
 
 ## Validation
 
 - Real MPDs and media from ffmpeg 8.1 and GPAC 26.07, and two real DASH-IF livesim2 MPD refreshes, with MP4Box and ffprobe output next to each; every static fixture plays to samples equal to a direct `Fmp4Demux` of the same files.
 - The IOP v4.3 Table 10 worked example, a differential against `transmux`'s DASH generator, and a hostile-input corpus.
 - The `World` simulation (true UTC, a host clock with skew, drift and steps, an origin that decides availability from true time): clock ladder, refresh, Periods, failures, a 24-hour run and a 4 000-session randomised soak. Mutation tables for the core, the static client and the live client.
-- Through `broadcast-client`: a 45-fault matrix over eight presentation shapes, the fuzz target `dash_session`, and 30 s of live DASH from livesim2 (pinned v1.15.2) over real HTTP. The matrix found two defects fixed in this release (a duplicated Period `@id`, and a `425` retried past its window).
+- Through `broadcast-client`: a 45-fault matrix over eight presentation shapes, the fuzz target `dash_session`, and 30 s of live DASH from livesim2 (pinned v1.15.2) over real HTTP. The matrix found two defects fixed in this release (a duplicated Period `@id`, and a `425` retried past its window). The same client is exercised by `broadcast-client`'s DASH inactivity-timeout and `Range`-resume suites over the real fixtures.
 
 ## Known limits
 
@@ -55,7 +59,7 @@ This is a README snippet. `examples/play_static.rs` and `examples/play_live.rs` 
 
 ## Dependencies
 
-`broadcast-common` 10.0, `transmux` 0.28, `container-probe` (the minor that carries the `segment` module), `quick-xml`, `url`, `jiff`, `thiserror`. `std` only; MSRV 1.95.0.
+`broadcast-common` 10.0, `transmux` 0.28, `container-probe` (the minor that carries the `segment` module), `quick-xml`, `url`, `jiff`, `thiserror`. `std` only (no feature flags); MSRV 1.95.0.
 
 ## Release order
 

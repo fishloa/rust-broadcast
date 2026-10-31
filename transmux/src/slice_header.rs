@@ -369,8 +369,14 @@ impl AvcParamSets {
     /// make the access unit a [`AvcPicture::Frame`] (it already holds more
     /// than one picture, so it is a complete sample on its own).
     pub fn classify_au(&mut self, annexb_au: &[u8]) -> AvcPicture {
+        self.classify_nals(iter_annexb_nals(annexb_au))
+    }
+
+    /// [`Self::classify_au`] over an access unit already split into NAL units
+    /// (for example from a length-prefixed sample).
+    pub fn classify_nals<'a>(&mut self, nals: impl IntoIterator<Item = &'a [u8]>) -> AvcPicture {
         let mut result: Option<AvcPicture> = None;
-        for nal in iter_annexb_nals(annexb_au) {
+        for nal in nals {
             let t = nal.first().map(|b| b & NAL_TYPE_MASK);
             match t {
                 Some(NAL_SPS) | Some(NAL_PPS) => self.observe_nal(nal),

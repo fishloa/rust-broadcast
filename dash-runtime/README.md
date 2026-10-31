@@ -5,7 +5,7 @@ Sans-IO MPEG-DASH (ISO/IEC 23009-1): the MPD model and parser, segment addressin
 [![crates.io](https://img.shields.io/crates/v/dash-runtime.svg)](https://crates.io/crates/dash-runtime)
 [![docs.rs](https://docs.rs/dash-runtime/badge.svg)](https://docs.rs/dash-runtime)
 
-Not yet published: version 0.1.0 is the core (design step W-c in `docs/dash-runtime/DESIGN.md`), the static-presentation client (step W-d1) and the live client (step W-d2). Two hosts are built on it: `broadcast-client`'s DASH source (step W-e) and `multimux`'s `dash_pull` (step W-f), which keeps its tokio loop and media-plane mapping and sets `DashConfig::cross_origin_urls` to `false` unless a route opts in.
+Use it to build a DASH player or repackager without taking a dependency on an HTTP stack, an async runtime or a media pipeline: the host performs the HTTP requests this crate asks for, tells it the time, and gets back ordered, demuxed samples with the clock, availability, refresh, Period and failure handling already decided. `broadcast-client` plays DASH through it (`SourceKind::Dash`), and `multimux`'s `dash_pull` is built on it, keeping its own tokio loop and pinning `DashConfig::cross_origin_urls` to `false` unless a route opts in. Design notes, including every decision where the standard is silent or contradicts itself, are in [`docs/dash-runtime/DESIGN.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/dash-runtime/DESIGN.md).
 
 ## What it does / what it does not
 
@@ -44,9 +44,9 @@ Not yet published: version 0.1.0 is the core (design step W-c in `docs/dash-runt
 | | | Annex A.3 availability, Annex I.2 URL parameters | Full / minimal | Only `$querypart$` or no `@queryTemplate` |
 | DASH-IF IOP | v4.3 | 4.3.3.2 live timing, 4.7 UTC timing | Full | Table 10 worked example is a test; the last (short) segment follows 5.3.9.5.3, not the IOP's nominal duration |
 | ETSI TS 103 285 | 1.4.1 | 10.8.2 BaseURL `@dvb:priority` | Priority, rotation after 2 failures | `@weight` parsed, never used |
-| ISO/IEC 23009-1 | 2022 (5th ed.) | 5.3.2.4 continuity, A.9 playback across Periods | Continuity honoured, connectivity treated as a discontinuity | the client; `docs/specs/dash/23009-1/` |
+| ISO/IEC 23009-1 | 2022 (5th ed.) | 5.3.2.4 continuity, A.9 playback across Periods | Continuity honoured, connectivity treated as a discontinuity | the client; spec notes in `private/specs-verified/dash/docs-specs/23009-1/` |
 | ISO/IEC 14496-12 | 2022 | 8.8.4 `moof`/`mdat`, 8.16.3 `sidx` | Used | structural segment check via `container-probe`; `sidx` ranges via `transmux` |
-| W3C XML Schema Part 2 | 2004 | 3.2.7 `xs:dateTime` | Accepted subset | `docs/specs/dash/xs-datetime-subset.md` |
+| W3C XML Schema Part 2 | 2004 | 3.2.7 `xs:dateTime` | Accepted subset | `private/specs-verified/dash/docs-specs/xs-datetime-subset.md` |
 
 ## Quick start
 
@@ -147,7 +147,7 @@ None. The crate is `std` (the XML reader, `quick-xml`, needs it).
 
 ## Related crates
 
-`transmux` (the DASH generator this crate is tested against, `Fmp4Demux`, `sidx` and duration parsers it reuses), `container-probe` (the structural "is this body a media segment" check), `hls-runtime` (the HLS counterpart), `broadcast-client` (the client session that will drive this client).
+`transmux` (the DASH generator this crate is tested against, `Fmp4Demux`, `sidx` and duration parsers it reuses), `container-probe` (the structural "is this body a media segment" check), `hls-runtime` (the HLS counterpart), `broadcast-client` (the client session that drives this client).
 
 ## License
 

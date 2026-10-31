@@ -325,6 +325,7 @@ fn address_name(e: &AddressError) -> &'static str {
         AddressError::Overflow => "overflow",
         AddressError::IndexRequired => "index_required",
         AddressError::EmptySegmentUrl => "empty_segment_url",
+        AddressError::ZeroSegmentDuration => "zero_segment_duration",
     }
 }
 

@@ -835,6 +835,9 @@ impl DashSource {
     }
 
     fn after_class(&mut self, id: ResourceId, class: FailureClass, now: u64) {
+        if !keeps_parked_prefix(class) {
+            self.stash.discard(&Purpose::Resource(id));
+        }
         if let FailureClass::Retry { attempt, .. } = class {
             let wait = self
                 .backoff
@@ -879,7 +882,9 @@ impl DashSource {
             .collect();
         for id in due {
             self.retries.remove(&id);
-            self.client.retry(now, id);
+            if !self.client.retry(now, id) {
+                self.stash.discard(&Purpose::Resource(id));
+            }
         }
     }
 
@@ -1443,6 +1448,10 @@ fn mpd_reason(error: &MpdError) -> &'static str {
     }
 }
 
+fn keeps_parked_prefix(class: FailureClass) -> bool {
+    matches!(class, FailureClass::Retry { .. })
+}
+
 fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
     if ENCRYPTED_SAMPLE_ENTRIES.contains(&fourcc.as_str()) {
         ErrorKind::UnsupportedEncryption { method: fourcc }
@@ -1486,5 +1495,28 @@ fn master_selection(selection: &ManifestSelection) -> MasterSelection {
         variants,
         chosen: selection.chosen.unwrap_or(0),
         renditions,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dash_runtime::client::FailureKind;
+
+    #[test]
+    fn only_a_resource_awaiting_retry_keeps_its_parked_prefix() {
+        assert!(keeps_parked_prefix(FailureClass::Retry {
+            attempt: 1,
+            kind: FailureKind::Transport
+        }));
+        for class in [
+            FailureClass::GiveUp,
+            FailureClass::Expired,
+            FailureClass::SegmentSkipped,
+            FailureClass::EndTail,
+            FailureClass::NotYetAvailable { retry_at_us: 5 },
+        ] {
+            assert!(!keeps_parked_prefix(class), "{class:?}");
+        }
     }
 }

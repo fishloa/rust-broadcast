@@ -27,7 +27,7 @@ const STATUS_PARTIAL_CONTENT: u16 = 206;
 const MIN_STRONG_LAST_MODIFIED_AGE_US: i64 = 1_000_000;
 const MAX_PARKED: usize = 8;
 
-fn map_of(headers: &[(String, String)]) -> HeaderMap {
+pub(super) fn map_of(headers: &[(String, String)]) -> HeaderMap {
     let mut map = HeaderMap::new();
     for (name, value) in headers {
         if let (Ok(name), Ok(value)) = (
@@ -152,6 +152,11 @@ impl Basis {
             .collect()
     }
 
+    fn remaining(&self, received: u64) -> Option<u64> {
+        let first = self.start.checked_add(received)?;
+        self.end?.checked_sub(first)?.checked_add(1)
+    }
+
     fn accept(&mut self, status: u16, headers: &[(String, String)], received: u64) -> Resumed {
         match status {
             STATUS_OK => Resumed::Restart,
@@ -209,7 +214,10 @@ pub(crate) fn accept_head(
             .map_or(Resumed::Mismatch, |b| b.accept(status, headers, received));
         match outcome {
             Resumed::Continue => {
-                let suffix = map_of(headers).typed_get::<ContentLength>().map(|l| l.0);
+                let suffix = map_of(headers)
+                    .typed_get::<ContentLength>()
+                    .map(|l| l.0)
+                    .or_else(|| basis.as_ref().and_then(|b| b.remaining(received)));
                 body.expect_suffix(suffix);
                 return HeadOutcome::Accepted;
             }
@@ -270,6 +278,10 @@ impl<K: PartialEq> Stash<K> {
         let at = self.items.iter().position(|(k, _)| k == key)?;
         let (_, parked) = self.items.remove(at);
         (parked.url == url && parked.byte_range == byte_range).then_some(parked)
+    }
+
+    pub(crate) fn discard(&mut self, key: &K) {
+        self.items.retain(|(k, _)| k != key);
     }
 
     pub(crate) fn clear(&mut self) {
@@ -437,6 +449,16 @@ mod tests {
     }
 
     #[test]
+    fn a_resumed_206_without_content_length_is_truncated_by_its_content_range() {
+        let (head, mut body) = resumed(&[("Content-Range", "bytes 40-99/100")], 206, 40);
+        assert_eq!(head, HeadOutcome::Accepted);
+        body.push(&[1u8; 59]).unwrap();
+        assert!(body.is_truncated(), "one byte short of 40 + 60");
+        body.push(&[1u8]).unwrap();
+        assert!(!body.is_truncated());
+    }
+
+    #[test]
     fn a_206_that_does_not_continue_the_prefix_falls_back_with_an_empty_body() {
         for range in [
             "bytes 41-99/100",
@@ -503,6 +525,17 @@ mod tests {
         stash.put(1u8, parked("http://a/x"));
         assert!(stash.take(&1, "http://a/x", None).is_some());
         assert!(stash.take(&1, "http://a/x", None).is_none());
+    }
+
+    #[test]
+    fn a_discarded_prefix_is_gone_and_others_stay() {
+        let mut stash = Stash::new();
+        stash.put(1u8, parked("http://a/x"));
+        stash.put(2u8, parked("http://a/y"));
+        stash.discard(&1);
+        assert_eq!(stash.len(), 1);
+        assert!(stash.take(&1, "http://a/x", None).is_none());
+        assert!(stash.take(&2, "http://a/y", None).is_some());
     }
 
     #[test]

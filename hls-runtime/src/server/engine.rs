@@ -785,7 +785,7 @@ fn dolby_vision_hls(spec: &transmux::TrackSpec) -> Option<DolbyVisionHls> {
     if !record.is_single_layer() || !record.is_hevc_profile() {
         return None;
     }
-    let dv = record.codec_string();
+    let dv = record.codec_string()?;
     match record.bl_signal_compatibility_id {
         Ccid::None => Some(DolbyVisionHls {
             codecs: dv,

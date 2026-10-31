@@ -38,13 +38,13 @@ SDP reports its own drops). An SDP
 with nothing playable left fails: when a skipped section names an unsupported codec by `a=rtpmap` (H.265,
 PCMU, ...) the failure is ONE fatal `ErrorKind::UnsupportedCodec { fourcc }` (the `rtpmap` encoding name) and
 the session goes silent instead of reconnecting; a section that names no codec, or a played codec with an
-unusable `a=fmtp`, or an SDP that does not parse, is an ordinary failed attempt (backoff and retry). At most
+unusable `a=fmtp` (an H.264 section with no `a=fmtp` at all is playable: the parameter sets arrive in-band, RFC 6184), or an SDP that does not parse, is an ordinary failed attempt (backoff and retry). At most
 16 sections are played; a SETUP reply that repeats or overlaps an earlier track's
 interleaved channels, or carries no `Transport`, fails the connection. `Event::Tracks` is
 emitted before the first sample of every connection, `Event::Sample { join: None }` per access
 unit, `Status::Establishing` on connect and `Status::Live` at the first sample. An `OPTIONS`
-keepalive is sent at half the server's `Session` `timeout` (clamped to 5 s..3600 s, 30 s when none
-is declared); a non-success reply to it is ignored. `Event::Discontinuity` is emitted only
+keepalive is sent at half the server's `Session` `timeout` (at most 3600 s, so always strictly before the
+server expires the session; 30 s when none, or `timeout=0`, is declared); a non-success reply to it is ignored. `Event::Discontinuity` is emitted only
 before the first sample of a connection that follows one that produced media (never for a connection
 that failed or was redirected before playing); the end of a connection that had played reports
 `Status::Reconnecting { attempt: 0 }` first. A session-level `a=control` is the URL of PLAY, the
