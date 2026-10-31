@@ -27,7 +27,7 @@ const STATUS_PARTIAL_CONTENT: u16 = 206;
 const MIN_STRONG_LAST_MODIFIED_AGE_US: i64 = 1_000_000;
 const MAX_PARKED: usize = 8;
 
-fn map_of(headers: &[(String, String)]) -> HeaderMap {
+pub(super) fn map_of(headers: &[(String, String)]) -> HeaderMap {
     let mut map = HeaderMap::new();
     for (name, value) in headers {
         if let (Ok(name), Ok(value)) = (
@@ -152,6 +152,11 @@ impl Basis {
             .collect()
     }
 
+    fn remaining(&self, received: u64) -> Option<u64> {
+        let first = self.start.checked_add(received)?;
+        self.end?.checked_sub(first)?.checked_add(1)
+    }
+
     fn accept(&mut self, status: u16, headers: &[(String, String)], received: u64) -> Resumed {
         match status {
             STATUS_OK => Resumed::Restart,
@@ -209,7 +214,10 @@ pub(crate) fn accept_head(
             .map_or(Resumed::Mismatch, |b| b.accept(status, headers, received));
         match outcome {
             Resumed::Continue => {
-                let suffix = map_of(headers).typed_get::<ContentLength>().map(|l| l.0);
+                let suffix = map_of(headers)
+                    .typed_get::<ContentLength>()
+                    .map(|l| l.0)
+                    .or_else(|| basis.as_ref().and_then(|b| b.remaining(received)));
                 body.expect_suffix(suffix);
                 return HeadOutcome::Accepted;
             }
@@ -434,6 +442,16 @@ mod tests {
         assert_eq!(head, HeadOutcome::Accepted);
         assert_eq!(body.len(), 40);
         let mut body = body;
+        body.push(&[1u8; 59]).unwrap();
+        assert!(body.is_truncated(), "one byte short of 40 + 60");
+        body.push(&[1u8]).unwrap();
+        assert!(!body.is_truncated());
+    }
+
+    #[test]
+    fn a_resumed_206_without_content_length_is_truncated_by_its_content_range() {
+        let (head, mut body) = resumed(&[("Content-Range", "bytes 40-99/100")], 206, 40);
+        assert_eq!(head, HeadOutcome::Accepted);
         body.push(&[1u8; 59]).unwrap();
         assert!(body.is_truncated(), "one byte short of 40 + 60");
         body.push(&[1u8]).unwrap();
