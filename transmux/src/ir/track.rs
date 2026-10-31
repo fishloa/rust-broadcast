@@ -8,9 +8,10 @@ use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use super::{CodecConfig, DisplayGeometry, ProgramNumber, Sample, TrackId};
+use crate::hdr::HdrStaticMetadata;
 
 /// A track's identity + codec config, used to build the init segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TrackSpec {
     /// Track ID (1-based, unique within the movie).
@@ -38,6 +39,29 @@ pub struct TrackSpec {
     /// carries the geometry of the new config. See
     /// [`DisplayGeometry::sample_aspect_ratio`].
     pub display: Option<DisplayGeometry>,
+    /// HDR10 static metadata (mastering display colour volume, content light
+    /// level) of an HEVC track: derived by [`TrackSpec::new`] from prefix SEI
+    /// NAL units carried in the `hvcC` record, or read from the `mdcv` /
+    /// `clli` boxes of an fMP4 sample entry. `None` when the stream carries
+    /// neither message.
+    pub hdr: Option<HdrStaticMetadata>,
+}
+
+impl core::fmt::Debug for TrackSpec {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("TrackSpec");
+        d.field("track_id", &self.track_id)
+            .field("timescale", &self.timescale)
+            .field("config", &self.config)
+            .field("source_pid", &self.source_pid)
+            .field("es_info_descriptors", &self.es_info_descriptors)
+            .field("program_number", &self.program_number)
+            .field("display", &self.display);
+        if let Some(hdr) = &self.hdr {
+            d.field("hdr", hdr);
+        }
+        d.finish()
+    }
 }
 
 impl TrackSpec {
@@ -45,6 +69,10 @@ impl TrackSpec {
     /// descriptors) — the common case for every non-TS demuxer/transform.
     pub fn new(track_id: TrackId, timescale: u32, config: CodecConfig) -> Self {
         let display = DisplayGeometry::from_codec_config(&config);
+        let hdr = match &config {
+            CodecConfig::Hevc { config, .. } => HdrStaticMetadata::from_hevc_record(&config.config),
+            _ => None,
+        };
         Self {
             track_id,
             timescale,
@@ -53,7 +81,14 @@ impl TrackSpec {
             es_info_descriptors: Vec::new(),
             program_number: None,
             display,
+            hdr,
         }
+    }
+
+    /// Replace the auto-derived [`hdr`](Self::hdr).
+    pub fn with_hdr(mut self, hdr: Option<HdrStaticMetadata>) -> Self {
+        self.hdr = hdr;
+        self
     }
 
     /// Replace the auto-derived [`display`](Self::display) (for a source that

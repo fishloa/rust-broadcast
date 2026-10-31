@@ -246,6 +246,7 @@ use crate::annexb::{annexb_to_length_prefixed, iter_annexb_nals};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::dts::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
+use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, PcrSample, Track};
 use crate::mp4esds::{
@@ -1415,6 +1416,7 @@ enum ConfigProbe {
         vps: Option<Vec<u8>>,
         sps: Option<Vec<u8>>,
         pps: Option<Vec<u8>>,
+        hdr_sei: Vec<Vec<u8>>,
     },
     Mpeg2Video,
     MpegAudio {
@@ -1446,6 +1448,7 @@ fn initial_probe(codec: Codec) -> ConfigProbe {
             vps: None,
             sps: None,
             pps: None,
+            hdr_sei: Vec::new(),
         },
         Codec::Mpeg2Video => ConfigProbe::Mpeg2Video,
         Codec::MpegAudio(is_mpeg2) => ConfigProbe::MpegAudio { is_mpeg2 },
@@ -3314,7 +3317,7 @@ fn seed_probe_parameter_sets(probe: &mut ConfigProbe, sets: &ParameterSets) {
             sps.clone_from(&sets.sps.current);
             pps.clone_from(&sets.pps.current);
         }
-        ConfigProbe::Hevc { vps, sps, pps } => {
+        ConfigProbe::Hevc { vps, sps, pps, .. } => {
             vps.clone_from(&sets.vps.current);
             sps.clone_from(&sets.sps.current);
             pps.clone_from(&sets.pps.current);
@@ -3467,7 +3470,12 @@ fn finalize_probe(
                 },
             ))
         }
-        ConfigProbe::Hevc { vps, sps, pps } => {
+        ConfigProbe::Hevc {
+            vps,
+            sps,
+            pps,
+            hdr_sei,
+        } => {
             // Accumulated across access units, exactly like the H.264 arm
             // above (r04-W47: only the newest access unit is scanned).
             for nal in iter_annexb_nals(latest) {
@@ -3489,6 +3497,17 @@ fn finalize_probe(
                             && parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
                     {
                         *pps = Some(nal.to_vec())
+                    }
+                    Some(HEVC_PREFIX_SEI_NUT) => {
+                        let mut have = HdrStaticMetadata::default();
+                        for kept in hdr_sei.iter() {
+                            have.absorb_hevc_sei_nal(kept);
+                        }
+                        let mut with = have;
+                        with.absorb_hevc_sei_nal(nal);
+                        if with != have {
+                            hdr_sei.push(nal.to_vec());
+                        }
                     }
                     _ => {}
                 }
@@ -3521,6 +3540,13 @@ fn finalize_probe(
                     true,
                     H265_NAL_PPS,
                     alloc::vec![HevcNalUnit::new(pps_nal)],
+                ));
+            }
+            if !hdr_sei.is_empty() {
+                arrays.push(HevcNalArray::new(
+                    false,
+                    HEVC_PREFIX_SEI_NUT,
+                    hdr_sei.iter().cloned().map(HevcNalUnit::new).collect(),
                 ));
             }
             let record = HEVCDecoderConfigurationRecord {

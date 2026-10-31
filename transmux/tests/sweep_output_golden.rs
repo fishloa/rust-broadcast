@@ -523,10 +523,12 @@ fn dash_mpd_output_is_unchanged() {
 // `PT2S` for both minBufferTime and mediaPresentationDuration, hevc a
 // `PT0.6S` that is unchanged); `dash_mpd_differs_from_pre_jiff_only_in_durations`
 // below proves the old hashes are reproduced exactly from the new output.
-const DASH_GOLDEN: &[u64] = &[0xd2dcfb26a908fc39, 0x5903eff510a8e03c, 0xa779291f14d039d8];
+const DASH_GOLDEN: &[u64] = &[0xd2dcfb26a908fc39, 0xe6e9e31487c71f4e, 0xa779291f14d039d8];
 
+/// The `ts/hevc/main.ts` entries of both tables were re-blessed when `rfc6381_hvc1`
+/// was fixed (decimal profile and level, issue #1428): `codecs` is the only change.
 /// The pre-W1-T hashes of the same three MPDs.
-const DASH_GOLDEN_PRE_JIFF: &[u64] = &[0xc52c2b56957ee88f, 0x0a897d11bfb559ec, 0xe7a3a19c6169f912];
+const DASH_GOLDEN_PRE_JIFF: &[u64] = &[0xc52c2b56957ee88f, 0x703b68283f20621e, 0xe7a3a19c6169f912];
 
 /// Putting the three shortened attribute spellings back to the old one-decimal
 /// form must reproduce the pre-jiff hashes bit for bit, so the ONLY change in
