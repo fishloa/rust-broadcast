@@ -2810,6 +2810,15 @@ fn parse_key_attributes(
             });
         }
     };
+    if method == EncryptionMethod::None && attrs.len() > 1 {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!(
+                "{tag} METHOD=NONE MUST NOT carry other attributes (RFC 8216bis §4.4.4.4)"
+            ),
+        });
+    }
     let uri = attrs.get("URI").cloned();
     let iv = match attrs.get("IV") {
         Some(v) => Some(parse_iv(v)?),
@@ -3780,10 +3789,12 @@ impl MasterPlaylist {
                 ",DEFAULT={}",
                 if m.default { "YES" } else { "NO" }
             ));
-            s.push_str(&format!(
-                ",AUTOSELECT={}",
-                if m.autoselect { "YES" } else { "NO" }
-            ));
+            if m.autoselect || !m.default {
+                s.push_str(&format!(
+                    ",AUTOSELECT={}",
+                    if m.autoselect { "YES" } else { "NO" }
+                ));
+            }
             if m.forced {
                 s.push_str(",FORCED=YES");
             } else if m.media_type == MediaType::Subtitles {
@@ -4024,13 +4035,6 @@ impl MasterPlaylist {
                     line: String::new(),
                     reason: "EXT-X-MEDIA CHANNELS MUST NOT be present unless TYPE is AUDIO"
                         .to_string(),
-                });
-            }
-            if m.default && !m.autoselect {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: "EXT-X-MEDIA AUTOSELECT MUST be YES when DEFAULT is YES".to_string(),
                 });
             }
             if let Some(uri) = &m.uri {
@@ -4525,7 +4529,8 @@ impl MasterPlaylist {
 
 /// Parse a `FRAME-RATE=<decimal-floating-point>` attribute value into an exact
 /// millihertz [`FrameRate`], rounding half-up to three decimal places without
-/// any floating-point arithmetic.
+/// any floating-point arithmetic; any number of fraction digits is accepted
+/// (RFC 8216bis §4.2 `decimal-floating-point` has no digit limit).
 fn parse_frame_rate(v: &str, line_no: usize, line: &str) -> Result<FrameRate> {
     let t = v.trim();
     if !is_valid_decimal_token(t, false) {
@@ -4539,74 +4544,21 @@ fn parse_frame_rate(v: &str, line_no: usize, line: &str) -> Result<FrameRate> {
         Some((i, f)) => (i, Some(f)),
         None => (t, None),
     };
-    let int_value: u128 = int_part.parse().map_err(|_| Error::HlsParse {
+    let out_of_range = || Error::HlsParse {
         line_no,
         line: line.to_string(),
-        reason: format!("FRAME-RATE value {v:?} is not a valid number"),
-    })?;
-    let (frac_value, frac_len): (u128, usize) = match frac_part {
-        Some(f) => (
-            f.parse().map_err(|_| Error::HlsParse {
-                line_no,
-                line: line.to_string(),
-                reason: format!("FRAME-RATE value {v:?} is not a valid number"),
-            })?,
-            f.len(),
-        ),
-        None => (0u128, 0usize),
+        reason: format!("FRAME-RATE value {v:?} is out of range"),
     };
-
-    // millihertz = round_half_up(1000 * (int + frac / 10^frac_len)).
-    // Computed entirely in integer arithmetic.
-    let scale: u128 = 10u128
-        .checked_pow(u32::try_from(frac_len).map_err(|_| Error::HlsParse {
-            line_no,
-            line: line.to_string(),
-            reason: format!("FRAME-RATE value {v:?} has too many fractional digits"),
-        })?)
-        .ok_or_else(|| Error::HlsParse {
-            line_no,
-            line: line.to_string(),
-            reason: format!("FRAME-RATE value {v:?} has too many fractional digits"),
-        })?;
-    // 1000 * int_part, checked.
-    let int_mh = int_value.checked_mul(1000).ok_or_else(|| Error::HlsParse {
-        line_no,
-        line: line.to_string(),
-        reason: format!("FRAME-RATE value {v:?} is out of range"),
-    })?;
-    // frac contribution: round_half_up(frac_value * 1000 / scale).
-    let frac_scaled = frac_value
+    let int_value: u32 = int_part.parse().map_err(|_| out_of_range())?;
+    let mut digits = frac_part.unwrap_or("").bytes().map(|b| u32::from(b - b'0'));
+    let mut next = || digits.next().unwrap_or(0);
+    let milli = next() * 100 + next() * 10 + next();
+    let round_up = u32::from(next() >= 5);
+    let total = int_value
         .checked_mul(1000)
-        .ok_or_else(|| Error::HlsParse {
-            line_no,
-            line: line.to_string(),
-            reason: format!("FRAME-RATE value {v:?} is out of range"),
-        })?;
-    let frac_mh = frac_scaled
-        .checked_add(scale / 2)
-        .ok_or_else(|| Error::HlsParse {
-            line_no,
-            line: line.to_string(),
-            reason: format!("FRAME-RATE value {v:?} is out of range"),
-        })?
-        .checked_div(scale)
-        .ok_or_else(|| Error::HlsParse {
-            line_no,
-            line: line.to_string(),
-            reason: format!("FRAME-RATE value {v:?} is not a valid number"),
-        })?;
-    let total = int_mh.checked_add(frac_mh).ok_or_else(|| Error::HlsParse {
-        line_no,
-        line: line.to_string(),
-        reason: format!("FRAME-RATE value {v:?} is out of range"),
-    })?;
-    let millihertz = u32::try_from(total).map_err(|_| Error::HlsParse {
-        line_no,
-        line: line.to_string(),
-        reason: format!("FRAME-RATE value {v:?} does not fit in u32 millihertz"),
-    })?;
-    Ok(FrameRate::from_millihertz(millihertz))
+        .and_then(|i| i.checked_add(milli + round_up))
+        .ok_or_else(out_of_range)?;
+    Ok(FrameRate::from_millihertz(total))
 }
 
 /// Parse a `RESOLUTION=<w>x<h>` attribute value.
@@ -4725,9 +4677,9 @@ fn parse_media_rendition(rest: &str, line_no: usize, line: &str) -> Result<Media
 
     // DEFAULT / AUTOSELECT
     let default = parse_yes_no(&attrs, "DEFAULT")?.unwrap_or(false);
-    let autoselect_present = attrs.contains_key("AUTOSELECT");
-    let autoselect = parse_yes_no(&attrs, "AUTOSELECT")?.unwrap_or(default);
-    if default && autoselect_present && !autoselect {
+    let autoselect_attr = parse_yes_no(&attrs, "AUTOSELECT")?;
+    let autoselect = autoselect_attr.unwrap_or(false);
+    if default && autoselect_attr == Some(false) {
         return Err(Error::HlsParse {
             line_no,
             line: line.to_string(),
