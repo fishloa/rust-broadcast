@@ -8,7 +8,7 @@ front-matter cruft, no parser-path guesses — just the spec, faithfully.
 
 Run (after extract_tables.py has populated <out>):
     python render_docs.py --tables out/si/tables --title "ETSI EN 300 468 v1.19.1 — DVB SI" \
-                          --pdf etsi_en_300_468_v01.19.01_dvb_si.pdf --o ../../dvb-si/docs/README.md
+                          --pdf etsi_en_300_468_v01.19.01_dvb_si.pdf --o ../../private/specs-verified/dvb/dvb-si/README.md
 """
 
 from __future__ import annotations

@@ -1,6 +1,3 @@
 # Citations that were already dangling before the private move (tools/check-private-map.py check 3).
 # file<TAB>cited path. May only shrink: fix or delete a citation, then delete its line.
-dvb-si/docs/enums/iso_13818_6/biop_object_kind.toml	docs/iso_13818_6_biop.md
-dvb-si/docs/enums/iso_13818_6/biop_tag.toml	docs/iso_13818_6_biop.md
 fixtures/hls/MANIFEST.md	ll-hls-runtime/docs/examples.md
-tools/gen-dvbsi-coverage.py	docs/COVERAGE.md

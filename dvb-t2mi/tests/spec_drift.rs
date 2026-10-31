@@ -20,6 +20,10 @@ use std::collections::BTreeSet;
 // ── tiny TOML parser ─────────────────────────────────────────────────────────
 
 /// Parse the spec_tables TOML format, returning `(value_u16, variant, spec)`.
+fn spec_toml(rel: &str) -> Option<String> {
+    test_fixtures::spec_string(&format!("dvb/dvb-t2mi/enums/{rel}"), "dvb-t2mi spec_drift")
+}
+
 fn parse_entries(toml: &str) -> Vec<(u16, String, String)> {
     let mut results = Vec::new();
     let mut cur_value: Option<u16> = None;
@@ -99,7 +103,10 @@ fn toml_set_u16(toml: &str) -> BTreeSet<(u16, String)> {
 
 #[test]
 fn packet_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_773/packet_type.toml");
+    let Some(toml) = spec_toml("ts_102_773/packet_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
@@ -130,7 +137,10 @@ fn packet_type_toml_matches_enum() {
 
 #[test]
 fn addressing_function_tag_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_773/addressing_function_tag.toml");
+    let Some(toml) = spec_toml("ts_102_773/addressing_function_tag.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
@@ -161,7 +171,10 @@ fn addressing_function_tag_toml_matches_enum() {
 
 #[test]
 fn bandwidth_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_773/bandwidth.toml");
+    let Some(toml) = spec_toml("ts_102_773/bandwidth.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
@@ -192,7 +205,10 @@ fn bandwidth_toml_matches_enum() {
 
 #[test]
 fn frequency_source_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_773/frequency_source.toml");
+    let Some(toml) = spec_toml("ts_102_773/frequency_source.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
@@ -223,7 +239,10 @@ fn frequency_source_toml_matches_enum() {
 
 #[test]
 fn s1_field_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_773/s1_field.toml");
+    let Some(toml) = spec_toml("ts_102_773/s1_field.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: S1Field is exhaustive over 3-bit domain; TryFromPrimitive
@@ -255,7 +274,10 @@ fn s1_field_toml_matches_enum() {
 
 #[test]
 fn subpart_variety_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/ts_102_773/subpart_variety.toml");
+    let Some(toml) = spec_toml("ts_102_773/subpart_variety.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let toml_set = toml_set_u16(toml);
 
     // u16 sweep over 0..=255 (all defined values fit in this range);
@@ -289,7 +311,10 @@ macro_rules! l1_drift_test {
     ($test_name:ident, $toml_file:literal, $enum_ty:ident, $domain:expr, $expected:expr, $reserved_pat:pat) => {
         #[test]
         fn $test_name() {
-            let toml = include_str!(concat!("../docs/enums/en_302_755/", $toml_file));
+            let Some(toml) = spec_toml(concat!("en_302_755/", $toml_file)) else {
+                return;
+            };
+            let toml = toml.as_str();
             let toml_set: BTreeSet<(u8, String)> = parse_entries(toml)
                 .iter()
                 .map(|(v, var, _)| (*v as u8, var.clone()))

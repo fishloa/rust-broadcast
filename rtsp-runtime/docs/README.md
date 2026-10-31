@@ -1,0 +1,1 @@
+Spec transcriptions, notes and registries for this crate live only in the private repository at `private/specs-verified/rtp/rtsp-runtime/` (old-path map: [`docs/specs/PRIVATE-MAP.md`](../../docs/specs/PRIVATE-MAP.md)).

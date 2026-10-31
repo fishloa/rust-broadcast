@@ -33,11 +33,15 @@ fn check_session_invariants(input: &str) -> SessionHeader {
     a
 }
 
-/// Every `Transport:` / `Session:` header in the RFC text (`docs/rfc2326.md`), with
-/// continuation lines joined (a header ends at a line not ending in `;` or `,`).
-fn rfc_headers(name: &str) -> Vec<String> {
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rfc2326.md"))
-        .expect("docs/rfc2326.md");
+/// Every `Transport:` / `Session:` header in the RFC text
+/// (`private/specs-verified/rtp/rtsp-runtime/rfc2326.md`), with continuation lines joined (a
+/// header ends at a line not ending in `;` or `,`). `None` after a loud skip when the private
+/// repo is absent.
+fn rfc_headers(name: &str) -> Option<Vec<String>> {
+    let text = test_fixtures::spec_string(
+        "rtp/rtsp-runtime/rfc2326.md",
+        "rtsp-runtime transport_session",
+    )?;
     let lines: Vec<&str> = text.lines().collect();
     let prefix = format!("{name}:");
     let mut out = Vec::new();
@@ -59,12 +63,14 @@ fn rfc_headers(name: &str) -> Vec<String> {
         }
         i += 1;
     }
-    out
+    Some(out)
 }
 
 #[test]
 fn every_transport_example_in_rfc_2326_parses_and_round_trips() {
-    let headers = rfc_headers("Transport");
+    let Some(headers) = rfc_headers("Transport") else {
+        return;
+    };
     assert!(
         headers.len() >= 25,
         "found {} Transport examples",
@@ -85,7 +91,9 @@ fn every_transport_example_in_rfc_2326_parses_and_round_trips() {
 
 #[test]
 fn every_session_example_in_rfc_2326_parses_and_round_trips() {
-    let headers = rfc_headers("Session");
+    let Some(headers) = rfc_headers("Session") else {
+        return;
+    };
     assert!(
         headers.len() >= 40,
         "found {} Session examples",

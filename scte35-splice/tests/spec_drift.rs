@@ -14,6 +14,13 @@ use std::collections::BTreeSet;
 // ── tiny TOML parser ─────────────────────────────────────────────────────────
 
 /// Parse the spec_tables TOML format, returning `(value, variant, spec)`.
+fn spec_toml(rel: &str) -> Option<String> {
+    test_fixtures::spec_string(
+        &format!("scte/scte35-splice/enums/{rel}"),
+        "scte35-splice spec_drift",
+    )
+}
+
 fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
     let mut results = Vec::new();
     let mut cur_value: Option<u8> = None;
@@ -77,7 +84,10 @@ fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
 
 #[test]
 fn segmentation_type_id_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/scte_35/segmentation_type_id.toml");
+    let Some(toml) = spec_toml("scte_35/segmentation_type_id.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -115,7 +125,10 @@ fn segmentation_type_id_toml_matches_enum() {
 
 #[test]
 fn device_restrictions_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/scte_35/device_restrictions.toml");
+    let Some(toml) = spec_toml("scte_35/device_restrictions.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -150,7 +163,10 @@ fn device_restrictions_toml_matches_enum() {
 
 #[test]
 fn segmentation_upid_type_toml_matches_enum() {
-    let toml = include_str!("../docs/enums/scte_35/segmentation_upid_type.toml");
+    let Some(toml) = spec_toml("scte_35/segmentation_upid_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -188,7 +204,10 @@ fn segmentation_upid_type_toml_matches_enum() {
 
 #[test]
 fn splice_command_type_toml_matches_dispatch() {
-    let toml = include_str!("../docs/enums/scte_35/splice_command_type.toml");
+    let Some(toml) = spec_toml("scte_35/splice_command_type.toml") else {
+        return;
+    };
+    let toml = toml.as_str();
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
