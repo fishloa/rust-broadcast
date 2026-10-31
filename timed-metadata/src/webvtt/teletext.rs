@@ -2,8 +2,9 @@
 //!
 //! Cite: `docs/teletext-subtitles.md` (curated transcription of the sections
 //! used here: §7.1 packet structure, §8.1/§8.2 FEC, §9.3.1 page header,
-//! Table 2 control bits, §15.1-15.2 national option selection, Table 35/36
-//! Latin G0 character set).
+//! Table 2 control bits, §12.2 spacing attributes, §15.1-15.2 national option
+//! selection, Table 35/36 Latin G0 character set; the Table 36 reading is in
+//! `private/specs-verified/dvb/timed-metadata/teletext-national-options.md`).
 //!
 //! `dvb-vbi` carries the EN 301 775 VBI PES framing (`TeletextDataField`, a
 //! 42-byte opaque `txt_data_block`) but — by its own module docs — does not
@@ -21,13 +22,10 @@
 //! - [`NationalOption`] — the C12/C13/C14 national option sub-set selector
 //!   (§15.1, Table 32's first ["Latin 0", Level-1-ambiguous] group, the
 //!   interpretation clause 15.1 mandates at presentation Level 1). Every
-//!   variant is decoded and labelled; only [`NationalOption::English`]'s
-//!   character substitutions are applied by [`latin_g0_char`] — others fall
-//!   back to the base/IRV glyph at the 13 nationally-substitutable positions
-//!   (a documented gap: see the crate doc above and `docs/teletext-subtitles.md`).
+//!   Table 36 row is a variant; the header can select the first seven.
 //! - [`latin_g0_char`] — Table 35 (Latin G0 Primary Set, identical to 7-bit
-//!   ASCII `0x20`-`0x7F` outside 13 reserved positions) + Table 36 (English
-//!   national option substitutions at those positions).
+//!   ASCII `0x20`-`0x7F` outside 13 reserved positions) + the Table 36
+//!   substitutions at those positions for the page's national option.
 //! - [`PacketAddress`] / [`decode_packet_address`] — the magazine + row
 //!   number prefix common to every packet (§7.1.2).
 //! - [`PageHeader`] / [`PageHeader::parse`] — the page header packet (`Y=0`,
@@ -45,13 +43,14 @@
 //!   panels, CLUTs) are not processed. Only basic Level-1 page composition
 //!   (`X/0` header + `X/1`-`X/24` display rows) is decoded.
 //! - **No styling**: spacing-attribute control codes (`0x00`-`0x1F`, clause
-//!   12.2 — colour, flash, double-height, box mode, etc.) are rendered as a
-//!   space, not carried into the WebVTT payload as cue styling.
+//!   12.2 — colour, flash, double-height, etc.) are rendered as a space, not
+//!   carried into the WebVTT payload as cue styling. Start Box / End Box are
+//!   interpreted: a C5/C6 page displays only the boxed text.
 //! - **Sub-code ignored for page matching**: a page is matched by magazine +
 //!   page number only; multi-subpage rotation (e.g. multi-language subtitle
 //!   variants sharing one page number) is not distinguished.
-//! - **National options**: see [`NationalOption`] above — only English's
-//!   character substitutions are applied.
+//! - **National options**: only the Level 1 reading of C12-C14 (Table 32's
+//!   first group); X/28 and M/29 designations are not processed.
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -144,17 +143,13 @@ pub fn encode_odd_parity(data7: u8) -> u8 {
 /// use on the page is defined by the C12, C13 and C14 control bits in the
 /// page header alone").
 ///
-/// Only [`NationalOption::English`]'s character substitutions are applied by
-/// [`latin_g0_char`]; the other variants are decoded and labelled (spec
-/// fidelity — every value of this 3-bit field has a name) but fall back to
-/// the base Latin G0 glyph at the 13 nationally-substitutable positions, a
-/// documented gap (see the module docs and `docs/teletext-subtitles.md`).
+/// [`latin_g0_char`] applies the Table 36 substitutions of the option in
+/// force; a [`NationalOption::Reserved`] value substitutes nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum NationalOption {
-    /// `000` — English. The only option whose Table 36 substitutions are
-    /// implemented (see [`latin_g0_char`]).
+    /// `000` — English.
     English,
     /// `001` — German.
     German,
