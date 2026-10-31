@@ -32,6 +32,7 @@ sdp-types          = { workspace = true }
 url                = "2"
 percent-encoding   = "2"
 http               = "1"
+headers            = { workspace = true }
 cookie             = { version = "0.18", default-features = false }
 cookie_store       = { version = "~0.22.1", default-features = false }
 thiserror          = "2"

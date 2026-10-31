@@ -83,7 +83,7 @@ Failed requests retry with the `Config::backoff_ms` schedule (2, 4, 8 s, then
 `Config::max_inflight_segments` (4) segment/part requests are outstanding at once, however long the
 playlist; after `Status::Ended` of an HLS session `reconnect()`, `select_variant()` and
 `select_audio_rendition()` do nothing. Bodies are bounded (`max_manifest_bytes`, `max_segment_bytes`) and requests
-time out (`request_timeout_us`, `segment_timeout_us`). A byte-ranged segment must come back as
+time out (`request_timeout_us`, `segment_timeout_us`), and a media request that goes silent for `segment_inactivity_timeout_us` (10 s: no response head and no body byte; playlists exempt) is closed, reported as `Status::RequestStalled { resume }` and requested again on the retry schedule, as a `Range` request with `If-Range` for the missing bytes when its first response carried a strong validator and `Accept-Ranges: bytes` (the prefix is kept and a `206` that continues it is appended; a `200` replaces it), else as a whole request. A byte-ranged segment must come back as
 `206` with a matching `Content-Range`, or as a `200` the range is sliced out of; anything else fails. Video samples carry a `join` decision (`JoinPoint` at the first random-access point, `Drop(_)` before it, `Keep` after; audio is `None`), so a mid-GOP join starts at an IDR and the host skips `Drop` samples exactly as for TS-over-HTTP. A TS-segment elementary stream that cannot be carried (SCTE-35, ID3 or private data, a subtitle without a sample entry) is reported once per track as a non-fatal `Event::Error { kind: ErrorKind::TrackDropped { track_id, stream_type, fourcc }, fatal: false }`; a stream with no playable track reports those and ends. The same holds for an fMP4 init: a track the demuxer cannot model is reported once per track id (an encrypted `encv`/`enca` sample entry as `ErrorKind::UnsupportedEncryption { method: "encv" }` — CENC/CBCS is never decrypted, whatever the playlist tags say — any other as `TrackDropped { fourcc: Some(..) }`), and a stream whose every track is skipped ends with a FATAL error of that kind, not `Ended`. A progressive MP4 served as HLS media is fatal `ErrorKind::UnsupportedContainer { reason: "non_fragmented_mp4" }`; a fragment whose sample data lies outside its own segment (absolute `tfhd` base-data-offset; CMAF uses default-base-is-moof) is lost and reported once as non-fatal `UnsupportedContainer { reason: "damaged_fragment" }`; a playlist or segment over `max_manifest_bytes`/`max_segment_bytes` reports `ErrorKind::BodyTooLarge { field }` once per field. Every segment is decoded with the init of its own `EXT-X-MAP` run (RFC 8216 §4.4.4.5), so an init change mid-playlist announces a new `Event::Tracks` after the `Event::Discontinuity`. Separate audio renditions are played by a second adapter
 (`Config::auto_select_audio`, `Config::preferred_audio_language`, `Session::select_audio_rendition`);
 audio track ids are offset by `AUDIO_TRACK_ID_OFFSET` (1000; a main-playlist track at or above it is
@@ -236,7 +236,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds the input limit.
   It also rejects every other value that silently disables output: `max_queued_events`, `max_manifest_bytes`,
   `max_segment_bytes`, `max_key_bytes`, `request_timeout_us`, `segment_timeout_us`,
-  `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, an invalid
+  `segment_inactivity_timeout_us`, `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, an invalid
   `dash` field (see the clock section), and a
   `buffer` that `buffering_runtime::ControllerConfig::validate` rejects. `ts_http` values are clamped to the
   nearest valid ones (`tshttp_runtime::Config::clamped`), `max_key_failures: 0` behaves as `1`, `max_segment_failures: 0` makes the first segment failure final, and a
@@ -322,7 +322,7 @@ and answers them exactly as for HLS; what differs is below.
 
 **Shared knobs.** `max_redirects`, `extra_headers`, cookies, `variant_policy` (`max_bandwidth`, `max_height`,
 `supported_codecs`), `preferred_audio_language`, `auto_select_audio`, `backoff_ms`, `backoff_cap_ms`,
-`max_segment_failures`, `max_inflight_segments`, `request_timeout_us` (MPD, init, index), `segment_timeout_us`,
+`max_segment_failures`, `max_inflight_segments`, `request_timeout_us` (MPD, init, index), `segment_timeout_us`, `segment_inactivity_timeout_us`,
 `max_manifest_bytes` (MPD), `max_segment_bytes`, `max_key_failures` (consecutive init and MPD-parse failures),
 `playout`, `timeline_jump` and `max_queued_events` apply as for HLS. A `UTCTiming` request is bounded by
 `dash.utc_timeout_us` and its body by 4 KiB. `Config::hls_key_timeout_us` and `max_key_bytes` are HLS-only.

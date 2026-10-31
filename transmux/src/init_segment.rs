@@ -3023,7 +3023,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(
                     crate::sample_entries::AVCSampleEntry::bare_parse(box_bytes)?,
                 ),
-                b"hvc1" | b"hev1" => SampleEntryVariant::Hevc1(
+                b"hvc1" | b"hev1" | b"dvh1" | b"dvhe" => SampleEntryVariant::Hevc1(
                     crate::sample_entries::HEVCSampleEntry::bare_parse(box_bytes)?,
                 ),
                 b"vvc1" | b"vvi1" => SampleEntryVariant::Vvc(Box::new(

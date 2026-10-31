@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Test pinning `SUPPLEMENTAL-CODECS` (carried in `extra_attrs`) as a quoted string through render and parse.
+
 ### Fixed
 - `LowLatencyConfig::effective_part_hold_back` returns `part_hold_back` as given when `part_target` is `None`, so a playlist without `EXT-X-PART-INF` can still render `PART-HOLD-BACK` in its `EXT-X-SERVER-CONTROL`. It used to return `None` and the attribute was silently dropped (issue #1589).
 ### Added

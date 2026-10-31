@@ -27,13 +27,15 @@ use url::Url;
 
 use crate::auth::{AuthDecision, AuthState};
 use crate::error::Error;
-use crate::events::{Action, Config, ErrorKind, Event, Status};
+use crate::events::{Action, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::body::BodyAcc;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::failures::{Attempts, Verdict, verdict};
+use crate::source::fetch::inactivity::Inactivity;
+use crate::source::fetch::resume::{Basis, HeadOutcome, Parked, Stash, accept_head};
 use crate::source::fetch::retry::{Backoff, RefusedCapture, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 
@@ -45,6 +47,7 @@ const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_GONE: u16 = 410;
 const STATUS_NOT_MODIFIED: u16 = 304;
+const STATUS_RANGE_NOT_SATISFIABLE: u16 = 416;
 
 const METHOD_GET: &str = "GET";
 const METHOD_HEAD: &str = "HEAD";
@@ -92,6 +95,12 @@ struct Timeouts {
     manifest_us: u64,
     segment_us: u64,
     utc_us: u64,
+}
+
+impl Purpose {
+    fn is_media(self) -> bool {
+        matches!(self, Self::Resource(_))
+    }
 }
 
 impl Timeouts {
@@ -149,7 +158,10 @@ struct Req {
     lease: Option<ConnLease>,
     started_us: u64,
     received_us: u64,
+    last_activity_us: u64,
     responded_ok: bool,
+    basis: Option<Basis>,
+    resume_from: Option<u64>,
     head: Head,
     body: BodyAcc,
 }
@@ -179,7 +191,10 @@ impl Req {
             lease: None,
             started_us: 0,
             received_us: 0,
+            last_activity_us: 0,
             responded_ok: false,
+            basis: None,
+            resume_from: None,
             head: Head::default(),
             body: BodyAcc::new(body_limit),
         }
@@ -229,6 +244,8 @@ pub(crate) struct DashSource {
     refused_captures: BTreeMap<u32, RefusedCapture>,
     reqs: HashMap<u32, Req>,
     deadlines: Deadlines<u32>,
+    inactivity: Inactivity,
+    stash: Stash<Purpose>,
     parked: Vec<Req>,
     retries: BTreeMap<ResourceId, u64>,
     mpd_retry_at: Option<u64>,
@@ -303,6 +320,8 @@ impl DashSource {
             refused_captures: BTreeMap::new(),
             reqs: HashMap::new(),
             deadlines: Deadlines::new(),
+            inactivity: Inactivity::new(config.segment_inactivity_timeout_us),
+            stash: Stash::new(),
             parked: Vec::new(),
             retries: BTreeMap::new(),
             mpd_retry_at: None,
@@ -515,22 +534,42 @@ impl DashSource {
                 }
             }
         } else if (200..300).contains(&status) {
-            if !req.body.accept(status, headers, req.byte_range) {
-                self.actions.push_back(Action::Close { conn });
-                self.fail(req, now, Failure::Status(status));
-                if !auth.is_waiting() {
-                    self.advance(now, auth);
+            match accept_head(
+                &mut req.body,
+                &mut req.basis,
+                &mut req.resume_from,
+                status,
+                headers,
+                req.byte_range,
+            ) {
+                HeadOutcome::Refused => {
+                    self.actions.push_back(Action::Close { conn });
+                    self.fail(req, now, Failure::Status(status));
+                    if !auth.is_waiting() {
+                        self.advance(now, auth);
+                    }
+                    return;
                 }
-                return;
+                HeadOutcome::Fallback => {
+                    self.actions.push_back(Action::Close { conn });
+                    self.send(req, auth, now);
+                }
+                HeadOutcome::Accepted => {
+                    req.responded_ok = true;
+                    req.received_us = now;
+                    req.last_activity_us = now;
+                    req.head = Head::of(headers);
+                    if !self.established {
+                        self.established = true;
+                        self.events.push_back(Event::Status(Status::Establishing));
+                    }
+                    self.reqs.insert(conn, req);
+                }
             }
-            req.responded_ok = true;
-            req.received_us = now;
-            req.head = Head::of(headers);
-            if !self.established {
-                self.established = true;
-                self.events.push_back(Event::Status(Status::Establishing));
-            }
-            self.reqs.insert(conn, req);
+        } else if status == STATUS_RANGE_NOT_SATISFIABLE && req.resume_from.is_some() {
+            self.actions.push_back(Action::Close { conn });
+            req.resume_from = None;
+            self.send(req, auth, now);
         } else if status == STATUS_NOT_MODIFIED && req.purpose == Purpose::Mpd {
             self.actions.push_back(Action::Close { conn });
             req.received_us = now;
@@ -586,6 +625,7 @@ impl DashSource {
         if !req.responded_ok || bytes.is_empty() {
             return;
         }
+        req.last_activity_us = now;
         let field = oversize_field(req.purpose);
         if req.body.push(bytes).is_err() {
             if let Some(field) = field
@@ -856,6 +896,50 @@ impl DashSource {
                 self.fail(req, now, Failure::Timeout);
             }
         }
+        self.expire_inactive(now);
+    }
+
+    fn expire_inactive(&mut self, now: u64) {
+        let reqs = &self.reqs;
+        let expired = self
+            .inactivity
+            .expire(now, |conn| reqs.get(&conn).map(|r| r.last_activity_us));
+        for at in expired.wakes {
+            self.actions.push_back(Action::WakeAt(at));
+        }
+        for conn in expired.stalled {
+            if let Some(req) = self.reqs.remove(&conn) {
+                self.stalled(req, conn, now);
+            }
+        }
+    }
+
+    fn stalled(&mut self, mut req: Req, conn: u32, now: u64) {
+        let received = u64::try_from(req.body.len()).unwrap_or(u64::MAX);
+        let kept = (req.responded_ok || req.resume_from.is_some())
+            .then(|| req.basis.take())
+            .flatten()
+            .filter(|basis| basis.request_headers(received).is_some());
+        let resume = if kept.is_some() {
+            ResumeMode::Range
+        } else {
+            ResumeMode::Full
+        };
+        if let Some(basis) = kept {
+            self.stash.put(
+                req.purpose,
+                Parked {
+                    url: req.original_url.clone(),
+                    byte_range: req.byte_range,
+                    body: core::mem::replace(&mut req.body, BodyAcc::new(0)),
+                    basis,
+                },
+            );
+        }
+        self.events
+            .push_back(Event::Status(Status::RequestStalled { resume }));
+        self.actions.push_back(Action::Close { conn });
+        self.fail(req, now, Failure::Timeout);
     }
 
     fn advance(&mut self, now: u64, auth: &mut AuthState) {
@@ -952,6 +1036,11 @@ impl DashSource {
                     self.body_limit(purpose),
                 );
                 req.conditional = conditional;
+                if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
+                    req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
+                    req.body = parked.body;
+                    req.basis = Some(parked.basis);
+                }
                 self.send(req, auth, now);
             }
             Err(_) => self.fail_purpose(purpose, now, Failure::Transport),
@@ -971,8 +1060,20 @@ impl DashSource {
         req.authed = crate::auth::carries_credentials(&headers);
         headers.extend(req.conditional.iter().cloned());
         req.started_us = now;
+        req.last_activity_us = now;
         req.responded_ok = false;
-        req.body.reset();
+        let resume = req
+            .resume_from
+            .zip(req.basis.as_ref())
+            .and_then(|(received, basis)| basis.request_headers(received));
+        match &resume {
+            Some(resume) => headers.extend(resume.iter().cloned()),
+            None => {
+                req.resume_from = None;
+                req.basis = None;
+                req.body.reset();
+            }
+        }
         let lease = self.conn_alloc.lease();
         let conn = lease.id();
         req.lease = Some(lease);
@@ -982,11 +1083,16 @@ impl DashSource {
             method: req.method.to_string(),
             url: req.url.to_string(),
             headers,
-            byte_range: req.byte_range,
+            byte_range: req.byte_range.filter(|_| resume.is_none()),
         });
         self.actions
             .push_back(Action::WakeAt(now.saturating_add(timeout)));
         let deadline = now.checked_add(timeout);
+        if req.purpose.is_media()
+            && let Some(at) = self.inactivity.arm(conn, now)
+        {
+            self.actions.push_back(Action::WakeAt(at));
+        }
         self.reqs.insert(conn, req);
         if let Some(deadline) = deadline {
             self.deadlines.arm(conn, deadline);
@@ -996,6 +1102,13 @@ impl DashSource {
             self.reqs
                 .iter()
                 .filter_map(|(conn, r)| r.deadline(timeouts).map(|d| (d, *conn)))
+        });
+        let reqs = &self.reqs;
+        self.inactivity.compact(|| {
+            reqs.iter()
+                .filter(|(_, r)| r.purpose.is_media())
+                .map(|(conn, r)| (*conn, r.last_activity_us))
+                .collect()
         });
     }
 
@@ -1007,6 +1120,8 @@ impl DashSource {
         }
         self.reqs.clear();
         self.deadlines.clear();
+        self.inactivity.clear();
+        self.stash.clear();
         self.parked.clear();
         self.retries.clear();
         self.mpd_retry_at = None;

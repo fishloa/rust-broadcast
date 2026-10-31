@@ -891,6 +891,11 @@ fn overlay_sample_entry_display(
     ) {
         spec.hdr = Some(hdr);
     }
+    if let Some(dovi) = crate::dovi::DoviDecoderConfigurationRecord::from_sample_entry_boxes(
+        extra_boxes.iter().map(|b| (&b.box_type, b.data.as_slice())),
+    ) {
+        spec.dovi = Some(dovi);
+    }
     spec
 }
 
@@ -924,7 +929,10 @@ fn track_entry_inband_and_extras(trak: &TrackBox) -> (bool, Vec<crate::sample_en
             e.codec_type == *b"avc3" || e.codec_type == *b"avc4",
             e.extra_boxes.clone(),
         ),
-        SampleEntryVariant::Hevc1(e) => (e.codec_type == *b"hev1", e.extra_boxes.clone()),
+        SampleEntryVariant::Hevc1(e) => (
+            e.codec_type == *b"hev1" || e.codec_type == crate::dovi::DVHE_FOURCC,
+            e.extra_boxes.clone(),
+        ),
         _ => (false, Vec::new()),
     }
 }

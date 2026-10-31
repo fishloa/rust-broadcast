@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use super::{CodecConfig, DisplayGeometry, ProgramNumber, Sample, TrackId};
+use crate::dovi::DoviDecoderConfigurationRecord;
 use crate::hdr::HdrStaticMetadata;
 
 /// A track's identity + codec config, used to build the init segment.
@@ -45,6 +46,11 @@ pub struct TrackSpec {
     /// `clli` boxes of an fMP4 sample entry. `None` when the stream carries
     /// neither message.
     pub hdr: Option<HdrStaticMetadata>,
+    /// Dolby Vision configuration of an HEVC track: read from the
+    /// `DOVI_video_stream_descriptor` of the PMT ES_info loop
+    /// ([`TrackSpec::with_source`]) or from the `dvcC` / `dvvC` box of an fMP4
+    /// sample entry. `None` for a stream that does not announce Dolby Vision.
+    pub dovi: Option<DoviDecoderConfigurationRecord>,
 }
 
 impl core::fmt::Debug for TrackSpec {
@@ -59,6 +65,9 @@ impl core::fmt::Debug for TrackSpec {
             .field("display", &self.display);
         if let Some(hdr) = &self.hdr {
             d.field("hdr", hdr);
+        }
+        if let Some(dovi) = &self.dovi {
+            d.field("dovi", dovi);
         }
         d.finish()
     }
@@ -82,12 +91,19 @@ impl TrackSpec {
             program_number: None,
             display,
             hdr,
+            dovi: None,
         }
     }
 
     /// Replace the auto-derived [`hdr`](Self::hdr).
     pub fn with_hdr(mut self, hdr: Option<HdrStaticMetadata>) -> Self {
         self.hdr = hdr;
+        self
+    }
+
+    /// Set the Dolby Vision configuration.
+    pub fn with_dovi(mut self, dovi: Option<DoviDecoderConfigurationRecord>) -> Self {
+        self.dovi = dovi;
         self
     }
 
@@ -102,6 +118,10 @@ impl TrackSpec {
     /// and its verbatim PMT ES_info descriptor-loop bytes.
     pub fn with_source(mut self, source_pid: Pid, es_info_descriptors: Vec<u8>) -> Self {
         self.source_pid = Some(source_pid);
+        if matches!(self.config, CodecConfig::Hevc { .. }) {
+            self.dovi =
+                crate::dovi::find_video_stream_descriptor(&es_info_descriptors).map(|d| d.record);
+        }
         self.es_info_descriptors = es_info_descriptors;
         self
     }

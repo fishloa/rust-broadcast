@@ -571,7 +571,40 @@ fn iframe_nonsync_first_video_after_entry_not_found() {
 }
 
 #[test]
-fn iframe_part_is_bad_request() {
+fn iframe_part_without_msn_is_bad_request() {
+    let (_trunk, origin, writer) = origin_fmp4();
+    let bytes = fixture_bytes("index0.m4s");
+    writer
+        .publish_segment(SegmentEntry::new(
+            Bytes::from(bytes),
+            SegmentSeq::new(1),
+            Duration::from_secs(1),
+            Timestamp::from_nanos(0),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .expect("publish");
+    let (now, policy) = patient();
+    let resp = origin.resolve(
+        HlsRequest::IFramePlaylist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery {
+                hls_msn: None,
+                hls_part: Some(0),
+                hls_skip: None,
+                hls_primary: None,
+            },
+            media_playlist_name: "media.m3u8".to_string(),
+        },
+        now,
+        policy,
+    );
+    assert!(matches!(resp, EgressResponse::BadRequest { .. }));
+}
+
+#[test]
+fn iframe_msn_with_part_is_served() {
     let (_trunk, origin, writer) = origin_fmp4();
     let bytes = fixture_bytes("index0.m4s");
     writer
@@ -600,7 +633,7 @@ fn iframe_part_is_bad_request() {
         now,
         policy,
     );
-    assert!(matches!(resp, EgressResponse::BadRequest { .. }));
+    assert!(matches!(resp, EgressResponse::Ready { .. }));
 }
 
 #[test]

@@ -178,6 +178,7 @@ pub mod dash;
 #[cfg(feature = "std")]
 pub mod dash_parse;
 pub(crate) mod display_track;
+pub mod dovi;
 pub mod drm;
 pub mod dts;
 pub mod error;
@@ -428,6 +429,10 @@ pub use smooth::{
 // field); reach it via `transmux::smooth_parse::StreamType`.
 #[cfg(feature = "std")]
 pub use base_url::{resolve as resolve_url_reference, resolve_chain as resolve_base_url_chain};
+pub use dovi::{
+    DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, DoviSampleEntryKind,
+    DoviVideoStreamDescriptor,
+};
 pub use hdr::{ChromaticityXy, ContentLightLevel, HdrStaticMetadata, MasteringDisplayColourVolume};
 #[cfg(feature = "std")]
 pub use smooth_parse::{

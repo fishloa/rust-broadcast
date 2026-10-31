@@ -444,6 +444,7 @@ dependencies = [
  "cookie_store",
  "dash-runtime",
  "dvb-si",
+ "headers",
  "hls-runtime",
  "http",
  "jiff",

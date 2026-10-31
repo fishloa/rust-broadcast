@@ -118,6 +118,45 @@ where
     E: ServedEgress,
     E::Request: Clone,
 {
+    resolve_blocking_timed(trunk, egress, request, timeout, on_enter_wait)
+        .await
+        .0
+}
+
+/// [`resolve_blocking`] plus whether a `NotFound` answer is the engine giving
+/// up on a wait (the request answered `Await` at least once) rather than a
+/// resource that does not exist. A Playlist whose blocking reload times out
+/// answers `503` (RFC 8216bis section 6.2.5.2), never `404`.
+pub(crate) async fn resolve_blocking_timed<E, G>(
+    trunk: &Arc<Trunk>,
+    egress: &E,
+    request: E::Request,
+    timeout: Duration,
+    on_enter_wait: impl FnOnce() -> G,
+) -> (EgressResponse<E::Body>, bool)
+where
+    E: ServedEgress,
+    E::Request: Clone,
+{
+    let mut waited = false;
+    let resp =
+        resolve_blocking_inner(trunk, egress, request, timeout, on_enter_wait, &mut waited).await;
+    let timed_out = waited && matches!(resp, EgressResponse::NotFound);
+    (resp, timed_out)
+}
+
+async fn resolve_blocking_inner<E, G>(
+    trunk: &Arc<Trunk>,
+    egress: &E,
+    request: E::Request,
+    timeout: Duration,
+    on_enter_wait: impl FnOnce() -> G,
+    waited: &mut bool,
+) -> EgressResponse<E::Body>
+where
+    E: ServedEgress,
+    E::Request: Clone,
+{
     let base = Instant::now();
     let deadline_instant = base + timeout;
     let deadline = Timestamp::from_instant(base, deadline_instant);
@@ -129,7 +168,7 @@ where
     loop {
         let now = Timestamp::from_instant(base, Instant::now());
         match egress.resolve(request.clone(), now, policy) {
-            EgressResponse::Await { .. } => {}
+            EgressResponse::Await { .. } => *waited = true,
             other => return other,
         }
 
@@ -140,7 +179,7 @@ where
         let listener = trunk.listen();
         let now = Timestamp::from_instant(base, Instant::now());
         match egress.resolve(request.clone(), now, policy) {
-            EgressResponse::Await { .. } => {}
+            EgressResponse::Await { .. } => *waited = true,
             other => return other,
         }
 
@@ -167,6 +206,19 @@ where
                 tokio::time::sleep(remaining.min(NO_SLOT_BACKOFF)).await;
             }
         }
+    }
+}
+
+/// Status of a Playlist answer the engine gave up waiting for.
+///
+/// RFC 8216bis section 6.2.5.2: "A Server that cannot provide the requested
+/// Playlist after blocking for more than three Target Durations SHOULD
+/// return Service Unavailable, such as HTTP 503."
+pub(crate) fn playlist_not_found_status(timed_out: bool) -> StatusCode {
+    if timed_out {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::NOT_FOUND
     }
 }
 

@@ -14,6 +14,7 @@ use super::dash_common::world::{self, HttpReq, Method, Outcome, World};
 
 pub type Headers = Vec<(String, String)>;
 
+pub const SIM_ETAG: &str = "\"sim-v1\"";
 pub const MS: u64 = 1_000;
 const MAX_STEPS: u64 = 3_000_000;
 pub const SEC: u64 = 1_000_000;
@@ -62,6 +63,11 @@ pub enum Answer {
         declared: usize,
     },
     Stall(Vec<u8>),
+    StallWith {
+        status: u16,
+        headers: Headers,
+        body: Vec<u8>,
+    },
     Hang,
     Late(Box<Answer>, u64),
     Duplicate(Box<Answer>),
@@ -111,6 +117,90 @@ impl Answer {
             other => other,
         }
     }
+}
+
+fn parse_open_range(value: &str) -> Option<(u64, Option<u64>)> {
+    let spec = value.strip_prefix("bytes=")?;
+    let (first, last) = spec.split_once('-')?;
+    Some((first.parse().ok()?, last.parse().ok()))
+}
+
+/// What an origin that honours `Range` and `If-Range` (RFC 9110 14.2, 13.1.5) makes of `answer`:
+/// the requested slice as a `206`, or the untouched `200` when `If-Range` names another validator.
+pub fn range_answer(answer: Answer, range: &str, if_range: Option<&str>) -> Answer {
+    let Answer::Full {
+        status: 200,
+        mut headers,
+        body,
+    } = answer
+    else {
+        return answer;
+    };
+    let Some((first, last)) = parse_open_range(range) else {
+        return Answer::Full {
+            status: 200,
+            headers,
+            body,
+        };
+    };
+    let etag = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("etag"))
+        .map_or_else(|| SIM_ETAG.to_string(), |(_, v)| v.clone());
+    let total = body.len() as u64;
+    let last = last.map_or(total.saturating_sub(1), |l| l.min(total.saturating_sub(1)));
+    if if_range.is_some_and(|validator| validator != etag) || first > last {
+        return Answer::Full {
+            status: 200,
+            headers,
+            body,
+        };
+    }
+    headers.retain(|(k, _)| {
+        !["etag", "content-length", "content-range"]
+            .iter()
+            .any(|n| k.eq_ignore_ascii_case(n))
+    });
+    let slice = body[usize::try_from(first).unwrap()..=usize::try_from(last).unwrap()].to_vec();
+    headers.push(("ETag".into(), etag));
+    headers.push(("Accept-Ranges".into(), "bytes".into()));
+    headers.push((
+        "Content-Range".into(),
+        format!("bytes {first}-{last}/{total}"),
+    ));
+    headers.push(("Content-Length".into(), slice.len().to_string()));
+    Answer::Full {
+        status: 206,
+        headers,
+        body: slice,
+    }
+}
+
+/// `good` turned into a transfer that sends its head and its first `sent` bytes and then goes
+/// silent, carrying the validators a resumable origin sends.
+pub fn stall_after(good: &Answer, sent: usize) -> Option<Answer> {
+    let Answer::Full {
+        status: status @ (200 | 206),
+        headers,
+        body,
+    } = good
+    else {
+        return None;
+    };
+    let mut headers = headers.clone();
+    headers.retain(|(k, _)| {
+        !["etag", "accept-ranges", "content-length"]
+            .iter()
+            .any(|n| k.eq_ignore_ascii_case(n))
+    });
+    headers.push(("ETag".into(), SIM_ETAG.into()));
+    headers.push(("Accept-Ranges".into(), "bytes".into()));
+    headers.push(("Content-Length".into(), body.len().to_string()));
+    Some(Answer::StallWith {
+        status: *status,
+        headers,
+        body: body[..sent.min(body.len())].to_vec(),
+    })
 }
 
 pub trait Backend {
@@ -222,6 +312,7 @@ pub struct DashSim {
     pub rtt_us: u64,
     pub chunk: usize,
     pub fault: Option<FaultFn>,
+    pub honour_ranges: bool,
     pub request_cap: usize,
     pub stalls: u64,
     pub steps: u64,
@@ -250,6 +341,7 @@ impl DashSim {
             rtt_us: 40 * MS,
             chunk: 65_536,
             fault: None,
+            honour_ranges: true,
             request_cap: 20_000,
             stalls: 0,
             steps: 0,
@@ -306,11 +398,17 @@ impl DashSim {
         if let Some(f) = self.fault.as_mut() {
             answer = f(&logged, origin_utc);
         }
-        let answer = answer.unwrap_or_else(|| self.backend.serve(origin_utc, &logged));
+        let mut answer = answer.unwrap_or_else(|| self.backend.serve(origin_utc, &logged));
+        if self.honour_ranges
+            && let Some(range) = logged.header("range")
+        {
+            answer = range_answer(answer, range, logged.header("if-range"));
+        }
         let mut logged = logged;
         logged.status = match &answer {
             Answer::Full { status, .. } => Some(*status),
             Answer::Redirect(_) => Some(302),
+            Answer::StallWith { status, .. } => Some(*status),
             Answer::Late(inner, _)
             | Answer::Duplicate(inner)
             | Answer::Unknown(inner)
@@ -413,6 +511,16 @@ impl DashSim {
             }
             Answer::Stall(body) => {
                 self.session.on_response(conn, 200, &[], now);
+                for c in body.chunks(chunk) {
+                    self.session.on_data(conn, c, now);
+                }
+            }
+            Answer::StallWith {
+                status,
+                headers,
+                body,
+            } => {
+                self.session.on_response(conn, status, &headers, now);
                 for c in body.chunks(chunk) {
                     self.session.on_data(conn, c, now);
                 }

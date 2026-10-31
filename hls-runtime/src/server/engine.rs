@@ -507,6 +507,11 @@ struct Window {
     /// window eviction — the denominator of an I-frame variant's
     /// `AVERAGE-BANDWIDTH`.
     iframe_total_duration_nanos: u128,
+    /// Cumulative count of video samples in every drained fMP4 segment, and
+    /// their summed duration in the video track's timescale ticks: the
+    /// measured frame rate used when the stream's SPS carries no VUI timing.
+    video_samples: u64,
+    video_ticks: u64,
     /// Cumulative count of discontinuities that have rolled off the front of
     /// the window — RFC 8216 §4.3.3.3's `#EXT-X-DISCONTINUITY-SEQUENCE`.
     /// Incremented exactly once per **evicted** entry whose
@@ -532,6 +537,8 @@ impl Window {
             iframe_peak_bandwidth_bps: 0,
             iframe_total_bytes: 0,
             iframe_total_duration_nanos: 0,
+            video_samples: 0,
+            video_ticks: 0,
             discontinuity_sequence: 0,
             gap_pending: false,
         }
@@ -541,6 +548,11 @@ impl Window {
     /// follow the current window contents.
     fn note_gap(&mut self) {
         self.gap_pending = true;
+    }
+
+    fn note_video_timing(&mut self, samples: u64, ticks: u64) {
+        self.video_samples = self.video_samples.saturating_add(samples);
+        self.video_ticks = self.video_ticks.saturating_add(ticks);
     }
 
     /// Drop every window entry (they roll off the front, so their
@@ -722,6 +734,59 @@ impl InitStore {
 
 /// Whether a codec config is a video codec (mirrors
 /// `transmux::CodecConfig::is_video`, which is crate-private).
+/// `SUPPLEMENTAL-CODECS` compatibility brand of a Dolby Vision stream whose
+/// base layer is HDR10 (`dv_bl_signal_compatibility_id` 1)
+/// (`private/specs-verified/hls/apple/hls-authoring-spec.md`, "The
+/// SUPPLEMENTAL-CODECS attribute").
+const DV_BRAND_HDR10: &str = "db1p";
+/// Brand for an HLG-compatible base layer (id 4), same table.
+const DV_BRAND_HLG: &str = "db4h";
+const MILLIHERTZ_PER_HZ: u128 = 1000;
+const SUPPLEMENTAL_CODECS_ATTR: &str = "SUPPLEMENTAL-CODECS";
+
+/// How a Dolby Vision video track is announced in the multivariant playlist.
+struct DolbyVisionHls {
+    codecs: String,
+    supplemental_codecs: Option<String>,
+    video_range: VideoRange,
+}
+
+/// Apple HLS authoring spec "The SUPPLEMENTAL-CODECS attribute": a
+/// compatible base layer keeps its own codec string in `CODECS` and names the
+/// Dolby Vision codec plus brand in `SUPPLEMENTAL-CODECS`, with `VIDEO-RANGE`
+/// matching the brand (HDR10 base: PQ, HLG base: HLG). A base layer that is not
+/// SDR/HDR compliant (id 0, profile 5) is announced as `dvh1.PP.LL` in `CODECS`
+/// with `VIDEO-RANGE=PQ`
+/// (`private/specs-verified/dolby/vision/dolby-vision-streams-in-hls-v2.0-2018-11.md`
+/// section 3 examples). Other compatibility ids have no brand in the verified
+/// text and are not signalled.
+fn dolby_vision_hls(spec: &transmux::TrackSpec) -> Option<DolbyVisionHls> {
+    use transmux::DoviBlSignalCompatibilityId as Ccid;
+    let record = spec.dovi.as_ref()?;
+    if !record.is_single_layer() || !record.is_hevc_profile() {
+        return None;
+    }
+    let dv = record.codec_string();
+    match record.bl_signal_compatibility_id {
+        Ccid::None => Some(DolbyVisionHls {
+            codecs: dv,
+            supplemental_codecs: None,
+            video_range: VideoRange::Pq,
+        }),
+        Ccid::Hdr10 => Some(DolbyVisionHls {
+            codecs: transmux::rfc6381_codec_string(&spec.config).ok()?,
+            supplemental_codecs: Some(format!("{dv}/{DV_BRAND_HDR10}")),
+            video_range: VideoRange::Pq,
+        }),
+        Ccid::Hlg => Some(DolbyVisionHls {
+            codecs: transmux::rfc6381_codec_string(&spec.config).ok()?,
+            supplemental_codecs: Some(format!("{dv}/{DV_BRAND_HLG}")),
+            video_range: VideoRange::Hlg,
+        }),
+        _ => None,
+    }
+}
+
 fn is_video_codec(config: &transmux::CodecConfig) -> bool {
     matches!(
         config,
@@ -763,11 +828,8 @@ fn channel_count_string(config: &transmux::CodecConfig) -> Option<String> {
     Some(n.to_string())
 }
 
-/// Compute the byte length of the leading I-frame slice of `segment`'s first
-/// video sample, or `None` when the segment cannot back an I-frame playlist
-/// entry (audio-first layout, non-sync first sample, parse failure, or no
-/// usable mdat/moof).
-fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
+/// The top-level `moof` of `segment` and its offset.
+fn first_moof(segment: &[u8]) -> Option<(usize, transmux::movie_fragment::MovieFragmentBox)> {
     // Locate the (single) top-level `moof` box. Its offset is measured from
     // the start of `segment`, matching `frag_offsets::sample_ranges_in`.
     let mut offset = 0usize;
@@ -804,7 +866,31 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     let moof_off = moof_off?;
     let body = &segment[moof_off + moof_hdr..moof_off + moof_total];
     let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
+    Some((moof_off, moof))
+}
 
+/// Number of video samples and their summed `trun` duration (track timescale
+/// ticks) in `segment`, or `None` when the segment cannot be parsed or holds no
+/// video samples.
+fn compute_video_timing(segment: &[u8], video_track_id: TrackId) -> Option<(u64, u64)> {
+    let (moof_off, moof) = first_moof(segment)?;
+    let mdats = transmux::frag_offsets::mdat_ranges(segment);
+    let samples =
+        transmux::frag_offsets::sample_ranges_in(segment, &mdats, moof_off, &moof, video_track_id)
+            .ok()?;
+    if samples.is_empty() {
+        return None;
+    }
+    let ticks: u64 = samples.iter().map(|r| u64::from(r.duration)).sum();
+    Some((u64::try_from(samples.len()).ok()?, ticks))
+}
+
+/// Compute the byte length of the leading I-frame slice of `segment`'s first
+/// video sample, or `None` when the segment cannot back an I-frame playlist
+/// entry (audio-first layout, non-sync first sample, parse failure, or no
+/// usable mdat/moof).
+fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
+    let (moof_off, moof) = first_moof(segment)?;
     let mdats = transmux::frag_offsets::mdat_ranges(segment);
     let samples =
         transmux::frag_offsets::sample_ranges_in(segment, &mdats, moof_off, &moof, video_track_id)
@@ -1695,6 +1781,7 @@ impl HlsOriginBuilder {
             codecs: Mutex::new(None),
             video_codecs: Mutex::new(None),
             video_range: Mutex::new(None),
+            supplemental_codecs: Mutex::new(None),
             resolution: Mutex::new(None),
             frame_rate: Mutex::new(None),
             video_track_id: Mutex::new(None),
@@ -1757,6 +1844,9 @@ pub struct HlsOrigin {
     /// `None` = unknown / SDR, so the attribute is omitted rather than
     /// invented (RFC 8216bis §4.4.6.2).
     video_range: Mutex<Option<VideoRange>>,
+    /// `SUPPLEMENTAL-CODECS` for the master playlist variants: the Dolby
+    /// Vision codec and brand of a compatible-base-layer track.
+    supplemental_codecs: Mutex<Option<String>>,
     resolution: Mutex<Option<(u32, u32)>>,
     /// `FRAME-RATE` for the master playlist, derived as the maximum across
     /// all video tracks. Emitted only when an H.264 track's SPS carries VUI
@@ -1871,6 +1961,7 @@ impl HlsOrigin {
                 *locked(&self.codecs) = None;
                 *locked(&self.video_codecs) = None;
                 *locked(&self.video_range) = None;
+                *locked(&self.supplemental_codecs) = None;
                 *locked(&self.resolution) = None;
                 *locked(&self.frame_rate) = None;
                 *locked(&self.video_track_id) = None;
@@ -1921,19 +2012,35 @@ impl HlsOrigin {
         let mut resolution: Option<(u32, u32)> = None;
         let mut resolution_decided = false;
         let mut frame_rate: Option<FrameRate> = None;
+        let mut supplemental_codecs: Option<String> = None;
         for spec in ordered {
+            let dolby_vision = if !video_codecs_decided && is_video_codec(&spec.config) {
+                dolby_vision_hls(spec)
+            } else {
+                None
+            };
             match transmux::rfc6381_codec_string(&spec.config) {
-                Ok(codec) => codecs.push(codec),
+                Ok(codec) => {
+                    codecs.push(dolby_vision.as_ref().map_or(codec, |dv| dv.codecs.clone()))
+                }
                 Err(transmux::Error::UnsupportedCodec { .. }) => {}
                 Err(other) => return Err(other),
             }
             if !video_codecs_decided && is_video_codec(&spec.config) {
                 match transmux::rfc6381_codec_string(&spec.config) {
-                    Ok(codec) => video_codecs = Some(codec),
+                    Ok(codec) => {
+                        video_codecs =
+                            Some(dolby_vision.as_ref().map_or(codec, |dv| dv.codecs.clone()))
+                    }
                     Err(transmux::Error::UnsupportedCodec { .. }) => {}
                     Err(other) => return Err(other),
                 }
                 video_codecs_decided = true;
+                if let Some(dv) = dolby_vision {
+                    supplemental_codecs = dv.supplemental_codecs;
+                    video_range = Some(dv.video_range);
+                    video_range_decided = true;
+                }
             }
             if !video_range_decided
                 && let Some(display) = &spec.display
@@ -1967,6 +2074,7 @@ impl HlsOrigin {
         *locked(&self.codecs) = (!codecs.is_empty()).then(|| codecs.join(","));
         *locked(&self.video_codecs) = video_codecs;
         *locked(&self.video_range) = video_range;
+        *locked(&self.supplemental_codecs) = supplemental_codecs;
         *locked(&self.resolution) = resolution;
         *locked(&self.frame_rate) = frame_rate;
         *locked(&self.track_specs) = stored_track_specs;
@@ -2087,6 +2195,13 @@ impl HlsOrigin {
             && matches!(range, VideoRange::Hlg | VideoRange::Pq)
         {
             extra_attrs.push(range.attr());
+        }
+        if let Some(supplemental) = locked(&self.supplemental_codecs).clone() {
+            extra_attrs.push((
+                String::from(SUPPLEMENTAL_CODECS_ATTR),
+                broadcast_hls::AttrValue::for_attr(SUPPLEMENTAL_CODECS_ATTR, supplemental)
+                    .map_err(HlsMasterError::Render)?,
+            ));
         }
 
         for decl in &self.audio_renditions {
@@ -2216,7 +2331,7 @@ impl HlsOrigin {
                 closed_captions,
                 extra_attrs: extra_attrs.clone(),
                 resolution: *locked(&self.resolution),
-                frame_rate: *locked(&self.frame_rate),
+                frame_rate: self.effective_frame_rate(),
             });
         } else {
             for group in &audio_groups {
@@ -2278,7 +2393,7 @@ impl HlsOrigin {
                     closed_captions: closed_captions.clone(),
                     extra_attrs: extra_attrs.clone(),
                     resolution: *locked(&self.resolution),
-                    frame_rate: *locked(&self.frame_rate),
+                    frame_rate: self.effective_frame_rate(),
                 });
             }
         }
@@ -2699,7 +2814,7 @@ impl HlsOrigin {
         drop(cursor);
 
         enum Prepared {
-            Segment(SegmentEntry, Generation, Option<u64>),
+            Segment(SegmentEntry, Generation, Option<u64>, Option<(u64, u64)>),
             Gap,
         }
         let video_track_id = *locked(&self.video_track_id);
@@ -2709,8 +2824,10 @@ impl HlsOrigin {
                 SegmentCursorItem::Segment(entry) => {
                     let iframe_len = video_track_id
                         .and_then(|track_id| compute_iframe_len(&entry.bytes, track_id));
+                    let video_timing = video_track_id
+                        .and_then(|track_id| compute_video_timing(&entry.bytes, track_id));
                     let init_gen = locked(&self.init).generation_for(entry.sequence_number);
-                    prepared.push(Prepared::Segment(entry, init_gen, iframe_len));
+                    prepared.push(Prepared::Segment(entry, init_gen, iframe_len, video_timing));
                 }
                 // `Lagged`/`Gap`/anything newer: segments were lost, so the
                 // next one does not follow the window's contents.
@@ -2721,7 +2838,7 @@ impl HlsOrigin {
         let mut window = locked(&self.window);
         for item in prepared {
             match item {
-                Prepared::Segment(entry, init_gen, iframe_len) => {
+                Prepared::Segment(entry, init_gen, iframe_len, video_timing) => {
                     // Record the arrival origin exactly once, the first time a
                     // segment drains into the window while an arrival clock is
                     // configured. "this segment ended about now, so it started
@@ -2741,6 +2858,9 @@ impl HlsOrigin {
                     }
                     let seg_duration = entry.duration;
                     window.push(entry, init_gen, iframe_len);
+                    if let Some((samples, ticks)) = video_timing {
+                        window.note_video_timing(samples, ticks);
+                    }
                     if let Some(frozen) = *locked(&self.frozen_target_duration_secs)
                         && seg_duration.as_secs_f64().round() > frozen.round()
                     {
@@ -2752,6 +2872,34 @@ impl HlsOrigin {
             }
         }
         self.drained_through.store(head, Ordering::Release);
+    }
+
+    /// `FRAME-RATE` of the video variants: the SPS VUI timing rate when the
+    /// stream signals one, else the rate measured over the drained fMP4
+    /// segments (`samples * timescale / summed trun duration`). Apple HLS
+    /// authoring spec item 9.15 requires it on every `EXT-X-STREAM-INF` with
+    /// video, and RFC 8216bis section 4.4.6.2 defines it as the maximum frame
+    /// rate of the variant's video.
+    fn effective_frame_rate(&self) -> Option<FrameRate> {
+        if let Some(signalled) = *locked(&self.frame_rate) {
+            return Some(signalled);
+        }
+        let timescale = locked(&self.track_specs)
+            .iter()
+            .find(|spec| is_video_codec(&spec.config))
+            .map(|spec| u128::from(spec.timescale))?;
+        let (samples, ticks) = {
+            let window = locked(&self.window);
+            (
+                u128::from(window.video_samples),
+                u128::from(window.video_ticks),
+            )
+        };
+        if samples == 0 || ticks == 0 {
+            return None;
+        }
+        let millihertz = (samples * timescale * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
+        Some(FrameRate::from_millihertz(u32::try_from(millihertz).ok()?))
     }
 
     /// What `render_playlist` needs from the window, copied out so the window
@@ -3345,10 +3493,14 @@ impl HlsOrigin {
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<HlsBody> {
-        // An I-frame playlist has no parts, so any `_HLS_part` is meaningless.
-        if query.hls_part.is_some() {
+        // RFC 8216bis §6.2.5.2: `_HLS_part` without `_HLS_msn` MUST be a Bad
+        // Request. With `_HLS_msn` it is legitimate on a playlist without
+        // Partial Segments (Apple's validator sends `_HLS_msn=M&_HLS_part=N`
+        // to the I-frame playlist): a Part Index past the parent's final part
+        // is treated as Part 0 of the next parent, so it waits on the MSN only.
+        if query.hls_part.is_some() && query.hls_msn.is_none() {
             return EgressResponse::BadRequest {
-                reason: "_HLS_part is not valid on an I-frame playlist",
+                reason: "_HLS_part without _HLS_msn is meaningless",
             };
         }
         if let Some(msn) = query.hls_msn {

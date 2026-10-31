@@ -781,7 +781,9 @@ fn request_timeout_aborts_playlist_and_segment() {
     assert_eq!(reconnect_attempts(&drain_events(&mut s)), vec![1]);
     assert_eq!(wake_times(&aborted), vec![22 * SEC]);
 
-    let mut s2 = Session::open(TS_PLAYLIST_URL, hls_config(), 0).expect("open");
+    let mut config = hls_config();
+    config.segment_inactivity_timeout_us = u64::MAX;
+    let mut s2 = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
     let (c, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, c, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s2, 0));
