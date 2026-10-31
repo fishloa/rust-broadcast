@@ -1000,7 +1000,7 @@ async fn subtitle_blocking_reload_waits_for_the_requested_part() {
     let wanted_uri_suffix = format!("-{msn}.{wanted}.vtt");
     let app = driver.rig.app.clone();
     let path = format!("/{STREAM}/{uri}?_HLS_msn={msn}&_HLS_part={wanted}");
-    let request = tokio::spawn(async move {
+    let mut request = tokio::spawn(async move {
         let resp = app
             .oneshot(
                 Request::builder()
@@ -1016,9 +1016,9 @@ async fn subtitle_blocking_reload_waits_for_the_requested_part() {
             .expect("body");
         (status, String::from_utf8(body.to_vec()).expect("utf8"))
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let early = tokio::time::timeout(Duration::from_millis(300), &mut request).await;
     assert!(
-        !request.is_finished(),
+        early.is_err(),
         "the request returned before part {msn}.{wanted} was published"
     );
     assert!(
