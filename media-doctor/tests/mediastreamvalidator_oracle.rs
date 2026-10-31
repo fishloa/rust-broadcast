@@ -956,7 +956,7 @@ fn origin_low_latency_shape_validates_clean() {
 
     let findings = run_validator(&dir, "out.m3u8", true, 5);
     assert_zero_errors_ignoring(&findings, "origin LL-HLS shape", |f| {
-        // Known mediastreamvalidator limitation, not a renderer defect:
+        // Issue #1595. Known mediastreamvalidator limitation, not a renderer defect:
         // verified (issue #870 calibration) that this fires unconditionally
         // whenever LL-HLS directives (`EXT-X-PART-INF`/`EXT-X-PART`) are
         // present, even standalone AND inside a real single-variant

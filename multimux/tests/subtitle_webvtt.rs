@@ -65,6 +65,16 @@ const VALIDATOR_BIN: &str = "/usr/local/bin/mediastreamvalidator";
 const VALIDATOR_DEADLINE: Duration = Duration::from_secs(60);
 const VALIDATOR_TARGET_SECS: &str = "5";
 const MUST_LEVEL: i64 = 1;
+/// Property of the interlaced real captures the rig uses (`rai-gulp-8MB.ts`,
+/// `transformers-eia608-h264.ts`), not of the origin; no issue.
+const KNOWN_INTERLACED_FIXTURE: &str = "Interlaced video detected - Must be progressive";
+/// Issue #1594: reported on the I-frame playlist although it carries the same
+/// HOLD-BACK as the media playlist.
+const KNOWN_MISSING_HOLD_BACK_1594: &str = "Missing server control attribute";
+/// Issue #1595: fires on a low-latency playlist with no sibling rendition to
+/// report, which RFC 8216bis Appendix B.1 allows; reporting the I-frame
+/// playlist instead is rejected by the validator as "Unknown rendition report".
+const KNOWN_NO_RENDITION_REPORTS_1595: &str = "No rendition reports in low-latency playlist";
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -1214,27 +1224,45 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         about_subtitles.is_empty(),
         "validator findings about subtitles: {about_subtitles:?}"
     );
-    let baseline: BTreeSet<&(i64, String)> = without.iter().collect();
-    let video_findings: BTreeSet<&str> = without
+    let message = |m: &str| {
+        m.split_once(": ")
+            .map_or(m.to_string(), |(_, rest)| rest.to_string())
+    };
+    let tolerated = |m: &str, extra: &[&str]| {
+        let m = message(m);
+        KNOWN_MISSING_HOLD_BACK_1594 == m
+            || KNOWN_INTERLACED_FIXTURE == m
+            || extra.contains(&m.as_str())
+    };
+    let unexpected_on: Vec<_> = with.iter().filter(|(_, m)| !tolerated(m, &[])).collect();
+    assert!(
+        unexpected_on.is_empty(),
+        "findings with subtitles on: {unexpected_on:?}"
+    );
+    let unexpected_off: Vec<_> = without
         .iter()
-        .filter_map(|(_, m)| {
-            m.strip_prefix("$/variants[0]")
-                .or_else(|| m.strip_prefix("$/variants[1]"))
-        })
+        .filter(|(_, m)| !tolerated(m, &[KNOWN_NO_RENDITION_REPORTS_1595]))
         .collect();
-    let new: Vec<_> = with
-        .iter()
-        .filter(|f| !baseline.contains(f))
-        .filter(|(_, m)| {
-            let on_subtitle_playlist =
-                !m.starts_with("$/variants[0]") && !m.starts_with("$/variants[1]");
-            let same_as_video = m
-                .split_once(']')
-                .is_some_and(|(_, rest)| video_findings.contains(rest));
-            !(on_subtitle_playlist && same_as_video)
-        })
-        .collect();
-    assert!(new.is_empty(), "findings the subtitles introduced: {new:?}");
+    assert!(
+        unexpected_off.is_empty(),
+        "findings with subtitles off: {unexpected_off:?}"
+    );
+    assert!(
+        with.iter()
+            .any(|(_, m)| message(m) == KNOWN_MISSING_HOLD_BACK_1594),
+        "#1594 no longer reported: remove its tolerance"
+    );
+    assert!(
+        without
+            .iter()
+            .any(|(_, m)| message(m) == KNOWN_NO_RENDITION_REPORTS_1595),
+        "#1595 no longer reported on the one-rendition route: remove its tolerance"
+    );
+    assert!(
+        with.iter()
+            .all(|(_, m)| message(m) != KNOWN_NO_RENDITION_REPORTS_1595),
+        "with subtitle siblings every playlist has reports to carry"
+    );
 }
 
 fn zero_duration_parts(playlist: &MediaPlaylist) -> Vec<String> {

@@ -888,7 +888,7 @@ fn mediastreamvalidator_accepts_the_low_latency_playlist_syntax() {
     let dir = scratch("ll-playlist");
     std::fs::write(dir.join("media.m3u8"), playlist(&o)).unwrap();
     let mut errors = validator_errors(&dir, "media.m3u8", &["--parse-playlist-only"]);
-    // Known finding that is not a violation (RFC 8216bis §B.1: a single rendition needs no report): the validator wants an
+    // Issue #1595. Known finding that is not a violation (RFC 8216bis §B.1: a single rendition needs no report): the validator wants an
     // `EXT-X-RENDITION-REPORT` even for a single-rendition low-latency
     // playlist ("No rendition reports in low-latency playlist", status
     // -50125); this origin renders none. Every other MUST-level finding fails.

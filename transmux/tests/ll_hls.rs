@@ -977,3 +977,60 @@ fn part_sample_count(part: &[u8], want_track: u32) -> usize {
     }
     total
 }
+
+/// Issue #1597. RFC 8216bis §4.4.4.9: `EXT-X-PART` `DURATION` is the duration
+/// of the Partial Segment, so a part never has zero duration, and the parts of
+/// a Parent Segment add up to its duration. When the audio lags the video, the
+/// part that drains the last video sample before the keyframe leaves audio
+/// still to flush at the cut; that audio must ride in the final part together
+/// with the video it belongs to, not in a part of its own with no video time.
+#[test]
+fn lagging_audio_never_makes_a_zero_duration_part() {
+    const LAG_FRAMES: usize = 4;
+    const FRAMES: usize = 90;
+    const GOP: usize = 30;
+    let mut seg =
+        LlHlsSegmenter::with_part_target(vec![video_track(), audio_track()], 1000, 1.0, 200)
+            .unwrap();
+    let audio = |n: usize| Sample::new(vec![n as u8; 8], None, None, Some(1024), true);
+    let mut audio_pushed = 0usize;
+    for i in 0..FRAMES {
+        seg.push(TrackId::new(1), vsample(i % GOP == 0, i as u8))
+            .unwrap();
+        if i >= LAG_FRAMES {
+            for _ in 0..2 {
+                seg.push(TrackId::new(2), audio(audio_pushed)).unwrap();
+                audio_pushed += 1;
+            }
+        }
+    }
+    seg.flush().unwrap();
+
+    let mut parts: std::collections::BTreeMap<u32, Vec<f64>> = std::collections::BTreeMap::new();
+    for p in seg.take_ready_parts() {
+        assert!(
+            p.duration > 0.0,
+            "part {}.{} has zero duration",
+            p.segment_seq,
+            p.part_index
+        );
+        assert!(
+            p.duration <= 0.2 + 1e-9,
+            "part {}.{}",
+            p.segment_seq,
+            p.part_index
+        );
+        parts.entry(p.segment_seq).or_default().push(p.duration);
+    }
+    let segments = seg.take_ready_segments();
+    assert_eq!(segments.len(), FRAMES / GOP);
+    for s in segments {
+        let sum: f64 = parts[&s.segment_seq].iter().sum();
+        assert!(
+            (sum - s.duration).abs() < 1e-6,
+            "segment {}: parts sum to {sum}, segment is {}",
+            s.segment_seq,
+            s.duration
+        );
+    }
+}
