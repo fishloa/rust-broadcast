@@ -137,13 +137,17 @@ fn starts_idr(payload: &[u8]) -> bool {
     }
 }
 
+fn rel_to(ts: u32, base: u32) -> i64 {
+    i64::from(ts.wrapping_sub(base) as i32)
+}
+
 #[derive(Default)]
 struct WireArrivals {
     pending: Vec<u8>,
-    first_arrival: std::collections::BTreeMap<u8, std::collections::BTreeMap<u32, u64>>,
+    first_arrival: std::collections::BTreeMap<u8, std::collections::BTreeMap<i64, u64>>,
     first_ts: std::collections::BTreeMap<u8, u32>,
-    idr_starts: std::collections::BTreeMap<u8, Vec<u32>>,
-    order: std::collections::BTreeMap<u8, Vec<u32>>,
+    idr_starts: std::collections::BTreeMap<u8, Vec<i64>>,
+    order: std::collections::BTreeMap<u8, Vec<i64>>,
     last_sr: std::collections::BTreeMap<u8, (f64, u32)>,
 }
 
@@ -185,14 +189,14 @@ impl WireArrivals {
                     let base = *self.first_ts.entry(channel).or_insert(ts);
                     {
                         let o = self.order.entry(channel).or_default();
-                        let rel = ts.wrapping_sub(base);
+                        let rel = rel_to(ts, base);
                         if o.last() != Some(&rel) {
                             o.push(rel);
                         }
                     }
                     if starts_idr(&frame[RTP_HEADER_MIN..]) {
                         let idr = self.idr_starts.entry(channel).or_default();
-                        let rel = ts.wrapping_sub(base);
+                        let rel = rel_to(ts, base);
                         if idr.last() != Some(&rel) {
                             idr.push(rel);
                         }
@@ -200,7 +204,7 @@ impl WireArrivals {
                     self.first_arrival
                         .entry(channel)
                         .or_default()
-                        .entry(ts.wrapping_sub(base))
+                        .entry(rel_to(ts, base))
                         .or_insert(now_us);
                 }
             } else {
@@ -222,18 +226,15 @@ impl WireArrivals {
     }
 
     fn has_exact(&self, channel: u8, rel_ticks: i64) -> bool {
-        u32::try_from(rel_ticks).ok().is_some_and(|rel| {
-            self.first_arrival
-                .get(&channel)
-                .is_some_and(|m| m.contains_key(&rel))
-        })
+        self.first_arrival
+            .get(&channel)
+            .is_some_and(|m| m.contains_key(&rel_ticks))
     }
 
     fn arrival_of(&self, channel: u8, rel_ticks: i64) -> Option<u64> {
-        let rel = u32::try_from(rel_ticks).ok()?;
         self.first_arrival
             .get(&channel)?
-            .range(..=rel)
+            .range(..=rel_ticks)
             .next_back()
             .map(|(_, &t)| t)
     }
@@ -641,7 +642,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                 emitted
                     .iter()
                     .filter(|(t, _, _)| *t == tid)
-                    .all(|&(_, pts, _)| wire.has_exact(channel, pts - key_pts + i64::from(cand)))
+                    .all(|&(_, pts, _)| wire.has_exact(channel, pts - key_pts + cand))
             })
             .unwrap_or_else(|| {
                 let video: Vec<i64> = emitted
@@ -656,7 +657,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     .map(|&cand| {
                         let misses: Vec<i64> = video
                             .iter()
-                            .map(|pts| pts - key_pts + i64::from(cand))
+                            .map(|pts| pts - key_pts + cand)
                             .filter(|rel| !wire.has_exact(channel, *rel))
                             .take(4)
                             .collect();
@@ -670,7 +671,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     idr.len()
                 )
             });
-        anchor.insert(tid, key_pts - i64::from(key_rel));
+        anchor.insert(tid, key_pts - key_rel);
     }
     let mut decode_offsets: Vec<f64> = Vec::new();
     let mut sr_vs_arrival: std::collections::BTreeMap<bool, Vec<f64>> =
@@ -704,12 +705,8 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
             .push(wall - arrival as f64 / 1e6);
         if video {
             let order = &wire.order[&channel];
-            let at = order.partition_point(|&r| i64::from(r) != rel);
-            let decode_rel = order[at..]
-                .iter()
-                .map(|&r| i64::from(r))
-                .min()
-                .unwrap_or(rel);
+            let at = order.partition_point(|&r| r != rel);
+            let decode_rel = order[at..].iter().copied().min().unwrap_or(rel);
             let dts_seconds = (pts - (rel - decode_rel)) as f64 / f64::from(track_timescale[&tid]);
             decode_offsets.push(dts_seconds - arrival as f64 / 1e6);
         }
