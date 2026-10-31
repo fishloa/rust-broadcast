@@ -549,7 +549,9 @@ fn key_retry_waits_for_retry_after() {
 
 #[test]
 fn an_init_that_never_answers_times_out_on_the_playlist_class_timeout() {
-    let mut h = fmp4_host(vec![Reply::Hang], vec![Reply::Hang], hls_config());
+    let mut config = hls_config();
+    config.segment_inactivity_timeout_us = u64::MAX;
+    let mut h = fmp4_host(vec![Reply::Hang], vec![Reply::Hang], config);
     h.run_until(stop_on_end_or_fatal, STEPS);
     assert_eq!(
         first_gap(&h, FMP4_INIT_URL),
@@ -571,7 +573,9 @@ fn an_init_that_never_answers_times_out_on_the_playlist_class_timeout() {
 
 #[test]
 fn a_segment_that_never_answers_keeps_the_segment_timeout() {
-    let mut h = ts_vod(vec![Reply::Hang, Reply::Ok(ts_segment(0))], hls_config());
+    let mut config = hls_config();
+    config.segment_inactivity_timeout_us = u64::MAX;
+    let mut h = ts_vod(vec![Reply::Hang, Reply::Ok(ts_segment(0))], config);
     h.run_until(stop_on_end_or_fatal, STEPS);
     assert!(tally(&h).ended);
     assert_eq!(
