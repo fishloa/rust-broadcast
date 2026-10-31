@@ -9,6 +9,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 ### Fixed
 - Teletext decoding applied only the English national option, so French pages read "d#passer", "fen\tre" and "apr`s". Every Table 36 national option is now applied, selected by the page header's C12-C14 bits (#1585).
 - Teletext Start Box and End Box (clause 12.2) were rendered as spaces, leaving up to eight leading spaces on every cue. On a newsflash or subtitle page (C5 or C6) only the text between a Start Box and the following End Box is now displayed, and spaces at the box edges are trimmed (#1585). A subtitle row with no Start Box is no longer displayed, as the spec requires.
+- `webvtt::write_segment` now writes `X-TIMESTAMP-MAP` as `LOCAL:...,MPEGTS:...`, the field order RFC 8216 section 3.5 gives (#1590).
 ### Changed
 - `DateRange::parse_tag_line` now propagates malformed attribute-list errors from `broadcast_hls::parse_attribute_list_strict` (unterminated quoted-string, duplicate attribute name) as `Error::HlsAttrValue` instead of silently half-parsing them (#1485 R15).
 

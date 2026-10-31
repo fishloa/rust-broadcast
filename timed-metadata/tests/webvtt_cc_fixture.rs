@@ -236,7 +236,7 @@ fn x_timestamp_map_on_segment_boundary() {
     let mut lines = doc.lines();
     assert_eq!(lines.next(), Some("WEBVTT"));
     let header = lines.next().expect("timestamp-map header");
-    assert_eq!(header, "X-TIMESTAMP-MAP=MPEGTS:15000,LOCAL:00:00:00.000");
+    assert_eq!(header, "X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:15000");
     assert_eq!(lines.next(), Some(""));
 
     // First cue in the segment ("HI") started exactly at the segment start,
@@ -254,5 +254,5 @@ fn x_timestamp_map_on_segment_boundary() {
 fn x_timestamp_map_wraps_at_33_bits() {
     use timed_metadata::timeline::PTS_WRAP;
     let doc = write_segment(&[], MediaTime(PTS_WRAP));
-    assert!(doc.contains("X-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000"));
+    assert!(doc.contains("X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0"));
 }

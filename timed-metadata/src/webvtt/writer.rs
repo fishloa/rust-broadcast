@@ -61,7 +61,7 @@ pub fn write_document(cues: &[Cue]) -> String {
 }
 
 /// Render one HLS **segment** of WebVTT (RFC 8216 §3.5): the `WEBVTT`
-/// signature, an `X-TIMESTAMP-MAP=MPEGTS:<n>,LOCAL:00:00:00.000` header
+/// signature, an `X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:<n>` header (field order per RFC 8216 §3.5)
 /// mapping this segment's local WebVTT clock to the shared MPEG-2 TS (PES)
 /// timeline, then each cue rendered with times **relative to
 /// `segment_start`** (so cue timestamps stay small and segment-local, per
@@ -76,7 +76,7 @@ pub fn write_document(cues: &[Cue]) -> String {
 #[must_use]
 pub fn write_segment(cues: &[Cue], segment_start: MediaTime) -> String {
     let mpegts = segment_start.0 % PTS_WRAP;
-    let mut out = format!("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:{mpegts},LOCAL:00:00:00.000\n\n");
+    let mut out = format!("WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{mpegts}\n\n");
     for cue in cues {
         let local = Cue {
             start: MediaTime(cue.start.0.saturating_sub(segment_start.0)),
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(lines.next(), Some("WEBVTT"));
         assert_eq!(
             lines.next(),
-            Some("X-TIMESTAMP-MAP=MPEGTS:9000000,LOCAL:00:00:00.000")
+            Some("X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:9000000")
         );
         assert_eq!(lines.next(), Some(""));
         // cue-local time = 9_090_000 - 9_000_000 = 90_000 ticks = 1.000s
@@ -172,6 +172,6 @@ mod tests {
     fn write_segment_mpegts_wraps_at_33_bits() {
         let wrap = PTS_WRAP; // 2^33
         let seg = write_segment(&[], MediaTime(wrap + 5));
-        assert!(seg.contains("X-TIMESTAMP-MAP=MPEGTS:5,LOCAL:00:00:00.000"));
+        assert!(seg.contains("X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:5"));
     }
 }
