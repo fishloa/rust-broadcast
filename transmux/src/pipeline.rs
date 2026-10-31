@@ -227,15 +227,29 @@ fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> 
 /// that `build_trak` appends to an AVC/HEVC sample entry from the track's
 /// [`DisplayGeometry`] (Phase 4a-1). `pasp` is emitted only for a non-1:1
 /// sample aspect ratio; `colr` (`nclx`) only when a colour description was
-/// signalled. Order: `pasp` then `colr`, both after the codec config box.
+/// signalled. The track's HDR10 static metadata adds `mdcv` then `clli`
+/// (`private/specs-verified/mpeg/hdr/isobmff-mdcv-clli-boxes.md`). Order:
+/// `pasp`, `colr`, `mdcv`, `clli`, all after the codec config box.
 fn avc_hevc_display_extra_boxes(
     display: Option<&crate::ir::DisplayGeometry>,
+    hdr: Option<&crate::hdr::HdrStaticMetadata>,
 ) -> Result<Vec<crate::sample_entries::OpaqueBox>> {
     let mut extra_boxes = Vec::new();
-    let Some(display) = display else {
-        return Ok(extra_boxes);
-    };
+    if let Some(display) = display {
+        push_display_boxes(display, &mut extra_boxes)?;
+    }
+    if let Some(hdr) = hdr {
+        for (box_type, data) in hdr.sample_entry_boxes()? {
+            extra_boxes.push(crate::sample_entries::OpaqueBox { box_type, data });
+        }
+    }
+    Ok(extra_boxes)
+}
 
+fn push_display_boxes(
+    display: &crate::ir::DisplayGeometry,
+    extra_boxes: &mut Vec<crate::sample_entries::OpaqueBox>,
+) -> Result<()> {
     // pasp — only when the SAR is specified and not square (§12.1.4.1: an
     // absent pasp means square pixels).
     if let Some((w, h)) = display.sample_aspect_ratio()
@@ -277,7 +291,7 @@ fn avc_hevc_display_extra_boxes(
         });
     }
 
-    Ok(extra_boxes)
+    Ok(())
 }
 
 /// Whole-pixel presentation size for an AVC/HEVC video track (square-pixel
@@ -610,7 +624,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 codec_type: *b"avc1",
                 visual,
                 config: config.clone(),
-                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref())?,
+                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref(), t.hdr.as_ref())?,
             });
             (
                 entry,
@@ -644,7 +658,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 codec_type: *b"hvc1",
                 visual,
                 config: config.clone(),
-                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref())?,
+                extra_boxes: avc_hevc_display_extra_boxes(t.display.as_ref(), t.hdr.as_ref())?,
             });
             (
                 entry,

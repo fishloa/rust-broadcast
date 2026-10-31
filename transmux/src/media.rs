@@ -886,6 +886,13 @@ fn overlay_sample_entry_display(
 ) -> TrackSpec {
     let config = spec.config.clone();
     spec.display = overlay_sample_entry_geometry(spec.display, &config, extra_boxes);
+    if let Some(hdr) = crate::hdr::HdrStaticMetadata::from_sample_entry_boxes(
+        extra_boxes
+            .iter()
+            .map(|b| (&b.box_type, b.data.as_slice())),
+    ) {
+        spec.hdr = Some(hdr);
+    }
     spec
 }
 

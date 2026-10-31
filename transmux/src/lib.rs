@@ -186,6 +186,7 @@ pub mod flv;
 pub mod flv_stream;
 pub mod frag_offsets;
 pub mod h262;
+pub mod hdr;
 pub mod hevc_config;
 pub mod init_segment;
 pub mod interlace;
@@ -458,6 +459,7 @@ pub use ts_mux::{DEFAULT_PSI_INTERVAL_MS, StreamingTsMux, TsContinuity, TsMux};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
+pub use hdr::{ChromaticityXy, ContentLightLevel, HdrStaticMetadata, MasteringDisplayColourVolume};
 pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 pub use vp9::{VP09_FOURCC, VPCC_FOURCC, Vp9ConfigurationBox, Vp9SampleEntry};
 pub use vvc_config::{
