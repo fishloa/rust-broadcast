@@ -459,11 +459,16 @@ fn source_media() -> Option<(Media, Vec<Vec<u8>>)> {
 
 #[test]
 fn track_flag_is_set_from_the_first_access_unit_alongside_hdr10_static_metadata() {
-    let Some((media, _)) = source_media() else { return };
+    let Some((media, _)) = source_media() else {
+        return;
+    };
     let spec = &hevc_track(&media).spec;
     assert!(spec.hdr10plus);
     let hdr = spec.hdr.expect("HDR10 static metadata");
-    assert_eq!(hdr.content_light_level.unwrap().max_content_light_level, 1000);
+    assert_eq!(
+        hdr.content_light_level.unwrap().max_content_light_level,
+        1000
+    );
     assert!(hdr.mastering_display.is_some());
 }
 
@@ -480,9 +485,13 @@ fn track_flag_is_clear_for_streams_without_hdr10plus() {
 
 #[test]
 fn fmp4_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
-    let Some((media, source)) = source_media() else { return };
+    let Some((media, source)) = source_media() else {
+        return;
+    };
     let bytes = transmux::CmafMux::default().package(&media).expect("cmaf");
-    let back = transmux::media::Fmp4Demux::default().unpackage(&bytes).expect("fmp4 demux");
+    let back = transmux::media::Fmp4Demux::default()
+        .unpackage(&bytes)
+        .expect("fmp4 demux");
     assert_eq!(seis_in_display_order(&back).len(), FRAMES);
     assert_eq!(seis_in_display_order(&back), source);
     assert!(hevc_track(&back).spec.hdr10plus);
@@ -490,8 +499,12 @@ fn fmp4_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
 
 #[test]
 fn ts_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
-    let Some((media, source)) = source_media() else { return };
-    let bytes = transmux::ts_mux::TsMux::default().package(&media).expect("ts mux");
+    let Some((media, source)) = source_media() else {
+        return;
+    };
+    let bytes = transmux::ts_mux::TsMux::default()
+        .package(&media)
+        .expect("ts mux");
     let back = TsDemux::new().unpackage(&bytes).expect("ts demux");
     assert_eq!(seis_in_display_order(&back).len(), FRAMES);
     assert_eq!(seis_in_display_order(&back), source);
@@ -500,9 +513,122 @@ fn ts_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
 
 #[test]
 fn ts_hls_segments_keep_every_sei_byte_identical() {
-    let Some((media, source)) = source_media() else { return };
-    let out = transmux::ts_hls::TsHlsPackager::default().package(&media).expect("ts hls");
+    let Some((media, source)) = source_media() else {
+        return;
+    };
+    let out = transmux::ts_hls::TsHlsPackager::default()
+        .package(&media)
+        .expect("ts hls");
     let joined: Vec<u8> = out.segments.concat();
     let back = TsDemux::new().unpackage(&joined).expect("ts demux");
     assert_eq!(seis_in_display_order(&back), source);
+}
+
+const DASHIF_PROPERTY: &str =
+    r#"<SupplementalProperty schemeIdUri="http://dashif.org/metadata/hdr" value="SMPTE2094-40"/>"#;
+const DVB_PROPERTY: &str =
+    r#"<SupplementalProperty schemeIdUri="urn:dvb:dash:hdr-dmi" value="ST2094-40"/>"#;
+const DVB_PROFILE: &str = "urn:dvb:dash:profile:dvb-dash:2014";
+
+fn mpd(media: &Media, profiles: Option<&str>) -> String {
+    let mut packager = transmux::DashPackager::default();
+    if let Some(p) = profiles {
+        packager.profiles = p.to_string();
+    }
+    packager.package(media).expect("dash")
+}
+
+#[test]
+fn dash_if_supplemental_property_is_emitted_once_on_the_video_adaptation_set() {
+    let Some((media, _)) = source_media() else {
+        return;
+    };
+    let text = mpd(&media, None);
+    assert_eq!(text.matches(DASHIF_PROPERTY).count(), 1, "{text}");
+    assert!(!text.contains("urn:dvb:dash:hdr-dmi"), "{text}");
+}
+
+#[test]
+fn dvb_dash_profile_adds_the_hdr_dmi_property() {
+    let Some((media, _)) = source_media() else {
+        return;
+    };
+    let text = mpd(&media, Some(DVB_PROFILE));
+    assert_eq!(text.matches(DASHIF_PROPERTY).count(), 1, "{text}");
+    assert_eq!(text.matches(DVB_PROPERTY).count(), 1, "{text}");
+}
+
+#[test]
+fn dash_without_hdr10plus_carries_no_hdr_metadata_property() {
+    for fixture in ["hdr10/meridian-hdr10-60f.ts", "ts/hevc/main10.ts"] {
+        let Some(bytes) = test_fixtures::require_bytes(fixture, "hdr10plus") else {
+            continue;
+        };
+        let media = TsDemux::new().unpackage(&bytes).expect("demux");
+        let text = mpd(&media, Some(DVB_PROFILE));
+        assert!(!text.contains("hdr"), "{fixture}\n{text}");
+    }
+}
+
+const FFPROBE_SIDE_DATA: &str = "HDR Dynamic Metadata SMPTE2094-40 (HDR10+)";
+
+fn ffprobe_frames(file: &std::path::Path) -> Option<String> {
+    let out = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-show_frames", "-select_streams", "v"])
+        .arg(file)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+#[test]
+fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_ts_output() {
+    let Some((media, _)) = source_media() else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/hdr10plus-ts");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("out.ts");
+    std::fs::write(
+        &file,
+        transmux::ts_mux::TsMux::default()
+            .package(&media)
+            .expect("ts mux"),
+    )
+    .unwrap();
+    let Some(text) = ffprobe_frames(&file) else {
+        eprintln!(
+            "SKIP ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_ts_output: ffprobe not usable"
+        );
+        return;
+    };
+    assert_eq!(text.matches("[FRAME]").count(), FRAMES, "{text}");
+    assert_eq!(text.matches(FFPROBE_SIDE_DATA).count(), FRAMES);
+
+    let mut control = media.clone();
+    for track in &mut control.tracks {
+        for sample in &mut track.samples {
+            let mut kept = Vec::new();
+            for nal in iter_length_prefixed_nals(&sample.data).unwrap() {
+                if !Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(nal) {
+                    kept.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+                    kept.extend_from_slice(nal);
+                }
+            }
+            sample.data = kept.into();
+        }
+    }
+    let control_file = dir.join("control.ts");
+    std::fs::write(
+        &control_file,
+        transmux::ts_mux::TsMux::default()
+            .package(&control)
+            .expect("ts mux"),
+    )
+    .unwrap();
+    let control_text = ffprobe_frames(&control_file).expect("ffprobe");
+    assert_eq!(control_text.matches("[FRAME]").count(), FRAMES);
+    assert_eq!(control_text.matches(FFPROBE_SIDE_DATA).count(), 0);
 }
