@@ -65,15 +65,6 @@ const VALIDATOR_BIN: &str = "/usr/local/bin/mediastreamvalidator";
 const VALIDATOR_DEADLINE: Duration = Duration::from_secs(60);
 const VALIDATOR_TARGET_SECS: &str = "5";
 const MUST_LEVEL: i64 = 1;
-/// What Apple's validator says of a low-latency playlist that carries no
-/// partial segments, which is what a WebVTT subtitle playlist is today: it
-/// wants `EXT-X-PART-INF` and the part-related `EXT-X-SERVER-CONTROL`
-/// attributes in every playlist of a low-latency stream. These are the only
-/// findings the subtitle playlists add.
-const LL_TAGS_OF_PARTLESS_PLAYLIST: [&str; 2] = [
-    "Missing EXT-X-PART-INF tag",
-    "Missing server control attribute",
-];
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -923,7 +914,6 @@ async fn apple_validator_reports_nothing_about_subtitles() {
     let new: Vec<_> = with
         .iter()
         .filter(|f| !baseline.contains(f))
-        .filter(|(_, m)| !LL_TAGS_OF_PARTLESS_PLAYLIST.iter().any(|k| m.ends_with(k)))
         .collect();
     assert!(new.is_empty(), "findings the subtitles introduced: {new:?}");
 }
