@@ -431,6 +431,11 @@ pub enum MediaEvent {
     /// inbound [`MediaEvent::Rtp`]/[`MediaEvent::Rtcp`] events can now be
     /// produced.
     DtlsHandshakeComplete,
+    /// The peer closed the DTLS association with a `close_notify` alert
+    /// (RFC 5246 section 7.2.1). The reply `close_notify` is queued for
+    /// [`MediaTransport::poll_transmit`], and the SRTP contexts are dropped:
+    /// nothing more decrypts or encrypts on this transport.
+    DtlsClosed,
     /// A decrypted, parsed inbound RTP packet.
     Rtp(DecryptedRtp),
     /// A decrypted inbound RTCP compound packet (RFC 3550 §6.1), parsed by
@@ -1154,6 +1159,17 @@ impl MediaTransport {
         Ok(())
     }
 
+    /// Close the DTLS association with the selected peer: queues a
+    /// `close_notify` for [`Self::poll_transmit`] and drops the SRTP contexts.
+    pub fn close(&mut self, now: Instant) {
+        if let Some(peer) = self.selected_pair_addr {
+            self.dtls.stop(now, peer);
+        }
+        self.srtp_read = None;
+        self.srtp_write = None;
+        self.retired_srtp_read = None;
+    }
+
     fn handle_dtls_datagram(
         &mut self,
         now: Instant,
@@ -1171,10 +1187,17 @@ impl MediaTransport {
         if self.selected_pair_addr != Some(peer) {
             return Ok(());
         }
-        let dtls_events = self
-            .dtls
-            .read(now, peer, None::<EcnCodepoint>, BytesMut::from(data))
-            .map_err(|e| Error::Media(format!("dtls read: {e}")))?;
+        let dtls_events =
+            match self
+                .dtls
+                .read(now, peer, None::<EcnCodepoint>, BytesMut::from(data))
+            {
+                Ok(events) => events,
+                Err(e) => {
+                    self.dtls.stop(now, peer);
+                    return Err(Error::Media(format!("dtls read: {e}")));
+                }
+            };
         for ev in dtls_events {
             match ev {
                 EndpointEvent::HandshakeComplete => {
@@ -1184,6 +1207,13 @@ impl MediaTransport {
                 EndpointEvent::ApplicationData(_) => {
                     // DTLS application data (e.g. SCTP data channels) is out
                     // of scope for this cut — see the crate README.
+                }
+                EndpointEvent::PeerClosed => {
+                    self.srtp_read = None;
+                    self.srtp_write = None;
+                    self.retired_srtp_read = None;
+                    self.selected_pair_addr = None;
+                    events.push(MediaEvent::DtlsClosed);
                 }
                 // `EndpointEvent` is `#[non_exhaustive]` in rtc-dtls 0.21. An
                 // event this crate does not understand is surfaced as an
@@ -2903,6 +2933,43 @@ mod tests {
             "two MediaTransports holding each other's real fingerprint must complete the DTLS handshake"
         );
         a_dtls_datagrams
+    }
+
+    #[test]
+    fn peer_close_notify_ends_the_session_cleanly() {
+        let mut pair = loopback_pair();
+        pump_until_both_complete(&mut pair, Duration::from_secs(8));
+
+        let now = Instant::now();
+        pair.a.close(now);
+        let mut b_events = Vec::new();
+        let mut a_events = Vec::new();
+        for _ in 0..8 {
+            while let Some(d) = pair.a.poll_transmit() {
+                b_events.extend(
+                    pair.b
+                        .handle_datagram(now, pair.a_addr, &d.bytes)
+                        .expect("a peer's close_notify is not an error"),
+                );
+            }
+            while let Some(d) = pair.b.poll_transmit() {
+                if let Ok(events) = pair.a.handle_datagram(now, pair.b_addr, &d.bytes) {
+                    a_events.extend(events);
+                }
+            }
+        }
+        assert!(
+            b_events.iter().any(|e| matches!(e, MediaEvent::DtlsClosed)),
+            "B must report DtlsClosed: {b_events:?}"
+        );
+        assert!(pair.b.encrypt_rtp(&rtp_test_packet(1)).is_err());
+        assert!(pair.a.encrypt_rtp(&rtp_test_packet(1)).is_err());
+        assert!(
+            !a_events
+                .iter()
+                .any(|e| matches!(e, MediaEvent::Rtp(_) | MediaEvent::DtlsHandshakeComplete)),
+            "{a_events:?}"
+        );
     }
 
     #[test]
