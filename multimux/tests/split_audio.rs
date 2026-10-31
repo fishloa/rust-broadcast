@@ -1431,21 +1431,45 @@ async fn split_audio_blocking_reload_audio_reports_current() {
     assert_eq!((report.last_msn, report.last_part), video, "{text}");
 }
 
+/// Issue #1595. RFC 8216bis Appendix B.1: a Media Playlist reports every
+/// other Media Playlist except those with EXT-X-I-FRAMES-ONLY, so on a plain
+/// route (one media playlist, one I-frame playlist) the media playlist carries
+/// no report, and the I-frame playlist (itself a Media Playlist) carries
+/// exactly the report for the media playlist, at the media playlist's own live
+/// edge with LAST-PART (section 4.4.5.4). Reporting the I-frame playlist from
+/// the media playlist is only a SHOULD, and Apple's validator rejects it as an
+/// unknown rendition report.
 #[tokio::test]
-async fn non_split_route_rendition_reports_absent() {
-    let sources = by_role(load("ts/h264_aac.ts"));
-    let rig = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
-    let pl = rig.playlist("media.m3u8").await;
-    assert!(pl.rendition_reports.is_empty());
-    let text = String::from_utf8(rig.ok("iframe.m3u8").await).expect("utf8");
-    assert!(text.contains("#EXT-X-RENDITION-REPORT:URI=\"media.m3u8\""));
-    assert_eq!(
-        text.matches("#EXT-X-RENDITION-REPORT").count(),
-        1,
-        "iframe playlist keeps exactly its media report: {text}"
+async fn non_split_route_reports_follow_appendix_b1() {
+    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let (start, end) = media_range_secs(&sources);
+    let mut at = start + 4.0;
+    let rig = rig_live_aligned(
+        &sources,
+        Vec::new(),
+        Vec::new(),
+        &window(&sources, f64::MIN, at),
     );
-    let media = String::from_utf8(rig.ok("media.m3u8").await).expect("utf8");
-    assert!(!media.contains("#EXT-X-RENDITION-REPORT"), "{media}");
+    let mut checked = 0;
+    while at < end - 1.0 && checked < 12 {
+        let media = rig.playlist("media.m3u8").await;
+        assert!(media.rendition_reports.is_empty(), "{media:?}");
+        let iframe = rig.playlist("iframe.m3u8").await;
+        assert_eq!(iframe.rendition_reports.len(), 1, "{iframe:?}");
+        let report = &iframe.rendition_reports[0];
+        assert_eq!(report.uri, "media.m3u8");
+        let edge = served_edge(&media);
+        assert_eq!((report.last_msn, report.last_part), edge, "at {at:.2}s");
+        assert!(
+            report.last_part.is_some(),
+            "the media playlist carries partial segments, so LAST-PART is required"
+        );
+        checked += 1;
+        let next = at + 0.7;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+    }
+    assert!(checked >= 10, "only {checked} checkpoints");
 }
 
 const CHECKPOINT_STEP_SECS: f64 = 0.5;
@@ -1659,9 +1683,11 @@ async fn split_audio_validator_reports_no_new_part_findings_over_the_muxed_route
     );
 }
 
-const NON_SPLIT_PARTS: usize = 18;
+// Issue #1597: the former 18 parts included one `DURATION=0` part per segment
+// (the audio left at each cut), which is now merged into the part before it.
+const NON_SPLIT_PARTS: usize = 15;
 const NON_SPLIT_SEGMENTS: usize = 3;
-const NON_SPLIT_DIGEST: u32 = 2_536_544_045;
+const NON_SPLIT_DIGEST: u32 = 1_674_747_859;
 
 #[tokio::test]
 async fn non_split_route_output_is_unchanged() {
@@ -1685,4 +1711,51 @@ async fn non_split_route_output_is_unchanged() {
         ),
         (NON_SPLIT_PARTS, NON_SPLIT_SEGMENTS, NON_SPLIT_DIGEST)
     );
+}
+
+fn all_parts(pl: &MediaPlaylist) -> Vec<&broadcast_hls::PartSpec> {
+    pl.segments
+        .iter()
+        .flat_map(|s| s.parts.iter())
+        .chain(pl.open_segment.iter().flat_map(|o| o.parts.iter()))
+        .collect()
+}
+
+/// Issue #1597 and #1577 on a split-audio route. RFC 8216bis section 4.4.4.9:
+/// every EXT-X-PART has a positive DURATION; Appendix B.1: a playlist with an
+/// EXT-X-PART and no EXT-X-ENDLIST has an EXT-X-PRELOAD-HINT. Checked on the
+/// video and the audio playlist at every step of a live feed.
+#[tokio::test]
+async fn split_audio_playlists_never_list_a_zero_duration_part_and_always_hint() {
+    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let (start, end) = media_range_secs(&sources);
+    let mut at = start + BLOCKING_STEP_SECS;
+    let rig = aac_rig_live(&sources, at);
+    let mut polls = 0usize;
+    while at < end {
+        for name in ["media.m3u8", "audio/a0.m3u8"] {
+            let pl = rig.playlist(name).await;
+            let parts = all_parts(&pl);
+            for part in &parts {
+                assert!(
+                    part.duration.get() > 0.0,
+                    "{name} lists {} with zero duration at {at:.2}s",
+                    part.uri
+                );
+            }
+            if !parts.is_empty() {
+                assert!(
+                    pl.low_latency
+                        .as_ref()
+                        .is_some_and(|ll| ll.preload_hint_part.is_some()),
+                    "{name} has EXT-X-PART but no EXT-X-PRELOAD-HINT at {at:.2}s"
+                );
+            }
+        }
+        polls += 1;
+        let next = at + BLOCKING_STEP_SECS;
+        rig.publish_more(&sources, &window(&sources, at, next));
+        at = next;
+    }
+    assert!(polls > 200, "only {polls} polls");
 }

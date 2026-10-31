@@ -304,6 +304,11 @@ pub struct LlHlsSegmenter {
     current_plan: Option<CutPlan>,
     /// Follower mode: the open segment is fed part by part via `follow_part`.
     incremental: bool,
+    /// A part boundary was reached while the segment is waiting for its next
+    /// keyframe and the part would have drained every anchor sample: the part is
+    /// held until the next anchor sample shows whether that is the keyframe that
+    /// closes the segment, which then merges it into the final part.
+    part_deferred: bool,
     /// Index into the open incremental segment's parts of the next one to emit.
     inc_next_part: usize,
     /// Parts actually emitted for the open incremental segment.
@@ -415,6 +420,7 @@ impl LlHlsSegmenter {
             incremental: false,
             inc_next_part: 0,
             inc_part_count: 0,
+            part_deferred: false,
         })
     }
 
@@ -538,6 +544,11 @@ impl LlHlsSegmenter {
             return Err(no_sync_sample_error());
         }
 
+        if idx == self.anchor && self.part_deferred {
+            self.part_deferred = false;
+            self.emit_part(false)?;
+        }
+
         if idx == self.anchor {
             let elapsed = self.anchor_clock.tick(&sample);
             self.anchor_seg_dur += elapsed;
@@ -553,7 +564,11 @@ impl LlHlsSegmenter {
         // past the segment target too: a segment waiting for its next keyframe
         // keeps cutting parts, so its final part is only the short remainder.
         if idx == self.anchor && self.anchor_part_dur >= self.part_target_ticks {
-            self.emit_part(false)?;
+            if self.would_end_with_empty_anchor_tail() {
+                self.part_deferred = true;
+            } else {
+                self.emit_part(false)?;
+            }
         }
         Ok(())
     }
@@ -1223,9 +1238,26 @@ impl LlHlsSegmenter {
         }
         self.anchor_seg_dur = 0;
         self.anchor_part_dur = 0;
+        self.part_deferred = false;
         self.current_segment += 1;
         self.next_part_index = 0;
         Ok(())
+    }
+
+    /// Whether emitting a part now would drain every anchor sample of a segment
+    /// that is already long enough to close at its next keyframe. If that
+    /// keyframe is the very next anchor sample, the segment's final part would
+    /// then carry no anchor time at all (only the audio or teletext that lags
+    /// the video), so the part is held back instead (see `part_deferred`). A
+    /// part the anchor does not drain completely leaves a remainder for the
+    /// final part, so it goes out at once.
+    fn would_end_with_empty_anchor_tail(&self) -> bool {
+        if self.anchor_seg_dur < self.target_ticks {
+            return false;
+        }
+        let t = &self.tracks[self.anchor];
+        let span = self.anchor_part_dur.min(self.part_target_ticks);
+        take_span(t, span) >= t.pending.len()
     }
 
     /// Emit one part covering the samples buffered since the last part. If
@@ -1308,6 +1340,16 @@ impl LlHlsSegmenter {
                 .map(|s| clock.tick(s))
                 .sum()
         };
+        // RFC 8216bis section 4.4.4.9: `EXT-X-PART` `DURATION` is the duration
+        // of the Partial Segment, and the parts of a Parent Segment must add up
+        // to its duration, which is the anchor's span. A part in which the
+        // anchor contributes no time (only audio or teletext samples are left
+        // at the cut, or the anchor's samples all have a zero span) is not a
+        // Partial Segment of its own: it is not emitted, and its samples stay in
+        // the segment, which is built from every buffered sample.
+        if anchor_span_ticks == 0 {
+            return Ok(());
+        }
         let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
 
         let seq = self.next_seq;

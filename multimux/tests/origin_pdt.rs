@@ -419,9 +419,14 @@ async fn pdt_validator_clean() {
     }
     let mut findings = Vec::new();
     collect(&json, "$", &mut findings);
-    const KNOWN_1429: &[&str] = &[
-        "No rendition reports in low-latency playlist",
-        "Missing server control attribute",
+    const KNOWN: &[(&str, &str)] = &[
+        // Issue #1595: a one-rendition low-latency route has no sibling for the
+        // media playlist to report (RFC 8216bis Appendix B.1); a report for the
+        // I-frame playlist is rejected as "Unknown rendition report".
+        ("No rendition reports in low-latency playlist", "#1595"),
+        // Issue #1594: reported on the I-frame playlist, which carries the same
+        // HOLD-BACK as the media playlist.
+        ("Missing server control attribute", "#1594"),
     ];
     for f in &findings {
         eprintln!("VALIDATOR: {} level={} {}", f.0, f.1, f.2);
@@ -429,16 +434,16 @@ async fn pdt_validator_clean() {
     let errors: Vec<_> = findings.iter().filter(|f| f.1 <= 1).collect();
     let unexpected: Vec<_> = errors
         .iter()
-        .filter(|f| !KNOWN_1429.contains(&f.2.as_str()))
+        .filter(|f| !KNOWN.iter().any(|(known, _)| *known == f.2))
         .collect();
     assert!(
         unexpected.is_empty(),
         "NEW validator level-1 findings: {unexpected:?}"
     );
-    for known in KNOWN_1429 {
+    for (known, issue) in KNOWN {
         assert!(
             errors.iter().any(|f| f.2 == *known),
-            "known finding {known:?} (#1429) no longer reported: remove it from KNOWN_1429"
+            "known finding {known:?} ({issue}) no longer reported: remove it from KNOWN"
         );
     }
 }

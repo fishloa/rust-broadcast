@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `LlHlsSegmenter` no longer emits a Partial Segment in which the anchor track contributes no time (issue #1597). When audio or teletext lagged the video, the part that drained the last video sample before the next keyframe left only that lagging audio for the segment's final part, which reached the playlist as `EXT-X-PART:DURATION=0`. A part that would drain every anchor sample of a segment already long enough to close is now held until the next anchor sample, so the keyframe's cut merges it with the lagging samples into one final part (the part target is not exceeded, and the parts again add up to the segment duration, which Apple's validator also checks). A part whose anchor span is zero is skipped; its samples stay in the segment. No sample is dropped.
+
 ### Changed
 - Explicit HE-AAC tracks (`TrackSpec::with_explicit_he_aac`, a DVB `AAC_descriptor` HE-AAC v2 value in the TS demux) now use the output sample rate (twice the core rate) as their media timescale, so every sample duration and timestamp doubles while presentation times are unchanged; `Track::with_explicit_he_aac` and `Sample::rescale_timescale` carry already-cut samples across.
 

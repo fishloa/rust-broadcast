@@ -65,6 +65,16 @@ const VALIDATOR_BIN: &str = "/usr/local/bin/mediastreamvalidator";
 const VALIDATOR_DEADLINE: Duration = Duration::from_secs(60);
 const VALIDATOR_TARGET_SECS: &str = "5";
 const MUST_LEVEL: i64 = 1;
+/// Property of the interlaced real captures the rig uses (`rai-gulp-8MB.ts`,
+/// `transformers-eia608-h264.ts`), not of the origin; no issue.
+const KNOWN_INTERLACED_FIXTURE: &str = "Interlaced video detected - Must be progressive";
+/// Issue #1594: reported on the I-frame playlist although it carries the same
+/// HOLD-BACK as the media playlist.
+const KNOWN_MISSING_HOLD_BACK_1594: &str = "Missing server control attribute";
+/// Issue #1595: fires on a low-latency playlist with no sibling rendition to
+/// report, which RFC 8216bis Appendix B.1 allows; reporting the I-frame
+/// playlist instead is rejected by the validator as "Unknown rendition report".
+const KNOWN_NO_RENDITION_REPORTS_1595: &str = "No rendition reports in low-latency playlist";
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -1214,25 +1224,112 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         about_subtitles.is_empty(),
         "validator findings about subtitles: {about_subtitles:?}"
     );
-    let baseline: BTreeSet<&(i64, String)> = without.iter().collect();
-    let video_findings: BTreeSet<&str> = without
+    let message = |m: &str| {
+        m.split_once(": ")
+            .map_or(m.to_string(), |(_, rest)| rest.to_string())
+    };
+    let tolerated = |m: &str, extra: &[&str]| {
+        let m = message(m);
+        KNOWN_MISSING_HOLD_BACK_1594 == m
+            || KNOWN_INTERLACED_FIXTURE == m
+            || extra.contains(&m.as_str())
+    };
+    let unexpected_on: Vec<_> = with.iter().filter(|(_, m)| !tolerated(m, &[])).collect();
+    assert!(
+        unexpected_on.is_empty(),
+        "findings with subtitles on: {unexpected_on:?}"
+    );
+    let unexpected_off: Vec<_> = without
         .iter()
-        .filter_map(|(_, m)| {
-            m.strip_prefix("$/variants[0]")
-                .or_else(|| m.strip_prefix("$/variants[1]"))
-        })
+        .filter(|(_, m)| !tolerated(m, &[KNOWN_NO_RENDITION_REPORTS_1595]))
         .collect();
-    let new: Vec<_> = with
+    assert!(
+        unexpected_off.is_empty(),
+        "findings with subtitles off: {unexpected_off:?}"
+    );
+    assert!(
+        with.iter()
+            .any(|(_, m)| message(m) == KNOWN_MISSING_HOLD_BACK_1594),
+        "#1594 no longer reported: remove its tolerance"
+    );
+    assert!(
+        without
+            .iter()
+            .any(|(_, m)| message(m) == KNOWN_NO_RENDITION_REPORTS_1595),
+        "#1595 no longer reported on the one-rendition route: remove its tolerance"
+    );
+    assert!(
+        with.iter()
+            .all(|(_, m)| message(m) != KNOWN_NO_RENDITION_REPORTS_1595),
+        "with subtitle siblings every playlist has reports to carry"
+    );
+}
+
+fn zero_duration_parts(playlist: &MediaPlaylist) -> Vec<String> {
+    playlist
+        .segments
         .iter()
-        .filter(|f| !baseline.contains(f))
-        .filter(|(_, m)| {
-            let on_subtitle_playlist =
-                !m.starts_with("$/variants[0]") && !m.starts_with("$/variants[1]");
-            let same_as_video = m
-                .split_once(']')
-                .is_some_and(|(_, rest)| video_findings.contains(rest));
-            !(on_subtitle_playlist && same_as_video)
-        })
-        .collect();
-    assert!(new.is_empty(), "findings the subtitles introduced: {new:?}");
+        .flat_map(|s| s.parts.iter())
+        .chain(playlist.open_segment.iter().flat_map(|o| o.parts.iter()))
+        .filter(|p| p.duration.get() <= 0.0)
+        .map(|p| p.uri.clone())
+        .collect()
+}
+
+/// Issue #1597. RFC 8216bis section 4.4.4.9: an `EXT-X-PART` `DURATION` is the
+/// duration of the Partial Segment, and Apple's validator rejects a partial
+/// segment without positive duration. Polls every playlist of a low-latency
+/// route with subtitles after each few samples, so a part cut with no span is
+/// caught at the moment it appears.
+#[tokio::test]
+async fn no_playlist_ever_lists_a_zero_duration_part() {
+    let who = "no_playlist_ever_lists_a_zero_duration_part";
+    let teletext = test_fixtures::tsduck(TELETEXT_FIXTURE, who)
+        .map(|p| std::fs::read(p).expect("read teletext fixture"));
+    let (Some(teletext), Some(video)) =
+        (teletext, test_fixtures::require_bytes(VIDEO_FIXTURE, who))
+    else {
+        return;
+    };
+    let mut driver = start_rig(compose(&video, &teletext), true);
+    let subs = [
+        driver.rig.subtitle_uri(false).await,
+        driver.rig.subtitle_uri(true).await,
+    ];
+    let mut polls = 0usize;
+    let mut parts_seen = 0usize;
+    while driver.next < driver.order.len() {
+        driver.feed(3);
+        polls += 1;
+        for name in ["media.m3u8", subs[0].as_str(), subs[1].as_str()] {
+            let (_, playlist) = driver.rig.playlist(name).await;
+            let zero = zero_duration_parts(&playlist);
+            assert!(
+                zero.is_empty(),
+                "{name} lists zero-duration parts {zero:?} after {polls} polls"
+            );
+            let has_parts = playlist.segments.iter().any(|s| !s.parts.is_empty())
+                || playlist
+                    .open_segment
+                    .as_ref()
+                    .is_some_and(|o| !o.parts.is_empty());
+            assert!(
+                !has_parts
+                    || playlist
+                        .low_latency
+                        .as_ref()
+                        .is_some_and(|ll| ll.preload_hint_part.is_some()),
+                "{name} has EXT-X-PART but no EXT-X-PRELOAD-HINT after {polls} polls"
+            );
+            parts_seen += playlist
+                .open_segment
+                .iter()
+                .map(|o| o.parts.len())
+                .sum::<usize>();
+        }
+    }
+    assert!(
+        polls > 200 && parts_seen > 100,
+        "polls={polls} parts={parts_seen}"
+    );
 }

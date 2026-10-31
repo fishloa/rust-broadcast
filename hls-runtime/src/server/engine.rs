@@ -2953,6 +2953,7 @@ impl HlsOrigin {
             behind_secs += s.duration_secs;
         }
         closed_parts.reverse();
+        let any_closed_parts = closed_parts.iter().any(|parts| !parts.is_empty());
         let fmp4 = self.container == Container::Fmp4;
         let map_for = |generation: Generation| {
             fmp4.then(|| MapTag {
@@ -3041,15 +3042,26 @@ impl HlsOrigin {
             };
             open
         });
-        let next_part_hint = has_open_parts.then(|| {
+        // RFC 8216bis Appendix B.1: "A Playlist that contains an EXT-X-PART
+        // tag but no EXT-X-ENDLIST tag will also contain an
+        // EXT-X-PRELOAD-HINT tag that specifies the next Partial Segment that
+        // is expected to be added to the Playlist." Right after a segment
+        // closes and before its successor has a part, the playlist still
+        // carries the closed segments' EXT-X-PART tags, so the hint names
+        // part 0 of the next Media Sequence Number (section 4.4.5.3).
+        let next_part_hint = if has_open_parts {
             let next_idx = open_parts
                 .iter()
                 .map(|p| p.part_index)
                 .max()
                 .map(PartIndex::saturating_next)
                 .unwrap_or(PartIndex::new(0));
-            self.part_name(track_id, open_seq, next_idx, ext)
-        });
+            Some(self.part_name(track_id, open_seq, next_idx, ext))
+        } else if low_latency_enabled && any_closed_parts {
+            Some(self.part_name(track_id, open_seq.saturating_next(), PartIndex::new(0), ext))
+        } else {
+            None
+        };
         // `#EXT-X-MAP`: unconditional under Fmp4 (RFC 8216bis §3.1.2 MUST);
         // omitted under MpegTs by default (§3.1.1's PAT/PMT-or-MAP
         // disjunction — see `Container`'s own doc for why this is a default,
@@ -3378,17 +3390,24 @@ impl HlsOrigin {
             None
         };
 
-        // Rendition report pointing back at the primary media playlist (RFC
-        // 8216bis §4.4.5.4 SHOULD; Apple accepts iframe->media reports).
+        // RFC 8216bis Appendix B.1: "Each Media Playlist MUST contain one
+        // EXT-X-RENDITION-REPORT tag for each Media Playlist (Rendition) in the
+        // Multivariant Playlist, except for the Media Playlist to which the
+        // EXT-X-RENDITION-REPORT tag is being added, and Playlists that
+        // contain the EXT-X-I-FRAMES-ONLY tag." This I-frame playlist is a
+        // Media Playlist, so it reports the primary media playlist, with the
+        // media playlist's own live edge (section 4.4.5.4: LAST-MSN is the
+        // last Partial Segment's Media Sequence Number and LAST-PART is
+        // "REQUIRED if the Rendition contains a Partial Segment").
+        // The reverse, a media playlist reporting this I-frame playlist, is
+        // only a SHOULD, and Apple's validator rejects it as "Unknown
+        // rendition report" (issue #1595).
         let rendition_reports = if self.part_target_ms.is_some() {
-            let last_closed = self
-                .trunk
-                .last_closed_segment()
-                .unwrap_or(entries[0].0.sequence_number);
+            let (last_msn, last_part) = self.current_live_edge();
             let mut reports = vec![broadcast_hls::RenditionReport {
                 uri: media_playlist_name.to_string(),
-                last_msn: self.public_msn(last_closed),
-                last_part: None,
+                last_msn,
+                last_part,
                 extra_attrs: Vec::new(),
             }];
             // Split-audio routes: report each audio sibling rendition as well
@@ -3949,6 +3968,49 @@ mod tests {
         );
     }
 
+    /// Issue #1577. RFC 8216bis Appendix B.1: a Playlist with an EXT-X-PART
+    /// tag and no EXT-X-ENDLIST names the next Partial Segment in an
+    /// EXT-X-PRELOAD-HINT. Right after segment 1 closes, with no part of
+    /// segment 2 yet, the hint is part 0 of segment 2, and the server holds a
+    /// request for that resource open (section 6.2.6) rather than 404ing it.
+    #[test]
+    fn preload_hint_present_between_segments() {
+        let (_trunk, origin, writer) = make_origin();
+        part(&writer, 1, 0, true);
+        part(&writer, 1, 1, false);
+        seg(&writer, 1, 4.0, false);
+
+        let body = render_body(&origin);
+        assert!(body.contains("#EXT-X-PART:"), "body: {body}");
+        assert!(
+            body.contains("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-7-2.0.m4s\""),
+            "hint names part 0 of the next segment: {body}"
+        );
+
+        let first = origin.resolve(
+            HlsRequest::Resource {
+                name: "part-1-7-2.0.m4s".to_string(),
+            },
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(5_000_000_000)),
+        );
+        assert!(
+            matches!(first, EgressResponse::Await { .. }),
+            "the hinted resource blocks, got {first:?}"
+        );
+        part(&writer, 2, 0, true);
+        let served = resolve_now(
+            &origin,
+            HlsRequest::Resource {
+                name: "part-1-7-2.0.m4s".to_string(),
+            },
+        );
+        assert!(
+            matches!(served, EgressResponse::Ready { .. }),
+            "served once produced, got {served:?}"
+        );
+    }
+
     // --- 2. a preload-hinted part BLOCKS until produced, then serves -----
 
     /// MUTATION VERIFIED: changing `resolve_resource`'s `never_will` check
@@ -4133,8 +4195,10 @@ mod tests {
         );
         // RFC 8216bis §6.2.2: the closed segment keeps its EXT-X-PART tags
         // (inside the segment, before its EXTINF) for three Target
-        // Durations. They are not an *open* segment: no preload hint, and
-        // every part line precedes the segment's own EXTINF/URI.
+        // Durations. They are not an *open* segment, and every part line
+        // precedes the segment's own EXTINF/URI. The playlist carries parts,
+        // so Appendix B.1 requires a preload hint: part 0 of the next
+        // segment (#1577).
         assert_eq!(
             body.lines().skip(5).collect::<Vec<_>>(),
             vec![
@@ -4145,6 +4209,7 @@ mod tests {
                 "#EXT-X-PART:DURATION=0.5,URI=\"part-1-7-1.1.m4s\"",
                 "#EXTINF:4,",
                 "seg-1-7-1.m4s",
+                "#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-7-2.0.m4s\"",
             ],
             "{body}"
         );
