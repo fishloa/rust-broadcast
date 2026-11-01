@@ -23,11 +23,10 @@ BC = "broadcast-client/src/"
 DR = "dash-runtime/src/"
 
 DASH_TESTS = ["cargo", "test", "-p", "broadcast-client", "--all-features", "--locked", "--no-fail-fast",
-              "--test", "dash_static", "--test", "dash_live", "--test", "dash_select", "--test", "dash_errors",
-              "--test", "dash_http", "--test", "dash_muxed", "--test", "dash_source_kind", "--test", "dash_matrix",
-              "--test", "dash_clock_surface", "--test", "label_coverage"]
+              "--test", "it", "--", "dash_static::", "dash_live::", "dash_select::", "dash_errors::",
+              "dash_http::", "dash_muxed::", "dash_source_kind::", "dash_matrix::", "dash_clock_surface::"]
 CORE_TESTS = ["cargo", "test", "-p", "dash-runtime", "--locked", "--no-fail-fast",
-              "--test", "client_select_audio", "--test", "client_static"]
+              "--test", "it", "--", "client_select_audio::", "client_static::"]
 
 D = BC + "source/dash.rs"
 S = BC + "session.rs"
