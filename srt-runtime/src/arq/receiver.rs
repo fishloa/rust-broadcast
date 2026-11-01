@@ -461,10 +461,9 @@ impl Receiver {
     /// sequence after `last`. A `last` preceding `first` is a malformed
     /// (empty) range and ignored.
     //
-    // The DROPREQ consumer lives in the tokio adapter (`crate::io`); the
-    // engine core itself never receives packets, so it is gated accordingly.
-    #[cfg(feature = "tokio")]
-    pub(crate) fn skip_range(&mut self, first: u32, last: u32) {
+    // Public so a sans-IO driver other than the tokio adapter (`crate::io`) can apply a DROPREQ
+    // and the Too-Late Packet Drop fake ACK.
+    pub fn skip_range(&mut self, first: u32, last: u32) {
         if seq::seq_diff(last, first) < 0 {
             return;
         }

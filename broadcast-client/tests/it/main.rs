@@ -70,6 +70,8 @@ mod rtsp_playout;
 mod rtsp_zero_duration;
 mod segment_inactivity;
 mod server_refused;
+mod srt;
+mod srt_wire;
 mod start_gate;
 #[macro_use]
 #[cfg(feature = "__test-seams")]

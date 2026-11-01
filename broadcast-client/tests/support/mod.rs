@@ -8,6 +8,8 @@ pub mod hls_host;
 pub mod renditions;
 pub mod replay;
 pub mod rtsp_host;
+pub mod srt_peer;
+pub mod srt_sim;
 pub mod truth;
 pub mod ts_host;
 pub mod ts_pmt;
@@ -15,6 +17,7 @@ pub mod ts_probe;
 pub mod ts_shift;
 pub mod ts_split;
 pub mod udp_host;
+pub mod wire_host;
 
 use broadcast_client::{Action, Event, Session};
 

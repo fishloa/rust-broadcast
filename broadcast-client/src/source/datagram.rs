@@ -14,6 +14,8 @@ use rtp_packet::RtpPacket;
 
 use url::{Host, Url};
 
+use crate::source::srt::{Notice, SrtCaller};
+use crate::srt::SrtConfig;
 use crate::udp::{DatagramStats, MulticastJoin, UdpConfig, UdpMode};
 use crate::{Action, Error};
 
@@ -223,13 +225,25 @@ impl Ingest {
     }
 }
 
+enum Kind {
+    Udp(Ingest),
+    Srt(Box<SrtCaller>),
+}
+
+pub(crate) struct Effects {
+    pub sends: Vec<Vec<u8>>,
+    pub notices: Vec<Notice>,
+}
+
 pub(crate) struct Datagram {
     host: String,
     port: u16,
     mode: UdpMode,
     multicast: Option<MulticastJoin>,
     recv_buffer_bytes: Option<u32>,
-    ingest: Ingest,
+    kind: Kind,
+    sends: Vec<Vec<u8>>,
+    notices: Vec<Notice>,
 }
 
 impl Datagram {
@@ -277,12 +291,40 @@ impl Datagram {
             mode: UdpMode::Receive,
             multicast,
             recv_buffer_bytes: config.recv_buffer_bytes,
-            ingest: Ingest::new(rtp, config),
+            kind: Kind::Udp(Ingest::new(rtp, config)),
+            sends: Vec::new(),
+            notices: Vec::new(),
+        })
+    }
+
+    pub(crate) fn srt(url: &Url, config: &SrtConfig) -> Result<Self, Error> {
+        let host = match url.host() {
+            Some(Host::Domain(name)) => name.to_string(),
+            Some(Host::Ipv4(a)) => a.to_string(),
+            Some(Host::Ipv6(a)) => a.to_string(),
+            None => return Err(Error::InvalidUrl("missing host".to_string())),
+        };
+        let port = match url.port() {
+            Some(p) if p != 0 => p,
+            _ => return Err(Error::InvalidUrl("missing port".to_string())),
+        };
+        Ok(Self {
+            host,
+            port,
+            mode: UdpMode::Connect,
+            multicast: None,
+            recv_buffer_bytes: None,
+            kind: Kind::Srt(Box::new(SrtCaller::new(config)?)),
+            sends: Vec::new(),
+            notices: Vec::new(),
         })
     }
 
     pub(crate) fn bind_action(&mut self, conn: u32) -> Action {
-        self.ingest.reset();
+        match &mut self.kind {
+            Kind::Udp(i) => i.reset(),
+            Kind::Srt(s) => s.reset(),
+        }
         Action::UdpBind {
             conn,
             host: self.host.clone(),
@@ -293,19 +335,74 @@ impl Datagram {
         }
     }
 
+    pub(crate) fn on_connected(&mut self, now_us: u64) {
+        if let Kind::Srt(s) = &mut self.kind {
+            s.on_connected(now_us);
+            self.collect();
+        }
+    }
+
     pub(crate) fn on_datagram(&mut self, bytes: &[u8], now_us: u64) -> Released {
-        self.ingest.push(bytes, now_us)
+        match &mut self.kind {
+            Kind::Udp(i) => i.push(bytes, now_us),
+            Kind::Srt(s) => {
+                s.on_datagram(bytes, now_us);
+                self.collect()
+            }
+        }
     }
 
     pub(crate) fn poll(&mut self, now_us: u64) -> Released {
-        self.ingest.poll(now_us)
+        match &mut self.kind {
+            Kind::Udp(i) => i.poll(now_us),
+            Kind::Srt(s) => {
+                s.poll(now_us);
+                self.collect()
+            }
+        }
     }
 
-    pub(crate) fn next_deadline_us(&self) -> Option<u64> {
-        self.ingest.next_deadline_us()
+    fn collect(&mut self) -> Released {
+        let Kind::Srt(s) = &mut self.kind else {
+            return Released {
+                payloads: Vec::new(),
+                discontinuity: false,
+            };
+        };
+        let out = s.take_out();
+        self.sends.extend(out.sends);
+        self.notices.extend(out.notices);
+        Released {
+            payloads: out.payloads,
+            discontinuity: false,
+        }
+    }
+
+    pub(crate) fn take_effects(&mut self) -> Effects {
+        Effects {
+            sends: core::mem::take(&mut self.sends),
+            notices: core::mem::take(&mut self.notices),
+        }
+    }
+
+    pub(crate) fn shutdown_datagram(&mut self, now_us: u64) -> Option<Vec<u8>> {
+        match &mut self.kind {
+            Kind::Srt(s) => s.shutdown_datagram(now_us),
+            Kind::Udp(_) => None,
+        }
+    }
+
+    pub(crate) fn next_deadline_us(&self, now_us: u64) -> Option<u64> {
+        match &self.kind {
+            Kind::Udp(i) => i.next_deadline_us(),
+            Kind::Srt(s) => s.next_deadline_us(now_us),
+        }
     }
 
     pub(crate) fn stats(&self) -> DatagramStats {
-        self.ingest.stats()
+        match &self.kind {
+            Kind::Udp(i) => i.stats(),
+            Kind::Srt(s) => s.stats(),
+        }
     }
 }

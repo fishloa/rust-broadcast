@@ -18,6 +18,7 @@ pub(crate) mod redirect;
 mod rendered;
 pub mod session;
 pub mod source;
+pub mod srt;
 pub mod timeline;
 pub mod udp;
 
@@ -37,6 +38,7 @@ pub use events::{
 pub use playout::PlayoutConfig;
 pub use session::Session;
 pub use source::ts_http::TsHttpSource;
+pub use srt::{SrtConfig, SrtEncryption, SrtEntropySeed, SrtKeyLength};
 pub use timeline::TimelineJumpConfig;
 pub use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};
 pub use tshttp_runtime::StarveKind;
