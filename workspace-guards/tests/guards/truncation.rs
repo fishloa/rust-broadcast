@@ -1,4 +1,4 @@
-//! Serializer length/count truncation guard for `rtmp-runtime` (#1129).
+//! Serializer length/count truncation guard (#1129), applied to every table crate.
 //!
 //! A wire length/count must be range-checked before it is narrowed:
 //! `buf[0] = x.len() as u8;` silently wraps a 256-byte body to length 0 and
@@ -10,23 +10,20 @@
 //! type's own over-range test): no production line (outside `#[cfg(test)]`)
 //! may narrow `<expr>.len()` / `<expr>.count()` with `as u8|u16|u32` unless
 //! its enclosing function also contains a range check, or the exact line is on
-//! `ALLOWLIST` with a reason. A stale allowlist entry fails the guard so the
-//! list cannot rot.
+//! the crate's `allowlist` with a reason. A stale allowlist entry fails the
+//! guard so the list cannot rot.
+//!
+//! Not in the table, by design: `dvb-si` (its guard scans only
+//! `descriptors/`, `tables/` and `carousel/` with a different detector) and
+//! `transmux` (its file also carries behavioural box-range tests that need the
+//! crate's types).
 
-use std::path::{Path, PathBuf};
+use workspace_guards::src_files;
 
-/// `(file, exact trimmed line, reason)`.
-const ALLOWLIST: &[(&str, &str, &str)] = &[];
-
-fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for e in std::fs::read_dir(dir).expect("read dir") {
-        let p = e.expect("dir entry").path();
-        if p.is_dir() {
-            rs_files(&p, out);
-        } else if p.extension().is_some_and(|x| x == "rs") {
-            out.push(p);
-        }
-    }
+pub struct Crate {
+    pub name: &'static str,
+    /// `(file, exact trimmed line, reason)`.
+    pub allowlist: &'static [(&'static str, &'static str, &'static str)],
 }
 
 /// `.len()` / `.count()` immediately narrowed with `as u8|u16|u32`.
@@ -63,22 +60,10 @@ fn has_guard(text: &str) -> bool {
         })
 }
 
-#[test]
-fn len_narrowing_sites_are_range_checked_or_allowlisted() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    rs_files(&root.join("src"), &mut files);
-    assert!(!files.is_empty(), "scan found no source files");
-
+fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
     let mut problems = Vec::new();
-    let mut used = vec![false; ALLOWLIST.len()];
-    for path in &files {
-        let rel = path
-            .strip_prefix(root)
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        let body = std::fs::read_to_string(path).unwrap();
+    let mut used = vec![false; c.allowlist.len()];
+    for (rel, body) in files {
         let prod = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
         let lines: Vec<&str> = prod.lines().collect();
         for (n, line) in lines.iter().enumerate() {
@@ -86,7 +71,11 @@ fn len_narrowing_sites_are_range_checked_or_allowlisted() {
             if t.starts_with("//") || !narrows_len(t) {
                 continue;
             }
-            if let Some(k) = ALLOWLIST.iter().position(|(f, l, _)| *f == rel && *l == t) {
+            if let Some(k) = c
+                .allowlist
+                .iter()
+                .position(|(f, l, _)| *f == rel && *l == t)
+            {
                 used[k] = true;
                 continue;
             }
@@ -96,20 +85,75 @@ fn len_narrowing_sites_are_range_checked_or_allowlisted() {
             }
             if !has_guard(&lines[start..=n].join("\n")) {
                 problems.push(format!(
-                    "{rel}:{}: unchecked length narrowing (use broadcast_common::len::fit_*): {t}",
+                    "{}: {rel}:{}: unchecked length narrowing (use broadcast_common::len::fit_*): {t}",
+                    c.name,
                     n + 1
                 ));
             }
         }
     }
     for (k, u) in used.iter().enumerate() {
-        assert!(
-            *u,
-            "stale allowlist entry: {} :: {}",
-            ALLOWLIST[k].0, ALLOWLIST[k].1
-        );
+        if !*u {
+            problems.push(format!(
+                "{}: stale allowlist entry: {} :: {}",
+                c.name, c.allowlist[k].0, c.allowlist[k].1
+            ));
+        }
+    }
+    problems
+}
+
+#[test]
+fn len_narrowing_sites_are_range_checked_or_allowlisted() {
+    let mut problems = Vec::new();
+    for c in crate::truncation_data::TABLE {
+        let files = src_files(c.name);
+        assert!(!files.is_empty(), "{}: scan found no source files", c.name);
+        problems.extend(check(c, &files));
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn table_covers_every_workspace_member() {
+    let names: Vec<&str> = crate::truncation_data::TABLE
+        .iter()
+        .map(|c| c.name)
+        .collect();
+    crate::common::assert_table_covers_members(
+        "truncation",
+        &names,
+        crate::truncation_data::EXEMPT,
+    );
+}
+
+#[test]
+fn allowlist_entries_are_reasoned() {
+    for c in crate::truncation_data::TABLE {
+        for (file, line, reason) in c.allowlist {
+            assert!(
+                !reason.trim().is_empty() && !line.is_empty(),
+                "{}: allowlist entry ({file}) needs a line pin and a reason",
+                c.name
+            );
+        }
+    }
+}
+
+#[test]
+fn check_flags_a_synthetic_offender_and_a_stale_entry() {
+    let c = Crate {
+        name: "synthetic",
+        allowlist: &[("src/gone.rs", "x.len() as u8;", "stale on purpose")],
+    };
+    let files = vec![(
+        "src/a.rs".to_string(),
+        "fn f() { buf[0] = x.len() as u8; }\n".to_string(),
+    )];
+    let p = check(&c, &files);
+    assert_eq!(p.len(), 2, "{p:?}");
+    assert!(p[0].starts_with("synthetic: src/a.rs:1:"), "{p:?}");
+    assert!(p[1].contains("stale allowlist entry"), "{p:?}");
 }
 
 #[test]

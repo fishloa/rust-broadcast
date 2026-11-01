@@ -3,3 +3,5 @@ mod label;
 mod label_data;
 mod non_exhaustive;
 mod non_exhaustive_data;
+mod truncation;
+mod truncation_data;
