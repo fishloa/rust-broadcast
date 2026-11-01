@@ -10,6 +10,9 @@ const fn plain(name: &'static str) -> Crate {
     }
 }
 
+/// Members with no `src/lib.rs` (pure binaries: `dvb-tools`, `multimux-cli`) or no
+/// public enums in `src/` (`dvb-stream`: async stream adapters + a stats struct;
+/// `test-bounded`, `test-alloc`, `test-fixtures`: shared test helpers).
 pub const EXEMPT: &[&str] = &[
     "dvb-tools",
     "multimux-cli",
