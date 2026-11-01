@@ -1,5 +1,5 @@
-//! Tripwire guard (spec §5, SP2–SP5): generic protocol and format work in this
-//! crate goes through an established crate, not hand-rolled code. Scans every
+//! Tripwire guard (spec §5, SP2–SP5), shape 1: generic protocol and format work in
+//! each table crate goes through an established crate, not hand-rolled code. Scans every
 //! `src/**/*.rs` outside `#[cfg(test)]` items and fails on:
 //!
 //! - an HTTP status/request line literal (`"HTTP/1.`) or a hand-framed
@@ -16,8 +16,13 @@
 //! `ALLOW` entry states why the hit is not hand-rolled protocol work, and a
 //! stale entry (one that no longer matches) fails the test.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use workspace_guards::src_files;
+
+pub struct Crate {
+    pub name: &'static str,
+    /// `(path suffix, needle, reason)` — reviewed exceptions.
+    pub allow: &'static [(&'static str, &'static str, &'static str)],
+}
 
 /// `(needle, why it is banned)`. `strip_prefix("<scheme>://")` is checked
 /// separately in `banned_in_line`.
@@ -38,20 +43,6 @@ const BANNED: &[(&str, &str)] = &[
     ("thread::sleep", "blocking sleep in non-test code"),
     ("sleep(", "sleep in non-test code"),
 ];
-
-/// `(path suffix, needle, reason)` — reviewed exceptions. Empty by design.
-const ALLOW: &[(&str, &str, &str)] = &[];
-
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).expect("read src dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
-}
 
 /// The source with every `#[cfg(test)]` item (a `mod … { … }` block, or a single
 /// line item) and every `//` comment line removed. Braces inside string
@@ -101,46 +92,45 @@ fn banned_in_line(line: &str) -> Vec<(&'static str, &'static str)> {
     hits
 }
 
-#[test]
-fn no_hand_rolled_protocol_code_in_src() {
-    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    rust_files(&src_dir, &mut files);
-    assert!(!files.is_empty());
+fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
     let mut violations = Vec::new();
-    let mut used = vec![false; ALLOW.len()];
-    for file in files {
-        let text = fs::read_to_string(&file).expect("read source");
-        let rel = file
-            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        for (no, line) in non_test_lines(&text) {
+    let mut used = vec![false; c.allow.len()];
+    for (rel, text) in files {
+        for (no, line) in non_test_lines(text) {
             for (needle, why) in banned_in_line(&line) {
-                if let Some(i) = ALLOW
+                if let Some(i) = c
+                    .allow
                     .iter()
                     .position(|(suffix, n, _)| rel.ends_with(suffix) && *n == needle)
                 {
                     used[i] = true;
                 } else {
-                    violations.push(format!("{rel}:{no}: {why}: {}", line.trim()));
+                    violations.push(format!("{}: {rel}:{no}: {why}: {}", c.name, line.trim()));
                 }
             }
         }
     }
-    let stale: Vec<_> = ALLOW
-        .iter()
-        .zip(&used)
-        .filter(|(_, u)| !**u)
-        .map(|(a, _)| a.0)
-        .collect();
+    for (a, u) in c.allow.iter().zip(&used) {
+        if !*u {
+            violations.push(format!("{}: stale ALLOW entry: ({}, {})", c.name, a.0, a.1));
+        }
+    }
+    violations
+}
+
+#[test]
+fn no_hand_rolled_protocol_code_in_src() {
+    let mut violations = Vec::new();
+    for c in crate::handroll_data::DEHANDROLL {
+        let files = src_files(c.name);
+        assert!(!files.is_empty(), "{}: no source files under src/", c.name);
+        violations.extend(check(c, &files));
+    }
     assert!(
         violations.is_empty(),
-        "hand-rolled protocol code (use the established crate, or add a reasoned ALLOW entry):\n{}",
+        "hand-rolled protocol code (use the established crate, or add a reasoned ALLOW entry in handroll_data.rs):\n{}",
         violations.join("\n")
     );
-    assert!(stale.is_empty(), "stale ALLOW entries: {stale:?}");
 }
 
 /// The scanner itself: it must bite on the shapes it claims to catch and
@@ -156,4 +146,15 @@ fn scanner_catches_banned_shapes_and_skips_test_items() {
         .flat_map(|(_, l)| banned_in_line(&l))
         .collect();
     assert_eq!(hits.len(), 2, "{hits:?}");
+}
+
+#[test]
+fn stale_allow_entry_is_reported() {
+    let c = Crate {
+        name: "synthetic",
+        allow: &[("src/gone.rs", "sleep(", "stale on purpose")],
+    };
+    let v = check(&c, &[("src/a.rs".into(), "fn a() { sleep(d); }\n".into())]);
+    assert_eq!(v.len(), 2, "{v:?}");
+    assert!(v[0].starts_with("synthetic: src/a.rs:1:"), "{v:?}");
 }

@@ -1,4 +1,5 @@
-//! Tripwire against hand-rolled generic protocol code coming back (W1 spec §5).
+//! Tripwire against hand-rolled generic protocol code coming back (W1 spec §5),
+//! shape 3 (needle list with a (file suffix, needle, reason) allowlist).
 //!
 //! Scans `src/**/*.rs` outside `#[cfg(test)] mod` bodies for: HTTP status-line literals, a CRLFCRLF
 //! header terminator, `find("://")`, `strip_prefix("<scheme>://")`, SDP line building (`"a=`, `"m=`,
@@ -12,13 +13,16 @@
 //! understood by the brace counter, and needles are lexical (a tokeniser built
 //! on `split(',')` is not detected).
 
-use std::fs;
-use std::path::Path;
+use workspace_guards::src_files;
 
-/// (file suffix, needle, reason).
-const ALLOW: &[(&str, &str, &str)] = &[];
+pub struct Crate {
+    pub name: &'static str,
+    /// (file suffix, needle, reason).
+    pub allow: &'static [(&'static str, &'static str, &'static str)],
+}
 
-const NEEDLES: &[&str] = &[
+/// Shared by every shape-3 crate.
+pub const NEEDLES: &[&str] = &[
     "\"HTTP/1.",
     "\\r\\n\\r\\n",
     "find(\"://\")",
@@ -34,20 +38,6 @@ const NEEDLES: &[&str] = &[
     "thread::sleep",
     "tokio::time::sleep(",
 ];
-
-fn rs_files(dir: &Path, out: &mut Vec<(String, String)>) {
-    for entry in fs::read_dir(dir).expect("read src dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            rs_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push((
-                path.display().to_string(),
-                fs::read_to_string(&path).expect("read source"),
-            ));
-        }
-    }
-}
 
 fn non_test_source(src: &str) -> String {
     let lines: Vec<&str> = src.lines().collect();
@@ -135,31 +125,31 @@ fn brace_delta(line: &str) -> (i64, bool) {
 
 #[test]
 fn no_hand_rolled_protocol_code_in_src() {
-    let mut files = Vec::new();
-    rs_files(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
     let mut hits = Vec::new();
-    for (path, src) in &files {
-        for (n, line) in non_test_source(src).lines().enumerate() {
-            if line.trim_start().starts_with("//") {
-                continue;
-            }
-            for needle in NEEDLES {
-                if line.contains(needle)
-                    && !ALLOW
-                        .iter()
-                        .any(|(f, nd, _)| path.ends_with(f) && nd == needle)
-                {
-                    hits.push(format!("{path}:{}: {needle}", n + 1));
+    for c in crate::handroll_data::NEEDLE_CRATES {
+        let files = src_files(c.name);
+        assert!(!files.is_empty(), "{}: no source files under src/", c.name);
+        for (path, src) in &files {
+            for (n, line) in non_test_source(src).lines().enumerate() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                for needle in NEEDLES {
+                    if line.contains(needle)
+                        && !c
+                            .allow
+                            .iter()
+                            .any(|(f, nd, _)| path.ends_with(f) && nd == needle)
+                    {
+                        hits.push(format!("{}: {path}:{}: {needle}", c.name, n + 1));
+                    }
                 }
             }
         }
     }
     assert!(
         hits.is_empty(),
-        "hand-rolled protocol code found (allowlist with a reason, or use the crate):\n{}",
+        "hand-rolled protocol code found (allowlist with a reason in handroll_data.rs, or use the crate):\n{}",
         hits.join("\n")
     );
 }

@@ -1,62 +1,20 @@
-//! Tripwire (de-hand-roll W1-P, spec §5): fails if `src/` (outside
+//! Tripwire (de-hand-roll W1-P, spec §5), shape 2: fails if a table crate's `src/` (outside
 //! `#[cfg(test)] mod` bodies) reintroduces a hand-rolled pattern the
-//! migration removed — hand-built HTTP/exposition text, sleep-based waits, raw `UdpSocket::bind`, the deleted `render_prometheus`.
+//! migration removed — poison-recovering std locks, sleep-based waits, HTTP framing literals, calendar maths, hand-built SDP.
 //! **This is a lexical tripwire, not a proof**; a renamed helper or a split
 //! literal evades it. Code review is the real control. Every allowlist entry
 //! carries a reason.
 
-use std::fs;
-use std::path::Path;
+use workspace_guards::src_files;
 
-/// (pattern, why it is banned).
-const PATTERNS: &[(&str, &str)] = &[
-    ("\"HTTP/1.", "hand-built HTTP status line"),
-    ("\"\\r\\n\\r\\n\"", "HTTP head terminator literal"),
-    ("find(\"://\")", "hand-rolled URL scheme split"),
-    ("://\")", "hand-rolled URL scheme prefix strip"),
-    ("\"a=", "hand-built SDP attribute line"),
-    ("\"m=", "hand-built SDP media line"),
-    ("\"v=0", "hand-built SDP version line"),
-    ("civil_from_days", "hand-rolled calendar maths (use jiff)"),
-    ("days_from_civil", "hand-rolled calendar maths (use jiff)"),
-    (
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
-        "base64 alphabet (use base64)",
-    ),
-    ("thread::sleep", "sleep-based wait"),
-    ("sleep(", "sleep-based wait"),
-    (
-        "UdpSocket::bind(",
-        "UDP binds go through `udp::bind_udp` (socket2)",
-    ),
-    (
-        "render_prometheus",
-        "the hand-written Prometheus renderer was deleted (use `render_metrics`)",
-    ),
-];
-
-/// (file suffix, pattern, text the offending LINE must contain, reason). Pinned
-/// to a line, not a whole file, so a new offender in the same file still trips.
-/// Each reason must be non-empty.
-const ALLOW: &[(&str, &str, &str, &str)] = &[(
-    "src/metrics_server.rs",
-    "sleep(",
-    "ACCEPT_ERROR_BACKOFF",
-    "accept-error backoff: EMFILE/ECONNABORTED must not spin the accept loop; not a wait for a condition",
-)];
-
-fn rs_files(dir: &Path, out: &mut Vec<(String, String)>) {
-    for entry in fs::read_dir(dir).expect("read src dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            rs_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push((
-                path.display().to_string(),
-                fs::read_to_string(&path).expect("read source"),
-            ));
-        }
-    }
+pub struct Crate {
+    pub name: &'static str,
+    /// (pattern, why it is banned).
+    pub patterns: &'static [(&'static str, &'static str)],
+    /// (file suffix, pattern, text the offending LINE must contain, reason).
+    /// Pinned to a line, not a whole file, so a new offender in the same file
+    /// still trips. Each reason must be non-empty.
+    pub allow: &'static [(&'static str, &'static str, &'static str, &'static str)],
 }
 
 /// Net `{` minus `}` on a line, ignoring string/char literals and `//` comments.
@@ -182,12 +140,12 @@ fn code_lines(text: &str) -> Vec<(usize, &str)> {
     out
 }
 
-fn hits_in(path: &str, text: &str) -> Vec<String> {
+fn hits_in(c: &Crate, path: &str, text: &str) -> Vec<String> {
     let mut hits = Vec::new();
     for (line_no, line) in code_lines(text) {
-        for (pat, why) in PATTERNS {
+        for (pat, why) in c.patterns {
             if line.contains(pat)
-                && !ALLOW.iter().any(|(f, p, l, r)| {
+                && !c.allow.iter().any(|(f, p, l, r)| {
                     path.ends_with(f) && p == pat && line.contains(l) && !r.is_empty()
                 })
             {
@@ -200,16 +158,18 @@ fn hits_in(path: &str, text: &str) -> Vec<String> {
 
 #[test]
 fn no_handrolled_patterns_in_production_source() {
-    let mut files = Vec::new();
-    rs_files(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
-    assert!(!files.is_empty(), "guard found no source files — path bug");
-    let hits: Vec<String> = files
-        .iter()
-        .flat_map(|(path, text)| hits_in(path, text))
-        .collect();
+    let mut hits = Vec::new();
+    for c in crate::handroll_data::LINE_PATTERNS {
+        let files = src_files(c.name);
+        assert!(
+            !files.is_empty(),
+            "{}: guard found no source files — path bug",
+            c.name
+        );
+        for (path, text) in &files {
+            hits.extend(hits_in(c, &format!("{}/{path}", c.name), text));
+        }
+    }
     assert!(
         hits.is_empty(),
         "hand-rolled patterns reintroduced:\n{}",
@@ -219,11 +179,25 @@ fn no_handrolled_patterns_in_production_source() {
 
 #[test]
 fn every_allowlist_entry_has_a_reason() {
-    for (file, pat, line, reason) in ALLOW {
-        assert!(
-            !reason.trim().is_empty() && !line.is_empty(),
-            "allowlist entry ({file}, {pat}) needs a line pin and a reason"
-        );
+    for c in crate::handroll_data::LINE_PATTERNS {
+        for (file, pat, line, reason) in c.allow {
+            assert!(
+                !reason.trim().is_empty() && !line.is_empty(),
+                "{}: allowlist entry ({file}, {pat}) needs a line pin and a reason",
+                c.name
+            );
+        }
+    }
+}
+
+fn synthetic() -> Crate {
+    Crate {
+        name: "synthetic",
+        patterns: &[
+            ("thread::sleep", "sleep-based wait"),
+            ("sleep(", "sleep-based wait"),
+        ],
+        allow: &[],
     }
 }
 
@@ -232,7 +206,7 @@ fn every_allowlist_entry_has_a_reason() {
 #[test]
 fn raw_string_braces_do_not_derail_block_matching() {
     let src = "#[cfg(test)]\nmod tests {\nconst S: &str = r#\"x\"{\"#\n}\nfn after() { std::thread::sleep(d); }\n";
-    let hits = hits_in("src/raw.rs", src);
+    let hits = hits_in(&synthetic(), "src/raw.rs", src);
     assert!(hits.iter().any(|h| h.contains("raw.rs:5:")), "{hits:?}");
 }
 
@@ -253,7 +227,7 @@ fn guard_detects_a_synthetic_offender() {
                }\n\
                }\n\
                fn after() { std::thread::sleep(d); }\n";
-    let hits = hits_in("src/synthetic.rs", src);
+    let hits = hits_in(&synthetic(), "src/synthetic.rs", src);
     assert!(
         hits.iter().any(|h| h.contains("src/synthetic.rs:1:")),
         "the offender on line 1 must be reported: {hits:?}"
