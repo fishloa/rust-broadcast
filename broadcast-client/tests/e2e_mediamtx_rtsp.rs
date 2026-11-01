@@ -244,6 +244,14 @@ fn micros(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_nanos() / MICROS_PER_NANO_DIVISOR).expect("elapsed fits u64")
 }
 
+fn soak_only(label: &str) -> bool {
+    if std::env::var_os("RUST_BROADCAST_SOAK").is_some() {
+        return false;
+    }
+    eprintln!("skipping {label}: long re-encoded case, runs only with RUST_BROADCAST_SOAK=1");
+    true
+}
+
 #[test]
 fn rtsp_session_plays_a_real_mediamtx_stream_with_dims_and_buffer_start() {
     run_case("fixture-1s-gop", None, true);
@@ -251,6 +259,9 @@ fn rtsp_session_plays_a_real_mediamtx_stream_with_dims_and_buffer_start() {
 
 #[test]
 fn rtsp_session_starts_on_a_two_second_gop_source() {
+    if soak_only("reencoded-2s-gop") {
+        return;
+    }
     run_case(
         "reencoded-2s-gop",
         Some(&[
@@ -273,6 +284,9 @@ fn rtsp_session_starts_on_a_two_second_gop_source() {
 
 #[test]
 fn rtsp_session_aligns_a_three_b_frame_two_second_gop_source() {
+    if soak_only("reencoded-2s-gop-3b") {
+        return;
+    }
     run_case(
         "reencoded-2s-gop-3b",
         Some(&[
