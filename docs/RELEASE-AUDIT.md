@@ -17,7 +17,7 @@ All six must be green on a fresh run before staging a release:
 1. `cargo fmt --all --check` — clean. (Local rustfmt can skew vs CI; if CI fmt fails, copy CI's expected wrap — don't trust local fmt.)
 2. `cargo build --workspace --all-features --locked`
 3. `cargo test --workspace --all-features --locked`
-4. `cargo build --workspace --no-default-features --locked` (host; some leaf/bin crates may need `--exclude` per CI)
+4. `cargo build --workspace --no-default-features --locked` (host; some leaf/bin crates may need `--exclude` per CI), plus `tools/check-bare-features.sh` (per-crate `cargo check --tests` bare; CI no longer re-runs the whole suite bare). Also confirm the latest `nightly.yml` run (soak tests + full-budget fuzz) is green: those are no longer on the PR path.
 5. `cargo clippy --workspace --all-features --all-targets --locked -- -D warnings`
 6. `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked`
 

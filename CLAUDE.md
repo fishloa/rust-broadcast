@@ -140,7 +140,9 @@ Work in this repo is tracked as GitHub issues and lands via PRs to `main`. Use t
 2. **Branch per issue** off `main`, named for the work (e.g. `complete-descriptors`, `fix-tot-crc`).
 3. **Commit style** follows the existing history: `feat(carousel): …`, `fix(text): …`, `docs(dvb-si): …`, or a plain scoped summary. Imperative, specific, references the spec section when relevant.
 4. **Open a PR** with `gh pr create`, body referencing the issue (`Closes #n`). CI must pass before merge:
-   - test matrix on stable **and** 1.95.0 (MSRV) — all-features and no-default-features builds
+   - tests on the pinned MSRV 1.95.0 only (there is no stable test lane; a pinned newer-stable clippy canary is non-blocking) — the all-features suite runs under nextest with the `[profile.ci]` Cargo profile; the no-default-features lane is the `cargo build --workspace --no-default-features` gate, a per-crate `cargo check --tests` of every member (`tools/check-bare-features.sh`, so feature unification cannot hide a break), and a bare *run* of only the code that differs without default features (the serde-off dvb-si/dvb-t2mi registries, and the doctests of the feature-gated crates) — it no longer re-runs the whole suite
+   - markdown-only PRs (nothing but non-README `.md`, see `tools/ci_changes.py`) skip every job except `lint`, `docs` and the cheap prep jobs; skipped jobs still report, so a required check is satisfied
+   - fuzz targets all build on every PR and each runs for a 10 s smoke budget (4 shards); the 60 s budget and the full-length soak tests (`RUST_BROADCAST_SOAK=1`) run in `.github/workflows/nightly.yml` (daily + `workflow_dispatch`)
    - `cargo fmt --all --check`
    - clippy `-D warnings` on all targets
    - doc build with `RUSTDOCFLAGS="-D warnings"`
