@@ -19,7 +19,8 @@ use dash_runtime::timing::clock::ClockSource;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
-    /// Auto-detect from the URL: an `rtsp://` or `rtsps://` URL is RTSP, a `.m3u8`/`.m3u` path
+    /// Auto-detect from the URL: a `udp://` URL is UDP, an `rtp://` URL is RTP, an `rtsp://` or
+    /// `rtsps://` URL is RTSP, a `.m3u8`/`.m3u` path
     /// is HLS, a `.mpd` path (ASCII case-insensitive) is DASH, anything else TS-over-HTTP.
     Auto,
     /// TS-over-HTTP.
@@ -30,6 +31,10 @@ pub enum SourceKind {
     Dash,
     /// RTSP 1.0 with RTP interleaved over the RTSP TCP connection (`rtsp://` and `rtsps://`).
     Rtsp,
+    /// MPEG-TS in plain UDP datagrams (`udp://`), unicast or multicast.
+    Udp,
+    /// MPEG-TS in RTP (RFC 3551 payload type 33) datagrams (`rtp://`), unicast or multicast.
+    Rtp,
 }
 
 impl SourceKind {
@@ -42,6 +47,8 @@ impl SourceKind {
             Self::Hls => "hls",
             Self::Dash => "dash",
             Self::Rtsp => "rtsp",
+            Self::Udp => "udp",
+            Self::Rtp => "rtp",
         }
     }
 }
@@ -507,11 +514,37 @@ pub enum Action {
         /// established; the session only ever exchanges plaintext bytes.
         tls: bool,
     },
-    /// Write bytes to an open TCP connection (RTSP).
+    /// Open a datagram socket (UDP, RTP and SRT sources). The host reports the outcome with
+    /// [`crate::Session::on_connected`], or [`crate::Session::on_closed`] with an error; every
+    /// datagram it then receives goes to [`crate::Session::on_data`], one call per datagram.
+    ///
+    /// With `socket2` the host does, in `Receive` mode: `Socket::new(DGRAM)`, `set_reuse_address`
+    /// (and `set_reuse_port` where it exists) so several players can share a group,
+    /// `set_recv_buffer_size(recv_buffer_bytes)`, `bind(host:port)`, then for a multicast `host`
+    /// `join_multicast_v4(group, interface)` or `join_ssm_v4(source, group, interface)` (the v6
+    /// forms with an interface index); in `Connect` mode it resolves `host`, binds an ephemeral
+    /// local port and `connect`s to `host:port`.
+    UdpBind {
+        /// Connection id.
+        conn: ConnId,
+        /// IP literal to bind or join (`Receive`, IPv6 without brackets), or the peer's name or
+        /// address (`Connect`).
+        host: String,
+        /// UDP port.
+        port: u16,
+        /// What to do with the socket.
+        mode: crate::udp::UdpMode,
+        /// Multicast membership; `Some` only when `host` is a multicast group in `Receive` mode.
+        multicast: Option<crate::udp::MulticastJoin>,
+        /// Requested `SO_RCVBUF` in bytes.
+        recv_buffer_bytes: Option<u32>,
+    },
+    /// Write bytes to an open TCP connection (RTSP), or send them as one datagram on a
+    /// [`crate::udp::UdpMode::Connect`] socket (SRT).
     Send {
         /// Connection id.
         conn: ConnId,
-        /// Bytes to write, in order.
+        /// Bytes to write, in order; one datagram for a UDP socket.
         bytes: Vec<u8>,
     },
     /// Drop a connection.
@@ -555,6 +588,22 @@ impl core::fmt::Debug for Action {
                 .field("host", host)
                 .field("port", port)
                 .field("tls", tls)
+                .finish(),
+            Self::UdpBind {
+                conn,
+                host,
+                port,
+                mode,
+                multicast,
+                recv_buffer_bytes,
+            } => f
+                .debug_struct("UdpBind")
+                .field("conn", conn)
+                .field("host", host)
+                .field("port", port)
+                .field("mode", mode)
+                .field("multicast", multicast)
+                .field("recv_buffer_bytes", recv_buffer_bytes)
                 .finish(),
             Self::Send { conn, bytes } => f
                 .debug_struct("Send")
@@ -993,6 +1042,8 @@ pub struct Config {
     /// [`crate::Error::InvalidConfig`] naming `dash.<field>`, even for a session that does not
     /// play DASH.
     pub dash: DashConfig,
+    /// UDP and RTP source settings.
+    pub udp: crate::udp::UdpConfig,
 }
 
 impl Config {
@@ -1033,6 +1084,7 @@ impl Config {
                 return invalid("timeline_jump.forward_slack_us");
             }
         }
+        self.udp.validate()?;
         if let Err(e) = self.dash.validate() {
             return invalid(dash_field(e.field));
         }
@@ -1100,6 +1152,7 @@ impl Default for Config {
             start_pending_track_wait_us: DEFAULT_START_PENDING_TRACK_WAIT_US,
             start_pending_track_hard_cap_us: DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
             dash: DashConfig::default(),
+            udp: crate::udp::UdpConfig::default(),
         }
     }
 }
@@ -1154,6 +1207,7 @@ impl core::fmt::Debug for Config {
                 &self.start_pending_track_hard_cap_us,
             )
             .field("dash", &self.dash)
+            .field("udp", &self.udp)
             .finish()
     }
 }

@@ -19,6 +19,7 @@ mod rendered;
 pub mod session;
 pub mod source;
 pub mod timeline;
+pub mod udp;
 
 pub use broadcast_auth::Credentials;
 #[cfg(feature = "__test-seams")]
@@ -39,6 +40,7 @@ pub use source::ts_http::TsHttpSource;
 pub use timeline::TimelineJumpConfig;
 pub use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};
 pub use tshttp_runtime::StarveKind;
+pub use udp::{DatagramStats, MulticastJoin, UdpConfig, UdpMode};
 
 /// Re-exported connection identifier.
 pub type ConnId = u32;

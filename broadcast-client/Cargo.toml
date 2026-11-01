@@ -29,6 +29,7 @@ dash-runtime       = { path = "../dash-runtime", version = "0.1" }
 broadcast-hls      = { path = "../broadcast-hls", version = "0.5" }
 rtsp-runtime       = { path = "../rtsp-runtime", version = "0.8.1", default-features = false }
 sdp-types          = { workspace = true }
+rtp-packet         = { path = "../rtp-packet", version = "0.5", default-features = false, features = ["std"] }
 url                = "2"
 percent-encoding   = "2"
 http               = "1"

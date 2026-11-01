@@ -451,6 +451,7 @@ dependencies = [
  "mpeg-ts",
  "percent-encoding",
  "reqwest",
+ "rtp-packet",
  "rtsp-runtime",
  "rtsp-types",
  "sdp-types",
