@@ -121,37 +121,28 @@ fn extra_headers_not_sent_cross_origin() {
 }
 
 #[test]
-fn reserved_names_rejected_at_open() {
+fn open_rejects_reserved_names_and_invalid_names_and_values() {
     for name in RESERVED_SPELLINGS {
         match open_err(vec![pair(name, "x")]) {
             Error::ReservedHeader { name: got } => assert_eq!(got, name),
             other => panic!("{name}: unexpected {other:?}"),
         }
     }
-}
-
-#[test]
-fn reserved_name_among_valid_ones_rejects_the_whole_open() {
     let err = open_err(vec![
         pair("X-A", "1"),
         pair("Range", "bytes=0-"),
         pair("X-B", "2"),
     ]);
-    assert!(matches!(err, Error::ReservedHeader { ref name } if name == "Range"));
-}
-
-#[test]
-fn invalid_header_name_rejected() {
+    assert!(
+        matches!(err, Error::ReservedHeader { ref name } if name == "Range"),
+        "a reserved name among valid ones rejects the whole open"
+    );
     for name in ["bad name", "", "x:y", "caf\u{e9}", "a\nb", "(paren)"] {
         match open_err(vec![pair(name, "v")]) {
             Error::InvalidHeader { name: got } => assert_eq!(got, name),
             other => panic!("{name:?}: unexpected {other:?}"),
         }
     }
-}
-
-#[test]
-fn invalid_header_value_with_crlf_rejected() {
     for value in [
         "a\r\nInjected: 1",
         "line\nfeed",

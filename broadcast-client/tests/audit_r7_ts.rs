@@ -93,26 +93,24 @@ fn released(start: Option<u64>) -> bool {
 }
 
 #[test]
-fn an_audio_pid_that_never_sends_holds_the_start_for_the_wait() {
-    assert!(waits(run(&audioless_with(|_| None))));
-}
-
-#[test]
-fn a_pid_flipped_from_audio_to_private_data_stops_being_waited_for() {
-    let start = run(&flip_audio_to(PES_PRIVATE_DATA, vec![]));
-    assert!(released(start), "{start:?}");
-}
-
-#[test]
-fn a_pid_flipped_from_audio_to_video_stops_being_waited_for_as_audio() {
-    let start = run(&flip_audio_to(AVC, vec![]));
-    assert!(released(start), "{start:?}");
-}
-
-#[test]
-fn a_pid_dropped_from_the_pmt_stops_being_waited_for() {
-    let start = run(&audioless_with(|es| Some(vec![es[0].clone()])));
-    assert!(released(start), "{start:?}");
+fn a_pid_the_pmt_stops_calling_audio_is_waited_for_only_while_it_is_audio() {
+    let silent = run(&audioless_with(|_| None));
+    assert!(waits(silent), "never sends: {silent:?}");
+    let cases = [
+        (
+            "flipped to private data",
+            flip_audio_to(PES_PRIVATE_DATA, vec![]),
+        ),
+        ("flipped to video", flip_audio_to(AVC, vec![])),
+        (
+            "dropped from the PMT",
+            audioless_with(|es| Some(vec![es[0].clone()])),
+        ),
+    ];
+    for (why, bytes) in cases {
+        let start = run(&bytes);
+        assert!(released(start), "{why}: {start:?}");
+    }
 }
 
 #[test]

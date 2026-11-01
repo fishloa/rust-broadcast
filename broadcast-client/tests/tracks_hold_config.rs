@@ -166,24 +166,19 @@ fn rejected(config: Config) -> &'static str {
 }
 
 #[test]
-fn a_zero_quiet_limit_is_rejected() {
-    let field = rejected({
-        let mut new_config = Config::default();
-        new_config.tracks_hold_quiet_input_bytes = 0;
-        new_config
-    });
-    assert_eq!(field, "tracks_hold_quiet_input_bytes");
-}
-
-#[test]
-fn a_max_input_below_the_quiet_limit_is_rejected() {
-    let field = rejected({
-        let mut new_config = Config::default();
-        new_config.tracks_hold_max_input_bytes = 1024;
-        new_config.tracks_hold_quiet_input_bytes = 2048;
-        new_config
-    });
-    assert_eq!(field, "tracks_hold_max_input_bytes");
+fn an_inconsistent_hold_input_limit_is_rejected_by_name() {
+    let mut zero_quiet = Config::default();
+    zero_quiet.tracks_hold_quiet_input_bytes = 0;
+    let mut max_below_quiet = Config::default();
+    max_below_quiet.tracks_hold_max_input_bytes = 1024;
+    max_below_quiet.tracks_hold_quiet_input_bytes = 2048;
+    let cases = [
+        (zero_quiet, "tracks_hold_quiet_input_bytes"),
+        (max_below_quiet, "tracks_hold_max_input_bytes"),
+    ];
+    for (config, want) in cases {
+        assert_eq!(rejected(config), want);
+    }
 }
 
 #[test]
