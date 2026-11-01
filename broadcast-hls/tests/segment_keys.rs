@@ -95,42 +95,6 @@ fn keyformat_other_than_identity_ignored_when_identity_present() {
 }
 
 #[test]
-fn only_non_identity_keyformat_is_unsupported_error() {
-    let p = MediaPlaylist::parse(&playlist(&[(&[FAIRPLAY], "s0.ts")])).unwrap();
-    assert_eq!(
-        p.segment_keys(),
-        Err(Error::UnsupportedKeyFormat {
-            keyformat: "com.apple.streamingkeydelivery".to_string()
-        })
-    );
-}
-
-#[test]
-fn key_without_uri_is_error() {
-    let p = MediaPlaylist::parse(&playlist(&[(&["#EXT-X-KEY:METHOD=AES-128"], "s0.ts")])).unwrap();
-    assert_eq!(
-        p.segment_keys(),
-        Err(Error::KeyWithoutUri {
-            method: EncryptionMethod::Aes128
-        })
-    );
-}
-
-#[test]
-fn iv_attribute_parsed_128_bit() {
-    let p = MediaPlaylist::parse(&playlist(&[(&[KEY_B], "s0.ts")])).unwrap();
-    let key = p.segment_keys().unwrap().remove(0).unwrap();
-    let expected: [u8; 16] = core::array::from_fn(|i| i as u8);
-    assert_eq!(key.iv, Some(expected));
-}
-
-#[test]
-fn no_key_tag_means_none() {
-    let p = MediaPlaylist::parse(&playlist(&[(&[], "s0.ts"), (&[], "s1.ts")])).unwrap();
-    assert_eq!(p.segment_keys().unwrap(), vec![None, None]);
-}
-
-#[test]
 fn keys_survive_parse_render_parse() {
     let p = MediaPlaylist::parse(&playlist(&[
         (&[KEY_A], "s0.ts"),
@@ -178,11 +142,61 @@ fn method_none_after_fairplay_leaves_following_segments_clear() {
 }
 
 #[test]
-fn clear_segments_after_fairplay_key_do_not_error() {
-    let text = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n\
-#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://k\",KEYFORMAT=\"com.apple.streamingkeydelivery\",KEYFORMATVERSIONS=\"1\"\n\
-#EXTINF:4,\na.ts\n#EXT-X-KEY:METHOD=NONE\n#EXTINF:4,\nb.ts\n#EXT-X-ENDLIST\n";
-    let p = MediaPlaylist::parse(text).unwrap();
-    let r = p.segment_key_results().unwrap();
-    assert_eq!(r[1], Ok(None));
+fn segment_key_resolution_cases() {
+    type Check = fn(Result<Vec<Option<broadcast_hls::MediaKey>>, Error>) -> Result<(), String>;
+    let cases: Vec<(&str, String, Check)> = vec![
+        (
+            "only a non-identity KEYFORMAT is an unsupported error",
+            playlist(&[(&[FAIRPLAY], "s0.ts")]),
+            |r| {
+                (r == Err(Error::UnsupportedKeyFormat {
+                    keyformat: "com.apple.streamingkeydelivery".to_string(),
+                }))
+                .then_some(())
+                .ok_or(format!("{r:?}"))
+            },
+        ),
+        (
+            "a key without a URI is an error",
+            playlist(&[(&["#EXT-X-KEY:METHOD=AES-128"], "s0.ts")]),
+            |r| {
+                (r == Err(Error::KeyWithoutUri {
+                    method: EncryptionMethod::Aes128,
+                }))
+                .then_some(())
+                .ok_or(format!("{r:?}"))
+            },
+        ),
+        (
+            "the IV attribute parses as 128 bits",
+            playlist(&[(&[KEY_B], "s0.ts")]),
+            |r| {
+                let iv = r
+                    .map_err(|e| format!("{e:?}"))?
+                    .remove(0)
+                    .and_then(|k| k.iv);
+                let want: [u8; 16] = core::array::from_fn(|i| i as u8);
+                (iv == Some(want)).then_some(()).ok_or(format!("{iv:?}"))
+            },
+        ),
+        (
+            "no key tag means no key",
+            playlist(&[(&[], "s0.ts"), (&[], "s1.ts")]),
+            |r| {
+                (r == Ok(vec![None, None]))
+                    .then_some(())
+                    .ok_or(format!("{r:?}"))
+            },
+        ),
+    ];
+    let wrong: Vec<_> = cases
+        .into_iter()
+        .filter_map(|(label, text, check)| {
+            let p = MediaPlaylist::parse(&text).unwrap();
+            check(p.segment_keys())
+                .err()
+                .map(|e| format!("{label}: {e}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
