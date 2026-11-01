@@ -431,6 +431,7 @@ impl RtspSource {
             host: self.host.clone(),
             port: self.port,
             tls: self.tls,
+            identity: None,
         });
     }
 

@@ -199,7 +199,8 @@ fn connect_action_has_host_port_default_ports_and_tls_flag() {
                 conn: 1,
                 host: host.to_string(),
                 port,
-                tls
+                tls,
+                identity: None,
             },
             "{url}"
         );
