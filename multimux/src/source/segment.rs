@@ -81,7 +81,9 @@ use std::time::{Duration, Instant};
 use transmux::TrackId;
 
 use broadcast_common::Timestamp;
+use dvb_si::descriptors::atsc_caption_service::AtscCaptionService;
 use hls_runtime::server::Container;
+use hls_runtime::server::bcp47_language;
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::ingress::{IngestDriver, IngestSession, ProgramId};
 use media_plane::trunk::{
@@ -92,7 +94,7 @@ use transmux::SegmentMeta;
 use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
-use transmux::{CaptionDetector, DetectedCaption};
+use transmux::{CaptionDetector, DetectedCaption, declared_caption_services};
 
 use super::split_audio::{self, AudioFollower, LEADER_DURATION_HISTORY, LeaderDurations};
 use super::split_subtitle::{self, LeaderPart, SubtitleFollower};
@@ -455,6 +457,7 @@ pub struct ProgramSegmenter {
     caption_detectors: HashMap<TrackId, Option<CaptionDetector>>,
     /// Every caption stream this segmenter has seen, across track changes.
     captions_seen: BTreeSet<DetectedCaption>,
+    captions_declared: Vec<AtscCaptionService>,
     /// `captions_seen` has grown, or the scan window has ended, since the
     /// state was last handed to the route.
     captions_unreported: bool,
@@ -827,6 +830,7 @@ impl ProgramSegmenter {
             leader_durations: LeaderDurations::new(),
             caption_detectors: HashMap::new(),
             captions_seen: BTreeSet::new(),
+            captions_declared: Vec::new(),
             captions_unreported: false,
             caption_scan_started: HashMap::new(),
             captions_scan_complete: false,
@@ -1037,8 +1041,17 @@ impl ProgramSegmenter {
         }
         if self.captions_unreported {
             let detected = self.captions_seen.iter().map(DetectedCaption::instream_id);
-            self.captions_unreported =
-                !route_handle.note_closed_captions(program, detected.collect());
+            let languages = self
+                .captions_seen
+                .iter()
+                .filter_map(|caption| {
+                    let iso = caption.declared_language(&self.captions_declared)?;
+                    Some((caption.instream_id(), bcp47_language(&iso)?))
+                })
+                .collect();
+            self.captions_unreported = !(route_handle
+                .note_closed_caption_languages(program, languages)
+                && route_handle.note_closed_captions(program, detected.collect()));
         }
         self.publish_part_target(program, route_handle);
         self.publish_ready()
@@ -1060,12 +1073,13 @@ impl ProgramSegmenter {
         data: &[u8],
         dts: Option<i64>,
     ) {
+        let declared = &mut self.captions_declared;
         let detector = self.caption_detectors.entry(track_id).or_insert_with(|| {
-            trunk
-                .tracks()
-                .iter()
-                .find(|t| t.track_id == track_id)
-                .and_then(|t| CaptionDetector::for_config(&t.config))
+            let tracks = trunk.tracks();
+            let spec = tracks.iter().find(|t| t.track_id == track_id)?;
+            let detector = CaptionDetector::for_config(&spec.config)?;
+            *declared = declared_caption_services(&spec.es_info_descriptors);
+            Some(detector)
         });
         let Some(detector) = detector else {
             return;
@@ -3257,6 +3271,7 @@ mod tests {
             leader_durations: LeaderDurations::new(),
             caption_detectors: HashMap::new(),
             captions_seen: BTreeSet::new(),
+            captions_declared: Vec::new(),
             captions_unreported: false,
             caption_scan_started: HashMap::new(),
             captions_scan_complete: false,

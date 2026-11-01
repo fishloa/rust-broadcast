@@ -1884,6 +1884,7 @@ impl HlsOriginBuilder {
             closed_captions_none: self.closed_captions_none,
             closed_caption_overrides: self.closed_caption_overrides,
             detected_closed_captions: Mutex::new(None),
+            declared_closed_caption_languages: Mutex::new(Vec::new()),
             frozen_target_duration_secs: Mutex::new(None),
             target_duration_violations: AtomicU64::new(0),
         })
@@ -1986,6 +1987,9 @@ pub struct HlsOrigin {
     /// Caption streams the video has been seen to carry, in advertising
     /// order. Taken alone (never while `window` or `codecs` is held).
     detected_closed_captions: Mutex<Option<Vec<broadcast_hls::InstreamId>>>,
+    /// BCP 47 `LANGUAGE` the stream itself declares per caption stream; a
+    /// [`ClosedCaptionDecl`] language wins over it.
+    declared_closed_caption_languages: Mutex<Vec<(broadcast_hls::InstreamId, String)>>,
     /// Frozen `EXT-X-TARGETDURATION` (seconds, pre-rounding) captured the
     /// first time a playlist is rendered with at least one segment in the
     /// window: RFC 8216 §4.3.3.1 forbids the tag changing once published,
@@ -2204,6 +2208,16 @@ impl HlsOrigin {
     /// way, unless [`HlsOriginBuilder::closed_captions_none`] is set.
     pub fn set_detected_closed_captions(&self, detected: Vec<broadcast_hls::InstreamId>) {
         *locked(&self.detected_closed_captions) = Some(detected);
+    }
+
+    /// Record the BCP 47 `LANGUAGE` the stream declares for each caption
+    /// stream (the ATSC `caption_service_descriptor` in the PMT). A rendition
+    /// takes it unless a [`ClosedCaptionDecl`] override names a language.
+    pub fn set_declared_closed_caption_languages(
+        &self,
+        languages: Vec<(broadcast_hls::InstreamId, String)>,
+    ) {
+        *locked(&self.declared_closed_caption_languages) = languages;
     }
 
     /// Replace the declared WebVTT subtitle renditions after construction, for
@@ -2567,6 +2581,7 @@ impl HlsOrigin {
         &self,
         detected: &[broadcast_hls::InstreamId],
     ) -> Vec<MediaRendition> {
+        let stream_languages = locked(&self.declared_closed_caption_languages).clone();
         let renditions = detected
             .iter()
             .map(|id| {
@@ -2585,7 +2600,13 @@ impl HlsOrigin {
                 m.name = pick(declared.map(|d| &d.name), &rendered);
                 m.language = declared
                     .map(|d| d.language.clone())
-                    .filter(|l| !l.is_empty());
+                    .filter(|l| !l.is_empty())
+                    .or_else(|| {
+                        stream_languages
+                            .iter()
+                            .find(|(declared_id, _)| declared_id == id)
+                            .map(|(_, language)| language.clone())
+                    });
                 m.autoselect = false;
                 m.instream_id = Some(id.clone());
                 m
