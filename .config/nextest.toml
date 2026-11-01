@@ -55,3 +55,10 @@ slow-timeout = { period = "60s", terminate-after = 6 }
 [[profile.ci.overrides]]
 filter = 'test(garbled_fixtures_never_yield_unserializable_configs)'
 slow-timeout = { period = "60s", terminate-after = 6 }
+
+# Nightly: the full-length soak tests (RUST_BROADCAST_SOAK=1) legitimately run
+# for minutes, so the 90 s PR cap does not apply; a per-test hang is still
+# terminated, after 1 h.
+[profile.nightly]
+inherits = "ci"
+slow-timeout = { period = "60s", terminate-after = 60 }
