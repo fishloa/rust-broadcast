@@ -17,35 +17,18 @@ fn load(name: &str) -> Config {
 }
 
 #[test]
-fn webcam_fleet_40_is_valid_and_has_forty_routes() {
-    let cfg = load("webcam-fleet-40.json");
-    assert_eq!(
-        cfg.routes.len(),
-        40,
-        "the 40-webcam scenario names 40 routes"
-    );
-    cfg.validate().expect("webcam-fleet-40.json must validate");
-}
-
-#[test]
-fn reverse_proxy_is_valid() {
-    let cfg = load("reverse-proxy.json");
-    assert_eq!(cfg.routes.len(), 3);
-    cfg.validate().expect("reverse-proxy.json must validate");
-}
-
-#[test]
-fn multi_output_is_valid() {
-    let cfg = load("multi-output.json");
-    assert_eq!(cfg.routes.len(), 1);
-    cfg.validate().expect("multi-output.json must validate");
-}
-
-#[test]
-fn custom_scheme_is_valid() {
-    let cfg = load("custom-scheme.json");
-    assert_eq!(cfg.routes.len(), 1);
-    cfg.validate().expect("custom-scheme.json must validate");
+fn simple_examples_are_valid_with_their_route_counts() {
+    for (name, routes) in [
+        ("webcam-fleet-40.json", 40),
+        ("reverse-proxy.json", 3),
+        ("multi-output.json", 1),
+        ("custom-scheme.json", 1),
+    ] {
+        let cfg = load(name);
+        assert_eq!(cfg.routes.len(), routes, "{name} route count");
+        cfg.validate()
+            .unwrap_or_else(|e| panic!("{name} must validate: {e}"));
+    }
 }
 
 #[test]
