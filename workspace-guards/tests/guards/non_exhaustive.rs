@@ -195,7 +195,13 @@ fn detector_bites() {
         &mut missing,
     );
     assert_eq!(missing.len(), 1, "{missing:?}");
-    assert!(missing.iter().next().unwrap().contains("src/x.rs:9: pub enum Bad"));
+    assert!(
+        missing
+            .iter()
+            .next()
+            .unwrap()
+            .contains("src/x.rs:9: pub enum Bad")
+    );
 
     let (mut m, mut mv) = (BTreeSet::new(), BTreeSet::new());
     let v = Crate {

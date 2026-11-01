@@ -10,7 +10,14 @@ const fn plain(name: &'static str) -> Crate {
     }
 }
 
-pub const EXEMPT: &[&str] = &["dvb-tools", "multimux-cli", "dvb-stream", "test-bounded", "test-alloc", "test-fixtures"];
+pub const EXEMPT: &[&str] = &[
+    "dvb-tools",
+    "multimux-cli",
+    "dvb-stream",
+    "test-bounded",
+    "test-alloc",
+    "test-fixtures",
+];
 
 pub const TABLE: &[Crate] = &[
     plain("atsc3-route"),

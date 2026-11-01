@@ -6,7 +6,8 @@ pub fn assert_table_covers_members(family: &str, table: &[&str], exempt: &[&str]
     let members = workspace_members();
     let mut problems = Vec::new();
     for m in &members {
-        if m != "workspace-guards" && !table.contains(&m.as_str()) && !exempt.contains(&m.as_str()) {
+        if m != "workspace-guards" && !table.contains(&m.as_str()) && !exempt.contains(&m.as_str())
+        {
             problems.push(format!(
                 "{family}: workspace member `{m}` is in neither the guard table nor its exempt list"
             ));
@@ -19,7 +20,9 @@ pub fn assert_table_covers_members(family: &str, table: &[&str], exempt: &[&str]
     }
     for name in table {
         if exempt.contains(name) {
-            problems.push(format!("{family}: `{name}` is both in the table and exempt"));
+            problems.push(format!(
+                "{family}: `{name}` is both in the table and exempt"
+            ));
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
