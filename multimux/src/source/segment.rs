@@ -455,8 +455,14 @@ pub struct ProgramSegmenter {
     caption_detectors: HashMap<TrackId, Option<CaptionDetector>>,
     /// Every caption stream this segmenter has seen, across track changes.
     captions_seen: BTreeSet<DetectedCaption>,
-    /// `captions_seen` has grown since it was last handed to the route.
+    /// `captions_seen` has grown, or the scan window has ended, since the
+    /// state was last handed to the route.
     captions_unreported: bool,
+    /// First DTS seen per track the caption scan covers.
+    caption_scan_started: HashMap<TrackId, i64>,
+    /// A full [`CAPTION_SCAN_WINDOW_SECS`] of video has been examined; an
+    /// empty `captions_seen` then means the route declares no captions.
+    captions_scan_complete: bool,
     /// The leader's `PART-TARGET` last handed to the route's origin.
     part_target_published: Option<u32>,
 }
@@ -464,6 +470,9 @@ pub struct ProgramSegmenter {
 /// Most sample payload bytes the IDR-fallback hold keeps (32 MiB). Past it the
 /// hold is discarded and restarts at the next sync sample, so a stream with
 /// no usable random-access point cannot grow it without bound.
+/// Media time of video examined for captions before a route that has found
+/// none declares `CLOSED-CAPTIONS=NONE`; a later detection replaces it.
+const CAPTION_SCAN_WINDOW_SECS: i64 = 10;
 const IDR_HOLD_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 /// Maps this segmenter's internal per-segment timeline
@@ -819,6 +828,8 @@ impl ProgramSegmenter {
             caption_detectors: HashMap::new(),
             captions_seen: BTreeSet::new(),
             captions_unreported: false,
+            caption_scan_started: HashMap::new(),
+            captions_scan_complete: false,
             part_target_published: None,
         })
     }
@@ -911,7 +922,7 @@ impl ProgramSegmenter {
                     }
                     continue;
                 }
-                self.observe_captions(trunk, track_id, &sample.data);
+                self.observe_captions(trunk, track_id, &sample.data, sample.dts);
                 // Start-gate (Apple authoring 7.4 MUST: segments start on a
                 // sync/IDR picture, issue #1425): for a program whose track set
                 // contains a video track, drop every timed sample until the
@@ -1042,7 +1053,13 @@ impl ProgramSegmenter {
         }
     }
 
-    fn observe_captions(&mut self, trunk: &Trunk, track_id: TrackId, data: &[u8]) {
+    fn observe_captions(
+        &mut self,
+        trunk: &Trunk,
+        track_id: TrackId,
+        data: &[u8],
+        dts: Option<i64>,
+    ) {
         let detector = self.caption_detectors.entry(track_id).or_insert_with(|| {
             trunk
                 .tracks()
@@ -1050,10 +1067,28 @@ impl ProgramSegmenter {
                 .find(|t| t.track_id == track_id)
                 .and_then(|t| CaptionDetector::for_config(&t.config))
         });
-        if let Some(detector) = detector
-            && detector.observe(data)
-        {
+        let Some(detector) = detector else {
+            return;
+        };
+        if detector.observe(data) {
             self.captions_seen.extend(detector.detected());
+            self.captions_unreported = true;
+        }
+        if self.captions_scan_complete {
+            return;
+        }
+        let timescale = trunk
+            .tracks()
+            .iter()
+            .find(|t| t.track_id == track_id)
+            .map(|t| t.timescale);
+        let (Some(dts), Some(timescale)) = (dts, timescale) else {
+            return;
+        };
+        let started = *self.caption_scan_started.entry(track_id).or_insert(dts);
+        let window_ticks = i64::from(timescale) * CAPTION_SCAN_WINDOW_SECS;
+        if dts.saturating_sub(started) >= window_ticks {
+            self.captions_scan_complete = true;
             self.captions_unreported = true;
         }
     }
@@ -3223,6 +3258,8 @@ mod tests {
             caption_detectors: HashMap::new(),
             captions_seen: BTreeSet::new(),
             captions_unreported: false,
+            caption_scan_started: HashMap::new(),
+            captions_scan_complete: false,
             part_target_published: None,
         }
     }
