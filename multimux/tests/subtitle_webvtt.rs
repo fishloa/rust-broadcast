@@ -1235,8 +1235,15 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         "subs-0.m3u8",
         "subs-1.m3u8",
     ];
-    let with = validator_findings(&on, "on", &playlists).await;
-    let without = validator_findings(&off, "off", &playlists[..3]).await;
+    let (with, without) = std::thread::scope(|scope| {
+        let with = scope.spawn(|| shared::run_async(validator_findings(&on, "on", &playlists)));
+        let without =
+            scope.spawn(|| shared::run_async(validator_findings(&off, "off", &playlists[..3])));
+        (
+            with.join().expect("validator thread"),
+            without.join().expect("validator thread"),
+        )
+    });
     for (level, message) in &with {
         eprintln!("VALIDATOR[on] level={level} {message}");
     }
