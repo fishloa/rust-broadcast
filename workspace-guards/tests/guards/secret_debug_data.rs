@@ -5,6 +5,11 @@ use crate::secret_debug::Crate;
 
 pub const TABLE: &[Crate] = &[
     Crate {
+        name: "broadcast-client",
+        allow: &[],
+        ct_compare: false,
+    },
+    Crate {
         name: "broadcast-auth",
         allow: &[],
         ct_compare: true,

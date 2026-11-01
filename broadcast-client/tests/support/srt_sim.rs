@@ -136,7 +136,7 @@ impl SrtSim {
                     let now = self.now;
                     let replies = self.peer().on_datagram(&bytes, now);
                     for r in replies {
-                        self.to_session(r, false);
+                        self.queue_for_session(r, false);
                     }
                 }
                 Dir::ToSession => {
@@ -154,7 +154,7 @@ impl SrtSim {
             .then(|| u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) & SEQ_MASK)
     }
 
-    pub fn to_session(&mut self, bytes: Vec<u8>, first: bool) {
+    pub fn queue_for_session(&mut self, bytes: Vec<u8>, first: bool) {
         let fate = match Self::data_seq(&bytes) {
             Some(seq) => (self.fate)(seq, !first),
             None => Fate::Deliver,
@@ -174,7 +174,7 @@ impl SrtSim {
     pub fn send_data(&mut self, payload: &[u8]) {
         let now = self.now;
         let d = self.peer().data(payload, now);
-        self.to_session(d, true);
+        self.queue_for_session(d, true);
     }
 
     pub fn raw_to_session(&mut self, bytes: Vec<u8>) {

@@ -35,6 +35,26 @@ window) is counted lost, duplicates and late packets are dropped, and a new SSRC
 space with `Event::Discontinuity`. `Session::datagram_stats()` reads the counters. Silence is handled exactly as for TS-over-HTTP
 (`Config::ts_http`): start timeout, `Starved`, `Status::Stalled`, rebind (a new `UdpBind` after `Close`) and backoff.
 
+## SRT
+
+`srt://host:port` connects to an SRT listener as the caller and plays its MPEG-TS (live mode). The host executes
+`Action::UdpBind { mode: UdpMode::Connect, host, port, .. }` (with `socket2`: resolve the name, bind an ephemeral port, `connect`
+to the peer), reports it with `Session::on_connected(conn)`, writes every `Action::Send { conn, bytes }` as one datagram and feeds
+every received datagram to `Session::on_data(conn, datagram, now_us)`. The session drives `srt-runtime`'s handshake, ARQ receiver
+(NAK, ACK) and TSBPD scheduler.
+
+`Config::srt` carries `latency_ms` (at least 120), `stream_id`, `handshake_timeout_ms`, `peer_idle_timeout_ms`, an optional
+`SrtEncryption::new(passphrase, SrtKeyLength)` and the required `entropy_seed`: 32 bytes from the host's CSPRNG
+(`SrtEntropySeed::new`). The session reads no randomness; it derives each connection's socket id, initial sequence number, salt and
+stream key from the seed and an attempt counter, so a reconnect never reuses them. An `srt://` session without a seed fails to open
+with `Error::InvalidConfig { field: "srt.entropy_seed" }`. The passphrase and seed are redacted in `Debug` and wiped on drop.
+
+A refused handshake is a non-fatal `ErrorKind::SrtRejected { reason }` (`bad-secret` for a wrong passphrase) followed by the usual
+backoff; a handshake that does not finish is `ErrorKind::SrtHandshakeTimeout`. `Session::datagram_stats()` counts lost, late,
+duplicate, malformed and undecryptable packets. A silent peer (`peer_idle_timeout_ms`) or a peer SHUTDOWN ends the link and a played
+stream reconnects at once with fresh identifiers and an `Event::Discontinuity`; `close()` sends one SHUTDOWN datagram and then
+`Close`. Not supported: rendezvous, listener mode, in-band key refresh.
+
 ## RTSP
 
 Sources for SAT>IP tuners and IP cameras. RTP/RTCP travel interleaved over the RTSP TCP connection
