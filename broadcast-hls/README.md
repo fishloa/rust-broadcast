@@ -7,7 +7,7 @@ HLS (M3U8) playlist syntax, RFC 8216 and RFC 8216bis (Low-Latency HLS): typed Me
 
 ```toml
 [dependencies]
-broadcast-hls = "0.4"
+broadcast-hls = "0.5"
 ```
 
 ## What it does / what it does not
@@ -85,6 +85,7 @@ Runnable programs: `cargo run -p broadcast-hls --example build_playlist` and `--
 - **Durations:** `DecimalSeconds` and `SignedDecimalSeconds` round-trip bit-exactly (including `9.9766` and `2.00004`). Round your own durations before building if you want compact playlists, since an unrounded division renders every digit.
 - **CENC:** `cenc_ext_x_key`, `CENC_KEYFORMAT`, `CENC_KEYFORMATVERSIONS`.
 - **Segment keys (RFC 8216 §4.3.2.4):** `MediaPlaylist::segment_keys` resolves the `#EXT-X-KEY` in effect for each closed segment (carry-forward until the next key of the same `KEYFORMAT`, `METHOD=NONE` resets, only the `identity` format participates) as `MediaKey` (an alias of `SessionKey`), and `open_segment_key` does the same for the open segment. A key with no `URI` is `Error::KeyWithoutUri`; a segment covered only by a non-identity `KEYFORMAT` is `Error::UnsupportedKeyFormat`.
+- **Codec and range signalling:** `SUPPLEMENTAL-CODECS` (round-trips, including the HDR10+ `/cdm4` brand) and the typed `VideoRange` (`SDR`, `HLG`, `PQ`), strict attribute-list parsing (`parse_attribute_list_strict`) that reports a malformed list instead of half-parsing it.
 
 ## Round-trip fidelity
 

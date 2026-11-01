@@ -9,7 +9,7 @@ Formerly published as `ll-hls-runtime` (last release 0.3.1 under that name); sea
 
 ```toml
 [dependencies]
-hls-runtime = "0.9"
+hls-runtime = "0.10"
 ```
 
 ## What it does / what it does not
@@ -91,6 +91,7 @@ For the origin, `examples/origin_playlist.rs` builds a `Trunk`, publishes parts 
 - **Typed identifiers:** `server::SegmentSeq` and `server::PartIndex` re-export `media_plane::ids`, `server::Generation` types the init-segment generation, and tracks are `transmux::TrackId`, so a swapped segment, part or generation argument is a compile error. Wire names (`seg-1-5-7.m4s`, `init-1-5-2.mp4`) are unchanged.
 - **Cache policy:** each resolved resource carries a `media_plane::egress::CachePolicy` (`Immutable` for instance-named parts, segments and generation-named inits; `NoCache` for the bare current init and playlists).
 - **Poison-tolerant locks** in the origin, and bounded behaviour on abusive requests (`tests/origin_hardening.rs`).
+- **HDR and subtitle signalling:** multivariant `SUPPLEMENTAL-CODECS` and `VIDEO-RANGE` for HDR10, HLG, Dolby Vision (profiles 5, 8.1, 8.4) and HDR10+ (`/cdm4`); `Container::WebVtt` renditions served as `.vtt` segments, with Partial Segments on a low-latency origin; `HlsOrigin::set_part_target_ms` for renditions whose frame grid does not divide the part target.
 
 ## Design notes
 

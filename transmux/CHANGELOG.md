@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-01
+
+### Changed (BREAKING: epoch)
+- Builds against new caret epochs of workspace siblings (`broadcast-hls` 0.4 -> 0.5). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.
+
 ### Breaking
 - `rfc6381_hvc1` / `HEVCDecoderConfigurationRecord::rfc6381` wrote a malformed HEVC codec string (output change: every HEVC `codecs` / `CODECS` value differs from earlier releases) (`hvc1.02.00000004.L99.90` for a Main 10 level 5.1 stream): ISO/IEC 14496-15 uses the decimal `general_profile_idc` (with an `A`/`B`/`C` prefix for a non-zero profile space), the bit-reversed compatibility word in hex without leading zeros, and the decimal `general_level_idc`. It now gives `hvc1.2.4.L153.90`. This is a visible change to the `codecs` string of every HEVC output (HLS `CODECS`, DASH `codecs`, demo/Python bindings); the grammar is RFC 6381 plus ISO/IEC 14496-15 Annex E (paywalled, not transcribed; the corrected form is restated in ETSI TS 103 285 section 5.2.2, `private/specs-verified/dash/docs-specs/etsi-ts-103-285/ch05-video.md`). It is what an HLS `CODECS` attribute for a real HEVC stream needs (issue #1428).
 - Explicit HE-AAC tracks (`TrackSpec::with_explicit_he_aac`, a DVB `AAC_descriptor` HE-AAC v2 value in the TS demux) now use the output sample rate (twice the core rate) as their media timescale, so every sample duration and timestamp doubles while presentation times are unchanged; `Track::with_explicit_he_aac` and `Sample::rescale_timescale` carry already-cut samples across. Output change: every sample duration and timestamp of an existing HE-AAC TS input differs from earlier releases.
@@ -3654,6 +3659,7 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
 
 ## [0.12.0] - 2026-07-04
 
+
 ### Breaking
 - `TrackSpec` gains two fields, `source_pid: Option<u16>` and
   `es_info_descriptors: Vec<u8>` (#582) — external struct literals must be
@@ -3746,6 +3752,7 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   chroma/bit-depth/interlace/fps vs real fixtures).
 
 ## [0.11.0] - 2026-07-04
+
 
 ### Breaking
 - **New public API surface is additive but two changes are source-breaking**

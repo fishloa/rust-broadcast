@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.14.0] - 2026-11-01
+
+### Changed (BREAKING: epoch)
+- Builds against new caret epochs of workspace siblings (`transmux` 0.27 -> 0.28, `broadcast-hls` 0.4 -> 0.5, `hls-runtime` 0.9 -> 0.10, `media-plane` 0.7 -> 0.8, `timed-metadata` 0.7 -> 0.8, `caption-convert` 0.3 -> 0.4). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.
 ### Added
 - `tests/hdr10plus_route.rs`: HDR10+ over a route fed the Tears of Steel TS fixture (issue #1428): `SUPPLEMENTAL-CODECS` `/cdm4` + `VIDEO-RANGE=PQ`, all 259 HDR10+ SEI byte-identical in the served fMP4, ffprobe HDR10+ side data on every frame, and `mediastreamvalidator` findings equal to the same stream without the SEI.
 - Dolby Vision profile 5, 8.1 and 8.4 routes (issue #1428): the fMP4 init carries `dvcC`/`dvvC` (and `dvh1` for profile 5) and the multivariant playlist carries the Dolby Vision `CODECS`/`SUPPLEMENTAL-CODECS`/`VIDEO-RANGE`; RPU NAL units pass through unchanged.

@@ -1,6 +1,6 @@
 [package]
 name         = "hls-runtime"
-version      = "0.9.0"
+version      = "0.10.0"
 edition      = "2024"
 description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter."
 license      = "MIT OR Apache-2.0"
@@ -16,17 +16,17 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
-transmux          = { path = "../transmux", version = "0.27", default-features = false, features = ["sample-aes"] }
+transmux          = { path = "../transmux", version = "0.28", default-features = false, features = ["sample-aes"] }
 # HLS (M3U8) playlist syntax (issue #878): the client/origin engines parse
 # and render playlists via this crate directly rather than through `transmux`.
-broadcast-hls     = { path = "../broadcast-hls", version = "0.4", default-features = false }
+broadcast-hls     = { path = "../broadcast-hls", version = "0.5", default-features = false }
 # `server::engine::HlsOrigin` renders SCTE-35 cues from the trunk's event
 # ring as `#EXT-X-DATERANGE` tag lines via `Timeline::with_anchor`/`to_daterange`
 # (issue #965). timed-metadata is `no_std`+`alloc`, so it does not force `std`.
-timed-metadata    = { path = "../timed-metadata", version = "0.7", default-features = false }
+timed-metadata    = { path = "../timed-metadata", version = "0.8", default-features = false }
 # `client::engine` decides whether a fetched segment body is media with the
 # shared `segment` checks (the DASH client uses the same ones).
-container-probe   = { path = "../container-probe", version = "0.2", default-features = false }
+container-probe   = { path = "../container-probe", version = "0.2.1", default-features = false }
 thiserror         = { version = "2", default-features = false }
 # ISO 639 code tables (alpha-2/alpha-3 B and T) for canonicalising HLS
 # LANGUAGE tags to BCP 47. Pulled in only by the `std` feature.
@@ -39,7 +39,7 @@ serde             = { version = "1", optional = true, default-features = false, 
 # used to. `bytes` is needed directly (not just transitively) because
 # `Trunk::part_bytes`/`SegmentEntry::bytes` hand back `bytes::Bytes` this
 # crate's own types carry forward (e.g. `HlsBody::Resource`).
-media-plane       = { path = "../media-plane", version = "0.7", optional = true, default-features = false }
+media-plane       = { path = "../media-plane", version = "0.8", optional = true, default-features = false }
 bytes             = { version = "1", optional = true, default-features = false }
 # Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
 # core (`client/engine.rs`) never depends on either.

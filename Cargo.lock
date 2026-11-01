@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-auth"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "base64 0.23.1",
  "form_urlencoded",
@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -557,7 +557,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "caption-convert"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "cc-data",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "compliance-probe"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -817,7 +817,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "container-probe"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "broadcast-common",
  "mpeg-ps",
@@ -1181,7 +1181,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvb-bbframe"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "broadcast-common",
  "criterion",
@@ -1208,7 +1208,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci-runtime"
-version = "0.18.1"
+version = "0.18.2"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -1223,7 +1223,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -1368,9 +1368,9 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "encoding_rs"
-version = "0.8.42"
+version = "0.8.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e985e0451871ad22fb8d2b6b076e2028a502a0d3950998c2c5c0a4f9b5d9679"
+checksum = "89253175e704ab869b04f9db224d38630e0211a53841a79181deae0889e169f5"
 dependencies = [
  "cfg-if",
  "core_detect",
@@ -1728,7 +1728,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hls-runtime"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum",
  "backon",
@@ -2283,9 +2283,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "loom"
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2601,7 +2601,7 @@ dependencies = [
 
 [[package]]
 name = "multimux-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "multimux",
@@ -2875,7 +2875,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "playout-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "mp4-emsg",
@@ -3613,7 +3613,7 @@ dependencies = [
 
 [[package]]
 name = "rtsp-runtime"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "broadcast-auth",
  "bytes",
@@ -4062,7 +4062,7 @@ dependencies = [
 
 [[package]]
 name = "srt-runtime"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "aes 0.9.3",
  "aes-kw",
@@ -4084,7 +4084,7 @@ dependencies = [
 
 [[package]]
 name = "ssai-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -4323,7 +4323,7 @@ dependencies = [
 
 [[package]]
 name = "timed-metadata"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -4581,7 +4581,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.27.7"
+version = "0.28.0"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -4896,7 +4896,7 @@ dependencies = [
 
 [[package]]
 name = "webrtc-runtime"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aes 0.9.3",
  "axum",

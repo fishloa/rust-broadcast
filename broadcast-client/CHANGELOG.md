@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-01
 ### Added
 
 - `Config::segment_inactivity_timeout_us` (default 10 s, validated non-zero), `Status::RequestStalled { resume }` and `ResumeMode`: a media-class request of a segment-pull source (HLS segment, part, initialization section and key; DASH init, index and segment) that receives neither its response head nor a body byte for that long is closed and requested again on the `backoff_ms` schedule, counted as a failure of that resource. When the first response was a `200` with `Accept-Ranges: bytes` or a `206`, with a strong validator (a strong `ETag`, else a `Last-Modified` at least a second older than `Date`) and no `Content-Encoding`, the retry sends `Range` and `If-Range` for the missing bytes (inside the original range for a DASH `mediaRange` or HLS `BYTERANGE`) and a `206` whose `Content-Range` continues the prefix extends it; a `200` replaces the prefix, any other answer falls back to one immediate full request. Playlists, manifests and `UTCTiming` are exempt. A resuming `Action::HttpRequest` carries its own `Range` and `If-Range` headers and a `byte_range` of `None`.

@@ -4,6 +4,7 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-01
 ### Added
 - `MediaEvent::DtlsClosed`, reported when the peer ends the DTLS association with `close_notify`, and `MediaTransport::close` to send one. Requires `rtc-dtls` >= 0.21.1 (the release that adds `EndpointEvent::PeerClosed`); a peer's graceful close used to surface as `Error::Media("unrecognised rtc-dtls endpoint event")`.
 

@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.8.1] - 2026-11-01
 ### Added
 - `ClientSession::take_rtp_info` and `RtpInfoEntry`: the `RTP-Info` entries (RFC 2326 12.33) of a successful PLAY response.
 ### Changed

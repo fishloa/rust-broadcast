@@ -4,6 +4,11 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-01
+
+### Changed (BREAKING: epoch)
+- Builds against new caret epochs of workspace siblings (`ssai-runtime` 0.3 -> 0.4). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.
+
 ## [0.3.0] - 2026-10-17
 ### Documentation
 - README and crate-root docs rewritten to the cluster standard: what it does / does not, standards table (SCTE 35 2023r1 `splice_insert` only), feature table, compiling quick start.

@@ -9,7 +9,7 @@ WebVTT <-> SRT. Built on this workspace's already-shipped decoders (`cc-data`,
 
 ```toml
 [dependencies]
-caption-convert = "0.3"
+caption-convert = "0.4"
 ```
 
 ## What it does / what it does not

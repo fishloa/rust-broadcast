@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-01
 ### Added
 
 - `TsHttpClient::set_retry_after` / `TsHttpPolicy::set_retry_after`: a server-requested delay (milliseconds) that raises the next reconnect wait to at least that long; consumed by that failure, cleared by a successful response.

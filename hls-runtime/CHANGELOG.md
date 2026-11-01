@@ -6,6 +6,11 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-01
+
+### Changed (BREAKING: epoch)
+- Builds against new caret epochs of workspace siblings (`broadcast-hls` 0.4 -> 0.5, `transmux` 0.27 -> 0.28, `timed-metadata` 0.7 -> 0.8, `media-plane` 0.7 -> 0.8, `container-probe` 0.2 -> 0.2.1 (minimum: segment-structure checks moved here)). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.
 ### Breaking
 - Removed the `HlsSkip`/`HlsSkipDirective`/`SkipValue` type aliases and `HlsOrigin::priority`/`urgency_for` methods; use `SkipDirective` and `HlsOrigin::http_priority` instead. `HttpPriority` now keeps a single `SEGMENT` constant for parts and segments.
 - A response the core rejects no longer ends the session: it is counted in `TokioClientStats::rejected_responses`, exposed as `TokioClient::last_rejection()` and retried with backoff; sixteen rounds in a row without output end it. New `TokioClientConfig::max_body_bytes` (default 256 MiB, `with_max_body_bytes`) bounds every body; `TokioError::BodyTooLarge` (not retried). **Breaking for struct-literal construction:** `TokioClientConfig` and `TokioClientStats` gained a field.

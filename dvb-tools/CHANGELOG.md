@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [12.0.1] - 2026-11-01
+
+### Changed
+- Lockstep release with `dvb-si` 12.0.1; no functional changes.
+
 ## [12.0.0] - 2026-10-17
 ### Documentation
 - README rewritten to the workspace crate-README standard: what the crate does and does not do, a standards table (edition, scope, status), feature flags, a doctested quick start, the implemented API surface, design notes and related crates. Where the crate has a library target the crate-root docs are now `include_str!("../README.md")`, so docs.rs and crates.io show the same text.

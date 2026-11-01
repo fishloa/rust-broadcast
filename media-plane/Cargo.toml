@@ -1,6 +1,6 @@
 [package]
 name         = "media-plane"
-version      = "0.7.0"
+version      = "0.8.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -14,8 +14,8 @@ readme       = "README.md"
 broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
-transmux         = { path = "../transmux", version = "0.27", default-features = false, optional = true }
-timed-metadata   = { path = "../timed-metadata", version = "0.7", default-features = false, optional = true }
+transmux         = { path = "../transmux", version = "0.28", default-features = false, optional = true }
+timed-metadata   = { path = "../timed-metadata", version = "0.8", default-features = false, optional = true }
 # Only pulled in by the `std` feature: `Trunk`'s reader-wake primitive
 # (step 3b-iv) needs a runtime-agnostic wakeup a `ServedEgress` can wait on
 # without busy-polling — NOT `tokio::sync::watch`, so it works under any

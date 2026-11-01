@@ -1,6 +1,6 @@
 [package]
 name    = "container-probe"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Robust media container-format detection — MPEG-2 TS (188/192/204/208 stride + phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF, and elementary streams."
 license      = "MIT OR Apache-2.0"

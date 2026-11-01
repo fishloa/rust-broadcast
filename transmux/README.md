@@ -34,6 +34,7 @@ Editions: where a spec is vendored in `private/specs/` the edition is verified a
 | ETSI TS 102 366 AC-3/E-AC-3, TS 103 190 AC-4, TS 102 114 DTS, ETSI TS 101 154 | TS 102 366 v1.4.1, TS 103 190-1 v1.4.1, TS 102 114 v1.6.1, TS 101 154 v2.10.1 (vendored) | `dac3`/`dec3`/`dac4`/`ddts`, BSI parse, E-AC-3 dependent substreams | Config headers only | |
 | GY/T 420-2025 Annex A (AVS3 video and Audio Vivid), AVS2 | As cited | `av3c`, `lavc`/`la2c`, `av2c`, `dca3`, sample groups `telg`/`lrap`/`a3lg` | Partial | `lidx`, `av3l` and the `av3a` init-segment wiring are not modelled |
 | SMPTE ST 336 / MISB ST 0601 | ST 336:2017 (vendored) | `KlvItem`, `UasLocalSet`, KLV over RTP | Full for the listed items | |
+| ITU-T H.265 Annex D (SEI 137/144), SMPTE ST 2086, SMPTE ST 2094-40 (HDR10+), Dolby Vision | As cited (H.265 vendored; ST 2094-40 and Dolby specs not vendored) | HDR10 static metadata (`HdrStaticMetadata`, `colr`/`mdcv`/`clli` boxes), HDR10+ dynamic metadata (`Hdr10PlusMetadata`), Dolby Vision `dvcC`/`dvvC` records and the TS `DOVI_video_stream_descriptor`, with the RFC 6381 `dvh1`/`dvhe` strings | Partial | Signalling and carriage only; no tone mapping, and Dolby Vision RPU payloads stay opaque |
 | ETSI EN 300 743 / EN 300 706 DVB subtitles and teletext | Vendored | Recovered as opaque `Data` tracks on TS demux | Typed-opaque | Interpretation is in `dvb-subtitle` and `dvb-si` |
 
 ## Input x output matrix

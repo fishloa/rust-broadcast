@@ -1,6 +1,6 @@
 [package]
 name         = "compliance-probe"
-version      = "0.4.0"
+version      = "0.5.0"
 edition      = "2024"
 rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
@@ -20,9 +20,9 @@ broadcast-common = { path = "../broadcast-common", version = "10.0",     default
 dvb-conformance  = { path = "../dvb-conformance",  version = "12.0",     default-features = false }
 mpeg-ts          = { path = "../mpeg-ts",          version = "0.6", default-features = false }
 scte35-splice    = { path = "../scte35-splice",    version = "4.0",     default-features = false }
-timed-metadata   = { path = "../timed-metadata",   version = "0.7", default-features = false }
-media-doctor     = { path = "../media-doctor",     version = "0.11",   default-features = false }
-media-plane      = { path = "../media-plane",      version = "0.7",   default-features = false }
+timed-metadata   = { path = "../timed-metadata",   version = "0.8", default-features = false }
+media-doctor     = { path = "../media-doctor",     version = "0.12",   default-features = false }
+media-plane      = { path = "../media-plane",      version = "0.8",   default-features = false }
 # Optional, enabled only by this crate's own `std` feature: the `metrics`
 # facade macros (`counter!`/`gauge!`) expand to code that needs `std` (they
 # are not no_std-compatible), so every call site in this crate is itself

@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-01
 ### Changed
 - Dependency `getrandom` 0.2 -> 0.4 (internal OS-RNG call site: `getrandom::getrandom` -> `getrandom::fill`). No public API exposure.
 
