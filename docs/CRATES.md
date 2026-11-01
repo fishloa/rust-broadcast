@@ -529,7 +529,7 @@ Spec-complete parse and serialize of the RTP packet header and its extension, wi
 - **Cargo description:** RTP fixed header + CSRC list + generic header extension (RFC 3550 §5.1/§5.3.1) — spec-complete parse/serialize, no_std.
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`dvb-stream`](#dvb-stream), [`multimux`](#multimux), [`st291`](#st291), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvb-stream`](#dvb-stream), [`multimux`](#multimux), [`st291`](#st291), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
 - **Links:** [README](../rtp-packet/README.md) · [CHANGELOG](../rtp-packet/CHANGELOG.md) · [docs + spec pointer](../rtp-packet/docs/) · [crates.io](https://crates.io/crates/rtp-packet) · [docs.rs](https://docs.rs/rtp-packet)
 
 #### rtsp-runtime
@@ -551,7 +551,7 @@ Sans-IO SRT: packet codecs, the HSv5 handshake state machines, an ARQ reliabilit
 - **Cargo description:** SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + sans-IO HSv5 Caller-Listener and Rendezvous handshake state machines, an ARQ reliability engine, a TSBPD delivery scheduler, LiveCC packet pacing, FileCC window-based congestion control, optional (crypto feature) payload encryption, and an optional (tokio feature) async UDP socket adapter; no_std core.
 - **Version (in-tree):** 0.6.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`multimux`](#multimux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../srt-runtime/README.md) · [CHANGELOG](../srt-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/srt-runtime) · [docs.rs](https://docs.rs/srt-runtime)
 
 #### st2022
@@ -625,9 +625,9 @@ A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 dem
 Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime), DASH (dash-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`) for live DASH, no I/O, std.
 
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
-- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH and RTSP sources.
+- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH, RTSP, UDP/RTP and SRT sources.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtsp-runtime`](#rtsp-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
 - **Used by (workspace):** none
 - **Links:** [README](../broadcast-client/README.md) · [CHANGELOG](../broadcast-client/CHANGELOG.md) · [docs + spec pointer](../broadcast-client/docs/)
 
@@ -1000,6 +1000,7 @@ flowchart BT
   broadcast_client --> dash_runtime
   broadcast_client --> hls_runtime
   broadcast_client --> rtsp_runtime
+  broadcast_client --> srt_runtime
   broadcast_client --> tshttp_runtime
   broadcast_hls --> broadcast_common
   broadcast_loudness --> broadcast_common
