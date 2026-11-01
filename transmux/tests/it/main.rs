@@ -25,6 +25,7 @@ mod codec_config;
 mod codec_config_boxes;
 mod codec_tail;
 mod codecs_new;
+#[cfg(feature = "cli")]
 mod common;
 mod container_child_order;
 mod damaged_unit_resync;

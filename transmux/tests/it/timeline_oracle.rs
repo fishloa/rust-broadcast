@@ -9,7 +9,6 @@
 //! walkers (no crate box/PES parsers) still assert the same values.
 #![cfg(feature = "std")]
 
-#[cfg(feature = "cli")]
 use std::path::PathBuf;
 use std::process::Command;
 use transmux::TrackId;
