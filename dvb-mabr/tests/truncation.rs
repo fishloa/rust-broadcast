@@ -25,11 +25,13 @@ fn assert_every_truncation_errors<T: std::fmt::Debug>(
         if !text.is_char_boundary(end) {
             continue;
         }
-        let structural = |i: usize| bytes.get(i).is_some_and(|b| matches!(b, b'<' | b'>' | b'/'));
-        let sampled = end % 16 == 0
-            || structural(end - 1)
-            || structural(end)
-            || end + 64 >= complete;
+        let structural = |i: usize| {
+            bytes
+                .get(i)
+                .is_some_and(|b| matches!(b, b'<' | b'>' | b'/'))
+        };
+        let sampled =
+            end % 16 == 0 || structural(end - 1) || structural(end) || end + 64 >= complete;
         if !soak && !sampled {
             continue;
         }
