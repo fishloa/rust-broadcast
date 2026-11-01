@@ -154,6 +154,17 @@ pub enum Cea608Channel {
 }
 
 impl Cea608Channel {
+    /// The channel's number in `CC1`..`CC4`, 1 to 4.
+    #[must_use]
+    pub fn number(self) -> u8 {
+        match self {
+            Self::Cc1 => 1,
+            Self::Cc2 => 2,
+            Self::Cc3 => 3,
+            Self::Cc4 => 4,
+        }
+    }
+
     /// Index 0–3 into the decoder's per-channel state.
     #[must_use]
     fn index(self) -> usize {
@@ -352,6 +363,9 @@ pub struct Cea608Decoder {
     /// via the most recent control code on that field.
     last_channel: [Cea608Channel; 2],
     xds_active: bool,
+    /// Bit `Cea608Channel::index` set once a displayable character has been
+    /// written to that channel outside text mode.
+    caption_text_seen: u8,
 }
 
 impl Default for Cea608Decoder {
@@ -369,6 +383,7 @@ impl Cea608Decoder {
             last_control: [None, None],
             last_channel: [Cea608Channel::Cc1, Cea608Channel::Cc3],
             xds_active: false,
+            caption_text_seen: 0,
         }
     }
 
@@ -688,6 +703,9 @@ impl Cea608Decoder {
     /// Put a standard / special character at the cursor, advancing it.
     fn put_char(&mut self, ch: Cea608Channel, c: char) {
         let st = &mut self.channels[ch.index()];
+        if st.mode != Cea608Mode::Text {
+            self.caption_text_seen |= 1 << ch.index();
+        }
         let row = st.cursor_row.min(SCREEN_ROWS - 1);
         let col = st.cursor_col;
         if col >= SCREEN_COLS {
@@ -727,6 +745,14 @@ impl Cea608Decoder {
             (true, false) => Cea608Channel::Cc3,
             (true, true) => Cea608Channel::Cc4,
         }
+    }
+
+    /// Whether caption text (a displayable character outside text mode) has
+    /// been written to `channel` since this decoder was created. Control codes,
+    /// XDS and null padding alone never set it.
+    #[must_use]
+    pub fn has_caption_text(&self, channel: Cea608Channel) -> bool {
+        self.caption_text_seen & (1 << channel.index()) != 0
     }
 
     /// The displayed screen for a channel.
@@ -974,6 +1000,36 @@ mod tests {
             }
         }
         assert!(found_green_b, "expected a green 'B'");
+    }
+
+    #[test]
+    fn caption_text_is_tracked_per_channel() {
+        let mut dec = Cea608Decoder::new();
+        dec.push_pair(false, par(0x1C), par(0x29));
+        dec.push_pair(false, par(b'H'), par(b'I'));
+        assert!(dec.has_caption_text(Cea608Channel::Cc2));
+        assert!(!dec.has_caption_text(Cea608Channel::Cc1));
+        assert!(!dec.has_caption_text(Cea608Channel::Cc3));
+        assert!(!dec.has_caption_text(Cea608Channel::Cc4));
+    }
+
+    #[test]
+    fn control_codes_xds_and_text_mode_are_not_caption_text() {
+        let mut dec = Cea608Decoder::new();
+        dec.push_pair(false, par(0x14), par(0x20));
+        dec.push_pair(true, par(0x01), par(0x03));
+        dec.push_pair(true, par(b'A'), par(b'B'));
+        dec.push_pair(true, par(0x0F), par(0x2C));
+        dec.push_pair(false, par(0x14), par(0x2A));
+        dec.push_pair(false, par(b'T'), par(b'X'));
+        for ch in [
+            Cea608Channel::Cc1,
+            Cea608Channel::Cc2,
+            Cea608Channel::Cc3,
+            Cea608Channel::Cc4,
+        ] {
+            assert!(!dec.has_caption_text(ch), "{}", ch.name());
+        }
     }
 
     /// Special character (musical note) via 0x11 0x37.
