@@ -6,7 +6,7 @@
 //! profile. Per cell: no panic, no hang, a bounded number of requests, and a
 //! terminal state.
 
-mod common;
+use crate::common;
 
 use common::loopback::{
     Drive, Fault, FaultKind, Origin, Run, Sig, assert_matches_oracle, drive, oracle,

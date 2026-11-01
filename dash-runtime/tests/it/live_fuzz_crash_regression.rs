@@ -41,27 +41,27 @@ const HTTP_DATES: [&str; 3] = [
 ];
 
 const MPDS: [&[u8]; 6] = [
-    include_bytes!("../../fixtures/dash/live-number/live.mpd"),
-    include_bytes!("../../fixtures/dash/live-timeline/live.mpd"),
-    include_bytes!("../../fixtures/dash/livesim2/segtimeline_time_a.mpd"),
-    include_bytes!("../../fixtures/dash/livesim2/segtimeline_time_b.mpd"),
-    include_bytes!("../../fixtures/dash/livesim2/segtimelinenr_a.mpd"),
-    include_bytes!("../../fixtures/dash/livesim2/segtimelinenr_b.mpd"),
+    include_bytes!("../../../fixtures/dash/live-number/live.mpd"),
+    include_bytes!("../../../fixtures/dash/live-timeline/live.mpd"),
+    include_bytes!("../../../fixtures/dash/livesim2/segtimeline_time_a.mpd"),
+    include_bytes!("../../../fixtures/dash/livesim2/segtimeline_time_b.mpd"),
+    include_bytes!("../../../fixtures/dash/livesim2/segtimelinenr_a.mpd"),
+    include_bytes!("../../../fixtures/dash/livesim2/segtimelinenr_b.mpd"),
 ];
 const VIDEO_SEGS: [&[u8]; POOL] = [
-    include_bytes!("../../fixtures/dash/live-number/seg-0-005.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-0-006.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-0-007.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-0-008.m4s"),
+    include_bytes!("../../../fixtures/dash/live-number/seg-0-005.m4s"),
+    include_bytes!("../../../fixtures/dash/live-number/seg-0-006.m4s"),
+    include_bytes!("../../../fixtures/dash/live-number/seg-0-007.m4s"),
+    include_bytes!("../../../fixtures/dash/live-number/seg-0-008.m4s"),
 ];
 const AUDIO_SEGS: [&[u8]; POOL] = [
-    include_bytes!("../../fixtures/dash/live-number/seg-1-005.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-1-006.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-1-007.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-1-008.m4s"),
+    include_bytes!("../../../fixtures/dash/live-number/seg-1-005.m4s"),
+    include_bytes!("../../../fixtures/dash/live-number/seg-1-006.m4s"),
+    include_bytes!("../../../fixtures/dash/live-number/seg-1-007.m4s"),
+    include_bytes!("../../../fixtures/dash/live-number/seg-1-008.m4s"),
 ];
-const VIDEO_INIT: &[u8] = include_bytes!("../../fixtures/dash/live-number/init-0.m4s");
-const AUDIO_INIT: &[u8] = include_bytes!("../../fixtures/dash/live-number/init-1.m4s");
+const VIDEO_INIT: &[u8] = include_bytes!("../../../fixtures/dash/live-number/init-0.m4s");
+const AUDIO_INIT: &[u8] = include_bytes!("../../../fixtures/dash/live-number/init-1.m4s");
 
 fn name_hash(name: &str) -> usize {
     name.bytes().fold(0usize, |h, b| {

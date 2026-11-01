@@ -2,7 +2,7 @@
 //! samples equal what `Fmp4Demux` makes of the concatenated init and segments
 //! (the oracle never sees the client).
 
-mod common;
+use crate::common;
 
 use common::loopback::{
     Drive, Order, Origin, Run, Sig, assert_matches_oracle, drive, oracle, play,

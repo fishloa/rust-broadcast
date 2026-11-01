@@ -1,6 +1,6 @@
 //! AdaptationSet / Representation selection (DESIGN 5.1).
 
-mod common;
+use crate::common;
 
 use common::load;
 use dash_runtime::mpd::Mpd;

@@ -2,7 +2,7 @@
 //! and the errors. The MPD is the real ffmpeg manifest with a second audio AdaptationSet added; the
 //! second set's URLs are served from the real audio files of the first.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::rc::Rc;

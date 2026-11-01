@@ -4,7 +4,7 @@
 //! multimux's), (c) the lazy timeline expander equals
 //! `SegmentTimeline::resolve` whenever no `@n` is present.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

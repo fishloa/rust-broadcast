@@ -8,7 +8,7 @@
 //! **This is a lexical tripwire, not a proof.** A renamed helper or a string
 //! assembled from pieces evades it. Code review is the real control.
 
-mod common;
+use crate::common;
 
 const ALLOW: &[(&str, &str, &str)] = &[];
 

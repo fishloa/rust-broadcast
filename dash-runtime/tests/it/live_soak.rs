@@ -2,7 +2,7 @@
 //! sources and errors, drift, faults, sleeps, host clock calls) each checked
 //! against the invariants that must hold whatever the network does.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::rc::Rc;

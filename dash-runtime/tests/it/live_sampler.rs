@@ -1,7 +1,7 @@
 //! The `UTCTiming` candidate order and sampling rules, observed through the
 //! client's own actions (DESIGN 3.3).
 
-mod common;
+use crate::common;
 
 use common::scenario::*;
 use common::synth::{Addressing, MPD_URL, Synth};

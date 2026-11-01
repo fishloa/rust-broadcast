@@ -1,7 +1,7 @@
 //! URL policy of `DashClient`: the origin pin and the http/https-only rule on
 //! `Location`, redirect final URLs, BaseURL, templates and BaseURL failover.
 
-mod common;
+use crate::common;
 
 use common::loopback::{Drive, Fault, FaultKind, Origin, drive, mpd_text};
 use dash_runtime::client::{

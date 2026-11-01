@@ -2,7 +2,7 @@
 //! exactly as written (samples compared with a direct `Fmp4Demux` of the same
 //! files), and the real livesim2 MPD refresh pair.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 

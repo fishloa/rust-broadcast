@@ -2,7 +2,7 @@
 //! over the per-segment formulas, monotonicity, window bounds and extreme
 //! inputs (no panic, no wrap).
 
-mod common;
+use crate::common;
 
 use common::Rng;
 use dash_runtime::address::{PlanOptions, plan_representation};

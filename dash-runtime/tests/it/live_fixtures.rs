@@ -2,7 +2,7 @@
 //! segments the real ffmpeg / livesim2 run had on disk, and consistency of the
 //! plan across two consecutive real MPD refreshes.
 
-mod common;
+use crate::common;
 
 use common::load;
 use dash_runtime::mpd::PresentationType;

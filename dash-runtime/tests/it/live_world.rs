@@ -2,7 +2,7 @@
 //! TRUE time, a host clock with skew, a synthesised origin recycling real
 //! fMP4 segments (see `common/world.rs`).
 
-mod common;
+use crate::common;
 
 use common::checks::*;
 use common::scenario::*;

@@ -2,7 +2,7 @@
 //! manifest model, skipping, representation switching and protocol misuse of
 //! `DashClient`. MPDs edited from the real ffmpeg file keep the real media.
 
-mod common;
+use crate::common;
 
 use common::loopback::{
     Drive, Fault, FaultKind, Origin, Sig, assert_matches_oracle, drive, mpd_text, oracle,

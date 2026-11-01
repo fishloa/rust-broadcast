@@ -5,7 +5,7 @@
 //! typed fatal error or continued progress; a transient fault must recover
 //! with no loss.
 
-mod common;
+use crate::common;
 
 use std::cell::Cell;
 use std::rc::Rc;

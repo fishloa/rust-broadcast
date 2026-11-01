@@ -2,7 +2,7 @@
 //! disk, checked against an independent oracle (MP4Box `-diso` output stored
 //! next to each fixture, and the bytes of the real files).
 
-mod common;
+use crate::common;
 
 use common::{load, oracle_epct, oracle_tfdt};
 use dash_runtime::address::base_index;

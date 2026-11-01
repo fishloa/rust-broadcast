@@ -1,7 +1,7 @@
 //! MPD refresh, update rules, Reset, dynamic-to-static and Period changes of
 //! the live client through the `World` simulation (DESIGN 5.2, 5.5).
 
-mod common;
+use crate::common;
 
 use common::checks::*;
 use common::scenario::*;

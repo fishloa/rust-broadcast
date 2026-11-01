@@ -4,14 +4,14 @@
 
 #![allow(dead_code)]
 
-#[path = "../../../dash-runtime/tests/common/world.rs"]
+#[path = "../../../dash-runtime/tests/it/common/world.rs"]
 pub mod world;
 
-#[path = "../../../dash-runtime/tests/common/synth.rs"]
+#[path = "../../../dash-runtime/tests/it/common/synth.rs"]
 pub mod synth;
 
-#[path = "../../../dash-runtime/tests/common/capture.rs"]
+#[path = "../../../dash-runtime/tests/it/common/capture.rs"]
 pub mod capture;
 
-#[path = "../../../dash-runtime/tests/common/loopback.rs"]
+#[path = "../../../dash-runtime/tests/it/common/loopback.rs"]
 pub mod loopback;

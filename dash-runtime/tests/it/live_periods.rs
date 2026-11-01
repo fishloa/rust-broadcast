@@ -1,7 +1,7 @@
 //! Multi-Period live presentations through the `World` simulation: Periods
 //! announced ahead, added by a refresh and removed once expired (DESIGN 5.5).
 
-mod common;
+use crate::common;
 
 use common::checks::*;
 use common::scenario::*;

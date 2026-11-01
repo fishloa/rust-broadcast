@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 use common::load;
 use dash_runtime::address::list;
 use dash_runtime::mpd::inherit::resolve_segment_info;

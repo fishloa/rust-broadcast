@@ -2,7 +2,7 @@
 //! fixtures: the restart (timeline reset) boundary, the continuous boundary
 //! (23009-1 5.3.2.4 / A.9), and the 13 ms tail GPAC declares past its media.
 
-mod common;
+use crate::common;
 
 use common::loopback::{
     Drive, Fault, FaultKind, Order, Origin, Run, Sig, assert_matches_oracle, drive, mpd_text,

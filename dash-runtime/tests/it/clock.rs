@@ -1,7 +1,7 @@
 //! UtcClock and UTCTiming sampling: mapping, saturation, replacement order and
 //! the exchange-midpoint arithmetic (DESIGN 3.2, 3.3, 3.6).
 
-mod common;
+use crate::common;
 
 use common::Rng;
 use dash_runtime::timing::TimingError;

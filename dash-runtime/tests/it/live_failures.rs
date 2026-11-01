@@ -1,7 +1,7 @@
 //! Early, expired and missing live segments, and the failure cadence
 //! (DESIGN 5.4, 23009-1 A.7, RFC 8470) through the `World` simulation.
 
-mod common;
+use crate::common;
 
 use common::checks::*;
 use common::scenario::*;

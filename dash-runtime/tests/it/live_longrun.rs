@@ -2,7 +2,7 @@
 //! bounded however long the session runs (DESIGN 8, "long-run bounded
 //! memory"), with and without Period churn.
 
-mod common;
+use crate::common;
 
 use common::checks::*;
 use common::scenario::*;

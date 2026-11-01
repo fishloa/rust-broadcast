@@ -1,7 +1,7 @@
 //! Hostile MPD corpus: every bound is a typed error, nothing panics, nothing
 //! allocates in proportion to a claimed size.
 
-mod common;
+use crate::common;
 
 use common::Rng;
 use dash_runtime::address::{PlanOptions, plan_representation};

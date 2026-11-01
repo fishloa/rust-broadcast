@@ -1,7 +1,7 @@
 //! The clock ladder and `UTCTiming` sampling through the `World` simulation
 //! (DESIGN 3.3, 3.4 and the case list of 3.6).
 
-mod common;
+use crate::common;
 
 use common::checks::*;
 use common::scenario::*;

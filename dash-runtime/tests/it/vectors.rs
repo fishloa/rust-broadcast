@@ -1,7 +1,7 @@
 //! Hand-computed vectors for the formulas of DESIGN 4.3 and 5.3, including
 //! the DASH-IF IOP v4.3 Table 10 worked example.
 
-mod common;
+use crate::common;
 
 use dash_runtime::address::template::{
     TemplateFault, TemplateUse, scan, scan_initialization, scan_media, substitute,

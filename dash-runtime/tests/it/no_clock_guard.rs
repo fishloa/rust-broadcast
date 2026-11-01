@@ -4,7 +4,7 @@
 //!
 //! **Lexical, not a proof**: a renamed import evades it; review is the control.
 
-mod common;
+use crate::common;
 
 const NEEDLES: &[&str] = &[
     "SystemTime::now",
