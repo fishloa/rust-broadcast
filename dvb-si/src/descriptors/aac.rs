@@ -557,20 +557,4 @@ mod tests {
         assert_eq!(buf[3] & RESERVED_ZERO_MASK, 0);
         assert_eq!(buf[3], 0x00);
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_serializes_to_stable_json() {
-        // Borrowed `&[u8]` cannot deserialize from a JSON number array, so we
-        // assert the Serialize impl is wired and emits stable JSON.
-        let d = AacDescriptor {
-            profile_and_level: 0x52,
-            extension: Some(AacExtension::new(true, Some(0x03), &[0x11])),
-        };
-        let j = serde_json::to_string(&d).unwrap();
-        // Valid, re-parseable JSON (key order is map-defined, so we do not
-        // assert byte-for-byte string stability).
-        let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
-        assert!(j.contains("profile_and_level"));
-    }
 }

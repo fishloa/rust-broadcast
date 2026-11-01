@@ -127,15 +127,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = RelatedContentDescriptor::default();
-        let j = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
-    }
-
     /// Non-empty body bytes of a non-conformant sender are kept and re-emitted.
     #[test]
     fn trailing_bytes_preserved() {

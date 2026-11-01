@@ -199,19 +199,4 @@ mod tests {
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = NvodReferenceDescriptor {
-            entries: vec![NvodReferenceEntry {
-                transport_stream_id: 1,
-                original_network_id: 2,
-                service_id: 3,
-            }],
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
 }

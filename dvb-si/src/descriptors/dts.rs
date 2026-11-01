@@ -658,26 +658,4 @@ mod tests {
             Error::InvalidDescriptor { .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_serializes_to_stable_json() {
-        // Borrowed `&[u8]` cannot deserialize from a JSON number array, so we
-        // assert the Serialize impl is wired and emits stable JSON.
-        let d = DtsDescriptor {
-            sample_rate_code: 0b1101,
-            bit_rate_code: 0b001010,
-            nblks: 16,
-            fsize: 2048,
-            surround_mode: 0b001000,
-            lfe_flag: true,
-            extended_surround_flag: 0b01,
-            additional_info: &[0x99],
-        };
-        let j = serde_json::to_string(&d).unwrap();
-        // Valid, re-parseable JSON (key order is map-defined, so we do not
-        // assert byte-for-byte string stability).
-        let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
-        assert!(j.contains("sample_rate_code"));
-    }
 }

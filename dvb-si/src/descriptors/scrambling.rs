@@ -190,17 +190,6 @@ mod tests {
         assert_eq!(d.serialized_len() - 2, 1);
     }
 
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = ScramblingDescriptor {
-            scrambling_mode: ScramblingMode::DvbCsa2,
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
-
     #[test]
     fn scrambling_mode_full_range_round_trip() {
         for b in 0..=0xFF_u8 {

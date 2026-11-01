@@ -157,15 +157,4 @@ mod tests {
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = CaIdentifierDescriptor {
-            ca_system_ids: vec![0x0500, 0x0650],
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
 }

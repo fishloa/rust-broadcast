@@ -110,14 +110,24 @@ fn every_accepted_descriptor_reserializes_byte_identically() {
     typed::<avs2_audio::Avs2AudioDescriptor>("avs2_audio", 0xD3, typed_iters, &mut fails);
     typed::<avs3_video::Avs3VideoDescriptor>("avs3_video", 0xD1, typed_iters, &mut fails);
     typed::<avs3_audio::Avs3AudioDescriptor>("avs3_audio", 0xD2, typed_iters, &mut fails);
-    typed::<tuwa_avs3_video::TuwaAvs3VideoDescriptor>("tuwa_avs3_video", 62, typed_iters, &mut fails);
+    typed::<tuwa_avs3_video::TuwaAvs3VideoDescriptor>(
+        "tuwa_avs3_video",
+        62,
+        typed_iters,
+        &mut fails,
+    );
     typed::<china_caption_service::ChinaCaptionServiceDescriptor>(
         "china_caption_service",
         0x86,
         typed_iters,
         &mut fails,
     );
-    typed::<logical_channel::LogicalChannelDescriptor>("logical_channel", 0x83, typed_iters, &mut fails);
+    typed::<logical_channel::LogicalChannelDescriptor>(
+        "logical_channel",
+        0x83,
+        typed_iters,
+        &mut fails,
+    );
     typed::<nordig::NordigLogicalChannelV1>("nordig_v1", 0x83, typed_iters, &mut fails);
     typed::<nordig::NordigLogicalChannelV2>("nordig_v2", 0x87, typed_iters, &mut fails);
     #[cfg(feature = "serde")]

@@ -162,20 +162,4 @@ mod tests {
             Error::FieldOverflow(_)
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = VbiTeletextDescriptor {
-            entries: vec![VbiTeletextEntry {
-                language_code: LangCode(*b"eng"),
-                teletext_type: TeletextType::SubtitlePage,
-                magazine_number: 1,
-                page_number: 0x10,
-            }],
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
 }
