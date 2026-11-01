@@ -35,7 +35,7 @@ Usage::
     python3 tools/gen-dvbsi-coverage.py           # rewrite the outputs
     python3 tools/gen-dvbsi-coverage.py --check   # exit 1 (with a diff) if stale
 
-``--check`` is what ``dvb-si/tests/it/docs_coverage_drift.rs`` runs, so CI fails
+``--check`` is what ``dvb-si/tests/docs_coverage_drift.rs`` runs, so CI fails
 whenever a table/descriptor is added, removed or re-cited without
 regenerating the docs.
 """
@@ -1173,7 +1173,7 @@ def render_coverage(m: Model) -> str:
         "# dvb-si coverage reference",
         "",
         "<!-- GENERATED FILE — do not edit by hand. Regenerate with",
-        "     `python3 tools/gen-dvbsi-coverage.py`; `cargo test -p dvb-si --test it docs_coverage_drift`",
+        "     `python3 tools/gen-dvbsi-coverage.py`; `cargo test -p dvb-si --test docs_coverage_drift`",
         "     fails when this file is stale. -->",
         "",
         "Everything `dvb-si` parses **and** serializes, generated from the crate's own dispatch lists",
