@@ -17,9 +17,9 @@ use transmux::TrackId;
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::{CmafMux, CodecConfig, FlvDemux, FlvMux};
 
-const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");
-const CSV: &str = include_str!("../../fixtures/flv/av.packets.csv");
-const REF_MP4: &[u8] = include_bytes!("../../fixtures/ts/demux-oracle/h264_aac.ref.mp4");
+const FLV: &[u8] = include_bytes!("../../../fixtures/flv/av.flv");
+const CSV: &str = include_str!("../../../fixtures/flv/av.packets.csv");
+const REF_MP4: &[u8] = include_bytes!("../../../fixtures/ts/demux-oracle/h264_aac.ref.mp4");
 
 /// One oracle packet row.
 #[derive(Debug, Clone, Copy)]
@@ -758,8 +758,8 @@ fn incomplete_first_tag_still_errors() {
 fn aac_channel_count_uses_table_1_19() {
     // The fixture is `ffmpeg -f lavfi -i "anullsrc=r=48000:cl=7.1" -c:a aac -f flv`;
     // its ASC is 0x11B856E500 (AAC-LC, sfi 3 = 48000 Hz, channelConfiguration 7).
-    const FLV_7_1: &[u8] = include_bytes!("../../fixtures/flv/aac-7_1.flv");
-    const ORACLE: &str = include_str!("../../fixtures/flv/aac-7_1.oracle.csv");
+    const FLV_7_1: &[u8] = include_bytes!("../../../fixtures/flv/aac-7_1.flv");
+    const ORACLE: &str = include_str!("../../../fixtures/flv/aac-7_1.oracle.csv");
     let row = ORACLE
         .lines()
         .find(|l| !l.starts_with('#') && !l.trim().is_empty())
@@ -788,7 +788,7 @@ fn aac_channel_count_uses_table_1_19() {
 #[test]
 fn streaming_aac_channel_count_uses_table_1_19() {
     use transmux::DemuxEvent;
-    const FLV_7_1: &[u8] = include_bytes!("../../fixtures/flv/aac-7_1.flv");
+    const FLV_7_1: &[u8] = include_bytes!("../../../fixtures/flv/aac-7_1.flv");
 
     let mut demux = transmux::StreamingFlvDemux::new();
     demux.feed(FLV_7_1).expect("feed aac-7_1.flv");
@@ -847,7 +847,7 @@ fn channel_configuration_channel_counts_match_table_1_19() {
 /// is exactly the point: no conformant decoder accepts these dimensions.
 #[test]
 fn oversized_avc_dimensions_are_rejected() {
-    const OVERSIZE: &[u8] = include_bytes!("../../fixtures/flv/oversize-dims.flv");
+    const OVERSIZE: &[u8] = include_bytes!("../../../fixtures/flv/oversize-dims.flv");
 
     let mut demux = FlvDemux::new();
     let err = demux
@@ -864,7 +864,7 @@ fn oversized_avc_dimensions_are_rejected() {
 /// RTMP publisher's sequence header takes.
 #[test]
 fn streaming_oversized_avc_dimensions_are_rejected() {
-    const OVERSIZE: &[u8] = include_bytes!("../../fixtures/flv/oversize-dims.flv");
+    const OVERSIZE: &[u8] = include_bytes!("../../../fixtures/flv/oversize-dims.flv");
 
     let mut demux = transmux::StreamingFlvDemux::new();
     let err = demux

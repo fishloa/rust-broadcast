@@ -57,8 +57,8 @@ use transmux::{
 
 use broadcast_common::Unpackage;
 
-const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");
-const PROGRESSIVE_MP4: &[u8] = include_bytes!("../../fixtures/transmux/h264_aac_prog.mp4");
+const FLV: &[u8] = include_bytes!("../../../fixtures/flv/av.flv");
+const PROGRESSIVE_MP4: &[u8] = include_bytes!("../../../fixtures/transmux/h264_aac_prog.mp4");
 
 fn fixtures_ts_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts")

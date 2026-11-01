@@ -10,8 +10,6 @@
 #![cfg(feature = "std")]
 
 #[cfg(feature = "cli")]
-mod common;
-
 use std::path::PathBuf;
 use std::process::Command;
 use transmux::TrackId;
@@ -586,7 +584,7 @@ fn cmaf_hls_playlist_covers_input_once() {
     let validator = {
         let mut c = Command::new("mediastreamvalidator");
         c.arg("--version");
-        common::run_bounded(c, common::PROBE_DEADLINE, "mediastreamvalidator --version")
+        crate::common::run_bounded(c, crate::common::PROBE_DEADLINE, "mediastreamvalidator --version")
             .is_ok_and(|o| o.status.success())
     };
     if !validator {
@@ -604,12 +602,12 @@ fn cmaf_hls_playlist_covers_input_once() {
         .args([
             "--quiet",
             "-t",
-            &common::MSV_TOOL_TIMEOUT_SECS.to_string(),
+            &crate::common::MSV_TOOL_TIMEOUT_SECS.to_string(),
             "-O",
         ])
         .arg(&json)
         .arg("out.m3u8");
-    let run = common::run_bounded(cmd, common::MSV_DEADLINE, "mediastreamvalidator")
+    let run = crate::common::run_bounded(cmd, crate::common::MSV_DEADLINE, "mediastreamvalidator")
         .expect("run mediastreamvalidator");
     eprintln!(
         "mediastreamvalidator exit {:?}\n{}{}",

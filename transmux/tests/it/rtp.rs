@@ -586,8 +586,8 @@ fn zero_clock_rate_is_rejected() {
 /// four bytes short of ffmpeg's own and a strict reader would mis-parse.
 #[test]
 fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
-    const SDP: &str = include_str!("fixtures/rtp/high-ffmpeg.sdp");
-    const AVCC_HEX: &str = include_str!("fixtures/rtp/high-ffmpeg.avcc.txt");
+    const SDP: &str = include_str!("../fixtures/rtp/high-ffmpeg.sdp");
+    const AVCC_HEX: &str = include_str!("../fixtures/rtp/high-ffmpeg.avcc.txt");
     let oracle = hex_decode(AVCC_HEX.trim()).expect("ffmpeg avcC hex");
     // Strip the 8-byte box header (`size` + `avcC`), leaving the record.
     let record = &oracle[8..];
@@ -620,7 +620,7 @@ fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
 /// (ISO/IEC 14496-15 §5.3.3.1.2 conditions it on the profile).
 #[test]
 fn baseline_profile_sdp_writes_no_trailer() {
-    const SDP: &str = include_str!("fixtures/rtp/baseline-ffmpeg.sdp");
+    const SDP: &str = include_str!("../fixtures/rtp/baseline-ffmpeg.sdp");
     let fmtp = SDP
         .lines()
         .find(|l| l.starts_with("a=fmtp:"))
@@ -650,7 +650,7 @@ fn baseline_profile_sdp_writes_no_trailer() {
 /// clock — never a hardcoded value.
 #[test]
 fn packetised_timestamps_are_presentation_times() {
-    const REF: &[u8] = include_bytes!("../../fixtures/ts/h264/high.ts");
+    const REF: &[u8] = include_bytes!("../../../fixtures/ts/h264/high.ts");
     let mut demux = transmux::TsDemux::new();
     let media = demux.unpackage(REF).expect("demux high.ts");
     let track = media
@@ -721,7 +721,7 @@ fn packetised_timestamps_are_presentation_times() {
 /// signal surfaces through `poll_timing_warning`.
 #[test]
 fn batch_depacketiser_reports_reordered_timestamps() {
-    const REF: &[u8] = include_bytes!("../../fixtures/ts/h264/high.ts");
+    const REF: &[u8] = include_bytes!("../../../fixtures/ts/h264/high.ts");
     let mut demux = transmux::TsDemux::new();
     let media = demux.unpackage(REF).expect("demux high.ts");
     let out = packetise(&media);
@@ -771,7 +771,7 @@ fn batch_depacketiser_reports_reordered_timestamps() {
 /// backward, and the samples it does emit keep their presentation timestamps.
 #[test]
 fn streaming_depacketiser_reports_reordered_timestamps() {
-    const REF: &[u8] = include_bytes!("../../fixtures/ts/h264/high.ts");
+    const REF: &[u8] = include_bytes!("../../../fixtures/ts/h264/high.ts");
     let mut demux = transmux::TsDemux::new();
     let media = demux.unpackage(REF).expect("demux high.ts");
     let out = packetise(&media);
@@ -931,7 +931,7 @@ fn fua_continuation_without_start_does_not_fail_the_stream() {
 /// bytes.
 #[test]
 fn fragmented_aac_access_units_round_trip() {
-    const REF: &[u8] = include_bytes!("../../fixtures/ts/aac-5_1-640k.ts");
+    const REF: &[u8] = include_bytes!("../../../fixtures/ts/aac-5_1-640k.ts");
     let mut demux = transmux::TsDemux::new();
     let media = demux.unpackage(REF).expect("demux aac-5_1-640k.ts");
     let track = media
@@ -1024,7 +1024,7 @@ fn fragmented_aac_access_units_round_trip() {
 /// dropping it.
 #[test]
 fn incomplete_aac_fragments_are_not_emitted_truncated() {
-    const REF: &[u8] = include_bytes!("../../fixtures/ts/aac-5_1-640k.ts");
+    const REF: &[u8] = include_bytes!("../../../fixtures/ts/aac-5_1-640k.ts");
     let mut demux = transmux::TsDemux::new();
     let media = demux.unpackage(REF).expect("demux aac-5_1-640k.ts");
     let track = media
@@ -1313,7 +1313,7 @@ fn vfr_stream_keeps_dts_equal_to_pts() {
 /// are real.
 #[test]
 fn reordered_stream_gets_an_exact_decode_order() {
-    const REF: &[u8] = include_bytes!("../../fixtures/ts/h264/high.ts");
+    const REF: &[u8] = include_bytes!("../../../fixtures/ts/h264/high.ts");
     let mut demux = transmux::TsDemux::new();
     let media = demux.unpackage(REF).expect("demux high.ts");
     let out = packetise(&media);
@@ -1689,7 +1689,7 @@ fn lost_middle_fu_a_fragment_never_emits_a_truncated_nal() {
 /// it claims to be.
 #[test]
 fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
-    const REF: &[u8] = include_bytes!("../../fixtures/ts/aac-5_1-640k.ts");
+    const REF: &[u8] = include_bytes!("../../../fixtures/ts/aac-5_1-640k.ts");
     let mut demux = transmux::TsDemux::new();
     let media = demux.unpackage(REF).expect("demux aac-5_1-640k.ts");
     let track = media
@@ -1759,7 +1759,7 @@ fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
 /// run is known to be incomplete.
 #[test]
 fn missing_audio_fragment_drops_the_whole_au() {
-    const REF: &[u8] = include_bytes!("../../fixtures/ts/aac-5_1-640k.ts");
+    const REF: &[u8] = include_bytes!("../../../fixtures/ts/aac-5_1-640k.ts");
     let mut demux = transmux::TsDemux::new();
     let media = demux.unpackage(REF).expect("demux aac-5_1-640k.ts");
     let track = media
@@ -1852,13 +1852,13 @@ fn missing_audio_fragment_drops_the_whole_au() {
 #[test]
 fn reordered_video_and_audio_share_one_epoch() {
     // Video: a real B-frame encode.
-    const VIDEO_TS: &[u8] = include_bytes!("../../fixtures/ts/h264/high.ts");
+    const VIDEO_TS: &[u8] = include_bytes!("../../../fixtures/ts/h264/high.ts");
     let mut vdemux = transmux::TsDemux::new();
     let video_media = vdemux.unpackage(VIDEO_TS).expect("demux high.ts");
     let vout = packetise(&video_media);
 
     // Audio: a real AAC stream, packetised at a small MTU too.
-    const AUDIO_TS: &[u8] = include_bytes!("../../fixtures/ts/aac-5_1-640k.ts");
+    const AUDIO_TS: &[u8] = include_bytes!("../../../fixtures/ts/aac-5_1-640k.ts");
     let mut ademux = transmux::TsDemux::new();
     let audio_media = ademux.unpackage(AUDIO_TS).expect("demux aac-5_1-640k.ts");
     let aout = {

@@ -25,7 +25,7 @@ use bytes::Bytes;
 use transmux::TrackId;
 use transmux::{CodecConfig, DemuxEvent, FlvDemux, FlvError, StreamingFlvDemux};
 
-const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");
+const FLV: &[u8] = include_bytes!("../../../fixtures/flv/av.flv");
 
 /// Feed `input` into `demux`, then drain every event it newly queued via
 /// `poll_event` (FIFO) — the drain loop a real caller uses.

@@ -20,7 +20,7 @@ use transmux::rtmp::{
     read_chunks, write_chunks,
 };
 
-const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");
+const FLV: &[u8] = include_bytes!("../../../fixtures/flv/av.flv");
 
 // ---------------------------------------------------------------------------
 // Test 1 — Chunk header round-trip, all four fmts + mutation bite

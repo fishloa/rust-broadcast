@@ -12,9 +12,6 @@
 //! machine without ffmpeg stays green.
 
 #![cfg(feature = "cli")]
-
-mod common;
-
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -218,7 +215,7 @@ fn have_msv() -> Option<&'static str> {
         std::path::Path::new(p).exists() || {
             let mut c = Command::new(p);
             c.arg("--help");
-            common::run_bounded(c, common::PROBE_DEADLINE, "mediastreamvalidator --help")
+            crate::common::run_bounded(c, crate::common::PROBE_DEADLINE, "mediastreamvalidator --help")
                 .is_ok_and(|o| o.status.code().is_some())
         }
     })
@@ -319,9 +316,9 @@ fn hls_passes_mediastreamvalidator() {
 
     let mut cmd = Command::new(msv);
     cmd.arg("-t")
-        .arg(common::MSV_TOOL_TIMEOUT_SECS.to_string())
+        .arg(crate::common::MSV_TOOL_TIMEOUT_SECS.to_string())
         .arg(&m3u8);
-    let out = common::run_bounded(cmd, common::MSV_DEADLINE, "mediastreamvalidator")
+    let out = crate::common::run_bounded(cmd, crate::common::MSV_DEADLINE, "mediastreamvalidator")
         .expect("spawn validator");
     let text = format!("{}{}", out.stdout, out.stderr);
     assert!(
@@ -752,5 +749,5 @@ fn bounded_runner_kills_a_hung_tool() {
     const HUNG_SLEEP_SECS: &str = "600";
     let mut c = Command::new("sleep");
     c.arg(HUNG_SLEEP_SECS);
-    let _ = common::run_bounded(c, std::time::Duration::from_millis(300), "sleep");
+    let _ = crate::common::run_bounded(c, std::time::Duration::from_millis(300), "sleep");
 }

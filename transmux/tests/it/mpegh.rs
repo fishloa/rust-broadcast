@@ -28,7 +28,7 @@ use transmux::{
     MHADecoderConfigurationRecord, SampleDescriptionBox, SampleEntryVariant,
 };
 
-const FIXTURE: &[u8] = include_bytes!("../../fixtures/mp4/frag/mpegh_stereo.frag.mp4");
+const FIXTURE: &[u8] = include_bytes!("../../../fixtures/mp4/frag/mpegh_stereo.frag.mp4");
 
 // Ground-truth values decoded from the fixture's own mhaC record (asserted, not
 // trusted): LC profile-level L1 and CICP ChannelConfiguration 2 (stereo).

@@ -7,7 +7,7 @@
 #![cfg(feature = "std")]
 
 #[allow(dead_code)]
-#[path = "../examples/ssai_ad_stitch.rs"]
+#[path = "../../examples/ssai_ad_stitch.rs"]
 mod ssai_ad_stitch;
 
 use timed_metadata::convert::emsg_to_scte35;

@@ -287,7 +287,7 @@ fn heaac_descriptor_that_cannot_tell_v1_from_v2_changes_nothing() {
 
 #[test]
 fn plain_aac_without_signal_is_unchanged() {
-    let golden = include_bytes!("golden/heaac/h264_aac_init_origin_main.bin");
+    let golden = include_bytes!("../golden/heaac/h264_aac_init_origin_main.bin");
     assert_eq!(
         plain_init(),
         golden.as_slice(),
