@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `CaptionDetector` now reports each CEA-608 channel `CC1` to `CC4` and every CEA-708 service 1 to 63 actually present (issue #1428). A 608 channel is reported once caption text (not control codes, XDS or null padding) has been written to it, routed by field and by the data-channel bit of the control codes; a pair with bad odd parity is ignored. `DetectedCaption::Cea608Field1`/`Cea608Field2` are replaced by `DetectedCaption::Cea608(Cea608Channel)`, and a service is reported when it received a service block with content, no longer only when it defined a window of services 1 to 6.
+
 ## [0.28.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)

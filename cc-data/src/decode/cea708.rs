@@ -82,6 +82,8 @@ broadcast_common::impl_spec_display!(AnchorPoint);
 // ── Service / window counts (§6.1, §8) ──────────────────────────────────────
 /// Number of standard services tracked (47 CFR §79.102 (c): Caption Service #1–#6).
 const NUM_SERVICES: usize = 6;
+const MIN_SERVICE_NUMBER: u8 = 1;
+const MAX_SERVICE_NUMBER: u8 = 63;
 /// Windows per service (DF0–DF7).
 const NUM_WINDOWS: usize = 8;
 /// Maximum rows in a window (rc field, virtual rows − 1, max 11 → 12 rows).
@@ -421,6 +423,9 @@ pub struct Cea708Decoder {
     packet: Vec<u8>,
     /// Last sequence number seen (for discontinuity detection).
     last_seq: Option<u8>,
+    /// Bit `n` set once a service block with content has arrived for service
+    /// `n` (1 to 63), whether or not this decoder models that service.
+    services_seen: u64,
 }
 
 impl Default for Cea708Decoder {
@@ -437,7 +442,19 @@ impl Cea708Decoder {
             services: Default::default(),
             packet: Vec::new(),
             last_seq: None,
+            services_seen: 0,
         }
+    }
+
+    /// The service numbers (1 to 63) for which a service block carrying at
+    /// least one non-null byte has been received, ascending. Covers every
+    /// service number the wire can address, not only the 1 to 6 this decoder
+    /// interprets.
+    #[must_use]
+    pub fn services_seen(&self) -> Vec<u8> {
+        (MIN_SERVICE_NUMBER..=MAX_SERVICE_NUMBER)
+            .filter(|n| self.services_seen & (1u64 << n) != 0)
+            .collect()
     }
 
     /// Reset every service (§8.9.5 packet-loss recovery / RST).
@@ -590,6 +607,11 @@ impl Cea708Decoder {
     }
 
     fn dispatch_service(&mut self, service_number: u16, block: &[u8]) {
+        if (u16::from(MIN_SERVICE_NUMBER)..=u16::from(MAX_SERVICE_NUMBER)).contains(&service_number)
+            && block.iter().any(|&b| b != 0)
+        {
+            self.services_seen |= 1u64 << service_number;
+        }
         // We track standard services 1–6 (47 CFR §79.102 (c)).
         if service_number == 0 || service_number as usize > NUM_SERVICES {
             return;
@@ -1212,6 +1234,19 @@ mod tests {
         assert_eq!(dec.service_text(2), "S2");
         assert!(dec.windows(1)[0].is_some());
         assert!(dec.windows(2)[1].is_some());
+    }
+
+    #[test]
+    fn services_seen_covers_unmodelled_and_extended_services() {
+        let mut dec = Cea708Decoder::new();
+        dec.push_packet(&ccp(1, b"A"));
+        dec.push_packet(&ccp(2, &[0x00, 0x00]));
+        let extended = [(7 << 5) | 1, 63, b'Z'];
+        let size_code = (extended.len().div_ceil(2) + 1) as u8 & 0x3F;
+        let mut packet = alloc::vec![size_code];
+        packet.extend_from_slice(&extended);
+        dec.push_packet(&packet);
+        assert_eq!(dec.services_seen(), alloc::vec![1, 63]);
     }
 
     #[test]

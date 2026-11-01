@@ -32,6 +32,10 @@ const SIDE_RINGS: usize = 64;
 const PUMP_EVERY: usize = 64;
 const DECLARED_BPS: u64 = 16_000_000;
 const STREAM: &str = "cam";
+const UNCAPTIONED_LONG: &str = "ts/h264_aac_40s.ts";
+const UNCAPTIONED_SHORT: &str = "ts/h264_aac.ts";
+const TWO_FIELD_CAPTURE: &str = "captions/mux.js/multi-channel-608-captions.ts";
+const SHAKA_CAPTURE: &str = "captions/shaka/captions-test.ts";
 const CAPTIONED: &str = "ts/transformers-eia608-h264.ts";
 const VALIDATOR_BIN: &str = "/usr/local/bin/mediastreamvalidator";
 const VALIDATOR_DEADLINE: Duration = Duration::from_secs(60);
@@ -235,18 +239,101 @@ async fn configured_caption_name_and_language_win() {
 }
 
 #[tokio::test]
-async fn master_claims_no_captions_before_any_are_detected() {
+async fn route_scanned_without_captions_declares_none() {
     let Some(rig) = build(
         CAPTIONED,
         Vec::new(),
-        "master_claims_no_captions_before_any_are_detected",
+        "route_scanned_without_captions_declares_none",
     ) else {
         return;
     };
     assert!(rig.route.note_closed_captions(ProgramId(0), Vec::new()));
-    let master = MasterPlaylist::parse(&rig.master_text().await).expect("master parses");
+    let text = rig.master_text().await;
+    let master = MasterPlaylist::parse(&text).expect("master parses");
     assert!(caption_renditions(&master).is_empty());
-    assert!(master.variants.iter().all(|v| v.closed_captions.is_none()));
+    assert!(!master.variants.is_empty());
+    assert!(
+        master
+            .variants
+            .iter()
+            .all(|v| v.closed_captions == Some(ClosedCaptionsRef::None)),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn long_caption_free_stream_declares_none_after_the_scan_window() {
+    let Some(rig) = build(
+        UNCAPTIONED_LONG,
+        Vec::new(),
+        "long_caption_free_stream_declares_none_after_the_scan_window",
+    ) else {
+        return;
+    };
+    let text = rig.master_text().await;
+    let master = MasterPlaylist::parse(&text).expect("master parses");
+    assert!(caption_renditions(&master).is_empty(), "{text}");
+    assert!(!master.variants.is_empty());
+    assert!(
+        master
+            .variants
+            .iter()
+            .all(|v| v.closed_captions == Some(ClosedCaptionsRef::None)),
+        "{text}"
+    );
+    assert_eq!(
+        text.matches("CLOSED-CAPTIONS=NONE").count(),
+        master.variants.len()
+    );
+}
+
+#[tokio::test]
+async fn short_caption_free_stream_claims_nothing_before_the_scan_window_ends() {
+    let Some(rig) = build(
+        UNCAPTIONED_SHORT,
+        Vec::new(),
+        "short_caption_free_stream_claims_nothing_before_the_scan_window_ends",
+    ) else {
+        return;
+    };
+    let text = rig.master_text().await;
+    assert!(!text.contains("CLOSED-CAPTIONS"), "{text}");
+}
+
+async fn declared_instream_ids(fixture: &str, test: &str) -> Option<(String, Vec<InstreamId>)> {
+    let rig = build(fixture, Vec::new(), test)?;
+    let text = rig.master_text().await;
+    let master = MasterPlaylist::parse(&text).expect("master parses");
+    let ids = caption_renditions(&master)
+        .iter()
+        .map(|m| m.instream_id.clone().expect("INSTREAM-ID"))
+        .collect();
+    Some((text, ids))
+}
+
+#[tokio::test]
+async fn two_field_capture_declares_cc1_and_cc3() {
+    let Some((text, ids)) =
+        declared_instream_ids(TWO_FIELD_CAPTURE, "two_field_capture_declares_cc1_and_cc3").await
+    else {
+        return;
+    };
+    assert_eq!(ids, [InstreamId::Cc(1), InstreamId::Cc(3)], "{text}");
+    assert_eq!(
+        text.matches("CLOSED-CAPTIONS=\"cc\"").count(),
+        MasterPlaylist::parse(&text).expect("parse").variants.len()
+    );
+    assert!(!text.contains("CLOSED-CAPTIONS=NONE"));
+}
+
+#[tokio::test]
+async fn shaka_capture_declares_cc1_and_service1() {
+    let Some((text, ids)) =
+        declared_instream_ids(SHAKA_CAPTURE, "shaka_capture_declares_cc1_and_service1").await
+    else {
+        return;
+    };
+    assert_eq!(ids, [InstreamId::Cc(1), InstreamId::Service(1)], "{text}");
 }
 
 #[test]
@@ -406,4 +493,11 @@ async fn apple_validator_reports_nothing_new_about_captions() {
         new.is_empty(),
         "captions added validator findings the caption-free route lacks: {new:?}"
     );
+    for (_, message) in with_captions.iter().chain(&without_captions) {
+        let lower = message.to_lowercase();
+        assert!(
+            !lower.contains("caption") && !lower.contains("instream"),
+            "validator finding about captions: {message}"
+        );
+    }
 }

@@ -1883,7 +1883,7 @@ impl HlsOriginBuilder {
             track_specs: Mutex::new(Vec::new()),
             closed_captions_none: self.closed_captions_none,
             closed_caption_overrides: self.closed_caption_overrides,
-            detected_closed_captions: Mutex::new(Vec::new()),
+            detected_closed_captions: Mutex::new(None),
             frozen_target_duration_secs: Mutex::new(None),
             target_duration_violations: AtomicU64::new(0),
         })
@@ -1985,7 +1985,7 @@ pub struct HlsOrigin {
     closed_caption_overrides: Vec<ClosedCaptionDecl>,
     /// Caption streams the video has been seen to carry, in advertising
     /// order. Taken alone (never while `window` or `codecs` is held).
-    detected_closed_captions: Mutex<Vec<broadcast_hls::InstreamId>>,
+    detected_closed_captions: Mutex<Option<Vec<broadcast_hls::InstreamId>>>,
     /// Frozen `EXT-X-TARGETDURATION` (seconds, pre-rounding) captured the
     /// first time a playlist is rendered with at least one segment in the
     /// window: RFC 8216 §4.3.3.1 forbids the tag changing once published,
@@ -2198,10 +2198,12 @@ impl HlsOrigin {
     /// master playlist advertises exactly these, one
     /// `EXT-X-MEDIA TYPE=CLOSED-CAPTIONS` per stream in group
     /// [`CLOSED_CAPTIONS_GROUP_ID`], and every variant references the group.
-    /// Until this is called with a non-empty list the master claims no
-    /// captions.
+    /// An empty list means the video was scanned and carries none: the master
+    /// then states `CLOSED-CAPTIONS=NONE` on every variant (RFC 8216bis
+    /// section 4.4.6.2). Until this is called the master claims nothing either
+    /// way, unless [`HlsOriginBuilder::closed_captions_none`] is set.
     pub fn set_detected_closed_captions(&self, detected: Vec<broadcast_hls::InstreamId>) {
-        *locked(&self.detected_closed_captions) = detected;
+        *locked(&self.detected_closed_captions) = Some(detected);
     }
 
     /// Replace the declared WebVTT subtitle renditions after construction, for
@@ -2379,7 +2381,9 @@ impl HlsOrigin {
             (_, c) => c,
         };
         let detected_captions = locked(&self.detected_closed_captions).clone();
-        let caption_media = self.closed_caption_renditions(&detected_captions);
+        let scanned_without_captions = detected_captions.as_ref().is_some_and(Vec::is_empty);
+        let caption_media =
+            self.closed_caption_renditions(detected_captions.as_deref().unwrap_or_default());
         let captions_advertised = !caption_media.is_empty();
         media.extend(caption_media);
 
@@ -2397,7 +2401,7 @@ impl HlsOrigin {
             Some(ClosedCaptionsRef::Group(
                 CLOSED_CAPTIONS_GROUP_ID.to_string(),
             ))
-        } else if self.closed_captions_none {
+        } else if self.closed_captions_none || scanned_without_captions {
             Some(ClosedCaptionsRef::None)
         } else {
             None
