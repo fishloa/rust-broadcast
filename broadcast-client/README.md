@@ -373,14 +373,14 @@ for a live one), `InitFetchFailed`, `InitDecodeFailed` and `BodyTooLarge`.
 | CENC/CBCS | never decrypted (`UnsupportedEncryption`) |
 | Seeking, `MPD@type="list"`, segment sequences, hierarchical `sidx`, `data:` URLs, open-ended byte ranges | not supported (typed errors) |
 
-**Verification.** `tests/dash_matrix.rs` injects 45 fault kinds (transport and status faults, `UTCTiming`,
+**Verification.** `tests/it/dash_matrix.rs` injects 45 fault kinds (transport and status faults, `UTCTiming`,
 MPD-refresh, Period-churn, `sidx`, `425`/`Retry-After`, container and host-clock faults) into eight presentation
 shapes at each request class, once and permanently, and asserts the fault was applied; its exhaustiveness guard
 fails when a fault or request class has no row. The `dash_session` fuzz target drives a whole `Session` over DASH.
 `tests/e2e_livesim2.rs` plays 30 s of live DASH from DASH-IF livesim2 (pinned) over real HTTP in six shapes
 and asserts samples flow, no segment is requested before it exists (strictly so under an exact host clock),
 and no segment is missing or repeated. It skips loudly when livesim2 is not installed and fails under
-`REQUIRE_LIVESIM2=1` (the `dash-e2e` CI job). `tests/no_clock_guard.rs` bans clock reads in this crate and in
+`REQUIRE_LIVESIM2=1` (the `dash-e2e` CI job). `tests/it/no_clock_guard.rs` bans clock reads in this crate and in
 `dash-runtime`.
 
 ## Cookies and custom headers

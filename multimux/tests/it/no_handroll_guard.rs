@@ -1,7 +1,7 @@
 //! Tripwire against hand-rolled generic protocol code coming back (W2a spec §5).
 //!
 //! Scans `src/**/*.rs` outside `#[cfg(test)] mod` bodies. Cross-references
-//! `tests/harness_guard.rs` (W2b-1 Task 10), which guards THIS crate's test
+//! `tests/it/harness_guard.rs` (W2b-1 Task 10), which guards THIS crate's test
 //! harness (reserve-then-rebind loops, sleeps) — this file guards `src/`
 //! only.
 //!

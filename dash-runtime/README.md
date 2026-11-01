@@ -139,7 +139,7 @@ Independent oracles, not this crate's own output:
 
 - The live client runs in the DESIGN 3.6 `World` simulation (true UTC, a host clock with skew, drift and steps, a fake origin that decides availability from TRUE time): a synthesised origin serving the four real fMP4 segments of the ffmpeg live capture recycled under a rewritten MPD (number, `$Number$` timeline, `$Time$` timeline, multi-Period), the two real ffmpeg live captures played exactly as written (samples equal a direct `Fmp4Demux`), and the two real livesim2 MPD refreshes. Cases: host skew +-0.5/5/60 s with and without `UTCTiming`, a skewed `UTCTiming` server, `Date` only, clock steps of +-30 s, six hours at +-100 ppm with re-sync, round trips over the limit, garbage/empty/huge UTC bodies, `HEAD` answered `405`, a UTC timeout falling to the next element and then to the host clock, `direct`, `PreferHost`, a static MPD with no clock. A failure-injection matrix (22 fault kinds x MPD refresh, segment, init and UTC x transient and permanent), a 24-hour bounded-memory run, a 4 000-session randomised soak and the fuzz target `dash_client_live`. Live mutants are in `docs/mutation-table-live.md`.
 
-Tripwires: `tests/no_clock_guard.rs` (no `now()` outside tests), `tests/no_handroll_guard.rs`, `tests/label_coverage.rs`, `tests/non_exhaustive_coverage.rs`. Fuzz targets `dash_mpd_parse`, `dash_address`, `dash_client_static` and `dash_client_live` live in the workspace `fuzz/` crate.
+Tripwires: `tests/it/no_clock_guard.rs` (no `now()` outside tests), `tests/no_handroll_guard.rs`, `tests/label_coverage.rs`, `tests/non_exhaustive_coverage.rs`. Fuzz targets `dash_mpd_parse`, `dash_address`, `dash_client_static` and `dash_client_live` live in the workspace `fuzz/` crate.
 
 ## Feature flags
 
