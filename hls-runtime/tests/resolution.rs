@@ -38,48 +38,40 @@ fn specs_from_fixture(fixture: &str) -> Option<Vec<TrackSpec>> {
     Some(media.tracks.into_iter().map(|t| t.spec).collect())
 }
 
-#[test]
-fn melodie_resolution_1024x576() {
-    let Some(specs) = specs_from_fixture("ts/melodie-anamorphic-sar-64-45-zenith-tv.ts") else {
-        return;
-    };
-    let origin = origin();
-    origin.set_track_specs(&specs).unwrap();
-    let body = render(&origin);
-    let parsed = MasterPlaylist::parse(&body).expect("parse master");
-    assert_eq!(parsed.variants[0].resolution, Some((1024, 576)));
-}
-
-#[test]
-fn krone_resolution_1047x576() {
-    let Some(specs) = specs_from_fixture("ts/krone-anamorphic-sar-16-11-zenith-tv.ts") else {
-        return;
-    };
-    let origin = origin();
-    origin.set_track_specs(&specs).unwrap();
-    let body = render(&origin);
-    let parsed = MasterPlaylist::parse(&body).expect("parse master");
-    assert_eq!(parsed.variants[0].resolution, Some((1047, 576)));
-}
-
-#[test]
-fn square_pixel_fixture_resolution_is_coded_size() {
-    let Some(specs) = specs_from_fixture("ts/h264_aac.ts") else {
-        return;
-    };
-    let coded = specs
+fn coded_size(specs: &[TrackSpec]) -> (u32, u32) {
+    specs
         .iter()
         .find_map(|s| match &s.config {
             CodecConfig::Avc { width, height, .. } => Some((*width as u32, *height as u32)),
             CodecConfig::Hevc { width, height, .. } => Some((*width as u32, *height as u32)),
             _ => None,
         })
-        .expect("video track");
-    let origin = origin();
-    origin.set_track_specs(&specs).unwrap();
-    let body = render(&origin);
-    let parsed = MasterPlaylist::parse(&body).expect("parse master");
-    assert_eq!(parsed.variants[0].resolution, Some(coded));
+        .expect("video track")
+}
+
+#[test]
+fn fixture_resolution_comes_from_display_geometry_or_coded_size() {
+    let cases: [(&str, Option<(u32, u32)>); 3] = [
+        (
+            "ts/melodie-anamorphic-sar-64-45-zenith-tv.ts",
+            Some((1024, 576)),
+        ),
+        (
+            "ts/krone-anamorphic-sar-16-11-zenith-tv.ts",
+            Some((1047, 576)),
+        ),
+        ("ts/h264_aac.ts", None),
+    ];
+    for (fixture, want) in cases {
+        let Some(specs) = specs_from_fixture(fixture) else {
+            continue;
+        };
+        let want = want.unwrap_or_else(|| coded_size(&specs));
+        let origin = origin();
+        origin.set_track_specs(&specs).unwrap();
+        let parsed = MasterPlaylist::parse(&render(&origin)).expect("parse master");
+        assert_eq!(parsed.variants[0].resolution, Some(want), "{fixture}");
+    }
 }
 
 #[test]
