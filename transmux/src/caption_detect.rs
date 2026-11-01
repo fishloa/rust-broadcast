@@ -288,7 +288,7 @@ mod tests {
     fn bad_parity_pair_is_not_a_caption() {
         let mut d = mpeg2_detector();
         let mut au = atsc_picture(&hi_on(0x14, 0x14, FIELD1));
-        let first = au.len() - 10;
+        let first = au.len() - 6;
         au[first] ^= 0x80;
         assert!(!d.observe(&au));
         assert!(d.detected().is_empty());
