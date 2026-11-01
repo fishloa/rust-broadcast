@@ -62,6 +62,7 @@ mod r6_rtsp_codecs;
 mod r6_ts_tracks;
 mod r6_video_kinds;
 mod redirect;
+mod rtmp;
 mod rtsp;
 mod rtsp_avsync;
 mod rtsp_chunking;

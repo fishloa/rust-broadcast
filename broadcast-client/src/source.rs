@@ -6,6 +6,7 @@ pub(crate) mod fetch;
 pub(crate) mod hls;
 pub(crate) mod hls_join;
 pub(crate) mod hls_session;
+pub(crate) mod rtmp;
 pub(crate) mod rtsp;
 pub(crate) mod rtsp_align;
 pub(crate) mod rtsp_sdp;
