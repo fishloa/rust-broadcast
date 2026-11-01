@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use broadcast_client::{
-    Action, Config, Credentials, DashClockPolicy, Event, Hint, Session, SrtEntropySeed, TrackId,
+    Action, ClientIdentity, Config, Credentials, DashClockPolicy, Event, Hint, Session, SrtEntropySeed, TrackId,
 };
 use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
@@ -63,6 +63,7 @@ const DATAGRAM_URLS: [&str; 5] = [
     "srt://[::1]:9001",
 ];
 const SRT_ENTROPY_SEED: [u8; 32] = [7; 32];
+const CLIENT_IDENTITY_HANDLE: u64 = 1;
 const SRT_HEADER_BYTES: usize = 16;
 const SRT_CONTROL_TYPES: u8 = 8;
 const SRT_CONTROL_BIT: u8 = 0x80;
@@ -442,8 +443,16 @@ impl Watch {
             steps += 1;
             match action {
                 Action::HttpRequest {
-                    conn, url, headers, ..
+                    conn,
+                    url,
+                    headers,
+                    identity,
+                    ..
                 } => {
+                    assert!(
+                        identity.is_none() || url.starts_with("https://"),
+                        "client identity offered over plain http: {url}"
+                    );
                     assert!(!self.closed, "HttpRequest after close");
                     assert!(self.live.insert(conn), "live conn id {conn} issued twice");
                     if !url.starts_with(ORIGIN_PREFIX) {
@@ -552,6 +561,7 @@ fn config_from(header: &[u8]) -> Config {
     config.extra_headers = vec![("X-Fuzz".to_string(), "1".to_string())];
     config.max_key_failures = knob(header, 0, &KEY_FAILURES);
     config.srt.entropy_seed = Some(SrtEntropySeed::new(SRT_ENTROPY_SEED));
+    config.client_identity = Some(ClientIdentity::handle(CLIENT_IDENTITY_HANDLE));
     config.max_redirects = knob(header, 1, &REDIRECTS);
     config.max_inflight_segments = knob(header, 2, &INFLIGHT);
     config.max_queued_events = knob(header, 3, &QUEUE_CAPS);

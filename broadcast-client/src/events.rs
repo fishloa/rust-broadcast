@@ -515,6 +515,10 @@ pub enum Action {
         /// Optional byte range as `(offset, length)`, not `(start, end)`: the host builds the
         /// `Range: bytes=offset-(offset+length-1)` header itself.
         byte_range: Option<(u64, u64)>,
+        /// Client certificate to present if the server asks for one (mutual TLS); `Some` only
+        /// for an `https` URL and only when [`Config::client_identity`] applies to this origin
+        /// (see [`Config::client_identity_scope`]).
+        identity: Option<Arc<crate::identity::ClientIdentity>>,
     },
     /// Open a TCP connection (RTSP). The host reports the outcome with
     /// [`crate::Session::on_connected`], or [`crate::Session::on_closed`] with an error.
@@ -528,6 +532,9 @@ pub enum Action {
         /// The host performs TLS and certificate validation before reporting the connection
         /// established; the session only ever exchanges plaintext bytes.
         tls: bool,
+        /// Client certificate to present if the server asks for one (mutual TLS); `Some` only
+        /// when `tls` is true and [`Config::client_identity`] applies to this host.
+        identity: Option<Arc<crate::identity::ClientIdentity>>,
     },
     /// Open a datagram socket (UDP, RTP and SRT sources). The host reports the outcome with
     /// [`crate::Session::on_connected`], or [`crate::Session::on_closed`] with an error; every
@@ -582,6 +589,7 @@ impl core::fmt::Debug for Action {
                 url,
                 headers,
                 byte_range,
+                identity,
             } => {
                 let names: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
                 f.debug_struct("HttpRequest")
@@ -590,6 +598,7 @@ impl core::fmt::Debug for Action {
                     .field("url", url)
                     .field("header_names", &names)
                     .field("byte_range", byte_range)
+                    .field("identity", identity)
                     .finish()
             }
             Self::TcpConnect {
@@ -597,12 +606,14 @@ impl core::fmt::Debug for Action {
                 host,
                 port,
                 tls,
+                identity,
             } => f
                 .debug_struct("TcpConnect")
                 .field("conn", conn)
                 .field("host", host)
                 .field("port", port)
                 .field("tls", tls)
+                .field("identity", identity)
                 .finish(),
             Self::UdpBind {
                 conn,
@@ -1061,6 +1072,11 @@ pub struct Config {
     pub udp: crate::udp::UdpConfig,
     /// SRT caller settings.
     pub srt: crate::srt::SrtConfig,
+    /// Client certificate for mutual TLS, carried on the actions the host executes over TLS
+    /// (HTTPS requests, `rtsps` connections). The session never performs TLS itself.
+    pub client_identity: Option<crate::identity::ClientIdentity>,
+    /// Which TLS connections offer [`Config::client_identity`].
+    pub client_identity_scope: crate::identity::ClientIdentityScope,
 }
 
 impl Config {
@@ -1103,6 +1119,9 @@ impl Config {
         }
         self.udp.validate()?;
         self.srt.validate()?;
+        if let Some(identity) = &self.client_identity {
+            identity.validate()?;
+        }
         if let Err(e) = self.dash.validate() {
             return invalid(dash_field(e.field));
         }
@@ -1172,6 +1191,8 @@ impl Default for Config {
             dash: DashConfig::default(),
             udp: crate::udp::UdpConfig::default(),
             srt: crate::srt::SrtConfig::default(),
+            client_identity: None,
+            client_identity_scope: crate::identity::ClientIdentityScope::default(),
         }
     }
 }
@@ -1228,6 +1249,8 @@ impl core::fmt::Debug for Config {
             .field("dash", &self.dash)
             .field("udp", &self.udp)
             .field("srt", &self.srt)
+            .field("client_identity", &self.client_identity)
+            .field("client_identity_scope", &self.client_identity_scope)
             .finish()
     }
 }
