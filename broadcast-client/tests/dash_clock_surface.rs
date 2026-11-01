@@ -68,38 +68,48 @@ fn gap_with_anchor(anchors: &[(u64, u64)], reply: Reply) -> u64 {
     first_gap_secs(&mut h)
 }
 
-#[test]
-fn an_http_date_retry_after_counts_from_the_anchor() {
-    let gap = gap_with_anchor(&[(0, BASE_UNIX_US)], retry_after(503, PLUS_30S));
-    assert_eq!(gap, 30);
-    let gap = gap_with_anchor(&[(0, BASE_UNIX_US)], retry_after(429, PLUS_30S));
-    assert_eq!(gap, 30);
-}
+type Anchors = &'static [(u64, u64)];
 
 #[test]
-fn an_http_date_in_the_past_falls_back_to_the_backoff_step() {
-    let gap = gap_with_anchor(&[(0, BASE_UNIX_US)], retry_after(503, MINUS_1S));
-    assert_eq!(gap, FIRST_BACKOFF_SECS);
-    let gap = gap_with_anchor(&[(0, BASE_UNIX_US)], retry_after(503, BASE_DATE));
-    assert_eq!(gap, FIRST_BACKOFF_SECS, "now is not in the future");
-}
-
-#[test]
-fn an_http_date_far_in_the_future_is_clamped_to_sixty_seconds() {
-    let gap = gap_with_anchor(&[(0, BASE_UNIX_US)], retry_after(503, PLUS_1H));
-    assert_eq!(gap, MAX_RETRY_AFTER_SECS);
-}
-
-#[test]
-fn an_http_date_without_an_anchor_or_date_header_is_ignored() {
-    let gap = gap_with_anchor(&[], retry_after(503, PLUS_30S));
-    assert_eq!(gap, FIRST_BACKOFF_SECS);
-}
-
-#[test]
-fn an_http_date_without_an_anchor_counts_from_the_response_date() {
-    let gap = gap_with_anchor(&[], retry_after_with_date(PLUS_30S, BASE_DATE));
-    assert_eq!(gap, 30);
+fn an_http_date_retry_after_resolves_against_the_anchor_or_the_response_date() {
+    let anchor: Anchors = &[(0, BASE_UNIX_US)];
+    let cases: [(Anchors, Reply, u64, &str); 7] = [
+        (anchor, retry_after(503, PLUS_30S), 30, "anchor, 503"),
+        (anchor, retry_after(429, PLUS_30S), 30, "anchor, 429"),
+        (
+            anchor,
+            retry_after(503, MINUS_1S),
+            FIRST_BACKOFF_SECS,
+            "in the past",
+        ),
+        (
+            anchor,
+            retry_after(503, BASE_DATE),
+            FIRST_BACKOFF_SECS,
+            "now is not in the future",
+        ),
+        (
+            anchor,
+            retry_after(503, PLUS_1H),
+            MAX_RETRY_AFTER_SECS,
+            "far future is clamped",
+        ),
+        (
+            &[],
+            retry_after(503, PLUS_30S),
+            FIRST_BACKOFF_SECS,
+            "no anchor and no Date header is ignored",
+        ),
+        (
+            &[],
+            retry_after_with_date(PLUS_30S, BASE_DATE),
+            30,
+            "no anchor counts from the response Date",
+        ),
+    ];
+    for (anchors, reply, want, why) in cases {
+        assert_eq!(gap_with_anchor(anchors, reply), want, "{why}");
+    }
 }
 
 #[test]

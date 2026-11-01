@@ -123,85 +123,6 @@ fn vod_init_permanent_404_is_one_typed_fatal_after_the_cap() {
 }
 
 #[test]
-fn vod_init_permanent_503_is_one_typed_fatal() {
-    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Status(503)])]);
-    h.run_until(stop_on_end_or_fatal, STEPS);
-    let t = tally(&h);
-    assert_eq!(
-        t.fatals,
-        vec![ErrorKind::InitFetchFailed { status: Some(503) }],
-        "{t:?}"
-    );
-}
-
-#[test]
-fn vod_init_transport_error_reports_no_status() {
-    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::TransportError])]);
-    h.run_until(stop_on_end_or_fatal, STEPS);
-    let t = tally(&h);
-    assert_eq!(
-        t.fatals,
-        vec![ErrorKind::InitFetchFailed { status: None }],
-        "{t:?}"
-    );
-}
-
-#[test]
-fn live_init_transient_503_still_recovers() {
-    let (init, segs) = parts();
-    let mut pl = vec![];
-    for r in 0..6usize {
-        pl.push(Reply::Ok(
-            format!(
-                "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{r}\n#EXT-X-MAP:URI=\"i1.mp4\"\n#EXTINF:1.0,\ns{}.m4s\n",
-                r.min(2)
-            )
-            .into_bytes(),
-        ));
-    }
-    let mut h = Host::new(PL, hls_config());
-    h.route(PL, pl);
-    h.route(
-        &format!("{BASE}/i1.mp4"),
-        vec![Reply::Status(503), Reply::Ok(init)],
-    );
-    for (i, seg) in segs.iter().enumerate().take(3) {
-        h.ok(&format!("{BASE}/s{i}.m4s"), seg.clone());
-    }
-    h.run_until(|_| false, 3_000);
-    let t = tally(&h);
-    assert!(t.fatals.is_empty(), "{t:?}");
-    assert!(t.samples > 0, "{t:?}");
-    assert_eq!(t.tracks, 1);
-}
-
-#[test]
-fn live_init_permanent_failure_is_one_typed_fatal() {
-    let (_, segs) = parts();
-    let pl: Vec<Reply> = (0..40usize)
-        .map(|r| {
-            Reply::Ok(
-                format!(
-                    "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{r}\n#EXT-X-MAP:URI=\"i1.mp4\"\n#EXTINF:1.0,\ns0.m4s\n"
-                )
-                .into_bytes(),
-            )
-        })
-        .collect();
-    let mut h = Host::new(PL, hls_config());
-    h.route(PL, pl);
-    h.route(&format!("{BASE}/i1.mp4"), vec![Reply::Status(404)]);
-    h.ok(&format!("{BASE}/s0.m4s"), segs[0].clone());
-    h.run_until(stop_on_end_or_fatal, STEPS);
-    let t = tally(&h);
-    assert_eq!(
-        t.fatals,
-        vec![ErrorKind::InitFetchFailed { status: Some(404) }],
-        "{t:?}"
-    );
-}
-
-#[test]
 fn vod_second_map_init_transient_failure_recovers() {
     let maps = ["i1.mp4", "i2.mp4"];
     let want = clean_samples(&maps);
@@ -213,22 +134,6 @@ fn vod_second_map_init_transient_failure_recovers() {
     let t = tally(&h);
     assert!(t.ended && t.fatals.is_empty(), "{t:?}");
     assert_eq!(t.samples, want);
-}
-
-#[test]
-fn vod_second_map_init_permanent_failure_is_one_typed_fatal() {
-    let mut h = vod_host(
-        &["i1.mp4", "i2.mp4"],
-        &[("i2.mp4", vec![Reply::Status(404)])],
-    );
-    h.run_until(stop_on_end_or_fatal, STEPS);
-    let t = tally(&h);
-    assert!(!t.ended, "{t:?}");
-    assert_eq!(
-        t.fatals,
-        vec![ErrorKind::InitFetchFailed { status: Some(404) }],
-        "{t:?}"
-    );
 }
 
 #[test]
@@ -463,18 +368,65 @@ fn live_host(init_replies: Vec<Reply>) -> Host {
 }
 
 #[test]
-fn live_garbage_init_then_good_recovers() {
-    let mut h = live_host(garbage_then_good());
-    h.run_until(|_| false, 3_000);
-    let t = tally(&h);
-    assert!(t.fatals.is_empty(), "{t:?}");
-    assert!(t.samples > 0 && t.tracks == 1, "{t:?}");
+fn a_permanent_init_failure_is_one_typed_fatal() {
+    type Build = fn() -> Host;
+    let cases: [(&str, Build, ErrorKind, bool); 5] = [
+        (
+            "vod 503",
+            || vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Status(503)])]),
+            ErrorKind::InitFetchFailed { status: Some(503) },
+            false,
+        ),
+        (
+            "vod transport error",
+            || vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::TransportError])]),
+            ErrorKind::InitFetchFailed { status: None },
+            false,
+        ),
+        (
+            "live 404",
+            || live_host(vec![Reply::Status(404)]),
+            ErrorKind::InitFetchFailed { status: Some(404) },
+            false,
+        ),
+        (
+            "vod second map 404",
+            || {
+                vod_host(
+                    &["i1.mp4", "i2.mp4"],
+                    &[("i2.mp4", vec![Reply::Status(404)])],
+                )
+            },
+            ErrorKind::InitFetchFailed { status: Some(404) },
+            true,
+        ),
+        (
+            "live garbage forever",
+            || live_host(vec![Reply::Ok(GARBAGE.to_vec())]),
+            ErrorKind::InitDecodeFailed,
+            false,
+        ),
+    ];
+    for (why, build, fatal, never_ends) in cases {
+        let mut h = build();
+        h.run_until(stop_on_end_or_fatal, STEPS);
+        let t = tally(&h);
+        assert_eq!(t.fatals, vec![fatal], "{why}: {t:?}");
+        assert!(!never_ends || !t.ended, "{why}: {t:?}");
+    }
 }
 
 #[test]
-fn live_garbage_init_forever_is_one_typed_fatal() {
-    let mut h = live_host(vec![Reply::Ok(GARBAGE.to_vec())]);
-    h.run_until(stop_on_end_or_fatal, STEPS);
-    let t = tally(&h);
-    assert_eq!(t.fatals, vec![ErrorKind::InitDecodeFailed], "{t:?}");
+fn a_transient_live_init_failure_recovers() {
+    let cases: [(&str, Vec<Reply>); 2] = [
+        ("503", vec![Reply::Status(503), Reply::Ok(parts().0)]),
+        ("garbage", garbage_then_good()),
+    ];
+    for (why, replies) in cases {
+        let mut h = live_host(replies);
+        h.run_until(|_| false, 3_000);
+        let t = tally(&h);
+        assert!(t.fatals.is_empty(), "{why}: {t:?}");
+        assert!(t.samples > 0 && t.tracks == 1, "{why}: {t:?}");
+    }
 }
