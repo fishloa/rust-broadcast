@@ -2,7 +2,6 @@
 //! from a real or a minimally edited real input, is reported once until a success resets it, and
 //! ends the session only when it is fatal.
 
-use crate::support::dash_checks;
 use crate::support::dash_common;
 use crate::support::dash_sim;
 #[allow(dead_code)]

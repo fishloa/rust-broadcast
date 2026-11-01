@@ -2,7 +2,6 @@
 //! every HTTP source, and `Event::ServerRefused` tells the host why.
 
 use crate::support;
-use crate::support::dash_common;
 use crate::support::dash_sim;
 
 use broadcast_client::{Action, Config, Event, MAX_SERVER_REFUSED_REASON_BYTES, Session, Status};

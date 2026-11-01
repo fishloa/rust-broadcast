@@ -1,5 +1,3 @@
-use crate::support;
-
 use std::collections::VecDeque;
 
 use broadcast_client::{Action, Config, Event, Session, Status};

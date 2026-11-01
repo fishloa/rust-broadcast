@@ -1,5 +1,3 @@
-use crate::support;
-
 use broadcast_client::{Action, Config, Session};
 
 #[test]

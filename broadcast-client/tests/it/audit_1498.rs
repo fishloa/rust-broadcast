@@ -1,5 +1,3 @@
-use crate::support;
-
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, Credentials, Session};
 

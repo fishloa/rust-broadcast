@@ -1,5 +1,3 @@
-use crate::support;
-
 use broadcast_auth::Scheme as AuthScheme;
 use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
 
