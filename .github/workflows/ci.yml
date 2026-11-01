@@ -159,12 +159,12 @@ jobs:
           cargo nextest run -p dvb-si --no-default-features --features std --locked --profile ci -E 'test(/registry/) | binary(descriptor_loop)'
           cargo nextest run -p dvb-t2mi --no-default-features --features std --locked --profile ci -E 'test(/registry/)'
       # Doctests whose code blocks are feature-gated (`# #[cfg(feature = ...)]`
-      # in cc-data, dvb-t2mi, st291) or that are the crate's documented bare
-      # surface (dvb-si); one invocation each, again to avoid unification.
+      # in cc-data, dvb-t2mi, st291); one invocation each, again to avoid
+      # unification. dvb-si is deliberately absent: its doctests need `ts`.
       - name: Doctests (bare, feature-gated crates)
         timeout-minutes: 15
         run: |
-          for c in cc-data dvb-si dvb-t2mi st291; do
+          for c in cc-data dvb-t2mi st291; do
             cargo test -p "$c" --no-default-features --features std --locked --doc
           done
 
