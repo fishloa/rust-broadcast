@@ -21,6 +21,9 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_demux::TsDemux;
 use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
 
+#[path = "support/shared.rs"]
+mod shared;
+
 use multimux::config::{AudioTrackSelector, Config};
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
@@ -505,8 +508,32 @@ fn by_role(mut sources: Vec<Source>) -> Vec<Source> {
     sources
 }
 
-fn france2() -> Vec<Source> {
-    by_role(load("ts/france2.ts"))
+fn france2() -> &'static [Source] {
+    shared::shared("sources:france2", || by_role(load("ts/france2.ts")))
+}
+
+fn h264_aac() -> &'static [Source] {
+    shared::shared("sources:h264_aac", || by_role(load("ts/h264_aac.ts")))
+}
+
+/// A static (non-live, keep-everything) rig built once per distinct
+/// (sources, declarations, selectors, declared bandwidth) and shared by every
+/// read-only test that asks for it.
+fn shared_rig(
+    sources: &'static [Source],
+    renditions: Vec<AudioRenditionDecl>,
+    selectors: Vec<AudioTrackSelector>,
+    declared: Option<u64>,
+) -> &'static Rig {
+    let key = format!(
+        "rig:{:p}:{renditions:?}:{selectors:?}:{declared:?}",
+        sources.as_ptr()
+    );
+    shared::shared(&key, || {
+        let rig = rig_declared(sources, renditions, selectors, declared, &|_, _| true);
+        shared::warm_up(&rig.app, STREAM);
+        rig
+    })
 }
 
 async fn assert_part_timing(rig: &Rig, uris: &[&str]) {
@@ -580,11 +607,11 @@ async fn split_audio_france2_three_renditions_align_with_video() {
     let audio: Vec<&Source> = sources.iter().filter(|s| s.is_audio()).collect();
     assert_eq!(audio.len(), 3, "france2 carries three audio tracks");
     let video = &sources[0];
-    let rig = rig(
-        &sources,
+    let rig = shared_rig(
+        sources,
         decls(&["fre", "qad", "qaa"]),
         index_selectors(3),
-        &|_, _| true,
+        Some(DECLARED_BPS),
     );
 
     let master = String::from_utf8(rig.ok("master.m3u8").await).expect("utf8");
@@ -607,7 +634,7 @@ async fn split_audio_france2_three_renditions_align_with_video() {
     assert!(video_init.windows(4).any(|w| w == b"vide"));
 
     assert_part_timing(
-        &rig,
+        rig,
         &[
             "media.m3u8",
             "audio/a0.m3u8",
@@ -619,7 +646,7 @@ async fn split_audio_france2_three_renditions_align_with_video() {
 
     for (i, a) in audio.iter().enumerate() {
         let gaps =
-            check_rendition(&rig, &video_playlist, video, a, &format!("audio/a{i}.m3u8")).await;
+            check_rendition(rig, &video_playlist, video, a, &format!("audio/a{i}.m3u8")).await;
         assert!(
             gaps.len() <= 1,
             "continuous audio must not gap more than a trailing segment: {gaps:?}"
@@ -681,16 +708,16 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
 
 #[tokio::test]
 async fn split_audio_h264_aac_track_id_selector() {
-    let sources = by_role(load("ts/h264_aac.ts"));
+    let sources = h264_aac();
     let aac = &sources[1];
-    let rig = rig(
-        &sources,
+    let rig = shared_rig(
+        sources,
         decls(&["eng"]),
         vec![AudioTrackSelector::TrackId(aac.spec.track_id.value())],
-        &|_, _| true,
+        Some(DECLARED_BPS),
     );
     let video = rig.playlist("media.m3u8").await;
-    let gaps = check_rendition(&rig, &video, &sources[0], aac, "audio/a0.m3u8").await;
+    let gaps = check_rendition(rig, &video, &sources[0], aac, "audio/a0.m3u8").await;
     assert!(gaps.len() <= 1, "{gaps:?}");
 }
 
@@ -746,11 +773,11 @@ async fn split_audio_silent_stretch_becomes_gap_with_contiguous_msns() {
 #[tokio::test]
 async fn split_audio_resources_route_to_their_own_rendition() {
     let sources = france2();
-    let rig = rig(
-        &sources,
+    let rig = shared_rig(
+        sources,
         decls(&["fre", "qad", "qaa"]),
         index_selectors(3),
-        &|_, _| true,
+        Some(DECLARED_BPS),
     );
     let video = rig.playlist("media.m3u8").await;
     let video_seg = rig.ok(&video.segments[0].uri).await;
@@ -780,9 +807,9 @@ async fn split_audio_resources_route_to_their_own_rendition() {
 
 #[tokio::test]
 async fn split_audio_off_leaves_default_route_byte_identical() {
-    let sources = by_role(load("ts/h264_aac.ts"));
-    let plain = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
-    let declared_only = rig(&sources, decls(&["eng"]), Vec::new(), &|_, _| true);
+    let sources = h264_aac();
+    let plain = shared_rig(sources, Vec::new(), Vec::new(), Some(DECLARED_BPS));
+    let declared_only = shared_rig(sources, decls(&["eng"]), Vec::new(), Some(DECLARED_BPS));
 
     let a = String::from_utf8(plain.ok("media.m3u8").await).expect("utf8");
     let b = String::from_utf8(declared_only.ok("media.m3u8").await).expect("utf8");
@@ -1111,7 +1138,7 @@ async fn split_audio_validator_findings() {
     }
     let sources = france2();
     let split = rig(
-        &sources,
+        sources,
         decls(&["fr", "qad", "qaa"]),
         index_selectors(3),
         &|_, _| true,
@@ -1202,14 +1229,8 @@ fn within(actual: u64, expected: u64, what: &str) {
 #[tokio::test]
 async fn split_master_parses_round_trips_and_lists_one_variant_per_group() {
     let sources = france2();
-    let rig = rig_declared(
-        &sources,
-        derived_decls(3),
-        index_selectors(3),
-        None,
-        &|_, _| true,
-    );
-    let (text, master) = master_of(&rig).await;
+    let rig = shared_rig(sources, derived_decls(3), index_selectors(3), None);
+    let (text, master) = master_of(rig).await;
     assert_eq!(master.media.len(), 3, "{text}");
     assert_eq!(master.variants.len(), 1, "{text}");
     assert_eq!(master.variants[0].audio.as_deref(), Some("aud"));
@@ -1224,14 +1245,8 @@ async fn split_master_parses_round_trips_and_lists_one_variant_per_group() {
 #[tokio::test]
 async fn split_master_codecs_carry_video_and_audio_codec() {
     let sources = france2();
-    let rig = rig_declared(
-        &sources,
-        derived_decls(3),
-        index_selectors(3),
-        None,
-        &|_, _| true,
-    );
-    let (text, master) = master_of(&rig).await;
+    let rig = shared_rig(sources, derived_decls(3), index_selectors(3), None);
+    let (text, master) = master_of(rig).await;
     let codecs = master.variants[0].codecs.clone().expect("CODECS");
     let parts: Vec<&str> = codecs.split(',').collect();
     assert_eq!(parts.len(), 2, "video + one distinct audio codec: {text}");
@@ -1242,19 +1257,13 @@ async fn split_master_codecs_carry_video_and_audio_codec() {
 #[tokio::test]
 async fn split_master_bandwidth_is_video_peak_plus_max_audio_peak() {
     let sources = france2();
-    let rig = rig_declared(
-        &sources,
-        derived_decls(3),
-        index_selectors(3),
-        None,
-        &|_, _| true,
-    );
-    let (text, master) = master_of(&rig).await;
-    let video = served_segments(&rig, "media.m3u8").await;
+    let rig = shared_rig(sources, derived_decls(3), index_selectors(3), None);
+    let (text, master) = master_of(rig).await;
+    let video = served_segments(rig, "media.m3u8").await;
     let mut audio_peak = 0;
     let mut audio_mean = 0;
     for i in 0..3 {
-        let segs = served_segments(&rig, &format!("audio/a{i}.m3u8")).await;
+        let segs = served_segments(rig, &format!("audio/a{i}.m3u8")).await;
         audio_peak = audio_peak.max(peak_bps(&segs));
         audio_mean = audio_mean.max(mean_bps(&segs));
     }
@@ -1278,22 +1287,21 @@ async fn split_master_bandwidth_is_video_peak_plus_max_audio_peak() {
 #[tokio::test]
 async fn split_master_declared_bandwidth_floors_the_video_part_only() {
     let sources = france2();
-    let rig = rig_declared(
-        &sources,
+    let rig = shared_rig(
+        sources,
         derived_decls(3),
         index_selectors(3),
         Some(DECLARED_BPS),
-        &|_, _| true,
     );
-    let (text, master) = master_of(&rig).await;
-    let video = served_segments(&rig, "media.m3u8").await;
+    let (text, master) = master_of(rig).await;
+    let video = served_segments(rig, "media.m3u8").await;
     assert!(
         peak_bps(&video) < DECLARED_BPS,
         "fixture peak under the override"
     );
     let mut audio_peak = 0;
     for i in 0..3 {
-        let segs = served_segments(&rig, &format!("audio/a{i}.m3u8")).await;
+        let segs = served_segments(rig, &format!("audio/a{i}.m3u8")).await;
         audio_peak = audio_peak.max(peak_bps(&segs));
     }
     within(
@@ -1307,14 +1315,8 @@ async fn split_master_declared_bandwidth_floors_the_video_part_only() {
 async fn split_master_derives_language_name_and_audio_description_from_the_pmt() {
     let sources = france2();
     let audio: Vec<&Source> = sources.iter().filter(|s| s.is_audio()).collect();
-    let rig = rig_declared(
-        &sources,
-        derived_decls(3),
-        index_selectors(3),
-        None,
-        &|_, _| true,
-    );
-    let (text, master) = master_of(&rig).await;
+    let rig = shared_rig(sources, derived_decls(3), index_selectors(3), None);
+    let (text, master) = master_of(rig).await;
     for (i, a) in audio.iter().enumerate() {
         let meta = a.spec.audio_metadata();
         let lang = meta.languages[0].language.clone();
@@ -1371,8 +1373,8 @@ async fn split_master_config_values_win_over_derived() {
     declared[1].name = "Deutsch".into();
     declared[1].characteristics = vec!["public.accessibility.transcribes-spoken-dialog".into()];
     declared[1].channels = Some("6".into());
-    let rig = rig_declared(&sources, declared, index_selectors(3), None, &|_, _| true);
-    let (text, master) = master_of(&rig).await;
+    let rig = shared_rig(sources, declared, index_selectors(3), None);
+    let (text, master) = master_of(rig).await;
     let m = &master.media[1];
     assert_eq!(m.language.as_deref(), Some("de"), "{text}");
     assert_eq!(m.name, "Deutsch", "{text}");
@@ -1389,16 +1391,16 @@ async fn split_master_config_values_win_over_derived() {
 async fn split_master_duplicate_derived_names_are_made_unique() {
     let sources = france2();
     let selectors = vec![AudioTrackSelector::Index(0), AudioTrackSelector::Index(0)];
-    let rig = rig_declared(&sources, derived_decls(2), selectors, None, &|_, _| true);
-    let (text, master) = master_of(&rig).await;
+    let rig = shared_rig(sources, derived_decls(2), selectors, None);
+    let (text, master) = master_of(rig).await;
     assert_ne!(master.media[0].name, master.media[1].name, "{text}");
 }
 
 #[tokio::test]
 async fn non_split_master_is_unchanged() {
-    let sources = by_role(load("ts/h264_aac.ts"));
-    let plain = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
-    let (text, master) = master_of(&plain).await;
+    let sources = h264_aac();
+    let plain = shared_rig(sources, Vec::new(), Vec::new(), Some(DECLARED_BPS));
+    let (text, master) = master_of(plain).await;
     assert!(master.media.is_empty(), "{text}");
     assert_eq!(master.variants.len(), 1, "{text}");
     let v = &master.variants[0];
@@ -1410,8 +1412,8 @@ async fn non_split_master_is_unchanged() {
         "muxed CODECS is the one the route always carried: {text}"
     );
 
-    let declared_only = rig(&sources, decls(&["eng"]), Vec::new(), &|_, _| true);
-    let (text2, master2) = master_of(&declared_only).await;
+    let declared_only = shared_rig(sources, decls(&["eng"]), Vec::new(), Some(DECLARED_BPS));
+    let (text2, master2) = master_of(declared_only).await;
     assert_eq!(master2.media.len(), 1, "{text2}");
     assert_eq!(master2.media[0].name, "Audio 0", "{text2}");
     assert_eq!(master2.variants[0].bandwidth, v.bandwidth, "{text2}");
@@ -1421,11 +1423,11 @@ async fn non_split_master_is_unchanged() {
 #[tokio::test]
 async fn split_audio_each_playlist_carries_rendition_reports() {
     let sources = france2();
-    let rig = rig(
-        &sources,
+    let rig = shared_rig(
+        sources,
         decls(&["fre", "qad", "qaa"]),
         index_selectors(3),
-        &|_, _| true,
+        Some(DECLARED_BPS),
     );
     let n_audio = 3usize;
     let n_reports = n_audio; // video + n_audio renditions -> n_audio reports
@@ -1517,9 +1519,9 @@ async fn assert_reports_match_served_edges(rig: &Rig, n_audio: usize) {
 #[tokio::test]
 async fn split_audio_rendition_report_matches_sibling_live_edge() {
     let sources = france2();
-    let cut = cut_secs(&sources, 1);
+    let cut = cut_secs(sources, 1);
     let rig = rig_live(
-        &sources,
+        sources,
         decls(&["fre", "qad", "qaa"]),
         index_selectors(3),
         &|ti, s| sources[ti].secs(s.dts.unwrap_or(0)) < cut,
@@ -1527,7 +1529,7 @@ async fn split_audio_rendition_report_matches_sibling_live_edge() {
     assert_reports_match_served_edges(&rig, 3).await;
     let before = served_edge(&rig.playlist("media.m3u8").await);
 
-    rig.publish_more(&sources, &|ti, s| {
+    rig.publish_more(sources, &|ti, s| {
         sources[ti].secs(s.dts.unwrap_or(0)) >= cut
     });
     let after = served_edge(&rig.playlist("media.m3u8").await);
@@ -1545,11 +1547,11 @@ async fn split_audio_rendition_report_matches_sibling_live_edge() {
 #[tokio::test]
 async fn split_audio_delta_playlist_keeps_rendition_reports() {
     let sources = france2();
-    let rig = rig(
-        &sources,
+    let rig = shared_rig(
+        sources,
         decls(&["fre", "qad", "qaa"]),
         index_selectors(3),
-        &|_, _| true,
+        Some(DECLARED_BPS),
     );
     let text = String::from_utf8(rig.ok("media.m3u8?_HLS_skip=YES").await).expect("utf8");
     let pl = MediaPlaylist::parse(&text).expect("parse delta");
@@ -1560,11 +1562,11 @@ async fn split_audio_delta_playlist_keeps_rendition_reports() {
 #[tokio::test]
 async fn split_audio_blocking_reload_audio_reports_current() {
     let sources = france2();
-    let rig = rig(
-        &sources,
+    let rig = shared_rig(
+        sources,
         decls(&["fre", "qad", "qaa"]),
         index_selectors(3),
-        &|_, _| true,
+        Some(DECLARED_BPS),
     );
     let (status, body) = rig.get("audio/a0.m3u8?_HLS_msn=2").await;
     assert_eq!(status, axum::http::StatusCode::OK);
@@ -1805,8 +1807,8 @@ const NON_SPLIT_DIGEST: u32 = 1_674_747_859;
 
 #[tokio::test]
 async fn non_split_route_output_is_unchanged() {
-    let sources = by_role(load("ts/h264_aac.ts"));
-    let rig = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
+    let sources = h264_aac();
+    let rig = shared_rig(sources, Vec::new(), Vec::new(), Some(DECLARED_BPS));
     let pl = rig.playlist("media.m3u8").await;
     let mut bytes = rig.ok(&pl.segments[0].map.as_ref().expect("map").uri).await;
     let mut parts = 0;
@@ -1877,11 +1879,11 @@ async fn split_audio_playlists_never_list_a_zero_duration_part_and_always_hint()
 #[tokio::test]
 async fn audio_playlist_resource_uris_resolve_from_the_playlist_directory() {
     let sources = france2();
-    let rig = rig(
-        &sources,
+    let rig = shared_rig(
+        sources,
         decls(&["fr", "qad", "qaa"]),
         index_selectors(3),
-        &|_, _| true,
+        Some(DECLARED_BPS),
     );
     for i in 0..3 {
         let playlist_uri = format!("audio/a{i}.m3u8");
@@ -1991,11 +1993,11 @@ fn attr_secs(text: &str, tag: &str, attr: &str) -> f64 {
 #[tokio::test]
 async fn every_part_is_within_its_own_playlists_part_target() {
     let sources = france2();
-    let rig = rig(
-        &sources,
+    let rig = shared_rig(
+        sources,
         decls(&["fr", "qad", "qaa"]),
         index_selectors(3),
-        &|_, _| true,
+        Some(DECLARED_BPS),
     );
     let mut names = vec!["media.m3u8".to_string()];
     names.extend((0..3).map(|i| format!("audio/a{i}.m3u8")));
@@ -2058,7 +2060,7 @@ fn trun_secs(part: &[u8], timescale: f64) -> f64 {
 #[tokio::test]
 async fn declared_video_part_durations_equal_the_trun_sums() {
     let sources = france2();
-    let rig = rig(&sources, Vec::new(), Vec::new(), &|_, _| true);
+    let rig = shared_rig(sources, Vec::new(), Vec::new(), Some(DECLARED_BPS));
     let pl = rig.playlist("media.m3u8").await;
     let mut checked = 0;
     for seg in &pl.segments {

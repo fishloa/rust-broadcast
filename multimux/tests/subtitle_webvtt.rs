@@ -80,6 +80,9 @@ const KNOWN_MISSING_HOLD_BACK_1594: &str = "Missing server control attribute";
 /// playlist instead is rejected by the validator as "Unknown rendition report".
 const KNOWN_NO_RENDITION_REPORTS_1595: &str = "No rendition reports in low-latency playlist";
 
+#[path = "support/shared.rs"]
+mod shared;
+
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
 }
@@ -214,16 +217,38 @@ fn build_from(media: transmux::Media, subtitles: bool) -> Rig {
     driver.finish()
 }
 
-fn teletext_rig(subtitles: bool, who: &str) -> Option<Rig> {
+fn teletext_rig_unshared(subtitles: bool, who: &str) -> Option<Rig> {
     let teletext = std::fs::read(test_fixtures::tsduck(TELETEXT_FIXTURE, who)?)
         .expect("read teletext fixture");
     let video = test_fixtures::require_bytes(VIDEO_FIXTURE, who)?;
     Some(build_from(compose(&video, &teletext), subtitles))
 }
 
-fn no_teletext_rig(subtitles: bool, who: &str) -> Option<Rig> {
+fn no_teletext_rig_unshared(subtitles: bool, who: &str) -> Option<Rig> {
     let bytes = test_fixtures::require_bytes(NO_TELETEXT_FIXTURE, who)?;
     Some(build_from(demux(&bytes), subtitles))
+}
+
+fn teletext_rig(subtitles: bool, who: &str) -> Option<&'static Rig> {
+    shared::shared(&format!("teletext:{subtitles}"), || {
+        let rig = teletext_rig_unshared(subtitles, who);
+        if let Some(rig) = &rig {
+            shared::warm_up(&rig.app, STREAM);
+        }
+        rig
+    })
+    .as_ref()
+}
+
+fn no_teletext_rig(subtitles: bool, who: &str) -> Option<&'static Rig> {
+    shared::shared(&format!("no_teletext:{subtitles}"), || {
+        let rig = no_teletext_rig_unshared(subtitles, who);
+        if let Some(rig) = &rig {
+            shared::warm_up(&rig.app, STREAM);
+        }
+        rig
+    })
+    .as_ref()
 }
 
 impl Rig {
@@ -544,7 +569,7 @@ async fn subtitle_playlist_matches_video_segments() {
                 v.duration.get()
             );
         }
-        fetch_vtt_segments(&rig, &subs).await;
+        fetch_vtt_segments(rig, &subs).await;
 
         let mut report = Report::new();
         check_hls_playlist(&text, &mut report);
@@ -602,7 +627,7 @@ async fn every_segment_has_webvtt_header_and_timestamp_map() {
     for hearing_impaired in [false, true] {
         let uri = rig.subtitle_uri(hearing_impaired).await;
         let (_, subs) = rig.playlist(&uri).await;
-        let segments = fetch_vtt_segments(&rig, &subs).await;
+        let segments = fetch_vtt_segments(rig, &subs).await;
         let maps: BTreeSet<u64> = segments.iter().map(|s| s.mpegts).collect();
         assert_eq!(
             maps.len(),
@@ -612,7 +637,7 @@ async fn every_segment_has_webvtt_header_and_timestamp_map() {
     }
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
-    let cues: usize = fetch_vtt_segments(&rig, &subs)
+    let cues: usize = fetch_vtt_segments(rig, &subs)
         .await
         .iter()
         .map(|s| s.cues.len())
@@ -708,11 +733,11 @@ async fn cue_times_line_up_with_the_video_timeline() {
     let (Some(rig), Some(reference)) = (teletext_rig(true, who), reference_cues(who)) else {
         return;
     };
-    let map = OutputMap::new(&rig).await;
+    let map = OutputMap::new(rig).await;
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
     let mut starts: BTreeMap<String, f64> = BTreeMap::new();
-    for segment in fetch_vtt_segments(&rig, &subs).await {
+    for segment in fetch_vtt_segments(rig, &subs).await {
         for cue in &segment.cues {
             starts
                 .entry(cue.text.clone())
@@ -758,12 +783,12 @@ async fn segments_carry_closed_cues_with_full_display_times() {
     let (Some(rig), Some(reference)) = (teletext_rig(true, who), reference_cues(who)) else {
         return;
     };
-    let map = OutputMap::new(&rig).await;
+    let map = OutputMap::new(rig).await;
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
     let mut copies: BTreeMap<String, Vec<CueCopy>> = BTreeMap::new();
     let mut segment_end_secs = map.tfdt_secs;
-    let vtts = fetch_vtt_segments(&rig, &subs).await;
+    let vtts = fetch_vtt_segments(rig, &subs).await;
     for (segment, entry) in vtts.iter().zip(&subs.segments) {
         segment_end_secs += entry.duration.get();
         for cue in &segment.cues {
@@ -929,12 +954,12 @@ async fn every_part_is_a_complete_webvtt_document() {
     for hearing_impaired in [false, true] {
         let uri = rig.subtitle_uri(hearing_impaired).await;
         let (_, subs) = rig.playlist(&uri).await;
-        let segment_maps: BTreeSet<u64> = fetch_vtt_segments(&rig, &subs)
+        let segment_maps: BTreeSet<u64> = fetch_vtt_segments(rig, &subs)
             .await
             .iter()
             .map(|s| s.mpegts)
             .collect();
-        let parts = part_bodies(&rig, &subs).await;
+        let parts = part_bodies(rig, &subs).await;
         assert!(!parts.is_empty(), "{uri}: the playlist lists parts");
         for (name, body) in parts {
             let body = String::from_utf8(body).expect("utf8 part");
@@ -1197,7 +1222,10 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         eprintln!("SKIP {who}: {VALIDATOR_BIN} absent");
         return;
     }
-    let (Some(on), Some(off)) = (teletext_rig(true, who), teletext_rig(false, who)) else {
+    let (Some(on), Some(off)) = (
+        teletext_rig_unshared(true, who),
+        teletext_rig_unshared(false, who),
+    ) else {
         return;
     };
     let playlists = [
@@ -1207,8 +1235,15 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         "subs-0.m3u8",
         "subs-1.m3u8",
     ];
-    let with = validator_findings(&on, "on", &playlists).await;
-    let without = validator_findings(&off, "off", &playlists[..3]).await;
+    let (with, without) = std::thread::scope(|scope| {
+        let with = scope.spawn(|| shared::run_async(validator_findings(&on, "on", &playlists)));
+        let without =
+            scope.spawn(|| shared::run_async(validator_findings(&off, "off", &playlists[..3])));
+        (
+            with.join().expect("validator thread"),
+            without.join().expect("validator thread"),
+        )
+    });
     for (level, message) in &with {
         eprintln!("VALIDATOR[on] level={level} {message}");
     }

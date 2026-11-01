@@ -117,8 +117,23 @@ fn new_trunk() -> Arc<Trunk> {
     ))
 }
 
+#[path = "support/shared.rs"]
+mod shared;
+
+/// One route per fixture, built once per process. The first request to a
+/// freshly built route populates its playlist state, and two tests making that
+/// first request concurrently see an empty playlist on one of them, so the
+/// builder makes it before the route is shared.
 fn route_app(fixture: &str) -> Router {
-    route_app_from(load(fixture))
+    shared::shared(&format!("route:{fixture}"), || {
+        let app = route_app_from(load(fixture));
+        shared::run_async(async {
+            let _ = get(&app, "media.m3u8").await;
+            let _ = get(&app, "master.m3u8").await;
+        });
+        app
+    })
+    .clone()
 }
 
 fn route_app_from(sources: Vec<Source>) -> Router {
@@ -444,8 +459,16 @@ async fn mediastreamvalidator_reports_no_hdr_specific_finding() {
         );
         return;
     }
-    let hdr = validator_comments(HDR_FIXTURE, "hdr10-validator").await;
-    let sdr = validator_comments(SDR_FIXTURE, "sdr-validator").await;
+    let (hdr, sdr) = std::thread::scope(|scope| {
+        let hdr =
+            scope.spawn(|| shared::run_async(validator_comments(HDR_FIXTURE, "hdr10-validator")));
+        let sdr =
+            scope.spawn(|| shared::run_async(validator_comments(SDR_FIXTURE, "sdr-validator")));
+        (
+            hdr.join().expect("validator thread"),
+            sdr.join().expect("validator thread"),
+        )
+    });
     for c in &hdr {
         eprintln!("VALIDATOR hdr: {c}");
     }

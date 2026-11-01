@@ -41,105 +41,106 @@ fn master_emits_selection_then_fetches_chosen_variant_playlist() {
     assert!(client.poll().is_none());
 }
 
-#[test]
-fn policy_default_picks_highest_bandwidth() {
-    let master_url = "http://example.com/bipbop/master.m3u8";
-    let mut client = HlsClient::new(master_url);
-    let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
-    client.on_playlist(&bytes).expect("master parses");
-    let sel = match client.next_output().unwrap() {
-        Output::Master(s) => s,
-        o => panic!("{o:?}"),
-    };
-    let max_bw = sel.variants.iter().map(|v| v.bandwidth).max().unwrap();
-    assert_eq!(sel.variants[sel.chosen].bandwidth, max_bw);
+enum Expect {
+    HighestBandwidth,
+    LowestBandwidth,
+    Bandwidth(u32),
+    Chosen(usize),
+    CodecsContain(&'static str),
 }
 
+const TIE_MASTER: &str =
+    "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nb.m3u8\n";
+
 #[test]
-fn policy_max_bandwidth_picks_highest_not_above() {
-    let master_url = "http://example.com/bipbop/master.m3u8";
-    let mut client = HlsClient::new(master_url);
-    client.set_variant_policy(VariantPolicy {
-        max_bandwidth: Some(1_000_000),
+fn selection_policy_table() {
+    let bipbop = || test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
+    let hevc = || test_fixtures::read("hls/real/bipbop-fmp4-hevc/master.m3u8");
+    let codecs = |names: [&str; 2]| VariantPolicy {
+        supported_codecs: Some(names.iter().map(|n| (*n).to_string()).collect()),
         ..Default::default()
-    });
-    let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
-    client.on_playlist(&bytes).expect("master parses");
-    let sel = match client.next_output().unwrap() {
-        Output::Master(s) => s,
-        o => panic!("{o:?}"),
     };
-    assert_eq!(sel.variants[sel.chosen].bandwidth, 915905);
-}
-
-#[test]
-fn policy_max_height_filters_by_resolution() {
-    let master_url = "http://example.com/bipbop/master.m3u8";
-    let mut client = HlsClient::new(master_url);
-    client.set_variant_policy(VariantPolicy {
-        max_height: Some(540),
-        ..Default::default()
-    });
-    let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
-    client.on_playlist(&bytes).expect("master parses");
-    let sel = match client.next_output().unwrap() {
-        Output::Master(s) => s,
-        o => panic!("{o:?}"),
-    };
-    assert_eq!(sel.variants[sel.chosen].bandwidth, 915905);
-}
-
-#[test]
-fn policy_supported_codecs_filters_hevc_vs_avc() {
-    let master_url = "http://example.com/bipbop/master.m3u8";
-    for (supported, needle) in [
-        (vec!["avc1".to_string(), "mp4a".to_string()], "avc1"),
-        (vec!["hvc1".to_string(), "mp4a".to_string()], "hvc1"),
-    ] {
-        let mut client = HlsClient::new(master_url);
-        client.set_variant_policy(VariantPolicy {
-            supported_codecs: Some(supported),
-            ..Default::default()
-        });
-        let bytes = test_fixtures::read("hls/real/bipbop-fmp4-hevc/master.m3u8");
-        client.on_playlist(&bytes).expect("master parses");
+    let cases: Vec<(&str, Vec<u8>, VariantPolicy, Expect)> = vec![
+        (
+            "default picks the highest bandwidth",
+            bipbop(),
+            VariantPolicy::default(),
+            Expect::HighestBandwidth,
+        ),
+        (
+            "max_bandwidth picks the highest not above",
+            bipbop(),
+            VariantPolicy {
+                max_bandwidth: Some(1_000_000),
+                ..Default::default()
+            },
+            Expect::Bandwidth(915905),
+        ),
+        (
+            "max_height filters by resolution",
+            bipbop(),
+            VariantPolicy {
+                max_height: Some(540),
+                ..Default::default()
+            },
+            Expect::Bandwidth(915905),
+        ),
+        (
+            "supported_codecs keeps avc1",
+            hevc(),
+            codecs(["avc1", "mp4a"]),
+            Expect::CodecsContain("avc1"),
+        ),
+        (
+            "supported_codecs keeps hvc1",
+            hevc(),
+            codecs(["hvc1", "mp4a"]),
+            Expect::CodecsContain("hvc1"),
+        ),
+        (
+            "none fit falls back to the lowest bandwidth",
+            bipbop(),
+            VariantPolicy {
+                max_bandwidth: Some(1),
+                ..Default::default()
+            },
+            Expect::LowestBandwidth,
+        ),
+        (
+            "a tie picks the first in playlist order",
+            TIE_MASTER.as_bytes().to_vec(),
+            VariantPolicy::default(),
+            Expect::Chosen(0),
+        ),
+    ];
+    for (label, master, policy, expect) in cases {
+        let mut client = HlsClient::new("http://example.com/bipbop/master.m3u8");
+        client.set_variant_policy(policy);
+        client.on_playlist(&master).expect("master parses");
         let sel = match client.next_output().unwrap() {
             Output::Master(s) => s,
-            o => panic!("{o:?}"),
+            o => panic!("{label}: {o:?}"),
         };
-        let codecs = sel.variants[sel.chosen].codecs.as_deref().unwrap_or("");
-        assert!(codecs.contains(needle), "expected {needle} in {codecs}");
+        let chosen = &sel.variants[sel.chosen];
+        match expect {
+            Expect::HighestBandwidth => assert_eq!(
+                chosen.bandwidth,
+                sel.variants.iter().map(|v| v.bandwidth).max().unwrap(),
+                "{label}"
+            ),
+            Expect::LowestBandwidth => assert_eq!(
+                chosen.bandwidth,
+                sel.variants.iter().map(|v| v.bandwidth).min().unwrap(),
+                "{label}"
+            ),
+            Expect::Bandwidth(bw) => assert_eq!(chosen.bandwidth, bw, "{label}"),
+            Expect::Chosen(i) => assert_eq!(sel.chosen, i, "{label}"),
+            Expect::CodecsContain(needle) => {
+                let codecs = chosen.codecs.as_deref().unwrap_or("");
+                assert!(codecs.contains(needle), "{label}: {needle} in {codecs}");
+            }
+        }
     }
-}
-
-#[test]
-fn policy_none_fit_falls_back_to_lowest_bandwidth() {
-    let master_url = "http://example.com/bipbop/master.m3u8";
-    let mut client = HlsClient::new(master_url);
-    client.set_variant_policy(VariantPolicy {
-        max_bandwidth: Some(1),
-        ..Default::default()
-    });
-    let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
-    client.on_playlist(&bytes).expect("master parses");
-    let sel = match client.next_output().unwrap() {
-        Output::Master(s) => s,
-        o => panic!("{o:?}"),
-    };
-    let min_bw = sel.variants.iter().map(|v| v.bandwidth).min().unwrap();
-    assert_eq!(sel.variants[sel.chosen].bandwidth, min_bw);
-}
-
-#[test]
-fn policy_tie_picks_first_in_playlist_order() {
-    let text = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nb.m3u8\n";
-    let mut client = HlsClient::new("http://example.com/m.m3u8");
-    client.on_playlist(text.as_bytes()).expect("master parses");
-    let sel = match client.next_output().unwrap() {
-        Output::Master(s) => s,
-        o => panic!("{o:?}"),
-    };
-    assert_eq!(sel.chosen, 0);
 }
 
 #[test]

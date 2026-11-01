@@ -56,13 +56,6 @@ fn master_with(decls: Vec<AudioRenditionDecl>, cc_none: bool) -> String {
         .expect("master")
 }
 
-fn build_err(decls: Vec<AudioRenditionDecl>) -> HlsOriginBuildError {
-    match builder().audio_renditions(decls).build() {
-        Ok(_) => panic!("build unexpectedly succeeded"),
-        Err(e) => e,
-    }
-}
-
 #[test]
 fn two_group_two_language_master_matches_golden() {
     let text = master_with(two_groups(), true);
@@ -116,100 +109,103 @@ fn same_name_in_two_groups_is_accepted() {
 }
 
 #[test]
-fn empty_group_rejected() {
-    let mut d = two_groups();
-    d[0].group_id.clear();
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::EmptyAudioRenditionGroupId
-    ));
-}
-
-#[test]
-fn empty_name_rejected() {
-    let mut d = two_groups();
-    d[0].name.clear();
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::EmptyAudioRenditionName
-    ));
-}
-
-#[test]
-fn duplicate_name_in_group_rejected() {
-    let d = vec![
-        decl("aac", "English", "en", true, "a.m3u8"),
-        decl("aac", "English", "de", false, "b.m3u8"),
+fn invalid_declarations_are_rejected() {
+    type Matches = fn(&HlsOriginBuildError) -> bool;
+    let cases: Vec<(&str, Vec<AudioRenditionDecl>, Matches)> = vec![
+        (
+            "empty group",
+            {
+                let mut d = two_groups();
+                d[0].group_id.clear();
+                d
+            },
+            |e| matches!(e, HlsOriginBuildError::EmptyAudioRenditionGroupId),
+        ),
+        (
+            "empty name",
+            {
+                let mut d = two_groups();
+                d[0].name.clear();
+                d
+            },
+            |e| matches!(e, HlsOriginBuildError::EmptyAudioRenditionName),
+        ),
+        (
+            "duplicate name in group",
+            vec![
+                decl("aac", "English", "en", true, "a.m3u8"),
+                decl("aac", "English", "de", false, "b.m3u8"),
+            ],
+            |e| matches!(e, HlsOriginBuildError::DuplicateAudioRenditionName),
+        ),
+        (
+            "zero defaults in group",
+            {
+                let mut d = two_groups();
+                d[0].default = false;
+                d[2].default = false;
+                d
+            },
+            |e| matches!(e, HlsOriginBuildError::AudioRenditionDefaultCount),
+        ),
+        (
+            "two defaults in group",
+            {
+                let mut d = two_groups();
+                d[1].default = true;
+                d[3].default = true;
+                d
+            },
+            |e| matches!(e, HlsOriginBuildError::AudioRenditionDefaultCount),
+        ),
+        (
+            "empty language",
+            {
+                let mut d = two_groups();
+                d[1].language.clear();
+                d
+            },
+            |e| matches!(e, HlsOriginBuildError::EmptyAudioRenditionLanguage),
+        ),
+        (
+            "empty uri",
+            {
+                let mut d = two_groups();
+                d[1].uri.clear();
+                d
+            },
+            |e| matches!(e, HlsOriginBuildError::EmptyAudioRenditionUri),
+        ),
+        (
+            "default without autoselect",
+            {
+                let mut d = two_groups();
+                d[0].autoselect = false;
+                d[2].autoselect = false;
+                d
+            },
+            |e| matches!(e, HlsOriginBuildError::AudioRenditionDefaultNotAutoselect),
+        ),
+        (
+            "groups with different members",
+            vec![
+                decl("aac", "English", "en", true, "a.m3u8"),
+                decl("ec3", "Deutsch", "de", true, "b.m3u8"),
+            ],
+            |e| matches!(e, HlsOriginBuildError::AudioRenditionGroupsDiffer),
+        ),
     ];
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::DuplicateAudioRenditionName
-    ));
-}
-
-#[test]
-fn zero_defaults_in_group_rejected() {
-    let mut d = two_groups();
-    d[0].default = false;
-    d[2].default = false;
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::AudioRenditionDefaultCount
-    ));
-}
-
-#[test]
-fn two_defaults_in_group_rejected() {
-    let mut d = two_groups();
-    d[1].default = true;
-    d[3].default = true;
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::AudioRenditionDefaultCount
-    ));
-}
-
-#[test]
-fn empty_language_rejected() {
-    let mut d = two_groups();
-    d[1].language.clear();
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::EmptyAudioRenditionLanguage
-    ));
-}
-
-#[test]
-fn empty_uri_rejected() {
-    let mut d = two_groups();
-    d[1].uri.clear();
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::EmptyAudioRenditionUri
-    ));
-}
-
-#[test]
-fn default_without_autoselect_rejected() {
-    let mut d = two_groups();
-    d[0].autoselect = false;
-    d[2].autoselect = false;
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::AudioRenditionDefaultNotAutoselect
-    ));
-}
-
-#[test]
-fn groups_with_different_members_rejected() {
-    let d = vec![
-        decl("aac", "English", "en", true, "a.m3u8"),
-        decl("ec3", "Deutsch", "de", true, "b.m3u8"),
-    ];
-    assert!(matches!(
-        build_err(d),
-        HlsOriginBuildError::AudioRenditionGroupsDiffer
-    ));
+    let wrong: Vec<_> = cases
+        .into_iter()
+        .filter_map(
+            |(label, decls, matches)| match builder().audio_renditions(decls).build() {
+                Ok(_) => Some(format!("{label}: built successfully")),
+                Err(e) if !matches(&e) => Some(format!("{label}: wrong error {e:?}")),
+                Err(_) => None,
+            },
+        )
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[test]

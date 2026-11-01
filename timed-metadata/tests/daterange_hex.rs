@@ -7,22 +7,22 @@ fn line(value: &str) -> String {
 }
 
 #[test]
-fn multibyte_character_in_hex_is_an_error_not_a_panic() {
-    // 4 bytes, even length: the old `&h[0..2]` cuts the `é` in half.
-    assert!(DateRange::parse_tag_line(&line("0xaéb")).is_err());
-}
-
-#[test]
-fn a_sign_is_not_a_hex_digit() {
-    // old: from_str_radix("+1", 16) == Ok(1) => bytes [1, 1]
-    assert!(DateRange::parse_tag_line(&line("0x+1+1")).is_err());
-    assert!(DateRange::parse_tag_line(&line("0x-1-1")).is_err());
-}
-
-#[test]
-fn odd_length_and_non_hex_are_errors() {
-    assert!(DateRange::parse_tag_line(&line("0xABC")).is_err());
-    assert!(DateRange::parse_tag_line(&line("0xZZ")).is_err());
+fn malformed_hex_is_an_error_never_a_panic() {
+    let cases = [
+        // 4 bytes, even length: the old `&h[0..2]` cut the `é` in half.
+        ("multibyte character", "0xaéb"),
+        // old: from_str_radix("+1", 16) == Ok(1) => bytes [1, 1]
+        ("plus sign", "0x+1+1"),
+        ("minus sign", "0x-1-1"),
+        ("odd length", "0xABC"),
+        ("non-hex digits", "0xZZ"),
+    ];
+    let accepted: Vec<_> = cases
+        .iter()
+        .filter(|(_, value)| DateRange::parse_tag_line(&line(value)).is_ok())
+        .map(|(label, _)| *label)
+        .collect();
+    assert!(accepted.is_empty(), "accepted malformed hex: {accepted:?}");
 }
 
 #[test]

@@ -84,102 +84,31 @@ fn ct(resp: &axum::response::Response) -> String {
 }
 
 #[tokio::test]
-async fn init_is_video_mp4() {
-    let app = app_for(fmp4_route());
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/cam/init-1.mp4")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(ct(&resp), "video/mp4");
-}
-
-#[tokio::test]
-async fn segment_is_video_iso_segment() {
-    let app = app_for(fmp4_route());
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/cam/seg-1-1.m4s")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(ct(&resp), "video/iso.segment");
-}
-
-#[tokio::test]
-async fn part_is_video_iso_segment() {
-    let app = app_for(fmp4_route());
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/cam/part-1-2.0.m4s")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(ct(&resp), "video/iso.segment");
-}
-
-#[tokio::test]
-async fn ts_segment_is_video_mp2t() {
-    let app = app_for(ts_route());
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/cam/seg-1-1.ts")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(ct(&resp), "video/mp2t");
-}
-
-#[tokio::test]
-async fn range_206_carries_same_type() {
-    for (uri, expected) in [
-        ("/cam/seg-1-1.m4s", "video/iso.segment"),
-        ("/cam/init-1.mp4", "video/mp4"),
-        ("/cam/part-1-2.0.m4s", "video/iso.segment"),
-    ] {
-        let app = app_for(fmp4_route());
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header("range", "bytes=0-3")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT, "{uri}");
-        assert_eq!(ct(&resp), expected, "{uri}");
+async fn resources_carry_their_apple_content_type_with_and_without_range() {
+    let cases = [
+        (false, "/cam/init-1.mp4", "video/mp4"),
+        (false, "/cam/seg-1-1.m4s", "video/iso.segment"),
+        (false, "/cam/part-1-2.0.m4s", "video/iso.segment"),
+        (true, "/cam/seg-1-1.ts", "video/mp2t"),
+    ];
+    for (ts, uri, expected) in cases {
+        for range in [false, true] {
+            let app = app_for(if ts { ts_route() } else { fmp4_route() });
+            let mut request = Request::builder().uri(uri);
+            if range {
+                request = request.header("range", "bytes=0-3");
+            }
+            let resp = app
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let want = if range {
+                StatusCode::PARTIAL_CONTENT
+            } else {
+                StatusCode::OK
+            };
+            assert_eq!(resp.status(), want, "{uri} range={range}");
+            assert_eq!(ct(&resp), expected, "{uri} range={range}");
+        }
     }
-    // TS
-    let app = app_for(ts_route());
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/cam/seg-1-1.ts")
-                .header("range", "bytes=0-3")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
-    assert_eq!(ct(&resp), "video/mp2t");
 }

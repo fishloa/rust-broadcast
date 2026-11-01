@@ -79,100 +79,93 @@ fn spec_with(track_id: u32, code: Option<u8>, colour: bool, display: bool) -> Tr
     spec
 }
 
-#[test]
-fn pq_transfer_code_renders_video_range_pq() {
+fn video_range_of(specs: &[TrackSpec]) -> String {
     let origin = origin();
-    let spec = spec_with(1, Some(16), true, true);
-    origin.set_track_specs(&[spec]).unwrap();
-    let body = render(&origin);
-    assert!(body.contains("VIDEO-RANGE=PQ"), "body: {body}");
+    origin.set_track_specs(specs).unwrap();
+    render(&origin)
+}
+
+fn range_attr(body: &str) -> Option<&str> {
+    let start = body.find("VIDEO-RANGE=")? + "VIDEO-RANGE=".len();
+    body[start..].split([',', '\n']).next()
 }
 
 #[test]
-fn hlg_transfer_code_renders_video_range_hlg() {
-    let origin = origin();
-    let spec = spec_with(1, Some(18), true, true);
-    origin.set_track_specs(&[spec]).unwrap();
-    let body = render(&origin);
-    assert!(body.contains("VIDEO-RANGE=HLG"), "body: {body}");
+fn transfer_code_and_colour_description_decide_video_range() {
+    let cases: [(&str, TrackSpec, Option<&str>); 6] = [
+        (
+            "PQ transfer code",
+            spec_with(1, Some(16), true, true),
+            Some("PQ"),
+        ),
+        (
+            "HLG transfer code",
+            spec_with(1, Some(18), true, true),
+            Some("HLG"),
+        ),
+        ("SDR transfer code", spec_with(1, Some(1), true, true), None),
+        (
+            "unspecified transfer code 2",
+            spec_with(1, Some(2), true, true),
+            None,
+        ),
+        (
+            "no colour description",
+            spec_with(1, None, false, true),
+            None,
+        ),
+        (
+            "no display geometry",
+            spec_with(1, None, false, false),
+            None,
+        ),
+    ];
+    let wrong: Vec<_> = cases
+        .into_iter()
+        .filter_map(|(label, spec, want)| {
+            let body = video_range_of(&[spec]);
+            (range_attr(&body) != want).then(|| format!("{label}: want {want:?} in {body}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[test]
-fn sdr_transfer_code_omits_video_range() {
-    let origin = origin();
-    let spec = spec_with(1, Some(1), true, true);
-    origin.set_track_specs(&[spec]).unwrap();
-    let body = render(&origin);
-    assert!(!body.contains("VIDEO-RANGE"), "body: {body}");
-}
-
-#[test]
-fn unspecified_transfer_code_2_omits_video_range() {
-    let origin = origin();
-    let spec = spec_with(1, Some(2), true, true);
-    origin.set_track_specs(&[spec]).unwrap();
-    let body = render(&origin);
-    assert!(!body.contains("VIDEO-RANGE"), "body: {body}");
-}
-
-#[test]
-fn no_colour_description_omits_video_range() {
-    let origin = origin();
-    let spec = spec_with(1, None, false, true);
-    origin.set_track_specs(&[spec]).unwrap();
-    let body = render(&origin);
-    assert!(!body.contains("VIDEO-RANGE"), "body: {body}");
-}
-
-#[test]
-fn no_display_omits_video_range() {
-    let origin = origin();
-    let spec = spec_with(1, None, false, false);
-    origin.set_track_specs(&[spec]).unwrap();
-    let body = render(&origin);
-    assert!(!body.contains("VIDEO-RANGE"), "body: {body}");
-}
-
-#[test]
-fn colour_without_transfer_mapping_omits_video_range() {
-    // colour description present but transfer code 2 (unspecified) -> no mapping
-    let origin = origin();
-    let spec = spec_with(1, Some(2), true, true);
-    origin.set_track_specs(&[spec]).unwrap();
-    let body = render(&origin);
-    assert!(!body.contains("VIDEO-RANGE"), "body: {body}");
-}
-
-#[test]
-fn first_video_track_by_track_id_wins_pq_then_hlg() {
-    let origin = origin();
-    let s1 = spec_with(1, Some(16), true, true); // PQ
-    let s2 = spec_with(2, Some(18), true, true); // HLG
-    // unsorted input
-    origin.set_track_specs(&[s2, s1]).unwrap();
-    let body = render(&origin);
-    assert!(body.contains("VIDEO-RANGE=PQ"), "body: {body}");
-    assert!(!body.contains("VIDEO-RANGE=HLG"), "body: {body}");
-}
-
-#[test]
-fn first_video_track_by_track_id_sdr_masks_later_pq() {
-    let origin = origin();
-    let s1 = spec_with(1, Some(1), true, true); // SDR -> omitted
-    let s2 = spec_with(2, Some(16), true, true); // PQ
-    origin.set_track_specs(&[s1, s2]).unwrap();
-    let body = render(&origin);
-    assert!(!body.contains("VIDEO-RANGE"), "body: {body}");
-}
-
-#[test]
-fn first_colour_track_with_unmapped_code_masks_later_pq() {
-    let origin = origin();
-    let s1 = spec_with(1, Some(2), true, true); // unmapped
-    let s2 = spec_with(2, Some(16), true, true); // PQ
-    origin.set_track_specs(&[s1, s2]).unwrap();
-    let body = render(&origin);
-    assert!(!body.contains("VIDEO-RANGE"), "body: {body}");
+fn first_video_track_by_track_id_decides_video_range() {
+    let cases: [(&str, [TrackSpec; 2], Option<&str>); 3] = [
+        (
+            "PQ track 1 wins over HLG track 2, unsorted input",
+            [
+                spec_with(2, Some(18), true, true),
+                spec_with(1, Some(16), true, true),
+            ],
+            Some("PQ"),
+        ),
+        (
+            "SDR track 1 masks later PQ",
+            [
+                spec_with(1, Some(1), true, true),
+                spec_with(2, Some(16), true, true),
+            ],
+            None,
+        ),
+        (
+            "unmapped code on track 1 masks later PQ",
+            [
+                spec_with(1, Some(2), true, true),
+                spec_with(2, Some(16), true, true),
+            ],
+            None,
+        ),
+    ];
+    let wrong: Vec<_> = cases
+        .into_iter()
+        .filter_map(|(label, specs, want)| {
+            let body = video_range_of(&specs);
+            (range_attr(&body) != want).then(|| format!("{label}: want {want:?} in {body}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[test]

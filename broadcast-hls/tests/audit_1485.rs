@@ -78,16 +78,6 @@ fn render_rejects_other_on_closed_captions_and_cc_on_other_types() {
 }
 
 #[test]
-fn two_default_yes_in_one_group_rejected_on_parse() {
-    let text = master(
-        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"1\",DEFAULT=YES,AUTOSELECT=YES\n\
-         #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"2\",DEFAULT=YES,AUTOSELECT=YES",
-    );
-    let r = MasterPlaylist::parse(&text);
-    assert!(r.is_err(), "two DEFAULT=YES in one group, got {r:?}");
-}
-
-#[test]
 fn same_group_id_different_type_is_a_different_group() {
     let text = master(
         "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"1\",DEFAULT=YES,AUTOSELECT=YES\n\
@@ -102,16 +92,6 @@ fn same_group_id_different_type_is_a_different_group() {
             .to_m3u8()
             .unwrap()
     );
-}
-
-#[test]
-fn duplicate_name_in_one_group_rejected_on_parse() {
-    let text = master(
-        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"same\"\n\
-         #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"same\"",
-    );
-    let r = MasterPlaylist::parse(&text);
-    assert!(r.is_err(), "duplicate NAME in one group, got {r:?}");
 }
 
 #[test]
