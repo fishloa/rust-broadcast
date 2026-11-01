@@ -420,6 +420,17 @@ and no segment is missing or repeated. It skips loudly when livesim2 is not inst
 `REQUIRE_LIVESIM2=1` (the `dash-e2e` CI job). `tests/it/no_clock_guard.rs` bans clock reads in this crate and in
 `dash-runtime`.
 
+## Client certificates (mTLS)
+
+`Config::client_identity` takes a `ClientIdentity`: `ClientIdentity::pem(cert_chain_pem, private_key_pem)`,
+`ClientIdentity::der(chain, key)` or `ClientIdentity::handle(id)` (an opaque id the host resolves against its keychain, so the session
+never holds key material). The session performs no TLS: every action the host executes over TLS, `Action::HttpRequest` for an `https`
+URL and `Action::TcpConnect` with `tls: true` (RTSPS), carries `identity: Option<Arc<ClientIdentity>>`, and the host presents it when
+the server asks for a client certificate (`pem_parts()`, `der_parts()` and `handle_id()` give the host the material). By default the
+identity is offered only to the session URL's own origin (`ClientIdentityScope::SessionOrigin`), so a redirect to, or a manifest naming,
+another host does not receive it; `ClientIdentityScope::AnyHttps` offers it everywhere. Malformed PEM or DER fails `Session::open` with
+`Error::InvalidConfig { field: "client_identity" }`. The key is wiped on drop and redacted in every `Debug`.
+
 ## Cookies and custom headers
 
 Responses of the session origin may set cookies (`Set-Cookie`, any status including 401 and 3xx);
