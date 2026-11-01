@@ -139,7 +139,7 @@ broadcast_common::impl_spec_display!(Cea608Mode);
 
 /// A line-21 caption data channel (Table 1, §4.1): the eight CC/Text logical
 /// services keyed by field + data-channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum Cea608Channel {
