@@ -374,3 +374,28 @@ fn an_early_answer_the_clock_disagrees_with_asks_for_a_resync() {
     sim.run_for(60 * MICROS as u64);
     assert!(sim.requests(Kind::Utc).len() >= 2);
 }
+
+#[test]
+fn forced_utc_resyncs_are_spaced_by_exactly_the_minimum_gap() {
+    const MIN_GAP_US: u64 = 30 * MICROS as u64;
+    let mut synth = with_utc(Addressing::Number);
+    synth.early_status = 425;
+    synth.utc.skew_us = 3 * MICROS;
+    let (mut sim, _geo) = sim_with(synth, START, quick());
+    sim.run_for(300 * MICROS as u64);
+    let sent: Vec<u64> = sim
+        .requests(Kind::Utc)
+        .iter()
+        .map(|r| r.send_mono_us)
+        .collect();
+    assert!(sent.len() >= 8, "forced resyncs recur: {sent:?}");
+    let gaps: Vec<u64> = sent.windows(2).skip(1).map(|w| w[1] - w[0]).collect();
+    assert!(
+        gaps.iter().all(|g| *g >= MIN_GAP_US),
+        "early resync: {gaps:?}"
+    );
+    assert!(
+        gaps[1..].iter().all(|g| *g == MIN_GAP_US),
+        "resync not exactly when due: {gaps:?}"
+    );
+}
