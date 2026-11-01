@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `arq::Receiver::skip_range` and `tsbpd::TsbpdScheduler::skip_range` are public (and no longer gated on the `tokio` feature), so a sans-IO driver can apply a DROPREQ and the Too-Late Packet Drop "fake ACK" without the tokio adapter (used by `broadcast-client`'s SRT caller).
+
 ## [0.6.1] - 2026-11-01
 ### Changed
 - Dependency `getrandom` 0.2 -> 0.4 (internal OS-RNG call site: `getrandom::getrandom` -> `getrandom::fill`). No public API exposure.

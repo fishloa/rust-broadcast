@@ -92,7 +92,6 @@ const MAX_TLPKT_SKIP_SPAN: u32 = 1 << 16;
 /// A bound on how many not-yet-reached DROPREQ ranges are remembered.
 /// Not a spec rule — memory back-pressure against a peer flooding DROPREQs;
 /// once reached, further gaps are cleared by the too-late skip instead.
-#[cfg(feature = "tokio")]
 const MAX_SKIPS: usize = 1024;
 
 /// `now` as whole microseconds, saturating (a `Duration` past ~584 000 years).
@@ -595,10 +594,9 @@ impl TsbpdScheduler {
     /// for the too-late threshold. A `last` preceding `first` is a malformed
     /// (empty) range and ignored.
     //
-    // The DROPREQ consumer lives in the tokio adapter (`crate::io`); the
-    // engine core itself never receives packets, so it is gated accordingly.
-    #[cfg(feature = "tokio")]
-    pub(crate) fn skip_range(&mut self, first: u32, last: u32) {
+    // Public so a sans-IO driver other than the tokio adapter (`crate::io`) can apply a DROPREQ
+    // and the Too-Late Packet Drop fake ACK.
+    pub fn skip_range(&mut self, first: u32, last: u32) {
         if seq::seq_diff(last, first) < 0 {
             // `last` precedes `first` — a malformed DROPREQ range; ignoring
             // it is safer than treating every sequence as skipped.
