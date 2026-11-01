@@ -269,7 +269,7 @@ pub use avs3::{
 };
 pub use avs3_audio::{AV3A_FOURCC, Ca3SpecificBox, DCA3_FOURCC};
 pub use box_types::{BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader, box_iter, parse_box};
-pub use caption_detect::{CaptionDetector, DetectedCaption};
+pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
 pub use cenc::{
     CencScheme, OriginalFormatBox, ProtectionSchemeInfoBox, ProtectionSystemSpecificHeaderBox,
     SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox,

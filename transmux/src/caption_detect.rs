@@ -28,11 +28,14 @@
 use crate::ir::CodecConfig;
 use crate::nal::{NalCodec, caption_cc_data};
 use alloc::collections::BTreeSet;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use broadcast_common::Parse;
 use broadcast_common::parity::has_odd_parity;
 use cc_data::decode::{Cea608Channel, Cea608Decoder, Cea708Decoder};
 use cc_data::{CcData, CcType};
+use dvb_si::descriptors::atsc_caption_service::{AtscCaptionKind, AtscCaptionService};
+use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry};
 
 const CC_DATA_HEADER_LEN: usize = 2;
 const CC_TRIPLET_LEN: usize = 3;
@@ -72,6 +75,56 @@ impl DetectedCaption {
             DetectedCaption::Cea708Service(n) => broadcast_hls::InstreamId::Service(*n),
         }
     }
+}
+
+impl DetectedCaption {
+    /// The ISO 639-2/B language the PMT's `caption_service_descriptor` declares
+    /// for this stream, from [`declared_caption_services`].
+    ///
+    /// A CEA-708 service is matched by `caption_service_number`. A CEA-608
+    /// channel is matched only when every declared 608 entry names the same
+    /// language: A/65 gives `line21_field` no polarity and does not expect
+    /// receivers to use it, so entries cannot be assigned to CC1-CC4
+    /// individually (`private/specs-verified/atsc/a65/a65-caption-service-descriptor.md`).
+    pub fn declared_language(&self, declared: &[AtscCaptionService]) -> Option<String> {
+        let language = match self {
+            DetectedCaption::Cea708Service(number) => declared.iter().find_map(|s| match s.kind {
+                AtscCaptionKind::Cea708 {
+                    caption_service_number,
+                } if caption_service_number == *number => Some(s.language),
+                _ => None,
+            }),
+            DetectedCaption::Cea608(_) => {
+                let mut languages = declared
+                    .iter()
+                    .filter(|s| matches!(s.kind, AtscCaptionKind::Cea608 { .. }))
+                    .map(|s| s.language);
+                let first = languages.next()?;
+                languages.all(|l| l == first).then_some(first)
+            }
+        }?;
+        Some(language.as_str().trim().to_string()).filter(|l| !l.is_empty())
+    }
+}
+
+/// The caption services a video elementary stream's PMT `ES_info` descriptor
+/// loop declares through an ATSC `caption_service_descriptor`
+/// (`TrackSpec::es_info_descriptors`), in descriptor order. Empty when the loop
+/// carries none.
+pub fn declared_caption_services(es_info_descriptors: &[u8]) -> Vec<AtscCaptionService> {
+    let mut registry = DescriptorRegistry::new();
+    registry.with_atsc_caption_service();
+    registry
+        .parse_loop(es_info_descriptors)
+        .flatten()
+        .filter_map(|descriptor| match descriptor {
+            AnyDescriptor::Other { value, .. } => value
+                .downcast_ref::<dvb_si::descriptors::atsc_caption_service::AtscCaptionServiceDescriptor>()
+                .map(|d| d.services.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
 }
 
 broadcast_common::impl_spec_display!(DetectedCaption);
