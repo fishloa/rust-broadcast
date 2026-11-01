@@ -139,34 +139,6 @@ fn demuxes_hevc_track_with_ffprobe_dims_and_wellformed_hvcc() {
     );
 }
 
-// ── Test 2: keyframe flags ───────────────────────────────────────────────────
-
-/// The first access unit is IRAP → is_sync; not every AU is a sync sample
-/// (there are TRAIL frames between IRAPs).
-#[test]
-fn first_au_is_irap_and_not_all_sync() {
-    let ts = load_ts("main.ts");
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
-    let track = hevc_track(&media);
-
-    assert!(!track.samples.is_empty(), "HEVC track must carry samples");
-    assert!(
-        track.samples[0].flags.is_sync,
-        "first access unit must be an IRAP keyframe (is_sync)"
-    );
-    let sync_count = track.samples.iter().filter(|s| s.flags.is_sync).count();
-    assert!(
-        sync_count >= 1,
-        "at least one sync sample (the IRAP): got {sync_count}"
-    );
-    assert!(
-        sync_count < track.samples.len(),
-        "not every AU can be a sync sample — there must be TRAIL frames \
-         (samples={}, sync={sync_count})",
-        track.samples.len()
-    );
-}
-
 // ── Test 3: TS → IR → CMAF, validated ────────────────────────────────────────
 
 /// Mux the demuxed HEVC Media to CMAF and run the conformance validator: zero

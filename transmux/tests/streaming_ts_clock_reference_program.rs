@@ -113,9 +113,7 @@ fn clock_refs(data: &[u8]) -> Vec<Obs> {
 }
 
 fn check(fixture: &str, min_programs: usize) -> Option<Oracle> {
-    let Some(path) = test_fixtures::require(fixture, "streaming_ts_clock_reference_program") else {
-        return None;
-    };
+    let path = test_fixtures::require(fixture, "streaming_ts_clock_reference_program")?;
     let data = std::fs::read(path).unwrap();
     let o = oracle(&data);
     assert!(
