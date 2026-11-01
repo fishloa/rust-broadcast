@@ -22,7 +22,9 @@ thiserror  = { version = "2", default-features = false }
 libm       = { version = "0.2", default-features = false }
 
 [dev-dependencies]
+hound = "3"
 test-alloc = { path = "../test-alloc" }
+test-fixtures = { path = "../test-fixtures" }
 
 [features]
 default = ["std"]
