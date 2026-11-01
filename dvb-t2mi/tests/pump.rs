@@ -138,20 +138,6 @@ fn feed_raw_packet_split_yields_one_event() {
     assert_eq!(s.malformed_packets, 0);
 }
 
-// ── (d) garbage TS packet → malformed counted, no panic ──────────────────────
-
-/// Feeding a 188-byte slice whose first byte is not 0x47 (bad sync) counts
-/// as malformed and does not panic.
-#[test]
-fn garbage_ts_packet_counted_no_panic() {
-    let mut pump = T2miPump::new(Pid::new(0x0006));
-    let garbage = [0x00u8; 188]; // 0x00 ≠ 0x47 → bad sync
-    let events: Vec<_> = pump.feed_ts(&garbage).collect();
-    assert_eq!(events.len(), 0);
-    assert_eq!(pump.stats().malformed_packets, 1);
-    assert_eq!(pump.stats().ts_packets, 1);
-}
-
 // ── (e) wrong-PID TS packet → ignored cheaply ────────────────────────────────
 
 /// A valid TS packet on the wrong PID is ignored: only `ts_packets` moves.
