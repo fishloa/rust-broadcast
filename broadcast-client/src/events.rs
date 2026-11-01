@@ -35,6 +35,8 @@ pub enum SourceKind {
     Udp,
     /// MPEG-TS in RTP (RFC 3551 payload type 33) datagrams (`rtp://`), unicast or multicast.
     Rtp,
+    /// MPEG-TS over SRT as the caller (`srt://host:port`), on `srt-runtime`.
+    Srt,
 }
 
 impl SourceKind {
@@ -49,6 +51,7 @@ impl SourceKind {
             Self::Rtsp => "rtsp",
             Self::Udp => "udp",
             Self::Rtp => "rtp",
+            Self::Srt => "srt",
         }
     }
 }
@@ -445,6 +448,16 @@ pub enum ErrorKind {
         /// The kind of stream that never resolved.
         kind: StreamKind,
     },
+    /// The SRT peer refused the handshake. Non-fatal: the connect-failure backoff follows and
+    /// the next attempt may succeed (a listener that is restarting, a stream id that is not
+    /// published yet); a wrong passphrase will be refused again every time.
+    SrtRejected {
+        /// The peer's reason (`name()` of the draft's rejection reason, e.g. `bad-secret`).
+        reason: &'static str,
+    },
+    /// The SRT handshake did not finish inside `SrtConfig::handshake_timeout_ms`. Non-fatal: the
+    /// connect-failure backoff follows.
+    SrtHandshakeTimeout,
 }
 
 impl ErrorKind {
@@ -472,6 +485,8 @@ impl ErrorKind {
             Self::LiveEdgeLost => "live_edge_lost",
             Self::ClockUnavailable => "clock_unavailable",
             Self::PendingTrackUnresolved { .. } => "pending_track_unresolved",
+            Self::SrtRejected { .. } => "srt_rejected",
+            Self::SrtHandshakeTimeout => "srt_handshake_timeout",
         }
     }
 }
@@ -1044,6 +1059,8 @@ pub struct Config {
     pub dash: DashConfig,
     /// UDP and RTP source settings.
     pub udp: crate::udp::UdpConfig,
+    /// SRT caller settings.
+    pub srt: crate::srt::SrtConfig,
 }
 
 impl Config {
@@ -1085,6 +1102,7 @@ impl Config {
             }
         }
         self.udp.validate()?;
+        self.srt.validate()?;
         if let Err(e) = self.dash.validate() {
             return invalid(dash_field(e.field));
         }
@@ -1153,6 +1171,7 @@ impl Default for Config {
             start_pending_track_hard_cap_us: DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
             dash: DashConfig::default(),
             udp: crate::udp::UdpConfig::default(),
+            srt: crate::srt::SrtConfig::default(),
         }
     }
 }
@@ -1208,6 +1227,7 @@ impl core::fmt::Debug for Config {
             )
             .field("dash", &self.dash)
             .field("udp", &self.udp)
+            .field("srt", &self.srt)
             .finish()
     }
 }

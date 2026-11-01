@@ -30,6 +30,9 @@ broadcast-hls      = { path = "../broadcast-hls", version = "0.5" }
 rtsp-runtime       = { path = "../rtsp-runtime", version = "0.8.1", default-features = false }
 sdp-types          = { workspace = true }
 rtp-packet         = { path = "../rtp-packet", version = "0.5", default-features = false, features = ["std"] }
+srt-runtime        = { path = "../srt-runtime", version = "0.6.1", default-features = false, features = ["std", "crypto"] }
+sha2               = { version = "0.11", default-features = false }
+zeroize            = { version = "1", default-features = false, features = ["alloc"] }
 url                = "2"
 percent-encoding   = "2"
 http               = "1"
@@ -40,6 +43,7 @@ thiserror          = "2"
 serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [dev-dependencies]
+srt-runtime = { path = "../srt-runtime", version = "0.6.1", features = ["tokio", "crypto"] }
 test-fixtures = { path = "../test-fixtures" }
 buffering-runtime = { path = "../buffering-runtime", version = "0.1" }
 transmux = { path = "../transmux", version = "0.28" }
@@ -50,6 +54,7 @@ rtsp-types = "0.1"
 url = "2"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 test-bounded = { path = "../test-bounded" }
+tokio = { version = "1", default-features = false, features = ["rt", "time", "net"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
 
 [features]
