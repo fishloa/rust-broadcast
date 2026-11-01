@@ -120,27 +120,5 @@ required-features = ["media"]
 # themselves (the workspace's documented feature-gated-test-file pattern),
 # so `cargo test -p webrtc-runtime --locked` (no `media`) skips them
 # cleanly instead of needing the media-only optional deps they import.
-[[test]]
-name              = "srtp_rfc3711_vectors"
-required-features = ["media"]
-
-[[test]]
-name              = "stun_rfc5769_vectors"
-required-features = ["media"]
-
-# Real-fixture pcap test (fixtures/webrtc/whip-ice-dtls-srtp-loopback.pcap):
-# decodes the genuine Chrome-emitted STUN messages from a captured
-# ICE/DTLS/SRTP session. Same gating pattern as the two vector tests above.
-[[test]]
-name              = "whip_smoke_pcap_stun"
-required-features = ["media"]
-
-# DTLS peer-certificate fingerprint verification tests (RFC 8122 §5 /
-# RFC 5764 §5 identity checks). Same gating pattern as the three media test
-# files above.
-[[test]]
-name              = "dtls_fingerprint"
-required-features = ["media"]
-
 [lints]
 workspace = true
