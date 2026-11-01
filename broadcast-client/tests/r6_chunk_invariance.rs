@@ -3,19 +3,7 @@ mod support;
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
 use support::replay::TS_PACKET;
 
-const PRIVATE_FILES: &[&str] = &[
-    "zenith-live/tf-1-8MB.ts",
-    "zenith-live/arte-8MB.ts",
-    "zenith-live/rai-gulp-8MB.ts",
-];
-const PUBLIC_FILES: &[&str] = &[
-    "ts/h264_aac.ts",
-    "ts/h264_aac_40s.ts",
-    "ts/france2.ts",
-    "ts/gulli-opengop.ts",
-    "ts/france-pcr-discontinuity.ts",
-];
-const FIXED_CHUNKS: &[usize] = &[
+const SOAK_FIXED_CHUNKS: &[usize] = &[
     TS_PACKET,
     7 * TS_PACKET,
     4096,
@@ -23,11 +11,19 @@ const FIXED_CHUNKS: &[usize] = &[
     64 * 1024,
     256 * 1024,
 ];
-const RANDOM_SEEDS: &[u64] = &[1, 2, 3];
+const FIXED_CHUNKS: &[usize] = &[TS_PACKET, 7 * TS_PACKET, 4096, 64 * 1024, 256 * 1024];
+const SMALL_FILE_EXTRA_CHUNKS: &[usize] = &[1, 1316];
+const SMALL_FILE: &str = "ts/h264_aac.ts";
+const SOAK_RANDOM_SEEDS: &[u64] = &[1, 2, 3];
+const RANDOM_SEEDS: &[u64] = &[1, 2];
 const MAX_RANDOM_PACKETS: u64 = 1500;
 const MICROS: u64 = 1_000_000;
 const FAST_LINK_BPS: u64 = 40_000_000;
 const LIVE_RATE_BPS: u64 = 6_000_000;
+
+fn soak() -> bool {
+    std::env::var_os("RUST_BROADCAST_SOAK").is_some()
+}
 
 // Chunk-invariant: the Sample sequence (track, pts, dts, join, length) and the position of every
 // Discontinuity among the samples, for every read size and for arrival clocks fast enough that no
@@ -172,17 +168,37 @@ fn first_difference(a: &[Rec], b: &[Rec]) -> String {
 
 fn check(name: &str, bytes: &[u8]) {
     let bytes = &bytes[..bytes.len() / TS_PACKET * TS_PACKET];
-    for clock in [
-        Clock::Fixed,
-        Clock::Paced(FAST_LINK_BPS),
-        Clock::Paced(LIVE_RATE_BPS),
-    ] {
+    let soak = soak();
+    let clocks: Vec<Clock> = if soak {
+        vec![
+            Clock::Fixed,
+            Clock::Paced(FAST_LINK_BPS),
+            Clock::Paced(LIVE_RATE_BPS),
+        ]
+    } else {
+        vec![Clock::Fixed, Clock::Paced(LIVE_RATE_BPS)]
+    };
+    let mut fixed: Vec<usize> = if soak {
+        SOAK_FIXED_CHUNKS
+    } else {
+        FIXED_CHUNKS
+    }
+    .to_vec();
+    if name == SMALL_FILE {
+        fixed.extend_from_slice(SMALL_FILE_EXTRA_CHUNKS);
+    }
+    let seeds = if soak {
+        SOAK_RANDOM_SEEDS
+    } else {
+        RANDOM_SEEDS
+    };
+    for clock in clocks {
         let mut reference: Option<(String, Vec<Rec>)> = None;
         let mut cases: Vec<(String, Box<dyn FnMut() -> usize>)> = Vec::new();
-        for &c in FIXED_CHUNKS {
+        for &c in &fixed {
             cases.push((format!("fixed {c}"), Box::new(move || c)));
         }
-        for &seed in RANDOM_SEEDS {
+        for &seed in seeds {
             let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
             cases.push((
                 format!("random seed {seed}"),
@@ -216,19 +232,35 @@ fn check(name: &str, bytes: &[u8]) {
     }
 }
 
-#[test]
-fn private_captures_are_chunk_invariant() {
-    for f in PRIVATE_FILES {
-        let Some(bytes) = test_fixtures::require_bytes(f, "r6_chunk_invariance") else {
-            continue;
-        };
-        check(f, &bytes);
-    }
+macro_rules! private_capture {
+    ($test:ident, $file:expr) => {
+        #[test]
+        fn $test() {
+            let Some(bytes) = test_fixtures::require_bytes($file, "r6_chunk_invariance") else {
+                return;
+            };
+            check($file, &bytes);
+        }
+    };
 }
 
-#[test]
-fn public_captures_are_chunk_invariant() {
-    for f in PUBLIC_FILES {
-        check(f, &test_fixtures::read(f));
-    }
+macro_rules! public_capture {
+    ($test:ident, $file:expr) => {
+        #[test]
+        fn $test() {
+            check($file, &test_fixtures::read($file));
+        }
+    };
 }
+
+private_capture!(tf1_is_chunk_invariant, "zenith-live/tf-1-8MB.ts");
+private_capture!(arte_is_chunk_invariant, "zenith-live/arte-8MB.ts");
+private_capture!(rai_gulp_is_chunk_invariant, "zenith-live/rai-gulp-8MB.ts");
+public_capture!(h264_aac_is_chunk_invariant, "ts/h264_aac.ts");
+public_capture!(h264_aac_40s_is_chunk_invariant, "ts/h264_aac_40s.ts");
+public_capture!(france2_is_chunk_invariant, "ts/france2.ts");
+public_capture!(gulli_opengop_is_chunk_invariant, "ts/gulli-opengop.ts");
+public_capture!(
+    france_pcr_discontinuity_is_chunk_invariant,
+    "ts/france-pcr-discontinuity.ts"
+);
