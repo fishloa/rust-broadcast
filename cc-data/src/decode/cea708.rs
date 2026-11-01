@@ -1239,7 +1239,7 @@ mod tests {
     #[test]
     fn services_seen_covers_unmodelled_and_extended_services() {
         let mut dec = Cea708Decoder::new();
-        dec.push_packet(&ccp(1, &[b'A']));
+        dec.push_packet(&ccp(1, b"A"));
         dec.push_packet(&ccp(2, &[0x00, 0x00]));
         let extended = [(7 << 5) | 1, 63, b'Z'];
         let size_code = (extended.len().div_ceil(2) + 1) as u8 & 0x3F;
