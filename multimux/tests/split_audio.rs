@@ -518,20 +518,32 @@ fn h264_aac() -> &'static [Source] {
 
 /// A static (non-live, keep-everything) rig built once per distinct
 /// (sources, declarations, selectors, declared bandwidth) and shared by every
-/// read-only test that asks for it.
+/// read-only test that asks for it. Access is serialised per rig: concurrent
+/// reads of one route can see an empty playlist, so a test holds the rig for
+/// its whole body.
+type SharedRig = std::sync::MutexGuard<'static, Rig>;
+
 fn shared_rig(
     sources: &'static [Source],
     renditions: Vec<AudioRenditionDecl>,
     selectors: Vec<AudioTrackSelector>,
     declared: Option<u64>,
-) -> &'static Rig {
+) -> SharedRig {
     let key = format!(
         "rig:{:p}:{renditions:?}:{selectors:?}:{declared:?}",
         sources.as_ptr()
     );
     shared::shared(&key, || {
-        rig_declared(sources, renditions, selectors, declared, &|_, _| true)
+        std::sync::Mutex::new(rig_declared(
+            sources,
+            renditions,
+            selectors,
+            declared,
+            &|_, _| true,
+        ))
     })
+    .lock()
+    .unwrap_or_else(|p| p.into_inner())
 }
 
 async fn assert_part_timing(rig: &Rig, uris: &[&str]) {

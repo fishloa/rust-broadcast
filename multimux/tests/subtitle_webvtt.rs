@@ -80,6 +80,9 @@ const KNOWN_MISSING_HOLD_BACK_1594: &str = "Missing server control attribute";
 /// playlist instead is rejected by the validator as "Unknown rendition report".
 const KNOWN_NO_RENDITION_REPORTS_1595: &str = "No rendition reports in low-latency playlist";
 
+#[path = "support/shared.rs"]
+mod shared;
+
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
 }
@@ -214,16 +217,38 @@ fn build_from(media: transmux::Media, subtitles: bool) -> Rig {
     driver.finish()
 }
 
-fn teletext_rig(subtitles: bool, who: &str) -> Option<Rig> {
+fn teletext_rig_unshared(subtitles: bool, who: &str) -> Option<Rig> {
     let teletext = std::fs::read(test_fixtures::tsduck(TELETEXT_FIXTURE, who)?)
         .expect("read teletext fixture");
     let video = test_fixtures::require_bytes(VIDEO_FIXTURE, who)?;
     Some(build_from(compose(&video, &teletext), subtitles))
 }
 
-fn no_teletext_rig(subtitles: bool, who: &str) -> Option<Rig> {
+fn no_teletext_rig_unshared(subtitles: bool, who: &str) -> Option<Rig> {
     let bytes = test_fixtures::require_bytes(NO_TELETEXT_FIXTURE, who)?;
     Some(build_from(demux(&bytes), subtitles))
+}
+
+/// The shared rigs are build-once but serialised per rig: two tests reading the
+/// same route's subtitle playlists at the same instant see an empty subtitle
+/// playlist on one of them, so each test holds its rig for its whole body.
+type SharedRig = std::sync::MutexGuard<'static, Rig>;
+
+fn lock_rig(cell: &'static Option<std::sync::Mutex<Rig>>) -> Option<SharedRig> {
+    cell.as_ref()
+        .map(|m| m.lock().unwrap_or_else(|p| p.into_inner()))
+}
+
+fn teletext_rig(subtitles: bool, who: &str) -> Option<SharedRig> {
+    lock_rig(shared::shared(&format!("teletext:{subtitles}"), || {
+        teletext_rig_unshared(subtitles, who).map(std::sync::Mutex::new)
+    }))
+}
+
+fn no_teletext_rig(subtitles: bool, who: &str) -> Option<SharedRig> {
+    lock_rig(shared::shared(&format!("no_teletext:{subtitles}"), || {
+        no_teletext_rig_unshared(subtitles, who).map(std::sync::Mutex::new)
+    }))
 }
 
 impl Rig {
@@ -1197,7 +1222,10 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         eprintln!("SKIP {who}: {VALIDATOR_BIN} absent");
         return;
     }
-    let (Some(on), Some(off)) = (teletext_rig(true, who), teletext_rig(false, who)) else {
+    let (Some(on), Some(off)) = (
+        teletext_rig_unshared(true, who),
+        teletext_rig_unshared(false, who),
+    ) else {
         return;
     };
     let playlists = [
