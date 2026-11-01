@@ -8,9 +8,6 @@
 
 use mpeg_ts::pid::Pid;
 use std::{fs, path::PathBuf};
-
-mod support;
-
 fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -23,7 +20,7 @@ fn is_null_packet(pkt: &[u8]) -> bool {
     if pkt.len() < 3 {
         return false;
     }
-    support::extract_pid(pkt) == Pid::new(0x1FFF)
+    crate::support::extract_pid(pkt) == Pid::new(0x1FFF)
 }
 
 /// Validate that a packet is a properly-formed null packet.
@@ -36,7 +33,7 @@ fn validate_null_packet(pkt: &[u8]) -> bool {
         return false;
     }
     // PID must be 0x1FFF
-    if support::extract_pid(pkt) != Pid::new(0x1FFF) {
+    if crate::support::extract_pid(pkt) != Pid::new(0x1FFF) {
         return false;
     }
     // Adaptation field control must be 01 (payload only).
@@ -54,7 +51,7 @@ fn drop_nulls_removes_all_null_packets() {
     let input = fs::read(fixture_path()).expect("fixture m6-single.ts not found");
 
     // Create a synthetic stream with null packets interleaved.
-    let input_with_nulls = support::add_null_packets(&input, 10);
+    let input_with_nulls = crate::support::add_null_packets(&input, 10);
 
     // Count nulls before processing.
     let null_count_before = input_with_nulls

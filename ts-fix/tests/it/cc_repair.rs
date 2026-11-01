@@ -11,9 +11,6 @@
 
 use mpeg_ts::pid::Pid;
 use std::{collections::BTreeMap, fs, path::PathBuf};
-
-mod support;
-
 fn m6_single_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -83,7 +80,7 @@ fn is_legal_duplicate(prev: &[u8], curr: &[u8]) -> bool {
 #[test]
 fn repair_continuity_from_corrupted_zeros() {
     let mut input = fs::read(m6_single_path()).expect("fixture not found");
-    support::zero_continuity_counters(&mut input);
+    crate::support::zero_continuity_counters(&mut input);
     let mut engine = ts_fix::TsFix::builder()
         .repair_continuity()
         .build()
@@ -104,7 +101,7 @@ fn repair_continuity_from_corrupted_zeros() {
 #[test]
 fn repair_continuity_from_xor_corruption() {
     let mut input = fs::read(m6_single_path()).expect("fixture not found");
-    support::xor_continuity_counters(&mut input, 0xAA);
+    crate::support::xor_continuity_counters(&mut input, 0xAA);
     let mut engine = ts_fix::TsFix::builder()
         .repair_continuity()
         .build()
