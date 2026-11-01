@@ -17,7 +17,7 @@
 //! are trimmed of SP/HT/CR/LF. Separator splitting never looks inside a
 //! quoted-string. Everything above this module works on already-split segments.
 //! This is the ONLY module of the crate allowed to tokenise header text by hand
-//! (see `tests/no_handroll_guard.rs`).
+//! (see `tests/it/no_handroll_guard.rs`).
 
 /// Separator between transport-specs (§12.39 `1#transport-spec`).
 pub(crate) const LIST_SEP: char = ',';

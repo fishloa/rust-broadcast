@@ -54,7 +54,7 @@ const FRAME_TICKS: i64 = 3_000;
 const FRAMES_PER_SEC: usize = 30;
 
 /// A minimal but structurally-real `avcC` so `build_init_segment` succeeds
-/// (same shape as `tests/segmenter.rs`).
+/// (same shape as `tests/it/segmenter.rs`).
 fn dummy_avc_config() -> AVCConfigurationBox {
     AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
         configuration_version: 1,

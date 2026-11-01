@@ -5,7 +5,7 @@
 //! which are all `schemaVersion="2"` and have no foreign-namespace content)
 //! — this is a text/XML config format, not a binary wire format, so a
 //! hand-built document citing the exact spec clause is this crate's normal
-//! testing approach (see `tests/round_trip.rs`'s own doc comment).
+//! testing approach (see `tests/it/round_trip.rs`'s own doc comment).
 #![cfg(feature = "std")]
 
 use dvb_mabr::{Error, MulticastGatewayConfiguration};

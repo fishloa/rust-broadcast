@@ -36,7 +36,7 @@ use transmux::{
     StreamingTsHlsSegmenter, Track, TrackSpec, TsDemux, TsHlsPackager, TsMux,
 };
 
-// ── Fixture loading (mirrors tests/ts_hevc.rs) ──────────────────────────────
+// ── Fixture loading (mirrors tests/it/ts_hevc.rs) ──────────────────────────────
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/hevc")
@@ -85,7 +85,7 @@ fn split_lp(lp: &[u8]) -> Vec<Vec<u8>> {
     out
 }
 
-// ── Minimal TS/PSI walking (byte-level, mirrors tests/ts_mux.rs) ────────────
+// ── Minimal TS/PSI walking (byte-level, mirrors tests/it/ts_mux.rs) ────────────
 
 const TS: usize = 188;
 

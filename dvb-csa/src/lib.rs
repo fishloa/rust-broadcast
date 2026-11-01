@@ -55,7 +55,7 @@
 //! - **libdvbcsa** 1.1.0 — VideoLAN's reference free implementation.
 //!   Committed known-answer vectors: encrypt with libdvbcsa, require
 //!   byte-identical output from this crate (and the reverse). See
-//!   `tests/golden_vectors.rs`.
+//!   `tests/it/golden_vectors.rs`.
 //!
 //! A round-trip test (`descramble(scramble(x)) == x`) proves nothing for a
 //! cipher: it passes for any invertible function. The libdvbcsa known-answer

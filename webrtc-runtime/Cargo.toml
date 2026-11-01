@@ -96,7 +96,7 @@ axum  = { workspace = true }
 # The WHIP-lite example reads the offer and writes the answer with `sdp-types`
 # (also the `media` feature's optional dependency; examples resolve dev-deps).
 sdp-types = { workspace = true }
-# Fixture-verification only (tests/srtp_rfc3711_vectors.rs): an independent,
+# Fixture-verification only (tests/it/srtp_rfc3711_vectors.rs): an independent,
 # from-spec-text AES-CM + HMAC-SHA1 implementation used to cross-check
 # rtc-srtp's own output against the RFC 3711 Appendix B test vectors. These
 # are RustCrypto 0.13 crates, deliberately independent of rtc-srtp's own

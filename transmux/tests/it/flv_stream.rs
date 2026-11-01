@@ -2,8 +2,8 @@
 //!
 //! Exercises [`transmux::StreamingFlvDemux`] against the same committed real
 //! fixture `fixtures/flv/av.flv` (H.264 + AAC, 320x240 — the ffmpeg RTMP
-//! publish capture also used by `transmux/tests/flv.rs` and
-//! `transmux/tests/rtmp.rs`), proving the incremental demuxer reproduces the
+//! publish capture also used by `transmux/tests/it/flv.rs` and
+//! `transmux/tests/it/rtmp.rs`), proving the incremental demuxer reproduces the
 //! trusted one-shot [`transmux::FlvDemux`] exactly:
 //!
 //! 1. Whole-buffer equivalence: the **full per-sample sequence** (per track,
@@ -166,7 +166,7 @@ fn full_from_events(events: &[DemuxEvent]) -> Vec<FullTrack> {
 #[test]
 fn streaming_whole_buffer_matches_one_shot_demux() {
     let one_shot = one_shot_full();
-    // Known oracle values (also asserted by `transmux/tests/flv.rs`): 2
+    // Known oracle values (also asserted by `transmux/tests/it/flv.rs`): 2
     // tracks, AVC 320x240 with 75 samples / 3 keyframes, AAC with 131
     // samples — pinned here too so a regression in *either* demuxer's
     // fixture handling is caught, not just a streaming/one-shot mismatch.

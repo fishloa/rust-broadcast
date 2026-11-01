@@ -11,7 +11,7 @@ use transmux::pipeline::CodecConfig;
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 const FIXTURE: &str = "ts/france-tnt-m6-eac3-zenith.ts";
-const WHO: &str = "transmux/tests/streaming_ts_demux_eac3_promotion.rs";
+const WHO: &str = "transmux/tests/it/streaming_ts_demux_eac3_promotion.rs";
 
 type Outcome = (Vec<(u16, String)>, BTreeMap<u16, usize>, usize, usize);
 

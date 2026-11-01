@@ -225,7 +225,7 @@ where
 /// small (317-byte, deliberately not TS-packet-aligned) pieces, and check the
 /// resulting per-track samples — dts/pts/duration/sync flag/payload bytes,
 /// not just counts — against the trusted batch `TsDemux` oracle (the same
-/// oracle `transmux/tests/streaming_demux.rs` uses).
+/// oracle `transmux/tests/it/streaming_demux.rs` uses).
 #[test]
 fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
     // --- StreamingTsDemux ---------------------------------------------------
@@ -382,7 +382,7 @@ fn progressive_demux_stage_feed_rejects_input_past_its_byte_cap() {
 // ── Segmenter-family Stage fixtures ─────────────────────────────────────────
 //
 // A minimal but structurally-real AAC `esds`, so `build_init_segment`
-// succeeds — the same fixture shape `transmux/tests/segmenter.rs` uses.
+// succeeds — the same fixture shape `transmux/tests/it/segmenter.rs` uses.
 // Audio-only (no video track) keeps this self-contained: every `Sample` is a
 // sync sample, so the anchor cuts purely on accumulated duration, with no
 // need for a real `avcC`.

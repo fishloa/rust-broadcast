@@ -7,7 +7,7 @@
 //! captured by running this workspace's own `transmux::RtpPacketiser`
 //! (RFC 3550-compliant AAC-hbr / RFC 3640 packetiser) over the real broadcast
 //! capture `fixtures/ts/h264_aac.ts` (already committed for transmux's own
-//! RTP tests, `transmux/tests/rtp.rs`, issue #469), then saving one emitted
+//! RTP tests, `transmux/tests/it/rtp.rs`, issue #469), then saving one emitted
 //! audio packet's exact wire bytes. The RTP fixed-header fields (marker,
 //! payload type, sequence number, timestamp, SSRC) and the AAC-hbr payload
 //! bytes are therefore real, spec-compliant wire content produced from a real
@@ -19,7 +19,7 @@
 //! Padding / CSRC / header-extension fixtures are **not** exercised anywhere
 //! in this workspace today (transmux never sets any of P/CC/X) and no public
 //! RTP pcap is reachable from this sandboxed environment, so those cases use
-//! spec-Table-derived vectors instead — see `tests/round_trip.rs`.
+//! spec-Table-derived vectors instead — see `tests/it/round_trip.rs`.
 
 use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;

@@ -7,7 +7,7 @@
 //! syntax tables** (`scte104/docs/ansi_scte_104/operations.md` for Tables
 //! 8-1/8-2/9-5, `scte104/docs/ansi_scte_104/pams_operations.md` for Tables
 //! 10-1/10-3/10-5), independently of this crate's own serializer — mirroring
-//! the pattern (and closing the exact gap) named in `rtcp-packet/tests/spec_vectors.rs`
+//! the pattern (and closing the exact gap) named in `rtcp-packet/tests/it/spec_vectors.rs`
 //! and issue #936: every other test in this crate builds via the typed API,
 //! serializes, parses, and compares against itself, which cannot distinguish a
 //! correct implementation from a self-consistent wrong one (a field-offset bug

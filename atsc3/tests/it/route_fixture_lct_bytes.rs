@@ -12,7 +12,7 @@
 //! (RFC 5651 §5.1, transcribed independently in `rmt-flute/docs/lct.md` and
 //! `rmt-flute/docs/alc.md`, neither of which `atsc3` depends on) directly
 //! against the documented byte layout, the same discipline
-//! `webrtc-runtime/tests/whip_smoke_pcap_stun.rs` uses for its hand-rolled
+//! `webrtc-runtime/tests/it/whip_smoke_pcap_stun.rs` uses for its hand-rolled
 //! pcap walker. It does **not** implement a ROUTE parser (no `Parse`/
 //! `Serialize` impl, no public API) — only test-local, one-shot field
 //! extraction to prove the fixture's documented byte layout is real.

@@ -1,5 +1,5 @@
 //! DASH MPD generation gate — extended addressing/live/content coverage
-//! (issue #566), on top of the base MPD writer gated by `tests/dash.rs`
+//! (issue #566), on top of the base MPD writer gated by `tests/it/dash.rs`
 //! (issue #464).
 //!
 //! Every assertion here is computed from what the crate itself produced
@@ -11,7 +11,7 @@
 //! re-parse.
 //!
 //! Oracle input: `fixtures/ts/h264_aac.ts` (the same deterministic 2-track
-//! H.264 + AAC capture `tests/dash.rs` uses), whose video keyframes are
+//! H.264 + AAC capture `tests/it/dash.rs` uses), whose video keyframes are
 //! spaced exactly 1.0 s apart — so a 1.0 s target [`Segmenter`] reliably cuts
 //! 3 video segments (matching the shape of the real ffmpeg oracle
 //! `fixtures/dash/manifest.mpd`, which SegmentTimeline-addresses the same
@@ -148,7 +148,7 @@ fn recover_segment_timing(
 }
 
 // ---------------------------------------------------------------------------
-// Element tree over `quick-xml` (self-contained: no shared code with tests/dash.rs).
+// Element tree over `quick-xml` (self-contained: no shared code with tests/it/dash.rs).
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]

@@ -4,7 +4,7 @@
 //!
 //! Two oracle sources:
 //! - `fixtures/dash/manifest.mpd`: a real ffmpeg-generated DASH MPD (the same
-//!   one `tests/dash.rs`/`tests/dash_mpd.rs` use as their writer oracle) —
+//!   one `tests/it/dash.rs`/`tests/it/dash_mpd.rs` use as their writer oracle) —
 //!   `SegmentTemplate`+`SegmentTimeline` addressing, two `AdaptationSet`s,
 //!   `$Number%05d$` media templates. Parsing it and asserting the exact
 //!   structural values is the real bite (never a bare substring check).

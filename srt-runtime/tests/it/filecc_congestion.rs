@@ -1,6 +1,6 @@
 //! FileCC (§5.2 window-based congestion control) — integration tests.
 //!
-//! Assertions use hand-computed constants (mirroring `tests/livecc_pacing.rs`'s
+//! Assertions use hand-computed constants (mirroring `tests/it/livecc_pacing.rs`'s
 //! style) so a trivial/no-op/constant implementation must fail every test
 //! here. Spec grounding: `specs/rules/srt-congestion.md`.
 

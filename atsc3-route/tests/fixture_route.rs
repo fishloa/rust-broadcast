@@ -4,7 +4,7 @@
 //! test for `atsc3-route`: parse the real captures with [`RoutePacket`] and
 //! byte-exact round-trip them — not hand-made bytes.
 //!
-//! `atsc3/tests/route_fixture_lct_bytes.rs` hand-decoded these same fixtures
+//! `atsc3/tests/it/route_fixture_lct_bytes.rs` hand-decoded these same fixtures
 //! with test-local helpers (predating this crate, since no ROUTE parser
 //! existed yet — see that file's own doc comment). This file is the real
 //! parser those helpers stood in for; it is intentionally independent (does

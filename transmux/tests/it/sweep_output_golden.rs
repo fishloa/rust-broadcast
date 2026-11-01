@@ -339,7 +339,7 @@ fn muxer_outputs_are_unchanged() {
     check(&mut bad, "mkv", fnv1a(&mkv), 0xf3db485ac205dbe1);
     // The golden pins the once-only-PSI layout (PAT/PMT at the start only). The
     // default `TsMux` now repeats PAT/PMT periodically (R7); that default is
-    // covered by tests/ts_mux_psi_repeat.rs, which proves the default output is
+    // covered by tests/it/ts_mux_psi_repeat.rs, which proves the default output is
     // exactly this once-only output plus the PSI repeats.
     let ts = TsMux::new()
         .with_psi_interval_ms(None)

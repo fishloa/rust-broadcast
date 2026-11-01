@@ -6,7 +6,7 @@
 //! 32 kbps, single-stream), `stream_type 0x2D`, ES_info carrying the
 //! `MPEG-H_3dAudio_descriptor` (`0x3F` extension descriptor). CC BY-NC-ND —
 //! lives in the private `private/` submodule, not the public tree; this
-//! test **skips cleanly** (mirrors `scte35-splice/tests/downloaded_scte35.rs`)
+//! test **skips cleanly** (mirrors `scte35-splice/tests/it/downloaded_scte35.rs`)
 //! when the submodule isn't checked out.
 //!
 //! Gate 3 below is an **independent oracle**: it re-implements the MHAS
@@ -53,7 +53,7 @@ fn mpegh_track(media: &Media) -> &transmux::media::Track {
 
 // ---------------------------------------------------------------------------
 // Minimal TS/PSI/PES walking (byte-level, independent of crate internals) —
-// mirrors tests/dts_ts.rs / tests/dolby.rs.
+// mirrors tests/it/dts_ts.rs / tests/it/dolby.rs.
 // ---------------------------------------------------------------------------
 
 fn pid_of(pkt: &[u8]) -> u16 {

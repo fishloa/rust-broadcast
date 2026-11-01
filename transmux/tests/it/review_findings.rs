@@ -10,7 +10,7 @@ use transmux::{DemuxEvent, StreamingTsDemux, TsDemux};
 const TS_PACKET: usize = 188;
 
 fn private(rel: &str) -> Option<Vec<u8>> {
-    test_fixtures::require_bytes(rel, "transmux/tests/review_findings.rs")
+    test_fixtures::require_bytes(rel, "transmux/tests/it/review_findings.rs")
 }
 
 fn pid_of(p: &[u8]) -> u16 {

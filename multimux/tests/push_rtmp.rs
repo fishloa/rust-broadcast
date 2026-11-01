@@ -12,7 +12,7 @@
 //! server can decode what `RtmpTransport` sends.
 //!
 //! The fixture (`fixtures/flv/av.flv`, real H.264 + AAC, shared with
-//! `transmux/tests/flv.rs`) is demuxed to get real `TrackSpec`s + samples,
+//! `transmux/tests/it/flv.rs`) is demuxed to get real `TrackSpec`s + samples,
 //! pushed through `RtmpTransport::setup` (metadata + sequence headers) and
 //! `send_media` (per-frame payloads), received by `ServerSession` (which
 //! reconstructs FLV tags from the RTMP messages it decodes), and the

@@ -1,7 +1,7 @@
 //! VP8 + Vorbis (WebM) demux integration tests — oracle-driven.
 //!
 //! Completes WebM codec coverage alongside the VP9/Opus suite
-//! (`tests/webm_demux.rs`). Two real ffmpeg-produced fixtures, each with a
+//! (`tests/it/webm_demux.rs`). Two real ffmpeg-produced fixtures, each with a
 //! per-frame ffprobe oracle:
 //!
 //! - `fixtures/webm/vp8_opus.webm` — VP8 video (25 frames) + Opus audio (51).

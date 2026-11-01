@@ -55,7 +55,7 @@ fn fixture_path() -> String {
 /// Minimal classic-pcap walker: yields the UDP payload of every
 /// `DLT_EN10MB`/IPv4/UDP packet in the file, in on-wire order. Written by
 /// hand rather than adding a `pcap` dependency, following
-/// `webrtc-runtime/tests/whip_smoke_pcap_stun.rs`'s existing precedent (that
+/// `webrtc-runtime/tests/it/whip_smoke_pcap_stun.rs`'s existing precedent (that
 /// one walks `DLT_NULL`; this one walks Ethernet framing instead).
 fn udp_payloads(data: &[u8]) -> Vec<&[u8]> {
     assert!(data.len() >= 24, "pcap file too short for global header");

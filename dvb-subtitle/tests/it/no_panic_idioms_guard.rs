@@ -4,7 +4,7 @@
 //! `unreachable!` / `todo!` / `unimplemented!`. `#[cfg(test)]` modules are
 //! exempt; a justified exception is added to `ALLOW` with a reason, pinned to
 //! the exact source text. A tripwire is lexical, not a proof (an index
-//! `buf[i]` can still panic): the behavioural half is `tests/hostility.rs`.
+//! `buf[i]` can still panic): the behavioural half is `tests/it/hostility.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};

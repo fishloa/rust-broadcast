@@ -75,7 +75,7 @@ const RS_PARITY_LEN: usize = 16;
 /// `TP_extra_header` an M2TS (192-byte) record prefixes each packet with.
 const M2TS_HEADER_LEN: usize = 4;
 /// The exact number of `cc-anomaly` findings `fixtures/ts/m6-duplicate.ts`
-/// carries — pinned independently by `tests/integration.rs`.
+/// carries — pinned independently by `tests/it/integration.rs`.
 const M6_DUPLICATE_CC_ANOMALIES: usize = 879;
 
 fn read_fixture(name: &str) -> Vec<u8> {

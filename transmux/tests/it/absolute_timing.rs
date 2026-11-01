@@ -15,7 +15,7 @@
 //! 2. **Each of the five previously-anchorless demuxers emits real absolute
 //!    time** (FLV, WebM, PS, RTMP, RTP), from that container's own clock.
 //! 3. **Timestamps are never fabricated**: a section-carried track stays
-//!    `None` (gated in `tests/any_stream.rs`), and every timed track's
+//!    `None` (gated in `tests/it/any_stream.rs`), and every timed track's
 //!    `Track::start_decode_time` stays in lockstep with its first sample's
 //!    `dts`.
 //!

@@ -92,7 +92,7 @@ fn markers_valid(p: &[u8]) -> bool {
 mod drift {
     //! Pins this module's `PACK_START_CODE` to `mpeg-ps`.
     //!
-    //! Lives here rather than in `tests/drift_guard.rs` because the constant is
+    //! Lives here rather than in `tests/it/drift_guard.rs` because the constant is
     //! private: an integration test can only compare upstream against a
     //! literal, which catches upstream changing but not this crate's copy
     //! drifting. A unit test sees the real constant.

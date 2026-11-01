@@ -7,7 +7,7 @@
 //!
 //! ## (a) 10 000 random 188-byte TS packets → SiDemux
 //! ## (b) Every truncation of a valid SDT section
-//! ## (c) 10 000 garbage feeds to T2miPump — lives in dvb-t2mi/tests/chain.rs
+//! ## (c) 10 000 garbage feeds to T2miPump — lives in dvb-t2mi/tests/it/chain.rs
 //! ## (d) 1 000 random descriptor loops through parse_loop
 
 #![cfg(feature = "ts")]

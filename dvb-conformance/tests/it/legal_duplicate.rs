@@ -78,7 +78,7 @@ fn cc_error_count(packets: &[[u8; TS_PACKET_SIZE]]) -> usize {
 /// `dvb-conformance`), which same-CC repeats on `m6-duplicate.ts` are
 /// legal duplicates (byte-identical, PCR excepted) vs genuine continuity
 /// faults (payload differs). This mirrors the reference oracle already used
-/// by `ts-fix/tests/cc_repair.rs` (`hash_payload_skip_pcr`), confirming the
+/// by `ts-fix/tests/it/cc_repair.rs` (`hash_payload_skip_pcr`), confirming the
 /// fixture's known "5 legal duplicates" property independently of the code
 /// under test, then additionally counts the illegal same-CC repeats the old
 /// `dvb-conformance` code silently missed.
@@ -137,7 +137,7 @@ fn m6_duplicate_distinguishes_legal_from_illegal_same_cc_repeats() {
     let (legal, illegal) = classify_same_cc_repeats(&data);
     assert_eq!(
         legal, 5,
-        "m6-duplicate.ts is known (ts-fix/tests/cc_repair.rs) to carry 5 legal duplicates"
+        "m6-duplicate.ts is known (ts-fix/tests/it/cc_repair.rs) to carry 5 legal duplicates"
     );
     assert!(
         illegal > 0,

@@ -636,7 +636,7 @@ fn lp_nal(payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// An AVC track spec — the same minimal shape `tests/splice.rs` builds.
+/// An AVC track spec — the same minimal shape `tests/it/splice.rs` builds.
 fn avc_spec(track_id: u32) -> transmux::TrackSpec {
     let record = transmux::AVCDecoderConfigurationRecord {
         configuration_version: 1,

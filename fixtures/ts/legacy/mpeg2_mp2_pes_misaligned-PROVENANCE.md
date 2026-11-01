@@ -29,9 +29,9 @@ real captured audio bytes rather than fabricated data.
 The one-off generator script (`transmux/examples/_gen_638_fixture.rs`) is not
 committed — it was run once and deleted; this file documents the recipe.
 Regenerate by reproducing the steps above (see
-`transmux/tests/mpeg_legacy.rs`'s `mpeg_audio_resyncs_across_pes_boundaries`
+`transmux/tests/it/mpeg_legacy.rs`'s `mpeg_audio_resyncs_across_pes_boundaries`
 for the exact chunking parameters).
 
 ## Used by
 
-- `transmux/tests/mpeg_legacy.rs::mpeg_audio_resyncs_across_pes_boundaries`
+- `transmux/tests/it/mpeg_legacy.rs::mpeg_audio_resyncs_across_pes_boundaries`

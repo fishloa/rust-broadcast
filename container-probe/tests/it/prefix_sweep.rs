@@ -8,7 +8,7 @@
 //!
 //! # Why this test exists in this shape
 //!
-//! `tests/insufficient_contract.rs` checks the same contract at *hand-picked*
+//! `tests/it/insufficient_contract.rs` checks the same contract at *hand-picked*
 //! boundaries: one byte short of each prober's header minimum, plus a 64-byte
 //! elementary-stream read. It passed while the contract was still broken at
 //! more than two hundred other lengths, because the bug never lived at a
@@ -71,7 +71,7 @@ enum WholeFile {
 /// claims to detect, with the format it must ultimately resolve to.
 ///
 /// A non-media file is deliberately absent: `Unknown` is the *correct* answer
-/// there, and that direction is covered by `tests/corpus_sweep.rs`.
+/// there, and that direction is covered by `tests/it/corpus_sweep.rs`.
 const REAL_FILES: &[(&str, Format, WholeFile)] = &[
     (
         "fixtures/ts/h264_aac.ts",

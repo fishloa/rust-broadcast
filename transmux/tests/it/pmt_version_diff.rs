@@ -721,7 +721,7 @@ const STREAM_TYPE_AVC: u8 = 0x1B;
 
 /// Real captured AC-3 syncframes, pulled straight out of the committed
 /// `fixtures/ts/dolby/ac3.ts` (the same real ffmpeg-encoded AC-3 capture
-/// `tests/dolby.rs`'s ffmpeg `dac3` oracle test bites against). Used verbatim,
+/// `tests/it/dolby.rs`'s ffmpeg `dac3` oracle test bites against). Used verbatim,
 /// so the reclassified track's config is recovered from genuine BSI bits, not
 /// from bytes invented to satisfy the parser.
 fn real_ac3_syncframes() -> Vec<Vec<u8>> {

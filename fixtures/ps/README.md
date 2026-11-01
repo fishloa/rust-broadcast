@@ -1,7 +1,7 @@
 # `fixtures/ps/` — MPEG-1/2 Program Stream fixtures
 
 - `h264_ac3.ps` + `h264_ac3.packets.csv` — H.264 video + AC-3 audio PS, with an
-  ffprobe per-packet oracle CSV. Used by `transmux/tests/ps_demux.rs`.
+  ffprobe per-packet oracle CSV. Used by `transmux/tests/it/ps_demux.rs`.
 
 - `ffmpeg-mpeg2video-mp2.ps` — MPEG-2 video + MPEG-1 Layer II audio PS (issue
   #1009, `ps_demux` C6: MPEG-2 video was misidentified as H.264). Generated
@@ -21,7 +21,7 @@
 - `ffmpeg-mpeg2video-2xac3.ps` — MPEG-2 video + **two** AC-3 audio substreams in
   a single `private_stream_1` (0xBD) `stream_id`, distinguished by their
   `substream_id` bytes (0x80 and 0x81). Used by
-  `transmux/tests/ps_demux_substreams.rs` (audit r04-W19/W20). Generated with:
+  `transmux/tests/it/ps_demux_substreams.rs` (audit r04-W19/W20). Generated with:
 
   ```sh
   ffmpeg -f lavfi -i testsrc2=duration=2:size=352x288:rate=25 \
@@ -37,7 +37,7 @@
   `substream_id`. Released under the workspace licence.
 
 - `ffmpeg-h264-noaud.ps` — H.264 video with **no access-unit delimiter** + AC-3
-  audio. Used by `transmux/tests/ps_demux_substreams.rs` (audit r04-W21): an
+  audio. Used by `transmux/tests/it/ps_demux_substreams.rs` (audit r04-W21): an
   AUD-only splitter cannot find a single boundary in it, so the whole file
   collapses into one "access unit". Generated from the H.264/AAC capture above:
   the AUDs are stripped as they are (so no NAL is rewritten, unlike a
@@ -64,7 +64,7 @@
   ffmpeg -v error -i fixtures/ps/ffmpeg-mpeg2video-2xac3.ps -map 0:a:N          -c copy -f ac3 fixtures/ps/ffmpeg-mpeg2video-2xac3.aN.ac3
   ```
 
-  Used by `transmux/tests/ps_demux_substreams.rs` as a **non-circular** oracle:
+  Used by `transmux/tests/it/ps_demux_substreams.rs` as a **non-circular** oracle:
   the crate's demuxed AC-3 tracks must be byte-identical to these, so the test
   is not comparing the demuxer against a rule it derived itself. Both are
   48 482 bytes (58 syncframes; the last is trimmed), and they differ from each
@@ -73,7 +73,7 @@
 
 - `ffmpeg-ac3-dts.ps` — MPEG-2 video + AC-3 + **DTS** in one
   `private_stream_1` stream, used by
-  `transmux/tests/ps_demux_substreams.rs` (a non-AC-3 audio substream must be
+  `transmux/tests/it/ps_demux_substreams.rs` (a non-AC-3 audio substream must be
   skipped). Generated with ffmpeg's own DTS encoder, so the 0x88 substream
   carries a real `dca` bitstream rather than relabelled AC-3:
 

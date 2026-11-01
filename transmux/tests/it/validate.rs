@@ -15,7 +15,7 @@ use transmux::{
 };
 
 // ---------------------------------------------------------------------------
-// Fixture plumbing (mirrors tests/pipeline.rs)
+// Fixture plumbing (mirrors tests/it/pipeline.rs)
 // ---------------------------------------------------------------------------
 
 fn fixture() -> Vec<u8> {

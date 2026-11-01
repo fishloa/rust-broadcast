@@ -8,4 +8,4 @@ machines emit, generated on `main` at BASE `182d03f78bd508981c2f2dace5efeebcfe88
 GOLDEN_UPDATE=1 cargo test --locked -p webrtc-runtime --all-features --test golden_http
 ```
 
-`tests/golden_http.rs` compares the live output to this file byte-for-byte.
+`tests/it/golden_http.rs` compares the live output to this file byte-for-byte.

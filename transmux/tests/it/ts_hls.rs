@@ -2,7 +2,7 @@
 //! playlist), verified by round-tripping the outputs through the independent,
 //! ffmpeg-oracle-gated `TsDemux` (issue #472).
 //!
-//! Oracle: `TsDemux` is byte-oracle-gated against ffmpeg in `tests/ts_demux.rs`.
+//! Oracle: `TsDemux` is byte-oracle-gated against ffmpeg in `tests/it/ts_demux.rs`.
 //! So demuxing the concatenated `.ts` segments (or the first segment alone) and
 //! comparing tracks / coded NAL payloads / audio frames / timing against the
 //! original IR proves segmentation is lossless and each segment is decodable —

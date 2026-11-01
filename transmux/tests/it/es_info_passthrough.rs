@@ -13,7 +13,7 @@
 //! would falsely advertise this cleartext-output muxer's stream as scrambled,
 //! pointing at a `CA_PID` that does not exist in the new PMT — de-duplicated
 //! against descriptors this muxer synthesises itself (e.g. the MPEG-H
-//! `MPEG-H_3dAudio_descriptor`, covered separately by `tests/mpegh_ts.rs`
+//! `MPEG-H_3dAudio_descriptor`, covered separately by `tests/it/mpegh_ts.rs`
 //! against a real fixture).
 //!
 //! Fixture: `fixtures/ts/france2.ts` — a real DVB capture, one PMT (PID

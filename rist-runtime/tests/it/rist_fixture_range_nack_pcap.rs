@@ -17,7 +17,7 @@
 //! [`GenericNack`] — asserting bitmask NACKs are present here would be false.
 //!
 //! The classic-pcap walker is written by hand rather than adding a `pcap`
-//! dependency, following `webrtc-runtime/tests/whip_smoke_pcap_stun.rs`'s
+//! dependency, following `webrtc-runtime/tests/it/whip_smoke_pcap_stun.rs`'s
 //! existing precedent for this exact `DLT_NULL` capture shape.
 
 use broadcast_common::{Parse, Serialize};

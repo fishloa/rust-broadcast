@@ -133,7 +133,7 @@ Annex C examples (ETSI copyright).
   document tree, so hostile nesting cannot overflow the stack); the serializer
   writes through `quick_xml::Writer`, so all attribute and text escaping is
   quick-xml's. A `DOCTYPE`, undefined entity, unbound prefix, second root or
-  trailing content is rejected. Guarded by `tests/no_dom_guard.rs`.
+  trailing content is rejected. Guarded by `tests/it/no_dom_guard.rs`.
 - Public enums are `#[non_exhaustive]` with `name()` and `Display`.
 - Truncation, XML-escaping and golden tests cover the parser.
 - `no_std` only for `error`; everything XML needs `std`.

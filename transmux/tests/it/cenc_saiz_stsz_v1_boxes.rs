@@ -29,7 +29,7 @@ fn fixture(name: &str) -> Vec<u8> {
 /// four-CC anywhere in `data`. Sufficient here: each four-CC of interest
 /// appears exactly once as a real box tag in these small fixtures, and an
 /// ASCII four-CC recurring by chance inside compressed audio/video payload
-/// bytes is not a realistic risk (the same approach `tests/cenc.rs` uses).
+/// bytes is not a realistic risk (the same approach `tests/it/cenc.rs` uses).
 fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
     let pos = data
         .windows(4)

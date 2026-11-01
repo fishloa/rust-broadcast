@@ -13,7 +13,7 @@
 //! transform must move the anchor **and** the samples in lockstep — asserted
 //! here. 33-bit wrap-unrolling is no longer a transform in this module at all:
 //! it happens once, at the demux edge, and is gated by
-//! `tests/absolute_timing.rs`.
+//! `tests/it/absolute_timing.rs`.
 //!
 //! EXIT CRITERIA:
 //! 1. Anchor from real demux: an fMP4 built at a known non-zero `tfdt`

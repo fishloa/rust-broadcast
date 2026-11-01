@@ -984,7 +984,7 @@ impl Ec3SpecificBox {
     /// dependent substream and, with it, no `chan_loc` at all (`if num_dep_sub >
     /// 0 { chan_loc }`). Real producers write the count: MP4Box (GPAC 26.07)
     /// and ffmpeg 8.1.2 both emit `num_dep_sub` = 1 for the real 7.1 stream in
-    /// `tests/eac3_real_dependent_substreams.rs`, whose lone dependent frame has
+    /// `tests/it/eac3_real_dependent_substreams.rs`, whose lone dependent frame has
     /// `substreamid` 0.
     ///
     /// The pre-fix builder derived `num_ind_sub` from the frame's own
@@ -1999,7 +1999,7 @@ pub(crate) mod tests {
     /// they are numbered from 0), so a lone dependent substream with id 0 is 1,
     /// not 0 - the literal §F.6.2.12 reading would give 0 and drop `chan_loc`
     /// (MP4Box and ffmpeg both write 1 for the real stream in
-    /// `tests/eac3_real_dependent_substreams.rs`).
+    /// `tests/it/eac3_real_dependent_substreams.rs`).
     #[test]
     fn num_dep_sub_counts_dependent_substreams() {
         let ind = eac3_bsi(0, 0, 64, 7, true, 0, 3, None, None);

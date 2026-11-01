@@ -3,7 +3,7 @@
 //! issue #741) and asserts the engine's own, independently-computed NACK
 //! output matches the real RTCP bytes librist actually put on the wire —
 //! the "must bite against the real capture" requirement for the ARQ engine
-//! (as opposed to `tests/rist_fixture_range_nack_pcap.rs`, which only
+//! (as opposed to `tests/it/rist_fixture_range_nack_pcap.rs`, which only
 //! exercises the wire *codec*, not the engine that decides when to build
 //! one).
 //!
@@ -45,7 +45,7 @@ use rist_runtime::{RangeNack, RistReceiverCompound};
 /// `DLT_NULL` classic-pcap walker, deliberately re-implemented (not shared
 /// via a test-support module) so this test independently re-verifies
 /// against the committed fixture file rather than trusting a copy of a hex
-/// literal — mirrors `tests/rist_fixture_range_nack_pcap.rs`'s walker.
+/// literal — mirrors `tests/it/rist_fixture_range_nack_pcap.rs`'s walker.
 struct UdpPacket<'a> {
     frame: usize,
     src_port: u16,
@@ -217,6 +217,6 @@ fn engine_reproduces_frame15_range_nack_from_the_verified_loss_shape() {
         "engine-generated RangeNack must be field-for-field equal to librist's \
          real frame-15 payload (typed equality — this test compares decoded \
          `RangeNack` values, not wire bytes; the wire-level byte-exact \
-         round-trip lives in tests/rist_fixture_range_nack_pcap.rs)"
+         round-trip lives in tests/it/rist_fixture_range_nack_pcap.rs)"
     );
 }

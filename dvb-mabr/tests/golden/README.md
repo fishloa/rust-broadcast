@@ -9,11 +9,11 @@ quick-xml branch):
 
 ```bash
 git worktree add --detach ../qxml-main b383d298
-cp dvb-mabr/tests/golden.rs ../qxml-main/dvb-mabr/tests/golden.rs   # the test file is API-identical on main
+cp dvb-mabr/tests/it/golden.rs ../qxml-main/dvb-mabr/tests/golden.rs   # the test file is API-identical on main
 cd ../qxml-main
 GOLDEN_BLESS=<this directory> cargo test -p dvb-mabr --test golden --all-features --locked
 ```
 
-The tests (`dvb-mabr/tests/golden.rs`) compare the current output to these files and fail on any
+The tests (`dvb-mabr/tests/it/golden.rs`) compare the current output to these files and fail on any
 byte difference. Intended, documented differences from main are listed in the crate
 CHANGELOG `### Changed` section; none of them is exercised by these inputs.

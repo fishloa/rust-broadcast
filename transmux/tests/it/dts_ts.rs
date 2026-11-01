@@ -35,7 +35,7 @@ fn dts_track(media: &Media) -> &transmux::media::Track {
 
 // ---------------------------------------------------------------------------
 // Minimal TS/PSI/PES walking (byte-level, independent of crate internals) —
-// mirrors tests/ts_mux.rs / tests/dolby.rs.
+// mirrors tests/it/ts_mux.rs / tests/it/dolby.rs.
 // ---------------------------------------------------------------------------
 
 fn pid_of(pkt: &[u8]) -> u16 {

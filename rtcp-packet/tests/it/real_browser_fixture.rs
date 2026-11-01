@@ -4,7 +4,7 @@
 //! discarding a leading, perfectly valid SR/RR along with it — losing a
 //! browser's own sender/receiver stats, not just the unsupported feedback.
 //!
-//! `tests/spec_vectors.rs` notes this crate had no real captured RTCP traffic
+//! `tests/it/spec_vectors.rs` notes this crate had no real captured RTCP traffic
 //! to draw on; this file closes that gap with one captured from a real
 //! Chromium `RTCPeerConnection` (see `tests/fixtures/README.md` for exact
 //! provenance) rather than another hand-built or spec-derived vector — this

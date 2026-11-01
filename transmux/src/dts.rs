@@ -595,7 +595,7 @@ mod tests {
     /// Spec-derived test vector: hand-computed from §E.2.2.3.1 field layout.
     ///
     /// Fields chosen to exercise every non-zero field and keep mental arithmetic
-    /// simple. See `transmux/tests/dts.rs` for the full integration gate.
+    /// simple. See `transmux/tests/it/dts.rs` for the full integration gate.
     #[test]
     fn round_trip_unit() {
         // Build a DtsSpecificBox from known field values.

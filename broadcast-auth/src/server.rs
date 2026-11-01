@@ -700,7 +700,7 @@ fn sanitize_realm(realm: &str) -> String {
 ///
 /// Rendering a `WWW-Authenticate` challenge stays a formatter here because no
 /// crate in the workspace can produce one (`http_auth::ChallengeRef`
-/// implements only `Debug`; escalation E1). `tests/challenge_render.rs` parses
+/// implements only `Debug`; escalation E1). `tests/it/challenge_render.rs` parses
 /// every rendering back with `http-auth`'s `ChallengeParser`.
 fn quoted(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
@@ -759,7 +759,7 @@ fn decode_ext_value(v: &str) -> Option<String> {
 /// RFC 7235 `credentials` for the Digest scheme are an `auth-param` list — the
 /// same grammar `http-auth` parses for challenges — so its parser reads them
 /// (verified against the RFC 7616 §3.9.1 examples in
-/// `tests/http_auth_rfc7616.rs`). Names are lower-cased (RFC 7235 §2.1),
+/// `tests/it/http_auth_rfc7616.rs`). Names are lower-cased (RFC 7235 §2.1),
 /// quoted-pairs are unescaped, and anything ambiguous is refused: more than one
 /// challenge, a scheme other than `Digest`, a repeated parameter, or more than
 /// [`MAX_DIGEST_FIELDS`] parameters.

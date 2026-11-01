@@ -1,7 +1,7 @@
 //! The post-fix server path: a 1.0-1.5 s delivery stall followed by a
 //! line-rate burst of the backlog (10x here: a 1.4 s backlog drains in about
 //! 140 ms) that returns the lead to its pre-gap value. Two stalls, 20 s apart.
-//! The real traces (`tests/real_traces.rs`) are the old no-burst server and
+//! The real traces (`tests/it/real_traces.rs`) are the old no-burst server and
 //! stay as they are; a real post-fix trace is to be added by zenith-tv.
 use crate::support::*;
 use buffering_runtime::{Event, State};

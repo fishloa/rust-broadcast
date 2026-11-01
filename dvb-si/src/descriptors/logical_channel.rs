@@ -7,7 +7,7 @@
 //! Provenance of the layout: EACEM TR-030 / the D-Book are **not vendored**, so
 //! this 10-bit-LCN layout (`visible_service_flag` + `reserved(5)` + 10-bit LCN,
 //! PDS 0x28) rests on real captures only (France TNT, TSDuck test streams; see
-//! `tests/downloaded_lcn.rs`). The vendored NorDig Unified Requirements v3.2.2
+//! `tests/it/downloaded_lcn.rs`). The vendored NorDig Unified Requirements v3.2.2
 //! define the descriptors that share tag 0x83 / 0x87 under PDS 0x29 in §12.2.9
 //! (LCD v1: `reserved(1)` + 14-bit LCN; LCD v2); both are typed in
 //! [`super::nordig`] and are a different layout from this one.
@@ -31,7 +31,7 @@ const LCN_HI_MASK: u8 = 0x03;
 /// NorDig v1 layout on the same tag has `reserved(1)` + a 14-bit LCN, see
 /// `nordig.rs`). Real-capture evidence: the run is `11111` in all 2456 entries
 /// of the PDS-0x28 captures in the private real-capture corpus (France TNT mux, TSDuck
-/// test-059/092/124/184; `tests/local_archive_reserved_defaults.rs`). The bits
+/// test-059/092/124/184; `tests/it/local_archive_reserved_defaults.rs`). The bits
 /// are preserved on parse.
 pub const RESERVED_DEFAULT: u8 = 0x1F;
 /// `logical_channel_number` is 10 bits (0..=1023).

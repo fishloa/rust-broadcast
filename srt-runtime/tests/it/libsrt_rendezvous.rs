@@ -2,7 +2,7 @@
 //! §4.3.2) over loopback UDP, through the tokio adapter
 //! ([`SrtSocket::rendezvous`]).
 //!
-//! `tests/rendezvous_round_trip.rs` only runs the sans-IO engine against
+//! `tests/it/rendezvous_round_trip.rs` only runs the sans-IO engine against
 //! ITSELF; the cookie contest, the Initiator/Responder message tables and the
 //! missing-packet recovery rules are exactly where two implementations of an
 //! ambiguous spec diverge, so the independent oracle here is a genuine

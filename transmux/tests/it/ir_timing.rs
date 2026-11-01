@@ -827,7 +827,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
     // m6-single.ts Data tracks too. Since issue #641, this excerpt's 3 audio
     // PIDs (0x82/0x83/0x84) classify as real, CMAF-carriable
     // `CodecConfig::Eac3` tracks rather than opaque Data (see
-    // `tests/any_stream.rs`), so this Media mixes carriable and opaque
+    // `tests/it/any_stream.rs`), so this Media mixes carriable and opaque
     // tracks: `CmafMux` must reject it naming one of the Data tracks, and
     // only succeed once the caller explicitly filters them out.
     let ts = read_fixture("m6-single.ts");

@@ -29,7 +29,7 @@
 //! reserved low). Without a real DAS-carrying capture this cannot be decided;
 //! the tests below pin the crate to Table 8 for the compact form only. Both
 //! readings are selectable through `DasNibbleOrder` and pinned in
-//! `tests/das_nibble_order.rs`; the evidence search is recorded in
+//! `tests/it/das_nibble_order.rs`; the evidence search is recorded in
 //! `docs/dvb_ta/compact-scte35.md`.
 
 use broadcast_common::{Parse, Serialize};

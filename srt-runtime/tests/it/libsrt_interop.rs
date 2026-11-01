@@ -1,13 +1,13 @@
 //! Real `libsrt` interop over loopback UDP, both directions (libsrt interop).
 //!
-//! `tests/libsrt_fixtures.rs` already proves real libsrt KEEPALIVE/ACKACK
+//! `tests/it/libsrt_fixtures.rs` already proves real libsrt KEEPALIVE/ACKACK
 //! bytes parse correctly (issue #1060). This file proves the *handshake and
 //! data path* actually completes end-to-end against a genuine libsrt peer, and
 //! that the connection-lifetime behaviour (idle survival, SHUTDOWN in both
 //! directions, a lost CONCLUSION response, a refused connect) matches what
 //! libsrt does — the independent oracle for the adapter, since every in-crate
 //! test of it is self-vs-self (issue #1131). The §6 key exchange has its own
-//! oracle file, `tests/libsrt_crypto_interop.rs`.
+//! oracle file, `tests/it/libsrt_crypto_interop.rs`.
 //!
 //! Skips itself LOUDLY (prints why, `--nocapture`) when `srt-live-transmit` is
 //! not on `PATH`; set `SRT_REQUIRE_LIBSRT=1` to make the skip a failure.
@@ -240,7 +240,7 @@ async fn our_caller_completes_real_handshake_and_data_with_libsrt_listener() {
 /// The source is `udp://:PORT`, not `file://con` (stdin): independently
 /// reproduced against two genuine `srt-live-transmit` processes with no code
 /// from this crate involved at all, `file://con` forwards zero bytes (a real
-/// libsrt/macOS `ConsoleSource` defect, see `tests/libsrt_fixtures.rs`'s
+/// libsrt/macOS `ConsoleSource` defect, see `tests/it/libsrt_fixtures.rs`'s
 /// module doc), while plain `udp://` sourcing forwards the full burst.
 #[tokio::test]
 async fn real_libsrt_caller_completes_handshake_and_data_with_our_listener() {

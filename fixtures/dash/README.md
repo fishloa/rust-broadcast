@@ -4,7 +4,7 @@
   real ffmpeg-generated DASH presentation (`ffmpeg -i fixtures/ts/h264_aac.ts
   -c copy -f dash`), one video and one audio `AdaptationSet`, each
   `Representation` carrying its own `SegmentTemplate` +
-  `SegmentTimeline`. Used by `transmux/tests/dash.rs`, `dash_mpd.rs`,
+  `SegmentTimeline`. Used by `transmux/tests/it/dash.rs`, `dash_mpd.rs`,
   `dash_parse.rs`.
 
 - `manifest-inheritance.mpd` — **derived** from `manifest.mpd` above (same

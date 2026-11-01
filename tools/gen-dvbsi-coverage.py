@@ -35,7 +35,7 @@ Usage::
     python3 tools/gen-dvbsi-coverage.py           # rewrite the outputs
     python3 tools/gen-dvbsi-coverage.py --check   # exit 1 (with a diff) if stale
 
-``--check`` is what ``dvb-si/tests/docs_coverage_drift.rs`` runs, so CI fails
+``--check`` is what ``dvb-si/tests/it/docs_coverage_drift.rs`` runs, so CI fails
 whenever a table/descriptor is added, removed or re-cited without
 regenerating the docs.
 """

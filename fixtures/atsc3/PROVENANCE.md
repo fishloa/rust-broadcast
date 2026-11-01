@@ -69,7 +69,7 @@ valid XML. Decompressed content (`SLT` root, A/331 §6.3 Table 6.2):
 
 This parses cleanly with `atsc3::slt::Slt::parse` (two `Service`
 elements, `slsProtocol="1"` = ROUTE, both services `LinearAv` category)
-— see `atsc3/tests/fixture_slt.rs`. Note `sltSvcSeqNum` on each
+— see `atsc3/tests/it/fixture_slt.rs`. Note `sltSvcSeqNum` on each
 `Service` is a real attribute this crate does not yet model (deferred,
 per `atsc3/src/slt.rs`'s own doc comment listing `sltSvcSeqNum` among
 "not yet modeled here" — this real fixture confirms it is a genuine,

@@ -3,7 +3,7 @@
 //! Oracle: `fixtures/ts/france-pcr-discontinuity.ts` — a 2688-packet slice of
 //! a real French DTT capture carrying 5 PCR PIDs. Independently walking every
 //! adaptation field in the fixture (byte-level scan, cross-checked against
-//! the existing `tests/pcr_restamp.rs` re-anchor test) finds **exactly one**
+//! the existing `tests/it/pcr_restamp.rs` re-anchor test) finds **exactly one**
 //! PCR jump in the whole file:
 //!
 //! ```text
@@ -16,7 +16,7 @@
 //!
 //! Because the real capture's only break is already legally flagged, this
 //! file's **unflagged-defect** tests use a real-fixture *fault injection*
-//! (the project's established pattern — see `tests/pcr_restamp.rs`'s
+//! (the project's established pattern — see `tests/it/pcr_restamp.rs`'s
 //! `corrupt_pcrs`): clear just the `discontinuity_indicator` bit at packet
 //! 1251, leaving the genuine ~10 s PCR jump (100% real capture data) with no
 //! indicator — the exact "defect" scenario ISO/IEC 13818-1 §2.4.3.5 /

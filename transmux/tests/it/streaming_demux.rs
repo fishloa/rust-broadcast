@@ -8,7 +8,7 @@
 //! teletext data tracks, zero PCRs, one codec PID with no packets in this
 //! excerpt), and `fixtures/ts/france-pcr-discontinuity.ts` (a genuine PCR
 //! discontinuity). `m6-single.ts` lives in `fixtures/ts/` (not
-//! `dvb-si/tests/fixtures/`) in this checkout — `transmux/tests/ir_timing.rs`
+//! `dvb-si/tests/fixtures/`) in this checkout — `transmux/tests/it/ir_timing.rs`
 //! already reads it from that path.
 
 use mpeg_ts::pid::Pid;

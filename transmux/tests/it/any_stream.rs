@@ -5,7 +5,7 @@
 //!
 //! Fixture: the real DVB capture `fixtures/ts/m6-single.ts` (PMT PID
 //! `0x0064`). Its PMT lists (across the several distinct PMT section
-//! contents the capture actually carries — see `tests/ir_timing.rs`'s module
+//! contents the capture actually carries — see `tests/it/ir_timing.rs`'s module
 //! docs for the same caveat, and note below: even the SAME PID's ES_info
 //! descriptors flip between two byte-for-byte variants across repeats):
 //! PES-carried `0x78` (H.264, `0x1B`) and `0x82`/`0x83`/`0x84` (audio,
@@ -18,8 +18,8 @@
 //! (`0x78`, zero packets at all), the other subtitle PIDs, and `0xAC` (4
 //! packets, but none `PUSI=1` — a truncated tail with no section ever
 //! started) never get one in this excerpt (a pre-existing, already-
-//! documented property of this fixture, see `tests/ir_timing.rs` /
-//! `tests/streaming_demux.rs`), so **no video track is ever produced from
+//! documented property of this fixture, see `tests/it/ir_timing.rs` /
+//! `tests/it/streaming_demux.rs`), so **no video track is ever produced from
 //! this fixture alone**; test 4 below combines it with a second real
 //! fixture that does carry video.
 //!
@@ -40,7 +40,7 @@
 //! Oracle: every PMT/section assertion is checked against an independent
 //! walk of the raw TS bytes in this file ([`mpeg_ts::ts::SectionReassembler`]
 //! plus a hand-rolled PMT-body walk) — never the crate's own PMT parser
-//! under test (mirrors `tests/ir_timing.rs`'s `collect_pmt_es`).
+//! under test (mirrors `tests/it/ir_timing.rs`'s `collect_pmt_es`).
 
 use mpeg_ts::pid::Pid;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -138,7 +138,7 @@ fn find_pmt_pid(data: &[u8]) -> u16 {
 /// `(stream_type, elementary_pid, ES_info descriptor bytes)` for every ES
 /// loop entry across every distinct PMT section seen on `pmt_pid` in `data`
 /// (ISO/IEC 13818-1 §2.4.4.8) — written from scratch here, not reusing the
-/// crate's own PMT parser (mirrors `tests/ir_timing.rs`'s `collect_pmt_es`).
+/// crate's own PMT parser (mirrors `tests/it/ir_timing.rs`'s `collect_pmt_es`).
 fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
     const TABLE_ID_PMT: u8 = 0x02;
     let mut reasm = SectionReassembler::default();

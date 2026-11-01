@@ -17,7 +17,7 @@
 //! the field plus one; with `timescale_flag == 0` the text infers `MDL = 0`
 //! (field = -1) and `ticks_per_second = 1`, i.e. a bare 5-bit duration. TSDuck
 //! 3.44 writes the field as `MDL` itself (one byte fewer) and so disagrees; the
-//! divergence is pinned in `tests/h222_descriptors.rs` (against a real
+//! divergence is pinned in `tests/it/h222_descriptors.rs` (against a real
 //! `tstabcomp` output, `tests/fixtures/tsduck-h222-virtual-segmentation-pmt.*`).
 //! Unlike ext 0x13 this is not a spec self-contradiction: the text is
 //! determinate (`timescale_flag == 0` infers `MDL = 0` for `minus_1 = -1`), so

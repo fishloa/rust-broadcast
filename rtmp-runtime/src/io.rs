@@ -505,7 +505,7 @@ mod tests {
     /// bytes and drains the server's replies, while the server side accepts
     /// the connection and loops `next_events` until the connection closes.
     ///
-    /// This is the online counterpart of `tests/ingest_fixture.rs`'s offline
+    /// This is the online counterpart of `tests/it/ingest_fixture.rs`'s offline
     /// replay — it proves the tokio adapter (not just the sans-IO session)
     /// actually drives a real publish to `Connected` -> `Publish` -> `Media`.
     #[tokio::test]

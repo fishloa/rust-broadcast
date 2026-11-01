@@ -1,6 +1,6 @@
 //! TSDuck as an independent oracle for `--regen-psi` (issue #1037).
 //!
-//! `ts-fix/tests/psi_regen.rs` validates `regen_psi`'s output with our own
+//! `ts-fix/tests/it/psi_regen.rs` validates `regen_psi`'s output with our own
 //! `dvb_si::tables::pat::PatSection::parse` — the same crate whose builder
 //! (`PatSection`/`SectionPacketiser`) `regen_psi` itself calls to construct
 //! that output. A shared misreading of ISO/IEC 13818-1 (e.g. what

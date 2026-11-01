@@ -6,7 +6,7 @@
 //! to the other side, round by round, until both reach `Connected`.
 //!
 //! This is the "must bite" test for issue #609, mirroring the Caller-Listener
-//! `tests/handshake_round_trip.rs`: it proves the two (identical, symmetric)
+//! `tests/it/handshake_round_trip.rs`: it proves the two (identical, symmetric)
 //! engines actually agree on a real cookie contest outcome — one becomes
 //! Initiator, the other Responder — and land on cross-matching negotiated
 //! parameters, not just that each one runs without erroring in isolation.

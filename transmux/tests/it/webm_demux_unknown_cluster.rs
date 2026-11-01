@@ -21,7 +21,7 @@
 //!
 //! The oracle is the fixture's own already-verified total block count and
 //! per-block byte lengths (`fixtures/webm/vp9_opus.packets.csv`, used
-//! identically by `transmux/tests/webm_demux.rs`): re-framing must not change
+//! identically by `transmux/tests/it/webm_demux.rs`): re-framing must not change
 //! how many blocks exist or their contents, only whether the demuxer finds
 //! all of them.
 

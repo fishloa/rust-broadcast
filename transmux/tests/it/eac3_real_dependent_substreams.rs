@@ -33,7 +33,7 @@ const SAMPLES_PER_AU: u32 = 1536;
 fn local(rel: &str) -> Option<Vec<u8>> {
     test_fixtures::require_bytes(
         &format!("eac3-dep/{rel}"),
-        "transmux/tests/eac3_real_dependent_substreams.rs",
+        "transmux/tests/it/eac3_real_dependent_substreams.rs",
     )
 }
 

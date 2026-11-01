@@ -203,7 +203,7 @@ fn access_units(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
         .collect()
 }
 
-// ── moof inspection (reused pattern from tests/segmenter.rs) ────────────────
+// ── moof inspection (reused pattern from tests/it/segmenter.rs) ────────────────
 
 /// Find the first top-level box of `fourcc` in a serialized segment and return
 /// its **body** (bytes after the 8-byte box header).

@@ -28,7 +28,7 @@ the moment the runtime feature is enabled.
 
 Every tag defined in §4.4 parses **and** serializes, with typed values (enums and structured
 attribute lists, never stringly-typed), `#[non_exhaustive]` public types, and a round-trip test.
-`broadcast-hls/tests/hls_tag_completeness.rs` enumerates all 32 by name and fails if one becomes
+`broadcast-hls/tests/it/hls_tag_completeness.rs` enumerates all 32 by name and fails if one becomes
 unhandled, so a future spec revision surfaces as a red test rather than silence.
 
 **Basic** (§4.4.1) — `EXTM3U`, `EXT-X-VERSION`
@@ -58,7 +58,7 @@ This replaced a hard-coded `9` that over-declared every playlist. §7 says a cli
 attempt playback if it does not support the declared version, so over-declaring told every
 client on 6, 7 or 8 to refuse a stream it could play.
 
-**Cross-checked against the spec authors.** `broadcast-hls/tests/spec_fixture_version.rs` parses
+**Cross-checked against the spec authors.** `broadcast-hls/tests/it/spec_fixture_version.rs` parses
 the RFC's own §9 example playlists and compares the derived version with the one the authors
 declared:
 

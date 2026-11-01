@@ -6,7 +6,7 @@
 //!
 //! Fixtures live in the workspace-shared `fixtures/atsc3/` directory, not
 //! inside this crate — per project convention (see e.g.
-//! `dvb-mabr/tests/round_trip.rs`). Full provenance, including why this is
+//! `dvb-mabr/tests/it/round_trip.rs`). Full provenance, including why this is
 //! a genuine capture and not a synthetic sample, is in
 //! `fixtures/atsc3/PROVENANCE.md`.
 

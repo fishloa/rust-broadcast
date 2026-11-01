@@ -2,7 +2,7 @@
 //! generated `#EXTM3U` text.
 //!
 //! RFC-8216 oracle validation (via `media_doctor::check_playlist`) lives in
-//! `media-doctor/tests/broadcast_hls_oracle.rs` — a cross-crate test that
+//! `media-doctor/tests/it/broadcast_hls_oracle.rs` — a cross-crate test that
 //! follows the governing rule that a test touching two crates lives in the
 //! topologically highest one.
 

@@ -1,7 +1,7 @@
 //! Real-fixture gate for the streaming RTP depayloader (#700).
 //!
 //! Demuxes the real `h264_aac.ts` fixture, packetises it to RTP (the same
-//! `TsDemux` + `RtpPacketiser::package` calls `tests/rtp.rs` uses), then feeds
+//! `TsDemux` + `RtpPacketiser::package` calls `tests/it/rtp.rs` uses), then feeds
 //! the video stream's packets through [`RtpStreamDepacketiser`] fed with the
 //! codec config recovered from the *generated SDP* (exercising the P2
 //! `avc_config_from_sprop`/`aac_config_from_asc_hex` round-trip), and checks the
@@ -33,7 +33,7 @@ use transmux::{
 const MTU: usize = 1400;
 const SSRC: u32 = 0x1234_5678;
 
-// ── Step 0 plumbing, copied verbatim from tests/rtp.rs ──────────────────────
+// ── Step 0 plumbing, copied verbatim from tests/it/rtp.rs ──────────────────────
 
 fn demux_fixture() -> Media {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");

@@ -1,7 +1,7 @@
 //! `TsMux` gate — hub `Media` IR → MPEG-2 TS, verified by a full round-trip
 //! through the independent, ffmpeg-oracle-gated `TsDemux` (issue #460).
 //!
-//! Oracle: `TsDemux` is byte-oracle-gated against ffmpeg in `tests/ts_demux.rs`,
+//! Oracle: `TsDemux` is byte-oracle-gated against ffmpeg in `tests/it/ts_demux.rs`,
 //! so a `TsDemux(TsMux(TsDemux(fixture)))` round-trip that preserves tracks,
 //! codec configs, coded NAL payloads, frame counts, and per-sample timing proves
 //! the mux is a faithful inverse — none of it can be faked (a raw-passthrough

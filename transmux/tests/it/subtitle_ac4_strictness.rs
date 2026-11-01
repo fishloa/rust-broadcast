@@ -137,7 +137,7 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
     assert_eq!(media.tracks.len(), 2, "AVC video + stpp subtitle track");
 
     // Since #1186 the demuxed `stpp` track carries its sample entry, so
-    // an UNFILTERED CmafMux carries it (see `tests/subtitle_remux.rs`). A
+    // an UNFILTERED CmafMux carries it (see `tests/it/subtitle_remux.rs`). A
     // subtitle track with no sample entry is still rejected, by name.
     let mut entryless = media.clone();
     for t in &mut entryless.tracks {
@@ -193,7 +193,7 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
 #[test]
 fn ac4_round_trips_through_cmaf_mux_then_demux() {
     // The same real, recorded `dac4` (ac4_dsi_v1) oracle body used by
-    // `tests/codecs_new.rs::DAC4_ORACLE` (29 bytes, real Dolby AC-4 init
+    // `tests/it/codecs_new.rs::DAC4_ORACLE` (29 bytes, real Dolby AC-4 init
     // segment; source mp4 non-redistributable, issue #431).
     const DAC4_ORACLE: &[u8] = &[
         0x20, 0xa4, 0x01, 0x40, 0x00, 0x00, 0x00, 0x1f, 0xff, 0xff, 0xff, 0xe0, 0x01, 0x0f, 0xf8,

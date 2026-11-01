@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use transmux::pipeline::CodecConfig;
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
-const WHO: &str = "transmux/tests/streaming_ts_demux_eac3_bsmod.rs";
+const WHO: &str = "transmux/tests/it/streaming_ts_demux_eac3_bsmod.rs";
 const AUDIO_PIDS: [u16; 3] = [0x82, 0x83, 0x84];
 /// The independently established truth (see the module docs): PID -> bsmod.
 const TRUTH: [(u16, u8); 3] = [(0x82, 0), (0x83, 2), (0x84, 0)];

@@ -93,10 +93,10 @@ run with `cargo run -p dvb-subtitle --example <name>`.
 - Zero-copy: parsed structs borrow `&'a [u8]` from the input.
 - Symmetric `Parse` / `Serialize`; parse then serialize is byte-identical, and
   serialize then parse compares equal. Tested against real M6 subtitle PES
-  reassembled from `fixtures/ts/m6-single.ts` (`tests/fixture_subtitle.rs`).
+  reassembled from `fixtures/ts/m6-single.ts` (`tests/it/fixture_subtitle.rs`).
 - Serializers reject a value wider than its bit-field (`Error::FieldOverflow`)
   instead of masking; reserved code values are carried verbatim as `Reserved(v)`.
-- Hostile input never panics (`tests/hostility.rs`: truncation at every length,
+- Hostile input never panics (`tests/it/hostility.rs`: truncation at every length,
   mutation of every byte).
 - Public enums are `#[non_exhaustive]` and carry `name()` + `Display`.
 - `no_std` + `alloc`; MSRV 1.95.0.

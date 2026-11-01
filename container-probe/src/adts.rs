@@ -199,7 +199,7 @@ mod tests {
     ///
     /// Without suppression this probes Ambiguous (MpegTs 128 vs AdtsAac 128);
     /// with it, MpegTs. The assembly-level assertion lives in
-    /// `tests/fixture_magic_es.rs`; here we confirm the ADTS prober itself
+    /// `tests/it/fixture_magic_es.rs`; here we confirm the ADTS prober itself
     /// fires directly (chain >= 16) on the TS payload.
     #[test]
     fn adts_prober_fires_on_ts_carrying_adts() {
@@ -262,7 +262,7 @@ mod tests {
     }
 
     /// Pins the synthetic TS+ADTS byte layout so the duplicated builder in
-    /// `tests/fixture_magic_es.rs` (WP4 of the "remove duplication" task) cannot
+    /// `tests/it/fixture_magic_es.rs` (WP4 of the "remove duplication" task) cannot
     /// silently drift from this crate-internal one.
     ///
     /// The integration test cannot see the `#[cfg(test)]` helper here (it is

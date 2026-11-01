@@ -36,7 +36,7 @@ async fn t2mi_stream_matches_sync_oracle() {
     let path = t2mi_fixture_path();
     let data = std::fs::read(path).expect("colombia-capital-t2mi.ts fixture not found");
 
-    // The T2-MI PID for this fixture (see dvb-t2mi/tests/real_capture.rs,
+    // The T2-MI PID for this fixture (see dvb-t2mi/tests/it/real_capture.rs,
     // which uses the same file and PID).
     const T2MI_PID: Pid = Pid::new(0x0040);
 

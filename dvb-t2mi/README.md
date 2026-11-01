@@ -124,7 +124,7 @@ Examples: `cargo run -p dvb-t2mi --example parse_header` and `--example pump_cap
 ## Design notes
 
 - **Zero-copy, symmetric.** Payload views borrow the input; each has `Parse` +
-  `Serialize` and round-trip tests; `tests/chain.rs` runs a synthetic T2-MI ->
+  `Serialize` and round-trip tests; `tests/it/chain.rs` runs a synthetic T2-MI ->
   BBFrame -> inner TS -> SI chain.
 - **RFU policy (stricter than the workspace default, documented):** payload
   parsers reject non-zero reserved (RFU) bits with `ReservedBitsViolation` and

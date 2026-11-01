@@ -401,7 +401,7 @@ impl TsHlsPackager {
 /// Both the batch ([`partition_tracks`]) and streaming
 /// ([`StreamingTsHlsSegmenter::cut_segment`]) partitions call this, so the two
 /// place a given sample in the same segment (the equivalence this module's
-/// docs claim, and `tests/streaming_tshls.rs` enforces).
+/// docs claim, and `tests/it/streaming_tshls.rs` enforces).
 ///
 /// A section sample carrying *neither* a duration nor a dts has no time
 /// information anywhere in the IR; it keeps the accumulator's value, i.e. it

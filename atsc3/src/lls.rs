@@ -128,7 +128,7 @@ mod tests {
     /// neither valid gzip nor valid XML (issue #926). Precomputed with
     /// Python's `gzip` module (`mtime=0`); a genuine real-broadcast capture
     /// fixture is separately committed under `fixtures/atsc3/` and covered
-    /// by `tests/fixture_slt.rs` — these inline unit tests only need
+    /// by `tests/it/fixture_slt.rs` — these inline unit tests only need
     /// spec-shaped bytes, not a second copy of the real capture.
     const GZIPPED_SLT_XML: [u8; 67] = [
         0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb3, 0x09, 0xf6, 0x09, 0x51,

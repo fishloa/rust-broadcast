@@ -25,7 +25,7 @@
 //!    mode is caught here, on real fixtures, for every demuxer in the crate.
 //!
 //! Every fixture below is a real capture/encode already committed to the
-//! workspace (never fabricated bytes) — the same ones `tests/absolute_timing.rs`
+//! workspace (never fabricated bytes) — the same ones `tests/it/absolute_timing.rs`
 //! and each demuxer's own dedicated test file already use.
 //!
 //! ## Why invariant #2 alone cannot catch a scaling bug (T2 test-integrity audit)

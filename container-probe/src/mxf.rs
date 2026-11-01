@@ -134,7 +134,7 @@ fn ber_length_well_formed(ber: &[u8]) -> bool {
 mod drift {
     //! Pins this module's `MXF_KEY_PREFIX` to `st377-1`.
     //!
-    //! Lives here rather than in `tests/drift_guard.rs` because the constant is
+    //! Lives here rather than in `tests/it/drift_guard.rs` because the constant is
     //! private: an integration test can only compare upstream against a
     //! literal, which catches upstream changing but not this crate's copy
     //! drifting. A unit test sees the real constant.

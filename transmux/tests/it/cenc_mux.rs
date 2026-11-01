@@ -42,7 +42,7 @@ fn fixture_path() -> PathBuf {
 }
 
 /// The cleartext fixture, narrowed to its single AVC video track (mirrors
-/// `tests/cenc_encrypt.rs`'s `clear_video_media`).
+/// `tests/it/cenc_encrypt.rs`'s `clear_video_media`).
 fn clear_video_media() -> Option<Media> {
     let path = fixture_path();
     if !path.exists() {

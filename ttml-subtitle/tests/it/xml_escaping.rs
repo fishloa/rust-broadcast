@@ -102,7 +102,7 @@ fn assert_xml_parse_error(xml: &str, what: &str) {
 #[test]
 fn malformed_documents_are_structured_errors() {
     let good = r#"<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body><div><p begin="0s" end="1s">hi</p></div></body></tt>"#;
-    // (Truncation at every offset is asserted in tests/truncation.rs.)
+    // (Truncation at every offset is asserted in tests/it/truncation.rs.)
     assert_xml_parse_error("", "empty input");
     assert_xml_parse_error("not xml", "plain text");
     assert_xml_parse_error(&good[..good.len() - 4], "truncated close tag");

@@ -1,7 +1,7 @@
 //! Loss-recovery integration test — proves ARQ NAK->retransmit recovery
 //! (`draft-sharabayko-srt-01` §4.8.2) end to end **through the tokio glue in
 //! `io.rs`**, not just the sans-IO engine in isolation (see
-//! `tests/arq_recovery.rs` for that in-memory version).
+//! `tests/it/arq_recovery.rs` for that in-memory version).
 //!
 //! A small loss-injecting UDP relay sits between the [`SrtSocket`] Caller and
 //! the [`SrtListener`]-accepted connection, forwarding datagrams both ways

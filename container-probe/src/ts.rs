@@ -334,7 +334,7 @@ mod drift {
     //! Pins this module's re-declared constants to the upstream crate that
     //! already validates them against real fixtures.
     //!
-    //! These live here, not in `tests/drift_guard.rs`, because the constants
+    //! These live here, not in `tests/it/drift_guard.rs`, because the constants
     //! are private to this module. An integration test cannot see them, so it
     //! can only compare upstream against a *literal* — which catches upstream
     //! changing but NOT this crate's copy drifting, the direction that actually

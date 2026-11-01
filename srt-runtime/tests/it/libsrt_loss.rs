@@ -1,6 +1,6 @@
 //! Loss recovery against a genuine libsrt, over a UDP relay that drops chosen
 //! datagrams (r08-SRT-W1, W2, W4; issue #1131's independent oracle for the
-//! NAK path — `tests/io_loss_recovery.rs` only ever exchanges NAKs between two
+//! NAK path — `tests/it/io_loss_recovery.rs` only ever exchanges NAKs between two
 //! halves of this crate).
 //!
 //! * `libsrt_listener_naks_are_served_by_our_sender`: our caller sends through

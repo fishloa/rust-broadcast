@@ -2102,7 +2102,7 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // RFC 3711 Appendix B.3 outbound SRTP (item 1). Mirrors
-    // `tests/srtp_rfc3711_vectors.rs`'s
+    // `tests/it/srtp_rfc3711_vectors.rs`'s
     // `srtp_context_reproduces_appendix_b3_ciphertext` (the existing
     // decrypt-direction fixture test), but exercises `MediaTransport`'s own
     // new `encrypt_rtp`/`encrypt_rtcp` — not just the underlying
@@ -2111,7 +2111,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// RFC 3711 Appendix B.3 master key/salt — same values as
-    /// `tests/srtp_rfc3711_vectors.rs`'s `B3_MASTER_KEY`/`B3_MASTER_SALT`.
+    /// `tests/it/srtp_rfc3711_vectors.rs`'s `B3_MASTER_KEY`/`B3_MASTER_SALT`.
     const APPENDIX_B3_MASTER_KEY: [u8; 16] = [
         0xE1, 0xF9, 0x7A, 0x0D, 0x3E, 0x01, 0x8B, 0xE0, 0xD6, 0x4F, 0xA3, 0x2C, 0x06, 0xDE, 0x41,
         0x39,
@@ -2768,7 +2768,7 @@ mod tests {
     // -----------------------------------------------------------------------
     // DTLS peer-certificate fingerprint verification (RFC 8122 §5, RFC 5764
     // §5). These two run the real handshake between two `MediaTransport`s in
-    // process. They live here rather than in `tests/dtls_fingerprint.rs`
+    // process. They live here rather than in `tests/it/dtls_fingerprint.rs`
     // because a certificate is generated inside `MediaTransport::new`, so
     // through the public API alone side A can only learn B's fingerprint by
     // constructing B — and vice versa, one of them necessarily holds a stale

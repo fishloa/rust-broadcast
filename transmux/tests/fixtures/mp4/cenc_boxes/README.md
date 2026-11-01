@@ -44,7 +44,7 @@ progressive (non-fragmented) layout with `saiz` inside `stbl`:
 ```
 
 `sample_count="88"` is the independent oracle used by
-`tests/cenc_saiz_stsz_v1_boxes.rs`: this crate's `SampleAuxInfoSizesBox::parse_box`
+`tests/it/cenc_saiz_stsz_v1_boxes.rs`: this crate's `SampleAuxInfoSizesBox::parse_box`
 must report the same 88, and the sample entry's four-CC must survive as
 `enca` (not `mp4a`) through a parse → serialize round trip.
 

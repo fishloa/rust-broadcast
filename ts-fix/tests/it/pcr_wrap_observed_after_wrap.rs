@@ -2,7 +2,7 @@
 //! 33-bit PCR wrap (ISO/IEC 13818-1 §2.4.3.5), not just survive the wrap
 //! packet itself.
 //!
-//! `tests/pcr_wrap.rs` only checks a constant-rate stream, where the old
+//! `tests/it/pcr_wrap.rs` only checks a constant-rate stream, where the old
 //! `obs.wrapping_sub(last) % (2^33 * 300)` form passes by coincidence: the
 //! forward distance came out as garbage (2^64 is not a multiple of the PCR
 //! modulus), the packet was treated as "not a sane forward step" and

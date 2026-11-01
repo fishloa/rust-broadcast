@@ -456,7 +456,7 @@ mod tests {
         // 1970-01-01 is day 0 by definition.
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         // 2024-01-01: a well-known reference date used elsewhere in this
-        // workspace's DASH tests (`transmux/tests/dash_mpd.rs`).
+        // workspace's DASH tests (`transmux/tests/it/dash_mpd.rs`).
         // 19723 days between 1970-01-01 and 2024-01-01 (54 years incl. 13
         // leap days beyond the flat 365*54).
         let days_2024_01_01 = 19_723;

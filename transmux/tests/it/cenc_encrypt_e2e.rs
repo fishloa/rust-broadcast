@@ -32,7 +32,7 @@
 //!
 //! `mp4decrypt` is optional at test-run time (skipped with a printed reason
 //! if absent from `PATH`), mirroring the established pattern in
-//! `tests/cenc_fragmented_fixture.rs` / `tests/golden_gate.rs`.
+//! `tests/it/cenc_fragmented_fixture.rs` / `tests/golden_gate.rs`.
 
 #![cfg(feature = "cenc")]
 
@@ -73,7 +73,7 @@ fn fixture_path() -> PathBuf {
 }
 
 /// The cleartext fixture, narrowed to its single AVC video track (mirrors
-/// `tests/cenc_encrypt.rs`/`tests/cenc_mux.rs`'s identical helper).
+/// `tests/it/cenc_encrypt.rs`/`tests/it/cenc_mux.rs`'s identical helper).
 fn clear_video_media() -> Option<Media> {
     let path = fixture_path();
     if !path.exists() {
@@ -110,7 +110,7 @@ fn keys() -> KeyMap {
 }
 
 /// True if `mp4decrypt` (Bento4) is on `PATH` — same detection strategy as
-/// `tests/cenc_fragmented_fixture.rs::mp4decrypt_available` (Bento4 CLIs
+/// `tests/it/cenc_fragmented_fixture.rs::mp4decrypt_available` (Bento4 CLIs
 /// print their usage banner to stderr and exit non-zero with no arguments).
 fn mp4decrypt_available() -> bool {
     Command::new("mp4decrypt").output().is_ok_and(|o| {
@@ -292,7 +292,7 @@ fn cbcs_end_to_end_round_trip_and_mp4decrypt_interop() {
 /// those three boxes appended at all — ISO/IEC 23001-7 §12.2/§12.3). Both
 /// cases above use [`SubsamplePolicy::Video`] (a real per-NAL subsample map),
 /// so `use_subsamples` is always `true` there and this branch was previously
-/// exercised only by this crate's own parser (`tests/cenc_mux.rs`'s
+/// exercised only by this crate's own parser (`tests/it/cenc_mux.rs`'s
 /// `build_cenc_fragment_boxes_omits_senc_for_constant_iv_whole_sample` and
 /// `protect_media_segment_constant_iv_whole_sample_round_trips_with_no_senc`
 /// in `src/movie_fragment.rs`).

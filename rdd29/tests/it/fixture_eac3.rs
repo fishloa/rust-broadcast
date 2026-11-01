@@ -6,7 +6,7 @@
 //!
 //! `tests/fixtures/eac3_frame0.bin` is 834 real bytes: the same first
 //! E-AC-3 syncframe already extracted, cross-checked, and committed for
-//! `st337`'s own real-fixture test (`st337/tests/fixture_eac3.rs`,
+//! `st337`'s own real-fixture test (`st337/tests/it/fixture_eac3.rs`,
 //! `st337/docs/st337-PROVENANCE.md`) — itself pulled from this workspace's
 //! ffmpeg-encoded capture `fixtures/ts/dolby/eac3.ts` (issue #426). RDD 29
 //! carries audio essence in a proprietary lossless codec (DLC), not E-AC-3,
