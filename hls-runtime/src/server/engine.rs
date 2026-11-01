@@ -3252,8 +3252,9 @@ impl HlsOrigin {
         // segmenter cuts on the next keyframe *after* the configured target,
         // so a real segment routinely exceeds it — advertising the
         // configured target alone can under-declare. Use whichever is
-        // larger, rounded (not the configured value's `ceil()` alone).
-        // RFC 8216 §4.3.3.1: `EXT-X-TARGETDURATION` is frozen once published.
+        // larger. RFC 8216 §4.3.3.1: `EXT-X-TARGETDURATION` is frozen once
+        // published, so it is rounded up to leave headroom for a later,
+        // slightly longer segment.
         let target_duration = self.published_target_duration_secs(&window);
         // `target_duration_secs` is validated finite and positive at build
         // and segment durations come from `Duration`, so this is finite;

@@ -18,7 +18,7 @@ hls-runtime = "0.10"
 
 **Does (origin):** `server::HlsOrigin` implements `media_plane::egress::ServedEgress`. It owns one segment cursor, renders media and master playlists (LL-HLS parts, preload hint, `EXT-X-DATERANGE` from the trunk's SCTE-35 events, discontinuity sequence), names resources per origin instance so a name maps to one set of bytes for ever, and resolves blocking-reload and part-availability decisions as a synchronous poll returning `Ready`, `Await`, `BadRequest` or `NotFound`.
 
-**Does not:** open sockets or read a clock in the core (an async adapter such as `multimux` turns an `Await` into a bounded wait), define its own playlist model (that is `broadcast-hls`), choose a rendition from a multivariant playlist (the client follows one media playlist URL), or have the origin emit `EXT-X-SKIP`, `CAN-SKIP-UNTIL` or `EXT-X-RENDITION-REPORT` (so the two halves cannot exercise delta updates against each other).
+**Does not:** open sockets or read a clock in the core (an async adapter such as `multimux` turns an `Await` into a bounded wait), define its own playlist model (that is `broadcast-hls`), choose a rendition from a multivariant playlist (the client follows one media playlist URL), or write playlist syntax itself. The origin advertises `CAN-SKIP-UNTIL` and answers `_HLS_skip` with an `EXT-X-SKIP` delta update, and emits `EXT-X-RENDITION-REPORT` for its rendition siblings.
 
 ## Standards supported
 
