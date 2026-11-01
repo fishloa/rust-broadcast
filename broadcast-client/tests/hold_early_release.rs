@@ -96,29 +96,15 @@ fn early_release_case(label: &str, bytes: &[u8]) {
 }
 
 #[test]
-fn a_declared_data_pid_that_never_sends_does_not_hold_the_tracks() {
+fn a_declared_pid_that_never_sends_does_not_hold_the_tracks() {
     let Some(b) = test_fixtures::require_bytes(TF1, "hold_early_release") else {
         return;
     };
     early_release_case("silent data pid", &without_pid(&b, TF1_LATE_DATA));
-}
-
-#[test]
-fn two_silent_declared_data_pids_do_not_hold_the_tracks() {
-    let Some(b) = test_fixtures::require_bytes(TF1, "hold_early_release") else {
-        return;
-    };
     early_release_case(
         "two silent data pids",
         &without_pid(&without_pid(&b, TF1_LATE_DATA), TF1_EARLY_DATA),
     );
-}
-
-#[test]
-fn a_declared_audio_pid_that_never_sends_does_not_hold_the_tracks() {
-    let Some(b) = test_fixtures::require_bytes(TF1, "hold_early_release") else {
-        return;
-    };
     let bytes = without_pid(
         &without_pid(&without_pid(&b, TF1_LAST_AUDIO), TF1_LATE_DATA),
         TF1_EARLY_DATA,

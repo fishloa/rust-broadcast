@@ -189,13 +189,10 @@ fn ts_http_server_refused_without_retry_after_carries_none() {
 }
 
 #[test]
-fn the_reason_has_control_characters_stripped_and_is_trimmed() {
+fn the_reason_is_sanitised_capped_decoded_and_absent_for_other_content_types() {
     let got = reason_of(Some("text/plain"), b"  bu\x00sy\x07\x1b\r\n\t slots \x7f ");
-    assert_eq!(got.as_deref(), Some("busy slots"));
-}
+    assert_eq!(got.as_deref(), Some("busy slots"), "control characters");
 
-#[test]
-fn the_reason_is_cut_on_a_char_boundary_at_the_cap() {
     let body = "\u{20ac}".repeat(100);
     assert!(body.len() > MAX_SERVER_REFUSED_REASON_BYTES);
     let got = reason_of(Some("text/plain; charset=UTF-8"), body.as_bytes()).unwrap();
@@ -203,17 +200,15 @@ fn the_reason_is_cut_on_a_char_boundary_at_the_cap() {
     assert!(got.chars().all(|c| c == '\u{20ac}'));
     let ascii = "x".repeat(1000);
     let got = reason_of(Some("text/plain"), ascii.as_bytes()).unwrap();
-    assert_eq!(got.len(), MAX_SERVER_REFUSED_REASON_BYTES);
-}
+    assert_eq!(
+        got.len(),
+        MAX_SERVER_REFUSED_REASON_BYTES,
+        "char boundary cap"
+    );
 
-#[test]
-fn the_reason_is_decoded_as_lossy_utf8() {
     let got = reason_of(Some("text/plain"), b"bad \xff byte");
-    assert_eq!(got.as_deref(), Some("bad \u{fffd} byte"));
-}
+    assert_eq!(got.as_deref(), Some("bad \u{fffd} byte"), "lossy utf8");
 
-#[test]
-fn no_reason_for_other_content_types_charsets_or_an_empty_body() {
     assert_eq!(reason_of(Some("application/json"), b"{\"e\":1}"), None);
     assert_eq!(reason_of(Some("text/html"), b"<p>busy</p>"), None);
     assert_eq!(

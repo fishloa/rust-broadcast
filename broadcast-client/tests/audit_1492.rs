@@ -116,7 +116,7 @@ fn a_401_from_another_origin_never_asks_for_credentials_of_the_session_origin() 
 
 #[test]
 fn every_non_success_final_status_closes_the_connection_once() {
-    for status in [404u16, 410, 429, 500, 502, 503] {
+    for status in [403u16, 404, 410, 429, 500, 502, 503] {
         let mut session = open(TS_URL, Config::default());
         let first = one(&mut session, 0);
         respond(&mut session, &first, status, &[]);

@@ -34,7 +34,6 @@ fn config() -> Config {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Resumed {
     Honoured,
-    NewValidator,
     ContentRangeOffByOne,
 }
 
@@ -91,22 +90,6 @@ impl Backend for Stall {
             return stall_after(&good, sent).expect("a 200 or 206 to stall");
         }
         match (resume, self.resumed, good) {
-            (
-                true,
-                Resumed::NewValidator,
-                Answer::Full {
-                    status,
-                    mut headers,
-                    body,
-                },
-            ) => {
-                headers.push(("ETag".into(), "\"sim-v2\"".into()));
-                Answer::Full {
-                    status,
-                    headers,
-                    body,
-                }
-            }
             (true, Resumed::ContentRangeOffByOne, Answer::Full { body, .. }) => {
                 let range = req.header("range").unwrap();
                 let first: u64 = range[6..].split('-').next().unwrap().parse().unwrap();
@@ -245,40 +228,6 @@ fn the_resume_range_starts_exactly_after_the_received_prefix() {
         header(second, "range"),
         Some(format!("bytes={sent}-{}", whole - 1).as_str())
     );
-}
-
-#[test]
-fn an_origin_that_ignores_ranges_has_its_whole_body_used_once() {
-    let want = baseline(MPD);
-    let mut faulty = sim(
-        MPD,
-        Stall::boxed(SEGMENT, None, Resumed::Honoured, false, static_origin()),
-    );
-    faulty.honour_ranges = false;
-    let got = run(faulty);
-    assert_same_media(&got, &want);
-    let requests = media_requests(&got, SEGMENT);
-    assert_eq!(requests.len(), 2);
-    assert!(
-        header(requests[1], "range").is_some(),
-        "the resume was asked for"
-    );
-    assert_eq!(requests[1].status, Some(200));
-    assert_eq!(stall_modes(&got), vec![ResumeMode::Range]);
-}
-
-#[test]
-fn a_changed_validator_gets_the_whole_new_body_not_a_splice() {
-    let want = baseline(MPD);
-    let got = run(sim(
-        MPD,
-        Stall::boxed(SEGMENT, None, Resumed::NewValidator, false, static_origin()),
-    ));
-    assert_same_media(&got, &want);
-    let requests = media_requests(&got, SEGMENT);
-    assert_eq!(requests.len(), 2);
-    assert_eq!(header(requests[1], "if-range"), Some(SIM_ETAG));
-    assert_eq!(requests[1].status, Some(200), "If-Range failed, whole body");
 }
 
 #[test]

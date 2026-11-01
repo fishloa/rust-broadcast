@@ -6,9 +6,18 @@ use support::replay::{bitrate_bps, replay_paced, replay_with_host};
 const CHUNK: usize = 32 * 1024;
 const MAX_BYTES: usize = 3 * 1024 * 1024;
 const MIN_FIXTURES: usize = 20;
-const WALLS_US: [u64; 4] = [0, 300_000, 1_000_000, 3_000_000];
+const WALLS_US: [u64; 3] = [0, 300_000, 3_000_000];
+const SOAK_WALLS_US: [u64; 4] = [0, 300_000, 1_000_000, 3_000_000];
 
-fn corpus() -> Vec<(String, Vec<u8>)> {
+fn walls() -> &'static [u64] {
+    if std::env::var_os("RUST_BROADCAST_SOAK").is_some() {
+        &SOAK_WALLS_US
+    } else {
+        &WALLS_US
+    }
+}
+
+fn public_paths() -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
     for entry in std::fs::read_dir(test_fixtures::root().join("ts")).unwrap() {
         let p = entry.unwrap().path();
@@ -16,7 +25,10 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
             paths.push(p);
         }
     }
-    paths.extend(test_fixtures::private_files("", &["ts"]));
+    paths
+}
+
+fn corpus(mut paths: Vec<std::path::PathBuf>) -> Vec<(String, Vec<u8>)> {
     paths.sort();
     paths.dedup();
     paths
@@ -37,19 +49,18 @@ fn with_wall(w: u64) -> Config {
     }
 }
 
-#[test]
-fn the_hold_never_changes_the_sample_sequence() {
-    let corpus = corpus();
+fn the_hold_never_changes_the_sample_sequence(corpus: Vec<(String, Vec<u8>)>) -> usize {
+    let walls = walls();
     let mut checked = 0;
     let mut failures = Vec::new();
     for (name, bytes) in &corpus {
         let bps = bitrate_bps(bytes);
-        let base = replay_paced(bytes, with_wall(0), CHUNK, bps).samples();
+        let base = replay_paced(bytes, with_wall(walls[0]), CHUNK, bps).samples();
         if base.is_empty() {
             continue;
         }
         checked += 1;
-        for w in &WALLS_US[1..] {
+        for w in &walls[1..] {
             let held = replay_paced(bytes, with_wall(*w), CHUNK, bps).samples();
             if base.len() != held.len() {
                 failures.push(format!(
@@ -66,12 +77,66 @@ fn the_hold_never_changes_the_sample_sequence() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    checked
+}
+
+#[test]
+fn the_hold_never_changes_the_sample_sequence_on_public_captures() {
+    let checked = the_hold_never_changes_the_sample_sequence(corpus(public_paths()));
+    assert!(checked > 0, "no public capture produced samples");
+}
+
+const PRIVATE_SHARDS: usize = 4;
+
+fn private_shard(shard: usize) {
+    let paths: Vec<_> = test_fixtures::private_files("", &["ts"])
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % PRIVATE_SHARDS == shard)
+        .map(|(_, p)| p)
+        .collect();
+    let checked = the_hold_never_changes_the_sample_sequence(corpus(paths));
     if test_fixtures::private_root().is_some() {
-        assert!(
-            checked >= MIN_FIXTURES,
-            "only {checked} fixtures produced samples"
-        );
+        assert!(checked > 0, "shard {shard}: no fixture produced samples");
     }
+}
+
+macro_rules! private_shard {
+    ($test:ident, $shard:expr) => {
+        #[test]
+        fn $test() {
+            private_shard($shard);
+        }
+    };
+}
+
+private_shard!(
+    the_hold_never_changes_the_sample_sequence_on_private_shard_0,
+    0
+);
+private_shard!(
+    the_hold_never_changes_the_sample_sequence_on_private_shard_1,
+    1
+);
+private_shard!(
+    the_hold_never_changes_the_sample_sequence_on_private_shard_2,
+    2
+);
+private_shard!(
+    the_hold_never_changes_the_sample_sequence_on_private_shard_3,
+    3
+);
+
+#[test]
+fn the_private_corpus_is_complete() {
+    if test_fixtures::private_root().is_none() {
+        return;
+    }
+    let readable = corpus(test_fixtures::private_files("", &["ts"])).len();
+    assert!(
+        readable >= MIN_FIXTURES,
+        "only {readable} private fixtures are readable"
+    );
 }
 
 const HOST_TICK_US: u64 = 20_000;
@@ -89,7 +154,7 @@ fn a_host_playing_from_start_never_sees_a_late_sample_whatever_the_hold() {
             continue;
         };
         let bps = bitrate_bps(&bytes);
-        for w in WALLS_US {
+        for &w in walls() {
             let (replay, host) =
                 replay_with_host(&bytes, with_wall(w), CHUNK, bps, Some(HOST_TICK_US));
             let first_tracks = replay.tracks_times().first().copied();

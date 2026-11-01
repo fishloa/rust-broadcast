@@ -83,7 +83,7 @@ fn reconnecting_attempts(events: &[Event]) -> Vec<u64> {
 }
 
 #[test]
-fn relative_control_resolves_against_the_request_url_with_a_trailing_slash() {
+fn relative_control_resolves_against_the_request_url_with_a_trailing_slash_or_the_content_base() {
     let host = connected(NO_SLASH_URL, Config::default(), Server::new(&fixture().sdp));
     assert_eq!(
         setup_uris(&host),
@@ -93,10 +93,7 @@ fn relative_control_resolves_against_the_request_url_with_a_trailing_slash() {
         ]
     );
     assert_eq!(host.server.count(PLAY), 1);
-}
 
-#[test]
-fn relative_control_resolves_against_content_base() {
     let mut server = Server::new(&fixture().sdp);
     server.content_base = Some("rtsp://cam.test/base/path/".to_string());
     let host = connected(NO_SLASH_URL, Config::default(), server);

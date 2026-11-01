@@ -74,12 +74,16 @@ fn redirect_without_location_is_connect_error() {
     };
     session.on_response(conn, 302, &[], 0);
     let mut saw_http = false;
+    let mut closes = Vec::new();
     while let Some(a) = session.poll(0) {
-        if matches!(a, Action::HttpRequest { .. }) {
-            saw_http = true;
+        match a {
+            Action::HttpRequest { .. } => saw_http = true,
+            Action::Close { conn } => closes.push(conn),
+            _ => {}
         }
     }
     assert!(!saw_http);
+    assert_eq!(closes, vec![conn]);
 }
 
 #[test]

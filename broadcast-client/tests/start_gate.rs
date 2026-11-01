@@ -194,7 +194,18 @@ impl Host {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum Stop {
+    Never,
+    AtStart,
+    AfterFlapWindow,
+}
+
 pub fn run(bytes: &[u8], cfg: Config, declare: Declare) -> Outcome {
+    run_until(bytes, cfg, declare, Stop::Never)
+}
+
+pub fn run_until(bytes: &[u8], cfg: Config, declare: Declare, stop: Stop) -> Outcome {
     let bps = bitrate_bps(bytes);
     let (mut s, c) = open_live(cfg);
     let mut out = Outcome::default();
@@ -301,6 +312,14 @@ pub fn run(bytes: &[u8], cfg: Config, declare: Declare) -> Outcome {
         .map_or(0, |f| f.len() as u64 * 8 * MICROS / bps);
     let mut next_tick = TICK_US;
     while chunks.peek().is_some() {
+        let settled = match (stop, out.start_us()) {
+            (Stop::AtStart, Some(_)) => true,
+            (Stop::AfterFlapWindow, Some(start)) => now > start + FLAP_WINDOW_US,
+            _ => false,
+        };
+        if settled {
+            break;
+        }
         let w = wake.unwrap_or(u64::MAX);
         let t = next_chunk_at.min(next_tick).min(w);
         now = now.max(t);
@@ -379,10 +398,15 @@ fn long_enough(b: &[u8]) -> bool {
     b.len() as u64 * 8 * MICROS / bitrate_bps(b) >= MIN_CAPTURE_US
 }
 
-fn skewed(c: &Capture, skew_ms: usize) -> Option<Vec<u8>> {
+fn skewed_set(c: &Capture) -> Option<BTreeMap<usize, Vec<u8>>> {
     let b = bytes_for(c, Hold::Early)?;
     let per_s = (bitrate_bps(&b) / 8 / TS_PACKET as u64) as usize;
-    Some(delay_audio(&b, c.audio_pid, per_s * skew_ms / 1000))
+    Some(
+        SKEWS_MS
+            .iter()
+            .map(|&skew| (skew, delay_audio(&b, c.audio_pid, per_s * skew / 1000)))
+            .collect(),
+    )
 }
 
 fn describe(c: &Capture, hold: Hold, declare: Declare, skew_ms: usize, o: &Outcome) -> String {
@@ -402,16 +426,21 @@ fn describe(c: &Capture, hold: Hold, declare: Declare, skew_ms: usize, o: &Outco
 fn start_never_precedes_a_rendered_track_that_trails_the_video() {
     let mut ran = 0;
     for c in CAPTURES {
-        for skew in SKEWS_MS {
-            let Some(b) = skewed(c, skew) else {
-                return;
-            };
+        let Some(set) = skewed_set(c) else {
+            continue;
+        };
+        for (&skew, b) in &set {
             for (hold, lead_us) in ALL_HOLDS
                 .into_iter()
                 .flat_map(|h| START_LEADS_US.map(|l| (h, l)))
             {
                 for declare in BOTH {
-                    let o = run(&b, config_with_lead(hold, b.len(), lead_us), declare);
+                    let o = run_until(
+                        b,
+                        config_with_lead(hold, b.len(), lead_us),
+                        declare,
+                        Stop::AfterFlapWindow,
+                    );
                     let why = format!(
                         "lead {lead_us} us: {}",
                         describe(c, hold, declare, skew, &o)
@@ -441,28 +470,34 @@ fn start_never_precedes_a_rendered_track_that_trails_the_video() {
 #[test]
 fn start_latency_grows_by_no_more_than_the_audio_skew() {
     for c in CAPTURES {
+        let Some(set) = skewed_set(c) else {
+            continue;
+        };
+        let base = &set[&0];
+        if !long_enough(base) {
+            continue;
+        }
         for (hold, lead_us) in ALL_HOLDS
             .into_iter()
             .flat_map(|h| START_LEADS_US.map(|l| (h, l)))
         {
-            let Some(base) = skewed(c, 0) else {
-                return;
+            let start_of = |b: &[u8], declare| {
+                run_until(
+                    b,
+                    config_with_lead(hold, b.len(), lead_us),
+                    declare,
+                    Stop::AtStart,
+                )
             };
-            if !long_enough(&base) {
-                continue;
-            }
-            let Some(base_start) = run(
-                &base,
-                config_with_lead(hold, base.len(), lead_us),
-                Declare::Default,
-            )
-            .start_us() else {
+            let Some(base_start) = start_of(base, Declare::Default).start_us() else {
                 continue;
             };
-            for skew in SKEWS_MS {
-                let b = skewed(c, skew).unwrap();
+            for (&skew, b) in &set {
                 for declare in BOTH {
-                    let o = run(&b, config_with_lead(hold, b.len(), lead_us), declare);
+                    if skew == 0 && declare == Declare::Default {
+                        continue;
+                    }
+                    let o = start_of(b, declare);
                     let start = o.start_us().unwrap_or(u64::MAX);
                     let allowed = base_start + skew as u64 * 1_000 + SKEW_SLACK_US;
                     assert!(
@@ -481,7 +516,7 @@ fn start_latency_grows_by_no_more_than_the_audio_skew() {
 fn a_declared_audio_pid_that_never_sends_does_not_block_start_for_long() {
     for c in CAPTURES {
         let Some(b0) = bytes_for(c, Hold::Early) else {
-            return;
+            continue;
         };
         let b: Vec<u8> = b0
             .chunks(TS_PACKET)

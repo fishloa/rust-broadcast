@@ -494,29 +494,16 @@ fn forward_jump_within_elapsed_plus_5s_is_not() {
 }
 
 #[test]
-fn backward_step_minus_0_9s_is_not_a_jump() {
+fn a_backward_step_is_a_jump_only_beyond_one_second() {
     let bytes = test_fixtures::read(SMALL);
-    let j = jumped(
-        &bytes,
-        true,
-        0,
-        |_| -(SEC_US - BACKWARD_MARGIN_US),
-        Config::default(),
-    );
-    assert!(jump_discontinuities(&j).is_empty());
-}
-
-#[test]
-fn backward_step_minus_1_1s_is_a_jump() {
-    let bytes = test_fixtures::read(SMALL);
-    let j = jumped(
-        &bytes,
-        true,
-        0,
-        |_| -(SEC_US + BACKWARD_MARGIN_US),
-        Config::default(),
-    );
-    assert_eq!(jump_discontinuities(&j).len(), 1);
+    let cases = [
+        (-(SEC_US - BACKWARD_MARGIN_US), 0, "minus 0.9 s"),
+        (-(SEC_US + BACKWARD_MARGIN_US), 1, "minus 1.1 s"),
+    ];
+    for (step_us, want, why) in cases {
+        let j = jumped(&bytes, true, 0, |_| step_us, Config::default());
+        assert_eq!(jump_discontinuities(&j).len(), want, "{why}");
+    }
 }
 
 #[test]

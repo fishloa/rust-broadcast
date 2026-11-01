@@ -66,24 +66,17 @@ fn a_session_level_control_is_the_aggregate_url_for_play_options_and_teardown() 
 }
 
 #[test]
-fn a_relative_session_level_control_resolves_against_the_base() {
-    let host = connected(&with_session_control("agg/"), quiet_config());
-    assert_eq!(uris(&host, PLAY), [format!("{BASE_URL}agg/")]);
-}
-
-#[test]
-fn a_star_session_level_control_is_the_base_itself() {
-    let host = connected(&with_session_control("*"), quiet_config());
-    assert_eq!(uris(&host, PLAY), [BASE_URL]);
-}
-
-#[test]
-fn a_foreign_authority_session_control_is_ignored() {
-    let host = connected(
-        &with_session_control("rtsp://other.test/live/agg"),
-        quiet_config(),
-    );
-    assert_eq!(uris(&host, PLAY), [BASE_URL]);
+fn a_relative_star_or_foreign_session_level_control_resolves_against_the_base() {
+    let relative_agg = format!("{BASE_URL}agg/");
+    let cases: [(&str, &str); 3] = [
+        ("agg/", &relative_agg),
+        ("*", BASE_URL),
+        ("rtsp://other.test/live/agg", BASE_URL),
+    ];
+    for (control, want) in cases {
+        let host = connected(&with_session_control(control), quiet_config());
+        assert_eq!(uris(&host, PLAY), [want], "{control}");
+    }
 }
 
 #[test]

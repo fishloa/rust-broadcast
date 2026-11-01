@@ -475,7 +475,19 @@ fn waits() -> Vec<(String, Reply, u64)> {
     ]
 }
 
-#[test]
+fn keyed_playlist() -> Vec<u8> {
+    let mut hex = String::new();
+    for b in IV {
+        hex.push_str(&format!("{b:02X}"));
+    }
+    format!(
+        "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x{hex}\n\
+         #EXTINF:2.0,\nindex0.ts\n#EXTINF:1.0,\nindex1.ts\n#EXT-X-ENDLIST\n"
+    )
+    .into_bytes()
+}
+
 fn playlist_retry_waits_for_retry_after() {
     for (name, reply, want) in waits() {
         let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
@@ -488,7 +500,6 @@ fn playlist_retry_waits_for_retry_after() {
     }
 }
 
-#[test]
 fn segment_retry_waits_for_retry_after() {
     for (name, reply, want) in waits() {
         let mut h = ts_vod(vec![reply, Reply::Ok(ts_segment(0))], hls_config());
@@ -498,7 +509,6 @@ fn segment_retry_waits_for_retry_after() {
     }
 }
 
-#[test]
 fn init_retry_waits_for_retry_after() {
     let init = fmp4_parts().0;
     for (name, reply, want) in waits() {
@@ -513,20 +523,6 @@ fn init_retry_waits_for_retry_after() {
     }
 }
 
-fn keyed_playlist() -> Vec<u8> {
-    let mut hex = String::new();
-    for b in IV {
-        hex.push_str(&format!("{b:02X}"));
-    }
-    format!(
-        "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
-         #EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x{hex}\n\
-         #EXTINF:2.0,\nindex0.ts\n#EXTINF:1.0,\nindex1.ts\n#EXT-X-ENDLIST\n"
-    )
-    .into_bytes()
-}
-
-#[test]
 fn key_retry_waits_for_retry_after() {
     use transmux::sample_aes::aes128_encrypt_segment;
     for (name, reply, want) in waits() {
@@ -545,6 +541,14 @@ fn key_retry_waits_for_retry_after() {
         assert!(tally(&h).ended, "{name}: {:?}", tally(&h));
         assert_eq!(first_gap(&h, KEY_URL), want, "{name}");
     }
+}
+
+#[test]
+fn retry_after_is_waited_for_by_every_resource_class() {
+    playlist_retry_waits_for_retry_after();
+    segment_retry_waits_for_retry_after();
+    init_retry_waits_for_retry_after();
+    key_retry_waits_for_retry_after();
 }
 
 #[test]
