@@ -15,12 +15,17 @@ use support::*;
 
 #[test]
 fn min_window_matches_a_brute_force_scan() {
+    let samples = if std::env::var_os("RUST_BROADCAST_SOAK").is_some() {
+        20_000
+    } else {
+        3_000
+    };
     for (window, seed) in [(1_000u64, 1u64), (2_000_000, 2), (17, 3), (500, 4)] {
         let mut w = MinWindow::new(window, 4096).unwrap();
         let mut rng = Rng(seed);
         let mut all: Vec<(u64, i64)> = Vec::new();
         let mut t = 0u64;
-        for _ in 0..20_000 {
+        for _ in 0..samples {
             let prev_t = all.last().map(|a| a.0);
             t += rng.below(window / 4 + 2); // equal timestamps happen
             if rng.below(200) == 0 {
