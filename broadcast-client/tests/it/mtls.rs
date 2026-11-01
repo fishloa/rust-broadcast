@@ -64,6 +64,7 @@ fn rtsps_offers_the_identity_and_plain_rtsp_does_not() {
     for (url, tls) in [
         ("rtsps://cam.example/live", true),
         ("rtsp://cam.example/live", false),
+        ("rtsp://cam.example:322/live", false),
     ] {
         let mut s = Session::open(url, with_handle(|_| {}), 0).unwrap();
         let mut seen = None;
@@ -170,6 +171,28 @@ fn malformed_identities_fail_open_with_a_typed_error() {
         ClientIdentity::der(vec![vec![0x30, 0x03, 0x02, 0x01, 0x00]], Vec::new()),
         ClientIdentity::der(vec![vec![0x00]], vec![0x30, 0x03, 0x02, 0x01, 0x00]),
     ];
+    let ca = Ca::new("validity ca");
+    let leaf = ca.issue("validity client", true);
+    let mixed = [
+        ClientIdentity::pem(leaf.chain_pem.clone(), "not a key"),
+        ClientIdentity::pem(leaf.chain_pem.clone(), leaf.chain_pem.clone()),
+        ClientIdentity::pem("not a certificate", leaf.key_pem.clone()),
+        ClientIdentity::pem(leaf.key_pem.clone(), leaf.key_pem.clone()),
+        ClientIdentity::der(leaf.chain_der.clone(), vec![0x30, 0x01]),
+    ];
+    for identity in mixed {
+        let config = cfg(|c| c.client_identity = Some(identity));
+        assert!(matches!(
+            Session::open("https://h.example/live.ts", config, 0).unwrap_err(),
+            Error::InvalidConfig {
+                field: "client_identity"
+            }
+        ));
+    }
+    for identity in [leaf.pem_identity(), leaf.der_identity()] {
+        let config = cfg(|c| c.client_identity = Some(identity));
+        Session::open("https://h.example/live.ts", config, 0).unwrap();
+    }
     for identity in bad {
         let config = cfg(|c| c.client_identity = Some(identity));
         match Session::open("https://h.example/live.ts", config, 0).unwrap_err() {
