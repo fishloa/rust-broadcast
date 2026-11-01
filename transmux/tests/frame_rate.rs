@@ -53,62 +53,6 @@ fn extract_hevc_sps(path: &str) -> Vec<u8> {
     sps_array.nalus[0].0.clone()
 }
 
-#[test]
-fn hevc_vui_hrd_fields() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_vui_hrd.mp4"
-    ));
-    let t = decode_hevc_vui_timing(&sps).unwrap().unwrap();
-    assert_eq!(t.num_units_in_tick, 1);
-    assert_eq!(t.time_scale, 25);
-    assert!(!t.field_seq);
-    assert!(!t.frame_field_info_present);
-    assert_eq!(t.hrd_fixed_pic_rate, Some(1));
-}
-
-#[test]
-fn hevc_vui_ntsc_fields() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_vui_ntsc.mp4"
-    ));
-    let t = decode_hevc_vui_timing(&sps).unwrap().unwrap();
-    assert_eq!(t.num_units_in_tick, 1001);
-    assert_eq!(t.time_scale, 30000);
-    assert!(!t.field_seq);
-    assert!(!t.frame_field_info_present);
-    assert_eq!(t.hrd_fixed_pic_rate, None);
-}
-
-#[test]
-fn hevc_vui_field_fields() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_vui_field.mp4"
-    ));
-    let t = decode_hevc_vui_timing(&sps).unwrap().unwrap();
-    assert_eq!(t.num_units_in_tick, 1);
-    assert_eq!(t.time_scale, 25);
-    assert!(t.field_seq);
-    assert!(t.frame_field_info_present);
-    assert_eq!(t.hrd_fixed_pic_rate, None);
-}
-
-#[test]
-fn hevc_vui_field_hrd_fields() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_vui_field_hrd.mp4"
-    ));
-    let t = decode_hevc_vui_timing(&sps).unwrap().unwrap();
-    assert_eq!(t.num_units_in_tick, 1);
-    assert_eq!(t.time_scale, 25);
-    assert!(t.field_seq);
-    assert!(t.frame_field_info_present);
-    assert_eq!(t.hrd_fixed_pic_rate, Some(1));
-}
-
 fn hevc_config(sps: Vec<u8>) -> CodecConfig {
     let record = HEVCDecoderConfigurationRecord {
         configuration_version: 1,
@@ -141,61 +85,63 @@ fn hevc_config(sps: Vec<u8>) -> CodecConfig {
     }
 }
 
-#[test]
-fn hevc_nominal_rate_hrd() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_vui_hrd.mp4"
-    ));
-    assert_eq!(
-        nominal_frame_rate(&hevc_config(sps)),
-        Some((25_000, transmux::FrameRateBasis::Normative))
-    );
+struct VuiRow {
+    fixture: &'static str,
+    vui: Option<(u32, u32, bool, bool, Option<u32>)>,
+    rate: Option<(u32, transmux::FrameRateBasis)>,
 }
 
 #[test]
-fn hevc_nominal_rate_ntsc() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_vui_ntsc.mp4"
-    ));
-    assert_eq!(
-        nominal_frame_rate(&hevc_config(sps)),
-        Some((29_970, transmux::FrameRateBasis::Convention))
-    );
-}
-
-#[test]
-fn hevc_nominal_rate_field() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_vui_field.mp4"
-    ));
-    assert_eq!(nominal_frame_rate(&hevc_config(sps)), None);
-}
-
-#[test]
-fn hevc_nominal_rate_field_hrd() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_vui_field_hrd.mp4"
-    ));
-    assert_eq!(
-        nominal_frame_rate(&hevc_config(sps)),
-        Some((12_500, transmux::FrameRateBasis::Normative))
-    );
-}
-
-#[test]
-fn hevc_nominal_rate_main() {
-    let sps = extract_hevc_sps(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_main.mp4"
-    ));
-    assert_eq!(
-        nominal_frame_rate(&hevc_config(sps)),
-        Some((25_000, transmux::FrameRateBasis::Convention))
-    );
+fn hevc_vui_timing_and_nominal_rate_per_fixture() {
+    use transmux::FrameRateBasis::{Convention, Normative};
+    let rows = [
+        VuiRow {
+            fixture: "hevc_vui_hrd",
+            vui: Some((1, 25, false, false, Some(1))),
+            rate: Some((25_000, Normative)),
+        },
+        VuiRow {
+            fixture: "hevc_vui_ntsc",
+            vui: Some((1001, 30000, false, false, None)),
+            rate: Some((29_970, Convention)),
+        },
+        VuiRow {
+            fixture: "hevc_vui_field",
+            vui: Some((1, 25, true, true, None)),
+            rate: None,
+        },
+        VuiRow {
+            fixture: "hevc_vui_field_hrd",
+            vui: Some((1, 25, true, true, Some(1))),
+            rate: Some((12_500, Normative)),
+        },
+        VuiRow {
+            fixture: "hevc_main",
+            vui: None,
+            rate: Some((25_000, Convention)),
+        },
+    ];
+    for r in rows {
+        let sps = extract_hevc_sps(&format!(
+            "{}/../fixtures/mp4/{}.mp4",
+            env!("CARGO_MANIFEST_DIR"),
+            r.fixture
+        ));
+        if let Some((tick, scale, field_seq, ffi, hrd)) = r.vui {
+            let t = decode_hevc_vui_timing(&sps).unwrap().unwrap();
+            assert_eq!(t.num_units_in_tick, tick, "{}", r.fixture);
+            assert_eq!(t.time_scale, scale, "{}", r.fixture);
+            assert_eq!(t.field_seq, field_seq, "{}", r.fixture);
+            assert_eq!(t.frame_field_info_present, ffi, "{}", r.fixture);
+            assert_eq!(t.hrd_fixed_pic_rate, hrd, "{}", r.fixture);
+        }
+        assert_eq!(
+            nominal_frame_rate(&hevc_config(sps)),
+            r.rate,
+            "{}",
+            r.fixture
+        );
+    }
 }
 
 #[test]
@@ -211,23 +157,12 @@ fn real_h264_fixture_with_vui_timing() {
         transmux::nominal_frame_rate_millihertz(&spec.spec.config),
         Some(25_000)
     );
-}
-
-#[test]
-fn h264_fixture_basis() {
-    let data = test_fixtures::require_bytes("ts/h264_aac.ts", "frame_rate").expect("fixture");
-    let media = TsDemux::new().demux(&data).expect("demux");
-    let spec = media
-        .tracks
-        .into_iter()
-        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-        .expect("video track");
-    // Report basis for the committed H.264 fixture:
     assert_eq!(
         transmux::nominal_frame_rate(&spec.spec.config),
         Some((25_000, transmux::FrameRateBasis::Convention))
     );
 }
+
 #[test]
 fn missing_sps_yields_none() {
     use transmux::AVCConfigurationBox;

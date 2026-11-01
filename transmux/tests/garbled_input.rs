@@ -51,11 +51,10 @@ enum Mode {
     Noise,
 }
 
-/// Damage `ts` from `start_permille / 1000` of its length onwards.
-fn garble(ts: &[u8], start_permille: usize, seed: u64, mode: Mode) -> Vec<u8> {
+/// Damage `ts` from packet `first` onwards.
+fn garble(ts: &[u8], first: usize, seed: u64, mode: Mode) -> Vec<u8> {
     let mut out = ts.to_vec();
     let packets = out.len() / TS_PACKET_SIZE;
-    let first = packets * start_permille / 1000;
     let mut rng = XorShift(0x9E37_79B9_7F4A_7C15 ^ seed.wrapping_mul(0xD1B5_4A32_D192_ED03));
     let constant = (rng.next() as u8) | 1;
     for p in first..packets {
@@ -151,6 +150,30 @@ fn run(ts: &[u8], chunk: usize, what: &str) -> Vec<String> {
     out
 }
 
+/// Packets kept from the head of the stream (PAT/PMT) in a PR-size input.
+const WINDOW_HEAD_PACKETS: usize = 100;
+/// Packets kept from the damaged region in a PR-size input.
+const WINDOW_DAMAGED_PACKETS: usize = 600;
+/// Chunk sizes fed to the demuxer.
+const CHUNKS: &[usize] = &[1, 7, 187, 188, 189, 1000];
+
+/// The input to damage and its first damaged packet: the whole stream
+/// (damage from `start_permille / 1000` of its length) when `soak`, otherwise
+/// the stream head plus the first packets of that damaged region, small enough
+/// to feed one byte at a time.
+fn input_and_damage_start(clean: &[u8], start_permille: usize, soak: bool) -> (Vec<u8>, usize) {
+    let packets = clean.len() / TS_PACKET_SIZE;
+    let first_damaged = packets * start_permille / 1000;
+    if soak {
+        return (clean.to_vec(), first_damaged);
+    }
+    let head = WINDOW_HEAD_PACKETS.min(first_damaged);
+    let tail_end = (first_damaged + WINDOW_DAMAGED_PACKETS).min(packets);
+    let mut out = clean[..head * TS_PACKET_SIZE].to_vec();
+    out.extend_from_slice(&clean[first_damaged * TS_PACKET_SIZE..tail_end * TS_PACKET_SIZE]);
+    (out, head)
+}
+
 const FIXTURES: &[&str] = &[
     "fixtures/ts/h264_aac.ts",
     "fixtures/ts/h264_aac_40s.ts",
@@ -169,6 +192,7 @@ const FIXTURES: &[&str] = &[
 
 #[test]
 fn garbled_fixtures_never_yield_unserializable_configs() {
+    let soak = std::env::var_os("RUST_BROADCAST_SOAK").is_some();
     let mut garbled_runs = 0usize;
     let mut config_events = 0usize;
     let mut rejected_sets = 0usize;
@@ -177,7 +201,8 @@ fn garbled_fixtures_never_yield_unserializable_configs() {
         for start in [0usize, 333, 500, 900] {
             for seed in 1..=3u64 {
                 for mode in [Mode::Constant, Mode::Noise] {
-                    let ts = garble(&clean, start, seed, mode);
+                    let (input, first) = input_and_damage_start(&clean, start, soak);
+                    let ts = garble(&input, first, seed, mode);
                     let what = format!("{rel} start={start} seed={seed} {mode:?}");
                     let baseline = run(&ts, ts.len(), &what);
                     config_events += baseline
@@ -188,7 +213,7 @@ fn garbled_fixtures_never_yield_unserializable_configs() {
                         .iter()
                         .filter(|e| e.contains("InvalidParameterSet"))
                         .count();
-                    for n in [1usize, 7, 187, 188, 189, 1000] {
+                    for &n in CHUNKS {
                         assert_eq!(run(&ts, n, &what), baseline, "{what}: chunk {n}");
                     }
                     // The whole-buffer batch API must not panic either, and

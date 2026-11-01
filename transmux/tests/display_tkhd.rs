@@ -46,36 +46,33 @@ fn dims(spec: &TrackSpec) -> (u32, u32) {
 }
 
 #[test]
-fn melodie_tkhd() {
-    let Some(spec) = spec_from_fixture("ts/melodie-anamorphic-sar-64-45-zenith-tv.ts") else {
-        return;
-    };
-    let data = build(spec.clone());
-    assert_eq!(tkhd_dims(&data), (0x0400_0000, 0x0240_0000));
-    // swapped SAR differs
-    let mut g = spec.display.clone().expect("display");
-    g.aspect_ratio = Some(AspectRatioIdc::ExtendedSar {
-        sar_width: 45,
-        sar_height: 64,
-    });
-    let swapped = build(spec.with_display(Some(g)));
-    assert_ne!(tkhd_dims(&swapped).0, 0x0400_0000);
-}
-
-#[test]
-fn krone_tkhd() {
-    let Some(spec) = spec_from_fixture("ts/krone-anamorphic-sar-16-11-zenith-tv.ts") else {
-        return;
-    };
-    let data = build(spec.clone());
-    assert_eq!(tkhd_dims(&data), (0x0417_45D1, 0x0240_0000));
-    let mut g = spec.display.clone().expect("display");
-    g.aspect_ratio = Some(AspectRatioIdc::ExtendedSar {
-        sar_width: 11,
-        sar_height: 16,
-    });
-    let swapped = build(spec.with_display(Some(g)));
-    assert_ne!(tkhd_dims(&swapped).0, 0x0417_45D1);
+fn anamorphic_tkhd_and_swapped_sar_differs() {
+    let rows = [
+        (
+            "ts/melodie-anamorphic-sar-64-45-zenith-tv.ts",
+            (0x0400_0000, 0x0240_0000),
+            (45, 64),
+        ),
+        (
+            "ts/krone-anamorphic-sar-16-11-zenith-tv.ts",
+            (0x0417_45D1, 0x0240_0000),
+            (11, 16),
+        ),
+    ];
+    for (fixture, expected, (sar_width, sar_height)) in rows {
+        let Some(spec) = spec_from_fixture(fixture) else {
+            continue;
+        };
+        let data = build(spec.clone());
+        assert_eq!(tkhd_dims(&data), expected, "{fixture}");
+        let mut g = spec.display.clone().expect("display");
+        g.aspect_ratio = Some(AspectRatioIdc::ExtendedSar {
+            sar_width,
+            sar_height,
+        });
+        let swapped = build(spec.with_display(Some(g)));
+        assert_ne!(tkhd_dims(&swapped).0, expected.0, "{fixture}");
+    }
 }
 
 #[test]

@@ -67,31 +67,26 @@ fn mpd_for(fixture: &str) -> Option<String> {
 }
 
 #[test]
-fn melodie_anamorphic_64_45() {
-    let Some(mpd) = mpd_for("ts/melodie-anamorphic-sar-64-45-zenith-tv.ts") else {
-        return;
-    };
-    let (par, sars) = video_geometry_attrs(&mpd);
-    assert_eq!(sars, vec![Some("64:45".to_string())]);
-    assert_eq!(par.as_deref(), Some("16:9"));
-}
-
-#[test]
-fn krone_anamorphic_16_11() {
-    let Some(mpd) = mpd_for("ts/krone-anamorphic-sar-16-11-zenith-tv.ts") else {
-        return;
-    };
-    let (par, sars) = video_geometry_attrs(&mpd);
-    assert_eq!(sars, vec![Some("16:11".to_string())]);
-    assert_eq!(par.as_deref(), Some("20:11"));
-}
-
-#[test]
-fn square_pixel_320x240() {
-    let Some(mpd) = mpd_for("ts/h264_aac.ts") else {
-        return;
-    };
-    let (par, sars) = video_geometry_attrs(&mpd);
-    assert_eq!(sars, vec![Some("1:1".to_string())]);
-    assert_eq!(par.as_deref(), Some("4:3"));
+fn display_geometry_attrs_per_capture() {
+    let rows = [
+        (
+            "ts/melodie-anamorphic-sar-64-45-zenith-tv.ts",
+            "64:45",
+            "16:9",
+        ),
+        (
+            "ts/krone-anamorphic-sar-16-11-zenith-tv.ts",
+            "16:11",
+            "20:11",
+        ),
+        ("ts/h264_aac.ts", "1:1", "4:3"),
+    ];
+    for (fixture, sar, dar) in rows {
+        let Some(mpd) = mpd_for(fixture) else {
+            continue;
+        };
+        let (par, sars) = video_geometry_attrs(&mpd);
+        assert_eq!(sars, vec![Some(sar.to_string())], "{fixture}");
+        assert_eq!(par.as_deref(), Some(dar), "{fixture}");
+    }
 }

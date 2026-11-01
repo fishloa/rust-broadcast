@@ -17,7 +17,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
@@ -113,9 +112,9 @@ fn clock_refs(data: &[u8]) -> Vec<Obs> {
     out
 }
 
-fn check(fixture: &str, min_programs: usize) {
+fn check(fixture: &str, min_programs: usize) -> Option<Oracle> {
     let Some(path) = test_fixtures::require(fixture, "streaming_ts_clock_reference_program") else {
-        return;
+        return None;
     };
     let data = std::fs::read(path).unwrap();
     let o = oracle(&data);
@@ -176,6 +175,7 @@ fn check(fixture: &str, min_programs: usize) {
         obs.len(),
         obs.iter().filter(|ob| ob.program.is_none()).count()
     );
+    Some(o)
 }
 
 #[test]
@@ -185,23 +185,13 @@ fn france_tnt_five_programs() {
 
 #[test]
 fn hotbird_many_programs_no_stray_pcr_pid() {
-    check("ts/hotbird-mhp-si.ts", 10);
-}
-
-#[test]
-fn hotbird_stray_pcr_pid_is_dropped() {
     // The measured defect: PID 985 carries exactly one PCR (packet 68185) and
     // no PMT names it as a PCR_PID; it used to surface as a ClockReference.
-    let Some(path) = test_fixtures::require(
-        "ts/hotbird-mhp-si.ts",
-        "streaming_ts_clock_reference_program",
-    ) else {
+    // `check` step 2 rejects it once every PMT is known, which the premise
+    // below guarantees for packet 68185.
+    let Some(o) = check("ts/hotbird-mhp-si.ts", 10) else {
         return;
     };
-    let data = std::fs::read(path).unwrap();
-    let o = oracle(&data);
     assert!(!o.pcr_pid.values().any(|p| *p == 985));
     assert!(o.all_pmts_known_at < 68185);
-    assert!(clock_refs(&data).iter().all(|ob| ob.pid != 985));
-    let _ = Pid::new(985);
 }

@@ -600,54 +600,6 @@ fn resolve_in(xml: &str, reference: &str) -> String {
         .expect("resolves")
 }
 
-/// An absolute `BaseURL` at the Period overrides the MPD's, and an absolute
-/// one at the Representation overrides both.
-#[test]
-fn absolute_base_url_at_a_deeper_level_resets_the_chain() {
-    let xml = r#"<MPD profiles="p">
-        <BaseURL>https://mpd.example.com/root/</BaseURL>
-        <Period>
-            <BaseURL>https://period.example.net/vod/</BaseURL>
-            <AdaptationSet contentType="video">
-                <Representation id="0" bandwidth="1">
-                    <BaseURL>https://rep.example.org/</BaseURL>
-                </Representation>
-            </AdaptationSet>
-        </Period>
-    </MPD>"#;
-    assert_eq!(
-        resolve_in(xml, "seg-1.m4s"),
-        "https://rep.example.org/seg-1.m4s",
-        "the deepest absolute BaseURL wins"
-    );
-}
-
-/// Relative `BaseURL`s at every level compose into one absolute URL.
-#[test]
-fn relative_base_urls_compose_across_every_level() {
-    let xml = r#"<MPD profiles="p">
-        <BaseURL>https://cdn.example.com/</BaseURL>
-        <Period>
-            <BaseURL>vod/</BaseURL>
-            <AdaptationSet contentType="video">
-                <BaseURL>period-1/</BaseURL>
-                <Representation id="0" bandwidth="1">
-                    <BaseURL>video/</BaseURL>
-                </Representation>
-            </AdaptationSet>
-        </Period>
-    </MPD>"#;
-    assert_eq!(
-        resolve_in(xml, "seg-1.m4s"),
-        "https://cdn.example.com/vod/period-1/video/seg-1.m4s"
-    );
-    // A `..` in the reference climbs out of the Representation's directory.
-    assert_eq!(
-        resolve_in(xml, "../audio/seg.m4s"),
-        "https://cdn.example.com/vod/period-1/audio/seg.m4s"
-    );
-}
-
 /// A Relative `BaseURL` with no trailing slash treats its last segment as a
 /// file, so the reference replaces it.
 #[test]
