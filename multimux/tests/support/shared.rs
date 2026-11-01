@@ -23,3 +23,21 @@ pub fn shared<T: Send + Sync + 'static>(key: &str, make: impl FnOnce() -> T) -> 
         .downcast_ref::<T>()
         .expect("shared cell holds the type it was keyed with")
 }
+
+/// Runs `fut` to completion on its own thread and current-thread runtime, so a
+/// builder inside a `#[tokio::test]` can issue requests without nesting
+/// runtimes.
+pub fn run_async<T: Send>(fut: impl std::future::Future<Output = T> + Send) -> T {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("run_async runtime")
+                    .block_on(fut)
+            })
+            .join()
+            .expect("run_async thread")
+    })
+}

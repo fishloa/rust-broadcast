@@ -79,8 +79,23 @@ fn new_trunk() -> Arc<Trunk> {
     ))
 }
 
+#[path = "support/shared.rs"]
+mod shared;
+
+/// One route per fixture, built once per process. The first request to a
+/// freshly built route populates its playlist state, and two tests making that
+/// first request concurrently see an empty playlist on one of them, so the
+/// builder makes it before the route is shared.
 fn route_app(fixture: &str) -> Router {
-    route_app_from(load(fixture))
+    shared::shared(&format!("route:{fixture}"), || {
+        let app = route_app_from(load(fixture));
+        shared::run_async(async {
+            let _ = get(&app, "media.m3u8").await;
+            let _ = get(&app, "master.m3u8").await;
+        });
+        app
+    })
+    .clone()
 }
 
 fn route_app_from(sources: Vec<Source>) -> Router {
@@ -456,23 +471,35 @@ async fn mediastreamvalidator_reports_no_hdr10plus_specific_finding() {
         );
         return;
     }
-    let mut baseline = Vec::new();
-    for (fixture, name) in [(SDR, "hdr10plus-base-sdr"), (HDR10, "hdr10plus-base-hdr10")] {
-        if test_fixtures::require(fixture, "hdr10plus_route").is_some() {
-            baseline.extend(validator_comments(route_app(fixture), name).await);
-        }
-    }
     if test_fixtures::require(HDR10PLUS, "hdr10plus_route").is_none() {
         return;
     }
-    baseline.extend(
-        validator_comments(
-            route_app_from(strip_hdr10plus_sei(load(HDR10PLUS))),
-            "hdr10plus-base-same-stream-without-sei",
-        )
-        .await,
-    );
-    let comments = validator_comments(route_app(HDR10PLUS), "hdr10plus-val").await;
+    let base_runs: Vec<_> = [(SDR, "hdr10plus-base-sdr"), (HDR10, "hdr10plus-base-hdr10")]
+        .into_iter()
+        .filter(|(fixture, _)| test_fixtures::require(fixture, "hdr10plus_route").is_some())
+        .collect();
+    let (mut baseline, comments) = std::thread::scope(|scope| {
+        let bases: Vec<_> = base_runs
+            .iter()
+            .map(|&(fixture, name)| {
+                scope.spawn(move || shared::run_async(validator_comments(route_app(fixture), name)))
+            })
+            .collect();
+        let stripped = scope.spawn(|| {
+            shared::run_async(validator_comments(
+                route_app_from(strip_hdr10plus_sei(load(HDR10PLUS))),
+                "hdr10plus-base-same-stream-without-sei",
+            ))
+        });
+        let value = scope
+            .spawn(|| shared::run_async(validator_comments(route_app(HDR10PLUS), "hdr10plus-val")));
+        let mut baseline = Vec::new();
+        for h in bases {
+            baseline.extend(h.join().expect("validator thread"));
+        }
+        baseline.extend(stripped.join().expect("validator thread"));
+        (baseline, value.join().expect("validator thread"))
+    });
     for c in &comments {
         eprintln!("VALIDATOR hdr10plus: {c}");
     }

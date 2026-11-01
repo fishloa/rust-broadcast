@@ -90,8 +90,23 @@ fn new_trunk() -> Arc<Trunk> {
     ))
 }
 
+#[path = "support/shared.rs"]
+mod shared;
+
+/// One route per fixture, built once per process. The first request to a
+/// freshly built route populates its playlist state, and two tests making that
+/// first request concurrently see an empty playlist on one of them, so the
+/// builder makes it before the route is shared.
 fn route_app(fixture: &str) -> Router {
-    route_app_from(load(fixture))
+    shared::shared(&format!("route:{fixture}"), || {
+        let app = route_app_from(load(fixture));
+        shared::run_async(async {
+            let _ = get(&app, "media.m3u8").await;
+            let _ = get(&app, "master.m3u8").await;
+        });
+        app
+    })
+    .clone()
 }
 
 fn route_app_from(sources: Vec<Source>) -> Router {
@@ -539,25 +554,44 @@ async fn mediastreamvalidator_reports_no_dolby_vision_specific_finding() {
         );
         return;
     }
-    let mut baseline = Vec::new();
-    for (fixture, name) in [
+    let present = |fixtures: &[(&'static str, &'static str)]| -> Vec<(&'static str, &'static str)> {
+        fixtures
+            .iter()
+            .copied()
+            .filter(|(fixture, _)| test_fixtures::require(fixture, "dovi_route").is_some())
+            .collect()
+    };
+    let baseline_runs = present(&[
         (SDR, "dovi-base-sdr"),
         (HDR10, "dovi-base-hdr10"),
         (HLG, "dovi-base-hlg"),
-    ] {
-        if test_fixtures::require(fixture, "dovi_route").is_some() {
-            baseline.extend(validator_comments(route_app(fixture), name).await);
-        }
-    }
-    for (fixture, name) in [
+    ]);
+    let value_runs = present(&[
         (P81, "dovi-val-p81"),
         (P5, "dovi-val-p5"),
         (P84, "dovi-val-p84"),
-    ] {
-        if test_fixtures::require(fixture, "dovi_route").is_none() {
-            continue;
-        }
-        let comments = validator_comments(route_app(fixture), name).await;
+    ]);
+    let mut all = baseline_runs.clone();
+    all.extend(value_runs.iter().copied());
+    let mut results = std::thread::scope(|scope| {
+        let handles: Vec<_> = all
+            .iter()
+            .map(|&(fixture, name)| {
+                scope.spawn(move || shared::run_async(validator_comments(route_app(fixture), name)))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("validator thread"))
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
+    let mut baseline = Vec::new();
+    for _ in &baseline_runs {
+        baseline.extend(results.next().expect("baseline result"));
+    }
+    for &(fixture, name) in &value_runs {
+        let comments = results.next().expect("value result");
         for c in &comments {
             eprintln!("VALIDATOR {name}: {c}");
         }
