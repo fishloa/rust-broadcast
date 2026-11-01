@@ -6,6 +6,7 @@ mod audit_prerelease;
 mod avg_bandwidth;
 mod bcp47_language;
 mod client_state;
+mod closed_captions;
 mod frame_rate;
 mod golden_client;
 mod hls_skip_delta;
