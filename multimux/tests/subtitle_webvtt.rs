@@ -231,22 +231,14 @@ fn no_teletext_rig_unshared(subtitles: bool, who: &str) -> Option<Rig> {
 
 fn teletext_rig(subtitles: bool, who: &str) -> Option<&'static Rig> {
     shared::shared(&format!("teletext:{subtitles}"), || {
-        let rig = teletext_rig_unshared(subtitles, who);
-        if let Some(rig) = &rig {
-            shared::warm_up(&rig.app, STREAM);
-        }
-        rig
+        teletext_rig_unshared(subtitles, who)
     })
     .as_ref()
 }
 
 fn no_teletext_rig(subtitles: bool, who: &str) -> Option<&'static Rig> {
     shared::shared(&format!("no_teletext:{subtitles}"), || {
-        let rig = no_teletext_rig_unshared(subtitles, who);
-        if let Some(rig) = &rig {
-            shared::warm_up(&rig.app, STREAM);
-        }
-        rig
+        no_teletext_rig_unshared(subtitles, who)
     })
     .as_ref()
 }

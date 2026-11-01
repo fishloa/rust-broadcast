@@ -49,31 +49,3 @@ pub fn run_async<T: Send>(fut: impl std::future::Future<Output = T> + Send) -> T
             .expect("run_async thread")
     })
 }
-
-/// Issues the first request to every playlist a rig may serve, so the route's
-/// lazily populated playlist state exists before the rig is shared: two tests
-/// making that first request concurrently see an empty playlist on one of them.
-pub fn warm_up(app: &axum::Router, stream: &str) {
-    use axum::body::Body;
-    use axum::http::Request;
-    use tower::ServiceExt;
-    const PLAYLISTS: &[&str] = &[
-        "master.m3u8",
-        "media.m3u8",
-        "iframe.m3u8",
-        "subs-0.m3u8",
-        "subs-1.m3u8",
-        "audio/a0.m3u8",
-        "audio/a1.m3u8",
-        "audio/a2.m3u8",
-    ];
-    run_async(async {
-        for path in PLAYLISTS {
-            let request = Request::builder()
-                .uri(format!("/{stream}/{path}"))
-                .body(Body::empty())
-                .expect("warm-up request");
-            let _ = app.clone().oneshot(request).await;
-        }
-    });
-}
