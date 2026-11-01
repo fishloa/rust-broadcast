@@ -1,6 +1,6 @@
 use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
-const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
+const D: &[u8] = include_bytes!("../../../fixtures/ts/h264_aac.ts");
 
 fn cfg() -> Config {
     Config::default()

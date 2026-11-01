@@ -30,7 +30,7 @@ fn event_is_serialize_only() {
 #[test]
 fn demux_event_serializes_as_its_bare_tag() {
     let mut d = StreamingTsDemux::new();
-    d.feed(include_bytes!("../../fixtures/ts/h264_aac.ts"));
+    d.feed(include_bytes!("../../../fixtures/ts/h264_aac.ts"));
     let ev = std::iter::from_fn(|| d.poll_event())
         .next()
         .expect("demuxer emits an event");

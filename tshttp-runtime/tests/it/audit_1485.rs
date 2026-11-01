@@ -1,6 +1,6 @@
 use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
-const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
+const D: &[u8] = include_bytes!("../../../fixtures/ts/h264_aac.ts");
 const TEN_MINUTES_MS: u64 = 600_000;
 const ITERATION_BOUND: u32 = 5_000;
 
