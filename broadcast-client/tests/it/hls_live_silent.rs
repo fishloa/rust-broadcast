@@ -24,18 +24,15 @@ fn playlist(first_seq: u64, count: usize) -> String {
     s
 }
 
-fn segments(total: usize) -> Vec<Vec<u8>> {
-    let Some(bytes) = test_fixtures::require_bytes(FIXTURE, "hls_live_silent") else {
-        eprintln!(
-            "hls_live_silent: SKIPPED - the rest of this test binary needs the private capture"
-        );
-        std::process::exit(0)
-    };
+fn segments(total: usize) -> Option<Vec<Vec<u8>>> {
+    let bytes = test_fixtures::require_bytes(FIXTURE, "hls_live_silent")?;
     let packets = bytes.len() / TS_PACKET;
     let per = packets / total;
-    (0..total)
-        .map(|i| bytes[i * per * TS_PACKET..(i + 1) * per * TS_PACKET].to_vec())
-        .collect()
+    Some(
+        (0..total)
+            .map(|i| bytes[i * per * TS_PACKET..(i + 1) * per * TS_PACKET].to_vec())
+            .collect(),
+    )
 }
 
 #[derive(Default)]
@@ -146,13 +143,13 @@ fn run(mut origin: Origin, order: Order, mut on_tick: impl FnMut(u64, &mut Origi
     t
 }
 
-fn origin(first_seq: u64, count: usize, content_length: bool) -> Origin {
+fn origin(first_seq: u64, count: usize, content_length: bool) -> Option<Origin> {
     origin_with(first_seq, count, REAL_SHAPE_SEGMENTS, content_length)
 }
 
-fn origin_with(first_seq: u64, count: usize, total: usize, content_length: bool) -> Origin {
-    let segs = segments(total);
-    Origin {
+fn origin_with(first_seq: u64, count: usize, total: usize, content_length: bool) -> Option<Origin> {
+    let segs = segments(total)?;
+    Some(Origin {
         playlist: playlist(first_seq, count),
         segs: segs
             .into_iter()
@@ -160,7 +157,7 @@ fn origin_with(first_seq: u64, count: usize, total: usize, content_length: bool)
             .map(|(i, b)| (format!("http://h/seg{}.ts", 12 + i), b))
             .collect(),
         content_length,
-    }
+    })
 }
 
 fn assert_flowing(t: &Tally) {
@@ -172,25 +169,33 @@ fn assert_flowing(t: &Tally) {
 
 #[test]
 fn live_hls_without_endlist_emits_tracks_and_samples() {
-    let t = run(origin(12, 3, true), Order::InPoll, |_, _| {});
+    let t = run(skip_none!(origin(12, 3, true)), Order::InPoll, |_, _| {});
     assert_flowing(&t);
 }
 
 #[test]
 fn live_hls_emits_when_responses_arrive_one_at_a_time() {
-    let t = run(origin(12, 3, true), Order::OneAtATime, |_, _| {});
+    let t = run(
+        skip_none!(origin(12, 3, true)),
+        Order::OneAtATime,
+        |_, _| {},
+    );
     assert_flowing(&t);
 }
 
 #[test]
 fn live_hls_emits_when_playlist_is_answered_last() {
-    let t = run(origin(12, 3, true), Order::PlaylistLast, |_, _| {});
+    let t = run(
+        skip_none!(origin(12, 3, true)),
+        Order::PlaylistLast,
+        |_, _| {},
+    );
     assert_flowing(&t);
 }
 
 #[test]
 fn live_hls_emits_without_content_length() {
-    let t = run(origin(12, 3, false), Order::InPoll, |_, _| {});
+    let t = run(skip_none!(origin(12, 3, false)), Order::InPoll, |_, _| {});
     assert_flowing(&t);
 }
 
@@ -198,7 +203,7 @@ fn live_hls_emits_without_content_length() {
 fn live_hls_keeps_flowing_across_playlist_reloads() {
     let mut grown = 0;
     let t = run(
-        origin_with(12, 3, LONG_LIVED_SEGMENTS, true),
+        skip_none!(origin_with(12, 3, LONG_LIVED_SEGMENTS, true)),
         Order::InPoll,
         |now, o| {
             let want = match now {

@@ -4,7 +4,6 @@ use broadcast_client::{
     Action, BufferEvent, BufferInput, Config, Event, Hint, Session, Status, TrackId,
 };
 use support::ts_shift::{PACKET, Shift, VIDEO_TIMESCALE, pes_starts, pts27, shift_pes};
-use support::{read_tf1_bytes, read_tf1_headers};
 use transmux::JoinDecision;
 
 const CHUNK: usize = 1316;
@@ -32,8 +31,8 @@ struct LiveHost {
 }
 
 impl LiveHost {
-    fn open(config: Config) -> Self {
-        let (status, headers) = read_tf1_headers();
+    fn open(config: Config) -> Option<Self> {
+        let (status, headers) = support::read_tf1_headers()?;
         let mut session = Session::open(URL, config, 0).unwrap();
         let conn = loop {
             match session.poll(0).expect("first request") {
@@ -42,7 +41,7 @@ impl LiveHost {
             }
         };
         session.on_response(conn, status, &headers, 0);
-        Self {
+        Some(Self {
             session,
             conn,
             clock: ClockState::Idle,
@@ -50,7 +49,7 @@ impl LiveHost {
             times: Vec::new(),
             now: 0,
             next_tick: 0,
-        }
+        })
     }
 
     fn position(&self, now: u64) -> Option<u64> {
@@ -110,7 +109,7 @@ impl LiveHost {
     }
 
     fn reconnect(&mut self, now: u64) {
-        let (status, headers) = read_tf1_headers();
+        let (status, headers) = tf1_headers!();
         self.ticks_until(now);
         self.session.on_closed(self.conn, None, now);
         let mut conn = None;
@@ -227,9 +226,9 @@ struct Reconnected {
     reconnected_at: u64,
 }
 
-fn lower_base_reconnect(from_chunk: usize) -> Reconnected {
-    let bytes = read_tf1_bytes();
-    let mut h = LiveHost::open(Config::default());
+fn lower_base_reconnect(from_chunk: usize) -> Option<Reconnected> {
+    let bytes = support::read_tf1_bytes()?;
+    let mut h = LiveHost::open(Config::default())?;
     let end = h.stream(&bytes[..1_500 * CHUNK], 0);
     h.ticks_until(end);
     let mark = h.marker();
@@ -237,16 +236,16 @@ fn lower_base_reconnect(from_chunk: usize) -> Reconnected {
     h.reconnect(reconnected_at);
     let end2 = h.stream(&bytes[from_chunk * CHUNK..], end + 1_000);
     h.tail(end2);
-    Reconnected {
+    Some(Reconnected {
         host: h,
         mark,
         reconnected_at,
-    }
+    })
 }
 
 #[test]
 fn a_reconnect_onto_a_lower_pts_base_starts_playing_on_the_new_timeline() {
-    let r = lower_base_reconnect(0);
+    let r = skip_none!(lower_base_reconnect(0));
     let h = &r.host;
     let (_, join_pts) = first_join(h, r.mark);
     let origin = pts27(join_pts, VIDEO_TIMESCALE);
@@ -291,7 +290,7 @@ const GO_DEADLINE_US: u64 = 5_000_000;
 
 #[test]
 fn a_played_reconnect_reports_attempt_zero_then_live_without_a_climbing_counter() {
-    let r = lower_base_reconnect(0);
+    let r = skip_none!(lower_base_reconnect(0));
     let attempts: Vec<u64> = r
         .host
         .statuses_since(r.mark)
@@ -320,9 +319,9 @@ fn a_played_reconnect_reports_attempt_zero_then_live_without_a_climbing_counter(
 
 #[test]
 fn a_reconnect_mid_gop_drops_video_until_a_random_access_point() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let cut = chunk_boundary_in_gop(&bytes) / CHUNK;
-    let r = lower_base_reconnect(cut);
+    let r = skip_none!(lower_base_reconnect(cut));
     let vs = r
         .host
         .video_samples_since(after_discontinuity(&r.host, r.mark));
@@ -339,8 +338,8 @@ fn a_reconnect_mid_gop_drops_video_until_a_random_access_point() {
     );
 }
 
-fn reconnect_with(first: &[u8], second: &[u8], idle_us: u64) -> Reconnected {
-    let mut h = LiveHost::open(Config::default());
+fn reconnect_with(first: &[u8], second: &[u8], idle_us: u64) -> Option<Reconnected> {
+    let mut h = LiveHost::open(Config::default())?;
     let end = h.stream(first, 0);
     h.ticks_until(end + idle_us);
     let mark = h.marker();
@@ -348,11 +347,11 @@ fn reconnect_with(first: &[u8], second: &[u8], idle_us: u64) -> Reconnected {
     h.reconnect(reconnected_at);
     let end2 = h.stream(second, reconnected_at);
     h.tail(end2);
-    Reconnected {
+    Some(Reconnected {
         host: h,
         mark,
         reconnected_at,
-    }
+    })
 }
 
 fn assert_goes_on_new_timeline(r: &Reconnected) {
@@ -387,8 +386,12 @@ const ADVANCE_TICKS: i64 = 40 * 90_000;
 
 #[test]
 fn a_reconnect_of_a_starved_session_resumes_on_the_new_timeline() {
-    let bytes = read_tf1_bytes();
-    let r = reconnect_with(&bytes[..1_500 * CHUNK], &bytes, STARVE_IDLE_US);
+    let bytes = tf1_bytes!();
+    let r = skip_none!(reconnect_with(
+        &bytes[..1_500 * CHUNK],
+        &bytes,
+        STARVE_IDLE_US
+    ));
     assert!(
         r.host
             .buffer_events_since(0)
@@ -401,9 +404,9 @@ fn a_reconnect_of_a_starved_session_resumes_on_the_new_timeline() {
 
 #[test]
 fn a_reconnect_onto_an_advanced_timeline_resumes_on_the_new_timeline() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let advanced = shift_pes(&bytes, 0, ADVANCE_TICKS, Shift::Both);
-    let r = reconnect_with(&bytes[..1_500 * CHUNK], &advanced, 0);
+    let r = skip_none!(reconnect_with(&bytes[..1_500 * CHUNK], &advanced, 0));
     assert_goes_on_new_timeline(&r);
 }
 
@@ -416,8 +419,8 @@ fn finite_pass(
     bytes: &[u8],
     now: u64,
     host_position: Option<u64>,
-) -> Vec<Event> {
-    let mut headers = read_tf1_headers().1;
+) -> Option<Vec<Event>> {
+    let mut headers = support::read_tf1_headers()?.1;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     session.on_response(conn, 200, &headers, now);
     let mut out = Vec::new();
@@ -447,7 +450,7 @@ fn finite_pass(
     while let Some(e) = session.next_event() {
         out.push(e);
     }
-    out
+    Some(out)
 }
 
 fn request_conn(session: &mut Session, now: u64) -> u32 {
@@ -472,7 +475,7 @@ fn starts(events: &[Event]) -> Vec<u64> {
 
 #[test]
 fn a_finite_ts_that_is_looped_with_reconnect_starts_the_gate_again() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     finite_loop(&bytes[..FINITE_LEN]);
 }
 
@@ -484,7 +487,7 @@ fn a_looped_small_finite_ts_is_not_paused_by_the_hosts_stale_position() {
 fn finite_loop(file: &[u8]) {
     let mut session = Session::open(URL, Config::default(), 0).unwrap();
     let conn = request_conn(&mut session, 0);
-    let first = finite_pass(&mut session, conn, file, 0, None);
+    let first = skip_none!(finite_pass(&mut session, conn, file, 0, None));
     assert!(
         first
             .iter()
@@ -506,7 +509,7 @@ fn finite_loop(file: &[u8]) {
     session.reconnect(3_100_000);
     let conn = request_conn(&mut session, 3_100_000);
     let stale = Some(end_pos);
-    let second = finite_pass(&mut session, conn, file, 3_100_000, stale);
+    let second = skip_none!(finite_pass(&mut session, conn, file, 3_100_000, stale));
     let statuses: Vec<Status> = second
         .iter()
         .filter_map(|e| match e {
@@ -554,13 +557,14 @@ const LOW_BASE_TICKS: i64 = 60 * 90_000;
 const NEGATIVE_JUMP_EXTRA_TICKS: i64 = 10 * 90_000;
 
 fn first_video_pts(bytes: &[u8]) -> i64 {
-    let mut h = LiveHost::open(Config::default());
+    let mut h = LiveHost::open(Config::default())
+        .expect("private tf1 headers present once its bytes were read");
     h.stream(&bytes[..CHUNK * 400], 0);
     h.video_samples_since(0)[0].1
 }
 
-fn negative_timeline_stream() -> (Vec<u8>, usize) {
-    let bytes = read_tf1_bytes();
+fn negative_timeline_stream() -> Option<(Vec<u8>, usize)> {
+    let bytes = support::read_tf1_bytes()?;
     let base = first_video_pts(&bytes);
     let low = shift_pes(&bytes, 0, LOW_BASE_TICKS - base, Shift::Both);
     let starts = pes_starts(&low, Shift::Video);
@@ -571,13 +575,13 @@ fn negative_timeline_stream() -> (Vec<u8>, usize) {
         WRAP_HALF_TICKS + NEGATIVE_JUMP_EXTRA_TICKS,
         Shift::Both,
     );
-    (jumped, from * PACKET / CHUNK)
+    Some((jumped, from * PACKET / CHUNK))
 }
 
 #[test]
 fn a_jump_to_a_negative_unrolled_timeline_keeps_the_controller_fed() {
-    let (stream, _) = negative_timeline_stream();
-    let mut h = LiveHost::open(Config::default());
+    let (stream, _) = skip_none!(negative_timeline_stream());
+    let mut h = skip_none!(LiveHost::open(Config::default()));
     let end = h.stream(&stream, 0);
     h.tail(end);
     let d = h
@@ -643,11 +647,11 @@ fn audio_track_of(h: &LiveHost) -> (TrackId, u32) {
 
 #[test]
 fn no_old_timeline_audio_follows_a_detected_jump() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let starts = pes_starts(&bytes, Shift::Video);
     let from = starts[starts.len() / 2];
     let shifted = shift_pes(&bytes, from, JUMP_SECONDS * 90_000, Shift::Both);
-    let mut h = LiveHost::open(Config::default());
+    let mut h = skip_none!(LiveHost::open(Config::default()));
     let end = h.stream(&shifted, 0);
     h.tail(end);
     let d = h

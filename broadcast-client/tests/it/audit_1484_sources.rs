@@ -318,9 +318,9 @@ fn buffer_events(events: &[Event]) -> Vec<BufferEvent> {
         .collect()
 }
 
-fn second_connection_buffer_events(first_headers: &[(String, String)]) -> Vec<BufferEvent> {
-    let bytes = support::read_tf1_bytes();
-    let (status, live_headers) = support::read_tf1_headers();
+fn second_connection_buffer_events(first_headers: &[(String, String)]) -> Option<Vec<BufferEvent>> {
+    let bytes = support::read_tf1_bytes()?;
+    let (status, live_headers) = support::read_tf1_headers()?;
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let first = first_request(&mut session, 0);
     session.on_response(first, status, first_headers, 0);
@@ -330,24 +330,29 @@ fn second_connection_buffer_events(first_headers: &[(String, String)]) -> Vec<Bu
     session.reconnect(later);
     let second = first_request(&mut session, later);
     session.on_response(second, status, &live_headers, 0);
-    buffer_events(&live_events(&mut session, second, &bytes, later))
+    Some(buffer_events(&live_events(
+        &mut session,
+        second,
+        &bytes,
+        later,
+    )))
 }
 
 #[test]
 fn live_connection_after_a_finite_one_is_buffered_like_after_a_live_one() {
-    let bytes = support::read_tf1_bytes();
-    let (_, live_headers) = support::read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (_, live_headers) = tf1_headers!();
     let mut finite_headers = live_headers.clone();
     finite_headers.push(("Content-Length".to_string(), bytes.len().to_string()));
 
-    let expected = second_connection_buffer_events(&live_headers);
+    let expected = skip_none!(second_connection_buffer_events(&live_headers));
     assert!(
         expected
             .iter()
             .any(|e| matches!(e, BufferEvent::Start { .. })),
         "the live-after-live control never started"
     );
-    let got = second_connection_buffer_events(&finite_headers);
+    let got = skip_none!(second_connection_buffer_events(&finite_headers));
     assert_eq!(
         got, expected,
         "the finite connection's gating leaked into the live connection"
@@ -356,8 +361,8 @@ fn live_connection_after_a_finite_one_is_buffered_like_after_a_live_one() {
 
 #[test]
 fn queued_events_are_capped_by_dropping_the_oldest_samples() {
-    let bytes = support::read_tf1_bytes();
-    let (status, headers) = support::read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let drive = |config: Config| {
         let mut s = Session::open(TS_URL, config, 0).unwrap();
         let c = first_request(&mut s, 0);
@@ -503,8 +508,8 @@ fn stalled_count(events: &[Event]) -> usize {
 
 #[test]
 fn ts_time_jump_does_not_flood_stall_notices() {
-    let bytes = support::read_tf1_bytes();
-    let (status, headers) = support::read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let conn = first_request(&mut session, 0);
     session.on_response(conn, status, &headers, 0);
@@ -536,8 +541,8 @@ fn ts_time_jump_does_not_flood_stall_notices() {
 
 #[test]
 fn ts_time_jump_to_the_end_of_time_terminates() {
-    let bytes = support::read_tf1_bytes();
-    let (status, headers) = support::read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let conn = first_request(&mut session, 0);
     session.on_response(conn, status, &headers, 0);
@@ -593,8 +598,8 @@ fn polls_until_idle(session: &mut Session, now: u64) -> usize {
 
 #[test]
 fn ts_poll_at_the_end_of_time_goes_idle() {
-    let bytes = support::read_tf1_bytes();
-    let (status, headers) = support::read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     let conn = first_request(&mut session, 0);
     session.on_response(conn, status, &headers, 0);
@@ -629,8 +634,8 @@ fn rtsp_poll_at_the_end_of_time_goes_idle() {
 
 #[test]
 fn ts_session_started_at_the_end_of_time_goes_idle() {
-    let bytes = support::read_tf1_bytes();
-    let (status, headers) = support::read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open(TS_URL, Config::default(), u64::MAX).unwrap();
     let conn = match session.poll(u64::MAX) {
         Some(Action::HttpRequest { conn, .. }) => conn,

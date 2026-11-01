@@ -5,8 +5,8 @@ use support::*;
 
 #[test]
 fn tracks_precede_first_sample() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let first_sample = evs
@@ -21,8 +21,8 @@ fn tracks_precede_first_sample() {
 
 #[test]
 fn tracks_coalesced_one_per_change() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let tracks_count = evs.iter().filter(|e| matches!(e, Event::Tracks(_))).count();
@@ -31,8 +31,8 @@ fn tracks_coalesced_one_per_change() {
 
 #[test]
 fn display_changed_keeps_position_between_samples() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let positions = |pred: fn(&Event) -> bool| -> Vec<usize> {
@@ -76,8 +76,8 @@ fn display_changed_keeps_position_between_samples() {
 
 #[test]
 fn status_establishing_then_live_once() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let live_count = evs
@@ -93,8 +93,8 @@ fn status_establishing_then_live_once() {
 
 #[test]
 fn stall_gives_stalled_then_live_on_next_byte() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -125,8 +125,8 @@ fn stall_gives_stalled_then_live_on_next_byte() {
 
 #[test]
 fn server_close_reconnects_with_discontinuity_before_first_sample() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut config = Config::default();
     config.ts_http.min_reconnect_interval_ms = 0;
     let mut session = Session::open("http://example/live.ts", config, 0).unwrap();
@@ -156,7 +156,7 @@ fn server_close_reconnects_with_discontinuity_before_first_sample() {
 
 #[test]
 fn not_found_status_and_keeps_retrying_at_cap() {
-    let (status, headers) = read_missing_headers();
+    let (status, headers) = missing_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -182,8 +182,8 @@ fn not_found_status_and_keeps_retrying_at_cap() {
 
 #[test]
 fn starved_event_passthrough() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -233,7 +233,7 @@ fn unsupported_scheme_error() {
 
 #[test]
 fn close_is_terminal_and_emits_close_once() {
-    let (status, headers) = read_tf1_headers();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -254,8 +254,8 @@ fn close_is_terminal_and_emits_close_once() {
 
 #[test]
 fn unknown_conn_callbacks_ignored() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,

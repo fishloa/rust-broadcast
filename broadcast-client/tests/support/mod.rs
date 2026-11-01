@@ -17,20 +17,8 @@ pub mod ts_split;
 
 use broadcast_client::{Action, Event, Session};
 
-/// `test_fixtures::require` already printed the loud `SKIPPED` line and returned `None`, which
-/// only happens when `private/` is not checked out (or `SKIP_PRIVATE_FIXTURES=1`); with `private/`
-/// present a missing fixture, or `REQUIRE_PRIVATE_FIXTURES=1`, panics inside `require` and never
-/// reaches here. Libtest cannot skip one test at runtime, so the binary stops cleanly instead.
-fn skip_without_private() -> ! {
-    eprintln!(
-        "broadcast-client: SKIPPED - the rest of this test binary needs the private zenith-http fixtures"
-    );
-    std::process::exit(0)
-}
-
-pub fn read_tf1_headers() -> (u16, Vec<(String, String)>) {
-    let path = test_fixtures::require("zenith-http/tf1.headers.txt", "support")
-        .unwrap_or_else(|| skip_without_private());
+pub fn read_tf1_headers() -> Option<(u16, Vec<(String, String)>)> {
+    let path = test_fixtures::require("zenith-http/tf1.headers.txt", "support")?;
     let text = std::fs::read_to_string(path).unwrap();
     let status: u16 = text
         .lines()
@@ -50,17 +38,15 @@ pub fn read_tf1_headers() -> (u16, Vec<(String, String)>) {
             headers.push((k.trim().to_string(), v.trim().to_string()));
         }
     }
-    (status, headers)
+    Some((status, headers))
 }
 
-pub fn read_tf1_bytes() -> Vec<u8> {
+pub fn read_tf1_bytes() -> Option<Vec<u8>> {
     test_fixtures::require_bytes("zenith-http/tf1-live.ts", "support")
-        .unwrap_or_else(|| skip_without_private())
 }
 
-pub fn read_missing_headers() -> (u16, Vec<(String, String)>) {
-    let path = test_fixtures::require("zenith-http/missing.headers.txt", "support")
-        .unwrap_or_else(|| skip_without_private());
+pub fn read_missing_headers() -> Option<(u16, Vec<(String, String)>)> {
+    let path = test_fixtures::require("zenith-http/missing.headers.txt", "support")?;
     let text = std::fs::read_to_string(path).unwrap();
     let status: u16 = text
         .lines()
@@ -80,7 +66,7 @@ pub fn read_missing_headers() -> (u16, Vec<(String, String)>) {
             headers.push((k.trim().to_string(), v.trim().to_string()));
         }
     }
-    (status, headers)
+    Some((status, headers))
 }
 
 pub fn feed_chunks(
@@ -122,4 +108,35 @@ pub fn feed_chunks(
         out.push(e);
     }
     out
+}
+
+#[allow(unused_macros)]
+macro_rules! skip_none {
+    ($e:expr) => {
+        match $e {
+            Some(v) => v,
+            None => return,
+        }
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! tf1_bytes {
+    () => {
+        skip_none!($crate::support::read_tf1_bytes())
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! tf1_headers {
+    () => {
+        skip_none!($crate::support::read_tf1_headers())
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! missing_headers {
+    () => {
+        skip_none!($crate::support::read_missing_headers())
+    };
 }

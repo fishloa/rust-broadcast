@@ -392,8 +392,8 @@ fn live_hls_reconnect_and_select_variant_still_restart_the_playlist() {
 
 #[test]
 fn finite_ts_reconnect_after_ended_still_restarts() {
-    let bytes = support::read_tf1_bytes();
-    let (status, base_headers) = support::read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, base_headers) = tf1_headers!();
     let mut headers = base_headers;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();

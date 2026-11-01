@@ -5,8 +5,8 @@ use support::*;
 
 #[test]
 fn session_finite_file_ends_without_reconnect() {
-    let bytes = read_tf1_bytes();
-    let (status0, base_headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status0, base_headers) = tf1_headers!();
     let mut headers = base_headers;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let status = status0;
@@ -45,8 +45,8 @@ fn session_finite_file_ends_without_reconnect() {
 
 #[test]
 fn session_live_unchanged_reconnects_on_close() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -69,8 +69,8 @@ fn session_live_unchanged_reconnects_on_close() {
 
 #[test]
 fn session_finite_event_emitted_once() {
-    let bytes = read_tf1_bytes();
-    let (status0, base_headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status0, base_headers) = tf1_headers!();
     let mut headers = base_headers;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let status = status0;
@@ -86,8 +86,8 @@ fn session_finite_event_emitted_once() {
 
 #[test]
 fn session_reconnect_after_ended_restarts() {
-    let bytes = read_tf1_bytes();
-    let (status0, base_headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status0, base_headers) = tf1_headers!();
     let mut headers = base_headers;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let status = status0;
@@ -118,7 +118,7 @@ fn session_reconnect_after_ended_restarts() {
 
 #[test]
 fn session_206_is_finite() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let headers = vec![(
         "Content-Range".to_string(),
         format!("bytes 0-{}/{}", bytes.len() - 1, bytes.len()),
@@ -136,8 +136,8 @@ fn session_206_is_finite() {
 
 #[test]
 fn truncated_finite_transfer_reconnects() {
-    let bytes = read_tf1_bytes();
-    let (status0, base_headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status0, base_headers) = tf1_headers!();
     let mut headers = base_headers;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let status = status0;

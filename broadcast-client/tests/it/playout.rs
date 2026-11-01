@@ -8,7 +8,6 @@ use broadcast_client::{
 };
 use support::hls_host::*;
 use support::renditions::{self, AUDIO_DIR, AUDIO_PLAYLIST_URL, MASTER_URL};
-use support::{read_tf1_bytes, read_tf1_headers};
 use transmux::JoinDecision;
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
@@ -685,8 +684,8 @@ fn finite_ts_vod_gate_events_not_buffering_runtime() {
 
 #[test]
 fn live_ts_http_still_uses_buffering_runtime() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut s = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     let conn = match s.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,

@@ -9,7 +9,6 @@ use support::hls_host::{self as hls, Reply};
 use support::rtsp_host::{
     self, BASE_URL, MediaFixture, Server, channel_of, interleaved, quiet_config,
 };
-use support::{read_tf1_bytes, read_tf1_headers};
 use transmux::JoinDecision;
 use transmux::rtp::RtpMediaKind;
 
@@ -95,8 +94,8 @@ struct Host {
 }
 
 impl Host {
-    fn open(config: Config) -> Self {
-        Self::open_with(config, read_tf1_headers())
+    fn open(config: Config) -> Option<Self> {
+        Some(Self::open_with(config, support::read_tf1_headers()?))
     }
 
     fn open_plain(config: Config) -> Self {
@@ -690,15 +689,15 @@ fn config_custom_thresholds_applied() {
     );
 }
 
-fn tf1_prefix_chunks() -> Vec<u8> {
-    read_tf1_bytes()
+fn tf1_prefix_chunks() -> Option<Vec<u8>> {
+    support::read_tf1_bytes()
 }
 
 #[test]
 fn same_capture_fed_twice_after_3s_pause_emits_discontinuity_before_first_new_sample() {
-    let bytes = tf1_prefix_chunks();
+    let bytes = skip_none!(tf1_prefix_chunks());
     let n = chunk_count(&bytes);
-    let mut h = Host::open(Config::default());
+    let mut h = skip_none!(Host::open(Config::default()));
     h.feed(&bytes, &realtime(n));
     let end = (n as u64) * STEP_US;
     let first_pass_events = h.events.len();
@@ -736,9 +735,9 @@ fn same_capture_fed_twice_after_3s_pause_emits_discontinuity_before_first_new_sa
 
 #[test]
 fn second_pass_buffer_start_follows_from_new_timeline_media() {
-    let bytes = tf1_prefix_chunks();
+    let bytes = skip_none!(tf1_prefix_chunks());
     let n = chunk_count(&bytes);
-    let mut h = Host::open(Config::default());
+    let mut h = skip_none!(Host::open(Config::default()));
     h.feed(&bytes, &realtime(n));
     let end = (n as u64) * STEP_US;
     let vid = h.video();
@@ -789,9 +788,9 @@ fn second_pass_buffer_start_follows_from_new_timeline_media() {
 
 #[test]
 fn bframe_reordering_never_triggers() {
-    let bytes = tf1_prefix_chunks();
+    let bytes = skip_none!(tf1_prefix_chunks());
     let n = chunk_count(&bytes);
-    let mut h = Host::open(Config::default());
+    let mut h = skip_none!(Host::open(Config::default()));
     h.feed(&bytes, &realtime(n));
     let vid = h.video();
     let vs: Vec<Rec> = h.samples_of(vid).into_iter().filter(Rec::kept).collect();
@@ -808,7 +807,8 @@ fn bframe_reordering_never_triggers() {
 }
 
 fn run_burst_tf1(bytes: &[u8]) -> Host {
-    let mut h = Host::open(Config::default());
+    let mut h = Host::open(Config::default())
+        .expect("private tf1 headers present once its bytes were read");
     for c in bytes.chunks(CHUNK) {
         h.data(c, 0);
     }
@@ -817,7 +817,7 @@ fn run_burst_tf1(bytes: &[u8]) -> Host {
 
 #[test]
 fn demux_discontinuity_and_jump_on_same_sample_emit_one_discontinuity() {
-    let bytes = tf1_prefix_chunks();
+    let bytes = skip_none!(tf1_prefix_chunks());
     let n = chunk_count(&bytes);
     let starts = video_pes_starts(&bytes);
     let from = starts[starts.len() / 2];
@@ -846,19 +846,19 @@ fn demux_discontinuity_and_jump_on_same_sample_emit_one_discontinuity() {
     };
     let mut flag_only = bytes.clone();
     flag_only[flag_at * PACKET + 5] |= AF_DISCONTINUITY_FLAG;
-    let mut h = Host::open(Config::default());
+    let mut h = skip_none!(Host::open(Config::default()));
     h.feed(&flag_only, &realtime(n));
     assert_eq!(pcr_hints(&h), 1, "the demuxer alone hints once");
     assert!(h.discontinuities().is_empty(), "and tells the host nothing");
 
     let mut jump_only = shift_pes(&bytes, from, FAR_JUMP_US * 9 / 100, Shift::Video);
-    let mut h = Host::open(Config::default());
+    let mut h = skip_none!(Host::open(Config::default()));
     h.feed(&jump_only, &realtime(n));
     assert_eq!(pcr_hints(&h), 1, "the detector alone hints once");
     assert_eq!(h.discontinuities().len(), 1);
 
     jump_only[flag_at * PACKET + 5] |= AF_DISCONTINUITY_FLAG;
-    let mut h = Host::open(Config::default());
+    let mut h = skip_none!(Host::open(Config::default()));
     h.feed(&jump_only, &realtime(n));
     assert_eq!(h.discontinuities().len(), 1, "{:?}", h.discontinuities());
     assert_eq!(pcr_hints(&h), 1, "demuxer and jump on one sample hint once");

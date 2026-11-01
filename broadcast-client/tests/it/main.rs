@@ -1,3 +1,7 @@
+#[macro_use]
+#[path = "../support/mod.rs"]
+mod support;
+
 mod audit_1484;
 mod audit_1484_sources;
 mod audit_1492;
@@ -67,8 +71,7 @@ mod rtsp_zero_duration;
 mod segment_inactivity;
 mod server_refused;
 mod start_gate;
-#[path = "../support/mod.rs"]
-mod support;
+#[macro_use]
 #[cfg(feature = "__test-seams")]
 mod timeline_jump;
 mod tracks_hold_config;

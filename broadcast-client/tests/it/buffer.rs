@@ -8,7 +8,6 @@ use broadcast_client::{
 use buffering_runtime::{
     BufferController, ControllerConfig, Event as RtEvent, Reason as RtReason, StallMemorySnapshot,
 };
-use support::{read_tf1_bytes, read_tf1_headers};
 use transmux::{DemuxEvent, JoinDecision, LiveJoin, StreamingTsDemux, TrackSpec};
 
 const CHUNK: usize = 1316;
@@ -139,15 +138,15 @@ struct Host {
 }
 
 impl Host {
-    fn open(seed: Option<StallMemorySnapshot>) -> Self {
+    fn open(seed: Option<StallMemorySnapshot>) -> Option<Self> {
         let mut session = Session::open_with_memory(URL, Config::default(), 0, seed).unwrap();
-        let (status, headers) = read_tf1_headers();
+        let (status, headers) = support::read_tf1_headers()?;
         let conn = match session.poll(0).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
             other => panic!("unexpected first action {other:?}"),
         };
         session.on_response(conn, status, &headers, 0);
-        Self {
+        Some(Self {
             session,
             conn,
             clock: PlayClock::new(),
@@ -155,7 +154,7 @@ impl Host {
             times: Vec::new(),
             chunk_marks: Vec::new(),
             ticks: Vec::new(),
-        }
+        })
     }
 
     fn drain(&mut self, now: u64) {
@@ -307,14 +306,14 @@ fn join_points(h: &Host) -> Vec<i64> {
 }
 
 fn run_realtime(bytes: &[u8]) -> Host {
-    let mut h = Host::open(None);
+    let mut h = Host::open(None).expect("private tf1 headers present once its bytes were read");
     let n = bytes.len().div_ceil(CHUNK);
     h.run(bytes, CHUNK, &realtime(n), TAIL_US);
     h
 }
 
 fn run_gap(bytes: &[u8]) -> Host {
-    let mut h = Host::open(None);
+    let mut h = Host::open(None).expect("private tf1 headers present once its bytes were read");
     let n = bytes.len().div_ceil(CHUNK);
     h.run(bytes, CHUNK, &with_gap(n, GAP_AFTER_CHUNK), TAIL_US);
     h
@@ -544,7 +543,7 @@ impl Oracle {
 
 #[test]
 fn buffer_events_match_bare_controller_oracle() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let n = bytes.len().div_ceil(CHUNK);
     let arrivals = with_gap(n, GAP_AFTER_CHUNK);
     let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
@@ -556,7 +555,7 @@ fn buffer_events_match_bare_controller_oracle() {
             Step::Data(i, t) => oracle.chunk(chunks[i], t),
         }
     }
-    let mut host = Host::open(None);
+    let mut host = skip_none!(Host::open(None));
     host.run(&bytes, CHUNK, &arrivals, TAIL_US);
 
     assert!(
@@ -589,7 +588,7 @@ fn buffer_events_match_bare_controller_oracle() {
 
 #[test]
 fn start_emitted_once_after_join_point() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_realtime(&bytes);
     let starts: Vec<(usize, u64)> = h
         .events
@@ -608,7 +607,7 @@ fn start_emitted_once_after_join_point() {
 
 #[test]
 fn no_pause_for_steady_delivery() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_realtime(&bytes);
     let last_arrival = (bytes.len().div_ceil(CHUNK) as u64 - 1) * STEP_US;
     let timed: Vec<(u64, BufferEvent)> = h
@@ -648,7 +647,7 @@ fn no_pause_for_steady_delivery() {
 
 #[test]
 fn pause_reason_data_arriving_when_chunks_still_arriving() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let from = 1_100 * PACKETS_PER_CHUNK;
     let no_audio = drop_pid_from(&bytes, AUDIO_PID, from);
     let h = run_realtime(&no_audio);
@@ -671,7 +670,7 @@ fn pause_reason_data_arriving_when_chunks_still_arriving() {
 
 #[test]
 fn pause_reason_no_data_on_silent_source() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_gap(&bytes);
     let first_pause = h
         .buffer_events()
@@ -700,7 +699,7 @@ fn first_pause_track(bytes: &[u8]) -> Option<u32> {
 
 #[test]
 fn pause_names_starving_track_when_one_track_starves() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let from = 1_100 * PACKETS_PER_CHUNK;
     let no_audio = drop_pid_from(&bytes, AUDIO_PID, from);
     assert_eq!(first_pause_track(&no_audio), Some(AUDIO));
@@ -710,7 +709,7 @@ fn pause_names_starving_track_when_one_track_starves() {
 
 #[test]
 fn resume_after_delivery_returns() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_gap(&bytes);
     let timed: Vec<(u64, BufferEvent)> = h
         .events
@@ -738,7 +737,7 @@ fn resume_after_delivery_returns() {
 
 #[test]
 fn first_media_report_is_zero_length_video_join_point() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_realtime(&bytes);
     let reports = media_reports(h.log());
     let (_, join_pts) = first_join_point(&h);
@@ -751,7 +750,7 @@ fn first_media_report_is_zero_length_video_join_point() {
 
 #[test]
 fn audio_withheld_until_video_join_point() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_realtime(&bytes);
     let (join_idx, _) = first_join_point(&h);
     let audio_before_join = h
@@ -790,7 +789,7 @@ fn mid_gop_stream(bytes: &[u8]) -> Vec<u8> {
 
 #[test]
 fn video_before_join_point_not_reported() {
-    let bytes = mid_gop_stream(&read_tf1_bytes());
+    let bytes = mid_gop_stream(&tf1_bytes!());
     let h = run_realtime(&bytes);
     let video: Vec<_> = h
         .samples()
@@ -845,7 +844,7 @@ fn expected_pcrs(bytes: &[u8], chunk: usize) -> Vec<(Option<u64>, usize)> {
 }
 
 fn fed_pcrs(bytes: &[u8], chunk: usize) -> Vec<Option<u64>> {
-    let mut h = Host::open(None);
+    let mut h = Host::open(None).expect("private tf1 headers present once its bytes were read");
     for (i, ch) in bytes.chunks(chunk).enumerate() {
         h.data(ch, i as u64 * 10_000);
     }
@@ -861,7 +860,7 @@ fn fed_pcrs(bytes: &[u8], chunk: usize) -> Vec<Option<u64>> {
 #[test]
 fn pcr_taken_once_per_chunk_from_last_clock_reference() {
     const BIG: usize = 65_536;
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
 
     let big = expected_pcrs(&bytes, BIG);
     assert!(
@@ -884,7 +883,7 @@ fn pcr_taken_once_per_chunk_from_last_clock_reference() {
 
 fn reconnect(h: &mut Host, now: u64) {
     h.session.on_closed(h.conn, None, now);
-    let (status, headers) = read_tf1_headers();
+    let (status, headers) = tf1_headers!();
     let mut new_conn = None;
     while let Some(a) = h.session.poll(now) {
         if let Action::HttpRequest { conn, .. } = a {
@@ -898,9 +897,9 @@ fn reconnect(h: &mut Host, now: u64) {
 
 #[test]
 fn reconnect_sends_reconnected_hint_before_first_chunk_and_keeps_memory() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let n = bytes.len().div_ceil(CHUNK);
-    let mut h = Host::open(None);
+    let mut h = skip_none!(Host::open(None));
     let split = 2_000;
     let arrivals = with_gap(n, GAP_AFTER_CHUNK);
     let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
@@ -949,8 +948,8 @@ fn reconnect_sends_reconnected_hint_before_first_chunk_and_keeps_memory() {
 
 #[test]
 fn source_ended_and_error_hints() {
-    let bytes = read_tf1_bytes();
-    let mut ended = Host::open(None);
+    let bytes = tf1_bytes!();
+    let mut ended = skip_none!(Host::open(None));
     ended.data(&bytes[..CHUNK * 4], 1_000);
     ended.session.on_closed(ended.conn, None, 2_000);
     assert_eq!(
@@ -961,7 +960,7 @@ fn source_ended_and_error_hints() {
         [Hint::SourceEnded]
     );
 
-    let mut failed = Host::open(None);
+    let mut failed = skip_none!(Host::open(None));
     failed.data(&bytes[..CHUNK * 4], 1_000);
     failed
         .session
@@ -991,7 +990,7 @@ fn source_ended_and_error_hints() {
 
 #[test]
 fn demux_discontinuity_sends_pcr_discontinuity_and_rejoins() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let clean = run_realtime(&bytes);
     assert!(
         !hints(clean.log())
@@ -1051,8 +1050,8 @@ fn demux_discontinuity_sends_pcr_discontinuity_and_rejoins() {
 
 #[test]
 fn set_rendered_tracks_registers_and_unregisters_difference() {
-    let bytes = read_tf1_bytes();
-    let mut h = Host::open(None);
+    let bytes = tf1_bytes!();
+    let mut h = skip_none!(Host::open(None));
     let n = 1_400;
     h.run(&bytes[..n * CHUNK], CHUNK, &realtime(n), 0);
     let ids = h.track_ids();
@@ -1097,8 +1096,8 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
 
 #[test]
 fn playback_position_none_until_started_then_some() {
-    let bytes = read_tf1_bytes();
-    let mut h = Host::open(None);
+    let bytes = tf1_bytes!();
+    let mut h = skip_none!(Host::open(None));
     h.tick(0);
     assert!(h.log().is_empty(), "no controller exists before data");
 
@@ -1131,25 +1130,25 @@ fn playback_position_none_until_started_then_some() {
 
 #[test]
 fn stall_memory_roundtrip_seeds_next_session() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let first = run_gap(&bytes);
     let memory = first.session.stall_memory();
     assert_ne!(memory.peak_us, 0);
 
-    let mut seeded = Host::open(Some(memory));
+    let mut seeded = skip_none!(Host::open(Some(memory)));
     assert_eq!(seeded.session.stall_memory().peak_us, memory.peak_us);
     seeded.data(&bytes[..CHUNK], 0);
     assert_eq!(seeded.session.stall_memory().peak_us, memory.peak_us);
 
-    let mut fresh = Host::open(None);
+    let mut fresh = skip_none!(Host::open(None));
     fresh.data(&bytes[..CHUNK], 0);
     assert_eq!(fresh.session.stall_memory().peak_us, 0);
 }
 
 #[test]
 fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
-    let bytes = read_tf1_bytes();
-    let (status, mut headers) = read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, mut headers) = tf1_headers!();
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let mut session = Session::open(URL, Config::default(), 0).unwrap();
     let conn = match session.poll(0).unwrap() {
@@ -1198,8 +1197,8 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
 
 #[test]
 fn on_data_zero_length_is_noop_for_controller() {
-    let bytes = read_tf1_bytes();
-    let mut h = Host::open(None);
+    let bytes = tf1_bytes!();
+    let mut h = skip_none!(Host::open(None));
     h.data(&[], 0);
     assert!(h.log().is_empty());
     h.data(&bytes[..CHUNK], 10);
@@ -1247,7 +1246,7 @@ fn video_expectations(h: &Host) -> Vec<ChunkVideo> {
 
 #[test]
 fn video_end_uses_max_pts_not_last_decoded() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_realtime(&bytes);
     let expect = video_expectations(&h);
     let mut reported: BTreeMap<usize, u64> = BTreeMap::new();
@@ -1280,7 +1279,7 @@ fn video_end_uses_max_pts_not_last_decoded() {
 
 #[test]
 fn audio_end_only_after_join_pts() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_realtime(&bytes);
     let ts_video = h.timescales()[&VIDEO];
     let ts_audio = h.timescales()[&AUDIO];
@@ -1318,8 +1317,8 @@ fn audio_end_only_after_join_pts() {
 
 #[test]
 fn audio_end_forgotten_when_rendered_audio_changes() {
-    let bytes = read_tf1_bytes();
-    let mut h = Host::open(None);
+    let bytes = tf1_bytes!();
+    let mut h = skip_none!(Host::open(None));
     let n = bytes.len().div_ceil(CHUNK);
     let arrivals = realtime(n);
     let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
@@ -1376,7 +1375,7 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
 
 #[test]
 fn non_rendered_audio_never_counts() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let h = run_realtime(&bytes);
     let other_audio_samples = h
         .samples()
@@ -1391,12 +1390,12 @@ fn non_rendered_audio_never_counts() {
     );
 }
 
-fn rejoin_run(rejoin_at: usize) -> (Host, usize) {
-    let bytes = read_tf1_bytes();
+fn rejoin_run(rejoin_at: usize) -> Option<(Host, usize)> {
+    let bytes = support::read_tf1_bytes()?;
     let n = bytes.len().div_ceil(CHUNK);
     let arrivals = realtime(n);
     let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
-    let mut h = Host::open(None);
+    let mut h = Host::open(None)?;
     let mut mark = 0;
     for step in timeline(&arrivals, TAIL_US) {
         match step {
@@ -1410,12 +1409,12 @@ fn rejoin_run(rejoin_at: usize) -> (Host, usize) {
             }
         }
     }
-    (h, mark)
+    Some((h, mark))
 }
 
 #[test]
 fn rejoin_rearms_join_without_pcr_discontinuity_hint_or_controller_reset() {
-    let (h, mark) = rejoin_run(1_200);
+    let (h, mark) = skip_none!(rejoin_run(1_200));
     let after = &h.log()[mark..];
     assert!(!after.iter().any(|l| matches!(
         l,
@@ -1442,8 +1441,8 @@ fn rejoin_rearms_join_without_pcr_discontinuity_hint_or_controller_reset() {
 
 #[test]
 fn rejoin_clears_pending_ends() {
-    let bytes = read_tf1_bytes();
-    let mut h = Host::open(None);
+    let bytes = tf1_bytes!();
+    let mut h = skip_none!(Host::open(None));
     let head = &bytes[..CHUNK * 1_200];
     for (i, ch) in head.chunks(CHUNK).enumerate() {
         h.data(ch, i as u64 * STEP_US);
@@ -1456,7 +1455,7 @@ fn rejoin_clears_pending_ends() {
         "closing must flush demuxer samples that stay pending"
     );
     h.session.rejoin();
-    let (status, headers) = read_tf1_headers();
+    let (status, headers) = tf1_headers!();
     let mut conn = None;
     while let Some(a) = h.session.poll(1_300 * STEP_US) {
         if let Action::HttpRequest { conn: c, .. } = a {
@@ -1503,7 +1502,7 @@ fn pick_rendered(h: &Host) -> Option<RenderedPick> {
 }
 
 fn run_declaring(bytes: &[u8], delay_us: Option<u64>) -> Host {
-    let mut h = Host::open(None);
+    let mut h = Host::open(None).expect("private tf1 headers present once its bytes were read");
     let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
     let arrivals = realtime(chunks.len());
     let mut tracks_at = None;
@@ -1548,7 +1547,7 @@ fn hold_sequence(h: &Host) -> Vec<(&'static str, Option<u64>)> {
 
 #[test]
 fn late_explicit_declaration_is_transparent_on_the_real_capture() {
-    let bytes = read_tf1_bytes();
+    let bytes = tf1_bytes!();
     let baseline = hold_sequence(&run_declaring(&bytes, None));
     assert!(baseline.len() >= 2, "{baseline:?}");
     for delay in LATE_DECLARATION_DELAYS_US {

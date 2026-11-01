@@ -25,12 +25,8 @@ fn without(bytes: &[u8], pid: u16) -> Vec<u8> {
         .collect()
 }
 
-fn rai() -> Vec<u8> {
-    let Some(path) = test_fixtures::require(RAI, "r7") else {
-        eprintln!("r7: SKIPPED - the rest of this test binary needs the private rai-gulp capture");
-        std::process::exit(0)
-    };
-    std::fs::read(path).unwrap()
+fn rai() -> Option<Vec<u8>> {
+    test_fixtures::require(RAI, "r7").map(|path| std::fs::read(path).unwrap())
 }
 
 fn drain(s: &mut Session, now: u64, starts: &mut Vec<u64>) {
@@ -73,13 +69,13 @@ fn start_times(bytes: &[u8], cfg: Config, ticks: Ticks) -> Vec<u64> {
 
 #[test]
 fn start_needs_at_least_one_playback_position_call() {
-    let starts = start_times(&rai(), Config::default(), Ticks::Never);
+    let starts = start_times(&skip_none!(rai()), Config::default(), Ticks::Never);
     assert!(starts.is_empty(), "{starts:?}");
 }
 
 #[test]
 fn start_fires_with_sparse_ticks_just_later_than_with_every_tick() {
-    let bytes = without(&rai(), AUDIO_PID);
+    let bytes = without(&skip_none!(rai()), AUDIO_PID);
     let sparse = start_times(&bytes, Config::default(), Ticks::IdleOnly);
     let every = start_times(&bytes, Config::default(), Ticks::EveryChunk);
     eprintln!("{sparse:?} {every:?}");
@@ -90,6 +86,6 @@ fn start_fires_with_sparse_ticks_just_later_than_with_every_tick() {
 
 #[test]
 fn start_fires_with_sparse_ticks_on_a_complete_stream() {
-    let starts = start_times(&rai(), Config::default(), Ticks::IdleOnly);
+    let starts = start_times(&skip_none!(rai()), Config::default(), Ticks::IdleOnly);
     assert_eq!(starts.len(), 1, "{starts:?}");
 }

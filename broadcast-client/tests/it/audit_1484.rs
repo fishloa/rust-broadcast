@@ -276,8 +276,8 @@ fn wake_only_host_sees_start_timeout() {
 
 #[test]
 fn wake_only_host_sees_stall_notice_and_stall_reconnect() {
-    let bytes = support::read_tf1_bytes();
-    let (status, headers) = support::read_tf1_headers();
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
     let mut session = open(TS_URL, Config::default());
     let mut wakes = BTreeSet::new();
     let first = tracked_wakes(&mut session, 0, &mut wakes);
