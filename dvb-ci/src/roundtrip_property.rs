@@ -11,8 +11,13 @@ use broadcast_common::{Parse, Serialize};
 use crate::error::Result;
 use crate::tag::ApduTag;
 
-/// Random bodies tried per `apdu_tag`.
-const ITERATIONS: usize = 40_000;
+fn iterations() -> usize {
+    if option_env!("RUST_BROADCAST_SOAK").is_some() {
+        40_000
+    } else {
+        8_000
+    }
+}
 /// Longest random body (covers every fixed layout and a few list entries).
 const MAX_BODY: usize = 64;
 
@@ -47,7 +52,7 @@ fn sweep(
 ) {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15 ^ (name.len() as u64));
     for &tag in tags {
-        'tag: for it in 0..ITERATIONS {
+        'tag: for it in 0..iterations() {
             let n = (rng.next() as usize) % (MAX_BODY + 1);
             let pool = it % 4;
             let mut wire = tag.to_bytes().to_vec();
@@ -160,7 +165,7 @@ fn spdus(f: &mut Vec<alloc::string::String>) {
     let mut rng = Rng(0xD1B5_4A32_D192_ED03);
     macro_rules! spdu {
         ($ty:ty, $tag:expr) => {
-            for it in 0..ITERATIONS {
+            for it in 0..iterations() {
                 let n = (rng.next() as usize) % 12;
                 let mut wire = alloc::vec![$tag, n as u8];
                 for _ in 0..n {
