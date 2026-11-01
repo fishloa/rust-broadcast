@@ -195,8 +195,8 @@ async fn tls_full_session_over_loopback() {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
     // Committed self-signed localhost cert (DER) — not secret; a test fixture.
-    let cert_der = include_bytes!("fixtures/localhost-cert.der").to_vec();
-    let key_der = include_bytes!("fixtures/localhost-key.der").to_vec();
+    let cert_der = include_bytes!("../fixtures/localhost-cert.der").to_vec();
+    let key_der = include_bytes!("../fixtures/localhost-key.der").to_vec();
 
     let server_config = {
         let certs = vec![CertificateDer::from(cert_der.clone())];
