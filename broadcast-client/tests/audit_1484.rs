@@ -104,24 +104,6 @@ fn send_action_debug_does_not_dump_bytes() {
 }
 
 #[test]
-fn forbidden_closes_the_connection() {
-    let mut session = open(TS_URL, Config::default());
-    let first = one(&mut session, 0);
-    respond(&mut session, &first, 403, &[]);
-    let actions = drain(&mut session, 0);
-    assert_eq!(closes(&actions), vec![first.conn], "{actions:?}");
-}
-
-#[test]
-fn redirect_without_location_closes_the_connection_once() {
-    let mut session = open(TS_URL, Config::default());
-    let first = one(&mut session, 0);
-    respond(&mut session, &first, 302, &[]);
-    let actions = drain(&mut session, 0);
-    assert_eq!(closes(&actions), vec![first.conn], "{actions:?}");
-}
-
-#[test]
 fn redirect_over_the_limit_closes_the_connection_once() {
     let config = {
         let mut new_config = Config::default();

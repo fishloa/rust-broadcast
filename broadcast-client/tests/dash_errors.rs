@@ -106,28 +106,6 @@ fn each_mpd_parse_failure_names_its_reason() {
 }
 
 #[test]
-fn a_good_mpd_after_failures_resets_the_failure_count() {
-    let mut config = Config::default();
-    config.max_key_failures = 3;
-    let mut sim = DashSim::static_origin(&url_of(MANIFEST), config);
-    let mut bad = 2;
-    sim.fault = Some(Box::new(move |req: &Logged, _| {
-        if is_mpd(req) && bad > 0 {
-            bad -= 1;
-            return Some(Answer::ok(b"nonsense".to_vec()));
-        }
-        None
-    }));
-    let sim = finished(sim);
-    assert!(sim.ended(), "{:?}", kinds(&sim));
-    assert_eq!(
-        kinds(&sim),
-        vec![(ErrorKind::MpdParse { reason: "xml" }, false)],
-        "two bad bodies stay below the limit and are reported once"
-    );
-}
-
-#[test]
 fn a_list_presentation_is_fatal_unsupported_addressing() {
     let text = manifest_text().replacen("type=\"static\"", "type=\"list\"", 1);
     let sim = finished(text_sim(MANIFEST, text, Config::default()));

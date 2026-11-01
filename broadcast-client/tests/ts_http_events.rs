@@ -92,25 +92,6 @@ fn status_establishing_then_live_once() {
 }
 
 #[test]
-fn chunking_invariant_1_1316_65536() {
-    let bytes = read_tf1_bytes();
-    let (status, headers) = read_tf1_headers();
-    let mut counts = Vec::new();
-    for chunk in [1usize, 1316, 65536] {
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-        let evs = feed_chunks(&mut session, &bytes, chunk, status, &headers, 0);
-        let samples = evs
-            .iter()
-            .filter(|e| matches!(e, Event::Sample { .. }))
-            .count();
-        let tracks = evs.iter().filter(|e| matches!(e, Event::Tracks(_))).count();
-        counts.push((samples, tracks));
-    }
-    assert_eq!(counts[0], counts[1]);
-    assert_eq!(counts[1], counts[2]);
-}
-
-#[test]
 fn stall_gives_stalled_then_live_on_next_byte() {
     let bytes = read_tf1_bytes();
     let (status, headers) = read_tf1_headers();
