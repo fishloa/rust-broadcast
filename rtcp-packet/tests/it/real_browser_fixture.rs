@@ -15,7 +15,7 @@
 use broadcast_common::{Parse, Serialize};
 use rtcp_packet::{CompoundPacket, RtcpPacket};
 
-const FIXTURE: &[u8] = include_bytes!("fixtures/chrome_rr_pli_remb.bin");
+const FIXTURE: &[u8] = include_bytes!("../fixtures/chrome_rr_pli_remb.bin");
 
 #[test]
 fn real_chrome_compound_parses_all_three_packets() {
