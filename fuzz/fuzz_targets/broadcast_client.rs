@@ -55,6 +55,15 @@ const TS_SEED_PACKETS: usize = 160;
 const STEP_US: u64 = 700_000;
 const BACKWARD_US: u64 = 5 * STEP_US;
 const TIMER_JUMP_US: u64 = 20_000_000;
+const DATAGRAM_URLS: [&str; 3] = [
+    "udp://239.1.1.1:5000",
+    "rtp://239.1.1.1:5000",
+    "rtp://[::1]:6000",
+];
+const RTP_VERSION_BYTE: u8 = 0x80;
+const RTP_PAYLOAD_TYPE_MP2T: u8 = 33;
+const RTP_HEADER_BYTES: usize = 12;
+const DATAGRAM_TS_PACKETS: usize = 7;
 const RTSP_URLS: [&str; 2] = ["rtsp://example/live/", "rtsps://example:8322/live/"];
 const RTSP_REPLY_STATUSES: [u16; 6] = [200, 200, 200, 401, 404, 461];
 const INTERLEAVED_MAGIC: u8 = 0x24;
@@ -848,9 +857,115 @@ fn drive_rtsp(url: &str, data: &[u8]) {
     finish(&mut session, &mut watch, now);
 }
 
+fn datagram_pump(session: &mut Session, watch: &mut Watch, now: u64, conn: &mut Option<u32>) {
+    let mut steps = 0usize;
+    loop {
+        if steps >= MAX_PUMP_ACTIONS {
+            assert!(now == u64::MAX, "runaway action loop at {now}");
+            break;
+        }
+        let Some(action) = session.poll(now) else {
+            break;
+        };
+        steps += 1;
+        match action {
+            Action::UdpBind { conn: c, .. } => {
+                assert!(!watch.closed, "UdpBind after close");
+                assert!(watch.live.insert(c), "live conn id {c} issued twice");
+                *conn = Some(c);
+                session.on_connected(c);
+            }
+            Action::Close { conn: c } => {
+                watch.live.remove(&c);
+            }
+            Action::WakeAt(_) => assert!(!watch.closed, "WakeAt after close"),
+            _ => {}
+        }
+    }
+}
+
+fn seed_datagram(rtp: bool, seq: u16, ssrc: u8, cursor: &mut usize) -> Vec<u8> {
+    let source = TS_SOURCES[0];
+    let len = DATAGRAM_TS_PACKETS * TS_PACKET;
+    let start = *cursor % (source.len() / TS_PACKET - DATAGRAM_TS_PACKETS) * TS_PACKET;
+    *cursor += DATAGRAM_TS_PACKETS;
+    let payload = &source[start..start + len];
+    if !rtp {
+        return payload.to_vec();
+    }
+    let mut out = vec![RTP_VERSION_BYTE, RTP_PAYLOAD_TYPE_MP2T];
+    out.extend_from_slice(&seq.to_be_bytes());
+    out.extend_from_slice(&[0, 0, 0, 0]);
+    out.extend_from_slice(&[ssrc; 4]);
+    debug_assert_eq!(out.len(), RTP_HEADER_BYTES);
+    out.extend_from_slice(payload);
+    out
+}
+
+fn drive_datagram(url: &str, data: &[u8]) {
+    let (header, data) = split_header(data);
+    let mut session = match Session::open(url, config_from(header), 0) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let rtp = url.starts_with("rtp");
+    let mut watch = Watch::default();
+    let mut now = 0u64;
+    let mut conn: Option<u32> = None;
+    let mut cursor = 0usize;
+    let mut seq = 0u16;
+    for chunk in data.chunks(CHUNK_BYTES) {
+        now = next_time(now, chunk);
+        let pick = chunk.first().copied().unwrap_or(0);
+        let second = chunk.get(1).copied().unwrap_or(0);
+        datagram_pump(&mut session, &mut watch, now, &mut conn);
+        match pick % 9 {
+            0 | 1 => {
+                if let Some(c) = conn {
+                    session.on_data(c, chunk, now);
+                }
+            }
+            2..=4 => {
+                if let Some(c) = conn {
+                    seq = seq.wrapping_add(1);
+                    let d = seed_datagram(rtp, seq, second % 2, &mut cursor);
+                    session.on_data(c, &d, now);
+                }
+            }
+            5 => {
+                if let Some(c) = conn {
+                    seq = seq.wrapping_add(u16::from(second) + 2);
+                    let d = seed_datagram(rtp, seq, second % 2, &mut cursor);
+                    session.on_data(c, &d, now);
+                }
+            }
+            6 => {
+                if let Some(c) = conn {
+                    let error = (second % 2 == 0).then(|| "reset".to_string());
+                    session.on_closed(c, error, now);
+                    watch.live.remove(&c);
+                }
+            }
+            7 => session.reconnect(now),
+            _ => now = now.saturating_add(TIMER_JUMP_US),
+        }
+        if pick == u8::MAX {
+            session.close();
+            watch.closed = true;
+        }
+        datagram_pump(&mut session, &mut watch, now, &mut conn);
+        let _ = session.datagram_stats();
+        watch.events(&mut session);
+    }
+    finish(&mut session, &mut watch, now);
+}
+
 fuzz_target!(|data: &[u8]| {
     for url in URLS {
         drive(url, data);
+    }
+    for url in DATAGRAM_URLS {
+        drive_datagram(url, data);
     }
     for url in RTSP_URLS {
         drive_rtsp(url, data);

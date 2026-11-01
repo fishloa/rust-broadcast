@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- UDP and RTP sources: `udp://` and `rtp://` URLs (`SourceKind::Udp`, `SourceKind::Rtp`, picked by `Auto`) play MPEG-TS from unicast or multicast datagrams. `Action::UdpBind { conn, host, port, mode, multicast, recv_buffer_bytes }` asks the host for a datagram socket (`UdpMode::Receive`, with an optional `MulticastJoin { interface, source }` for source-specific multicast); the host reports the bind with `on_connected` and feeds one datagram per `on_data`. `Config::udp` (`UdpConfig`: interface, source, `SO_RCVBUF`, RTP reorder window and wait) and `Session::datagram_stats()` (`DatagramStats`). Plain UDP datagrams must be whole TS packets; RTP is parsed with `rtp-packet`, payload type 33 only, with a bounded reorder buffer (sequence wrap, duplicates, late packets, loss, SSRC change). Silence, start timeout, stall notices and rebind use the TS-over-HTTP policy, so the events are the same as for TS-over-HTTP.
+
 ## [0.1.0] - 2026-11-01
 ### Added
 

@@ -2,12 +2,12 @@
 
 Generic sans-IO client session for live media: auth, redirects, reconnect/retry and buffering
 decisions over a TS-over-HTTP source (`tshttp-runtime`), an HLS source (`hls-runtime`), a DASH
-source (`dash-runtime`) and an RTSP source (`rtsp-runtime`). The host performs only transport I/O (HTTP requests, or a TCP
-connection for RTSP); time is a caller-supplied monotonic `now_us`.
+source (`dash-runtime`), an RTSP source (`rtsp-runtime`) and UDP/RTP TS sources. The host performs only transport I/O (HTTP requests, a TCP
+connection for RTSP, a datagram socket for UDP and RTP); time is a caller-supplied monotonic `now_us`.
 
 ## Sources
 
-`Config::kind` selects the source; `SourceKind::Auto` picks RTSP for an `rtsp://` or `rtsps://` URL,
+`Config::kind` selects the source; `SourceKind::Auto` picks UDP for a `udp://` URL, RTP for an `rtp://` URL, RTSP for an `rtsp://` or `rtsps://` URL,
 HLS for a `.m3u8`/`.m3u` URL path and DASH for a `.mpd` URL path (both ASCII case-insensitive) and
 TS-over-HTTP otherwise. An explicit kind wins over the extension (`SourceKind::Dash` plays an MPD served
 from any path; DASH is HTTP-only, so `rtsp://` with `SourceKind::Dash` is `Error::UnsupportedScheme`).
@@ -17,6 +17,23 @@ the PAT/PMT declares and that has sent a packet has resolved (plus a 0.5 s settl
 yet), or 4 MiB of input, 1 s of media or 1 s of wall clock (whichever is first) has passed, then released behind ONE `Event::Tracks` with the whole resolved set, so a host can build its
 pipeline from the first `Tracks`. A stream that resolves later is announced by a further `Event::Tracks` with the
 merged set. Samples keep their order; `Status::Live` is delivered with the release.
+
+## UDP and RTP
+
+`udp://239.1.1.1:5000` plays MPEG-TS from plain UDP datagrams and `rtp://239.1.1.1:5000` from RTP (RFC 3551 payload type 33), unicast
+or multicast; the host must be an IP literal (IPv6 in brackets) and the port is required. A `udp://@group:port` form (an empty user name)
+is accepted. The host executes `Action::UdpBind { conn, host, port, mode, multicast, recv_buffer_bytes }`: in `UdpMode::Receive` it
+binds `host:port` (with `socket2`: `set_reuse_address`, `set_recv_buffer_size`, `bind`, then `join_multicast_v4`/`join_ssm_v4` or the v6
+forms for a `Some(MulticastJoin { interface, source })`), and reports the bind with `Session::on_connected(conn)` (or a failure with
+`on_closed(conn, Some(error), now_us)`). Every datagram it then receives goes to `Session::on_data(conn, datagram, now_us)`, one call
+per datagram. `Config::udp` carries the interface, the source-specific multicast source (RFC 4607), `SO_RCVBUF` and, for RTP, the
+reorder window (`reorder_packets`, `reorder_wait_us`).
+
+A plain UDP datagram must be a whole number of 188-byte packets that each start with the sync byte; anything else is dropped and counted.
+RTP packets are put back in sequence order inside the window; a packet that does not arrive within `reorder_wait_us` (or a jump beyond the
+window) is counted lost, duplicates and late packets are dropped, and a new SSRC or a backward jump beyond the window restarts the sequence
+space with `Event::Discontinuity`. `Session::datagram_stats()` reads the counters. Silence is handled exactly as for TS-over-HTTP
+(`Config::ts_http`): start timeout, `Starved`, `Status::Stalled`, rebind (a new `UdpBind` after `Close`) and backoff.
 
 ## RTSP
 

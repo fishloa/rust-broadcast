@@ -179,13 +179,6 @@ impl Ingest {
                 payload: packet.payload.to_vec(),
             },
         );
-        while self.held.len() > self.window {
-            let Some((&first, _)) = self.held.first_key_value() else {
-                break;
-            };
-            self.skip_to(first);
-            self.drain(out);
-        }
     }
 
     fn deliver(&mut self, payload: &[u8], out: &mut Vec<Vec<u8>>) {

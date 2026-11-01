@@ -351,7 +351,7 @@ fn a_gap_is_held_for_the_reorder_wait_and_the_wake_is_announced() {
 }
 
 #[test]
-fn a_full_reorder_window_gives_up_the_oldest_gap() {
+fn a_packet_beyond_the_window_gives_up_everything_held() {
     let ts = small();
     let window = UdpConfig::default().reorder_packets;
     let rtp = rtp_datagrams(&ts, 1, 0, SSRC_A);
@@ -367,10 +367,34 @@ fn a_full_reorder_window_gives_up_the_oldest_gap() {
     assert_eq!(
         host.session.datagram_stats().lost,
         0,
-        "the window is full, not over"
+        "a full window is still waiting for the missing packet"
     );
     host.datagram(&rtp[window + 2]);
     assert_eq!(host.session.datagram_stats().lost, 1);
+    host.datagram(&rtp[window]);
+    assert_eq!(host.session.datagram_stats().late, 1);
+}
+
+#[test]
+fn a_duplicate_of_a_held_packet_is_counted_and_not_delivered_twice() {
+    let ts = small();
+    let want = baseline(&ts);
+    let rtp = rtp_datagrams(&ts, 7, 7, SSRC_A);
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[2]);
+    host.datagram(&rtp[2]);
+    assert_eq!(host.session.datagram_stats().duplicates, 1);
+    host.datagram(&rtp[1]);
+    for d in &rtp[3..] {
+        host.datagram(d);
+    }
+    let end = host.now + 1_000_000;
+    host.advance_to(end);
+    host.close_socket();
+    assert_eq!(host.replay().samples(), want);
+    let stats = host.session.datagram_stats();
+    assert_eq!((stats.duplicates, stats.lost, stats.reordered), (1, 0, 1));
 }
 
 #[test]
@@ -378,7 +402,8 @@ fn a_new_ssrc_restarts_the_sequence_space_with_a_discontinuity() {
     let ts = small();
     let half = ts.len() / TS_PACKET / 2 * TS_PACKET;
     let mut dgrams = rtp_datagrams(&ts[..half], 7, 500, SSRC_A);
-    dgrams.extend(rtp_datagrams(&ts[half..], 7, 9, SSRC_B));
+    let next_seq = 500 + dgrams.len() as u16;
+    dgrams.extend(rtp_datagrams(&ts[half..], 7, next_seq, SSRC_B));
     let host = play("rtp://239.1.1.1:5000", &dgrams);
     let stats = host.session.datagram_stats();
     assert_eq!((stats.resyncs, stats.lost), (1, 0));
