@@ -1,0 +1,71 @@
+name: Nightly
+
+# Everything that was moved off the PR path to keep CI fast: the full-length
+# soak tests and the full fuzz budget. Scheduled runs only exist on the default
+# branch; `workflow_dispatch` runs it by hand. A red job here is a real
+# failure (GitHub notifies on a failed scheduled workflow) - nothing is
+# continue-on-error.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  MULTIMUX_ALLOW_ORACLE_SKIP: "1"
+
+jobs:
+  soak:
+    name: full suite + soak (MSRV 1.95.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      RUST_BROADCAST_SOAK: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Private fixtures (real-capture tests)
+        uses: ./.github/actions/private-fixtures
+        with:
+          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - name: Test (all features, soak lengths)
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile nightly --cargo-profile ci
+      - name: dvb-stream
+        run: cargo nextest run -p dvb-stream --all-features --locked --profile nightly --cargo-profile ci
+      - name: Doctests (all features)
+        timeout-minutes: 30
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci --doc
+
+  fuzz:
+    name: fuzz (shard ${{ matrix.shard }}/4, 60 s per target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUSTFLAGS: ""
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Build all fuzz targets
+        working-directory: fuzz
+        run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
+      - name: Seed fuzz corpora from tracked fixtures
+        run: python3 fuzz/seed-corpus.py
+      - name: Fuzz this shard's targets (60 s each)
+        run: tools/fuzz-smoke.sh ${{ matrix.shard }} 4 60

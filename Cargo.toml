@@ -29,3 +29,17 @@ sdp-types                   = "0.3"
 serde_json                  = "1.0"
 socket2                     = "0.6"
 yoke                        = "0.8"
+
+# CI-only test profile (`cargo nextest run --cargo-profile ci`); local `cargo
+# test` keeps the plain dev profile. Dependencies (quick-xml, the crypto and
+# codec crates) are optimised and cached by rust-cache; our own crates stay at
+# opt-level 0 and keep debug assertions and overflow checks ON. Line tables
+# only: full debuginfo for ~1000 test binaries nearly fills a runner disk.
+[profile.ci]
+inherits         = "test"
+debug            = "line-tables-only"
+debug-assertions = true
+overflow-checks  = true
+
+[profile.ci.package."*"]
+opt-level = 2
