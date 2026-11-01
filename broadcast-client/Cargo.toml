@@ -56,26 +56,6 @@ serde = ["dep:serde", "serde/std", "broadcast-common/serde", "transmux/serde", "
 
 __test-seams = []
 
-[[test]]
-name = "buffer"
-required-features = ["__test-seams"]
-
-[[test]]
-name = "playout"
-required-features = ["__test-seams"]
-
-[[test]]
-name = "timeline_jump"
-required-features = ["__test-seams"]
-
-[[test]]
-name = "audit_1498_live"
-required-features = ["__test-seams"]
-
-[[test]]
-name = "r6_ts_tracks"
-required-features = ["__test-seams"]
-
 [[example]]
 name = "live_loop"
 

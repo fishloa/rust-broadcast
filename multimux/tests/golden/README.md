@@ -84,7 +84,7 @@ Regenerate:
 ```bash
 cd multimux
 GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
-  --test whip_whep_sdp --test whep_sdp_golden
+  --test it -- whip_whep_sdp:: whep_sdp_golden::
 ```
 
 ## `dash_mpd.golden` / `ll_dash_mpd.golden`

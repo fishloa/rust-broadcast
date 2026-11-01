@@ -5,7 +5,7 @@
 W1-R-low-b change) with:
 
 ```text
-GOLDEN_UPDATE=1 cargo test --locked -p hls-runtime --all-features --test golden_client
+GOLDEN_UPDATE=1 cargo test --locked -p hls-runtime --all-features --test it golden_client
 ```
 
 `tests/golden_client.rs` compares the live output to this file byte-for-byte.
