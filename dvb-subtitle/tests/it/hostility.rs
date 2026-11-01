@@ -7,9 +7,6 @@
 
 use broadcast_common::{Parse, Serialize};
 use dvb_subtitle::PesDataField;
-
-mod support;
-
 /// Distinct real fields swept (bounded so the test stays fast).
 const MAX_SEEDS: usize = 16;
 
@@ -25,7 +22,7 @@ fn exercise(bytes: &[u8]) -> bool {
 
 #[test]
 fn truncation_and_mutation_of_real_data_fields_never_panic() {
-    let seeds = support::data_fields(MAX_SEEDS);
+    let seeds = crate::support::data_fields(MAX_SEEDS);
     assert!(!seeds.is_empty(), "no real subtitle data fields found");
     let mut parsed_after_mutation = 0usize;
     for seed in &seeds {

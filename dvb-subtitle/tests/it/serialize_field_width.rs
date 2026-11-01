@@ -8,9 +8,6 @@
 
 use broadcast_common::{Parse, Serialize};
 use dvb_subtitle::{AnySegment, Error, PesDataField};
-
-mod support;
-
 fn is_overflow<T>(r: Result<T, Error>) -> bool {
     matches!(r, Err(Error::FieldOverflow(_)))
 }
@@ -26,7 +23,7 @@ fn over_range_fields_of_real_segments_are_rejected() {
     let mut pages = 0;
     let mut regions = 0;
     let mut cluts = 0;
-    for raw in support::data_fields(64) {
+    for raw in crate::support::data_fields(64) {
         let field = PesDataField::parse(&raw).unwrap();
         for seg in &field.segments {
             match seg {
