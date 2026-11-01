@@ -64,13 +64,12 @@ use media_plane::ingress::{
     Dialer, HandshakePolicy, IngestSession, ProgramId, SessionEvent, run_dial,
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
-use quick_xml::Reader;
-use quick_xml::events::Event;
 use reqwest::{Client as HttpClient, StatusCode};
-use transmux::box_types::parse_box;
 use transmux::media::Fmp4Demux;
-use transmux::movie_fragment::MovieFragmentBox;
 use transmux::pipeline::build_init_segment;
+use transmux::smooth_fragment::{
+    FragmentState, fragment_state, fragment_track_id, manifest_declares_protection,
+};
 use transmux::smooth_parse::{
     SmoothManifest, StreamIndex, StreamType, track_spec_from_quality_level,
 };
@@ -109,16 +108,6 @@ const MAX_TOLERATED_404_ATTEMPTS: u32 = 240;
 /// A one-off miss (a transient encoder hiccup) is tolerated; a stream that
 /// never reappears stops the session from stalling silently.
 const MAX_REFRESH_MISSES: u32 = 5;
-
-/// The PIFF "UUID Sample Encryption Box" extended type
-/// (`A2394F52-5A9B-4F14-A244-6C427C648DF4`).
-const PIFF_SAMPLE_ENCRYPTION_UUID: [u8; 16] = [
-    0xA2, 0x39, 0x4F, 0x52, 0x5A, 0x9B, 0x4F, 0x14, 0xA2, 0x44, 0x6C, 0x42, 0x7C, 0x64, 0x8D, 0xF4,
-];
-
-/// Local name of the Smooth client Manifest's content-protection element
-/// (PlayReady/PIFF sample encryption).
-const PROTECTION_ELEMENT: &str = "Protection";
 
 /// How long a `run_*_pull` drive loop parks when its session has, momentarily,
 /// neither an outbound request queued nor a fetch in flight — and has not
@@ -344,7 +333,7 @@ impl SmoothIngestSession {
                     let Some(found) = manifest
                         .streams
                         .iter()
-                        .find(|s| same_stream_index(s, &stream.stream))
+                        .find(|s| s.same_stream(&stream.stream))
                     else {
                         // No StreamIndex with this stream's full identity in
                         // the refreshed manifest: the encoder renamed it or
@@ -503,7 +492,7 @@ impl SmoothIngestSession {
                     ),
                 });
             }
-            FragmentState::Undetermined => {
+            _ => {
                 return Err(MultimuxError::Connect {
                     reason: format!(
                         "smooth-pull: stream {:?} fragment is malformed/truncated; cannot \
@@ -534,7 +523,10 @@ impl SmoothIngestSession {
 
         for (global_id, p) in (1_u32..).zip(pending) {
             let first_bytes = p.first_bytes.expect("checked all-Some by the caller");
-            let local_track_id = discover_moof_track_id(&first_bytes)?;
+            let local_track_id =
+                fragment_track_id(&first_bytes).map_err(|e| MultimuxError::Connect {
+                    reason: format!("smooth-pull: fragment track id: {e}"),
+                })?;
             let effective_timescale: u32 = match p.stream_type {
                 StreamType::Video => transmux::VIDEO_CLOCK_RATE,
                 StreamType::Audio => p
@@ -687,7 +679,7 @@ impl SmoothIngestSession {
                         .into(),
                 });
             }
-            FragmentState::Undetermined => {
+            _ => {
                 return Err(MultimuxError::Connect {
                     reason: "smooth-pull: fragment is malformed/truncated; cannot determine \
                              whether it is encrypted"
@@ -807,183 +799,6 @@ impl Dialer for SmoothPullDialer {
     fn dial(&mut self) -> Result<SmoothIngestSession> {
         Ok(SmoothIngestSession::new(self.manifest_url.clone()))
     }
-}
-
-/// Peeks a fetched fragment's `moof`/`traf[0]`/`tfhd@track_ID` without
-/// needing a `moov` — see the module doc's "Discovering each stream's wire
-/// track id".
-fn discover_moof_track_id(fragment_bytes: &[u8]) -> Result<u32> {
-    let mut offset = 0usize;
-    while offset + 8 <= fragment_bytes.len() {
-        let (bx, consumed) =
-            parse_box(&fragment_bytes[offset..]).map_err(|e| MultimuxError::Connect {
-                reason: format!("smooth-pull: fragment box parse: {e}"),
-            })?;
-        if &bx.header.box_type.0 == b"moof" {
-            let moof = MovieFragmentBox::parse_body(bx.body)?;
-            let traf = moof.traf.first().ok_or_else(|| MultimuxError::Connect {
-                reason: "smooth-pull: fragment moof has no traf".into(),
-            })?;
-            return Ok(traf.tfhd.track_id.value());
-        }
-        if consumed == 0 {
-            break;
-        }
-        offset += consumed;
-    }
-    Err(MultimuxError::Connect {
-        reason: "smooth-pull: fragment carries no moof box".into(),
-    })
-}
-
-/// Whether two `StreamIndex` elements denote the **same** stream across a
-/// manifest refresh (audit run 7, W14): matching on `Type` alone collapsed
-/// two audio `StreamIndex`es onto the first, so the second adopted the
-/// first's URL template and timeline and fetched the wrong fragments under a
-/// track id that no longer matched. Identity is `Type` + `Name` + `Url`
-/// template (MS-SSTR §2.2.3 — the three attributes that name a stream).
-fn same_stream_index(a: &StreamIndex, b: &StreamIndex) -> bool {
-    a.stream_type == b.stream_type && a.name == b.name && a.url == b.url
-}
-
-/// Whether the manifest carries a `<Protection>` element (PlayReady/PIFF
-/// sample encryption) anywhere — matched by local name on a real `quick-xml`
-/// pull loop, so a prefixed `<ms:Protection>` counts, while a comment, an
-/// attribute value, or a longer name such as `<ProtectionFoo>` does not.
-///
-/// A manifest the reader cannot get through is reported `false`: the caller
-/// goes on to [`SmoothManifest::parse`], which rejects the same malformed input
-/// with its own error, so nothing unreadable is ever ingested.
-fn manifest_declares_protection(xml: &str) -> bool {
-    let mut reader = Reader::from_str(xml);
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e) | Event::Empty(e))
-                if e.local_name().as_ref() == PROTECTION_ELEMENT =>
-            {
-                return true;
-            }
-            Ok(Event::Eof) | Err(_) => return false,
-            Ok(_) => {}
-        }
-    }
-}
-
-/// Whether a fetched fragment carries CENC/PIFF sample-encryption signalling.
-///
-/// Walks the **box tree** and inspects only the `moof` box and its `traf`
-/// children — `senc`/`saiz`/`saio` are `traf` children (ISO/IEC 14496-12:2015
-/// §8.8.7/§8.8.8) and the PIFF sample-encryption `uuid` box is a `traf` child
-/// too, so they can only legitimately appear there. A byte scan of the whole
-/// fragment (the pre-fix behaviour) false-positived on a random four-byte run
-/// in clear `mdat` payload.
-///
-/// **A malformed/truncated fragment is treated as *not* reliably clear**: if
-/// the box walk fails *after* a `moof` has been seen (or the top-level walk
-/// itself fails mid-fragment), this returns `true` so the caller fails closed
-/// rather than silently demuxing bytes that may be encrypted under a
-/// truncated structure. Only a fragment whose walk completes with no
-/// encryption box anywhere is reported clear.
-/// How a fragment's box walk classified it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FragmentState {
-    /// No encryption box anywhere; safe to demux.
-    Clear,
-    /// A `senc`/`saiz`/`saio` (or PIFF `uuid`) box inside a `moof`/`traf`.
-    Encrypted,
-    /// A malformed/truncated `moof` (or a top-level box that does not parse):
-    /// cannot be proven clear, and is not provably encrypted either.
-    Undetermined,
-}
-
-impl FragmentState {
-    #[cfg(test)]
-    fn is_clear(self) -> bool {
-        matches!(self, FragmentState::Clear)
-    }
-}
-
-/// Convenience bool for tests: `true` for anything not proven clear
-/// (encrypted **or** undetermined) — the fail-closed predicate.
-#[cfg(test)]
-fn fragment_looks_encrypted(bytes: &[u8]) -> bool {
-    !fragment_state(bytes).is_clear()
-}
-
-/// Classify a fragment, distinguishing a genuinely encrypted one from a
-/// malformed/truncated one (audit W15) so the session's error message is
-/// accurate.
-fn fragment_state(bytes: &[u8]) -> FragmentState {
-    // Walk the top level by peeking each box's 4-byte type *before* parsing
-    // it — a `moof` truncated so badly that its own header no longer parses
-    // must still fail closed, which a plain `box_iter` error cannot signal
-    // (its type is only known once the header parses).
-    let mut offset = 0usize;
-    let mut saw_moof = false;
-    while offset + 8 <= bytes.len() {
-        let size = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap_or([0; 4]));
-        let box_type = &bytes[offset + 4..offset + 8];
-        let is_moof = box_type == b"moof";
-        if is_moof {
-            saw_moof = true;
-        }
-        // A truncated box (declared size past the buffer, or < header): if it
-        // is a `moof` (or we have already seen one), it cannot be proven
-        // clear — fail closed.
-        let size_usize = size as usize;
-        if size_usize < 8 || offset + size_usize > bytes.len() {
-            return if is_moof || saw_moof {
-                FragmentState::Undetermined
-            } else {
-                FragmentState::Clear
-            };
-        }
-        if is_moof {
-            match moof_is_encrypted(&bytes[offset + 8..offset + size_usize]) {
-                Some(true) => return FragmentState::Encrypted,
-                // A truncated `moof` body: cannot prove clear → undetermined.
-                None => return FragmentState::Undetermined,
-                Some(false) => {}
-            }
-        }
-        offset += size_usize;
-    }
-    // Trailing bytes too short to be a box header: fine unless they follow a
-    // `moof` we could not finish walking.
-    if saw_moof && offset < bytes.len() {
-        FragmentState::Undetermined
-    } else {
-        FragmentState::Clear
-    }
-}
-
-/// Whether a `moof` body's `traf` children carry encryption boxes: `Some(true)`
-/// if one is present, `Some(false)` if the walk completed cleanly, `None` if
-/// the body is malformed/truncated (cannot be proven clear).
-fn moof_is_encrypted(moof_body: &[u8]) -> Option<bool> {
-    for result in transmux::box_iter(moof_body) {
-        let Ok((child, _)) = result else {
-            return None;
-        };
-        if !child.header.box_type.is(b"traf") {
-            continue;
-        }
-        for result in transmux::box_iter(child.body) {
-            let Ok((grandchild, _)) = result else {
-                return None;
-            };
-            let t = grandchild.header.box_type;
-            if t.is(b"senc") || t.is(b"saiz") || t.is(b"saio") {
-                return Some(true);
-            }
-            if t.is(b"uuid")
-                && grandchild.header.usertype.as_ref() == Some(&PIFF_SAMPLE_ENCRYPTION_UUID)
-            {
-                return Some(true);
-            }
-        }
-    }
-    Some(false)
 }
 
 fn status_error(what: &str, status: StatusCode) -> MultimuxError {
@@ -1346,7 +1161,12 @@ mod tests {
     use std::num::NonZeroUsize;
     use std::sync::Arc;
     use transmux::pipeline::{CodecConfig, TrackSpec};
+    use transmux::smooth_fragment::PIFF_SAMPLE_ENCRYPTION_UUID;
     use transmux::{Media, SmoothOutput, SmoothPackager, TsDemux};
+
+    fn fragment_looks_encrypted(bytes: &[u8]) -> bool {
+        fragment_state(bytes) != FragmentState::Clear
+    }
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
@@ -1381,11 +1201,11 @@ mod tests {
             "QualityLevels({bitrate})/Fragments(audio={start time})",
         );
         assert!(
-            !same_stream_index(&audio_a, &audio_b),
+            !audio_a.same_stream(&audio_b),
             "two audio StreamIndexes with different names are different streams"
         );
         assert!(
-            same_stream_index(&audio_a, &audio_a.clone()),
+            audio_a.same_stream(&audio_a.clone()),
             "a stream matches itself across a refresh"
         );
     }
@@ -2202,7 +2022,7 @@ mod tests {
             .find(|f| f.track_id == TrackId::new(video_id.value()))
             .unwrap();
         assert_eq!(
-            discover_moof_track_id(&video_frag.data).unwrap(),
+            fragment_track_id(&video_frag.data).unwrap(),
             video_id.value()
         );
 
@@ -2212,15 +2032,15 @@ mod tests {
             .find(|f| f.track_id == TrackId::new(audio_id.value()))
             .unwrap();
         assert_eq!(
-            discover_moof_track_id(&audio_frag.data).unwrap(),
+            fragment_track_id(&audio_frag.data).unwrap(),
             audio_id.value()
         );
     }
 
     #[test]
     fn discover_moof_track_id_errors_not_panics_on_garbage() {
-        assert!(discover_moof_track_id(b"not a fragment at all").is_err());
-        assert!(discover_moof_track_id(&[]).is_err());
+        assert!(fragment_track_id(b"not a fragment at all").is_err());
+        assert!(fragment_track_id(&[]).is_err());
     }
 
     /// Test-only: `fetch_one_bytes`, unwrapped to the body bytes (tests never

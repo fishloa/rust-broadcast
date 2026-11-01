@@ -550,6 +550,16 @@ pub const TOKEN_BITRATE: &str = "{bitrate}";
 pub const TOKEN_START_TIME: &str = "{start time}";
 
 impl StreamIndex {
+    /// Whether `other` denotes the **same** stream as `self` across a manifest refresh.
+    ///
+    /// Identity is `Type` + `Name` + `Url` template (MS-SSTR 2.2.3, the attributes that name a
+    /// stream); matching on `Type` alone collapses two audio `StreamIndex` elements onto the
+    /// first, which then adopts the other's URL template and timeline.
+    #[must_use]
+    pub fn same_stream(&self, other: &StreamIndex) -> bool {
+        self.stream_type == other.stream_type && self.name == other.name && self.url == other.url
+    }
+
     /// Expand every `c` entry's `@r` repeat run into `(t, d)` pairs in
     /// presentation order (§2.2.2.6): `t` accumulates (explicit on an entry
     /// resets it, otherwise it continues from the previous entry's `t + d`),

@@ -469,8 +469,10 @@ pub struct HlsClient {
     last_media_sequence: Option<u64>,
 }
 
-/// Choose a variant index according to the policy.
-fn choose_variant(variants: &[VariantInfo], policy: &VariantPolicy) -> usize {
+/// Choose a variant index according to the policy: the highest-bandwidth variant the policy
+/// allows, else the lowest-bandwidth one when it allows none; `0` for an empty list.
+#[must_use]
+pub fn choose_variant(variants: &[VariantInfo], policy: &VariantPolicy) -> usize {
     if variants.is_empty() {
         return 0;
     }

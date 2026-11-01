@@ -70,7 +70,7 @@ pub mod tokio_client;
 mod url;
 
 pub use action::{Action, BlockingReload, KeyId, ResourceId};
-pub use engine::HlsClient;
+pub use engine::{HlsClient, choose_variant};
 pub use error::{Error, Result};
 pub use output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 #[cfg(feature = "tokio")]
