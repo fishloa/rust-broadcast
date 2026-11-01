@@ -1,6 +1,6 @@
 # rtsp-runtime 0.8.1
 
-_Released 2026-10-31._
+_Released 2026-11-01._
 
 ### Added
 - `ClientSession::take_rtp_info` and `RtpInfoEntry`: the `RTP-Info` entries (RFC 2326 12.33) of a successful PLAY response.

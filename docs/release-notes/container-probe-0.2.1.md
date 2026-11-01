@@ -1,6 +1,6 @@
 # container-probe 0.2.1
 
-_Released 2026-10-31._
+_Released 2026-11-01._
 
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).

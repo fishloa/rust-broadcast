@@ -4,7 +4,7 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
-## [0.12.0] - 2026-10-31
+## [0.12.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)
 - Builds against new caret epochs of workspace siblings (`multimux` 0.13 -> 0.14). A caret-epoch change is major-class for a 0.x crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` section 2), whatever its own API diff, so this release is a minor bump; consumers must resolve a single copy of each of those crates.

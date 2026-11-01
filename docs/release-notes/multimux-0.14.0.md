@@ -1,6 +1,6 @@
 # multimux 0.14.0
 
-_Released 2026-10-31._
+_Released 2026-11-01._
 
 Breaking minor. The DASH pull input now runs on `dash-runtime`'s `DashClient` (see the BREAKING entry below for the removed types), a cross-origin redirect is refused unless the route sets `allow_cross_origin`, and the served HLS output changes on the wire (frame-grid `PART-TARGET`, split-audio part targets, WebVTT subtitle parts). New: HDR10, HLG, HDR10+ and Dolby Vision signalling, teletext-to-WebVTT subtitle renditions, and a monotonic DTS on RTSP/RTP/WHIP video with B-frames.
 

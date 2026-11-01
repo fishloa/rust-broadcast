@@ -1,6 +1,6 @@
 # hls-runtime 0.10.0
 
-_Released 2026-10-31._
+_Released 2026-11-01._
 
 Breaking minor. The `HlsSkip`/`HlsSkipDirective`/`SkipValue` aliases and `HlsOrigin::priority`/`urgency_for` are removed (use `SkipDirective` and `HlsOrigin::http_priority`). New in this release: HDR10, HLG, Dolby Vision and HDR10+ multivariant signalling, WebVTT subtitle renditions including low-latency partial segments, and LL-HLS part-target fixes; segment-structure checks now come from `container-probe` 0.2.1.
 

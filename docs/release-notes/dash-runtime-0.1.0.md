@@ -1,6 +1,6 @@
 # dash-runtime 0.1.0
 
-_Released 2026-10-31._
+_Released 2026-11-01._
 
 Initial release. `dash-runtime` is a **sans-IO MPEG-DASH client toolkit** (ISO/IEC 23009-1): a bounded MPD parser and typed model, a lazy segment plan for every addressing mode, the UTC clock and live-edge arithmetic a live client needs, and `DashClient`, a state machine that plays static (VOD) and dynamic (live) presentations to ordered, demuxed samples. It performs no I/O, spawns nothing and reads no clock: the host fetches what the client asks for, tells it the time, and reports what happened. `broadcast-client` is the first consumer (`SourceKind::Dash`); the design, including every decision where the standard is silent or contradicts itself, is `docs/dash-runtime/DESIGN.md`.
 

@@ -1,6 +1,6 @@
 # webrtc-runtime 0.4.1
 
-_Released 2026-10-31._
+_Released 2026-11-01._
 
 Patch release, but it raises a dependency floor: with the `media` feature, `webrtc-runtime` now requires `rtc-dtls` >= 0.21.1 (the release that adds `EndpointEvent::PeerClosed`). It fixes a wrong-fingerprint DTLS rejection that hung under `rtc-dtls` 0.21.1, and a peer's graceful DTLS close is now reported as `MediaEvent::DtlsClosed` instead of surfacing as an error; `MediaTransport::close` sends one. No change without the `media` feature.
 

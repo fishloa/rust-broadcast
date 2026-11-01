@@ -1,6 +1,6 @@
 # broadcast-auth 0.5.1
 
-_Released 2026-10-31._
+_Released 2026-11-01._
 
 ### Changed
 - Dependency `lru` 0.18 -> 0.19.
