@@ -1,14 +1,11 @@
 //! The state machine, policy, configuration and event queue, driven by hand.
 //! DESIGN.md section 2.4: every state x input cell is asserted.
-
-mod support;
-
 use buffering_runtime::policy::Policy;
 use buffering_runtime::{
     BufferController, ConfigField, ControllerConfig, Error, Event, Hint, JitterConfig,
     PolicyConfig, Reason, StallMemorySnapshot, State, WRAP_27MHZ,
 };
-use support::*;
+use crate::support::*;
 
 const STEP_US: u64 = 35_000;
 const STEP_TICKS: u64 = STEP_US * TICKS_PER_US;

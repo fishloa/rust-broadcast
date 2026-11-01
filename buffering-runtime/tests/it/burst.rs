@@ -3,11 +3,8 @@
 //! 140 ms) that returns the lead to its pre-gap value. Two stalls, 20 s apart.
 //! The real traces (`tests/real_traces.rs`) are the old no-burst server and
 //! stay as they are; a real post-fix trace is to be added by zenith-tv.
-
-mod support;
-
 use buffering_runtime::{Event, State};
-use support::*;
+use crate::support::*;
 
 const MAX: u64 = 3_000_000;
 

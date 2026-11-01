@@ -4,13 +4,10 @@
 //! The 1x/2x/4x stall pattern is the shape of a transport that retransmits
 //! with exponential backoff (RFC 6298); the real ~1.4 s stalls have an
 //! undetermined cause, the controller must survive them from any cause.
-
-mod support;
-
 use buffering_runtime::{
     BufferController, ControllerConfig, Event, Hint, Reason, State, WRAP_27MHZ,
 };
-use support::*;
+use crate::support::*;
 
 const MIN: u64 = 300_000;
 const MAX: u64 = 3_000_000;

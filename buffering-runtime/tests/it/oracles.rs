@@ -3,13 +3,10 @@
 //! (`specs/rfc3550_rtp.txt`, hand-ported below), the RFC 5481 PDV definition
 //! computed directly, and a brute-force replay of the stall max-hold.
 //! No test compares a component to itself.
-
-mod support;
-
 use buffering_runtime::histogram::ForgettingHistogram;
 use buffering_runtime::window::MinWindow;
 use buffering_runtime::{DeliveryJitter, JitterConfig, SampleOutcome, StallMemorySnapshot};
-use support::*;
+use crate::support::*;
 
 // ------------------------------------------------------------------ window
 
