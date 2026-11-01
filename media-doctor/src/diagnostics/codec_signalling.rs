@@ -263,7 +263,7 @@ mod tests {
 
     /// Real committed captures must never be flagged — the ultimate
     /// clean-negative gate (mirrors the crate-wide hard gate this issue
-    /// requires; see also `media-doctor/tests/codec_v2_real_captures.rs`).
+    /// requires; see also `media-doctor/tests/it/codec_v2_real_captures.rs`).
     #[test]
     fn real_captures_not_flagged() {
         for rel in [

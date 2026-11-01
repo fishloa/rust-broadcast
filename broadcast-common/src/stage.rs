@@ -36,7 +36,7 @@
 //! honest input shape — `&'a [u8]` for byte-stream stages, `(u32, Sample)` for
 //! the segmenters — while [`Stage::Out`]/[`Stage::Error`] stay per-implementor
 //! too. This is what lets one driver loop, generic only over `S: Stage`, span
-//! both families (see `transmux/tests/stage.rs`'s `drive` helper).
+//! both families (see `transmux/tests/it/stage.rs`'s `drive` helper).
 //!
 //! This module defines the trait plus its two small supporting types; it does
 //! not migrate any existing implementor (that is the workspace's media-plane

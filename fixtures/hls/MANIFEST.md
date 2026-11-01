@@ -210,7 +210,7 @@ that doesn't support a falsely-declared version is required by §8 to refuse
 playback entirely.
 
 **This table is executable, not prose.**
-`broadcast-hls/tests/spec_fixture_version.rs` asserts `computed_version()`
+`broadcast-hls/tests/it/spec_fixture_version.rs` asserts `computed_version()`
 (issue #880's §8 implementation) equals the value claimed below for each
 fixture, *and* that each fixture's own declared `#EXT-X-VERSION` line
 matches it — so a claim here cannot rot, and a fixture cannot drift from its

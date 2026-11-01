@@ -163,7 +163,7 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 |---|---|---|---|
 | [`broadcast-loudness`](broadcast-loudness/) | EBU R 128 / ITU-R BS.1770-5 loudness: integrated, momentary, short-term, LRA, true peak. | ITU-R BS.1770-5 (11/2023); EBU R 128, Tech 3341, Tech 3342 (all November 2023); GY/T 282-2014, GY/T 377-2023, GY/T 379-2023 target profiles | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) |
 
-Plus `test-alloc`, `test-bounded`, `test-fixtures`: `publish = false` test helpers, see [docs/CRATES.md](docs/CRATES.md).
+Plus `test-alloc`, `test-bounded`, `test-fixtures`, `workspace-guards`: `publish = false` test helpers, see [docs/CRATES.md](docs/CRATES.md).
 <!-- END GENERATED: crate-table -->
 
 Outside the workspace: Python bindings [`dvb-si-py`](bindings/python/) and

@@ -129,7 +129,7 @@ worse than no scheduler." The tests hold `TransitionPlan` to that bar:
   once rebased, the incoming source's PTS sequence lands exactly on the channel
   timeline with no gap and no overlap.
 - `transition::tests::rebase_returns_none_rather_than_wrapping_out_of_range`.
-- `tests/real_fixture_transition.rs` plans a programme to ad transition against
+- `tests/it/real_fixture_transition.rs` plans a programme to ad transition against
   the real, non-IDR-aligned cue in `fixtures/scte35-ssai/` (DASH-IF `livesim2`,
   Apache-2.0): the nearest keyframe is 6000 ticks (67 ms) after the cue's nominal
   instant, measured independently from the fragment's own boxes (see

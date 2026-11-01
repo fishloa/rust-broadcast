@@ -505,7 +505,7 @@ mod tests {
     /// bytes and drains the server's replies, while the server side accepts
     /// the connection and loops `next_events` until the connection closes.
     ///
-    /// This is the online counterpart of `tests/ingest_fixture.rs`'s offline
+    /// This is the online counterpart of `tests/it/ingest_fixture.rs`'s offline
     /// replay — it proves the tokio adapter (not just the sans-IO session)
     /// actually drives a real publish to `Connected` -> `Publish` -> `Media`.
     #[tokio::test]
@@ -610,17 +610,17 @@ mod tests {
             // header-compression bug that still yields 2 events would
             // otherwise pass).
             let mut medias: Vec<Vec<u8>> = Vec::new();
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-            while medias.len() < 2 && tokio::time::Instant::now() < deadline {
-                match tokio::time::timeout_at(deadline, conn.next_events()).await {
-                    Ok(Ok(Some(batch))) => {
+            let is_video = |m: &Vec<u8>| m.contains(&0xAA) || m.contains(&0xBB);
+            while medias.iter().filter(|m| is_video(m)).count() < 2 {
+                match conn.next_events().await {
+                    Ok(Some(batch)) => {
                         for e in batch {
                             if let ServerEvent::Media { flv } = e {
                                 medias.push(flv);
                             }
                         }
                     }
-                    Ok(Ok(None)) | Ok(Err(_)) | Err(_) => break,
+                    Ok(None) | Err(_) => break,
                 }
             }
             medias

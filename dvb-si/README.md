@@ -284,7 +284,7 @@ every layout are indexed in [`docs/README.md`](https://github.com/fishloa/rust-b
   `broadcast_common::Parse<'a>` (borrowing from the input — descriptor loops, names and selector
   tails are `&'a [u8]` / `DescriptorLoop<'a>` / `DvbText<'a>`) and `broadcast_common::Serialize`
   (`serialized_len` + `serialize_into`). Every type has a round-trip test (parse → serialize →
-  byte-identical; serialize → parse → equal), and `tests/real_capture_byte_identity.rs`
+  byte-identical; serialize → parse → equal), and `tests/it/real_capture_byte_identity.rs`
   re-serializes every descriptor found in the real-capture archive and requires byte identity.
 - **Reserved bits: parse tolerant, serialize preserving.** Any value of a `reserved` /
   `reserved_future_use` / `reserved_zero_future_use` run is accepted on parse, captured in a

@@ -9,7 +9,7 @@ page plan. Bytes are constructed with this crate's own verified
 (wire/LSB-first order — issue #1041): EN 300 706 transmits each byte
 LSB-first, so a real DVB capture's PES bytes are the bit-reversal of the
 spec's own canonical values. Used by `tests/webvtt_teletext_fixture.rs` and
-`caption-convert/tests/teletext_to_webvtt_fixture.rs`.
+`caption-convert/tests/it/teletext_to_webvtt_fixture.rs`.
 
 ## `teletext_subtitle_boxed.ts` + `teletext_subtitle_boxed.tsduck-oracle.srt`
 

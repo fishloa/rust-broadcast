@@ -24,7 +24,7 @@
 //! takes the latter reading (`SubstreamCountMinus1 = 1` followed by TWO offsets).
 //! Per the spec-fidelity rule this crate reproduces the printed syntax and does
 //! not silently correct it, so TSDuck-encoded 0x13 bodies are **rejected with a
-//! clear `Err`** (not misparsed); pinned in `tests/h222_descriptors.rs`.
+//! clear `Err`** (not misparsed); pinned in `tests/it/h222_descriptors.rs`.
 //!
 //! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
 //! and `…-0x0f-0x19.md`. `profile_tier_level_info[i]` is typed as

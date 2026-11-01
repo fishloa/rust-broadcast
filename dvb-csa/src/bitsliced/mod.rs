@@ -32,10 +32,10 @@
 //!
 //! - every generated circuit in `src/bitsliced/circuits.rs` is checked against
 //!   the table it came from over its **entire** input domain;
-//! - `tests/bitsliced_differential.rs` compares batch output against
+//! - `tests/it/bitsliced_differential.rs` compares batch output against
 //!   [`crate::scramble`] / [`crate::descramble`] over randomised payloads and
 //!   lengths, in both directions;
-//! - `tests/golden_vectors.rs` runs the libdvbcsa known-answer vectors through
+//! - `tests/it/golden_vectors.rs` runs the libdvbcsa known-answer vectors through
 //!   the batch API too, so the fast path answers to the external oracle and
 //!   not merely to our own scalar code.
 //!

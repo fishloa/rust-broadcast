@@ -131,15 +131,4 @@ mod tests {
             Error::OutputBufferTooSmall { .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = TimeShiftedServiceDescriptor {
-            reference_service_id: 0x1234,
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
 }

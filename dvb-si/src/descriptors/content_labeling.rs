@@ -488,113 +488,91 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_indicator_0_minimal() {
-        let d = ContentLabelingDescriptor {
-            metadata_application_format: 0x0010,
-            metadata_application_format_identifier: None,
-            content_reference_id_record_flag: false,
-            content_time_base_indicator: ContentTimeBaseIndicator::None,
-            content_reference_id_record: None,
-            time_base: None,
-            content_id: None,
-            time_base_association: None,
-            reserved: RESERVED_3_DEFAULT,
-            content_id_reserved: RESERVED_1_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_indicator_0_with_ref_id_and_private() {
-        let d = ContentLabelingDescriptor {
-            metadata_application_format: 0x0011,
-            metadata_application_format_identifier: None,
-            content_reference_id_record_flag: true,
-            content_time_base_indicator: ContentTimeBaseIndicator::None,
-            content_reference_id_record: Some(&[0xAA, 0xBB, 0xCC]),
-            time_base: None,
-            content_id: None,
-            time_base_association: None,
-            reserved: RESERVED_3_DEFAULT,
-            content_id_reserved: RESERVED_1_DEFAULT,
-            private_data: &[0xDD, 0xEE],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_indicator_1_stc_time_base() {
-        let d = ContentLabelingDescriptor {
-            metadata_application_format: 0x0100,
-            metadata_application_format_identifier: None,
-            content_reference_id_record_flag: false,
-            content_time_base_indicator: ContentTimeBaseIndicator::Stc,
-            content_reference_id_record: None,
-            time_base: Some(ContentTimeBase::new(0x123456789, 0x1ABCDEF01)),
-            content_id: None,
-            time_base_association: None,
-            reserved: RESERVED_3_DEFAULT,
-            content_id_reserved: RESERVED_1_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_indicator_2_npt_with_content_id() {
-        let d = ContentLabelingDescriptor {
-            metadata_application_format: 0x0100,
-            metadata_application_format_identifier: None,
-            content_reference_id_record_flag: false,
-            content_time_base_indicator: ContentTimeBaseIndicator::Npt,
-            content_reference_id_record: None,
-            time_base: Some(ContentTimeBase::new(0x1AABBCCDD, 0x0)),
-            content_id: Some(42),
-            time_base_association: None,
-            reserved: RESERVED_3_DEFAULT,
-            content_id_reserved: RESERVED_1_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_indicator_3_association() {
-        let d = ContentLabelingDescriptor {
-            metadata_application_format: 0x0100,
-            metadata_application_format_identifier: None,
-            content_reference_id_record_flag: false,
-            content_time_base_indicator: ContentTimeBaseIndicator::Reserved(3),
-            content_reference_id_record: None,
-            time_base: None,
-            content_id: None,
-            time_base_association: Some(ContentTimeBaseAssociation {
-                data: &[0x11, 0x22, 0x33, 0x44],
-            }),
-            reserved: RESERVED_3_DEFAULT,
-            content_id_reserved: RESERVED_1_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_with_ffff_identifier() {
-        let d = ContentLabelingDescriptor {
-            metadata_application_format: 0xFFFF,
-            metadata_application_format_identifier: Some(0xDEADBEEF),
-            content_reference_id_record_flag: true,
-            content_time_base_indicator: ContentTimeBaseIndicator::None,
-            content_reference_id_record: Some(&[0x01, 0x02]),
-            time_base: None,
-            content_id: None,
-            time_base_association: None,
-            reserved: RESERVED_3_DEFAULT,
-            content_id_reserved: RESERVED_1_DEFAULT,
-            private_data: &[0xFF],
-        };
-        serialize_round_trip(&d);
+    fn round_trips_every_case() {
+        for d in [
+            ContentLabelingDescriptor {
+                metadata_application_format: 0x0010,
+                metadata_application_format_identifier: None,
+                content_reference_id_record_flag: false,
+                content_time_base_indicator: ContentTimeBaseIndicator::None,
+                content_reference_id_record: None,
+                time_base: None,
+                content_id: None,
+                time_base_association: None,
+                reserved: RESERVED_3_DEFAULT,
+                content_id_reserved: RESERVED_1_DEFAULT,
+                private_data: &[],
+            },
+            ContentLabelingDescriptor {
+                metadata_application_format: 0x0011,
+                metadata_application_format_identifier: None,
+                content_reference_id_record_flag: true,
+                content_time_base_indicator: ContentTimeBaseIndicator::None,
+                content_reference_id_record: Some(&[0xAA, 0xBB, 0xCC]),
+                time_base: None,
+                content_id: None,
+                time_base_association: None,
+                reserved: RESERVED_3_DEFAULT,
+                content_id_reserved: RESERVED_1_DEFAULT,
+                private_data: &[0xDD, 0xEE],
+            },
+            ContentLabelingDescriptor {
+                metadata_application_format: 0x0100,
+                metadata_application_format_identifier: None,
+                content_reference_id_record_flag: false,
+                content_time_base_indicator: ContentTimeBaseIndicator::Stc,
+                content_reference_id_record: None,
+                time_base: Some(ContentTimeBase::new(0x123456789, 0x1ABCDEF01)),
+                content_id: None,
+                time_base_association: None,
+                reserved: RESERVED_3_DEFAULT,
+                content_id_reserved: RESERVED_1_DEFAULT,
+                private_data: &[],
+            },
+            ContentLabelingDescriptor {
+                metadata_application_format: 0x0100,
+                metadata_application_format_identifier: None,
+                content_reference_id_record_flag: false,
+                content_time_base_indicator: ContentTimeBaseIndicator::Npt,
+                content_reference_id_record: None,
+                time_base: Some(ContentTimeBase::new(0x1AABBCCDD, 0x0)),
+                content_id: Some(42),
+                time_base_association: None,
+                reserved: RESERVED_3_DEFAULT,
+                content_id_reserved: RESERVED_1_DEFAULT,
+                private_data: &[],
+            },
+            ContentLabelingDescriptor {
+                metadata_application_format: 0x0100,
+                metadata_application_format_identifier: None,
+                content_reference_id_record_flag: false,
+                content_time_base_indicator: ContentTimeBaseIndicator::Reserved(3),
+                content_reference_id_record: None,
+                time_base: None,
+                content_id: None,
+                time_base_association: Some(ContentTimeBaseAssociation {
+                    data: &[0x11, 0x22, 0x33, 0x44],
+                }),
+                reserved: RESERVED_3_DEFAULT,
+                content_id_reserved: RESERVED_1_DEFAULT,
+                private_data: &[],
+            },
+            ContentLabelingDescriptor {
+                metadata_application_format: 0xFFFF,
+                metadata_application_format_identifier: Some(0xDEADBEEF),
+                content_reference_id_record_flag: true,
+                content_time_base_indicator: ContentTimeBaseIndicator::None,
+                content_reference_id_record: Some(&[0x01, 0x02]),
+                time_base: None,
+                content_id: None,
+                time_base_association: None,
+                reserved: RESERVED_3_DEFAULT,
+                content_id_reserved: RESERVED_1_DEFAULT,
+                private_data: &[0xFF],
+            },
+        ] {
+            serialize_round_trip(&d);
+        }
     }
 
     #[test]

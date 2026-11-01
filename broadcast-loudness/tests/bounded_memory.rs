@@ -1,6 +1,6 @@
 //! Issue #1072 (audit r14-LOUD-C2): both meters must run in memory bounded
 //! by the *window* sizes (a few seconds of audio), never by the measurement
-//! duration. The whole test thread runs under a 16 MiB live-byte cap
+//! duration. The whole test thread runs under a 8 MiB live-byte cap
 //! (`test_alloc::ThreadCapped`): the pre-fix meters stored one `f64` per
 //! sample frame (and per true-peak sample), which at the volume below needs
 //! well over 100 MiB, so an allocation over the cap returns null and the
@@ -10,14 +10,22 @@ use broadcast_loudness::{ChannelLayout, LoudnessMeter, TruePeakMeter};
 use test_alloc::ThreadCapped;
 
 #[global_allocator]
-static CAP: ThreadCapped<{ 16 * 1024 * 1024 }> = ThreadCapped::new();
+static CAP: ThreadCapped<{ 8 * 1024 * 1024 }> = ThreadCapped::new();
 
 const RATE: u32 = 8_000;
-/// 30 minutes of stereo at 8 kHz = 14.4 M frames (115 MB as one f64 each).
-const FRAMES: usize = RATE as usize * 60 * 30;
+/// 5 minutes of stereo at 8 kHz = 2.4 M frames (19 MB as one f64 each, over the
+/// cap); 30 minutes under `RUST_BROADCAST_SOAK`.
+fn frames() -> usize {
+    let minutes = if std::env::var_os("RUST_BROADCAST_SOAK").is_some() {
+        30
+    } else {
+        5
+    };
+    RATE as usize * 60 * minutes
+}
 
 #[test]
-fn loudness_meter_is_bounded_and_correct_over_30_minutes() {
+fn loudness_meter_is_bounded_and_correct_over_a_long_run() {
     let mut m = LoudnessMeter::new(RATE, ChannelLayout::Stereo).unwrap();
     // 1 kHz-class sine at 0.1 amplitude on both channels, fed in 1-frame pushes
     // from a precomputed one-second table (so the test itself allocates nothing).
@@ -27,7 +35,7 @@ fn loudness_meter_is_bounded_and_correct_over_30_minutes() {
                 as f32
         })
         .collect();
-    for n in 0..FRAMES {
+    for n in 0..frames() {
         let s = table[n % table.len()];
         m.push_f32(&[s, s]).unwrap();
     }
@@ -45,9 +53,9 @@ fn loudness_meter_is_bounded_and_correct_over_30_minutes() {
 }
 
 #[test]
-fn true_peak_meter_is_bounded_over_30_minutes() {
+fn true_peak_meter_is_bounded_over_a_long_run() {
     let mut tp = TruePeakMeter::new();
-    for n in 0..FRAMES {
+    for n in 0..frames() {
         let s = if n % 4 == 0 { 0.5f32 } else { -0.25 };
         tp.push_f32(s).unwrap();
     }

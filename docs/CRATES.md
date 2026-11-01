@@ -89,7 +89,7 @@ change, so the old versions stay live.
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**62 workspace members.** 55 are on crates.io; 48 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**63 workspace members.** 55 are on crates.io; 48 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -157,6 +157,7 @@ change, so the old versions stay live.
 | [`test-alloc`](#test-alloc) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`test-bounded`](#test-bounded) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`test-fixtures`](#test-fixtures) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
+| [`workspace-guards`](#workspace-guards) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 
 ### Foundation
 
@@ -889,12 +890,22 @@ Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get th
 - **Depends on (workspace):** none
 - **Used by (workspace):** none
 
+#### workspace-guards
+
+One test binary that walks every crate named in each guard's data table (`non_exhaustive`, `label`, `truncation`, `clock33`, the de-hand-roll tripwires, `secret_debug`), with each crate's SKIP list or allowlist and its reasons carried verbatim; a new crate adds a table line instead of copying a test file.
+
+- **Standards:** n/a
+- **Cargo description:** Workspace-wide lexical guard tests with per-crate data tables (unpublished).
+- **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
+- **Depends on (workspace):** none
+- **Used by (workspace):** none
+
 ### Dependency layers
 
 Layer 0 has no workspace dependencies; every other crate sits one layer above its deepest workspace dependency. Normal dependencies only (dev-dependencies are excluded, so the test helpers appear at layer 0 with no edges).
 
 ```text
-layer 0: broadcast-auth, broadcast-common, test-alloc, test-bounded, test-fixtures
+layer 0: broadcast-auth, broadcast-common, test-alloc, test-bounded, test-fixtures, workspace-guards
 layer 1: atsc3, broadcast-hls, broadcast-loudness, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtcp-packet, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, scte35-splice, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, ssai-runtime, st291, timed-metadata, webrtc-runtime
 layer 3: caption-convert, dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, transmux

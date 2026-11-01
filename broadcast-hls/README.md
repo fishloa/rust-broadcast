@@ -77,7 +77,7 @@ Runnable programs: `cargo run -p broadcast-hls --example build_playlist` and `--
 
 - **`MediaPlaylist` and `MediaSegment`:** segments with `title`, `map` (carry-forward on parse, deduplicated on render), `bitrate`, `gap`, `discontinuous`, byte ranges, and `pre_tags` (segment-defining tags kept in place), plus playlist-level `extra_tags` for unrecognised tags.
 - **`MasterPlaylist`, `Variant`, `IFrameVariant`:** multivariant playlists with `EXT-X-I-FRAME-STREAM-INF` trick-play (RFC 8216 §4.3.4.2) and `MasterPlaylist::extra_tags`.
-- **The 28 typed tags:** including `EXT-X-INDEPENDENT-SEGMENTS`, `EXT-X-START` (`StartPoint`), `EXT-X-DEFINE` (`Define`), `EXT-X-PLAYLIST-TYPE` (`PlaylistType`), `EXT-X-GAP`, `EXT-X-BITRATE`, `EXT-X-SESSION-DATA` (`SessionData`), `EXT-X-SESSION-KEY` (`SessionKey`, `EncryptionMethod`) and `EXT-X-CONTENT-STEERING` (`ContentSteering`). `tests/hls_tag_completeness.rs` parses a fixture carrying all 32 and asserts typed tags populate their field and the four opaque ones survive verbatim.
+- **The 28 typed tags:** including `EXT-X-INDEPENDENT-SEGMENTS`, `EXT-X-START` (`StartPoint`), `EXT-X-DEFINE` (`Define`), `EXT-X-PLAYLIST-TYPE` (`PlaylistType`), `EXT-X-GAP`, `EXT-X-BITRATE`, `EXT-X-SESSION-DATA` (`SessionData`), `EXT-X-SESSION-KEY` (`SessionKey`, `EncryptionMethod`) and `EXT-X-CONTENT-STEERING` (`ContentSteering`). `tests/it/hls_tag_completeness.rs` parses a fixture carrying all 32 and asserts typed tags populate their field and the four opaque ones survive verbatim.
 - **Low-Latency HLS** (opt-in, so a plain playlist is unchanged): `LowLatencyConfig`, `PartSpec`, `OpenSegment` (the in-progress segment at the live edge), `MapTag`, `ByteRange`, `PreloadHintType`, `RenditionReport`, `SkipInfo`. `PART-HOLD-BACK` must be at least three part targets.
 - **Discontinuities:** `EXT-X-DISCONTINUITY` and `EXT-X-DISCONTINUITY-SEQUENCE`, and `mark_init_discontinuities` (detect an init-segment change across a run).
 - **Version derivation:** `MediaPlaylist::computed_version` and `MasterPlaylist::computed_version` apply the draft's §8 table (`docs/version-compatibility.md`). A playlist needing nothing gets no `EXT-X-VERSION` tag. The `version` field is a floor: raised to the computed value, never lowered.
@@ -100,7 +100,7 @@ The workspace text-format rule is that a second parse of the rendered output equ
 
 ## Design notes
 
-Zero dependencies beyond `broadcast-common` and `thiserror`, `no_std` + `alloc`, symmetric parse and render, `#[non_exhaustive]` on `Error` and the open enums, label-coverage tests for spec enums, fixture corpus (`tests/hls_fixture_corpus.rs`) over Apple's BipBop playlists and every RFC 8216bis §9 example (provenance in `fixtures/hls/MANIFEST.md`), and a fuzz target.
+Zero dependencies beyond `broadcast-common` and `thiserror`, `no_std` + `alloc`, symmetric parse and render, `#[non_exhaustive]` on `Error` and the open enums, label-coverage tests for spec enums, fixture corpus (`tests/it/hls_fixture_corpus.rs`) over Apple's BipBop playlists and every RFC 8216bis §9 example (provenance in `fixtures/hls/MANIFEST.md`), and a fuzz target.
 
 ## Related crates
 

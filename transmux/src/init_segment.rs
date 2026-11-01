@@ -4630,7 +4630,7 @@ mod tests {
         // carries a real sample_count even though `entries` stays empty
         // (issue #1018) — a real MP4Box/ffmpeg-produced fixture asserting
         // this against an independent oracle lives in
-        // `tests/cenc_saiz_stsz_v1_boxes.rs`.
+        // `tests/it/cenc_saiz_stsz_v1_boxes.rs`.
         let s = SampleSizeBox {
             version: 0,
             flags: 0,

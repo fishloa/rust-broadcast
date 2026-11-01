@@ -16,7 +16,7 @@
 //! [`Mpeg2ExtensionBody::Other`] so the descriptor always round-trips. 0x10
 //! (`MDL` = field + 1) and 0x13 (`SubstreamOffset` loop of `SubstreamCountMinus1`
 //! entries) follow the text of §2.6.121 / §2.6.126; TSDuck 3.44 encodes both
-//! differently (see `tests/h222_descriptors.rs`).
+//! differently (see `tests/it/h222_descriptors.rs`).
 //!
 //! ```text
 //! Extension_descriptor() {

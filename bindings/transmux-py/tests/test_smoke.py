@@ -2,7 +2,7 @@
 
 Validates the binding against `fixtures/ts/h264_aac.ts` — the deterministic,
 real 2-track (H.264 video + AAC audio) capture the `transmux` Rust crate's own
-test suite (`transmux/tests/ts_demux.rs`, `smooth.rs`, `golden_gate.rs`, etc.)
+test suite (`transmux/tests/it/ts_demux.rs`, `smooth.rs`, `golden_gate.rs`, etc.)
 uses as its oracle-backed fixture. Its exact sample counts (75 video / 131
 audio) and codec identity are cross-checked there against ffprobe/ffmpeg
 oracles, so this test's expected numbers are not invented — they mirror the
@@ -116,7 +116,7 @@ def test_video_track_is_avc_with_sync_samples():
     # RFC 6381 avc1.PPCCLL string, derived from the recovered avcC fields.
     assert video["codec_string"] is not None
     assert video["codec_string"].startswith("avc1.")
-    assert len(video["samples"]) == 75, "oracle count from transmux/tests/smooth.rs"
+    assert len(video["samples"]) == 75, "oracle count from transmux/tests/it/smooth.rs"
     assert any(s["is_sync"] for s in video["samples"]), "expected at least one keyframe"
     first = video["samples"][0]
     assert isinstance(first["data"], bytes)
@@ -132,7 +132,7 @@ def test_audio_track_is_aac():
     assert audio["channel_count"] == 1
     assert audio["sample_rate"] == 44100
     assert audio["codec_string"] == "mp4a.40.2"  # AAC-LC (AudioObjectType 2)
-    assert len(audio["samples"]) == 131, "oracle count from transmux/tests/smooth.rs"
+    assert len(audio["samples"]) == 131, "oracle count from transmux/tests/it/smooth.rs"
     first = audio["samples"][0]
     assert isinstance(first["data"], bytes)
     assert len(first["data"]) > 0

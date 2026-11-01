@@ -29,13 +29,13 @@ Each item is tagged with how it is enforced:
   guards (DescriptorTag, ExtensionTag, …) updated.
 
 ## 3. Forward-compatibility (no future breaking change) — MUST be pre-publish
-- [CI] Every public **enum** is `#[non_exhaustive]` (`non_exhaustive_coverage.rs`)
+- [CI] Every public **enum** is `#[non_exhaustive]` (`workspace-guards` `non_exhaustive` table)
   AND has a `Reserved`/`Unknown` byte-bearing catch-all that round-trips unknown
   values — so a spec adding a value is additive, never breaking.
 - [REVIEW] Public **structs** stay bare/constructable (matches the existing set —
   downstream builds them for the serialize path); do NOT add `#[non_exhaustive]`
   to a descriptor struct unless the spec genuinely reserves growth there.
-- [CI] Every public enum has `name()` + `impl_spec_display!` (`label_coverage.rs`);
+- [CI] Every public enum has `name()` + `impl_spec_display!` (`workspace-guards` `label` table);
   data-carrying ADTs go in its SKIP list.
 
 ## 4. Typing (minimise untyped surface)

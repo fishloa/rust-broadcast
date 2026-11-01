@@ -1771,7 +1771,7 @@ mod tests {
         // through a whole small file whose one block claims 256 frames.
         //
         // Hand-assembled EBML so the test does not depend on the test-only
-        // builder in `tests/webm_demux.rs`:
+        // builder in `tests/it/webm_demux.rs`:
         //   EBML header | Segment { Cluster { Timecode, SimpleBlock } }
         let block_payload = [
             0x81u8, 0x00, 0x00, 0x04, 0xFF, 0xAA, 0xBB, // track,ts,flags=fixed,count=255,+2

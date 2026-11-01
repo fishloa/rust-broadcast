@@ -5,7 +5,7 @@ repo, and pulling a live one is not possible in this sandboxed environment
 (no network access). This fixture is instead built by **reusing the
 already-verified real ANC packet content bytes** from the existing,
 already-audited `fixtures/st291/anc.bin` fixture (see
-`st291/tests/fixture_anc.rs` for the values it asserts) and wrapping them
+`st291/tests/it/fixture_anc.rs` for the values it asserts) and wrapping them
 fresh in RFC-8331-correct RTP + payload-header framing — the parity/checksum
 math over `DID`/`SDID`/`Data_Count`/`User_Data_Words`/`Checksum_Word` is
 **identical across transports** per `st291/docs/anc_packet_291.md`, so the
@@ -22,14 +22,14 @@ that were off by one, so it did not conform to ST 291-1:2011. Both fixtures
 are now regenerated: the same placement/UDW values, but `Data_Count` =
 `with_parity(count)` (`0x102`, `0x203`) and `Checksum_Word` =
 `compute_checksum()` (`0x134`, `0x1AC`), via `st291`'s own builders; every
-other byte is unchanged, and `st291/tests/fixture_validate.rs` asserts
+other byte is unchanged, and `st291/tests/it/fixture_validate.rs` asserts
 `is_valid()` on both. They remain **synthetic and spec-conformant, not real
 captures** (the values in step 1 below are the pre-regeneration words).
 
 ## How it was generated
 
 1. Took the same two ANC packets' content values already asserted by
-   `st291/tests/fixture_anc.rs` against `anc.bin`:
+   `st291/tests/it/fixture_anc.rs` against `anc.bin`:
    - Packet 0: `DID=0x161 SDID=0x101 Data_Count=0x002
      User_Data_Words=[0x2CF,0x101] Checksum_Word=0x233`
    - Packet 1: `DID=0x241 SDID=0x102 Data_Count=0x003
@@ -60,6 +60,6 @@ committed — it was run once and deleted; this file documents the recipe.
 
 ## Used by
 
-- `st291/tests/fixture_anc_rtp.rs` (`parses_expected_fields`,
+- `st291/tests/it/fixture_anc_rtp.rs` (`parses_expected_fields`,
   `byte_exact_round_trip`)
 - `st291/examples/parse_anc_rtp.rs`

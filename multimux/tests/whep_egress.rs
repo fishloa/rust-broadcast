@@ -161,6 +161,10 @@ fn run_whep_playback_check(whip_url: &str, whep_url: &str) -> WhepPlaybackResult
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn real_browser_whep_playback_decodes_real_video() {
+    skip_unless!(
+        std::env::var_os("RUST_BROADCAST_SOAK").is_some_and(|v| v == "1"),
+        "long real-browser run is opt-in: set RUST_BROADCAST_SOAK=1"
+    );
     skip_unless!(node_available(), "node not on PATH");
     skip_unless!(
         harness_ready(),

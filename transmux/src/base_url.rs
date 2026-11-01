@@ -19,7 +19,7 @@
 //! An input using the synthetic scheme itself is rejected (`None`).
 //!
 //! The `url` crate implements the WHATWG URL algorithm; it differs from strict
-//! RFC 3986 in two §5.4 rows (see `tests/base_url.rs`).
+//! RFC 3986 in two §5.4 rows (see `tests/it/base_url.rs`).
 
 use url::Url;
 

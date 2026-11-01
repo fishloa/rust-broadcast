@@ -11,7 +11,7 @@
 //! load/demux overhead is excluded).
 //!
 //! Deliberately public-API-only (same fixture/config shape as
-//! `tests/cenc_encrypt.rs`) so this file compiles unchanged against BOTH the
+//! `tests/it/cenc_encrypt.rs`) so this file compiles unchanged against BOTH the
 //! pre-refactor (`Sample.data: Vec<u8>`) and post-refactor (`Bytes`) checkouts
 //! — the BEFORE numbers in the media-plane-step-2b report were captured by
 //! running this exact file (via `git stash`) against the pre-refactor tree.

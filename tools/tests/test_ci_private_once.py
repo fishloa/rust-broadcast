@@ -20,6 +20,7 @@ CHECKOUT = "actions/checkout@v5"
 RESTORE = "actions/cache/restore@v4"
 SAVE = "actions/cache/save@v4"
 KEY = "${{ steps.pin.outputs.sha }}"
+MARKDOWN_ONLY_SKIP = "needs.changes.outputs.rust == 'true'"
 
 
 def _ci():
@@ -87,7 +88,11 @@ def test_every_consumer_job_needs_the_prepare_job():
         needs = doc["jobs"][job].get("needs")
         needs = [needs] if isinstance(needs, str) else list(needs or [])
         assert PREP_JOB in needs, f"{job}: mode `use` restores from the prep job, so it must need it"
-        assert not doc["jobs"][job].get("if"), f"{job}: a skipped `use` job would silently skip the private tests"
+        assert doc["jobs"][job].get("if") == MARKDOWN_ONLY_SKIP, (
+            f"{job}: the only permitted skip is the markdown-only `changes` gate; any other "
+            "condition would silently skip the private tests"
+        )
+        assert "changes" in needs, f"{job}: its `if` reads the `changes` job's output"
         for step in doc["jobs"][job]["steps"]:
             if _uses(step, ACTION_USES):
                 assert (step.get("with") or {}).get("deploy-key") == "${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}"

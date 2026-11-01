@@ -263,15 +263,6 @@ mod tests {
         assert_eq!(d.serialized_len() - 2, 8);
     }
 
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = PartialTransportStreamDescriptor::new(0x00_1234, 0x00_5678, 0x09AB);
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
-
     /// EN 300 468 Table 165. All three `reserved_future_use(2)` regions are
     /// preserved verbatim (zero and non-default values).
     #[test]

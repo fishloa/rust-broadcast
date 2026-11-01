@@ -606,3 +606,26 @@ pub(crate) fn opt_attr_f64(
         None => Ok(None),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn skip_root(xml: &str) -> Result<()> {
+        let mut ev = Events::new(xml);
+        let root = ev.root()?;
+        ev.skip(&root)
+    }
+
+    #[test]
+    fn skipping_content_truncated_by_eof_is_an_xml_parse_error() {
+        assert!(skip_root("<a><b><c>text</c></b></a>").is_ok());
+        for cut in ["<a>", "<a><b>", "<a><b><c>text", "<a><b><c>text</c></b>"] {
+            assert!(
+                matches!(skip_root(cut), Err(Error::XmlParse(_))),
+                "{cut}: {:?}",
+                skip_root(cut)
+            );
+        }
+    }
+}

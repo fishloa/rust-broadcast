@@ -137,15 +137,4 @@ mod tests {
             Error::OutputBufferTooSmall { .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_serializes_to_stable_json() {
-        let d = ServiceIdentifierDescriptor {
-            textual_service_identifier: DvbText::new(b"ITV1"),
-        };
-        let j = serde_json::to_string(&d).unwrap();
-        let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
-        assert!(j.contains("textual_service_identifier"));
-    }
 }

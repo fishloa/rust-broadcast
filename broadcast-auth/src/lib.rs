@@ -23,7 +23,7 @@ mod tests {
     use super::*;
 
     // The exact nonce rtsp-runtime's own digest test vector uses
-    // (`rtsp-runtime/tests/io_loopback.rs::digest_auth_over_loopback` and
+    // (`rtsp-runtime/tests/it/io_loopback.rs::digest_auth_over_loopback` and
     // `rtsp-runtime/src/auth.rs` unit tests), reused here so both crates are
     // known to agree on the same wire bytes.
     const DIGEST_CHALLENGE: &str = "Digest realm=\"IP Camera\",\

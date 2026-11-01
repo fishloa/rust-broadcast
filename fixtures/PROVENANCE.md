@@ -12,7 +12,7 @@ material lives in the private `private/` git submodule, never here.
 | `missing-extm3u.m3u8` | Hand-crafted fault-injection fixture (no `#EXTM3U` on first line). Issue #383. | 2025-07 | Own work — MIT OR Apache-2.0 |
 | `bad-extinf.m3u8` | Hand-crafted fault-injection fixture (EXTINF 15.0 > TARGETDURATION 10). Issue #383. | 2025-07 | Own work — MIT OR Apache-2.0 |
 | `malformed-daterange.m3u8` | Hand-crafted fault-injection fixture (DATERANGE missing required `ID`). Issue #383. | 2025-07 | Own work — MIT OR Apache-2.0 |
-| `reference-vod.m3u8` | Output of `broadcast_hls::MediaPlaylist::to_m3u8()` (playlist syntax moved from `transmux` to `broadcast-hls` in issue #878) — same struct shape exercised by `broadcast-hls/tests/hls_playlist.rs`. 10 segments, TARGETDURATION 10, ENDLIST. Issue #756. | 2026-07 | Own work — MIT OR Apache-2.0 |
+| `reference-vod.m3u8` | Output of `broadcast_hls::MediaPlaylist::to_m3u8()` (playlist syntax moved from `transmux` to `broadcast-hls` in issue #878) — same struct shape exercised by `broadcast-hls/tests/it/hls_playlist.rs`. 10 segments, TARGETDURATION 10, ENDLIST. Issue #756. | 2026-07 | Own work — MIT OR Apache-2.0 |
 
 ### Excluded manifest
 
@@ -108,7 +108,7 @@ real, permissively-licensed subtitle file.
 
 | File | Source | Date | Licence |
 |---|---|---|---|
-| `cc/cea608_cc1_synthetic.txt` | **Synthetic.** Hand-constructed CEA-608 (line-21) CC1 `cc_data()` byte stream (CTA-608-E control/PAC/char codes; ETSI TS 101 154 Table B.9 wire framing) — see the file's own header comment for the exact pop-on/roll-up/paint-on caption plan. A real capture with embedded EIA-608 (`samples.ffmpeg.org/ffmpeg-bugs/trac/ticket2885/transformers_EIA608_H264.ts`) was located and used to informally validate the *design* during development, but it is licensed third-party movie footage with no clear redistribution terms, so per this project's fixture-licensing convention it is fetched on demand into `.test-streams/` (`tools/fetch-test-streams.sh transformers-eia608-h264`) and never committed here — see `timed-metadata/tests/webvtt_cc_fixture.rs` and `transmux/tests/sei_caption_real_capture.rs`. This synthetic fallback was the explicitly-sanctioned outcome of that search, not a shortcut around it. Issue #568. | 2026 | Own work — MIT OR Apache-2.0 |
+| `cc/cea608_cc1_synthetic.txt` | **Synthetic.** Hand-constructed CEA-608 (line-21) CC1 `cc_data()` byte stream (CTA-608-E control/PAC/char codes; ETSI TS 101 154 Table B.9 wire framing) — see the file's own header comment for the exact pop-on/roll-up/paint-on caption plan. A real capture with embedded EIA-608 (`samples.ffmpeg.org/ffmpeg-bugs/trac/ticket2885/transformers_EIA608_H264.ts`) was located and used to informally validate the *design* during development, but it is licensed third-party movie footage with no clear redistribution terms, so per this project's fixture-licensing convention it is fetched on demand into `.test-streams/` (`tools/fetch-test-streams.sh transformers-eia608-h264`) and never committed here — see `timed-metadata/tests/it/webvtt_cc_fixture.rs` and `transmux/tests/it/sei_caption_real_capture.rs`. This synthetic fallback was the explicitly-sanctioned outcome of that search, not a shortcut around it. Issue #568. | 2026 | Own work — MIT OR Apache-2.0 |
 | `teletext/teletext_subtitle_synthetic.txt` | **Synthetic.** No DVB VBI-teletext-bearing capture was found anywhere in this workspace's `fixtures/` tree, and ETSI EN 300 706 has no worked byte-level page example in its annexes to lift verbatim (see the file's own header comment for the full search/derivation note and the page-888 subtitle plan). Bytes are constructed with `timed-metadata`'s own verified `encode_hamming_8_4`/`encode_odd_parity` (exhaustive round-trip + bit-error tests). Issue #666. | 2026 | Own work — MIT OR Apache-2.0 |
 | `sub/cap.vtt` | **Synthetic.** A small hand/tool-authored plain WebVTT sample (2 cues, `WEBVTT` signature only, no settings/NOTE/REGION), committed as part of `transmux`'s fMP4 gap-tier fixture prep (commit `9ab617f5`) and reused here for the WebVTT<->SRT round trip. | 2026 | Own work — MIT OR Apache-2.0 |
 | `sub/sintel-en.srt` | **Real.** The official English dialogue subtitles for *Sintel* (Blender Foundation's 2010 "Durian" open movie) — 26 cues, real punctuation/ellipses and a genuine multi-line cue, non-round timestamps. Fetched verbatim (byte-for-byte, no edits) from Wikimedia Commons' `TimedText:Sintel_movie_4K.webm.en.srt` page (`https://commons.wikimedia.org/w/index.php?title=TimedText:Sintel_movie_4K.webm.en.srt&action=raw`), the official English-subtitle companion track of `File:Sintel_movie_4K.webm` (`https://commons.wikimedia.org/wiki/File:Sintel_movie_4K.webm`, `oldid=1212979998`). That media file's licence, per its Commons `imageinfo` `extmetadata` (`LicenseShortName: CC BY 3.0`, `LicenseUrl: https://creativecommons.org/licenses/by/3.0`) and its own licence-template rendering ("This file is licensed under the Creative Commons Attribution 3.0 Unported license. Attribution: © copyright Blender Foundation \| www.sintel.org"), is **CC BY 3.0** — permissive, attribution-only, no share-alike/copyleft term. Commons' `TimedText:` namespace subtitle pages are treated as part of the associated CC-licensed media file (a straightforward timing/transcription of that film's own released dialogue, not a separately-copyrighted work); this specific transcription's only Commons revision was created 2015-10-10 by user `Wardsegers`. Attribution: © Blender Foundation, `www.sintel.org` / `durian.blender.org`. Issue #931 (`caption-convert` real-fixture gap). | 2010 (film) / 2015 (Commons transcription) / 2026 (fetched) | CC BY 3.0 (© Blender Foundation) |
@@ -125,7 +125,7 @@ time-base bit layout including the bit-32 carry case), an `m4mux_timing_descript
 reserved bits set), and a `J2K_video_descriptor` with `extended_capability_flag`
 set. Expected field values are read directly off the compiled bytes (verified
 against `tstabcomp -d`'s own decompile), not derived from our own serializer —
-see `dvb-si/tests/tsduck_interop.rs`'s
+see `dvb-si/tests/it/tsduck_interop.rs`'s
 `decodes_tsduck_compiled_w4_spec_misread_descriptors`.
 
 | File | Source | Date | Licence |
@@ -146,7 +146,7 @@ duration=0.4" -c:v vc2 -b:v 50k -f mpegts`, synthetic input only): the `vc2`
 signalling. Only the video PID's TS packets are kept (PAT/PMT stripped). Expected
 values (`PES_extension_field_length` = 1, `stream_id_extension_flag` = 0,
 `stream_id_extension` = `0x60`) are read directly off the muxed bytes, not derived
-from our own serializer — see `mpeg-pes/tests/fixture_pes_extension.rs`.
+from our own serializer — see `mpeg-pes/tests/it/fixture_pes_extension.rs`.
 
 | File | Source | Date | Licence |
 |---|---|---|---|

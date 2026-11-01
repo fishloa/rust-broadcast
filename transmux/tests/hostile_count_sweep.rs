@@ -30,6 +30,21 @@ const INFLATED: [[u8; 4]; 2] = [[0xFF, 0xFF, 0xFF, 0xFF], [0x10, 0x00, 0x00, 0x0
 const REGION: usize = 16;
 /// Skip fixtures larger than this (keeps the debug-build runtime low).
 const MAX_FIXTURE_LEN: u64 = 100_000;
+/// In a PR run a fixture larger than this sweeps only every
+/// [`LARGE_FIXTURE_STRIDE`]th box (the small fixtures, where nearly all the
+/// distinct box types live, are swept in full); `RUST_BROADCAST_SOAK` sweeps
+/// every box of every fixture.
+const FULL_SWEEP_LEN: usize = 30_000;
+const LARGE_FIXTURE_STRIDE: usize = 4;
+const SHARDS: usize = 4;
+
+fn box_stride(len: usize) -> usize {
+    if len > FULL_SWEEP_LEN && std::env::var_os("RUST_BROADCAST_SOAK").is_none() {
+        LARGE_FIXTURE_STRIDE
+    } else {
+        1
+    }
+}
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -68,8 +83,7 @@ fn after_fourcc(data: &[u8]) -> Vec<usize> {
     v
 }
 
-#[test]
-fn inflated_counts_never_become_unbounded_allocations() {
+fn sweep_shard(shard: usize) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/mp4");
     let mut files = Vec::new();
     collect(&root, &mut files);
@@ -77,9 +91,12 @@ fn inflated_counts_never_become_unbounded_allocations() {
     assert!(files.len() >= 10, "only {} fixtures found", files.len());
 
     let mut parses = 0usize;
-    for path in &files {
+    for path in files.iter().skip(shard).step_by(SHARDS) {
         let data = std::fs::read(path).unwrap();
-        for start in after_fourcc(&data) {
+        for start in after_fourcc(&data)
+            .into_iter()
+            .step_by(box_stride(data.len()))
+        {
             for word in (0..REGION).step_by(4) {
                 let at = start + word;
                 if at + 4 > data.len() {
@@ -98,8 +115,26 @@ fn inflated_counts_never_become_unbounded_allocations() {
         }
     }
     eprintln!(
-        "hostile_count_sweep: {} fixtures, {parses} mutated parses",
+        "hostile_count_sweep shard {shard}: {} fixtures, {parses} mutated parses",
         files.len()
     );
-    assert!(parses > 1_000, "sweep ran only {parses} parses");
+    assert!(parses > 250, "shard {shard} ran only {parses} parses");
 }
+
+macro_rules! shard_tests {
+    ($($name:ident => $n:expr),*) => {
+        $(
+            #[test]
+            fn $name() {
+                sweep_shard($n);
+            }
+        )*
+    };
+}
+
+shard_tests!(
+    inflated_counts_never_become_unbounded_allocations_shard_0 => 0,
+    inflated_counts_never_become_unbounded_allocations_shard_1 => 1,
+    inflated_counts_never_become_unbounded_allocations_shard_2 => 2,
+    inflated_counts_never_become_unbounded_allocations_shard_3 => 3
+);

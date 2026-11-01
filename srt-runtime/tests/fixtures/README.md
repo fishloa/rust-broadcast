@@ -1,6 +1,6 @@
 # SRT wire fixtures
 
-Real `libsrt` control-packet captures used by `tests/libsrt_fixtures.rs`
+Real `libsrt` control-packet captures used by `tests/it/libsrt_fixtures.rs`
 (issue #1060, the 4-byte zero-pad libsrt appends to CIF-less control types).
 
 ## `libsrt_keepalive.bin`, `libsrt_ackack.bin`

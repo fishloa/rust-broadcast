@@ -993,7 +993,7 @@ mod tests {
     //! [`crate::cenc_decrypt::CencDecryptor`] calls — using each recorded
     //! [`crate::cenc::SampleEncryptionEntry`]'s IV/subsample map. Only
     //! reachable from an in-crate unit test (`cenc_crypto` is `pub(crate)`);
-    //! `tests/cenc_encrypt.rs` covers the equivalent public-API-only surface
+    //! `tests/it/cenc_encrypt.rs` covers the equivalent public-API-only surface
     //! (see that file's docs for why it does not repeat this exact reversal).
 
     use super::*;
@@ -1016,7 +1016,7 @@ mod tests {
     /// below have a deterministic, single-track `Media`. Cross-track IV
     /// uniqueness (the property a single-track `Media` structurally cannot
     /// test) is covered by [`multi_track_media`]'s tests and by
-    /// `tests/cenc_encrypt.rs`'s `counter_ivs_are_unique_across_every_track`.
+    /// `tests/it/cenc_encrypt.rs`'s `counter_ivs_are_unique_across_every_track`.
     fn clear_media() -> Media {
         let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("..");
@@ -1581,7 +1581,7 @@ mod tests {
 
     /// The IV counter must not restart per track: the last IV of track 0 and
     /// the first IV of track 1 must be consecutive, and the whole `Media`'s
-    /// IVs must be distinct. (`tests/cenc_encrypt.rs` asserts the same
+    /// IVs must be distinct. (`tests/it/cenc_encrypt.rs` asserts the same
     /// uniqueness property through the public API; this pins the *continuity*
     /// of the counter, which is what makes the uniqueness hold.)
     #[test]

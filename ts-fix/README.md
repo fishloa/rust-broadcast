@@ -136,8 +136,8 @@ wrote 450 packets (84600 bytes) to keep.ts
   of ES PIDs only) emits a program-less PAT at end of stream rather than no PAT
   (H.222.0 Table 2-30: the program loop may be empty); it never lists a PMT PID
   absent from the output (#1288).
-- **Verified against an oracle.** `tests/tsduck_oracle.rs` checks `--regen-psi`
-  output against TSDuck as an independent second opinion; `tests/scte35_preserve.rs` pins that splice signalling survives.
+- **Verified against an oracle.** `tests/it/tsduck_oracle.rs` checks `--regen-psi`
+  output against TSDuck as an independent second opinion; `tests/it/scte35_preserve.rs` pins that splice signalling survives.
 - The library has no `std` path: with `default-features = false` it is
   `no_std` + `alloc` (a CI no_std lane proves it).
 

@@ -34,5 +34,5 @@ with them. It now parses as one `CompoundPacket` of three packets: a typed
 `RtcpPacket::ReceiverReport`, and two `RtcpPacket::Unknown { packet_type:
 206, .. }` (this crate does not decode PSFB FCI — see the crate's own
 `docs/rtcp.md` decode-completeness notes). See
-`tests/real_browser_fixture.rs` for the parse + byte-identical round-trip
+`tests/it/real_browser_fixture.rs` for the parse + byte-identical round-trip
 assertions.

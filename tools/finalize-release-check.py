@@ -57,7 +57,7 @@ BINDINGS = ("bindings/python/Cargo.toml", "bindings/transmux-py/Cargo.toml")
 DEP_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 
 # Not packaged: abandoned (atsc3) and the publish = false test helpers.
-PACKAGE_EXCLUDES = ("atsc3", "test-fixtures", "test-alloc", "test-bounded")
+PACKAGE_EXCLUDES = ("atsc3", "test-fixtures", "test-alloc", "test-bounded", "workspace-guards")
 PACKAGE_MAX_BYTES = 10 * 1024 * 1024  # crates.io's own upload cap is 10 MiB
 
 PASS, FAIL, INFO = "PASS", "FAIL", "INFO"

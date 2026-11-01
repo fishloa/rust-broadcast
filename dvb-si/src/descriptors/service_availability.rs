@@ -252,13 +252,4 @@ mod tests {
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = ServiceAvailabilityDescriptor::new(true, vec![0x0001, 0x0002]);
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
 }

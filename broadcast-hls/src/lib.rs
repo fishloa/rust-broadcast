@@ -5455,7 +5455,7 @@ mod tests {
     /// A whole real-shaped LL-HLS playlist built from RFC 8216bis §9.11's
     /// actual sub-millisecond part/segment durations must round-trip. The
     /// spec's own §9.11 fixture can't cover this (it is unparsable — its
-    /// `...` elision line, see `tests/hls_fixture_corpus.rs`), so the values
+    /// `...` elision line, see `tests/it/hls_fixture_corpus.rs`), so the values
     /// are exercised here instead.
     #[test]
     fn round_trip_rfc_9_11_sub_millisecond_part_durations() {

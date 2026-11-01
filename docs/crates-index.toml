@@ -609,3 +609,11 @@ standards = "n/a"
 what = "Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong."
 crates_io = false
 lifecycle = "internal"
+
+[crate.workspace-guards]
+domain = "internal"
+summary = "Workspace-wide lexical source guards with per-crate data tables."
+standards = "n/a"
+what = "One test binary that walks every crate named in each guard's data table (`non_exhaustive`, `label`, `truncation`, `clock33`, the de-hand-roll tripwires, `secret_debug`), with each crate's SKIP list or allowlist and its reasons carried verbatim; a new crate adds a table line instead of copying a test file."
+crates_io = false
+lifecycle = "internal"

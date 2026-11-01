@@ -12,10 +12,9 @@
 
 // Drift-guard exemption (issue #806): this crate defines no `pub enum` at
 // all (only stream adapter structs and `ResyncStats` below), so neither the
-// `tests/label_coverage.rs` (#204 Display convention) nor the
-// `tests/non_exhaustive_coverage.rs` (`#[non_exhaustive]`) drift guard has
-// anything to police. Recorded in `broadcast-common`'s
-// `tests/workspace_drift_guard_coverage.rs` exemption lists.
+// `label` (#204 Display convention) nor the `non_exhaustive`
+// (`#[non_exhaustive]`) guard has anything to police. Recorded in the EXEMPT
+// lists of `workspace-guards`.
 
 pub mod resync;
 pub mod section_stream;

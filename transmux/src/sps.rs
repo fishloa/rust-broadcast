@@ -2053,18 +2053,10 @@ mod tests {
     }
 
     #[test]
-    fn rfc6381_avc1_baseline() {
-        assert_eq!(rfc6381_avc1(66, 0xC0, 13), "avc1.42C00D");
-    }
-
-    #[test]
-    fn rfc6381_avc1_main() {
-        assert_eq!(rfc6381_avc1(77, 0x40, 13), "avc1.4D400D");
-    }
-
-    #[test]
-    fn rfc6381_avc1_high() {
-        assert_eq!(rfc6381_avc1(100, 0x00, 13), "avc1.64000D");
+    fn rfc6381_avc1_profiles() {
+        assert_eq!(rfc6381_avc1(66, 0xC0, 13), "avc1.42C00D", "baseline");
+        assert_eq!(rfc6381_avc1(77, 0x40, 13), "avc1.4D400D", "main");
+        assert_eq!(rfc6381_avc1(100, 0x00, 13), "avc1.64000D", "high");
     }
 
     #[test]
@@ -3833,13 +3825,8 @@ mod tests {
         nal
     }
 
-    #[test]
-    fn hevc_vui_hrd_ed_one_halves_rate() {
-        // elemental_duration_in_tc_minus1 = 1 -> interval doubles -> half rate.
-        let sps = hevc_sps_vui_hrd(false, false, 1, 25, Some((true, true, 1)));
-        let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
-        assert_eq!(t.hrd_fixed_pic_rate, Some(2));
-        let cfg = crate::pipeline::CodecConfig::Hevc {
+    fn hevc_cfg_for_sps(sps: Vec<u8>) -> crate::pipeline::CodecConfig {
+        crate::pipeline::CodecConfig::Hevc {
             config: crate::hevc_config::HEVCConfigurationBox::new(
                 crate::hevc_config::HEVCDecoderConfigurationRecord {
                     configuration_version: 1,
@@ -3868,147 +3855,113 @@ mod tests {
             ),
             width: 320,
             height: 240,
-        };
-        assert_eq!(
-            crate::pipeline::nominal_frame_rate(&cfg),
-            Some((12500, crate::pipeline::FrameRateBasis::Normative))
-        );
+        }
     }
 
     #[test]
-    fn hevc_vui_hrd_field_ed_one_quarters() {
-        // field_seq=1, ed=1 -> frame rate = 1/(2*T*2?) Actually ed+1=2, field halves -> quarter? 25/(1*2*2)=6.25? Let's just ensure Some.
-        let sps = hevc_sps_vui_hrd(true, true, 1, 25, Some((true, true, 1)));
-        let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
-        assert_eq!(t.hrd_fixed_pic_rate, Some(2));
-        assert!(t.field_seq);
-    }
-
-    #[test]
-    fn hevc_vui_hrd_ffip_one_field_seq_zero_none() {
-        // ffip=1, field_seq=0, HRD present -> None (cadence unknown).
-        let sps = hevc_sps_vui_hrd(false, true, 1, 25, Some((true, true, 0)));
-        let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(
-                crate::hevc_config::HEVCDecoderConfigurationRecord {
-                    configuration_version: 1,
-                    general_profile_space: 0,
-                    general_tier_flag: false,
-                    general_profile_idc: 1,
-                    general_profile_compatibility_flags: 0,
-                    general_constraint_indicator_flags: 0,
-                    general_level_idc: 93,
-                    min_spatial_segmentation_idc: 0,
-                    parallelism_type: 0,
-                    chroma_format_idc: 1,
-                    bit_depth_luma_minus8: 0,
-                    bit_depth_chroma_minus8: 0,
-                    avg_frame_rate: 0,
-                    constant_frame_rate: 0,
-                    num_temporal_layers: 1,
-                    temporal_id_nested: true,
-                    length_size_minus_one: 3,
-                    arrays: vec![crate::nalu_types::HevcNalArray {
-                        array_completeness: true,
-                        nal_unit_type: 33,
-                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
-                    }],
-                },
-            ),
-            width: 320,
-            height: 240,
-        };
-        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
-    }
-
-    #[test]
-    fn hevc_vui_hrd_general_zero_within_one_tier_b_or_a() {
-        // general=0, within=1 -> HRD fixed present (tier A).
-        let sps = hevc_sps_vui_hrd(false, false, 1, 25, Some((false, true, 0)));
-        let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
-        assert_eq!(t.hrd_fixed_pic_rate, Some(1));
-    }
-
-    #[test]
-    fn hevc_vui_hrd_general_zero_within_zero_tier_b() {
-        // general=0, within=0 -> no HRD fixed -> tier B (field_seq=0, ffi=0).
-        let sps = hevc_sps_vui_hrd(false, false, 1, 25, Some((false, false, 0)));
-        // within=0 branch reads low_delay + cpb_cnt; our helper writes low_delay false + cpb_cnt 0.
-        let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
-        assert_eq!(t.hrd_fixed_pic_rate, None);
-    }
-
-    #[test]
-    fn hevc_vui_hrd_field_seq_one_no_hrd_none() {
-        // field_seq=1, no HRD -> None (tier B not applied).
-        let sps = hevc_sps_vui_hrd(true, true, 1, 25, None);
-        let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(
-                crate::hevc_config::HEVCDecoderConfigurationRecord {
-                    configuration_version: 1,
-                    general_profile_space: 0,
-                    general_tier_flag: false,
-                    general_profile_idc: 1,
-                    general_profile_compatibility_flags: 0,
-                    general_constraint_indicator_flags: 0,
-                    general_level_idc: 93,
-                    min_spatial_segmentation_idc: 0,
-                    parallelism_type: 0,
-                    chroma_format_idc: 1,
-                    bit_depth_luma_minus8: 0,
-                    bit_depth_chroma_minus8: 0,
-                    avg_frame_rate: 0,
-                    constant_frame_rate: 0,
-                    num_temporal_layers: 1,
-                    temporal_id_nested: true,
-                    length_size_minus_one: 3,
-                    arrays: vec![crate::nalu_types::HevcNalArray {
-                        array_completeness: true,
-                        nal_unit_type: 33,
-                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
-                    }],
-                },
-            ),
-            width: 320,
-            height: 240,
-        };
-        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
-    }
-
-    #[test]
-    fn hevc_vui_hrd_zero_num_units_none() {
-        let sps = hevc_sps_vui_hrd(false, false, 0, 25, Some((true, true, 0)));
-        let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(
-                crate::hevc_config::HEVCDecoderConfigurationRecord {
-                    configuration_version: 1,
-                    general_profile_space: 0,
-                    general_tier_flag: false,
-                    general_profile_idc: 1,
-                    general_profile_compatibility_flags: 0,
-                    general_constraint_indicator_flags: 0,
-                    general_level_idc: 93,
-                    min_spatial_segmentation_idc: 0,
-                    parallelism_type: 0,
-                    chroma_format_idc: 1,
-                    bit_depth_luma_minus8: 0,
-                    bit_depth_chroma_minus8: 0,
-                    avg_frame_rate: 0,
-                    constant_frame_rate: 0,
-                    num_temporal_layers: 1,
-                    temporal_id_nested: true,
-                    length_size_minus_one: 3,
-                    arrays: vec![crate::nalu_types::HevcNalArray {
-                        array_completeness: true,
-                        nal_unit_type: 33,
-                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
-                    }],
-                },
-            ),
-            width: 320,
-            height: 240,
-        };
-        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
+    fn hevc_vui_hrd_cases() {
+        use crate::pipeline::FrameRateBasis::Normative;
+        type Hrd = Option<(bool, bool, u32)>;
+        struct Case {
+            name: &'static str,
+            field_seq: bool,
+            ffip: bool,
+            num_units: u32,
+            hrd: Hrd,
+            fixed_pic_rate: Option<Option<u32>>,
+            field_seq_out: Option<bool>,
+            rate: Option<Option<(u32, crate::pipeline::FrameRateBasis)>>,
+        }
+        let cases = [
+            Case {
+                name: "ed_one_halves_rate",
+                field_seq: false,
+                ffip: false,
+                num_units: 1,
+                hrd: Some((true, true, 1)),
+                fixed_pic_rate: Some(Some(2)),
+                field_seq_out: None,
+                rate: Some(Some((12500, Normative))),
+            },
+            Case {
+                name: "field_ed_one_quarters",
+                field_seq: true,
+                ffip: true,
+                num_units: 1,
+                hrd: Some((true, true, 1)),
+                fixed_pic_rate: Some(Some(2)),
+                field_seq_out: Some(true),
+                rate: None,
+            },
+            Case {
+                name: "ffip_one_field_seq_zero_none",
+                field_seq: false,
+                ffip: true,
+                num_units: 1,
+                hrd: Some((true, true, 0)),
+                fixed_pic_rate: None,
+                field_seq_out: None,
+                rate: Some(None),
+            },
+            Case {
+                name: "general_zero_within_one_tier_b_or_a",
+                field_seq: false,
+                ffip: false,
+                num_units: 1,
+                hrd: Some((false, true, 0)),
+                fixed_pic_rate: Some(Some(1)),
+                field_seq_out: None,
+                rate: None,
+            },
+            Case {
+                name: "general_zero_within_zero_tier_b",
+                field_seq: false,
+                ffip: false,
+                num_units: 1,
+                hrd: Some((false, false, 0)),
+                fixed_pic_rate: Some(None),
+                field_seq_out: None,
+                rate: None,
+            },
+            Case {
+                name: "field_seq_one_no_hrd_none",
+                field_seq: true,
+                ffip: true,
+                num_units: 1,
+                hrd: None,
+                fixed_pic_rate: None,
+                field_seq_out: None,
+                rate: Some(None),
+            },
+            Case {
+                name: "zero_num_units_none",
+                field_seq: false,
+                ffip: false,
+                num_units: 0,
+                hrd: Some((true, true, 0)),
+                fixed_pic_rate: None,
+                field_seq_out: None,
+                rate: Some(None),
+            },
+        ];
+        for c in cases {
+            let sps = hevc_sps_vui_hrd(c.field_seq, c.ffip, c.num_units, 25, c.hrd);
+            if let Some(expected) = c.fixed_pic_rate {
+                let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
+                assert_eq!(t.hrd_fixed_pic_rate, expected, "{}", c.name);
+                if let Some(fs) = c.field_seq_out {
+                    assert_eq!(t.field_seq, fs, "{}", c.name);
+                }
+            }
+            if let Some(expected) = c.rate {
+                assert_eq!(
+                    crate::pipeline::nominal_frame_rate(&hevc_cfg_for_sps(sps)),
+                    expected,
+                    "{}",
+                    c.name
+                );
+            }
+        }
     }
 
     #[test]

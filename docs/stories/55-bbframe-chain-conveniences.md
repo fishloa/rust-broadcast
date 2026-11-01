@@ -57,10 +57,10 @@ impl BbframePump {
   pump is orchestration over them, not new framing logic.
 
 ### (a) tests
-- Move the chain glue: `dvb-t2mi/tests/chain.rs` should drive the pipeline
+- Move the chain glue: `dvb-t2mi/tests/it/chain.rs` should drive the pipeline
   through `BbframePump` instead of hand-calling `Bbheader::parse` + `up_iter`,
   and still assert the full `T2miPump → BbframePump → SiDemux → PatSection`
-  result. (You MAY edit `dvb-t2mi/tests/chain.rs` for this one purpose — it is
+  result. (You MAY edit `dvb-t2mi/tests/it/chain.rs` for this one purpose — it is
   the AC. dvb-t2mi already has dvb-bbframe as a dev/optional dep.)
 - Unit tests in dvb-bbframe: NM and HEM frames each yield the right inner packets;
   two interleaved `plp_id`s keep independent carry-over; a malformed `df_bytes`
@@ -69,7 +69,7 @@ impl BbframePump {
 ## (b) Decoded ISSY accessors — `dvb-bbframe/src/issy.rs`
 
 Follow the 4.1.0 decoded-accessor pattern (see `dvb-si/src/tables/eit.rs` +
-`dvb-si/tests/accessors.rs` for the shape: raw field stays, decoded accessor
+`dvb-si/tests/it/accessors.rs` for the shape: raw field stays, decoded accessor
 added, symmetric `set_*` encoder, round-trip test with hand-computed values).
 
 On the `Issy::Signalling` (BUFS/TTO) data add:
@@ -113,6 +113,6 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --lock
 
 - Touch only: `dvb-bbframe/src/packet.rs` (or new `dvb-bbframe/src/pump.rs` +
   its `lib.rs` mod line), `dvb-bbframe/src/issy.rs`, `dvb-bbframe/CHANGELOG.md`,
-  and `dvb-t2mi/tests/chain.rs` (for the (a) AC only).
+  and `dvb-t2mi/tests/it/chain.rs` (for the (a) AC only).
 - Do **not** add a `dvb-t2mi` dependency to `dvb-bbframe`.
 - Do **not** implement part (c) (GSE docs). Do **not** commit.

@@ -190,7 +190,7 @@ python3 tools/finalize-release-check.py $PAIRS --package
 ```
 
 This is `cargo package --workspace --locked --exclude atsc3 --exclude test-fixtures
---exclude test-alloc --exclude test-bounded` (verify-builds every tarball) followed by a
+--exclude test-alloc --exclude test-bounded --exclude workspace-guards` (verify-builds every tarball) followed by a
 sanity pass over each plan crate's `.crate`: under 10 MiB, `Cargo.toml` + the declared
 `readme`/`license-file` + every literal `include` path present. Slow (about 2 minutes warm,
 longer cold); it is never part of the default check. Cargo 1.95 verifies workspace members
