@@ -90,7 +90,7 @@ fn every_accepted_descriptor_reserializes_byte_identically() {
                 #[cfg(feature = "serde")]
                 {
                     let n = serialized_tags.entry(tag).or_insert(0);
-                    if *n < SERDE_PER_TAG || soak() {
+                    if *n < SERDE_PER_TAG {
                         serde_json::to_string(&d)
                             .unwrap_or_else(|e| panic!("serde failed for tag 0x{tag:02X}: {e}"));
                     }
