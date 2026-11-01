@@ -3610,6 +3610,7 @@ dependencies = [
  "serde_json",
  "subtle",
  "test-alloc",
+ "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",

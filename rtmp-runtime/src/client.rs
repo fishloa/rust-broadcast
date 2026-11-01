@@ -13,6 +13,7 @@ use broadcast_common::{Parse, Serialize};
 use crate::RtmpError;
 use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
+use crate::flv_bridge::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::{
     EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
 };
@@ -30,18 +31,59 @@ const FLASH_VER: &str = "FMLE/3.0 (compatible; rtmp-runtime)";
 /// (Adobe FMLE publish sequence, as ffmpeg's `rtmpproto` emits it).
 const CMD_RELEASE_STREAM: &str = "releaseStream";
 const CMD_FC_PUBLISH: &str = "FCPublish";
+/// `play` Start argument (§7.2.2.1): `-2` plays the live stream of that name, else a recorded
+/// one, else waits for a live one.
+const PLAY_START_LIVE_OR_RECORDED: f64 = -2.0;
+/// Default playback buffer length announced with SetBufferLength before `play` (§6.7), ms.
+pub const DEFAULT_PLAY_BUFFER_MS: u32 = 3_000;
+const STATUS_PLAY_START: &str = "NetStream.Play.Start";
+const STATUS_PLAY_STOP: &str = "NetStream.Play.Stop";
+const STATUS_PLAY_COMPLETE: &str = "NetStream.Play.Complete";
+const STATUS_PLAY_STREAM_NOT_FOUND: &str = "NetStream.Play.StreamNotFound";
+const STATUS_PLAY_FAILED: &str = "NetStream.Play.Failed";
+const STATUS_LEVEL_ERROR: &str = "error";
+
+/// What a [`ClientSession`] does after `connect` and `createStream`.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClientMode {
+    /// `publish` a stream (§7.2.2.6): the session sends audio, video and metadata.
+    #[default]
+    Publish,
+    /// `play` a stream (§7.2.2.1): the session receives audio, video and data.
+    Play,
+}
+
+impl ClientMode {
+    /// The NetStream command this mode ends in.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Publish => "publish",
+            Self::Play => "play",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ClientMode);
 
 /// Configuration for a [`ClientSession`].
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct ClientConfig {
+    /// Publish (default) or play.
+    pub mode: ClientMode,
+    /// Playback buffer length announced to the server before `play` (§6.7 SetBufferLength),
+    /// milliseconds. Play mode only.
+    pub play_buffer_ms: u32,
     /// Outbound chunk size (§5.4.1).
     pub chunk_size: u32,
     /// Window Acknowledgement Size (§5.4.4).
     pub window_ack_size: u32,
     /// RTMP `app` name for the `connect` command.
     pub app: String,
-    /// Publishing name (stream key) for the `publish` command.
+    /// Publishing name (stream key) for the `publish` command, or the stream name `play` asks
+    /// for in play mode.
     pub stream_key: String,
     /// `tcUrl` for the `connect` command (e.g. `rtmp://host/app`).
     pub tc_url: Option<String>,
@@ -57,6 +99,8 @@ pub struct ClientConfig {
 impl core::fmt::Debug for ClientConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ClientConfig")
+            .field("mode", &self.mode)
+            .field("play_buffer_ms", &self.play_buffer_ms)
             .field("chunk_size", &self.chunk_size)
             .field("window_ack_size", &self.window_ack_size)
             .field("app", &self.app)
@@ -70,6 +114,8 @@ impl core::fmt::Debug for ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
+            mode: ClientMode::Publish,
+            play_buffer_ms: DEFAULT_PLAY_BUFFER_MS,
             chunk_size: 4096,
             window_ack_size: 2_500_000,
             app: String::new(),
@@ -96,6 +142,18 @@ pub enum ClientEvent {
     },
     /// Server accepted `publish` — session is now publishing.
     Publishing,
+    /// Server accepted `play` (`NetStream.Play.Start`): media follows. Play mode only.
+    Playing,
+    /// One FLV chunk of played media: the payload of a single Audio(8)/Video(9)/Data-AMF0(18)
+    /// message as an FLV tag (+ `PreviousTagSize`), the very first chunk prefixed with the FLV
+    /// file header. Concatenating every chunk in order yields a valid FLV stream. Play mode only.
+    Media {
+        /// FLV bytes for this tag.
+        flv: Vec<u8>,
+    },
+    /// The played stream ended: User Control Stream EOF (§6.7) or `NetStream.Play.Stop` /
+    /// `NetStream.Play.Complete`. Play mode only.
+    StreamEnded,
     /// Server returned an error.
     Error {
         /// Status code.
@@ -117,6 +175,8 @@ enum ClientState {
     StreamCreated,
     PublishSent,
     Publishing,
+    PlaySent,
+    Playing,
 }
 
 /// Client-side handshake: generate C0+C1, consume S0+S1+S2, produce C2.
@@ -226,6 +286,7 @@ pub struct ClientSession {
     /// tracks the PEER's advertised window for OUR acking of THEIR
     /// data — #1108/RTMP-W7).
     advertised_window_ack_size: u32,
+    flv: FlvTagWriter,
 }
 
 impl ClientSession {
@@ -249,6 +310,7 @@ impl ClientSession {
             bytes_acked: 0,
             peer_bandwidth: None,
             advertised_window_ack_size,
+            flv: FlvTagWriter::default(),
         }
     }
 
@@ -503,6 +565,52 @@ impl ClientSession {
         self.writer.write(&msg)
     }
 
+    /// `SetBufferLength` (§6.7) then `play` (§7.2.2.1) on the created stream.
+    fn build_play(&mut self) -> Result<Vec<u8>> {
+        self.state = ClientState::PlaySent;
+        let stream_id = self.stream_id.unwrap_or(1);
+        let mut out = Vec::new();
+        let buffer = UserControl::SetBufferLength {
+            stream_id,
+            buffer_ms: self.config.play_buffer_ms,
+        };
+        out.extend_from_slice(&self.writer.write(&buffer.to_message())?);
+        let cmd = Command {
+            name: "play".to_string(),
+            transaction_id: 0.0,
+            arguments: vec![
+                Amf0Value::Null,
+                Amf0Value::String(self.config.stream_key.clone()),
+                Amf0Value::Number(PLAY_START_LIVE_OR_RECORDED),
+            ],
+        };
+        let msg = Message {
+            chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
+            timestamp: 0,
+            message_type_id: msg_type::COMMAND_AMF0,
+            message_stream_id: stream_id,
+            payload: cmd.to_body()?,
+        };
+        out.extend_from_slice(&self.writer.write(&msg)?);
+        Ok(out)
+    }
+
+    fn receiving_media(&self) -> bool {
+        matches!(self.state, ClientState::PlaySent | ClientState::Playing)
+    }
+
+    fn emit_media(
+        &mut self,
+        tag_type: u8,
+        timestamp: u32,
+        payload: &[u8],
+        events: &mut Vec<ClientEvent>,
+    ) -> Result<()> {
+        let flv = self.flv.tag(tag_type, timestamp, payload)?;
+        events.push(ClientEvent::Media { flv });
+        Ok(())
+    }
+
     fn dispatch_message(
         &mut self,
         msg: &Message,
@@ -552,15 +660,43 @@ impl ClientSession {
             let cmd = Command::parse(&msg.payload)?;
             self.handle_command(&cmd, out, events)?;
         }
+        if msg.message_type_id == msg_type::COMMAND_AMF3 {
+            let body = msg.payload.get(1..).ok_or(RtmpError::BufferTooShort {
+                need: 1,
+                have: msg.payload.len(),
+                what: "AMF3 command encoding marker byte",
+            })?;
+            let cmd = Command::parse(body)?;
+            self.handle_command(&cmd, out, events)?;
+        }
+        if self.receiving_media() {
+            match msg.message_type_id {
+                msg_type::AUDIO | msg_type::VIDEO | msg_type::DATA_AMF0 => {
+                    self.emit_media(msg.message_type_id, msg.timestamp, &msg.payload, events)?;
+                }
+                msg_type::AGGREGATE => {
+                    unpack_aggregate(msg, |tag_type, timestamp, payload| {
+                        self.emit_media(tag_type, timestamp, payload, events)
+                    })?;
+                }
+                _ => {}
+            }
+        }
         if msg.message_type_id == msg_type::USER_CONTROL {
             // #1108/RTMP-W8: servers that probe liveness with User Control
             // PingRequest (event 6 — FMS/Wowza) got no PingResponse and may
             // have dropped the publisher; malformed/unrecognised event
             // types are tolerated, same as the server side's inbound
             // handling.
-            if let Ok(UserControl::PingRequest(ts)) = UserControl::parse(&msg.payload) {
-                let reply = UserControl::PingResponse(ts);
-                out.extend_from_slice(&self.writer.write(&reply.to_message())?);
+            match UserControl::parse(&msg.payload) {
+                Ok(UserControl::PingRequest(ts)) => {
+                    let reply = UserControl::PingResponse(ts);
+                    out.extend_from_slice(&self.writer.write(&reply.to_message())?);
+                }
+                Ok(UserControl::StreamEof(_)) if self.receiving_media() => {
+                    events.push(ClientEvent::StreamEnded);
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -601,7 +737,10 @@ impl ClientSession {
                 };
                 events.push(ClientEvent::Connected { properties: props });
                 self.state = ClientState::Connected;
-                out.extend_from_slice(&self.build_publish_preamble_and_create_stream()?);
+                match self.config.mode {
+                    ClientMode::Play => out.extend_from_slice(&self.build_create_stream()?),
+                    _ => out.extend_from_slice(&self.build_publish_preamble_and_create_stream()?),
+                }
             }
             ClientState::CreateStreamSent { txn_id }
                 if (cmd.transaction_id - txn_id).abs() < 0.5 =>
@@ -613,7 +752,10 @@ impl ClientSession {
                 self.stream_id = Some(sid);
                 events.push(ClientEvent::StreamCreated { stream_id: sid });
                 self.state = ClientState::StreamCreated;
-                out.extend_from_slice(&self.build_publish()?);
+                match self.config.mode {
+                    ClientMode::Play => out.extend_from_slice(&self.build_play()?),
+                    _ => out.extend_from_slice(&self.build_publish()?),
+                }
             }
             _ => {}
         }
@@ -622,6 +764,23 @@ impl ClientSession {
 
     fn handle_on_status(&mut self, cmd: &Command, events: &mut Vec<ClientEvent>) -> Result<()> {
         let (code, desc) = extract_status(&cmd.arguments);
+        if self.config.mode == ClientMode::Play {
+            let is_error = extract_status_level(&cmd.arguments) == STATUS_LEVEL_ERROR
+                || code == STATUS_PLAY_STREAM_NOT_FOUND
+                || code == STATUS_PLAY_FAILED;
+            if is_error {
+                events.push(ClientEvent::Error {
+                    code,
+                    description: desc,
+                });
+            } else if code == STATUS_PLAY_START {
+                self.state = ClientState::Playing;
+                events.push(ClientEvent::Playing);
+            } else if code == STATUS_PLAY_STOP || code == STATUS_PLAY_COMPLETE {
+                events.push(ClientEvent::StreamEnded);
+            }
+            return Ok(());
+        }
         if code == "NetStream.Publish.Start" {
             self.state = ClientState::Publishing;
             events.push(ClientEvent::Publishing);
@@ -650,6 +809,18 @@ impl ClientSession {
             self.bytes_acked = self.bytes_received;
         }
     }
+}
+
+fn extract_status_level(args: &[Amf0Value]) -> String {
+    args.iter()
+        .find_map(|arg| match arg {
+            Amf0Value::Object(pairs) => pairs.iter().find_map(|(k, v)| match (k.as_str(), v) {
+                ("level", Amf0Value::String(s)) => Some(s.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 fn extract_status(args: &[Amf0Value]) -> (String, String) {
