@@ -39,7 +39,7 @@ Media plane step-2 fix wave 1 (B2/B3, the demux lenient-but-loud regression
 test): a real, fragmented CMAF file carrying an AVC video track, an AAC audio
 track, AND a TTML/IMSC (`stpp`) subtitle track — three tracks, generated
 locally with ffmpeg 8.1.2, not hand-built/fabricated bytes. Used by
-`tests/subtitle_ac4_strictness.rs`'s
+`tests/it/subtitle_ac4_strictness.rs`'s
 `fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest`: the test mutates
 only the `stpp` sample entry's four-CC in-place (to a value no
 `SampleEntryVariant` matches, simulating a codec this crate has no

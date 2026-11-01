@@ -89,7 +89,7 @@ Runnable examples: `cargo run -p dvb-vbi --example build_data_field` and
 - No raw passthrough: reserved bits and stuffing are typed fields, so
   non-conformant input still round-trips; `Opaque`/`Stuffing` units that own
   their whole body reject a non-zero extra stuffing count on serialize.
-- Hostile input never panics (`tests/hostility.rs`).
+- Hostile input never panics (`tests/it/hostility.rs`).
 - Public enums are `#[non_exhaustive]` with `name()` and `Display`.
 - `no_std` + `alloc`.
 

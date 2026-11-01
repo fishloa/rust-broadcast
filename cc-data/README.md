@@ -113,7 +113,7 @@ Examples: `parse_cc_data`, `build_cc_data`, `decode_cea608`, `decode_cea708`
   `cc_data()` access units is kept across calls and decoded when complete; exposes
   the six services' window text.
 - Both decoders are one-way (bytes to caption state) and panic-free on arbitrary,
-  truncated or malformed input (`tests/hostility.rs`).
+  truncated or malformed input (`tests/it/hostility.rs`).
 
 ## Design notes
 

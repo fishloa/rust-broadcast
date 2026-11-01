@@ -215,7 +215,7 @@ captured the full STUN/DTLS/SRTP exchange on that port. Only `lo0.pcap`
   http.response.code`): `OPTIONS`→204 (CORS preflight), `POST`→201 — the
   WHIP-lite SDP offer/answer exchange that bootstrapped the whole session.
 - Automated re-verification of the STUN layer lives in
-  `webrtc-runtime/tests/whip_smoke_pcap_stun.rs` (feature `media`): it
+  `webrtc-runtime/tests/it/whip_smoke_pcap_stun.rs` (feature `media`): it
   walks this exact file with a hand-written classic-pcap reader (no new
   `pcap` dependency — none existed in the workspace already) and decodes
   every STUN message with `rtc_stun::message::Message` (the same type
@@ -231,7 +231,7 @@ captured the full STUN/DTLS/SRTP exchange on that port. Only `lo0.pcap`
 The byte-exact worked NACK example (bitmask + range formats) from VSF
 TR-06-1:2020 Appendix A is already transcribed in
 `rist-runtime/docs/tr-06-1-simple-profile.md` and already has committed
-tests in `rist-runtime/tests/spec_vectors.rs` (`appendix_a_bitmask_nack`,
+tests in `rist-runtime/tests/it/spec_vectors.rs` (`appendix_a_bitmask_nack`,
 `appendix_a_range_nack`, and the cross-verification tests) — landed in an
 earlier PR (#920). Not re-done here; see the task report for the bite-proof
 re-run.

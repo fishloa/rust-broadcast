@@ -525,7 +525,7 @@ fn expand_ranges(ranges: &[PacketRange]) -> Vec<u16> {
 /// packets (the `PID` itself plus 16 `BLP` bits), so it packs as many
 /// still-missing sequence numbers as fit within each 17-wide window before
 /// starting a new FCI — reproducing TR-06-1 Appendix A's own bitmask worked
-/// example exactly (see `tests/spec_vectors.rs`).
+/// example exactly (see `tests/it/spec_vectors.rs`).
 pub fn ranges_to_fci(ranges: &[PacketRange]) -> Vec<NackFci> {
     let seqs = expand_ranges(ranges);
     seqs_to_fci(&seqs)

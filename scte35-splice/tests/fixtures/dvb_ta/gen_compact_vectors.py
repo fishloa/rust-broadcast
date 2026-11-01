@@ -4,7 +4,7 @@
 Packs Tables 6 and 8 with a plain MSB-first bit packer written ONLY from the
 spec tables (page images of V1.2.1 pp.27-28, "No. of Bits" column), sharing no
 code with the scte35-splice crate. Prints Rust `const` byte arrays for
-`scte35-splice/tests/dvb_ta_compact_vectors.rs`. Re-run to regenerate:
+`scte35-splice/tests/it/dvb_ta_compact_vectors.rs`. Re-run to regenerate:
 
     python3 scte35-splice/tests/fixtures/dvb_ta/gen_compact_vectors.py
 

@@ -65,8 +65,8 @@ implementation resolves it. `dvb_ta::DasNibbleOrder` (`TypeHigh` = Table 8,
 `TypeLow` = Table 1) with `parse_with_order` / `serialize_into_with_order` on
 `DvbDasDescriptor` and `CompactSpliceInsert` selects either reading. Default wire
 behaviour is Table 1 for the descriptor and Table 8 for the compact form; both are
-pinned by `tests/das_nibble_order.rs`. Independent-oracle compact vectors:
-`tests/dvb_ta_compact_vectors.rs`. Evidence: `docs/dvb_ta/compact-scte35.md`.
+pinned by `tests/it/das_nibble_order.rs`. Independent-oracle compact vectors:
+`tests/it/dvb_ta_compact_vectors.rs`. Evidence: `docs/dvb_ta/compact-scte35.md`.
 
 ## Feature flags
 
@@ -109,7 +109,7 @@ assert!(matches!(parsed.clear.as_ref().unwrap().command, AnyCommand::TimeSignal(
   `0xFFF` sentinel (SCTE 35 §9.6.1) is parsed by deriving the command extent from its
   structure (never guessed; an underivable layout is an error);
   `ClearPayload::legacy_command_length_sentinel` records it so it re-serializes
-  byte-exactly (found with a real TSDuck capture, `tests/real_capture.rs`).
+  byte-exactly (found with a real TSDuck capture, `tests/it/real_capture.rs`).
   Serializers reject `sap_type` > 3, `encryption_algorithm` > 63, audio
   `bit_stream_mode` > 7 and `num_channels` > 15 with `Error::FieldOverflow`.
 - **DVB-TA** (`dvb_ta`): `DVB_DAS_descriptor`, compact SCTE 35 (Tables 6 and 8 as

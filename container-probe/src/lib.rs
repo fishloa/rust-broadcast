@@ -808,7 +808,7 @@ mod sampled_prober_needs {
     //! documented caller loop converges in O(log n) reads no matter what a
     //! prober reports — measured end to end: for a buffer of n bytes the public
     //! API returns exactly `geometric_floor(n)` whenever a prober under-asks.
-    //! The guarantee is proved by `tests/insufficient_terminates.rs` (the loop
+    //! The guarantee is proved by `tests/it/insufficient_terminates.rs` (the loop
     //! itself, bounded turns, over adversarial seeds) and by
     //! `mod need_normalisation` (the floor's own algebra).
     //!

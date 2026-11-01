@@ -589,7 +589,7 @@ async fn run_no_credentials_fails() {
 // flagged in the client-auth story: config-supplied credentials (as opposed
 // to URL userinfo, which `rtsp_ingest_basic_auth_from_url_userinfo_succeeds`
 // above already covers) needed a test driving them against a real server.
-// Mirrors `rtsp-runtime/tests/io_loopback.rs::digest_auth_over_loopback`, but
+// Mirrors `rtsp-runtime/tests/it/io_loopback.rs::digest_auth_over_loopback`, but
 // for multimux's own RTSP ingest and through the full DESCRIBE->SETUP->PLAY
 // handshake, not just a single DESCRIBE round trip. The mock server's Digest
 // verification is the real, production `broadcast_auth::Verifier` (issue

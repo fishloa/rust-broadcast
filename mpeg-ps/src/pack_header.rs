@@ -194,7 +194,7 @@ mod tests {
         // mux = (0x43<<14)|(0x36<<6)|(0x3B>>2) = 0x10CD8E (Table 2-39, no '01'
         // prefix before program_mux_rate — see the parse-side comment), which
         // matches this same fixture's system_header.rate_bound (0x10CD8E,
-        // cross-checked in `real_fixture_walk` / see mpeg-ps/tests/fixture_ps.rs).
+        // cross-checked in `real_fixture_walk` / see mpeg-ps/tests/it/fixture_ps.rs).
         let bytes = vec![
             0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, // SCR=0
             0x43, 0x36, 0x3B, 0xF8, // mux + reserved + stuffing

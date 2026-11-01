@@ -61,7 +61,7 @@
 //! the presentation timeline is unchanged and the cue stays aligned to the media.
 //! Shifting `splice_time.pts_time` by the PCR delta would therefore *desync* the
 //! cue from the (unchanged) PES PTS. So SCTE-35 cues are left byte-identical
-//! through a PCR restamp (see `tests/scte35_preserve.rs`). A splice-PTS
+//! through a PCR restamp (see `tests/it/scte35_preserve.rs`). A splice-PTS
 //! adjustment becomes correct only once a PES-PTS-rebase op exists (the v0.2
 //! PTS/DTS-wrap op), at which point the cue would shift by the *same* PES-PTS delta.
 //!

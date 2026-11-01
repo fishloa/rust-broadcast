@@ -40,14 +40,6 @@ required-features = ["cli"]
 # These tests spawn the `ts-fix` binary (`CARGO_BIN_EXE_ts-fix`), which only
 # exists with the `cli` feature. Without this they ran (and failed) in a bare
 # `--no-default-features` lane whenever nothing else had built the binary.
-[[test]]
-name = "cli_keep_pids"
-required-features = ["cli"]
-
-[[test]]
-name = "cli_resync"
-required-features = ["cli"]
-
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
 scte35-splice = { path = "../scte35-splice", version = "4.0", default-features = false }

@@ -136,8 +136,8 @@ taken from the wire; there is deliberately no `From<u16>`. `Pid` implements
 ## Design notes
 
 - **Zero-copy, symmetric.** Parsed types borrow the input; every wire type has
-  a matching serializer. `tests/fixture_roundtrip.rs` and
-  `tests/af_extension_roundtrip.rs` re-serialize every adaptation field of
+  a matching serializer. `tests/it/fixture_roundtrip.rs` and
+  `tests/it/af_extension_roundtrip.rs` re-serialize every adaptation field of
   every committed `.ts` fixture and require byte-identical output.
 - **No information dropped.** Adaptation-field stuffing, `pcr_reserved` /
   `opcr_reserved`, splice marker bits and every extension reserved bit are

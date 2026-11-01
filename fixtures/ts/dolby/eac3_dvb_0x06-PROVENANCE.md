@@ -31,4 +31,4 @@ committed -- it was run once and deleted; this file documents the recipe.
 
 ## Used by
 
-- `transmux/tests/dolby.rs::dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3`
+- `transmux/tests/it/dolby.rs::dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3`

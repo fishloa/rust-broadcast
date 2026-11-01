@@ -104,7 +104,7 @@ const EMSG_VALUE_PROVIDER_AD_START: &str = "34";
 
 /// The full set of rendered outputs, returned so both `main` (which writes
 /// them to disk and prints a summary) and the integration test
-/// (`tests/ssai_ad_stitch.rs`, which `#[path]`-includes this file as a
+/// (`tests/it/ssai_ad_stitch.rs`, which `#[path]`-includes this file as a
 /// module) can inspect the exact same run.
 pub struct Demo {
     /// The video-rendition HLS media playlist text.
@@ -545,7 +545,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // 10. Write everything to disk.
     // ------------------------------------------------------------------
     // Unique output dir per `run()` call: the integration test in
-    // `tests/ssai_ad_stitch.rs` invokes `run()` from several tests that
+    // `tests/it/ssai_ad_stitch.rs` invokes `run()` from several tests that
     // execute in parallel, so a single fixed directory would race (one call
     // truncating a file mid-write while another reads it). Keying the dir on
     // the process id + a per-call counter isolates every invocation.

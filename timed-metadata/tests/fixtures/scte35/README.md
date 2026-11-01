@@ -22,7 +22,7 @@ tstabcomp --compile splice_insert_pts_adjustment.xml
 ```
 
 `tstabcomp --decompile splice_insert_pts_adjustment.bin`'s own output (the
-independent-tool oracle asserted in `tests/scte35_pts_adjustment.rs`):
+independent-tool oracle asserted in `tests/it/scte35_pts_adjustment.rs`):
 
 ```
 <splice_information_table protocol_version="0" pts_adjustment="8,100,000" tier="0x0FFF">

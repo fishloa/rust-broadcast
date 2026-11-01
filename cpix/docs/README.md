@@ -25,7 +25,7 @@ implemented and documented, in `transmux`, before this task started:
 | `CencScheme` (`cenc`/`cbcs` ISO/IEC 23001-7 scheme identity) | `broadcast-common::cenc` |
 | `sinf`/`frma`/`schm`/`schi`/`rinf`/`stvi` box layouts (ISO/IEC 14496-12) | `docs/specs/transmux/protection-scheme.md` |
 | `tenc`/`pssh`/`senc` CENC boxes, CENC/CBCS encrypt+decrypt | `transmux/src/cenc*.rs` |
-| **Multi-DRM `pssh` payload generation**: DRM system UUIDs (Widevine/PlayReady/FairPlay/ClearKey), the version-0/1 `pssh` box layout, PlayReady PRO+WRMHEADER (all 4 XML versions, v4.0–v4.3) with the GUID↔UUID KID byte-swap, the Widevine `WidevineCencHeader` protobuf field table, and the FairPlay `skd://` URI convention | `transmux/src/drm.rs` + `transmux/docs/drm/pssh.md` (+ biting tests in `transmux/tests/drm_pssh.rs`) |
+| **Multi-DRM `pssh` payload generation**: DRM system UUIDs (Widevine/PlayReady/FairPlay/ClearKey), the version-0/1 `pssh` box layout, PlayReady PRO+WRMHEADER (all 4 XML versions, v4.0–v4.3) with the GUID↔UUID KID byte-swap, the Widevine `WidevineCencHeader` protobuf field table, and the FairPlay `skd://` URI convention | `transmux/src/drm.rs` + `transmux/docs/drm/pssh.md` (+ biting tests in `transmux/tests/it/drm_pssh.rs`) |
 | HLS `#EXT-X-KEY`/`#EXT-X-SESSION-KEY` rendering (`cenc_ext_x_key`) | `broadcast-hls` |
 | **HLS SAMPLE-AES byte layouts** (H.264/AAC/AC-3/E-AC-3 clear-prefix + skip-pattern + IV-reset rules) and the exact `EXT-X-KEY` attribute grammar for AES-128 / FairPlay / Widevine / ClearKey | `transmux/docs/drm/hls-sample-aes.md` |
 | Real CENC/CBCS-encrypted fixtures (Bento4-produced, issue #564) | `fixtures/transmux/h264_{cenc,cbcs}.mp4` + `fixtures/transmux/h264_cenc-PROVENANCE.md`; also `fixtures/mp4/cenc.mp4` |
@@ -119,7 +119,7 @@ from `Complex.xml`'s `ContentProtectionData`, used for the cross-corroboration i
 data, not hand-built) that happens to double-check `transmux::drm`'s existing Widevine
 protobuf encoder/PSSH builder — **not wired into any Rust test by this task** (that
 would be implementation work, out of scope here), but flagged in the report as a
-worthwhile addition to `transmux/tests/drm_pssh.rs` whenever that file is next touched.
+worthwhile addition to `transmux/tests/it/drm_pssh.rs` whenever that file is next touched.
 
 ## Explicit list of what is `UNVERIFIED` or out of scope (per the "never invent a
 value" rule)

@@ -92,7 +92,7 @@ Examples (`cargo run -p mpeg-pes --example <name>`): `parse_pes_packet`,
 ## Design notes
 
 - **Zero-copy and symmetric.** Parsed packets borrow the input; every type has
-  `serialize_into`; `tests/pes_header_roundtrip_exhaustive.rs` re-serializes
+  `serialize_into`; `tests/it/pes_header_roundtrip_exhaustive.rs` re-serializes
   every PES packet of every committed `.ts` fixture.
 - **Nothing dropped.** `header_stuffing` (the bytes, not a length),
   `es_rate_marker_bits` and `PesExtension::reserved_bits` are preserved

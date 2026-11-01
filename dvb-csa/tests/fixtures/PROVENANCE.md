@@ -6,7 +6,7 @@ Known-answer vectors generated with **libdvbcsa 1.1.0** (VideoLAN's reference
 free implementation). Each line is `control_word : plaintext : ciphertext`,
 all hex.
 
-Used by `tests/golden_vectors.rs`, which requires byte-identical output from
+Used by `tests/it/golden_vectors.rs`, which requires byte-identical output from
 this crate in both directions. This is the crate's correctness gate — DVB-CSA
 has no public normative specification, so agreement with an independent
 implementation is the only available standard of proof.

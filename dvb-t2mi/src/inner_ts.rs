@@ -211,7 +211,7 @@ mod tests {
         p
     }
 
-    /// Wrap one inner TS packet in a Normal-Mode BBFrame (mirrors tests/chain.rs).
+    /// Wrap one inner TS packet in a Normal-Mode BBFrame (mirrors tests/it/chain.rs).
     fn nm_bbframe(inner: &[u8; TS_LEN]) -> Vec<u8> {
         let hdr = Bbheader {
             matype: Matype {

@@ -198,7 +198,7 @@ mod tests {
         }
     }
 
-    /// A peer (e.g. real libsrt — see `tests/libsrt_fixtures.rs`) may also
+    /// A peer (e.g. real libsrt — see `tests/it/libsrt_fixtures.rs`) may also
     /// send these types with the pure-spec empty CIF instead of the pad.
     /// Both 16-byte (no-pad) and 20-byte (with-pad) wire shapes parse correctly.
     #[test]

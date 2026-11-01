@@ -13,7 +13,7 @@
 
 Synthesised, not captured. A minimal FLV whose AVC sequence header carries an
 SPS with `pic_width_in_mbs_minus1 = 4095` (width 65 536, height 48), followed by
-one AVC NALU tag. Used by `transmux/tests/flv.rs` to prove a coded size that
+one AVC NALU tag. Used by `transmux/tests/it/flv.rs` to prove a coded size that
 does not fit the IR's `u16` is rejected (the `#997` class) rather than truncated.
 
 Its NALU tag payload is a **well-formed** 4-byte-length-prefixed access unit

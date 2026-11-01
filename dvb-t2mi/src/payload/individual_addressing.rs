@@ -1926,7 +1926,7 @@ mod tests {
     //
     // Spec vectors: every byte below is hand-derived from the bit layout in
     // `docs/tables/ts_101_191/6-1-existing-individual-addressing-functions.md`.
-    // The one real-capture vector lives in `tests/real_capture.rs`.
+    // The one real-capture vector lives in `tests/it/real_capture.rs`.
 
     /// Wrap one function (`tag`, `body`) in a one-transmitter payload
     /// (`tx_id` 0x1234).  `function_length` = 2 + body length.

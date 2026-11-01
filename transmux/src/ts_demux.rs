@@ -150,7 +150,7 @@
 //! `Ec3SyncframeInfo::first_crc_verified_bsmod`), not from whichever frame the
 //! config happens to be read from. Pinned on `m6-single.ts` and the private
 //! zenith capture against an independent parse of every intact frame and the PMT
-//! `component_type` (`tests/streaming_ts_demux_eac3_bsmod.rs`: 0x82 / 0x84 main,
+//! `component_type` (`tests/it/streaming_ts_demux_eac3_bsmod.rs`: 0x82 / 0x84 main,
 //! `bsmod` 0; 0x83 visually impaired, `bsmod` 2). **Limit:** an unverified first
 //! frame is not corrected later: if the window holds no intact frame carrying
 //! `bsmod` at the time the track is announced (only possible on a capture that
@@ -4753,7 +4753,7 @@ enum CcVerdict {
 /// every `feed` versus only after [`finish`](Self::finish). Input need not
 /// start on a packet boundary (`TsResync` locks on `0x47`); an event is never
 /// withheld waiting for "the rest of a chunk". This is pinned by
-/// `tests/streaming_chunk_invariance.rs` (whole buffer vs 1, 7, 187, 188, 189,
+/// `tests/it/streaming_chunk_invariance.rs` (whole buffer vs 1, 7, 187, 188, 189,
 /// 1000, 65536 B and 32 fixed-seed random chunkings, over audio+video,
 /// multi-track, discontinuity and track-update captures). Only the *moment*
 /// (which `feed` call) an event becomes pollable depends on chunking, never
@@ -10702,7 +10702,7 @@ pub(crate) mod tests {
         let media = Media::new(vec![Track::new(spec, samples)], VIDEO_TIMESCALE);
 
         // Two separately muxed copies of the same track, concatenated as a
-        // segmenter would emit (and as `transmux/tests/ts_hls.rs` does): each
+        // segmenter would emit (and as `transmux/tests/it/ts_hls.rs` does): each
         // begins with its own PAT/PMT and its own counter sequence.
         let segment = TsMux::default().package(&media).expect("mux to TS");
         let mut concatenated = segment.clone();
@@ -11566,7 +11566,7 @@ pub(crate) mod tests {
     /// a recognised Dolby/DTS descriptor reclassifies from opaque data to the
     /// matching audio codec (issue #641). The end-to-end E-AC-3 case (real
     /// captured syncframes, full PMT-parse-through-sample-recovery path) is
-    /// covered by `transmux/tests/dolby.rs`'s
+    /// covered by `transmux/tests/it/dolby.rs`'s
     /// `dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3`; this covers the
     /// other two descriptor tags at the classification-function level.
     #[test]
@@ -12623,7 +12623,7 @@ pub(crate) mod tests {
     // by the crate's own `build_adts_header` (48 kHz AAC-LC stereo, variable
     // length). Bodies never contain `0xFF`, so there is no false syncword to
     // confuse the *test oracle* (the false-sync behaviour has its own tests).
-    // The one real-capture run is `tests/mpeg_legacy.rs`'s
+    // The one real-capture run is `tests/it/mpeg_legacy.rs`'s
     // `mpeg_audio_resyncs_across_pes_boundaries` over the committed
     // `mpeg2_mp2_pes_misaligned.ts`.
 

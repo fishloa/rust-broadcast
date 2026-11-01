@@ -33,7 +33,7 @@
 //! ```
 //!
 //! [`KmRefreshThresholds::RECOMMENDED`] is the spec's `2^25`/`4000` pair;
-//! `tests/km_refresh.rs` drives the same state machine with a scaled-down
+//! `tests/it/km_refresh.rs` drives the same state machine with a scaled-down
 //! threshold pair so the test suite does not need `2^25` real iterations —
 //! the state machine logic is identical, only the threshold constants
 //! differ.

@@ -1,0 +1,12 @@
+mod declaration_validation;
+mod deep_drop;
+mod golden;
+mod integration;
+mod mixed_content;
+mod no_dom_guard;
+mod review_signalling_findings;
+mod truncation;
+mod unknown_attributes;
+mod unknown_children_roundtrip;
+mod xml_declaration;
+mod xml_escaping;

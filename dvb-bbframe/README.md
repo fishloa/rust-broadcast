@@ -110,7 +110,7 @@ Transport Error Indicator).
 - **RFU policy.** `reserved_future_use` bits are emitted as 1 and
   `reserved_zero_future_use` bits as 0 (DVB convention); parsers accept any
   value for forward compatibility.
-- **Real captures.** `tests/integration_fixture.rs` runs against the committed
+- **Real captures.** `tests/it/integration_fixture.rs` runs against the committed
   DVB-S2 captures (`rai-5w-12606v-bbframe.ts`, `tnt-5w-12732v-bbframe.ts`).
 - Public enums carry `name()` and `Display`; `#![warn(missing_docs)]`;
   `no_std` + `alloc`.

@@ -111,7 +111,7 @@ Field-level transcriptions live in the crate's `docs/` directory
 - Zero-copy: parameter values borrow from the input.
 - No raw passthrough: lengths are recomputed from the typed fields on serialize.
 - Round-trip tested against a committed capture of a `CW_provision` message
-  (`tests/fixture_cw_provision.rs`) and truncation/length-overflow tests.
+  (`tests/it/fixture_cw_provision.rs`) and truncation/length-overflow tests.
 - Public enums are `#[non_exhaustive]` with `name()` and `Display`.
 - `no_std` + `alloc`.
 

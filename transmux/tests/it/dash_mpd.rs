@@ -1,0 +1,841 @@
+//! DASH MPD generation gate — extended addressing/live/content coverage
+//! (issue #566), on top of the base MPD writer gated by `tests/it/dash.rs`
+//! (issue #464).
+//!
+//! Every assertion here is computed from what the crate itself produced
+//! (via [`Segmenter`]/[`Fmp4Demux`]/[`DashPackager`]) — never a hardcoded
+//! literal — and cross-checks two independent code paths against each other:
+//! the [`Segmenter`]'s own segment-cut bookkeeping vs. an independent
+//! [`Fmp4Demux`] re-parse of the produced CMAF bytes (which reads the real
+//! `tfdt`/`trun` box fields), and the [`DashPackager`]'s emitted XML vs. that
+//! re-parse.
+//!
+//! Oracle input: `fixtures/ts/h264_aac.ts` (the same deterministic 2-track
+//! H.264 + AAC capture `tests/it/dash.rs` uses), whose video keyframes are
+//! spaced exactly 1.0 s apart — so a 1.0 s target [`Segmenter`] reliably cuts
+//! 3 video segments (matching the shape of the real ffmpeg oracle
+//! `fixtures/dash/manifest.mpd`, which SegmentTimeline-addresses the same
+//! source: 3 equal 90000-tick video segments, several unequal audio ones).
+//!
+//! Uses `ConstantIvSenc` (the `cenc` feature): gate the whole file on it, or
+//! `--no-default-features --features std` (which excludes `cenc`) fails to
+//! compile this test rather than skipping it.
+#![cfg(feature = "cenc")]
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use transmux::TrackId;
+
+use broadcast_common::{Package, Unpackage};
+use transmux::pipeline::CodecConfig;
+use transmux::{
+    Addressing, CencScheme, CmafMux, ConstantIvSenc, ContentProtectionSystem, DashPackager,
+    Fmp4Demux, InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, SampleEncryptionEntry,
+    Segmenter, TrackEncryption, TrackEncryptionBox, TrackSegments, TrackSpec, TsDemux,
+};
+
+// ---------------------------------------------------------------------------
+// Fixture + IR helpers
+// ---------------------------------------------------------------------------
+
+fn fixtures_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
+}
+
+fn demux_media() -> Media {
+    let ts = std::fs::read(fixtures_dir().join("ts/h264_aac.ts")).expect("h264_aac.ts fixture");
+    let mut demux = TsDemux::new();
+    demux.unpackage(&ts[..]).expect("demux h264_aac.ts")
+}
+
+/// Cut `media` into real CMAF media segments with [`Segmenter`], pushing
+/// samples interleaved by decode time (mirroring
+/// [`transmux::LlSegmenter::package`]'s merge so a segment boundary sees that
+/// segment's audio already buffered, matching real live-remux ordering).
+/// Returns the init segment plus every media segment's raw bytes.
+fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mut seg = Segmenter::new(specs, media.movie_timescale, target_secs).expect("segmenter");
+    let init = seg.init_segment().expect("init segment");
+
+    let anchor_id = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .map_or(media.tracks[0].spec.track_id, |t| t.spec.track_id);
+
+    struct Cursor<'a> {
+        track_id: u32,
+        timescale: u64,
+        samples: &'a [Sample],
+        idx: usize,
+        dts_ticks: u64,
+        is_anchor: bool,
+    }
+    let mut cursors: Vec<Cursor<'_>> = media
+        .tracks
+        .iter()
+        .map(|t| Cursor {
+            track_id: t.spec.track_id.value(),
+            timescale: (t.spec.timescale as u64).max(1),
+            samples: &t.samples,
+            idx: 0,
+            dts_ticks: 0,
+            is_anchor: t.spec.track_id == anchor_id,
+        })
+        .collect();
+
+    loop {
+        let mut best: Option<usize> = None;
+        for (i, c) in cursors.iter().enumerate() {
+            if c.idx >= c.samples.len() {
+                continue;
+            }
+            best = Some(match best {
+                None => i,
+                Some(b) => {
+                    let lhs = c.dts_ticks as u128 * cursors[b].timescale as u128;
+                    let rhs = cursors[b].dts_ticks as u128 * c.timescale as u128;
+                    if lhs < rhs || (lhs == rhs && !c.is_anchor && cursors[b].is_anchor) {
+                        i
+                    } else {
+                        b
+                    }
+                }
+            });
+        }
+        let Some(i) = best else { break };
+        let (track_id, sample) = {
+            let c = &mut cursors[i];
+            let s = c.samples[c.idx].clone();
+            c.dts_ticks += s.duration.unwrap_or(0) as u64;
+            c.idx += 1;
+            (c.track_id, s)
+        };
+        seg.push(TrackId::new(track_id), sample)
+            .expect("push sample");
+    }
+    seg.flush().expect("flush trailing segment");
+    (init, seg.take_ready())
+}
+
+/// Independently recover, for every track, the per-segment sample-duration
+/// sum and the segment's `tfdt.baseMediaDecodeTime` — by re-demuxing each
+/// produced CMAF segment with [`Fmp4Demux`] (reading the real `trun`/`tfdt`
+/// box fields), **not** by trusting [`Segmenter`]'s own bookkeeping.
+fn recover_segment_timing(
+    init: &[u8],
+    raw_segments: &[Vec<u8>],
+) -> BTreeMap<u32, (Vec<u64>, Vec<u64>)> {
+    let mut out: BTreeMap<u32, (Vec<u64>, Vec<u64>)> = BTreeMap::new();
+    for seg in raw_segments {
+        let mut buf = Vec::with_capacity(init.len() + seg.len());
+        buf.extend_from_slice(init);
+        buf.extend_from_slice(seg);
+        let media = Fmp4Demux::new().unpackage(&buf[..]).expect("demux segment");
+        for t in &media.tracks {
+            let dur: u64 = t
+                .samples
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
+            let entry = out.entry(t.spec.track_id.value()).or_default();
+            entry.0.push(dur);
+            entry.1.push(t.start_decode_time);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Element tree over `quick-xml` (self-contained: no shared code with tests/it/dash.rs).
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct Element {
+    name: String,
+    attrs: Vec<(String, String)>,
+    children: Vec<Element>,
+}
+
+impl Element {
+    fn attr(&self, key: &str) -> Option<&str> {
+        self.attrs
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+    fn has_attr(&self, key: &str) -> bool {
+        self.attrs.iter().any(|(k, _)| k == key)
+    }
+    fn find_all<'a>(&'a self, name: &str) -> Vec<&'a Element> {
+        self.children.iter().filter(|c| c.name == name).collect()
+    }
+    fn find<'a>(&'a self, name: &str) -> Option<&'a Element> {
+        self.children.iter().find(|c| c.name == name)
+    }
+}
+
+/// Parse `s` with `quick-xml` into an [`Element`] tree, asserting the document
+/// is well-formed: matched tags (checked by the reader), a single root element,
+/// and nothing but whitespace outside it.
+fn parse_xml(s: &str) -> Element {
+    use quick_xml::Reader;
+    use quick_xml::XmlVersion;
+    use quick_xml::events::{BytesStart, Event};
+
+    fn open(e: &BytesStart<'_>) -> Element {
+        let attrs = e
+            .attributes()
+            .map(|a| {
+                let a = a.expect("well-formed attribute");
+                let v = a
+                    .normalized_value(XmlVersion::Implicit1_0)
+                    .expect("resolvable attribute value");
+                (a.key.as_ref().to_string(), v.into_owned())
+            })
+            .collect();
+        Element {
+            name: e.name().as_ref().to_string(),
+            attrs,
+            children: Vec::new(),
+        }
+    }
+
+    let mut reader = Reader::from_str(s);
+    // Bottom of the stack is a synthetic document node holding the root.
+    let mut stack = vec![Element {
+        name: String::new(),
+        attrs: Vec::new(),
+        children: Vec::new(),
+    }];
+    loop {
+        match reader.read_event().expect("well-formed XML") {
+            Event::Start(e) => stack.push(open(&e)),
+            Event::Empty(e) => {
+                let el = open(&e);
+                stack.last_mut().expect("document node").children.push(el);
+            }
+            Event::End(_) => {
+                let el = stack.pop().expect("open element");
+                stack.last_mut().expect("document node").children.push(el);
+            }
+            Event::Text(t) if stack.len() == 1 => {
+                assert!(
+                    t.trim_ascii().is_empty(),
+                    "content outside the root element (not well-formed)"
+                );
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    assert_eq!(stack.len(), 1, "unclosed element at end of document");
+    let mut doc = stack.pop().expect("document node");
+    assert_eq!(doc.children.len(), 1, "exactly one root element");
+    doc.children.pop().expect("root element")
+}
+
+// ---------------------------------------------------------------------------
+// Static MPD: real single-segment CMAF (CmafMux) + real multi-segment
+// $Number$ nominal-duration math (Segmenter).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn static_mpd_structure_codecs_and_number_duration_math() {
+    let media = demux_media();
+
+    // Sanity: CmafMux can package the same IR into one real CMAF artifact
+    // (evidence the IR this MPD describes is itself a valid segment set).
+    let mut cmaf = CmafMux::new(1);
+    let cmaf_bytes = cmaf.package(&media).expect("CmafMux package");
+    assert!(!cmaf_bytes.is_empty());
+
+    // Real multi-segment cut (1.0 s target — the fixture's keyframes are
+    // exactly 1.0 s apart, see module docs).
+    let (init, raw_segments) = segment_via_segmenter(&media, 1.0);
+    assert!(
+        raw_segments.len() >= 2,
+        "expected multiple real segments, got {}",
+        raw_segments.len()
+    );
+    let recovered = recover_segment_timing(&init, &raw_segments);
+
+    let segments: Vec<TrackSegments> = recovered
+        .iter()
+        .map(|(&track_id, (durations, _tfdt))| TrackSegments {
+            track_id: TrackId::new(track_id),
+            durations: durations.clone(),
+        })
+        .collect();
+
+    let mut pkg = DashPackager {
+        segments,
+        ..DashPackager::default()
+    };
+    let xml = pkg.package(&media).expect("package static MPD");
+    let root = parse_xml(&xml);
+
+    assert_eq!(root.name, "MPD");
+    assert_eq!(root.attr("type"), Some("static"));
+    assert!(root.has_attr("mediaPresentationDuration"));
+    assert!(!root.has_attr("availabilityStartTime"));
+
+    let period = root.find("Period").expect("Period");
+    let sets = period.find_all("AdaptationSet");
+    assert_eq!(sets.len(), 2, "video + audio AdaptationSets");
+
+    let mimes: std::collections::BTreeSet<&str> =
+        sets.iter().filter_map(|s| s.attr("mimeType")).collect();
+    assert!(mimes.contains("video/mp4"));
+    assert!(mimes.contains("audio/mp4"));
+
+    // Every AdaptationSet carries a Role (main) — ISO/IEC 23009-1 §5.8.5.5.
+    for s in &sets {
+        let role = s.find("Role").expect("Role element");
+        assert_eq!(role.attr("schemeIdUri"), Some("urn:mpeg:dash:role:2011"));
+        assert_eq!(role.attr("value"), Some("main"));
+    }
+
+    // $Number$/duration math: `@duration` is the nominal (first-segment)
+    // duration, and — the invariant the task calls out — the *real* segment
+    // durations for a track (independently recovered via Fmp4Demux) must sum
+    // to exactly that track's total sample-duration (the segments fully
+    // partition the track; nothing dropped/duplicated by segmentation).
+    for (&track_id, (durations, _)) in &recovered {
+        let repr = sets
+            .iter()
+            .flat_map(|s| s.find_all("Representation"))
+            .find(|r| r.attr("id") == Some(&track_id.to_string()))
+            .unwrap_or_else(|| panic!("Representation id={track_id}"));
+        let st = repr.find("SegmentTemplate").expect("SegmentTemplate");
+        assert!(st.has_attr("duration"), "$Number$ mode carries @duration");
+        assert!(
+            st.find("SegmentTimeline").is_none(),
+            "$Number$ mode must not carry a SegmentTimeline"
+        );
+        let media_tpl = st.attr("media").unwrap();
+        assert!(media_tpl.contains("$Number$"));
+
+        let nominal: u64 = st.attr("duration").unwrap().parse().unwrap();
+        assert_eq!(
+            nominal, durations[0],
+            "@duration is the first segment's duration"
+        );
+
+        let sum_of_real_segments: u64 = durations.iter().sum();
+        let track_total: u64 = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == TrackId::new(track_id))
+            .expect("track")
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
+        assert_eq!(
+            sum_of_real_segments, track_total,
+            "sum of the real per-segment durations must equal the track's total \
+             sample-duration sum (the segment partition is exact) for track {track_id}"
+        );
+    }
+
+    // mediaPresentationDuration, converted back to (tenth-of-a-second) ticks,
+    // must match the longest track's total duration within one rounded tenth
+    // — the "within rounding" tolerance the xs:duration tenths formatting
+    // introduces.
+    let mpd_dur = root.attr("mediaPresentationDuration").unwrap();
+    let tenths = parse_xs_duration_tenths(mpd_dur);
+    let want_tenths = recovered
+        .iter()
+        .map(|(&track_id, (durations, _))| {
+            let ts = media
+                .tracks
+                .iter()
+                .find(|t| t.spec.track_id == TrackId::new(track_id))
+                .unwrap()
+                .spec
+                .timescale as u64;
+            let total: u64 = durations.iter().sum();
+            (total * 10 + ts / 2) / ts
+        })
+        .max()
+        .unwrap();
+    assert!(
+        tenths.abs_diff(want_tenths) <= 1,
+        "mediaPresentationDuration {mpd_dur} ({tenths} tenths) must match the derived \
+         total ({want_tenths} tenths) within rounding"
+    );
+}
+
+/// Parse `PT<seconds>.<tenth>S` back into whole tenths of a second.
+fn parse_xs_duration_tenths(s: &str) -> u64 {
+    let inner = s
+        .strip_prefix("PT")
+        .and_then(|s| s.strip_suffix('S'))
+        .unwrap_or_else(|| panic!("not an xs:duration seconds value: {s}"));
+    let (whole, frac) = inner.split_once('.').unwrap_or((inner, "0"));
+    let whole: u64 = whole.parse().unwrap();
+    let frac: u64 = frac.parse().unwrap();
+    whole * 10 + frac
+}
+
+// ---------------------------------------------------------------------------
+// SegmentTimeline / $Time$ addressing, cross-checked against real tfdt.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn segment_timeline_time_addressing_matches_tfdt() {
+    let media = demux_media();
+    let (init, raw_segments) = segment_via_segmenter(&media, 1.0);
+    assert!(raw_segments.len() >= 2);
+    let recovered = recover_segment_timing(&init, &raw_segments);
+
+    let segments: Vec<TrackSegments> = recovered
+        .iter()
+        .map(|(&track_id, (durations, _tfdt))| TrackSegments {
+            track_id: TrackId::new(track_id),
+            durations: durations.clone(),
+        })
+        .collect();
+
+    let mut pkg = DashPackager {
+        addressing: Addressing::Timeline,
+        segments,
+        ..DashPackager::default()
+    };
+    let xml = pkg.package(&media).expect("package timeline MPD");
+    let root = parse_xml(&xml);
+    let period = root.find("Period").unwrap();
+    let sets = period.find_all("AdaptationSet");
+
+    for (&track_id, (durations, tfdts)) in &recovered {
+        let repr = sets
+            .iter()
+            .flat_map(|s| s.find_all("Representation"))
+            .find(|r| r.attr("id") == Some(&track_id.to_string()))
+            .unwrap_or_else(|| panic!("Representation id={track_id}"));
+        let st = repr.find("SegmentTemplate").expect("SegmentTemplate");
+        assert!(
+            !st.has_attr("duration"),
+            "Timeline mode must not also carry @duration (mutually exclusive, §5.3.9.2.2)"
+        );
+        let media_tpl = st.attr("media").unwrap();
+        assert!(media_tpl.contains("$Time$"), "media template: {media_tpl}");
+
+        let timeline = st.find("SegmentTimeline").expect("SegmentTimeline");
+        let entries = timeline.find_all("S");
+        assert!(!entries.is_empty(), "at least one <S> for track {track_id}");
+
+        // Expand the run-length-encoded <S> list back into a flat per-segment
+        // (t, d) sequence and compare against the independently-recovered
+        // (duration, tfdt) pairs.
+        let mut flat_t = Vec::new();
+        let mut flat_d = Vec::new();
+        let mut t = 0u64;
+        let mut first = true;
+        for s in &entries {
+            if let Some(explicit_t) = s.attr("t") {
+                t = explicit_t.parse().unwrap();
+                assert!(
+                    first,
+                    "@t must only appear on the first <S> in this packager's output"
+                );
+            } else {
+                assert!(!first, "the first <S> must carry @t");
+            }
+            first = false;
+            let d: u64 = s.attr("d").expect("@d mandatory").parse().unwrap();
+            let r: u64 = s.attr("r").map_or(0, |v| v.parse().unwrap());
+            for _ in 0..=r {
+                flat_t.push(t);
+                flat_d.push(d);
+                t += d;
+            }
+        }
+
+        assert_eq!(
+            flat_d, *durations,
+            "expanded <S>@d sequence must equal the real per-segment sample-duration sums \
+             for track {track_id}"
+        );
+        assert_eq!(
+            flat_t, *tfdts,
+            "expanded <S>@t sequence must equal the real tfdt.baseMediaDecodeTime values \
+             (independently recovered via Fmp4Demux) for track {track_id}"
+        );
+        assert_eq!(flat_t[0], 0, "first segment starts at decode time zero");
+    }
+}
+
+#[test]
+fn timeline_addressing_without_segments_is_rejected() {
+    let media = demux_media();
+    let mut pkg = DashPackager {
+        addressing: Addressing::Timeline,
+        ..DashPackager::default()
+    };
+    assert!(
+        pkg.package(&media).is_err(),
+        "Addressing::Timeline with no DashPackager::segments must error, not silently \
+         fall back to a whole-track SegmentTimeline"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic (live) MPD.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dynamic_mpd_carries_live_attributes() {
+    let media = demux_media();
+    let mut pkg = DashPackager {
+        dynamic: true,
+        availability_start_time: Some("2024-01-01T00:00:00Z".to_string()),
+        publish_time: Some("2024-01-01T00:05:00Z".to_string()),
+        minimum_update_period: Some("PT2S".to_string()),
+        time_shift_buffer_depth: Some("PT30S".to_string()),
+        suggested_presentation_delay: Some("PT4S".to_string()),
+        ..DashPackager::default()
+    };
+    let xml = pkg.package(&media).expect("package dynamic MPD");
+    let root = parse_xml(&xml);
+
+    assert_eq!(root.attr("type"), Some("dynamic"));
+    assert_eq!(
+        root.attr("availabilityStartTime"),
+        Some("2024-01-01T00:00:00Z")
+    );
+    assert_eq!(root.attr("publishTime"), Some("2024-01-01T00:05:00Z"));
+    assert_eq!(root.attr("minimumUpdatePeriod"), Some("PT2S"));
+    assert_eq!(root.attr("timeShiftBufferDepth"), Some("PT30S"));
+    assert_eq!(root.attr("suggestedPresentationDelay"), Some("PT4S"));
+    assert!(
+        !root.has_attr("mediaPresentationDuration"),
+        "a dynamic MPD must not carry mediaPresentationDuration"
+    );
+
+    // Well-formed-ness of the whole document (namespace + balanced tags —
+    // parse_xml already asserts no trailing garbage / mismatched tags).
+    assert_eq!(root.attr("xmlns"), Some(transmux::dash::MPD_NAMESPACE));
+}
+
+#[test]
+fn dynamic_mpd_omits_absent_live_attributes() {
+    let media = demux_media();
+    let mut pkg = DashPackager {
+        dynamic: true,
+        availability_start_time: Some("2024-01-01T00:00:00Z".to_string()),
+        ..DashPackager::default()
+    };
+    let xml = pkg.package(&media).expect("package dynamic MPD");
+    let root = parse_xml(&xml);
+    assert!(!root.has_attr("publishTime"));
+    assert!(!root.has_attr("timeShiftBufferDepth"));
+    assert!(!root.has_attr("suggestedPresentationDelay"));
+}
+
+// ---------------------------------------------------------------------------
+// AdaptationSet content: ContentProtection hook + InbandEventStream.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn content_protection_and_inband_event_stream_hooks() {
+    let media = demux_media();
+    let kid: [u8; 16] = [
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd,
+        0xef,
+    ];
+    let mut pkg = DashPackager {
+        content_protection: vec![ContentProtectionSystem {
+            scheme_id_uri: "urn:mpeg:dash:mp4protection:2011".to_string(),
+            value: Some("cenc".to_string()),
+            default_kid: Some(kid),
+            pssh: None,
+        }],
+        inband_event_streams: vec![InbandEventStream {
+            scheme_id_uri: "urn:scte:scte35:2013:bin".to_string(),
+            value: None,
+        }],
+        ..DashPackager::default()
+    };
+    let xml = pkg.package(&media).expect("package MPD");
+    let root = parse_xml(&xml);
+
+    // xmlns:cenc only appears because a default_kid was supplied.
+    assert_eq!(root.attr("xmlns:cenc"), Some("urn:mpeg:cenc:2013"));
+
+    let period = root.find("Period").unwrap();
+    let sets = period.find_all("AdaptationSet");
+    for s in &sets {
+        let cp = s
+            .find("ContentProtection")
+            .expect("ContentProtection element");
+        assert_eq!(
+            cp.attr("schemeIdUri"),
+            Some("urn:mpeg:dash:mp4protection:2011")
+        );
+        assert_eq!(cp.attr("value"), Some("cenc"));
+        assert_eq!(
+            cp.attr("cenc:default_KID"),
+            Some("01234567-89ab-cdef-0123-456789abcdef")
+        );
+    }
+
+    let video_set = sets
+        .iter()
+        .find(|s| s.attr("mimeType") == Some("video/mp4"))
+        .unwrap();
+    let audio_set = sets
+        .iter()
+        .find(|s| s.attr("mimeType") == Some("audio/mp4"))
+        .unwrap();
+    assert!(
+        video_set.find("InbandEventStream").is_some(),
+        "InbandEventStream must be advertised on the video AdaptationSet"
+    );
+    assert!(
+        audio_set.find("InbandEventStream").is_none(),
+        "this packager only advertises InbandEventStream on the video AdaptationSet"
+    );
+    let ies = video_set.find("InbandEventStream").unwrap();
+    assert_eq!(ies.attr("schemeIdUri"), Some("urn:scte:scte35:2013:bin"));
+    assert!(!ies.has_attr("value"), "no @value was supplied");
+}
+
+// ---------------------------------------------------------------------------
+// CENC/CBCS DASH signalling (issue #564): auto-derived "common"
+// ContentProtection from Track::encryption, plus caller-supplied
+// DRM-system ContentProtection carrying a cenc:pssh child.
+// ---------------------------------------------------------------------------
+
+/// Build a minimal [`TrackEncryption`] carrying `scheme`/`kid`, with one
+/// (trivial) sample-encryption entry per sample so
+/// `TrackEncryption::samples.len()` matches the track's sample count (the
+/// documented invariant), even though DASH signalling never reads it.
+fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> TrackEncryption {
+    TrackEncryption::new(
+        scheme,
+        TrackEncryptionBox {
+            version: 0,
+            default_crypt_byte_block: 0,
+            default_skip_byte_block: 0,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 8,
+            default_kid: kid,
+            default_constant_iv: None,
+        },
+        vec![
+            SampleEncryptionEntry {
+                initialization_vector: vec![0u8; 8],
+                subsamples: vec![],
+            };
+            sample_count
+        ],
+        ConstantIvSenc::default(),
+    )
+}
+
+#[test]
+fn track_encryption_auto_derives_common_content_protection() {
+    let mut media = demux_media();
+    let kid: [u8; 16] = [
+        0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99,
+    ];
+    // Encrypt every track with the same scheme/KID (the common real-world
+    // shape): no caller `content_protection` wiring is needed for this.
+    for t in &mut media.tracks {
+        let n = t.samples.len();
+        t.encryption = Some(track_encryption(CencScheme::Cbcs, kid, n));
+    }
+
+    let mut pkg = DashPackager::default();
+    let xml = pkg.package(&media).expect("package MPD");
+
+    assert_eq!(
+        xml.matches("xmlns:cenc=\"urn:mpeg:cenc:2013\"").count(),
+        1,
+        "xmlns:cenc must be declared exactly once on MPD"
+    );
+    let expected = format!(
+        "<ContentProtection schemeIdUri=\"{MP4_PROTECTION_SCHEME_URI}\" value=\"cbcs\" \
+         cenc:default_KID=\"aabbccdd-eeff-0011-2233-445566778899\"/>"
+    );
+    assert_eq!(
+        xml.matches(&expected).count(),
+        2,
+        "expected one auto-derived common ContentProtection per AdaptationSet (video+audio); xml:\n{xml}"
+    );
+}
+
+#[test]
+fn cleartext_track_emits_no_content_protection() {
+    let media = demux_media();
+    let mut pkg = DashPackager::default();
+    let xml = pkg.package(&media).expect("package MPD");
+    assert!(
+        !xml.contains("ContentProtection"),
+        "a cleartext Media must not emit any ContentProtection element"
+    );
+    assert!(
+        !xml.contains("xmlns:cenc"),
+        "xmlns:cenc must not be declared with nothing to signal"
+    );
+}
+
+#[test]
+fn caller_supplied_pssh_renders_base64_cenc_pssh_child() {
+    let media = demux_media();
+    let pssh_bytes: Vec<u8> = vec![
+        0, 0, 0, 32, b'p', b's', b's',
+        b'h', // fake box header, content irrelevant to this test
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ];
+    let expected_b64 = transmux::rtp::base64_encode(&pssh_bytes);
+
+    let mut pkg = DashPackager {
+        content_protection: vec![ContentProtectionSystem {
+            scheme_id_uri: "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed".to_string(),
+            value: None,
+            default_kid: None,
+            pssh: Some(pssh_bytes),
+        }],
+        ..DashPackager::default()
+    };
+    let xml = pkg.package(&media).expect("package MPD");
+
+    assert!(
+        xml.contains("xmlns:cenc=\"urn:mpeg:cenc:2013\""),
+        "xmlns:cenc must be declared when a pssh child is emitted"
+    );
+    let expected_open =
+        "<ContentProtection schemeIdUri=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\">";
+    assert!(
+        xml.contains(expected_open),
+        "expected DRM-system ContentProtection open tag; xml:\n{xml}"
+    );
+    let expected_pssh = format!("<cenc:pssh>{expected_b64}</cenc:pssh>");
+    assert!(
+        xml.contains(&expected_pssh),
+        "expected base64 cenc:pssh child; xml:\n{xml}"
+    );
+    assert!(
+        xml.contains("</ContentProtection>"),
+        "pssh-bearing ContentProtection must be a non-empty element"
+    );
+    // No track is encrypted, so the auto-derived common element must be absent.
+    assert!(
+        !xml.contains(MP4_PROTECTION_SCHEME_URI),
+        "no track is encrypted; the common mp4protection element must not appear"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Optional ffprobe cross-check (skips cleanly if ffprobe is unavailable).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ffprobe_reads_the_static_mpd_if_available() {
+    use std::process::Command;
+
+    if !ffprobe_has_dash_demuxer() {
+        eprintln!(
+            "ffprobe unavailable or built without the DASH demuxer (needs libxml2) — \
+             skipping cross-check"
+        );
+        return;
+    }
+
+    let media = demux_media();
+    let mut dash = DashPackager::default();
+    let xml = dash.package(&media).expect("package MPD");
+
+    let dir = std::env::temp_dir().join(format!("transmux-dash-mpd-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let mpd_path = dir.join("manifest.mpd");
+    std::fs::write(&mpd_path, &xml).expect("write mpd");
+
+    // The default templates reference one **single-track** init segment plus
+    // one media segment per Representation (`init-stream$RepresentationID$`,
+    // `chunk-stream$RepresentationID$-1` — `startNumber` defaults to 1, and
+    // `DashPackager::default()` addresses the whole track as one segment).
+    // Build those for real via a single-track `Segmenter` with a target
+    // duration longer than the whole track, so exactly one segment is cut —
+    // matching `DashPackager::default()`'s whole-track-as-one-segment model.
+    for t in &media.tracks {
+        let id = t.spec.track_id;
+        let single = media
+            .select_tracks_by(|tt| tt.spec.track_id == id)
+            .expect("select single track");
+        let track = &single.tracks[0];
+        let mut seg = Segmenter::new(vec![track.spec.clone()], media.movie_timescale, 100.0)
+            .expect("single-track segmenter");
+        let init = seg.init_segment().expect("init segment");
+        for s in &track.samples {
+            seg.push(id, s.clone()).expect("push sample");
+        }
+        seg.flush().expect("flush");
+        let mut segs = seg.take_ready();
+        assert_eq!(
+            segs.len(),
+            1,
+            "one segment (target duration exceeds track length)"
+        );
+        std::fs::write(dir.join(format!("init-stream{id}.m4s")), &init).unwrap();
+        std::fs::write(
+            dir.join(format!("chunk-stream{id}-1.m4s")),
+            segs.pop().unwrap(),
+        )
+        .unwrap();
+    }
+
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(&mpd_path)
+        .output()
+        .expect("run ffprobe");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.status.success(),
+        "ffprobe failed to read the generated MPD: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("video"),
+        "ffprobe must identify a video stream: {stdout}"
+    );
+    assert!(
+        stdout.contains("audio"),
+        "ffprobe must identify an audio stream: {stdout}"
+    );
+}
+
+/// True if `ffprobe` is present **and** its build registers a demuxer named
+/// exactly `dash` with decode capability. Many distro/homebrew ffmpeg builds
+/// omit it (it needs `libxml2`) and only carry `webm_dash_manifest`, which
+/// cannot read a plain ISOBMFF-profile MPD — so probing for the binary alone
+/// is not enough to predict whether this cross-check can run.
+fn ffprobe_has_dash_demuxer() -> bool {
+    let Ok(output) = std::process::Command::new("ffprobe")
+        .args(["-v", "quiet", "-demuxers"])
+        .output()
+    else {
+        return false;
+    };
+    String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+        let mut fields = line.split_whitespace();
+        let flags = fields.next().unwrap_or("");
+        let name = fields.next().unwrap_or("");
+        flags.contains('D') && name == "dash"
+    })
+}

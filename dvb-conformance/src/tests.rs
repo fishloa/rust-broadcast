@@ -1816,7 +1816,7 @@ fn buffer_error_absent_when_large_section_paced_realistically() {
 /// never enter TBsys (H.222.0 §2.4.2.1). A real multiplex bursts EIT packets
 /// back-to-back; the same >512-byte burst on the PAT PID overflows (the test
 /// above), on EIT it must not. Real-capture counterpart:
-/// `tests/tbsys_real_capture.rs`.
+/// `tests/it/tbsys_real_capture.rs`.
 #[test]
 fn buffer_error_absent_for_eit_burst_not_psi() {
     let mut monitor = ConformanceMonitor::new();

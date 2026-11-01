@@ -39,11 +39,11 @@
 //! sample correctly and diverged from Bento4 on every subsequent subsample's
 //! first crypt block, while still round-tripping through this crate's own
 //! encrypt/decrypt pair (self-consistent, but not spec/interop-correct) — see
-//! `tests/cenc_encrypt_e2e.rs`'s `cbcs` case (a real per-NAL subsample map)
+//! `tests/it/cenc_encrypt_e2e.rs`'s `cbcs` case (a real per-NAL subsample map)
 //! for the regression coverage. The whole-sample case (an empty subsample
 //! map) is unaffected either way: with no subsample boundary to cross, there
 //! was never more than one chain in play. This is also consistent with the
-//! real fixture in `tests/cenc_fragmented_fixture.rs` (Bento4-produced),
+//! real fixture in `tests/it/cenc_fragmented_fixture.rs` (Bento4-produced),
 //! whose samples each carry exactly one subsample — a fixture that alone
 //! cannot distinguish "resets every subsample" from "never resets", since it
 //! never has more than one crypt-bearing subsample per sample to cross a

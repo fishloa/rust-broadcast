@@ -91,7 +91,7 @@
 //!   defined by sibling essence-container-mapping specs, which this crate does
 //!   not anticipate.
 //! - **No file assembler.** Every offset/byte-count field in
-//!   `tests/round_trip.rs`'s `full_op1a_structure_builds_and_round_trips` is a
+//!   `tests/it/round_trip.rs`'s `full_op1a_structure_builds_and_round_trips` is a
 //!   hardcoded placeholder, not a computed value. A full implementation would
 //!   need a typed `EssenceDescriptor` family plus a writer that lays out
 //!   Partitions, tracks running offsets, backpatches the byte counts and emits a

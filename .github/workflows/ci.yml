@@ -156,7 +156,7 @@ jobs:
       # `--features std`: libtest needs std, the OTHER optional features stay off.
       - name: Test bare-only code (serde-off registries)
         run: |
-          cargo nextest run -p dvb-si --no-default-features --features std --locked --profile ci -E 'test(/registry/) | binary(descriptor_loop)'
+          cargo nextest run -p dvb-si --no-default-features --features std --locked --profile ci -E 'test(/registry/) | test(/^descriptor_loop::/)'
           cargo nextest run -p dvb-t2mi --no-default-features --features std --locked --profile ci -E 'test(/registry/)'
       # Doctests whose code blocks are feature-gated (`# #[cfg(feature = ...)]`
       # in cc-data, dvb-t2mi, st291); one invocation each, again to avoid

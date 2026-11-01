@@ -39,5 +39,5 @@ ffmpeg -v error -i header_meta.vtt -f srt -
 
 ## `cap.vtt`, `sintel-en.srt`
 
-Pre-existing fixtures — see `caption-convert/tests/webvtt_srt_fixture.rs`
-and `caption-convert/tests/srt_real_fixture.rs` for their usage.
+Pre-existing fixtures — see `caption-convert/tests/it/webvtt_srt_fixture.rs`
+and `caption-convert/tests/it/srt_real_fixture.rs` for their usage.

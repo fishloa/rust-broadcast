@@ -120,7 +120,7 @@ no error channel).
   from `poll_next`; events queue per packet and drain before the next read.
 - **Observability.** `resync_stats()` and the inner pump's `stats()` make every
   discarded byte and CRC failure visible.
-- **No hand-rolled socket or RTP code.** `tests/no_handroll_guard.rs` carries
+- **No hand-rolled socket or RTP code.** `tests/it/no_handroll_guard.rs` carries
   the workspace tripwire; UDP binds go through `socket2`, RTP through
   `rtp-packet`.
 - The crate defines no public enum, so the label-coverage and
