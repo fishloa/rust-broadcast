@@ -1,4 +1,8 @@
 #![allow(dead_code)]
+pub mod dash_checks;
+pub mod dash_common;
+pub mod dash_matrix;
+pub mod dash_sim;
 pub mod fmp4_split;
 pub mod hls_host;
 pub mod renditions;
