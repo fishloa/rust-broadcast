@@ -229,26 +229,26 @@ fn no_teletext_rig_unshared(subtitles: bool, who: &str) -> Option<Rig> {
     Some(build_from(demux(&bytes), subtitles))
 }
 
-/// The shared rigs are build-once but serialised per rig: two tests reading the
-/// same route's subtitle playlists at the same instant see an empty subtitle
-/// playlist on one of them, so each test holds its rig for its whole body.
-type SharedRig = std::sync::MutexGuard<'static, Rig>;
-
-fn lock_rig(cell: &'static Option<std::sync::Mutex<Rig>>) -> Option<SharedRig> {
-    cell.as_ref()
-        .map(|m| m.lock().unwrap_or_else(|p| p.into_inner()))
+fn teletext_rig(subtitles: bool, who: &str) -> Option<&'static Rig> {
+    shared::shared(&format!("teletext:{subtitles}"), || {
+        let rig = teletext_rig_unshared(subtitles, who);
+        if let Some(rig) = &rig {
+            shared::warm_up(&rig.app, STREAM);
+        }
+        rig
+    })
+    .as_ref()
 }
 
-fn teletext_rig(subtitles: bool, who: &str) -> Option<SharedRig> {
-    lock_rig(shared::shared(&format!("teletext:{subtitles}"), || {
-        teletext_rig_unshared(subtitles, who).map(std::sync::Mutex::new)
-    }))
-}
-
-fn no_teletext_rig(subtitles: bool, who: &str) -> Option<SharedRig> {
-    lock_rig(shared::shared(&format!("no_teletext:{subtitles}"), || {
-        no_teletext_rig_unshared(subtitles, who).map(std::sync::Mutex::new)
-    }))
+fn no_teletext_rig(subtitles: bool, who: &str) -> Option<&'static Rig> {
+    shared::shared(&format!("no_teletext:{subtitles}"), || {
+        let rig = no_teletext_rig_unshared(subtitles, who);
+        if let Some(rig) = &rig {
+            shared::warm_up(&rig.app, STREAM);
+        }
+        rig
+    })
+    .as_ref()
 }
 
 impl Rig {
@@ -569,7 +569,7 @@ async fn subtitle_playlist_matches_video_segments() {
                 v.duration.get()
             );
         }
-        fetch_vtt_segments(&rig, &subs).await;
+        fetch_vtt_segments(rig, &subs).await;
 
         let mut report = Report::new();
         check_hls_playlist(&text, &mut report);
@@ -627,7 +627,7 @@ async fn every_segment_has_webvtt_header_and_timestamp_map() {
     for hearing_impaired in [false, true] {
         let uri = rig.subtitle_uri(hearing_impaired).await;
         let (_, subs) = rig.playlist(&uri).await;
-        let segments = fetch_vtt_segments(&rig, &subs).await;
+        let segments = fetch_vtt_segments(rig, &subs).await;
         let maps: BTreeSet<u64> = segments.iter().map(|s| s.mpegts).collect();
         assert_eq!(
             maps.len(),
@@ -637,7 +637,7 @@ async fn every_segment_has_webvtt_header_and_timestamp_map() {
     }
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
-    let cues: usize = fetch_vtt_segments(&rig, &subs)
+    let cues: usize = fetch_vtt_segments(rig, &subs)
         .await
         .iter()
         .map(|s| s.cues.len())
@@ -733,11 +733,11 @@ async fn cue_times_line_up_with_the_video_timeline() {
     let (Some(rig), Some(reference)) = (teletext_rig(true, who), reference_cues(who)) else {
         return;
     };
-    let map = OutputMap::new(&rig).await;
+    let map = OutputMap::new(rig).await;
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
     let mut starts: BTreeMap<String, f64> = BTreeMap::new();
-    for segment in fetch_vtt_segments(&rig, &subs).await {
+    for segment in fetch_vtt_segments(rig, &subs).await {
         for cue in &segment.cues {
             starts
                 .entry(cue.text.clone())
@@ -783,12 +783,12 @@ async fn segments_carry_closed_cues_with_full_display_times() {
     let (Some(rig), Some(reference)) = (teletext_rig(true, who), reference_cues(who)) else {
         return;
     };
-    let map = OutputMap::new(&rig).await;
+    let map = OutputMap::new(rig).await;
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
     let mut copies: BTreeMap<String, Vec<CueCopy>> = BTreeMap::new();
     let mut segment_end_secs = map.tfdt_secs;
-    let vtts = fetch_vtt_segments(&rig, &subs).await;
+    let vtts = fetch_vtt_segments(rig, &subs).await;
     for (segment, entry) in vtts.iter().zip(&subs.segments) {
         segment_end_secs += entry.duration.get();
         for cue in &segment.cues {
@@ -954,12 +954,12 @@ async fn every_part_is_a_complete_webvtt_document() {
     for hearing_impaired in [false, true] {
         let uri = rig.subtitle_uri(hearing_impaired).await;
         let (_, subs) = rig.playlist(&uri).await;
-        let segment_maps: BTreeSet<u64> = fetch_vtt_segments(&rig, &subs)
+        let segment_maps: BTreeSet<u64> = fetch_vtt_segments(rig, &subs)
             .await
             .iter()
             .map(|s| s.mpegts)
             .collect();
-        let parts = part_bodies(&rig, &subs).await;
+        let parts = part_bodies(rig, &subs).await;
         assert!(!parts.is_empty(), "{uri}: the playlist lists parts");
         for (name, body) in parts {
             let body = String::from_utf8(body).expect("utf8 part");

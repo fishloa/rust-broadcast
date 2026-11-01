@@ -518,32 +518,22 @@ fn h264_aac() -> &'static [Source] {
 
 /// A static (non-live, keep-everything) rig built once per distinct
 /// (sources, declarations, selectors, declared bandwidth) and shared by every
-/// read-only test that asks for it. Access is serialised per rig: concurrent
-/// reads of one route can see an empty playlist, so a test holds the rig for
-/// its whole body.
-type SharedRig = std::sync::MutexGuard<'static, Rig>;
-
+/// read-only test that asks for it.
 fn shared_rig(
     sources: &'static [Source],
     renditions: Vec<AudioRenditionDecl>,
     selectors: Vec<AudioTrackSelector>,
     declared: Option<u64>,
-) -> SharedRig {
+) -> &'static Rig {
     let key = format!(
         "rig:{:p}:{renditions:?}:{selectors:?}:{declared:?}",
         sources.as_ptr()
     );
     shared::shared(&key, || {
-        std::sync::Mutex::new(rig_declared(
-            sources,
-            renditions,
-            selectors,
-            declared,
-            &|_, _| true,
-        ))
+        let rig = rig_declared(sources, renditions, selectors, declared, &|_, _| true);
+        shared::warm_up(&rig.app, STREAM);
+        rig
     })
-    .lock()
-    .unwrap_or_else(|p| p.into_inner())
 }
 
 async fn assert_part_timing(rig: &Rig, uris: &[&str]) {
@@ -644,7 +634,7 @@ async fn split_audio_france2_three_renditions_align_with_video() {
     assert!(video_init.windows(4).any(|w| w == b"vide"));
 
     assert_part_timing(
-        &rig,
+        rig,
         &[
             "media.m3u8",
             "audio/a0.m3u8",
@@ -656,7 +646,7 @@ async fn split_audio_france2_three_renditions_align_with_video() {
 
     for (i, a) in audio.iter().enumerate() {
         let gaps =
-            check_rendition(&rig, &video_playlist, video, a, &format!("audio/a{i}.m3u8")).await;
+            check_rendition(rig, &video_playlist, video, a, &format!("audio/a{i}.m3u8")).await;
         assert!(
             gaps.len() <= 1,
             "continuous audio must not gap more than a trailing segment: {gaps:?}"
@@ -727,7 +717,7 @@ async fn split_audio_h264_aac_track_id_selector() {
         Some(DECLARED_BPS),
     );
     let video = rig.playlist("media.m3u8").await;
-    let gaps = check_rendition(&rig, &video, &sources[0], aac, "audio/a0.m3u8").await;
+    let gaps = check_rendition(rig, &video, &sources[0], aac, "audio/a0.m3u8").await;
     assert!(gaps.len() <= 1, "{gaps:?}");
 }
 
@@ -1240,7 +1230,7 @@ fn within(actual: u64, expected: u64, what: &str) {
 async fn split_master_parses_round_trips_and_lists_one_variant_per_group() {
     let sources = france2();
     let rig = shared_rig(sources, derived_decls(3), index_selectors(3), None);
-    let (text, master) = master_of(&rig).await;
+    let (text, master) = master_of(rig).await;
     assert_eq!(master.media.len(), 3, "{text}");
     assert_eq!(master.variants.len(), 1, "{text}");
     assert_eq!(master.variants[0].audio.as_deref(), Some("aud"));
@@ -1256,7 +1246,7 @@ async fn split_master_parses_round_trips_and_lists_one_variant_per_group() {
 async fn split_master_codecs_carry_video_and_audio_codec() {
     let sources = france2();
     let rig = shared_rig(sources, derived_decls(3), index_selectors(3), None);
-    let (text, master) = master_of(&rig).await;
+    let (text, master) = master_of(rig).await;
     let codecs = master.variants[0].codecs.clone().expect("CODECS");
     let parts: Vec<&str> = codecs.split(',').collect();
     assert_eq!(parts.len(), 2, "video + one distinct audio codec: {text}");
@@ -1268,12 +1258,12 @@ async fn split_master_codecs_carry_video_and_audio_codec() {
 async fn split_master_bandwidth_is_video_peak_plus_max_audio_peak() {
     let sources = france2();
     let rig = shared_rig(sources, derived_decls(3), index_selectors(3), None);
-    let (text, master) = master_of(&rig).await;
-    let video = served_segments(&rig, "media.m3u8").await;
+    let (text, master) = master_of(rig).await;
+    let video = served_segments(rig, "media.m3u8").await;
     let mut audio_peak = 0;
     let mut audio_mean = 0;
     for i in 0..3 {
-        let segs = served_segments(&rig, &format!("audio/a{i}.m3u8")).await;
+        let segs = served_segments(rig, &format!("audio/a{i}.m3u8")).await;
         audio_peak = audio_peak.max(peak_bps(&segs));
         audio_mean = audio_mean.max(mean_bps(&segs));
     }
@@ -1303,15 +1293,15 @@ async fn split_master_declared_bandwidth_floors_the_video_part_only() {
         index_selectors(3),
         Some(DECLARED_BPS),
     );
-    let (text, master) = master_of(&rig).await;
-    let video = served_segments(&rig, "media.m3u8").await;
+    let (text, master) = master_of(rig).await;
+    let video = served_segments(rig, "media.m3u8").await;
     assert!(
         peak_bps(&video) < DECLARED_BPS,
         "fixture peak under the override"
     );
     let mut audio_peak = 0;
     for i in 0..3 {
-        let segs = served_segments(&rig, &format!("audio/a{i}.m3u8")).await;
+        let segs = served_segments(rig, &format!("audio/a{i}.m3u8")).await;
         audio_peak = audio_peak.max(peak_bps(&segs));
     }
     within(
@@ -1326,7 +1316,7 @@ async fn split_master_derives_language_name_and_audio_description_from_the_pmt()
     let sources = france2();
     let audio: Vec<&Source> = sources.iter().filter(|s| s.is_audio()).collect();
     let rig = shared_rig(sources, derived_decls(3), index_selectors(3), None);
-    let (text, master) = master_of(&rig).await;
+    let (text, master) = master_of(rig).await;
     for (i, a) in audio.iter().enumerate() {
         let meta = a.spec.audio_metadata();
         let lang = meta.languages[0].language.clone();
@@ -1384,7 +1374,7 @@ async fn split_master_config_values_win_over_derived() {
     declared[1].characteristics = vec!["public.accessibility.transcribes-spoken-dialog".into()];
     declared[1].channels = Some("6".into());
     let rig = shared_rig(sources, declared, index_selectors(3), None);
-    let (text, master) = master_of(&rig).await;
+    let (text, master) = master_of(rig).await;
     let m = &master.media[1];
     assert_eq!(m.language.as_deref(), Some("de"), "{text}");
     assert_eq!(m.name, "Deutsch", "{text}");
@@ -1402,7 +1392,7 @@ async fn split_master_duplicate_derived_names_are_made_unique() {
     let sources = france2();
     let selectors = vec![AudioTrackSelector::Index(0), AudioTrackSelector::Index(0)];
     let rig = shared_rig(sources, derived_decls(2), selectors, None);
-    let (text, master) = master_of(&rig).await;
+    let (text, master) = master_of(rig).await;
     assert_ne!(master.media[0].name, master.media[1].name, "{text}");
 }
 
@@ -1410,7 +1400,7 @@ async fn split_master_duplicate_derived_names_are_made_unique() {
 async fn non_split_master_is_unchanged() {
     let sources = h264_aac();
     let plain = shared_rig(sources, Vec::new(), Vec::new(), Some(DECLARED_BPS));
-    let (text, master) = master_of(&plain).await;
+    let (text, master) = master_of(plain).await;
     assert!(master.media.is_empty(), "{text}");
     assert_eq!(master.variants.len(), 1, "{text}");
     let v = &master.variants[0];
@@ -1423,7 +1413,7 @@ async fn non_split_master_is_unchanged() {
     );
 
     let declared_only = shared_rig(sources, decls(&["eng"]), Vec::new(), Some(DECLARED_BPS));
-    let (text2, master2) = master_of(&declared_only).await;
+    let (text2, master2) = master_of(declared_only).await;
     assert_eq!(master2.media.len(), 1, "{text2}");
     assert_eq!(master2.media[0].name, "Audio 0", "{text2}");
     assert_eq!(master2.variants[0].bandwidth, v.bandwidth, "{text2}");
@@ -1529,9 +1519,9 @@ async fn assert_reports_match_served_edges(rig: &Rig, n_audio: usize) {
 #[tokio::test]
 async fn split_audio_rendition_report_matches_sibling_live_edge() {
     let sources = france2();
-    let cut = cut_secs(&sources, 1);
+    let cut = cut_secs(sources, 1);
     let rig = rig_live(
-        &sources,
+        sources,
         decls(&["fre", "qad", "qaa"]),
         index_selectors(3),
         &|ti, s| sources[ti].secs(s.dts.unwrap_or(0)) < cut,
@@ -1539,7 +1529,7 @@ async fn split_audio_rendition_report_matches_sibling_live_edge() {
     assert_reports_match_served_edges(&rig, 3).await;
     let before = served_edge(&rig.playlist("media.m3u8").await);
 
-    rig.publish_more(&sources, &|ti, s| {
+    rig.publish_more(sources, &|ti, s| {
         sources[ti].secs(s.dts.unwrap_or(0)) >= cut
     });
     let after = served_edge(&rig.playlist("media.m3u8").await);

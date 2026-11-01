@@ -478,7 +478,7 @@ async fn mediastreamvalidator_reports_no_hdr10plus_specific_finding() {
         .into_iter()
         .filter(|(fixture, _)| test_fixtures::require(fixture, "hdr10plus_route").is_some())
         .collect();
-    let (mut baseline, comments) = std::thread::scope(|scope| {
+    let (baseline, comments) = std::thread::scope(|scope| {
         let bases: Vec<_> = base_runs
             .iter()
             .map(|&(fixture, name)| {
