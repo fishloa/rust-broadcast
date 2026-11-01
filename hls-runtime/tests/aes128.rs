@@ -370,53 +370,48 @@ fn segment_not_multiple_of_16_is_decrypt_failed() {
 }
 
 #[test]
-fn sample_aes_is_unsupported_not_plaintext() {
+fn unsupported_encryption_is_an_error_never_plaintext() {
+    let iv = iv_seq(0x02);
+    let mut cases: Vec<(String, String, Option<&str>)> = Vec::new();
     for method in ["SAMPLE-AES", "SAMPLE-AES-CTR", "AES-256-GCM"] {
         let tag = format!("#EXT-X-KEY:METHOD={method},URI=\"key.bin\"");
-        let text = playlist(0, "", &[(tag, "index0.ts")]);
+        cases.push((method.into(), playlist(0, "", &[(tag, "index0.ts")]), None));
+    }
+    cases.push((
+        "encrypted EXT-X-MAP".into(),
+        playlist(
+            0,
+            "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key.bin\"\n#EXT-X-MAP:URI=\"init.mp4\"\n",
+            &[(key_tag("key.bin", Some(&iv)), "index0.ts")],
+        ),
+        Some("EXT-X-MAP"),
+    ));
+    cases.push((
+        "I-FRAMES-ONLY with AES-128".into(),
+        playlist(
+            0,
+            "#EXT-X-I-FRAMES-ONLY\n",
+            &[(key_tag("key.bin", Some(&iv)), "index0.ts")],
+        ),
+        Some("I-FRAMES-ONLY"),
+    ));
+    for (label, text, what_contains) in cases {
         let mut client = HlsClient::new(URL);
         drain(&mut client);
         let err = client.on_playlist(text.as_bytes()).unwrap_err();
         assert!(
-            matches!(err, Error::UnsupportedEncryption { .. }),
-            "{method}: {err:?}"
+            matches!(&err, Error::UnsupportedEncryption { what, .. }
+                if what_contains.is_none_or(|needle| what.contains(needle))),
+            "{label}: {err:?}"
         );
         let actions = drain(&mut client);
         assert!(
             !actions
                 .iter()
                 .any(|a| matches!(a, Action::FetchResource { .. } | Action::FetchKey { .. })),
-            "{method}: {actions:?}"
+            "{label}: {actions:?}"
         );
     }
-}
-
-#[test]
-fn encrypted_map_is_unsupported() {
-    let iv0 = iv_seq(0x02);
-    let header = "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key.bin\"\n#EXT-X-MAP:URI=\"init.mp4\"\n";
-    let text = playlist(0, header, &[(key_tag("key.bin", Some(&iv0)), "index0.ts")]);
-    let mut client = HlsClient::new(URL);
-    drain(&mut client);
-    let err = client.on_playlist(text.as_bytes()).unwrap_err();
-    assert!(
-        matches!(err, Error::UnsupportedEncryption { what, .. } if what.contains("EXT-X-MAP")),
-        "{err:?}"
-    );
-}
-
-#[test]
-fn iframes_only_with_aes_is_unsupported() {
-    let iv0 = iv_seq(0x03);
-    let header = "#EXT-X-I-FRAMES-ONLY\n";
-    let text = playlist(0, header, &[(key_tag("key.bin", Some(&iv0)), "index0.ts")]);
-    let mut client = HlsClient::new(URL);
-    drain(&mut client);
-    let err = client.on_playlist(text.as_bytes()).unwrap_err();
-    assert!(
-        matches!(err, Error::UnsupportedEncryption { what, .. } if what.contains("I-FRAMES-ONLY")),
-        "{err:?}"
-    );
 }
 
 #[test]
