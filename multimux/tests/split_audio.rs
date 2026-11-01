@@ -530,9 +530,7 @@ fn shared_rig(
         sources.as_ptr()
     );
     shared::shared(&key, || {
-        let rig = rig_declared(sources, renditions, selectors, declared, &|_, _| true);
-        shared::warm_up(&rig.app, STREAM);
-        rig
+        rig_declared(sources, renditions, selectors, declared, &|_, _| true)
     })
 }
 
@@ -2085,4 +2083,82 @@ async fn declared_video_part_durations_equal_the_trun_sums() {
         );
     }
     assert!(checked >= 10, "only {checked} parts checked");
+}
+
+const FIRST_REQUEST_PATHS: &[&str] = &[
+    "master.m3u8",
+    "media.m3u8",
+    "audio/a0.m3u8",
+    "audio/a1.m3u8",
+    "audio/a2.m3u8",
+];
+const CONCURRENT_FIRST_REQUESTS: usize = 16;
+const FIRST_REQUEST_ROUNDS: usize = 4;
+
+fn without_epoch_tokens(body: &[u8]) -> String {
+    let text = String::from_utf8_lossy(body);
+    text.split('-')
+        .filter(|part| !(part.len() == 13 && part.bytes().all(|b| b.is_ascii_digit())))
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn fresh_france2_rig() -> Rig {
+    rig_declared(
+        france2(),
+        decls(&["fre", "qad", "qaa"]),
+        index_selectors(3),
+        Some(DECLARED_BPS),
+        &|_, _| true,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_first_requests_to_a_fresh_route_see_complete_playlists() {
+    for round in 0..FIRST_REQUEST_ROUNDS {
+        let reference = fresh_france2_rig();
+        let mut expected = HashMap::new();
+        for path in FIRST_REQUEST_PATHS {
+            expected.insert(*path, reference.ok(path).await);
+        }
+        let media = String::from_utf8(expected["media.m3u8"].clone()).expect("utf8");
+        assert!(media.contains("#EXTINF"), "reference media has segments");
+
+        let rig = fresh_france2_rig();
+        let barrier = Arc::new(tokio::sync::Barrier::new(CONCURRENT_FIRST_REQUESTS));
+        let tasks: Vec<_> = (0..CONCURRENT_FIRST_REQUESTS)
+            .map(|i| {
+                let path = FIRST_REQUEST_PATHS[i % FIRST_REQUEST_PATHS.len()];
+                let app = rig.app.clone();
+                let barrier = Arc::clone(&barrier);
+                tokio::spawn(async move {
+                    barrier.wait().await;
+                    let resp = app
+                        .oneshot(
+                            Request::builder()
+                                .uri(format!("/{STREAM}/{path}"))
+                                .body(Body::empty())
+                                .expect("request"),
+                        )
+                        .await
+                        .expect("response");
+                    let status = resp.status();
+                    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                        .await
+                        .expect("body")
+                        .to_vec();
+                    (path, status, body)
+                })
+            })
+            .collect();
+        for task in tasks {
+            let (path, status, body) = task.await.expect("request task");
+            assert_eq!(status, StatusCode::OK, "round {round}: GET {path}");
+            assert_eq!(
+                without_epoch_tokens(&body),
+                without_epoch_tokens(&expected[path]),
+                "round {round}: concurrent first GET {path} differs from the sequential first GET"
+            );
+        }
+    }
 }

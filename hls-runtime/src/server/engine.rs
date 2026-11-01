@@ -1854,6 +1854,7 @@ impl HlsOriginBuilder {
             trunk: self.trunk,
             cursor: Mutex::new(cursor),
             drained_through: AtomicU64::new(UNDRAINED),
+            drain_gate: Mutex::new(()),
             window: Mutex::new(Window::new(window_segments)),
             init: Mutex::new(InitStore::default()),
             codecs: Mutex::new(None),
@@ -1903,7 +1904,10 @@ pub struct HlsOrigin {
     /// drain; [`Self::drain`] returns at once while the `Trunk` still shows
     /// the same head. [`UNDRAINED`] before the first drain.
     drained_through: AtomicU64,
-    // Lock order (never the reverse): `cursor` -> `window` -> `arrival_origin`
+    /// Serialises whole drains, so a concurrent caller waits for the window to
+    /// be populated instead of rendering from a half-drained one.
+    drain_gate: Mutex<()>,
+    // Lock order (never the reverse): `drain_gate` -> `cursor` -> `window` -> `arrival_origin`
     // -> `init`; `codecs` is taken alone. No `Trunk` call is made while
     // `window` is held except inside `drain` (the cursor poll).
     window: Mutex<Window>,
@@ -2885,6 +2889,10 @@ impl HlsOrigin {
             .trunk
             .last_closed_segment()
             .map_or(0, |n| u64::from(n.value()).saturating_add(1));
+        if self.drained_through.load(Ordering::Acquire) == head {
+            return;
+        }
+        let _gate = locked(&self.drain_gate);
         if self.drained_through.load(Ordering::Acquire) == head {
             return;
         }
