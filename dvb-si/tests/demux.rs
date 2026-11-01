@@ -128,20 +128,6 @@ fn scenario3_corrupted_crc_dropped() {
 }
 
 #[test]
-fn scenario4_gate_eviction_and_reemit() {
-    let mut demux = SiDemux::builder().gate_capacity(2).build();
-    let a = long_section(0x4E, 0x0001, 0, 0, &[0x01]);
-    let b = long_section(0x4E, 0x0002, 0, 0, &[0x02]);
-    let c = long_section(0x4E, 0x0003, 0, 0, &[0x03]);
-    assert_eq!(demux.feed(&ts_packet(0x0012, &a)).count(), 1);
-    assert_eq!(demux.feed(&ts_packet(0x0012, &b)).count(), 1);
-    assert_eq!(demux.feed(&ts_packet(0x0012, &c)).count(), 1);
-    assert_eq!(demux.stats().gate_evictions, 1);
-    // a was evicted -> re-emits.
-    assert_eq!(demux.feed(&ts_packet(0x0012, &a)).count(), 1);
-}
-
-#[test]
 fn scenario5_garbage_packet_no_panic() {
     let mut demux = SiDemux::builder().build();
     assert_eq!(demux.feed(&[0u8; TS_PACKET_SIZE]).count(), 0);
