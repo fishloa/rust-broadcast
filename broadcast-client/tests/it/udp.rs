@@ -479,7 +479,7 @@ fn warmed(ts: &[u8]) -> (UdpHost, u64) {
     let samples = host.count(|e| matches!(e, Event::Sample { .. }));
     assert!(samples > 0);
     let last = host.now;
-    (host, last as u64)
+    (host, last)
 }
 
 #[test]
