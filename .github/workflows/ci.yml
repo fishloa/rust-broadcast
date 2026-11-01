@@ -107,10 +107,10 @@ jobs:
       # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
       # not run doctests, which get their own bounded lane below.
       - name: Test (all features)
-        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci --cargo-profile ci
       - name: Doctests (all features)
         timeout-minutes: 15
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci --doc
 
   # The bare / std-only feature lanes run as their own job in PARALLEL with the
   # all-features `test` job above (they used to be its serial tail, which made
@@ -449,7 +449,7 @@ jobs:
       - name: Build
         run: cargo build -p dvb-stream --all-features --locked
       - name: Test
-        run: cargo nextest run -p dvb-stream --all-features --locked --profile ci
+        run: cargo nextest run -p dvb-stream --all-features --locked --profile ci --cargo-profile ci
       - name: Doctests
         timeout-minutes: 10
         run: cargo test -p dvb-stream --all-features --locked --doc

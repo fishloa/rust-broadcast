@@ -77,3 +77,21 @@ def test_nightly_runs_soak_and_full_fuzz_budget():
     text = (REPO / ".github" / "workflows" / "nightly.yml").read_text()
     assert "RUST_BROADCAST_SOAK" in text
     assert "tools/fuzz-smoke.sh" in text and " 60" in text
+
+
+def test_ci_cargo_profile_keeps_overflow_and_debug_assertions():
+    import tomllib
+
+    manifest = tomllib.loads((REPO / "Cargo.toml").read_text())
+    ci = manifest["profile"]["ci"]
+    assert ci["inherits"] == "test"
+    assert ci["debug-assertions"] is True and ci["overflow-checks"] is True
+    assert "opt-level" not in ci, "our own crates stay at opt-level 0"
+    assert ci["package"]["*"]["opt-level"] == 2
+    assert "dev" not in manifest["profile"], "local dev builds keep the default profile"
+
+
+def test_test_jobs_run_under_the_ci_cargo_profile():
+    for job in ("test", "dvb-stream"):
+        assert "--cargo-profile ci" in _runs(job), job
+    assert "--profile ci --doc" in _runs("test")

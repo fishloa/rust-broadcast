@@ -36,12 +36,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - name: Test (all features, soak lengths)
-        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile nightly
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile nightly --cargo-profile ci
       - name: dvb-stream
-        run: cargo nextest run -p dvb-stream --all-features --locked --profile nightly
+        run: cargo nextest run -p dvb-stream --all-features --locked --profile nightly --cargo-profile ci
       - name: Doctests (all features)
         timeout-minutes: 30
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci --doc
 
   fuzz:
     name: fuzz (shard ${{ matrix.shard }}/4, 60 s per target)
