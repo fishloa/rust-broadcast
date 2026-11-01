@@ -273,7 +273,7 @@ fn duplicated_packets_are_dropped_and_counted() {
     let want = baseline(&ts);
     let mut sim = clear_sim();
     sim.fate = Box::new(|seq, retransmit| {
-        if !retransmit && (seq - PEER_ISN) % 4 == 0 {
+        if !retransmit && (seq - PEER_ISN).is_multiple_of(4) {
             Fate::Duplicate
         } else {
             Fate::Deliver

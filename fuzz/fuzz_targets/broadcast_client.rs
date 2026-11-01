@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use broadcast_client::{
-    Action, Config, Credentials, DashClockPolicy, Event, Hint, Session, TrackId,
+    Action, Config, Credentials, DashClockPolicy, Event, Hint, Session, SrtEntropySeed, TrackId,
 };
 use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
@@ -55,11 +55,17 @@ const TS_SEED_PACKETS: usize = 160;
 const STEP_US: u64 = 700_000;
 const BACKWARD_US: u64 = 5 * STEP_US;
 const TIMER_JUMP_US: u64 = 20_000_000;
-const DATAGRAM_URLS: [&str; 3] = [
+const DATAGRAM_URLS: [&str; 5] = [
     "udp://239.1.1.1:5000",
     "rtp://239.1.1.1:5000",
     "rtp://[::1]:6000",
+    "srt://example:9000",
+    "srt://[::1]:9001",
 ];
+const SRT_ENTROPY_SEED: [u8; 32] = [7; 32];
+const SRT_HEADER_BYTES: usize = 16;
+const SRT_CONTROL_TYPES: u8 = 8;
+const SRT_CONTROL_BIT: u8 = 0x80;
 const RTP_VERSION_BYTE: u8 = 0x80;
 const RTP_PAYLOAD_TYPE_MP2T: u8 = 33;
 const RTP_HEADER_BYTES: usize = 12;
@@ -545,6 +551,7 @@ fn config_from(header: &[u8]) -> Config {
     config.initial_cookies = vec![("seed".to_string(), "1".to_string())];
     config.extra_headers = vec![("X-Fuzz".to_string(), "1".to_string())];
     config.max_key_failures = knob(header, 0, &KEY_FAILURES);
+    config.srt.entropy_seed = Some(SrtEntropySeed::new(SRT_ENTROPY_SEED));
     config.max_redirects = knob(header, 1, &REDIRECTS);
     config.max_inflight_segments = knob(header, 2, &INFLIGHT);
     config.max_queued_events = knob(header, 3, &QUEUE_CAPS);
@@ -902,6 +909,16 @@ fn seed_datagram(rtp: bool, seq: u16, ssrc: u8, cursor: &mut usize) -> Vec<u8> {
     out
 }
 
+fn srt_like(chunk: &[u8], pick: u8) -> Vec<u8> {
+    let mut d = vec![0u8; SRT_HEADER_BYTES];
+    if pick % 2 == 0 {
+        d[0] = SRT_CONTROL_BIT;
+        d[1] = chunk.get(1).copied().unwrap_or(0) % SRT_CONTROL_TYPES;
+    }
+    d.extend_from_slice(chunk);
+    d
+}
+
 fn drive_datagram(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
     let mut session = match Session::open(url, config_from(header), 0) {
@@ -909,6 +926,7 @@ fn drive_datagram(url: &str, data: &[u8]) {
         Err(_) => return,
     };
     let rtp = url.starts_with("rtp");
+    let srt = url.starts_with("srt");
     let mut watch = Watch::default();
     let mut now = 0u64;
     let mut conn: Option<u32> = None;
@@ -922,13 +940,21 @@ fn drive_datagram(url: &str, data: &[u8]) {
         match pick % 9 {
             0 | 1 => {
                 if let Some(c) = conn {
-                    session.on_data(c, chunk, now);
+                    if srt {
+                        session.on_data(c, &srt_like(chunk, second), now);
+                    } else {
+                        session.on_data(c, chunk, now);
+                    }
                 }
             }
             2..=4 => {
                 if let Some(c) = conn {
                     seq = seq.wrapping_add(1);
-                    let d = seed_datagram(rtp, seq, second % 2, &mut cursor);
+                    let d = if srt {
+                        srt_like(&seed_datagram(false, seq, 0, &mut cursor), second)
+                    } else {
+                        seed_datagram(rtp, seq, second % 2, &mut cursor)
+                    };
                     session.on_data(c, &d, now);
                 }
             }
