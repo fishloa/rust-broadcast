@@ -41,6 +41,7 @@ pub struct SrtPeer {
     pub acks_received: u32,
     pub retransmits: u32,
     pub isn: u32,
+    pub max_acked: Option<u32>,
 }
 
 impl SrtPeer {
@@ -80,6 +81,7 @@ impl SrtPeer {
             acks_received: 0,
             retransmits: 0,
             isn,
+            max_acked: None,
         }
     }
 
@@ -116,6 +118,18 @@ impl SrtPeer {
             }
             Ok(SrtPacket::Control(ControlPacket::Ack(ack))) => {
                 self.acks_received += 1;
+                let acked = match ack.cif {
+                    srt_runtime::packet::AckCif::Full { last_ack_seq, .. }
+                    | srt_runtime::packet::AckCif::Small { last_ack_seq, .. }
+                    | srt_runtime::packet::AckCif::Light { last_ack_seq } => last_ack_seq,
+                    _ => 0,
+                };
+                if self
+                    .max_acked
+                    .is_none_or(|m| srt_runtime::arq::seq::seq_lt(m, acked))
+                {
+                    self.max_acked = Some(acked);
+                }
                 let pkt = ControlPacket::AckAck(AckAckPacket {
                     ack_number: ack.ack_number,
                     timestamp: self.ts(now_us),
@@ -153,6 +167,19 @@ impl SrtPeer {
 
     pub fn connected_peer_socket_id(&self) -> u32 {
         PEER_SOCKET_ID
+    }
+
+    pub fn sent_datagram(&self, seq: u32) -> Vec<u8> {
+        self.sent[&seq].clone()
+    }
+
+    pub fn far_ahead_datagram(&mut self, payload: &[u8], ahead: u32, now_us: u64) -> Vec<u8> {
+        let saved = self.next_seq;
+        self.next_seq = (saved + ahead) & 0x7FFF_FFFF;
+        let d = self.data(payload, now_us);
+        self.next_seq = saved;
+        self.sent.remove(&((saved + ahead) & 0x7FFF_FFFF));
+        d
     }
 
     pub fn next_seq(&self) -> u32 {

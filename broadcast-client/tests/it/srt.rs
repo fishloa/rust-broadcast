@@ -203,8 +203,13 @@ fn a_packet_that_never_arrives_is_dropped_at_its_deadline_and_counted() {
             Fate::Deliver
         }
     });
-    let sim = play(sim, &ts);
+    let mut sim = play(sim, &ts);
     assert_eq!(sim.session.datagram_stats().lost, 1);
+    let acked = sim.peer().max_acked.expect("the peer was acknowledged");
+    assert!(
+        srt_runtime::arq::seq::seq_lt(missing, acked),
+        "the ack point must move past a packet given up on, or the peer keeps it forever: {acked}"
+    );
     let got = sim.replay().samples();
     assert!(!got.is_empty() && got.len() <= want.len());
     assert!(
@@ -241,6 +246,8 @@ fn a_drop_request_skips_the_gap_without_counting_a_loss() {
     finish(&mut sim);
     assert_eq!(sim.session.datagram_stats().lost, 0);
     assert!(sim.count(|e| matches!(e, Event::Sample { .. })) > 40);
+    let acked = sim.peer().max_acked.expect("the peer was acknowledged");
+    assert!(srt_runtime::arq::seq::seq_lt(missing, acked));
 }
 
 #[test]
@@ -559,4 +566,162 @@ fn garbage_datagrams_before_and_after_the_handshake_are_ignored() {
     sim.advance_by(SECOND_US / 10);
     assert!(sim.session.datagram_stats().malformed >= 1);
     assert_ne!(last_status(&sim), Some(Status::Ended));
+}
+
+#[test]
+fn a_copy_that_arrives_after_its_packet_was_delivered_is_counted_late() {
+    let ts = small();
+    let mut sim = clear_sim();
+    sim.connect();
+    stream(&mut sim, &ts, 7);
+    sim.advance_by(SECOND_US);
+    let old = sim.peer().sent_datagram(PEER_ISN + 3);
+    sim.raw_to_session(old);
+    sim.advance_by(SECOND_US / 10);
+    assert_eq!(sim.session.datagram_stats().late, 1);
+}
+
+#[test]
+fn the_session_announces_a_wake_for_the_next_ack_so_a_wake_driven_host_keeps_the_link() {
+    let mut sim = clear_sim();
+    sim.connect();
+    for _ in 0..20 {
+        sim.advance_by(1_000);
+        let wake = sim.last_wake.expect("a wake is outstanding");
+        assert!(
+            wake <= sim.now + 12_000,
+            "the next ACK is due within 10 ms, the wake is {} us away",
+            wake.saturating_sub(sim.now)
+        );
+    }
+}
+
+#[test]
+fn the_handshake_budget_is_the_configured_timeout_not_the_retransmit_count() {
+    let mut sim = SrtSim::open(
+        URL,
+        cfg(|c| c.srt.handshake_timeout_ms = 1_000),
+        SrtPeer::new(Cipher::Clear, None, LATENCY_MS),
+    );
+    sim.peer_listening = false;
+    sim.advance_by(900_000);
+    assert_eq!(
+        sim.count(|e| matches!(
+            e,
+            Event::Error {
+                kind: ErrorKind::SrtHandshakeTimeout,
+                ..
+            }
+        )),
+        0
+    );
+    sim.advance_by(200_000);
+    assert_eq!(
+        sim.count(|e| matches!(
+            e,
+            Event::Error {
+                kind: ErrorKind::SrtHandshakeTimeout,
+                ..
+            }
+        )),
+        1
+    );
+}
+
+#[test]
+fn a_packet_far_beyond_the_flow_window_is_ignored_not_staged() {
+    let ts = small();
+    let want = baseline(&ts);
+    let datagrams = ts_datagrams(&ts, 7);
+    let mut sim = clear_sim();
+    sim.connect();
+    for (i, d) in datagrams.iter().enumerate() {
+        sim.send_data(d);
+        if i == 10 {
+            let now = sim.now;
+            let far = sim.peer().far_ahead_datagram(&datagrams[0], 20_000, now);
+            sim.raw_to_session(far);
+        }
+        sim.advance_by(DATA_INTERVAL_US);
+    }
+    finish(&mut sim);
+    assert_eq!(sim.replay().samples(), want);
+    assert_eq!(sim.session.datagram_stats().lost, 0);
+    assert_eq!(
+        sim.peer().naks_received,
+        0,
+        "a crafted sequence number must not open a NAK gap"
+    );
+}
+
+#[test]
+fn a_gap_is_reported_at_once_not_at_the_next_periodic_nak() {
+    let ts = small();
+    let datagrams = ts_datagrams(&ts, 7);
+    let mut sim = clear_sim();
+    sim.connect();
+    sim.send_data(&datagrams[0]);
+    sim.advance_by(10_000);
+    let skipped = {
+        let now = sim.now;
+        sim.peer().data(&datagrams[1], now)
+    };
+    drop(skipped);
+    sim.send_data(&datagrams[2]);
+    sim.advance_by(2_500);
+    assert_eq!(
+        sim.peer().naks_received,
+        0,
+        "the datagram is still in flight"
+    );
+    sim.advance_by(2_500);
+    assert!(
+        sim.peer().naks_received >= 1,
+        "the gap is NAKed on arrival, well before the 20 ms periodic NAK"
+    );
+}
+
+#[test]
+fn a_rejection_is_reported_from_the_callback_without_a_poll() {
+    use broadcast_client::Action;
+    let mut peer = SrtPeer::new(Cipher::Aes128, Some(PASS), LATENCY_MS);
+    let mut session = Session::open(
+        URL,
+        {
+            let mut c = encrypted(SrtKeyLength::Aes128);
+            c.srt.encryption = Some(SrtEncryption::new("wrong passphrase", SrtKeyLength::Aes128));
+            c
+        },
+        0,
+    )
+    .unwrap();
+    let mut conn = None;
+    while let Some(a) = session.poll(0) {
+        if let Action::UdpBind { conn: c, .. } = a {
+            conn = Some(c);
+        }
+    }
+    let conn = conn.unwrap();
+    session.on_connected(conn);
+    let mut now = 0;
+    let mut inflight: Vec<Vec<u8>> = Vec::new();
+    for _ in 0..10 {
+        while let Some(a) = session.poll(now) {
+            if let Action::Send { bytes, .. } = a {
+                inflight.push(bytes);
+            }
+        }
+        for b in inflight.drain(..) {
+            for reply in peer.on_datagram(&b, now) {
+                now += 1_000;
+                session.on_data(conn, &reply, now);
+                if let Some(Event::Error { kind, .. }) = session.next_event() {
+                    assert!(matches!(kind, ErrorKind::SrtRejected { .. }));
+                    return;
+                }
+            }
+        }
+        now += 1_000;
+    }
+    panic!("no rejection surfaced");
 }
