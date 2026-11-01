@@ -7,7 +7,7 @@ use transmux::sample_aes::aes128_encrypt_segment;
 const URL: &str = "http://origin/live/media.m3u8";
 const TS_PACKET_LEN: usize = 188;
 const LEADING_PACKETS_DROPPED: usize = 3;
-const FIXTURE0: &[u8] = include_bytes!("fixtures/ts-hls/index0.ts");
+const FIXTURE0: &[u8] = include_bytes!("../fixtures/ts-hls/index0.ts");
 const KEY: [u8; 16] = [0x42; 16];
 const MAX_WAIT_MS: u64 = 60_000;
 

@@ -17,7 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use transmux::sample_aes::aes128_encrypt_segment;
 
-const FIXTURE: &[u8] = include_bytes!("fixtures/ts-hls/index0.ts");
+const FIXTURE: &[u8] = include_bytes!("../fixtures/ts-hls/index0.ts");
 const KEY: [u8; 16] = [0x61; 16];
 const IV: [u8; 16] = [0x17; 16];
 const PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
