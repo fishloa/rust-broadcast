@@ -103,8 +103,17 @@ fn kinds(events: &[String]) -> std::collections::BTreeMap<&str, usize> {
     m
 }
 
+/// PR runs check chunk-size invariance on at most this many packets of each
+/// capture (every committed fixture but the two large captures is smaller);
+/// `RUST_BROADCAST_SOAK` runs the whole file.
+const PR_MAX_PACKETS: usize = 4_250;
+const TS_PACKET_SIZE: usize = 188;
+
 fn assert_invariant(rel: &str) -> Vec<String> {
-    let ts = fixture(rel);
+    let mut ts = fixture(rel);
+    if std::env::var_os("RUST_BROADCAST_SOAK").is_none() {
+        ts.truncate(PR_MAX_PACKETS * TS_PACKET_SIZE);
+    }
     let baseline = run(&ts, fixed(ts.len()), true);
     assert!(!baseline.is_empty(), "{rel}: no events");
     for n in [1usize, 7, 187, 188, 189, 1000, 65536] {
