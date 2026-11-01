@@ -25,8 +25,7 @@ use multimux::registry::SchemeRegistry;
 use multimux::serve_with_registry_on;
 use transmux::Repackage;
 
-#[path = "support/listener.rs"]
-mod listener;
+use crate::support::listener;
 use listener::bind_tcp;
 
 const SOURCE_SEGMENT_SECS: f64 = 2.0;

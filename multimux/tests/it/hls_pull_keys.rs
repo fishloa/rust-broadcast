@@ -27,8 +27,7 @@ use multimux::RouteHandle;
 use multimux::source::hls_pull::{HlsPullRoute, run_hls_pull};
 use transmux::sample_aes::aes128_encrypt_segment;
 
-#[path = "support/listener.rs"]
-mod listener;
+use crate::support::listener;
 
 const TS_PACKET_LEN: usize = 188;
 const LEADING_PACKETS_DROPPED: usize = 3;

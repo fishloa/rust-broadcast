@@ -21,8 +21,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_demux::TsDemux;
 use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
 
-#[path = "support/shared.rs"]
-mod shared;
+use crate::support::shared;
 
 use multimux::config::{AudioTrackSelector, Config};
 use multimux::origin::{AppState, router};

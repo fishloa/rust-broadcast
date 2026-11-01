@@ -44,8 +44,7 @@ use multimux::{
 };
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
-#[path = "support/listener.rs"]
-mod listener;
+use crate::support::listener;
 use listener::bind_tcp;
 
 const ADMIN_TOKEN: &str = "admin-test-token";

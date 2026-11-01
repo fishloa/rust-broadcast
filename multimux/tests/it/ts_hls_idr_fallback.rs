@@ -22,8 +22,7 @@ use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample};
 use transmux::{NalCodec, TsDemux, TsMux, access_unit_is_idr};
 
-#[path = "support/listener.rs"]
-mod listener;
+use crate::support::listener;
 use listener::bind_tcp;
 
 const ADMIN_TOKEN: &str = "ts-hls-idr-fallback-admin";

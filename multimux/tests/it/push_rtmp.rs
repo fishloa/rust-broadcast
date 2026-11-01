@@ -34,7 +34,7 @@ use tokio::net::TcpListener;
 use transmux::FlvDemux;
 use transmux::ir::TrackSpec;
 
-const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");
+const FLV: &[u8] = include_bytes!("../../../fixtures/flv/av.flv");
 
 /// HANG GUARD (workspace precedent, issue #826): every blocking wait below is
 /// bounded, so a broken connect/publish/media path fails the test rather than

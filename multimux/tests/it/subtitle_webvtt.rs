@@ -80,8 +80,7 @@ const KNOWN_MISSING_HOLD_BACK_1594: &str = "Missing server control attribute";
 /// playlist instead is rejected by the validator as "Unknown rendition report".
 const KNOWN_NO_RENDITION_REPORTS_1595: &str = "No rendition reports in low-latency playlist";
 
-#[path = "support/shared.rs"]
-mod shared;
+use crate::support::shared;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")

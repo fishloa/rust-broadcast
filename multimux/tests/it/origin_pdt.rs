@@ -29,8 +29,7 @@ use multimux::route::RouteHandle;
 use multimux::serve_with_registry_on;
 use transmux::TrackId;
 
-#[path = "support/listener.rs"]
-mod listener;
+use crate::support::listener;
 use listener::bind_tcp;
 use transmux::avc_config_from_sprop;
 use transmux::ll_hls::LlHlsSegmenter;

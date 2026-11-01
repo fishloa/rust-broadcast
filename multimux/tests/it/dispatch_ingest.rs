@@ -77,8 +77,7 @@ use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
 use multimux::serve_with_registry_on;
 
-#[path = "support/listener.rs"]
-mod listener;
+use crate::support::listener;
 use listener::{bind_tcp, bind_udp};
 
 fn fixture_path() -> PathBuf {

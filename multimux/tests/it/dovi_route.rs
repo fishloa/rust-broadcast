@@ -1,10 +1,10 @@
-//! HDR10+ (SMPTE ST 2094-40) over the real Tears of Steel MPEG-TS stream (issue
-//! #1428): the multivariant playlist carries `SUPPLEMENTAL-CODECS` with the
-//! `cdm4` brand and `VIDEO-RANGE=PQ`, every fMP4 sample keeps its HDR10+ SEI
-//! byte-identical, and external readers (ffprobe, Apple `mediastreamvalidator`)
-//! agree.
+//! Dolby Vision profiles 5, 8.1 and 8.4 over real MPEG-TS streams (issue
+//! #1428): the multivariant playlist carries the CODECS / SUPPLEMENTAL-CODECS /
+//! VIDEO-RANGE the Apple HLS authoring spec prescribes, the init segment carries
+//! the `dvcC` / `dvvC` box, and external readers (ffprobe, GPAC, Apple
+//! `mediastreamvalidator`) agree.
 //!
-//! Real artifact: `private/fixtures/hdr10plus/` (PROVENANCE.md). Every test
+//! Real artifacts: `private/fixtures/dolby-vision/` (PROVENANCE.md). Every test
 //! drives the production path: `RouteHandle` + `ProgramSegmenter::pump` over a
 //! `Trunk`, read back through the axum router. External tools skip loudly when
 //! absent.
@@ -17,7 +17,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use broadcast_common::mux::Unpackage;
-use broadcast_hls::MasterPlaylist;
+use broadcast_hls::{MasterPlaylist, MediaPlaylist};
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
@@ -37,19 +37,30 @@ const RING: usize = 1 << 16;
 const PUMP_EVERY: usize = 64;
 const STREAM: &str = "cam";
 const DECLARED_BPS: u64 = 4_000_000;
-const HDR10PLUS: &str = "hdr10plus/tos-256x144-hdr10plus.ts";
+const P81: &str = "dolby-vision/sollevante-dv-p8.1-1080p24-10s.ts";
+const P5: &str = "dolby-vision/sollevante-dv-p5-1080p24-10s.ts";
+const P84: &str = "dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.ts";
 const HDR10: &str = "hdr10/meridian-hdr10-60f.ts";
 const HLG: &str = "hlg/sollevante-hlg-derived-1080p24-10s.ts";
 const SDR: &str = "ts/hevc/main10.ts";
-const FRAMES: usize = 259;
 
 struct Source {
     spec: TrackSpec,
     samples: Vec<Sample>,
 }
 
+fn without_dovi(mut sources: Vec<Source>) -> Vec<Source> {
+    for src in &mut sources {
+        if src.spec.dovi.is_some() {
+            src.spec.dovi = None;
+        }
+    }
+    assert!(sources.iter().all(|s| s.spec.dovi.is_none()));
+    sources
+}
+
 fn load(fixture: &str) -> Vec<Source> {
-    let bytes = test_fixtures::require_bytes(fixture, "hdr10plus_route").expect("fixture");
+    let bytes = test_fixtures::require_bytes(fixture, "dovi_route").expect("fixture");
     let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
     media
         .tracks
@@ -79,8 +90,7 @@ fn new_trunk() -> Arc<Trunk> {
     ))
 }
 
-#[path = "support/shared.rs"]
-mod shared;
+use crate::support::shared;
 
 /// One route per fixture, built once per process. The first request to a
 /// freshly built route populates its playlist state, and two tests making that
@@ -173,6 +183,23 @@ async fn ok(app: &Router, path: &str) -> Vec<u8> {
     body
 }
 
+async fn init_bytes(app: &Router) -> Vec<u8> {
+    let text = String::from_utf8(ok(app, "media.m3u8").await).expect("utf8");
+    let playlist =
+        MediaPlaylist::parse(&text).unwrap_or_else(|e| panic!("media must parse: {e}\n{text}"));
+    let map = playlist.segments[0]
+        .map
+        .as_ref()
+        .expect("EXT-X-MAP")
+        .uri
+        .clone();
+    ok(app, &map).await
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
 fn tool_available(tool: &str, arg: &str) -> bool {
     std::process::Command::new(tool)
         .arg(arg)
@@ -253,69 +280,117 @@ fn video_codec(master: &str) -> String {
         .to_string()
 }
 
-const HDR10PLUS_SIDE_DATA: &str = "HDR Dynamic Metadata SMPTE2094-40 (HDR10+)";
-const NAL_LENGTH_PREFIX: usize = 4;
-
-fn strip_hdr10plus_sei(sources: Vec<Source>) -> Vec<Source> {
-    sources
-        .into_iter()
-        .map(|mut src| {
-            src.spec.hdr10plus = false;
-            for sample in &mut src.samples {
-                let mut out = Vec::with_capacity(sample.data.len());
-                let mut at = 0;
-                while at + NAL_LENGTH_PREFIX <= sample.data.len() {
-                    let len = u32::from_be_bytes(
-                        sample.data[at..at + NAL_LENGTH_PREFIX].try_into().unwrap(),
-                    ) as usize;
-                    let end = at + NAL_LENGTH_PREFIX + len;
-                    let nal = &sample.data[at + NAL_LENGTH_PREFIX..end];
-                    if !transmux::Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(nal) {
-                        out.extend_from_slice(&sample.data[at..end]);
-                    }
-                    at = end;
-                }
-                sample.data = out.into();
-            }
-            src
-        })
-        .collect()
+struct Expected {
+    codec: &'static str,
+    supplemental: Option<&'static str>,
+    range: &'static str,
 }
 
-#[tokio::test]
-async fn master_announces_hdr10plus_with_the_cdm4_brand_and_pq() {
-    if test_fixtures::require(HDR10PLUS, "hdr10plus_route").is_none() {
+async fn assert_master(fixture: &str, want: Expected) {
+    if test_fixtures::require(fixture, "dovi_route").is_none() {
         return;
     }
-    let text = master_text(&route_app(HDR10PLUS)).await;
+    let app = route_app(fixture);
+    let text = master_text(&app).await;
     MasterPlaylist::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
-    assert_eq!(video_codec(&text), "hvc1.2.4.H153.90", "{text}");
+    assert_eq!(video_codec(&text), want.codec, "{text}");
     assert_eq!(
         attribute(&text, "SUPPLEMENTAL-CODECS").as_deref(),
-        Some("hvc1.2.4.H153.90/cdm4"),
+        want.supplemental,
         "{text}"
     );
     assert_eq!(
         attribute(&text, "VIDEO-RANGE").as_deref(),
-        Some("PQ"),
+        Some(want.range),
         "{text}"
     );
 }
 
 #[tokio::test]
-async fn routes_without_hdr10plus_carry_no_supplemental_codecs() {
+async fn p81_master_has_hdr10_base_codecs_supplemental_dvh1_db1p_and_pq() {
+    assert_master(
+        P81,
+        Expected {
+            codec: "hvc1.2.4.L153.B0",
+            supplemental: Some("dvh1.08.03/db1p"),
+            range: "PQ",
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn p5_master_has_dvh1_codecs_no_supplemental_and_pq() {
+    assert_master(
+        P5,
+        Expected {
+            codec: "dvh1.05.03",
+            supplemental: None,
+            range: "PQ",
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn p84_master_has_hlg_base_codecs_supplemental_dvh1_db4h_and_hlg() {
+    assert_master(
+        P84,
+        Expected {
+            codec: "hvc1.2.4.L150.B0",
+            supplemental: Some("dvh1.08.07/db4h"),
+            range: "HLG",
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn every_video_variant_carries_the_measured_frame_rate() {
+    for (fixture, expected) in [
+        (P81, "24.000"),
+        (P5, "24.000"),
+        (P84, "30.000"),
+        (HLG, "24.000"),
+    ] {
+        if test_fixtures::require(fixture, "dovi_route").is_none() {
+            continue;
+        }
+        let text = master_text(&route_app(fixture)).await;
+        assert_eq!(
+            attribute(&text, "FRAME-RATE").as_deref(),
+            Some(expected),
+            "{fixture}\n{text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn non_dolby_vision_routes_have_no_supplemental_codecs() {
     for fixture in [HDR10, HLG, SDR] {
-        if test_fixtures::require(fixture, "hdr10plus_route").is_none() {
+        if test_fixtures::require(fixture, "dovi_route").is_none() {
             continue;
         }
         let text = master_text(&route_app(fixture)).await;
         assert!(!text.contains("SUPPLEMENTAL-CODECS"), "{fixture}\n{text}");
-        assert!(!text.contains("cdm4"), "{fixture}\n{text}");
+        assert!(!video_codec(&text).starts_with("dvh1"), "{fixture}\n{text}");
     }
-    if test_fixtures::require(HDR10PLUS, "hdr10plus_route").is_some() {
-        let stripped = route_app_from(strip_hdr10plus_sei(load(HDR10PLUS)));
-        let text = master_text(&stripped).await;
-        assert!(!text.contains("SUPPLEMENTAL-CODECS"), "{text}");
+}
+
+#[tokio::test]
+async fn p5_init_carries_dvh1_and_dvcc_and_p81_carries_hvc1_and_dvvc() {
+    for (fixture, entry, config_box, other_box) in [
+        (P5, b"dvh1", b"dvcC", b"dvvC"),
+        (P81, b"hvc1", b"dvvC", b"dvcC"),
+        (P84, b"hvc1", b"dvvC", b"dvcC"),
+    ] {
+        if test_fixtures::require(fixture, "dovi_route").is_none() {
+            continue;
+        }
+        let init = init_bytes(&route_app(fixture)).await;
+        assert!(contains(&init, entry), "{fixture}");
+        assert!(contains(&init, config_box), "{fixture}");
+        assert!(!contains(&init, other_box), "{fixture}");
     }
 }
 
@@ -337,49 +412,15 @@ async fn joined_mp4(app: &Router, dir: &std::path::Path) -> std::path::PathBuf {
     file
 }
 
-fn hdr10plus_seis_by_pts(media: &transmux::Media) -> Vec<Vec<u8>> {
-    let track = media
-        .tracks
-        .iter()
-        .find(|t| matches!(t.spec.config, transmux::CodecConfig::Hevc { .. }))
-        .expect("HEVC track");
-    let mut samples: Vec<_> = track.samples.iter().collect();
-    samples.sort_by_key(|s| s.pts);
-    samples
-        .iter()
-        .flat_map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
-                .unwrap()
-                .into_iter()
-                .filter(|n| transmux::Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(n))
-                .map(<[u8]>::to_vec)
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-#[tokio::test]
-async fn every_fmp4_sample_of_the_route_keeps_its_hdr10plus_sei_byte_identical() {
-    if test_fixtures::require(HDR10PLUS, "hdr10plus_route").is_none() {
-        return;
-    }
-    let source = {
-        let bytes = test_fixtures::require_bytes(HDR10PLUS, "hdr10plus_route").unwrap();
-        hdr10plus_seis_by_pts(&TsDemux::new().unpackage(&bytes).unwrap())
-    };
-    assert_eq!(source.len(), FRAMES);
-    let file = joined_mp4(&route_app(HDR10PLUS), &scratch("hdr10plus-passthrough")).await;
-    let served = transmux::Fmp4Demux::new()
-        .unpackage(&std::fs::read(file).unwrap())
-        .expect("demux the served segments");
-    let seis = hdr10plus_seis_by_pts(&served);
-    assert_eq!(seis.len(), FRAMES);
-    assert_eq!(seis, source);
-}
-
-fn ffprobe_frames(file: &std::path::Path) -> String {
+fn ffprobe_streams(file: &std::path::Path) -> String {
     let out = std::process::Command::new("ffprobe")
-        .args(["-v", "error", "-show_frames", "-select_streams", "v"])
+        .args([
+            "-v",
+            "error",
+            "-show_streams",
+            "-show_entries",
+            "stream_side_data",
+        ])
         .arg(file)
         .output()
         .expect("ffprobe");
@@ -387,35 +428,76 @@ fn ffprobe_frames(file: &std::path::Path) -> String {
 }
 
 #[tokio::test]
-async fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_output() {
-    if test_fixtures::require(HDR10PLUS, "hdr10plus_route").is_none() {
-        return;
-    }
+async fn ffprobe_reads_dolby_vision_configuration_only_from_our_box() {
     if !tool_available("ffprobe", "-version") {
         eprintln!(
-            "SKIP ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_output: ffprobe not on PATH"
+            "SKIP ffprobe_reads_dolby_vision_configuration_only_from_our_box: ffprobe not on PATH"
         );
         return;
     }
-    let with = joined_mp4(&route_app(HDR10PLUS), &scratch("hdr10plus-ffprobe")).await;
-    let text = ffprobe_frames(&with);
-    assert_eq!(text.matches("[FRAME]").count(), FRAMES, "{text}");
-    assert_eq!(text.matches(HDR10PLUS_SIDE_DATA).count(), FRAMES);
-    let control = joined_mp4(
-        &route_app_from(strip_hdr10plus_sei(load(HDR10PLUS))),
-        &scratch("hdr10plus-ffprobe-control"),
-    )
-    .await;
-    let control_text = ffprobe_frames(&control);
-    assert_eq!(control_text.matches("[FRAME]").count(), FRAMES);
-    assert_eq!(
-        control_text.matches(HDR10PLUS_SIDE_DATA).count(),
-        0,
-        "the control route has no HDR10+ SEI yet ffprobe reports it"
-    );
+    for (fixture, profile, level, compat) in [(P81, 8, 3, 1), (P5, 5, 3, 0), (P84, 8, 7, 4)] {
+        if test_fixtures::require(fixture, "dovi_route").is_none() {
+            continue;
+        }
+        let name = format!("dovi-ffprobe-{profile}-{compat}");
+        let with = joined_mp4(&route_app(fixture), &scratch(&name)).await;
+        let text = ffprobe_streams(&with);
+        for needle in [
+            "side_data_type=DOVI configuration record".to_string(),
+            format!("dv_profile={profile}"),
+            format!("dv_level={level}"),
+            format!("dv_bl_signal_compatibility_id={compat}"),
+            "rpu_present_flag=1".to_string(),
+            "bl_present_flag=1".to_string(),
+        ] {
+            assert!(text.contains(&needle), "{fixture}: lacks {needle}\n{text}");
+        }
+        let control = joined_mp4(
+            &route_app_from(without_dovi(load(fixture))),
+            &scratch(&format!("{name}-control")),
+        )
+        .await;
+        let control_text = ffprobe_streams(&control);
+        assert!(
+            !control_text.contains("dv_profile"),
+            "{fixture}: the control route has no dvcC/dvvC yet ffprobe reports Dolby Vision\n{control_text}"
+        );
+    }
 }
 
-const PART_FLOOR_FINDING: &str = "at least 85% of PART-TARGET";
+#[tokio::test]
+async fn gpac_dumps_the_dolby_vision_configuration_box() {
+    if !tool_available("MP4Box", "-version") {
+        eprintln!("SKIP gpac_dumps_the_dolby_vision_configuration_box: MP4Box not on PATH");
+        return;
+    }
+    for (fixture, box_name) in [(P81, "dvvC"), (P5, "dvcC"), (P84, "dvvC")] {
+        if test_fixtures::require(fixture, "dovi_route").is_none() {
+            continue;
+        }
+        let app = route_app(fixture);
+        let dir = scratch(&format!("dovi-gpac-{box_name}-{}", fixture.len()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let init = dir.join("init.mp4");
+        std::fs::write(&init, init_bytes(&app).await).unwrap();
+        let out = std::process::Command::new("MP4Box")
+            .arg("-diso")
+            .arg(&init)
+            .current_dir(&dir)
+            .output()
+            .expect("MP4Box");
+        let xml = std::fs::read_to_string(dir.join("init_info.xml"))
+            .unwrap_or_else(|_| String::from_utf8_lossy(&out.stdout).to_string());
+        assert!(
+            xml.contains("DOLBY") || xml.contains("Dolby") || xml.contains("DOVI"),
+            "{fixture}\n{xml}"
+        );
+        assert!(
+            xml.contains(box_name) || xml.contains("DOVIConfigurationBox"),
+            "{fixture}\n{xml}"
+        );
+    }
+}
 
 const ISSUE_1602_FINDINGS: [&str; 2] = [
     "Playlist vs segment duration mismatch",
@@ -464,115 +546,67 @@ async fn validator_comments(app: Router, name: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn mediastreamvalidator_reports_no_hdr10plus_specific_finding() {
+async fn mediastreamvalidator_reports_no_dolby_vision_specific_finding() {
     if !tool_available("mediastreamvalidator", "--version") {
         eprintln!(
-            "SKIP mediastreamvalidator_reports_no_hdr10plus_specific_finding: mediastreamvalidator not on PATH"
+            "SKIP mediastreamvalidator_reports_no_dolby_vision_specific_finding: mediastreamvalidator not on PATH"
         );
         return;
     }
-    if test_fixtures::require(HDR10PLUS, "hdr10plus_route").is_none() {
-        return;
-    }
-    let base_runs: Vec<_> = [(SDR, "hdr10plus-base-sdr"), (HDR10, "hdr10plus-base-hdr10")]
-        .into_iter()
-        .filter(|(fixture, _)| test_fixtures::require(fixture, "hdr10plus_route").is_some())
-        .collect();
-    let (baseline, comments) = std::thread::scope(|scope| {
-        let bases: Vec<_> = base_runs
+    let present = |fixtures: &[(&'static str, &'static str)]| -> Vec<(&'static str, &'static str)> {
+        fixtures
+            .iter()
+            .copied()
+            .filter(|(fixture, _)| test_fixtures::require(fixture, "dovi_route").is_some())
+            .collect()
+    };
+    let baseline_runs = present(&[
+        (SDR, "dovi-base-sdr"),
+        (HDR10, "dovi-base-hdr10"),
+        (HLG, "dovi-base-hlg"),
+    ]);
+    let value_runs = present(&[
+        (P81, "dovi-val-p81"),
+        (P5, "dovi-val-p5"),
+        (P84, "dovi-val-p84"),
+    ]);
+    let mut all = baseline_runs.clone();
+    all.extend(value_runs.iter().copied());
+    let mut results = std::thread::scope(|scope| {
+        let handles: Vec<_> = all
             .iter()
             .map(|&(fixture, name)| {
                 scope.spawn(move || shared::run_async(validator_comments(route_app(fixture), name)))
             })
             .collect();
-        let stripped = scope.spawn(|| {
-            shared::run_async(validator_comments(
-                route_app_from(strip_hdr10plus_sei(load(HDR10PLUS))),
-                "hdr10plus-base-same-stream-without-sei",
-            ))
-        });
-        let value = scope
-            .spawn(|| shared::run_async(validator_comments(route_app(HDR10PLUS), "hdr10plus-val")));
-        let mut baseline = Vec::new();
-        for h in bases {
-            baseline.extend(h.join().expect("validator thread"));
-        }
-        baseline.extend(stripped.join().expect("validator thread"));
-        (baseline, value.join().expect("validator thread"))
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("validator thread"))
+            .collect::<Vec<_>>()
+            .into_iter()
     });
-    for c in &comments {
-        eprintln!("VALIDATOR hdr10plus: {c}");
+    let mut baseline = Vec::new();
+    for _ in &baseline_runs {
+        baseline.extend(results.next().expect("baseline result"));
     }
-    for c in baseline.iter().chain(&comments) {
+    for &(fixture, name) in &value_runs {
+        let comments = results.next().expect("value result");
+        for c in &comments {
+            eprintln!("VALIDATOR {name}: {c}");
+        }
         assert!(
-            !c.contains(PART_FLOOR_FINDING),
-            "validator reports the 85% part floor: {c}"
+            !comments.iter().any(|c| c.contains("FRAME-RATE")),
+            "{fixture}: {comments:?}"
+        );
+        let issue_1602 = has_b_frame_reordering(fixture);
+        let only: Vec<_> = comments
+            .iter()
+            .filter(|c| !baseline.contains(c))
+            .filter(|c| !(issue_1602 && ISSUE_1602_FINDINGS.contains(&c.as_str())))
+            .collect();
+        assert!(
+            only.is_empty(),
+            "{fixture}: findings beyond the SDR/HDR10/HLG baseline: {only:?}"
         );
     }
-    let issue_1602 = has_b_frame_reordering(HDR10PLUS);
-    let only: Vec<_> = comments
-        .iter()
-        .filter(|c| !baseline.contains(c))
-        .filter(|c| !(issue_1602 && ISSUE_1602_FINDINGS.contains(&c.as_str())))
-        .collect();
-    assert!(
-        only.is_empty(),
-        "findings beyond the SDR/HDR10 baseline: {only:?}"
-    );
-}
-
-#[tokio::test]
-async fn parts_at_23_976_fps_sit_on_the_frame_grid() {
-    if test_fixtures::require(HDR10PLUS, "hdr10plus_route").is_none() {
-        return;
-    }
-    let text = String::from_utf8(ok(&route_app(HDR10PLUS), "media.m3u8").await).expect("utf8");
-    let value = |tag: &str, key: &str| -> f64 {
-        let line = text
-            .lines()
-            .find(|l| l.starts_with(tag))
-            .unwrap_or_else(|| panic!("{tag} missing:\n{text}"));
-        let start = line.find(key).expect(key) + key.len();
-        line[start..]
-            .split(',')
-            .next()
-            .and_then(|v| v.parse().ok())
-            .expect("number")
-    };
-    let target = value("#EXT-X-PART-INF:", "PART-TARGET=");
-    let hold_back = value("#EXT-X-SERVER-CONTROL:", "PART-HOLD-BACK=");
-    assert!(target > 0.2, "200 ms holds 4.8 frames; got {target}");
-    assert!(hold_back >= 3.0 * target - 1e-9, "{hold_back} vs {target}");
-    let mut segments: Vec<Vec<(f64, bool)>> = vec![Vec::new()];
-    for line in text.lines() {
-        if line.starts_with("#EXT-X-PART:") {
-            let start = line.find("DURATION=").expect("duration") + "DURATION=".len();
-            let duration: f64 = line[start..]
-                .split(',')
-                .next()
-                .and_then(|v| v.parse().ok())
-                .expect("number");
-            let exempt = line.contains("INDEPENDENT=YES") || line.contains("GAP=YES");
-            segments
-                .last_mut()
-                .expect("segment")
-                .push((duration, exempt));
-        } else if line.starts_with("#EXTINF") {
-            segments.push(Vec::new());
-        }
-    }
-    let mut checked = 0;
-    for parts in &segments {
-        for (i, (duration, exempt)) in parts.iter().enumerate() {
-            assert!(*duration <= target + 1e-9, "{duration} > {target}");
-            if i + 1 < parts.len() && !exempt {
-                assert!(
-                    *duration >= 0.85 * target - 1e-9,
-                    "{duration} < 85% of {target}"
-                );
-                checked += 1;
-            }
-        }
-    }
-    assert!(checked > 10, "only {checked} non-terminal parts checked");
 }

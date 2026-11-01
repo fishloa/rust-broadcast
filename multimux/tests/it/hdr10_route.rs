@@ -117,8 +117,7 @@ fn new_trunk() -> Arc<Trunk> {
     ))
 }
 
-#[path = "support/shared.rs"]
-mod shared;
+use crate::support::shared;
 
 /// One route per fixture, built once per process. The first request to a
 /// freshly built route populates its playlist state, and two tests making that

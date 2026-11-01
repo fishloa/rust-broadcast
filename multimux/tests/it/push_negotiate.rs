@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 use transmux::FlvDemux;
 use transmux::ir::TrackSpec;
 
-const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");
+const FLV: &[u8] = include_bytes!("../../../fixtures/flv/av.flv");
 
 /// HANG GUARD (workspace precedent, issue #826).
 const GUARD: Duration = Duration::from_secs(20);

@@ -13,8 +13,7 @@ use transmux::pipeline::{build_init_segment, build_media_segment};
 use transmux::ts_demux::TsDemux;
 use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
 
-#[path = "support/listener.rs"]
-mod listener;
+use crate::support::listener;
 use listener::bind_tcp;
 
 struct Presentation {

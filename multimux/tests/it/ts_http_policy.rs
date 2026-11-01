@@ -21,8 +21,7 @@ use multimux::{MultimuxError, RouteHandle};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-#[path = "support/listener.rs"]
-mod listener;
+use crate::support::listener;
 
 const FIXTURE: &str = "../hls-runtime/tests/fixtures/ts-hls/index0.ts";
 const TS_CHUNK: usize = 7 * 188;
