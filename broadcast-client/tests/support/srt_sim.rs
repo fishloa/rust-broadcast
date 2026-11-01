@@ -37,6 +37,7 @@ pub struct SrtSim {
     pub closes: Vec<u32>,
     pub from_session: Vec<(u64, Vec<u8>)>,
     pub peer_listening: bool,
+    pub last_wake: Option<u64>,
     pub fate: Box<dyn FnMut(u32, bool) -> Fate>,
     inflight: Vec<(u64, Dir, Vec<u8>)>,
     connected_to: usize,
@@ -59,6 +60,7 @@ impl SrtSim {
             closes: Vec::new(),
             from_session: Vec::new(),
             peer_listening: true,
+            last_wake: None,
             fate: Box::new(|_, _| Fate::Deliver),
             inflight: Vec::new(),
             connected_to: 0,
@@ -99,6 +101,7 @@ impl SrtSim {
                         }
                     }
                     Action::Close { conn } => self.closes.push(conn),
+                    Action::WakeAt(at) => self.last_wake = Some(at),
                     _ => {}
                 }
             }
