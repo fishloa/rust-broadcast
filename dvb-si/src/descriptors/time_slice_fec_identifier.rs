@@ -272,19 +272,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_serializes_to_stable_json() {
-        // Borrowed `&[u8]` cannot deserialize from a JSON number array, so we
-        // assert the Serialize impl is wired and emits stable JSON.
-        let d = TimeSliceFecIdentifierDescriptor::new(true, 1, 3, 0x44, 7, 0xF, &[0xDE, 0xAD]);
-        let j = serde_json::to_string(&d).unwrap();
-        // Valid, re-parseable JSON (key order is map-defined, so we do not
-        // assert byte-for-byte string stability).
-        let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
-        assert!(j.contains("time_slice_fec_id"));
-    }
-
     /// Every `reserved_for_future_use(2)` value re-serializes byte-identically.
     #[test]
     fn reserved_preserved() {

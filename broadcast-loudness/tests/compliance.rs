@@ -460,26 +460,7 @@ fn case_19_tp_fs4_amplitude_1_41_phase_45() {
 // signals that match. These cases are therefore skipped until the
 // reference WAV files can be included as test fixtures.
 //
-// Tests are included as `#[ignore]` to document the gap; they
-// would need the reference `.wav` files from tech.ebu.ch/loudness.
-
-#[test]
-#[ignore = "requires EBU reference WAV files (cases 20-23 from tech.ebu.ch/loudness)"]
-fn case_20_tp_pulse_offset_0() {
-    // Would load reference WAV and verify TP = 0.0 +0.2/-0.4 dBTP
-}
-
-#[test]
-#[ignore = "requires EBU reference WAV files"]
-fn case_21_tp_pulse_offset_1() {}
-
-#[test]
-#[ignore = "requires EBU reference WAV files"]
-fn case_22_tp_pulse_offset_2() {}
-
-#[test]
-#[ignore = "requires EBU reference WAV files"]
-fn case_23_tp_pulse_offset_3() {}
+// Tracked in issue #1635; no placeholder tests are kept.
 
 fn lra_two_tones(level1: f64, level2: f64, duration_each: f64) -> f64 {
     let (t1_l, t1_r) = stereo_sine(level1, 1000.0, duration_each);

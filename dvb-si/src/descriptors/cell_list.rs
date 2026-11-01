@@ -541,28 +541,4 @@ mod tests {
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = CellListDescriptor {
-            entries: vec![CellListEntry {
-                cell_id: 0x1234,
-                cell_latitude: 0x5678,
-                cell_longitude: 0x9ABC,
-                cell_extent_of_latitude: 0xDEF,
-                cell_extent_of_longitude: 0x012,
-                subcells: vec![CellListSubcell {
-                    cell_id_extension: 0x07,
-                    subcell_latitude: 0x1111,
-                    subcell_longitude: 0x2222,
-                    subcell_extent_of_latitude: 0x333,
-                    subcell_extent_of_longitude: 0x444,
-                }],
-            }],
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
 }

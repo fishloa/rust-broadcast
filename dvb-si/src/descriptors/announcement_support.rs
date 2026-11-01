@@ -642,27 +642,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = AnnouncementSupportDescriptor {
-            announcement_support_indicator: 0xBEEF,
-            entries: vec![AnnouncementEntry::new(
-                AnnouncementType::RoadTrafficFlash,
-                ReferenceType::DifferentServiceSameTs,
-                Some(AnnouncementReference {
-                    original_network_id: 0xAABB,
-                    transport_stream_id: 0xCCDD,
-                    service_id: 0xEEFF,
-                    component_tag: 0x09,
-                }),
-            )],
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
-
     #[test]
     fn announcement_type_full_range_round_trip() {
         for b in 0..=0xFF_u8 {

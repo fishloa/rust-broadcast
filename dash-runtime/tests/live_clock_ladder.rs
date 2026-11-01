@@ -207,25 +207,41 @@ fn the_host_clock_stepping_forward_and_back_never_duplicates_a_segment() {
     }
 }
 
+fn soak() -> bool {
+    std::env::var_os("RUST_BROADCAST_SOAK").is_some()
+}
+
+fn drift_with_resync_never_requests_early(ppm: i64) {
+    let minutes: u64 = if soak() { 360 } else { 90 };
+    let mut dash = quick();
+    dash.utc_resync_us = 600 * MICROS as u64;
+    let mut synth = with_utc(Addressing::Number);
+    synth.tsb_us = Some(60 * MICROS);
+    let (mut sim, geo) = sim_with(synth, START, dash);
+    sim.world.host_drift_ppm = ppm;
+    sim.run_for(minutes * 60 * MICROS as u64);
+    no_fatal(&sim);
+    assert!(sim.errors.is_empty(), "{:?}", sim.errors);
+    let reqs = segment_requests(&sim, geo);
+    assert_no_duplicates(&reqs);
+    assert_contiguous(&reqs);
+    assert!(early_requests(&reqs, geo, 150_000).is_empty(), "ppm {ppm}");
+    let utc = sim.requests(Kind::Utc).len();
+    let resyncs = (minutes / 10) as usize;
+    assert!(
+        (resyncs - resyncs / 10..=resyncs * 6).contains(&utc),
+        "{utc} UTC requests"
+    );
+}
+
 #[test]
-fn six_hours_at_plus_and_minus_100_ppm_with_resync_never_requests_early() {
-    for ppm in [100i64, -100] {
-        let mut dash = quick();
-        dash.utc_resync_us = 600 * MICROS as u64;
-        let mut synth = with_utc(Addressing::Number);
-        synth.tsb_us = Some(60 * MICROS);
-        let (mut sim, geo) = sim_with(synth, START, dash);
-        sim.world.host_drift_ppm = ppm;
-        sim.run_for(6 * 3600 * MICROS as u64);
-        no_fatal(&sim);
-        assert!(sim.errors.is_empty(), "{:?}", sim.errors);
-        let reqs = segment_requests(&sim, geo);
-        assert_no_duplicates(&reqs);
-        assert_contiguous(&reqs);
-        assert!(early_requests(&reqs, geo, 150_000).is_empty(), "ppm {ppm}");
-        let utc = sim.requests(Kind::Utc).len();
-        assert!((35..=200).contains(&utc), "{utc} UTC requests");
-    }
+fn hours_at_plus_100_ppm_with_resync_never_requests_early() {
+    drift_with_resync_never_requests_early(100);
+}
+
+#[test]
+fn hours_at_minus_100_ppm_with_resync_never_requests_early() {
+    drift_with_resync_never_requests_early(-100);
 }
 
 #[test]
@@ -234,7 +250,8 @@ fn early_answers_trigger_a_rate_limited_clock_resync_even_without_periodic_resyn
     dash.utc_resync_us = u64::MAX;
     let (mut sim, geo) = sim_with(with_utc(Addressing::Number), START, dash);
     sim.world.host_drift_ppm = 100;
-    sim.run_for(3 * 3600 * MICROS as u64);
+    let hours: u64 = if soak() { 3 } else { 1 };
+    sim.run_for(hours * 3600 * MICROS as u64);
     let reqs = segment_requests(&sim, geo);
     assert!(early_requests(&reqs, geo, 150_000).is_empty());
     let utc = sim.requests(Kind::Utc);

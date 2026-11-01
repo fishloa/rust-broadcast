@@ -465,155 +465,123 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_decoder_config_none() {
-        let d = MetadataDescriptor {
-            metadata_application_format: 0x0010,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::TeM,
-            metadata_format_identifier: None,
-            metadata_service_id: 5,
-            decoder_config_flags: DecoderConfigFlags::None,
-            dsmcc_flag: false,
-            service_identification: None,
-            decoder_config: DecoderConfig::None,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_decoder_config_in_descriptor() {
-        let d = MetadataDescriptor {
-            metadata_application_format: 0x0011,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::BiM,
-            metadata_format_identifier: None,
-            metadata_service_id: 3,
-            decoder_config_flags: DecoderConfigFlags::InDescriptor,
-            dsmcc_flag: false,
-            service_identification: None,
-            decoder_config: DecoderConfig::InDescriptor(DecoderConfigInDescriptor {
-                decoder_config: &[0x01, 0x02, 0x03],
-            }),
-            reserved: RESERVED_DEFAULT,
-            private_data: &[0xFF],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_decoder_config_same_service() {
-        let d = MetadataDescriptor {
-            metadata_application_format: 0x0100,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::AppFormat,
-            metadata_format_identifier: None,
-            metadata_service_id: 1,
-            decoder_config_flags: DecoderConfigFlags::SameService,
-            dsmcc_flag: true,
-            service_identification: Some(&[0xAA, 0xBB]),
-            decoder_config: DecoderConfig::SameService,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_decoder_config_dsmcc() {
-        let d = MetadataDescriptor {
-            metadata_application_format: 0x0010,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::Reserved1(0x30),
-            metadata_format_identifier: None,
-            metadata_service_id: 7,
-            decoder_config_flags: DecoderConfigFlags::DsmccCarousel,
-            dsmcc_flag: false,
-            service_identification: None,
-            decoder_config: DecoderConfig::DsmccCarousel(DecoderConfigDsmcc {
-                dec_config_identification: &[0x11, 0x22, 0x33, 0x44],
-            }),
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_decoder_config_other_service() {
-        let d = MetadataDescriptor {
-            metadata_application_format: 0x0010,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::Private(0x50),
-            metadata_format_identifier: None,
-            metadata_service_id: 2,
-            decoder_config_flags: DecoderConfigFlags::OtherService,
-            dsmcc_flag: false,
-            service_identification: None,
-            decoder_config: DecoderConfig::OtherService(DecoderConfigOtherService {
-                decoder_config_metadata_service_id: 99,
-            }),
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_decoder_config_reserved_data() {
-        let d = MetadataDescriptor {
-            metadata_application_format: 0x0010,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::Identifier,
-            metadata_format_identifier: Some(0xDEADBEEF),
-            metadata_service_id: 4,
-            decoder_config_flags: DecoderConfigFlags::Reserved(5),
-            dsmcc_flag: false,
-            service_identification: None,
-            decoder_config: DecoderConfig::ReservedData(ReservedData {
-                data: &[0x99, 0x88, 0x77],
-            }),
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_decoder_config_private() {
-        let d = MetadataDescriptor {
-            metadata_application_format: 0x0010,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::TeM,
-            metadata_format_identifier: None,
-            metadata_service_id: 6,
-            decoder_config_flags: DecoderConfigFlags::Private,
-            dsmcc_flag: false,
-            service_identification: None,
-            decoder_config: DecoderConfig::Private,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[0x01],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_with_ffff_and_ff() {
-        let d = MetadataDescriptor {
-            metadata_application_format: 0xFFFF,
-            metadata_application_format_identifier: Some(0x11223344),
-            metadata_format: MetadataFormat::Identifier,
-            metadata_format_identifier: Some(0x55667788),
-            metadata_service_id: 8,
-            decoder_config_flags: DecoderConfigFlags::None,
-            dsmcc_flag: true,
-            service_identification: Some(&[0xCA, 0xFE]),
-            decoder_config: DecoderConfig::None,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
+    fn round_trips_every_case() {
+        for d in [
+            MetadataDescriptor {
+                metadata_application_format: 0x0010,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::TeM,
+                metadata_format_identifier: None,
+                metadata_service_id: 5,
+                decoder_config_flags: DecoderConfigFlags::None,
+                dsmcc_flag: false,
+                service_identification: None,
+                decoder_config: DecoderConfig::None,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+            MetadataDescriptor {
+                metadata_application_format: 0x0011,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::BiM,
+                metadata_format_identifier: None,
+                metadata_service_id: 3,
+                decoder_config_flags: DecoderConfigFlags::InDescriptor,
+                dsmcc_flag: false,
+                service_identification: None,
+                decoder_config: DecoderConfig::InDescriptor(DecoderConfigInDescriptor {
+                    decoder_config: &[0x01, 0x02, 0x03],
+                }),
+                reserved: RESERVED_DEFAULT,
+                private_data: &[0xFF],
+            },
+            MetadataDescriptor {
+                metadata_application_format: 0x0100,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::AppFormat,
+                metadata_format_identifier: None,
+                metadata_service_id: 1,
+                decoder_config_flags: DecoderConfigFlags::SameService,
+                dsmcc_flag: true,
+                service_identification: Some(&[0xAA, 0xBB]),
+                decoder_config: DecoderConfig::SameService,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+            MetadataDescriptor {
+                metadata_application_format: 0x0010,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::Reserved1(0x30),
+                metadata_format_identifier: None,
+                metadata_service_id: 7,
+                decoder_config_flags: DecoderConfigFlags::DsmccCarousel,
+                dsmcc_flag: false,
+                service_identification: None,
+                decoder_config: DecoderConfig::DsmccCarousel(DecoderConfigDsmcc {
+                    dec_config_identification: &[0x11, 0x22, 0x33, 0x44],
+                }),
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+            MetadataDescriptor {
+                metadata_application_format: 0x0010,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::Private(0x50),
+                metadata_format_identifier: None,
+                metadata_service_id: 2,
+                decoder_config_flags: DecoderConfigFlags::OtherService,
+                dsmcc_flag: false,
+                service_identification: None,
+                decoder_config: DecoderConfig::OtherService(DecoderConfigOtherService {
+                    decoder_config_metadata_service_id: 99,
+                }),
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+            MetadataDescriptor {
+                metadata_application_format: 0x0010,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::Identifier,
+                metadata_format_identifier: Some(0xDEADBEEF),
+                metadata_service_id: 4,
+                decoder_config_flags: DecoderConfigFlags::Reserved(5),
+                dsmcc_flag: false,
+                service_identification: None,
+                decoder_config: DecoderConfig::ReservedData(ReservedData {
+                    data: &[0x99, 0x88, 0x77],
+                }),
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+            MetadataDescriptor {
+                metadata_application_format: 0x0010,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::TeM,
+                metadata_format_identifier: None,
+                metadata_service_id: 6,
+                decoder_config_flags: DecoderConfigFlags::Private,
+                dsmcc_flag: false,
+                service_identification: None,
+                decoder_config: DecoderConfig::Private,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[0x01],
+            },
+            MetadataDescriptor {
+                metadata_application_format: 0xFFFF,
+                metadata_application_format_identifier: Some(0x11223344),
+                metadata_format: MetadataFormat::Identifier,
+                metadata_format_identifier: Some(0x55667788),
+                metadata_service_id: 8,
+                decoder_config_flags: DecoderConfigFlags::None,
+                dsmcc_flag: true,
+                service_identification: Some(&[0xCA, 0xFE]),
+                decoder_config: DecoderConfig::None,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+        ] {
+            serialize_round_trip(&d);
+        }
     }
 
     fn base<'a>() -> MetadataDescriptor<'a> {

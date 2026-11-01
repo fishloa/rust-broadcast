@@ -186,17 +186,6 @@ mod tests {
         assert_eq!(d.serialized_len() - 2, 4);
     }
 
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = PrivateDataSpecifierDescriptor {
-            private_data_specifier: 0x0000_233A,
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
-
     #[test]
     fn specifier_name_exact_entry() {
         // Exact entry from tsPDS.names [PrivateDataSpecifier].

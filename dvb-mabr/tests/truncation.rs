@@ -19,8 +19,20 @@ fn assert_every_truncation_errors<T: std::fmt::Debug>(
     // The prefix that is the whole document up to its root end tag.
     let complete = text.trim_end().len();
     assert!(complete < text.len() || parse(text).is_ok());
+    let soak = std::env::var_os("RUST_BROADCAST_SOAK").is_some();
+    let bytes = text.as_bytes();
     for end in 1..text.len() {
         if !text.is_char_boundary(end) {
+            continue;
+        }
+        let structural = |i: usize| {
+            bytes
+                .get(i)
+                .is_some_and(|b| matches!(b, b'<' | b'>' | b'/'))
+        };
+        let sampled =
+            end % 16 == 0 || structural(end - 1) || structural(end) || end + 64 >= complete;
+        if !soak && !sampled {
             continue;
         }
         let result = parse(&text[..end]);

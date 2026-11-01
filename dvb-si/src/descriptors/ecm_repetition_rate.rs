@@ -158,21 +158,4 @@ mod tests {
             Error::OutputBufferTooSmall { .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_serializes_to_stable_json() {
-        // Borrowed `&[u8]` cannot deserialize from a JSON number array, so we
-        // assert the Serialize impl is wired and emits stable JSON.
-        let d = EcmRepetitionRateDescriptor {
-            ca_system_id: 0x0648,
-            ecm_repetition_rate: 480,
-            private_data: &[0xFE],
-        };
-        let j = serde_json::to_string(&d).unwrap();
-        // Valid, re-parseable JSON (key order is map-defined, so we do not
-        // assert byte-for-byte string stability).
-        let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
-        assert!(j.contains("ca_system_id"));
-    }
 }

@@ -349,123 +349,101 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_carriage_0_same_ts() {
-        let d = MetadataPointerDescriptor {
-            metadata_application_format: 0x0010,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::TeM,
-            metadata_format_identifier: None,
-            metadata_service_id: 5,
-            metadata_locator_record_flag: false,
-            mpeg_carriage_flags: MpegCarriageFlags::SameTs,
-            metadata_locator_record: None,
-            program_number: Some(0x0101),
-            transport_stream_location: None,
-            transport_stream_id: None,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_carriage_1_different_ts() {
-        let d = MetadataPointerDescriptor {
-            metadata_application_format: 0x0011,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::BiM,
-            metadata_format_identifier: None,
-            metadata_service_id: 7,
-            metadata_locator_record_flag: false,
-            mpeg_carriage_flags: MpegCarriageFlags::DifferentTs,
-            metadata_locator_record: None,
-            program_number: Some(0x0202),
-            transport_stream_location: Some(0x0303),
-            transport_stream_id: Some(0x0404),
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_carriage_2_program_stream() {
-        let d = MetadataPointerDescriptor {
-            metadata_application_format: 0x0100,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::AppFormat,
-            metadata_format_identifier: None,
-            metadata_service_id: 3,
-            metadata_locator_record_flag: false,
-            mpeg_carriage_flags: MpegCarriageFlags::ProgramStream,
-            metadata_locator_record: None,
-            program_number: Some(0x0505),
-            transport_stream_location: None,
-            transport_stream_id: None,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_carriage_3_none() {
-        let d = MetadataPointerDescriptor {
-            metadata_application_format: 0x0200,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::Private(0x80),
-            metadata_format_identifier: None,
-            metadata_service_id: 1,
-            metadata_locator_record_flag: true,
-            mpeg_carriage_flags: MpegCarriageFlags::None,
-            metadata_locator_record: Some(&[0xAA, 0xBB]),
-            program_number: None,
-            transport_stream_location: None,
-            transport_stream_id: None,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[0xCC],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_with_ffff_and_ff_identifiers() {
-        let d = MetadataPointerDescriptor {
-            metadata_application_format: 0xFFFF,
-            metadata_application_format_identifier: Some(0x12345678),
-            metadata_format: MetadataFormat::Identifier,
-            metadata_format_identifier: Some(0x9ABCDEF0),
-            metadata_service_id: 9,
-            metadata_locator_record_flag: false,
-            mpeg_carriage_flags: MpegCarriageFlags::SameTs,
-            metadata_locator_record: None,
-            program_number: Some(42),
-            transport_stream_location: None,
-            transport_stream_id: None,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[0xFF],
-        };
-        serialize_round_trip(&d);
-    }
-
-    #[test]
-    fn round_trip_all_empty_private() {
-        let d = MetadataPointerDescriptor {
-            metadata_application_format: 0x0010,
-            metadata_application_format_identifier: None,
-            metadata_format: MetadataFormat::Reserved0(0x05),
-            metadata_format_identifier: None,
-            metadata_service_id: 0,
-            metadata_locator_record_flag: false,
-            mpeg_carriage_flags: MpegCarriageFlags::None,
-            metadata_locator_record: None,
-            program_number: None,
-            transport_stream_location: None,
-            transport_stream_id: None,
-            reserved: RESERVED_DEFAULT,
-            private_data: &[],
-        };
-        serialize_round_trip(&d);
+    fn round_trips_every_case() {
+        for d in [
+            MetadataPointerDescriptor {
+                metadata_application_format: 0x0010,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::TeM,
+                metadata_format_identifier: None,
+                metadata_service_id: 5,
+                metadata_locator_record_flag: false,
+                mpeg_carriage_flags: MpegCarriageFlags::SameTs,
+                metadata_locator_record: None,
+                program_number: Some(0x0101),
+                transport_stream_location: None,
+                transport_stream_id: None,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+            MetadataPointerDescriptor {
+                metadata_application_format: 0x0011,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::BiM,
+                metadata_format_identifier: None,
+                metadata_service_id: 7,
+                metadata_locator_record_flag: false,
+                mpeg_carriage_flags: MpegCarriageFlags::DifferentTs,
+                metadata_locator_record: None,
+                program_number: Some(0x0202),
+                transport_stream_location: Some(0x0303),
+                transport_stream_id: Some(0x0404),
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+            MetadataPointerDescriptor {
+                metadata_application_format: 0x0100,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::AppFormat,
+                metadata_format_identifier: None,
+                metadata_service_id: 3,
+                metadata_locator_record_flag: false,
+                mpeg_carriage_flags: MpegCarriageFlags::ProgramStream,
+                metadata_locator_record: None,
+                program_number: Some(0x0505),
+                transport_stream_location: None,
+                transport_stream_id: None,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+            MetadataPointerDescriptor {
+                metadata_application_format: 0x0200,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::Private(0x80),
+                metadata_format_identifier: None,
+                metadata_service_id: 1,
+                metadata_locator_record_flag: true,
+                mpeg_carriage_flags: MpegCarriageFlags::None,
+                metadata_locator_record: Some(&[0xAA, 0xBB]),
+                program_number: None,
+                transport_stream_location: None,
+                transport_stream_id: None,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[0xCC],
+            },
+            MetadataPointerDescriptor {
+                metadata_application_format: 0xFFFF,
+                metadata_application_format_identifier: Some(0x12345678),
+                metadata_format: MetadataFormat::Identifier,
+                metadata_format_identifier: Some(0x9ABCDEF0),
+                metadata_service_id: 9,
+                metadata_locator_record_flag: false,
+                mpeg_carriage_flags: MpegCarriageFlags::SameTs,
+                metadata_locator_record: None,
+                program_number: Some(42),
+                transport_stream_location: None,
+                transport_stream_id: None,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[0xFF],
+            },
+            MetadataPointerDescriptor {
+                metadata_application_format: 0x0010,
+                metadata_application_format_identifier: None,
+                metadata_format: MetadataFormat::Reserved0(0x05),
+                metadata_format_identifier: None,
+                metadata_service_id: 0,
+                metadata_locator_record_flag: false,
+                mpeg_carriage_flags: MpegCarriageFlags::None,
+                metadata_locator_record: None,
+                program_number: None,
+                transport_stream_location: None,
+                transport_stream_id: None,
+                reserved: RESERVED_DEFAULT,
+                private_data: &[],
+            },
+        ] {
+            serialize_round_trip(&d);
+        }
     }
 
     #[test]

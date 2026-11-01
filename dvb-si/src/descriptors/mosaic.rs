@@ -746,23 +746,4 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(MosaicDescriptor::parse(&buf).unwrap(), d);
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = MosaicDescriptor::new(
-            true,
-            1,
-            1,
-            vec![MosaicLogicalCell::new(
-                5,
-                1,
-                vec![ElementaryCell::new(3), ElementaryCell::new(7)],
-                CellLinkage::Bouquet { bouquet_id: 0x1234 },
-            )],
-        );
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
 }

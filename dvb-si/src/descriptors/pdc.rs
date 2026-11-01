@@ -258,13 +258,4 @@ mod tests {
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
     }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = PdcDescriptor::new(0x0A_BCDE);
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
 }

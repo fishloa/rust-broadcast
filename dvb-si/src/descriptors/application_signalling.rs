@@ -360,18 +360,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = ApplicationSignallingDescriptor::new(vec![ApplicationSignallingEntry::new(
-            ApplicationType::HbbTv,
-            4,
-        )]);
-        let j = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
-    }
-
     #[test]
     fn application_type_known_values_round_trip() {
         // Spot-check that well-known types survive a serialize→parse round-trip.

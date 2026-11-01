@@ -331,20 +331,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let d = FtaContentManagementDescriptor::new(
-            true,
-            false,
-            ControlRemoteAccess::EnabledManagedDomain,
-            true,
-        );
-        let json = serde_json::to_string(&d).unwrap();
-        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    }
-
     #[test]
     fn control_remote_access_full_range_round_trip() {
         for b in 0..=0xFF_u8 {

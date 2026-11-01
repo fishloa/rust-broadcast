@@ -13,6 +13,14 @@ use dash_runtime::client::{DashConfig, StateSize};
 const HOUR_US: u64 = 3_600 * MICROS as u64;
 const REMEMBERED_DONE: usize = 4096;
 
+fn hours() -> usize {
+    if std::env::var_os("RUST_BROADCAST_SOAK").is_some() {
+        24
+    } else {
+        6
+    }
+}
+
 fn sample(sim: &Sim) -> StateSize {
     sim.client.state_size()
 }
@@ -34,7 +42,7 @@ fn bounded(s: &StateSize) {
 fn day(mut sim: Sim, label: &str) -> Vec<StateSize> {
     sim.keep_samples = false;
     let mut sizes = Vec::new();
-    for _ in 0..24 {
+    for _ in 0..hours() {
         sim.run_for(HOUR_US);
         assert!(sim.fatal().is_none(), "{label}: {:?}", sim.fatal());
         let s = sample(&sim);
@@ -51,7 +59,7 @@ fn day(mut sim: Sim, label: &str) -> Vec<StateSize> {
 
 fn steady(sizes: &[StateSize]) {
     let first = sizes[3];
-    let last = sizes[23];
+    let last = sizes[sizes.len() - 1];
     assert_eq!(first.periods, last.periods);
     assert_eq!(first.inits, last.inits);
     assert_eq!(first.reps, last.reps);
@@ -59,7 +67,7 @@ fn steady(sizes: &[StateSize]) {
 }
 
 #[test]
-fn twenty_four_hours_of_a_single_period_keeps_every_collection_bounded() {
+fn a_long_run_of_a_single_period_keeps_every_collection_bounded() {
     let mut synth = with_utc(Addressing::TimelineNumber);
     synth.tsb_us = Some(60 * MICROS);
     let (sim, geo) = sim_with(synth, 41 * MICROS + 120_000, DashConfig::default());
@@ -69,7 +77,7 @@ fn twenty_four_hours_of_a_single_period_keeps_every_collection_bounded() {
 }
 
 #[test]
-fn twenty_four_hours_with_a_new_period_every_ten_minutes_keeps_every_collection_bounded() {
+fn a_long_run_with_a_new_period_every_ten_minutes_keeps_every_collection_bounded() {
     let mut synth = with_utc(Addressing::TimelineNumber);
     synth.tsb_us = Some(60 * MICROS);
     synth.period_starts_us = (0..160).map(|i| i * 600 * MICROS).collect();
@@ -77,7 +85,7 @@ fn twenty_four_hours_with_a_new_period_every_ten_minutes_keeps_every_collection_
     let (mut sim, geo) = sim_with(synth, 41 * MICROS + 120_000, DashConfig::default());
     sim.keep_samples = false;
     let mut sizes = Vec::new();
-    for _ in 0..24 {
+    for _ in 0..hours() {
         sim.run_for(HOUR_US);
         assert!(sim.fatal().is_none(), "{:?}", sim.fatal());
         let s = sample(&sim);
@@ -88,5 +96,9 @@ fn twenty_four_hours_with_a_new_period_every_ten_minutes_keeps_every_collection_
     let reqs = segment_requests(&sim, geo);
     assert_no_duplicates(&reqs);
     let changes = sim.count(|o| matches!(o, dash_runtime::client::Output::PeriodChanged { .. }));
-    assert!(changes >= 140, "{changes} Period changes in a day");
+    assert!(
+        changes >= hours() * 6 - 4,
+        "{changes} Period changes in {} hours",
+        hours()
+    );
 }
