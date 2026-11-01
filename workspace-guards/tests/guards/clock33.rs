@@ -1,7 +1,9 @@
-//! Tripwire guard (umbrella #1137 T9): 33-bit PTS/DTS/`pts_time` wrap
+//! Tripwire guard (umbrella #1137 T9), applied to every table crate: 33-bit PTS/DTS/`pts_time` wrap
 //! arithmetic in this crate goes through `broadcast_common::clock33`
 //! (`WRAP_33BIT`, `unwrap_delta`, `wrapping_forward_distance`, `add`,
-//! `add_signed`, `signed_distance`), never a hand-rolled modulus or a raw
+//! `add_signed`, `signed_distance`) and the 27 MHz PCR clock arithmetic goes
+//! through `clock33::{PCR_HZ, PCR_WRAP_27MHZ, pcr_forward_distance,
+//! pcr_from_parts, pcr_split}`, never a hand-rolled modulus or a raw
 //! subtraction. Scans every `src/**/*.rs` outside `#[cfg(test)]` items and
 //! fails on:
 //!
@@ -16,11 +18,20 @@
 //! real control. Every `ALLOW` entry is line-pinned and states why the hit is
 //! not 33-bit wrap arithmetic; a stale entry (no longer matching) fails.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use workspace_guards::src_files;
+
+pub struct Crate {
+    pub name: &'static str,
+    /// Banned needles; `dvb-si` carries the 2^33 + `abs_diff` subset only
+    /// (its Green/Quality_Access_Unit PCR-free codecs have no 27 MHz clock).
+    pub banned: &'static [(&'static str, &'static str)],
+    /// `(path suffix, line number, needle, reason)` — reviewed, line-pinned
+    /// exceptions.
+    pub allow: &'static [(&'static str, usize, &'static str, &'static str)],
+}
 
 /// `(needle, why it is banned)`.
-const BANNED: &[(&str, &str)] = &[
+pub const BANNED_FULL: &[(&str, &str)] = &[
     (
         "abs_diff",
         "raw abs_diff on a timestamp (use clock33::signed_distance)",
@@ -46,26 +57,8 @@ const BANNED: &[(&str, &str)] = &[
     ),
 ];
 
-/// `(path suffix, line number, needle, reason)` — reviewed, line-pinned
-/// exceptions.
-const ALLOW: &[(&str, usize, &str, &str)] = &[(
-    "src/splice.rs",
-    98,
-    "abs_diff",
-    "condition_splice_point is the documented LINEAR (non-wrapping) variant for a clock that does not wrap; \
-         the wrapping clock uses condition_splice_point_wrapping (circular distance, issue #1125)",
-)];
-
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).expect("read src dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
-}
+/// The 2^33 + `abs_diff` rules without the 27 MHz PCR ones (the first six).
+pub const BANNED_NO_PCR: &[(&str, &str)] = BANNED_FULL.split_at(6).0;
 
 /// The source with every `#[cfg(test)]` item and every `//` comment line
 /// removed. Braces inside string literals can fool the brace counter; that is
@@ -103,54 +96,67 @@ fn non_test_lines(src: &str) -> Vec<(usize, String)> {
     out
 }
 
-fn banned_in_line(line: &str) -> Vec<(&'static str, &'static str)> {
-    BANNED
+fn banned_in_line<'a>(
+    banned: &'a [(&'static str, &'static str)],
+    line: &str,
+) -> Vec<(&'a str, &'a str)> {
+    banned
         .iter()
         .filter(|(needle, _)| line.contains(needle))
         .copied()
         .collect()
 }
 
-#[test]
-fn no_hand_rolled_33bit_wrap_arithmetic_in_src() {
-    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    rust_files(&src_dir, &mut files);
-    assert!(!files.is_empty());
+fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
     let mut violations = Vec::new();
-    let mut used = vec![false; ALLOW.len()];
-    for file in files {
-        let text = fs::read_to_string(&file).expect("read source");
-        let rel = file
-            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        for (no, line) in non_test_lines(&text) {
-            for (needle, why) in banned_in_line(&line) {
-                if let Some(i) = ALLOW
+    let mut used = vec![false; c.allow.len()];
+    for (rel, text) in files {
+        for (no, line) in non_test_lines(text) {
+            for (needle, why) in banned_in_line(c.banned, &line) {
+                if let Some(i) = c
+                    .allow
                     .iter()
                     .position(|(s, l, n, _)| rel.ends_with(s) && *l == no && *n == needle)
                 {
                     used[i] = true;
                 } else {
-                    violations.push(format!("{rel}:{no}: {why}: {}", line.trim()));
+                    violations.push(format!("{}: {rel}:{no}: {why}: {}", c.name, line.trim()));
                 }
             }
         }
     }
-    let stale: Vec<_> = ALLOW
-        .iter()
-        .zip(&used)
-        .filter(|(_, u)| !**u)
-        .map(|(a, _)| (a.0, a.1))
-        .collect();
+    for (a, u) in c.allow.iter().zip(&used) {
+        if !*u {
+            violations.push(format!("{}: stale ALLOW entry: ({}, {})", c.name, a.0, a.1));
+        }
+    }
+    violations
+}
+
+#[test]
+fn no_hand_rolled_33bit_wrap_arithmetic_in_src() {
+    let mut violations = Vec::new();
+    for c in crate::clock33_data::TABLE {
+        let files = src_files(c.name);
+        assert!(!files.is_empty(), "{}: no source files under src/", c.name);
+        violations.extend(check(c, &files));
+    }
     assert!(
         violations.is_empty(),
-        "hand-rolled 33-bit wrap arithmetic (use broadcast_common::clock33, or add a reasoned line-pinned ALLOW entry):\n{}",
+        "hand-rolled 33-bit wrap arithmetic (use broadcast_common::clock33, or add a reasoned line-pinned ALLOW entry in clock33_data.rs):\n{}",
         violations.join("\n")
     );
-    assert!(stale.is_empty(), "stale ALLOW entries: {stale:?}");
+}
+
+#[test]
+fn table_is_exactly_the_clock33_crates() {
+    let names: Vec<&str> = crate::clock33_data::TABLE.iter().map(|c| c.name).collect();
+    for n in &names {
+        assert!(
+            workspace_guards::workspace_members().iter().any(|m| m == n),
+            "{n} is not a workspace member"
+        );
+    }
 }
 
 /// The scanner itself: it must bite on the shapes it claims to catch and
@@ -166,8 +172,35 @@ fn scanner_catches_banned_shapes_and_skips_test_items() {
                // 1 << 33 in a comment\n";
     let hits: Vec<_> = non_test_lines(src)
         .into_iter()
-        .flat_map(|(_, l)| banned_in_line(&l))
+        .flat_map(|(_, l)| {
+            banned_in_line(BANNED_FULL, &l)
+                .into_iter()
+                .map(|h| (h.0.to_string(), h.1.to_string()))
+                .collect::<Vec<_>>()
+        })
         .collect();
     // `1u64 << 33` contains no `1 << 33` substring, so each shape hits once.
     assert_eq!(hits.len(), 4, "{hits:?}");
+}
+
+#[test]
+fn allow_pin_and_stale_entry_are_enforced() {
+    let src = vec![(
+        "src/x.rs".to_string(),
+        "fn a(x: u64, y: u64) -> u64 { x.abs_diff(y) }\n".to_string(),
+    )];
+    let pinned = Crate {
+        name: "synthetic",
+        banned: BANNED_FULL,
+        allow: &[("src/x.rs", 1, "abs_diff", "reason")],
+    };
+    assert!(check(&pinned, &src).is_empty());
+    let wrong_line = Crate {
+        name: "synthetic",
+        banned: BANNED_FULL,
+        allow: &[("src/x.rs", 9, "abs_diff", "reason")],
+    };
+    let v = check(&wrong_line, &src);
+    assert_eq!(v.len(), 2, "{v:?}");
+    assert!(v[0].starts_with("synthetic: src/x.rs:1:"), "{v:?}");
 }

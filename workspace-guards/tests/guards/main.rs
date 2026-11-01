@@ -1,3 +1,5 @@
+mod clock33;
+mod clock33_data;
 mod common;
 mod label;
 mod label_data;
