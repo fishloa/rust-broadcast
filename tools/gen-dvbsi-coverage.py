@@ -1173,7 +1173,7 @@ def render_coverage(m: Model) -> str:
         "# dvb-si coverage reference",
         "",
         "<!-- GENERATED FILE — do not edit by hand. Regenerate with",
-        "     `python3 tools/gen-dvbsi-coverage.py`; `cargo test -p dvb-si --test docs_coverage_drift`",
+        "     `python3 tools/gen-dvbsi-coverage.py`; `cargo test -p dvb-si --test it docs_coverage_drift`",
         "     fails when this file is stale. -->",
         "",
         "Everything `dvb-si` parses **and** serializes, generated from the crate's own dispatch lists",
