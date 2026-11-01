@@ -11,6 +11,7 @@ mod cookies;
 pub mod error;
 pub mod events;
 mod headers;
+pub mod identity;
 mod join;
 pub mod playout;
 mod queue;
@@ -35,6 +36,7 @@ pub use events::{
     AUDIO_TRACK_ID_OFFSET, Action, AvSync, BufferEvent, BufferStats, Config, ErrorKind, Event,
     MAX_SERVER_REFUSED_REASON_BYTES, PauseReason, ResumeMode, SourceKind, Status, StreamKind,
 };
+pub use identity::{ClientIdentity, ClientIdentityScope};
 pub use playout::PlayoutConfig;
 pub use session::Session;
 pub use source::ts_http::TsHttpSource;

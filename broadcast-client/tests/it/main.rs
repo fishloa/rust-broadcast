@@ -44,6 +44,7 @@ mod hls_live_silent;
 mod hls_renditions;
 mod hold_early_release;
 mod hold_transparency;
+mod mtls;
 mod no_clock_guard;
 mod no_handroll_guard;
 #[cfg(feature = "__test-seams")]
