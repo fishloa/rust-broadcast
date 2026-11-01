@@ -1,4 +1,3 @@
-mod support;
 mod cc_repair;
 #[cfg(feature = "cli")]
 mod cli_keep_pids;
@@ -14,4 +13,5 @@ mod pid_filter;
 mod psi_regen;
 mod scte35_preserve;
 mod stuffing;
+mod support;
 mod tsduck_oracle;

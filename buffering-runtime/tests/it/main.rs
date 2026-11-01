@@ -1,4 +1,3 @@
-mod support;
 mod apple_tv_input_logs;
 mod burst;
 mod granularity;
@@ -13,4 +12,5 @@ mod serde_round_trip;
 mod slate_start;
 mod start_granularity;
 mod state_machine;
+mod support;
 mod synth;

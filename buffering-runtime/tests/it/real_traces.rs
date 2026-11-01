@@ -24,8 +24,8 @@
 //! These tests load through `test_fixtures::require`: they skip loudly when
 //! the private repo is not checked out and fail when `REQUIRE_PRIVATE_FIXTURES=1`
 //! (CI) and it is missing.
-use buffering_runtime::Event;
 use crate::support::*;
+use buffering_runtime::Event;
 
 fn trace(name: &str) -> Option<Vec<Chunk>> {
     test_fixtures::require(

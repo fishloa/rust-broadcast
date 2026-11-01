@@ -584,8 +584,12 @@ fn cmaf_hls_playlist_covers_input_once() {
     let validator = {
         let mut c = Command::new("mediastreamvalidator");
         c.arg("--version");
-        crate::common::run_bounded(c, crate::common::PROBE_DEADLINE, "mediastreamvalidator --version")
-            .is_ok_and(|o| o.status.success())
+        crate::common::run_bounded(
+            c,
+            crate::common::PROBE_DEADLINE,
+            "mediastreamvalidator --version",
+        )
+        .is_ok_and(|o| o.status.success())
     };
     if !validator {
         eprintln!("SKIP mediastreamvalidator cross-check: not on PATH");

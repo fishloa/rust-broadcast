@@ -13,11 +13,11 @@
 //! 3. `Cea608ToWebVtt` turns the real frames into cues, and the SRT/WebVTT
 //!    renderings agree with each other.
 #![cfg(feature = "cc-data")]
+use crate::support::ga94::{ga94_from_ts, parse_reference};
 use broadcast_common::{Parse, Serialize};
 use caption_convert::Cea608ToWebVtt;
 use cc_data::CcData;
 use cc_data::decode::Cea608Channel;
-use crate::support::ga94::{ga94_from_ts, parse_reference};
 
 /// The captures live in the private submodule (their media licence is unclear,
 /// see `private/fixtures/captions/PROVENANCE.md`): `true` (after a loud notice)

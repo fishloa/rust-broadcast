@@ -1,7 +1,7 @@
 //! Property tests over random operation streams (seeded xorshift; no extra
 //! dependency): no panic on any input, and a fixed invariant set.
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, State};
 use crate::support::Rng;
+use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, State};
 
 const MIN: u64 = 300_000;
 const MAX: u64 = 3_000_000;

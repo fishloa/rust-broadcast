@@ -1,4 +1,3 @@
-mod common;
 mod absolute_timing;
 mod any_stream;
 mod audio_config_facts;
@@ -26,6 +25,7 @@ mod codec_config;
 mod codec_config_boxes;
 mod codec_tail;
 mod codecs_new;
+mod common;
 mod container_child_order;
 mod damaged_unit_resync;
 mod damaged_unit_resync_flv;

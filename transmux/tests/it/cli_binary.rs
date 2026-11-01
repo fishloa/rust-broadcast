@@ -215,8 +215,12 @@ fn have_msv() -> Option<&'static str> {
         std::path::Path::new(p).exists() || {
             let mut c = Command::new(p);
             c.arg("--help");
-            crate::common::run_bounded(c, crate::common::PROBE_DEADLINE, "mediastreamvalidator --help")
-                .is_ok_and(|o| o.status.code().is_some())
+            crate::common::run_bounded(
+                c,
+                crate::common::PROBE_DEADLINE,
+                "mediastreamvalidator --help",
+            )
+            .is_ok_and(|o| o.status.code().is_some())
         }
     })
 }
