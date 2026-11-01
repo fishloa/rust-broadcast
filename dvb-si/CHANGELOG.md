@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `descriptors::atsc_caption_service::AtscCaptionServiceDescriptor` (tag 0x86, ATSC A/65:2013 Table 6.26): per-service `language`, typed `AtscCaptionKind` (608 with `line21_field`, 708 with `caption_service_number`), `easy_reader`, `wide_aspect_ratio`, every reserved run preserved. Tag 0x86 is context dependent (the China descriptor reuses it), so it is not auto-dispatched: enable it with `DescriptorRegistry::with_atsc_caption_service()`. `AnyDescriptor::AtscCaptionService` variant. Verified against the descriptor in `tsduck/input/test-040.ts`.
+
 ## [12.0.1] - 2026-11-01
 ### Changed
 - The optional `yoke` feature now derives `yoke` 0.8's `Yokeable` (was 0.7). Only users who enable `yoke` and name `yoke` 0.7 types directly need to update their own `yoke` dependency.
