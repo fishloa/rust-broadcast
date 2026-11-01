@@ -29,6 +29,7 @@ pub struct PeerConfig {
     pub window_ack_size: u32,
     pub chunk_size_after_connect: Option<u32>,
     pub client_chunk_size: u32,
+    pub recorded: bool,
 }
 
 impl Default for PeerConfig {
@@ -38,6 +39,7 @@ impl Default for PeerConfig {
             window_ack_size: 2_500_000,
             chunk_size_after_connect: None,
             client_chunk_size: 4096,
+            recorded: false,
         }
     }
 }
@@ -225,7 +227,12 @@ impl PlayPeer {
                 if name != self.config.stream_name {
                     return self.send_on_status("error", PLAY_NOT_FOUND_CODE, out);
                 }
-                self.send_control(UserControl::StreamIsRecorded(PLAY_STREAM_ID).to_message(), out)?;
+                if self.config.recorded {
+                    self.send_control(
+                        UserControl::StreamIsRecorded(PLAY_STREAM_ID).to_message(),
+                        out,
+                    )?;
+                }
                 self.send_control(UserControl::StreamBegin(PLAY_STREAM_ID).to_message(), out)?;
                 self.send_on_status("status", PLAY_RESET_CODE, out)?;
                 self.send_on_status("status", PLAY_START_CODE, out)?;

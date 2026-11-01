@@ -143,7 +143,11 @@ pub enum ClientEvent {
     /// Server accepted `publish` — session is now publishing.
     Publishing,
     /// Server accepted `play` (`NetStream.Play.Start`): media follows. Play mode only.
-    Playing,
+    Playing {
+        /// The server announced the stream as recorded (User Control StreamIsRecorded, §6.7)
+        /// before starting it, so its end is final; a live stream's end is not.
+        recorded: bool,
+    },
     /// One FLV chunk of played media: the payload of a single Audio(8)/Video(9)/Data-AMF0(18)
     /// message as an FLV tag (+ `PreviousTagSize`), the very first chunk prefixed with the FLV
     /// file header. Concatenating every chunk in order yields a valid FLV stream. Play mode only.
@@ -287,6 +291,7 @@ pub struct ClientSession {
     /// data — #1108/RTMP-W7).
     advertised_window_ack_size: u32,
     flv: FlvTagWriter,
+    stream_is_recorded: bool,
 }
 
 impl ClientSession {
@@ -311,6 +316,7 @@ impl ClientSession {
             peer_bandwidth: None,
             advertised_window_ack_size,
             flv: FlvTagWriter::default(),
+            stream_is_recorded: false,
         }
     }
 
@@ -693,6 +699,9 @@ impl ClientSession {
                     let reply = UserControl::PingResponse(ts);
                     out.extend_from_slice(&self.writer.write(&reply.to_message())?);
                 }
+                Ok(UserControl::StreamIsRecorded(_)) if self.receiving_media() => {
+                    self.stream_is_recorded = true;
+                }
                 Ok(UserControl::StreamEof(_)) if self.receiving_media() => {
                     events.push(ClientEvent::StreamEnded);
                 }
@@ -775,7 +784,9 @@ impl ClientSession {
                 });
             } else if code == STATUS_PLAY_START {
                 self.state = ClientState::Playing;
-                events.push(ClientEvent::Playing);
+                events.push(ClientEvent::Playing {
+                    recorded: self.stream_is_recorded,
+                });
             } else if code == STATUS_PLAY_STOP || code == STATUS_PLAY_COMPLETE {
                 events.push(ClientEvent::StreamEnded);
             }

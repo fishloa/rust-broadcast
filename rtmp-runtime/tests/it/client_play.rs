@@ -177,7 +177,7 @@ fn the_command_sequence_is_connect_create_stream_play_without_the_publish_preamb
         .map(|e| match e {
             ClientEvent::Connected { .. } => "connected",
             ClientEvent::StreamCreated { .. } => "created",
-            ClientEvent::Playing => "playing",
+            ClientEvent::Playing { .. } => "playing",
             _ => "other",
         })
         .collect();
@@ -193,7 +193,7 @@ fn a_publish_mode_session_still_sends_the_publish_preamble_and_never_plays() {
     let names = rig.peer.commands();
     assert_eq!(names[..3], ["connect", "releaseStream", "FCPublish"]);
     assert!(!names.contains(&"play"));
-    assert!(!rig.events.iter().any(|e| matches!(e, ClientEvent::Playing)));
+    assert!(!rig.events.iter().any(|e| matches!(e, ClientEvent::Playing { .. })));
 }
 
 #[test]
@@ -331,7 +331,7 @@ fn a_missing_stream_is_an_error_event_and_no_playing() {
         errors[0],
         ClientEvent::Error { code, .. } if code == "NetStream.Play.StreamNotFound"
     ));
-    assert!(!rig.events.iter().any(|e| matches!(e, ClientEvent::Playing)));
+    assert!(!rig.events.iter().any(|e| matches!(e, ClientEvent::Playing { .. })));
 }
 
 #[test]
@@ -459,6 +459,23 @@ fn a_command_sent_as_amf3_is_decoded_after_its_marker_byte() {
         e,
         ClientEvent::Error { code, .. } if code == "NetStream.Play.Failed"
     )));
+}
+
+#[test]
+fn playing_reports_whether_the_server_marked_the_stream_recorded() {
+    for recorded in [false, true] {
+        let mut cfg = peer_config();
+        cfg.recorded = recorded;
+        let mut rig = Rig::new(play_config(STREAM), cfg);
+        rig.handshake_and_play();
+        assert!(
+            rig.events
+                .iter()
+                .any(|e| *e == ClientEvent::Playing { recorded }),
+            "recorded={recorded}: {:?}",
+            rig.events
+        );
+    }
 }
 
 #[test]
