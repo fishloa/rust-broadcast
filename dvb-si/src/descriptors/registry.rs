@@ -382,6 +382,14 @@ impl DescriptorRegistry {
         self.register::<crate::descriptors::china_caption_service::ChinaCaptionServiceDescriptor>()
     }
 
+    /// Register the ATSC `caption_service_descriptor` (tag 0x86, ATSC A/65:2013
+    /// §6.9.2 Table 6.26). PDS-agnostic registration of tag 0x86: enable it for
+    /// ATSC streams only, and not together with
+    /// [`Self::with_china_caption_service`], which claims the same tag.
+    pub fn with_atsc_caption_service(&mut self) -> &mut Self {
+        self.register::<crate::descriptors::atsc_caption_service::AtscCaptionServiceDescriptor>()
+    }
+
     /// Lazily walk a raw descriptor loop using this registry's configuration.
     ///
     /// Semantics mirror [`crate::descriptors::parse_loop`]: per-descriptor
@@ -1034,6 +1042,27 @@ mod tests {
                 assert_eq!(*tag, 0x86);
                 let d = value
                     .downcast_ref::<ChinaCaptionServiceDescriptor>()
+                    .unwrap();
+                assert_eq!(d.services.len(), 1);
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn atsc_caption_service_is_opt_in() {
+        use crate::descriptors::atsc_caption_service::AtscCaptionServiceDescriptor;
+        let desc = [0x86, 7, 0xE1, b'e', b'n', b'g', 0xC1, 0x7F, 0xFF];
+        let plain = DescriptorRegistry::new();
+        let items: Vec<_> = plain.parse_loop(&desc).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(items[0], AnyDescriptor::Unknown { tag: 0x86, .. }));
+        let mut reg = DescriptorRegistry::new();
+        reg.with_atsc_caption_service();
+        let items: Vec<_> = reg.parse_loop(&desc).collect::<Result<_, _>>().unwrap();
+        match &items[0] {
+            AnyDescriptor::Other { value, .. } => {
+                let d = value
+                    .downcast_ref::<AtscCaptionServiceDescriptor>()
                     .unwrap();
                 assert_eq!(d.services.len(), 1);
             }
