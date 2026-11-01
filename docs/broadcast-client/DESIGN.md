@@ -884,3 +884,49 @@ A host networking stack can stop delivering bytes for one in-flight request whil
 - A stall before the head, before any byte, or without a strong validator is `ResumeMode::Full`: the retry is the original request.
 
 Tests: `tests/dash_inactivity.rs` (static fixture, `DashSim`), `tests/segment_inactivity.rs` (HLS fixture segments through a caller-clocked `Session`, one cell per origin behaviour x stall point), the `StallResume` fault in `tests/dash_matrix.rs`, unit tests in `fetch/resume.rs` and `fetch/inactivity.rs`.
+
+## BC-7 UDP/RTP, SRT caller and client identity (#1555, #1460 SRT part, #1461)
+
+Three additions, each its own PR. All stay sans-IO: the host owns every socket and every TLS stack, the session owns every protocol and timing decision, and time is the caller's `now_us`.
+
+### Success criteria
+
+A part is done only when every line of its list holds on a fresh run of the full gate suite.
+
+**Common**
+- The three parts add no tokio, no threads, no clock read and no randomness source to `broadcast-client`; the existing `no_clock_guard` and `no_handroll_guard` stay green. `cargo check` still passes for the Apple targets.
+- Every new public enum is `#[non_exhaustive]` with `name()` and a `Display` (#204); every new failure is a typed `Error` or `ErrorKind`, never a string; no new public API takes or returns raw wire bytes except the datagram and write payloads that `Action::Send` and `Session::on_data` already carry.
+- Secrets (SRT passphrase, entropy seed, client private key) never appear in `Debug`, in an `Event`, or in a log line; the workspace `secret_debug` guard covers the new types.
+- Every new behaviour line has a named test on real data: TS captures read through `test_fixtures`, never hand-built bytes alone. Each test that guards a decision is mutation-checked (the mutation is shown to fail it).
+- Events are the existing vocabulary. UDP, RTP and SRT sources deliver `Tracks`, `Sample`, `Status` (`Establishing`, `Live`, `Stalled`, `Reconnecting`, `Ended`), `Starved`, `Discontinuity` and the buffer/playout events exactly as TS-over-HTTP does, because they reuse its demux, hold and retry policy; only the transport differs.
+
+**UDP and RTP source (`udp://`, `rtp://`)**
+1. `Action::UdpBind` asks the host for a datagram socket. In receive mode it names the local address and port, and for a multicast group the optional interface and optional source address (source-specific multicast); in connect mode (SRT) it names the remote peer. The host reports success with `Session::on_connected(conn)` and failure with `on_closed(conn, Some(error), now)`. Each `Session::on_data(conn, bytes)` carries exactly one datagram; boundaries are never merged or split by the host.
+2. A plain UDP datagram must be a whole number of 188-byte TS packets, each starting with the sync byte. Anything else is dropped whole and counted as malformed, so one damaged datagram cannot desynchronise the demuxer.
+3. An RTP datagram is parsed with `rtp-packet`; only payload type 33 (MP2T) is accepted, the rest is counted as malformed. A bounded reorder buffer releases payloads in sequence order, tolerates 16-bit sequence wrap, drops duplicates and packets that arrive after their slot was given up on, and declares a gap lost when its oldest entry waited `reorder_wait_us`. A packet more than a window ahead of the delivery point gives up every gap held and counts the missing numbers lost. Lost, reordered, duplicate and late counts are readable from `Session::datagram_stats()`. A change of SSRC, or a backward jump of more than a window, flushes the buffer, counts a resync and emits `Event::Discontinuity`.
+4. Silence is handled by the TS-over-HTTP policy: the start timeout from bind to the first sample, `Starved(NoData)` and one `Stalled` per second after `stall_notice_ms`, `Live` on the next datagram, and a rebind (a new `UdpBind` after `Close`) after `stall_reconnect_ms`. A bind failure backs off as a TS-HTTP connect failure does. Timers are driven only by `poll(now_us)` and `WakeAt`.
+5. The delivered media does not depend on how the stream was cut into datagrams: replaying a capture as 1316-byte datagrams, as 188-byte datagrams, and as RTP with shuffled neighbours (inside the window) gives the same `Tracks`/`Sample` sequence as the TS-over-HTTP source reading the same file.
+6. `close()` emits one `Close` per live socket. Host-side socket options (`SO_RCVBUF`, `SO_REUSEADDR`/`SO_REUSEPORT`, the multicast interface, `IP_ADD_SOURCE_MEMBERSHIP`) are described for `socket2`; the crate never calls them.
+
+**SRT caller (`srt://host:port`)**
+1. The session drives `srt-runtime`'s existing caller handshake, ARQ receiver and TSBPD scheduler; no SRT packet format, handshake step, loss rule or timing rule is reimplemented in this crate. The host provides one connected UDP socket (`UdpBind` in connect mode), sends every `Action::Send` as one datagram and feeds every received datagram to `on_data`.
+2. Configuration: TSBPD latency, an optional stream id, an optional passphrase with the AES key length, and an entropy seed. The seed is 32 bytes from the host's CSPRNG; the session derives each connection's socket id, initial sequence number, salt and stream key from it with HMAC-SHA-256 and a per-attempt counter, so a reconnect never reuses a value. A session for an `srt://` URL without a seed is `Error::InvalidConfig`.
+3. Handshake: induction and conclusion are retransmitted by `poll`; a rejection becomes a non-fatal `Event::Error` that names the peer's reason, then the connect-failure backoff; a handshake that does not finish inside its budget is a connect failure. The source reports `Establishing` at bind and `Live` at the first sample.
+4. Data: packets are staged, acknowledged and NAKed by the ARQ receiver, released in order at their play time by TSBPD (with too-late drop only when negotiated), and decrypted with the negotiated key when a passphrase is set. Each released payload goes through the same TS alignment as UDP and into the TS source.
+5. A wrong passphrase is rejected by the handshake; a packet encrypted under a key the session does not hold is dropped and counted (`undecryptable`), never delivered as garbage.
+6. Liveness: keepalive after one idle second, peer-idle expiry after `peer_idle_ms` (default 5000), and a peer SHUTDOWN end the connection. A connection that had played reconnects at once with fresh entropy and emits `Discontinuity`; one that never played backs off. `close()` sends one SHUTDOWN datagram, then `Close`.
+7. Verified against `srt-runtime`'s own listener in-process (clear and encrypted, loss, reorder, duplicate, stall, reconnect, rejection, wrong passphrase) and against libsrt's `srt-live-transmit` when installed (loud skip when absent, hard failure under `REQUIRE_LIBSRT=1`).
+
+**Client identity (mTLS)**
+1. `Config::client_identity` holds either an opaque host handle (the host's keychain or enclave owns the key; the session never sees key material) or a PEM or DER certificate chain with its private key. Malformed material is `Error::InvalidConfig` at `open`, checked structurally (a chain of well-formed DER certificates and one private key, not a full path validation).
+2. The identity rides on every action the host performs over TLS: `HttpRequest` for an `https` URL (TS-HTTP, HLS manifests, segments and keys, DASH) and `TcpConnect` with `tls: true` (RTSPS). It is attached only for the session's own origin unless `client_identity_scope` is `AnyHttps`, so a redirect to a foreign origin never offers it by default. Plain `http` requests carry none.
+3. The key bytes are held once (behind an `Arc`), are redacted in every `Debug`, and are never copied into events.
+4. Tested end to end against a local rustls server that requires client authentication: with the identity the capture plays, without it the TLS handshake fails and the session reports a connect failure with backoff, and a certificate from the wrong CA is refused. The test host performs the TLS exactly as the action instructs.
+
+### UDP/RTP as built
+
+- One engine, two transports: `source/datagram.rs` turns datagrams into ordered TS payloads (alignment check, RTP parse, reorder buffer, counters) and feeds them to the same `TsHttpSource` that plays TS-over-HTTP, so the hold, `Tracks`, stall, backoff and `Discontinuity` rules are shared code, not a second copy. `Action::Open` from that policy becomes `Action::UdpBind`, `Action::Abort` becomes `Close`, and `Session::on_connected` plays the part of the `200` response.
+- The `url` crate parses `udp://239.1.1.1:5000` with an opaque domain host (the scheme is not special), so the host string is parsed as an `IpAddr` by hand; IPv6 literals arrive as `Host::Ipv6`.
+- The reorder buffer keys held packets by an extended 64-bit position relative to the delivery point, so wrap needs no special case; the window bound (`reorder_packets`, at most 8192) keeps every "ahead" distance inside the signed half of the 16-bit space. Memory is bounded by the window because a packet further ahead is a jump, not a hold.
+- The reorder deadline is part of the session's `WakeAt` computation, so a host that sleeps on `WakeAt` releases a held gap on time with no datagram arriving.
+- Not in this part: SMPTE ST 2022-1 FEC, ST 2022-7 seamless protection, RTP header extensions or CSRC handling beyond parsing, non-MP2T RTP payloads, and `SO_TIMESTAMP` receive times (the host's `now_us` at delivery is the arrival time).

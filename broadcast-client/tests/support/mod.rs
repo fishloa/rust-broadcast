@@ -14,6 +14,7 @@ pub mod ts_pmt;
 pub mod ts_probe;
 pub mod ts_shift;
 pub mod ts_split;
+pub mod udp_host;
 
 use broadcast_client::{Action, Event, Session};
 

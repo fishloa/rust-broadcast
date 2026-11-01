@@ -19,6 +19,7 @@ use crate::queue::EventQueue;
 use crate::redirect;
 use crate::source::adaptive::Adaptive;
 use crate::source::dash::DashSource;
+use crate::source::datagram::Datagram;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
@@ -34,6 +35,8 @@ const SCHEME_HTTP: &str = "http";
 const SCHEME_HTTPS: &str = "https";
 const SCHEME_RTSP: &str = "rtsp";
 const SCHEME_RTSPS: &str = "rtsps";
+const SCHEME_UDP: &str = "udp";
+const SCHEME_RTP: &str = "rtp";
 const MICROS_PER_MILLI: u64 = 1_000;
 const TS_WAKE_TICK_US: u64 = 1_000_000;
 const FIRST_CONN_ID: u32 = 1;
@@ -65,6 +68,7 @@ pub struct Session {
     source: TsHttpSource,
     adaptive: Option<Adaptive>,
     rtsp: Option<Box<RtspSource>>,
+    datagram: Option<Box<Datagram>>,
     redirect_count: u32,
     next_conn: u32,
     live_conn: Option<u32>,
@@ -101,21 +105,32 @@ impl Session {
         let scheme = parsed.scheme();
         let is_rtsp_scheme = scheme == SCHEME_RTSP || scheme == SCHEME_RTSPS;
         let is_http_scheme = scheme == SCHEME_HTTP || scheme == SCHEME_HTTPS;
+        let is_udp_scheme = scheme == SCHEME_UDP;
+        let is_rtp_scheme = scheme == SCHEME_RTP;
         let rtsp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtsp);
-        let http_allowed = !matches!(config.kind, SourceKind::Rtsp);
-        if !((is_rtsp_scheme && rtsp_allowed) || (is_http_scheme && http_allowed)) {
+        let http_allowed = !matches!(
+            config.kind,
+            SourceKind::Rtsp | SourceKind::Udp | SourceKind::Rtp
+        );
+        let udp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Udp);
+        let rtp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtp);
+        if !((is_rtsp_scheme && rtsp_allowed)
+            || (is_http_scheme && http_allowed)
+            || (is_udp_scheme && udp_allowed)
+            || (is_rtp_scheme && rtp_allowed))
+        {
             return Err(Error::UnsupportedScheme(scheme.to_string()));
         }
         if is_rtsp_scheme && parsed.host().is_none() {
             return Err(Error::InvalidUrl("missing host".to_string()));
         }
-        let use_hls = !is_rtsp_scheme
+        let use_hls = is_http_scheme
             && match config.kind {
                 SourceKind::Hls => true,
                 SourceKind::Auto => has_playlist_extension(&parsed),
                 _ => false,
             };
-        let use_dash = !is_rtsp_scheme
+        let use_dash = is_http_scheme
             && match config.kind {
                 SourceKind::Dash => true,
                 SourceKind::Auto => has_mpd_extension(&parsed),
@@ -124,6 +139,15 @@ impl Session {
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
         config.validate()?;
+        let datagram = if is_udp_scheme || is_rtp_scheme {
+            Some(Box::new(Datagram::udp(
+                &parsed,
+                &config.udp,
+                is_rtp_scheme,
+            )?))
+        } else {
+            None
+        };
         let buffer_cfg = config.buffer;
         let start_pending_wait_us = config.start_pending_track_wait_us;
         let start_pending_hard_cap_us = config.start_pending_track_hard_cap_us;
@@ -172,6 +196,7 @@ impl Session {
             source,
             adaptive,
             rtsp,
+            datagram,
             redirect_count: 0,
             next_conn: FIRST_CONN_ID,
             live_conn: None,
@@ -210,6 +235,10 @@ impl Session {
                 h.poll(now_us, &mut self.auth);
                 self.flush_adaptive();
             } else {
+                if let Some(d) = self.datagram.as_mut() {
+                    let released = d.poll(now_us);
+                    self.feed_released(released, now_us);
+                }
                 if !self.auth.is_waiting() {
                     self.source.poll_timeout(now_us);
                 }
@@ -244,7 +273,7 @@ impl Session {
         headers: &[(String, String)],
         now_us: u64,
     ) {
-        if self.closed || self.rtsp.is_some() {
+        if self.closed || self.rtsp.is_some() || self.datagram.is_some() {
             return;
         }
         self.now_us = now_us;
@@ -413,6 +442,15 @@ impl Session {
             self.flush_adaptive();
             return;
         }
+        if let Some(d) = self.datagram.as_mut() {
+            if !self.known_conns.contains_key(&conn) {
+                return;
+            }
+            self.now_us = now_us;
+            let released = d.on_datagram(bytes, now_us);
+            self.feed_released(released, now_us);
+            return;
+        }
         if self.refused_conns.contains(&conn) {
             self.now_us = now_us;
             if self.source.on_refused_body(bytes, now_us) {
@@ -495,6 +533,39 @@ impl Session {
         if let Some(r) = self.rtsp.as_mut() {
             r.on_connected(conn, self.now_us);
             self.flush_rtsp();
+            return;
+        }
+        if self.datagram.is_some() && self.known_conns.contains_key(&conn) {
+            self.live_conn = Some(conn);
+            self.source.on_response(200, &[], self.now_us);
+            self.drain_source();
+        }
+    }
+
+    /// Datagram counters of a UDP, RTP or SRT session; all zero for any other source.
+    #[must_use]
+    pub fn datagram_stats(&self) -> crate::udp::DatagramStats {
+        self.datagram
+            .as_ref()
+            .map(|d| d.stats())
+            .unwrap_or_default()
+    }
+
+    fn feed_released(&mut self, released: crate::source::datagram::Released, now_us: u64) {
+        if released.discontinuity {
+            self.drain_source();
+            self.buffer_reconnected();
+            self.emit(Event::Discontinuity);
+        }
+        for payload in &released.payloads {
+            self.source.on_data(payload, now_us);
+            self.drain_source();
+            let pcr = self.source.take_last_pcr();
+            self.buffer.on_chunk(now_us, payload.len(), pcr);
+            let evs = self.buffer.drain();
+            for e in evs {
+                self.events.push_back(e);
+            }
         }
     }
 
@@ -1046,7 +1117,14 @@ impl Session {
         if self.closed || self.auth.is_waiting() {
             return;
         }
-        let Some(deadline) = self.source.next_deadline_us() else {
+        let datagram = self.datagram.as_ref().and_then(|d| d.next_deadline_us());
+        let Some(deadline) = self
+            .source
+            .next_deadline_us()
+            .into_iter()
+            .chain(datagram)
+            .min()
+        else {
             return;
         };
         let at = if deadline > self.now_us {
@@ -1065,6 +1143,14 @@ impl Session {
 
     fn map_source_action(&mut self, a: TsAction) {
         match a {
+            TsAction::Open { .. } if self.datagram.is_some() => {
+                let target = self.source.url().clone();
+                let conn = self.alloc_conn(target);
+                if let Some(d) = self.datagram.as_mut() {
+                    let bind = d.bind_action(conn);
+                    self.actions.push_back(bind);
+                }
+            }
             TsAction::Open { .. } => {
                 self.redirect_count = 0;
                 self.close_refused_conns();

@@ -1,6 +1,7 @@
 //! Source adapters.
 pub(crate) mod adaptive;
 pub(crate) mod dash;
+pub(crate) mod datagram;
 pub(crate) mod fetch;
 pub(crate) mod hls;
 pub(crate) mod hls_join;

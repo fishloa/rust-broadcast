@@ -2,7 +2,7 @@
 name    = "broadcast-client"
 version = "0.1.0"
 edition = "2024"
-description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH and RTSP sources."
+description = "Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH, RTSP and UDP/RTP sources."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["broadcast", "client", "rtsp", "live", "streaming"]
@@ -29,6 +29,7 @@ dash-runtime       = { path = "../dash-runtime", version = "0.1" }
 broadcast-hls      = { path = "../broadcast-hls", version = "0.5" }
 rtsp-runtime       = { path = "../rtsp-runtime", version = "0.8.1", default-features = false }
 sdp-types          = { workspace = true }
+rtp-packet         = { path = "../rtp-packet", version = "0.5", default-features = false, features = ["std"] }
 url                = "2"
 percent-encoding   = "2"
 http               = "1"
