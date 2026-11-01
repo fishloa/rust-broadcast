@@ -265,6 +265,21 @@ fn rtp_neighbours_swapped_inside_the_window_are_put_back() {
 }
 
 #[test]
+fn rtp_neighbours_swapped_across_the_sequence_wrap_are_put_back() {
+    let ts = small();
+    let want = baseline(&ts);
+    let mut rtp = rtp_datagrams(&ts, 7, 65_530, SSRC_A);
+    rtp.swap(5, 6);
+    let host = play("rtp://239.1.1.1:5000", &rtp);
+    assert_eq!(host.replay().samples(), want);
+    let stats = host.session.datagram_stats();
+    assert_eq!(
+        (stats.reordered, stats.lost, stats.late, stats.duplicates),
+        (1, 0, 0, 0)
+    );
+}
+
+#[test]
 fn rtp_duplicates_are_dropped_and_counted() {
     let ts = small();
     let want = baseline(&ts);
