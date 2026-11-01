@@ -26,10 +26,6 @@ test-fixtures = { path = "../test-fixtures" }
 mp4-emsg = { path = "../mp4-emsg", version = "0.5", default-features = false }
 test-alloc = { path = "../test-alloc" }
 
-[[test]]
-name = "label_coverage"
-required-features = []
-
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
