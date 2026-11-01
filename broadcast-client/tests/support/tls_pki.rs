@@ -152,9 +152,8 @@ impl TlsServer {
                         .map(|c| c.to_vec()),
                 );
                 drop(l);
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: video/MP2T\r\nConnection: close\r\n\r\n"
-                );
+                let response =
+                    "HTTP/1.1 200 OK\r\nContent-Type: video/MP2T\r\nConnection: close\r\n\r\n";
                 let _ = tls.write_all(response.as_bytes());
                 let _ = tls.write_all(&body);
                 let _ = tls.flush();

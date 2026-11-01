@@ -28,17 +28,18 @@ fn with_handle(f: impl FnOnce(&mut Config)) -> Config {
 }
 
 fn first_http(session: &mut Session, now: u64) -> (u32, String, Option<Arc<ClientIdentity>>) {
-    loop {
-        match session.poll(now).expect("an HttpRequest") {
-            Action::HttpRequest {
-                conn,
-                url,
-                identity,
-                ..
-            } => return (conn, url, identity),
-            _ => {}
+    while let Some(action) = session.poll(now) {
+        if let Action::HttpRequest {
+            conn,
+            url,
+            identity,
+            ..
+        } = action
+        {
+            return (conn, url, identity);
         }
     }
+    panic!("an HttpRequest");
 }
 
 fn identity_handle(i: &Option<Arc<ClientIdentity>>) -> Option<u64> {
