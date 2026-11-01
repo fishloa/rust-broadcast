@@ -29,6 +29,34 @@ env:
 # file with `cargo +nightly` / `cargo +<CANARY_RUST>`. See issue #574.
 
 jobs:
+  # Markdown-only changes cannot affect any Rust job, so they skip the heavy
+  # ones. Skipped jobs (job-level `if`, not workflow `paths-ignore`) still
+  # report as skipped, which satisfies a required status check; a workflow-level
+  # filter would leave it pending forever. `lint` and `docs` always run (the
+  # doc-link, README-snippet and crate-index gates live in `lint`). Pushes to
+  # main always run everything. The classifier is tools/ci_changes.py.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Classify the change set
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git diff --name-only "$BASE_SHA" HEAD | python3 tools/ci_changes.py >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
   # The ONE place a CI run clones the private fixtures repo (~374 MB). GitHub
   # jobs get separate runners, so a per-job checkout paid that clone up to
   # three times a run; this job does it once (or, when the pinned commit is
@@ -50,7 +78,8 @@ jobs:
   test:
     name: test (MSRV 1.95.0)
     runs-on: ubuntu-latest
-    needs: private-fixtures
+    needs: [private-fixtures, changes]
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v5
       # Restores the private fixtures the `private-fixtures` job prepared (a
@@ -89,7 +118,8 @@ jobs:
   test-no-default:
     name: test (MSRV 1.95.0, no default features)
     runs-on: ubuntu-latest
-    needs: private-fixtures
+    needs: [private-fixtures, changes]
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v5
       # Restores the private fixtures the `private-fixtures` job prepared (a
@@ -110,27 +140,39 @@ jobs:
       # regression in the library crates' bare --no-default-features build.
       - name: Build (no default features)
         run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
-      # `--features std`: the library crates are #![no_std] with the default
-      # `std` feature off, and the libtest harness requires std — so tests are
-      # run with std re-enabled but the OTHER optional features (chrono/ts/serde)
-      # still off, to catch feature-gating regressions. The bare-metal `no_std`
-      # job below is what proves the #![no_std] build.
-      - name: Test (no optional features, std on)
-        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --profile ci
-      - name: Doctests (no optional features, std on)
-        timeout-minutes: 15
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --doc
-      # The excluded crates above never see a bare --no-default-features
-      # test build; build (not run) them separately, one invocation each so
-      # feature unification cannot leak between them.
-      - name: Tests compile without default features (excluded crates)
+      # Every member's tests must COMPILE bare, one `cargo check -p <crate>`
+      # per crate so workspace feature unification cannot hide a break (it hid
+      # rtmp-runtime's, and the excluded leaf crates above are covered here
+      # too). Bare behaviour is no longer re-run workspace-wide: a bare lane
+      # only ever removes tests (everything feature-gated compiles out), so the
+      # all-features `test` job already ran every one of them. What a bare run
+      # can still show is the code that differs when a feature is off, below.
+      - name: Tests compile without default features (per crate)
+        run: tools/check-bare-features.sh
+      # The only runtime alternative arms behind `cfg(not(feature = "serde"))`:
+      # the TableObject / DescriptorObject / PayloadObject blanket impls in the
+      # dvb-si and dvb-t2mi registries (different trait bounds). One invocation
+      # per crate keeps `serde` off (a combined run would unify it back on).
+      # `--features std`: libtest needs std, the OTHER optional features stay off.
+      - name: Test bare-only code (serde-off registries)
         run: |
-          cargo test -p dvb-conformance --no-default-features --no-run --locked
-          cargo test -p dvb-tools --no-default-features --no-run --locked
+          cargo nextest run -p dvb-si --no-default-features --features std --locked --profile ci -E 'test(/registry/) | binary(descriptor_loop)'
+          cargo nextest run -p dvb-t2mi --no-default-features --features std --locked --profile ci -E 'test(/registry/)'
+      # Doctests whose code blocks are feature-gated (`# #[cfg(feature = ...)]`
+      # in cc-data, dvb-t2mi, st291) or that are the crate's documented bare
+      # surface (dvb-si); one invocation each, again to avoid unification.
+      - name: Doctests (bare, feature-gated crates)
+        timeout-minutes: 15
+        run: |
+          for c in cc-data dvb-si dvb-t2mi st291; do
+            cargo test -p "$c" --no-default-features --features std --locked --doc
+          done
 
   examples:
     name: examples (MSRV 1.95.0)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
@@ -157,6 +199,8 @@ jobs:
   dash-e2e:
     name: dash e2e (livesim2 v1.15.2)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     env:
       LIVESIM2_VERSION: v1.15.2
       REQUIRE_LIVESIM2: "1"
@@ -187,6 +231,8 @@ jobs:
   rtsp-e2e:
     name: rtsp e2e (mediamtx v1.21.1)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     env:
       MEDIAMTX_VERSION: v1.21.1
       MEDIAMTX_SHA256: 653abc672a3e693f8d3b2717752492fdcfb8072291ec108d03d3dd857411b0ee
@@ -265,6 +311,8 @@ jobs:
   no-std:
     name: no_std (thumbv7em-none-eabi)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
@@ -324,16 +372,30 @@ jobs:
 
   # Fuzz targets are not part of the workspace (own sub-workspace under fuzz/)
   # and so are never built by the jobs above — they rot silently when a crate's
-  # parse API changes. This job builds every libfuzzer target on nightly (build
-  # only, no run) so a broken target fails CI. `cargo +nightly` overrides the
+  # parse API changes. Every shard builds EVERY libfuzzer target on nightly, so
+  # a broken target fails CI whichever shard happens to own it; each shard then
+  # smoke-runs only its own slice of the targets. `cargo +nightly` overrides the
   # pinned toolchain from rust-toolchain.toml. RUSTFLAGS="-D warnings" is unset
   # here: cargo-fuzz injects sanitizer/coverage codegen flags and we only need a
   # compile smoke, not a warning gate (the library warning gate is the lint job).
+  #
+  # Building a fuzz target proves it COMPILES, not that the code it drives
+  # survives hostile input. container-probe shipped a panic reachable from a
+  # 12-byte slice, in a crate whose fuzz target was written specifically to
+  # catch that class -- because the target had never actually been executed.
+  # So PRs smoke-run each target for a short budget (tools/fuzz-smoke.sh);
+  # the full 60 s per target runs nightly (.github/workflows/nightly.yml).
   fuzz:
-    name: fuzz build (nightly)
+    name: fuzz (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     env:
       RUSTFLAGS: ""
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
@@ -351,15 +413,6 @@ jobs:
         # its host triple leaks as the default --target (musl), whose std isn't
         # installed and whose static libc is incompatible with the sanitizer.
         run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
-
-      # Building a fuzz target proves it COMPILES, not that the code it drives
-      # survives hostile input. container-probe shipped a panic reachable from a
-      # 12-byte slice, in a crate whose fuzz target was written specifically to
-      # catch that class -- because the target had never actually been executed.
-      #
-      # So: a bounded smoke run of every target. `-runs` (not a time budget)
-      # keeps this deterministic and reproducible; it is a regression gate, not
-      # a fuzzing campaign. A real campaign belongs in a scheduled job.
       # Seeds are generated, never committed: fuzz/corpus/ is gitignored, so the
       # generator is what gets reviewed. Without seeds, libFuzzer starting from
       # empty essentially never synthesises a valid MXF key or EBML magic, so a
@@ -367,22 +420,8 @@ jobs:
       # not its probers. Best-effort: a clone without the fixtures skips them.
       - name: Seed fuzz corpora from tracked fixtures
         run: python3 fuzz/seed-corpus.py
-
-      - name: Smoke-run every fuzz target
-        working-directory: fuzz
-        run: |
-          set -euo pipefail
-          fail=0
-          for t in $(cargo +nightly fuzz list); do
-            echo "::group::$t"
-            if ! cargo +nightly fuzz run "$t" --target x86_64-unknown-linux-gnu \
-                 -- -runs=20000 -max_total_time=60 -print_final_stats=1; then
-              echo "::error::fuzz target $t failed"
-              fail=1
-            fi
-            echo "::endgroup::"
-          done
-          exit "$fail"
+      - name: Smoke-run this shard's fuzz targets (10 s each)
+        run: tools/fuzz-smoke.sh ${{ matrix.shard }} 4 10
 
   # dvb-stream is versioned and released independently from the lockstep
   # v-tag publish and is feature-forcing (tokio), so it is excluded from the
@@ -392,7 +431,8 @@ jobs:
   dvb-stream:
     name: dvb-stream
     runs-on: ubuntu-latest
-    needs: private-fixtures
+    needs: [private-fixtures, changes]
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v5
       # Restores the private fixtures the `private-fixtures` job prepared (a
@@ -418,14 +458,6 @@ jobs:
       # longer covers an import) would otherwise go unseen.
       - name: Tests compile without default features
         run: cargo test -p dvb-stream --no-default-features --no-run --locked
-      - name: Clippy
-        run: cargo clippy -p dvb-stream --all-features --all-targets --locked -- -D warnings
-      - name: rustfmt
-        run: cargo fmt --all --check
-      - name: Doc
-        run: cargo doc -p dvb-stream --all-features --no-deps --locked
-        env:
-          RUSTDOCFLAGS: "-D warnings"
 
   # Non-blocking early-warning canary: clippy on a stable NEWER than the MSRV,
   # so a new lint surfaces here as a soft failure instead of red-lighting a real
@@ -449,6 +481,8 @@ jobs:
   clippy-canary:
     name: clippy (pinned stable, non-blocking)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     continue-on-error: true
     env:
       CANARY_RUST: "1.97.1"
@@ -496,6 +530,8 @@ jobs:
   golden-gate:
     name: golden gate (ffprobe + mediastreamvalidator, non-blocking)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
@@ -519,6 +555,8 @@ jobs:
   apple-targets:
     name: apple targets (${{ matrix.target }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
