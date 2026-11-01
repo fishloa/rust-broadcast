@@ -3,7 +3,10 @@
 ## [Unreleased]
 
 ### Added
-- Caption detection reads the real channel and service (issue #1428): CEA-608 text is attributed to `CC1` to `CC4` by field and control-code channel bit (a stream carrying text on both fields declares `CC1` and `CC3`), XDS, text mode, null padding and bad-parity pairs declare nothing, and every CEA-708 service present is declared as `SERVICEn`. After 10 seconds of video with no caption found a route declares `CLOSED-CAPTIONS=NONE` on every variant; a caption found later replaces it with the caption group. `LANGUAGE` still comes only from `closed_caption_overrides`, as the bitstream carries none; Apple's authoring spec 4.4 asks for it, so set it when the language is known.
+- `CLOSED-CAPTIONS` renditions take `LANGUAGE` from the ATSC `caption_service_descriptor` in the video's PMT loop (issue #1428): a 708 service by `caption_service_number`, 608 channels when all declared 608 entries agree on the language. `closed_caption_overrides` still win, and a stream without the descriptor gets no `LANGUAGE`. `RouteHandle::note_closed_caption_languages` is the new hand-off.
+
+### Added
+- Caption detection reads the real channel and service (issue #1428): CEA-608 text is attributed to `CC1` to `CC4` by field and control-code channel bit (a stream carrying text on both fields declares `CC1` and `CC3`), XDS, text mode, null padding and bad-parity pairs declare nothing, and every CEA-708 service present is declared as `SERVICEn`. After 10 seconds of video with no caption found a route declares `CLOSED-CAPTIONS=NONE` on every variant; a caption found later replaces it with the caption group.
 
 ## [0.14.0] - 2026-11-01
 

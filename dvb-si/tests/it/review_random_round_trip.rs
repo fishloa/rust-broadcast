@@ -122,6 +122,12 @@ fn every_accepted_descriptor_reserializes_byte_identically() {
         typed_iters,
         &mut fails,
     );
+    typed::<atsc_caption_service::AtscCaptionServiceDescriptor>(
+        "atsc_caption_service",
+        0x86,
+        typed_iters,
+        &mut fails,
+    );
     typed::<logical_channel::LogicalChannelDescriptor>(
         "logical_channel",
         0x83,

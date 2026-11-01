@@ -46,13 +46,108 @@ fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
 }
 
+const TS_PACKET_LEN: usize = 188;
+const TS_SYNC: u8 = 0x47;
+const PID_MASK: u16 = 0x1FFF;
+const PAT_PID: u16 = 0;
+const TS_PUSI: u8 = 0x40;
+const TS_PAYLOAD_ONLY_BITS: u8 = 0x10;
+const TS_CC_MASK: u8 = 0x0F;
+const TS_STUFFING: u8 = 0xFF;
+const PMT_ES_LOOP_START: usize = 12;
+const PMT_ES_ENTRY_HEADER: usize = 5;
+const STREAM_TYPES_VIDEO: [u8; 3] = [0x02, 0x1B, 0x24];
+const CRC_LEN: usize = 4;
+
+fn pid_of(packet: &[u8]) -> u16 {
+    u16::from_be_bytes([packet[1], packet[2]]) & PID_MASK
+}
+
+fn pmt_pids(ts: &[u8]) -> Vec<u16> {
+    let packet = ts
+        .chunks_exact(TS_PACKET_LEN)
+        .find(|p| pid_of(p) == PAT_PID && p[1] & TS_PUSI != 0)
+        .expect("PAT");
+    let section = &packet[5 + usize::from(packet[4])..];
+    let length = usize::from(u16::from_be_bytes([section[1], section[2]]) & 0x0FFF);
+    section[8..3 + length - CRC_LEN]
+        .chunks_exact(4)
+        .filter(|e| u16::from_be_bytes([e[0], e[1]]) != 0)
+        .map(|e| u16::from_be_bytes([e[2], e[3]]) & PID_MASK)
+        .collect()
+}
+
+fn with_video_es_descriptor(ts: &[u8], descriptor: &[u8]) -> Vec<u8> {
+    let pmts = pmt_pids(ts);
+    let mut out = Vec::with_capacity(ts.len());
+    for packet in ts.chunks_exact(TS_PACKET_LEN) {
+        if !pmts.contains(&pid_of(packet)) || packet[1] & TS_PUSI == 0 {
+            out.extend_from_slice(packet);
+            continue;
+        }
+        assert_eq!(
+            packet[3] & 0x20,
+            0,
+            "PMT packet carries no adaptation field"
+        );
+        let start = 5 + usize::from(packet[4]);
+        let section = &packet[start..];
+        let length = usize::from(u16::from_be_bytes([section[1], section[2]]) & 0x0FFF);
+        let body = &section[..3 + length - CRC_LEN];
+        let program_info = usize::from(u16::from_be_bytes([body[10], body[11]]) & 0x0FFF);
+        let mut rebuilt = body[..PMT_ES_LOOP_START + program_info].to_vec();
+        let mut at = PMT_ES_LOOP_START + program_info;
+        let mut injected = false;
+        while at + PMT_ES_ENTRY_HEADER <= body.len() {
+            let info = usize::from(u16::from_be_bytes([body[at + 3], body[at + 4]]) & 0x0FFF);
+            let mut entry = body[at..at + PMT_ES_ENTRY_HEADER + info].to_vec();
+            if !injected && STREAM_TYPES_VIDEO.contains(&entry[0]) {
+                entry.extend_from_slice(descriptor);
+                let new_info = (info + descriptor.len()) as u16;
+                entry[3] = (entry[3] & 0xF0) | (new_info >> 8) as u8;
+                entry[4] = new_info as u8;
+                injected = true;
+            }
+            rebuilt.extend_from_slice(&entry);
+            at += PMT_ES_ENTRY_HEADER + info;
+        }
+        assert!(injected, "PMT lists a video stream");
+        let new_length = (rebuilt.len() - 3 + CRC_LEN) as u16;
+        rebuilt[1] = (rebuilt[1] & 0xF0) | (new_length >> 8) as u8;
+        rebuilt[2] = new_length as u8;
+        let crc = broadcast_common::crc32_mpeg2::compute(&rebuilt);
+        rebuilt.extend_from_slice(&crc.to_be_bytes());
+        assert!(rebuilt.len() < TS_PACKET_LEN - 5, "PMT fits one packet");
+        let mut rewritten = vec![TS_STUFFING; TS_PACKET_LEN];
+        rewritten[..3].copy_from_slice(&packet[..3]);
+        rewritten[3] = TS_PAYLOAD_ONLY_BITS | (packet[3] & TS_CC_MASK);
+        rewritten[4] = 0;
+        rewritten[5..5 + rebuilt.len()].copy_from_slice(&rebuilt);
+        debug_assert_eq!(rewritten[0], TS_SYNC);
+        out.extend_from_slice(&rewritten);
+    }
+    out
+}
+
 struct CaptionedRoute {
     route: Arc<RouteHandle>,
     app: Router,
 }
 
 fn build(fixture: &str, overrides: Vec<ClosedCaptionDecl>, who: &str) -> Option<CaptionedRoute> {
-    let bytes = test_fixtures::require_bytes(fixture, who)?;
+    build_with(fixture, overrides, who, None)
+}
+
+fn build_with(
+    fixture: &str,
+    overrides: Vec<ClosedCaptionDecl>,
+    who: &str,
+    video_descriptor: Option<&[u8]>,
+) -> Option<CaptionedRoute> {
+    let mut bytes = test_fixtures::require_bytes(fixture, who)?;
+    if let Some(descriptor) = video_descriptor {
+        bytes = with_video_es_descriptor(&bytes, descriptor);
+    }
     let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
     let trunk = Trunk::new(TrunkConfig::new(
         nz(RING),
@@ -500,4 +595,140 @@ async fn apple_validator_reports_nothing_new_about_captions() {
             "validator finding about captions: {message}"
         );
     }
+}
+
+const DESCRIPTOR_608_ENG_708_SPA: [u8; 15] = [
+    0x86, 13, 0xE2, b'e', b'n', b'g', 0x7F, 0x3F, 0xFF, b's', b'p', b'a', 0xC1, 0x3F, 0xFF,
+];
+const DESCRIPTOR_608_ENG_AND_SPA: [u8; 15] = [
+    0x86, 13, 0xE2, b'e', b'n', b'g', 0x7E, 0x3F, 0xFF, b's', b'p', b'a', 0x7F, 0x3F, 0xFF,
+];
+const DESCRIPTOR_608_ENG_TWICE: [u8; 15] = [
+    0x86, 13, 0xE2, b'e', b'n', b'g', 0x7E, 0x3F, 0xFF, b'e', b'n', b'g', 0x7F, 0x3F, 0xFF,
+];
+
+async fn languages_of(
+    fixture: &str,
+    descriptor: Option<&[u8]>,
+    overrides: Vec<ClosedCaptionDecl>,
+    test: &str,
+) -> Option<Vec<(InstreamId, Option<String>)>> {
+    let rig = build_with(fixture, overrides, test, descriptor)?;
+    let text = rig.master_text().await;
+    let master = MasterPlaylist::parse(&text).expect("master parses");
+    Some(
+        caption_renditions(&master)
+            .iter()
+            .map(|m| {
+                (
+                    m.instream_id.clone().expect("INSTREAM-ID"),
+                    m.language.clone(),
+                )
+            })
+            .collect(),
+    )
+}
+
+#[tokio::test]
+async fn declared_caption_languages_land_on_each_rendition() {
+    let Some(found) = languages_of(
+        CAPTIONED,
+        Some(&DESCRIPTOR_608_ENG_708_SPA),
+        Vec::new(),
+        "declared_caption_languages_land_on_each_rendition",
+    )
+    .await
+    else {
+        return;
+    };
+    assert_eq!(
+        found,
+        [
+            (InstreamId::Cc(1), Some("en".to_string())),
+            (InstreamId::Service(1), Some("es".to_string())),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn no_descriptor_means_no_language() {
+    let Some(found) = languages_of(
+        CAPTIONED,
+        None,
+        Vec::new(),
+        "no_descriptor_means_no_language",
+    )
+    .await
+    else {
+        return;
+    };
+    assert_eq!(
+        found,
+        [(InstreamId::Cc(1), None), (InstreamId::Service(1), None)]
+    );
+}
+
+#[tokio::test]
+async fn configured_language_wins_over_the_declared_one() {
+    let overrides = vec![ClosedCaptionDecl {
+        instream_id: "CC1".into(),
+        name: String::new(),
+        language: "fr".into(),
+    }];
+    let Some(found) = languages_of(
+        CAPTIONED,
+        Some(&DESCRIPTOR_608_ENG_708_SPA),
+        overrides,
+        "configured_language_wins_over_the_declared_one",
+    )
+    .await
+    else {
+        return;
+    };
+    assert_eq!(
+        found,
+        [
+            (InstreamId::Cc(1), Some("fr".to_string())),
+            (InstreamId::Service(1), Some("es".to_string())),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn conflicting_608_languages_are_left_undeclared() {
+    let Some(found) = languages_of(
+        TWO_FIELD_CAPTURE,
+        Some(&DESCRIPTOR_608_ENG_AND_SPA),
+        Vec::new(),
+        "conflicting_608_languages_are_left_undeclared",
+    )
+    .await
+    else {
+        return;
+    };
+    assert_eq!(
+        found,
+        [(InstreamId::Cc(1), None), (InstreamId::Cc(3), None)]
+    );
+}
+
+#[tokio::test]
+async fn agreeing_608_languages_apply_to_both_fields() {
+    let Some(found) = languages_of(
+        TWO_FIELD_CAPTURE,
+        Some(&DESCRIPTOR_608_ENG_TWICE),
+        Vec::new(),
+        "agreeing_608_languages_apply_to_both_fields",
+    )
+    .await
+    else {
+        return;
+    };
+    assert_eq!(
+        found,
+        [
+            (InstreamId::Cc(1), Some("en".to_string())),
+            (InstreamId::Cc(3), Some("en".to_string())),
+        ]
+    );
 }

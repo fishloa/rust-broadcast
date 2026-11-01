@@ -1753,6 +1753,25 @@ impl RouteHandle {
         }
     }
 
+    /// Hand the `LANGUAGE` (BCP 47) the stream declares for each caption
+    /// stream of `program` to its master playlist. `false` when the program
+    /// is not published yet.
+    pub fn note_closed_caption_languages(
+        &self,
+        program: ProgramId,
+        languages: Vec<(broadcast_hls::InstreamId, String)>,
+    ) -> bool {
+        match self.serving(program) {
+            Some(serving) => {
+                serving
+                    .ll_hls
+                    .set_declared_closed_caption_languages(languages);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub(crate) fn set_part_target_ms(&self, program: ProgramId, ms: u32) -> bool {
         match self.serving(program) {
             Some(serving) => {
