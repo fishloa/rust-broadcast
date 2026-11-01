@@ -27,7 +27,8 @@
 //!   `elementary_PID`). Both captures are mirrored in `private/fixtures/tsduck/`.
 //!
 //! Regenerate (only for an intentional behaviour change):
-//! `TRACK_ID_BLESS=1 cargo test -p transmux --all-features --test track_id_baseline`
+//! `RUST_BROADCAST_SOAK=1 TRACK_ID_BLESS=1 cargo test -p transmux --all-features --test track_id_baseline`
+//! (bless merges each shard's entries into the golden; stale keys are never dropped)
 #![cfg(feature = "std")]
 
 use std::collections::BTreeMap;
@@ -37,7 +38,19 @@ use std::path::{Path, PathBuf};
 use broadcast_common::Unpackage;
 use transmux::{FlvDemux, Fmp4Demux, Media, PsDemux, TsDemux, WebmDemux};
 
-const MAX_BYTES: u64 = 40 * 1024 * 1024;
+/// Largest capture demuxed in a PR run. It keeps the `test-013` (9.4 MB) and
+/// `test-089` captures that pin #1255/#1579; the full 40 MB corpus runs when
+/// `RUST_BROADCAST_SOAK` is set.
+const PR_MAX_BYTES: u64 = 10 * 1024 * 1024;
+const SOAK_MAX_BYTES: u64 = 40 * 1024 * 1024;
+
+fn max_bytes() -> u64 {
+    if std::env::var_os("RUST_BROADCAST_SOAK").is_some() {
+        SOAK_MAX_BYTES
+    } else {
+        PR_MAX_BYTES
+    }
+}
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -74,7 +87,7 @@ fn summarize(root: &Path, key: impl Fn(&str) -> Option<String>) -> String {
         let Ok(md) = std::fs::metadata(&f) else {
             continue;
         };
-        if md.len() > MAX_BYTES {
+        if md.len() > max_bytes() {
             continue;
         }
         let Ok(bytes) = std::fs::read(&f) else {
@@ -110,40 +123,9 @@ fn lines(s: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-#[test]
-fn track_ids_match_pre_typed_golden() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut got = summarize(&manifest.join("../fixtures"), |r| {
-        Some(format!("fixtures/{r}"))
-    });
-    // Real-capture corpus. The golden keys predate the private repo and keep
-    // their historic `test-streams/...` spelling: `private/fixtures/ts/X` ->
-    // `test-streams/X`, `.../tsduck/Y` -> `test-streams/tsduck-test/Y`,
-    // `.../mpegh/Z` -> `test-streams/mpegh/Z`; other private entries are new
-    // captures and are not in the golden.
-    if let Some(private) = test_fixtures::private_root() {
-        got.push_str(&summarize(&private.join("fixtures"), |r| {
-            if let Some(x) = r.strip_prefix("ts/") {
-                Some(format!("test-streams/{x}"))
-            } else if let Some(x) = r.strip_prefix("tsduck/") {
-                Some(format!("test-streams/tsduck-test/{x}"))
-            } else {
-                r.strip_prefix("mpegh/")
-                    .map(|x| format!("test-streams/mpegh/{x}"))
-            }
-        }));
-    }
-    // Fetched (pinned tsduck-test clone) legacy directory.
-    got.push_str(&summarize(&manifest.join("../.test-streams"), |r| {
-        Some(format!("test-streams/{r}"))
-    }));
-    if std::env::var_os("TRACK_ID_BLESS").is_some() {
-        std::fs::write(golden_path(), &got).unwrap();
-        return;
-    }
+fn compare(got: &str, committed: bool) {
     let want = lines(&std::fs::read_to_string(golden_path()).unwrap());
-    let got = lines(&got);
-    assert!(!got.is_empty(), "no fixtures found");
+    let got = lines(got);
     let mut bad = Vec::new();
     let mut checked = 0;
     for (k, v) in &got {
@@ -156,11 +138,73 @@ fn track_ids_match_pre_typed_golden() {
     }
     eprintln!("track_id golden: {checked} files matched");
     assert!(bad.is_empty(), "track ids changed: {bad:#?}");
-    // Every committed (not real-capture corpus) golden entry must still demux.
-    for k in want.keys().filter(|k| k.starts_with("fixtures/")) {
-        assert!(
-            got.contains_key(k),
-            "committed fixture {k} no longer demuxes"
-        );
+    if committed {
+        assert!(!got.is_empty(), "no fixtures found");
+        // Every committed (not real-capture corpus) golden entry must still demux.
+        for k in want.keys().filter(|k| k.starts_with("fixtures/")) {
+            assert!(
+                got.contains_key(k),
+                "committed fixture {k} no longer demuxes"
+            );
+        }
     }
+}
+
+fn bless_or(got: &str, committed: bool) {
+    if std::env::var_os("TRACK_ID_BLESS").is_some() {
+        let path = golden_path();
+        let mut all = lines(&std::fs::read_to_string(&path).unwrap_or_default());
+        for (k, v) in lines(got) {
+            all.insert(k, v);
+        }
+        let mut out = String::new();
+        for (k, v) in all {
+            let _ = writeln!(out, "{k}:{v}");
+        }
+        std::fs::write(path, out).unwrap();
+        return;
+    }
+    compare(got, committed);
+}
+
+#[test]
+fn committed_fixture_track_ids_match_pre_typed_golden() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let got = summarize(&manifest.join("../fixtures"), |r| {
+        Some(format!("fixtures/{r}"))
+    });
+    bless_or(&got, true);
+}
+
+/// Real-capture corpus. The golden keys predate the private repo and keep
+/// their historic `test-streams/...` spelling: `private/fixtures/ts/X` ->
+/// `test-streams/X`, `.../tsduck/Y` -> `test-streams/tsduck-test/Y`,
+/// `.../mpegh/Z` -> `test-streams/mpegh/Z`; other private entries are new
+/// captures and are not in the golden.
+#[test]
+fn private_corpus_track_ids_match_pre_typed_golden() {
+    let Some(private) = test_fixtures::private_root() else {
+        return;
+    };
+    let got = summarize(&private.join("fixtures"), |r| {
+        if let Some(x) = r.strip_prefix("ts/") {
+            Some(format!("test-streams/{x}"))
+        } else if let Some(x) = r.strip_prefix("tsduck/") {
+            Some(format!("test-streams/tsduck-test/{x}"))
+        } else {
+            r.strip_prefix("mpegh/")
+                .map(|x| format!("test-streams/mpegh/{x}"))
+        }
+    });
+    bless_or(&got, false);
+}
+
+/// Fetched (pinned tsduck-test clone) legacy directory.
+#[test]
+fn legacy_test_streams_track_ids_match_pre_typed_golden() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let got = summarize(&manifest.join("../.test-streams"), |r| {
+        Some(format!("test-streams/{r}"))
+    });
+    bless_or(&got, false);
 }

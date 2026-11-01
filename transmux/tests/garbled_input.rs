@@ -51,11 +51,10 @@ enum Mode {
     Noise,
 }
 
-/// Damage `ts` from `start_permille / 1000` of its length onwards.
-fn garble(ts: &[u8], start_permille: usize, seed: u64, mode: Mode) -> Vec<u8> {
+/// Damage `ts` from packet `first` onwards.
+fn garble(ts: &[u8], first: usize, seed: u64, mode: Mode) -> Vec<u8> {
     let mut out = ts.to_vec();
     let packets = out.len() / TS_PACKET_SIZE;
-    let first = packets * start_permille / 1000;
     let mut rng = XorShift(0x9E37_79B9_7F4A_7C15 ^ seed.wrapping_mul(0xD1B5_4A32_D192_ED03));
     let constant = (rng.next() as u8) | 1;
     for p in first..packets {
@@ -151,6 +150,36 @@ fn run(ts: &[u8], chunk: usize, what: &str) -> Vec<String> {
     out
 }
 
+/// Packets kept from the head of the stream (PAT/PMT) in a PR-size window.
+const WINDOW_HEAD_PACKETS: usize = 100;
+/// Packets kept from the damaged region in a PR-size window.
+const WINDOW_DAMAGED_PACKETS: usize = 600;
+/// Chunk sizes fed to the demuxer.
+const CHUNKS: &[usize] = &[1, 7, 187, 188, 189, 1000];
+
+/// The stream head plus the first packets of the damaged region, and the index
+/// of the first damaged packet in it: small enough to feed one byte at a time.
+fn window(clean: &[u8], start_permille: usize) -> (Vec<u8>, usize) {
+    let packets = clean.len() / TS_PACKET_SIZE;
+    let first_damaged = packets * start_permille / 1000;
+    let head = WINDOW_HEAD_PACKETS.min(first_damaged);
+    let tail_end = (first_damaged + WINDOW_DAMAGED_PACKETS).min(packets);
+    let mut out = clean[..head * TS_PACKET_SIZE].to_vec();
+    out.extend_from_slice(&clean[first_damaged * TS_PACKET_SIZE..tail_end * TS_PACKET_SIZE]);
+    (out, head)
+}
+
+/// Feed `ts` whole and at every [`CHUNKS`] size: the event sequence must not
+/// depend on the chunking, and every config along the way must serialize.
+/// Returns the whole-buffer event sequence.
+fn assert_chunk_invariant(ts: &[u8], what: &str) -> Vec<String> {
+    let baseline = run(ts, ts.len(), what);
+    for &n in CHUNKS {
+        assert_eq!(run(ts, n, what), baseline, "{what}: chunk {n}");
+    }
+    baseline
+}
+
 const FIXTURES: &[&str] = &[
     "fixtures/ts/h264_aac.ts",
     "fixtures/ts/h264_aac_40s.ts",
@@ -167,8 +196,14 @@ const FIXTURES: &[&str] = &[
     "transmux/tests/fixtures/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
 ];
 
+/// The config-validity check needs whole-length damage: the over-long
+/// parameter set of #1171 only builds up over many damaged packets of the two
+/// high-bitrate captures. PR runs therefore damage the whole stream for seed 1
+/// and take the cheaper windowed chunk sweep for every seed; with
+/// `RUST_BROADCAST_SOAK` set every seed runs whole-length at every chunk size.
 #[test]
 fn garbled_fixtures_never_yield_unserializable_configs() {
+    let soak = std::env::var_os("RUST_BROADCAST_SOAK").is_some();
     let mut garbled_runs = 0usize;
     let mut config_events = 0usize;
     let mut rejected_sets = 0usize;
@@ -177,25 +212,40 @@ fn garbled_fixtures_never_yield_unserializable_configs() {
         for start in [0usize, 333, 500, 900] {
             for seed in 1..=3u64 {
                 for mode in [Mode::Constant, Mode::Noise] {
-                    let ts = garble(&clean, start, seed, mode);
                     let what = format!("{rel} start={start} seed={seed} {mode:?}");
-                    let baseline = run(&ts, ts.len(), &what);
-                    config_events += baseline
-                        .iter()
-                        .filter(|e| e.starts_with("TrackAdded") || e.starts_with("TrackUpdated"))
-                        .count();
-                    rejected_sets += baseline
-                        .iter()
-                        .filter(|e| e.contains("InvalidParameterSet"))
-                        .count();
-                    for n in [1usize, 7, 187, 188, 189, 1000] {
-                        assert_eq!(run(&ts, n, &what), baseline, "{what}: chunk {n}");
+                    if soak || seed == 1 {
+                        let ts = garble(
+                            &clean,
+                            clean.len() / TS_PACKET_SIZE * start / 1000,
+                            seed,
+                            mode,
+                        );
+                        let baseline = if soak {
+                            assert_chunk_invariant(&ts, &what)
+                        } else {
+                            run(&ts, ts.len(), &what)
+                        };
+                        config_events += baseline
+                            .iter()
+                            .filter(|e| {
+                                e.starts_with("TrackAdded") || e.starts_with("TrackUpdated")
+                            })
+                            .count();
+                        rejected_sets += baseline
+                            .iter()
+                            .filter(|e| e.contains("InvalidParameterSet"))
+                            .count();
+                        // The whole-buffer batch API must not panic either, and
+                        // every track it reports must serialize.
+                        let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
+                        for t in &media.tracks {
+                            assert_serializable(&t.spec.config, &what);
+                        }
                     }
-                    // The whole-buffer batch API must not panic either, and
-                    // every track it reports must serialize.
-                    let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
-                    for t in &media.tracks {
-                        assert_serializable(&t.spec.config, &what);
+                    if !soak {
+                        let (input, first) = window(&clean, start);
+                        let ts = garble(&input, first, seed, mode);
+                        assert_chunk_invariant(&ts, &what);
                     }
                     garbled_runs += 1;
                 }

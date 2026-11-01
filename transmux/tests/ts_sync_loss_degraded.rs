@@ -21,6 +21,31 @@ fn damaged_indices() -> Vec<usize> {
     (56392..56792).step_by(7).collect()
 }
 
+/// Packets of lead-in kept before the first damaged packet in a PR run.
+const PR_LEAD_IN_PACKETS: usize = 2000;
+/// Packets kept after the last damaged packet in a PR run.
+const PR_TAIL_PACKETS: usize = 500;
+/// Largest capture the no-false-positive sweep reads in a PR run;
+/// `RUST_BROADCAST_SOAK` sweeps every capture.
+const PR_SWEEP_MAX_BYTES: u64 = 6 * 1024 * 1024;
+
+fn soak() -> bool {
+    std::env::var_os("RUST_BROADCAST_SOAK").is_some()
+}
+
+/// The ORF1 capture and the packet index of its first byte: the whole file
+/// under `RUST_BROADCAST_SOAK`, otherwise just the damaged region and its
+/// lead-in (PAT/PMT repeat, so every window demuxes cleanly).
+fn orf1_window(clean: Vec<u8>) -> (Vec<u8>, usize) {
+    if soak() {
+        return (clean, 0);
+    }
+    let idx = damaged_indices();
+    let base = idx[0] - PR_LEAD_IN_PACKETS;
+    let end = idx[idx.len() - 1] + 1 + PR_TAIL_PACKETS;
+    (clean[base * PKT..end * PKT].to_vec(), base)
+}
+
 fn counts(m: &Media) -> Vec<usize> {
     m.tracks.iter().map(|t| t.samples.len()).collect()
 }
@@ -55,7 +80,7 @@ fn orf1_broken_sync_bytes_are_reported_and_counts_are_clean_minus_lost() {
     let Some(path) = test_fixtures::require(ORF1, "ts_sync_loss_degraded") else {
         return;
     };
-    let clean = std::fs::read(path).unwrap();
+    let (clean, base) = orf1_window(std::fs::read(path).unwrap());
     let clean_media = demux(&clean);
     assert!(
         clean_media.degraded.is_empty(),
@@ -63,7 +88,7 @@ fn orf1_broken_sync_bytes_are_reported_and_counts_are_clean_minus_lost() {
         clean_media.degraded
     );
 
-    let idx = damaged_indices();
+    let idx: Vec<usize> = damaged_indices().into_iter().map(|i| i - base).collect();
     assert_eq!(idx.len(), 58);
     let mut damaged = clean.clone();
     for &i in &idx {
@@ -253,6 +278,9 @@ fn all_ts() -> Vec<std::path::PathBuf> {
 #[test]
 fn committed_fixtures_have_no_unexpected_sync_loss() {
     for p in all_ts() {
+        if !soak() && std::fs::metadata(&p).unwrap().len() > PR_SWEEP_MAX_BYTES {
+            continue;
+        }
         let bytes = std::fs::read(&p).unwrap();
         let m = demux(&bytes);
         let s = m

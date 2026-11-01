@@ -7,6 +7,19 @@ use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 const CHUNK: usize = 64 * 1024;
 const SEAM_TAIL_FRAMES: usize = 12;
+const TS_PACKET: usize = 188;
+/// PR runs feed the 20 MB `test-062` capture only this prefix (its first
+/// sample arrives within the first few hundred KB); the whole capture runs
+/// when `RUST_BROADCAST_SOAK` is set.
+const PR_PREFIX_PACKETS: usize = 12_000;
+
+fn pr_prefix(data: &[u8]) -> &[u8] {
+    if std::env::var_os("RUST_BROADCAST_SOAK").is_some() {
+        data
+    } else {
+        &data[..data.len().min(PR_PREFIX_PACKETS * TS_PACKET)]
+    }
+}
 
 struct Run {
     first_sample_byte: Option<usize>,
@@ -90,7 +103,7 @@ fn test_062_delivers_before_finish() {
         return;
     };
     let data = std::fs::read(p).unwrap();
-    let r = run(&data);
+    let r = run(pr_prefix(&data));
     report("test-062", &r);
     assert!(r.before_finish_samples > 0, "no sample before finish()");
 }
@@ -142,9 +155,10 @@ fn live_policy_loses_nothing_and_keeps_per_track_order_versus_strict() {
             return;
         };
         let data = std::fs::read(path).unwrap();
-        let strict = per_source_pid(&data, true, data.len());
-        let live_big = per_source_pid(&data, false, CHUNK);
-        let live_one = per_source_pid(&data, false, 188);
+        let data = if tsduck { pr_prefix(&data) } else { &data[..] };
+        let strict = per_source_pid(data, true, data.len());
+        let live_big = per_source_pid(data, false, CHUNK);
+        let live_one = per_source_pid(data, false, 188);
         assert!(!strict.is_empty(), "{rel}: strict run produced nothing");
         assert_eq!(strict, live_big, "{rel}: live policy changed a track");
         assert_eq!(live_one, live_big, "{rel}: live policy is chunk-dependent");

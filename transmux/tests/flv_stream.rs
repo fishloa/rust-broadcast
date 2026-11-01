@@ -257,30 +257,10 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
     summaries
 }
 
-#[test]
-fn streaming_100_byte_chunks_match_whole_buffer_feed() {
-    let mut whole = StreamingFlvDemux::new();
-    let mut whole_events = feed_and_drain(&mut whole, FLV).expect("whole-buffer feed");
-    whole_events.extend(finish_and_drain(&mut whole));
-    let whole_summary = summarize(&whole_events);
-
-    let mut chunked = StreamingFlvDemux::new();
-    let mut chunked_events = Vec::new();
-    for chunk in FLV.chunks(100) {
-        chunked_events.extend(feed_and_drain(&mut chunked, chunk).expect("chunked feed"));
-    }
-    chunked_events.extend(finish_and_drain(&mut chunked));
-    let chunked_summary = summarize(&chunked_events);
-
-    assert_eq!(
-        chunked_summary, whole_summary,
-        "feeding the real fixture in 100-byte chunks must reproduce the exact \
-         same per-track summary as one whole-buffer feed call"
-    );
-
-    // Stronger than the summary: every individual sample (bytes + duration +
-    // sync flag), in order, must be identical — not just aggregate totals.
-    let whole_samples: Vec<_> = whole_events
+fn sample_tuples(
+    events: &[DemuxEvent],
+) -> Vec<(transmux::TrackId, bytes::Bytes, Option<u32>, bool)> {
+    events
         .iter()
         .filter_map(|e| match e {
             DemuxEvent::Sample {
@@ -293,50 +273,40 @@ fn streaming_100_byte_chunks_match_whole_buffer_feed() {
             )),
             _ => None,
         })
-        .collect();
-    let chunked_samples: Vec<_> = chunked_events
-        .iter()
-        .filter_map(|e| match e {
-            DemuxEvent::Sample {
-                track_id, sample, ..
-            } => Some((
-                *track_id,
-                sample.data.clone(),
-                sample.duration,
-                sample.flags.is_sync,
-            )),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        chunked_samples, whole_samples,
-        "every sample (bytes/duration/sync), in order, must match exactly"
-    );
+        .collect()
 }
 
 #[test]
-fn streaming_byte_at_a_time_matches_whole_buffer_feed() {
+fn streaming_chunked_feeds_match_whole_buffer_feed() {
     let mut whole = StreamingFlvDemux::new();
     let mut whole_events = feed_and_drain(&mut whole, FLV).expect("whole-buffer feed");
     whole_events.extend(finish_and_drain(&mut whole));
     let whole_summary = summarize(&whole_events);
+    let whole_samples = sample_tuples(&whole_events);
 
-    let mut byte_demux = StreamingFlvDemux::new();
-    let mut byte_events = Vec::new();
-    for b in FLV {
-        byte_events.extend(
-            feed_and_drain(&mut byte_demux, std::slice::from_ref(b)).expect("byte-at-a-time feed"),
+    // 100-byte chunks, and one byte at a time (partial-tag buffering across
+    // arbitrarily small chunk boundaries).
+    for chunk_size in [100usize, 1] {
+        let mut chunked = StreamingFlvDemux::new();
+        let mut chunked_events = Vec::new();
+        for chunk in FLV.chunks(chunk_size) {
+            chunked_events.extend(feed_and_drain(&mut chunked, chunk).expect("chunked feed"));
+        }
+        chunked_events.extend(finish_and_drain(&mut chunked));
+
+        assert_eq!(
+            summarize(&chunked_events),
+            whole_summary,
+            "{chunk_size}-byte chunks must reproduce the exact same per-track summary \
+             as one whole-buffer feed call"
+        );
+        assert_eq!(
+            sample_tuples(&chunked_events),
+            whole_samples,
+            "{chunk_size}-byte chunks: every sample (bytes/duration/sync), in order, \
+             must match exactly"
         );
     }
-    byte_events.extend(finish_and_drain(&mut byte_demux));
-    let byte_summary = summarize(&byte_events);
-
-    assert_eq!(
-        byte_summary, whole_summary,
-        "feeding the real fixture one byte at a time must reproduce the exact \
-         same per-track summary as one whole-buffer feed call (proves partial-tag \
-         buffering across arbitrarily small chunk boundaries is correct)"
-    );
 }
 
 // ---------------------------------------------------------------------------
