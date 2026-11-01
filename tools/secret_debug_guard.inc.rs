@@ -1,7 +1,7 @@
-// Shared body of the per-crate `tests/secret_debug_guard.rs` tripwire (audit
+// Shared body of the `secret_debug` workspace guard tripwire (audit
 // umbrella #1142, remediation item "redacting Debug impls for key material").
 //
-// `include!`d by each crate that holds secrets (passwords, tokens, stream keys,
+// `include!`d by `workspace-guards` (tests/guards/secret_debug.rs) for each crate that holds secrets (passwords, tokens, stream keys,
 // passphrases, keys, ICE credentials, ...). It scans `src/**/*.rs` outside the
 // `#[cfg(test)]` module for a `#[derive(.. Debug ..)]` on a struct/enum whose
 // body has a field with a secret-looking name: a derived `Debug` would print
