@@ -24,4 +24,5 @@ mod no_panic;
 mod pacing_throughput;
 mod rendezvous_round_trip;
 mod rfc_vectors;
+mod tokio_crypto_interop;
 mod tsbpd_delivery;
