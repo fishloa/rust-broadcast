@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Tests: RFC 3394 AES key wrap (all six section 4 vectors, wrap + unwrap) and RFC 6070 PBKDF2-HMAC-SHA1 vectors, plus SRT KEK derivation checks (low 64 bits of salt, 2048 iterations) against the private transcription paths (#1653).
 
 ### Added
 - `arq::Receiver::skip_range` and `tsbpd::TsbpdScheduler::skip_range` are public (and no longer gated on the `tokio` feature), so a sans-IO driver can apply a DROPREQ and the Too-Late Packet Drop "fake ACK" without the tokio adapter (used by `broadcast-client`'s SRT caller).

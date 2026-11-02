@@ -23,4 +23,5 @@ mod livecc_pacing;
 mod no_panic;
 mod pacing_throughput;
 mod rendezvous_round_trip;
+mod rfc_vectors;
 mod tsbpd_delivery;

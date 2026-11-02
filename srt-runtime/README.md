@@ -24,8 +24,8 @@ Typical users: an SRT ingest or contribution endpoint (`multimux` builds its SRT
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
 | SRT protocol, IETF Internet-Draft `draft-sharabayko-srt` | -01 (vendored `specs/ietf_draft_sharabayko_srt_01.txt`; rules in `specs/rules/srt-*.md`) | §3 packet structure (data, every control type, handshake extensions, Key Material, Stream ID, Group Membership); §4.3.1 Caller/Listener; §4.3.2 Rendezvous (HSv5); §4.5-§4.7 TSBPD and too-late drop; §4.8, §4.10 ARQ and RTT; §5.1 LiveCC; §5.2 FileCC; §6 encryption | Partial | A draft, not a ratified RFC. Omissions: V4 rendezvous, CUBIC/BBR, CC wired into the sender, encryption in the tokio data path |
-| RFC 3394 AES Key Wrap | RFC 3394 (not vendored, unverified here) | Wrapping the SEK | Full, behind `crypto` | |
-| RFC 8018 PBKDF2 (HMAC-SHA1) | not vendored, unverified here | KEK derivation from a passphrase | Full, behind `crypto` | The draft specifies PBKDF2 over HMAC-SHA1 |
+| RFC 3394 AES Key Wrap | RFC 3394 (private/specs-verified/ietf/srt-runtime/rfc3394-aes-key-wrap.md) | Wrapping the SEK | Full, behind `crypto` | Verified against RFC 3394 §4 vectors (tests/it/rfc_vectors.rs) |
+| RFC 8018 PBKDF2 (HMAC-SHA1) | private/specs-verified/ietf/srt-runtime/rfc8018-pbkdf2.md (PBKDF2) + rfc6070-pbkdf2-hmac-sha1-vectors.md (vectors) | KEK derivation from a passphrase | Full, behind `crypto` | Verified against RFC 6070 vectors (tests/it/rfc_vectors.rs); SRT uses LSB(64, Salt), 2048 iterations |
 | libsrt 1.5.5 (reference implementation) | Used as an interop oracle, not a standard | Handshake, key exchange, loss recovery, rendezvous, MPEG-TS media | Verified | `tests/libsrt_*.rs`, see below |
 
 ## Features
