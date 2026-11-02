@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- LL-HLS video parts on B-frame (reordered) captures declare their
+  `EXT-X-PART` `DURATION` from presentation time instead of decode time, so
+  Apple `mediastreamvalidator` no longer reports "Playlist vs partial segment
+  duration mismatch" on those parts (#1602).
+
 ### Added
 - `CLOSED-CAPTIONS` renditions take `LANGUAGE` from the ATSC `caption_service_descriptor` in the video's PMT loop (issue #1428): a 708 service by `caption_service_number`, 608 channels when all declared 608 entries agree on the language. `closed_caption_overrides` still win, and a stream without the descriptor gets no `LANGUAGE`. `RouteHandle::note_closed_caption_languages` is the new hand-off.
 

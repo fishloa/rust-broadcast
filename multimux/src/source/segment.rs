@@ -1064,6 +1064,9 @@ impl ProgramSegmenter {
         if self.part_target_published != Some(ms) && route_handle.set_part_target_ms(program, ms) {
             self.part_target_published = Some(ms);
         }
+        for follower in &mut self.followers {
+            follower.follow_leader_part_target(ms);
+        }
     }
 
     fn observe_captions(

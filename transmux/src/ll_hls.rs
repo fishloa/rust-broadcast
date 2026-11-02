@@ -268,12 +268,25 @@ pub struct LlHlsSegmenter {
     /// Anchor span at which a part is cut: the part target until the frame
     /// grid is sized, then the shortest span a whole number of frames can have.
     part_trigger_ticks: u64,
+    /// Longest `DURATION` a part is declared with: the part target before its
+    /// rounding up to whole milliseconds.
+    part_cap_ticks: u64,
     /// Where the anchor's frame duration measurement stands.
     frame_probe: FrameProbe,
     /// Buffered duration of the whole current segment on the anchor (ticks).
     anchor_seg_dur: u64,
     /// Buffered duration since the last part flush on the anchor (ticks).
     anchor_part_dur: u64,
+    /// Sum of the `DURATION`s declared for the open segment's parts (ticks).
+    segment_declared_ticks: u64,
+    /// A part of the open segment was declared by presentation distance.
+    segment_reordered: bool,
+    /// Declared minus presented distance accumulated over those parts (ticks).
+    segment_drift: i64,
+
+    /// The open segment's last sample is buffered: no later sample can
+    /// present before a buffered one.
+    segment_closing: bool,
     /// Anchor-progress clock: advances *both* accumulators above from each
     /// anchor sample's `duration`, or from its `dts` delta when `duration` is
     /// absent or zero (see [`MediaClock`]).
@@ -411,9 +424,14 @@ impl LlHlsSegmenter {
             part_target_ticks,
             part_target_ms,
             part_trigger_ticks: part_target_ticks,
+            part_cap_ticks: part_target_ticks,
             frame_probe: FrameProbe::default(),
             anchor_seg_dur: 0,
             anchor_part_dur: 0,
+            segment_declared_ticks: 0,
+            segment_reordered: false,
+            segment_drift: 0,
+            segment_closing: false,
             anchor_clock: MediaClock::new(),
             next_seq: 1,
             current_segment: 1,
@@ -1211,6 +1229,14 @@ impl LlHlsSegmenter {
         };
         // Any samples buffered since the last part become the segment's final
         // part (also carries trailing non-anchor samples).
+        self.segment_closing = true;
+        while !self.frame_probe.is_measuring() && self.closing_part_due() {
+            let before = self.next_part_index;
+            self.emit_part(false)?;
+            if self.next_part_index == before {
+                break;
+            }
+        }
         let has_tail = self.tracks.iter().any(|t| t.part_start < t.pending.len());
         if has_tail {
             self.emit_part(true)?;
@@ -1264,10 +1290,46 @@ impl LlHlsSegmenter {
         }
         self.anchor_seg_dur = 0;
         self.anchor_part_dur = 0;
+        self.segment_declared_ticks = 0;
+        self.segment_reordered = false;
+        self.segment_drift = 0;
+        self.segment_closing = false;
         self.part_deferred = false;
         self.current_segment += 1;
         self.next_part_index = 0;
         Ok(())
+    }
+
+    fn cut_start(&self, part_start: i64, declared_before: u64) -> i64 {
+        let t = &self.tracks[self.anchor];
+        let reordered = t
+            .pending
+            .windows(2)
+            .any(|w| matches!((w[0].pts, w[1].pts), (Some(a), Some(b)) if b < a));
+        match t.pending.first().and_then(|s| s.dts) {
+            Some(first_dts) if reordered => {
+                first_dts + i64::try_from(declared_before).unwrap_or(i64::MAX)
+            }
+            _ => part_start,
+        }
+    }
+
+    fn drains_closing_segment(&self, anchor_end: usize) -> bool {
+        self.segment_closing && anchor_end == self.tracks[self.anchor].pending.len()
+    }
+
+    fn closing_part_due(&self) -> bool {
+        if self.segment_reordered {
+            self.anchor_seg_dur
+                .saturating_sub(self.segment_declared_ticks)
+                > self.part_target_ticks
+        } else {
+            self.anchor_part_dur >= self.part_trigger_ticks
+        }
+    }
+
+    fn part_min_ticks(&self) -> u64 {
+        (self.part_target_ticks * PART_MIN_PERCENT).div_ceil(PERCENT_SCALE)
     }
 
     fn observe_frame(&mut self, elapsed: u64) {
@@ -1286,6 +1348,7 @@ impl LlHlsSegmenter {
         {
             if (floor_frames - 1) * hi < floor_frames * lo {
                 self.part_trigger_ticks = floor_frames * lo;
+                self.part_cap_ticks = floor_frames * hi;
             }
             return;
         }
@@ -1301,6 +1364,7 @@ impl LlHlsSegmenter {
         self.part_target_ms = ms;
         self.part_target_ticks = u64::from(ms) * timescale / MILLIS_PER_SEC;
         self.part_trigger_ticks = frames * lo;
+        self.part_cap_ticks = frames * hi;
     }
 
     /// Whether emitting a part now would drain every anchor sample of a segment
@@ -1352,12 +1416,58 @@ impl LlHlsSegmenter {
         // span is within the part span, scaled to its own timescale — so a
         // lower-rate track (audio) still contributes its samples to *this* part
         // rather than waiting for the segment's final one (audit r05-W27).
+        let mut declared: Option<u64> = None;
+        let anchor_end = if final_part {
+            self.tracks[anchor].pending.len()
+        } else {
+            let fitted = take_span(&self.tracks[anchor], part_span);
+            let limits = ReorderLimits {
+                min_span: self.part_min_ticks(),
+                max_span: self.part_cap_ticks,
+                drift: self.segment_drift,
+                closing: self.segment_closing,
+                first_part: self.next_part_index == 0,
+                settled: self.anchor_seg_dur >= self.target_ticks,
+                remaining: i64::try_from(
+                    self.anchor_seg_dur
+                        .saturating_sub(self.segment_declared_ticks),
+                )
+                .unwrap_or(i64::MAX),
+            };
+            match reorder_cut(&self.tracks[anchor], &limits) {
+                ReorderCut::Wait => return Ok(()),
+                ReorderCut::Decode => fitted,
+                ReorderCut::Presentation {
+                    end,
+                    duration,
+                    error,
+                } => {
+                    declared = Some(duration);
+                    self.segment_drift += error;
+                    end
+                }
+            }
+        };
+        let part_span = if declared.is_none() {
+            part_span
+        } else {
+            let t = &self.tracks[anchor];
+            let clock = &mut MediaClock::resumed_at(t.part_clock.last_dts());
+            t.pending[t.part_start..anchor_end]
+                .iter()
+                .map(|s| clock.tick(s))
+                .sum()
+        };
         let take_ends: Vec<usize> = self
             .tracks
             .iter()
-            .map(|t| {
+            .enumerate()
+            .map(|(i, t)| {
                 if final_part {
                     return t.pending.len();
+                }
+                if i == anchor {
+                    return anchor_end;
                 }
                 let track_scale = t.spec.timescale.max(1) as u64;
                 let track_span = if part_span == u64::MAX {
@@ -1410,7 +1520,26 @@ impl LlHlsSegmenter {
         if anchor_span_ticks == 0 {
             return Ok(());
         }
-        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
+        let declared_ticks = match declared {
+            Some(ticks) => ticks,
+            None if (final_part || self.drains_closing_segment(anchor_end))
+                && self.segment_reordered =>
+            {
+                let remainder = self
+                    .anchor_seg_dur
+                    .saturating_sub(self.segment_declared_ticks);
+                if remainder <= self.part_target_ticks {
+                    remainder.max(1)
+                } else {
+                    anchor_span_ticks.min(self.part_target_ticks)
+                }
+            }
+            None => anchor_span_ticks,
+        };
+        self.segment_reordered |= declared.is_some();
+        let cut_start = self.cut_start(part_start, self.segment_declared_ticks);
+        self.segment_declared_ticks += declared_ticks;
+        let part_secs = declared_ticks as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
 
         let seq = self.next_seq;
         let part_bytes = {
@@ -1472,7 +1601,7 @@ impl LlHlsSegmenter {
         if self.record_cuts {
             self.current_cuts.push(PartCut::new(
                 part_index,
-                part_start,
+                cut_start,
                 self.tracks[anchor].spec.timescale,
             ));
         }
@@ -1480,7 +1609,7 @@ impl LlHlsSegmenter {
             self.ready_part_cuts.push_back(PartCutReady {
                 msn: self.current_segment,
                 part_index,
-                start_dts: part_start,
+                start_dts: cut_start,
                 timescale: self.tracks[anchor].spec.timescale,
             });
         }
@@ -1602,6 +1731,176 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
     // the part target is still carried as its own part and the drain advances.
     end
 }
+enum ReorderCut {
+    Decode,
+    Wait,
+    Presentation {
+        end: usize,
+        duration: u64,
+        error: i64,
+    },
+}
+
+struct ReorderLimits {
+    min_span: u64,
+    max_span: u64,
+    drift: i64,
+    closing: bool,
+    settled: bool,
+    first_part: bool,
+    remaining: i64,
+}
+
+/// RFC 8216bis section 4.4.4.9 and Apple HLS Authoring Specification 8.1: a
+/// part's `DURATION` is the distance to the next part's earliest presentation
+/// time, within one frame.
+fn reorder_cut(t: &TrackState, limits: &ReorderLimits) -> ReorderCut {
+    let start = t.part_start;
+    let tail = &t.pending[start..];
+    if tail.iter().any(|s| s.dts.is_none() || s.pts.is_none()) {
+        return ReorderCut::Decode;
+    }
+    let pts = |s: &Sample| s.pts.unwrap_or_default();
+    let dts = |s: &Sample| s.dts.unwrap_or_default();
+    if tail.windows(2).all(|w| pts(&w[0]) < pts(&w[1])) {
+        return ReorderCut::Decode;
+    }
+    let mut clock = MediaClock::resumed_at(t.part_clock.last_dts());
+    let spans: Vec<u64> = tail.iter().map(|s| clock.tick(s)).collect();
+    let frame = i64::try_from(spans.iter().copied().max().unwrap_or(0)).unwrap_or(i64::MAX);
+    let buffered: u64 = spans.iter().sum();
+    let unseen_floor = if limits.closing {
+        i64::MAX
+    } else {
+        let min_offset = t.pending.iter().map(|s| pts(s) - dts(s)).min().unwrap_or(0);
+        tail.last().map_or(i64::MIN, |last| {
+            dts(last)
+                .saturating_add(i64::try_from(spans.last().copied().unwrap_or(0)).unwrap_or(0))
+                .saturating_add(min_offset)
+        })
+    };
+    let mut suffix_min = vec![i64::MAX; tail.len() + 1];
+    for i in (0..tail.len()).rev() {
+        suffix_min[i] = suffix_min[i + 1].min(pts(&tail[i]));
+    }
+    if suffix_min[0] >= unseen_floor {
+        return ReorderCut::Wait;
+    }
+    let sync_at: Vec<bool> = tail.iter().map(|s| s.flags.is_sync).collect();
+    let planner = Planner {
+        suffix_min: &suffix_min,
+        sync_at: &sync_at,
+        min_span: i64::try_from(limits.min_span).unwrap_or(i64::MAX),
+        max_span: i64::try_from(limits.max_span).unwrap_or(i64::MAX),
+        tolerance: frame.saturating_sub(1),
+        aim: if limits.settled { 0 } else { frame },
+    };
+    let mut best: Option<(bool, i64, usize, i64, i64)> = None;
+    let mut fallback: Option<(i64, usize, i64, i64)> = None;
+    let mut unproven = false;
+    #[allow(clippy::needless_range_loop)]
+    for k in 1..tail.len() {
+        let Some(cut) = planner.cut(0, k, limits.drift, true) else {
+            continue;
+        };
+        if suffix_min[k] >= unseen_floor {
+            unproven = true;
+            break;
+        }
+        let residual = (limits.drift + cut.error - planner.aim).abs();
+        if (limits.drift + cut.error).abs() > planner.tolerance {
+            fallback = fallback.or(Some((residual, k, cut.declared, cut.error)));
+            continue;
+        }
+        let continuable = planner.continues(k, limits.drift + cut.error, tail.len())
+            || (limits.closing && limits.remaining - cut.declared <= planner.max_span);
+        let better = |(c, r, _, d, _): (bool, i64, usize, i64, i64)| {
+            if continuable != c {
+                continuable
+            } else if limits.first_part {
+                (cut.declared, -residual) >= (d, -r)
+            } else {
+                residual <= r
+            }
+        };
+        if best.is_none_or(better) {
+            best = Some((continuable, residual, k, cut.declared, cut.error));
+        }
+    }
+    if unproven && best.is_none_or(|(_, r, ..)| r > 0) {
+        return ReorderCut::Wait;
+    }
+    let settling = !limits.closing && buffered < limits.max_span.saturating_mul(SETTLE_SPANS);
+    if best.is_none() && settling && fallback.is_some() {
+        return ReorderCut::Wait;
+    }
+    match best.map(|(_, r, k, d, e)| (r, k, d, e)).or(fallback) {
+        Some((residual, ..)) if residual > 0 && settling => ReorderCut::Wait,
+        Some((_, k, declared, error)) => ReorderCut::Presentation {
+            end: start + k,
+            duration: u64::try_from(declared).unwrap_or(0),
+            error,
+        },
+        None if !limits.closing && buffered < limits.max_span.saturating_mul(HOPELESS_SPANS) => {
+            ReorderCut::Wait
+        }
+        None => ReorderCut::Decode,
+    }
+}
+
+struct Planner<'a> {
+    suffix_min: &'a [i64],
+    sync_at: &'a [bool],
+    min_span: i64,
+    max_span: i64,
+    tolerance: i64,
+    aim: i64,
+}
+
+struct PlannedCut {
+    declared: i64,
+    error: i64,
+}
+
+impl Planner<'_> {
+    fn cut(&self, from: usize, to: usize, drift: i64, first_part: bool) -> Option<PlannedCut> {
+        let distance = self.suffix_min[to].saturating_sub(self.suffix_min[from]);
+        if distance <= 0 {
+            return None;
+        }
+        let floor = if first_part && self.sync_at[from..to].iter().any(|&s| s) {
+            1
+        } else {
+            self.min_span
+        };
+        let lowest = floor.min(self.max_span).max(distance - self.tolerance);
+        let highest = self.max_span.min(distance + self.tolerance);
+        if lowest > highest {
+            return None;
+        }
+        let declared = (distance - drift + self.aim).clamp(lowest, highest);
+        let declared = declared.clamp(
+            distance - self.tolerance.saturating_sub(1),
+            distance + self.tolerance.saturating_sub(1),
+        );
+        Some(PlannedCut {
+            declared,
+            error: declared - distance,
+        })
+    }
+
+    fn continues(&self, from: usize, drift: i64, len: usize) -> bool {
+        (from + 1..len).any(|to| {
+            self.cut(from, to, drift, false)
+                .is_some_and(|c| (drift + c.error).abs() <= self.tolerance)
+        })
+    }
+}
+
+const HOPELESS_SPANS: u64 = 3;
+
+const SETTLE_SPANS: u64 = 2;
+
 const MILLIS_PER_SEC: u64 = 1000;
 
 const PERCENT_SCALE: u64 = 100;

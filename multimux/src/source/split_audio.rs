@@ -160,6 +160,8 @@ pub(super) struct AudioFollower {
     next_timeline_ns: u64,
     target_duration_secs: f64,
     part_target_ms: u32,
+    leader_part_target_ms: u32,
+    frame_ticks: Option<u32>,
     part_target_sized: bool,
     origin_handle: Arc<HlsOrigin>,
 }
@@ -221,6 +223,8 @@ impl AudioFollower {
             next_timeline_ns: 0,
             target_duration_secs,
             part_target_ms,
+            leader_part_target_ms: 0,
+            frame_ticks: None,
             part_target_sized: false,
             origin_handle: Arc::clone(&serving.origin),
         })
@@ -234,9 +238,24 @@ impl AudioFollower {
             return;
         };
         self.part_target_sized = true;
-        if let Some(ms) = part_target_for_frame_ms(self.part_target_ms, frame_ticks, self.timescale)
-        {
+        self.frame_ticks = Some(frame_ticks);
+        self.publish_part_target();
+    }
+
+    fn publish_part_target(&self) {
+        let Some(frame_ticks) = self.frame_ticks else {
+            return;
+        };
+        let wanted = self.part_target_ms.max(self.leader_part_target_ms);
+        if let Some(ms) = part_target_for_frame_ms(wanted, frame_ticks, self.timescale) {
             self.origin_handle.set_part_target_ms(ms);
+        }
+    }
+
+    pub(super) fn follow_leader_part_target(&mut self, ms: u32) {
+        if self.leader_part_target_ms != ms {
+            self.leader_part_target_ms = ms;
+            self.publish_part_target();
         }
     }
 

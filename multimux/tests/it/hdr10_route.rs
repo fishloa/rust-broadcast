@@ -410,6 +410,11 @@ async fn gpac_dumps_the_mdcv_and_clli_boxes() {
     }
 }
 
+const DURATION_FINDINGS: [&str; 2] = [
+    "Playlist vs segment duration mismatch",
+    "The sum of the partial segment durations must match the parent segment duration",
+];
+
 async fn validator_comments(fixture: &str, name: &str) -> Vec<String> {
     let app = route_app(fixture);
     let dir = scratch(name);
@@ -473,6 +478,12 @@ async fn mediastreamvalidator_reports_no_hdr_specific_finding() {
     }
     for c in &sdr {
         eprintln!("VALIDATOR sdr: {c}");
+    }
+    for c in hdr.iter().chain(&sdr) {
+        assert!(
+            !DURATION_FINDINGS.contains(&c.as_str()),
+            "validator reports a duration mismatch (issue #1602): {c}"
+        );
     }
     let only_hdr: Vec<_> = hdr.iter().filter(|c| !sdr.contains(c)).collect();
     assert!(

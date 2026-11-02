@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (BREAKING)
 - `CaptionDetector` now reports each CEA-608 channel `CC1` to `CC4` and every CEA-708 service 1 to 63 actually present (issue #1428). A 608 channel is reported once caption text (not control codes, XDS or null padding) has been written to it, routed by field and by the data-channel bit of the control codes; a pair with bad odd parity is ignored. `DetectedCaption::Cea608Field1`/`Cea608Field2` are replaced by `DetectedCaption::Cea608(Cea608Channel)`, and a service is reported when it received a service block with content, no longer only when it defined a window of services 1 to 6.
 
+### Fixed
+- `LlHlsSegmenter`: on a stream with frame reordering, each `EXT-X-PART`
+  `DURATION` (`PartInfo::duration`) is now the distance from the part's earliest
+  presentation time to the next part's, within one frame, instead of the sum of
+  its sample durations, so playlist-derived part start times equal the media
+  timestamps. Parts still stay within the part target, are at least 85% of it
+  unless independent or last, and sum to the segment duration (#1602). A part
+  may now hold more decode samples than its duration implies, and a part waits
+  up to two part targets of lookahead before it is cut. Streams without
+  reordering are unchanged.
+
 ## [0.28.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)

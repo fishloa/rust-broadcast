@@ -499,17 +499,10 @@ async fn gpac_dumps_the_dolby_vision_configuration_box() {
     }
 }
 
-const ISSUE_1602_FINDINGS: [&str; 2] = [
+const DURATION_FINDINGS: [&str; 2] = [
     "Playlist vs segment duration mismatch",
-    "Playlist vs partial segment duration mismatch",
+    "The sum of the partial segment durations must match the parent segment duration",
 ];
-
-fn has_b_frame_reordering(fixture: &str) -> bool {
-    load(fixture)
-        .iter()
-        .flat_map(|s| s.samples.iter())
-        .any(|s| s.pts != s.dts)
-}
 
 async fn validator_comments(app: Router, name: &str) -> Vec<String> {
     let dir = scratch(name);
@@ -589,6 +582,12 @@ async fn mediastreamvalidator_reports_no_dolby_vision_specific_finding() {
     for _ in &baseline_runs {
         baseline.extend(results.next().expect("baseline result"));
     }
+    assert!(
+        !baseline
+            .iter()
+            .any(|c| DURATION_FINDINGS.contains(&c.as_str())),
+        "baseline validator reports a duration mismatch (issue #1602): {baseline:?}"
+    );
     for &(fixture, name) in &value_runs {
         let comments = results.next().expect("value result");
         for c in &comments {
@@ -598,12 +597,13 @@ async fn mediastreamvalidator_reports_no_dolby_vision_specific_finding() {
             !comments.iter().any(|c| c.contains("FRAME-RATE")),
             "{fixture}: {comments:?}"
         );
-        let issue_1602 = has_b_frame_reordering(fixture);
-        let only: Vec<_> = comments
-            .iter()
-            .filter(|c| !baseline.contains(c))
-            .filter(|c| !(issue_1602 && ISSUE_1602_FINDINGS.contains(&c.as_str())))
-            .collect();
+        assert!(
+            !comments
+                .iter()
+                .any(|c| DURATION_FINDINGS.contains(&c.as_str())),
+            "{fixture}: validator reports a duration mismatch (issue #1602): {comments:?}"
+        );
+        let only: Vec<_> = comments.iter().filter(|c| !baseline.contains(c)).collect();
         assert!(
             only.is_empty(),
             "{fixture}: findings beyond the SDR/HDR10/HLG baseline: {only:?}"

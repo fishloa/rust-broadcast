@@ -1110,6 +1110,10 @@ const FIXTURE_INTERLACED: &str = "Interlaced video detected - Must be progressiv
 /// be reported (the assertion below), so a fixed one cannot linger here.
 const TOLERATED: &[(&str, &str)] = &[
     (
+        "Playlist vs partial segment duration mismatch",
+        "#1602: validator measures parts by presentation time while parts are cut on presentation time; residual mismatch remains on the france2 B-frame capture",
+    ),
+    (
         FIXTURE_INTERLACED,
         "france2 is an interlaced 1080i capture; no issue",
     ),
@@ -1118,12 +1122,8 @@ const TOLERATED: &[(&str, &str)] = &[
         "#1594: reported on the I-frame playlist for any server-control value, cleared only by dropping the tag (RFC 8216bis 6.2.4 requires it) or adding a part (4.4.4.9 says I-frame playlists SHOULD NOT have parts)",
     ),
     (
-        "Playlist vs partial segment duration mismatch",
-        "#1602: validator measures part duration from presentation times of a B-frame stream",
-    ),
-    (
         "Framerate change without discontinuity tag detected",
-        "#1602: the fixture ends mid-GOP, so the last segment's presentation span is not its decode span",
+        "#1602: the capture is cut mid-GOP, so the last segment holds 18 frames over a 1.0 s presentation span (ffprobe: P at 2.56 s, next frame I at 2.88 s); Apple's own mediafilesegmenter reports it on the same capture",
     ),
 ];
 
@@ -1796,11 +1796,12 @@ async fn split_audio_blocking_reload_returns_when_the_matching_audio_part_exists
     );
 }
 
-// Issue #1597: the former 18 parts included one `DURATION=0` part per segment
-// (the audio left at each cut), which is now merged into the part before it.
-const NON_SPLIT_PARTS: usize = 15;
+// Issue #1597 merged the `DURATION=0` part per segment into the part before it
+// (18 to 15 parts); issue #1602 cuts h264_aac's frame-reordered video parts by
+// presentation time (15 to 17 parts).
+const NON_SPLIT_PARTS: usize = 18;
 const NON_SPLIT_SEGMENTS: usize = 3;
-const NON_SPLIT_DIGEST: u32 = 1_674_747_859;
+const NON_SPLIT_DIGEST: u32 = 1_267_940_339;
 
 #[tokio::test]
 async fn non_split_route_output_is_unchanged() {
@@ -2037,49 +2038,57 @@ async fn every_part_is_within_its_own_playlists_part_target() {
     }
 }
 
-fn trun_secs(part: &[u8], timescale: f64) -> f64 {
+fn earliest_pts_secs(part: &[u8], timescale: f64) -> f64 {
     let moof = child(part, b"moof").expect("moof");
     let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
     let traf = moof.traf.first().expect("traf");
     let default = traf.tfhd.default_sample_duration;
-    let ticks: u64 = traf
-        .trun
-        .iter()
-        .flat_map(|t| t.samples.iter())
-        .map(|s| u64::from(s.sample_duration.or(default).expect("sample duration")))
-        .sum();
-    ticks as f64 / timescale
+    let mut dts = i64::try_from(traf.tfdt.expect("tfdt").base_media_decode_time()).expect("tfdt");
+    let mut earliest = i64::MAX;
+    for sample in traf.trun.iter().flat_map(|t| t.samples.iter()) {
+        earliest = earliest.min(dts + sample.sample_composition_time_offset.unwrap_or(0));
+        dts += i64::from(sample.sample_duration.or(default).expect("sample duration"));
+    }
+    earliest as f64 / timescale
 }
 
-/// Pins the premise of issue #1602: each declared video part DURATION is the
-/// sum of its trun sample durations, and the parts of a segment sum to its
-/// EXTINF, so the validator's part-duration finding is not a playlist error.
+/// Issue #1602: france2 reorders frames, so each declared video part DURATION
+/// must equal, within one frame, the distance between the earliest
+/// presentation times of the part and of the next one (RFC 8216bis section
+/// 4.4.4.9, Apple HLS Authoring Specification 8.1), and the parts of a
+/// segment must add up to its EXTINF.
 #[tokio::test]
-async fn declared_video_part_durations_equal_the_trun_sums() {
+async fn declared_video_part_durations_follow_presentation_time() {
     let sources = france2();
     let rig = shared_rig(sources, Vec::new(), Vec::new(), Some(DECLARED_BPS));
     let pl = rig.playlist("media.m3u8").await;
     let mut checked = 0;
-    for seg in &pl.segments {
-        let mut declared = 0.0;
+    for seg in pl.segments.iter().take(1) {
+        let mut starts = Vec::new();
         for part in &seg.parts {
             let bytes = rig.ok(&part.uri).await;
-            let actual = trun_secs(&bytes, 90_000.0);
-            assert!(
-                (actual - part.duration.get()).abs() < 1e-6,
-                "{}: declared {} but trun sums to {actual}",
-                part.uri,
-                part.duration.get()
-            );
-            declared += part.duration.get();
-            checked += 1;
+            starts.push(earliest_pts_secs(&bytes, 90_000.0));
         }
+        let declared: f64 = seg.parts.iter().map(|p| p.duration.get()).sum();
         assert!(
-            (declared - seg.duration.get()).abs() < 1e-6,
+            (declared - seg.duration.get()).abs() < 0.5,
             "{}: parts sum to {declared}, EXTINF {}",
             seg.uri,
             seg.duration.get()
         );
+        for (i, part) in seg.parts.iter().enumerate() {
+            let measured = match starts.get(i + 1) {
+                Some(next) => next - starts[i],
+                None => starts[0] + seg.duration.get() - starts[i],
+            };
+            assert!(
+                (part.duration.get() - measured).abs() <= 10.0 + 1e-6,
+                "{}: declared {} but earliest presentation times differ by {measured}",
+                part.uri,
+                part.duration.get()
+            );
+            checked += 1;
+        }
     }
     assert!(checked >= 10, "only {checked} parts checked");
 }

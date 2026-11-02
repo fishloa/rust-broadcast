@@ -416,17 +416,10 @@ async fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_output() {
 
 const PART_FLOOR_FINDING: &str = "at least 85% of PART-TARGET";
 
-const ISSUE_1602_FINDINGS: [&str; 2] = [
+const DURATION_FINDINGS: [&str; 2] = [
     "Playlist vs segment duration mismatch",
-    "Playlist vs partial segment duration mismatch",
+    "The sum of the partial segment durations must match the parent segment duration",
 ];
-
-fn has_b_frame_reordering(fixture: &str) -> bool {
-    load(fixture)
-        .iter()
-        .flat_map(|s| s.samples.iter())
-        .any(|s| s.pts != s.dts)
-}
 
 async fn validator_comments(app: Router, name: &str) -> Vec<String> {
     let dir = scratch(name);
@@ -507,13 +500,12 @@ async fn mediastreamvalidator_reports_no_hdr10plus_specific_finding() {
             !c.contains(PART_FLOOR_FINDING),
             "validator reports the 85% part floor: {c}"
         );
+        assert!(
+            !DURATION_FINDINGS.contains(&c.as_str()),
+            "validator reports a duration mismatch (issue #1602): {c}"
+        );
     }
-    let issue_1602 = has_b_frame_reordering(HDR10PLUS);
-    let only: Vec<_> = comments
-        .iter()
-        .filter(|c| !baseline.contains(c))
-        .filter(|c| !(issue_1602 && ISSUE_1602_FINDINGS.contains(&c.as_str())))
-        .collect();
+    let only: Vec<_> = comments.iter().filter(|c| !baseline.contains(c)).collect();
     assert!(
         only.is_empty(),
         "findings beyond the SDR/HDR10 baseline: {only:?}"

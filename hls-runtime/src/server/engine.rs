@@ -403,6 +403,10 @@ struct WindowSegment {
     /// `None` otherwise (audio-first, non-sync first sample, parse failure,
     /// or no video track).
     iframe_len: Option<u64>,
+    /// Presentation time of that I-frame and how far it trails the segment's
+    /// earliest presentation time, both in nanoseconds (RFC 8216bis I-frame
+    /// `EXTINF`); `None` when the segment's timing cannot be read.
+    iframe_timing: Option<IFrameTiming>,
     /// This segment's `SegmentEntry::timeline_position`, in nanoseconds —
     /// carried through so [`HlsOrigin::closed_segments`] can hand it to a
     /// caller doing time-based windowing over a *different* source of
@@ -579,6 +583,7 @@ impl Window {
         entry: SegmentEntry,
         init_gen: Generation,
         iframe_len: Option<u64>,
+        iframe_timing: Option<IFrameTiming>,
         video_millihertz: Option<u32>,
     ) {
         let follows = self
@@ -649,6 +654,7 @@ impl Window {
             discontinuous,
             start_ns: entry.timeline_position.as_nanos(),
             iframe_len,
+            iframe_timing,
             video_millihertz,
         });
     }
@@ -988,6 +994,86 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
         return None;
     }
     u64::try_from(first.end).ok()
+}
+
+/// Presentation timing of a segment's leading I-frame.
+#[derive(Debug, Clone, Copy)]
+struct IFrameTiming {
+    /// Presentation time of the I-frame, in nanoseconds on the track timeline.
+    pts_ns: u128,
+    /// How far that I-frame trails the segment's earliest presentation time
+    /// (leading pictures that follow it in decode order), in nanoseconds.
+    lead_ns: u64,
+}
+
+/// Presentation time of `segment`'s first video sample and its offset from the
+/// segment's earliest video presentation time, from `tfdt` and the `trun`
+/// composition offsets.
+fn compute_iframe_timing(
+    segment: &[u8],
+    video_track_id: TrackId,
+    timescale: u32,
+) -> Option<IFrameTiming> {
+    if timescale == 0 {
+        return None;
+    }
+    let (_, moof) = first_moof(segment)?;
+    let traf = moof
+        .traf
+        .iter()
+        .find(|traf| traf.tfhd.track_id == video_track_id)?;
+    let base = i128::from(traf.tfdt?.base_media_decode_time());
+    let default_duration = traf.tfhd.default_sample_duration;
+    let mut decode = base;
+    let mut first = None;
+    let mut earliest = i128::MAX;
+    for sample in traf.trun.iter().flat_map(|run| run.samples.iter()) {
+        let pts = decode + i128::from(sample.sample_composition_time_offset.unwrap_or(0));
+        first.get_or_insert(pts);
+        earliest = earliest.min(pts);
+        decode += i128::from(sample.sample_duration.or(default_duration)?);
+    }
+    let first = first?;
+    let scale = i128::from(timescale);
+    let ns = |ticks: i128| {
+        ticks
+            .checked_mul(i128::try_from(NANOS_PER_SEC).ok()?)?
+            .checked_div(scale)
+    };
+    Some(IFrameTiming {
+        pts_ns: u128::try_from(ns(first)?).ok()?,
+        lead_ns: u64::try_from(ns(first - earliest)?).ok()?,
+    })
+}
+
+/// RFC 8216bis section 4.4.4.1: in an `EXT-X-I-FRAMES-ONLY` Playlist the
+/// `EXTINF` duration is the time between the presentation time of the I-frame
+/// in the Media Segment and the presentation time of the next I-frame in the
+/// Playlist, or the end of the presentation for the last one. A segment whose
+/// I-frame timing is unknown, or that is followed by a discontinuity, an
+/// I-frame whose timing is unknown or one that does not follow it by a plausible
+/// distance, keeps the Media Segment's own duration.
+fn iframe_durations_secs(entries: &[(WindowSegment, u64)]) -> Vec<f64> {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(i, (segment, _))| {
+            let own = segment.duration_secs;
+            let Some(timing) = segment.iframe_timing else {
+                return own;
+            };
+            match entries.get(i + 1) {
+                Some((next, _)) if !next.discontinuous => next
+                    .iframe_timing
+                    .and_then(|n| n.pts_ns.checked_sub(timing.pts_ns))
+                    .map(|ns| ns as f64 / NANOS_PER_SEC as f64)
+                    .filter(|secs| *secs > 0.0 && *secs <= own * 2.0)
+                    .unwrap_or(own),
+                Some(_) => own,
+                None => (own - timing.lead_ns as f64 / NANOS_PER_SEC as f64).max(0.0),
+            }
+        })
+        .collect()
 }
 
 /// Byte offset of the `mdat` payload that contains `sample_start`, if any.
@@ -2932,7 +3018,13 @@ impl HlsOrigin {
         drop(cursor);
 
         enum Prepared {
-            Segment(SegmentEntry, Generation, Option<u64>, Option<u32>),
+            Segment(
+                SegmentEntry,
+                Generation,
+                Option<u64>,
+                Option<IFrameTiming>,
+                Option<u32>,
+            ),
             Gap,
         }
         let video_track_id = *locked(&self.video_track_id);
@@ -2947,6 +3039,12 @@ impl HlsOrigin {
                 SegmentCursorItem::Segment(entry) => {
                     let iframe_len = video_track_id
                         .and_then(|track_id| compute_iframe_len(&entry.bytes, track_id));
+                    let iframe_timing =
+                        video_track_id
+                            .zip(video_timescale)
+                            .and_then(|(track_id, timescale)| {
+                                compute_iframe_timing(&entry.bytes, track_id, timescale)
+                            });
                     let video_rate = if signalled_rate {
                         None
                     } else {
@@ -2960,7 +3058,13 @@ impl HlsOrigin {
                         }
                     };
                     let init_gen = locked(&self.init).generation_for(entry.sequence_number);
-                    prepared.push(Prepared::Segment(entry, init_gen, iframe_len, video_rate));
+                    prepared.push(Prepared::Segment(
+                        entry,
+                        init_gen,
+                        iframe_len,
+                        iframe_timing,
+                        video_rate,
+                    ));
                 }
                 // `Lagged`/`Gap`/anything newer: segments were lost, so the
                 // next one does not follow the window's contents.
@@ -2971,7 +3075,7 @@ impl HlsOrigin {
         let mut window = locked(&self.window);
         for item in prepared {
             match item {
-                Prepared::Segment(entry, init_gen, iframe_len, video_rate) => {
+                Prepared::Segment(entry, init_gen, iframe_len, iframe_timing, video_rate) => {
                     // Record the arrival origin exactly once, the first time a
                     // segment drains into the window while an arrival clock is
                     // configured. "this segment ended about now, so it started
@@ -2990,7 +3094,7 @@ impl HlsOrigin {
                         }
                     }
                     let seg_duration = entry.duration;
-                    window.push(entry, init_gen, iframe_len, video_rate);
+                    window.push(entry, init_gen, iframe_len, iframe_timing, video_rate);
                     if let Some(frozen) = *locked(&self.frozen_target_duration_secs)
                         && seg_duration.as_secs_f64().round() > frozen.round()
                     {
@@ -3704,16 +3808,18 @@ impl HlsOrigin {
 
         let first_entry_seq = entries[0].0.sequence_number;
         let media_sequence = self.public_msn(first_entry_seq);
+        let durations = iframe_durations_secs(&entries);
         let segments: Vec<MediaSegment> = entries
             .iter()
-            .map(|(s, len)| MediaSegment {
+            .zip(durations)
+            .map(|((s, len), duration_secs)| MediaSegment {
                 map: map_for(s.init_gen),
                 uri: self.iframe_segment_uri(
                     track_id,
                     s.sequence_number,
                     self.container.segment_extension(),
                 ),
-                duration: DecimalSeconds::new(s.duration_secs).unwrap_or_default(),
+                duration: DecimalSeconds::new(duration_secs).unwrap_or_default(),
                 discontinuous: s.discontinuous,
                 byte_range: Some(ByteRange {
                     length: *len,
@@ -5390,6 +5496,64 @@ mod tests {
             .collect()
     }
 
+    fn timed_window(entries: &[(u32, bool, Option<IFrameTiming>)]) -> Vec<(WindowSegment, u64)> {
+        let mut w = Window::new(nz(8));
+        for &(seq, discontinuous, timing) in entries {
+            w.push(
+                window_entry(seq, 0, discontinuous),
+                Generation::new(1),
+                Some(1),
+                timing,
+                None,
+            );
+        }
+        w.segments.iter().map(|s| (s.clone(), 1)).collect()
+    }
+
+    fn timing(pts_ms: u128, lead_ms: u64) -> Option<IFrameTiming> {
+        Some(IFrameTiming {
+            pts_ns: pts_ms * 1_000_000,
+            lead_ns: lead_ms * 1_000_000,
+        })
+    }
+
+    // RFC 8216bis section 4.4.4.1: an I-frame Playlist's EXTINF is the time
+    // between this I-frame's presentation time and the next one's, the last
+    // lasting to the end of its segment.
+    #[test]
+    fn iframe_durations_are_the_presentation_distance_between_iframes() {
+        let entries = timed_window(&[
+            (1, false, timing(65, 0)),
+            (2, false, timing(2201, 100)),
+            (3, false, timing(3268, 100)),
+        ]);
+        let secs = iframe_durations_secs(&entries);
+        assert!((secs[0] - 2.136).abs() < 1e-9, "{secs:?}");
+        assert!((secs[1] - 1.067).abs() < 1e-9, "{secs:?}");
+        assert!((secs[2] - 3.9).abs() < 1e-9, "{secs:?}");
+    }
+
+    #[test]
+    fn iframe_durations_keep_the_segment_duration_when_the_timeline_does_not_advance() {
+        let entries = timed_window(&[
+            (1, false, timing(500, 0)),
+            (2, false, timing(500, 0)),
+            (3, false, timing(90_000, 0)),
+        ]);
+        assert_eq!(iframe_durations_secs(&entries), vec![4.0, 4.0, 4.0]);
+    }
+
+    #[test]
+    fn iframe_durations_keep_the_segment_duration_across_a_discontinuity_or_unknown_timing() {
+        let entries = timed_window(&[
+            (1, false, timing(65, 0)),
+            (2, true, timing(9000, 0)),
+            (3, false, None),
+            (4, false, timing(15000, 0)),
+        ]);
+        assert_eq!(iframe_durations_secs(&entries), vec![4.0, 4.0, 4.0, 4.0]);
+    }
+
     // r09-W11: the Trunk's `publish_segment` refuses a decreasing number, but
     // the window must not depend on that: a repeat or decrease clears it
     // instead of holding two entries under one number (the old `bytes_of`
@@ -5397,12 +5561,30 @@ mod tests {
     #[test]
     fn window_restarts_on_a_repeated_or_decreasing_sequence_number() {
         let mut w = Window::new(nz(6));
-        w.push(window_entry(5, 0xA5, false), Generation::new(1), None, None);
-        w.push(window_entry(6, 0xA6, true), Generation::new(1), None, None);
+        w.push(
+            window_entry(5, 0xA5, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
+        w.push(
+            window_entry(6, 0xA6, true),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(5, false), (6, true)]);
 
         // Decrease: 3 after 6.
-        w.push(window_entry(3, 0xB3, false), Generation::new(1), None, None);
+        w.push(
+            window_entry(3, 0xB3, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
@@ -5414,7 +5596,13 @@ mod tests {
         assert_eq!(w.bytes_of(SegmentSeq::new(6)), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
-        w.push(window_entry(3, 0xC3, false), Generation::new(1), None, None);
+        w.push(
+            window_entry(3, 0xC3, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         assert_eq!(
             w.bytes_of(SegmentSeq::new(3)),
@@ -5432,10 +5620,12 @@ mod tests {
             Generation::new(1),
             None,
             None,
+            None,
         );
         w.push(
             window_entry(u32::MAX, 2, false),
             Generation::new(1),
+            None,
             None,
             None,
         );
@@ -5446,6 +5636,7 @@ mod tests {
         w.push(
             window_entry(u32::MAX, 3, false),
             Generation::new(1),
+            None,
             None,
             None,
         );
@@ -5460,7 +5651,13 @@ mod tests {
     fn window_capacity_is_never_below_three_segments() {
         let mut w = Window::new(nz(1));
         for seq in 1..=5 {
-            w.push(window_entry(seq, 0, false), Generation::new(1), None, None);
+            w.push(
+                window_entry(seq, 0, false),
+                Generation::new(1),
+                None,
+                None,
+                None,
+            );
         }
         assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
     }
@@ -5518,6 +5715,7 @@ mod tests {
             w.push(
                 window_entry(seq, tag, false),
                 Generation::new(1),
+                None,
                 None,
                 None,
             );

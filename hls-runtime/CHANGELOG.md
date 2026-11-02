@@ -13,6 +13,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - `HlsOrigin::set_detected_closed_captions(Vec::new())` now means the video was scanned and carries no captions: the master playlist states `CLOSED-CAPTIONS=NONE` on every `EXT-X-STREAM-INF` (RFC 8216bis section 4.4.6.2). Until the first call the master claims nothing, as before; a later non-empty call replaces `NONE` with the caption group (issue #1428).
 
+### Fixed
+- The I-frame playlist `EXTINF` is the presentation-time distance between an
+  I-frame and the next one (RFC 8216bis 4.4.4.1), not the Media Segment's
+  duration, so an open-GOP stream whose leading pictures precede the I-frame no
+  longer reports a segment duration mismatch (#1602).
+
 ## [0.10.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)

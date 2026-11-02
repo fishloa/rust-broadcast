@@ -109,6 +109,7 @@ mod ps_demux;
 mod ps_demux_mpeg2;
 mod ps_demux_substreams;
 mod rebase;
+mod reorder_parts;
 mod repackage;
 mod review_findings;
 mod rtcp;

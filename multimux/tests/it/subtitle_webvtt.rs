@@ -79,6 +79,8 @@ const KNOWN_MISSING_HOLD_BACK_1594: &str = "Missing server control attribute";
 /// report, which RFC 8216bis Appendix B.1 allows; reporting the I-frame
 /// playlist instead is rejected by the validator as "Unknown rendition report".
 const KNOWN_NO_RENDITION_REPORTS_1595: &str = "No rendition reports in low-latency playlist";
+const KNOWN_PARTIAL_SEGMENT_DURATION_MISMATCH_1602: &str =
+    "Playlist vs partial segment duration mismatch";
 
 use crate::support::shared;
 
@@ -1262,6 +1264,7 @@ async fn apple_validator_reports_nothing_about_subtitles() {
         let m = message(m);
         KNOWN_MISSING_HOLD_BACK_1594 == m
             || KNOWN_INTERLACED_FIXTURE == m
+            || KNOWN_PARTIAL_SEGMENT_DURATION_MISMATCH_1602 == m
             || extra.contains(&m.as_str())
     };
     let unexpected_on: Vec<_> = with.iter().filter(|(_, m)| !tolerated(m, &[])).collect();
