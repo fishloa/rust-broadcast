@@ -450,17 +450,67 @@ fn case_19_tp_fs4_amplitude_1_41_phase_45() {
 // Tech 3341 Table 1 — True-peak compliance tests (cases 20–23)
 // =====================================================================
 //
-// Cases 20–23 require synthesizing a signal at 4×fs, applying a
-// specific lowpass anti-aliasing filter, then downsampling with
-// 4 different offsets. The exact filter is not specified in the
-// standard — only the resulting reference WAV files (available from
-// the EBU Technical website) produce the correct expected values.
-//
-// Without the exact filter coefficients, we cannot generate test
-// signals that match. These cases are therefore skipped until the
-// reference WAV files can be included as test fixtures.
-//
-// Tracked in issue #1635; no placeholder tests are kept.
+// Cases 20-23 are the EBU's 4x-oversampled pulse downsampled at offsets 0..3.
+// The reference WAVs are not redistributable, so they come from the private
+// fixtures repo through `test_fixtures` (skip loudly without the checkout).
+
+fn reference_wav_true_peak(case: u32) -> Option<f64> {
+    let who = format!("tech3341 case {case}");
+    let rel = format!("loudness/ebu-tech3341/seq-3341-{case}-24bit.wav.wav");
+    let path = test_fixtures::require(&rel, &who)?;
+    let mut reader = hound::WavReader::open(&path).unwrap();
+    let spec = reader.spec();
+    assert_eq!(spec.sample_format, hound::SampleFormat::Int);
+    assert_eq!(spec.bits_per_sample, 24);
+    let scale = f64::from(1u32 << (spec.bits_per_sample - 1));
+    let channels = usize::from(spec.channels);
+    let mut per_channel: Vec<Vec<f64>> = vec![Vec::new(); channels];
+    for (i, s) in reader.samples::<i32>().enumerate() {
+        per_channel[i % channels].push(f64::from(s.unwrap()) / scale);
+    }
+    let mut peak = f64::NEG_INFINITY;
+    for samples in &per_channel {
+        let mut tp = TruePeakMeter::new();
+        tp.push_f64_slice(samples).unwrap();
+        peak = peak.max(tp.finish());
+    }
+    Some(peak)
+}
+
+fn assert_reference_true_peak(case: u32) {
+    let Some(level) = reference_wav_true_peak(case) else {
+        return;
+    };
+    assert!(
+        (-0.4..=0.2).contains(&level),
+        "case {case}: TP={level} dBTP, expected 0.0 +0.2/-0.4 dBTP"
+    );
+    eprintln!("case {case}: TP={level} dBTP");
+}
+
+/// Tech 3341 Table 1 case 20: 4x-oversampled pulse, offset 0.
+#[test]
+fn case_20_tp_reference_wav_offset_0() {
+    assert_reference_true_peak(20);
+}
+
+/// Tech 3341 Table 1 case 21: 4x-oversampled pulse, offset 1.
+#[test]
+fn case_21_tp_reference_wav_offset_1() {
+    assert_reference_true_peak(21);
+}
+
+/// Tech 3341 Table 1 case 22: 4x-oversampled pulse, offset 2.
+#[test]
+fn case_22_tp_reference_wav_offset_2() {
+    assert_reference_true_peak(22);
+}
+
+/// Tech 3341 Table 1 case 23: 4x-oversampled pulse, offset 3.
+#[test]
+fn case_23_tp_reference_wav_offset_3() {
+    assert_reference_true_peak(23);
+}
 
 fn lra_two_tones(level1: f64, level2: f64, duration_each: f64) -> f64 {
     let (t1_l, t1_r) = stereo_sine(level1, 1000.0, duration_each);
