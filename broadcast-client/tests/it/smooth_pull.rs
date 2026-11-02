@@ -1,6 +1,5 @@
 use crate::support::hls_host::{self, Host};
 use broadcast_client::{Config, ErrorKind, Event, Session, SourceKind, Status};
-use broadcast_common::Unpackage;
 
 fn manifest_url() -> &'static str {
     "http://origin.test/Manifest"

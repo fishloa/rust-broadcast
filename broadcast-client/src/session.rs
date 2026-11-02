@@ -1445,10 +1445,10 @@ fn is_smooth_manifest(url: &Url) -> bool {
     }
     if let Some(q) = url.query() {
         for pair in q.split('&') {
-            if let Some((k, _)) = pair.split_once('=') {
-                if k.eq_ignore_ascii_case("format") {
-                    return false;
-                }
+            if let Some((k, _)) = pair.split_once('=')
+                && k.eq_ignore_ascii_case("format")
+            {
+                return false;
             }
         }
     }

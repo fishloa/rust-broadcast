@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if, clippy::redundant_clone)]
 //! Smooth Streaming (MS-SSTR) pull source.
 
 use alloc::collections::VecDeque;
@@ -26,11 +27,6 @@ use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
 
 const MICROS_PER_MILLI: u64 = 1_000;
-const STATUS_UNAUTHORIZED: u16 = 401;
-const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
-const STATUS_FORBIDDEN: u16 = 403;
-const STATUS_NOT_FOUND: u16 = 404;
-const STATUS_GONE: u16 = 410;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const SYNTHETIC_MOVIE_TIMESCALE: u32 = 90_000;
 const LIVE_JOIN_FRAGMENTS: usize = 2;
@@ -53,7 +49,6 @@ struct Req {
 struct StreamRuntime {
     stream: StreamIndex,
     timescale: u64,
-    quality_index: usize,
     quality: transmux::smooth_parse::QualityLevel,
     chunks: Vec<(u64, u64)>,
     next: usize,
@@ -83,12 +78,9 @@ pub(crate) struct SmoothSource {
     first_bodies: Vec<Option<Vec<u8>>>,
     chosen_video: usize,
     pending_variant: Option<usize>,
-    pending_audio: Option<Option<usize>>,
     is_live: bool,
-    live_ended_pending: bool,
     ended: bool,
     fatal: bool,
-    established: bool,
     now: u64,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
@@ -111,12 +103,9 @@ impl SmoothSource {
             first_bodies: Vec::new(),
             chosen_video: 0,
             pending_variant: None,
-            pending_audio: None,
             is_live: false,
-            live_ended_pending: false,
             ended: false,
             fatal: false,
-            established: false,
             now: 0,
             actions: VecDeque::new(),
             events: VecDeque::new(),
@@ -388,8 +377,7 @@ impl SmoothSource {
                                     self.streams[si].refresh_misses = 0;
                                     // new chunks at/after frontier
                                     let frontier = self.streams[si].frontier;
-                                    let mut new_chunks =
-                                        found.enumerate_chunks().unwrap_or_default();
+                                    let new_chunks = found.enumerate_chunks().unwrap_or_default();
                                     // filter
                                     let mut filtered: Vec<(u64, u64)> = new_chunks
                                         .iter()
@@ -410,7 +398,7 @@ impl SmoothSource {
                                             filtered = new_chunks;
                                         }
                                     }
-                                    if self.is_live == false && prev_live {
+                                    if !self.is_live && prev_live {
                                         // ended after drain handled by completion
                                     }
                                     self.streams[si].chunks = filtered;
@@ -519,9 +507,11 @@ impl SmoothSource {
                             .ok();
                             s.track_spec = spec.clone();
                             if let Some(sp) = spec {
-                                let init =
-                                    build_init_segment(&[sp.clone()], SYNTHETIC_MOVIE_TIMESCALE)
-                                        .ok();
+                                let init = build_init_segment(
+                                    std::slice::from_ref(&sp),
+                                    SYNTHETIC_MOVIE_TIMESCALE,
+                                )
+                                .ok();
                                 s.init_bytes = init;
                                 specs.push(sp);
                             }
@@ -642,7 +632,6 @@ impl SmoothSource {
             self.streams.push(StreamRuntime {
                 stream: vs,
                 timescale: ts,
-                quality_index: qi,
                 quality,
                 chunks,
                 next: 0,
@@ -674,7 +663,6 @@ impl SmoothSource {
             self.streams.push(StreamRuntime {
                 stream: as_,
                 timescale: ts,
-                quality_index: qi,
                 quality,
                 chunks,
                 next: 0,
@@ -814,11 +802,6 @@ impl SmoothSource {
             .copied()
             .unwrap_or(self.config.backoff_cap_ms)
             .max(1)
-    }
-
-    fn handle_fragment_failure(&mut self, _req: Req, status: Option<u16>, now: u64) {
-        // fallback for transport errors: we lost req kind? We'll not use this path.
-        let _ = (status, now);
     }
 
     pub(crate) fn select_variant(

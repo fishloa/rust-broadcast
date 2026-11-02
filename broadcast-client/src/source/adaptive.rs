@@ -154,8 +154,10 @@ impl Adaptive {
     }
 
     pub(crate) fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
-        if let Self::Dash(s) = self {
-            s.set_wall_clock(now_us, unix_us);
+        match self {
+            Self::Dash(s) => s.set_wall_clock(now_us, unix_us),
+            Self::Smooth(s) => s.set_wall_clock(now_us, unix_us),
+            _ => {}
         }
     }
 }
