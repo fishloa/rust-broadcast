@@ -44,7 +44,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsRequest};
 
-use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
+use crate::http;
 use crate::origin::resource::{BlockingRequestGuard, cors_preflight};
 use crate::output::llhls::BlockingReloadQuery;
 use crate::output::{Output, OutputKind};
@@ -171,24 +171,20 @@ pub(crate) async fn media_playlist(
         &trunk,
         ll_hls.as_ref(),
         request,
-        BLOCKING_RELOAD_TIMEOUT,
+        http::playlist_reload_timeout(&ll_hls),
         BlockingRequestGuard::new,
     )
     .await;
-    http::into_response(
-        resp,
-        http::playlist_not_found_status(timed_out),
-        |body| match body {
-            HlsBody::Playlist(m) => {
-                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
-            }
-            HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-            // `HlsBody` is `#[non_exhaustive]`; a future body variant this
-            // playlist route doesn't understand is treated the same as a
-            // resource body -- not found here.
-            _ => StatusCode::NOT_FOUND.into_response(),
-        },
-    )
+    http::into_playlist_response(resp, timed_out, |body| match body {
+        HlsBody::Playlist(m) => {
+            ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
+        }
+        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+        // `HlsBody` is `#[non_exhaustive]`; a future body variant this
+        // playlist route doesn't understand is treated the same as a
+        // resource body -- not found here.
+        _ => StatusCode::NOT_FOUND.into_response(),
+    })
 }
 
 #[cfg(test)]

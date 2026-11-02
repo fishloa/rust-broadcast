@@ -17,7 +17,7 @@
 //! query parameters (`_HLS_msn`/`_HLS_part`) are the Blocking Playlist Reload
 //! mechanism of RFC 8216bis §6.2.5.2 — the client asks the origin to hold the
 //! response open until the requested Media Sequence Number/part is
-//! available, bounded by `crate::http::BLOCKING_RELOAD_TIMEOUT` so the
+//! available, bounded by `crate::http::playlist_reload_timeout` (three Target Durations, RFC 8216bis section 6.2.5.2) so the
 //! origin never hangs indefinitely.
 
 use std::sync::Arc;
@@ -32,7 +32,7 @@ use hls_runtime::server::{
 };
 use serde::Deserialize;
 
-use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
+use crate::http;
 use crate::origin::resource::{BlockingRequestGuard, cors_preflight};
 use crate::output::{Output, OutputKind};
 use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, subtitle_playlist_uri};
@@ -269,27 +269,22 @@ pub(crate) async fn media_playlist(
         &trunk,
         ll_hls.as_ref(),
         request,
-        BLOCKING_RELOAD_TIMEOUT,
+        http::playlist_reload_timeout(&ll_hls),
         BlockingRequestGuard::new,
     )
     .await;
-    http::into_response(
-        resp,
-        http::playlist_not_found_status(timed_out),
-        |body| match body {
-            HlsBody::Playlist(m) => {
-                let mut resp =
-                    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
-                if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency))
-                {
-                    resp.headers_mut().insert("priority", value);
-                }
-                resp
+    http::into_playlist_response(resp, timed_out, |body| match body {
+        HlsBody::Playlist(m) => {
+            let mut resp =
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
+                resp.headers_mut().insert("priority", value);
             }
-            HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-            _ => StatusCode::NOT_FOUND.into_response(),
-        },
-    )
+            resp
+        }
+        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    })
 }
 
 /// `GET /{audio uri}` — the LL-HLS media playlist for one audio rendition
@@ -342,27 +337,22 @@ async fn sibling_playlist(
         trunk,
         origin.as_ref(),
         request,
-        BLOCKING_RELOAD_TIMEOUT,
+        http::playlist_reload_timeout(origin),
         BlockingRequestGuard::new,
     )
     .await;
-    http::into_response(
-        resp,
-        http::playlist_not_found_status(timed_out),
-        |body| match body {
-            HlsBody::Playlist(m) => {
-                let mut resp =
-                    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
-                if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency))
-                {
-                    resp.headers_mut().insert("priority", value);
-                }
-                resp
+    http::into_playlist_response(resp, timed_out, |body| match body {
+        HlsBody::Playlist(m) => {
+            let mut resp =
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
+                resp.headers_mut().insert("priority", value);
             }
-            HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-            _ => StatusCode::NOT_FOUND.into_response(),
-        },
-    )
+            resp
+        }
+        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    })
 }
 
 /// `GET /iframe.m3u8` — the LL-HLS I-frame (trick-play) playlist for
@@ -389,27 +379,22 @@ pub(crate) async fn iframe_playlist(
         &trunk,
         ll_hls.as_ref(),
         request,
-        BLOCKING_RELOAD_TIMEOUT,
+        http::playlist_reload_timeout(&ll_hls),
         BlockingRequestGuard::new,
     )
     .await;
-    http::into_response(
-        resp,
-        http::playlist_not_found_status(timed_out),
-        |body| match body {
-            HlsBody::Playlist(m) => {
-                let mut resp =
-                    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
-                if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency))
-                {
-                    resp.headers_mut().insert("priority", value);
-                }
-                resp
+    http::into_playlist_response(resp, timed_out, |body| match body {
+        HlsBody::Playlist(m) => {
+            let mut resp =
+                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
+                resp.headers_mut().insert("priority", value);
             }
-            HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-            _ => StatusCode::NOT_FOUND.into_response(),
-        },
-    )
+            resp
+        }
+        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    })
 }
 
 #[cfg(test)]
