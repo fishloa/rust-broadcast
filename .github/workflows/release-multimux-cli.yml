@@ -20,7 +20,7 @@ env:
 jobs:
   publish:
     name: publish multimux-cli to crates.io
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: crates-io
     # `contents: write` is needed to create the GitHub Release below, and is
     # the only elevated permission this job holds — `cargo publish`

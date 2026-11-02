@@ -29,7 +29,7 @@ on:
 jobs:
   yank:
     name: yank crates.io ${{ inputs.version }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: dtolnay/rust-toolchain@stable
       - name: Yank crates

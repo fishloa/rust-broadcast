@@ -38,7 +38,7 @@ env:
 jobs:
   package-check:
     name: cargo package (workspace) + tarball sanity
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
