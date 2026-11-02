@@ -14,7 +14,7 @@ upgrade to the latest release.
 
 | Crate set | Supported |
 |---|---|
-| Core crates, latest minor (8.5.x) | ✅ |
+| Core crates, latest minor (12.1.x) | ✅ |
 | Anything older | ❌ |
 
 ## Reporting a vulnerability
