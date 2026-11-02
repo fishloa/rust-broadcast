@@ -97,6 +97,7 @@ impl Watch {
                     url,
                     headers,
                     byte_range,
+                    identity: _,
                 } => {
                     assert!(!self.closed, "HttpRequest after close");
                     assert!(!self.fatal, "HttpRequest after a fatal error");
