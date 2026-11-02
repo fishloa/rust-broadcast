@@ -374,3 +374,181 @@ async fn tokio_key_refresh_keeps_delivering() {
     .await
     .unwrap();
 }
+
+// ---------- Rendezvous + crypto (issue #1658) ----------
+
+fn libsrt_rdv_crypto_uri(
+    peer_port: u16,
+    local_port: u16,
+    passphrase: &str,
+    pbkeylen: usize,
+) -> String {
+    format!(
+        "srt://127.0.0.1:{peer_port}?mode=rendezvous&port={local_port}&latency=120&passphrase={passphrase}&pbkeylen={pbkeylen}"
+    )
+}
+
+fn crypto_patient_config(passphrase: &str, key_len: usize) -> HandshakeConfig {
+    let mut c = crypto_config(passphrase, key_len);
+    c.max_retries = 60;
+    c
+}
+
+async fn rendezvous_with_libsrt(key_len: usize, seed: u8) {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        skip_unless_tools!("srt-live-transmit" => "-version");
+        let our_port = free_udp_port();
+        let lib_port = free_udp_port();
+        let discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let discard_port = discard.local_addr().unwrap().port();
+        let _libsrt = spawn(
+            Command::new("srt-live-transmit")
+                .arg("-loglevel:error")
+                .arg(libsrt_rdv_crypto_uri(
+                    our_port, lib_port, PASSPHRASE, key_len,
+                ))
+                .arg(format!("udp://127.0.0.1:{discard_port}")),
+        );
+
+        let mut ours = tokio::time::timeout(
+            Duration::from_secs(25),
+            SrtSocket::rendezvous_with(
+                format!("127.0.0.1:{our_port}")
+                    .parse::<SocketAddr>()
+                    .unwrap(),
+                format!("127.0.0.1:{lib_port}")
+                    .parse::<SocketAddr>()
+                    .unwrap(),
+                crypto_patient_config(PASSPHRASE, key_len),
+                IoConfig::default().with_handshake(Duration::from_secs(20)),
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("rendezvous never completed"))
+        .unwrap_or_else(|e| panic!("rendezvous with libsrt: {e}"));
+
+        let burst = pattern(PAYLOAD_LEN * 8, seed);
+        for chunk in burst.chunks(PAYLOAD_LEN) {
+            ours.send(chunk).await.expect("send");
+        }
+        let got = recv_at_least(&discard, burst.len(), Duration::from_secs(10)).await;
+        assert_eq!(got, burst, "burst must be forwarded byte-identical");
+        drop(ours);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn rendezvous_with_libsrt_aes128() {
+    rendezvous_with_libsrt(16, 11).await;
+}
+
+#[tokio::test]
+async fn rendezvous_with_libsrt_aes256() {
+    rendezvous_with_libsrt(32, 22).await;
+}
+
+#[tokio::test]
+async fn rendezvous_wrong_passphrase_is_refused() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        skip_unless_tools!("srt-live-transmit" => "-version");
+        let our_port = free_udp_port();
+        let lib_port = free_udp_port();
+        let discard_port = free_udp_port();
+        let _libsrt = spawn(
+            Command::new("srt-live-transmit")
+                .arg("-loglevel:error")
+                .arg(libsrt_rdv_crypto_uri(our_port, lib_port, PASSPHRASE, 16))
+                .arg(format!("udp://127.0.0.1:{discard_port}")),
+        );
+
+        let err = tokio::time::timeout(
+            Duration::from_secs(15),
+            SrtSocket::rendezvous_with(
+                format!("127.0.0.1:{our_port}")
+                    .parse::<SocketAddr>()
+                    .unwrap(),
+                format!("127.0.0.1:{lib_port}")
+                    .parse::<SocketAddr>()
+                    .unwrap(),
+                crypto_patient_config("wrong-passphrase-xxxxxxxx", 16),
+                IoConfig::default().with_handshake(Duration::from_secs(20)),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::Rejected(_)),
+            "expected rejection, got {err:?}"
+        );
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn tokio_rendezvous_pair_encrypted_round_trip() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let port_a = free_udp_port();
+        let port_b = free_udp_port();
+        let cfg = crypto_config(PASSPHRASE, 16);
+        let io = IoConfig::default().with_handshake(Duration::from_secs(20));
+        let cfg_a = cfg.clone();
+        let cfg_b = cfg.clone();
+        let io_a = io;
+        let io_b = io;
+
+        let ha = tokio::spawn(async move {
+            SrtSocket::rendezvous_with(
+                format!("127.0.0.1:{port_a}").parse::<SocketAddr>().unwrap(),
+                format!("127.0.0.1:{port_b}").parse::<SocketAddr>().unwrap(),
+                cfg_a,
+                io_a,
+            )
+            .await
+        });
+        let hb = tokio::spawn(async move {
+            SrtSocket::rendezvous_with(
+                format!("127.0.0.1:{port_b}").parse::<SocketAddr>().unwrap(),
+                format!("127.0.0.1:{port_a}").parse::<SocketAddr>().unwrap(),
+                cfg_b,
+                io_b,
+            )
+            .await
+        });
+
+        let mut a = ha.await.unwrap().unwrap();
+        let mut b = hb.await.unwrap().unwrap();
+
+        // A -> B
+        let burst_ab = pattern(PAYLOAD_LEN * 6, 41);
+        for chunk in burst_ab.chunks(PAYLOAD_LEN) {
+            a.send(chunk).await.expect("send ab");
+        }
+        let mut received_ab = Vec::new();
+        while received_ab.len() < burst_ab.len() {
+            let p = b.recv().await.expect("recv").expect("conn ended");
+            received_ab.extend_from_slice(&p);
+        }
+        assert_eq!(received_ab, burst_ab);
+
+        // B -> A
+        let burst_ba = pattern(PAYLOAD_LEN * 6, 99);
+        for chunk in burst_ba.chunks(PAYLOAD_LEN) {
+            b.send(chunk).await.expect("send ba");
+        }
+        let mut received_ba = Vec::new();
+        while received_ba.len() < burst_ba.len() {
+            let p = a.recv().await.expect("recv").expect("conn ended");
+            received_ba.extend_from_slice(&p);
+        }
+        assert_eq!(received_ba, burst_ba);
+
+        drop(a);
+        drop(b);
+    })
+    .await
+    .unwrap();
+}

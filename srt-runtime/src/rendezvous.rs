@@ -320,6 +320,12 @@ pub struct RendezvousHandshake {
     ticks_since_send: u32,
     retries: u32,
     negotiated: Option<NegotiatedParams>,
+    #[cfg(feature = "crypto")]
+    crypto_recovered: Option<handshake_sm::RecoveredSek>,
+    #[cfg(feature = "crypto")]
+    km_echo_ext: Option<Vec<u8>>,
+    #[cfg(feature = "crypto")]
+    crypto_verified: bool,
 }
 
 impl RendezvousHandshake {
@@ -344,6 +350,12 @@ impl RendezvousHandshake {
             ticks_since_send: 0,
             retries: 0,
             negotiated: None,
+            #[cfg(feature = "crypto")]
+            crypto_recovered: None,
+            #[cfg(feature = "crypto")]
+            km_echo_ext: None,
+            #[cfg(feature = "crypto")]
+            crypto_verified: false,
         }
     }
 
@@ -582,6 +594,25 @@ impl RendezvousHandshake {
                 // L2318-2320: contains HSRSP -> Connected, send AGREEMENT.
                 self.peer_hs_msg = Some(msg);
                 self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
+                #[cfg(feature = "crypto")]
+                {
+                    let parsed = match handshake_sm::parse_peer_extensions(hp) {
+                        Ok(p) => p,
+                        Err(_) => return Ok(self.reject(RejectionReason::Rogue)),
+                    };
+                    match (&self.config.crypto, parsed.km) {
+                        (Some(crypto), Some(km)) => {
+                            if !handshake_sm::verify_km_echo(crypto, &km) {
+                                return Ok(self.reject(RejectionReason::BadSecret));
+                            }
+                            self.crypto_verified = true;
+                        }
+                        (Some(_), None) | (None, Some(_)) => {
+                            return Ok(self.reject(RejectionReason::Unsecure));
+                        }
+                        (None, None) => {}
+                    }
+                }
                 self.enter_connected()
             }
             (RendezvousRole::Responder, PeerHsExt::None) => {
@@ -595,6 +626,31 @@ impl RendezvousHandshake {
                 // CONCLUSION+HSRSP.
                 self.peer_hs_msg = Some(msg);
                 self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
+                #[cfg(feature = "crypto")]
+                {
+                    let parsed = match handshake_sm::parse_peer_extensions(hp) {
+                        Ok(p) => p,
+                        Err(_) => return Ok(self.reject(RejectionReason::Rogue)),
+                    };
+                    match (&self.config.crypto, parsed.km) {
+                        (Some(crypto), Some(km)) => {
+                            match handshake_sm::recover_sek(&crypto.passphrase, &km) {
+                                Ok((sek, salt)) => {
+                                    self.crypto_recovered = Some((sek, salt));
+                                    match handshake_sm::echo_key_material_as_response(&km) {
+                                        Ok(e) => self.km_echo_ext = Some(e),
+                                        Err(_) => return Ok(self.reject(RejectionReason::Rogue)),
+                                    }
+                                }
+                                Err(_) => return Ok(self.reject(RejectionReason::BadSecret)),
+                            }
+                        }
+                        (Some(_), None) | (None, Some(_)) => {
+                            return Ok(self.reject(RejectionReason::Unsecure));
+                        }
+                        (None, None) => {}
+                    }
+                }
                 self.state = RendezvousHandshakeState::Initiated;
                 self.send_conclusion(Some(ExtensionType::HsRsp))
             }
@@ -630,6 +686,25 @@ impl RendezvousHandshake {
                     PeerHsExt::HsRsp(msg) => {
                         self.peer_hs_msg = Some(msg);
                         self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
+                        #[cfg(feature = "crypto")]
+                        {
+                            let parsed = match handshake_sm::parse_peer_extensions(hp) {
+                                Ok(p) => p,
+                                Err(_) => return Ok(self.reject(RejectionReason::Rogue)),
+                            };
+                            match (&self.config.crypto, parsed.km) {
+                                (Some(crypto), Some(km)) => {
+                                    if !handshake_sm::verify_km_echo(crypto, &km) {
+                                        return Ok(self.reject(RejectionReason::BadSecret));
+                                    }
+                                    self.crypto_verified = true;
+                                }
+                                (Some(_), None) | (None, Some(_)) => {
+                                    return Ok(self.reject(RejectionReason::Unsecure));
+                                }
+                                (None, None) => {}
+                            }
+                        }
                         self.enter_connected()
                     }
                     PeerHsExt::HsReq(_) => Ok(self.reject(RejectionReason::Rogue)),
@@ -654,6 +729,35 @@ impl RendezvousHandshake {
                     PeerHsExt::HsReq(msg) => {
                         self.peer_hs_msg = Some(msg);
                         self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
+                        #[cfg(feature = "crypto")]
+                        {
+                            let parsed = match handshake_sm::parse_peer_extensions(hp) {
+                                Ok(p) => p,
+                                Err(_) => return Ok(self.reject(RejectionReason::Rogue)),
+                            };
+                            match (&self.config.crypto, parsed.km) {
+                                (Some(crypto), Some(km)) => {
+                                    match handshake_sm::recover_sek(&crypto.passphrase, &km) {
+                                        Ok((sek, salt)) => {
+                                            self.crypto_recovered = Some((sek, salt));
+                                            match handshake_sm::echo_key_material_as_response(&km) {
+                                                Ok(e) => self.km_echo_ext = Some(e),
+                                                Err(_) => {
+                                                    return Ok(self.reject(RejectionReason::Rogue));
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            return Ok(self.reject(RejectionReason::BadSecret));
+                                        }
+                                    }
+                                }
+                                (Some(_), None) | (None, Some(_)) => {
+                                    return Ok(self.reject(RejectionReason::Unsecure));
+                                }
+                                (None, None) => {}
+                            }
+                        }
                         self.send_conclusion(Some(ExtensionType::HsRsp))
                     }
                     _ => Ok(self.reject(RejectionReason::Rogue)),
@@ -716,7 +820,8 @@ impl RendezvousHandshake {
     /// for the extension-less greeting (§4.3.2.2, L2286-2288: no Stream ID /
     /// Group Membership is ever attached — see module docs).
     fn send_conclusion(&mut self, ext_type: Option<ExtensionType>) -> Result<Vec<HandshakeOutput>> {
-        let (ext_bytes, ext_flags): (Vec<u8>, u16) = match ext_type {
+        #[allow(unused_mut)]
+        let (mut ext_bytes, mut ext_flags): (Vec<u8>, u16) = match ext_type {
             None => (Vec::new(), 0),
             Some(t) => {
                 let hs_msg = HsExtMessage {
@@ -728,6 +833,24 @@ impl RendezvousHandshake {
                 handshake_sm::build_conclusion_extensions(t, &hs_msg, None, None)?
             }
         };
+        // §6.1.5: the Initiator (cookie-contest winner) sends the Key
+        // Material request piggybacked on its CONCLUSION's HSREQ block;
+        // the Responder echoes it back on its HSRSP CONCLUSION.
+        #[cfg(feature = "crypto")]
+        if ext_type == Some(ExtensionType::HsReq)
+            && let Some(crypto) = &self.config.crypto
+        {
+            let km_ext = handshake_sm::build_key_material_extension(crypto)?;
+            ext_bytes.extend(km_ext);
+            ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
+        }
+        #[cfg(feature = "crypto")]
+        if ext_type == Some(ExtensionType::HsRsp)
+            && let Some(echo) = &self.km_echo_ext
+        {
+            ext_bytes.extend(echo.clone());
+            ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
+        }
         let hp = HandshakePacket {
             timestamp: 0,
             dest_socket_id: self.peer_socket_id,
@@ -803,17 +926,44 @@ impl RendezvousHandshake {
             peer_socket_id: self.peer_socket_id,
             mtu: self.config.mtu.min(peer_mtu),
             max_flow_window_size: self.config.max_flow_window_size.min(peer_mfw),
-            // §4.3.2 never mentions a Stream ID / Group Membership exchange —
-            // module docs "Resolved ambiguities". The same applies to §6.1.5
-            // Key Material Exchange: this engine does not implement it (see
-            // the crate root docs' explicit-follow-ups list), so encryption
-            // is never negotiated over Rendezvous.
+            // §4.3.2 never mentions a Stream ID / Group Membership exchange.
             stream_id: None,
             group: None,
             #[cfg(feature = "crypto")]
-            sek: None,
+            sek: {
+                match self.role {
+                    Some(RendezvousRole::Initiator) => {
+                        if self.config.crypto.is_some() && self.crypto_verified {
+                            self.config
+                                .crypto
+                                .as_ref()
+                                .map(|c| handshake_sm::SecretBytes::new(c.sek.clone()))
+                        } else {
+                            None
+                        }
+                    }
+                    Some(RendezvousRole::Responder) => {
+                        self.crypto_recovered.as_ref().map(|(sek, _)| sek.clone())
+                    }
+                    None => None,
+                }
+            },
             #[cfg(feature = "crypto")]
-            salt: None,
+            salt: {
+                match self.role {
+                    Some(RendezvousRole::Initiator) => {
+                        if self.config.crypto.is_some() && self.crypto_verified {
+                            self.config.crypto.as_ref().map(|c| c.salt)
+                        } else {
+                            None
+                        }
+                    }
+                    Some(RendezvousRole::Responder) => {
+                        self.crypto_recovered.as_ref().map(|(_, salt)| *salt)
+                    }
+                    None => None,
+                }
+            },
         })
     }
 }
