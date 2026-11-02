@@ -523,12 +523,9 @@ impl SrtSocket {
     /// Connect to a remote SRT peer as a Caller.
     ///
     /// # Encryption
-    /// A [`HandshakeConfig`] with `crypto` set is refused with
-    /// [`Error::EncryptionUnsupported`] before any network I/O: this
-    /// adapter's data path does not encrypt, so an encrypted connection must
-    /// not be silently downgraded to plaintext. The sans-IO engines still
-    /// negotiate keys; the adapter will support encryption once its data path
-    /// does.
+    /// With `crypto` set in the [`HandshakeConfig`], the adapter negotiates
+    /// keys in the handshake and encrypts outgoing / decrypts incoming data
+    /// packets (AES-CTR, draft section 6) on this connection.
     ///
     /// # Errors
     /// [`Error::Rejected`] carries the peer's [`RejectionReason`];
@@ -555,8 +552,8 @@ impl SrtSocket {
     /// Connect from a specific local address.
     ///
     /// # Encryption
-    /// Like [`Self::connect`], refuses a `crypto`-enabled
-    /// [`HandshakeConfig`] with [`Error::EncryptionUnsupported`] before any I/O.
+    /// Like [`Self::connect`], negotiates and applies payload encryption when
+    /// `crypto` is set in the [`HandshakeConfig`].
     pub async fn connect_from<A: tokio::net::ToSocketAddrs>(
         local_addr: std::net::SocketAddr,
         remote_addr: A,
@@ -775,9 +772,9 @@ impl SrtSocket {
     /// socket bound to `local_addr` (its port must be the one the peer targets).
     ///
     /// # Encryption
-    /// Like [`Self::connect`], refuses a `crypto`-enabled [`HandshakeConfig`]
-    /// with [`Error::EncryptionUnsupported`] before any I/O (the Rendezvous
-    /// engine never negotiates keys either).
+    /// The Rendezvous handshake engine does not negotiate Key Material, so a
+    /// `crypto`-enabled [`HandshakeConfig`] is refused here with
+    /// [`Error::EncryptionUnsupported`] (rendezvous-only restriction).
     ///
     /// # Errors
     /// [`Error::Rejected`] carries the peer's [`RejectionReason`];
@@ -798,7 +795,7 @@ impl SrtSocket {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        refuse_crypto(&config)?;
+        refuse_rendezvous_crypto(&config)?;
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let socket = bounded(io.connect, "bind", async {
             UdpSocket::bind(local_addr)
@@ -1506,7 +1503,7 @@ impl Driver {
         let (payload, key_flag) = (payload.to_vec(), EncryptionKeyField::NotEncrypted);
 
         // The counters are kept within their wire widths below, so this cannot
-        // be refused; if it ever were, the payload is dropped, not the task.
+        // be queued; if it ever were, the payload is dropped, not the task.
         let Ok(bytes) = self.sender.on_data_keyed(
             self.next_send_seq,
             self.next_message_number,
@@ -1607,7 +1604,7 @@ impl Driver {
         // ack point than the negotiated maximum flow window can never be
         // released in this connection's lifetime — staging it would let an
         // unrecoverable gap grow memory without bound, so the receiver
-        // refuses it and nothing downstream sees it.
+        // an unsupported packet and nothing downstream sees it.
         //
         // A packet that is not ahead of the delivery cursor (a duplicate, a
         // retransmission of what was delivered or given up on, or an
@@ -2230,11 +2227,10 @@ impl SrtListener {
     /// Bind an SRT listener on `addr`.
     ///
     /// # Encryption
-    /// A [`HandshakeConfig`] with `crypto` set is refused with
-    /// [`Error::EncryptionUnsupported`] before any network I/O, and a peer
-    /// whose CONCLUSION requests encryption (a Key Material extension or a
-    /// non-zero `Encryption Field`) is rejected — this adapter's data path
-    /// does not encrypt, so an encrypted connection must never be accepted.
+    /// A listener configured without a passphrase rejects any peer that asks
+    /// for encryption (a Key Material extension or a non-zero `Encryption
+    /// Field`). A listener configured with one negotiates keys and encrypts /
+    /// decrypts the data path.
     pub async fn bind<A: tokio::net::ToSocketAddrs>(
         addr: A,
         config: HandshakeConfig,
@@ -2463,17 +2459,13 @@ impl ListenerCore {
             }
         }
 
-        // A peer that asks for encryption is refused, never accepted: this
-        // adapter's data path never applies the negotiated SEK (§6.1.5), so
-        // accepting would silently exchange plaintext (or deliver a peer's
-        // ciphertext to the application as if it were TS). With the `crypto`
-        // feature the sans-IO engine already rejects a Key Material
-        // *extension* (`(None, Some(km))` → `REJ_UNSECURE`, see
-        // `listener.rs`); this adapter-level check covers a non-zero
-        // `Encryption Field` (§3.2.1, Table 2) on any handshake and the
-        // `KMREQ` extension-flag bit on a CONCLUSION (on an INDUCTION that
-        // 16-bit field is the legacy UDT socket-type value, not the Table 3
-        // bitmask — see `handshake_sm::INDUCTION_LEGACY_SOCKET_TYPE`).
+        // A listener without its own crypto config refuses a peer that asks
+        // for encryption (a non-zero `Encryption Field` or a `KMREQ` bit),
+        // since it has no passphrase to recover the SEK with. A listener that
+        // does have crypto configured leaves this to the sans-IO engine, which
+        // performs the Key Material exchange. (On an INDUCTION the extension
+        // field is the legacy UDT socket-type value, not the Table 3 bitmask
+        // — see `handshake_sm::INDUCTION_LEGACY_SOCKET_TYPE`.)
         if !self.local_crypto_enabled()
             && let ControlPacket::Handshake(hp) = &ctrl
         {
@@ -2865,14 +2857,9 @@ fn build_encryption_rejection(
     handshake_sm::build_bytes(hp_out)
 }
 
-/// Refuses a [`HandshakeConfig`] that asks for payload encryption.
-///
-/// The sans-IO handshake engines implement the §6.1.5 Key Material exchange,
-/// but this adapter's data path never applies the negotiated SEK — it would
-/// send and receive plaintext while the caller believed the stream was
-/// encrypted (and deliver a peer's ciphertext as if it were TS). Until the
-/// data path is wired, an encrypted connection is refused up front instead.
-fn refuse_crypto(config: &HandshakeConfig) -> Result<()> {
+/// Refuses a [`HandshakeConfig`] that asks for payload encryption on the
+/// Rendezvous path, which does not negotiate Key Material.
+fn refuse_rendezvous_crypto(config: &HandshakeConfig) -> Result<()> {
     #[cfg(feature = "crypto")]
     if config.crypto.is_some() {
         return Err(Error::EncryptionUnsupported);
@@ -3700,7 +3687,7 @@ mod adapter_tests {
     }
 
     // -----------------------------------------------------------------------
-    // Item 1 — refuse encryption in the tokio adapter
+    // Item 1 — encryption in the tokio adapter
     // -----------------------------------------------------------------------
 
     #[tokio::test]

@@ -231,7 +231,9 @@ async fn libsrt_caller_to_tokio_listener(key_len: usize) {
                 .send_to(&pattern(PAYLOAD_LEN, 7), ("127.0.0.1", src_port))
                 .await;
             // try recv
-            if let Ok(Ok(Some(p))) = tokio::time::timeout(Duration::from_millis(50), receiver.recv()).await {
+            if let Ok(Ok(Some(p))) =
+                tokio::time::timeout(Duration::from_millis(50), receiver.recv()).await
+            {
                 assert_eq!(p.len(), PAYLOAD_LEN);
                 received += 1;
             }
@@ -342,14 +344,18 @@ async fn tokio_key_refresh_keeps_delivering() {
             sent_chunks.push(chunk.clone());
             caller.send(&chunk).await.unwrap();
             // drain
-            while let Ok(Ok(Some(p))) = tokio::time::timeout(Duration::from_millis(5), receiver.recv()).await {
+            while let Ok(Ok(Some(p))) =
+                tokio::time::timeout(Duration::from_millis(5), receiver.recv()).await
+            {
                 received.push(p.to_vec());
             }
         }
         // drain remaining
         let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while received.len() < 80 && tokio::time::Instant::now() < drain_deadline {
-            if let Ok(Ok(Some(p))) = tokio::time::timeout(Duration::from_millis(50), receiver.recv()).await {
+            if let Ok(Ok(Some(p))) =
+                tokio::time::timeout(Duration::from_millis(50), receiver.recv()).await
+            {
                 received.push(p.to_vec());
             }
         }
