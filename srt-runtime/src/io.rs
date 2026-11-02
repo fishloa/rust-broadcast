@@ -1489,7 +1489,9 @@ impl Driver {
             };
             if let (Some(sek), Some(salt)) = (sek, salt) {
                 let mut enc = payload.to_vec();
-                let _ = crate::crypto::aes_ctr_apply(sek, &salt, self.next_send_seq, &mut enc);
+                if crate::crypto::aes_ctr_apply(sek, &salt, self.next_send_seq, &mut enc).is_err() {
+                    return;
+                }
                 let kf = match active {
                     KeyParity::Even => EncryptionKeyField::Even,
                     KeyParity::Odd => EncryptionKeyField::Odd,
