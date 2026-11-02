@@ -45,22 +45,22 @@ fuzz_target!(|data: &[u8]| {
     // Lossless WebVTT -> SRT -> WebVTT must preserve every cue (issue #931:
     // `webvtt_to_srt`'s `lossy` flag is the caller's promise that nothing
     // SRT-incompatible was dropped).
-    if let Ok((srt, lossy)) = webvtt_to_srt(input) {
-        if !lossy {
-            let back = match caption_convert::srt_to_webvtt(&srt) {
-                Ok(b) => b,
-                Err(e) => panic!(
-                    "srt_to_webvtt failed on webvtt_to_srt's own (lossless) \
+    if let Ok((srt, lossy)) = webvtt_to_srt(input)
+        && !lossy
+    {
+        let back = match caption_convert::srt_to_webvtt(&srt) {
+            Ok(b) => b,
+            Err(e) => panic!(
+                "srt_to_webvtt failed on webvtt_to_srt's own (lossless) \
                      output: {e:?}\nsrt: {srt:?}"
-                ),
-            };
-            let round_tripped = parse_webvtt(&back)
-                .expect("srt_to_webvtt always produces a valid WEBVTT document");
-            assert_eq!(
-                round_tripped.cues, parsed.cues,
-                "webvtt -> srt -> webvtt lost cues despite lossy=false\n\
+            ),
+        };
+        let round_tripped =
+            parse_webvtt(&back).expect("srt_to_webvtt always produces a valid WEBVTT document");
+        assert_eq!(
+            round_tripped.cues, parsed.cues,
+            "webvtt -> srt -> webvtt lost cues despite lossy=false\n\
                  input: {input:?}\nsrt: {srt:?}"
-            );
-        }
+        );
     }
 });

@@ -20,7 +20,11 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(pp) = PartitionPack::parse(&full) {
             let reserialized = pp.try_to_bytes().unwrap();
             if let Ok(reparsed) = PartitionPack::parse(&reserialized) {
-                assert_eq!(reserialized, reparsed.try_to_bytes().unwrap(), "PartitionPack roundtrip mismatch");
+                assert_eq!(
+                    reserialized,
+                    reparsed.try_to_bytes().unwrap(),
+                    "PartitionPack roundtrip mismatch"
+                );
             }
         }
         return;
@@ -30,7 +34,11 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(pp) = PrimerPack::parse(&full) {
             let reserialized = pp.try_to_bytes().unwrap();
             if let Ok(reparsed) = PrimerPack::parse(&reserialized) {
-                assert_eq!(reserialized, reparsed.try_to_bytes().unwrap(), "PrimerPack roundtrip mismatch");
+                assert_eq!(
+                    reserialized,
+                    reparsed.try_to_bytes().unwrap(),
+                    "PrimerPack roundtrip mismatch"
+                );
             }
         }
         return;
@@ -60,7 +68,11 @@ fuzz_target!(|data: &[u8]| {
         };
         let reserialized = set.try_to_bytes().unwrap();
         if let Ok(reparsed) = LocalSet::parse(&reserialized) {
-            assert_eq!(reserialized, reparsed.try_to_bytes().unwrap(), "LocalSet roundtrip mismatch");
+            assert_eq!(
+                reserialized,
+                reparsed.try_to_bytes().unwrap(),
+                "LocalSet roundtrip mismatch"
+            );
         }
 
         match set.kind() {
@@ -76,7 +88,11 @@ fuzz_target!(|data: &[u8]| {
                 if let Ok(p) = Identification::parse(&full) {
                     let s = p.try_to_bytes().unwrap();
                     if let Ok(rp) = Identification::parse(&s) {
-                        assert_eq!(s, rp.try_to_bytes().unwrap(), "Identification roundtrip mismatch");
+                        assert_eq!(
+                            s,
+                            rp.try_to_bytes().unwrap(),
+                            "Identification roundtrip mismatch"
+                        );
                     }
                 }
             }
@@ -84,7 +100,11 @@ fuzz_target!(|data: &[u8]| {
                 if let Ok(p) = ContentStorage::parse(&full) {
                     let s = p.try_to_bytes().unwrap();
                     if let Ok(rp) = ContentStorage::parse(&s) {
-                        assert_eq!(s, rp.try_to_bytes().unwrap(), "ContentStorage roundtrip mismatch");
+                        assert_eq!(
+                            s,
+                            rp.try_to_bytes().unwrap(),
+                            "ContentStorage roundtrip mismatch"
+                        );
                     }
                 }
             }
@@ -92,7 +112,11 @@ fuzz_target!(|data: &[u8]| {
                 if let Ok(p) = EssenceContainerData::parse(&full) {
                     let s = p.try_to_bytes().unwrap();
                     if let Ok(rp) = EssenceContainerData::parse(&s) {
-                        assert_eq!(s, rp.try_to_bytes().unwrap(), "EssenceContainerData roundtrip mismatch");
+                        assert_eq!(
+                            s,
+                            rp.try_to_bytes().unwrap(),
+                            "EssenceContainerData roundtrip mismatch"
+                        );
                     }
                 }
             }

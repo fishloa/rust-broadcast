@@ -22,7 +22,14 @@ const RESYNC_US: [u64; 4] = [MICROS, 30 * MICROS, 600 * MICROS, u64::MAX];
 const GRACE_US: [u64; 3] = [0, MICROS, 5 * MICROS];
 const REFRESH_US: [u64; 4] = [1_000, 500_000, 2 * MICROS, 30 * MICROS];
 const TIMEOUT_US: [u64; 4] = [1_000, 2 * MICROS, 20 * MICROS, 120 * MICROS];
-const STEPS_US: [u64; 6] = [1_000, 50_000, 500_000, 2 * MICROS, 30 * MICROS, 700 * MICROS];
+const STEPS_US: [u64; 6] = [
+    1_000,
+    50_000,
+    500_000,
+    2 * MICROS,
+    30 * MICROS,
+    700 * MICROS,
+];
 const CHUNK_BYTES: [usize; 4] = [1, 7, 1_316, usize::MAX];
 const SMALL_BODY: usize = 2_048;
 const MODES: u8 = 21;
@@ -34,7 +41,13 @@ const HTTP_DATES: [&str; 3] = [
     "Thu, 01 Jan 1970 00:00:00 GMT",
     "not a date",
 ];
-const RETRY_AFTER: [&str; 5] = ["0", "3", "99999999999999999999", "Mon, 26 Oct 2026 09:18:30 GMT", "soon"];
+const RETRY_AFTER: [&str; 5] = [
+    "0",
+    "3",
+    "99999999999999999999",
+    "Mon, 26 Oct 2026 09:18:30 GMT",
+    "soon",
+];
 const LOCATIONS: [&str; 3] = [
     "http://example/dash/moved.mpd",
     "http://other.example/dash/stream.mpd",
@@ -175,8 +188,9 @@ impl Watch {
 }
 
 fn name_hash(name: &str) -> usize {
-    name.bytes()
-        .fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(usize::from(b)))
+    name.bytes().fold(0usize, |h, b| {
+        h.wrapping_mul(31).wrapping_add(usize::from(b))
+    })
 }
 
 fn real_body(url: &str, range: Option<(u64, u64)>) -> Option<Vec<u8>> {
@@ -267,7 +281,11 @@ fn answer(
     publish: i64,
     rest: &mut &[u8],
 ) {
-    let is_mpd = req.url.split('?').next().is_some_and(|p| p.ends_with(".mpd"));
+    let is_mpd = req
+        .url
+        .split('?')
+        .next()
+        .is_some_and(|p| p.ends_with(".mpd"));
     let is_utc = !is_mpd && !req.url.starts_with(ORIGIN_PREFIX);
     let real: Vec<u8> = if is_mpd {
         mpd.to_vec()
@@ -278,8 +296,11 @@ fn answer(
     };
     let chunk = CHUNK_BYTES[usize::from(aux >> 2) % CHUNK_BYTES.len()];
     let mut headers = vec![header("Content-Length", &real.len().to_string())];
-    if req.method == "HEAD" || aux % 3 == 0 {
-        headers.push(header("Date", HTTP_DATES[usize::from(aux) % HTTP_DATES.len()]));
+    if req.method == "HEAD" || aux.is_multiple_of(3) {
+        headers.push(header(
+            "Date",
+            HTTP_DATES[usize::from(aux) % HTTP_DATES.len()],
+        ));
     }
     match mode % MODES {
         0..=7 => {
@@ -312,8 +333,11 @@ fn answer(
         11..=14 => {
             let status = [404, 410, 425, 503][usize::from(mode % MODES - 11)];
             let mut h = Vec::new();
-            if aux % 2 == 0 {
-                h.push(header("Retry-After", RETRY_AFTER[usize::from(aux / 2) % RETRY_AFTER.len()]));
+            if aux.is_multiple_of(2) {
+                h.push(header(
+                    "Retry-After",
+                    RETRY_AFTER[usize::from(aux / 2) % RETRY_AFTER.len()],
+                ));
             }
             deliver(session, conn, now, status, &h, b"nope", chunk);
             session.on_closed(conn, None, now);
@@ -340,7 +364,10 @@ fn answer(
             session.on_closed(conn, None, now);
         }
         19 => {
-            let h = [header("Location", LOCATIONS[usize::from(aux) % LOCATIONS.len()])];
+            let h = [header(
+                "Location",
+                LOCATIONS[usize::from(aux) % LOCATIONS.len()],
+            )];
             session.on_response(conn, [301, 302, 307][usize::from(aux / 4) % 3], &h, now);
         }
         _ => {
@@ -400,7 +427,9 @@ fuzz_target!(|data: &[u8]| {
         let _ = session.set_credentials(Credentials::new("user", "pass"));
     }
     let give_clock = |session: &mut Session, now: u64, skew: i64| {
-        let unix = publish.saturating_add(i64::try_from(now).unwrap_or(0)).saturating_add(skew);
+        let unix = publish
+            .saturating_add(i64::try_from(now).unwrap_or(0))
+            .saturating_add(skew);
         session.set_wall_clock(now, u64::try_from(unix.max(0)).unwrap_or(0));
     };
     match head[5] % 4 {
@@ -424,20 +453,28 @@ fuzz_target!(|data: &[u8]| {
         // A wake at u64::MAX is a saturated "never" (resync period u64::MAX); the broadcast_client
         // target already covers time at u64::MAX.
         now = if jump % 7 == 0 {
-            watch.wake.filter(|w| *w != u64::MAX).map_or(now, |w| w.max(now))
+            watch
+                .wake
+                .filter(|w| *w != u64::MAX)
+                .map_or(now, |w| w.max(now))
         } else {
             now.saturating_add(STEPS_US[usize::from(jump) % STEPS_US.len()])
         };
         assert!(now >= previous, "time ran backwards");
         if mode % MODES == HOST_SKEW_MODE && aux % 4 == 0 {
-            give_clock(&mut session, now, i64::from(aux) * MICROS as i64 - SKEW_BASE_US);
+            give_clock(
+                &mut session,
+                now,
+                i64::from(aux) * MICROS as i64 - SKEW_BASE_US,
+            );
         }
         match pick % 16 {
             0 => {
                 let _ = session.select_variant(usize::from(aux % 4));
             }
             1 => {
-                let _ = session.select_audio_rendition(Some(usize::from(aux % 3)).filter(|_| aux % 5 != 0));
+                let _ = session
+                    .select_audio_rendition(Some(usize::from(aux % 3)).filter(|_| aux % 5 != 0));
             }
             2 => session.reconnect(now),
             3 if aux == u8::MAX => {
@@ -456,7 +493,17 @@ fuzz_target!(|data: &[u8]| {
             continue;
         };
         now = now.max(req.sent);
-        answer(&mut session, conn, &req, now, mode, aux, &mpd, publish, &mut tail);
+        answer(
+            &mut session,
+            conn,
+            &req,
+            now,
+            mode,
+            aux,
+            &mpd,
+            publish,
+            &mut tail,
+        );
         watch.pump(&mut session, now);
         watch.events(&mut session);
     }
@@ -470,5 +517,8 @@ fuzz_target!(|data: &[u8]| {
             panic!("a request after close()");
         }
     }
-    assert!(session.poll(now).is_none(), "action after a drained close()");
+    assert!(
+        session.poll(now).is_none(),
+        "action after a drained close()"
+    );
 });

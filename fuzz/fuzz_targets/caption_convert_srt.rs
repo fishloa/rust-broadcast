@@ -43,8 +43,8 @@ fuzz_target!(|data: &[u8]| {
     // construct WebVTT cannot represent) — round-tripping through WebVTT and
     // back to SRT must therefore reproduce the identical Cue list too.
     let vtt = srt_to_webvtt(input).expect("srt_to_webvtt must accept anything parse_srt accepted");
-    let (back, lossy) =
-        caption_convert::webvtt_to_srt(&vtt).expect("webvtt_to_srt must accept its own writer's output");
+    let (back, lossy) = caption_convert::webvtt_to_srt(&vtt)
+        .expect("webvtt_to_srt must accept its own writer's output");
     assert!(
         !lossy,
         "srt -> webvtt round-trip introduced a construct webvtt_to_srt calls lossy\n\
