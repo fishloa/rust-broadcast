@@ -96,6 +96,9 @@ use crate::packet::{
 };
 use crate::tsbpd::{TickOutcome, TsbpdScheduler};
 
+#[cfg(feature = "crypto")]
+use crate::km_refresh::{KeyParity, KmRefreshEvent};
+
 // ===========================================================================
 // Constants
 // ===========================================================================
@@ -134,6 +137,9 @@ pub struct IoConfig {
     pub read_idle: Duration,
     /// Longest a single `send_to` may take. Default 5 s.
     pub write: Duration,
+    /// KM Refresh thresholds (crypto feature / key rotation). Default the
+    /// spec-recommended `2^25` / `4000` values. Lower for testing.
+    pub km_refresh_thresholds: crate::km_refresh::KmRefreshThresholds,
 }
 
 impl Default for IoConfig {
@@ -144,6 +150,7 @@ impl Default for IoConfig {
             handshake: Duration::from_secs(5),
             read_idle: Duration::from_secs(5),
             write: Duration::from_secs(5),
+            km_refresh_thresholds: crate::km_refresh::KmRefreshThresholds::RECOMMENDED,
         }
     }
 }
@@ -181,6 +188,27 @@ impl IoConfig {
     #[must_use]
     pub fn with_write(mut self, d: Duration) -> Self {
         self.write = d;
+        self
+    }
+
+    /// Set the KM Refresh thresholds (key rotation packet counts).
+    #[must_use]
+    pub fn with_km_refresh_thresholds(mut self, t: crate::km_refresh::KmRefreshThresholds) -> Self {
+        self.km_refresh_thresholds = t;
+        self
+    }
+
+    /// Alias for [`Self::with_km_refresh_thresholds`].
+    #[must_use]
+    pub fn with_km_refresh(mut self, t: crate::km_refresh::KmRefreshThresholds) -> Self {
+        self.km_refresh_thresholds = t;
+        self
+    }
+
+    /// Alias for [`Self::with_km_refresh_thresholds`].
+    #[must_use]
+    pub fn with_refresh_thresholds(mut self, t: crate::km_refresh::KmRefreshThresholds) -> Self {
+        self.km_refresh_thresholds = t;
         self
     }
 }
@@ -448,6 +476,17 @@ struct ConnParams {
     /// Whether Too-Late Packet Drop was negotiated (the `TLPKTDROP` flag both
     /// sides advertised, §3.2.1.1.1): only then may the receiver skip a gap.
     tlpkt_drop: bool,
+    /// Opt-in §6 payload-encryption state recovered from the handshake
+    /// (crypto feature only). `None` on every field when encryption was not
+    /// negotiated, and the connection runs in plaintext.
+    #[cfg(feature = "crypto")]
+    crypto_passphrase: Vec<u8>,
+    #[cfg(feature = "crypto")]
+    crypto_salt: Option<[u8; crate::crypto::SALT_LEN]>,
+    #[cfg(feature = "crypto")]
+    crypto_even_sek: Option<Vec<u8>>,
+    #[cfg(feature = "crypto")]
+    crypto_thresholds: crate::km_refresh::KmRefreshThresholds,
 }
 
 /// A handle to an established SRT connection over UDP.
@@ -509,7 +548,6 @@ impl SrtSocket {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        refuse_crypto(&config)?;
         let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
         Self::connect_from_with(local, remote_addr, config, io).await
     }
@@ -534,7 +572,6 @@ impl SrtSocket {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        refuse_crypto(&config)?;
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let socket = bounded(io.connect, "bind", async {
             UdpSocket::bind(local_addr)
@@ -656,6 +693,12 @@ impl SrtSocket {
                             peer_hs,
                             max_datagram,
                             &io,
+                            #[cfg(feature = "crypto")]
+                            config
+                                .crypto
+                                .as_ref()
+                                .map(|c| c.passphrase.clone())
+                                .unwrap_or_default(),
                         ));
                     }
                     HandshakeOutput::Rejected(reason) => return Err(Error::Rejected(reason)),
@@ -673,6 +716,7 @@ impl SrtSocket {
     /// Rendezvous): a dedicated-socket forwarder feeding the same
     /// `Driver::rx` path a listener-accepted connection uses (issue #1029),
     /// seeded from the peer's ISN and handshake timestamp (TSBPD rule 12).
+    #[allow(clippy::too_many_arguments)]
     fn established(
         socket: Arc<UdpSocket>,
         peer: std::net::SocketAddr,
@@ -681,6 +725,7 @@ impl SrtSocket {
         peer_hs: PeerHandshake,
         max_datagram: usize,
         io: &IoConfig,
+        #[cfg(feature = "crypto")] passphrase: Vec<u8>,
     ) -> SrtSocket {
         let epoch = Instant::now();
         // This socket is exclusively this connection's own (bound fresh by
@@ -711,6 +756,14 @@ impl SrtSocket {
             max_flow_window: params.max_flow_window_size,
             mtu: params.mtu,
             tlpkt_drop: params.flags.tlpktdrop(),
+            #[cfg(feature = "crypto")]
+            crypto_passphrase: passphrase,
+            #[cfg(feature = "crypto")]
+            crypto_salt: params.salt,
+            #[cfg(feature = "crypto")]
+            crypto_even_sek: params.sek.as_ref().map(|s| s.to_vec()),
+            #[cfg(feature = "crypto")]
+            crypto_thresholds: io.km_refresh_thresholds,
         })
     }
 
@@ -862,6 +915,12 @@ impl SrtSocket {
                             peer_hs,
                             max_datagram,
                             &io,
+                            #[cfg(feature = "crypto")]
+                            config
+                                .crypto
+                                .as_ref()
+                                .map(|c| c.passphrase.clone())
+                                .unwrap_or_default(),
                         ));
                     }
                     HandshakeOutput::Rejected(reason) => return Err(Error::Rejected(reason)),
@@ -1064,6 +1123,23 @@ struct Driver {
     // unacknowledged packets the sender may hold.
     max_flow_window: u32,
 
+    /// §6 payload-encryption state (crypto feature only). `None` salts/SEKs
+    /// mean the connection is plaintext.
+    #[cfg(feature = "crypto")]
+    crypto_passphrase: zeroize::Zeroizing<alloc::vec::Vec<u8>>,
+    #[cfg(feature = "crypto")]
+    crypto_salt_even: Option<[u8; crate::crypto::SALT_LEN]>,
+    #[cfg(feature = "crypto")]
+    crypto_salt_odd: Option<[u8; crate::crypto::SALT_LEN]>,
+    #[cfg(feature = "crypto")]
+    crypto_even_sek: Option<zeroize::Zeroizing<alloc::vec::Vec<u8>>>,
+    #[cfg(feature = "crypto")]
+    crypto_odd_sek: Option<zeroize::Zeroizing<alloc::vec::Vec<u8>>>,
+    #[cfg(feature = "crypto")]
+    crypto_key_len: usize,
+    #[cfg(feature = "crypto")]
+    km_refresh: crate::km_refresh::KmRefreshDriver,
+
     // Outbound datagram queues — separate so control can never queue behind
     // a not-yet-due paced DATA packet (see the module doc above).
     outbound_data: VecDeque<Vec<u8>>,
@@ -1136,6 +1212,28 @@ impl Driver {
             epoch: p.epoch,
             staged: std::collections::BTreeMap::new(),
             max_flow_window: p.max_flow_window,
+            #[cfg(feature = "crypto")]
+            crypto_passphrase: zeroize::Zeroizing::new(p.crypto_passphrase.clone()),
+            #[cfg(feature = "crypto")]
+            crypto_salt_even: p.crypto_salt,
+            #[cfg(feature = "crypto")]
+            crypto_salt_odd: None,
+            #[cfg(feature = "crypto")]
+            crypto_key_len: p
+                .crypto_even_sek
+                .as_ref()
+                .map(|v| v.len())
+                .or_else(|| p.crypto_salt.map(|_| 16))
+                .unwrap_or(0),
+            #[cfg(feature = "crypto")]
+            crypto_even_sek: p.crypto_even_sek.map(zeroize::Zeroizing::new),
+            #[cfg(feature = "crypto")]
+            crypto_odd_sek: None,
+            #[cfg(feature = "crypto")]
+            km_refresh: crate::km_refresh::KmRefreshDriver::new(
+                p.crypto_thresholds,
+                crate::km_refresh::KeyParity::Even,
+            ),
             outbound_data: VecDeque::new(),
             outbound_control: VecDeque::new(),
             next_data_send_at: None,
@@ -1288,24 +1386,137 @@ impl Driver {
         let now = self.elapsed();
         self.livecc
             .on_data_packet(u64::try_from(payload.len()).unwrap_or(u64::MAX));
+
+        // KM Refresh: advance the packet counter and act on any threshold
+        // crossing (announce / switchover / decommission).
+        #[cfg(feature = "crypto")]
+        {
+            let events = self.km_refresh.on_packet_sent(1);
+            for ev in events {
+                match ev {
+                    KmRefreshEvent::PreAnnounce { next_parity } => {
+                        // Generate + wrap + announce a fresh SEK for next_parity.
+                        let key_len = if self.crypto_key_len == 0 {
+                            16
+                        } else {
+                            self.crypto_key_len
+                        };
+                        let salt = {
+                            let mut s = [0u8; crate::crypto::SALT_LEN];
+                            let _ = getrandom::fill(&mut s);
+                            s
+                        };
+                        let sek = {
+                            let mut v = vec![0u8; key_len];
+                            let _ = getrandom::fill(&mut v);
+                            v
+                        };
+                        let kek = match crate::crypto::derive_kek(
+                            &self.crypto_passphrase,
+                            &salt,
+                            key_len,
+                        ) {
+                            Ok(k) => k,
+                            Err(_) => continue,
+                        };
+                        let (icv, wrapped) = match crate::crypto::wrap_sek(&kek, &sek) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        let km_key_flag = match next_parity {
+                            KeyParity::Even => crate::packet::KmKeyFlag::Even,
+                            KeyParity::Odd => crate::packet::KmKeyFlag::Odd,
+                        };
+                        let km = crate::packet::KeyMaterial {
+                            kk: km_key_flag,
+                            keki: 0,
+                            cipher: crate::packet::Cipher::AesCtr,
+                            auth: crate::packet::KmAuth::None,
+                            se: crate::packet::StreamEncapsulation::MpegTsSrt,
+                            salt: &salt,
+                            icv,
+                            x_sek: &wrapped,
+                            o_sek: None,
+                        };
+                        let mut km_buf = vec![0u8; km.serialized_len()];
+                        if km.serialize_into(&mut km_buf).is_ok() {
+                            let ud = crate::packet::ControlPacket::UserDefined(
+                                crate::packet::UserDefinedPacket {
+                                    control_type: crate::packet::control::CONTROL_TYPE_USER_DEFINED,
+                                    subtype: 3,
+                                    type_specific_info: 0,
+                                    timestamp: crate::arq::duration_to_wire_us(self.elapsed()),
+                                    dest_socket_id: self.peer_socket_id,
+                                    cif: &km_buf,
+                                },
+                            );
+                            let mut out = vec![0u8; ud.serialized_len()];
+                            if ud.serialize_into(&mut out).is_ok() {
+                                self.outbound_control.push_back(out);
+                            }
+                        }
+                        // store announced key
+                        match next_parity {
+                            KeyParity::Even => {
+                                self.crypto_even_sek = Some(zeroize::Zeroizing::new(sek));
+                                self.crypto_salt_even = Some(salt);
+                            }
+                            KeyParity::Odd => {
+                                self.crypto_odd_sek = Some(zeroize::Zeroizing::new(sek));
+                                self.crypto_salt_odd = Some(salt);
+                            }
+                        }
+                    }
+                    KmRefreshEvent::Switchover { .. } => {}
+                    KmRefreshEvent::Decommission { retired } => match retired {
+                        KeyParity::Even => {
+                            self.crypto_even_sek = None;
+                            self.crypto_salt_even = None;
+                        }
+                        KeyParity::Odd => {
+                            self.crypto_odd_sek = None;
+                            self.crypto_salt_odd = None;
+                        }
+                    },
+                }
+            }
+        }
+
+        // Determine active key for this packet.
+        #[cfg(feature = "crypto")]
+        let (payload, key_flag) = {
+            let active = self.km_refresh.active_parity();
+            let (sek, salt) = match active {
+                KeyParity::Even => (self.crypto_even_sek.as_deref(), self.crypto_salt_even),
+                KeyParity::Odd => (self.crypto_odd_sek.as_deref(), self.crypto_salt_odd),
+            };
+            if let (Some(sek), Some(salt)) = (sek, salt) {
+                let mut enc = payload.to_vec();
+                let _ = crate::crypto::aes_ctr_apply(sek, &salt, self.next_send_seq, &mut enc);
+                let kf = match active {
+                    KeyParity::Even => EncryptionKeyField::Even,
+                    KeyParity::Odd => EncryptionKeyField::Odd,
+                };
+                (enc, kf)
+            } else {
+                (payload.to_vec(), EncryptionKeyField::NotEncrypted)
+            }
+        };
+        #[cfg(not(feature = "crypto"))]
+        let (payload, key_flag) = (payload.to_vec(), EncryptionKeyField::NotEncrypted);
+
         // The counters are kept within their wire widths below, so this cannot
         // be refused; if it ever were, the payload is dropped, not the task.
-        let Ok(bytes) =
-            self.sender
-                .on_data(self.next_send_seq, self.next_message_number, payload, now)
-        else {
+        let Ok(bytes) = self.sender.on_data_keyed(
+            self.next_send_seq,
+            self.next_message_number,
+            &payload,
+            key_flag,
+            now,
+        ) else {
             return;
         };
-        // Wrap at the wire field's own bit width (31 bits for the sequence
-        // number, 26 for the message number — `draft-sharabayko-srt-01`
-        // §3.1), not at `u32::MAX`: a plain `wrapping_add(1)` let both
-        // counters walk past their field width (~20 h of continuous sending
-        // for the sequence number, or immediately with a high initial value;
-        // ~67 million messages for the message number), after which every
-        // subsequent `DataPacket::serialize_into` returned
-        // `Error::FieldTooWide` and panicked the `.expect("buffer sized from
-        // serialized_len")` call sites in `arq::sender` that assumed only a
-        // too-small buffer could fail (issue #1062).
+        // Wrap at the wire field's own bit width ...
         self.next_send_seq = seq_next(self.next_send_seq);
         self.next_message_number = next_message_number(self.next_message_number);
         self.outbound_data.push_back(bytes);
@@ -1336,13 +1547,54 @@ impl Driver {
         key_flag: EncryptionKeyField,
         now: Duration,
     ) {
-        // The adapter never decrypts, so a ciphertext packet must not reach
-        // the application (§3.1 `KK`, §6): drop it before ARQ or TSBPD see it
-        // (acknowledging data we can never deliver would be worse than
-        // dropping it).
-        if key_flag != EncryptionKeyField::NotEncrypted {
-            return;
-        }
+        // Decrypt an encrypted data packet in place before staging, using the
+        // SEK named by its `KK` flag. A missing key (not yet unwrapped, or
+        // already decommissioned) means the packet cannot be delivered and is
+        // dropped — never surfaced as corrupt plaintext.
+        let (datagram, _key_flag) = {
+            #[cfg(feature = "crypto")]
+            {
+                if key_flag != EncryptionKeyField::NotEncrypted {
+                    let sek = match key_flag {
+                        EncryptionKeyField::Even => self.crypto_even_sek.as_deref(),
+                        EncryptionKeyField::Odd => self.crypto_odd_sek.as_deref(),
+                        _ => None,
+                    };
+                    let salt = match key_flag {
+                        EncryptionKeyField::Even => self.crypto_salt_even,
+                        EncryptionKeyField::Odd => self.crypto_salt_odd,
+                        _ => None,
+                    };
+                    match (sek, salt) {
+                        (Some(sek), Some(salt)) => {
+                            let mut bytes = datagram.to_vec();
+                            if bytes.len() > SRT_HEADER_LEN
+                                && crate::crypto::aes_ctr_apply(
+                                    sek,
+                                    &salt,
+                                    seq_number,
+                                    &mut bytes[SRT_HEADER_LEN..],
+                                )
+                                .is_err()
+                            {
+                                return;
+                            }
+                            (Bytes::from(bytes), EncryptionKeyField::NotEncrypted)
+                        }
+                        _ => return,
+                    }
+                } else {
+                    (datagram, key_flag)
+                }
+            }
+            #[cfg(not(feature = "crypto"))]
+            {
+                if key_flag != EncryptionKeyField::NotEncrypted {
+                    return;
+                }
+                (datagram, key_flag)
+            }
+        };
 
         // The ARQ receiver drives *reliability* only: loss detection and the
         // resulting NAK (rules 4, 14) plus the ACK point. Application
@@ -1413,6 +1665,48 @@ impl Driver {
             ControlPacket::KeepAlive(_) => {}
             ControlPacket::Shutdown(_) => {
                 self.peer_shutdown = true;
+            }
+            #[cfg(feature = "crypto")]
+            ControlPacket::UserDefined(u) => {
+                if let Ok(km) = u.as_key_material() {
+                    let parity = match km.kk {
+                        crate::packet::KmKeyFlag::Even => KeyParity::Even,
+                        crate::packet::KmKeyFlag::Odd => KeyParity::Odd,
+                        _ => KeyParity::Even,
+                    };
+                    if let Ok((sek, salt)) =
+                        crate::handshake_sm::recover_sek(&self.crypto_passphrase, &km)
+                    {
+                        match parity {
+                            KeyParity::Even => {
+                                self.crypto_even_sek = Some(zeroize::Zeroizing::new(sek.to_vec()));
+                                self.crypto_salt_even = Some(salt);
+                            }
+                            KeyParity::Odd => {
+                                self.crypto_odd_sek = Some(zeroize::Zeroizing::new(sek.to_vec()));
+                                self.crypto_salt_odd = Some(salt);
+                            }
+                        }
+                        // echo back as KMRSP (subtype 4)
+                        let mut km_buf = vec![0u8; km.serialized_len()];
+                        if km.serialize_into(&mut km_buf).is_ok() {
+                            let ud = crate::packet::ControlPacket::UserDefined(
+                                crate::packet::UserDefinedPacket {
+                                    control_type: crate::packet::control::CONTROL_TYPE_USER_DEFINED,
+                                    subtype: 4,
+                                    type_specific_info: 0,
+                                    timestamp: crate::arq::duration_to_wire_us(self.elapsed()),
+                                    dest_socket_id: self.peer_socket_id,
+                                    cif: &km_buf,
+                                },
+                            );
+                            let mut out = vec![0u8; ud.serialized_len()];
+                            if ud.serialize_into(&mut out).is_ok() {
+                                self.outbound_control.push_back(out);
+                            }
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -1954,7 +2248,6 @@ impl SrtListener {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        refuse_crypto(&config)?;
         let socket = Arc::new(UdpSocket::bind(addr).await.map_err(|e| io_err("bind", e))?);
         let local = socket.local_addr().map_err(|e| io_err("local_addr", e))?;
         let routes: RouteTable = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -2433,6 +2726,19 @@ impl ListenerCore {
             max_flow_window: negotiated.max_flow_window_size,
             mtu: negotiated.mtu,
             tlpkt_drop: negotiated.flags.tlpktdrop(),
+            #[cfg(feature = "crypto")]
+            crypto_passphrase: self
+                .config
+                .crypto
+                .as_ref()
+                .map(|c| c.passphrase.clone())
+                .unwrap_or_default(),
+            #[cfg(feature = "crypto")]
+            crypto_salt: negotiated.salt,
+            #[cfg(feature = "crypto")]
+            crypto_even_sek: negotiated.sek.as_ref().map(|s| s.to_vec()),
+            #[cfg(feature = "crypto")]
+            crypto_thresholds: self.io.km_refresh_thresholds,
         });
         Some(Ok(conn))
     }
@@ -2871,8 +3177,6 @@ mod isn_tests {
 #[cfg(all(test, feature = "tokio"))]
 mod adapter_tests {
     use super::*;
-    #[cfg(feature = "crypto")]
-    use crate::handshake_sm::CryptoConfig;
     use crate::packet::{
         AckCif, AckPacket, DataPacket, DropReqPacket, EncryptionKeyField, HandshakeExtensionFlags,
         HandshakeExtensions, HandshakePacket, PacketPosition,
@@ -2931,6 +3235,14 @@ mod adapter_tests {
                 max_flow_window,
                 mtu: 1500,
                 tlpkt_drop: true,
+                #[cfg(feature = "crypto")]
+                crypto_passphrase: Vec::new(),
+                #[cfg(feature = "crypto")]
+                crypto_salt: None,
+                #[cfg(feature = "crypto")]
+                crypto_even_sek: None,
+                #[cfg(feature = "crypto")]
+                crypto_thresholds: crate::km_refresh::KmRefreshThresholds::RECOMMENDED,
             },
             deliver,
         );
@@ -3390,60 +3702,6 @@ mod adapter_tests {
     // -----------------------------------------------------------------------
     // Item 1 — refuse encryption in the tokio adapter
     // -----------------------------------------------------------------------
-
-    #[cfg(feature = "crypto")]
-    fn crypto_config() -> HandshakeConfig {
-        HandshakeConfig {
-            crypto: Some(CryptoConfig {
-                passphrase: b"test-passphrase".to_vec(),
-                salt: [0x11u8; crate::crypto::SALT_LEN],
-                sek: vec![0x22u8; 16],
-            }),
-            ..HandshakeConfig::default()
-        }
-    }
-
-    #[cfg(feature = "crypto")]
-    #[tokio::test]
-    async fn connect_with_crypto_is_refused_before_any_io() {
-        // A bound UDP socket stands in for the "peer": a refused connection
-        // must not emit even the INDUCTION datagram.
-        let peer_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let peer_addr = peer_socket.local_addr().unwrap();
-
-        let result = tokio::time::timeout(
-            Duration::from_millis(2_000),
-            SrtSocket::connect(peer_addr, crypto_config()),
-        )
-        .await
-        .expect("crypto refusal must return immediately, not run the handshake");
-
-        let err = result.expect_err("crypto-enabled connect must be refused");
-        assert!(
-            matches!(err, Error::EncryptionUnsupported),
-            "expected EncryptionUnsupported, got {err:?}"
-        );
-
-        let mut buf = [0u8; 64];
-        assert!(
-            tokio::time::timeout(Duration::from_millis(200), peer_socket.recv_from(&mut buf))
-                .await
-                .is_err(),
-            "a refused connect must send nothing to the peer"
-        );
-    }
-
-    #[cfg(feature = "crypto")]
-    #[tokio::test]
-    async fn bind_with_crypto_is_refused() {
-        let err = SrtListener::bind("127.0.0.1:0", crypto_config())
-            .await
-            .expect_err("crypto-enabled bind must be refused");
-        assert!(
-            matches!(err, Error::EncryptionUnsupported),
-            "expected EncryptionUnsupported, got {err:?}"
-        );
-    }
 
     #[tokio::test]
     async fn encrypted_data_packet_is_never_staged_or_delivered() {
@@ -4193,6 +4451,14 @@ mod adapter_tests {
                 max_flow_window: 8192,
                 mtu: 1500,
                 tlpkt_drop: true,
+                #[cfg(feature = "crypto")]
+                crypto_passphrase: Vec::new(),
+                #[cfg(feature = "crypto")]
+                crypto_salt: None,
+                #[cfg(feature = "crypto")]
+                crypto_even_sek: None,
+                #[cfg(feature = "crypto")]
+                crypto_thresholds: crate::km_refresh::KmRefreshThresholds::RECOMMENDED,
             },
             deliver,
         );
@@ -4483,6 +4749,14 @@ mod adapter_tests {
                     max_flow_window: 8192,
                     mtu: 1500,
                     tlpkt_drop: negotiated,
+                    #[cfg(feature = "crypto")]
+                    crypto_passphrase: Vec::new(),
+                    #[cfg(feature = "crypto")]
+                    crypto_salt: None,
+                    #[cfg(feature = "crypto")]
+                    crypto_even_sek: None,
+                    #[cfg(feature = "crypto")]
+                    crypto_thresholds: crate::km_refresh::KmRefreshThresholds::RECOMMENDED,
                 },
                 deliver,
             );

@@ -53,6 +53,8 @@ struct SentPacket {
     seq: u32,
     message_number: u32,
     payload: Vec<u8>,
+    /// `KK` flag for this packet (NotEncrypted for plaintext connections).
+    key_flag: EncryptionKeyField,
     /// Resend counter (rule 18): incremented on every retransmission.
     resend_count: u32,
 }
@@ -200,6 +202,60 @@ impl Sender {
             seq,
             message_number,
             payload: payload.to_vec(),
+            key_flag: EncryptionKeyField::NotEncrypted,
+            resend_count: 0,
+        });
+        Ok(buf)
+    }
+    /// Like [`Self::on_data`] but records a `KK` flag for the packet (used by
+    /// the tokio adapter's encrypted data path). The payload is already
+    /// encrypted by the caller.
+    pub fn on_data_keyed(
+        &mut self,
+        seq: u32,
+        message_number: u32,
+        payload: &[u8],
+        key_flag: EncryptionKeyField,
+        now: Duration,
+    ) -> Result<Vec<u8>> {
+        if seq > SEQ_NUMBER_MASK {
+            return Err(Error::FieldTooWide {
+                what: "Packet Sequence Number",
+                value: u64::from(seq),
+                bits: 31,
+            });
+        }
+        if message_number > MESSAGE_NUMBER_MASK {
+            return Err(Error::FieldTooWide {
+                what: "Message Number",
+                value: u64::from(message_number),
+                bits: 26,
+            });
+        }
+        debug_assert!(
+            self.buffer
+                .back()
+                .is_none_or(|last| seq::seq_lt(last.seq, seq)),
+            "Sender::on_data requires circularly increasing sequence numbers"
+        );
+        let pkt = DataPacket {
+            seq_number: seq,
+            position: PacketPosition::Solo,
+            in_order: true,
+            key_flag,
+            retransmitted: false,
+            message_number,
+            timestamp: duration_to_wire_us(now),
+            dest_socket_id: self.dest_socket_id,
+            data: payload,
+        };
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut buf)?;
+        self.buffer.push_back(SentPacket {
+            seq,
+            message_number,
+            payload: payload.to_vec(),
+            key_flag,
             resend_count: 0,
         });
         Ok(buf)
@@ -274,7 +330,7 @@ impl Sender {
                 seq_number: sent.seq,
                 position: PacketPosition::Solo,
                 in_order: true,
-                key_flag: EncryptionKeyField::NotEncrypted,
+                key_flag: sent.key_flag,
                 retransmitted: true,
                 message_number: sent.message_number,
                 timestamp: duration_to_wire_us(now),
