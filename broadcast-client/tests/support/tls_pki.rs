@@ -90,27 +90,7 @@ pub struct TlsServer {
 
 impl TlsServer {
     pub fn start(server_ca: &Ca, client_ca: &Ca, body: Vec<u8>) -> Self {
-        let server_leaf = server_ca.issue("localhost", false);
-        let mut roots = RootCertStore::empty();
-        roots.add(client_ca.cert_der.clone()).unwrap();
-        let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider())
-            .build()
-            .unwrap();
-        let config = Arc::new(
-            ServerConfig::builder_with_provider(provider())
-                .with_safe_default_protocol_versions()
-                .unwrap()
-                .with_client_cert_verifier(verifier)
-                .with_single_cert(
-                    server_leaf
-                        .chain_der
-                        .iter()
-                        .map(|c| CertificateDer::from(c.clone()))
-                        .collect(),
-                    PrivateKeyDer::try_from(server_leaf.key_der.clone()).unwrap(),
-                )
-                .unwrap(),
-        );
+        let config = server_config(server_ca, client_ca);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let addr = listener.local_addr().unwrap();
@@ -195,6 +175,50 @@ impl Drop for TlsServer {
             let _ = t.join();
         }
     }
+}
+
+/// A rustls server configuration for a leaf of `server_ca` that requires a client certificate
+/// issued by `client_ca`.
+pub fn server_config(server_ca: &Ca, client_ca: &Ca) -> Arc<ServerConfig> {
+    let server_leaf = server_ca.issue("localhost", false);
+    let mut roots = RootCertStore::empty();
+    roots.add(client_ca.cert_der.clone()).unwrap();
+    let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider())
+        .build()
+        .unwrap();
+    Arc::new(
+        ServerConfig::builder_with_provider(provider())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(
+                server_leaf
+                    .chain_der
+                    .iter()
+                    .map(|c| CertificateDer::from(c.clone()))
+                    .collect(),
+                PrivateKeyDer::try_from(server_leaf.key_der.clone()).unwrap(),
+            )
+            .unwrap(),
+    )
+}
+
+/// A rustls client configuration trusting `server_ca`, presenting `identity` when given: what a
+/// host builds from an action's identity.
+pub fn client_config(server_ca: &Ca, identity: Option<&ClientIdentity>) -> Arc<ClientConfig> {
+    let mut roots = RootCertStore::empty();
+    roots.add(server_ca.cert_der.clone()).unwrap();
+    let builder = ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots);
+    Arc::new(match identity {
+        Some(id) => {
+            let (chain, key) = identity_material(id);
+            builder.with_client_auth_cert(chain, key).unwrap()
+        }
+        None => builder.with_no_client_auth(),
+    })
 }
 
 pub fn identity_material(
